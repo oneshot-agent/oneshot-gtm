@@ -34,10 +34,10 @@ export async function setup(req: Request): Promise<Response> {
     llmProvider,
     llmModel: body.llmModel ?? current.llmModel,
     telemetryEnabled: body.telemetryEnabled ?? current.telemetryEnabled,
-    founderName: body.founderName ?? current.founderName,
-    founderEmail: body.founderEmail ?? current.founderEmail,
-    productOneLiner: body.productOneLiner ?? current.productOneLiner,
-    icpOneLiner: body.icpOneLiner ?? current.icpOneLiner,
+    founderName: mergeString(body.founderName, current.founderName),
+    founderEmail: mergeString(body.founderEmail, current.founderEmail),
+    productOneLiner: mergeString(body.productOneLiner, current.productOneLiner),
+    icpOneLiner: mergeString(body.icpOneLiner, current.icpOneLiner),
   });
 
   if (body.secrets && Object.keys(body.secrets).length > 0) {
@@ -45,4 +45,16 @@ export async function setup(req: Request): Promise<Response> {
   }
 
   return jsonResponse({ ok: true }, 200, req);
+}
+
+/**
+ * Merge a form-submitted string into the stored config:
+ *   undefined → keep existing (caller didn't touch the field)
+ *   ""        → clear (caller deliberately emptied the field)
+ *   non-empty → trim + save
+ */
+function mergeString(incoming: string | undefined, current: string | null): string | null {
+  if (incoming === undefined) return current;
+  const trimmed = incoming.trim();
+  return trimmed.length === 0 ? null : trimmed;
 }

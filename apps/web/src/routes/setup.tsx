@@ -36,6 +36,7 @@ function SetupPage() {
   const [founderName, setFounderName] = useState("");
   const [founderEmail, setFounderEmail] = useState("");
   const [productOneLiner, setProductOneLiner] = useState("");
+  const [icpOneLiner, setIcpOneLiner] = useState("");
   const [llmProvider, setLlmProvider] = useState<"openrouter" | "openai" | "anthropic">(
     "openrouter",
   );
@@ -51,6 +52,7 @@ function SetupPage() {
     setFounderName(c.founderName ?? "");
     setFounderEmail(c.founderEmail ?? "");
     setProductOneLiner(c.productOneLiner ?? "");
+    setIcpOneLiner(c.icpOneLiner ?? "");
     setLlmProvider(c.llmProvider);
     setLlmModel(c.llmModel || LLM_DEFAULTS[c.llmProvider] || "");
     setTelemetryEnabled(c.telemetryEnabled);
@@ -67,6 +69,7 @@ function SetupPage() {
         founderName,
         founderEmail,
         productOneLiner,
+        icpOneLiner,
         llmProvider,
         llmModel,
         telemetryEnabled,
@@ -136,6 +139,23 @@ function SetupPage() {
                 placeholder="Open-source GTM agent for technical founders, paid per-result."
                 rows={2}
                 className="md:col-span-2"
+              />
+            </Field>
+          </CardBody>
+        </Card>
+
+        <Card>
+          <CardHeader>Ideal customer profile (ICP)</CardHeader>
+          <CardBody>
+            <Field
+              label="ICP one-liner"
+              hint="Who you want to reach, in one sentence. The find layer's classifier uses this to drop candidates that don't match — strict by design. Leave blank to disable filtering (every candidate passes through)."
+            >
+              <Textarea
+                value={icpOneLiner}
+                onChange={(e) => setIcpOneLiner(e.target.value)}
+                placeholder="Developers shipping autonomous AI agents who need deterministic spend tracking and on-chain receipts."
+                rows={2}
               />
             </Field>
           </CardBody>
