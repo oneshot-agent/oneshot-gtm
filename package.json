@@ -30,7 +30,7 @@
   },
   "devDependencies": {
     "@types/bun": "catalog:",
-    "oxfmt": "^0.40.0",
+    "oxfmt": "^0.46.0",
     "oxlint": "^1.55.0",
     "turbo": "^2.3.3",
     "typescript": "catalog:",
