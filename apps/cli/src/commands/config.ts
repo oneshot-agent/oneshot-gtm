@@ -73,26 +73,6 @@ export async function configTelemetry(state: "on" | "off"): Promise<void> {
   ok(`telemetry ${state === "on" ? c.green("enabled") : c.dim("disabled")}`);
 }
 
-export async function configIcpSet(oneLiner: string): Promise<void> {
-  const cfg = loadConfig();
-  const trimmed = oneLiner.trim();
-  if (trimmed.length < 10) {
-    note("ICP one-liner too short — give a fuller statement.");
-    process.exit(1);
-  }
-  saveConfig({ ...cfg, icpOneLiner: trimmed });
-  ok(`ICP set: ${c.dim(trimmed)}`);
-}
-
-export function configIcpShow(): void {
-  const cfg = loadConfig();
-  if (!cfg.icpOneLiner) {
-    note('No ICP set. Set with: oneshot-gtm config icp set "<your one-liner>"');
-    return;
-  }
-  process.stdout.write(`${c.bold("ICP:")}  ${cfg.icpOneLiner}\n`);
-}
-
 export async function configKeys(): Promise<void> {
   header("Configure API keys");
   note(`Keys are saved to ${c.cyan(secretsPath())} (chmod 600). Empty input = leave unchanged.\n`);

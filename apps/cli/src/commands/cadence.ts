@@ -1,6 +1,5 @@
 import { advanceCadence, receiptUrlsForCadence } from "@oneshot-gtm/plays";
-import { getLedger } from "@oneshot-gtm/core";
-import { c, fail, header, note, ok, warn } from "../output.ts";
+import { c, header, note, ok } from "../output.ts";
 
 export async function commandCadenceAdvance(opts: { dryRun: boolean }): Promise<void> {
   header(`cadence advance ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
@@ -39,54 +38,4 @@ export async function commandCadenceAdvance(opts: { dryRun: boolean }): Promise<
   }
   process.stdout.write("\n");
   ok(`done.`);
-}
-
-export function commandCadenceList(opts: { all: boolean }): void {
-  header(`cadence list ${opts.all ? c.dim("(all)") : c.dim("(active only)")}`);
-  const ledger = getLedger();
-  const rows = opts.all ? ledger.listAllCadences() : ledger.listActiveCadences();
-  if (rows.length === 0) {
-    note("No cadences yet. Run a play to enroll prospects.");
-    return;
-  }
-  for (const r of rows) {
-    const status =
-      r.status === "active"
-        ? c.green(r.status)
-        : r.status === "replied"
-          ? c.cyan(r.status)
-          : r.status === "breakup"
-            ? c.yellow(r.status)
-            : c.dim(r.status);
-    process.stdout.write(
-      `  ${status.padEnd(20)} ${c.cyan((r.prospect_email ?? "?").padEnd(36))} ${r.play_name.padEnd(20)} step=${r.current_step} ${c.dim("next:")}${r.next_due_at ?? "—"}\n`,
-    );
-  }
-  process.stdout.write("\n");
-}
-
-export function commandCadenceStop(args: { email: string; play?: string }): void {
-  header("cadence stop");
-  const ledger = getLedger();
-  const prospect = ledger.findProspectByEmail(args.email);
-  if (!prospect) {
-    fail(`prospect not found: ${args.email}`);
-    process.exit(1);
-  }
-  const cadences = ledger
-    .listAllCadences()
-    .filter((c) => c.prospect_id === prospect.id && (!args.play || c.play_name === args.play));
-  if (cadences.length === 0) {
-    warn(`no cadences found for ${args.email}${args.play ? ` (play: ${args.play})` : ""}`);
-    return;
-  }
-  for (const cad of cadences) {
-    if (cad.status !== "active") continue;
-    ledger.setCadenceStatus({
-      prospectId: prospect.id,
-      playName: cad.play_name,
-      status: "completed",
-    });
-    ok(`stopped: ${cad.play_name} → ${args.email}`);
-  }
 }

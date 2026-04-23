@@ -1,24 +1,18 @@
 import {
   receiptUrls,
-  runAcceleratorBatch,
   runBreakupRevive,
   runCompetitorSwitch,
   runConcierge,
   runDemoNoShow,
   runHiringSignal,
-  runJobChange,
   runPodcastGuest,
   runPostFunding,
-  runShowHn,
-  type AcceleratorBatchTarget,
   type CompetitorSwitchTarget,
   type ConciergeTarget,
   type DemoNoShowTarget,
   type HiringSignalTarget,
-  type JobChangeTarget,
   type PodcastGuestTarget,
   type PostFundingTarget,
-  type ShowHnTarget,
 } from "@oneshot-gtm/plays";
 import { readFileSync } from "node:fs";
 import { box, c, fail, header, note, ok, warn } from "../output.ts";
@@ -52,48 +46,6 @@ function readJson<T>(path: string): T {
   return JSON.parse(readFileSync(path, "utf8")) as T;
 }
 
-export async function commandMotionShowHn(opts: {
-  targetFile: string;
-  dryRun: boolean;
-}): Promise<void> {
-  header(`motion show-hn ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
-  const targets = readJson<ShowHnTarget[]>(opts.targetFile);
-  note(`${targets.length} target(s) loaded from ${c.cyan(opts.targetFile)}\n`);
-  const result = await runShowHn({ dryRun: opts.dryRun, targets });
-  printDrafts(
-    result.drafted.map((d) => ({
-      label: `${d.target.founderName} — ${d.target.postTitle}`,
-      subject: d.subject,
-      body: d.body,
-      flags: d.flags,
-      receiptIds: d.receiptIds,
-      sent: d.sent,
-    })),
-    opts.dryRun,
-  );
-}
-
-export async function commandMotionJobChange(opts: {
-  targetFile: string;
-  dryRun: boolean;
-}): Promise<void> {
-  header(`motion job-change ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
-  const targets = readJson<JobChangeTarget[]>(opts.targetFile);
-  note(`${targets.length} target(s) loaded from ${c.cyan(opts.targetFile)}\n`);
-  const result = await runJobChange({ dryRun: opts.dryRun, targets });
-  printDrafts(
-    result.drafted.map((d) => ({
-      label: `${d.target.name} — ${d.target.newRole} @ ${d.target.newCompany}`,
-      subject: d.subject,
-      body: d.body,
-      flags: d.flags,
-      receiptIds: d.receiptIds,
-      sent: d.sent,
-    })),
-    opts.dryRun,
-  );
-}
-
 export async function commandMotionPostFunding(opts: {
   targetFile: string;
   dryRun: boolean;
@@ -105,36 +57,6 @@ export async function commandMotionPostFunding(opts: {
   printDrafts(
     result.drafted.map((d) => ({
       label: `${d.target.name} — ${d.target.company} ${d.target.round}`,
-      subject: d.subject,
-      body: d.body,
-      flags: d.flags,
-      receiptIds: d.receiptIds,
-      sent: d.sent,
-    })),
-    opts.dryRun,
-  );
-}
-
-export async function commandMotionAcceleratorBatch(opts: {
-  targetFile: string;
-  dryRun: boolean;
-  senderCohort: string;
-  freeForCohortOffer?: string;
-}): Promise<void> {
-  header(`motion accelerator-batch ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
-  const targets = readJson<AcceleratorBatchTarget[]>(opts.targetFile);
-  note(
-    `${targets.length} target(s) loaded from ${c.cyan(opts.targetFile)}; sender cohort = ${c.cyan(opts.senderCohort)}\n`,
-  );
-  const result = await runAcceleratorBatch({
-    dryRun: opts.dryRun,
-    targets,
-    senderCohort: opts.senderCohort,
-    ...(opts.freeForCohortOffer ? { freeForCohortOffer: opts.freeForCohortOffer } : {}),
-  });
-  printDrafts(
-    result.drafted.map((d) => ({
-      label: `${d.target.name} — ${d.target.company} (${d.target.cohort})`,
       subject: d.subject,
       body: d.body,
       flags: d.flags,
