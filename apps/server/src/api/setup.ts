@@ -37,6 +37,7 @@ export async function setup(req: Request): Promise<Response> {
     founderName: body.founderName ?? current.founderName,
     founderEmail: body.founderEmail ?? current.founderEmail,
     productOneLiner: body.productOneLiner ?? current.productOneLiner,
+    icpOneLiner: body.icpOneLiner ?? current.icpOneLiner,
   });
 
   if (body.secrets && Object.keys(body.secrets).length > 0) {

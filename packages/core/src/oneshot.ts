@@ -3,10 +3,12 @@ import {
   type BrowserResult,
   type EmailResult,
   type EnrichProfileResult,
+  type FindEmailResult,
   type InboxEmail,
   type InboxListResult,
   type ResearchResult,
   type SmsSendResult,
+  type VerifyEmailResult,
   type VoiceCallResult,
   type WebReadResult,
   type WebSearchResult,
@@ -104,6 +106,48 @@ export async function enrichProfile(input: EnrichInput, ctx: CallContext) {
   const receiptId = getLedger().recordReceipt({
     playName: ctx.playName,
     callType: "enrich.profile",
+    signedReceipt: result,
+    oneshotRequestId: result.request_id,
+  });
+  return { result, receiptId };
+}
+
+export interface FindEmailInput {
+  /** Pass either fullName, OR firstName + lastName. companyDomain is required. */
+  fullName?: string;
+  firstName?: string;
+  lastName?: string;
+  companyDomain: string;
+}
+
+export async function findEmail(input: FindEmailInput, ctx: CallContext) {
+  const agent = await getAgent();
+  const opts: Parameters<OneShot["findEmail"]>[0] = {
+    company_domain: input.companyDomain,
+  };
+  if (input.fullName) opts.full_name = input.fullName;
+  if (input.firstName) opts.first_name = input.firstName;
+  if (input.lastName) opts.last_name = input.lastName;
+  const result: FindEmailResult = await agent.findEmail(opts);
+  const receiptId = getLedger().recordReceipt({
+    playName: ctx.playName,
+    callType: "email.find",
+    signedReceipt: result,
+    oneshotRequestId: result.request_id,
+  });
+  return { result, receiptId };
+}
+
+export interface VerifyEmailInput {
+  email: string;
+}
+
+export async function verifyEmail(input: VerifyEmailInput, ctx: CallContext) {
+  const agent = await getAgent();
+  const result: VerifyEmailResult = await agent.verifyEmail({ email: input.email });
+  const receiptId = getLedger().recordReceipt({
+    playName: ctx.playName,
+    callType: "email.verify",
     signedReceipt: result,
     oneshotRequestId: result.request_id,
   });

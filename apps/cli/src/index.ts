@@ -2,7 +2,14 @@
 import { Command } from "commander";
 import { fail } from "./output.ts";
 import { runInit } from "./commands/init.ts";
-import { configFounder, configKeys, configLlm, configTelemetry } from "./commands/config.ts";
+import {
+  configFounder,
+  configIcpSet,
+  configIcpShow,
+  configKeys,
+  configLlm,
+  configTelemetry,
+} from "./commands/config.ts";
 import { commandDoctor } from "./commands/doctor.ts";
 import {
   commandIntelAdvise,
@@ -28,6 +35,16 @@ import {
   commandCadenceStop,
 } from "./commands/cadence.ts";
 import { commandUi } from "./commands/ui.ts";
+import {
+  commandFindAcceleratorBatch,
+  commandFindApprove,
+  commandFindDrain,
+  commandFindPostFunding,
+  commandFindQueue,
+  commandFindReject,
+  commandFindShowHn,
+  commandFindWatch,
+} from "./commands/find.ts";
 import {
   commandMotionAcceleratorBatch,
   commandMotionBreakupRevive,
@@ -71,6 +88,18 @@ config
   .command("telemetry <state>")
   .description("Enable or disable opt-out telemetry (on|off)")
   .action(runOrFail((state: string) => configTelemetry(state === "on" ? "on" : "off")));
+
+const configIcp = config
+  .command("icp")
+  .description("Manage the ICP one-liner used by the find layer's classifier");
+configIcp
+  .command("set <oneLiner>")
+  .description('Save a one-liner ICP statement, e.g. "developers shipping autonomous AI agents..."')
+  .action(runOrFail(configIcpSet));
+configIcp
+  .command("show")
+  .description("Print the current ICP one-liner")
+  .action(runOrFail(configIcpShow));
 
 program.command("doctor").description("Check setup health").action(runOrFail(commandDoctor));
 
@@ -407,6 +436,126 @@ cadence
   .action(
     runOrFail(async (email: string, opts: { play?: string }) =>
       commandCadenceStop({ email, ...(opts.play ? { play: opts.play } : {}) }),
+    ),
+  );
+
+const find = program
+  .command("find")
+  .description("Discover targets, ICP-filter, enrich, dedupe, queue for review");
+find
+  .command("show-hn")
+  .option("--since-days <n>", "look back this many days (default 1)", (v) => Number.parseInt(v, 10))
+  .option("--limit <n>", "max rows to enqueue (default 25)", (v) => Number.parseInt(v, 10))
+  .option("--max-cost <usd>", "halt mid-run when this much OneShot $ is spent", (v) =>
+    Number.parseFloat(v),
+  )
+  .option("--dry-run", "skip enrichment + enqueue; just count what would be found", false)
+  .description("Pull recent Show HN posts, ICP-filter, enrich founder contact, enqueue")
+  .action(
+    runOrFail((opts: { sinceDays?: number; limit?: number; maxCost?: number; dryRun: boolean }) =>
+      commandFindShowHn(opts),
+    ),
+  );
+find
+  .command("post-funding")
+  .requiredOption(
+    "-s, --source-urls <file>",
+    "file with one TC/Crunchbase/blog URL per line (auto-discovery lands in F2)",
+  )
+  .option("--limit <n>", "max URLs to process (default 25)", (v) => Number.parseInt(v, 10))
+  .option("--max-cost <usd>", "halt mid-run when this much OneShot $ is spent", (v) =>
+    Number.parseFloat(v),
+  )
+  .option("--dry-run", "skip enrichment + enqueue; just count what would be processed", false)
+  .description("Read funding announcement URLs, extract structure, enrich founder contact, enqueue")
+  .action(
+    runOrFail((opts: { sourceUrls: string; limit?: number; maxCost?: number; dryRun: boolean }) =>
+      commandFindPostFunding(opts),
+    ),
+  );
+find
+  .command("accelerator-batch")
+  .requiredOption("-c, --cohort <cohort>", "cohort tag (yc-w26, yc-s26, yc-w25, ...)")
+  .option("--limit <n>", "max companies to process (default 25)", (v) => Number.parseInt(v, 10))
+  .option("--max-cost <usd>", "halt mid-run when this much OneShot $ is spent", (v) =>
+    Number.parseFloat(v),
+  )
+  .option("--dry-run", "skip enrichment + enqueue; just count what would be processed", false)
+  .description("Pull a YC batch index page, extract companies, enrich + enqueue")
+  .action(
+    runOrFail((opts: { cohort: string; limit?: number; maxCost?: number; dryRun: boolean }) =>
+      commandFindAcceleratorBatch(opts),
+    ),
+  );
+find
+  .command("queue")
+  .option("--play <name>", "filter by play name")
+  .option("--status <status>", "filter by status (pending|approved|rejected|sent|expired)")
+  .option("--limit <n>", "rows to show (default 50)", (v) => Number.parseInt(v, 10))
+  .description("List target_queue rows for review")
+  .action(
+    runOrFail(async (opts: { play?: string; status?: string; limit?: number }) => {
+      commandFindQueue({
+        ...(opts.play ? { play: opts.play } : {}),
+        ...(opts.status ? { status: opts.status as never } : {}),
+        ...(opts.limit ? { limit: opts.limit } : {}),
+      });
+    }),
+  );
+find
+  .command("approve [id]")
+  .option("--all", "approve every pending row (optionally scoped by --play)", false)
+  .option("--play <name>", "scope --all to this play")
+  .description("Mark a queue row (or all pending) as approved")
+  .action(
+    runOrFail(async (id: string | undefined, opts: { all: boolean; play?: string }) => {
+      commandFindApprove({
+        ...(id ? { id } : {}),
+        all: opts.all,
+        ...(opts.play ? { play: opts.play } : {}),
+      });
+    }),
+  );
+find
+  .command("reject <id>")
+  .option("--reason <text>", "reason note (logged for future ICP-filter learning)")
+  .description("Mark a queue row as rejected")
+  .action(
+    runOrFail(async (id: string, opts: { reason?: string }) => {
+      commandFindReject({ id, ...(opts.reason ? { reason: opts.reason } : {}) });
+    }),
+  );
+find
+  .command("drain <play>")
+  .option("--limit <n>", "max approved rows to drain (default 10)", (v) => Number.parseInt(v, 10))
+  .option("--sender-cohort <tag>", "REQUIRED for accelerator-batch (your cohort tag)")
+  .option("--offer <text>", "free-for-cohort offer text (accelerator-batch only)")
+  .option("--dry-run", "preview drain; don't actually send", false)
+  .description("Pull approved rows for a play and run the existing motion play on them")
+  .action(
+    runOrFail(
+      async (
+        play: string,
+        opts: { limit?: number; senderCohort?: string; offer?: string; dryRun: boolean },
+      ) => {
+        await commandFindDrain({
+          play,
+          dryRun: opts.dryRun,
+          ...(opts.limit ? { limit: opts.limit } : {}),
+          ...(opts.senderCohort ? { senderCohort: opts.senderCohort } : {}),
+          ...(opts.offer ? { offer: opts.offer } : {}),
+        });
+      },
+    ),
+  );
+find
+  .command("watch")
+  .option("--once", "run all due triggers once and exit (cron-friendly)", false)
+  .option("--quiet", "log summary only, not per-trigger details", false)
+  .description("Daemon: continuously poll registered triggers and enqueue new candidates")
+  .action(
+    runOrFail((opts: { once: boolean; quiet: boolean }) =>
+      commandFindWatch({ once: opts.once, quiet: opts.quiet }),
     ),
   );
 

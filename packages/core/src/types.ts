@@ -47,6 +47,32 @@ export interface OneShotConfig {
   founderName: string | null;
   founderEmail: string | null;
   productOneLiner: string | null;
+  /** Free-text ICP statement; the find layer's LLM filter uses it as a yes/no classifier. */
+  icpOneLiner: string | null;
+}
+
+export type QueueStatus = "pending" | "approved" | "rejected" | "sent" | "expired";
+
+export interface QueueRow {
+  id: number;
+  play_name: string;
+  payload_json: string;
+  dedupe_key: string;
+  source: string;
+  status: QueueStatus;
+  found_at: string;
+  reviewed_at: string | null;
+  sent_at: string | null;
+  notes: string | null;
+  prospect_id: number | null;
+}
+
+export interface TriggerRow {
+  name: string;
+  last_polled_at: string | null;
+  last_run_summary: string | null;
+  enabled: number;
+  config_json: string | null;
 }
 
 export type PlayName =

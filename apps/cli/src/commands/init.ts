@@ -76,6 +76,7 @@ export async function runInit(): Promise<void> {
     founderName: (answers["founderName"] ?? cfg.founderName) || null,
     founderEmail: (answers["founderEmail"] ?? cfg.founderEmail) || null,
     productOneLiner: (answers["productOneLiner"] ?? cfg.productOneLiner) || null,
+    icpOneLiner: cfg.icpOneLiner,
   });
   ok(`Saved profile to ${c.dim("~/.oneshot-gtm/config.json")}`);
 

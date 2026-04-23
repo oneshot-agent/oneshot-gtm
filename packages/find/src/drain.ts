@@ -1,0 +1,117 @@
+import { getLedger, type ProspectRecord } from "@oneshot-gtm/core";
+import {
+  runAcceleratorBatch,
+  runJobChange,
+  runPostFunding,
+  runShowHn,
+  type AcceleratorBatchTarget,
+  type JobChangeTarget,
+  type PostFundingTarget,
+  type ShowHnTarget,
+} from "@oneshot-gtm/plays";
+import type { QueueRow } from "@oneshot-gtm/core";
+
+export interface DrainOpts {
+  playName: string;
+  limit?: number;
+  dryRun: boolean;
+  /** Required for accelerator-batch. */
+  senderCohort?: string;
+  freeForCohortOffer?: string;
+}
+
+export interface DrainOutcome {
+  drained: number;
+  sent: number;
+  errors: Array<{ id: number; message: string }>;
+}
+
+/**
+ * Pull approved rows for a play from target_queue, run them through the
+ * existing motion play, and mark each as sent (or rollback on error).
+ */
+export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
+  const ledger = getLedger();
+  const rows = ledger.dequeueApproved({ playName: opts.playName, limit: opts.limit ?? 50 });
+  const outcome: DrainOutcome = { drained: rows.length, sent: 0, errors: [] };
+
+  if (rows.length === 0) return outcome;
+
+  try {
+    const sentIds = await dispatchPlay(opts, rows);
+    if (!opts.dryRun) {
+      for (const id of sentIds) {
+        const prospectId = backfillProspectId(rows.find((r) => r.id === id) ?? null);
+        ledger.setQueueStatus({ id, status: "sent" });
+        if (prospectId != null) {
+          // best-effort backfill — failure is non-fatal
+          try {
+            ledger["db"]
+              .prepare("UPDATE target_queue SET prospect_id = ? WHERE id = ?")
+              .run(prospectId, id);
+          } catch {
+            // ignore — schema mismatch shouldn't break the drain
+          }
+        }
+      }
+      outcome.sent = sentIds.length;
+    } else {
+      outcome.sent = rows.length; // would-be-sent
+    }
+  } catch (err) {
+    outcome.errors.push({ id: -1, message: (err as Error).message ?? "drain failed" });
+  }
+
+  return outcome;
+}
+
+async function dispatchPlay(opts: DrainOpts, rows: QueueRow[]): Promise<number[]> {
+  switch (opts.playName) {
+    case "show-hn": {
+      const targets = rows.map((r) => JSON.parse(r.payload_json) as ShowHnTarget);
+      const result = await runShowHn({ dryRun: opts.dryRun, targets });
+      return result.drafted.filter((d) => d.sent || opts.dryRun).map((_, i) => rows[i]?.id ?? -1);
+    }
+    case "job-change": {
+      const targets = rows.map((r) => JSON.parse(r.payload_json) as JobChangeTarget);
+      const result = await runJobChange({ dryRun: opts.dryRun, targets });
+      return result.drafted.filter((d) => d.sent || opts.dryRun).map((_, i) => rows[i]?.id ?? -1);
+    }
+    case "post-funding": {
+      const targets = rows.map((r) => JSON.parse(r.payload_json) as PostFundingTarget);
+      const result = await runPostFunding({ dryRun: opts.dryRun, targets });
+      return result.drafted.filter((d) => d.sent || opts.dryRun).map((_, i) => rows[i]?.id ?? -1);
+    }
+    case "accelerator-batch": {
+      if (!opts.senderCohort) {
+        throw new Error("--sender-cohort is required for draining accelerator-batch");
+      }
+      const targets = rows.map((r) => JSON.parse(r.payload_json) as AcceleratorBatchTarget);
+      const result = await runAcceleratorBatch({
+        dryRun: opts.dryRun,
+        targets,
+        senderCohort: opts.senderCohort,
+        ...(opts.freeForCohortOffer ? { freeForCohortOffer: opts.freeForCohortOffer } : {}),
+      });
+      return result.drafted.filter((d) => d.sent || opts.dryRun).map((_, i) => rows[i]?.id ?? -1);
+    }
+    default:
+      throw new Error(`drain: unsupported play '${opts.playName}'`);
+  }
+}
+
+function backfillProspectId(row: QueueRow | null): number | null {
+  if (!row) return null;
+  try {
+    const payload = JSON.parse(row.payload_json) as { email?: string; founderEmail?: string };
+    const email = payload.email ?? payload.founderEmail;
+    if (!email) return null;
+    const ledger = getLedger();
+    const p = ledger.findProspectByEmail(email);
+    return p ? p.id : null;
+  } catch {
+    return null;
+  }
+}
+
+export type { ProspectRecord };

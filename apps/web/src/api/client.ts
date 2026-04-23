@@ -1,11 +1,16 @@
 import type {
   CadenceView,
   DoctorCheck,
+  DrainRequest,
+  DrainResult,
   EventsByPlay,
   HomeMetrics,
   OutcomeByPlay,
   OutcomeRequest,
   PlayDescriptor,
+  QueueCounts,
+  QueueRowView,
+  QueueStatusView,
   ReceiptDetail,
   ReceiptView,
   SetupRequest,
@@ -69,6 +74,7 @@ export const api = {
         founderName: string | null;
         founderEmail: string | null;
         productOneLiner: string | null;
+        icpOneLiner: string | null;
         llmProvider: "openrouter" | "openai" | "anthropic";
         llmModel: string;
         telemetryEnabled: boolean;
@@ -78,4 +84,18 @@ export const api = {
       sources: Record<string, "env" | "file" | null>;
     }>("/setup"),
   setup: (req: SetupRequest) => postJson<{ ok: boolean }>("/setup", req),
+  queue: (opts?: { play?: string; status?: QueueStatusView; limit?: number }) => {
+    const q = new URLSearchParams();
+    if (opts?.play) q.set("play", opts.play);
+    if (opts?.status) q.set("status", opts.status);
+    if (opts?.limit != null) q.set("limit", String(opts.limit));
+    const qs = q.toString();
+    return getJson<{ rows: QueueRowView[]; counts: QueueCounts }>(`/queue${qs ? `?${qs}` : ""}`);
+  },
+  approveQueue: (id: number) => postJson<{ ok: boolean }>(`/queue/${id}/approve`, {}),
+  rejectQueue: (id: number, reason?: string) =>
+    postJson<{ ok: boolean }>(`/queue/${id}/reject`, reason ? { reason } : {}),
+  approveAllQueue: (play?: string) =>
+    postJson<{ approved: number }>("/queue/approve-all", play ? { play } : {}),
+  drainQueue: (req: DrainRequest) => postJson<DrainResult>("/queue/drain", req),
 };

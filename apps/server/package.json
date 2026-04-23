@@ -34,6 +34,7 @@
   "devDependencies": {
     "@oneshot-gtm/core": "workspace:*",
     "@oneshot-gtm/doctor": "workspace:*",
+    "@oneshot-gtm/find": "workspace:*",
     "@oneshot-gtm/intel": "workspace:*",
     "@oneshot-gtm/plays": "workspace:*",
     "@oneshot-gtm/shared-types": "workspace:*",

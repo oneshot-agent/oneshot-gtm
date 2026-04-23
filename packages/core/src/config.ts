@@ -26,6 +26,7 @@ const DEFAULTS: OneShotConfig = {
   founderName: null,
   founderEmail: null,
   productOneLiner: null,
+  icpOneLiner: null,
 };
 
 export function configDir(): string {

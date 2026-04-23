@@ -25,6 +25,10 @@ export default defineConfig({
         replacement: path.resolve(import.meta.dirname, "./packages/doctor/src/index.ts"),
       },
       {
+        find: /^@oneshot-gtm\/find$/,
+        replacement: path.resolve(import.meta.dirname, "./packages/find/src/index.ts"),
+      },
+      {
         find: /^@oneshot-gtm\/ledger$/,
         replacement: path.resolve(import.meta.dirname, "./packages/ledger/src/index.ts"),
       },

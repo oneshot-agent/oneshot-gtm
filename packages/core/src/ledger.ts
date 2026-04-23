@@ -5,8 +5,11 @@ import { configDir } from "./config.ts";
 import type {
   InterviewRecord,
   ProspectRecord,
+  QueueRow,
+  QueueStatus,
   ReceiptRecord,
   SequenceEventRecord,
+  TriggerRow,
 } from "./types.ts";
 
 const DEFAULT_DB_PATH = join(configDir(), "ledger.sqlite");
@@ -96,10 +99,36 @@ export class Ledger {
       CREATE INDEX IF NOT EXISTS idx_outcomes_outcome ON deal_outcomes(outcome);
       CREATE INDEX IF NOT EXISTS idx_outcomes_play ON deal_outcomes(play_name);
 
+      CREATE TABLE IF NOT EXISTS target_queue (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        play_name TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        dedupe_key TEXT NOT NULL,
+        source TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        found_at TEXT NOT NULL DEFAULT (datetime('now')),
+        reviewed_at TEXT,
+        sent_at TEXT,
+        notes TEXT,
+        prospect_id INTEGER,
+        FOREIGN KEY(prospect_id) REFERENCES prospects(id)
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_queue_dedupe ON target_queue(play_name, dedupe_key);
+      CREATE INDEX IF NOT EXISTS idx_queue_status ON target_queue(status);
+      CREATE INDEX IF NOT EXISTS idx_queue_play ON target_queue(play_name);
+
+      CREATE TABLE IF NOT EXISTS triggers (
+        name TEXT PRIMARY KEY,
+        last_polled_at TEXT,
+        last_run_summary TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        config_json TEXT
+      );
+
       CREATE TABLE IF NOT EXISTS schema_version (
         version INTEGER PRIMARY KEY
       );
-      INSERT OR IGNORE INTO schema_version(version) VALUES(3);
+      INSERT OR IGNORE INTO schema_version(version) VALUES(4);
     `);
 
     // Lightweight migrations for installs that pre-date a column.
@@ -497,6 +526,184 @@ export class Ledger {
     }
     const sql = `SELECT COALESCE(SUM(cost_usd), 0) AS total FROM receipts WHERE ${where.join(" AND ")}`;
     return (this.db.query(sql).get(...(args as never[])) as { total: number } | null)?.total ?? 0;
+  }
+
+  // ── target_queue ────────────────────────────────────────────────────────────
+
+  /**
+   * Insert a row into target_queue. Returns the new id, or null if a row with
+   * the same (play_name, dedupe_key) already exists.
+   */
+  enqueueTarget(input: {
+    playName: string;
+    payload: unknown;
+    dedupeKey: string;
+    source: string;
+    notes?: string;
+  }): number | null {
+    try {
+      const result = this.db
+        .prepare(
+          `INSERT INTO target_queue(play_name, payload_json, dedupe_key, source, notes)
+           VALUES(?, ?, ?, ?, ?)`,
+        )
+        .run(
+          input.playName,
+          JSON.stringify(input.payload),
+          input.dedupeKey,
+          input.source,
+          input.notes ?? null,
+        );
+      return Number(result.lastInsertRowid);
+    } catch (err) {
+      // Unique constraint violation = already queued; return null to signal dedupe.
+      const msg = (err as Error).message ?? "";
+      if (msg.includes("UNIQUE constraint failed")) return null;
+      throw err;
+    }
+  }
+
+  isQueueDuplicate(playName: string, dedupeKey: string): boolean {
+    const row = this.db
+      .query("SELECT 1 FROM target_queue WHERE play_name = ? AND dedupe_key = ?")
+      .get(playName, dedupeKey);
+    return row !== null && row !== undefined;
+  }
+
+  listQueue(opts: { playName?: string; status?: QueueStatus; limit?: number } = {}): QueueRow[] {
+    const where: string[] = [];
+    const args: unknown[] = [];
+    if (opts.playName) {
+      where.push("play_name = ?");
+      args.push(opts.playName);
+    }
+    if (opts.status) {
+      where.push("status = ?");
+      args.push(opts.status);
+    }
+    const sql = `
+      SELECT * FROM target_queue
+      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+      ORDER BY found_at DESC
+      LIMIT ?
+    `;
+    args.push(opts.limit ?? 200);
+    return this.db.query(sql).all(...(args as never[])) as QueueRow[];
+  }
+
+  getQueueRow(id: number): QueueRow | null {
+    return (this.db.query("SELECT * FROM target_queue WHERE id = ?").get(id) as QueueRow) ?? null;
+  }
+
+  setQueueStatus(input: { id: number; status: QueueStatus; notes?: string }): void {
+    const now = new Date().toISOString();
+    if (input.status === "sent") {
+      this.db
+        .prepare(
+          `UPDATE target_queue SET status = ?, sent_at = ?, reviewed_at = COALESCE(reviewed_at, ?) ${input.notes ? ", notes = ?" : ""} WHERE id = ?`,
+        )
+        .run(
+          ...(input.notes
+            ? [input.status, now, now, input.notes, input.id]
+            : [input.status, now, now, input.id]),
+        );
+    } else if (input.status === "approved" || input.status === "rejected") {
+      this.db
+        .prepare(
+          `UPDATE target_queue SET status = ?, reviewed_at = ? ${input.notes ? ", notes = ?" : ""} WHERE id = ?`,
+        )
+        .run(
+          ...(input.notes
+            ? [input.status, now, input.notes, input.id]
+            : [input.status, now, input.id]),
+        );
+    } else {
+      this.db
+        .prepare(`UPDATE target_queue SET status = ? WHERE id = ?`)
+        .run(input.status, input.id);
+    }
+  }
+
+  approveAllPending(opts: { playName?: string } = {}): number {
+    const where: string[] = ["status = 'pending'"];
+    const args: unknown[] = [];
+    if (opts.playName) {
+      where.push("play_name = ?");
+      args.push(opts.playName);
+    }
+    const result = this.db
+      .prepare(
+        `UPDATE target_queue SET status = 'approved', reviewed_at = ? WHERE ${where.join(" AND ")}`,
+      )
+      .run(...([new Date().toISOString(), ...args] as never[]));
+    return Number(result.changes);
+  }
+
+  dequeueApproved(opts: { playName: string; limit?: number }): QueueRow[] {
+    const sql = `
+      SELECT * FROM target_queue
+      WHERE play_name = ? AND status = 'approved'
+      ORDER BY found_at ASC
+      LIMIT ?
+    `;
+    return this.db.query(sql).all(opts.playName, opts.limit ?? 50) as QueueRow[];
+  }
+
+  expirePendingOlderThan(days: number): number {
+    const sinceIso = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
+    const result = this.db
+      .prepare(
+        `UPDATE target_queue SET status = 'expired' WHERE status = 'pending' AND found_at < ?`,
+      )
+      .run(sinceIso);
+    return Number(result.changes);
+  }
+
+  queueCounts(): Record<QueueStatus, number> {
+    const rows = this.db
+      .query("SELECT status, COUNT(*) AS n FROM target_queue GROUP BY status")
+      .all() as Array<{ status: QueueStatus; n: number }>;
+    const out: Record<QueueStatus, number> = {
+      pending: 0,
+      approved: 0,
+      rejected: 0,
+      sent: 0,
+      expired: 0,
+    };
+    for (const r of rows) out[r.status] = r.n;
+    return out;
+  }
+
+  // ── triggers (find watch state) ────────────────────────────────────────────
+
+  upsertTrigger(input: { name: string; configJson: string; enabled?: boolean }): void {
+    this.db
+      .prepare(
+        `INSERT INTO triggers(name, enabled, config_json)
+         VALUES(?, ?, ?)
+         ON CONFLICT(name) DO UPDATE SET
+           enabled = excluded.enabled,
+           config_json = excluded.config_json`,
+      )
+      .run(input.name, input.enabled === false ? 0 : 1, input.configJson);
+  }
+
+  getTrigger(name: string): TriggerRow | null {
+    return (this.db.query("SELECT * FROM triggers WHERE name = ?").get(name) as TriggerRow) ?? null;
+  }
+
+  listTriggers(): TriggerRow[] {
+    return this.db.query("SELECT * FROM triggers ORDER BY name ASC").all() as TriggerRow[];
+  }
+
+  updateTriggerLastPoll(input: { name: string; summary: unknown }): void {
+    this.db
+      .prepare(`UPDATE triggers SET last_polled_at = ?, last_run_summary = ? WHERE name = ?`)
+      .run(new Date().toISOString(), JSON.stringify(input.summary), input.name);
+  }
+
+  setTriggerEnabled(name: string, enabled: boolean): void {
+    this.db.prepare(`UPDATE triggers SET enabled = ? WHERE name = ?`).run(enabled ? 1 : 0, name);
   }
 
   close(): void {

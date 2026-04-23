@@ -87,6 +87,7 @@ export interface SetupRequest {
   founderName?: string;
   founderEmail?: string;
   productOneLiner?: string;
+  icpOneLiner?: string;
   llmProvider?: LlmProvider;
   llmModel?: string;
   telemetryEnabled?: boolean;
@@ -103,6 +104,53 @@ export interface SetupRequest {
       string
     >
   >;
+}
+
+export type QueueStatusView = "pending" | "approved" | "rejected" | "sent" | "expired";
+
+export interface QueueRowView {
+  id: number;
+  playName: string;
+  payload: unknown;
+  dedupeKey: string;
+  source: string;
+  status: QueueStatusView;
+  foundAt: string;
+  reviewedAt: string | null;
+  sentAt: string | null;
+  notes: string | null;
+  prospectId: number | null;
+}
+
+export interface QueueCounts {
+  pending: number;
+  approved: number;
+  rejected: number;
+  sent: number;
+  expired: number;
+}
+
+export interface DrainRequest {
+  playName: string;
+  limit: number;
+  dryRun: boolean;
+  /** For accelerator-batch: required cohort tag. */
+  senderCohort?: string;
+  freeForCohortOffer?: string;
+}
+
+export interface DrainResult {
+  drained: number;
+  sent: number;
+  errors: Array<{ id: number; message: string }>;
+}
+
+export interface TriggerView {
+  name: string;
+  lastPolledAt: string | null;
+  lastRunSummary: unknown | null;
+  enabled: boolean;
+  config: unknown | null;
 }
 
 export interface OutcomeRequest {

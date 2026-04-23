@@ -9,6 +9,13 @@ import { measureCac, measureRocs, recordOutcome } from "./api/measure.ts";
 import { setup, getSetupStatus } from "./api/setup.ts";
 import { doctor } from "./api/doctor.ts";
 import { runPlay } from "./api/run.ts";
+import {
+  approveAllRoute,
+  approveQueueRoute,
+  drainQueueRoute,
+  listQueueRoute,
+  rejectQueueRoute,
+} from "./api/queue.ts";
 
 interface ServerOptions {
   port: number;
@@ -49,6 +56,11 @@ const routes: RouteEntry[] = [
   route("POST", "/api/setup", setup),
   route("GET", "/api/doctor", doctor),
   route("POST", "/api/run/:playName", runPlay),
+  route("GET", "/api/queue", listQueueRoute),
+  route("POST", "/api/queue/approve-all", approveAllRoute),
+  route("POST", "/api/queue/drain", drainQueueRoute),
+  route("POST", "/api/queue/:id/approve", approveQueueRoute),
+  route("POST", "/api/queue/:id/reject", rejectQueueRoute),
 ];
 
 function findRoute(req: Request): { handler: RouteHandler; params: Record<string, string> } | null {

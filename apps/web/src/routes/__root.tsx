@@ -1,6 +1,6 @@
 import { Outlet, createRootRouteWithContext, Link } from "@tanstack/react-router";
 import type { QueryClient } from "@tanstack/react-query";
-import { Activity, BarChart3, Layers, Receipt, Settings, Zap } from "lucide-react";
+import { Activity, BarChart3, Inbox, Layers, Receipt, Settings, Zap } from "lucide-react";
 import { cn } from "../lib/cn.ts";
 
 interface RootContext {
@@ -13,6 +13,7 @@ export const Route = createRootRouteWithContext<RootContext>()({
 
 const NAV = [
   { to: "/", label: "Home", icon: Activity },
+  { to: "/queue", label: "Queue", icon: Inbox },
   { to: "/cadences", label: "Cadences", icon: Layers },
   { to: "/receipts", label: "Receipts", icon: Receipt },
   { to: "/measure", label: "Measure", icon: BarChart3 },

@@ -19,6 +19,7 @@ export default defineConfig({
       "@oneshot-gtm/intel",
       "@oneshot-gtm/plays",
       "@oneshot-gtm/doctor",
+      "@oneshot-gtm/find",
       "@oneshot-gtm/shared-types",
     ],
     neverBundle: ["@oneshot-agent/sdk", "open", "bun:sqlite"],
