@@ -45,7 +45,11 @@ export async function commandUi(opts: UiOpts): Promise<void> {
       stdio: "inherit",
       env,
     });
-    const server = spawn("bun", ["run", serverBin], {
+    // --watch makes Bun re-exec the server when any imported file changes.
+    // The web client auto-reloads via Vite HMR; the server side gets a hard
+    // restart, which is fast (<1s) and picks up new routes / shared-types
+    // changes without manual intervention.
+    const server = spawn("bun", ["--watch", "run", serverBin], {
       stdio: "inherit",
       env: { ...env, ONESHOT_GTM_NO_BROWSER: "1" },
     });
