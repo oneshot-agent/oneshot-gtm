@@ -1,0 +1,45 @@
+{
+  "name": "oneshot-gtm-server",
+  "version": "0.1.0",
+  "description": "Local dashboard server for oneshot-gtm. Boots Bun.serve, opens the browser to your GTM operating state.",
+  "homepage": "https://github.com/oneshot-agent/oneshot-gtm",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oneshot-agent/oneshot-gtm",
+    "directory": "apps/server"
+  },
+  "bin": {
+    "oneshot-gtm-server": "./dist/bin.mjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "main": "./src/server.ts",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "dev": "bun run --watch src/bin.ts",
+    "start": "bun run src/bin.ts",
+    "build": "tsdown && bun run copy:web",
+    "copy:web": "rm -rf dist/web && cp -R ../web/dist dist/web",
+    "prepublishOnly": "bun run --cwd ../web build && bun run build"
+  },
+  "dependencies": {
+    "@oneshot-agent/sdk": "^0.15.0",
+    "open": "^11.0.0"
+  },
+  "devDependencies": {
+    "@oneshot-gtm/core": "workspace:*",
+    "@oneshot-gtm/doctor": "workspace:*",
+    "@oneshot-gtm/intel": "workspace:*",
+    "@oneshot-gtm/plays": "workspace:*",
+    "@oneshot-gtm/shared-types": "workspace:*",
+    "tsdown": "^0.21.10"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

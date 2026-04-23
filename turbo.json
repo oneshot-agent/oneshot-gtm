@@ -1,0 +1,45 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "globalEnv": [
+    "HOST",
+    "PORT",
+    "NODE_ENV",
+    "ONESHOT_GTM_TELEMETRY",
+    "OPENROUTER_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "AGENT_PRIVATE_KEY",
+    "CDP_API_KEY_ID",
+    "CDP_API_KEY_SECRET",
+    "CDP_WALLET_SECRET"
+  ],
+  "globalPassThroughEnv": ["PATHEXT"],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"]
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "typecheck": {
+      "dependsOn": ["^typecheck"],
+      "outputs": [],
+      "cache": false
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "cache": false,
+      "outputs": []
+    },
+    "lint": {
+      "outputs": [],
+      "cache": false
+    },
+    "fmt": {
+      "outputs": [],
+      "cache": false
+    }
+  }
+}

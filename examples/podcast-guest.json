@@ -1,0 +1,11 @@
+[
+  {
+    "name": "Rae Kim",
+    "email": "rae@stellar.dev",
+    "company": "Stellar",
+    "podcast": "Latent Space",
+    "episodeTitle": "The economics of agent infra",
+    "hookQuote": "Around 38:20 you said evals are the bottleneck for agent companies hitting Series A — that the eval suite is now the moat, not the model.",
+    "bridge": "We took that exact argument and built per-call signed receipts so eval costs are deterministic instead of estimated."
+  }
+]

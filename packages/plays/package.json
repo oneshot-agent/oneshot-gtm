@@ -1,0 +1,13 @@
+{
+  "name": "@oneshot-gtm/plays",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@oneshot-gtm/core": "workspace:*",
+    "@oneshot-gtm/intel": "workspace:*"
+  }
+}

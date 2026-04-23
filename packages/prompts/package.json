@@ -1,0 +1,8 @@
+{
+  "name": "@oneshot-gtm/prompts",
+  "version": "0.1.0",
+  "private": true,
+  "files": [
+    "*.md"
+  ]
+}

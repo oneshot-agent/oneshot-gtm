@@ -1,0 +1,19 @@
+[
+  {
+    "name": "Jordan Lee",
+    "email": "jordan@acmedata.io",
+    "newRole": "Head of Platform",
+    "newCompany": "Acme Data",
+    "previousRole": "Staff Engineer, Infra",
+    "previousCompany": "Stripe",
+    "linkedinUrl": "https://linkedin.com/in/jordan-lee-fake"
+  },
+  {
+    "name": "Priya Shah",
+    "email": "priya@northstar.ai",
+    "newRole": "VP Engineering",
+    "newCompany": "Northstar AI",
+    "previousRole": "Director of Engineering",
+    "previousCompany": "Datadog"
+  }
+]

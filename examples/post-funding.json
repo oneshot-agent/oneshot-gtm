@@ -1,0 +1,20 @@
+[
+  {
+    "name": "Maya Chen",
+    "email": "maya@helix.dev",
+    "company": "Helix",
+    "round": "Series A",
+    "amountUsd": 14000000,
+    "leadInvestor": "Index Ventures",
+    "sourceUrl": "https://techcrunch.com/2026/04/example-helix-series-a"
+  },
+  {
+    "name": "Diego Alvarez",
+    "email": "diego@compass.run",
+    "company": "Compass",
+    "round": "Seed",
+    "amountUsd": 4500000,
+    "leadInvestor": "First Round Capital",
+    "sourceUrl": "https://twitter.com/diegoalvarez/status/example"
+  }
+]

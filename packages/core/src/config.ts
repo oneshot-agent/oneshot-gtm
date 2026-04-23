@@ -1,0 +1,148 @@
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
+import type { OneShotConfig } from "./types.ts";
+
+const CONFIG_DIR = join(homedir(), ".oneshot-gtm");
+const CONFIG_PATH = join(CONFIG_DIR, "config.json");
+const SECRETS_PATH = join(CONFIG_DIR, ".env");
+
+export const SECRET_KEYS = [
+  "OPENROUTER_API_KEY",
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "CDP_API_KEY_ID",
+  "CDP_API_KEY_SECRET",
+  "CDP_WALLET_SECRET",
+  "AGENT_PRIVATE_KEY",
+] as const;
+export type SecretKey = (typeof SECRET_KEYS)[number];
+
+const DEFAULTS: OneShotConfig = {
+  walletMode: "cdp",
+  llmProvider: "openrouter",
+  llmModel: "anthropic/claude-sonnet-4.6",
+  telemetryEnabled: true,
+  founderName: null,
+  founderEmail: null,
+  productOneLiner: null,
+};
+
+export function configDir(): string {
+  return CONFIG_DIR;
+}
+
+export function ensureConfigDir(): void {
+  if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true });
+}
+
+export function loadConfig(): OneShotConfig {
+  if (!existsSync(CONFIG_PATH)) return { ...DEFAULTS };
+  try {
+    const raw = readFileSync(CONFIG_PATH, "utf8");
+    return { ...DEFAULTS, ...JSON.parse(raw) };
+  } catch {
+    return { ...DEFAULTS };
+  }
+}
+
+export function saveConfig(cfg: OneShotConfig): void {
+  ensureConfigDir();
+  if (!existsSync(dirname(CONFIG_PATH))) mkdirSync(dirname(CONFIG_PATH), { recursive: true });
+  writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+}
+
+export function secretsPath(): string {
+  return SECRETS_PATH;
+}
+
+export function loadSecretsFile(): Record<string, string> {
+  if (!existsSync(SECRETS_PATH)) return {};
+  const out: Record<string, string> = {};
+  for (const raw of readFileSync(SECRETS_PATH, "utf8").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const eq = line.indexOf("=");
+    if (eq < 0) continue;
+    const k = line.slice(0, eq).trim();
+    let v = line.slice(eq + 1).trim();
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+      v = v.slice(1, -1);
+    }
+    out[k] = v;
+  }
+  return out;
+}
+
+export function applySecretsToEnv(): void {
+  const stored = loadSecretsFile();
+  for (const [k, v] of Object.entries(stored)) {
+    if (process.env[k] === undefined || process.env[k] === "") {
+      process.env[k] = v;
+    }
+  }
+}
+
+export function saveSecrets(updates: Partial<Record<SecretKey, string>>): void {
+  ensureConfigDir();
+  const existing = loadSecretsFile();
+  for (const [k, v] of Object.entries(updates)) {
+    if (v === undefined || v === "") continue;
+    existing[k] = v;
+  }
+  const lines = [
+    "# oneshot-gtm secrets — do not commit",
+    "# this file is read on every CLI invocation; values here override blank process.env",
+    "",
+    ...Object.entries(existing)
+      .filter(([k]) => SECRET_KEYS.includes(k as SecretKey))
+      .map(([k, v]) => `${k}=${v}`),
+    "",
+  ];
+  writeFileSync(SECRETS_PATH, lines.join("\n"));
+  try {
+    chmodSync(SECRETS_PATH, 0o600);
+  } catch {
+    // chmod may fail on Windows; the file is still in $HOME so reasonably scoped.
+  }
+  // reflect new values into the running process so `doctor` etc see them immediately
+  for (const [k, v] of Object.entries(updates)) {
+    if (v) process.env[k] = v;
+  }
+}
+
+export function secretSource(key: SecretKey): "env" | "file" | null {
+  // process.env was populated either by the shell (env) or by applySecretsToEnv (file).
+  // We can distinguish by checking the file directly.
+  const fromFile = loadSecretsFile();
+  if (fromFile[key]) {
+    // If the shell ALSO has it AND it differs from the file, the shell value wins (we only fill blanks).
+    if (process.env[key] && process.env[key] !== fromFile[key]) return "env";
+    return "file";
+  }
+  if (process.env[key]) return "env";
+  return null;
+}
+
+// Auto-apply on first import so downstream code sees keys in process.env without ceremony.
+applySecretsToEnv();
+
+export function llmApiKey(provider: OneShotConfig["llmProvider"]): string | null {
+  switch (provider) {
+    case "openrouter":
+      return process.env.OPENROUTER_API_KEY ?? null;
+    case "openai":
+      return process.env.OPENAI_API_KEY ?? null;
+    case "anthropic":
+      return process.env.ANTHROPIC_API_KEY ?? null;
+  }
+}
+
+export function oneshotEnvReady(): boolean {
+  return Boolean(
+    (process.env.CDP_API_KEY_ID &&
+      process.env.CDP_API_KEY_SECRET &&
+      process.env.CDP_WALLET_SECRET) ||
+    process.env.AGENT_PRIVATE_KEY,
+  );
+}

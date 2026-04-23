@@ -1,0 +1,304 @@
+import {
+  OneShot,
+  type BrowserResult,
+  type EmailResult,
+  type EnrichProfileResult,
+  type InboxEmail,
+  type InboxListResult,
+  type ResearchResult,
+  type SmsSendResult,
+  type VoiceCallResult,
+  type WebReadResult,
+  type WebSearchResult,
+} from "@oneshot-agent/sdk";
+import { getLedger } from "./ledger.ts";
+import { oneshotEnvReady } from "./config.ts";
+
+export interface SendEmailInput {
+  to: string;
+  subject: string;
+  body: string;
+  fromDomain?: string;
+}
+
+export interface ResearchInput {
+  topic: string;
+  depth?: "quick" | "deep";
+}
+
+export interface EnrichInput {
+  email?: string;
+  linkedinUrl?: string;
+  name?: string;
+  companyDomain?: string;
+}
+
+export interface CallContext {
+  playName: string;
+}
+
+let agentSingleton: OneShot | null = null;
+
+async function initAgent(): Promise<OneShot> {
+  if (!oneshotEnvReady()) {
+    throw new Error(
+      "OneShot credentials missing. Set CDP_API_KEY_ID + CDP_API_KEY_SECRET + CDP_WALLET_SECRET, or AGENT_PRIVATE_KEY. Run `oneshot-gtm doctor` for details.",
+    );
+  }
+  if (process.env["AGENT_PRIVATE_KEY"]) {
+    return new OneShot({ privateKey: process.env["AGENT_PRIVATE_KEY"] });
+  }
+  return await OneShot.create({ cdp: true });
+}
+
+async function getAgent(): Promise<OneShot> {
+  if (!agentSingleton) agentSingleton = await initAgent();
+  return agentSingleton;
+}
+
+function emailRequestId(r: EmailResult): string | undefined {
+  return r.email?.id;
+}
+
+export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
+  const agent = await getAgent();
+  const opts: Parameters<OneShot["email"]>[0] = {
+    to: input.to,
+    subject: input.subject,
+    body: input.body,
+  };
+  if (input.fromDomain) opts.from_domain = input.fromDomain;
+  const result = await agent.email(opts);
+  const receiptId = getLedger().recordReceipt({
+    playName: ctx.playName,
+    callType: "email.send",
+    signedReceipt: result,
+    oneshotRequestId: emailRequestId(result) ?? undefined,
+  });
+  return { result, receiptId };
+}
+
+export async function deepResearch(input: ResearchInput, ctx: CallContext) {
+  const agent = await getAgent();
+  const result: ResearchResult = await agent.research({
+    topic: input.topic,
+    depth: input.depth ?? "quick",
+  });
+  const receiptId = getLedger().recordReceipt({
+    playName: ctx.playName,
+    callType: "research.deep",
+    signedReceipt: result,
+  });
+  return { result, receiptId };
+}
+
+export async function enrichProfile(input: EnrichInput, ctx: CallContext) {
+  const agent = await getAgent();
+  const opts: Parameters<OneShot["enrichProfile"]>[0] = {};
+  if (input.email) opts.email = input.email;
+  if (input.linkedinUrl) opts.linkedin_url = input.linkedinUrl;
+  if (input.name) opts.name = input.name;
+  if (input.companyDomain) opts.company_domain = input.companyDomain;
+
+  const result: EnrichProfileResult = await agent.enrichProfile(opts);
+  const receiptId = getLedger().recordReceipt({
+    playName: ctx.playName,
+    callType: "enrich.profile",
+    signedReceipt: result,
+    oneshotRequestId: result.request_id,
+  });
+  return { result, receiptId };
+}
+
+export async function getBalance(
+  tokenAddress?: string,
+): Promise<{ balance: string; raw: unknown }> {
+  const agent = await getAgent();
+  const raw = await agent.getBalance(tokenAddress);
+  return { balance: raw, raw };
+}
+
+export async function listInbox(opts?: {
+  since?: string;
+  limit?: number;
+}): Promise<InboxListResult> {
+  const agent = await getAgent();
+  const out: { since?: string; limit?: number; include_body?: boolean } = { include_body: true };
+  if (opts?.since) out.since = opts.since;
+  if (opts?.limit) out.limit = opts.limit;
+  return agent.inboxList(out);
+}
+
+export interface BuildSiteInput {
+  name: string;
+  description: string;
+  type?:
+    | "saas"
+    | "portfolio"
+    | "agency"
+    | "personal"
+    | "product"
+    | "funnel"
+    | "restaurant"
+    | "event";
+  sections?: string[];
+  leadCaptureEmail?: string;
+  primaryColor?: string;
+  tone?: "professional" | "playful" | "bold" | "minimal";
+  domain?: string;
+}
+
+export async function buildSite(input: BuildSiteInput, ctx: CallContext) {
+  const agent = await getAgent();
+  const opts: Parameters<OneShot["build"]>[0] = {
+    product: { name: input.name, description: input.description },
+  };
+  if (input.type) opts.type = input.type;
+  if (input.sections) opts.sections = input.sections;
+  if (input.leadCaptureEmail) {
+    opts.lead_capture = { enabled: true, inbox_email: input.leadCaptureEmail };
+  }
+  if (input.primaryColor || input.tone) {
+    opts.brand = {};
+    if (input.primaryColor) opts.brand.primary_color = input.primaryColor;
+    if (input.tone) opts.brand.tone = input.tone;
+  }
+  if (input.domain) opts.domain = input.domain;
+
+  const result = await agent.build(opts);
+  const receiptId = getLedger().recordReceipt({
+    playName: ctx.playName,
+    callType: "build.website",
+    signedReceipt: result,
+  });
+  return { result, receiptId };
+}
+
+export interface SendSmsInput {
+  to: string | string[];
+  message: string;
+  maxCost?: number;
+}
+
+export async function sendSms(input: SendSmsInput, ctx: CallContext) {
+  const agent = await getAgent();
+  const opts: Parameters<OneShot["sms"]>[0] = {
+    to_number: input.to,
+    message: input.message,
+  };
+  if (input.maxCost) opts.maxCost = input.maxCost;
+  const result: SmsSendResult = await agent.sms(opts);
+  const receiptId = getLedger().recordReceipt({
+    playName: ctx.playName,
+    callType: "sms.send",
+    signedReceipt: result,
+    oneshotRequestId: result.details[0]?.message_sid ?? undefined,
+  });
+  return { result, receiptId };
+}
+
+export interface VoiceCallInput {
+  objective: string;
+  to: string | string[];
+  callerPersona?: string;
+  context?: string;
+  maxDurationMinutes?: number;
+  maxCost?: number;
+}
+
+export async function voiceCall(input: VoiceCallInput, ctx: CallContext) {
+  const agent = await getAgent();
+  const opts: Parameters<OneShot["voice"]>[0] = {
+    objective: input.objective,
+    target_number: input.to,
+  };
+  if (input.callerPersona) opts.caller_persona = input.callerPersona;
+  if (input.context) opts.context = input.context;
+  if (input.maxDurationMinutes) opts.max_duration_minutes = input.maxDurationMinutes;
+  if (input.maxCost) opts.maxCost = input.maxCost;
+  const result: VoiceCallResult = await agent.voice(opts);
+  const receiptId = getLedger().recordReceipt({
+    playName: ctx.playName,
+    callType: "voice.call",
+    costUsd: result.cost,
+    signedReceipt: result,
+  });
+  return { result, receiptId };
+}
+
+export interface WebSearchInput {
+  query: string;
+  maxResults?: number;
+}
+
+export async function webSearch(input: WebSearchInput, ctx: CallContext) {
+  const agent = await getAgent();
+  const opts: Parameters<OneShot["webSearch"]>[0] = { query: input.query };
+  if (input.maxResults) opts.max_results = input.maxResults;
+  const result: WebSearchResult = await agent.webSearch(opts);
+  const receiptId = getLedger().recordReceipt({
+    playName: ctx.playName,
+    callType: "web.search",
+    signedReceipt: result,
+  });
+  return { result, receiptId };
+}
+
+export interface WebReadInput {
+  url: string;
+}
+
+export async function webRead(input: WebReadInput, ctx: CallContext) {
+  const agent = await getAgent();
+  const result: WebReadResult = await agent.webRead({ url: input.url });
+  const receiptId = getLedger().recordReceipt({
+    playName: ctx.playName,
+    callType: "web.read",
+    signedReceipt: result,
+  });
+  return { result, receiptId };
+}
+
+export interface BrowserTaskInput {
+  task: string;
+  startUrl?: string;
+  allowedDomains?: string[];
+  outputSchema?: Record<string, unknown>;
+  profileId?: string;
+  maxSteps?: number;
+  maxCost?: number;
+}
+
+export async function browserTask(input: BrowserTaskInput, ctx: CallContext) {
+  const agent = await getAgent();
+  const opts: Parameters<OneShot["browser"]>[0] = { task: input.task };
+  if (input.startUrl) opts.start_url = input.startUrl;
+  if (input.allowedDomains) opts.allowed_domains = input.allowedDomains;
+  if (input.outputSchema) opts.output_schema = input.outputSchema;
+  if (input.profileId) opts.profile_id = input.profileId;
+  if (input.maxSteps) opts.max_steps = input.maxSteps;
+  if (input.maxCost) opts.maxCost = input.maxCost;
+  const result: BrowserResult = await agent.browser(opts);
+  const receiptId = getLedger().recordReceipt({
+    playName: ctx.playName,
+    callType: "browser.task",
+    costUsd: result.cost,
+    signedReceipt: result,
+    oneshotRequestId: result.browser_task_id ?? undefined,
+  });
+  return { result, receiptId };
+}
+
+export type {
+  BrowserResult,
+  InboxEmail,
+  InboxListResult,
+  SmsSendResult,
+  VoiceCallResult,
+  WebReadResult,
+  WebSearchResult,
+};
+
+export function receiptUrlForId(receiptId: number): string {
+  return `local://receipt/${receiptId}`;
+}

@@ -1,0 +1,29 @@
+{
+  "name": "oneshot-gtm",
+  "version": "0.1.0",
+  "description": "Open-source GTM agent for technical founders. Pay-per-result, signed receipts.",
+  "license": "MIT",
+  "bin": {
+    "oneshot-gtm": "./src/index.ts"
+  },
+  "files": [
+    "src"
+  ],
+  "type": "module",
+  "main": "./src/index.ts",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@oneshot-gtm/core": "workspace:*",
+    "@oneshot-gtm/doctor": "workspace:*",
+    "@oneshot-gtm/intel": "workspace:*",
+    "@oneshot-gtm/plays": "workspace:*",
+    "commander": "^14.0.3",
+    "kleur": "^4.1.5",
+    "prompts": "^2.4.2"
+  },
+  "devDependencies": {
+    "@types/prompts": "^2.4.0"
+  }
+}

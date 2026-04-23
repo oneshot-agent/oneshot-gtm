@@ -1,0 +1,130 @@
+/**
+ * Wire types shared between apps/cli, apps/server, and apps/web.
+ * These are the API contracts for /api/* endpoints. Keep stable.
+ */
+
+export type CadenceStatus = "active" | "replied" | "breakup" | "completed";
+export type StepChannel = "email" | "sms" | "voice" | "linkedin";
+
+export interface CadenceView {
+  prospectId: number;
+  prospectEmail: string | null;
+  prospectName: string | null;
+  prospectCompany: string | null;
+  playName: string;
+  status: CadenceStatus;
+  currentStep: number;
+  enrolledAt: string;
+  nextDueAt: string | null;
+  lastPolledAt: string | null;
+}
+
+export interface ReceiptView {
+  id: number;
+  playName: string;
+  callType: string;
+  costUsd: number | null;
+  oneshotRequestId: string | null;
+  createdAt: string;
+}
+
+export interface ReceiptDetail extends ReceiptView {
+  signedReceipt: unknown | null;
+}
+
+export interface SpendByPlay {
+  playName: string;
+  calls: number;
+  totalUsd: number;
+}
+
+export interface EventsByPlay {
+  playName: string;
+  sent: number;
+  delivered: number;
+  replied: number;
+  bounced: number;
+}
+
+export interface OutcomeByPlay {
+  playName: string | null;
+  meetings: number;
+  sqls: number;
+  won: number;
+  lost: number;
+  ghosted: number;
+}
+
+export interface HomeMetrics {
+  spendUsd7d: number;
+  spendUsd30d: number;
+  callsLast7d: number;
+  sentLast7d: number;
+  repliedLast7d: number;
+  activeCadences: number;
+}
+
+export interface PlayDescriptor {
+  name: string;
+  channels: StepChannel[];
+  followupCount: number;
+  hasBreakup: boolean;
+  cliInvocation: string;
+}
+
+export type LlmProvider = "openrouter" | "openai" | "anthropic";
+export type WalletMode = "cdp" | "private-key";
+export type KeySource = "env" | "file" | null;
+
+export interface DoctorCheck {
+  name: string;
+  severity: "ok" | "warn" | "fail";
+  message: string;
+  hint?: string;
+}
+
+export interface SetupRequest {
+  founderName?: string;
+  founderEmail?: string;
+  productOneLiner?: string;
+  llmProvider?: LlmProvider;
+  llmModel?: string;
+  telemetryEnabled?: boolean;
+  walletMode?: WalletMode;
+  secrets?: Partial<
+    Record<
+      | "OPENROUTER_API_KEY"
+      | "OPENAI_API_KEY"
+      | "ANTHROPIC_API_KEY"
+      | "CDP_API_KEY_ID"
+      | "CDP_API_KEY_SECRET"
+      | "CDP_WALLET_SECRET"
+      | "AGENT_PRIVATE_KEY",
+      string
+    >
+  >;
+}
+
+export interface OutcomeRequest {
+  email: string;
+  outcome: "meeting_booked" | "sql_qualified" | "deal_won" | "deal_lost" | "ghosted";
+  playName?: string;
+  amountUsd?: number;
+  notes?: string;
+}
+
+export interface RunPlayRequest {
+  dryRun: boolean;
+  /** Free-form per-play target rows; the server validates per-play shape. */
+  targets: unknown[];
+  /** For accelerator-batch: sender cohort + free offer text. */
+  senderCohort?: string;
+  freeForCohortOffer?: string;
+}
+
+/** Server-Sent Events frame contract for /api/run/$playName. */
+export type RunPlayEvent =
+  | { kind: "draft"; index: number; subject: string; body: string; flags: string[] }
+  | { kind: "send"; index: number; receiptIds: number[] }
+  | { kind: "error"; index: number; message: string }
+  | { kind: "done"; total: number; sent: number };

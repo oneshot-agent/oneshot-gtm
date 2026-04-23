@@ -1,0 +1,19 @@
+[
+  {
+    "name": "Sam Builder",
+    "email": "sam@beacon.run",
+    "company": "Beacon",
+    "cohort": "yc-w26",
+    "launchUrl": "https://www.ycombinator.com/launches/example-beacon",
+    "productOneLiner": "Distributed cron with at-least-once semantics for AI workflows.",
+    "linkedinUrl": "https://linkedin.com/in/sam-builder-fake"
+  },
+  {
+    "name": "Rae Kim",
+    "email": "rae@stellar.dev",
+    "company": "Stellar",
+    "cohort": "yc-s26",
+    "launchUrl": "https://www.ycombinator.com/launches/example-stellar",
+    "productOneLiner": "Open-source serverless GPU runtime for ML inference."
+  }
+]

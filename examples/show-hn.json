@@ -1,0 +1,16 @@
+[
+  {
+    "postTitle": "Show HN: Acme — open-source durable workflows for AI agents",
+    "postUrl": "https://news.ycombinator.com/item?id=00000000",
+    "founderName": "Jane Founder",
+    "founderEmail": "jane@acme.dev",
+    "hookSummary": "Top comment thread debates whether Postgres or NATS makes more sense as the queue backend; Jane defends the Postgres choice citing 1k concurrent jobs in production."
+  },
+  {
+    "postTitle": "Show HN: Beacon — distributed cron with at-least-once semantics",
+    "postUrl": "https://news.ycombinator.com/item?id=00000001",
+    "founderName": "Sam Builder",
+    "founderEmail": "sam@beacon.run",
+    "hookSummary": "Sam writes in the comments about choosing not to add a dashboard in v1, and the post hits #2 within an hour despite no marketing site."
+  }
+]
