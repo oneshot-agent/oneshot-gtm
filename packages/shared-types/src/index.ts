@@ -151,6 +151,8 @@ export interface TriggerView {
   lastRunSummary: unknown | null;
   enabled: boolean;
   config: Record<string, unknown> | null;
+  /** Registry default config. Null if this trigger isn't in the registry (orphan). */
+  defaultConfig: Record<string, unknown> | null;
   defaultIntervalMs: number;
   /** Currently-active interval (defaultIntervalMs unless overridden via config.intervalMs). */
   intervalMs: number;

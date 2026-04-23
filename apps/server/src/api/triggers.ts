@@ -34,6 +34,7 @@ function toView(
     defaultIntervalMs,
     intervalMs,
     config,
+    defaultConfig: spec ? spec.defaultConfig : null,
     lastPolledAt: row?.last_polled_at ?? null,
     lastRunSummary: lastSummary,
   };

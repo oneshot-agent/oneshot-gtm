@@ -264,9 +264,11 @@ export async function commandFindDrain(opts: {
 export async function commandFindWatch(opts: { once: boolean; quiet: boolean }): Promise<void> {
   header(`find watch ${opts.once ? c.dim("(--once)") : c.dim("(daemon)")}`);
   let cancelled = false;
+  let wake: (() => void) | null = null;
   const shutdown = (): void => {
     cancelled = true;
-    process.stdout.write(`\n${c.dim("watch: stopping after current iteration...")}\n`);
+    process.stdout.write(`\n${c.dim("watch: shutting down...")}\n`);
+    if (wake) wake();
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
@@ -290,8 +292,27 @@ export async function commandFindWatch(opts: { once: boolean; quiet: boolean }):
     if (opts.once || cancelled) break;
     const sleepMs = nextSleepMs(outcomes);
     if (!opts.quiet) note(`watch: sleeping ${humanMs(sleepMs)}`);
-    await new Promise((resolve) => setTimeout(resolve, sleepMs));
+    await sleepCancellable(sleepMs, (cancel) => {
+      wake = cancel;
+    });
+    wake = null;
+    if (cancelled) break;
   }
+}
+
+/**
+ * Resolves after `ms` OR when the registered cancel function is called.
+ * Lets SIGINT/SIGTERM short-circuit a long sleep so `find watch` exits
+ * promptly instead of blocking until the next poll window.
+ */
+function sleepCancellable(ms: number, register: (cancel: () => void) => void): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const t = setTimeout(resolve, ms);
+    register(() => {
+      clearTimeout(t);
+      resolve();
+    });
+  });
 }
 
 function printFinderResult(r: FinderResult): void {

@@ -466,7 +466,11 @@ function TriggersCard() {
     },
   });
 
-  const [editing, setEditing] = useState<{ name: string; text: string } | null>(null);
+  const [editing, setEditing] = useState<{
+    name: string;
+    text: string;
+    defaultConfig: Record<string, unknown> | null;
+  } | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
 
   const triggers = triggersQuery.data?.triggers ?? [];
@@ -531,6 +535,7 @@ function TriggersCard() {
                           setEditing({
                             name: t.name,
                             text: JSON.stringify(t.config ?? {}, null, 2),
+                            defaultConfig: t.defaultConfig,
                           });
                           setEditError(null);
                         }}
@@ -555,6 +560,23 @@ function TriggersCard() {
             <Button variant="ghost" onClick={() => setEditing(null)}>
               Cancel
             </Button>
+            {editing?.defaultConfig && (
+              <Button
+                variant="ghost"
+                onClick={() => {
+                  if (!editing) return;
+                  setEditing({
+                    ...editing,
+                    text: JSON.stringify(editing.defaultConfig ?? {}, null, 2),
+                  });
+                  setEditError(null);
+                }}
+                disabled={setConfig.isPending}
+                title="Replace the textarea with the registry default config (does not save until you click Save)"
+              >
+                Reset to defaults
+              </Button>
+            )}
             <Button
               onClick={() => {
                 if (!editing) return;
