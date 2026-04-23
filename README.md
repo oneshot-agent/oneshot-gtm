@@ -209,7 +209,7 @@ oneshot-gtm
 
 ## Stack
 
-Mirrors the `pingdotgg/t3code` Bun-native stack:
+Bun-native, all the modern picks:
 
 - **Runtime**: [Bun](https://bun.sh) 1.3+
 - **Monorepo**: [Turborepo](https://turbo.build) + Bun catalog for shared dep versions
@@ -221,7 +221,7 @@ Mirrors the `pingdotgg/t3code` Bun-native stack:
 - **DB**: `bun:sqlite` (built-in, zero deps)
 - **LLM**: bring your own — [OpenRouter](https://openrouter.ai) (recommended), OpenAI, or Anthropic
 
-We deliberately **skip Effect** (t3code uses it heavily). For a local-first ledger + CLI/dashboard, plain `async/await` ships faster and keeps the codebase forkable. Effect can come later for the server only if observability becomes load-bearing.
+Plain `async/await` throughout — no monadic abstractions to learn before reading the code. Keeps the codebase forkable.
 
 ---
 

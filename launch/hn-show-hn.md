@@ -6,7 +6,7 @@
 
 Hi HN,
 
-We built oneshot-gtm, an open-source TypeScript monorepo (Bun + Turbo + TanStack + Base UI, mirrors `pingdotgg/t3code`) that wraps named GTM plays (cold outbound, customer-discovery interviews, PMF surveys, voice onboarding, multichannel cadences) on top of OneShot — a pay-per-use API for email/SMS/voice/research/enrichment with cryptographically signed receipts settled on Base.
+We built oneshot-gtm, an open-source TypeScript monorepo (Bun + Turbo + TanStack + Base UI) that wraps named GTM plays (cold outbound, customer-discovery interviews, PMF surveys, voice onboarding, multichannel cadences) on top of OneShot — a pay-per-use API for email/SMS/voice/research/enrichment with cryptographically signed receipts settled on Base.
 
 Two surfaces, one local SQLite ledger:
 

@@ -37,7 +37,7 @@ Public. Issues mirror the items below. PRs welcome.
 
 - [x] Turborepo + `turbo.json`
 - [x] Vitest 4 with first 24 tests (ledger schema + lint regex coverage)
-- [x] oxlint + oxfmt (matches t3code config patterns)
+- [x] oxlint + oxfmt (Rust-based; ~50× faster than ESLint/Prettier)
 - [x] `tsconfig.base.json` shared across all apps + packages
 - [x] Bun catalog for shared dep versions
 - [x] Move `packages/cli` → `apps/cli`; root workspaces switched to `["apps/*", "packages/*"]`
