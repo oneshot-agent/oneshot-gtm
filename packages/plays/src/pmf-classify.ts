@@ -1,4 +1,4 @@
-import { complete, loadPrompt } from "@oneshot-gtm/intel";
+import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 
 export type SequoiaArc = "hair-on-fire" | "hard-fact" | "future-vision";
 export type FitStatus = "fit" | "misfit" | "unknown";
@@ -47,13 +47,7 @@ export async function pmfClassify(answers: PmfClassifyAnswers): Promise<PmfClass
     maxTokens: 900,
   });
 
-  const fenced = res.content.match(/```(?:json)?\s*([\s\S]*?)```/);
-  let parsed: Record<string, unknown> = {};
-  try {
-    parsed = JSON.parse((fenced ? fenced[1] : res.content) ?? "{}");
-  } catch {
-    parsed = {};
-  }
+  const parsed = tryParseJsonObject<Record<string, unknown>>(res.content, {});
 
   const fits = (parsed["four_fits"] as Record<string, FitStatus> | undefined) ?? {};
   const actions = parsed["next_actions"];

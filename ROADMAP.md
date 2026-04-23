@@ -119,7 +119,7 @@ The motion plays needed hand-curated JSON target lists; founders kept asking "wh
 - [ ] **Webhook intake** — `POST /api/triggers/cal-no-show` + `POST /api/triggers/signup` → ICP-filter → enqueue into `demo-no-show` / `concierge`. Turns oneshot-gtm from polling into real-time.
 - [ ] **ICP-filter learning loop v1** — every `icpFilter` call pulls the last ~20 (candidate, decision, reason) tuples from `target_queue` as in-context examples. Tighter filtering, zero schema change.
 - [ ] `find competitor-switch` — webSearch for "switching from X to Y" + G2 reviews mentioning a competitor
-- [ ] `find breakup-revive` — scan the local ledger for cold prospects (>90d, no reply, marketable) and enqueue them
+- [x] `find breakup-revive` — scan the local ledger for cold prospects (60–90d window) and enqueue them (opt-in trigger, 7d interval, zero OneShot spend)
 - [ ] **`find watch` as an OS service** — launchd plist + systemd unit + Windows Service docs; `--once` mode already works for cron
 
 ## Phase F4 — Operationalize + scale

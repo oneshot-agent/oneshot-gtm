@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homeMetrics } from "./api/home.ts";
 import { listCadences, getCadence, stopCadence } from "./api/cadences.ts";
@@ -18,6 +18,7 @@ import {
 } from "./api/queue.ts";
 import {
   listTriggersRoute,
+  runTriggerRoute,
   setTriggerConfigRoute,
   setTriggerEnabledRoute,
 } from "./api/triggers.ts";
@@ -69,6 +70,7 @@ const routes: RouteEntry[] = [
   route("GET", "/api/triggers", listTriggersRoute),
   route("POST", "/api/triggers/:name/enabled", setTriggerEnabledRoute),
   route("POST", "/api/triggers/:name/config", setTriggerConfigRoute),
+  route("POST", "/api/triggers/:name/run", runTriggerRoute),
 ];
 
 function findRoute(req: Request): { handler: RouteHandler; params: Record<string, string> } | null {
@@ -104,15 +106,18 @@ function getStaticDir(): string | null {
 }
 
 async function serveStatic(staticDir: string, pathname: string): Promise<Response | null> {
-  const safe = pathname.replace(/\.\./g, "").replace(/\/+/g, "/");
-  const candidate = join(staticDir, safe === "/" ? "/index.html" : safe);
+  const root = resolve(staticDir);
+  const rel = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
+  const candidate = resolve(root, rel);
+  // Reject anything that escapes the static dir. `resolve` collapses `..`
+  // segments so the prefix check catches both raw `..` and encoded variants.
+  if (candidate !== root && !candidate.startsWith(`${root}/`)) return null;
   if (existsSync(candidate)) {
-    const file = Bun.file(candidate);
-    return new Response(file);
+    return new Response(Bun.file(candidate));
   }
-  // SPA fallback: serve index.html for non-asset paths.
-  if (!safe.includes(".")) {
-    return new Response(Bun.file(join(staticDir, "index.html")));
+  // SPA fallback: serve index.html for non-asset paths (paths without a dot).
+  if (!rel.includes(".")) {
+    return new Response(Bun.file(join(root, "index.html")));
   }
   return null;
 }

@@ -158,6 +158,22 @@ export interface TriggerView {
   intervalMs: number;
 }
 
+export interface RunTriggerResult {
+  name: string;
+  fired: boolean;
+  result: {
+    source: string;
+    candidates: number;
+    droppedIcp: number;
+    droppedDuplicate: number;
+    droppedEnrichment: number;
+    enqueued: number;
+    costUsd: number;
+    halted?: string;
+  } | null;
+  error: string | null;
+}
+
 export interface OutcomeRequest {
   email: string;
   outcome: "meeting_booked" | "sql_qualified" | "deal_won" | "deal_lost" | "ghosted";

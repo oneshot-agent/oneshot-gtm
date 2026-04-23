@@ -1,5 +1,5 @@
 import { getLedger } from "@oneshot-gtm/core";
-import { complete, loadPrompt } from "@oneshot-gtm/intel";
+import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 
 export type Verdict = "green" | "yellow" | "red";
 export type SignalStatus = "met" | "partial" | "not_met" | "unknown";
@@ -126,13 +126,7 @@ export async function handoffTemplatize(input: TemplatizeInput): Promise<Templat
     maxTokens: 1500,
   });
 
-  const fenced = res.content.match(/```(?:json)?\s*([\s\S]*?)```/);
-  let parsed: Record<string, unknown> = {};
-  try {
-    parsed = JSON.parse((fenced ? fenced[1] : res.content) ?? "{}");
-  } catch {
-    parsed = {};
-  }
+  const parsed = tryParseJsonObject<Record<string, unknown>>(res.content, {});
 
   const doDont = (parsed["do_dont"] as { do?: string[]; dont?: string[] } | undefined) ?? {};
   const slotDefs = parsed["slot_definitions"];
@@ -203,13 +197,7 @@ export async function handoffFirstAe(input: FirstAeAnswers): Promise<FirstAeResu
 }
 
 function parseHandoffJson<T extends { raw: string }>(content: string, fallback: T): T {
-  const fenced = content.match(/```(?:json)?\s*([\s\S]*?)```/);
-  let parsed: Record<string, unknown> = {};
-  try {
-    parsed = JSON.parse((fenced ? fenced[1] : content) ?? "{}");
-  } catch {
-    return fallback;
-  }
+  const parsed = tryParseJsonObject<Record<string, unknown>>(content, {});
   // Map snake_case JSON keys to camelCase result keys for both shapes.
   const obj: Record<string, unknown> = {
     verdict: parsed["verdict"],

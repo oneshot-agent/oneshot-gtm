@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
-import { Check, ChevronDown, ChevronRight, Send, X } from "lucide-react";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { Check, ChevronDown, ChevronRight, Play, Send, Target, X } from "lucide-react";
 import { useState } from "react";
 import type { QueueRowView, QueueStatusView } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
@@ -147,6 +147,8 @@ function QueuePage() {
         </div>
       </div>
 
+      <IcpBanner />
+
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs uppercase tracking-wider text-zinc-500">status</span>
         {STATUSES.map((s) => (
@@ -217,10 +219,7 @@ function QueuePage() {
         <CardHeader>{queueQuery.data ? `${rows.length} row(s)` : "loading…"}</CardHeader>
         <CardBody className="p-0">
           {rows.length === 0 ? (
-            <div className="px-4 py-10 text-center text-sm text-zinc-500">
-              No queue rows match this filter. Run <code>oneshot-gtm find show-hn</code> from the
-              CLI to enqueue some.
-            </div>
+            <EmptyQueueHelp filterActive={statusFilter !== "pending" || playFilter !== "all"} />
           ) : (
             <table className="w-full text-sm">
               <thead>
@@ -465,6 +464,14 @@ function TriggersCard() {
       void qc.invalidateQueries({ queryKey: ["triggers"] });
     },
   });
+  const runTrigger = useMutation({
+    mutationFn: (name: string) => api.runTrigger(name),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["triggers"] });
+      void qc.invalidateQueries({ queryKey: ["queue"] });
+      void qc.invalidateQueries({ queryKey: ["home"] });
+    },
+  });
 
   const [editing, setEditing] = useState<{
     name: string;
@@ -528,20 +535,34 @@ function TriggersCard() {
                     </td>
                     <td className="px-4 py-2 text-xs text-zinc-400">{summary}</td>
                     <td className="px-4 py-2 text-right">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => {
-                          setEditing({
-                            name: t.name,
-                            text: JSON.stringify(t.config ?? {}, null, 2),
-                            defaultConfig: t.defaultConfig,
-                          });
-                          setEditError(null);
-                        }}
-                      >
-                        edit config
-                      </Button>
+                      <div className="flex items-center justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={runTrigger.isPending}
+                          onClick={() => runTrigger.mutate(t.name)}
+                          title="Run this finder now (ignores schedule). Spends OneShot $."
+                        >
+                          <Play size={12} />{" "}
+                          {runTrigger.isPending && runTrigger.variables === t.name
+                            ? "running…"
+                            : "run now"}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => {
+                            setEditing({
+                              name: t.name,
+                              text: JSON.stringify(t.config ?? {}, null, 2),
+                              defaultConfig: t.defaultConfig,
+                            });
+                            setEditError(null);
+                          }}
+                        >
+                          edit config
+                        </Button>
+                      </div>
                     </td>
                   </tr>
                 );
@@ -615,6 +636,78 @@ function TriggersCard() {
         {editError && <div className="mt-2 text-xs text-red-400">{editError}</div>}
       </Modal>
     </Card>
+  );
+}
+
+function IcpBanner() {
+  const setupQuery = useQuery({ queryKey: ["setup"], queryFn: () => api.setupStatus() });
+  const icp = setupQuery.data?.cfg.icpOneLiner ?? null;
+  if (setupQuery.isLoading) return null;
+
+  if (!icp || icp.trim().length === 0) {
+    return (
+      <Card>
+        <CardBody>
+          <div className="flex items-start gap-3">
+            <Target size={16} className="mt-0.5 text-amber-400" />
+            <div className="flex-1">
+              <div className="text-sm font-medium text-zinc-100">Set your ICP first</div>
+              <div className="mt-1 text-xs text-zinc-400">
+                The find layer needs a free-text ICP one-liner to filter candidates. Without it,
+                every result passes through and you'll review more noise than signal.
+              </div>
+            </div>
+            <Link to="/setup">
+              <Button size="sm">Open setup</Button>
+            </Link>
+          </div>
+        </CardBody>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardBody>
+        <div className="flex items-start gap-3">
+          <Target size={16} className="mt-0.5 text-emerald-400" />
+          <div className="flex-1">
+            <div className="text-xs uppercase tracking-wider text-zinc-500">ICP</div>
+            <div className="mt-0.5 text-sm text-zinc-200">{icp}</div>
+          </div>
+          <Link to="/setup">
+            <Button variant="ghost" size="sm">
+              edit
+            </Button>
+          </Link>
+        </div>
+      </CardBody>
+    </Card>
+  );
+}
+
+function EmptyQueueHelp({ filterActive }: { filterActive: boolean }) {
+  if (filterActive) {
+    return (
+      <div className="px-4 py-10 text-center text-sm text-zinc-500">
+        No queue rows match this filter. Switch the status/play chips above to see other rows.
+      </div>
+    );
+  }
+  return (
+    <div className="px-4 py-10 text-center text-sm text-zinc-500">
+      <div className="mx-auto max-w-md">
+        <div className="text-zinc-300">No targets yet.</div>
+        <div className="mt-2 text-xs">
+          Pick a finder from the <strong>Triggers</strong> section above and click{" "}
+          <strong>run now</strong>. Results land here for review before any send.
+        </div>
+        <div className="mt-3 text-xs text-zinc-600">
+          You can also enable a finder's toggle and start <code>oneshot-gtm find watch</code> in a
+          terminal to poll continuously.
+        </div>
+      </div>
+    </div>
   );
 }
 

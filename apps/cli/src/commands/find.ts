@@ -3,6 +3,7 @@ import {
   drainQueue,
   nextSleepMs,
   runAcceleratorBatchFinder,
+  runBreakupReviveFinder,
   runDueTriggers,
   runHiringSignalFinder,
   runJobChangeFinder,
@@ -126,6 +127,22 @@ export async function commandFindHiringSignal(opts: {
     ...(opts.sinceDays != null ? { sinceDays: opts.sinceDays } : {}),
     limit: opts.limit ?? 25,
     ...(opts.maxCost != null ? { maxCostUsd: opts.maxCost } : {}),
+  });
+  printFinderResult(result);
+}
+
+export function commandFindBreakupRevive(opts: {
+  minDays?: number;
+  maxDays?: number;
+  limit?: number;
+  dryRun: boolean;
+}): void {
+  header(`find breakup-revive ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
+  const result = runBreakupReviveFinder({
+    dryRun: opts.dryRun,
+    ...(opts.minDays != null ? { minDays: opts.minDays } : {}),
+    ...(opts.maxDays != null ? { maxDays: opts.maxDays } : {}),
+    limit: opts.limit ?? 25,
   });
   printFinderResult(result);
 }

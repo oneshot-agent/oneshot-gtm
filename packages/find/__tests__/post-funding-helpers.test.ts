@@ -7,7 +7,7 @@ import {
   deriveIndustryHint,
   isLikelyFundingUrl,
   normalizeUrl,
-  parseExtract,
+  parsePostFundingExtract,
 } from "../src/post-funding.ts";
 
 describe("normalizeUrl", () => {
@@ -76,7 +76,7 @@ describe("deriveIndustryHint", () => {
   });
 });
 
-describe("parseExtract", () => {
+describe("parsePostFundingExtract", () => {
   it("parses a fenced json block", () => {
     const raw = [
       "```json",
@@ -93,7 +93,7 @@ describe("parseExtract", () => {
       }),
       "```",
     ].join("\n");
-    expect(parseExtract(raw)).toEqual({
+    expect(parsePostFundingExtract(raw)).toEqual({
       company: "Acme",
       companyDomain: "acme.dev",
       round: "Seed",
@@ -108,13 +108,13 @@ describe("parseExtract", () => {
 
   it("recovers from leading/trailing prose by slicing to the outer braces", () => {
     const raw = `Sure! Here's the json: {"company":"Acme","companyDomain":"acme.dev","round":"Seed","amountUsd":null,"leadInvestor":null,"founderName":"Sam","founderRole":null,"industry":null,"summary":null} hope this helps.`;
-    const out = parseExtract(raw);
+    const out = parsePostFundingExtract(raw);
     expect(out.company).toBe("Acme");
     expect(out.founderName).toBe("Sam");
   });
 
   it("returns a fully-null extract when nothing parseable is present", () => {
-    const out = parseExtract("nope");
+    const out = parsePostFundingExtract("nope");
     expect(out.company).toBeNull();
     expect(out.founderName).toBeNull();
     expect(out.amountUsd).toBeNull();

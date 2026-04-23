@@ -1,5 +1,6 @@
 import { getLedger } from "@oneshot-gtm/core";
 import { runAcceleratorBatchFinder } from "./accelerator-batch.ts";
+import { runBreakupReviveFinder } from "./breakup-revive.ts";
 import { runHiringSignalFinder } from "./hiring-signal.ts";
 import { runJobChangeFinder } from "./job-change.ts";
 import { runPodcastGuestFinder } from "./podcast-guest.ts";
@@ -129,6 +130,21 @@ export const TRIGGERS: TriggerSpec[] = [
         maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
       }),
   },
+  {
+    // Ledger-only finder; no OneShot/LLM spend. Opt-in so it doesn't surprise
+    // founders on fresh installs where the ledger is mostly empty.
+    name: "breakup-revive",
+    defaultIntervalMs: 7 * 24 * ONE_HOUR,
+    enabledByDefault: false,
+    defaultConfig: { minDays: 60, maxDays: 90, limit: 25 },
+    run: async (cfg) =>
+      runBreakupReviveFinder({
+        dryRun: false,
+        minDays: (cfg["minDays"] as number) ?? 60,
+        maxDays: (cfg["maxDays"] as number) ?? 90,
+        limit: (cfg["limit"] as number) ?? 25,
+      }),
+  },
 ];
 
 /**
@@ -155,6 +171,42 @@ export interface TriggerRunOutcome {
   error?: string;
   /** ms until this trigger is next due */
   nextDueInMs: number;
+}
+
+/**
+ * Run a single trigger by name immediately, ignoring its scheduled dueAt
+ * and the enabled flag. Useful for the /queue UI's "Run now" affordance:
+ * the founder explicitly asked, so we bypass the scheduler. Persists
+ * last_polled_at + last_run_summary so the watch loop respects the run.
+ */
+export async function runTriggerNow(name: string): Promise<TriggerRunOutcome> {
+  const spec = TRIGGERS.find((t) => t.name === name);
+  if (!spec) throw new Error(`unknown trigger '${name}'`);
+  const ledger = getLedger();
+  const stored = ledger.getTrigger(name);
+  if (!stored) {
+    ledger.upsertTrigger({
+      name,
+      configJson: JSON.stringify(spec.defaultConfig),
+      enabled: spec.enabledByDefault !== false,
+    });
+  }
+  const config = stored?.config_json
+    ? (JSON.parse(stored.config_json) as Record<string, unknown>)
+    : spec.defaultConfig;
+  const intervalMs = effectiveIntervalMs(spec, config);
+  try {
+    const result = await spec.run(config);
+    ledger.updateTriggerLastPoll({ name, summary: result });
+    return { name, fired: true, result, nextDueInMs: intervalMs };
+  } catch (err) {
+    const message = (err as Error).message ?? "unknown error";
+    ledger.updateTriggerLastPoll({
+      name,
+      summary: { error: message, at: new Date().toISOString() },
+    });
+    return { name, fired: true, error: message, nextDueInMs: intervalMs };
+  }
 }
 
 /**

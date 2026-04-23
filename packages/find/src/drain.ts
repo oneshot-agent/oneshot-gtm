@@ -1,12 +1,14 @@
 import { getLedger, type ProspectRecord } from "@oneshot-gtm/core";
 import {
   runAcceleratorBatch,
+  runBreakupRevive,
   runHiringSignal,
   runJobChange,
   runPodcastGuest,
   runPostFunding,
   runShowHn,
   type AcceleratorBatchTarget,
+  type BreakupReviveTarget,
   type HiringSignalTarget,
   type JobChangeTarget,
   type PodcastGuestTarget,
@@ -48,13 +50,10 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
         const prospectId = backfillProspectId(rows.find((r) => r.id === id) ?? null);
         ledger.setQueueStatus({ id, status: "sent" });
         if (prospectId != null) {
-          // best-effort backfill — failure is non-fatal
           try {
-            ledger["db"]
-              .prepare("UPDATE target_queue SET prospect_id = ? WHERE id = ?")
-              .run(prospectId, id);
+            ledger.setQueueProspectId(id, prospectId);
           } catch {
-            // ignore — schema mismatch shouldn't break the drain
+            // best-effort backfill — a schema mismatch shouldn't break the drain
           }
         }
       }
@@ -107,6 +106,11 @@ async function dispatchPlay(opts: DrainOpts, rows: QueueRow[]): Promise<number[]
     case "podcast-guest": {
       const targets = rows.map((r) => JSON.parse(r.payload_json) as PodcastGuestTarget);
       const result = await runPodcastGuest({ dryRun: opts.dryRun, targets });
+      return idsForSentDrafts(result.drafted, rows, opts.dryRun);
+    }
+    case "breakup-revive": {
+      const targets = rows.map((r) => JSON.parse(r.payload_json) as BreakupReviveTarget);
+      const result = await runBreakupRevive({ dryRun: opts.dryRun, targets });
       return idsForSentDrafts(result.drafted, rows, opts.dryRun);
     }
     default:

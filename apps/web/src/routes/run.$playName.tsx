@@ -123,6 +123,106 @@ const PLAY_SCHEMAS: Record<string, PlaySchema> = {
       },
     ],
   },
+  "post-funding": {
+    description:
+      "Triggered by a recent funding announcement. Day-0 here; cadence engine fires the day-9 follow-up and day-18 breakup automatically.",
+    fields: [
+      { key: "name", label: "Founder name", type: "text", required: true },
+      { key: "email", label: "Founder email", type: "email", required: true },
+      { key: "company", label: "Company", type: "text", required: true },
+      {
+        key: "round",
+        label: "Round",
+        type: "text",
+        required: true,
+        placeholder: "Seed / Series A / Series B",
+      },
+      {
+        key: "amountUsd",
+        label: "Amount (USD)",
+        type: "number",
+        required: true,
+        placeholder: "5000000",
+      },
+      { key: "leadInvestor", label: "Lead investor (optional)", type: "text" },
+      { key: "sourceUrl", label: "Announcement URL", type: "url", required: true },
+      { key: "linkedinUrl", label: "LinkedIn URL (optional)", type: "url" },
+    ],
+    defaultRow: {
+      name: "",
+      email: "",
+      company: "",
+      round: "",
+      amountUsd: "",
+      leadInvestor: "",
+      sourceUrl: "",
+      linkedinUrl: "",
+    },
+  },
+  "hiring-signal": {
+    description:
+      "Triggered by a job post at a target company. One-touch email to the hiring manager with your ramp-time claim.",
+    fields: [
+      { key: "name", label: "Hiring manager name", type: "text", required: true },
+      { key: "email", label: "Hiring manager email", type: "email", required: true },
+      { key: "company", label: "Company", type: "text", required: true },
+      { key: "jobTitle", label: "Job title they're hiring for", type: "text", required: true },
+      { key: "jobPostUrl", label: "Job post URL (optional)", type: "url" },
+      {
+        key: "yourClaim",
+        label: "Your ramp-time claim",
+        type: "textarea",
+        required: true,
+        placeholder:
+          "We cut new-hire ramp time by ~30% on the team they're hiring for — happy to share how.",
+      },
+    ],
+    defaultRow: {
+      name: "",
+      email: "",
+      company: "",
+      jobTitle: "",
+      jobPostUrl: "",
+      yourClaim: "",
+    },
+  },
+  "podcast-guest": {
+    description:
+      "One-touch reply to a recent podcast guest referencing a specific moment from the episode.",
+    fields: [
+      { key: "name", label: "Guest name", type: "text", required: true },
+      { key: "email", label: "Guest email", type: "email", required: true },
+      { key: "company", label: "Guest company", type: "text", required: true },
+      {
+        key: "podcast",
+        label: "Podcast",
+        type: "text",
+        required: true,
+        placeholder: "Latent Space",
+      },
+      { key: "episodeTitle", label: "Episode title", type: "text", required: true },
+      {
+        key: "hookQuote",
+        label: "Specific quote or moment",
+        type: "textarea",
+        required: true,
+      },
+      {
+        key: "bridge",
+        label: "Why the moment matters to your work (one sentence)",
+        type: "text",
+      },
+    ],
+    defaultRow: {
+      name: "",
+      email: "",
+      company: "",
+      podcast: "",
+      episodeTitle: "",
+      hookQuote: "",
+      bridge: "",
+    },
+  },
 };
 
 function RunPage() {

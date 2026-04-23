@@ -1,4 +1,5 @@
 import { complete } from "./client.ts";
+import { tryParseJsonObject } from "./_parse.ts";
 import { loadPrompt } from "./prompts.ts";
 
 const SLOP_PATTERNS = [
@@ -45,9 +46,9 @@ export async function generateFirstLine(input: PersonalizeInput): Promise<Person
     maxTokens: 400,
   });
 
-  const parsed = parseJson(res.content);
-  const firstLine = String(parsed.first_line ?? "").trim();
-  const reasoning = String(parsed.reasoning ?? "").trim();
+  const parsed = tryParseJsonObject<Record<string, unknown>>(res.content, {});
+  const firstLine = String(parsed["first_line"] ?? "").trim();
+  const reasoning = String(parsed["reasoning"] ?? "").trim();
 
   const flagged: string[] = [];
   for (const re of SLOP_PATTERNS) {
@@ -57,23 +58,4 @@ export async function generateFirstLine(input: PersonalizeInput): Promise<Person
   if ((firstLine.match(/,/g) ?? []).length >= 3) flagged.push("three-item-list");
 
   return { firstLine, reasoning, flagged };
-}
-
-function parseJson(s: string): Record<string, unknown> {
-  const fenced = s.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidate = fenced ? fenced[1] : s;
-  try {
-    return JSON.parse((candidate ?? "").trim());
-  } catch {
-    const start = (candidate ?? "").indexOf("{");
-    const end = (candidate ?? "").lastIndexOf("}");
-    if (start >= 0 && end > start) {
-      try {
-        return JSON.parse((candidate ?? "").slice(start, end + 1));
-      } catch {
-        return {};
-      }
-    }
-    return {};
-  }
 }

@@ -3,11 +3,25 @@ import { draftEmailFromPrompt, lintEmail, sendDraftedEmail } from "./_lib.ts";
 
 const PLAY_NAME = "breakup-revive";
 
+export interface BreakupReviveTarget {
+  name: string | null;
+  email: string;
+  company: string | null;
+  daysCold: number;
+  lastEventAt: string | null;
+}
+
 export interface BreakupReviveOptions {
   dryRun: boolean;
-  /** Min days since last activity to consider cold. Default 60. */
+  /**
+   * When provided, skip the ledger scan and use these prospects directly.
+   * The queue-based flow (`find breakup-revive` → `find drain breakup-revive`)
+   * goes through this path. When omitted, fall back to scanning the ledger.
+   */
+  targets?: BreakupReviveTarget[];
+  /** Min days since last activity to consider cold. Default 60. (Ledger-scan mode only.) */
   minDays?: number;
-  /** Max days since last activity to consider revivable. Default 90. */
+  /** Max days since last activity to consider revivable. Default 90. (Ledger-scan mode only.) */
   maxDays?: number;
   /** Hard cap on prospects to revive in one run. Default 25. */
   limit?: number;
@@ -33,28 +47,19 @@ export async function runBreakupRevive(
   if (!cfg.founderName || !cfg.productOneLiner) {
     throw new Error("founder profile incomplete. Run: oneshot-gtm config founder");
   }
-  const ledger = getLedger();
-  const cold = ledger.listColdProspects({
-    minDaysSinceLastEvent: opts.minDays ?? 60,
-    maxDaysSinceLastEvent: opts.maxDays ?? 90,
-    ...(opts.limit ? { limit: opts.limit } : {}),
-  });
 
+  const targets = opts.targets ?? ledgerScanTargets(opts);
   const drafted: BreakupReviveDraft[] = [];
 
-  for (const p of cold) {
-    if (!p.email) continue;
-    const daysCold = p.last_event_at
-      ? Math.floor((Date.now() - new Date(p.last_event_at).getTime()) / (24 * 3600 * 1000))
-      : 0;
-
+  for (const t of targets) {
+    if (!t.email) continue;
     const draft = await draftEmailFromPrompt({
       promptName: "breakup-revive-email",
       inputBlock: [
         `FOUNDER: ${cfg.founderName}`,
         `PRODUCT: ${cfg.productOneLiner}`,
-        `PROSPECT: ${p.name ?? "(unknown)"} at ${p.company ?? "(unknown)"}`,
-        `DAYS SINCE LAST ACTIVITY: ${daysCold}`,
+        `PROSPECT: ${t.name ?? "(unknown)"} at ${t.company ?? "(unknown)"}`,
+        `DAYS SINCE LAST ACTIVITY: ${t.daysCold}`,
         `OPTIONAL VALUE DROP: ${opts.valueDrop ?? "(none — go with a probe question instead)"}`,
       ].join("\n"),
     });
@@ -63,23 +68,23 @@ export async function runBreakupRevive(
 
     const send = await sendDraftedEmail({
       playName: PLAY_NAME,
-      to: p.email,
+      to: t.email,
       draft,
       flags,
       prospectMeta: {
-        name: p.name,
-        email: p.email,
-        company: p.company,
+        name: t.name,
+        email: t.email,
+        company: t.company,
         source: "breakup-revive",
       },
-      metadata: { daysCold, lastEventAt: p.last_event_at },
+      metadata: { daysCold: t.daysCold, lastEventAt: t.lastEventAt },
       dryRun: opts.dryRun,
     });
 
     drafted.push({
-      prospectEmail: p.email,
-      prospectName: p.name,
-      daysCold,
+      prospectEmail: t.email,
+      prospectName: t.name,
+      daysCold: t.daysCold,
       subject: draft.subject,
       body: draft.body,
       receiptIds: send.receiptIds,
@@ -89,4 +94,24 @@ export async function runBreakupRevive(
   }
 
   return { drafted };
+}
+
+function ledgerScanTargets(opts: BreakupReviveOptions): BreakupReviveTarget[] {
+  const ledger = getLedger();
+  const cold = ledger.listColdProspects({
+    minDaysSinceLastEvent: opts.minDays ?? 60,
+    maxDaysSinceLastEvent: opts.maxDays ?? 90,
+    ...(opts.limit ? { limit: opts.limit } : {}),
+  });
+  return cold
+    .filter((p): p is typeof p & { email: string } => p.email != null)
+    .map((p) => ({
+      name: p.name,
+      email: p.email,
+      company: p.company,
+      daysCold: p.last_event_at
+        ? Math.floor((Date.now() - new Date(p.last_event_at).getTime()) / (24 * 3600 * 1000))
+        : 0,
+      lastEventAt: p.last_event_at,
+    }));
 }

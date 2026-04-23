@@ -710,6 +710,16 @@ export class Ledger {
     this.db.prepare(`UPDATE triggers SET config_json = ? WHERE name = ?`).run(configJson, name);
   }
 
+  /**
+   * Associate a queued target with a known prospect (so the queue page can
+   * link back to the prospect record). Best-effort — the caller is expected
+   * to swallow failures since the link is a convenience, not a correctness
+   * invariant.
+   */
+  setQueueProspectId(id: number, prospectId: number): void {
+    this.db.prepare(`UPDATE target_queue SET prospect_id = ? WHERE id = ?`).run(prospectId, id);
+  }
+
   close(): void {
     this.db.close();
   }

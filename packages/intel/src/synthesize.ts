@@ -1,4 +1,5 @@
 import { complete } from "./client.ts";
+import { tryParseJsonObject } from "./_parse.ts";
 import { loadPrompt } from "./prompts.ts";
 
 export interface SynthesizeOutput {
@@ -20,13 +21,7 @@ export async function synthesizeInterviews(combinedTranscripts: string): Promise
     maxTokens: 2000,
   });
 
-  const fenced = res.content.match(/```(?:json)?\s*([\s\S]*?)```/);
-  let parsed: Record<string, unknown> = {};
-  try {
-    parsed = JSON.parse((fenced ? fenced[1] : res.content) ?? "{}");
-  } catch {
-    parsed = {};
-  }
+  const parsed = tryParseJsonObject<Record<string, unknown>>(res.content, {});
 
   return {
     jtbd: asStringArray(parsed["jtbd"]),

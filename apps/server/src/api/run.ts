@@ -1,15 +1,28 @@
 import {
   runAcceleratorBatch,
+  runHiringSignal,
   runJobChange,
+  runPodcastGuest,
+  runPostFunding,
   runShowHn,
   type AcceleratorBatchTarget,
+  type HiringSignalTarget,
   type JobChangeTarget,
+  type PodcastGuestTarget,
+  type PostFundingTarget,
   type ShowHnTarget,
 } from "@oneshot-gtm/plays";
 import type { RunPlayEvent, RunPlayRequest } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 
-const SUPPORTED = new Set(["show-hn", "job-change", "accelerator-batch"]);
+const SUPPORTED = new Set([
+  "show-hn",
+  "job-change",
+  "post-funding",
+  "accelerator-batch",
+  "hiring-signal",
+  "podcast-guest",
+]);
 
 interface DraftedView {
   subject: string;
@@ -93,49 +106,71 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
 }
 
 async function dispatchPlay(playName: string, body: RunPlayRequest): Promise<DraftedView[]> {
-  if (playName === "show-hn") {
-    const result = await runShowHn({
-      dryRun: body.dryRun,
-      targets: body.targets as ShowHnTarget[],
-    });
-    return result.drafted.map((d) => ({
-      subject: d.subject,
-      body: d.body,
-      flags: d.flags,
-      receiptIds: d.receiptIds,
-      sent: d.sent,
-    }));
-  }
-  if (playName === "job-change") {
-    const result = await runJobChange({
-      dryRun: body.dryRun,
-      targets: body.targets as JobChangeTarget[],
-    });
-    return result.drafted.map((d) => ({
-      subject: d.subject,
-      body: d.body,
-      flags: d.flags,
-      receiptIds: d.receiptIds,
-      sent: d.sent,
-    }));
-  }
-  if (playName === "accelerator-batch") {
-    if (!body.senderCohort || body.senderCohort.length === 0) {
-      throw new Error("accelerator-batch requires senderCohort");
+  switch (playName) {
+    case "show-hn": {
+      const result = await runShowHn({
+        dryRun: body.dryRun,
+        targets: body.targets as ShowHnTarget[],
+      });
+      return result.drafted.map(toDraftedView);
     }
-    const result = await runAcceleratorBatch({
-      dryRun: body.dryRun,
-      targets: body.targets as AcceleratorBatchTarget[],
-      senderCohort: body.senderCohort,
-      ...(body.freeForCohortOffer ? { freeForCohortOffer: body.freeForCohortOffer } : {}),
-    });
-    return result.drafted.map((d) => ({
-      subject: d.subject,
-      body: d.body,
-      flags: d.flags,
-      receiptIds: d.receiptIds,
-      sent: d.sent,
-    }));
+    case "job-change": {
+      const result = await runJobChange({
+        dryRun: body.dryRun,
+        targets: body.targets as JobChangeTarget[],
+      });
+      return result.drafted.map(toDraftedView);
+    }
+    case "post-funding": {
+      const result = await runPostFunding({
+        dryRun: body.dryRun,
+        targets: body.targets as PostFundingTarget[],
+      });
+      return result.drafted.map(toDraftedView);
+    }
+    case "accelerator-batch": {
+      if (!body.senderCohort || body.senderCohort.length === 0) {
+        throw new Error("accelerator-batch requires senderCohort");
+      }
+      const result = await runAcceleratorBatch({
+        dryRun: body.dryRun,
+        targets: body.targets as AcceleratorBatchTarget[],
+        senderCohort: body.senderCohort,
+        ...(body.freeForCohortOffer ? { freeForCohortOffer: body.freeForCohortOffer } : {}),
+      });
+      return result.drafted.map(toDraftedView);
+    }
+    case "hiring-signal": {
+      const result = await runHiringSignal({
+        dryRun: body.dryRun,
+        targets: body.targets as HiringSignalTarget[],
+      });
+      return result.drafted.map(toDraftedView);
+    }
+    case "podcast-guest": {
+      const result = await runPodcastGuest({
+        dryRun: body.dryRun,
+        targets: body.targets as PodcastGuestTarget[],
+      });
+      return result.drafted.map(toDraftedView);
+    }
+    default:
+      throw new Error(`unsupported play: ${playName}`);
   }
-  throw new Error(`unsupported play: ${playName}`);
+}
+
+function toDraftedView(d: {
+  subject: string;
+  body: string;
+  flags: string[];
+  receiptIds: number[];
+  sent: boolean;
+}): DraftedView {
+  return {
+    subject: d.subject,
+    body: d.body,
+    flags: d.flags,
+    receiptIds: d.receiptIds,
+    sent: d.sent,
+  };
 }

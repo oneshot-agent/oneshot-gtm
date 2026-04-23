@@ -39,6 +39,7 @@ import {
   commandFindAcceleratorBatch,
   commandFindApprove,
   commandFindDrain,
+  commandFindBreakupRevive,
   commandFindHiringSignal,
   commandFindJobChange,
   commandFindPodcastGuest,
@@ -593,6 +594,22 @@ find
         maxCost?: number;
         dryRun: boolean;
       }) => commandFindPodcastGuest(opts),
+    ),
+  );
+find
+  .command("breakup-revive")
+  .option("--min-days <n>", "min days since last activity (default 60)", (v) =>
+    Number.parseInt(v, 10),
+  )
+  .option("--max-days <n>", "max days since last activity (default 90)", (v) =>
+    Number.parseInt(v, 10),
+  )
+  .option("--limit <n>", "max prospects to enqueue (default 25)", (v) => Number.parseInt(v, 10))
+  .option("--dry-run", "skip enqueue; just count what would be processed", false)
+  .description("Scan the ledger for cold prospects and enqueue them for revival")
+  .action(
+    runOrFail((opts: { minDays?: number; maxDays?: number; limit?: number; dryRun: boolean }) =>
+      commandFindBreakupRevive(opts),
     ),
   );
 find

@@ -13,6 +13,7 @@ import type {
   QueueStatusView,
   ReceiptDetail,
   ReceiptView,
+  RunTriggerResult,
   SetupRequest,
   SpendByPlay,
   TriggerView,
@@ -104,4 +105,6 @@ export const api = {
     postJson<{ ok: boolean }>(`/triggers/${encodeURIComponent(name)}/enabled`, { enabled }),
   setTriggerConfig: (name: string, config: unknown) =>
     postJson<{ ok: boolean }>(`/triggers/${encodeURIComponent(name)}/config`, { config }),
+  runTrigger: (name: string) =>
+    postJson<RunTriggerResult>(`/triggers/${encodeURIComponent(name)}/run`, {}),
 };

@@ -40,6 +40,7 @@ describe("TRIGGERS registry", () => {
   it("exposes the expected built-in triggers", () => {
     const names = TRIGGERS.map((t) => t.name).toSorted();
     expect(names).toEqual([
+      "breakup-revive",
       "hiring-signal",
       "job-change",
       "podcast-guest",
@@ -57,8 +58,8 @@ describe("TRIGGERS registry", () => {
     }
   });
 
-  it("opt-in triggers (job-change, hiring-signal, podcast-guest) are disabled by default", () => {
-    const optIn = ["job-change", "hiring-signal", "podcast-guest"];
+  it("opt-in triggers are disabled by default", () => {
+    const optIn = ["job-change", "hiring-signal", "podcast-guest", "breakup-revive"];
     for (const name of optIn) {
       const spec = TRIGGERS.find((t) => t.name === name);
       expect(spec?.enabledByDefault, `${name} should be opt-in`).toBe(false);

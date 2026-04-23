@@ -18,6 +18,17 @@ const CHANNEL_ICON = {
   linkedin: MessageSquare,
 } as const;
 
+// Mirror of apps/server/src/api/run.ts SUPPORTED — plays whose targets the
+// SSE /api/run endpoint knows how to dispatch.
+const RUNNABLE_PLAYS = new Set([
+  "show-hn",
+  "job-change",
+  "post-funding",
+  "accelerator-batch",
+  "hiring-signal",
+  "podcast-guest",
+]);
+
 function PlaysPage() {
   const plays = useQuery({ queryKey: ["plays"], queryFn: api.plays });
   const [copiedName, setCopiedName] = useState<string | null>(null);
@@ -62,9 +73,7 @@ function PlaysPage() {
                 </code>
               </div>
               <div className="flex items-center gap-2">
-                {(p.name === "show-hn" ||
-                  p.name === "job-change" ||
-                  p.name === "accelerator-batch") && (
+                {RUNNABLE_PLAYS.has(p.name) && (
                   <Link to="/run/$playName" params={{ playName: p.name }}>
                     <Button variant="primary" size="sm">
                       <Play size={12} /> run

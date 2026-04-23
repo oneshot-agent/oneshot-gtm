@@ -1,5 +1,5 @@
 import { findEmail, getLedger, verifyEmail, webRead } from "@oneshot-gtm/core";
-import { complete, loadPrompt } from "@oneshot-gtm/intel";
+import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { AcceleratorBatchTarget } from "@oneshot-gtm/plays";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
@@ -73,7 +73,7 @@ export async function runAcceleratorBatchFinder(
       temperature: 0.1,
       maxTokens: 1500,
     });
-    companies = parseList(llm.content);
+    companies = parseAcceleratorList(llm.content);
   }
   result.candidates = companies.length;
 
@@ -176,23 +176,8 @@ export async function runAcceleratorBatchFinder(
   return result;
 }
 
-function parseList(raw: string): AcceleratorListExtract[] {
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidate = fenced ? fenced[1] : raw;
-  let parsed: BatchListExtract = { companies: [] };
-  try {
-    parsed = JSON.parse((candidate ?? "").trim()) as BatchListExtract;
-  } catch {
-    const start = (candidate ?? "").indexOf("{");
-    const end = (candidate ?? "").lastIndexOf("}");
-    if (start >= 0 && end > start) {
-      try {
-        parsed = JSON.parse((candidate ?? "").slice(start, end + 1)) as BatchListExtract;
-      } catch {
-        parsed = { companies: [] };
-      }
-    }
-  }
+export function parseAcceleratorList(raw: string): AcceleratorListExtract[] {
+  const parsed = tryParseJsonObject<BatchListExtract>(raw, { companies: [] });
   return Array.isArray(parsed.companies) ? parsed.companies : [];
 }
 
@@ -201,7 +186,7 @@ function parseList(raw: string): AcceleratorListExtract[] {
  * Looks for "Founders" or "Founder:" or first proper-noun pair under "Team".
  * Looks for the company's website link (often labeled as such).
  */
-function parseLaunchPage(markdown: string): {
+export function parseLaunchPage(markdown: string): {
   founderName: string | null;
   companyWebsite: string | null;
 } {

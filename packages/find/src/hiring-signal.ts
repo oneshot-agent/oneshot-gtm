@@ -1,5 +1,5 @@
 import { findEmail, getLedger, verifyEmail, webRead, webSearch } from "@oneshot-gtm/core";
-import { complete, loadPrompt } from "@oneshot-gtm/intel";
+import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { HiringSignalTarget } from "@oneshot-gtm/plays";
 import { isDuplicate } from "./_dedupe.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
@@ -131,7 +131,7 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
         temperature: 0.1,
         maxTokens: 500,
       });
-      extract = parseExtract(llm.content);
+      extract = parseHiringSignalExtract(llm.content);
     } catch {
       result.droppedEnrichment++;
       continue;
@@ -201,7 +201,7 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
   return result;
 }
 
-function isAtsUrl(url: string): boolean {
+export function isAtsUrl(url: string): boolean {
   try {
     const host = new URL(url).hostname.toLowerCase();
     return ATS_DOMAIN_HINTS.some((h) => host === h || host.endsWith(`.${h}`));
@@ -264,7 +264,7 @@ async function resolveCorporateDomain(
   return { domain, costUsd };
 }
 
-function pickCorporateHost(url: string | null | undefined): string | null {
+export function pickCorporateHost(url: string | null | undefined): string | null {
   if (!url) return null;
   try {
     const host = new URL(url).hostname.replace(/^www\./, "").toLowerCase();
@@ -276,7 +276,7 @@ function pickCorporateHost(url: string | null | undefined): string | null {
   }
 }
 
-function slugFallback(jobUrl: string): string | null {
+export function slugFallback(jobUrl: string): string | null {
   try {
     const u = new URL(jobUrl);
     const seg = u.pathname.split("/").find((s) => s.length > 0);
@@ -287,23 +287,8 @@ function slugFallback(jobUrl: string): string | null {
   return null;
 }
 
-function parseExtract(raw: string): HiringSignalExtract {
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidate = fenced ? fenced[1] : raw;
-  try {
-    return JSON.parse((candidate ?? "").trim()) as HiringSignalExtract;
-  } catch {
-    const start = (candidate ?? "").indexOf("{");
-    const end = (candidate ?? "").lastIndexOf("}");
-    if (start >= 0 && end > start) {
-      try {
-        return JSON.parse((candidate ?? "").slice(start, end + 1)) as HiringSignalExtract;
-      } catch {
-        // fall through
-      }
-    }
-  }
-  return {
+export function parseHiringSignalExtract(raw: string): HiringSignalExtract {
+  return tryParseJsonObject<HiringSignalExtract>(raw, {
     jobTitle: null,
     jobUrl: null,
     company: null,
@@ -313,7 +298,7 @@ function parseExtract(raw: string): HiringSignalExtract {
     team: null,
     postedAt: null,
     summary: null,
-  };
+  });
 }
 
 function extractCost(r: unknown): number | undefined {

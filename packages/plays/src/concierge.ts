@@ -6,7 +6,7 @@ import {
   voiceCall,
   type VoiceCallResult,
 } from "@oneshot-gtm/core";
-import { complete, loadPrompt } from "@oneshot-gtm/intel";
+import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { lintEmail } from "./_lib.ts";
 
 const PLAY_NAME = "concierge";
@@ -174,22 +174,7 @@ async function draftWithPrompt(opts: { promptName: string; inputBlock: string })
     temperature: 0.5,
     maxTokens: 400,
   });
-  const fenced = res.content.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidate = fenced ? fenced[1] : res.content;
-  let parsed: { subject?: string; body?: string } = {};
-  try {
-    parsed = JSON.parse((candidate ?? "").trim());
-  } catch {
-    const start = (candidate ?? "").indexOf("{");
-    const end = (candidate ?? "").lastIndexOf("}");
-    if (start >= 0 && end > start) {
-      try {
-        parsed = JSON.parse((candidate ?? "").slice(start, end + 1));
-      } catch {
-        parsed = {};
-      }
-    }
-  }
+  const parsed = tryParseJsonObject<{ subject?: string; body?: string }>(res.content, {});
   return { subject: (parsed.subject ?? "").trim(), body: (parsed.body ?? "").trim() };
 }
 

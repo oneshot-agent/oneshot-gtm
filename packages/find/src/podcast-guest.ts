@@ -1,5 +1,5 @@
 import { findEmail, getLedger, verifyEmail, webRead, webSearch } from "@oneshot-gtm/core";
-import { complete, loadPrompt } from "@oneshot-gtm/intel";
+import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { PodcastGuestTarget } from "@oneshot-gtm/plays";
 import { isDuplicate } from "./_dedupe.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
@@ -118,7 +118,7 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
         temperature: 0.1,
         maxTokens: 500,
       });
-      extract = parseExtract(llm.content);
+      extract = parsePodcastGuestExtract(llm.content);
     } catch {
       result.droppedEnrichment++;
       continue;
@@ -174,23 +174,8 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
   return result;
 }
 
-function parseExtract(raw: string): PodcastGuestExtract {
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidate = fenced ? fenced[1] : raw;
-  try {
-    return JSON.parse((candidate ?? "").trim()) as PodcastGuestExtract;
-  } catch {
-    const start = (candidate ?? "").indexOf("{");
-    const end = (candidate ?? "").lastIndexOf("}");
-    if (start >= 0 && end > start) {
-      try {
-        return JSON.parse((candidate ?? "").slice(start, end + 1)) as PodcastGuestExtract;
-      } catch {
-        // fall through
-      }
-    }
-  }
-  return {
+export function parsePodcastGuestExtract(raw: string): PodcastGuestExtract {
+  return tryParseJsonObject<PodcastGuestExtract>(raw, {
     podcastName: null,
     episodeTitle: null,
     episodeUrl: null,
@@ -200,7 +185,7 @@ function parseExtract(raw: string): PodcastGuestExtract {
     guestCompanyDomain: null,
     publishedAt: null,
     summary: null,
-  };
+  });
 }
 
 function extractCost(r: unknown): number | undefined {

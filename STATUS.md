@@ -40,6 +40,19 @@ Last manual update: **2026-04-23** · Bun **1.3.13** · OneShot SDK **0.15.0**
 | `podcast-guest`     | ✅ green    | enrich + websearch + email           | Single touch, no follow-up                |
 | `breakup-revive`    | ✅ green    | email only                           | Pulls from `listColdProspects`            |
 
+## `find` (upstream discovery → target_queue)
+
+| Command                                         | State     | OneShot calls                                 | Notes                                                                      |
+| ----------------------------------------------- | --------- | --------------------------------------------- | -------------------------------------------------------------------------- |
+| `find show-hn`                                  | ✅ green  | findEmail + verifyEmail                       | HN Algolia poller                                                          |
+| `find post-funding`                             | ✅ green  | webRead + findEmail + verifyEmail             | `--source-urls <file>` or `--auto` (webSearch by ICP + round)              |
+| `find accelerator-batch`                        | ✅ green  | webRead + findEmail + verifyEmail             | `--cohort yc-w26 / od / spc / antler / techstars` + `--index-url` override |
+| `find job-change`                               | ⚠️ opt-in | webSearch + findEmail + verifyEmail           | Disabled by default; `--personas` + `--companies` filters                  |
+| `find hiring-signal`                            | ⚠️ opt-in | webSearch + webRead + findEmail + verifyEmail | Disabled by default; ATS search + corporate-domain lookup                  |
+| `find podcast-guest`                            | ⚠️ opt-in | webSearch + webRead + findEmail + verifyEmail | Disabled by default                                                        |
+| `find breakup-revive`                           | ✅ green  | none (ledger-only)                            | Scans cold prospects; opt-in trigger (7d interval)                         |
+| `find queue / approve / reject / drain / watch` | ✅ green  | —                                             | Review lifecycle; `watch` has `--once` and daemon modes                    |
+
 ## `cadence`
 
 | Command           | State    | Notes                                            |
@@ -86,26 +99,29 @@ Last manual update: **2026-04-23** · Bun **1.3.13** · OneShot SDK **0.15.0**
 | `/setup`                 | ✅ green (editable wizard with hidden-input keys) |
 | `/run/show-hn`           | ✅ green (SSE-streamed drafts)                    |
 | `/run/job-change`        | ✅ green (SSE-streamed drafts)                    |
+| `/run/post-funding`      | ✅ green (SSE-streamed drafts)                    |
 | `/run/accelerator-batch` | ✅ green (SSE-streamed drafts)                    |
+| `/run/hiring-signal`     | ✅ green (SSE-streamed drafts)                    |
+| `/run/podcast-guest`     | ✅ green (SSE-streamed drafts)                    |
 
 ## Server (`apps/server`)
 
-| Route                                         | State                                                                         |
-| --------------------------------------------- | ----------------------------------------------------------------------------- |
-| `GET /api/home`                               | ✅ green                                                                      |
-| `GET /api/cadences[?all=1]`                   | ✅ green                                                                      |
-| `GET /api/cadences/:id`                       | ✅ green                                                                      |
-| `POST /api/cadences/:id/stop`                 | ✅ green                                                                      |
-| `GET /api/receipts[?play=&sinceDays=&limit=]` | ✅ green                                                                      |
-| `GET /api/receipts/:id`                       | ✅ green                                                                      |
-| `GET /api/plays`                              | ✅ green                                                                      |
-| `GET /api/measure/cac[?sinceDays=]`           | ✅ green                                                                      |
-| `GET /api/measure/rocs[?sinceDays=]`          | ✅ green                                                                      |
-| `POST /api/measure/outcome`                   | ✅ green                                                                      |
-| `GET /api/setup`                              | ✅ green                                                                      |
-| `POST /api/setup`                             | ✅ green                                                                      |
-| `GET /api/doctor`                             | ✅ green                                                                      |
-| `POST /api/run/:playName` (SSE)               | ✅ green (returns valid SSE; full play execution requires real OneShot calls) |
+| Route                                         | State                                                                                                    |
+| --------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `GET /api/home`                               | ✅ green                                                                                                 |
+| `GET /api/cadences[?all=1]`                   | ✅ green                                                                                                 |
+| `GET /api/cadences/:id`                       | ✅ green                                                                                                 |
+| `POST /api/cadences/:id/stop`                 | ✅ green                                                                                                 |
+| `GET /api/receipts[?play=&sinceDays=&limit=]` | ✅ green                                                                                                 |
+| `GET /api/receipts/:id`                       | ✅ green                                                                                                 |
+| `GET /api/plays`                              | ✅ green                                                                                                 |
+| `GET /api/measure/cac[?sinceDays=]`           | ✅ green                                                                                                 |
+| `GET /api/measure/rocs[?sinceDays=]`          | ✅ green                                                                                                 |
+| `POST /api/measure/outcome`                   | ✅ green                                                                                                 |
+| `GET /api/setup`                              | ✅ green                                                                                                 |
+| `POST /api/setup`                             | ✅ green                                                                                                 |
+| `GET /api/doctor`                             | ✅ green                                                                                                 |
+| `POST /api/run/:playName` (SSE)               | ✅ green — dispatches show-hn, job-change, post-funding, accelerator-batch, hiring-signal, podcast-guest |
 
 ## Distribution
 
@@ -117,14 +133,14 @@ Last manual update: **2026-04-23** · Bun **1.3.13** · OneShot SDK **0.15.0**
 
 ## Lint / typecheck / test
 
-| Check                          | State                                                       |
-| ------------------------------ | ----------------------------------------------------------- |
-| `bun run typecheck`            | ✅ 0 errors across apps/cli + apps/server + packages/\*     |
-| `bun run --cwd apps/web build` | ✅ 1849 modules transformed, ~298 kB main chunk gzip ~94 kB |
-| `bun run lint`                 | ✅ 0 warnings, 0 errors (oxlint, 75 files)                  |
-| `bun run fmt:check`            | ✅ all 140 files pass oxfmt                                 |
-| `bun run test`                 | ✅ 24/24 vitest cases passing                               |
-| `bun run cli -- doctor`        | ✅ all systems go                                           |
+| Check                          | State                                                        |
+| ------------------------------ | ------------------------------------------------------------ |
+| `bun run typecheck`            | ✅ 0 errors across apps/cli + apps/server + packages/\*      |
+| `bun run --cwd apps/web build` | ✅ ~1850 modules transformed, ~300 kB main chunk gzip ~94 kB |
+| `bun run lint`                 | ✅ 0 warnings, 0 errors (oxlint, 109 files)                  |
+| `bun run fmt:check`            | ✅ all 184 files pass oxfmt                                  |
+| `bun run test`                 | ✅ 146/146 vitest cases passing (17 test files)              |
+| `bun run cli -- doctor`        | ✅ all systems go                                            |
 
 ---
 

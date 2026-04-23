@@ -1,5 +1,5 @@
 import { loadConfig } from "@oneshot-gtm/core";
-import { complete, loadPrompt } from "@oneshot-gtm/intel";
+import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 
 export interface IcpFilterResult {
   match: boolean;
@@ -49,22 +49,7 @@ export async function icpFilter(input: {
 }
 
 function parseIcpJson(raw: string): IcpFilterResult {
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidate = fenced ? fenced[1] : raw;
-  let parsed: { match?: unknown; reason?: unknown } = {};
-  try {
-    parsed = JSON.parse((candidate ?? "").trim());
-  } catch {
-    const start = (candidate ?? "").indexOf("{");
-    const end = (candidate ?? "").lastIndexOf("}");
-    if (start >= 0 && end > start) {
-      try {
-        parsed = JSON.parse((candidate ?? "").slice(start, end + 1));
-      } catch {
-        parsed = {};
-      }
-    }
-  }
+  const parsed = tryParseJsonObject<{ match?: unknown; reason?: unknown }>(raw, {});
   return {
     match: parsed.match === true,
     reason: typeof parsed.reason === "string" ? parsed.reason : "no reason given",

@@ -1,5 +1,5 @@
 import { findEmail, getLedger, verifyEmail, webSearch } from "@oneshot-gtm/core";
-import { complete, loadPrompt } from "@oneshot-gtm/intel";
+import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { JobChangeTarget } from "@oneshot-gtm/plays";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
@@ -124,7 +124,7 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
         temperature: 0.1,
         maxTokens: 500,
       });
-      extract = parseExtract(llm.content);
+      extract = parseJobChangeExtract(llm.content);
     } catch {
       result.droppedEnrichment++;
       continue;
@@ -187,23 +187,8 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
   return result;
 }
 
-function parseExtract(raw: string): JobChangeExtract {
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidate = fenced ? fenced[1] : raw;
-  try {
-    return JSON.parse((candidate ?? "").trim()) as JobChangeExtract;
-  } catch {
-    const start = (candidate ?? "").indexOf("{");
-    const end = (candidate ?? "").lastIndexOf("}");
-    if (start >= 0 && end > start) {
-      try {
-        return JSON.parse((candidate ?? "").slice(start, end + 1)) as JobChangeExtract;
-      } catch {
-        // fall through
-      }
-    }
-  }
-  return {
+export function parseJobChangeExtract(raw: string): JobChangeExtract {
+  return tryParseJsonObject<JobChangeExtract>(raw, {
     fullName: null,
     newRole: null,
     newCompany: null,
@@ -212,7 +197,7 @@ function parseExtract(raw: string): JobChangeExtract {
     previousCompany: null,
     linkedinUrl: null,
     summary: null,
-  };
+  });
 }
 
 function extractCost(r: unknown): number | undefined {

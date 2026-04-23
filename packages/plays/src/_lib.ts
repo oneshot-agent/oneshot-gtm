@@ -1,5 +1,5 @@
 import { getLedger, loadConfig, receiptUrlForId, sendEmail } from "@oneshot-gtm/core";
-import { complete, loadPrompt } from "@oneshot-gtm/intel";
+import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 
 export const SLOP_PHRASES: Array<[RegExp, string]> = [
   [/\bI noticed\b/i, "banned-opener:I-noticed"],
@@ -77,22 +77,7 @@ export async function draftEmailFromPrompt(opts: {
 }
 
 function parseSubjectBody(raw: string): DraftedEmail {
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidate = fenced ? fenced[1] : raw;
-  let parsed: { subject?: string; body?: string } = {};
-  try {
-    parsed = JSON.parse((candidate ?? "").trim());
-  } catch {
-    const start = (candidate ?? "").indexOf("{");
-    const end = (candidate ?? "").lastIndexOf("}");
-    if (start >= 0 && end > start) {
-      try {
-        parsed = JSON.parse((candidate ?? "").slice(start, end + 1));
-      } catch {
-        parsed = {};
-      }
-    }
-  }
+  const parsed = tryParseJsonObject<{ subject?: string; body?: string }>(raw, {});
   return {
     subject: (parsed.subject ?? "").trim(),
     body: (parsed.body ?? "").trim(),

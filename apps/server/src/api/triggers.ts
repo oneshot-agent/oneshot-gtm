@@ -1,9 +1,9 @@
 import { getLedger, type TriggerRow } from "@oneshot-gtm/core";
-import { effectiveIntervalMs, TRIGGERS, type TriggerSpec } from "@oneshot-gtm/find";
-import type { TriggerView } from "@oneshot-gtm/shared-types";
+import { effectiveIntervalMs, runTriggerNow, TRIGGERS, type TriggerSpec } from "@oneshot-gtm/find";
+import type { RunTriggerResult, TriggerView } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 
-function toView(
+export function toView(
   name: string,
   defaultIntervalMs: number,
   row: TriggerRow | null,
@@ -119,4 +119,23 @@ export async function setTriggerConfigRoute(
     ledger.setTriggerConfig(name, JSON.stringify(body.config));
   }
   return jsonResponse({ ok: true, name }, 200, req);
+}
+
+export async function runTriggerRoute(
+  req: Request,
+  params: Record<string, string>,
+): Promise<Response> {
+  const name = params["name"];
+  if (!name) return jsonResponse({ error: "name required" }, 400, req);
+  if (!TRIGGERS.some((t) => t.name === name)) {
+    return jsonResponse({ error: `unknown trigger '${name}'` }, 404, req);
+  }
+  const outcome = await runTriggerNow(name);
+  const view: RunTriggerResult = {
+    name,
+    fired: outcome.fired,
+    result: outcome.result ?? null,
+    error: outcome.error ?? null,
+  };
+  return jsonResponse(view, 200, req);
 }

@@ -1,5 +1,5 @@
 import { getLedger, loadConfig, sendSms } from "@oneshot-gtm/core";
-import { complete, loadPrompt } from "@oneshot-gtm/intel";
+import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { draftEmailFromPrompt, lintEmail, sendDraftedEmail } from "./_lib.ts";
 import { buildFollowUpEmail, enrollInCadence, registerSequence } from "./_cadence.ts";
 
@@ -129,22 +129,7 @@ async function draftSmsBody(
     temperature: 0.5,
     maxTokens: 200,
   });
-  const fenced = res.content.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidate = fenced ? fenced[1] : res.content;
-  let parsed: { message?: string } = {};
-  try {
-    parsed = JSON.parse((candidate ?? "").trim());
-  } catch {
-    const start = (candidate ?? "").indexOf("{");
-    const end = (candidate ?? "").lastIndexOf("}");
-    if (start >= 0 && end > start) {
-      try {
-        parsed = JSON.parse((candidate ?? "").slice(start, end + 1));
-      } catch {
-        parsed = {};
-      }
-    }
-  }
+  const parsed = tryParseJsonObject<{ message?: string }>(res.content, {});
   return (parsed.message ?? "").trim();
 }
 

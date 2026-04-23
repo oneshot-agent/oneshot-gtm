@@ -1,6 +1,6 @@
 import { getLedger, webRead, webSearch } from "@oneshot-gtm/core";
 import { findEmail, verifyEmail } from "@oneshot-gtm/core";
-import { complete, loadPrompt } from "@oneshot-gtm/intel";
+import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { PostFundingTarget } from "@oneshot-gtm/plays";
 import { readFileSync } from "node:fs";
 import { icpFilter, resolveIcp } from "./_filter.ts";
@@ -97,7 +97,7 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
         temperature: 0.1,
         maxTokens: 600,
       });
-      extract = parseExtract(llm.content);
+      extract = parsePostFundingExtract(llm.content);
     } catch {
       result.droppedEnrichment++;
       continue;
@@ -189,24 +189,8 @@ export function collectUrls(opts: PostFundingFinderOpts): string[] {
   return [...new Set(urls)];
 }
 
-export function parseExtract(raw: string): PostFundingExtract {
-  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  const candidate = fenced ? fenced[1] : raw;
-  try {
-    const parsed = JSON.parse((candidate ?? "").trim()) as PostFundingExtract;
-    return parsed;
-  } catch {
-    const start = (candidate ?? "").indexOf("{");
-    const end = (candidate ?? "").lastIndexOf("}");
-    if (start >= 0 && end > start) {
-      try {
-        return JSON.parse((candidate ?? "").slice(start, end + 1)) as PostFundingExtract;
-      } catch {
-        // fall through
-      }
-    }
-  }
-  return {
+export function parsePostFundingExtract(raw: string): PostFundingExtract {
+  return tryParseJsonObject<PostFundingExtract>(raw, {
     company: null,
     companyDomain: null,
     round: null,
@@ -216,7 +200,7 @@ export function parseExtract(raw: string): PostFundingExtract {
     founderRole: null,
     industry: null,
     summary: null,
-  };
+  });
 }
 
 function extractCost(r: unknown): number | undefined {
