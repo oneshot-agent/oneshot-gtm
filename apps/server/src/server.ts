@@ -7,6 +7,7 @@ import { listReceipts, getReceipt } from "./api/receipts.ts";
 import { listPlays } from "./api/plays.ts";
 import { measureCac, measureRocs, recordOutcome } from "./api/measure.ts";
 import { setup, getSetupStatus } from "./api/setup.ts";
+import { deriveIcpRoute } from "./api/derive-icp.ts";
 import { doctor } from "./api/doctor.ts";
 import { runPlay } from "./api/run.ts";
 import {
@@ -60,6 +61,7 @@ const routes: RouteEntry[] = [
   route("POST", "/api/measure/outcome", recordOutcome),
   route("GET", "/api/setup", getSetupStatus),
   route("POST", "/api/setup", setup),
+  route("POST", "/api/setup/derive-icp", deriveIcpRoute),
   route("GET", "/api/doctor", doctor),
   route("POST", "/api/run/:playName", runPlay),
   route("GET", "/api/queue", listQueueRoute),

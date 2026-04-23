@@ -158,6 +158,12 @@ export interface TriggerView {
   intervalMs: number;
 }
 
+export interface DeriveIcpResult {
+  proposedIcp: string;
+  sourceUrl: string;
+  costUsd: number;
+}
+
 export interface RunTriggerResult {
   name: string;
   fired: boolean;

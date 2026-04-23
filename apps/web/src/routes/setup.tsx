@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Save } from "lucide-react";
+import { Save, Wand2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../api/client.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
@@ -37,6 +37,11 @@ function SetupPage() {
   const [founderEmail, setFounderEmail] = useState("");
   const [productOneLiner, setProductOneLiner] = useState("");
   const [icpOneLiner, setIcpOneLiner] = useState("");
+  const [icpDomain, setIcpDomain] = useState("");
+  const [icpDeriveError, setIcpDeriveError] = useState<string | null>(null);
+  const [icpDeriveSource, setIcpDeriveSource] = useState<{ url: string; cost: number } | null>(
+    null,
+  );
   const [llmProvider, setLlmProvider] = useState<"openrouter" | "openai" | "anthropic">(
     "openrouter",
   );
@@ -58,6 +63,19 @@ function SetupPage() {
     setTelemetryEnabled(c.telemetryEnabled);
     setWalletMode(c.walletMode);
   }, [status.data?.cfg]);
+
+  const deriveIcp = useMutation({
+    mutationFn: (domain: string) => api.deriveIcp(domain),
+    onSuccess: (res) => {
+      setIcpOneLiner(res.proposedIcp);
+      setIcpDeriveSource({ url: res.sourceUrl, cost: res.costUsd });
+      setIcpDeriveError(null);
+    },
+    onError: (err: Error) => {
+      setIcpDeriveError(err.message);
+      setIcpDeriveSource(null);
+    },
+  });
 
   const save = useMutation({
     mutationFn: async () => {
@@ -146,16 +164,64 @@ function SetupPage() {
 
         <Card>
           <CardHeader>Ideal customer profile (ICP)</CardHeader>
-          <CardBody>
+          <CardBody className="flex flex-col gap-4">
+            <Field
+              label="Derive from a website"
+              hint="Paste a domain (or full URL) of a company whose customers look like yours. We'll read the page and propose an ICP — you can edit before saving. Spends ~$0.02–0.05 (one webRead + one LLM call)."
+            >
+              <div className="flex gap-2">
+                <Input
+                  value={icpDomain}
+                  onChange={(e) => setIcpDomain(e.target.value)}
+                  placeholder="acme.com  ·  https://yourcompany.com/customers"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !deriveIcp.isPending && icpDomain.trim().length > 0) {
+                      e.preventDefault();
+                      deriveIcp.mutate(icpDomain.trim());
+                    }
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={deriveIcp.isPending || icpDomain.trim().length === 0}
+                  onClick={() => deriveIcp.mutate(icpDomain.trim())}
+                >
+                  <Wand2 size={12} />
+                  {deriveIcp.isPending ? "Reading…" : "Derive ICP"}
+                </Button>
+              </div>
+            </Field>
+
+            {icpDeriveError && (
+              <div className="rounded-md border border-red-900 bg-red-950/40 px-3 py-2 text-xs text-red-300">
+                {icpDeriveError}
+              </div>
+            )}
+            {icpDeriveSource && !icpDeriveError && (
+              <div className="text-xs text-zinc-500">
+                Drafted from{" "}
+                <a
+                  href={icpDeriveSource.url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-zinc-300 underline"
+                >
+                  {icpDeriveSource.url}
+                </a>{" "}
+                · spent ${icpDeriveSource.cost.toFixed(3)}. Edit below before saving.
+              </div>
+            )}
+
             <Field
               label="ICP one-liner"
-              hint="Who you want to reach, in one sentence. The find layer's classifier uses this to drop candidates that don't match — strict by design. Leave blank to disable filtering (every candidate passes through)."
+              hint="The find layer's classifier uses this to drop candidates that don't match — strict by design. Leave blank to disable filtering (every candidate passes through)."
             >
               <Textarea
                 value={icpOneLiner}
                 onChange={(e) => setIcpOneLiner(e.target.value)}
                 placeholder="Developers shipping autonomous AI agents who need deterministic spend tracking and on-chain receipts."
-                rows={2}
+                rows={3}
               />
             </Field>
           </CardBody>

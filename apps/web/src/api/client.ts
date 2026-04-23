@@ -11,6 +11,7 @@ import type {
   QueueCounts,
   QueueRowView,
   QueueStatusView,
+  DeriveIcpResult,
   ReceiptDetail,
   ReceiptView,
   RunTriggerResult,
@@ -86,6 +87,7 @@ export const api = {
       sources: Record<string, "env" | "file" | null>;
     }>("/setup"),
   setup: (req: SetupRequest) => postJson<{ ok: boolean }>("/setup", req),
+  deriveIcp: (domain: string) => postJson<DeriveIcpResult>("/setup/derive-icp", { domain }),
   queue: (opts?: { play?: string; status?: QueueStatusView; limit?: number }) => {
     const q = new URLSearchParams();
     if (opts?.play) q.set("play", opts.play);
