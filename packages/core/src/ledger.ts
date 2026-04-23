@@ -289,9 +289,9 @@ export class Ledger {
 
   upsertProspect(input: Partial<ProspectRecord> & { email?: string | null }): number {
     if (input.email) {
-      const existing = this.db.query("SELECT id FROM prospects WHERE email = ?").get(input.email) as
-        | { id: number }
-        | undefined;
+      const existing = this.db
+        .query("SELECT id FROM prospects WHERE email = ?")
+        .get(input.email) as { id: number } | undefined;
       if (existing) return existing.id;
     }
     const stmt = this.db.prepare(`

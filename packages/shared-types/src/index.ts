@@ -150,8 +150,10 @@ export interface TriggerView {
   lastPolledAt: string | null;
   lastRunSummary: unknown | null;
   enabled: boolean;
-  config: unknown | null;
+  config: Record<string, unknown> | null;
   defaultIntervalMs: number;
+  /** Currently-active interval (defaultIntervalMs unless overridden via config.intervalMs). */
+  intervalMs: number;
 }
 
 export interface OutcomeRequest {

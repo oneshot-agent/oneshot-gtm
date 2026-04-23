@@ -1,7 +1,7 @@
 import { findEmail, getLedger, verifyEmail, webRead, webSearch } from "@oneshot-gtm/core";
 import { complete, loadPrompt } from "@oneshot-gtm/intel";
 import type { HiringSignalTarget } from "@oneshot-gtm/plays";
-import { isDuplicate, urlDomain } from "./_dedupe.ts";
+import { isDuplicate } from "./_dedupe.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import type { FinderResult, HiringSignalExtract, RunOpts } from "./_types.ts";
 
@@ -62,6 +62,7 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
   const seen = new Set<string>();
   const hits: SearchHit[] = [];
   const sincePhrase = sinceDays <= 7 ? "this week" : `last ${sinceDays} days`;
+  const domainCache = new Map<string, string | null>();
 
   for (const role of roles) {
     if (hits.length >= limit * 2) break;
@@ -141,7 +142,12 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
       continue;
     }
 
-    const domain = extract.companyDomain ?? guessCorporateDomain(hit.url, extract.company);
+    let domain = extract.companyDomain;
+    if (!domain) {
+      const resolved = await resolveCorporateDomain(extract.company, hit.url, domainCache);
+      domain = resolved.domain;
+      result.costUsd += resolved.costUsd;
+    }
     if (!domain) {
       result.droppedEnrichment++;
       continue;
@@ -204,22 +210,81 @@ function isAtsUrl(url: string): boolean {
   }
 }
 
-function guessCorporateDomain(jobUrl: string, _company: string): string | null {
-  // ATS URLs encode the slug in the path: jobs.lever.co/<slug>/...,
-  // boards.greenhouse.io/<slug>/jobs/..., apply.workable.com/<slug>/...,
-  // jobs.ashbyhq.com/<slug>/...
-  // We don't know the corporate TLD, so we fall through to urlDomain — the
-  // findEmail call will just use the ATS subdomain, which usually fails. The
-  // safest move is to surface this as enrichment-failed when we can't infer a
-  // real corporate domain from the slug.
+const SOCIAL_OR_ATS_HOSTS = new Set([
+  "linkedin.com",
+  "twitter.com",
+  "x.com",
+  "facebook.com",
+  "instagram.com",
+  "youtube.com",
+  "github.com",
+  "wikipedia.org",
+  "crunchbase.com",
+  "glassdoor.com",
+  "indeed.com",
+  "builtin.com",
+  "medium.com",
+  "substack.com",
+  ...ATS_DOMAIN_HINTS,
+]);
+
+/**
+ * Try to find the company's actual corporate domain when the LLM didn't
+ * extract one from the job page. webSearch is ~$0.01/call; we cache by
+ * company name within a single finder run so repeated postings from the same
+ * employer don't double-charge.
+ */
+async function resolveCorporateDomain(
+  company: string,
+  jobUrl: string,
+  cache: Map<string, string | null>,
+): Promise<{ domain: string | null; costUsd: number }> {
+  const key = company.trim().toLowerCase();
+  if (cache.has(key)) return { domain: cache.get(key) ?? null, costUsd: 0 };
+  let costUsd = 0;
+  let domain: string | null = null;
+  try {
+    const search = await webSearch(
+      { query: `"${company}" official site`, maxResults: 5 },
+      { playName: PLAY_NAME },
+    );
+    costUsd += extractCost(search.result) ?? 0.01;
+    for (const hit of search.result.results ?? []) {
+      const host = pickCorporateHost(hit.url);
+      if (host) {
+        domain = host;
+        break;
+      }
+    }
+  } catch {
+    // fall through to slug guess
+  }
+  if (!domain) domain = slugFallback(jobUrl);
+  cache.set(key, domain);
+  return { domain, costUsd };
+}
+
+function pickCorporateHost(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    const host = new URL(url).hostname.replace(/^www\./, "").toLowerCase();
+    if (SOCIAL_OR_ATS_HOSTS.has(host)) return null;
+    if ([...SOCIAL_OR_ATS_HOSTS].some((h) => host.endsWith(`.${h}`))) return null;
+    return host;
+  } catch {
+    return null;
+  }
+}
+
+function slugFallback(jobUrl: string): string | null {
   try {
     const u = new URL(jobUrl);
     const seg = u.pathname.split("/").find((s) => s.length > 0);
     if (seg && /^[a-z0-9-]+$/.test(seg)) return `${seg}.com`;
   } catch {
-    // fall through
+    // ignore
   }
-  return urlDomain(jobUrl);
+  return null;
 }
 
 function parseExtract(raw: string): HiringSignalExtract {

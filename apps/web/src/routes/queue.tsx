@@ -512,7 +512,12 @@ function TriggersCard() {
                       </label>
                     </td>
                     <td className="px-4 py-2 text-xs text-zinc-400">
-                      {humanInterval(t.defaultIntervalMs)}
+                      {humanInterval(t.intervalMs)}
+                      {t.intervalMs !== t.defaultIntervalMs && (
+                        <span className="ml-1 text-zinc-600">
+                          (default {humanInterval(t.defaultIntervalMs)})
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-2 text-xs text-zinc-400">
                       {t.lastPolledAt ? timeAgo(t.lastPolledAt) : "never"}
@@ -523,7 +528,10 @@ function TriggersCard() {
                         variant="ghost"
                         size="sm"
                         onClick={() => {
-                          setEditing({ name: t.name, text: JSON.stringify(t.config ?? {}, null, 2) });
+                          setEditing({
+                            name: t.name,
+                            text: JSON.stringify(t.config ?? {}, null, 2),
+                          });
                           setEditError(null);
                         }}
                       >
@@ -571,7 +579,10 @@ function TriggersCard() {
           </>
         }
       >
-        <Field label="JSON config">
+        <Field
+          label="JSON config"
+          hint='Add "intervalMs": 21600000 to override the watch cadence (here = 6h). Min 60000.'
+        >
           <Textarea
             rows={10}
             value={editing?.text ?? ""}

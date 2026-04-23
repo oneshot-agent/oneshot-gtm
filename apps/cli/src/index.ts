@@ -500,10 +500,7 @@ find
     "-c, --cohort <cohort>",
     "cohort tag (yc-w26, yc-s26, yc-w25, yc-s25, od-current, spc-current, antler-current, techstars-current)",
   )
-  .option(
-    "--index-url <url>",
-    "override the program index URL (use any portfolio / launch page)",
-  )
+  .option("--index-url <url>", "override the program index URL (use any portfolio / launch page)")
   .option("--limit <n>", "max companies to process (default 25)", (v) => Number.parseInt(v, 10))
   .option("--max-cost <usd>", "halt mid-run when this much OneShot $ is spent", (v) =>
     Number.parseFloat(v),
@@ -525,7 +522,9 @@ find
   .command("job-change")
   .option("--personas <list>", "comma-separated personas (default: VP Eng,Head of Growth,...)")
   .option("--companies <list>", "optional comma-separated company filter")
-  .option("--since-days <n>", "look back this many days (default 14)", (v) => Number.parseInt(v, 10))
+  .option("--since-days <n>", "look back this many days (default 14)", (v) =>
+    Number.parseInt(v, 10),
+  )
   .option("--limit <n>", "max candidates to process (default 25)", (v) => Number.parseInt(v, 10))
   .option("--max-cost <usd>", "halt mid-run when this much OneShot $ is spent", (v) =>
     Number.parseFloat(v),
@@ -549,7 +548,9 @@ find
   .option("--roles <list>", "comma-separated job titles to scan for")
   .option("--companies <list>", "optional comma-separated company filter")
   .option("--your-claim <text>", "one-line claim about ramp-time compression for that role")
-  .option("--since-days <n>", "look back this many days (default 14)", (v) => Number.parseInt(v, 10))
+  .option("--since-days <n>", "look back this many days (default 14)", (v) =>
+    Number.parseInt(v, 10),
+  )
   .option("--limit <n>", "max postings to process (default 25)", (v) => Number.parseInt(v, 10))
   .option("--max-cost <usd>", "halt mid-run when this much OneShot $ is spent", (v) =>
     Number.parseFloat(v),
@@ -572,7 +573,9 @@ find
 find
   .command("podcast-guest")
   .option("--podcasts <list>", "comma-separated podcast names")
-  .option("--since-days <n>", "look back this many days (default 21)", (v) => Number.parseInt(v, 10))
+  .option("--since-days <n>", "look back this many days (default 21)", (v) =>
+    Number.parseInt(v, 10),
+  )
   .option("--skip-read", "skip the per-episode webRead step (cheaper, less accurate)", false)
   .option("--limit <n>", "max episodes to process (default 25)", (v) => Number.parseInt(v, 10))
   .option("--max-cost <usd>", "halt mid-run when this much OneShot $ is spent", (v) =>

@@ -8,9 +8,7 @@ import { llmApiKey, oneshotEnvReady, SECRET_KEYS } from "../src/config.ts";
  */
 let snapshot: Record<string, string | undefined> = {};
 
-const KEYS_TO_TOUCH = [
-  ...SECRET_KEYS,
-] as const;
+const KEYS_TO_TOUCH = [...SECRET_KEYS] as const;
 
 beforeEach(() => {
   snapshot = {};

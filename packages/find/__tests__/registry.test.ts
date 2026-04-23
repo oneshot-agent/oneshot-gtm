@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { nextSleepMs, TRIGGERS, type TriggerRunOutcome } from "../src/registry.ts";
+import {
+  effectiveIntervalMs,
+  nextSleepMs,
+  TRIGGERS,
+  type TriggerRunOutcome,
+} from "../src/registry.ts";
 
 describe("nextSleepMs", () => {
   it("defaults to 1h when there are no outcomes", () => {
@@ -34,7 +39,14 @@ describe("nextSleepMs", () => {
 describe("TRIGGERS registry", () => {
   it("exposes the expected built-in triggers", () => {
     const names = TRIGGERS.map((t) => t.name).toSorted();
-    expect(names).toEqual(["post-funding-auto", "show-hn", "yc-w26"]);
+    expect(names).toEqual([
+      "hiring-signal",
+      "job-change",
+      "podcast-guest",
+      "post-funding-auto",
+      "show-hn",
+      "yc-w26",
+    ]);
   });
 
   it("each trigger has a positive default interval and a run function", () => {
@@ -43,5 +55,32 @@ describe("TRIGGERS registry", () => {
       expect(typeof t.run).toBe("function");
       expect(t.defaultConfig).toBeTypeOf("object");
     }
+  });
+
+  it("opt-in triggers (job-change, hiring-signal, podcast-guest) are disabled by default", () => {
+    const optIn = ["job-change", "hiring-signal", "podcast-guest"];
+    for (const name of optIn) {
+      const spec = TRIGGERS.find((t) => t.name === name);
+      expect(spec?.enabledByDefault, `${name} should be opt-in`).toBe(false);
+    }
+  });
+});
+
+describe("effectiveIntervalMs", () => {
+  it("uses defaultIntervalMs when no override is supplied", () => {
+    const spec = TRIGGERS[0]!;
+    expect(effectiveIntervalMs(spec, null)).toBe(spec.defaultIntervalMs);
+    expect(effectiveIntervalMs(spec, {})).toBe(spec.defaultIntervalMs);
+  });
+
+  it("honors a numeric intervalMs override", () => {
+    const spec = TRIGGERS[0]!;
+    expect(effectiveIntervalMs(spec, { intervalMs: 90_000 })).toBe(90_000);
+  });
+
+  it("ignores a too-small or non-numeric intervalMs", () => {
+    const spec = TRIGGERS[0]!;
+    expect(effectiveIntervalMs(spec, { intervalMs: 1000 })).toBe(spec.defaultIntervalMs);
+    expect(effectiveIntervalMs(spec, { intervalMs: "fast" })).toBe(spec.defaultIntervalMs);
   });
 });

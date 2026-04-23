@@ -1,9 +1,14 @@
 import { getLedger, type TriggerRow } from "@oneshot-gtm/core";
-import { TRIGGERS } from "@oneshot-gtm/find";
+import { effectiveIntervalMs, TRIGGERS, type TriggerSpec } from "@oneshot-gtm/find";
 import type { TriggerView } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 
-function toView(name: string, defaultIntervalMs: number, row: TriggerRow | null): TriggerView {
+function toView(
+  name: string,
+  defaultIntervalMs: number,
+  row: TriggerRow | null,
+  spec: TriggerSpec | null,
+): TriggerView {
   let lastSummary: unknown = null;
   if (row?.last_run_summary) {
     try {
@@ -12,18 +17,22 @@ function toView(name: string, defaultIntervalMs: number, row: TriggerRow | null)
       lastSummary = row.last_run_summary;
     }
   }
-  let config: unknown = null;
+  let config: Record<string, unknown> | null = null;
   if (row?.config_json) {
     try {
-      config = JSON.parse(row.config_json);
+      const parsed = JSON.parse(row.config_json) as unknown;
+      if (parsed && typeof parsed === "object") config = parsed as Record<string, unknown>;
     } catch {
-      config = row.config_json;
+      config = null;
     }
   }
+  const defaultEnabled = spec ? spec.enabledByDefault !== false : true;
+  const intervalMs = spec ? effectiveIntervalMs(spec, config) : defaultIntervalMs;
   return {
     name,
-    enabled: row ? Boolean(row.enabled) : true,
+    enabled: row ? Boolean(row.enabled) : defaultEnabled,
     defaultIntervalMs,
+    intervalMs,
     config,
     lastPolledAt: row?.last_polled_at ?? null,
     lastRunSummary: lastSummary,
@@ -38,13 +47,13 @@ export function listTriggersRoute(req: Request): Response {
   const views: TriggerView[] = [];
   for (const spec of TRIGGERS) {
     seen.add(spec.name);
-    views.push(toView(spec.name, spec.defaultIntervalMs, byName.get(spec.name) ?? null));
+    views.push(toView(spec.name, spec.defaultIntervalMs, byName.get(spec.name) ?? null, spec));
   }
   // Surface any historical triggers stored in the ledger that no longer exist
   // in the registry (e.g. a deprecated cohort) so the founder can disable them.
   for (const row of rows) {
     if (seen.has(row.name)) continue;
-    views.push(toView(row.name, 24 * 3600 * 1000, row));
+    views.push(toView(row.name, 24 * 3600 * 1000, row, null));
   }
   return jsonResponse({ triggers: views }, 200, req);
 }
