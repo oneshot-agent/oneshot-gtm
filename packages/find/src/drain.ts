@@ -1,11 +1,15 @@
 import { getLedger, type ProspectRecord } from "@oneshot-gtm/core";
 import {
   runAcceleratorBatch,
+  runHiringSignal,
   runJobChange,
+  runPodcastGuest,
   runPostFunding,
   runShowHn,
   type AcceleratorBatchTarget,
+  type HiringSignalTarget,
   type JobChangeTarget,
+  type PodcastGuestTarget,
   type PostFundingTarget,
   type ShowHnTarget,
 } from "@oneshot-gtm/plays";
@@ -70,17 +74,17 @@ async function dispatchPlay(opts: DrainOpts, rows: QueueRow[]): Promise<number[]
     case "show-hn": {
       const targets = rows.map((r) => JSON.parse(r.payload_json) as ShowHnTarget);
       const result = await runShowHn({ dryRun: opts.dryRun, targets });
-      return result.drafted.filter((d) => d.sent || opts.dryRun).map((_, i) => rows[i]?.id ?? -1);
+      return idsForSentDrafts(result.drafted, rows, opts.dryRun);
     }
     case "job-change": {
       const targets = rows.map((r) => JSON.parse(r.payload_json) as JobChangeTarget);
       const result = await runJobChange({ dryRun: opts.dryRun, targets });
-      return result.drafted.filter((d) => d.sent || opts.dryRun).map((_, i) => rows[i]?.id ?? -1);
+      return idsForSentDrafts(result.drafted, rows, opts.dryRun);
     }
     case "post-funding": {
       const targets = rows.map((r) => JSON.parse(r.payload_json) as PostFundingTarget);
       const result = await runPostFunding({ dryRun: opts.dryRun, targets });
-      return result.drafted.filter((d) => d.sent || opts.dryRun).map((_, i) => rows[i]?.id ?? -1);
+      return idsForSentDrafts(result.drafted, rows, opts.dryRun);
     }
     case "accelerator-batch": {
       if (!opts.senderCohort) {
@@ -93,11 +97,44 @@ async function dispatchPlay(opts: DrainOpts, rows: QueueRow[]): Promise<number[]
         senderCohort: opts.senderCohort,
         ...(opts.freeForCohortOffer ? { freeForCohortOffer: opts.freeForCohortOffer } : {}),
       });
-      return result.drafted.filter((d) => d.sent || opts.dryRun).map((_, i) => rows[i]?.id ?? -1);
+      return idsForSentDrafts(result.drafted, rows, opts.dryRun);
+    }
+    case "hiring-signal": {
+      const targets = rows.map((r) => JSON.parse(r.payload_json) as HiringSignalTarget);
+      const result = await runHiringSignal({ dryRun: opts.dryRun, targets });
+      return idsForSentDrafts(result.drafted, rows, opts.dryRun);
+    }
+    case "podcast-guest": {
+      const targets = rows.map((r) => JSON.parse(r.payload_json) as PodcastGuestTarget);
+      const result = await runPodcastGuest({ dryRun: opts.dryRun, targets });
+      return idsForSentDrafts(result.drafted, rows, opts.dryRun);
     }
     default:
       throw new Error(`drain: unsupported play '${opts.playName}'`);
   }
+}
+
+/**
+ * Map drafted-results back to queue-row IDs by position. Plays return one
+ * draft per input target (in order), so drafted[i] always corresponds to
+ * rows[i]. We only flip a row to `sent` when its draft actually sent (or in
+ * dry-run, when we'd have sent it). The earlier `.filter().map((_, i) => rows[i])`
+ * pattern was wrong — after filtering, the index no longer maps to the
+ * original row, so partial sends marked the wrong rows as sent.
+ */
+export function idsForSentDrafts(
+  drafted: Array<{ sent: boolean }>,
+  rows: QueueRow[],
+  dryRun: boolean,
+): number[] {
+  const ids: number[] = [];
+  for (let i = 0; i < drafted.length; i++) {
+    const draft = drafted[i];
+    const row = rows[i];
+    if (!draft || !row) continue;
+    if (draft.sent || dryRun) ids.push(row.id);
+  }
+  return ids;
 }
 
 function backfillProspectId(row: QueueRow | null): number | null {
