@@ -151,6 +151,7 @@ export interface TriggerView {
   lastRunSummary: unknown | null;
   enabled: boolean;
   config: unknown | null;
+  defaultIntervalMs: number;
 }
 
 export interface OutcomeRequest {

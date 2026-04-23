@@ -24,7 +24,14 @@ const STATUSES: Array<QueueStatusView | "all"> = [
   "expired",
 ];
 
-const DRAINABLE_PLAYS = ["show-hn", "job-change", "post-funding", "accelerator-batch"];
+const DRAINABLE_PLAYS = [
+  "show-hn",
+  "job-change",
+  "post-funding",
+  "accelerator-batch",
+  "hiring-signal",
+  "podcast-guest",
+];
 
 function statusTone(status: QueueStatusView): "green" | "yellow" | "red" | "neutral" | "blue" {
   switch (status) {
@@ -203,6 +210,8 @@ function QueuePage() {
           </Button>
         ))}
       </div>
+
+      <TriggersCard />
 
       <Card>
         <CardHeader>{queueQuery.data ? `${rows.length} row(s)` : "loading…"}</CardHeader>
@@ -434,6 +443,166 @@ function QueueRow({
       )}
     </>
   );
+}
+
+function TriggersCard() {
+  const qc = useQueryClient();
+  const triggersQuery = useQuery({
+    queryKey: ["triggers"],
+    queryFn: () => api.triggers(),
+    refetchInterval: 30_000,
+  });
+  const setEnabled = useMutation({
+    mutationFn: (vars: { name: string; enabled: boolean }) =>
+      api.setTriggerEnabled(vars.name, vars.enabled),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: ["triggers"] }),
+  });
+  const setConfig = useMutation({
+    mutationFn: (vars: { name: string; config: unknown }) =>
+      api.setTriggerConfig(vars.name, vars.config),
+    onSuccess: () => {
+      setEditing(null);
+      void qc.invalidateQueries({ queryKey: ["triggers"] });
+    },
+  });
+
+  const [editing, setEditing] = useState<{ name: string; text: string } | null>(null);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  const triggers = triggersQuery.data?.triggers ?? [];
+
+  return (
+    <Card>
+      <CardHeader>Triggers ({triggers.length})</CardHeader>
+      <CardBody className="p-0">
+        {triggers.length === 0 ? (
+          <div className="px-4 py-6 text-center text-sm text-zinc-500">
+            No triggers registered. Run <code>oneshot-gtm find watch --once</code> to bootstrap.
+          </div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-xs uppercase tracking-wider text-zinc-500">
+                <th className="px-4 py-2 text-left font-medium">name</th>
+                <th className="px-4 py-2 text-left font-medium">enabled</th>
+                <th className="px-4 py-2 text-left font-medium">interval</th>
+                <th className="px-4 py-2 text-left font-medium">last polled</th>
+                <th className="px-4 py-2 text-left font-medium">last run</th>
+                <th className="px-4 py-2 text-right font-medium">actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {triggers.map((t) => {
+                const summary = summarizeRun(t.lastRunSummary);
+                return (
+                  <tr key={t.name} className="border-t border-zinc-800">
+                    <td className="px-4 py-2 font-mono text-xs text-zinc-200">{t.name}</td>
+                    <td className="px-4 py-2">
+                      <label className="flex items-center gap-2 text-xs text-zinc-400">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-zinc-700 bg-zinc-900"
+                          checked={t.enabled}
+                          disabled={setEnabled.isPending}
+                          onChange={(e) =>
+                            setEnabled.mutate({ name: t.name, enabled: e.target.checked })
+                          }
+                        />
+                        {t.enabled ? "on" : "off"}
+                      </label>
+                    </td>
+                    <td className="px-4 py-2 text-xs text-zinc-400">
+                      {humanInterval(t.defaultIntervalMs)}
+                    </td>
+                    <td className="px-4 py-2 text-xs text-zinc-400">
+                      {t.lastPolledAt ? timeAgo(t.lastPolledAt) : "never"}
+                    </td>
+                    <td className="px-4 py-2 text-xs text-zinc-400">{summary}</td>
+                    <td className="px-4 py-2 text-right">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setEditing({ name: t.name, text: JSON.stringify(t.config ?? {}, null, 2) });
+                          setEditError(null);
+                        }}
+                      >
+                        edit config
+                      </Button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </CardBody>
+
+      <Modal
+        open={editing != null}
+        onClose={() => setEditing(null)}
+        title={`Config for ${editing?.name ?? ""}`}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setEditing(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (!editing) return;
+                let parsed: unknown;
+                try {
+                  parsed = JSON.parse(editing.text);
+                } catch (err) {
+                  setEditError(`Invalid JSON: ${(err as Error).message}`);
+                  return;
+                }
+                if (!parsed || typeof parsed !== "object") {
+                  setEditError("Config must be a JSON object.");
+                  return;
+                }
+                setEditError(null);
+                setConfig.mutate({ name: editing.name, config: parsed });
+              }}
+              disabled={setConfig.isPending}
+            >
+              {setConfig.isPending ? "Saving…" : "Save"}
+            </Button>
+          </>
+        }
+      >
+        <Field label="JSON config">
+          <Textarea
+            rows={10}
+            value={editing?.text ?? ""}
+            onChange={(e) => setEditing(editing ? { ...editing, text: e.target.value } : null)}
+            className="font-mono text-xs"
+          />
+        </Field>
+        {editError && <div className="mt-2 text-xs text-red-400">{editError}</div>}
+      </Modal>
+    </Card>
+  );
+}
+
+function summarizeRun(summary: unknown): string {
+  if (!summary || typeof summary !== "object") return "—";
+  const s = summary as Record<string, unknown>;
+  if (typeof s["error"] === "string") return `error: ${(s["error"] as string).slice(0, 60)}`;
+  const parts: string[] = [];
+  if (typeof s["candidates"] === "number") parts.push(`cand=${s["candidates"]}`);
+  if (typeof s["enqueued"] === "number") parts.push(`kept=${s["enqueued"]}`);
+  if (typeof s["droppedIcp"] === "number") parts.push(`icp=${s["droppedIcp"]}`);
+  if (typeof s["costUsd"] === "number") {
+    parts.push(`$${(s["costUsd"] as number).toFixed(2)}`);
+  }
+  return parts.length > 0 ? parts.join(" · ") : "—";
+}
+
+function humanInterval(ms: number): string {
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+  if (ms < 3600_000) return `${Math.round(ms / 60_000)}m`;
+  return `${(ms / 3600_000).toFixed(1)}h`;
 }
 
 function emailFor(payload: unknown): string | null {

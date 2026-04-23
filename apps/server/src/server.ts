@@ -16,6 +16,11 @@ import {
   listQueueRoute,
   rejectQueueRoute,
 } from "./api/queue.ts";
+import {
+  listTriggersRoute,
+  setTriggerConfigRoute,
+  setTriggerEnabledRoute,
+} from "./api/triggers.ts";
 
 interface ServerOptions {
   port: number;
@@ -61,6 +66,9 @@ const routes: RouteEntry[] = [
   route("POST", "/api/queue/drain", drainQueueRoute),
   route("POST", "/api/queue/:id/approve", approveQueueRoute),
   route("POST", "/api/queue/:id/reject", rejectQueueRoute),
+  route("GET", "/api/triggers", listTriggersRoute),
+  route("POST", "/api/triggers/:name/enabled", setTriggerEnabledRoute),
+  route("POST", "/api/triggers/:name/config", setTriggerConfigRoute),
 ];
 
 function findRoute(req: Request): { handler: RouteHandler; params: Record<string, string> } | null {

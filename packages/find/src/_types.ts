@@ -53,6 +53,41 @@ export interface AcceleratorListExtract {
   oneLiner: string | null;
 }
 
+export interface JobChangeExtract {
+  fullName: string | null;
+  newRole: string | null;
+  newCompany: string | null;
+  newCompanyDomain: string | null;
+  previousRole: string | null;
+  previousCompany: string | null;
+  linkedinUrl: string | null;
+  summary: string | null;
+}
+
+export interface HiringSignalExtract {
+  jobTitle: string | null;
+  jobUrl: string | null;
+  company: string | null;
+  companyDomain: string | null;
+  hiringManagerName: string | null;
+  hiringManagerRole: string | null;
+  team: string | null;
+  postedAt: string | null;
+  summary: string | null;
+}
+
+export interface PodcastGuestExtract {
+  podcastName: string | null;
+  episodeTitle: string | null;
+  episodeUrl: string | null;
+  guestName: string | null;
+  guestRole: string | null;
+  guestCompany: string | null;
+  guestCompanyDomain: string | null;
+  publishedAt: string | null;
+  summary: string | null;
+}
+
 export interface RunOpts {
   dryRun: boolean;
   /** Hard cap on USD spent. The finder halts mid-run when this is hit. */

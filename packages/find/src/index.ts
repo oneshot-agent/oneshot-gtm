@@ -4,5 +4,8 @@ export * from "./_dedupe.ts";
 export * from "./show-hn.ts";
 export * from "./post-funding.ts";
 export * from "./accelerator-batch.ts";
+export * from "./job-change.ts";
+export * from "./hiring-signal.ts";
+export * from "./podcast-guest.ts";
 export * from "./registry.ts";
 export * from "./drain.ts";

@@ -4,6 +4,9 @@ import {
   nextSleepMs,
   runAcceleratorBatchFinder,
   runDueTriggers,
+  runHiringSignalFinder,
+  runJobChangeFinder,
+  runPodcastGuestFinder,
   runPostFundingFinder,
   runShowHnFinder,
   type FinderResult,
@@ -27,15 +30,34 @@ export async function commandFindShowHn(opts: {
 }
 
 export async function commandFindPostFunding(opts: {
-  sourceUrls: string;
+  sourceUrls?: string;
+  auto: boolean;
+  autoIndustry?: string;
+  autoRounds?: string;
+  autoSinceDays?: number;
   limit?: number;
   maxCost?: number;
   dryRun: boolean;
 }): Promise<void> {
-  header(`find post-funding ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
+  if (!opts.sourceUrls && !opts.auto) {
+    fail("post-funding requires --source-urls <file> or --auto");
+    process.exit(1);
+  }
+  const tag = opts.auto ? c.dim("(auto)") : "";
+  header(`find post-funding ${tag} ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
+  const rounds = opts.autoRounds
+    ? opts.autoRounds
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : undefined;
   const result = await runPostFundingFinder({
     dryRun: opts.dryRun,
-    sourceUrlsFile: opts.sourceUrls,
+    auto: opts.auto,
+    ...(opts.sourceUrls ? { sourceUrlsFile: opts.sourceUrls } : {}),
+    ...(opts.autoIndustry ? { autoIndustry: opts.autoIndustry } : {}),
+    ...(rounds ? { autoRounds: rounds } : {}),
+    ...(opts.autoSinceDays != null ? { autoSinceDays: opts.autoSinceDays } : {}),
     limit: opts.limit ?? 25,
     ...(opts.maxCost != null ? { maxCostUsd: opts.maxCost } : {}),
   });
@@ -44,6 +66,7 @@ export async function commandFindPostFunding(opts: {
 
 export async function commandFindAcceleratorBatch(opts: {
   cohort: string;
+  indexUrl?: string;
   limit?: number;
   maxCost?: number;
   dryRun: boolean;
@@ -54,10 +77,87 @@ export async function commandFindAcceleratorBatch(opts: {
   const result = await runAcceleratorBatchFinder({
     dryRun: opts.dryRun,
     cohort: opts.cohort,
+    ...(opts.indexUrl ? { indexUrl: opts.indexUrl } : {}),
     limit: opts.limit ?? 25,
     ...(opts.maxCost != null ? { maxCostUsd: opts.maxCost } : {}),
   });
   printFinderResult(result);
+}
+
+export async function commandFindJobChange(opts: {
+  personas?: string;
+  companies?: string;
+  sinceDays?: number;
+  limit?: number;
+  maxCost?: number;
+  dryRun: boolean;
+}): Promise<void> {
+  header(`find job-change ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
+  const personas = splitCsv(opts.personas);
+  const companies = splitCsv(opts.companies);
+  const result = await runJobChangeFinder({
+    dryRun: opts.dryRun,
+    ...(personas ? { personas } : {}),
+    ...(companies ? { companies } : {}),
+    ...(opts.sinceDays != null ? { sinceDays: opts.sinceDays } : {}),
+    limit: opts.limit ?? 25,
+    ...(opts.maxCost != null ? { maxCostUsd: opts.maxCost } : {}),
+  });
+  printFinderResult(result);
+}
+
+export async function commandFindHiringSignal(opts: {
+  roles?: string;
+  companies?: string;
+  yourClaim?: string;
+  sinceDays?: number;
+  limit?: number;
+  maxCost?: number;
+  dryRun: boolean;
+}): Promise<void> {
+  header(`find hiring-signal ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
+  const roles = splitCsv(opts.roles);
+  const companies = splitCsv(opts.companies);
+  const result = await runHiringSignalFinder({
+    dryRun: opts.dryRun,
+    ...(roles ? { roles } : {}),
+    ...(companies ? { companies } : {}),
+    ...(opts.yourClaim ? { yourClaim: opts.yourClaim } : {}),
+    ...(opts.sinceDays != null ? { sinceDays: opts.sinceDays } : {}),
+    limit: opts.limit ?? 25,
+    ...(opts.maxCost != null ? { maxCostUsd: opts.maxCost } : {}),
+  });
+  printFinderResult(result);
+}
+
+export async function commandFindPodcastGuest(opts: {
+  podcasts?: string;
+  sinceDays?: number;
+  skipRead: boolean;
+  limit?: number;
+  maxCost?: number;
+  dryRun: boolean;
+}): Promise<void> {
+  header(`find podcast-guest ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
+  const podcasts = splitCsv(opts.podcasts);
+  const result = await runPodcastGuestFinder({
+    dryRun: opts.dryRun,
+    ...(podcasts ? { podcasts } : {}),
+    ...(opts.sinceDays != null ? { sinceDays: opts.sinceDays } : {}),
+    skipRead: opts.skipRead,
+    limit: opts.limit ?? 25,
+    ...(opts.maxCost != null ? { maxCostUsd: opts.maxCost } : {}),
+  });
+  printFinderResult(result);
+}
+
+function splitCsv(raw?: string): string[] | undefined {
+  if (!raw) return undefined;
+  const parts = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return parts.length > 0 ? parts : undefined;
 }
 
 export function commandFindQueue(opts: {

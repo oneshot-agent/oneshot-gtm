@@ -1,5 +1,6 @@
 import { getLedger } from "@oneshot-gtm/core";
 import { runAcceleratorBatchFinder } from "./accelerator-batch.ts";
+import { runPostFundingFinder } from "./post-funding.ts";
 import { runShowHnFinder } from "./show-hn.ts";
 import type { FinderResult } from "./_types.ts";
 
@@ -33,6 +34,28 @@ export const TRIGGERS: TriggerSpec[] = [
       runAcceleratorBatchFinder({
         dryRun: false,
         cohort: (cfg["cohort"] as string) ?? "yc-w26",
+        limit: (cfg["limit"] as number) ?? 25,
+        maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
+      }),
+  },
+  {
+    name: "post-funding-auto",
+    defaultIntervalMs: 12 * ONE_HOUR,
+    defaultConfig: {
+      autoRounds: ["Seed", "Series A"],
+      autoSinceDays: 7,
+      limit: 25,
+      maxCostUsd: 5,
+    },
+    run: (cfg) =>
+      runPostFundingFinder({
+        dryRun: false,
+        auto: true,
+        autoRounds: (cfg["autoRounds"] as string[]) ?? ["Seed", "Series A"],
+        ...(typeof cfg["autoIndustry"] === "string"
+          ? { autoIndustry: cfg["autoIndustry"] as string }
+          : {}),
+        autoSinceDays: (cfg["autoSinceDays"] as number) ?? 7,
         limit: (cfg["limit"] as number) ?? 25,
         maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
       }),

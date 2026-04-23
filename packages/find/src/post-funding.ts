@@ -1,4 +1,4 @@
-import { getLedger, webRead } from "@oneshot-gtm/core";
+import { getLedger, webRead, webSearch } from "@oneshot-gtm/core";
 import { findEmail, verifyEmail } from "@oneshot-gtm/core";
 import { complete, loadPrompt } from "@oneshot-gtm/intel";
 import type { PostFundingTarget } from "@oneshot-gtm/plays";
@@ -24,23 +24,48 @@ export interface PostFundingFinderOpts extends RunOpts {
   sourceUrlsFile?: string;
   /** Or: pass URLs directly. */
   sourceUrls?: string[];
+  /**
+   * Auto-discovery mode: if no source URLs are supplied, run a webSearch
+   * per round in `autoRounds` for "<industry hint> <round> announcement".
+   * Industry hint comes from the saved ICP one-liner (or autoIndustry override).
+   */
+  auto?: boolean;
+  /** Rounds to scan in auto mode. Default: ["Seed", "Series A"]. */
+  autoRounds?: string[];
+  /** Override the industry hint extracted from the ICP. */
+  autoIndustry?: string;
+  /** Look back this many days in auto mode (used in the search query). Default 7. */
+  autoSinceDays?: number;
 }
 
 export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise<FinderResult> {
-  const urls = collectUrls(opts);
   const limit = opts.limit ?? 25;
   const icp = resolveIcp(opts.icpOverride);
   const ledger = getLedger();
   const system = loadPrompt("post-funding-extract");
 
+  // Auto mode: harvest URLs via webSearch instead of reading a file.
+  let urls = collectUrls(opts);
+  let autoCost = 0;
+  if (opts.auto && urls.length === 0) {
+    const harvested = await harvestAutoUrls({
+      rounds: opts.autoRounds ?? ["Seed", "Series A"],
+      industry: opts.autoIndustry ?? deriveIndustryHint(icp),
+      sinceDays: opts.autoSinceDays ?? 7,
+      limit: limit * 2, // pull a bit extra; ICP filter + extract will winnow
+    });
+    urls = harvested.urls;
+    autoCost = harvested.costUsd;
+  }
+
   const result: FinderResult = {
-    source: SOURCE,
+    source: opts.auto ? `${SOURCE}:auto` : SOURCE,
     candidates: urls.length,
     droppedIcp: 0,
     droppedDuplicate: 0,
     droppedEnrichment: 0,
     enqueued: 0,
-    costUsd: 0,
+    costUsd: autoCost,
   };
 
   for (const url of urls.slice(0, limit)) {
@@ -145,7 +170,7 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
   return result;
 }
 
-function collectUrls(opts: PostFundingFinderOpts): string[] {
+export function collectUrls(opts: PostFundingFinderOpts): string[] {
   const urls: string[] = [];
   if (opts.sourceUrls) urls.push(...opts.sourceUrls);
   if (opts.sourceUrlsFile) {
@@ -164,7 +189,7 @@ function collectUrls(opts: PostFundingFinderOpts): string[] {
   return [...new Set(urls)];
 }
 
-function parseExtract(raw: string): PostFundingExtract {
+export function parseExtract(raw: string): PostFundingExtract {
   const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
   const candidate = fenced ? fenced[1] : raw;
   try {
@@ -198,4 +223,159 @@ function extractCost(r: unknown): number | undefined {
   if (!r || typeof r !== "object") return undefined;
   const v = (r as Record<string, unknown>)["cost"];
   return typeof v === "number" ? v : undefined;
+}
+
+interface HarvestArgs {
+  rounds: string[];
+  industry: string;
+  sinceDays: number;
+  limit: number;
+}
+
+const FUNDING_DOMAIN_HINTS = [
+  "techcrunch.com",
+  "crunchbase.com",
+  "businesswire.com",
+  "prnewswire.com",
+  "pitchbook.com",
+  "venturebeat.com",
+  "axios.com",
+  "fortune.com",
+  "forbes.com",
+  "reuters.com",
+  "bloomberg.com",
+  "sifted.eu",
+  "tech.eu",
+  "theinformation.com",
+];
+
+async function harvestAutoUrls(args: HarvestArgs): Promise<{ urls: string[]; costUsd: number }> {
+  const seen = new Set<string>();
+  const urls: string[] = [];
+  let costUsd = 0;
+  const sincePhrase = args.sinceDays <= 1 ? "today" : `last ${args.sinceDays} days`;
+  const industry = args.industry.trim();
+
+  for (const round of args.rounds) {
+    if (urls.length >= args.limit) break;
+    const queryParts = [
+      industry,
+      `"${round}"`,
+      "funding announcement",
+      sincePhrase,
+      "site:(techcrunch.com OR crunchbase.com OR businesswire.com OR prnewswire.com OR sifted.eu OR tech.eu)",
+    ].filter(Boolean);
+    const query = queryParts.join(" ");
+    try {
+      const search = await webSearch(
+        { query, maxResults: Math.min(20, Math.max(5, args.limit - urls.length)) },
+        { playName: PLAY_NAME },
+      );
+      costUsd += extractCost(search.result) ?? 0.01;
+      for (const hit of search.result.results ?? []) {
+        if (urls.length >= args.limit) break;
+        if (!hit.url) continue;
+        const normalized = normalizeUrl(hit.url);
+        if (!normalized) continue;
+        if (seen.has(normalized)) continue;
+        if (!isLikelyFundingUrl(normalized, hit.title, hit.description)) continue;
+        seen.add(normalized);
+        urls.push(normalized);
+      }
+    } catch {
+      // skip this round on error; keep harvesting others
+    }
+  }
+  return { urls, costUsd };
+}
+
+export function normalizeUrl(raw: string): string | null {
+  try {
+    const u = new URL(raw);
+    u.hash = "";
+    return u.toString();
+  } catch {
+    return null;
+  }
+}
+
+export function isLikelyFundingUrl(url: string, title?: string, description?: string): boolean {
+  let host = "";
+  try {
+    host = new URL(url).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  const hostMatch = FUNDING_DOMAIN_HINTS.some((h) => host === h || host.endsWith(`.${h}`));
+  if (hostMatch) return true;
+  const text = `${title ?? ""} ${description ?? ""}`.toLowerCase();
+  return /\b(raises?|raised|series\s+[a-d]|seed round|pre-?seed|funding round|led by)\b/.test(text);
+}
+
+export function deriveIndustryHint(icp: string | null): string {
+  if (!icp) return "startup";
+  const cleaned = icp
+    .toLowerCase()
+    .replace(/[^a-z0-9\s+/-]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  const stop = new Set([
+    "the",
+    "a",
+    "an",
+    "and",
+    "or",
+    "of",
+    "for",
+    "to",
+    "with",
+    "in",
+    "on",
+    "who",
+    "that",
+    "are",
+    "is",
+    "be",
+    "their",
+    "they",
+    "we",
+    "our",
+    "you",
+    "your",
+    "at",
+    "as",
+    "by",
+    "from",
+    "any",
+    "need",
+    "needs",
+    "want",
+    "wants",
+    "use",
+    "uses",
+    "using",
+    "build",
+    "building",
+    "ship",
+    "shipping",
+    "make",
+    "making",
+    "people",
+    "team",
+    "teams",
+    "company",
+    "companies",
+    "founder",
+    "founders",
+    "developer",
+    "developers",
+    "engineer",
+    "engineers",
+    "ceo",
+    "cto",
+    "vp",
+    "head",
+  ]);
+  const keywords = cleaned.filter((w) => w.length > 2 && !stop.has(w)).slice(0, 4);
+  return keywords.length > 0 ? keywords.join(" ") : "startup";
 }

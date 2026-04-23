@@ -178,4 +178,17 @@ describe("trigger registry state", () => {
     ledger.setTriggerEnabled("show-hn", true);
     expect(ledger.getTrigger("show-hn")?.enabled).toBe(1);
   });
+
+  it("setTriggerConfig overwrites config_json", () => {
+    ledger.upsertTrigger({
+      name: "post-funding-auto",
+      configJson: JSON.stringify({ autoSinceDays: 7 }),
+    });
+    ledger.setTriggerConfig(
+      "post-funding-auto",
+      JSON.stringify({ autoSinceDays: 14, limit: 50 }),
+    );
+    const t = ledger.getTrigger("post-funding-auto");
+    expect(JSON.parse(t!.config_json ?? "{}")).toEqual({ autoSinceDays: 14, limit: 50 });
+  });
 });

@@ -15,6 +15,7 @@ import type {
   ReceiptView,
   SetupRequest,
   SpendByPlay,
+  TriggerView,
 } from "@oneshot-gtm/shared-types";
 
 const BASE = "/api";
@@ -98,4 +99,9 @@ export const api = {
   approveAllQueue: (play?: string) =>
     postJson<{ approved: number }>("/queue/approve-all", play ? { play } : {}),
   drainQueue: (req: DrainRequest) => postJson<DrainResult>("/queue/drain", req),
+  triggers: () => getJson<{ triggers: TriggerView[] }>("/triggers"),
+  setTriggerEnabled: (name: string, enabled: boolean) =>
+    postJson<{ ok: boolean }>(`/triggers/${encodeURIComponent(name)}/enabled`, { enabled }),
+  setTriggerConfig: (name: string, config: unknown) =>
+    postJson<{ ok: boolean }>(`/triggers/${encodeURIComponent(name)}/config`, { config }),
 };

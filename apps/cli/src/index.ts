@@ -39,6 +39,9 @@ import {
   commandFindAcceleratorBatch,
   commandFindApprove,
   commandFindDrain,
+  commandFindHiringSignal,
+  commandFindJobChange,
+  commandFindPodcastGuest,
   commandFindPostFunding,
   commandFindQueue,
   commandFindReject,
@@ -458,9 +461,18 @@ find
   );
 find
   .command("post-funding")
-  .requiredOption(
+  .option(
     "-s, --source-urls <file>",
-    "file with one TC/Crunchbase/blog URL per line (auto-discovery lands in F2)",
+    "file with one TC/Crunchbase/blog URL per line (skip when using --auto)",
+  )
+  .option("--auto", "auto-discover URLs via webSearch using ICP-derived industry hint", false)
+  .option(
+    "--auto-industry <text>",
+    "industry hint for --auto search (defaults to keywords from saved ICP)",
+  )
+  .option("--auto-rounds <list>", 'comma-separated rounds for --auto (default "Seed,Series A")')
+  .option("--auto-since-days <n>", "look back this many days in --auto (default 7)", (v) =>
+    Number.parseInt(v, 10),
   )
   .option("--limit <n>", "max URLs to process (default 25)", (v) => Number.parseInt(v, 10))
   .option("--max-cost <usd>", "halt mid-run when this much OneShot $ is spent", (v) =>
@@ -469,22 +481,115 @@ find
   .option("--dry-run", "skip enrichment + enqueue; just count what would be processed", false)
   .description("Read funding announcement URLs, extract structure, enrich founder contact, enqueue")
   .action(
-    runOrFail((opts: { sourceUrls: string; limit?: number; maxCost?: number; dryRun: boolean }) =>
-      commandFindPostFunding(opts),
+    runOrFail(
+      (opts: {
+        sourceUrls?: string;
+        auto: boolean;
+        autoIndustry?: string;
+        autoRounds?: string;
+        autoSinceDays?: number;
+        limit?: number;
+        maxCost?: number;
+        dryRun: boolean;
+      }) => commandFindPostFunding(opts),
     ),
   );
 find
   .command("accelerator-batch")
-  .requiredOption("-c, --cohort <cohort>", "cohort tag (yc-w26, yc-s26, yc-w25, ...)")
+  .requiredOption(
+    "-c, --cohort <cohort>",
+    "cohort tag (yc-w26, yc-s26, yc-w25, yc-s25, od-current, spc-current, antler-current, techstars-current)",
+  )
+  .option(
+    "--index-url <url>",
+    "override the program index URL (use any portfolio / launch page)",
+  )
   .option("--limit <n>", "max companies to process (default 25)", (v) => Number.parseInt(v, 10))
   .option("--max-cost <usd>", "halt mid-run when this much OneShot $ is spent", (v) =>
     Number.parseFloat(v),
   )
   .option("--dry-run", "skip enrichment + enqueue; just count what would be processed", false)
-  .description("Pull a YC batch index page, extract companies, enrich + enqueue")
+  .description("Pull a cohort/portfolio index page, extract companies, enrich + enqueue")
   .action(
-    runOrFail((opts: { cohort: string; limit?: number; maxCost?: number; dryRun: boolean }) =>
-      commandFindAcceleratorBatch(opts),
+    runOrFail(
+      (opts: {
+        cohort: string;
+        indexUrl?: string;
+        limit?: number;
+        maxCost?: number;
+        dryRun: boolean;
+      }) => commandFindAcceleratorBatch(opts),
+    ),
+  );
+find
+  .command("job-change")
+  .option("--personas <list>", "comma-separated personas (default: VP Eng,Head of Growth,...)")
+  .option("--companies <list>", "optional comma-separated company filter")
+  .option("--since-days <n>", "look back this many days (default 14)", (v) => Number.parseInt(v, 10))
+  .option("--limit <n>", "max candidates to process (default 25)", (v) => Number.parseInt(v, 10))
+  .option("--max-cost <usd>", "halt mid-run when this much OneShot $ is spent", (v) =>
+    Number.parseFloat(v),
+  )
+  .option("--dry-run", "skip enrichment + enqueue; just count what would be processed", false)
+  .description("Search for recent job-change announcements, ICP-filter, enrich + enqueue")
+  .action(
+    runOrFail(
+      (opts: {
+        personas?: string;
+        companies?: string;
+        sinceDays?: number;
+        limit?: number;
+        maxCost?: number;
+        dryRun: boolean;
+      }) => commandFindJobChange(opts),
+    ),
+  );
+find
+  .command("hiring-signal")
+  .option("--roles <list>", "comma-separated job titles to scan for")
+  .option("--companies <list>", "optional comma-separated company filter")
+  .option("--your-claim <text>", "one-line claim about ramp-time compression for that role")
+  .option("--since-days <n>", "look back this many days (default 14)", (v) => Number.parseInt(v, 10))
+  .option("--limit <n>", "max postings to process (default 25)", (v) => Number.parseInt(v, 10))
+  .option("--max-cost <usd>", "halt mid-run when this much OneShot $ is spent", (v) =>
+    Number.parseFloat(v),
+  )
+  .option("--dry-run", "skip enrichment + enqueue; just count what would be processed", false)
+  .description("Search ATS sites (Greenhouse/Lever/Workable/Ashby) for hiring signals, enqueue")
+  .action(
+    runOrFail(
+      (opts: {
+        roles?: string;
+        companies?: string;
+        yourClaim?: string;
+        sinceDays?: number;
+        limit?: number;
+        maxCost?: number;
+        dryRun: boolean;
+      }) => commandFindHiringSignal(opts),
+    ),
+  );
+find
+  .command("podcast-guest")
+  .option("--podcasts <list>", "comma-separated podcast names")
+  .option("--since-days <n>", "look back this many days (default 21)", (v) => Number.parseInt(v, 10))
+  .option("--skip-read", "skip the per-episode webRead step (cheaper, less accurate)", false)
+  .option("--limit <n>", "max episodes to process (default 25)", (v) => Number.parseInt(v, 10))
+  .option("--max-cost <usd>", "halt mid-run when this much OneShot $ is spent", (v) =>
+    Number.parseFloat(v),
+  )
+  .option("--dry-run", "skip enrichment + enqueue; just count what would be processed", false)
+  .description("Discover recent podcast guests via webSearch, enrich + enqueue")
+  .action(
+    runOrFail(
+      (opts: {
+        podcasts?: string;
+        sinceDays?: number;
+        skipRead: boolean;
+        limit?: number;
+        maxCost?: number;
+        dryRun: boolean;
+      }) => commandFindPodcastGuest(opts),
     ),
   );
 find

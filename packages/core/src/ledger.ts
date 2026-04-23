@@ -706,6 +706,10 @@ export class Ledger {
     this.db.prepare(`UPDATE triggers SET enabled = ? WHERE name = ?`).run(enabled ? 1 : 0, name);
   }
 
+  setTriggerConfig(name: string, configJson: string): void {
+    this.db.prepare(`UPDATE triggers SET config_json = ? WHERE name = ?`).run(configJson, name);
+  }
+
   close(): void {
     this.db.close();
   }

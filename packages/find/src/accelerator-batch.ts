@@ -8,19 +8,30 @@ import type { AcceleratorListExtract, FinderResult, RunOpts } from "./_types.ts"
 const PLAY_NAME = "accelerator-batch";
 
 export interface AcceleratorBatchFinderOpts extends RunOpts {
-  /** Cohort tag, e.g. "yc-w26", "yc-s26", "yc-w25". For non-YC cohorts, pass --source-urls. */
+  /** Cohort tag, e.g. "yc-w26", "yc-s26", "od-current", "spc-current", "antler-current", "techstars-current". */
   cohort: string;
+  /** Override the cohort index URL (lets founders point at any program page). */
+  indexUrl?: string;
 }
 
 interface BatchListExtract {
   companies: AcceleratorListExtract[];
 }
 
-const YC_BATCH_URL: Record<string, string> = {
+const COHORT_INDEX_URL: Record<string, string> = {
+  // YC
   "yc-w26": "https://www.ycombinator.com/launches/?batch=W26",
   "yc-s26": "https://www.ycombinator.com/launches/?batch=S26",
   "yc-w25": "https://www.ycombinator.com/launches/?batch=W25",
   "yc-s25": "https://www.ycombinator.com/launches/?batch=S25",
+  // On Deck — Founder Fellowship
+  "od-current": "https://www.beondeck.com/founders",
+  // South Park Commons
+  "spc-current": "https://www.southparkcommons.com/founders",
+  // Antler
+  "antler-current": "https://www.antler.co/portfolio",
+  // Techstars
+  "techstars-current": "https://www.techstars.com/portfolio",
 };
 
 export async function runAcceleratorBatchFinder(
@@ -41,10 +52,10 @@ export async function runAcceleratorBatchFinder(
     costUsd: 0,
   };
 
-  const indexUrl = YC_BATCH_URL[opts.cohort];
+  const indexUrl = opts.indexUrl ?? COHORT_INDEX_URL[opts.cohort];
   if (!indexUrl) {
     throw new Error(
-      `cohort '${opts.cohort}' not yet supported as an auto-discoverable source. Use 'find post-funding' style --source-urls for non-YC cohorts in F1.`,
+      `cohort '${opts.cohort}' has no built-in index URL. Pass --index-url <url> to point at the program's portfolio/launch page, or use one of: ${Object.keys(COHORT_INDEX_URL).join(", ")}.`,
     );
   }
 
@@ -212,9 +223,11 @@ function parseLaunchPage(markdown: string): {
     }
     if (founderName && companyWebsite) break;
   }
-  // Fallback: any bare https URL not pointing to YC itself.
+  // Fallback: any bare https URL not pointing to a known program domain.
   if (!companyWebsite) {
-    const m = markdown.match(/https?:\/\/(?!www\.ycombinator\.com|ycombinator\.com)[^\s)]+/);
+    const m = markdown.match(
+      /https?:\/\/(?!(?:www\.)?(?:ycombinator|beondeck|southparkcommons|antler|techstars)\.com)[^\s)]+/,
+    );
     if (m) companyWebsite = m[0].trim();
   }
   return { founderName, companyWebsite };
