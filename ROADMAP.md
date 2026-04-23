@@ -86,14 +86,59 @@ Public. Issues mirror the items below. PRs welcome.
 - [ ] `measure benchmark` — opt-in cohort comparisons (deferred to Phase 3 since it needs a hosted endpoint)
 - [ ] Warm-signal escalation in cadence (open-tracking → auto phone call) — needs OneShot to surface open events
 
+## Phase F1 — Find layer (shipped)
+
+The motion plays needed hand-curated JSON target lists; founders kept asking "where do these targets come from?" F1 closes that loop with an upstream discovery layer.
+
+- [x] **`target_queue` + `triggers` ledger tables** (schema v4) with cross-table dedupe against `prospects.email`
+- [x] `find show-hn` — HN Algolia poller, ICP-filter → enrich (findEmail + verifyEmail) → enqueue
+- [x] `find post-funding --source-urls <file>` — read TC/Crunchbase/blog URLs, LLM-extract structured facts, enrich, enqueue
+- [x] `find accelerator-batch --cohort yc-w26` — pull YC launch index, LLM-extract company list, per-company webRead → enrich → enqueue
+- [x] `find queue / approve / reject / drain / watch` — review lifecycle in CLI
+- [x] `find watch` — long-running poller with `--once` for cron + foreground daemon mode; per-trigger interval + spend cap
+- [x] **Web `/queue` page** — filterable inbox (status + play), bulk approve, drain modal per play with dry-run toggle
+- [x] `config icp set/show` + free-text ICP one-liner used by the binary classifier prompt
+- [x] `findEmail` + `verifyEmail` wrappers in `packages/core/src/oneshot.ts`
+- [x] Server `/api/queue/*` routes; SDK clients via `apps/web/src/api/client.ts`
+
+## Phase F2 — Sourcing breadth + trigger UI (shipped)
+
+- [x] `find post-funding --auto` — webSearch by ICP-derived industry × round; bypasses the URL file. Registered as the `post-funding-auto` trigger (12h interval).
+- [x] `find job-change` — webSearch for "joined as <persona>" announcements with `--personas` + `--companies` filters
+- [x] `find hiring-signal` — Greenhouse / Lever / Workable / Ashby ATS search with smart corporate-domain lookup (webSearch fallback when LLM doesn't extract one)
+- [x] `find podcast-guest` — recent-guest discovery across Latent Space / Lenny's / 20VC / Acquired / Invest Like the Best
+- [x] `find accelerator-batch` — `--index-url` override + cohort aliases for OD, SPC, Antler, Techstars
+- [x] **Trigger-config UI** in `/queue`: enable/disable toggle, last-poll + last-run summary, JSON config editor with `intervalMs` override (min 60s)
+- [x] Opt-in triggers — `job-change`, `hiring-signal`, `podcast-guest` register disabled-by-default; founder enables from the UI without touching code
+- [x] `drainQueue` dispatcher handles all six finders (was missing hiring-signal + podcast-guest)
+- [x] Partial-send id-mapping fix — drain no longer marks the wrong rows as sent when some drafts fail mid-batch
+- [x] Three new structured-output prompts: `job-change-extract`, `hiring-signal-extract`, `podcast-guest-extract`
+
+## Phase F3 — Real-time signals + ICP learning loop
+
+- [ ] **Webhook intake** — `POST /api/triggers/cal-no-show` + `POST /api/triggers/signup` → ICP-filter → enqueue into `demo-no-show` / `concierge`. Turns oneshot-gtm from polling into real-time.
+- [ ] **ICP-filter learning loop v1** — every `icpFilter` call pulls the last ~20 (candidate, decision, reason) tuples from `target_queue` as in-context examples. Tighter filtering, zero schema change.
+- [ ] `find competitor-switch` — webSearch for "switching from X to Y" + G2 reviews mentioning a competitor
+- [ ] `find breakup-revive` — scan the local ledger for cold prospects (>90d, no reply, marketable) and enqueue them
+- [ ] **`find watch` as an OS service** — launchd plist + systemd unit + Windows Service docs; `--once` mode already works for cron
+
+## Phase F4 — Operationalize + scale
+
+- [ ] **Bulk Clay / Apollo CSV import** — `find import --csv <file> --play <name>` with column mapping; drop-in for cohorts you already paid to source
+- [ ] **ICP-filter learning loop v2** — periodic LLM job that proposes a tighter ICP one-liner from accumulated decisions; founder approves the rewrite in `/queue`
+- [ ] **Per-source weighting** in the watch loop — track approval rate per finder; deprioritize noisy sources automatically
+- [ ] **Per-trigger interval UI input** — dedicated number field instead of editing JSON (small polish on F2)
+- [ ] **Webhook signing + replay protection** for the F3 endpoints
+
 ## Phase 3 — Distribution flywheel
 
 - [ ] Public benchmarks page powered by opt-in telemetry
 - [ ] CRM adapters: Attio, Folk, Pipedrive
 - [ ] Slack / Linear notification webhooks
 - [ ] Fireship sponsor video
-- [ ] "Built with oneshot-gtm" badge program
+- [ ] "Built with oneshot-gtm" badge program (the artifact shipped in R3; this is the adoption push)
 - [ ] BYO sending domain (advanced — OneShot handles the default)
+- [ ] Multi-user / hosted dashboard ("OneShot Cloud" territory)
 
 ## Things we intentionally do NOT do
 
