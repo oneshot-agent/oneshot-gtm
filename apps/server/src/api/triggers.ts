@@ -1,5 +1,14 @@
 import { getLedger, type TriggerRow } from "@oneshot-gtm/core";
-import { effectiveIntervalMs, runTriggerNow, TRIGGERS, type TriggerSpec } from "@oneshot-gtm/find";
+import {
+  checkReadiness,
+  effectiveIntervalMs,
+  fireTriggerNow,
+  getTriggerRunningSince,
+  isTriggerRunning,
+  TRIGGERS,
+  type Readiness,
+  type TriggerSpec,
+} from "@oneshot-gtm/find";
 import type { RunTriggerResult, TriggerView } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 
@@ -28,6 +37,15 @@ export function toView(
   }
   const defaultEnabled = spec ? spec.enabledByDefault !== false : true;
   const intervalMs = spec ? effectiveIntervalMs(spec, config) : defaultIntervalMs;
+  const runningSinceMs = getTriggerRunningSince(name);
+  // Readiness is based on the spec's `readiness` fn + the effective config.
+  // Orphan rows (no spec) are always ready — there's nothing to gate against.
+  // The explicit Readiness annotation keeps the discriminated-union narrowing
+  // intact (otherwise the literal { ready: true } widens to { ready: boolean }
+  // and TS can't see that ready=false implies a `reason` field).
+  const readiness: Readiness = spec
+    ? checkReadiness(spec, config ?? spec.defaultConfig)
+    : { ready: true };
   return {
     name,
     enabled: row ? Boolean(row.enabled) : defaultEnabled,
@@ -37,6 +55,10 @@ export function toView(
     defaultConfig: spec ? spec.defaultConfig : null,
     lastPolledAt: row?.last_polled_at ?? null,
     lastRunSummary: lastSummary,
+    running: isTriggerRunning(name),
+    runningSince: runningSinceMs != null ? new Date(runningSinceMs).toISOString() : null,
+    ready: readiness.ready,
+    notReadyReason: readiness.ready ? null : readiness.reason,
   };
 }
 
@@ -76,8 +98,27 @@ export async function setTriggerEnabledRoute(
   }
   const ledger = getLedger();
   const stored = ledger.getTrigger(name);
+  const spec = TRIGGERS.find((t) => t.name === name) ?? null;
+  // Readiness gate: block *enabling* an unready trigger so the scheduler
+  // doesn't sit in a loop skipping it every tick. Disabling is always allowed.
+  if (body.enabled && spec) {
+    const config = stored?.config_json
+      ? (JSON.parse(stored.config_json) as Record<string, unknown>)
+      : spec.defaultConfig;
+    const readiness = checkReadiness(spec, config);
+    if (!readiness.ready) {
+      return jsonResponse(
+        {
+          error: `trigger '${name}' not ready: ${readiness.reason}`,
+          name,
+          reason: readiness.reason,
+        },
+        409,
+        req,
+      );
+    }
+  }
   if (!stored) {
-    const spec = TRIGGERS.find((t) => t.name === name);
     if (!spec) return jsonResponse({ error: `unknown trigger '${name}'` }, 404, req);
     ledger.upsertTrigger({
       name,
@@ -121,21 +162,41 @@ export async function setTriggerConfigRoute(
   return jsonResponse({ ok: true, name }, 200, req);
 }
 
-export async function runTriggerRoute(
-  req: Request,
-  params: Record<string, string>,
-): Promise<Response> {
+/**
+ * Fire-and-forget. Returns 202 immediately after kicking the finder off on
+ * the event loop. The UI polls `GET /api/triggers` for `lastRunSummary` +
+ * `running` to observe completion. Returns 409 if the trigger is already
+ * running — prevents double-spend on an impatient second click.
+ */
+export function runTriggerRoute(req: Request, params: Record<string, string>): Response {
   const name = params["name"];
   if (!name) return jsonResponse({ error: "name required" }, 400, req);
   if (!TRIGGERS.some((t) => t.name === name)) {
     return jsonResponse({ error: `unknown trigger '${name}'` }, 404, req);
   }
-  const outcome = await runTriggerNow(name);
+  try {
+    fireTriggerNow(name);
+  } catch (err) {
+    const message = (err as Error).message ?? "failed to fire";
+    // Already-running is an expected concurrent-click case → 409, not 500.
+    if (message.includes("already running")) {
+      return jsonResponse({ error: message, name, running: true }, 409, req);
+    }
+    // Readiness gate: `fireTriggerNow` throws `not ready: <reason>` when the
+    // spec's readiness fn rejects the stored config. Surface the reason so the
+    // UI can toast it.
+    if (message.startsWith("not ready:")) {
+      const reason = message.slice("not ready:".length).trim();
+      return jsonResponse({ error: message, name, reason, ready: false }, 409, req);
+    }
+    return jsonResponse({ error: message }, 500, req);
+  }
   const view: RunTriggerResult = {
     name,
-    fired: outcome.fired,
-    result: outcome.result ?? null,
-    error: outcome.error ?? null,
+    fired: true,
+    pending: true,
+    result: null,
+    error: null,
   };
-  return jsonResponse(view, 200, req);
+  return jsonResponse(view, 202, req);
 }

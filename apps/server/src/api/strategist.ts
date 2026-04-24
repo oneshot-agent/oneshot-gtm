@@ -1,11 +1,9 @@
 import { loadConfig, logEvent, startRun } from "@oneshot-gtm/core";
 import { complete, loadPrompt } from "@oneshot-gtm/intel";
-import { effectiveIntervalMs, TRIGGERS, type TriggerSpec } from "@oneshot-gtm/find";
+import { effectiveIntervalMs, TRIGGERS } from "@oneshot-gtm/find";
 import type { StrategistFrame, StrategistRequest } from "@oneshot-gtm/shared-types";
 import { getLedger } from "@oneshot-gtm/core";
 import { jsonResponse } from "../server.ts";
-
-const PLAY_NAME = "config:strategist";
 
 /**
  * SSE chat endpoint for the trigger strategist.
@@ -59,10 +57,18 @@ export async function strategistRoute(req: Request): Promise<Response> {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const encoder = new TextEncoder();
+      let closed = false;
       const send = (event: StrategistFrame): void => {
-        controller.enqueue(
-          encoder.encode(`event: ${event.kind}\ndata: ${JSON.stringify(event)}\n\n`),
-        );
+        if (closed) return;
+        try {
+          controller.enqueue(
+            encoder.encode(`event: ${event.kind}\ndata: ${JSON.stringify(event)}\n\n`),
+          );
+        } catch {
+          // Client disconnected mid-stream — controller already closed by
+          // the runtime. Mark and stop trying to write.
+          closed = true;
+        }
       };
 
       const startedAt = Date.now();
@@ -77,19 +83,24 @@ export async function strategistRoute(req: Request): Promise<Response> {
           temperature: 0.4,
           maxTokens: 800,
         });
-        // Fake-stream the assistant content in ~60-char chunks so the UI gets
+        // Fake-stream the assistant content in chunks so the UI gets
         // progressive text instead of a single late drop. Real token streaming
         // is a future hop on intel.complete; this is good enough for chat
         // turns that complete in ~5-10s.
-        const text = llm.content;
-        const chunkSize = 60;
-        for (let i = 0; i < text.length; i += chunkSize) {
-          send({ kind: "delta", text: text.slice(i, i + chunkSize) });
+        //
+        // Split on Unicode code points (Array.from), not UTF-16 code units —
+        // a midstream split through a surrogate pair would yield mojibake on
+        // the client. Chunk size is in code-points, not bytes.
+        const codePoints = Array.from(llm.content);
+        const CHUNK_CODE_POINTS = 60;
+        for (let i = 0; i < codePoints.length; i += CHUNK_CODE_POINTS) {
+          if (closed) break;
+          send({ kind: "delta", text: codePoints.slice(i, i + CHUNK_CODE_POINTS).join("") });
         }
         send({ kind: "done" });
         logEvent("strategist.turn.done", {
           duration_ms: Date.now() - startedAt,
-          response_chars: text.length,
+          response_chars: llm.content.length,
         });
       } catch (err) {
         const message = (err as Error).message ?? "strategist failed";
@@ -103,7 +114,12 @@ export async function strategistRoute(req: Request): Promise<Response> {
         );
         send({ kind: "error", message });
       } finally {
-        controller.close();
+        closed = true;
+        try {
+          controller.close();
+        } catch {
+          // already closed by client disconnect — ignore
+        }
       }
     },
   });
@@ -155,7 +171,6 @@ function buildTriggerCatalog(): string {
         `\n- brief: ${spec.configBrief ?? "(no brief — defaults are sane)"}`,
     );
   }
-  void ((_: TriggerSpec) => null);
   return lines.join("\n\n");
 }
 
@@ -173,8 +188,3 @@ function humanInterval(ms: number): string {
   if (ms < 24 * 3600_000) return `${(ms / 3600_000).toFixed(1)}h`;
   return `${(ms / (24 * 3600_000)).toFixed(1)}d`;
 }
-
-// PLAY_NAME exported for receipts attribution if/when the strategist starts
-// recording its own LLM cost. Currently the cost lands in the receipts table
-// under the existing complete() flow; this constant lets future code tag it.
-export { PLAY_NAME };

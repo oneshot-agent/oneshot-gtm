@@ -28,20 +28,7 @@ const SUGGESTIONS = [
  * no extra deps. Same shape soul-hunt-web uses.
  */
 export function StrategistChat() {
-  const qc = useQueryClient();
-
-  // Refetch triggers + queue whenever the strategist applies a config change
-  // through one of the action chips. Plumbed into the action chip onClick.
-  const invalidateAll = useCallback(() => {
-    void qc.invalidateQueries({ queryKey: ["triggers"] });
-    void qc.invalidateQueries({ queryKey: ["queue"] });
-    void qc.invalidateQueries({ queryKey: ["home"] });
-  }, [qc]);
-
-  const adapter = useMemo(
-    () => createStrategistAdapter({ onInvalidate: invalidateAll }),
-    [invalidateAll],
-  );
+  const adapter = useMemo(() => createStrategistAdapter(), []);
   const runtime = useLocalRuntime(adapter);
 
   return (
@@ -56,8 +43,8 @@ export function StrategistChat() {
                 <div className="flex-1">
                   <div className="ln-eyebrow">Strategist</div>
                   <p className="mt-1 text-sm text-ink-cream-2">
-                    Tell me what to set up. I'll propose configs anchored in your ICP + product
-                    and ask before applying anything. Try a chip below or ask anything.
+                    Tell me what to set up. I'll propose configs anchored in your ICP + product and
+                    ask before applying anything. Try a chip below or ask anything.
                   </p>
                 </div>
               </div>
@@ -140,11 +127,21 @@ interface ParsedAction {
   config?: Record<string, unknown>;
 }
 
-const ACTION_RE = /<!--ACTION:(enable|disable|apply-config):([^:>-]+)(?::([\s\S]*?))?-->/;
+// Trigger names contain hyphens (post-funding-auto, agent-builders, show-hn).
+// The earlier `[^:>-]+` excluded `-` and silently broke every multi-word
+// trigger; only `[^:>]+` is correct. The trigger name capture stops at the
+// first `:` (which separates the optional JSON config) or `>` (rare).
+const ACTION_RE = /<!--ACTION:(enable|disable|apply-config):([^:>]+?)(?::([\s\S]*?))?-->/;
+// Looser match for partial markers mid-stream — used to strip "<!--ACTION:..."
+// fragments from displayed text before the closing `-->` arrives, so the
+// founder doesn't see the marker scaffolding flicker into view.
+const PARTIAL_ACTION_RE = /<!--ACTION:[\s\S]*$/;
 
 function RenderedAssistantText({ text }: { text: string }) {
   const action = parseAction(text);
-  const cleanText = text.replace(ACTION_RE, "").trim();
+  // Strip the complete marker first (when present), then strip any trailing
+  // half-marker that's still being streamed.
+  const cleanText = text.replace(ACTION_RE, "").replace(PARTIAL_ACTION_RE, "").trim();
   return (
     <div>
       <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink-cream-2">{cleanText}</p>
@@ -157,7 +154,7 @@ function parseAction(text: string): ParsedAction | null {
   const m = text.match(ACTION_RE);
   if (!m) return null;
   const kind = m[1] as ParsedAction["kind"];
-  const trigger = m[2] ?? "";
+  const trigger = (m[2] ?? "").trim();
   const rawConfig = m[3] ?? "";
   if (kind === "apply-config") {
     try {

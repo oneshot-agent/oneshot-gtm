@@ -8,11 +8,11 @@ const ENDPOINT = "/api/strategist/stream";
  * SSE strategist endpoint. Streams text deltas as they arrive; surfaces
  * server errors as inline assistant text so the chat doesn't go silent.
  *
- * `onInvalidate` is invoked whenever the founder's action chip flips a
- * trigger config (so the consumer can refetch the triggers query).
+ * Query invalidation lives in the action-chip onClick (StrategistChat) —
+ * the adapter has no notion of which trigger was applied, so wiring a
+ * callback here was dead surface area. Removed.
  */
-export function createStrategistAdapter(opts?: { onInvalidate?: () => void }): ChatModelAdapter {
-  void opts; // reserved for the action-card flow; see StrategistChat
+export function createStrategistAdapter(): ChatModelAdapter {
   return {
     async *run({ messages, abortSignal }: ChatModelRunOptions) {
       const wireMessages: StrategistMessage[] = [];
