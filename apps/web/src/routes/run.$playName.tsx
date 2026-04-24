@@ -4,8 +4,8 @@ import { useMemo, useState } from "react";
 import type { RunPlayEvent, RunPlayRequest } from "@oneshot-gtm/shared-types";
 import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
-import { Card, CardBody, CardHeader } from "../components/primitives/Card.tsx";
 import { Checkbox, Field, Input, Textarea } from "../components/primitives/Field.tsx";
+import { cn } from "../lib/cn.ts";
 
 export const Route = createFileRoute("/run/$playName")({
   component: RunPage,
@@ -257,27 +257,52 @@ function RunPage() {
   const doneEvent = events.find((e) => e.kind === "done");
   const errorEvents = events.filter((e) => e.kind === "error");
 
+  const aggregate = useMemo(() => {
+    const drafts = draftedByIndex.size;
+    let sent = 0;
+    let flagged = 0;
+    for (const d of draftedByIndex.values()) {
+      if (d.receiptIds && d.receiptIds.length > 0) sent++;
+      if (d.flags.length > 0) flagged++;
+    }
+    return { drafts, sent, flagged };
+  }, [draftedByIndex]);
+
   if (!schema) {
     return (
-      <div className="flex flex-col gap-4">
-        <Link
-          to="/plays"
-          className="flex items-center gap-1 text-sm text-zinc-400 hover:text-zinc-200"
-        >
-          <ArrowLeft size={14} /> back to plays
-        </Link>
-        <Card>
-          <CardBody>
-            <div className="text-sm text-zinc-300">
-              Play <code className="font-mono">{playName}</code> isn&apos;t exposed in the dashboard
-              yet. Run it from the CLI; the copy-CLI button is on the{" "}
-              <Link to="/plays" className="text-zinc-100 underline">
-                Plays page
-              </Link>
-              .
-            </div>
-          </CardBody>
-        </Card>
+      <div className="-mx-6 -my-6 flex flex-col">
+        <section className="border-b border-ink-rule px-6 pb-5 pt-6">
+          <Link
+            to="/plays"
+            className="inline-flex items-center gap-1 font-mono text-[11px] text-ink-muted hover:text-ink-cream"
+          >
+            <ArrowLeft size={11} /> back to plays
+          </Link>
+          <div className="ln-eyebrow mt-3">The Ledger · Run</div>
+          <h1
+            className="mt-1 text-ink-cream"
+            style={{
+              fontFamily: "var(--font-display)",
+              fontSize: 36,
+              fontWeight: 400,
+              letterSpacing: "-0.02em",
+              lineHeight: 1,
+            }}
+          >
+            CLI-only play.
+          </h1>
+          <p className="ln-note mt-3 max-w-[64ch] text-[14px] text-ink-cream-2">
+            <code className="font-mono text-[color:var(--ink-spend-2)]">{playName}</code> isn&apos;t
+            exposed in the dashboard yet. Run it from the CLI; the copy-CLI button is on the{" "}
+            <Link
+              to="/plays"
+              className="text-ink-cream underline decoration-ink-faint decoration-1 underline-offset-2"
+            >
+              Plays page
+            </Link>
+            .
+          </p>
+        </section>
       </div>
     );
   }
@@ -349,24 +374,44 @@ function RunPage() {
   };
 
   return (
-    <div className="flex flex-col gap-6">
-      <div>
+    <div className="-mx-6 -my-6 flex flex-col">
+      {/* Masthead */}
+      <section className="border-b border-ink-rule px-6 pb-5 pt-6">
         <Link
           to="/plays"
-          className="flex w-fit items-center gap-1 text-sm text-zinc-400 hover:text-zinc-200"
+          className="inline-flex items-center gap-1 font-mono text-[11px] text-ink-muted hover:text-ink-cream"
         >
-          <ArrowLeft size={14} /> back to plays
+          <ArrowLeft size={11} /> back to plays
         </Link>
-        <h1 className="mt-2 text-2xl font-semibold text-zinc-100">
-          Run <code className="font-mono">{playName}</code>
+        <div className="mt-3 flex items-baseline gap-3">
+          <div className="ln-eyebrow">The Ledger · Run</div>
+          <code
+            className="font-mono text-[13px] text-[color:var(--ink-spend-2)]"
+            style={{ fontFeatureSettings: '"zero"' }}
+          >
+            {playName}
+          </code>
+        </div>
+        <h1
+          className="mt-1 text-ink-cream"
+          style={{
+            fontFamily: "var(--font-display)",
+            fontSize: 44,
+            fontWeight: 600,
+            letterSpacing: "-0.025em",
+            lineHeight: 0.98,
+          }}
+        >
+          Draft in dry-run, then send.
         </h1>
-        <p className="mt-1 text-sm text-zinc-400">{schema.description}</p>
-      </div>
+        <p className="ln-note mt-3 max-w-[72ch] text-[14px] text-ink-cream-2">
+          {schema.description}
+        </p>
+      </section>
 
       {schema.extras && (
-        <Card>
-          <CardHeader>Run options</CardHeader>
-          <CardBody className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <RunLedgerSection eyebrow="Run options">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {schema.extras.map((f) => (
               <Field key={f.key} label={f.label} hint={f.hint ?? ""}>
                 <Input
@@ -378,31 +423,27 @@ function RunPage() {
                 />
               </Field>
             ))}
-          </CardBody>
-        </Card>
+          </div>
+        </RunLedgerSection>
       )}
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <span>Targets ({rows.length})</span>
-            <Button variant="secondary" size="sm" onClick={addRow}>
-              <Plus size={12} /> add row
-            </Button>
-          </div>
-        </CardHeader>
-        <CardBody className="flex flex-col gap-6">
+      <RunLedgerSection
+        eyebrow={`Targets · ${rows.length}`}
+        action={
+          <Button variant="secondary" size="sm" onClick={addRow}>
+            <Plus size={12} /> add row
+          </Button>
+        }
+      >
+        <div className="flex flex-col gap-5">
           {rows.map((row, rowIdx) => (
             <div
-              // Stable key would require row IDs; rows are short-lived form state, index is acceptable.
               // eslint-disable-next-line react/no-array-index-key
               key={`row-${rowIdx}`}
-              className="rounded-md border border-zinc-800 bg-zinc-950/40 p-4"
+              className="border-l-2 border-ink-rule pl-4"
             >
               <div className="mb-3 flex items-center justify-between">
-                <span className="text-xs font-medium uppercase tracking-wider text-zinc-500">
-                  Target #{rowIdx + 1}
-                </span>
+                <span className="font-mono text-[11px] text-ink-faint">target #{rowIdx + 1}</span>
                 {rows.length > 1 && (
                   <Button variant="ghost" size="sm" onClick={() => removeRow(rowIdx)}>
                     <Trash2 size={12} />
@@ -416,13 +457,13 @@ function RunPage() {
                       key={f.key}
                       label={f.label + (f.required ? " *" : "")}
                       hint={f.hint ?? ""}
+                      className="md:col-span-2"
                     >
                       <Textarea
                         required={!!f.required}
                         placeholder={f.placeholder ?? ""}
                         value={row[f.key] ?? ""}
                         onChange={(e) => updateRow(rowIdx, f.key, e.target.value)}
-                        className="md:col-span-2"
                         rows={3}
                       />
                     </Field>
@@ -445,67 +486,132 @@ function RunPage() {
               </div>
             </div>
           ))}
-        </CardBody>
-      </Card>
+        </div>
+      </RunLedgerSection>
 
-      <div className="flex items-center justify-between gap-4">
+      {/* Action bar — sticky. Live aggregates appear in the middle once drafts land. */}
+      <section className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-t border-ink-rule bg-ink-bg/90 px-6 py-3 backdrop-blur-[2px]">
         <Checkbox
-          label="Dry run (draft only, no send, no spend)"
+          label="Dry run — draft only, no send, no spend"
           checked={dryRun}
           onChange={(e) => setDryRun(e.target.checked)}
         />
+        <div className="flex items-center gap-4 font-mono text-[11.5px] text-ink-faint">
+          {aggregate.drafts > 0 && (
+            <>
+              <span>
+                <span className="text-ink-cream-2">{aggregate.drafts}</span> drafted
+              </span>
+              {aggregate.flagged > 0 && (
+                <span className="text-[color:var(--ink-blocked-2)]">
+                  · {aggregate.flagged} lint
+                </span>
+              )}
+              <span>
+                ·{" "}
+                <span
+                  className={
+                    aggregate.sent > 0 ? "text-[color:var(--ink-receipt-2)]" : "text-ink-muted"
+                  }
+                >
+                  {aggregate.sent}
+                </span>{" "}
+                sent
+              </span>
+              {doneEvent?.kind === "done" && <span className="text-ink-muted">· done</span>}
+            </>
+          )}
+          {running && aggregate.drafts === 0 && <span>preparing…</span>}
+        </div>
         <Button onClick={submit} disabled={running}>
           <Play size={14} />
           {running ? "Running…" : dryRun ? "Generate drafts" : "Send for real"}
         </Button>
-      </div>
+      </section>
 
       {error && (
-        <Card>
-          <CardBody>
-            <Badge tone="red">error</Badge>
-            <span className="ml-2 text-sm text-red-300">{error}</span>
-          </CardBody>
-        </Card>
+        <section className="border-b border-ink-rule border-l-2 border-l-[color:var(--ink-blocked)] bg-[color:var(--ink-blocked)]/8 px-6 py-3">
+          <div className="flex items-start gap-2">
+            <Badge tone="blocked">error</Badge>
+            <span className="font-mono text-[12px] text-[color:var(--ink-blocked-2)]">{error}</span>
+          </div>
+        </section>
       )}
 
       {(events.length > 0 || running) && (
-        <Card>
-          <CardHeader>Output</CardHeader>
-          <CardBody className="flex flex-col gap-4">
+        <RunLedgerSection eyebrow="Output">
+          <div className="flex flex-col gap-4">
             {Array.from(draftedByIndex.entries())
               .toSorted((a, b) => a[0] - b[0])
               .map(([idx, d]) => (
-                <div key={idx} className="rounded-md border border-zinc-800 bg-zinc-950/40 p-3">
-                  <div className="mb-1 flex items-center gap-2 text-xs">
-                    <span className="font-mono text-zinc-500">#{idx + 1}</span>
-                    {d.flags.length === 0 && d.receiptIds && <Badge tone="green">sent</Badge>}
+                <div
+                  key={idx}
+                  className={cn(
+                    "relative border-l-2 pl-4",
+                    d.flags.length > 0
+                      ? "border-[color:var(--ink-blocked)]"
+                      : d.receiptIds
+                        ? "border-[color:var(--ink-receipt)]"
+                        : "border-ink-rule",
+                  )}
+                >
+                  {/* Receipt seal — appears only on successfully sent drafts. */}
+                  {d.receiptIds && d.receiptIds.length > 0 && (
+                    <span
+                      aria-hidden="true"
+                      className="pointer-events-none absolute right-0 top-1 -rotate-[8deg] select-none font-mono text-[9.5px] uppercase tracking-[0.2em] text-[color:var(--ink-receipt-2)]"
+                    >
+                      <span className="inline-flex items-center gap-1 rounded-[var(--radius-xs)] border border-[color:var(--ink-receipt)]/50 px-1.5 py-0.5">
+                        ✓ signed
+                      </span>
+                    </span>
+                  )}
+                  <div className="mb-1 flex items-center gap-2">
+                    <span className="font-mono text-[11px] text-ink-faint">#{idx + 1}</span>
+                    {d.flags.length === 0 && d.receiptIds && <Badge tone="receipt">sent</Badge>}
                     {d.flags.length === 0 && !d.receiptIds && dryRun && <Badge>dry-run</Badge>}
-                    {d.flags.length > 0 && <Badge tone="red">lint</Badge>}
+                    {d.flags.length > 0 && <Badge tone="blocked">lint</Badge>}
                   </div>
-                  <div className="text-sm">
-                    <div className="font-mono text-xs text-zinc-400">subject:</div>
-                    <div className="mb-2 text-zinc-100">{d.subject}</div>
-                    <div className="font-mono text-xs text-zinc-400">body:</div>
-                    <pre className="whitespace-pre-wrap font-sans text-zinc-200">{d.body}</pre>
+                  <div className="ln-eyebrow mt-1" style={{ fontSize: 10 }}>
+                    subject
                   </div>
+                  <div
+                    className="mt-0.5 text-ink-cream"
+                    style={{
+                      fontFamily: "var(--font-display)",
+                      fontSize: 18,
+                      fontWeight: 400,
+                      letterSpacing: "-0.005em",
+                    }}
+                  >
+                    {d.subject}
+                  </div>
+                  <div className="ln-eyebrow mt-3" style={{ fontSize: 10 }}>
+                    body
+                  </div>
+                  <pre className="mt-0.5 ln-prose whitespace-pre-wrap text-[13.5px] text-ink-cream-2">
+                    {d.body}
+                  </pre>
                   {d.flags.length > 0 && (
-                    <div className="mt-2 text-xs text-amber-300">
+                    <div className="mt-2 flex flex-wrap gap-1">
                       {d.flags.map((f) => (
-                        <span key={f} className="mr-2 font-mono">
+                        <span
+                          key={f}
+                          className="rounded-[var(--radius-xs)] border border-[color:var(--ink-blocked)]/40 bg-[color:var(--ink-blocked)]/10 px-1.5 py-0.5 font-mono text-[10.5px] text-[color:var(--ink-blocked-2)]"
+                        >
                           {f}
                         </span>
                       ))}
                     </div>
                   )}
                   {d.receiptIds && d.receiptIds.length > 0 && (
-                    <div className="mt-2 flex items-center gap-2 text-xs">
-                      <span className="text-zinc-500">receipts:</span>
+                    <div className="mt-2 flex items-center gap-2 font-mono text-[11px]">
+                      <span className="text-ink-faint">receipts</span>
                       {d.receiptIds.map((rid) => (
                         <Link
                           key={rid}
                           to="/receipts"
-                          className="font-mono text-emerald-400 hover:underline"
+                          className="text-[color:var(--ink-receipt-2)] hover:underline"
                         >
                           #{rid}
                         </Link>
@@ -516,20 +622,43 @@ function RunPage() {
               ))}
             {errorEvents.map((e) =>
               e.kind === "error" ? (
-                <div key={`${e.index}-${e.message}`} className="text-xs text-red-300">
-                  error: {e.message}
+                <div
+                  key={`${e.index}-${e.message}`}
+                  className="font-mono text-[11.5px] text-[color:var(--ink-blocked-2)]"
+                >
+                  error · {e.message}
                 </div>
               ) : null,
             )}
             {doneEvent && doneEvent.kind === "done" && (
-              <div className="text-xs text-zinc-400">
-                Done. {doneEvent.sent} of {doneEvent.total} sent.
+              <div className="font-mono text-[11.5px] text-ink-muted">
+                done · {doneEvent.sent} of {doneEvent.total} sent
               </div>
             )}
-          </CardBody>
-        </Card>
+          </div>
+        </RunLedgerSection>
       )}
     </div>
+  );
+}
+
+function RunLedgerSection({
+  eyebrow,
+  action,
+  children,
+}: {
+  eyebrow: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="border-b border-ink-rule px-6 py-6">
+      <div className="mb-4 flex items-center justify-between">
+        <div className="ln-eyebrow">{eyebrow}</div>
+        {action}
+      </div>
+      {children}
+    </section>
   );
 }
 
