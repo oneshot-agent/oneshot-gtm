@@ -21,37 +21,90 @@ import { jsonResponse } from "../server.ts";
  * strategist pattern, and works with every provider that supports plain
  * chat completion.
  */
+/**
+ * Pure body-shape check, extracted so HTTP tests can exercise the failure
+ * paths without mocking fetch / Bun.serve. Returns either the parsed
+ * messages or a status+error pair the caller can mirror back as JSON.
+ */
+export function validateStrategistBody(
+  raw: unknown,
+):
+  | { kind: "ok"; messages: StrategistRequest["messages"] }
+  | { kind: "error"; status: number; error: string } {
+  if (!raw || typeof raw !== "object") {
+    return { kind: "error", status: 400, error: "messages must be a non-empty array" };
+  }
+  const body = raw as Partial<StrategistRequest>;
+  if (!Array.isArray(body.messages) || body.messages.length === 0) {
+    return { kind: "error", status: 400, error: "messages must be a non-empty array" };
+  }
+  for (const m of body.messages) {
+    if (!m || typeof m !== "object") {
+      return { kind: "error", status: 400, error: "each message must be an object" };
+    }
+    if (m.role !== "user" && m.role !== "assistant") {
+      return {
+        kind: "error",
+        status: 400,
+        error: `each message.role must be 'user' or 'assistant' (got ${String(m.role)})`,
+      };
+    }
+    if (typeof m.content !== "string") {
+      return { kind: "error", status: 400, error: "each message.content must be a string" };
+    }
+  }
+  return { kind: "ok", messages: body.messages };
+}
+
+/**
+ * Pure cfg readiness check — strategist needs ICP + product to anchor
+ * proposals. Same shape as validateStrategistBody so the route handler
+ * can mirror either failure verbatim.
+ */
+export function validateCfgForStrategist(cfg: {
+  icpOneLiner?: string | null;
+  productOneLiner?: string | null;
+}): { kind: "ok" } | { kind: "error"; status: number; error: string } {
+  if (!cfg.icpOneLiner || cfg.icpOneLiner.trim().length === 0) {
+    return {
+      kind: "error",
+      status: 400,
+      error: "set ICP one-liner in /setup before opening the strategist",
+    };
+  }
+  if (!cfg.productOneLiner || cfg.productOneLiner.trim().length === 0) {
+    return {
+      kind: "error",
+      status: 400,
+      error: "set product one-liner in /setup before opening the strategist",
+    };
+  }
+  return { kind: "ok" };
+}
+
 export async function strategistRoute(req: Request): Promise<Response> {
   startRun();
-  let body: StrategistRequest;
+  let raw: unknown;
   try {
-    body = (await req.json()) as StrategistRequest;
+    raw = await req.json();
   } catch {
     return jsonResponse({ error: "invalid JSON body" }, 400, req);
   }
-  if (!Array.isArray(body.messages) || body.messages.length === 0) {
-    return jsonResponse({ error: "messages must be a non-empty array" }, 400, req);
+  const bodyCheck = validateStrategistBody(raw);
+  if (bodyCheck.kind === "error") {
+    return jsonResponse({ error: bodyCheck.error }, bodyCheck.status, req);
   }
+  const messages = bodyCheck.messages;
 
   const cfg = loadConfig();
-  if (!cfg.icpOneLiner || cfg.icpOneLiner.trim().length === 0) {
-    return jsonResponse(
-      { error: "set ICP one-liner in /setup before opening the strategist" },
-      400,
-      req,
-    );
-  }
-  if (!cfg.productOneLiner || cfg.productOneLiner.trim().length === 0) {
-    return jsonResponse(
-      { error: "set product one-liner in /setup before opening the strategist" },
-      400,
-      req,
-    );
+  const cfgCheck = validateCfgForStrategist(cfg);
+  if (cfgCheck.kind === "error") {
+    return jsonResponse({ error: cfgCheck.error }, cfgCheck.status, req);
   }
 
   const systemPrompt = composeSystemPrompt({
-    productOneLiner: cfg.productOneLiner,
-    icpOneLiner: cfg.icpOneLiner,
+    productOneLiner: cfg.productOneLiner!,
+    icpOneLiner: cfg.icpOneLiner!,
   });
 
   const stream = new ReadableStream<Uint8Array>({
@@ -72,13 +125,13 @@ export async function strategistRoute(req: Request): Promise<Response> {
       };
 
       const startedAt = Date.now();
-      logEvent("strategist.turn.start", { message_count: body.messages.length });
+      logEvent("strategist.turn.start", { message_count: messages.length });
       try {
         send({ kind: "thinking" });
         const llm = await complete({
           messages: [
             { role: "system", content: systemPrompt },
-            ...body.messages.map((m) => ({ role: m.role, content: m.content }) as const),
+            ...messages.map((m) => ({ role: m.role, content: m.content }) as const),
           ],
           temperature: 0.4,
           // 800 tokens truncated apply-config markers when the proposed JSON
