@@ -119,6 +119,20 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
     });
     if (!filter.match) {
       result.droppedIcp++;
+      ledger.enqueueTarget({
+        playName: PLAY_NAME,
+        payload: {
+          company: extract.company,
+          round: extract.round,
+          industry: extract.industry,
+          summary: extract.summary,
+          sourceUrl: url,
+        },
+        dedupeKey: url,
+        source: SOURCE,
+        initialStatus: "rejected",
+        notes: `auto: ICP — ${filter.reason}`,
+      });
       continue;
     }
 

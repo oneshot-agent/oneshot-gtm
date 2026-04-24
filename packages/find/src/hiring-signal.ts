@@ -110,6 +110,14 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
     });
     if (!filter.match) {
       result.droppedIcp++;
+      ledger.enqueueTarget({
+        playName: PLAY_NAME,
+        payload: { title: hit.title, url: hit.url, description: hit.description },
+        dedupeKey: hit.url,
+        source: SOURCE,
+        initialStatus: "rejected",
+        notes: `auto: ICP — ${filter.reason}`,
+      });
       continue;
     }
 

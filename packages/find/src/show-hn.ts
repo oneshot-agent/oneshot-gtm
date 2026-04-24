@@ -77,6 +77,19 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
     // Rough cost: ~$0.001 per filter call (LLM tokens; not OneShot $).
     if (!filter.match) {
       result.droppedIcp++;
+      // Persist the auto-rejection so the founder can review what got
+      // dropped, override (set to approved) if it was a false negative,
+      // and so the future learning loop has labeled examples.
+      if (!opts.dryRun) {
+        ledger.enqueueTarget({
+          playName: PLAY_NAME,
+          payload: { postTitle: hit.title, postUrl: hit.url, founderName: hit.author },
+          dedupeKey: hit.objectID,
+          source: SOURCE,
+          initialStatus: "rejected",
+          notes: `auto: ICP — ${filter.reason}`,
+        });
+      }
       continue;
     }
 

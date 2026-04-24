@@ -104,6 +104,14 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
     });
     if (!filter.match) {
       result.droppedIcp++;
+      ledger.enqueueTarget({
+        playName: PLAY_NAME,
+        payload: { title: hit.title, url: hit.url, description: hit.description },
+        dedupeKey: hit.url,
+        source: SOURCE,
+        initialStatus: "rejected",
+        notes: `auto: ICP — ${filter.reason}`,
+      });
       continue;
     }
 

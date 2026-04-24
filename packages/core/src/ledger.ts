@@ -540,18 +540,28 @@ export class Ledger {
     dedupeKey: string;
     source: string;
     notes?: string;
+    /**
+     * Status to insert with. Defaults to "pending" (the normal review path).
+     * Pass "rejected" to record an auto-drop (e.g. ICP filter said no) so the
+     * founder can see what was filtered out and override if needed.
+     */
+    initialStatus?: QueueStatus;
   }): number | null {
     try {
+      const status = input.initialStatus ?? "pending";
+      const reviewedAt = status === "pending" ? null : new Date().toISOString();
       const result = this.db
         .prepare(
-          `INSERT INTO target_queue(play_name, payload_json, dedupe_key, source, notes)
-           VALUES(?, ?, ?, ?, ?)`,
+          `INSERT INTO target_queue(play_name, payload_json, dedupe_key, source, status, reviewed_at, notes)
+           VALUES(?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.playName,
           JSON.stringify(input.payload),
           input.dedupeKey,
           input.source,
+          status,
+          reviewedAt,
           input.notes ?? null,
         );
       return Number(result.lastInsertRowid);

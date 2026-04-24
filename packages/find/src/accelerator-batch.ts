@@ -100,6 +100,16 @@ export async function runAcceleratorBatchFinder(
     });
     if (!filter.match) {
       result.droppedIcp++;
+      if (!opts.dryRun) {
+        ledger.enqueueTarget({
+          playName: PLAY_NAME,
+          payload: { company: c.name, launchUrl: c.launchUrl, oneLiner: c.oneLiner },
+          dedupeKey,
+          source,
+          initialStatus: "rejected",
+          notes: `auto: ICP — ${filter.reason}`,
+        });
+      }
       continue;
     }
 
