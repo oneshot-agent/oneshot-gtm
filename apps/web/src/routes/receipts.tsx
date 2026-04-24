@@ -1,15 +1,24 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
-import { X } from "lucide-react";
+import { useMemo, useState } from "react";
+import type { ReceiptView } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
-import { Card, CardBody, CardHeader } from "../components/primitives/Card.tsx";
-import { Button } from "../components/primitives/Button.tsx";
-import { formatUsd, timeAgo } from "../lib/cn.ts";
+import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
+import { Modal } from "../components/primitives/Modal.tsx";
+import { Skeleton, SkeletonRow } from "../components/primitives/Skeleton.tsx";
+import { cn, formatUsd, timeAgo } from "../lib/cn.ts";
 
 export const Route = createFileRoute("/receipts")({
   component: ReceiptsPage,
 });
+
+interface DayGroup {
+  key: string;
+  label: string;
+  count: number;
+  totalCost: number;
+  rows: ReceiptView[];
+}
 
 function ReceiptsPage() {
   const [activeId, setActiveId] = useState<number | null>(null);
@@ -24,90 +33,196 @@ function ReceiptsPage() {
     enabled: activeId != null,
   });
 
+  const groups = useMemo(() => groupByDay(receipts.data?.receipts ?? []), [receipts.data]);
+  const totalCost = useMemo(
+    () => (receipts.data?.receipts ?? []).reduce((a, r) => a + (r.costUsd ?? 0), 0),
+    [receipts.data],
+  );
+
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold text-zinc-100">Receipts</h1>
-        <span className="text-xs text-zinc-500">
-          {receipts.data ? `${receipts.data.receipts.length} shown` : "loading…"}
-        </span>
-      </div>
-
-      <Card>
-        <CardHeader>signed receipts (most recent first)</CardHeader>
-        <CardBody className="p-0">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="text-xs uppercase tracking-wider text-zinc-500">
-                <th className="px-4 py-2 text-left font-medium">id</th>
-                <th className="px-4 py-2 text-left font-medium">play</th>
-                <th className="px-4 py-2 text-left font-medium">type</th>
-                <th className="px-4 py-2 text-right font-medium">cost</th>
-                <th className="px-4 py-2 text-right font-medium">when</th>
-                <th className="px-4 py-2 text-right font-medium">request id</th>
-              </tr>
-            </thead>
-            <tbody>
-              {receipts.data?.receipts.map((r) => (
-                <tr
-                  key={r.id}
-                  onClick={() => setActiveId(r.id)}
-                  className="cursor-pointer border-t border-zinc-800 hover:bg-zinc-900/40"
-                >
-                  <td className="px-4 py-2 font-mono text-xs text-zinc-500">#{r.id}</td>
-                  <td className="px-4 py-2">{r.playName}</td>
-                  <td className="px-4 py-2 text-zinc-400">{r.callType}</td>
-                  <td className="px-4 py-2 text-right font-mono">
-                    {r.costUsd != null ? formatUsd(r.costUsd) : "—"}
-                  </td>
-                  <td className="px-4 py-2 text-right text-zinc-500">{timeAgo(r.createdAt)}</td>
-                  <td className="px-4 py-2 text-right font-mono text-xs text-zinc-500">
-                    {r.oneshotRequestId ?? "—"}
-                  </td>
-                </tr>
-              ))}
-              {receipts.data?.receipts.length === 0 && (
-                <tr>
-                  <td colSpan={6} className="px-4 py-8 text-center text-sm text-zinc-500">
-                    No receipts yet.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </CardBody>
-      </Card>
-
-      {activeId != null && (
-        <div
-          className="fixed inset-0 z-50 grid place-items-center bg-zinc-950/70 backdrop-blur"
-          onClick={() => setActiveId(null)}
-        >
-          <div
-            className="max-h-[80vh] w-[min(720px,92vw)] overflow-y-auto rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
+    <div className="-mx-6 -my-6 flex flex-col">
+      {/* Masthead */}
+      <section className="flex items-end justify-between gap-4 border-b border-ink-rule px-6 pb-5 pt-6">
+        <div>
+          <div className="ln-eyebrow">The Ledger · Receipts</div>
+          <h1
+            className="mt-1 text-ink-cream"
+            style={{
+              fontFamily: "var(--font-display)",
+              fontSize: 44,
+              fontWeight: 600,
+              letterSpacing: "-0.025em",
+              lineHeight: 0.98,
+            }}
           >
-            <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
-              <div className="text-sm">
-                <span className="font-mono text-zinc-500">#{activeId}</span>{" "}
-                <span className="text-zinc-300">
-                  {detail.data?.receipt.playName} · {detail.data?.receipt.callType}
-                </span>
-              </div>
-              <Button variant="ghost" size="sm" onClick={() => setActiveId(null)}>
-                <X size={14} />
-              </Button>
-            </div>
-            <div className="p-4">
-              <pre className="max-h-[60vh] overflow-auto rounded-md bg-zinc-950 p-3 font-mono text-xs text-zinc-200">
-                {detail.isLoading
-                  ? "loading…"
-                  : JSON.stringify(detail.data?.receipt.signedReceipt ?? {}, null, 2)}
-              </pre>
-            </div>
-          </div>
+            Signed, most recent first.
+          </h1>
         </div>
-      )}
+        <div className="text-right font-mono text-[11px] text-ink-faint">
+          {receipts.data ? (
+            <>
+              <div>
+                <span className="text-ink-cream-2">{receipts.data.receipts.length}</span>{" "}
+                <span className="text-ink-muted">shown</span>
+              </div>
+              <div className="mt-0.5">
+                <span className="text-[color:var(--ink-spend-2)]">{formatUsd(totalCost)}</span>{" "}
+                <span className="text-ink-muted">total</span>
+              </div>
+            </>
+          ) : (
+            <Skeleton lines={2} widths={["96px", "64px"]} />
+          )}
+        </div>
+      </section>
+
+      {/* Receipts timeline — grouped by day, newest day first */}
+      <section>
+        {receipts.isLoading ? (
+          <div>
+            {Array.from({ length: 8 }, (_, i) => (
+              <SkeletonRow key={i} />
+            ))}
+          </div>
+        ) : receipts.data?.receipts.length === 0 ? (
+          <div className="px-6 py-8">
+            <EmptyNote
+              note="No receipts yet. Every call the agent makes leaves one; one always beats zero."
+              cli="oneshot-gtm motion show-hn"
+            />
+          </div>
+        ) : (
+          <div>
+            {groups.map((g) => (
+              <DaySection key={g.key} group={g} onClickRow={(id) => setActiveId(id)} />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <Modal
+        open={activeId != null}
+        title={detail.data?.receipt.playName ?? "receipt"}
+        subtitle={detail.data ? `#${activeId} · ${detail.data.receipt.callType}` : `#${activeId}`}
+        onClose={() => setActiveId(null)}
+        width={720}
+      >
+        {detail.isLoading ? (
+          <Skeleton lines={8} />
+        ) : (
+          <pre className="max-h-[60vh] overflow-auto rounded-[var(--radius-md)] border border-ink-rule bg-ink-bg-deep p-3 font-mono text-[12px] leading-[1.55] text-ink-cream-2">
+            {JSON.stringify(detail.data?.receipt.signedReceipt ?? {}, null, 2)}
+          </pre>
+        )}
+      </Modal>
     </div>
   );
+}
+
+function DaySection({ group, onClickRow }: { group: DayGroup; onClickRow: (id: number) => void }) {
+  return (
+    <div>
+      {/* Day header — sticky so you always know which day you're scrolling through. */}
+      <div className="sticky top-0 z-10 flex items-baseline justify-between border-b border-ink-rule/80 bg-ink-bg/95 px-6 py-2.5 backdrop-blur-[2px]">
+        <div className="ln-eyebrow text-ink-cream-2">{group.label}</div>
+        <div className="font-mono text-[11px] text-ink-faint">
+          <span className="text-ink-cream-2">{group.count}</span> call
+          {group.count === 1 ? "" : "s"}
+          {group.totalCost > 0 && (
+            <>
+              {" · "}
+              <span className="text-[color:var(--ink-spend-2)]">{formatUsd(group.totalCost)}</span>
+            </>
+          )}
+        </div>
+      </div>
+      <table className="w-full text-[13px]">
+        <tbody>
+          {group.rows.map((r, i) => (
+            <tr
+              key={r.id}
+              onClick={() => onClickRow(r.id)}
+              className={cn(
+                "cursor-pointer border-b border-ink-rule/50",
+                "transition-colors duration-[var(--dur-stamp)]",
+                "hover:bg-ink-surface/60",
+                i % 2 === 1 && "bg-ink-surface/15",
+              )}
+            >
+              <td className="w-[72px] px-6 py-2 font-mono text-[11px] text-ink-faint">#{r.id}</td>
+              <td className="py-2 text-ink-cream">{r.playName}</td>
+              <td className="py-2 font-mono text-[12px] text-ink-muted">{r.callType}</td>
+              <td className="w-[88px] py-2 text-right font-mono text-ink-cream">
+                {r.costUsd != null ? (
+                  formatUsd(r.costUsd)
+                ) : (
+                  <span className="text-ink-faint">—</span>
+                )}
+              </td>
+              <td className="w-[72px] py-2 text-right font-mono text-[12px] text-ink-muted">
+                {timeAgo(r.createdAt)}
+              </td>
+              <td className="w-[200px] px-6 py-2 text-right font-mono text-[11px] text-ink-faint truncate">
+                {r.oneshotRequestId ?? "—"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/**
+ * Bucket receipts by local-calendar day. Assumes `receipts` is already in
+ * reverse-chron order from the server; within a bucket we preserve that
+ * order so the first row is the most recent.
+ */
+function groupByDay(receipts: ReceiptView[]): DayGroup[] {
+  const now = new Date();
+  const today = dayKey(now);
+  const yesterday = (() => {
+    const d = new Date(now);
+    d.setDate(d.getDate() - 1);
+    return dayKey(d);
+  })();
+
+  const groups: DayGroup[] = [];
+  const byKey = new Map<string, DayGroup>();
+
+  for (const r of receipts) {
+    const d = new Date(r.createdAt);
+    if (Number.isNaN(d.getTime())) continue;
+    const key = dayKey(d);
+    let g = byKey.get(key);
+    if (!g) {
+      g = {
+        key,
+        label: formatDayLabel(d, key, today, yesterday),
+        count: 0,
+        totalCost: 0,
+        rows: [],
+      };
+      byKey.set(key, g);
+      groups.push(g);
+    }
+    g.rows.push(r);
+    g.count++;
+    g.totalCost += r.costUsd ?? 0;
+  }
+  return groups;
+}
+
+function dayKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function formatDayLabel(d: Date, key: string, today: string, yesterday: string): string {
+  if (key === today) return "Today";
+  if (key === yesterday) return "Yesterday";
+  return d.toLocaleDateString(undefined, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  });
 }
