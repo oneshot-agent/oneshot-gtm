@@ -122,17 +122,22 @@ export class Ledger {
         last_polled_at TEXT,
         last_run_summary TEXT,
         enabled INTEGER NOT NULL DEFAULT 1,
-        config_json TEXT
+        config_json TEXT,
+        running_started_at TEXT
       );
 
       CREATE TABLE IF NOT EXISTS schema_version (
         version INTEGER PRIMARY KEY
       );
-      INSERT OR IGNORE INTO schema_version(version) VALUES(4);
+      INSERT OR IGNORE INTO schema_version(version) VALUES(5);
     `);
 
     // Lightweight migrations for installs that pre-date a column.
     this.addColumnIfMissing("prospects", "phone", "TEXT");
+    // v5 (2026-04): persist trigger run-state so a server restart doesn't
+    // strand fire-and-forget runs as silent stale rows. See
+    // sweepStaleRunningTriggers + fireTriggerNow.
+    this.addColumnIfMissing("triggers", "running_started_at", "TEXT");
   }
 
   private addColumnIfMissing(table: string, column: string, type: string): void {
@@ -706,10 +711,89 @@ export class Ledger {
     return this.db.query("SELECT * FROM triggers ORDER BY name ASC").all() as TriggerRow[];
   }
 
+  /**
+   * Records the result of a finished run AND clears `running_started_at` in
+   * the same statement. This is the only "completed" path — both success and
+   * caught-finder-throw funnel through here, so clearing the in-flight flag
+   * here is the right semantic.
+   */
   updateTriggerLastPoll(input: { name: string; summary: unknown }): void {
     this.db
-      .prepare(`UPDATE triggers SET last_polled_at = ?, last_run_summary = ? WHERE name = ?`)
+      .prepare(
+        `UPDATE triggers
+         SET last_polled_at = ?, last_run_summary = ?, running_started_at = NULL
+         WHERE name = ?`,
+      )
       .run(new Date().toISOString(), JSON.stringify(input.summary), input.name);
+  }
+
+  /**
+   * Marks a trigger as in-flight. Called by `fireTriggerNow` synchronously
+   * before backgrounding the work, so the row's `running_started_at`
+   * reflects the truth even if the process is killed mid-run. Cleared by
+   * `updateTriggerLastPoll` on completion or by `sweepStaleRunningTriggers`
+   * on the next cold boot.
+   */
+  markTriggerRunning(name: string, startedAtIso: string): void {
+    this.db
+      .prepare(`UPDATE triggers SET running_started_at = ? WHERE name = ?`)
+      .run(startedAtIso, name);
+  }
+
+  /**
+   * Sweep trigger rows whose `running_started_at` is older than `maxAgeMs`.
+   * For each match, write a `last_run_summary = { error: "killed_by_restart",
+   * at }` and clear the in-flight flag. Returns the swept rows so the caller
+   * can log them.
+   *
+   * Pure-ish (takes `now` + `maxAgeMs` as args) so tests can drive both
+   * "fresh entries are spared" and "stale entries are swept" without
+   * faking the system clock.
+   */
+  sweepStaleRunningTriggers(input: {
+    now: Date;
+    maxAgeMs: number;
+  }): Array<{ name: string; startedAt: string; ageMs: number }> {
+    const cutoffMs = input.now.getTime() - input.maxAgeMs;
+    const rows = this.db
+      .query(`SELECT name, running_started_at FROM triggers WHERE running_started_at IS NOT NULL`)
+      .all() as Array<{ name: string; running_started_at: string }>;
+    const swept: Array<{ name: string; startedAt: string; ageMs: number }> = [];
+    const update = this.db.prepare(
+      `UPDATE triggers
+       SET last_polled_at = ?, last_run_summary = ?, running_started_at = NULL
+       WHERE name = ?`,
+    );
+    for (const row of rows) {
+      const startedMs = new Date(row.running_started_at).getTime();
+      if (!Number.isFinite(startedMs)) {
+        // Garbage timestamp — clear it so it doesn't perpetually re-trip.
+        update.run(
+          input.now.toISOString(),
+          JSON.stringify({
+            error: "killed_by_restart",
+            reason: "running_started_at unparseable",
+            at: input.now.toISOString(),
+          }),
+          row.name,
+        );
+        continue;
+      }
+      if (startedMs > cutoffMs) continue; // still fresh
+      const ageMs = input.now.getTime() - startedMs;
+      update.run(
+        input.now.toISOString(),
+        JSON.stringify({
+          error: "killed_by_restart",
+          startedAt: row.running_started_at,
+          ageMs,
+          at: input.now.toISOString(),
+        }),
+        row.name,
+      );
+      swept.push({ name: row.name, startedAt: row.running_started_at, ageMs });
+    }
+    return swept;
   }
 
   setTriggerEnabled(name: string, enabled: boolean): void {

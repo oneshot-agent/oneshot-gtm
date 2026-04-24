@@ -80,6 +80,13 @@ export interface TriggerRow {
   last_run_summary: string | null;
   enabled: number;
   config_json: string | null;
+  /**
+   * ISO timestamp set by `fireTriggerNow` before backgrounding the work and
+   * cleared by `updateTriggerLastPoll` on completion. Survives server
+   * restart so a watch-restart-killed run can be detected and swept by the
+   * boot-time `sweepStaleRunningTriggers` call.
+   */
+  running_started_at: string | null;
 }
 
 export type PlayName =

@@ -22,7 +22,30 @@ export interface TriggerSpec {
    * the chat references these so the founder doesn't have to know JSON shapes.
    */
   configBrief?: string;
+  /**
+   * Optional readiness gate. Return `{ready:false, reason}` when the stored
+   * config lacks required founder-supplied inputs (e.g. agent-builders without
+   * `combos`). Consulted by the server's enable/run endpoints and by the watch
+   * loop to avoid pointless runs. When absent, the trigger is always ready.
+   */
+  readiness?: (
+    config: Record<string, unknown>,
+  ) => { ready: true } | { ready: false; reason: string };
   run: (config: Record<string, unknown>) => Promise<FinderResult>;
+}
+
+export type Readiness = { ready: true } | { ready: false; reason: string };
+
+/** Evaluate a spec's readiness fn (defaulting to ready when absent). */
+export function checkReadiness(spec: TriggerSpec, config: Record<string, unknown>): Readiness {
+  if (!spec.readiness) return { ready: true };
+  try {
+    return spec.readiness(config);
+  } catch {
+    // A throwing readiness fn shouldn't bring down the watch loop; treat as
+    // not-ready with a generic reason so the founder sees *something*.
+    return { ready: false, reason: "readiness check threw" };
+  }
 }
 
 const ONE_HOUR = 3600 * 1000;
@@ -167,6 +190,23 @@ export const TRIGGERS: TriggerSpec[] = [
     },
     configBrief:
       "Searches GitHub for repos that stitch together multiple vendor SDKs which OVERLAP with the founder's product, then pitches consolidation via the competitor-switch motion play. Config: `combos` (array of {label, query, vendors} — each query is a `site:github.com \"VendorA\" \"VendorB\"` Google-style search; vendors lists the names matched. Aim for 4-8 combos covering vendor pairs the founder COMPETES WITH — name actual vendors from the founder's product context, not generic ones), `yourEdge` (one-sentence migration pitch handed to the email — what's the consolidation value?), `minVendors` (gate: how many distinct vendors must appear in a candidate repo's README; 2 is right for 'consolidation pitch holds'), `limit`, `maxCostUsd`. SHIPS EMPTY — no candidates fire until combos + yourEdge are set.",
+    readiness: (cfg) => {
+      const combos = cfg["combos"];
+      if (!Array.isArray(combos) || combos.length === 0) {
+        return {
+          ready: false,
+          reason: "set `combos` in config (one or more `{query, vendors}` entries)",
+        };
+      }
+      const edge = cfg["yourEdge"];
+      if (typeof edge !== "string" || edge.trim().length === 0) {
+        return {
+          ready: false,
+          reason: "set `yourEdge` — one-sentence reason your SDK beats the status quo",
+        };
+      }
+      return { ready: true };
+    },
     run: (cfg) => {
       const combos = parseCombos(cfg["combos"]) ?? [];
       const yourEdge = typeof cfg["yourEdge"] === "string" ? cfg["yourEdge"] : "";
@@ -226,50 +266,98 @@ export interface TriggerRunOutcome {
 }
 
 /**
- * In-memory map of triggers with an in-flight ad-hoc run → startedAt epoch ms.
+ * Maximum age before an in-flight `running_started_at` is considered a
+ * killed-by-restart zombie and swept by `sweepStaleRunningTriggers`. Real
+ * finder runs cap at ~5 min (max-cost gate, webSearch loop limit, idleTimeout
+ * 255s), so 15 min is a generous floor. Tighten when a trigger genuinely
+ * needs longer.
  *
- * Used to (a) short-circuit duplicate "Run now" clicks, (b) let the
- * TriggerView surface `running: true` + `runningSince` so the UI can show a
- * live elapsed counter without relying on the client-side localStorage
- * tracker (which is empty in fresh tabs), and (c) compute an elapsed time
- * for any client. Resets on server restart — an in-flight run is orphaned
- * there, but `runTriggerNow` writes partial progress to `target_queue`
- * row-by-row so nothing is lost.
+ * Also gates `isTriggerRunning` — a stale `running_started_at` shouldn't
+ * read as "still running" in the UI.
  */
-const runningTriggers = new Map<string, number>();
+export const MAX_RUN_AGE_MS = 15 * 60 * 1000;
 
+/**
+ * Truth of "is this trigger running" lives in the ledger
+ * (`triggers.running_started_at`). Survives server restart so the UI shows
+ * accurate state across `bun --watch` re-execs and OS reboots.
+ *
+ * The freshness gate (`< MAX_RUN_AGE_MS`) hides stale rows that the boot
+ * sweep hasn't cleaned up yet — defense in depth so we never report "still
+ * running" for a row that's older than any real run could be.
+ */
 export function isTriggerRunning(name: string): boolean {
-  return runningTriggers.has(name);
+  return getTriggerRunningSince(name) !== null;
 }
 
 export function getTriggerRunningSince(name: string): number | null {
-  return runningTriggers.get(name) ?? null;
+  const row = getLedger().getTrigger(name);
+  if (!row?.running_started_at) return null;
+  const startedMs = new Date(row.running_started_at).getTime();
+  if (!Number.isFinite(startedMs)) return null;
+  if (Date.now() - startedMs > MAX_RUN_AGE_MS) return null;
+  return startedMs;
 }
 
 export function listRunningTriggers(): string[] {
-  return [...runningTriggers.keys()];
+  const now = Date.now();
+  return getLedger()
+    .listTriggers()
+    .filter((r) => {
+      if (!r.running_started_at) return false;
+      const startedMs = new Date(r.running_started_at).getTime();
+      return Number.isFinite(startedMs) && now - startedMs <= MAX_RUN_AGE_MS;
+    })
+    .map((r) => r.name);
 }
 
 /**
  * Fire-and-forget wrapper around `runTriggerNow`: returns immediately after
- * marking the trigger as running; the actual finder work runs on the event
- * loop. Throws synchronously if the trigger is unknown or already running.
+ * marking the trigger as running in the ledger; the actual finder work runs
+ * on the event loop. Throws synchronously if the trigger is unknown,
+ * already running, or unready.
  *
  * Errors from the finder are swallowed here — `runTriggerNow` already
  * persists them to the ledger (`last_run_summary`) and emits a
  * `trigger.run.error` event, so there's nothing useful for the caller to do.
+ *
+ * If the process is killed mid-run (bun --watch re-exec, OS reboot), the
+ * row's `running_started_at` stays set. The next cold boot's
+ * `sweepStaleRunningTriggers` call writes a `killed_by_restart` summary so
+ * the UI shows the truth instead of frozen-from-an-hour-ago state.
  */
 export function fireTriggerNow(name: string): void {
-  if (!TRIGGERS.some((t) => t.name === name)) {
+  const spec = TRIGGERS.find((t) => t.name === name);
+  if (!spec) {
     throw new Error(`unknown trigger '${name}'`);
   }
-  if (runningTriggers.has(name)) {
+  const ledger = getLedger();
+  if (isTriggerRunning(name)) {
     throw new Error(`trigger '${name}' is already running`);
   }
-  runningTriggers.set(name, Date.now());
-  void runTriggerNow(name).finally(() => {
-    runningTriggers.delete(name);
-  });
+  // Readiness gate: block the run synchronously so the server route can map
+  // this to a 409 without the finder ever being invoked on a dead config.
+  const stored = ledger.getTrigger(name);
+  const config = stored?.config_json
+    ? (JSON.parse(stored.config_json) as Record<string, unknown>)
+    : spec.defaultConfig;
+  const readiness = checkReadiness(spec, config);
+  if (!readiness.ready) {
+    throw new Error(`not ready: ${readiness.reason}`);
+  }
+  // Bootstrap the row if it doesn't exist yet — markTriggerRunning is an
+  // UPDATE that no-ops on a missing row, so we'd silently lose state.
+  if (!stored) {
+    ledger.upsertTrigger({
+      name,
+      configJson: JSON.stringify(spec.defaultConfig),
+      enabled: spec.enabledByDefault !== false,
+    });
+  }
+  ledger.markTriggerRunning(name, new Date().toISOString());
+  // No `.finally` cleanup — runTriggerNow's own updateTriggerLastPoll clears
+  // running_started_at on completion (success OR caught error).
+  void runTriggerNow(name);
 }
 
 /**
@@ -295,6 +383,18 @@ export async function runTriggerNow(name: string): Promise<TriggerRunOutcome> {
     ? (JSON.parse(stored.config_json) as Record<string, unknown>)
     : spec.defaultConfig;
   const intervalMs = effectiveIntervalMs(spec, config);
+  // Readiness re-check: fireTriggerNow already gates ad-hoc runs, but a direct
+  // CLI/test caller hitting runTriggerNow should get the same protection.
+  const readiness = checkReadiness(spec, config);
+  if (!readiness.ready) {
+    const message = `not ready: ${readiness.reason}`;
+    ledger.updateTriggerLastPoll({
+      name,
+      summary: { error: message, at: new Date().toISOString() },
+    });
+    logEvent("trigger.run.skipped", { name, source: "ad_hoc", reason: readiness.reason });
+    return { name, fired: false, error: message, nextDueInMs: intervalMs };
+  }
   const startedAt = Date.now();
   logEvent("trigger.run.start", { name, source: "ad_hoc" });
   try {
@@ -362,6 +462,20 @@ export async function runDueTriggers(): Promise<TriggerRunOutcome[]> {
     const enabled = stored ? Boolean(stored.enabled) : defaultEnabled;
     if (!enabled) {
       outcomes.push({ name: spec.name, fired: false, nextDueInMs: intervalMs });
+      continue;
+    }
+
+    // Readiness gate: skip without touching last_polled_at so the watch loop
+    // retries on the *next* tick once config is fixed, not on the next
+    // interval boundary.
+    const readiness = checkReadiness(spec, config);
+    if (!readiness.ready) {
+      outcomes.push({ name: spec.name, fired: false, nextDueInMs: intervalMs });
+      logEvent("trigger.run.skipped", {
+        name: spec.name,
+        source: "watch",
+        reason: readiness.reason,
+      });
       continue;
     }
 

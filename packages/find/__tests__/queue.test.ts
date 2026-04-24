@@ -189,3 +189,98 @@ describe("trigger registry state", () => {
     expect(JSON.parse(t!.config_json ?? "{}")).toEqual({ autoSinceDays: 14, limit: 50 });
   });
 });
+
+describe("trigger run-state persistence (survives restart)", () => {
+  it("markTriggerRunning sets running_started_at to the iso string", () => {
+    ledger.upsertTrigger({ name: "show-hn", configJson: "{}" });
+    expect(ledger.getTrigger("show-hn")?.running_started_at).toBeNull();
+    const iso = "2026-04-24T18:23:54.607Z";
+    ledger.markTriggerRunning("show-hn", iso);
+    expect(ledger.getTrigger("show-hn")?.running_started_at).toBe(iso);
+  });
+
+  it("updateTriggerLastPoll clears running_started_at in the same write", () => {
+    ledger.upsertTrigger({ name: "show-hn", configJson: "{}" });
+    ledger.markTriggerRunning("show-hn", "2026-04-24T18:23:54.607Z");
+    expect(ledger.getTrigger("show-hn")?.running_started_at).not.toBeNull();
+    ledger.updateTriggerLastPoll({ name: "show-hn", summary: { kept: 3 } });
+    const t = ledger.getTrigger("show-hn");
+    expect(t?.running_started_at).toBeNull();
+    expect(t?.last_polled_at).not.toBeNull();
+    expect(JSON.parse(t!.last_run_summary ?? "{}")).toEqual({ kept: 3 });
+  });
+
+  it("sweepStaleRunningTriggers returns [] when nothing is in flight", () => {
+    ledger.upsertTrigger({ name: "show-hn", configJson: "{}" });
+    const swept = ledger.sweepStaleRunningTriggers({
+      now: new Date("2026-04-24T19:00:00Z"),
+      maxAgeMs: 15 * 60_000,
+    });
+    expect(swept).toEqual([]);
+  });
+
+  it("sweepStaleRunningTriggers spares fresh in-flight rows", () => {
+    ledger.upsertTrigger({ name: "agent-builders", configJson: "{}" });
+    ledger.markTriggerRunning("agent-builders", "2026-04-24T18:55:00Z");
+    const swept = ledger.sweepStaleRunningTriggers({
+      now: new Date("2026-04-24T19:00:00Z"), // 5 min in
+      maxAgeMs: 15 * 60_000,
+    });
+    expect(swept).toEqual([]);
+    expect(ledger.getTrigger("agent-builders")?.running_started_at).toBe(
+      "2026-04-24T18:55:00Z",
+    );
+  });
+
+  it("sweepStaleRunningTriggers sweeps stale rows + writes killed_by_restart", () => {
+    ledger.upsertTrigger({ name: "agent-builders", configJson: "{}" });
+    ledger.markTriggerRunning("agent-builders", "2026-04-24T18:23:54.607Z");
+    const now = new Date("2026-04-24T19:30:00Z"); // > 15 min after start
+    const swept = ledger.sweepStaleRunningTriggers({ now, maxAgeMs: 15 * 60_000 });
+    expect(swept).toHaveLength(1);
+    expect(swept[0]?.name).toBe("agent-builders");
+    expect(swept[0]?.startedAt).toBe("2026-04-24T18:23:54.607Z");
+    expect(swept[0]?.ageMs).toBeGreaterThan(15 * 60_000);
+    const t = ledger.getTrigger("agent-builders");
+    expect(t?.running_started_at).toBeNull();
+    expect(t?.last_polled_at).toBe(now.toISOString());
+    const summary = JSON.parse(t!.last_run_summary ?? "{}") as { error: string; ageMs: number };
+    expect(summary.error).toBe("killed_by_restart");
+    expect(summary.ageMs).toBeGreaterThan(15 * 60_000);
+  });
+
+  it("sweepStaleRunningTriggers handles a garbage timestamp by clearing the row", () => {
+    ledger.upsertTrigger({ name: "show-hn", configJson: "{}" });
+    ledger.markTriggerRunning("show-hn", "this is not a valid date");
+    const swept = ledger.sweepStaleRunningTriggers({
+      now: new Date("2026-04-24T19:00:00Z"),
+      maxAgeMs: 15 * 60_000,
+    });
+    // Garbage isn't reported as a successful sweep (no ageMs), but the row
+    // is still cleared so it doesn't perpetually re-trip.
+    expect(ledger.getTrigger("show-hn")?.running_started_at).toBeNull();
+    const summary = JSON.parse(
+      ledger.getTrigger("show-hn")!.last_run_summary ?? "{}",
+    ) as { error: string; reason?: string };
+    expect(summary.error).toBe("killed_by_restart");
+    expect(summary.reason).toContain("unparseable");
+    expect(swept).toEqual([]);
+  });
+
+  it("sweepStaleRunningTriggers across many rows: keeps fresh, sweeps stale", () => {
+    ledger.upsertTrigger({ name: "fresh", configJson: "{}" });
+    ledger.upsertTrigger({ name: "stale", configJson: "{}" });
+    ledger.upsertTrigger({ name: "idle", configJson: "{}" });
+    ledger.markTriggerRunning("fresh", "2026-04-24T18:55:00Z");
+    ledger.markTriggerRunning("stale", "2026-04-24T17:00:00Z");
+    // "idle" has no running_started_at — should never appear in the sweep.
+    const swept = ledger.sweepStaleRunningTriggers({
+      now: new Date("2026-04-24T19:00:00Z"),
+      maxAgeMs: 15 * 60_000,
+    });
+    expect(swept.map((s) => s.name)).toEqual(["stale"]);
+    expect(ledger.getTrigger("fresh")?.running_started_at).not.toBeNull();
+    expect(ledger.getTrigger("stale")?.running_started_at).toBeNull();
+    expect(ledger.getTrigger("idle")?.last_run_summary).toBeNull();
+  });
+});

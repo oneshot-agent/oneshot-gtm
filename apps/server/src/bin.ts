@@ -1,5 +1,7 @@
 import open from "open";
-import { startServer } from "./server.ts";
+import { getLedger, logEvent } from "@oneshot-gtm/core";
+import { MAX_RUN_AGE_MS } from "@oneshot-gtm/find";
+import { buildFetchHandler, SERVER_BASE_OPTS, startServer } from "./server.ts";
 
 // Runtime guard: this binary depends on Bun (bun:sqlite, Bun.serve, Bun.stdin).
 // If invoked under plain node, fail loudly with an install hint.
@@ -15,23 +17,53 @@ if (typeof (globalThis as { Bun?: unknown }).Bun === "undefined") {
 const port = Number.parseInt(process.env["PORT"] ?? "3030", 10);
 const noBrowser = process.env["ONESHOT_GTM_NO_BROWSER"] === "1";
 
-const { url, server } = await startServer({ port });
+// Cache the server on globalThis so Bun's `--hot` re-execution (same
+// process) can swap handlers via `server.reload({fetch})` instead of
+// rebinding the port, which would fail with EADDRINUSE.
+type BunServer = Awaited<ReturnType<typeof startServer>>["server"];
+const cache = globalThis as { __oneshotGtmServer?: BunServer };
 
-process.stdout.write(`\n  oneshot-gtm dashboard: ${url}\n\n`);
-
-if (!noBrowser) {
-  try {
-    await open(url);
-  } catch {
-    // ignore — terminal output already shows the URL.
+if (cache.__oneshotGtmServer) {
+  cache.__oneshotGtmServer.reload({
+    ...SERVER_BASE_OPTS,
+    fetch: buildFetchHandler(),
+  });
+  process.stdout.write(`\n  oneshot-gtm dashboard: http://127.0.0.1:${port}  (reloaded)\n\n`);
+} else {
+  // Cold boot only — sweep any trigger rows that were marked running by a
+  // previous process that never got to call updateTriggerLastPoll
+  // (bun --watch re-exec, OS reboot, OOM kill). Writes a `killed_by_restart`
+  // last_run_summary so the UI shows the truth instead of frozen-from-an-
+  // hour-ago state. Hot reload (the if-branch above) preserves the event
+  // loop, so any genuinely in-flight run continues and shouldn't be swept.
+  const swept = getLedger().sweepStaleRunningTriggers({
+    now: new Date(),
+    maxAgeMs: MAX_RUN_AGE_MS,
+  });
+  for (const s of swept) {
+    logEvent("trigger.killed_by_restart", { name: s.name, age_ms: s.ageMs }, "warn");
+    process.stdout.write(`  swept stale run: ${s.name} (${Math.round(s.ageMs / 1000)}s old)\n`);
   }
+
+  const { url, server } = await startServer({ port });
+  cache.__oneshotGtmServer = server;
+
+  process.stdout.write(`\n  oneshot-gtm dashboard: ${url}\n\n`);
+
+  if (!noBrowser) {
+    try {
+      await open(url);
+    } catch {
+      // ignore — terminal output already shows the URL.
+    }
+  }
+
+  const shutdown = (): void => {
+    process.stdout.write("\n  shutting down...\n");
+    server.stop();
+    process.exit(0);
+  };
+
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
 }
-
-const shutdown = (): void => {
-  process.stdout.write("\n  shutting down...\n");
-  server.stop();
-  process.exit(0);
-};
-
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
