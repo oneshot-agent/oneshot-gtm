@@ -1,16 +1,46 @@
 @import "tailwindcss";
+@import "./design/fonts.css";
+@import "./design/tokens.css";
 
+/*
+ * Tailwind theme — map our semantic tokens to utilities so class names
+ * read like the design language (bg-ink-surface, text-ink-cream, etc.).
+ * We keep the default Tailwind colour palette available for edge cases
+ * but prefer ink-* tokens throughout the app.
+ */
 @theme {
-  --color-bg: oklch(0.145 0 0);
-  --color-surface: oklch(0.18 0 0);
-  --color-border: oklch(0.27 0 0);
-  --color-muted: oklch(0.55 0 0);
-  --color-fg: oklch(0.97 0 0);
-  --color-accent: oklch(0.7 0.18 210);
-  --font-sans:
-    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, "Liberation Mono", monospace;
+  --color-ink-bg: var(--ink-bg);
+  --color-ink-bg-deep: var(--ink-bg-deep);
+  --color-ink-surface: var(--ink-surface);
+  --color-ink-surface-2: var(--ink-surface-2);
+  --color-ink-rule: var(--ink-rule);
+  --color-ink-rule-2: var(--ink-rule-2);
+  --color-ink-cream: var(--ink-cream);
+  --color-ink-cream-2: var(--ink-cream-2);
+  --color-ink-muted: var(--ink-muted);
+  --color-ink-faint: var(--ink-faint);
+  --color-ink-receipt: var(--ink-receipt);
+  --color-ink-receipt-2: var(--ink-receipt-2);
+  --color-ink-spend: var(--ink-spend);
+  --color-ink-spend-2: var(--ink-spend-2);
+  --color-ink-blocked: var(--ink-blocked);
+  --color-ink-blocked-2: var(--ink-blocked-2);
+  --color-ink-signal: var(--ink-signal);
+  --color-ink-signal-2: var(--ink-signal-2);
+
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+  --font-serif: var(--font-display);
+  --font-prose: var(--font-prose);
+
+  --radius-xs: var(--radius-xs);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
 }
+
+/* ── base ─────────────────────────────────────────────────────────── */
 
 html,
 body,
@@ -18,14 +48,343 @@ body,
   height: 100%;
 }
 
+html {
+  background: var(--ink-bg);
+  color: var(--ink-cream);
+  /*
+   * Ruled-paper under-feel: a faint horizontal hairline every 8px.
+   * The image is built from a 1x8 linear-gradient so it tiles cheaply.
+   */
+  background-image:
+    /* noise (subtle grain) */
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.035 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>"),
+    /* ruled lines — 1px every 8px */
+    linear-gradient(
+        to bottom,
+        transparent 0,
+        transparent 7px,
+        oklch(1 0 0 / 0.02) 7px,
+        oklch(1 0 0 / 0.02) 8px
+      );
+  background-repeat: repeat;
+  background-size:
+    180px 180px,
+    100% 8px;
+  background-attachment: fixed;
+}
+
 body {
   font-family: var(--font-sans);
+  font-feature-settings: "ss01", "cv11", "zero";
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 * {
   box-sizing: border-box;
 }
 
+/* Selection: muted cream wash, not saturated blue. */
 ::selection {
-  background: oklch(0.4 0.18 210 / 0.4);
+  background: oklch(0.86 0.05 85 / 0.24);
+  color: var(--ink-cream);
+}
+
+/* ── focus ────────────────────────────────────────────────────────── */
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--ring);
+  border-radius: var(--radius-sm);
+}
+
+/* ── link baseline ────────────────────────────────────────────────── */
+
+a {
+  color: inherit;
+  text-decoration-color: oklch(0.62 0.015 65 / 0.6);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+/* ── type helpers (used by primitives + routes directly) ──────────── */
+
+.ln-display {
+  font-family: var(--font-display);
+  font-weight: 500;
+  letter-spacing: -0.035em;
+  line-height: 0.95;
+}
+
+.ln-heading {
+  font-family: var(--font-display);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+.ln-eyebrow {
+  font-family: var(--font-sans);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-weight: 600;
+  color: var(--ink-muted);
+}
+
+/*
+ * `ln-note` is the quiet caption / lede style. Used to be Fraunces
+ * italic; now it's Plex Sans at muted weight + colour. No italics.
+ */
+.ln-note {
+  font-family: var(--font-sans);
+  font-weight: 400;
+  color: var(--ink-cream-2);
+}
+
+.ln-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-feature-settings: "zero", "ss01";
+}
+
+.ln-prose {
+  font-family: var(--font-prose);
+  line-height: 1.55;
+}
+
+/*
+ * Big display numerals — Plex Mono monumental. Tabular-nums so columns
+ * of $ and integers align, and slashed-zero so a cold 0 doesn't look
+ * like an O.
+ */
+.ln-numeral {
+  font-family: var(--font-mono);
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  line-height: 0.96;
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-feature-settings: "zero", "ss01";
+}
+
+/* ── ledger row rhythm ───────────────────────────────────────────── */
+
+.ln-row {
+  border-bottom: 1px solid var(--ink-rule);
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px 8px 12px;
+  position: relative;
+}
+.ln-row::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: transparent;
+  transition: background var(--dur-reveal) var(--ease-standard);
+}
+.ln-row[data-tone="receipt"]::before {
+  background: var(--ink-receipt);
+}
+.ln-row[data-tone="spend"]::before {
+  background: var(--ink-spend);
+}
+.ln-row[data-tone="blocked"]::before {
+  background: var(--ink-blocked);
+}
+.ln-row[data-tone="signal"]::before {
+  background: var(--ink-signal);
+}
+
+/* ── sparkline animation keyframes ───────────────────────────────── */
+
+@keyframes ln-draw {
+  from {
+    stroke-dashoffset: var(--ln-dash-length, 1000);
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes ln-stamp {
+  0% {
+    transform: scale(0.98);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.01);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+@keyframes ln-settle {
+  0% {
+    transform: translateY(4px);
+    opacity: 0;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Reduced-motion respect — kill all non-essential motion. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── command palette (cmdk) ──────────────────────────────────────── */
+
+[cmdk-root] {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  background: var(--ink-surface);
+  border: 1px solid var(--ink-rule);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  box-shadow: var(--shadow-ink-bleed);
+}
+
+[cmdk-input] {
+  width: 100%;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: var(--font-sans);
+  font-size: 15px;
+  color: var(--ink-cream);
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--ink-rule);
+}
+[cmdk-input]::placeholder {
+  color: var(--ink-faint);
+  font-family: var(--font-sans);
+  font-weight: 400;
+}
+[cmdk-input]:focus {
+  box-shadow: none;
+  border-radius: 0;
+}
+
+[cmdk-list] {
+  max-height: 420px;
+  overflow-y: auto;
+  padding: 4px;
+}
+
+[cmdk-group-heading] {
+  font-family: var(--font-sans);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-weight: 600;
+  color: var(--ink-faint);
+  padding: 10px 12px 4px;
+}
+
+[cmdk-item] {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--ink-cream-2);
+  font-size: 13.5px;
+  position: relative;
+}
+[cmdk-item] svg {
+  color: var(--ink-muted);
+  flex-shrink: 0;
+}
+[cmdk-item] code {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--ink-cream);
+}
+[cmdk-item][data-selected="true"] {
+  background: var(--ink-surface-2);
+  color: var(--ink-cream);
+}
+[cmdk-item][data-selected="true"] svg {
+  color: var(--ink-cream-2);
+}
+[cmdk-item][data-selected="true"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--ink-signal);
+}
+
+[cmdk-empty] {
+  padding: 24px 12px;
+  color: var(--ink-muted);
+  text-align: center;
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+}
+
+[cmdk-overlay] {
+  position: fixed;
+  inset: 0;
+  background: oklch(0.13 0.008 60 / 0.6);
+  z-index: 60;
+  animation: ln-overlay-in 140ms var(--ease-standard);
+}
+
+@keyframes ln-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes ln-palette-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── scrollbars (subtle) ─────────────────────────────────────────── */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--ink-rule) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--ink-rule);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--ink-rule-2);
 }

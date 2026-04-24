@@ -1,0 +1,67 @@
+/*
+ * Founder's Ledger — design tokens
+ *
+ * Palette is in oklch; colours are named for what they MEAN in this app,
+ * not for what they look like. A meeting booked is receipt-green, a
+ * dollar outbound is spend-amber, a bounce is blocked-oxblood. The
+ * palette is warm throughout; the only cool is the rare signal-cobalt.
+ */
+
+:root {
+  /* ── surfaces ─────────────────────────────────────────── */
+  --ink-bg: oklch(0.17 0.008 60); /* base — warm deep black */
+  --ink-bg-deep: oklch(0.13 0.008 60); /* sunken wells (kanban gutter, etc.) */
+  --ink-surface: oklch(0.21 0.01 55); /* cards, rails */
+  --ink-surface-2: oklch(0.235 0.012 55); /* hover, selected */
+  --ink-rule: oklch(0.27 0.018 50); /* walnut hairlines */
+  --ink-rule-2: oklch(0.32 0.022 50); /* emphasised divider */
+
+  /* ── ink ──────────────────────────────────────────────── */
+  --ink-cream: oklch(0.96 0.01 80); /* primary text */
+  --ink-cream-2: oklch(0.89 0.012 80); /* secondary text */
+  --ink-muted: oklch(0.62 0.015 65); /* meta / captions */
+  --ink-faint: oklch(0.48 0.015 60); /* tertiary, rule labels */
+
+  /* ── semantic accents ─────────────────────────────────── */
+  --ink-receipt: oklch(0.7 0.14 155); /* delivered, replied, meeting */
+  --ink-receipt-2: oklch(0.78 0.12 155); /* receipt text on surface */
+  --ink-spend: oklch(0.77 0.14 75); /* money outbound */
+  --ink-spend-2: oklch(0.84 0.12 80);
+  --ink-blocked: oklch(0.58 0.15 28); /* bounced, rejected */
+  --ink-blocked-2: oklch(0.7 0.14 28);
+  --ink-signal: oklch(0.62 0.17 255); /* rare cobalt — information */
+  --ink-signal-2: oklch(0.72 0.14 255);
+
+  /* ── type ─────────────────────────────────────────────── */
+  --font-display:
+    "Host Grotesk Variable", "Host Grotesk", ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-sans:
+    "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    Arial, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, monospace;
+  --font-prose: "IBM Plex Sans", var(--font-sans);
+
+  /* ── spatial rhythm ───────────────────────────────────── */
+  --rhythm: 8px; /* ruled paper line height */
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+
+  /* ── motion ───────────────────────────────────────────── */
+  --ease-reveal: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+  --dur-stamp: 80ms;
+  --dur-settle: 320ms;
+  --dur-reveal: 240ms;
+
+  /* ── shadow / depth ───────────────────────────────────── */
+  --shadow-inset: inset 0 1px 0 0 oklch(1 0 0 / 0.03);
+  --shadow-ink-bleed: 0 1px 0 0 oklch(0 0 0 / 0.4), 0 12px 32px -12px oklch(0 0 0 / 0.5);
+  --shadow-stamp: 0 1px 0 0 oklch(0 0 0 / 0.5), 0 4px 12px -4px oklch(0 0 0 / 0.35);
+
+  /* ── focus ring ───────────────────────────────────────── */
+  --ring: 0 0 0 1px var(--ink-bg), 0 0 0 3px var(--ink-signal);
+}

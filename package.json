@@ -28,6 +28,9 @@
     "cli": "bun run apps/cli/src/index.ts",
     "ui": "bun run apps/server/src/bin.ts"
   },
+  "dependencies": {
+    "@fontsource-variable/host-grotesk": "^5.2.8"
+  },
   "devDependencies": {
     "@types/bun": "catalog:",
     "oxfmt": "^0.46.0",

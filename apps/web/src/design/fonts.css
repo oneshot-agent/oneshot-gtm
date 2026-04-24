@@ -1,0 +1,25 @@
+/*
+ * Font loading
+ *
+ * Host Grotesk replaces Fraunces as the display face — a modern
+ * geometric grotesque with a distinctive character that holds up at
+ * large sizes without feeling editorial/literary. Paired with
+ * IBM Plex Sans for UI body and IBM Plex Mono for data/code/numbers.
+ *
+ * No italics anywhere. The old "ln-note" italic serif look is gone;
+ * lede/caption text now uses Plex Sans at a muted weight.
+ */
+
+/* Host Grotesk — variable, for display + headings. */
+@import "@fontsource-variable/host-grotesk/index.css";
+
+/* IBM Plex Mono — data, code, receipts, big numerals. */
+@import "@fontsource/ibm-plex-mono/400.css";
+@import "@fontsource/ibm-plex-mono/500.css";
+@import "@fontsource/ibm-plex-mono/600.css";
+
+/* IBM Plex Sans — UI body + email prose. Family unity with Plex Mono. */
+@import "@fontsource/ibm-plex-sans/400.css";
+@import "@fontsource/ibm-plex-sans/500.css";
+@import "@fontsource/ibm-plex-sans/600.css";
+@import "@fontsource/ibm-plex-sans/700.css";

@@ -6,11 +6,12 @@ export function cn(...inputs: ClassValue[]): string {
 }
 
 export function formatUsd(n: number): string {
+  const digits = n === 0 ? 2 : n < 0.01 ? 4 : 2;
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
-    minimumFractionDigits: n < 1 ? 4 : 2,
-    maximumFractionDigits: n < 1 ? 4 : 2,
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
   }).format(n);
 }
 
