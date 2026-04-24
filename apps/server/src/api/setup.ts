@@ -14,7 +14,11 @@ import { jsonResponse } from "../server.ts";
  * Strip it before any HTTP response so the browser never sees it (and can't
  * accidentally clobber it on a subsequent POST).
  */
-function publicCfg(cfg: OneShotConfig): Omit<OneShotConfig, "clientId"> {
+/**
+ * Strip the anonymous clientId before sending cfg to the web layer. Exported
+ * so we can unit-test the privacy boundary directly.
+ */
+export function publicCfg(cfg: OneShotConfig): Omit<OneShotConfig, "clientId"> {
   const { clientId: _omit, ...rest } = cfg;
   void _omit;
   return rest;

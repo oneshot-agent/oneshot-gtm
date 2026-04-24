@@ -47,6 +47,7 @@ const DEBUG_ENABLED = (process.env["DEBUG"] ?? "").includes("oneshot");
 let runId: string | null = null;
 let cachedClientId: string | null = null;
 let clientIdResolved = false;
+let configDirEnsured = false;
 
 /**
  * Begin a new "run" — subsequent events emitted from this process will share
@@ -63,28 +64,34 @@ export function logEvent(
   ctx?: Record<string, unknown>,
   level: EventLevel = "info",
 ): void {
-  const event: DevEvent = {
-    ts: new Date().toISOString(),
-    kind,
-    level,
-  };
-  if (ctx) event.ctx = ctx;
-  const cid = resolveClientId();
-  if (cid) event.client_id = cid;
-  if (runId) event.run_id = runId;
-
-  const line = JSON.stringify(event) + "\n";
-
+  // Whole body is best-effort; a logging bug must not break the caller.
+  // JSON.stringify can throw on BigInt / circular refs, so it goes inside
+  // the try block alongside the filesystem work.
   try {
-    if (!existsSync(configDir())) mkdirSync(configDir(), { recursive: true });
+    const event: DevEvent = {
+      ts: new Date().toISOString(),
+      kind,
+      level,
+    };
+    if (ctx) event.ctx = ctx;
+    const cid = resolveClientId();
+    if (cid) event.client_id = cid;
+    if (runId) event.run_id = runId;
+
+    const line = JSON.stringify(event) + "\n";
+
+    if (!configDirEnsured) {
+      if (!existsSync(configDir())) mkdirSync(configDir(), { recursive: true });
+      configDirEnsured = true;
+    }
     appendFileSync(EVENTS_PATH, line);
+
+    if (DEBUG_ENABLED) {
+      // Mirror to stderr so it doesn't interleave with command output on stdout.
+      process.stderr.write(line);
+    }
   } catch {
     // dropped silently — see file header
-  }
-
-  if (DEBUG_ENABLED) {
-    // Mirror to stderr so it doesn't interleave with command output on stdout.
-    process.stderr.write(line);
   }
 }
 
@@ -96,7 +103,11 @@ export function logEvent(
  * Cached for the process lifetime once non-null.
  */
 function resolveClientId(): string | null {
-  if (clientIdResolved && cachedClientId) return cachedClientId;
+  // First call resolves and caches, subsequent calls return the cached value
+  // even if it's null. The previous `clientIdResolved && cachedClientId` check
+  // re-read the config file on every event when bootstrap hadn't finished
+  // yet — turning the once-per-process cost into a per-event syscall.
+  if (clientIdResolved) return cachedClientId;
   clientIdResolved = true;
   try {
     const path = join(configDir(), "config.json");
@@ -117,6 +128,7 @@ function resolveClientId(): string | null {
 export function _resetClientIdCacheForTests(): void {
   cachedClientId = null;
   clientIdResolved = false;
+  configDirEnsured = false;
   runId = null;
 }
 

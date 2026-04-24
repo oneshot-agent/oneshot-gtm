@@ -279,6 +279,32 @@ Build the publishable server bundle (apps/server/dist/bin.mjs + dist/web/):
 bun run --cwd apps/server build
 ```
 
+### Watching what's happening
+
+Every install writes a structured event log to `~/.oneshot-gtm/events.jsonl` — one JSON line per LLM call, ICP filter decision, finder lifecycle event, and swallowed `catch`. Local-only; never transmitted off-device. Tail with `jq` while iterating:
+
+```bash
+# Live tail, condensed
+tail -f ~/.oneshot-gtm/events.jsonl | jq -c '{t:.ts, k:.kind, ctx:.ctx}'
+
+# Just LLM calls (with durations)
+tail -f ~/.oneshot-gtm/events.jsonl | jq -c 'select(.kind | startswith("llm."))'
+
+# Just ICP classifier decisions (see WHY rejects happened)
+tail -f ~/.oneshot-gtm/events.jsonl | jq -c 'select(.kind == "icp.decision")'
+
+# Errors and warnings only
+tail -f ~/.oneshot-gtm/events.jsonl | jq -c 'select(.level == "error" or .level == "warn")'
+
+# All events from one run (grab a run_id from above, then)
+tail -2000 ~/.oneshot-gtm/events.jsonl | jq -c 'select(.run_id == "PASTE-HERE")'
+
+# Mirror to stderr too (in addition to file)
+DEBUG=oneshot:* oneshot-gtm find watch --once
+```
+
+The event payload (`ctx`) is bound by a strict privacy boundary — primitives, counters, durations, hostnames only. No prospect data, no LLM completions verbatim, no user-typed values. See [TELEMETRY.md](./TELEMETRY.md) for the full schema.
+
 ---
 
 ## Distribution

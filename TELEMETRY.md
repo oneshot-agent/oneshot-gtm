@@ -39,3 +39,21 @@ Or set `ONESHOT_GTM_TELEMETRY=0` in your environment. That's a hard kill at the 
 Sent to a single endpoint owned by OneShot. Aggregated and used to prioritize the public roadmap. Never sold, never shared with third parties.
 
 This file is the authoritative spec. If telemetry is ever extended, this file is updated in the same PR. CI rejects PRs that change telemetry without updating this file.
+
+## Local development log (separate from telemetry)
+
+Independent of the opt-out flag above, every install writes a structured local event log to `~/.oneshot-gtm/events.jsonl`. This is **never transmitted off-device**. Its purpose is letting you (the developer) see what's happening inside finder runs, ICP filter decisions, LLM calls, and swallowed errors while iterating.
+
+Tail it with `jq`:
+
+```bash
+tail -f ~/.oneshot-gtm/events.jsonl | jq -c '{k:.kind, l:.level, ctx:.ctx}'
+```
+
+The same privacy boundary applies to event `ctx` payloads — primitives, counters, durations, category labels, hostnames only. No user-typed values, no prospect data, no LLM completions verbatim. This rule means the local log shape is forward-compatible with future opt-in distribution telemetry: the producer sticks; only the sink (file vs HTTP) changes.
+
+Delete the file any time: `rm ~/.oneshot-gtm/events.jsonl`. Disable the dev mirror to stderr by leaving `DEBUG` unset; the file gets written either way.
+
+## Anonymous `clientId`
+
+A UUID is generated on first run and persisted to `~/.oneshot-gtm/config.json`. It is never exposed to the web layer (filtered out of `/api/setup` responses) and never transmitted today. Reserved for opt-in distribution telemetry once that lands — having it now means pre-launch installs aren't attribution-orphaned later. Disabling telemetry leaves the UUID on disk but blocks any transmission.
