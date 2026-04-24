@@ -799,7 +799,6 @@ function TriggersCard() {
     lastPolledByName,
   );
 
-
   return (
     <>
       <section className="border-b border-ink-rule">

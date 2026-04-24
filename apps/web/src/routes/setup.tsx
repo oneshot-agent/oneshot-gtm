@@ -236,10 +236,7 @@ function SetupPage() {
                   disabled={deriveIcp.isPending || icpDomain.trim().length === 0}
                   onClick={() => deriveIcp.mutate(icpDomain.trim())}
                 >
-                  <Wand2
-                    size={12}
-                    className={deriveIcp.isPending ? "animate-pulse" : undefined}
-                  />
+                  <Wand2 size={12} className={deriveIcp.isPending ? "animate-pulse" : undefined} />
                   {deriveIcp.isPending ? `Working · ${deriveElapsed}s` : "Derive ICP"}
                 </Button>
               </div>

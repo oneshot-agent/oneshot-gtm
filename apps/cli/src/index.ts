@@ -2,12 +2,7 @@
 import { Command } from "commander";
 import { fail } from "./output.ts";
 import { runInit } from "./commands/init.ts";
-import {
-  configFounder,
-  configKeys,
-  configLlm,
-  configTelemetry,
-} from "./commands/config.ts";
+import { configFounder, configKeys, configLlm, configTelemetry } from "./commands/config.ts";
 import { commandDoctor } from "./commands/doctor.ts";
 import {
   commandIntelAdvise,

@@ -63,11 +63,7 @@ export async function deriveIcpRoute(req: Request): Promise<Response> {
   }
 
   if (proposed.toLowerCase().startsWith("unable to derive")) {
-    return jsonResponse(
-      { error: proposed, sourceUrl: url, costUsd },
-      422,
-      req,
-    );
+    return jsonResponse({ error: proposed, sourceUrl: url, costUsd }, 422, req);
   }
 
   const view: DeriveIcpResult = {
