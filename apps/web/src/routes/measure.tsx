@@ -1,10 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import type { ReceiptView } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
-import { Card, CardBody, CardHeader } from "../components/primitives/Card.tsx";
 import { Button } from "../components/primitives/Button.tsx";
-import { formatUsd } from "../lib/cn.ts";
+import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
+import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
+import { Sparkline } from "../components/primitives/Sparkline.tsx";
+import { cn, formatUsd } from "../lib/cn.ts";
 
 export const Route = createFileRoute("/measure")({
   component: MeasurePage,
@@ -27,11 +30,47 @@ function MeasurePage() {
     queryFn: () => api.measureRocs(sinceDays),
   });
 
+  // Pull a wide receipts window once so the per-play sparklines can show a
+  // daily-spend trend. We grab up to 500 receipts; for heavier founders we'd
+  // wire a server-side time-bucketed aggregate, but 500 covers a month of
+  // daily activity for the current scale.
+  const receipts = useQuery({
+    queryKey: ["measure", "receipts-trend"],
+    queryFn: () => api.receipts({ limit: 500 }),
+    staleTime: 60_000,
+  });
+
+  const sparkDays = sinceDays ?? 30;
+  const spendSeries = useMemo(
+    () => buildSpendSeries(receipts.data?.receipts ?? [], sparkDays),
+    [receipts.data?.receipts, sparkDays],
+  );
+
+  const totalSpend = cac.data?.spend.reduce((a, s) => a + s.totalUsd, 0) ?? 0;
+  const totalReplied = cac.data?.events.reduce((a, e) => a + e.replied, 0) ?? 0;
+  const totalSent = cac.data?.events.reduce((a, e) => a + e.sent, 0) ?? 0;
+  const totalWon = rocs.data?.outcomes.reduce((a, o) => a + o.won, 0) ?? 0;
+
   return (
-    <div className="flex flex-col gap-6">
-      <div className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold text-zinc-100">Measure</h1>
-        <div className="flex items-center gap-2">
+    <div className="-mx-6 -my-6 flex flex-col">
+      {/* Masthead */}
+      <section className="flex items-end justify-between gap-4 border-b border-ink-rule px-6 pb-5 pt-6">
+        <div>
+          <div className="ln-eyebrow">The Ledger · Measure</div>
+          <h1
+            className="mt-1 text-ink-cream"
+            style={{
+              fontFamily: "var(--font-display)",
+              fontSize: 44,
+              fontWeight: 600,
+              letterSpacing: "-0.025em",
+              lineHeight: 0.98,
+            }}
+          >
+            $ per reply, per meeting, per won.
+          </h1>
+        </div>
+        <div className="flex items-center gap-1.5">
           {RANGES.map((r) => (
             <Button
               key={r.label}
@@ -43,104 +82,275 @@ function MeasurePage() {
             </Button>
           ))}
         </div>
-      </div>
+      </section>
 
-      <Card>
-        <CardHeader>CAC by play (signed receipts)</CardHeader>
-        <CardBody className="p-0">
-          <table className="w-full text-sm">
+      {/* Aggregate strip */}
+      <section className="grid grid-cols-2 divide-x divide-ink-rule border-b border-ink-rule md:grid-cols-4">
+        <Summary
+          label="Total spend"
+          value={cac.data ? formatUsd(totalSpend) : undefined}
+          tone="spend"
+        />
+        <Summary
+          label="Sent"
+          value={cac.data ? String(totalSent) : undefined}
+          caption="lifetime, all plays"
+        />
+        <Summary
+          label="Replied"
+          value={cac.data ? String(totalReplied) : undefined}
+          caption={
+            cac.data && totalSent > 0
+              ? `${((totalReplied / totalSent) * 100).toFixed(1)}% reply rate`
+              : undefined
+          }
+          tone="receipt"
+        />
+        <Summary
+          label="Won"
+          value={rocs.data ? String(totalWon) : undefined}
+          caption={rocs.data ? "deals" : undefined}
+        />
+      </section>
+
+      {/* CAC table */}
+      <section className="border-b border-ink-rule">
+        <div className="flex items-baseline justify-between px-6 pb-2 pt-5">
+          <div className="ln-eyebrow">CAC by play · signed receipts</div>
+          <div className="font-mono text-[11px] text-ink-faint">{rangeLabel(sinceDays)}</div>
+        </div>
+        {cac.isLoading ? (
+          Array.from({ length: 3 }, (_, i) => <SkeletonRow key={i} />)
+        ) : cac.data?.spend.length === 0 ? (
+          <div className="px-6 pb-6">
+            <EmptyNote
+              note="No spend in this window. Run a play and the dollars will account for themselves."
+              cli="oneshot-gtm motion show-hn --target targets.json"
+            />
+          </div>
+        ) : (
+          <table className="w-full text-[13px]">
             <thead>
-              <tr className="text-xs uppercase tracking-wider text-zinc-500">
-                <th className="px-4 py-2 text-left font-medium">play</th>
-                <th className="px-4 py-2 text-right font-medium">spend</th>
-                <th className="px-4 py-2 text-right font-medium">calls</th>
-                <th className="px-4 py-2 text-right font-medium">sent</th>
-                <th className="px-4 py-2 text-right font-medium">replied</th>
-                <th className="px-4 py-2 text-right font-medium">$/send</th>
-                <th className="px-4 py-2 text-right font-medium">$/reply</th>
+              <tr className="text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+                <th className="px-6 py-2 text-left font-medium">play</th>
+                <th className="py-2 text-left font-medium">spend · {sparkDays}d</th>
+                <th className="py-2 text-right font-medium">spend</th>
+                <th className="py-2 text-right font-medium">calls</th>
+                <th className="py-2 text-right font-medium">sent</th>
+                <th className="py-2 text-right font-medium">replied</th>
+                <th className="py-2 text-right font-medium">$/send</th>
+                <th className="px-6 py-2 text-right font-medium">$/reply</th>
               </tr>
             </thead>
             <tbody>
-              {cac.data?.spend.map((s) => {
+              {cac.data?.spend.map((s, i) => {
                 const ev = cac.data.events.find((e) => e.playName === s.playName);
                 const sent = ev?.sent ?? 0;
                 const replied = ev?.replied ?? 0;
+                const series = spendSeries.get(s.playName) ?? [];
                 return (
-                  <tr key={s.playName} className="border-t border-zinc-800">
-                    <td className="px-4 py-2">{s.playName}</td>
-                    <td className="px-4 py-2 text-right font-mono">{formatUsd(s.totalUsd)}</td>
-                    <td className="px-4 py-2 text-right font-mono text-zinc-400">{s.calls}</td>
-                    <td className="px-4 py-2 text-right font-mono text-zinc-400">{sent}</td>
-                    <td className="px-4 py-2 text-right font-mono text-zinc-400">{replied}</td>
-                    <td className="px-4 py-2 text-right font-mono">
-                      {sent > 0 ? formatUsd(s.totalUsd / sent) : "—"}
+                  <tr
+                    key={s.playName}
+                    className={cn(
+                      "border-t border-ink-rule/60",
+                      i % 2 === 1 && "bg-ink-surface/20",
+                    )}
+                  >
+                    <td className="px-6 py-2 text-ink-cream">{s.playName}</td>
+                    <td className="py-2">
+                      {series.length > 1 ? (
+                        <Sparkline
+                          values={series}
+                          tone="spend"
+                          width={96}
+                          height={22}
+                          aria-label={`${s.playName} spend over last ${sparkDays} days`}
+                        />
+                      ) : (
+                        <span className="font-mono text-[11px] text-ink-faint">—</span>
+                      )}
                     </td>
-                    <td className="px-4 py-2 text-right font-mono text-emerald-300">
-                      {replied > 0 ? formatUsd(s.totalUsd / replied) : "—"}
+                    <td className="py-2 text-right font-mono text-ink-cream">
+                      {formatUsd(s.totalUsd)}
+                    </td>
+                    <td className="py-2 text-right font-mono text-ink-muted">{s.calls}</td>
+                    <td className="py-2 text-right font-mono text-ink-muted">{sent}</td>
+                    <td className="py-2 text-right font-mono text-ink-muted">{replied}</td>
+                    <td className="py-2 text-right font-mono text-ink-cream-2">
+                      {sent > 0 ? (
+                        formatUsd(s.totalUsd / sent)
+                      ) : (
+                        <span className="text-ink-faint">—</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-2 text-right font-mono text-[color:var(--ink-receipt-2)]">
+                      {replied > 0 ? (
+                        formatUsd(s.totalUsd / replied)
+                      ) : (
+                        <span className="text-ink-faint">—</span>
+                      )}
                     </td>
                   </tr>
                 );
               })}
-              {cac.data?.spend.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-sm text-zinc-500">
-                    No spend in this window. Run a play.
-                  </td>
-                </tr>
-              )}
             </tbody>
           </table>
-        </CardBody>
-      </Card>
+        )}
+      </section>
 
-      <Card>
-        <CardHeader>RoCS — Return on Cognitive Spend (per outcome)</CardHeader>
-        <CardBody className="p-0">
-          <table className="w-full text-sm">
+      {/* RoCS table */}
+      <section className="border-b border-ink-rule">
+        <div className="flex items-baseline justify-between px-6 pb-2 pt-5">
+          <div className="ln-eyebrow">RoCS · return on cognitive spend</div>
+          <div className="font-mono text-[11px] text-ink-faint">{rangeLabel(sinceDays)}</div>
+        </div>
+        {rocs.isLoading ? (
+          Array.from({ length: 3 }, (_, i) => <SkeletonRow key={i} />)
+        ) : rocs.data?.spend.length === 0 ? (
+          <div className="px-6 pb-6">
+            <EmptyNote note="No spend in this window to attribute to outcomes yet." />
+          </div>
+        ) : (
+          <table className="w-full text-[13px]">
             <thead>
-              <tr className="text-xs uppercase tracking-wider text-zinc-500">
-                <th className="px-4 py-2 text-left font-medium">play</th>
-                <th className="px-4 py-2 text-right font-medium">spend</th>
-                <th className="px-4 py-2 text-right font-medium">meetings</th>
-                <th className="px-4 py-2 text-right font-medium">SQLs</th>
-                <th className="px-4 py-2 text-right font-medium">won</th>
-                <th className="px-4 py-2 text-right font-medium">$/meeting</th>
-                <th className="px-4 py-2 text-right font-medium">$/won</th>
+              <tr className="text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+                <th className="px-6 py-2 text-left font-medium">play</th>
+                <th className="py-2 text-left font-medium">spend · {sparkDays}d</th>
+                <th className="py-2 text-right font-medium">spend</th>
+                <th className="py-2 text-right font-medium">meetings</th>
+                <th className="py-2 text-right font-medium">SQLs</th>
+                <th className="py-2 text-right font-medium">won</th>
+                <th className="py-2 text-right font-medium">$/meeting</th>
+                <th className="px-6 py-2 text-right font-medium">$/won</th>
               </tr>
             </thead>
             <tbody>
-              {rocs.data?.spend.map((s) => {
+              {rocs.data?.spend.map((s, i) => {
                 const oc = rocs.data.outcomes.find((o) => o.playName === s.playName);
                 const meet = oc?.meetings ?? 0;
                 const sql = oc?.sqls ?? 0;
                 const won = oc?.won ?? 0;
+                const series = spendSeries.get(s.playName) ?? [];
                 return (
-                  <tr key={s.playName} className="border-t border-zinc-800">
-                    <td className="px-4 py-2">{s.playName}</td>
-                    <td className="px-4 py-2 text-right font-mono">{formatUsd(s.totalUsd)}</td>
-                    <td className="px-4 py-2 text-right font-mono">{meet}</td>
-                    <td className="px-4 py-2 text-right font-mono">{sql}</td>
-                    <td className="px-4 py-2 text-right font-mono text-emerald-300">{won}</td>
-                    <td className="px-4 py-2 text-right font-mono">
-                      {meet > 0 ? formatUsd(s.totalUsd / meet) : "—"}
+                  <tr
+                    key={s.playName}
+                    className={cn(
+                      "border-t border-ink-rule/60",
+                      i % 2 === 1 && "bg-ink-surface/20",
+                    )}
+                  >
+                    <td className="px-6 py-2 text-ink-cream">{s.playName}</td>
+                    <td className="py-2">
+                      {series.length > 1 ? (
+                        <Sparkline
+                          values={series}
+                          tone="spend"
+                          width={96}
+                          height={22}
+                          aria-label={`${s.playName} spend over last ${sparkDays} days`}
+                        />
+                      ) : (
+                        <span className="font-mono text-[11px] text-ink-faint">—</span>
+                      )}
                     </td>
-                    <td className="px-4 py-2 text-right font-mono text-emerald-300">
-                      {won > 0 ? formatUsd(s.totalUsd / won) : "—"}
+                    <td className="py-2 text-right font-mono text-ink-cream">
+                      {formatUsd(s.totalUsd)}
+                    </td>
+                    <td className="py-2 text-right font-mono text-ink-muted">{meet}</td>
+                    <td className="py-2 text-right font-mono text-ink-muted">{sql}</td>
+                    <td className="py-2 text-right font-mono text-[color:var(--ink-receipt-2)]">
+                      {won}
+                    </td>
+                    <td className="py-2 text-right font-mono text-ink-cream-2">
+                      {meet > 0 ? (
+                        formatUsd(s.totalUsd / meet)
+                      ) : (
+                        <span className="text-ink-faint">—</span>
+                      )}
+                    </td>
+                    <td className="px-6 py-2 text-right font-mono text-[color:var(--ink-receipt-2)]">
+                      {won > 0 ? (
+                        formatUsd(s.totalUsd / won)
+                      ) : (
+                        <span className="text-ink-faint">—</span>
+                      )}
                     </td>
                   </tr>
                 );
               })}
-              {rocs.data?.spend.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-sm text-zinc-500">
-                    No spend in this window.
-                  </td>
-                </tr>
-              )}
             </tbody>
           </table>
-        </CardBody>
-      </Card>
+        )}
+      </section>
     </div>
   );
+}
+
+/**
+ * Group receipts by play and compute a daily spend histogram (oldest → newest).
+ * Returns a Map keyed by playName. Receipts without a `costUsd` value are
+ * skipped. Days beyond `windowDays` are dropped.
+ */
+function buildSpendSeries(receipts: ReceiptView[], windowDays: number): Map<string, number[]> {
+  const days = Math.max(7, Math.min(windowDays, 90));
+  const now = Date.now();
+  const DAY_MS = 24 * 3600 * 1000;
+  const out = new Map<string, number[]>();
+
+  for (const r of receipts) {
+    if (r.costUsd == null) continue;
+    const ts = new Date(r.createdAt).getTime();
+    if (Number.isNaN(ts)) continue;
+    const daysAgo = Math.floor((now - ts) / DAY_MS);
+    if (daysAgo < 0 || daysAgo >= days) continue;
+    const idx = days - 1 - daysAgo;
+    let arr = out.get(r.playName);
+    if (!arr) {
+      arr = Array.from({ length: days }, () => 0);
+      out.set(r.playName, arr);
+    }
+    arr[idx] = (arr[idx] ?? 0) + r.costUsd;
+  }
+  return out;
+}
+
+function Summary({
+  label,
+  value,
+  caption,
+  tone = "neutral",
+}: {
+  label: string;
+  value: string | undefined;
+  caption?: string;
+  /** Caption tint only; the number itself stays cream. */
+  tone?: "neutral" | "receipt" | "spend";
+}) {
+  const captionColor =
+    tone === "spend"
+      ? "var(--ink-spend-2)"
+      : tone === "receipt"
+        ? "var(--ink-receipt-2)"
+        : "var(--ink-faint)";
+  return (
+    <div className="px-5 py-4">
+      <div className="ln-eyebrow">{label}</div>
+      <div
+        className="mt-1 truncate text-ink-cream ln-numeral"
+        style={{ fontSize: 34, lineHeight: 1 }}
+      >
+        {value ?? <span className="text-ink-faint">—</span>}
+      </div>
+      {caption && (
+        <div className="mt-2 truncate font-mono text-[11px]" style={{ color: captionColor }}>
+          {caption}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function rangeLabel(s: number | undefined): string {
+  if (s === undefined) return "all-time";
+  return `last ${s}d`;
 }
