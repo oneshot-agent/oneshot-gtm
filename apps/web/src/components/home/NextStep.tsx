@@ -66,15 +66,25 @@ export function NextStep() {
   const step = STEPS[ix]!;
 
   return (
-    <section className="border-b border-ink-rule px-6 pb-5 pt-5">
-      <div className="flex items-start justify-between gap-6">
-        <div className="flex-1">
-          <div className="ln-eyebrow">Next step · {ix + 1} of {STEPS.length}</div>
+    <section className="border-b border-ink-rule bg-ink-bg-deep px-6 py-6">
+      <div
+        className="relative flex items-start justify-between gap-6 overflow-hidden rounded-[var(--radius-lg)] border border-ink-rule bg-ink-surface px-6 py-5 shadow-[var(--shadow-inset)]"
+      >
+        {/* Accent rail — marks this as a next-action callout, not a data section. */}
+        <span
+          aria-hidden="true"
+          className="absolute inset-y-0 left-0 w-[3px]"
+          style={{ background: "var(--ink-spend)" }}
+        />
+        <div className="flex-1 pl-2">
+          <div className="ln-eyebrow">
+            Next step · {ix + 1} of {STEPS.length}
+          </div>
           <h2
             className="mt-1 text-ink-cream"
             style={{
               fontFamily: "var(--font-display)",
-              fontSize: 28,
+              fontSize: 26,
               fontWeight: 600,
               letterSpacing: "-0.02em",
               lineHeight: 1.05,
@@ -82,7 +92,7 @@ export function NextStep() {
           >
             {step.title}
           </h2>
-          <p className="mt-1 max-w-2xl text-sm text-ink-cream-2">{step.lede}</p>
+          <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink-cream-2">{step.lede}</p>
         </div>
         <div className="flex flex-col items-end gap-2">
           <Link to={step.href}>
