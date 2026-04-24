@@ -3,9 +3,10 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { Check, Copy, Mail, MessageSquare, Phone, Play } from "lucide-react";
 import { useState } from "react";
 import { api } from "../api/client.ts";
-import { Badge } from "../components/primitives/Badge.tsx";
-import { Card, CardBody, CardHeader } from "../components/primitives/Card.tsx";
 import { Button } from "../components/primitives/Button.tsx";
+import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
+import { CadenceTimeline, type CadenceStep } from "../components/plays/CadenceTimeline.tsx";
+import { cn } from "../lib/cn.ts";
 
 export const Route = createFileRoute("/plays")({
   component: PlaysPage,
@@ -29,81 +30,268 @@ const RUNNABLE_PLAYS = new Set([
   "podcast-guest",
 ]);
 
+/**
+ * Per-play metadata the API doesn't expose yet — human description + day-
+ * offset timeline. Values mirror the sequences defined in
+ * packages/plays/src/_cadence.ts on the server.
+ */
+const PLAY_META: Record<string, { description: string; steps: CadenceStep[] }> = {
+  "show-hn": {
+    description:
+      "One-touch founder-to-founder reply to a recent Show HN post, referencing a specific comment thread.",
+    steps: [{ day: 0, label: "send" }],
+  },
+  "job-change": {
+    description:
+      "Trigger: prospect started a new role at a target company. Day-0 send; day-5 follow-up; day-14 breakup.",
+    steps: [
+      { day: 0, label: "send" },
+      { day: 5, label: "follow-up" },
+      { day: 14, label: "breakup", breakup: true },
+    ],
+  },
+  "post-funding": {
+    description:
+      "Trigger: prospect's company announced a round. Day-3 congrats; day-9 follow-up; day-18 breakup.",
+    steps: [
+      { day: 0, label: "send" },
+      { day: 9, label: "follow-up" },
+      { day: 18, label: "breakup", breakup: true },
+    ],
+  },
+  "accelerator-batch": {
+    description:
+      "Founder-to-founder outreach within or across accelerator batches (YC, OD, SPC, Antler, Techstars).",
+    steps: [
+      { day: 0, label: "send" },
+      { day: 5, label: "follow-up" },
+      { day: 12, label: "breakup", breakup: true },
+    ],
+  },
+  concierge: {
+    description:
+      "Autonomous voice onboarding for new signups. Pre-call email → voice call → post-call summary email.",
+    steps: [
+      { day: 0, label: "prep email" },
+      { day: 0, label: "voice" },
+      { day: 0, label: "summary" },
+    ],
+  },
+  "demo-no-show": {
+    description:
+      "Same-day SMS + email recovery for demo no-shows; cadence engine handles day-3 follow-up.",
+    steps: [
+      { day: 0, label: "sms + email" },
+      { day: 3, label: "follow-up" },
+    ],
+  },
+  "competitor-switch": {
+    description:
+      "Migration-honesty pitch for prospects using a competing vendor. Optional G2 / BuiltWith scrape.",
+    steps: [{ day: 0, label: "send" }],
+  },
+  "hiring-signal": {
+    description:
+      "Triggered by a job post at a target company. One-touch email to the hiring manager with your ramp-time claim.",
+    steps: [{ day: 0, label: "send" }],
+  },
+  "podcast-guest": {
+    description:
+      "One-touch reply to a recent podcast guest referencing a specific moment from the episode.",
+    steps: [{ day: 0, label: "send" }],
+  },
+  "breakup-revive": {
+    description:
+      "Pattern-interrupt for ledger cold leads (60–90 days). Pulled from `listColdProspects`.",
+    steps: [{ day: 0, label: "revive" }],
+  },
+};
+
 function PlaysPage() {
   const plays = useQuery({ queryKey: ["plays"], queryFn: api.plays });
+
+  // Pull a wide window of receipts once and group them client-side so we can
+  // show per-play "signed N this month" without an API change.
+  const receipts = useQuery({
+    queryKey: ["receipts", "plays-catalogue"],
+    queryFn: () => api.receipts({ limit: 500 }),
+    staleTime: 60_000,
+  });
+  const receiptCounts = groupByPlay(receipts.data?.receipts ?? []);
+
   const [copiedName, setCopiedName] = useState<string | null>(null);
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold text-zinc-100">Plays</h1>
-        <span className="text-xs text-zinc-500">
-          Read-only here. Run via CLI; the dashboard's run-form ships in R2.
-        </span>
-      </div>
+    <div className="-mx-6 -my-6 flex flex-col">
+      {/* Masthead */}
+      <section className="flex items-end justify-between gap-4 border-b border-ink-rule px-6 pb-5 pt-6">
+        <div>
+          <div className="ln-eyebrow">The Ledger · Plays</div>
+          <h1
+            className="mt-1 text-ink-cream"
+            style={{
+              fontFamily: "var(--font-display)",
+              fontSize: 44,
+              fontWeight: 600,
+              letterSpacing: "-0.025em",
+              lineHeight: 0.98,
+            }}
+          >
+            The motion catalogue.
+          </h1>
+          <p className="ln-note mt-2 max-w-[64ch] text-[13px] text-ink-cream-2">
+            Ten motion plays. Each one is a known signal you can act on — trigger, cadence,
+            anti-slop lint, signed receipt. Run from the CLI or, for the six queue-drain plays, from
+            the dashboard.
+          </p>
+        </div>
+        <div className="font-mono text-[11px] text-ink-faint">
+          {plays.data ? (
+            <>
+              {plays.data.plays.length} <span className="text-ink-muted">plays</span>
+            </>
+          ) : (
+            "…"
+          )}
+        </div>
+      </section>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {plays.data?.plays.map((p) => (
-          <Card key={p.name}>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <span className="font-mono text-zinc-100">{p.name}</span>
-                <div className="flex items-center gap-1">
-                  {p.channels.map((ch) => {
-                    const Icon = CHANNEL_ICON[ch] ?? Mail;
-                    return (
-                      <Badge tone="purple" key={ch} title={ch}>
-                        <Icon size={10} />
-                      </Badge>
-                    );
-                  })}
-                </div>
-              </div>
-            </CardHeader>
-            <CardBody className="flex flex-col gap-3">
-              <div className="flex items-center gap-2 text-xs text-zinc-400">
-                <span>
-                  {p.followupCount} follow-up{p.followupCount === 1 ? "" : "s"}
-                </span>
-                {p.hasBreakup && <Badge tone="yellow">breakup step</Badge>}
-              </div>
-              <div className="rounded-md border border-zinc-800 bg-zinc-950 p-2">
-                <code className="block overflow-x-auto whitespace-nowrap font-mono text-xs text-zinc-200">
-                  {p.cliInvocation}
-                </code>
-              </div>
-              <div className="flex items-center gap-2">
-                {RUNNABLE_PLAYS.has(p.name) && (
-                  <Link to="/run/$playName" params={{ playName: p.name }}>
-                    <Button variant="primary" size="sm">
-                      <Play size={12} /> run
-                    </Button>
-                  </Link>
-                )}
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => {
-                    void navigator.clipboard.writeText(p.cliInvocation);
-                    setCopiedName(p.name);
-                    setTimeout(() => setCopiedName((n) => (n === p.name ? null : n)), 1500);
-                  }}
-                >
-                  {copiedName === p.name ? (
-                    <>
-                      <Check size={12} /> copied
-                    </>
-                  ) : (
-                    <>
-                      <Copy size={12} /> copy CLI
-                    </>
+      {/* Plays ledger — one rich row per play */}
+      <section>
+        {plays.isLoading ? (
+          <div>
+            {Array.from({ length: 8 }, (_, i) => (
+              <SkeletonRow key={i} />
+            ))}
+          </div>
+        ) : (
+          <div>
+            {plays.data?.plays.map((p, i) => {
+              const meta = PLAY_META[p.name];
+              const runnable = RUNNABLE_PLAYS.has(p.name);
+              const count = receiptCounts.get(p.name) ?? 0;
+              return (
+                <div
+                  key={p.name}
+                  className={cn(
+                    "group grid gap-x-6 gap-y-3 px-6 py-5",
+                    "grid-cols-[minmax(220px,280px)_1fr_auto]",
+                    "border-b border-ink-rule/60",
+                    "transition-colors duration-[var(--dur-stamp)]",
+                    "hover:bg-ink-surface/40",
+                    i % 2 === 1 && "bg-ink-surface/20",
                   )}
-                </Button>
-              </div>
-            </CardBody>
-          </Card>
-        ))}
-      </div>
+                >
+                  {/* Left: name + channel chips + receipt badge */}
+                  <div className="flex flex-col gap-2.5">
+                    <div className="flex items-baseline gap-2">
+                      <code
+                        className="font-mono text-[15px] font-medium text-ink-cream"
+                        style={{ fontFeatureSettings: '"zero"' }}
+                      >
+                        {p.name}
+                      </code>
+                      {runnable && (
+                        <span className="font-mono text-[10px] text-ink-faint">· runnable</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-1 text-ink-muted">
+                        {p.channels.map((ch) => {
+                          const Icon = CHANNEL_ICON[ch] ?? Mail;
+                          return (
+                            <span
+                              key={ch}
+                              className="inline-flex h-[18px] w-[18px] items-center justify-center rounded-[var(--radius-xs)] border border-ink-rule"
+                              title={ch}
+                            >
+                              <Icon size={10} />
+                            </span>
+                          );
+                        })}
+                      </div>
+                      <span className="font-mono text-[11px] text-ink-faint">
+                        {p.followupCount} follow-up{p.followupCount === 1 ? "" : "s"}
+                        {p.hasBreakup ? " · breakup" : ""}
+                      </span>
+                    </div>
+                    <div className="font-mono text-[11px] text-ink-faint">
+                      {count > 0 ? (
+                        <span>
+                          <span className="text-[color:var(--ink-receipt-2)]">{count}</span> receipt
+                          {count === 1 ? "" : "s"} signed
+                        </span>
+                      ) : (
+                        <span>no receipts yet</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Middle: description + cadence timeline + CLI */}
+                  <div className="flex flex-col gap-3 min-w-0">
+                    {meta?.description && (
+                      <p className="ln-note text-[13px] text-ink-cream-2">{meta.description}</p>
+                    )}
+                    {meta?.steps && meta.steps.length > 0 && <CadenceTimeline steps={meta.steps} />}
+                    <code
+                      className={cn(
+                        "block overflow-x-auto whitespace-nowrap rounded-[var(--radius-sm)]",
+                        "border border-ink-rule bg-ink-bg-deep px-2.5 py-1.5",
+                        "font-mono text-[12px] text-ink-cream-2",
+                      )}
+                    >
+                      $ {p.cliInvocation}
+                    </code>
+                  </div>
+
+                  {/* Right: actions */}
+                  <div className="flex flex-col items-end gap-1.5">
+                    {runnable && (
+                      <Link
+                        to="/run/$playName"
+                        params={{ playName: p.name }}
+                        className="inline-flex"
+                      >
+                        <Button variant="primary" size="sm">
+                          <Play size={12} /> run
+                        </Button>
+                      </Link>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        void navigator.clipboard.writeText(p.cliInvocation);
+                        setCopiedName(p.name);
+                        setTimeout(() => setCopiedName((n) => (n === p.name ? null : n)), 1500);
+                      }}
+                    >
+                      {copiedName === p.name ? (
+                        <>
+                          <Check size={12} /> copied
+                        </>
+                      ) : (
+                        <>
+                          <Copy size={12} /> copy
+                        </>
+                      )}
+                    </Button>
+                    {!runnable && (
+                      <span className="font-mono text-[10px] text-ink-faint">CLI only</span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
     </div>
   );
+}
+
+function groupByPlay<T extends { playName: string }>(rows: T[]): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const r of rows) m.set(r.playName, (m.get(r.playName) ?? 0) + 1);
+  return m;
 }
