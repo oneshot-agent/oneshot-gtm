@@ -1,4 +1,4 @@
-import { llmApiKey, loadConfig } from "@oneshot-gtm/core";
+import { llmApiKey, loadConfig, logEvent } from "@oneshot-gtm/core";
 import { loadPrompt } from "./prompts.ts";
 
 export interface LlmMessage {
@@ -72,29 +72,62 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
 
   const expanded: LlmCompleteInput = { ...input, messages: injectHumanizer(input.messages) };
 
-  switch (cfg.llmProvider) {
-    case "openrouter":
-      return openaiCompatibleComplete({
-        key,
+  const startedAt = Date.now();
+  logEvent("llm.start", {
+    provider: cfg.llmProvider,
+    model: cfg.llmModel,
+    message_count: expanded.messages.length,
+    max_tokens: expanded.maxTokens ?? null,
+  });
+  try {
+    let result: LlmCompleteOutput;
+    switch (cfg.llmProvider) {
+      case "openrouter":
+        result = await openaiCompatibleComplete({
+          key,
+          model: cfg.llmModel,
+          baseUrl: "https://openrouter.ai/api/v1",
+          provider: "openrouter",
+          input: expanded,
+          extraHeaders: {
+            "HTTP-Referer": "https://github.com/oneshot-agent/oneshot-gtm",
+            "X-Title": "oneshot-gtm",
+          },
+        });
+        break;
+      case "openai":
+        result = await openaiCompatibleComplete({
+          key,
+          model: cfg.llmModel,
+          baseUrl: "https://api.openai.com/v1",
+          provider: "openai",
+          input: expanded,
+        });
+        break;
+      case "anthropic":
+        result = await anthropicComplete({ key, model: cfg.llmModel, input: expanded });
+        break;
+    }
+    logEvent("llm.done", {
+      provider: cfg.llmProvider,
+      model: cfg.llmModel,
+      duration_ms: Date.now() - startedAt,
+      response_chars: result.content.length,
+    });
+    return result;
+  } catch (err) {
+    logEvent(
+      "llm.error",
+      {
+        provider: cfg.llmProvider,
         model: cfg.llmModel,
-        baseUrl: "https://openrouter.ai/api/v1",
-        provider: "openrouter",
-        input: expanded,
-        extraHeaders: {
-          "HTTP-Referer": "https://github.com/oneshot-agent/oneshot-gtm",
-          "X-Title": "oneshot-gtm",
-        },
-      });
-    case "openai":
-      return openaiCompatibleComplete({
-        key,
-        model: cfg.llmModel,
-        baseUrl: "https://api.openai.com/v1",
-        provider: "openai",
-        input: expanded,
-      });
-    case "anthropic":
-      return anthropicComplete({ key, model: cfg.llmModel, input: expanded });
+        duration_ms: Date.now() - startedAt,
+        error_class: (err as Error).constructor.name,
+        message_120: ((err as Error).message ?? "").slice(0, 120),
+      },
+      "error",
+    );
+    throw err;
   }
 }
 

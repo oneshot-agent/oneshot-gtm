@@ -1,4 +1,4 @@
-import { getLedger, webRead, webSearch } from "@oneshot-gtm/core";
+import { getLedger, logEvent, webRead, webSearch } from "@oneshot-gtm/core";
 import { findEmail, verifyEmail } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { PostFundingTarget } from "@oneshot-gtm/plays";
@@ -98,7 +98,15 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
         maxTokens: 600,
       });
       extract = parsePostFundingExtract(llm.content);
-    } catch {
+    } catch (err) {
+      logEvent(
+        "error.swallowed",
+        {
+          kind: "post-funding.read_or_extract",
+          message_120: ((err as Error).message ?? "").slice(0, 120),
+        },
+        "warn",
+      );
       result.droppedEnrichment++;
       continue;
     }

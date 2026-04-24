@@ -1,4 +1,4 @@
-import { webRead } from "@oneshot-gtm/core";
+import { logEvent, startRun, webRead } from "@oneshot-gtm/core";
 import { complete, loadPrompt } from "@oneshot-gtm/intel";
 import type { DeriveIcpResult } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
@@ -6,6 +6,7 @@ import { jsonResponse } from "../server.ts";
 const PLAY_NAME = "config:icp";
 
 export async function deriveIcpRoute(req: Request): Promise<Response> {
+  startRun();
   let body: { domain?: unknown } = {};
   try {
     body = (await req.json()) as { domain?: unknown };
@@ -20,15 +21,35 @@ export async function deriveIcpRoute(req: Request): Promise<Response> {
   if (!url) {
     return jsonResponse({ error: `not a valid domain or URL: ${body.domain}` }, 400, req);
   }
+  // Hostname is the public domain the founder pasted — not user-typed PII.
+  const host = new URL(url).hostname;
+  logEvent("derive_icp.start", { host });
 
   let costUsd = 0;
   let markdown = "";
+  const readStartedAt = Date.now();
+  logEvent("derive_icp.read.start", { host });
   try {
     const read = await webRead({ url }, { playName: PLAY_NAME });
     markdown = (read.result.markdown ?? "").trim();
     const c = (read.result as unknown as { cost?: number }).cost;
     if (typeof c === "number") costUsd += c;
+    logEvent("derive_icp.read.done", {
+      host,
+      duration_ms: Date.now() - readStartedAt,
+      markdown_chars: markdown.length,
+      cost_usd: costUsd,
+    });
   } catch (err) {
+    logEvent(
+      "derive_icp.read.error",
+      {
+        host,
+        duration_ms: Date.now() - readStartedAt,
+        message_120: ((err as Error).message ?? "").slice(0, 120),
+      },
+      "error",
+    );
     return jsonResponse(
       { error: `webRead failed for ${url}: ${(err as Error).message}` },
       502,
@@ -37,6 +58,7 @@ export async function deriveIcpRoute(req: Request): Promise<Response> {
   }
 
   if (markdown.length < 80) {
+    logEvent("derive_icp.too_thin", { host, markdown_chars: markdown.length }, "warn");
     return jsonResponse(
       {
         error: `not enough page content to derive an ICP from ${url} (got ${markdown.length} chars). Try a more specific page (pricing, customers, about).`,
@@ -48,6 +70,8 @@ export async function deriveIcpRoute(req: Request): Promise<Response> {
 
   const system = loadPrompt("icp-derive-from-site");
   let proposed = "";
+  const llmStartedAt = Date.now();
+  logEvent("derive_icp.llm.start", { host });
   try {
     const llm = await complete({
       messages: [
@@ -58,14 +82,30 @@ export async function deriveIcpRoute(req: Request): Promise<Response> {
       maxTokens: 200,
     });
     proposed = llm.content.trim().replace(/^["']|["']$/g, "");
+    logEvent("derive_icp.llm.done", {
+      host,
+      duration_ms: Date.now() - llmStartedAt,
+      response_chars: proposed.length,
+    });
   } catch (err) {
+    logEvent(
+      "derive_icp.llm.error",
+      {
+        host,
+        duration_ms: Date.now() - llmStartedAt,
+        message_120: ((err as Error).message ?? "").slice(0, 120),
+      },
+      "error",
+    );
     return jsonResponse({ error: `LLM call failed: ${(err as Error).message}` }, 502, req);
   }
 
   if (proposed.toLowerCase().startsWith("unable to derive")) {
+    logEvent("derive_icp.unable_to_derive", { host, markdown_chars: markdown.length }, "warn");
     return jsonResponse({ error: proposed, sourceUrl: url, costUsd }, 422, req);
   }
 
+  logEvent("derive_icp.done", { host, cost_usd: costUsd, response_chars: proposed.length });
   const view: DeriveIcpResult = {
     proposedIcp: proposed,
     sourceUrl: url,

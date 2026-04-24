@@ -1,5 +1,6 @@
-import { getLedger } from "@oneshot-gtm/core";
+import { getLedger, logEvent, startRun } from "@oneshot-gtm/core";
 import { runAcceleratorBatchFinder } from "./accelerator-batch.ts";
+import { runAgentBuildersFinder } from "./agent-builders.ts";
 import { runBreakupReviveFinder } from "./breakup-revive.ts";
 import { runHiringSignalFinder } from "./hiring-signal.ts";
 import { runJobChangeFinder } from "./job-change.ts";
@@ -131,6 +132,23 @@ export const TRIGGERS: TriggerSpec[] = [
       }),
   },
   {
+    // GitHub-sourced: builders wiring multiple vendor SDKs that overlap with
+    // OneShot primitives. Feeds competitor-switch (consolidation pitch).
+    // Opt-in because the query set is opinionated; enable from /queue.
+    name: "agent-builders",
+    defaultIntervalMs: 12 * ONE_HOUR,
+    enabledByDefault: false,
+    defaultConfig: { limit: 25, maxCostUsd: 5, minPrimitives: 2 },
+    run: (cfg) =>
+      runAgentBuildersFinder({
+        dryRun: false,
+        limit: (cfg["limit"] as number) ?? 25,
+        maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
+        minPrimitives: (cfg["minPrimitives"] as number) ?? 2,
+        ...(typeof cfg["yourEdge"] === "string" ? { yourEdge: cfg["yourEdge"] as string } : {}),
+      }),
+  },
+  {
     // Ledger-only finder; no OneShot/LLM spend. Opt-in so it doesn't surprise
     // founders on fresh installs where the ledger is mostly empty.
     name: "breakup-revive",
@@ -180,6 +198,7 @@ export interface TriggerRunOutcome {
  * last_polled_at + last_run_summary so the watch loop respects the run.
  */
 export async function runTriggerNow(name: string): Promise<TriggerRunOutcome> {
+  startRun();
   const spec = TRIGGERS.find((t) => t.name === name);
   if (!spec) throw new Error(`unknown trigger '${name}'`);
   const ledger = getLedger();
@@ -195,9 +214,22 @@ export async function runTriggerNow(name: string): Promise<TriggerRunOutcome> {
     ? (JSON.parse(stored.config_json) as Record<string, unknown>)
     : spec.defaultConfig;
   const intervalMs = effectiveIntervalMs(spec, config);
+  const startedAt = Date.now();
+  logEvent("trigger.run.start", { name, source: "ad_hoc" });
   try {
     const result = await spec.run(config);
     ledger.updateTriggerLastPoll({ name, summary: result });
+    logEvent("trigger.run.done", {
+      name,
+      duration_ms: Date.now() - startedAt,
+      candidates: result.candidates,
+      enqueued: result.enqueued,
+      dropped_icp: result.droppedIcp,
+      dropped_dup: result.droppedDuplicate,
+      dropped_enrich: result.droppedEnrichment,
+      cost_usd: result.costUsd,
+      halted: result.halted ?? null,
+    });
     return { name, fired: true, result, nextDueInMs: intervalMs };
   } catch (err) {
     const message = (err as Error).message ?? "unknown error";
@@ -205,6 +237,15 @@ export async function runTriggerNow(name: string): Promise<TriggerRunOutcome> {
       name,
       summary: { error: message, at: new Date().toISOString() },
     });
+    logEvent(
+      "trigger.run.error",
+      {
+        name,
+        duration_ms: Date.now() - startedAt,
+        message_120: message.slice(0, 120),
+      },
+      "error",
+    );
     return { name, fired: true, error: message, nextDueInMs: intervalMs };
   }
 }
@@ -214,9 +255,11 @@ export async function runTriggerNow(name: string): Promise<TriggerRunOutcome> {
  * Returns one outcome per trigger so the caller can log + decide sleep duration.
  */
 export async function runDueTriggers(): Promise<TriggerRunOutcome[]> {
+  startRun();
   const ledger = getLedger();
   const now = Date.now();
   const outcomes: TriggerRunOutcome[] = [];
+  logEvent("watch.tick.start", { trigger_count: TRIGGERS.length });
 
   for (const spec of TRIGGERS) {
     const stored = ledger.getTrigger(spec.name);
@@ -248,9 +291,22 @@ export async function runDueTriggers(): Promise<TriggerRunOutcome[]> {
       continue;
     }
 
+    const startedAt = Date.now();
+    logEvent("trigger.run.start", { name: spec.name, source: "watch" });
     try {
       const result = await spec.run(config);
       ledger.updateTriggerLastPoll({ name: spec.name, summary: result });
+      logEvent("trigger.run.done", {
+        name: spec.name,
+        duration_ms: Date.now() - startedAt,
+        candidates: result.candidates,
+        enqueued: result.enqueued,
+        dropped_icp: result.droppedIcp,
+        dropped_dup: result.droppedDuplicate,
+        dropped_enrich: result.droppedEnrichment,
+        cost_usd: result.costUsd,
+        halted: result.halted ?? null,
+      });
       outcomes.push({ name: spec.name, fired: true, result, nextDueInMs: intervalMs });
     } catch (err) {
       const message = (err as Error).message ?? "unknown error";
@@ -258,6 +314,15 @@ export async function runDueTriggers(): Promise<TriggerRunOutcome[]> {
         name: spec.name,
         summary: { error: message, at: new Date().toISOString() },
       });
+      logEvent(
+        "trigger.run.error",
+        {
+          name: spec.name,
+          duration_ms: Date.now() - startedAt,
+          message_120: message.slice(0, 120),
+        },
+        "error",
+      );
       outcomes.push({
         name: spec.name,
         fired: true,
@@ -266,6 +331,7 @@ export async function runDueTriggers(): Promise<TriggerRunOutcome[]> {
       });
     }
   }
+  logEvent("watch.tick.done", { fired: outcomes.filter((o) => o.fired).length });
   return outcomes;
 }
 

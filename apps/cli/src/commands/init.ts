@@ -77,6 +77,10 @@ export async function runInit(): Promise<void> {
     founderEmail: (answers["founderEmail"] ?? cfg.founderEmail) || null,
     productOneLiner: (answers["productOneLiner"] ?? cfg.productOneLiner) || null,
     icpOneLiner: cfg.icpOneLiner,
+    // Preserve the anonymous install id (loadConfig already bootstrapped it
+    // by the time we got here). Omitting it would silently drop it from disk
+    // and the next loadConfig() would mint a fresh one.
+    clientId: cfg.clientId,
   });
   ok(`Saved profile to ${c.dim("~/.oneshot-gtm/config.json")}`);
 

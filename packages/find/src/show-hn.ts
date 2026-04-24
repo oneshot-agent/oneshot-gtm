@@ -1,4 +1,4 @@
-import { getLedger, type FindEmailInput } from "@oneshot-gtm/core";
+import { getLedger, logEvent, type FindEmailInput } from "@oneshot-gtm/core";
 import { findEmail, verifyEmail, webRead } from "@oneshot-gtm/core";
 import type { ShowHnTarget } from "@oneshot-gtm/plays";
 import { icpFilter, resolveIcp } from "./_filter.ts";
@@ -41,6 +41,7 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
     costUsd: 0,
   };
 
+  logEvent("finder.start", { name: PLAY_NAME, since_days: sinceDays, limit });
   const sinceUnix = Math.floor((Date.now() - sinceDays * 24 * 3600 * 1000) / 1000);
   const url = `${HN_ALGOLIA}?tags=show_hn&numericFilters=created_at_i>${sinceUnix}&hitsPerPage=${Math.min(50, limit * 2)}`;
   const res = await fetch(url);
@@ -49,6 +50,7 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
   }
   const data = (await res.json()) as SearchHitsResponse;
   result.candidates = data.hits.length;
+  logEvent("finder.fetched", { name: PLAY_NAME, candidates: result.candidates });
 
   for (const hit of data.hits) {
     if (result.enqueued >= limit) break;
@@ -141,8 +143,16 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
         const read = await webRead({ url: hit.url }, { playName: PLAY_NAME });
         result.costUsd += extractCost(read.result) ?? 0.02;
         hookSummary = (read.result.markdown ?? "").trim().slice(0, 280);
-      } catch {
+      } catch (err) {
         // best-effort; fall through to whatever we have
+        logEvent(
+          "error.swallowed",
+          {
+            kind: "show-hn.hookSummary.webRead",
+            message_120: ((err as Error).message ?? "").slice(0, 120),
+          },
+          "warn",
+        );
       }
     }
     if (!hookSummary || hookSummary.length < 20) {
@@ -167,6 +177,16 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
     else result.droppedDuplicate++;
   }
 
+  logEvent("finder.done", {
+    name: PLAY_NAME,
+    candidates: result.candidates,
+    enqueued: result.enqueued,
+    dropped_icp: result.droppedIcp,
+    dropped_dup: result.droppedDuplicate,
+    dropped_enrich: result.droppedEnrichment,
+    cost_usd: result.costUsd,
+    halted: result.halted ?? null,
+  });
   return result;
 }
 

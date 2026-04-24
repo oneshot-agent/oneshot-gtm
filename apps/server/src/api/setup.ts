@@ -1,12 +1,30 @@
-import { loadConfig, saveConfig, saveSecrets, secretSource, secretsPath } from "@oneshot-gtm/core";
+import {
+  loadConfig,
+  saveConfig,
+  saveSecrets,
+  secretSource,
+  secretsPath,
+  type OneShotConfig,
+} from "@oneshot-gtm/core";
 import type { LlmProvider, SetupRequest, WalletMode } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
+
+/**
+ * The anonymous clientId is local-only — never exposed to the web layer.
+ * Strip it before any HTTP response so the browser never sees it (and can't
+ * accidentally clobber it on a subsequent POST).
+ */
+function publicCfg(cfg: OneShotConfig): Omit<OneShotConfig, "clientId"> {
+  const { clientId: _omit, ...rest } = cfg;
+  void _omit;
+  return rest;
+}
 
 export function getSetupStatus(req: Request): Response {
   const cfg = loadConfig();
   return jsonResponse(
     {
-      cfg,
+      cfg: publicCfg(cfg),
       secretsPath: secretsPath(),
       sources: {
         OPENROUTER_API_KEY: secretSource("OPENROUTER_API_KEY"),
@@ -29,6 +47,10 @@ export async function setup(req: Request): Promise<Response> {
   const llmProvider: LlmProvider = body.llmProvider ?? current.llmProvider;
   const walletMode: WalletMode = body.walletMode ?? current.walletMode;
 
+  // clientId is preserved from current — body.clientId is intentionally
+  // ignored so a malicious or accidental web POST can't rotate the anonymous
+  // install id. saveConfig writes the entire cfg, so omitting clientId here
+  // would silently drop it from disk.
   saveConfig({
     walletMode,
     llmProvider,
@@ -38,6 +60,7 @@ export async function setup(req: Request): Promise<Response> {
     founderEmail: mergeString(body.founderEmail, current.founderEmail),
     productOneLiner: mergeString(body.productOneLiner, current.productOneLiner),
     icpOneLiner: mergeString(body.icpOneLiner, current.icpOneLiner),
+    clientId: current.clientId,
   });
 
   if (body.secrets && Object.keys(body.secrets).length > 0) {

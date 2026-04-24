@@ -1,4 +1,4 @@
-import { loadConfig } from "@oneshot-gtm/core";
+import { loadConfig, logEvent } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 
 export interface IcpFilterResult {
@@ -45,7 +45,16 @@ export async function icpFilter(input: {
     temperature: 0.1,
     maxTokens: 200,
   });
-  return parseIcpJson(res.content);
+  const decision = parseIcpJson(res.content);
+  // Title is a category-ish label sourced from public listings (post titles,
+  // job titles, episode titles); reason is the LLM's own classifier output.
+  // Neither is user-typed prospect data — safe to log.
+  logEvent("icp.decision", {
+    match: decision.match,
+    reason_120: decision.reason.slice(0, 120),
+    candidate_title: input.candidate.title.slice(0, 120),
+  });
+  return decision;
 }
 
 function parseIcpJson(raw: string): IcpFilterResult {

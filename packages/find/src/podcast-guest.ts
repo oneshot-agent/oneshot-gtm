@@ -1,4 +1,4 @@
-import { findEmail, getLedger, verifyEmail, webRead, webSearch } from "@oneshot-gtm/core";
+import { findEmail, getLedger, logEvent, verifyEmail, webRead, webSearch } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { PodcastGuestTarget } from "@oneshot-gtm/plays";
 import { isDuplicate } from "./_dedupe.ts";
@@ -67,8 +67,16 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
         seen.add(hit.url);
         hits.push({ url: hit.url, title: hit.title, description: hit.description });
       }
-    } catch {
-      // skip podcast on failure
+    } catch (err) {
+      logEvent(
+        "error.swallowed",
+        {
+          kind: "podcast-guest.webSearch",
+          show,
+          message_120: ((err as Error).message ?? "").slice(0, 120),
+        },
+        "warn",
+      );
     }
   }
   result.candidates = hits.length;
@@ -127,7 +135,15 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
         maxTokens: 500,
       });
       extract = parsePodcastGuestExtract(llm.content);
-    } catch {
+    } catch (err) {
+      logEvent(
+        "error.swallowed",
+        {
+          kind: "podcast-guest.llm.extract",
+          message_120: ((err as Error).message ?? "").slice(0, 120),
+        },
+        "warn",
+      );
       result.droppedEnrichment++;
       continue;
     }

@@ -1,4 +1,4 @@
-import { findEmail, getLedger, verifyEmail, webRead } from "@oneshot-gtm/core";
+import { findEmail, getLedger, logEvent, verifyEmail, webRead } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { AcceleratorBatchTarget } from "@oneshot-gtm/plays";
 import { icpFilter, resolveIcp } from "./_filter.ts";
@@ -125,7 +125,15 @@ export async function runAcceleratorBatchFinder(
       const read = await webRead({ url: c.launchUrl }, { playName: PLAY_NAME });
       result.costUsd += extractCost(read.result) ?? 0.02;
       ({ founderName, companyWebsite } = parseLaunchPage(read.result.markdown ?? ""));
-    } catch {
+    } catch (err) {
+      logEvent(
+        "error.swallowed",
+        {
+          kind: "accelerator-batch.launchPage.webRead",
+          message_120: ((err as Error).message ?? "").slice(0, 120),
+        },
+        "warn",
+      );
       result.droppedEnrichment++;
       continue;
     }

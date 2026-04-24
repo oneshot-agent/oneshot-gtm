@@ -1,5 +1,6 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
+import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import type { OneShotConfig } from "./types.ts";
 
@@ -27,6 +28,7 @@ const DEFAULTS: OneShotConfig = {
   founderEmail: null,
   productOneLiner: null,
   icpOneLiner: null,
+  clientId: null,
 };
 
 export function configDir(): string {
@@ -38,6 +40,23 @@ export function ensureConfigDir(): void {
 }
 
 export function loadConfig(): OneShotConfig {
+  const cfg = readConfigOrDefault();
+  // First-sight bootstrap of the anonymous install id. Persisted immediately
+  // so subsequent reads (and any future telemetry sink) see a stable value.
+  // Failures are non-fatal: returning the in-memory id still works for this
+  // process, we just won't have it on disk yet — next call will retry.
+  if (!cfg.clientId) {
+    cfg.clientId = randomUUID();
+    try {
+      saveConfig(cfg);
+    } catch {
+      // ignore — read-only fs, permission denied, etc. Caller still gets the id.
+    }
+  }
+  return cfg;
+}
+
+function readConfigOrDefault(): OneShotConfig {
   if (!existsSync(CONFIG_PATH)) return { ...DEFAULTS };
   try {
     const raw = readFileSync(CONFIG_PATH, "utf8");
