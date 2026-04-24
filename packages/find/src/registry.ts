@@ -286,28 +286,38 @@ export const MAX_RUN_AGE_MS = 15 * 60 * 1000;
  * sweep hasn't cleaned up yet — defense in depth so we never report "still
  * running" for a row that's older than any real run could be.
  */
+/**
+ * Pure helper extracted so the freshness gate is unit-testable without
+ * mocking the ledger. Returns the parsed start-epoch when the iso
+ * timestamp is valid AND fresh (within MAX_RUN_AGE_MS of `now`); null
+ * otherwise.
+ *
+ * `nowMs` is injected so tests can drive time without faking Date.
+ */
+export function freshRunningStartedAtMs(
+  iso: string | null | undefined,
+  nowMs: number,
+): number | null {
+  if (!iso) return null;
+  const startedMs = new Date(iso).getTime();
+  if (!Number.isFinite(startedMs)) return null;
+  if (nowMs - startedMs > MAX_RUN_AGE_MS) return null;
+  return startedMs;
+}
+
 export function isTriggerRunning(name: string): boolean {
   return getTriggerRunningSince(name) !== null;
 }
 
 export function getTriggerRunningSince(name: string): number | null {
-  const row = getLedger().getTrigger(name);
-  if (!row?.running_started_at) return null;
-  const startedMs = new Date(row.running_started_at).getTime();
-  if (!Number.isFinite(startedMs)) return null;
-  if (Date.now() - startedMs > MAX_RUN_AGE_MS) return null;
-  return startedMs;
+  return freshRunningStartedAtMs(getLedger().getTrigger(name)?.running_started_at, Date.now());
 }
 
 export function listRunningTriggers(): string[] {
   const now = Date.now();
   return getLedger()
     .listTriggers()
-    .filter((r) => {
-      if (!r.running_started_at) return false;
-      const startedMs = new Date(r.running_started_at).getTime();
-      return Number.isFinite(startedMs) && now - startedMs <= MAX_RUN_AGE_MS;
-    })
+    .filter((r) => freshRunningStartedAtMs(r.running_started_at, now) !== null)
     .map((r) => r.name);
 }
 
@@ -332,9 +342,6 @@ export function fireTriggerNow(name: string): void {
     throw new Error(`unknown trigger '${name}'`);
   }
   const ledger = getLedger();
-  if (isTriggerRunning(name)) {
-    throw new Error(`trigger '${name}' is already running`);
-  }
   // Readiness gate: block the run synchronously so the server route can map
   // this to a 409 without the finder ever being invoked on a dead config.
   const stored = ledger.getTrigger(name);
@@ -354,7 +361,13 @@ export function fireTriggerNow(name: string): void {
       enabled: spec.enabledByDefault !== false,
     });
   }
-  ledger.markTriggerRunning(name, new Date().toISOString());
+  // Atomic claim — no TOCTOU race. Two concurrent fires both calling
+  // markTriggerRunning will see exactly one `true` and one `false`, so
+  // only one finder run actually launches.
+  const claimed = ledger.markTriggerRunning(name, new Date().toISOString());
+  if (!claimed) {
+    throw new Error(`trigger '${name}' is already running`);
+  }
   // No `.finally` cleanup — runTriggerNow's own updateTriggerLastPoll clears
   // running_started_at on completion (success OR caught error).
   void runTriggerNow(name);

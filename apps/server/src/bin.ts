@@ -36,13 +36,26 @@ if (cache.__oneshotGtmServer) {
   // last_run_summary so the UI shows the truth instead of frozen-from-an-
   // hour-ago state. Hot reload (the if-branch above) preserves the event
   // loop, so any genuinely in-flight run continues and shouldn't be swept.
-  const swept = getLedger().sweepStaleRunningTriggers({
-    now: new Date(),
-    maxAgeMs: MAX_RUN_AGE_MS,
-  });
-  for (const s of swept) {
-    logEvent("trigger.killed_by_restart", { name: s.name, age_ms: s.ageMs }, "warn");
-    process.stdout.write(`  swept stale run: ${s.name} (${Math.round(s.ageMs / 1000)}s old)\n`);
+  //
+  // Wrapped — a SQL hiccup here must not take down the server. Boot
+  // continuing on stale ledger state is strictly better than refusing to
+  // start because of a cleanup detail.
+  try {
+    const swept = getLedger().sweepStaleRunningTriggers({
+      now: new Date(),
+      maxAgeMs: MAX_RUN_AGE_MS,
+    });
+    for (const s of swept) {
+      logEvent("trigger.killed_by_restart", { name: s.name, age_ms: s.ageMs }, "warn");
+      process.stdout.write(`  swept stale run: ${s.name} (${Math.round(s.ageMs / 1000)}s old)\n`);
+    }
+  } catch (err) {
+    logEvent(
+      "trigger.sweep.failed",
+      { message_120: ((err as Error).message ?? "").slice(0, 120) },
+      "error",
+    );
+    process.stderr.write(`  warn: stale-run sweep failed: ${(err as Error).message}\n`);
   }
 
   const { url, server } = await startServer({ port });

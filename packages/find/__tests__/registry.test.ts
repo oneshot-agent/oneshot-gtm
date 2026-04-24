@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  checkReadiness,
   effectiveIntervalMs,
+  freshRunningStartedAtMs,
+  MAX_RUN_AGE_MS,
   nextSleepMs,
   TRIGGERS,
   type TriggerRunOutcome,
+  type TriggerSpec,
 } from "../src/registry.ts";
 
 describe("nextSleepMs", () => {
@@ -40,6 +44,7 @@ describe("TRIGGERS registry", () => {
   it("exposes the expected built-in triggers", () => {
     const names = TRIGGERS.map((t) => t.name).toSorted();
     expect(names).toEqual([
+      "agent-builders",
       "breakup-revive",
       "hiring-signal",
       "job-change",
@@ -67,6 +72,114 @@ describe("TRIGGERS registry", () => {
   });
 });
 
+describe("checkReadiness", () => {
+  it("returns ready:true for specs without a readiness fn", () => {
+    const spec: TriggerSpec = {
+      name: "noop",
+      defaultIntervalMs: 60_000,
+      defaultConfig: {},
+      run: async () => ({
+        source: "test",
+        candidates: 0,
+        droppedIcp: 0,
+        droppedDuplicate: 0,
+        droppedEnrichment: 0,
+        enqueued: 0,
+        costUsd: 0,
+      }),
+    };
+    expect(checkReadiness(spec, {})).toEqual({ ready: true });
+  });
+
+  it("returns the spec's readiness verdict when a fn is declared", () => {
+    const spec: TriggerSpec = {
+      name: "gated",
+      defaultIntervalMs: 60_000,
+      defaultConfig: { token: "" },
+      readiness: (cfg) =>
+        typeof cfg["token"] === "string" && cfg["token"].length > 0
+          ? { ready: true }
+          : { ready: false, reason: "token missing" },
+      run: async () => ({
+        source: "test",
+        candidates: 0,
+        droppedIcp: 0,
+        droppedDuplicate: 0,
+        droppedEnrichment: 0,
+        enqueued: 0,
+        costUsd: 0,
+      }),
+    };
+    expect(checkReadiness(spec, { token: "" })).toEqual({ ready: false, reason: "token missing" });
+    expect(checkReadiness(spec, { token: "abc" })).toEqual({ ready: true });
+  });
+
+  it("treats a throwing readiness fn as not-ready rather than crashing the caller", () => {
+    const spec: TriggerSpec = {
+      name: "boom",
+      defaultIntervalMs: 60_000,
+      defaultConfig: {},
+      readiness: () => {
+        throw new Error("unexpected");
+      },
+      run: async () => ({
+        source: "test",
+        candidates: 0,
+        droppedIcp: 0,
+        droppedDuplicate: 0,
+        droppedEnrichment: 0,
+        enqueued: 0,
+        costUsd: 0,
+      }),
+    };
+    const out = checkReadiness(spec, {});
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/threw/);
+  });
+
+  it("agent-builders is not ready with its empty default config", () => {
+    const spec = TRIGGERS.find((t) => t.name === "agent-builders");
+    expect(spec).toBeDefined();
+    expect(spec!.readiness).toBeDefined();
+    const out = checkReadiness(spec!, spec!.defaultConfig);
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/combos/);
+  });
+
+  it("agent-builders is not ready when yourEdge is empty even with combos set", () => {
+    const spec = TRIGGERS.find((t) => t.name === "agent-builders")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      combos: [{ query: 'site:github.com "stripe" "openai"', vendors: ["stripe", "openai"] }],
+      yourEdge: "   ",
+    });
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/yourEdge/);
+  });
+
+  it("agent-builders becomes ready with both combos and yourEdge set", () => {
+    const spec = TRIGGERS.find((t) => t.name === "agent-builders")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      combos: [{ query: 'site:github.com "stripe" "openai"', vendors: ["stripe", "openai"] }],
+      yourEdge: "one SDK instead of six dependencies",
+    });
+    expect(out).toEqual({ ready: true });
+  });
+
+  it("every other registered trigger is ready with its own default config", () => {
+    // Regression guard: only agent-builders declares readiness today. If that
+    // changes, update this list — the mechanism is generic but the opt-ins are
+    // explicit.
+    for (const spec of TRIGGERS) {
+      if (spec.name === "agent-builders") continue;
+      expect(checkReadiness(spec, spec.defaultConfig), `${spec.name} should be ready`).toEqual({
+        ready: true,
+      });
+    }
+  });
+});
+
 describe("effectiveIntervalMs", () => {
   it("uses defaultIntervalMs when no override is supplied", () => {
     const spec = TRIGGERS[0]!;
@@ -83,5 +196,45 @@ describe("effectiveIntervalMs", () => {
     const spec = TRIGGERS[0]!;
     expect(effectiveIntervalMs(spec, { intervalMs: 1000 })).toBe(spec.defaultIntervalMs);
     expect(effectiveIntervalMs(spec, { intervalMs: "fast" })).toBe(spec.defaultIntervalMs);
+  });
+});
+
+describe("freshRunningStartedAtMs — freshness gate", () => {
+  const NOW = new Date("2026-04-24T19:00:00Z").getTime();
+
+  it("returns null for null/undefined/empty", () => {
+    expect(freshRunningStartedAtMs(null, NOW)).toBeNull();
+    expect(freshRunningStartedAtMs(undefined, NOW)).toBeNull();
+    expect(freshRunningStartedAtMs("", NOW)).toBeNull();
+  });
+
+  it("returns null for an unparseable timestamp", () => {
+    expect(freshRunningStartedAtMs("not a date", NOW)).toBeNull();
+  });
+
+  it("returns the start epoch when the timestamp is fresh (within window)", () => {
+    const startedAt = "2026-04-24T18:55:00Z"; // 5 min before NOW
+    expect(freshRunningStartedAtMs(startedAt, NOW)).toBe(new Date(startedAt).getTime());
+  });
+
+  it("returns null when the timestamp exceeds MAX_RUN_AGE_MS", () => {
+    // 16 minutes before NOW — outside the 15-min window.
+    const startedAt = "2026-04-24T18:44:00Z";
+    expect(freshRunningStartedAtMs(startedAt, NOW)).toBeNull();
+  });
+
+  it("treats the boundary as fresh (==MAX_RUN_AGE_MS) — only > is stale", () => {
+    const exact = NOW - MAX_RUN_AGE_MS;
+    const justFresh = new Date(exact).toISOString();
+    expect(freshRunningStartedAtMs(justFresh, NOW)).toBe(exact);
+    const justStale = new Date(exact - 1).toISOString();
+    expect(freshRunningStartedAtMs(justStale, NOW)).toBeNull();
+  });
+
+  it("returns the start epoch when the timestamp is in the future (clock skew)", () => {
+    // We don't actively defend against future timestamps — better to keep
+    // the row visible than to silently hide a real run.
+    const future = new Date(NOW + 60_000).toISOString();
+    expect(freshRunningStartedAtMs(future, NOW)).toBe(new Date(future).getTime());
   });
 });

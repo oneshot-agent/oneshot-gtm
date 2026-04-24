@@ -728,16 +728,28 @@ export class Ledger {
   }
 
   /**
-   * Marks a trigger as in-flight. Called by `fireTriggerNow` synchronously
-   * before backgrounding the work, so the row's `running_started_at`
-   * reflects the truth even if the process is killed mid-run. Cleared by
-   * `updateTriggerLastPoll` on completion or by `sweepStaleRunningTriggers`
-   * on the next cold boot.
+   * Atomic claim: marks a trigger as in-flight ONLY if it's not already
+   * running. Returns true when the claim succeeded (caller may proceed to
+   * fire), false when another caller already holds the slot.
+   *
+   * The conditional UPDATE (`WHERE running_started_at IS NULL`) closes the
+   * TOCTOU race that would otherwise let two concurrent `fireTriggerNow`
+   * calls both pass an `isTriggerRunning()` check, both write, both fire —
+   * burning real $ on duplicate API spend. SQLite serializes writes per
+   * process, so the second UPDATE's `changes` count is 0.
+   *
+   * Cleared by `updateTriggerLastPoll` on completion or by
+   * `sweepStaleRunningTriggers` on the next cold boot.
    */
-  markTriggerRunning(name: string, startedAtIso: string): void {
-    this.db
-      .prepare(`UPDATE triggers SET running_started_at = ? WHERE name = ?`)
+  markTriggerRunning(name: string, startedAtIso: string): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE triggers
+         SET running_started_at = ?
+         WHERE name = ? AND running_started_at IS NULL`,
+      )
       .run(startedAtIso, name);
+    return result.changes > 0;
   }
 
   /**

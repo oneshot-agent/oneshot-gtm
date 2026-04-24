@@ -191,12 +191,35 @@ describe("trigger registry state", () => {
 });
 
 describe("trigger run-state persistence (survives restart)", () => {
-  it("markTriggerRunning sets running_started_at to the iso string", () => {
+  it("markTriggerRunning sets running_started_at + returns true on first claim", () => {
     ledger.upsertTrigger({ name: "show-hn", configJson: "{}" });
     expect(ledger.getTrigger("show-hn")?.running_started_at).toBeNull();
     const iso = "2026-04-24T18:23:54.607Z";
-    ledger.markTriggerRunning("show-hn", iso);
+    expect(ledger.markTriggerRunning("show-hn", iso)).toBe(true);
     expect(ledger.getTrigger("show-hn")?.running_started_at).toBe(iso);
+  });
+
+  it("markTriggerRunning is atomic: second concurrent claim returns false", () => {
+    ledger.upsertTrigger({ name: "show-hn", configJson: "{}" });
+    expect(ledger.markTriggerRunning("show-hn", "2026-04-24T18:00:00Z")).toBe(true);
+    // Second call without a clearing updateTriggerLastPoll in between MUST
+    // be rejected. Closes the TOCTOU race two concurrent fireTriggerNow
+    // calls would otherwise hit.
+    expect(ledger.markTriggerRunning("show-hn", "2026-04-24T18:01:00Z")).toBe(false);
+    // Original timestamp preserved — the second claim doesn't overwrite.
+    expect(ledger.getTrigger("show-hn")?.running_started_at).toBe("2026-04-24T18:00:00Z");
+  });
+
+  it("markTriggerRunning returns false when the row doesn't exist (UPDATE no-op)", () => {
+    expect(ledger.markTriggerRunning("never-seen", "2026-04-24T18:00:00Z")).toBe(false);
+  });
+
+  it("markTriggerRunning succeeds again after updateTriggerLastPoll clears the flag", () => {
+    ledger.upsertTrigger({ name: "show-hn", configJson: "{}" });
+    expect(ledger.markTriggerRunning("show-hn", "2026-04-24T18:00:00Z")).toBe(true);
+    ledger.updateTriggerLastPoll({ name: "show-hn", summary: { ok: true } });
+    // After clear, a fresh fire is allowed.
+    expect(ledger.markTriggerRunning("show-hn", "2026-04-24T18:30:00Z")).toBe(true);
   });
 
   it("updateTriggerLastPoll clears running_started_at in the same write", () => {
