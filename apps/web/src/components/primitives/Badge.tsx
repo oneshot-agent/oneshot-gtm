@@ -2,17 +2,35 @@ import { cva, type VariantProps } from "class-variance-authority";
 import type { HTMLAttributes } from "react";
 import { cn } from "../../lib/cn.ts";
 
+/**
+ * Ledger badge. Tones map to product semantics:
+ *   receipt → meeting booked / replied / delivered (patina green)
+ *   spend   → $ outbound (cognac amber)
+ *   blocked → bounced / rejected (oxblood)
+ *   signal  → rare informational (cobalt)
+ *   neutral → everything else
+ */
 const badgeStyles = cva(
-  "inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset",
+  [
+    "inline-flex items-center gap-1 rounded-[var(--radius-xs)]",
+    "px-1.5 py-[1.5px]",
+    "font-sans text-[10.5px] font-medium",
+    "tracking-[0.02em] uppercase",
+    "ring-1 ring-inset",
+    "whitespace-nowrap",
+  ].join(" "),
   {
     variants: {
       tone: {
-        neutral: "bg-zinc-800/60 text-zinc-300 ring-zinc-700",
-        green: "bg-emerald-900/30 text-emerald-300 ring-emerald-700/40",
-        yellow: "bg-amber-900/30 text-amber-300 ring-amber-700/40",
-        red: "bg-red-900/30 text-red-300 ring-red-700/40",
-        blue: "bg-sky-900/30 text-sky-300 ring-sky-700/40",
-        purple: "bg-purple-900/30 text-purple-300 ring-purple-700/40",
+        neutral: "bg-ink-surface-2 text-ink-cream-2 ring-ink-rule",
+        receipt:
+          "bg-[color:var(--ink-receipt)]/10 text-[color:var(--ink-receipt-2)] ring-[color:var(--ink-receipt)]/30",
+        spend:
+          "bg-[color:var(--ink-spend)]/10 text-[color:var(--ink-spend-2)] ring-[color:var(--ink-spend)]/30",
+        blocked:
+          "bg-[color:var(--ink-blocked)]/10 text-[color:var(--ink-blocked-2)] ring-[color:var(--ink-blocked)]/30",
+        signal:
+          "bg-[color:var(--ink-signal)]/10 text-[color:var(--ink-signal-2)] ring-[color:var(--ink-signal)]/30",
       },
     },
     defaultVariants: { tone: "neutral" },
