@@ -1,7 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Check, ChevronDown, ChevronRight, Pencil, Play, Send, Target, X } from "lucide-react";
-import { useState } from "react";
+import {
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Loader2,
+  Pencil,
+  Play,
+  Send,
+  Target,
+  X,
+} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { QueueRowView, QueueStatusView, TriggerView } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
@@ -9,6 +19,7 @@ import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
 import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
 import { Field, Input, Textarea } from "../components/primitives/Field.tsx";
+import { StrategistChat } from "../components/queue/StrategistChat.tsx";
 import { Modal } from "../components/primitives/Modal.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { Toggle } from "../components/primitives/Toggle.tsx";
@@ -728,10 +739,16 @@ function TriggersCard() {
   const triggersQuery = useQuery({
     queryKey: ["triggers"],
     queryFn: () => api.triggers(),
-    // Poll every 5s whenever any trigger is believed running (localStorage
-    // flag set anywhere) so a refresh-resumed spinner clears within seconds
-    // of the server writing lastPolledAt. Otherwise a leisurely 30s.
-    refetchInterval: () => (hasAnyRunningTrigger() ? 5_000 : 30_000),
+    // Poll every 5s whenever anything is believed running — either a local
+    // marker (localStorage, for pre-response + refresh resume) or a
+    // server-authoritative `running: true` from the last fetch (for fresh
+    // tabs that never set a marker). Otherwise a leisurely 30s.
+    refetchInterval: (query) => {
+      if (hasAnyRunningTrigger()) return 5_000;
+      const data = query.state.data;
+      if (data?.triggers.some((t) => t.running)) return 5_000;
+      return 30_000;
+    },
   });
   const setEnabled = useMutation({
     mutationFn: (vars: { name: string; enabled: boolean }) =>
@@ -754,8 +771,18 @@ function TriggersCard() {
       return api.runTrigger(name);
     },
     onSuccess: (data, name) => {
-      clearTriggerRunning(name);
+      // Server now fires the finder and returns 202 immediately. Keep the
+      // localStorage marker in place — the cross-refresh tracker clears it
+      // once the server's lastPolledAt advances past our startedAt.
       void qc.invalidateQueries({ queryKey: ["triggers"] });
+      if (data.pending) {
+        toast.success(`${name} · started`, {
+          description: "polling for results",
+        });
+        return;
+      }
+      // Synchronous fallback (should only hit when the server couldn't fire).
+      clearTriggerRunning(name);
       void qc.invalidateQueries({ queryKey: ["queue"] });
       void qc.invalidateQueries({ queryKey: ["home"] });
       if (data.error) {
@@ -779,6 +806,14 @@ function TriggersCard() {
       toast.success(`${name} · ${parts.join(" · ")}`);
     },
     onError: (err, name) => {
+      // "already running" (409) means the server already has this in flight;
+      // the authoritative `running` flag will arrive via the triggers poll
+      // and keep the spinner lit. Don't clear the local marker.
+      if (err.message.includes("already running")) {
+        void qc.invalidateQueries({ queryKey: ["triggers"] });
+        toast.info(`${name} · already running`);
+        return;
+      }
       clearTriggerRunning(name);
       toast.error(`${name} · ${err.message}`);
     },
@@ -786,17 +821,45 @@ function TriggersCard() {
 
   const [editing, setEditing] = useState<EditingState | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
+  const [strategistOpen, setStrategistOpen] = useState(false);
 
   const triggers = triggersQuery.data?.triggers ?? [];
 
-  // Cross-refresh "is running" tracker — pulls from localStorage and clears
-  // entries whose work the server has already confirmed done.
+  // Invalidate queue + home the moment the server's `running` flag flips
+  // from true → false for any trigger, so new rows + updated spend land in
+  // the UI without waiting for the 20s queue poll. Derive a stable key from
+  // the running-names set so the effect only fires on actual transitions.
+  const runningKey = triggers
+    .filter((t) => t.running)
+    .map((t) => t.name)
+    .toSorted()
+    .join(",");
+  const prevRunningRef = useRef<string>("");
+  useEffect(() => {
+    const prev = prevRunningRef.current;
+    prevRunningRef.current = runningKey;
+    const prevNames = prev ? prev.split(",") : [];
+    const nowNames = runningKey ? runningKey.split(",") : [];
+    const stillRunning = new Set(nowNames);
+    if (prevNames.some((n) => !stillRunning.has(n))) {
+      void qc.invalidateQueries({ queryKey: ["queue"] });
+      void qc.invalidateQueries({ queryKey: ["home"] });
+    }
+  }, [runningKey, qc]);
+
+  // Cross-refresh "is running" tracker — merges local (localStorage, set on
+  // click) + server (runningSince from the triggers poll, authoritative for
+  // fresh tabs). Clears local entries whose work the server has confirmed done.
   const lastPolledByName = new Map<string, string | null>(
     triggers.map((t) => [t.name, t.lastPolledAt]),
+  );
+  const serverRunningSinceByName = new Map<string, string | null>(
+    triggers.map((t) => [t.name, t.runningSince]),
   );
   const runningByName = useRunningTriggers(
     triggers.map((t) => t.name),
     lastPolledByName,
+    serverRunningSinceByName,
   );
 
   return (
@@ -806,7 +869,17 @@ function TriggersCard() {
           <div className="ln-eyebrow">
             Triggers <span className="text-ink-faint">· {triggers.length}</span>
           </div>
-          <div className="font-mono text-[11px] text-ink-faint">refresh · 30s</div>
+          <div className="flex items-center gap-3 font-mono text-[11px] text-ink-faint">
+            <button
+              type="button"
+              onClick={() => setStrategistOpen((v) => !v)}
+              className="cursor-pointer rounded-full border border-ink-rule px-2.5 py-1 uppercase tracking-wider text-ink-muted transition-colors hover:border-ink-rule-2 hover:text-ink-cream-2"
+              title="Open the LLM-powered strategist that proposes trigger configs based on your ICP + product"
+            >
+              {strategistOpen ? "▾ strategist" : "✦ strategist"}
+            </button>
+            <span>refresh · 30s</span>
+          </div>
         </div>
         {triggersQuery.isLoading ? (
           Array.from({ length: 3 }, (_, i) => <SkeletonRow key={i} />)
@@ -833,9 +906,13 @@ function TriggersCard() {
               {triggers.map((t, i) => {
                 const summary = summarizeRun(t.lastRunSummary);
                 const inProcess = runTrigger.isPending && runTrigger.variables === t.name;
-                const crossRefresh = runningByName.get(t.name);
-                const running = inProcess || crossRefresh != null;
-                const elapsedMs = crossRefresh?.elapsedMs ?? null;
+                // `runningByName` already merges local (pre-request +
+                // refresh-resume) + server (fresh-tab authoritative) start
+                // times, with a live-ticking elapsedMs. `inProcess` covers
+                // the sub-millisecond mutation window before the 202 lands.
+                const tracked = runningByName.get(t.name);
+                const running = inProcess || tracked != null;
+                const elapsedMs = tracked?.elapsedMs ?? null;
                 const isEditing = editing?.name === t.name;
                 return (
                   <TriggerRowFragment
@@ -899,6 +976,7 @@ function TriggersCard() {
             </tbody>
           </table>
         )}
+        {strategistOpen && <StrategistChat />}
       </section>
     </>
   );
@@ -937,14 +1015,26 @@ function TriggerRowFragment(props: TriggerRowProps) {
           !t.enabled && "opacity-65",
           "hover:bg-ink-surface/50",
           props.isEditing && "bg-ink-surface/50",
+          // Running state: subtle cobalt wash so the eye lands on the
+          // firing trigger without drowning the rest of the table.
+          props.running && "bg-[color:var(--ink-signal)]/[0.08]",
         )}
       >
         <td className="relative px-6 py-2 font-mono text-[12px]">
-          {t.enabled && (
+          {/* Left-edge status accent: running wins over enabled so an in-flight
+              trigger gets its own stronger, animated marker. */}
+          {props.running ? (
             <span
               aria-hidden="true"
-              className="absolute inset-y-0 left-0 w-[2px] bg-[color:var(--ink-signal)]/60"
+              className="absolute inset-y-0 left-0 w-[2px] bg-[color:var(--ink-signal)] animate-pulse"
             />
+          ) : (
+            t.enabled && (
+              <span
+                aria-hidden="true"
+                className="absolute inset-y-0 left-0 w-[2px] bg-[color:var(--ink-signal)]/60"
+              />
+            )
           )}
           <span className={t.enabled ? "text-ink-cream" : "text-ink-muted"}>{t.name}</span>
         </td>
@@ -971,13 +1061,30 @@ function TriggerRowFragment(props: TriggerRowProps) {
         <td className="px-6 py-2 text-right">
           <div className="flex items-center justify-end gap-1">
             <Button
-              variant="ghost"
+              // Switch to the cobalt accent outline while running so the
+              // button reads as *live* instead of just "pressed". Ghost is
+              // too subtle; primary is too loud for a table cell.
+              variant={props.running ? "accent" : "ghost"}
               size="sm"
-              disabled={props.running}
-              onClick={props.onRun}
-              title="Run this finder now — ignores schedule, spends OneShot $"
+              // Use aria-disabled (not `disabled`) to keep the accent colors
+              // visible — `disabled:opacity-50` would wash out the spinner
+              // and defeat the whole point of the visual upgrade. Clicks
+              // during a run are gated via `onClick` below; cursor styling
+              // reinforces the lockout.
+              aria-disabled={props.running || undefined}
+              onClick={props.running ? undefined : props.onRun}
+              className={cn(props.running && "cursor-not-allowed pointer-events-none")}
+              title={
+                props.running
+                  ? `Running for ${props.elapsedMs != null ? humanDuration(props.elapsedMs) : "a moment"} — click won't re-fire`
+                  : "Run this finder now — ignores schedule, spends OneShot $"
+              }
             >
-              <Play size={12} className={props.running ? "animate-pulse" : undefined} />
+              {props.running ? (
+                <Loader2 size={12} className="animate-spin" aria-hidden="true" />
+              ) : (
+                <Play size={12} aria-hidden="true" />
+              )}
               {props.running
                 ? props.elapsedMs != null
                   ? `running · ${humanDuration(props.elapsedMs)}`
@@ -1127,10 +1234,19 @@ function summarizeRun(summary: unknown): string {
   if (!summary || typeof summary !== "object") return "—";
   const s = summary as Record<string, unknown>;
   if (typeof s["error"] === "string") return `error: ${(s["error"] as string).slice(0, 60)}`;
+  // A halted run (e.g. unconfigured, max-cost cap) is the most important thing
+  // to show — surface it before the counter breakdown so it's not drowned out
+  // by a row of zeros.
+  if (typeof s["halted"] === "string" && s["halted"]) {
+    return `halted · ${(s["halted"] as string).slice(0, 80)}`;
+  }
   const parts: string[] = [];
   if (typeof s["candidates"] === "number") parts.push(`cand=${s["candidates"]}`);
   if (typeof s["enqueued"] === "number") parts.push(`kept=${s["enqueued"]}`);
   if (typeof s["droppedIcp"] === "number") parts.push(`icp=${s["droppedIcp"]}`);
+  if (typeof s["droppedLowSignal"] === "number" && (s["droppedLowSignal"] as number) > 0) {
+    parts.push(`low=${s["droppedLowSignal"]}`);
+  }
   if (typeof s["costUsd"] === "number") {
     parts.push(`$${(s["costUsd"] as number).toFixed(2)}`);
   }
@@ -1158,6 +1274,22 @@ function nameFor(payload: unknown): string | null {
   const p = payload as Record<string, unknown>;
   if (typeof p["name"] === "string") return p["name"] as string;
   if (typeof p["founderName"] === "string") return p["founderName"] as string;
+  // Pre-enrichment rejected rows only carry the source URL. Derive a handle so
+  // the /queue table shows something identifiable instead of "(unknown)".
+  const repoUrl = typeof p["repoUrl"] === "string" ? (p["repoUrl"] as string) : null;
+  if (repoUrl) {
+    const m = repoUrl.match(/github\.com\/([^/]+)\/([^/?#]+)/);
+    if (m) return `${m[1]}/${m[2]}`;
+  }
+  const postUrl = typeof p["postUrl"] === "string" ? (p["postUrl"] as string) : null;
+  if (postUrl) {
+    try {
+      const host = new URL(postUrl).hostname.replace(/^www\./, "");
+      if (host) return host;
+    } catch {
+      // fall through
+    }
+  }
   return null;
 }
 

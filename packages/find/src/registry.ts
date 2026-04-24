@@ -1,6 +1,7 @@
 import { getLedger, logEvent, startRun } from "@oneshot-gtm/core";
 import { runAcceleratorBatchFinder } from "./accelerator-batch.ts";
 import { runAgentBuildersFinder } from "./agent-builders.ts";
+import { parseCombos, type ComboQuery } from "./_agent-builder-combos.ts";
 import { runBreakupReviveFinder } from "./breakup-revive.ts";
 import { runHiringSignalFinder } from "./hiring-signal.ts";
 import { runJobChangeFinder } from "./job-change.ts";
@@ -15,6 +16,12 @@ export interface TriggerSpec {
   defaultConfig: Record<string, unknown>;
   /** Whether new installs auto-enable this trigger. Default true. */
   enabledByDefault?: boolean;
+  /**
+   * Plain-English brief the strategist embeds in its system prompt. Describes
+   * what the finder does + what each config key controls. Founder-facing too:
+   * the chat references these so the founder doesn't have to know JSON shapes.
+   */
+  configBrief?: string;
   run: (config: Record<string, unknown>) => Promise<FinderResult>;
 }
 
@@ -25,6 +32,8 @@ export const TRIGGERS: TriggerSpec[] = [
     name: "show-hn",
     defaultIntervalMs: 6 * ONE_HOUR,
     defaultConfig: { sinceDays: 1, limit: 25, maxCostUsd: 5 },
+    configBrief:
+      "Polls Hacker News Algolia for recent Show HN posts, ICP-filters them, enriches founder contact, and enqueues them for review. Config: `sinceDays` (lookback window, default 1), `limit` (max kept, default 25), `maxCostUsd` (per-run spend cap). Defaults work for most ICPs — bump sinceDays to 7+ if your ICP is niche enough that daily volume is thin.",
     run: (cfg) =>
       runShowHnFinder({
         dryRun: false,
@@ -37,6 +46,8 @@ export const TRIGGERS: TriggerSpec[] = [
     name: "yc-w26",
     defaultIntervalMs: 24 * ONE_HOUR,
     defaultConfig: { cohort: "yc-w26", limit: 25, maxCostUsd: 5 },
+    configBrief:
+      "Pulls a YC batch's launch index, extracts each company, ICP-filters, enriches the founder contact. Config: `cohort` (yc-w26 / yc-s25 / etc — pick a batch tag), `limit`, `maxCostUsd`. Useful when your ICP overlaps with a current/recent YC cohort. To target a different accelerator, ask the founder if they want a fresh trigger pointed at a different cohort URL.",
     run: (cfg) =>
       runAcceleratorBatchFinder({
         dryRun: false,
@@ -54,6 +65,8 @@ export const TRIGGERS: TriggerSpec[] = [
       limit: 25,
       maxCostUsd: 5,
     },
+    configBrief:
+      "Auto-discovers funding announcements via webSearch, extracts company + founder, ICP-filters. Config: `autoRounds` (e.g. ['Seed','Series A','Series B'] — match what your ICP actually buys at), `autoIndustry` (optional industry hint to bias the search query — derive from the ICP), `autoSinceDays` (lookback, default 7), `limit`, `maxCostUsd`. Tune autoRounds to skip stages that won't buy yet.",
     run: (cfg) =>
       runPostFundingFinder({
         dryRun: false,
@@ -79,6 +92,8 @@ export const TRIGGERS: TriggerSpec[] = [
       limit: 25,
       maxCostUsd: 5,
     },
+    configBrief:
+      "Searches for 'joined X as Y' job-change announcements, ICP-filters, enriches the new email. Config: `personas` (the roles whose JOB CHANGE represents a buying moment for THIS product — not generic 'VP Eng' unless that's actually who buys; e.g. 'Head of AI', 'Founding Engineer' for AI-tooling ICPs), `companies` (optional whitelist of companies to bias toward), `sinceDays` (lookback, default 14), `limit`, `maxCostUsd`. Strong personas matter more than long lists.",
     run: (cfg) =>
       runJobChangeFinder({
         dryRun: false,
@@ -99,6 +114,8 @@ export const TRIGGERS: TriggerSpec[] = [
       limit: 25,
       maxCostUsd: 5,
     },
+    configBrief:
+      "Scans Greenhouse / Lever / Workable / Ashby ATS pages for open roles that signal the company would buy THIS product. Config: `roles` (job titles whose existence implies a need for the product — e.g. 'Founding ML Engineer' for AI-infra products, 'Head of Compliance' for compliance products), `companies` (optional whitelist), `yourClaim` (one-sentence pitch about why your product makes that role's first 90 days easier — fed into the email), `sinceDays`, `limit`, `maxCostUsd`. The roles + yourClaim need to be tightly coupled to the product.",
     run: (cfg) =>
       runHiringSignalFinder({
         dryRun: false,
@@ -121,6 +138,8 @@ export const TRIGGERS: TriggerSpec[] = [
       limit: 25,
       maxCostUsd: 5,
     },
+    configBrief:
+      "Discovers recent podcast guests, ICP-filters, enriches their email. Config: `podcasts` (shows whose guest demographic overlaps with the ICP — replace defaults with shows the founder's actual buyer listens to), `sinceDays` (default 21), `skipRead` (skip per-episode webRead for cheaper but less accurate runs), `limit`, `maxCostUsd`. Podcast list is the leverage — narrow + on-target beats broad.",
     run: (cfg) =>
       runPodcastGuestFinder({
         dryRun: false,
@@ -132,21 +151,34 @@ export const TRIGGERS: TriggerSpec[] = [
       }),
   },
   {
-    // GitHub-sourced: builders wiring multiple vendor SDKs that overlap with
-    // OneShot primitives. Feeds competitor-switch (consolidation pitch).
-    // Opt-in because the query set is opinionated; enable from /queue.
+    // GitHub-sourced: repos stitching together multiple vendor SDKs. Feeds
+    // competitor-switch (migration-honesty pitch). Config-driven — the
+    // founder supplies their own combos + edge via /queue; ships empty so
+    // nothing fires until it's explicitly configured.
     name: "agent-builders",
     defaultIntervalMs: 12 * ONE_HOUR,
     enabledByDefault: false,
-    defaultConfig: { limit: 25, maxCostUsd: 5, minPrimitives: 2 },
-    run: (cfg) =>
-      runAgentBuildersFinder({
+    defaultConfig: {
+      limit: 25,
+      maxCostUsd: 5,
+      minVendors: 2,
+      yourEdge: "",
+      combos: [] as ComboQuery[],
+    },
+    configBrief:
+      "Searches GitHub for repos that stitch together multiple vendor SDKs which OVERLAP with the founder's product, then pitches consolidation via the competitor-switch motion play. Config: `combos` (array of {label, query, vendors} — each query is a `site:github.com \"VendorA\" \"VendorB\"` Google-style search; vendors lists the names matched. Aim for 4-8 combos covering vendor pairs the founder COMPETES WITH — name actual vendors from the founder's product context, not generic ones), `yourEdge` (one-sentence migration pitch handed to the email — what's the consolidation value?), `minVendors` (gate: how many distinct vendors must appear in a candidate repo's README; 2 is right for 'consolidation pitch holds'), `limit`, `maxCostUsd`. SHIPS EMPTY — no candidates fire until combos + yourEdge are set.",
+    run: (cfg) => {
+      const combos = parseCombos(cfg["combos"]) ?? [];
+      const yourEdge = typeof cfg["yourEdge"] === "string" ? cfg["yourEdge"] : "";
+      return runAgentBuildersFinder({
         dryRun: false,
+        combos,
+        yourEdge,
         limit: (cfg["limit"] as number) ?? 25,
         maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
-        minPrimitives: (cfg["minPrimitives"] as number) ?? 2,
-        ...(typeof cfg["yourEdge"] === "string" ? { yourEdge: cfg["yourEdge"] as string } : {}),
-      }),
+        minVendors: (cfg["minVendors"] as number) ?? 2,
+      });
+    },
   },
   {
     // Ledger-only finder; no OneShot/LLM spend. Opt-in so it doesn't surprise
@@ -155,6 +187,8 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 7 * 24 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: { minDays: 60, maxDays: 90, limit: 25 },
+    configBrief:
+      "Scans the founder's local prospect ledger for cold leads (no reply, marketable) within the day window and re-enqueues them for a pattern-interrupt revive. No OneShot/LLM spend (ledger-only). Config: `minDays` / `maxDays` (the cold-window — defaults 60-90), `limit`. Only enable when the founder has been sending for ≥2 months — empty ledger = no revives.",
     run: async (cfg) =>
       runBreakupReviveFinder({
         dryRun: false,
@@ -189,6 +223,53 @@ export interface TriggerRunOutcome {
   error?: string;
   /** ms until this trigger is next due */
   nextDueInMs: number;
+}
+
+/**
+ * In-memory map of triggers with an in-flight ad-hoc run → startedAt epoch ms.
+ *
+ * Used to (a) short-circuit duplicate "Run now" clicks, (b) let the
+ * TriggerView surface `running: true` + `runningSince` so the UI can show a
+ * live elapsed counter without relying on the client-side localStorage
+ * tracker (which is empty in fresh tabs), and (c) compute an elapsed time
+ * for any client. Resets on server restart — an in-flight run is orphaned
+ * there, but `runTriggerNow` writes partial progress to `target_queue`
+ * row-by-row so nothing is lost.
+ */
+const runningTriggers = new Map<string, number>();
+
+export function isTriggerRunning(name: string): boolean {
+  return runningTriggers.has(name);
+}
+
+export function getTriggerRunningSince(name: string): number | null {
+  return runningTriggers.get(name) ?? null;
+}
+
+export function listRunningTriggers(): string[] {
+  return [...runningTriggers.keys()];
+}
+
+/**
+ * Fire-and-forget wrapper around `runTriggerNow`: returns immediately after
+ * marking the trigger as running; the actual finder work runs on the event
+ * loop. Throws synchronously if the trigger is unknown or already running.
+ *
+ * Errors from the finder are swallowed here — `runTriggerNow` already
+ * persists them to the ledger (`last_run_summary`) and emits a
+ * `trigger.run.error` event, so there's nothing useful for the caller to do.
+ */
+export function fireTriggerNow(name: string): void {
+  if (!TRIGGERS.some((t) => t.name === name)) {
+    throw new Error(`unknown trigger '${name}'`);
+  }
+  if (runningTriggers.has(name)) {
+    throw new Error(`trigger '${name}' is already running`);
+  }
+  runningTriggers.set(name, Date.now());
+  void runTriggerNow(name).finally(() => {
+    runningTriggers.delete(name);
+  });
 }
 
 /**

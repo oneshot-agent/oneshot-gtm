@@ -156,6 +156,10 @@ export interface TriggerView {
   defaultIntervalMs: number;
   /** Currently-active interval (defaultIntervalMs unless overridden via config.intervalMs). */
   intervalMs: number;
+  /** True while an ad-hoc run is in flight on the server (fire-and-forget). */
+  running: boolean;
+  /** ISO timestamp of when the current in-flight run started. Null when `running=false`. */
+  runningSince: string | null;
 }
 
 export interface DeriveIcpResult {
@@ -167,6 +171,12 @@ export interface DeriveIcpResult {
 export interface RunTriggerResult {
   name: string;
   fired: boolean;
+  /**
+   * True when the run was kicked off fire-and-forget — work is still in
+   * progress on the server. `result` and `error` will be null; poll
+   * `GET /api/triggers` for `lastRunSummary` to see the outcome.
+   */
+  pending: boolean;
   result: {
     source: string;
     candidates: number;
@@ -179,6 +189,22 @@ export interface RunTriggerResult {
   } | null;
   error: string | null;
 }
+
+export interface StrategistMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface StrategistRequest {
+  messages: StrategistMessage[];
+}
+
+/** Server-Sent Events frame contract for /api/strategist/stream. */
+export type StrategistFrame =
+  | { kind: "thinking" }
+  | { kind: "delta"; text: string }
+  | { kind: "done" }
+  | { kind: "error"; message: string };
 
 export interface OutcomeRequest {
   email: string;

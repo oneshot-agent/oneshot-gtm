@@ -8,6 +8,7 @@ import { listPlays } from "./api/plays.ts";
 import { measureCac, measureRocs, recordOutcome } from "./api/measure.ts";
 import { setup, getSetupStatus } from "./api/setup.ts";
 import { deriveIcpRoute } from "./api/derive-icp.ts";
+import { strategistRoute } from "./api/strategist.ts";
 import { doctor } from "./api/doctor.ts";
 import { runPlay } from "./api/run.ts";
 import {
@@ -62,6 +63,7 @@ const routes: RouteEntry[] = [
   route("GET", "/api/setup", getSetupStatus),
   route("POST", "/api/setup", setup),
   route("POST", "/api/setup/derive-icp", deriveIcpRoute),
+  route("POST", "/api/strategist/stream", strategistRoute),
   route("GET", "/api/doctor", doctor),
   route("POST", "/api/run/:playName", runPlay),
   route("GET", "/api/queue", listQueueRoute),
@@ -124,77 +126,95 @@ async function serveStatic(staticDir: string, pathname: string): Promise<Respons
   return null;
 }
 
-export async function startServer(
-  opts: ServerOptions,
-): Promise<{ url: string; server: ReturnType<typeof Bun.serve> }> {
+/**
+ * Build the fetch handler. Factored out of `startServer` so `bin.ts` can
+ * hand a fresh handler to an existing Bun.serve instance via `server.reload`
+ * on a `bun --watch` re-entry — which runs in the same process, so re-binding
+ * the port would fail with EADDRINUSE.
+ */
+export function buildFetchHandler(): (req: Request) => Promise<Response> | Response {
   const staticDir = getStaticDir();
   const viteDevUrl = process.env["VITE_DEV_SERVER_URL"] ?? null;
 
+  return async function fetchHandler(req) {
+    const url = new URL(req.url);
+
+    // DNS-rebinding defense: reject any request whose Host header isn't a
+    // loopback name. An attacker who points evil.com at 127.0.0.1 still
+    // sends Host: evil.com to the browser, which we reject here.
+    if (!isLoopbackHost(req.headers.get("host"))) {
+      return new Response("forbidden: non-loopback host", {
+        status: 403,
+        headers: { "content-type": "text/plain" },
+      });
+    }
+
+    // CORS for vite dev server (different port). Non-loopback origins get
+    // an empty header set from corsHeaders() → browser blocks both
+    // preflight and the response, preventing CSRF-style side effects on
+    // mutating endpoints (e.g. POST /api/run/$playName triggering spend).
+    if (req.method === "OPTIONS") {
+      return new Response(null, {
+        status: 204,
+        headers: corsHeaders(req),
+      });
+    }
+
+    if (url.pathname.startsWith("/api/")) {
+      const match = findRoute(req);
+      if (!match) {
+        return jsonResponse({ error: "not found", path: url.pathname }, 404, req);
+      }
+      try {
+        const res = await match.handler(req, match.params);
+        // Inject CORS headers if not already set
+        for (const [k, v] of Object.entries(corsHeaders(req))) {
+          if (!res.headers.has(k)) res.headers.set(k, v);
+        }
+        return res;
+      } catch (err) {
+        return jsonResponse({ error: (err as Error).message ?? "internal error" }, 500, req);
+      }
+    }
+
+    // Static / SPA serving
+    if (staticDir) {
+      const r = await serveStatic(staticDir, url.pathname);
+      if (r) return r;
+    }
+
+    // Dev: tell the user where the UI is hosted by Vite.
+    if (viteDevUrl) {
+      return new Response(
+        `<!doctype html><title>oneshot-gtm dev</title>` +
+          `<p>API is running at <code>${url.origin}/api</code>.</p>` +
+          `<p>Vite dev server should be at <a href="${viteDevUrl}">${viteDevUrl}</a>.</p>`,
+        { headers: { "content-type": "text/html" } },
+      );
+    }
+
+    return new Response(
+      "oneshot-gtm server running. Build the web app to see the dashboard, or set VITE_DEV_SERVER_URL.",
+      { status: 200, headers: { "content-type": "text/plain" } },
+    );
+  };
+}
+
+/**
+ * Bun.serve options shared between first-boot and hot-reload. `idleTimeout`
+ * is the safety net for any synchronous handler that might still do slow
+ * upstream work (max 255s; Bun's default is 10).
+ */
+export const SERVER_BASE_OPTS = { idleTimeout: 255 } as const;
+
+export async function startServer(
+  opts: ServerOptions,
+): Promise<{ url: string; server: ReturnType<typeof Bun.serve> }> {
   const server = Bun.serve({
     port: opts.port,
     hostname: "127.0.0.1",
-    async fetch(req) {
-      const url = new URL(req.url);
-
-      // DNS-rebinding defense: reject any request whose Host header isn't a
-      // loopback name. An attacker who points evil.com at 127.0.0.1 still
-      // sends Host: evil.com to the browser, which we reject here.
-      if (!isLoopbackHost(req.headers.get("host"))) {
-        return new Response("forbidden: non-loopback host", {
-          status: 403,
-          headers: { "content-type": "text/plain" },
-        });
-      }
-
-      // CORS for vite dev server (different port). Non-loopback origins get
-      // an empty header set from corsHeaders() → browser blocks both
-      // preflight and the response, preventing CSRF-style side effects on
-      // mutating endpoints (e.g. POST /api/run/$playName triggering spend).
-      if (req.method === "OPTIONS") {
-        return new Response(null, {
-          status: 204,
-          headers: corsHeaders(req),
-        });
-      }
-
-      if (url.pathname.startsWith("/api/")) {
-        const match = findRoute(req);
-        if (!match) {
-          return jsonResponse({ error: "not found", path: url.pathname }, 404, req);
-        }
-        try {
-          const res = await match.handler(req, match.params);
-          // Inject CORS headers if not already set
-          for (const [k, v] of Object.entries(corsHeaders(req))) {
-            if (!res.headers.has(k)) res.headers.set(k, v);
-          }
-          return res;
-        } catch (err) {
-          return jsonResponse({ error: (err as Error).message ?? "internal error" }, 500, req);
-        }
-      }
-
-      // Static / SPA serving
-      if (staticDir) {
-        const r = await serveStatic(staticDir, url.pathname);
-        if (r) return r;
-      }
-
-      // Dev: tell the user where the UI is hosted by Vite.
-      if (viteDevUrl) {
-        return new Response(
-          `<!doctype html><title>oneshot-gtm dev</title>` +
-            `<p>API is running at <code>${url.origin}/api</code>.</p>` +
-            `<p>Vite dev server should be at <a href="${viteDevUrl}">${viteDevUrl}</a>.</p>`,
-          { headers: { "content-type": "text/html" } },
-        );
-      }
-
-      return new Response(
-        "oneshot-gtm server running. Build the web app to see the dashboard, or set VITE_DEV_SERVER_URL.",
-        { status: 200, headers: { "content-type": "text/plain" } },
-      );
-    },
+    ...SERVER_BASE_OPTS,
+    fetch: buildFetchHandler(),
   });
 
   return { url: `http://127.0.0.1:${server.port}`, server };
