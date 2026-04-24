@@ -40,13 +40,13 @@ export function ensureConfigDir(): void {
 }
 
 export function loadConfig(): OneShotConfig {
-  const cfg = readConfigOrDefault();
+  const raw = readConfigOrDefault();
+  const { cfg, minted } = bootstrapClientId(raw);
   // First-sight bootstrap of the anonymous install id. Persisted immediately
   // so subsequent reads (and any future telemetry sink) see a stable value.
   // Failures are non-fatal: returning the in-memory id still works for this
   // process, we just won't have it on disk yet — next call will retry.
-  if (!cfg.clientId) {
-    cfg.clientId = randomUUID();
+  if (minted) {
     try {
       saveConfig(cfg);
     } catch {
@@ -54,6 +54,20 @@ export function loadConfig(): OneShotConfig {
     }
   }
   return cfg;
+}
+
+/**
+ * Pure helper for the clientId bootstrap path — extracted so it can be
+ * unit-tested without touching the user's real config file. Mints a fresh
+ * UUID when `cfg.clientId` is null/empty, otherwise returns the input
+ * unchanged. `minted: true` signals the caller to persist.
+ */
+export function bootstrapClientId(cfg: OneShotConfig): {
+  cfg: OneShotConfig;
+  minted: boolean;
+} {
+  if (cfg.clientId && cfg.clientId.length > 0) return { cfg, minted: false };
+  return { cfg: { ...cfg, clientId: randomUUID() }, minted: true };
 }
 
 function readConfigOrDefault(): OneShotConfig {

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { llmApiKey, oneshotEnvReady, SECRET_KEYS } from "../src/config.ts";
+import { bootstrapClientId, llmApiKey, oneshotEnvReady, SECRET_KEYS } from "../src/config.ts";
+import type { OneShotConfig } from "../src/types.ts";
 
 /**
  * `config.ts` auto-applies `~/.oneshot-gtm/.env` into process.env at import time,
@@ -69,6 +70,77 @@ describe("oneshotEnvReady", () => {
 
   it("returns false when none of the four wallet vars are set", () => {
     expect(oneshotEnvReady()).toBe(false);
+  });
+});
+
+describe("bootstrapClientId", () => {
+  const baseCfg: OneShotConfig = {
+    walletMode: "cdp",
+    llmProvider: "openrouter",
+    llmModel: "x",
+    telemetryEnabled: true,
+    founderName: null,
+    founderEmail: null,
+    productOneLiner: null,
+    icpOneLiner: null,
+    clientId: null,
+  };
+
+  it("mints a UUID-shaped clientId when none is stored", () => {
+    const { cfg, minted } = bootstrapClientId(baseCfg);
+    expect(minted).toBe(true);
+    expect(cfg.clientId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    );
+  });
+
+  it("preserves an existing clientId verbatim and signals not minted", () => {
+    const stored: OneShotConfig = {
+      ...baseCfg,
+      clientId: "11111111-2222-3333-4444-555555555555",
+    };
+    const { cfg, minted } = bootstrapClientId(stored);
+    expect(minted).toBe(false);
+    expect(cfg.clientId).toBe("11111111-2222-3333-4444-555555555555");
+    // Same reference — no defensive clone when nothing was minted.
+    expect(cfg).toBe(stored);
+  });
+
+  it("treats an empty-string clientId as missing and mints fresh", () => {
+    const { cfg, minted } = bootstrapClientId({ ...baseCfg, clientId: "" });
+    expect(minted).toBe(true);
+    expect(cfg.clientId).toBeTruthy();
+    expect(cfg.clientId?.length).toBeGreaterThan(0);
+  });
+
+  it("doesn't mutate the input when minting (returns a new cfg object)", () => {
+    const original = { ...baseCfg };
+    const { cfg } = bootstrapClientId(baseCfg);
+    expect(baseCfg).toEqual(original);
+    expect(cfg).not.toBe(baseCfg);
+  });
+
+  it("preserves every other field when minting", () => {
+    const stored: OneShotConfig = {
+      ...baseCfg,
+      founderName: "Sam",
+      founderEmail: "sam@acme.dev",
+      icpOneLiner: "agent builders",
+      productOneLiner: "single SDK",
+      llmModel: "claude-sonnet-4.6",
+    };
+    const { cfg } = bootstrapClientId(stored);
+    expect(cfg.founderName).toBe("Sam");
+    expect(cfg.founderEmail).toBe("sam@acme.dev");
+    expect(cfg.icpOneLiner).toBe("agent builders");
+    expect(cfg.productOneLiner).toBe("single SDK");
+    expect(cfg.llmModel).toBe("claude-sonnet-4.6");
+  });
+
+  it("two consecutive bootstraps mint different UUIDs", () => {
+    const a = bootstrapClientId(baseCfg);
+    const b = bootstrapClientId(baseCfg);
+    expect(a.cfg.clientId).not.toBe(b.cfg.clientId);
   });
 });
 

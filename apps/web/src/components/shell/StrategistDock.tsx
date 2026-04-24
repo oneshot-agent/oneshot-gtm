@@ -12,6 +12,11 @@ import { toast } from "sonner";
 import { api } from "../../api/client.ts";
 import { Button } from "../primitives/Button.tsx";
 import { createStrategistAdapter } from "../../lib/strategist-runtime.ts";
+import {
+  parseStrategistAction,
+  stripActionMarkers,
+  type ParsedStrategistAction,
+} from "../../lib/strategistAction.ts";
 
 const SUGGESTIONS = [
   "What should I enable for my ICP?",
@@ -168,23 +173,9 @@ function AssistantMessageWithActions() {
   );
 }
 
-interface ParsedAction {
-  kind: "enable" | "disable" | "apply-config";
-  trigger: string;
-  config?: Record<string, unknown>;
-}
-
-// Trigger names contain hyphens (post-funding-auto, agent-builders, show-hn).
-// `[^:>]+?` is the only correct character class — earlier `[^:>-]+` excluded
-// `-` and silently broke every multi-word trigger.
-const ACTION_RE = /<!--ACTION:(enable|disable|apply-config):([^:>]+?)(?::([\s\S]*?))?-->/;
-// Looser match for partial markers mid-stream — strips "<!--ACTION:..."
-// fragments from displayed text before the closing `-->` arrives.
-const PARTIAL_ACTION_RE = /<!--ACTION:[\s\S]*$/;
-
 function RenderedAssistantText({ text }: { text: string }) {
-  const action = parseAction(text);
-  const cleanText = text.replace(ACTION_RE, "").replace(PARTIAL_ACTION_RE, "").trim();
+  const action = parseStrategistAction(text);
+  const cleanText = stripActionMarkers(text);
   return (
     <div>
       <p className="whitespace-pre-wrap text-sm leading-relaxed text-ink-cream-2">{cleanText}</p>
@@ -193,24 +184,7 @@ function RenderedAssistantText({ text }: { text: string }) {
   );
 }
 
-function parseAction(text: string): ParsedAction | null {
-  const m = text.match(ACTION_RE);
-  if (!m) return null;
-  const kind = m[1] as ParsedAction["kind"];
-  const trigger = (m[2] ?? "").trim();
-  const rawConfig = m[3] ?? "";
-  if (kind === "apply-config") {
-    try {
-      const config = JSON.parse(rawConfig) as Record<string, unknown>;
-      return { kind, trigger, config };
-    } catch {
-      return null;
-    }
-  }
-  return { kind, trigger };
-}
-
-function ActionChip({ action }: { action: ParsedAction }) {
+function ActionChip({ action }: { action: ParsedStrategistAction }) {
   const qc = useQueryClient();
   const [pending, setPending] = useState(false);
   const [done, setDone] = useState<string | null>(null);

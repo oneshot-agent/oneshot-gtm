@@ -65,20 +65,10 @@ export function logEvent(
   level: EventLevel = "info",
 ): void {
   // Whole body is best-effort; a logging bug must not break the caller.
-  // JSON.stringify can throw on BigInt / circular refs, so it goes inside
-  // the try block alongside the filesystem work.
+  // buildEventLine can throw on BigInt / circular refs (JSON.stringify), so
+  // it goes inside the try block alongside the filesystem work.
   try {
-    const event: DevEvent = {
-      ts: new Date().toISOString(),
-      kind,
-      level,
-    };
-    if (ctx) event.ctx = ctx;
-    const cid = resolveClientId();
-    if (cid) event.client_id = cid;
-    if (runId) event.run_id = runId;
-
-    const line = JSON.stringify(event) + "\n";
+    const line = buildEventLine(kind, ctx, level, runId, resolveClientId(), new Date());
 
     if (!configDirEnsured) {
       if (!existsSync(configDir())) mkdirSync(configDir(), { recursive: true });
@@ -93,6 +83,33 @@ export function logEvent(
   } catch {
     // dropped silently — see file header
   }
+}
+
+/**
+ * Pure builder for a single JSONL line. Extracted for testability — the
+ * call site supplies `now`, `runId`, `clientId` so tests can pin them
+ * without touching the module-level singletons or the filesystem.
+ *
+ * Includes the trailing newline so the caller can append in a single
+ * fs syscall.
+ */
+export function buildEventLine(
+  kind: string,
+  ctx: Record<string, unknown> | undefined,
+  level: EventLevel,
+  runId: string | null,
+  clientId: string | null,
+  now: Date,
+): string {
+  const event: DevEvent = {
+    ts: now.toISOString(),
+    kind,
+    level,
+  };
+  if (ctx) event.ctx = ctx;
+  if (clientId) event.client_id = clientId;
+  if (runId) event.run_id = runId;
+  return JSON.stringify(event) + "\n";
 }
 
 /**
