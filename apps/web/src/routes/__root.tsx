@@ -7,6 +7,7 @@ import { Toaster } from "sonner";
 import { api } from "../api/client.ts";
 import { CommandPalette } from "../components/shell/CommandPalette.tsx";
 import { StatusBar } from "../components/shell/StatusBar.tsx";
+import { StrategistDock } from "../components/shell/StrategistDock.tsx";
 import { useKeyboard } from "../components/shell/useKeyboard.ts";
 import { cn } from "../lib/cn.ts";
 
@@ -182,6 +183,7 @@ function RootLayout() {
       </footer>
 
       <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+      <StrategistDock />
 
       <Toaster
         position="bottom-right"

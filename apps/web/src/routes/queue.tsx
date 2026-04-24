@@ -19,7 +19,6 @@ import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
 import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
 import { Field, Input, Textarea } from "../components/primitives/Field.tsx";
-import { StrategistChat } from "../components/queue/StrategistChat.tsx";
 import { Modal } from "../components/primitives/Modal.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { Toggle } from "../components/primitives/Toggle.tsx";
@@ -244,7 +243,9 @@ function QueuePage() {
 
       <IcpBanner />
 
-      {/* Filter bar */}
+      {/* Status filter — global; scopes both the queue rows and the bulk
+          actions below. Play filter moved into the Target Queue section
+          (closer to the rows it actually narrows). */}
       <section className="flex flex-wrap items-center gap-2 border-b border-ink-rule px-6 py-3">
         <span className="ln-eyebrow">status</span>
         {STATUSES.map((s) => (
@@ -255,25 +256,6 @@ function QueuePage() {
             onClick={() => setStatusFilter(s)}
           >
             {s}
-          </Button>
-        ))}
-        <span className="mx-2 h-4 w-px bg-ink-rule" />
-        <span className="ln-eyebrow">play</span>
-        <Button
-          variant={playFilter === "all" ? "primary" : "ghost"}
-          size="sm"
-          onClick={() => setPlayFilter("all")}
-        >
-          all
-        </Button>
-        {playList.map((p) => (
-          <Button
-            key={p}
-            variant={playFilter === p ? "primary" : "ghost"}
-            size="sm"
-            onClick={() => setPlayFilter(p)}
-          >
-            {p}
           </Button>
         ))}
       </section>
@@ -313,19 +295,44 @@ function QueuePage() {
 
       <TriggersCard />
 
-      {/* Queue ledger */}
-      <section className="border-b border-ink-rule">
-        <div className="flex items-baseline justify-between px-6 pb-2 pt-5">
-          <div className="ln-eyebrow">
-            {queueQuery.data ? (
-              <>
-                {rows.length} <span className="text-ink-faint">row(s)</span>
-              </>
-            ) : (
-              <span className="text-ink-faint">…</span>
-            )}
+      {/* Target Queue — the candidates themselves. A heavier rule + explicit
+          section header separates this from the Triggers table above (which
+          was reading as a seamless continuation of the same list). Play
+          filter lives inline here: it narrows the rows in this table
+          specifically, so it belongs next to them, not in the global bar. */}
+      <section className="border-t-2 border-ink-rule">
+        <div className="flex flex-wrap items-center justify-between gap-3 px-6 pb-3 pt-5">
+          <div className="flex items-baseline gap-3">
+            <div className="ln-eyebrow">
+              Target Queue{" "}
+              <span className="text-ink-faint">
+                · {queueQuery.data ? rows.length : "…"} row{rows.length === 1 ? "" : "s"}
+              </span>
+            </div>
           </div>
           <div className="font-mono text-[11px] text-ink-faint">refresh · 20s</div>
+        </div>
+
+        {/* Play filter, inline with the table it scopes. */}
+        <div className="flex flex-wrap items-center gap-2 border-b border-ink-rule/60 px-6 pb-3">
+          <span className="ln-eyebrow">play</span>
+          <Button
+            variant={playFilter === "all" ? "primary" : "ghost"}
+            size="sm"
+            onClick={() => setPlayFilter("all")}
+          >
+            all
+          </Button>
+          {playList.map((p) => (
+            <Button
+              key={p}
+              variant={playFilter === p ? "primary" : "ghost"}
+              size="sm"
+              onClick={() => setPlayFilter(p)}
+            >
+              {p}
+            </Button>
+          ))}
         </div>
 
         {/* 7-day signal strip — enqueues per day from the rows in memory. */}
@@ -754,6 +761,9 @@ function TriggersCard() {
     mutationFn: (vars: { name: string; enabled: boolean }) =>
       api.setTriggerEnabled(vars.name, vars.enabled),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["triggers"] }),
+    // Surface 409 (not ready) / 400 errors — the mutation was silent before,
+    // which hid the readiness gate from the founder.
+    onError: (err) => toast.error(err.message),
   });
   const setConfig = useMutation({
     mutationFn: (vars: { name: string; config: unknown }) =>
@@ -762,6 +772,7 @@ function TriggersCard() {
       setEditing(null);
       void qc.invalidateQueries({ queryKey: ["triggers"] });
     },
+    onError: (err) => toast.error(err.message),
   });
   const runTrigger = useMutation({
     mutationFn: (name: string) => {
@@ -821,7 +832,6 @@ function TriggersCard() {
 
   const [editing, setEditing] = useState<EditingState | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
-  const [strategistOpen, setStrategistOpen] = useState(false);
 
   const triggers = triggersQuery.data?.triggers ?? [];
 
@@ -869,17 +879,7 @@ function TriggersCard() {
           <div className="ln-eyebrow">
             Triggers <span className="text-ink-faint">· {triggers.length}</span>
           </div>
-          <div className="flex items-center gap-3 font-mono text-[11px] text-ink-faint">
-            <button
-              type="button"
-              onClick={() => setStrategistOpen((v) => !v)}
-              className="cursor-pointer rounded-full border border-ink-rule px-2.5 py-1 uppercase tracking-wider text-ink-muted transition-colors hover:border-ink-rule-2 hover:text-ink-cream-2"
-              title="Open the LLM-powered strategist that proposes trigger configs based on your ICP + product"
-            >
-              {strategistOpen ? "▾ strategist" : "✦ strategist"}
-            </button>
-            <span>refresh · 30s</span>
-          </div>
+          <div className="font-mono text-[11px] text-ink-faint">refresh · 30s</div>
         </div>
         {triggersQuery.isLoading ? (
           Array.from({ length: 3 }, (_, i) => <SkeletonRow key={i} />)
@@ -976,7 +976,6 @@ function TriggersCard() {
             </tbody>
           </table>
         )}
-        {strategistOpen && <StrategistChat />}
       </section>
     </>
   );
@@ -1005,6 +1004,15 @@ interface TriggerRowProps {
 
 function TriggerRowFragment(props: TriggerRowProps) {
   const t = props.trigger;
+  // Treat an absent `ready` field as ready — the server only sends `ready:false`
+  // when a spec's readiness fn actively rejects the config. This keeps stale
+  // clients rendering correctly if the API is briefly behind on a deploy.
+  const notReady = t.ready === false;
+  const notReadyReason = t.notReadyReason ?? "missing required config";
+  // Toggle: block *enabling* an unready trigger but keep "disable" reachable
+  // for historical rows where a previously-ready config was then cleared.
+  const toggleDisabled = props.setEnabledPending || (notReady && !t.enabled);
+  const runDisabled = props.running || notReady;
   return (
     <>
       <tr
@@ -1038,10 +1046,13 @@ function TriggerRowFragment(props: TriggerRowProps) {
           )}
           <span className={t.enabled ? "text-ink-cream" : "text-ink-muted"}>{t.name}</span>
         </td>
-        <td className="py-2">
+        <td
+          className="py-2"
+          title={notReady && !t.enabled ? `not ready · ${notReadyReason}` : undefined}
+        >
           <Toggle
             checked={t.enabled}
-            disabled={props.setEnabledPending}
+            disabled={toggleDisabled}
             label={`${t.enabled ? "disable" : "enable"} ${t.name}`}
             onChange={props.onToggleEnabled}
           />
@@ -1057,7 +1068,14 @@ function TriggerRowFragment(props: TriggerRowProps) {
         <td className="py-2 font-mono text-[12px] text-ink-muted">
           {t.lastPolledAt ? timeAgo(t.lastPolledAt) : "never"}
         </td>
-        <td className="py-2 font-mono text-[11.5px] text-ink-muted">{props.summary}</td>
+        <td
+          className={cn(
+            "py-2 font-mono text-[11.5px]",
+            notReady ? "text-[color:var(--ink-blocked-2)]" : "text-ink-muted",
+          )}
+        >
+          {notReady ? `not ready · ${notReadyReason}` : props.summary}
+        </td>
         <td className="px-6 py-2 text-right">
           <div className="flex items-center justify-end gap-1">
             <Button
@@ -1071,13 +1089,15 @@ function TriggerRowFragment(props: TriggerRowProps) {
               // and defeat the whole point of the visual upgrade. Clicks
               // during a run are gated via `onClick` below; cursor styling
               // reinforces the lockout.
-              aria-disabled={props.running || undefined}
-              onClick={props.running ? undefined : props.onRun}
-              className={cn(props.running && "cursor-not-allowed pointer-events-none")}
+              aria-disabled={runDisabled || undefined}
+              onClick={runDisabled ? undefined : props.onRun}
+              className={cn(runDisabled && "cursor-not-allowed pointer-events-none")}
               title={
                 props.running
                   ? `Running for ${props.elapsedMs != null ? humanDuration(props.elapsedMs) : "a moment"} — click won't re-fire`
-                  : "Run this finder now — ignores schedule, spends OneShot $"
+                  : notReady
+                    ? `not ready · ${notReadyReason}`
+                    : "Run this finder now — ignores schedule, spends OneShot $"
               }
             >
               {props.running ? (

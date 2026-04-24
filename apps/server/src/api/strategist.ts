@@ -81,7 +81,11 @@ export async function strategistRoute(req: Request): Promise<Response> {
             ...body.messages.map((m) => ({ role: m.role, content: m.content }) as const),
           ],
           temperature: 0.4,
-          maxTokens: 800,
+          // 800 tokens truncated apply-config markers when the proposed JSON
+          // ran long (agent-builders combos easily hit ~600 chars of JSON +
+          // prose). Bumped to 4096 so a multi-combo config never gets clipped
+          // mid-marker.
+          maxTokens: 4096,
         });
         // Fake-stream the assistant content in chunks so the UI gets
         // progressive text instead of a single late drop. Real token streaming
