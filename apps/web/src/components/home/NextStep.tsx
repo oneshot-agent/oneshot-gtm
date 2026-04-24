@@ -67,16 +67,8 @@ export function NextStep() {
 
   return (
     <section className="border-b border-ink-rule bg-ink-bg-deep px-6 py-6">
-      <div
-        className="relative flex items-start justify-between gap-6 overflow-hidden rounded-[var(--radius-lg)] border border-ink-rule bg-ink-surface px-6 py-5 shadow-[var(--shadow-inset)]"
-      >
-        {/* Accent rail — marks this as a next-action callout, not a data section. */}
-        <span
-          aria-hidden="true"
-          className="absolute inset-y-0 left-0 w-[3px]"
-          style={{ background: "var(--ink-spend)" }}
-        />
-        <div className="flex-1 pl-2">
+      <div className="flex items-start justify-between gap-6 rounded-[var(--radius-lg)] border border-ink-rule bg-ink-surface px-6 py-5 shadow-[var(--shadow-inset)]">
+        <div className="flex-1">
           <div className="ln-eyebrow">
             Next step · {ix + 1} of {STEPS.length}
           </div>
