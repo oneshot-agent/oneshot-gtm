@@ -23,6 +23,7 @@ import { Modal } from "../components/primitives/Modal.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { Toggle } from "../components/primitives/Toggle.tsx";
 import { cn, timeAgo } from "../lib/cn.ts";
+import { buildSignalDays } from "../lib/signalDays.ts";
 import {
   clearTriggerRunning,
   hasAnyRunningTrigger,
@@ -702,42 +703,12 @@ function SignalStrip({ rows }: { rows: QueueRowView[] }) {
       <div className="font-mono text-[11px] text-ink-muted">
         {total} enqueued
         <span className="ml-2 text-ink-faint">
-          ·{" "}
-          <span className="text-ink-cream-2">{days[days.length - 1]?.count ?? 0}</span> in
-          last 24h
+          · <span className="text-ink-cream-2">{days[days.length - 1]?.count ?? 0}</span>{" "}
+          today
         </span>
       </div>
     </div>
   );
-}
-
-/** Compute a 7-day histogram (oldest → newest) of enqueues. */
-function buildSignalDays(rows: QueueRowView[]): Array<{ label: string; count: number }> {
-  const now = new Date();
-  const days: Array<{ label: string; count: number }> = [];
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date(now);
-    d.setHours(0, 0, 0, 0);
-    d.setDate(d.getDate() - i);
-    days.push({
-      label: d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }),
-      count: 0,
-    });
-  }
-  const cutoff = new Date(now);
-  cutoff.setHours(0, 0, 0, 0);
-  cutoff.setDate(cutoff.getDate() - 6);
-  for (const r of rows) {
-    const ts = new Date(r.foundAt);
-    if (Number.isNaN(ts.getTime())) continue;
-    if (ts < cutoff) continue;
-    const idx = 6 - Math.floor((now.getTime() - ts.getTime()) / (24 * 3600 * 1000));
-    if (idx >= 0 && idx < 7) {
-      const day = days[idx];
-      if (day) day.count += 1;
-    }
-  }
-  return days;
 }
 
 function TriggersCard() {
