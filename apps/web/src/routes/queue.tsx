@@ -243,56 +243,6 @@ function QueuePage() {
 
       <IcpBanner />
 
-      {/* Status filter — global; scopes both the queue rows and the bulk
-          actions below. Play filter moved into the Target Queue section
-          (closer to the rows it actually narrows). */}
-      <section className="flex flex-wrap items-center gap-2 border-b border-ink-rule px-6 py-3">
-        <span className="ln-eyebrow">status</span>
-        {STATUSES.map((s) => (
-          <Button
-            key={s}
-            variant={statusFilter === s ? "primary" : "ghost"}
-            size="sm"
-            onClick={() => setStatusFilter(s)}
-          >
-            {s}
-          </Button>
-        ))}
-      </section>
-
-      {/* Bulk action bar */}
-      <section className="flex flex-wrap items-center gap-2 border-b border-ink-rule bg-ink-surface/30 px-6 py-3">
-        <Button
-          variant="secondary"
-          size="sm"
-          disabled={approveAll.isPending || counts.pending === 0}
-          onClick={() => approveAll.mutate(playFilter === "all" ? undefined : playFilter)}
-        >
-          <Check size={12} /> approve all pending{playFilter !== "all" ? ` (${playFilter})` : ""}
-        </Button>
-        {DRAINABLE_PLAYS.map((p) => (
-          <Button
-            key={p}
-            variant="ghost"
-            size="sm"
-            disabled={
-              counts.approved === 0 ||
-              (playFilter !== "all" && playFilter !== p) ||
-              !rows.some((r) => r.playName === p && r.status === "approved")
-            }
-            onClick={() =>
-              setDrainModal({
-                playName: p,
-                approvedCount: rows.filter((r) => r.playName === p && r.status === "approved")
-                  .length,
-              })
-            }
-          >
-            <Send size={12} /> drain {p}
-          </Button>
-        ))}
-      </section>
-
       <TriggersCard />
 
       {/* Target Queue — the candidates themselves. A heavier rule + explicit
@@ -313,8 +263,22 @@ function QueuePage() {
           <div className="font-mono text-[11px] text-ink-faint">refresh · 20s</div>
         </div>
 
-        {/* Play filter, inline with the table it scopes. */}
+        {/* Status + play filters, inline with the table they scope. Status
+            is first (it narrows far more rows than play) and the two are
+            visually separated by a thin rule for scannability. */}
         <div className="flex flex-wrap items-center gap-2 border-b border-ink-rule/60 px-6 pb-3">
+          <span className="ln-eyebrow">status</span>
+          {STATUSES.map((s) => (
+            <Button
+              key={s}
+              variant={statusFilter === s ? "primary" : "ghost"}
+              size="sm"
+              onClick={() => setStatusFilter(s)}
+            >
+              {s}
+            </Button>
+          ))}
+          <span className="mx-2 h-4 w-px bg-ink-rule" />
           <span className="ln-eyebrow">play</span>
           <Button
             variant={playFilter === "all" ? "primary" : "ghost"}
@@ -331,6 +295,42 @@ function QueuePage() {
               onClick={() => setPlayFilter(p)}
             >
               {p}
+            </Button>
+          ))}
+        </div>
+
+        {/* Bulk actions — approve-all + per-play drain. Colocated with the
+            table they act on; respects the current play filter so clicking
+            "approve all pending" while a play is selected scopes down. */}
+        <div className="flex flex-wrap items-center gap-2 border-b border-ink-rule/60 bg-ink-surface/30 px-6 py-3">
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={approveAll.isPending || counts.pending === 0}
+            onClick={() => approveAll.mutate(playFilter === "all" ? undefined : playFilter)}
+          >
+            <Check size={12} /> approve all pending
+            {playFilter !== "all" ? ` (${playFilter})` : ""}
+          </Button>
+          {DRAINABLE_PLAYS.map((p) => (
+            <Button
+              key={p}
+              variant="ghost"
+              size="sm"
+              disabled={
+                counts.approved === 0 ||
+                (playFilter !== "all" && playFilter !== p) ||
+                !rows.some((r) => r.playName === p && r.status === "approved")
+              }
+              onClick={() =>
+                setDrainModal({
+                  playName: p,
+                  approvedCount: rows.filter((r) => r.playName === p && r.status === "approved")
+                    .length,
+                })
+              }
+            >
+              <Send size={12} /> drain {p}
             </Button>
           ))}
         </div>
@@ -702,10 +702,9 @@ function SignalStrip({ rows }: { rows: QueueRowView[] }) {
       <div className="font-mono text-[11px] text-ink-muted">
         {total} enqueued
         <span className="ml-2 text-ink-faint">
-          · newest <span className="text-ink-cream-2">
-            {days[days.length - 1]?.count ?? 0}
-          </span>{" "}
-          today
+          ·{" "}
+          <span className="text-ink-cream-2">{days[days.length - 1]?.count ?? 0}</span> in
+          last 24h
         </span>
       </div>
     </div>
@@ -746,10 +745,7 @@ function TriggersCard() {
   const triggersQuery = useQuery({
     queryKey: ["triggers"],
     queryFn: () => api.triggers(),
-    // Poll every 5s whenever anything is believed running — either a local
-    // marker (localStorage, for pre-response + refresh resume) or a
-    // server-authoritative `running: true` from the last fetch (for fresh
-    // tabs that never set a marker). Otherwise a leisurely 30s.
+    // Poll 5s while anything is running (local marker OR server `running`), 30s otherwise.
     refetchInterval: (query) => {
       if (hasAnyRunningTrigger()) return 5_000;
       const data = query.state.data;
@@ -761,8 +757,6 @@ function TriggersCard() {
     mutationFn: (vars: { name: string; enabled: boolean }) =>
       api.setTriggerEnabled(vars.name, vars.enabled),
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["triggers"] }),
-    // Surface 409 (not ready) / 400 errors — the mutation was silent before,
-    // which hid the readiness gate from the founder.
     onError: (err) => toast.error(err.message),
   });
   const setConfig = useMutation({
@@ -776,15 +770,10 @@ function TriggersCard() {
   });
   const runTrigger = useMutation({
     mutationFn: (name: string) => {
-      // Persist "this trigger is now running" before the network call so a
-      // refresh mid-flight can rebuild the spinner state from localStorage.
       markTriggerRunning(name);
       return api.runTrigger(name);
     },
     onSuccess: (data, name) => {
-      // Server now fires the finder and returns 202 immediately. Keep the
-      // localStorage marker in place — the cross-refresh tracker clears it
-      // once the server's lastPolledAt advances past our startedAt.
       void qc.invalidateQueries({ queryKey: ["triggers"] });
       if (data.pending) {
         toast.success(`${name} · started`, {
@@ -792,7 +781,6 @@ function TriggersCard() {
         });
         return;
       }
-      // Synchronous fallback (should only hit when the server couldn't fire).
       clearTriggerRunning(name);
       void qc.invalidateQueries({ queryKey: ["queue"] });
       void qc.invalidateQueries({ queryKey: ["home"] });
@@ -817,9 +805,8 @@ function TriggersCard() {
       toast.success(`${name} · ${parts.join(" · ")}`);
     },
     onError: (err, name) => {
-      // "already running" (409) means the server already has this in flight;
-      // the authoritative `running` flag will arrive via the triggers poll
-      // and keep the spinner lit. Don't clear the local marker.
+      // 409 = server already running it — keep the local marker so the
+      // spinner stays lit until the authoritative `running` flag clears.
       if (err.message.includes("already running")) {
         void qc.invalidateQueries({ queryKey: ["triggers"] });
         toast.info(`${name} · already running`);
@@ -835,10 +822,7 @@ function TriggersCard() {
 
   const triggers = triggersQuery.data?.triggers ?? [];
 
-  // Invalidate queue + home the moment the server's `running` flag flips
-  // from true → false for any trigger, so new rows + updated spend land in
-  // the UI without waiting for the 20s queue poll. Derive a stable key from
-  // the running-names set so the effect only fires on actual transitions.
+  // Invalidate queue/home the moment any trigger's `running` flips true → false.
   const runningKey = triggers
     .filter((t) => t.running)
     .map((t) => t.name)
@@ -857,9 +841,6 @@ function TriggersCard() {
     }
   }, [runningKey, qc]);
 
-  // Cross-refresh "is running" tracker — merges local (localStorage, set on
-  // click) + server (runningSince from the triggers poll, authoritative for
-  // fresh tabs). Clears local entries whose work the server has confirmed done.
   const lastPolledByName = new Map<string, string | null>(
     triggers.map((t) => [t.name, t.lastPolledAt]),
   );
@@ -905,11 +886,9 @@ function TriggersCard() {
             <tbody>
               {triggers.map((t, i) => {
                 const summary = summarizeRun(t.lastRunSummary);
+                // `inProcess` covers the sub-millisecond window before the 202 lands;
+                // `tracked` takes over via localStorage + server `runningSince`.
                 const inProcess = runTrigger.isPending && runTrigger.variables === t.name;
-                // `runningByName` already merges local (pre-request +
-                // refresh-resume) + server (fresh-tab authoritative) start
-                // times, with a live-ticking elapsedMs. `inProcess` covers
-                // the sub-millisecond mutation window before the 202 lands.
                 const tracked = runningByName.get(t.name);
                 const running = inProcess || tracked != null;
                 const elapsedMs = tracked?.elapsedMs ?? null;
@@ -1004,13 +983,10 @@ interface TriggerRowProps {
 
 function TriggerRowFragment(props: TriggerRowProps) {
   const t = props.trigger;
-  // Treat an absent `ready` field as ready — the server only sends `ready:false`
-  // when a spec's readiness fn actively rejects the config. This keeps stale
-  // clients rendering correctly if the API is briefly behind on a deploy.
+  // Missing `ready` field = treat as ready (tolerate older servers).
   const notReady = t.ready === false;
   const notReadyReason = t.notReadyReason ?? "missing required config";
-  // Toggle: block *enabling* an unready trigger but keep "disable" reachable
-  // for historical rows where a previously-ready config was then cleared.
+  // Block enabling an unready trigger but still allow disabling.
   const toggleDisabled = props.setEnabledPending || (notReady && !t.enabled);
   const runDisabled = props.running || notReady;
   return (
@@ -1023,14 +999,10 @@ function TriggerRowFragment(props: TriggerRowProps) {
           !t.enabled && "opacity-65",
           "hover:bg-ink-surface/50",
           props.isEditing && "bg-ink-surface/50",
-          // Running state: subtle cobalt wash so the eye lands on the
-          // firing trigger without drowning the rest of the table.
           props.running && "bg-[color:var(--ink-signal)]/[0.08]",
         )}
       >
         <td className="relative px-6 py-2 font-mono text-[12px]">
-          {/* Left-edge status accent: running wins over enabled so an in-flight
-              trigger gets its own stronger, animated marker. */}
           {props.running ? (
             <span
               aria-hidden="true"
@@ -1079,16 +1051,10 @@ function TriggerRowFragment(props: TriggerRowProps) {
         <td className="px-6 py-2 text-right">
           <div className="flex items-center justify-end gap-1">
             <Button
-              // Switch to the cobalt accent outline while running so the
-              // button reads as *live* instead of just "pressed". Ghost is
-              // too subtle; primary is too loud for a table cell.
               variant={props.running ? "accent" : "ghost"}
               size="sm"
-              // Use aria-disabled (not `disabled`) to keep the accent colors
-              // visible — `disabled:opacity-50` would wash out the spinner
-              // and defeat the whole point of the visual upgrade. Clicks
-              // during a run are gated via `onClick` below; cursor styling
-              // reinforces the lockout.
+              // `aria-disabled` (not `disabled`) so accent colors stay vivid;
+              // clicks are gated by the `onClick` guard + pointer-events-none.
               aria-disabled={runDisabled || undefined}
               onClick={runDisabled ? undefined : props.onRun}
               className={cn(runDisabled && "cursor-not-allowed pointer-events-none")}
@@ -1254,9 +1220,6 @@ function summarizeRun(summary: unknown): string {
   if (!summary || typeof summary !== "object") return "—";
   const s = summary as Record<string, unknown>;
   if (typeof s["error"] === "string") return `error: ${(s["error"] as string).slice(0, 60)}`;
-  // A halted run (e.g. unconfigured, max-cost cap) is the most important thing
-  // to show — surface it before the counter breakdown so it's not drowned out
-  // by a row of zeros.
   if (typeof s["halted"] === "string" && s["halted"]) {
     return `halted · ${(s["halted"] as string).slice(0, 80)}`;
   }
@@ -1294,8 +1257,7 @@ function nameFor(payload: unknown): string | null {
   const p = payload as Record<string, unknown>;
   if (typeof p["name"] === "string") return p["name"] as string;
   if (typeof p["founderName"] === "string") return p["founderName"] as string;
-  // Pre-enrichment rejected rows only carry the source URL. Derive a handle so
-  // the /queue table shows something identifiable instead of "(unknown)".
+  // Pre-enrichment rejected rows only carry a source URL — derive a handle.
   const repoUrl = typeof p["repoUrl"] === "string" ? (p["repoUrl"] as string) : null;
   if (repoUrl) {
     const m = repoUrl.match(/github\.com\/([^/]+)\/([^/?#]+)/);
