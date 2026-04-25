@@ -368,9 +368,30 @@ export function fireTriggerNow(name: string): void {
   if (!claimed) {
     throw new Error(`trigger '${name}' is already running`);
   }
-  // No `.finally` cleanup — runTriggerNow's own updateTriggerLastPoll clears
-  // running_started_at on completion (success OR caught error).
-  void runTriggerNow(name);
+  // Explicit catch — `void` discards the promise without wiring rejection
+  // handling. If `runTriggerNow` throws synchronously OR rejects before its
+  // own try/catch (e.g. JSON.parse on a corrupted config_json, an import
+  // resolution issue under bun --hot, anything that would otherwise be a
+  // silent unhandled rejection), we surface the failure AND clear the
+  // stranded `running_started_at` so the row doesn't stay "running" until
+  // the next boot sweep.
+  runTriggerNow(name).catch((err) => {
+    const message = (err as Error).message ?? "runTriggerNow rejected";
+    logEvent(
+      "trigger.run.fire_failed",
+      { name, message_120: message.slice(0, 120) },
+      "error",
+    );
+    try {
+      ledger.updateTriggerLastPoll({
+        name,
+        summary: { error: `fire_failed: ${message}`, at: new Date().toISOString() },
+      });
+    } catch {
+      // updateTriggerLastPoll itself failing is hopeless; the boot sweep
+      // is the safety net.
+    }
+  });
 }
 
 /**
