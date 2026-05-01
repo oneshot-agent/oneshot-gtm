@@ -18,6 +18,8 @@ A JSON object only:
   "founderName": string | null,
   "founderRole": string | null,
   "industry": string | null,
+  "linkedinUrl": string | null,
+  "phone": string | null,
   "summary": string | null
 }
 ```
@@ -28,6 +30,8 @@ A JSON object only:
 - `amountUsd`: integer USD. "$5M" → 5000000. "$1.2 billion" → 1200000000. Null if range or unstated.
 - `round`: pick from the enum exactly. "extension" rounds map to the parent (e.g. "Series A extension" → "Series A").
 - `founderName`: the CEO/founder quoted in the announcement, NOT the lead investor. Use full name if given.
+- `linkedinUrl`: a LinkedIn profile URL for the founder if the page links one (e.g. https://www.linkedin.com/in/...). Null otherwise — do not guess.
+- `phone`: a direct phone number for the founder if the page mentions one. Null otherwise — do not guess.
 - `summary`: 1-2 sentence description of what the company does, in their own words from the announcement when possible. ≤300 chars.
 - Anything not stated in the page → null. Do not guess.
 

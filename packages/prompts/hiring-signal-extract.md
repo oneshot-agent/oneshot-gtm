@@ -18,6 +18,8 @@ A JSON object only:
   "hiringManagerRole": string | null,
   "team": string | null,
   "postedAt": string | null,
+  "linkedinUrl": string | null,
+  "phone": string | null,
   "summary": string | null
 }
 ```
@@ -31,6 +33,8 @@ A JSON object only:
 - `hiringManagerRole`: title of that hiring manager when stated.
 - `team`: the team / org / function the role sits in, when stated (e.g. "Platform", "Growth", "Inference").
 - `postedAt`: ISO date if shown, else null.
+- `linkedinUrl`: a LinkedIn profile URL for the hiring manager if the page links one. NULL otherwise — do not guess.
+- `phone`: a direct phone number for the hiring manager if the page mentions one. NULL otherwise.
 - `summary`: ≤200 chars, what the role is doing in one sentence (NOT a perks list).
 - If the page is clearly NOT a single job posting (job index, generic careers landing, blog post), return all-null.
 - Do not guess. Anything not stated → null.

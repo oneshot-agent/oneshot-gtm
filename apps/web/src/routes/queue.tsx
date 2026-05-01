@@ -52,6 +52,7 @@ const DRAINABLE_PLAYS = [
   "accelerator-batch",
   "hiring-signal",
   "podcast-guest",
+  "competitor-switch",
 ];
 
 function statusTone(
@@ -579,6 +580,8 @@ function QueueRow({
   const email = emailFor(row.payload);
   const name = nameFor(row.payload);
   const company = companyFor(row.payload);
+  const linkedinUrl = linkedinUrlFor(row.payload);
+  const phone = phoneFor(row.payload);
   return (
     <>
       <tr
@@ -621,6 +624,18 @@ function QueueRow({
           <div className="font-mono text-[11px] text-ink-faint">
             {email ?? "—"}
             {company ? ` · ${company}` : ""}
+            {linkedinUrl ? (
+              <a
+                href={linkedinUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="ml-1 text-ink-cream-2 underline decoration-ink-rule underline-offset-2 hover:text-ink-cream hover:decoration-ink-cream-2"
+                onClick={(e) => e.stopPropagation()}
+              >
+                [in]
+              </a>
+            ) : null}
+            {phone ? <span className="ml-1 text-ink-faint">· {phone}</span> : null}
           </div>
         </td>
         <td className="py-2 text-ink-cream-2">{row.playName}</td>
@@ -1250,5 +1265,23 @@ function companyFor(payload: unknown): string | null {
   if (!payload || typeof payload !== "object") return null;
   const p = payload as Record<string, unknown>;
   if (typeof p["company"] === "string") return p["company"] as string;
+  return null;
+}
+
+function linkedinUrlFor(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const p = payload as Record<string, unknown>;
+  const v = p["linkedinUrl"];
+  if (typeof v !== "string" || v.length === 0) return null;
+  // Defense in depth — payload comes from sqlite but a stale/garbage row should
+  // never render as a clickable javascript:// or data:// link.
+  return /^https?:\/\/(?:[a-z0-9-]+\.)*linkedin\.com\/in\//i.test(v) ? v : null;
+}
+
+function phoneFor(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const p = payload as Record<string, unknown>;
+  const v = p["phone"];
+  if (typeof v === "string" && v.length > 0) return v;
   return null;
 }

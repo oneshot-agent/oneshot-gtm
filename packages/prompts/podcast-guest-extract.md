@@ -18,6 +18,8 @@ A JSON object only:
   "guestCompany": string | null,
   "guestCompanyDomain": string | null,
   "publishedAt": string | null,
+  "linkedinUrl": string | null,
+  "phone": string | null,
   "summary": string | null
 }
 ```
@@ -30,6 +32,8 @@ A JSON object only:
 - `guestRole` + `guestCompany`: their CURRENT role at the time of recording (e.g. "CEO of Acme"). Null if not stated.
 - `guestCompanyDomain`: bare domain, no protocol/www/path.
 - `publishedAt`: ISO date when stated, else null.
+- `linkedinUrl`: a LinkedIn profile URL for the guest if the page links one (Latent Space, Lenny's, etc. usually do). NULL otherwise — do not guess.
+- `phone`: a direct phone number for the guest if the page mentions one. NULL otherwise.
 - `summary`: ≤200 chars, neutral, what the episode is about. Quote the host's own one-liner when present.
 - If the page is clearly NOT a podcast episode (general podcast index, blog post, news article), return all-null.
 - Do not guess. Anything not stated → null.

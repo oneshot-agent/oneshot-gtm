@@ -17,6 +17,7 @@ A JSON object only:
   "previousRole": string | null,
   "previousCompany": string | null,
   "linkedinUrl": string | null,
+  "phone": string | null,
   "summary": string | null
 }
 ```
@@ -29,6 +30,7 @@ A JSON object only:
 - `newCompanyDomain`: bare domain (no protocol/www/path). Null if not stated.
 - `previousRole` / `previousCompany`: prior position, if mentioned.
 - `linkedinUrl`: only if the source is a LinkedIn URL or contains a LinkedIn profile link. Otherwise null.
+- `phone`: a direct phone number for the person if the source mentions one. Otherwise null — do not guess.
 - `summary`: ≤200 chars, 1 sentence, neutral tone. "Joined Acme as VP Eng after 4 years at Stripe."
 - If the snippet is clearly NOT a job-change announcement (job posting, "we're hiring" page, generic profile), return all-null.
 - Do not guess. Anything not stated → null.
