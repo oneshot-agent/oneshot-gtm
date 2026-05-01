@@ -3,8 +3,12 @@
 > Open-source GTM agent for technical founders. Pay-per-result. Signed receipts. Founder-led discipline encoded. Two surfaces: terminal CLI + local web dashboard, both backed by the same SQLite ledger.
 
 ```bash
-bunx oneshot-gtm init       # one-time setup
-bunx oneshot-gtm ui         # opens http://127.0.0.1:3030
+# Dashboard-only (published, no clone needed):
+bunx oneshot-gtm-server     # opens http://127.0.0.1:3030
+
+# Full install (CLI + dashboard, repo clone — see below):
+bun run cli -- init         # one-time setup
+bun run cli -- ui           # opens http://127.0.0.1:3030
 ```
 
 [![Built with oneshot-gtm](https://img.shields.io/badge/built%20with-oneshot--gtm-0a0a0a?style=flat&labelColor=18181b&color=22c55e)](https://github.com/oneshot-agent/oneshot-gtm) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE) [![Bun](https://img.shields.io/badge/runtime-Bun%201.3+-fbf0df?logo=bun&logoColor=black)](https://bun.sh) [![TypeScript](https://img.shields.io/badge/typed-TypeScript%206-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org)
@@ -28,12 +32,12 @@ It's open source (MIT) so you can read every prompt, fork every play, and trust 
 ```bash
 bun run cli -- intel advise                                  # interactive coach
 bun run cli -- discover icp interview-prep "your hypothesis"
-bun run cli -- motion show-hn --target ./examples/show-hn.json --dry-run
+bun run cli -- find watch --once                             # poll all due triggers, enqueue candidates
+bun run cli -- find drain podcast-guest --dry-run            # preview approved /queue rows
 bun run cli -- cadence advance                               # daily tick: poll inbox + fire follow-ups
-bun run cli -- measure cac --since-days 7                    # per-play unit economics
 ```
 
-33 commands across 7 groups. See `bun run cli -- --help` or jump to the [Command map](#command-map).
+~30 commands across 9 groups. See `bun run cli -- --help` or jump to the [Command map](#command-map).
 
 ### Dashboard — for visibility + non-technical co-founders
 
@@ -50,13 +54,28 @@ Seven pages, all reading the same `~/.oneshot-gtm/ledger.sqlite`:
 - **Queue** — triggers table (enable, edit JSON config, fire) + target queue (status + play filters, bulk approve, per-play drain modal). Per-row spinner + locked button while a trigger is running.
 - **Cadences** — table view with inline **Stop** + **Log outcome** buttons; outcome modal supports `meeting_booked / sql_qualified / deal_won / deal_lost / ghosted`
 - **Receipts** — paginated table; click a row → modal with the signed receipt payload
-- **Plays** — cards with channel badges + **Run** button (for `show-hn`/`job-change`/`accelerator-batch`) + **Copy CLI** button
+- **Plays** — cards with channel badges + **Run** button (for `show-hn` / `job-change` / `post-funding` / `accelerator-batch` / `hiring-signal` / `podcast-guest`) + **Copy CLI** button
 - **Measure** — CAC + RoCS tables filterable by time range
 - **Setup** — editable wizard: founder profile, LLM provider/model, OneShot wallet keys (hidden inputs), telemetry toggle. Saves to chmod-600 `~/.oneshot-gtm/.env`.
 
 The `Run a play` form (`/run/$playName`) takes editable target rows + a dry-run toggle and streams drafted emails back via Server-Sent Events with lint flags + clickable receipt links.
 
 A floating **strategist dock** is mounted on every page. Open it to chat through trigger config: it reads your ICP + product one-liner and proposes JSON configs as confirmation chips you click to apply. Endpoint: `POST /api/strategist/stream` (SSE).
+
+### Discovery — where targets come from
+
+Motion plays don't require hand-curated JSON anymore. Eight **finders** auto-discover prospects, ICP-filter them, and enqueue into `/queue` for one-click approve / reject:
+
+- **`show-hn`** — HN Algolia poller, surfaces same-day Show HN posts
+- **`post-funding`** — webSearch by ICP-derived industry × round (auto), or a TC/Crunchbase URL list
+- **`job-change`** — webSearch for `"joined as <persona>"` announcements with persona + company filters
+- **`hiring-signal`** — Greenhouse / Lever / Workable / Ashby ATS search
+- **`podcast-guest`** — recent-guest discovery across Latent Space, Lenny's, 20VC, Acquired, Invest Like the Best
+- **`accelerator-batch`** — yc-oss directory + websearch fallback for non-YC cohorts (Techstars, Antler, 500 Global, AI Grant)
+- **`github-topics`** — GitHub-API manifest scan (`package.json`, `pyproject.toml`, `requirements.txt`) detects vendor stack deterministically; finds repos stitching together N agent vendors as competitor-switch targets
+- **`breakup-revive`** — scans the local ledger for prospects cold for 60-90 days
+
+Each finder runs as a **trigger** with its own interval + spend cap. Captured per-prospect signals (LinkedIn URL via webSearch + phone via passive enrichment when surfaced) show next to the email + company in `/queue`. Approved rows ship via `bun run cli -- find drain <play>` or the per-play **Drain** button on the Queue page.
 
 ---
 
@@ -103,7 +122,7 @@ Most GTM tools (Apollo, Clay, Outreach, Lemlist, Smartlead) assume you have prod
 - Plays default to **founder-to-founder voice**, low volume (≤50/day), one-touch unless the cadence engine is invoked.
 - Every drafted email passes a **lint pass** based on the Wikipedia "Signs of AI writing" canon — banned phrases, em dashes, AI vocabulary, copula avoidance, three-item lists, sycophantic openers, generic positive endings.
 - Scale-move commands (`handoff templatize`, `handoff first-ae`, `handoff readiness`) print **soft-gate checklists** — they default to "not yet, fix this first" if the underlying signals haven't earned the move, but the founder can always say `--force` to proceed.
-- Every paid action emits a **signed receipt**; `measure cac` and `measure rocs` produce per-play unit economics that are cryptographically attestable, not estimated.
+- Every paid action emits a **signed receipt**; the dashboard's **Measure** page renders per-play CAC + RoCS unit economics that are cryptographically attestable, not estimated.
 
 ---
 
@@ -128,22 +147,23 @@ oneshot-gtm
 │       ├── survey --cohort <file>           Build landing page + email + collect inbound
 │       └── survey-collect                   Analyze inbound replies → Sean Ellis report
 │
-├── motion
-│   ├── show-hn --target <file>              founder-to-founder one-touch reply to a Show HN
-│   ├── job-change --target <file>           prospect started a new role at a target company
+├── find                                     scheduled discovery — ad-hoc runs live in the dashboard
+│   ├── watch [--once] [--quiet]             daemon: poll registered triggers + enqueue candidates
+│   └── drain <play> [--limit N] [--dry-run] ship approved /queue rows through the matching motion play
+│
+├── motion                                   CLI-only plays (rest live in /run)
 │   ├── post-funding --target <file>         prospect's company just raised (send day 3+)
-│   ├── accelerator-batch --target <file> --sender-cohort <yc-w26|od|spc|antler|...>
 │   ├── concierge --target <file>            autonomous voice onboarding
 │   ├── demo-no-show --target <file>         same-day SMS + email recovery
 │   ├── competitor-switch --target <file>    migration pitch w/ G2/BuiltWith scrape via browser
 │   ├── hiring-signal --target <file>        trigger off prospect's open job post
 │   ├── podcast-guest --target <file>        reference a specific quote from a recent podcast
-│   └── breakup-revive [--min-days 60]       pattern-interrupt for cold ledger leads
+│   └── breakup-revive                       pattern-interrupt for cold ledger leads
+│
+│   show-hn / job-change / accelerator-batch live in the dashboard /run page
 │
 ├── cadence
-│   ├── advance [--dry-run]                  poll inbound + fire due follow-ups
-│   ├── list [--all]                         show in-flight cadences
-│   └── stop <email> [--play <name>]         manually stop a cadence
+│   └── advance [--dry-run]                  poll inbound + fire due follow-ups
 │
 ├── intel
 │   ├── advise                               interactive coach with conversation memory
@@ -151,17 +171,13 @@ oneshot-gtm
 │   ├── triage-replies                       classify inbound + draft founder-approved replies
 │   └── weekly-review                        paste-able Monday narrative brief
 │
-├── handoff
-│   ├── readiness                            six-signal PMF→scale scorecard
-│   ├── templatize --input <file>            soft-gated template extraction
-│   └── first-ae                             five-gate hire-readiness check (Lemkin/Blond/Kazanjy)
-│
-└── measure
-    ├── receipt <id>                         fetch + display a signed receipt
-    ├── cac [--since-days N]                 per-play CAC, $/send, $/reply
-    ├── rocs [--since-days N]                Return on Cognitive Spend: $/meeting, $/SQL, $/won
-    └── outcome <email> <outcome>            log meeting_booked | sql_qualified | deal_won | deal_lost | ghosted
+└── handoff
+    ├── readiness                            six-signal PMF→scale scorecard
+    ├── templatize --input <file>            soft-gated template extraction
+    └── first-ae                             five-gate hire-readiness check (Lemkin/Blond/Kazanjy)
 ```
+
+> **Where's `measure`?** Spend, CAC, RoCS, deal-outcome logging all live in the dashboard's **Measure** + **Cadences** pages — single source of truth, no `--since-days` flag dance. The `/api/measure/*` routes are still there if you'd rather hit them directly.
 
 ---
 
@@ -190,8 +206,8 @@ oneshot-gtm
                                       │
                    ┌──────────────────┴──────────────────────────┐
                    │  packages/* (the brains, shared by all 3)   │
-                   │  core, intel, plays, prompts, doctor,       │
-                   │  ledger, shared-types                       │
+                   │  core, intel, plays, find, prompts,         │
+                   │  doctor, shared-types                       │
                    └──────────────────┬──────────────────────────┘
                                       │
                                       ▼
@@ -202,7 +218,7 @@ oneshot-gtm
                    └─────────────────────────────────────────────┘
 ```
 
-**State**: a single `~/.oneshot-gtm/ledger.sqlite` is the source of truth. CLI, server, and web all read/write the same tables (`receipts`, `prospects`, `sequence_events`, `cadence_state`, `deal_outcomes`, `interviews`).
+**State**: a single `~/.oneshot-gtm/ledger.sqlite` is the source of truth. CLI, server, and web all read/write the same tables (`receipts`, `prospects`, `sequence_events`, `cadence_state`, `deal_outcomes`, `interviews`, `target_queue`, `triggers`).
 
 **Secrets**: `~/.oneshot-gtm/.env` chmod-600. Auto-loaded into `process.env` on first import.
 
@@ -216,7 +232,7 @@ Bun-native, all the modern picks:
 
 - **Runtime**: [Bun](https://bun.sh) 1.3+
 - **Monorepo**: [Turborepo](https://turbo.build) + Bun catalog for shared dep versions
-- **Test**: [Vitest 4](https://vitest.dev) (24 cases covering ledger schema + lint regex)
+- **Test**: [Vitest 4](https://vitest.dev) (422 cases across 32 files; ledger, lint, finder pipelines, strategist endpoint, web bucketing helpers)
 - **Lint / format**: [oxlint](https://oxc.rs) + [oxfmt](https://oxc.rs) (Rust-based, ~50× faster than ESLint/Prettier)
 - **TypeScript**: 6.x with `verbatimModuleSyntax`, `noUncheckedIndexedAccess`, `noImplicitOverride`
 - **Web**: [Vite 8](https://vite.dev) + [React 19](https://react.dev) + [TanStack Router](https://tanstack.com/router) + [TanStack Query](https://tanstack.com/query) + [Base UI](https://base-ui.com) primitives + [Tailwind 4](https://tailwindcss.com) + [class-variance-authority](https://cva.style) + [lucide-react](https://lucide.dev)
@@ -233,20 +249,24 @@ Plain `async/await` throughout — no monadic abstractions to learn before readi
 ```
 oneshot-gtm/
 ├── apps/
-│   ├── cli/         33-command CLI (commander)
-│   ├── server/      Bun.serve + SSE + tsdown bundle (publishable as `oneshot-gtm-server`)
-│   └── web/         Vite + React 19 + TanStack + Base UI dashboard
+│   ├── cli/         ~30-command CLI (commander)
+│   ├── server/      Bun.serve + SSE — REST + /queue + /run + strategist + trigger fire-and-forget;
+│   │                tsdown bundle, publishable as `oneshot-gtm-server`
+│   └── web/         Vite + React 19 + TanStack + Base UI dashboard (7 pages + StrategistDock)
 ├── packages/
-│   ├── core/        OneShot SDK wrapper, SQLite ledger, config + secrets
+│   ├── core/        OneShot SDK wrapper, SQLite ledger, config + secrets, JSONL event log
 │   ├── intel/       LLM client (OpenRouter/OpenAI/Anthropic), advise, personalize, triage, weekly-review
-│   ├── plays/       16 named GTM plays + multichannel cadence engine
-│   ├── prompts/     Markdown prompt files (humanizer canon + per-play prompts)
+│   ├── plays/       10 outreach plays + handoff/icp/pmf modules + multichannel cadence engine
+│   ├── find/        8 finders + shared pipeline (manifest scan, parallel infra, dedupe, ICP filter,
+│   │                drain dispatcher, trigger registry)
+│   ├── prompts/     Markdown prompt files (humanizer canon + per-play + per-extract prompts)
 │   ├── doctor/      Wallet + ledger + key health checks
-│   ├── ledger/      (placeholder for ledger-only consumers)
+│   ├── ledger/      Empty placeholder for future ledger-only consumers
 │   └── shared-types/ Wire types shared across CLI / server / web
 ├── examples/        Runnable target files for every motion play
 ├── launch/          Draft launch posts (HN, Bookface, IH, Twitter/X, Reddit)
 ├── docs/            Long-form docs
+├── .github/workflows/release.yml   tag-driven npm publish for oneshot-gtm-server
 ├── turbo.json
 ├── vitest.config.ts
 ├── .oxlintrc.json
@@ -265,7 +285,7 @@ bun run typecheck        # tsc --noEmit across cli + server + packages
 bun run lint             # oxlint
 bun run fmt              # oxfmt --write
 bun run fmt:check        # CI-style format check
-bun run test             # vitest run (24 cases)
+bun run test             # vitest run (422 cases)
 bun run cli -- doctor    # smoke check
 ```
 
@@ -361,7 +381,7 @@ Full disclosure of what's collected (and what's never collected) is in [TELEMETR
 
 ## Status
 
-See [ROADMAP.md](./ROADMAP.md). Phases 0–2 (CLI) and R0–R3 (monorepo + dashboard) are shipped.
+See [ROADMAP.md](./ROADMAP.md). Phases 0–2 (CLI), R0–R3 (monorepo + dashboard), F1–F2 (find layer + trigger UI), and most of F3 (strategist dock, trigger fire-and-forget, readiness gate, stale-run sweep) are shipped.
 
 What's known to work end-to-end against the live OneShot API is in [STATUS.md](./STATUS.md).
 
