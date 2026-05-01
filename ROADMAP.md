@@ -118,8 +118,12 @@ The motion plays needed hand-curated JSON target lists; founders kept asking "wh
 
 - [ ] **Webhook intake** — `POST /api/triggers/cal-no-show` + `POST /api/triggers/signup` → ICP-filter → enqueue into `demo-no-show` / `concierge`. Turns oneshot-gtm from polling into real-time.
 - [ ] **ICP-filter learning loop v1** — every `icpFilter` call pulls the last ~20 (candidate, decision, reason) tuples from `target_queue` as in-context examples. Tighter filtering, zero schema change.
-- [ ] `find competitor-switch` — webSearch for "switching from X to Y" + G2 reviews mentioning a competitor
+- [x] `find agent-builders` — GitHub signal source. Config-driven: founder supplies their own combo queries + pitch via `/queue` → agent-builders → edit config. webSearches each combo, URL-filters noise, webReads README, LLM-extracts stack + author, ICP-gates on the rich context, enriches via findEmail / verifyEmail, enqueues into `competitor-switch`. Closes the earlier `find competitor-switch` gap.
 - [x] `find breakup-revive` — scan the local ledger for cold prospects (60–90d window) and enqueue them (opt-in trigger, 7d interval, zero OneShot spend)
+- [x] **Trigger strategist** — `POST /api/strategist/stream` SSE chat endpoint backed by the founder's ICP + per-trigger briefs. Proposes config in plain English, emits `<!--ACTION:...-->` markers the UI renders as confirmation chips, and applies through the existing `enable` / `apply-config` REST routes. Mounted as a global floating dock (`StrategistDock`) on every page.
+- [x] **Trigger fire-and-forget** — `POST /api/triggers/:name/run` returns 202 + `pending: true` immediately; finder runs on the event loop. `TriggerView.running` + `runningSince` give the UI a server-authoritative spinner. 409 on duplicate click prevents double-spend.
+- [x] **Readiness gate** — `TriggerSpec.readiness` rejects enabling/firing a trigger whose stored config lacks required inputs (e.g. `agent-builders` without `combos`). Shown inline in the `/queue` row + as a 409 reason on the run endpoint.
+- [x] **Stale-run sweep on cold boot** — `ledger.sweepStaleRunningTriggers()` clears trigger rows left in `running` state by a previous process that died without updating `last_polled_at` (bun --watch re-exec, OOM, OS reboot). Writes a `killed_by_restart` summary so `/queue` shows the actual state instead of a stale one.
 - [ ] **`find watch` as an OS service** — launchd plist + systemd unit + Windows Service docs; `--once` mode already works for cron
 
 ## Phase F4 — Operationalize + scale

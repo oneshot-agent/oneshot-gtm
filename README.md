@@ -44,9 +44,10 @@ bun run cli -- ui --port 4000    # custom port
 bun run cli -- ui --no-browser   # don't auto-open
 ```
 
-Six pages, all reading the same `~/.oneshot-gtm/ledger.sqlite`:
+Seven pages, all reading the same `~/.oneshot-gtm/ledger.sqlite`:
 
 - **Home** — spend (7d / 30d), reply rate trend, in-flight cadences, recent receipts
+- **Queue** — triggers table (enable, edit JSON config, fire) + target queue (status + play filters, bulk approve, per-play drain modal). Per-row spinner + locked button while a trigger is running.
 - **Cadences** — table view with inline **Stop** + **Log outcome** buttons; outcome modal supports `meeting_booked / sql_qualified / deal_won / deal_lost / ghosted`
 - **Receipts** — paginated table; click a row → modal with the signed receipt payload
 - **Plays** — cards with channel badges + **Run** button (for `show-hn`/`job-change`/`accelerator-batch`) + **Copy CLI** button
@@ -54,6 +55,8 @@ Six pages, all reading the same `~/.oneshot-gtm/ledger.sqlite`:
 - **Setup** — editable wizard: founder profile, LLM provider/model, OneShot wallet keys (hidden inputs), telemetry toggle. Saves to chmod-600 `~/.oneshot-gtm/.env`.
 
 The `Run a play` form (`/run/$playName`) takes editable target rows + a dry-run toggle and streams drafted emails back via Server-Sent Events with lint flags + clickable receipt links.
+
+A floating **strategist dock** is mounted on every page. Open it to chat through trigger config: it reads your ICP + product one-liner and proposes JSON configs as confirmation chips you click to apply. Endpoint: `POST /api/strategist/stream` (SSE).
 
 ---
 
@@ -361,6 +364,34 @@ Full disclosure of what's collected (and what's never collected) is in [TELEMETR
 See [ROADMAP.md](./ROADMAP.md). Phases 0–2 (CLI) and R0–R3 (monorepo + dashboard) are shipped.
 
 What's known to work end-to-end against the live OneShot API is in [STATUS.md](./STATUS.md).
+
+---
+
+## Publishing
+
+`oneshot-gtm-server` ships to [npmjs.com](https://www.npmjs.com/package/oneshot-gtm-server) on every `v*` git tag via `.github/workflows/release.yml`. The bundle inlines all `@oneshot-gtm/*` workspace packages, so the published tarball has only `dist/` + a couple of runtime deps (`@oneshot-agent/sdk`, `open`).
+
+**Runtime prereq for consumers.** The published binary's shebang is `#!/usr/bin/env bun` because it uses `bun:sqlite`, `Bun.serve`, and `Bun.stdin`. Anyone running `oneshot-gtm-server` needs Bun installed (`curl -fsSL https://bun.sh/install | bash`). Plain Node won't work — the runtime guard in `bin.ts` fails loudly with an install hint.
+
+**One-time setup.**
+
+1. npmjs.com → Access Tokens → Generate new → **Automation token** with publish scope on `oneshot-gtm-server`.
+2. Add as a GitHub Actions secret named `NPM_TOKEN` (Repo → Settings → Secrets and variables → Actions).
+
+**Cut a release.**
+
+```bash
+# First release: version is already 0.1.0 in apps/server/package.json.
+bun run release:server                       # creates v0.1.0 tag, pushes, workflow fires
+
+# Subsequent releases: bump first, then tag.
+cd apps/server && npm version patch && cd ../..
+bun run release:server                       # creates v0.1.1 tag, pushes
+```
+
+The workflow does `npm publish --access public --provenance` — `id-token: write` is set so npm can mint an OIDC token and attach a signed build attestation, visible as a "Provenance" badge on the package page.
+
+The CLI (`oneshot-gtm`) is not yet on npm — its `bin` still points at raw TypeScript. Use the workspace locally (`bun run cli …`) until the same tsdown wiring lands there.
 
 ---
 
