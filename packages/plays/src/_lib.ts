@@ -94,6 +94,7 @@ export interface SendDraftedOpts {
     email?: string | null;
     company?: string | null;
     linkedin_url?: string | null;
+    phone?: string | null;
     source?: string | null;
   };
   metadata?: Record<string, unknown>;

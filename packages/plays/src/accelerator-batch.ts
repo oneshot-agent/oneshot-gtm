@@ -23,6 +23,7 @@ export interface AcceleratorBatchTarget {
   launchUrl?: string;
   productOneLiner?: string;
   linkedinUrl?: string;
+  phone?: string;
 }
 
 export interface AcceleratorBatchRunOptions {
@@ -108,6 +109,7 @@ export async function runAcceleratorBatch(
         email: target.email,
         company: target.company,
         linkedin_url: target.linkedinUrl ?? null,
+        phone: target.phone ?? null,
         source: `accelerator-${target.cohort}`,
       },
       metadata: {

@@ -38,11 +38,8 @@ export function toView(
   const defaultEnabled = spec ? spec.enabledByDefault !== false : true;
   const intervalMs = spec ? effectiveIntervalMs(spec, config) : defaultIntervalMs;
   const runningSinceMs = getTriggerRunningSince(name);
-  // Readiness is based on the spec's `readiness` fn + the effective config.
-  // Orphan rows (no spec) are always ready — there's nothing to gate against.
-  // The explicit Readiness annotation keeps the discriminated-union narrowing
-  // intact (otherwise the literal { ready: true } widens to { ready: boolean }
-  // and TS can't see that ready=false implies a `reason` field).
+  // Explicit annotation keeps the discriminated-union narrowing intact
+  // (the literal { ready: true } branch would otherwise widen the union).
   const readiness: Readiness = spec
     ? checkReadiness(spec, config ?? spec.defaultConfig)
     : { ready: true };
@@ -162,12 +159,7 @@ export async function setTriggerConfigRoute(
   return jsonResponse({ ok: true, name }, 200, req);
 }
 
-/**
- * Fire-and-forget. Returns 202 immediately after kicking the finder off on
- * the event loop. The UI polls `GET /api/triggers` for `lastRunSummary` +
- * `running` to observe completion. Returns 409 if the trigger is already
- * running — prevents double-spend on an impatient second click.
- */
+/** Fire-and-forget: 202 on kick-off, 409 if already running. UI polls `GET /api/triggers`. */
 export function runTriggerRoute(req: Request, params: Record<string, string>): Response {
   const name = params["name"];
   if (!name) return jsonResponse({ error: "name required" }, 400, req);
@@ -178,13 +170,9 @@ export function runTriggerRoute(req: Request, params: Record<string, string>): R
     fireTriggerNow(name);
   } catch (err) {
     const message = (err as Error).message ?? "failed to fire";
-    // Already-running is an expected concurrent-click case → 409, not 500.
     if (message.includes("already running")) {
       return jsonResponse({ error: message, name, running: true }, 409, req);
     }
-    // Readiness gate: `fireTriggerNow` throws `not ready: <reason>` when the
-    // spec's readiness fn rejects the stored config. Surface the reason so the
-    // UI can toast it.
     if (message.startsWith("not ready:")) {
       const reason = message.slice("not ready:".length).trim();
       return jsonResponse({ error: message, name, reason, ready: false }, 409, req);

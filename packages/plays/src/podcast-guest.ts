@@ -16,6 +16,8 @@ export interface PodcastGuestTarget {
   hookQuote: string;
   /** ONE-sentence reason the moment matters to your work. */
   bridge?: string;
+  linkedinUrl?: string;
+  phone?: string;
 }
 
 export interface PodcastGuestRunOptions {
@@ -92,6 +94,8 @@ export async function runPodcastGuest(
         name: t.name,
         email: t.email,
         company: t.company,
+        linkedin_url: t.linkedinUrl ?? null,
+        phone: t.phone ?? null,
         source: "podcast-guest",
       },
       metadata: { podcast: t.podcast, episodeTitle: t.episodeTitle },

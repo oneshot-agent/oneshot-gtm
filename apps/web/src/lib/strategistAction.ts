@@ -16,7 +16,7 @@ export interface ParsedStrategistAction {
 }
 
 /**
- * Trigger names contain hyphens (post-funding-auto, agent-builders, show-hn).
+ * Trigger names contain hyphens (post-funding-auto, github-topics, show-hn).
  * `[^:>]+?` is the only correct character class — earlier `[^:>-]+` excluded
  * `-` and silently broke every multi-word trigger. The trigger name capture
  * stops at the first `:` (which separates the optional JSON config) or `>`.

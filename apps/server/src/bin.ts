@@ -1,6 +1,5 @@
 import open from "open";
 import { getLedger, logEvent } from "@oneshot-gtm/core";
-import { MAX_RUN_AGE_MS } from "@oneshot-gtm/find";
 import { buildFetchHandler, SERVER_BASE_OPTS, startServer } from "./server.ts";
 
 // Runtime guard: this binary depends on Bun (bun:sqlite, Bun.serve, Bun.stdin).
@@ -32,10 +31,20 @@ if (cache.__oneshotGtmServer) {
 } else {
   // Cold boot only — sweep any trigger rows that were marked running by a
   // previous process that never got to call updateTriggerLastPoll
-  // (bun --watch re-exec, OS reboot, OOM kill). Writes a `killed_by_restart`
-  // last_run_summary so the UI shows the truth instead of frozen-from-an-
-  // hour-ago state. Hot reload (the if-branch above) preserves the event
-  // loop, so any genuinely in-flight run continues and shouldn't be swept.
+  // (bun --watch re-exec, OS reboot, OOM kill, hung SDK call when the
+  // process was killed). Writes a `killed_by_restart` last_run_summary so
+  // the UI shows the truth instead of frozen-from-an-hour-ago state.
+  //
+  // `maxAgeMs: 0` is intentional and important. At cold boot, any non-null
+  // `running_started_at` is by definition a zombie — the previous process is
+  // gone and an async finder run can't outlive its process. The MAX_RUN_AGE_MS
+  // freshness gate (4h) is for live UI reads where a long-running finder
+  // shouldn't disappear from the spinner mid-run. Applying it to the boot
+  // sweep would let a row that crashed 30 minutes ago survive across reboots
+  // and block re-runs with `409 already running` — exactly the bug we hit.
+  //
+  // Hot reload (the if-branch above) skips the sweep because it preserves
+  // the event loop, so any genuinely in-flight run continues.
   //
   // Wrapped — a SQL hiccup here must not take down the server. Boot
   // continuing on stale ledger state is strictly better than refusing to
@@ -43,7 +52,7 @@ if (cache.__oneshotGtmServer) {
   try {
     const swept = getLedger().sweepStaleRunningTriggers({
       now: new Date(),
-      maxAgeMs: MAX_RUN_AGE_MS,
+      maxAgeMs: 0,
     });
     for (const s of swept) {
       logEvent("trigger.killed_by_restart", { name: s.name, age_ms: s.ageMs }, "warn");

@@ -3,6 +3,7 @@ import { findEmail, verifyEmail, webRead } from "@oneshot-gtm/core";
 import type { ShowHnTarget } from "@oneshot-gtm/plays";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
+import { findLinkedInUrl } from "./_linkedin.ts";
 import type { FinderResult, RunOpts, ShowHnHit } from "./_types.ts";
 
 const HN_ALGOLIA = "https://hn.algolia.com/api/v1/search_by_date";
@@ -37,6 +38,7 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
     droppedIcp: 0,
     droppedDuplicate: 0,
     droppedEnrichment: 0,
+    droppedLowSignal: 0,
     enqueued: 0,
     costUsd: 0,
   };
@@ -58,7 +60,10 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
       result.halted = `max-cost cap (${opts.maxCostUsd})`;
       break;
     }
-    if (hit.points < minPoints) continue;
+    if (hit.points < minPoints) {
+      result.droppedLowSignal = (result.droppedLowSignal ?? 0) + 1;
+      continue;
+    }
 
     // Dedupe BEFORE any LLM/OneShot spend.
     if (ledger.isQueueDuplicate(PLAY_NAME, hit.objectID)) {
@@ -159,12 +164,23 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
       hookSummary = `Show HN post: ${hit.title}. ${hit.points} points.`;
     }
 
+    const founderName = found.result.full_name ?? hit.author;
+    const linkedinUrl = await findLinkedInUrl({
+      fullName: founderName,
+      disambiguators: ["hacker news", domain],
+      accumCost: (c) => {
+        result.costUsd += c ?? 0;
+      },
+      errKindPrefix: "show-hn",
+    });
+
     const target: ShowHnTarget = {
       postTitle: hit.title,
       postUrl: `https://news.ycombinator.com/item?id=${hit.objectID}`,
-      founderName: found.result.full_name ?? hit.author,
+      founderName,
       founderEmail: email,
       hookSummary,
+      ...(linkedinUrl ? { linkedinUrl } : {}),
     };
     const id = ledger.enqueueTarget({
       playName: PLAY_NAME,
@@ -184,6 +200,7 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
     dropped_icp: result.droppedIcp,
     dropped_dup: result.droppedDuplicate,
     dropped_enrich: result.droppedEnrichment,
+    dropped_low_signal: result.droppedLowSignal ?? 0,
     cost_usd: result.costUsd,
     halted: result.halted ?? null,
   });

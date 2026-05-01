@@ -13,6 +13,7 @@ export interface DemoNoShowTarget {
   missedAt: string;
   rescheduleLink: string;
   whatTheyWanted?: string;
+  linkedinUrl?: string;
 }
 
 export interface DemoNoShowRunOptions {
@@ -77,8 +78,9 @@ export async function runDemoNoShow(opts: DemoNoShowRunOptions): Promise<DemoNoS
         name: t.name,
         email: t.email,
         company: t.company,
+        linkedin_url: t.linkedinUrl ?? null,
+        phone: t.phone ?? null,
         source: "demo-no-show",
-        ...({ phone: t.phone ?? null } as Record<string, unknown>),
       },
       metadata: { missedAt: t.missedAt, rescheduleLink: t.rescheduleLink },
       dryRun: opts.dryRun,

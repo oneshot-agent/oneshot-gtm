@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  parseStrategistAction,
-  stripActionMarkers,
-} from "../src/lib/strategistAction.ts";
+import { parseStrategistAction, stripActionMarkers } from "../src/lib/strategistAction.ts";
 
 describe("parseStrategistAction — kind + trigger", () => {
   // Regression: the previous regex `[^:>-]+` excluded `-` from the trigger
@@ -10,12 +7,12 @@ describe("parseStrategistAction — kind + trigger", () => {
   // confirmed broken before the fix; they MUST stay green.
   it.each([
     "show-hn",
-    "yc-w26",
+    "accelerator-batch",
     "post-funding-auto",
     "job-change",
     "hiring-signal",
     "podcast-guest",
-    "agent-builders",
+    "github-topics",
     "breakup-revive",
   ])("parses an enable marker for %s", (trigger) => {
     const r = parseStrategistAction(`<!--ACTION:enable:${trigger}-->`);
@@ -23,29 +20,30 @@ describe("parseStrategistAction — kind + trigger", () => {
   });
 
   it("parses a disable marker", () => {
-    expect(parseStrategistAction("<!--ACTION:disable:agent-builders-->")).toEqual({
+    expect(parseStrategistAction("<!--ACTION:disable:github-topics-->")).toEqual({
       kind: "disable",
-      trigger: "agent-builders",
+      trigger: "github-topics",
     });
   });
 });
 
 describe("parseStrategistAction — apply-config JSON", () => {
-  it("parses a single-combo config", () => {
-    const m = `<!--ACTION:apply-config:agent-builders:{"limit":25,"yourEdge":"x"}-->`;
+  it("parses a single-field config", () => {
+    const m = `<!--ACTION:apply-config:github-topics:{"limit":25,"yourEdge":"x"}-->`;
     const r = parseStrategistAction(m);
     expect(r?.kind).toBe("apply-config");
-    expect(r?.trigger).toBe("agent-builders");
+    expect(r?.trigger).toBe("github-topics");
     expect(r?.config).toEqual({ limit: 25, yourEdge: "x" });
   });
 
-  it("parses a multi-combo config with embedded colons + quotes", () => {
-    const m = `<!--ACTION:apply-config:agent-builders:{"combos":[{"label":"a","query":"site:github.com \\"Stripe\\" \\"Twilio\\"","vendors":["Stripe","Twilio"]},{"label":"b","query":"site:github.com \\"Anthropic\\" \\"Inngest\\"","vendors":["Anthropic","Inngest"]}],"yourEdge":"unified SDK"}-->`;
+  it("parses a multi-field config with embedded colons + quotes", () => {
+    const m = `<!--ACTION:apply-config:github-topics:{"topics":["llm-agents","ai-agent"],"vendors":["Stripe","Twilio","Anthropic","Inngest"],"yourEdge":"unified SDK","minStars":10}-->`;
     const r = parseStrategistAction(m);
     expect(r?.kind).toBe("apply-config");
-    const combos = (r?.config?.["combos"] ?? []) as Array<{ vendors: string[] }>;
-    expect(combos).toHaveLength(2);
-    expect(combos[0]?.vendors).toEqual(["Stripe", "Twilio"]);
+    const topics = (r?.config?.["topics"] ?? []) as string[];
+    const vendors = (r?.config?.["vendors"] ?? []) as string[];
+    expect(topics).toEqual(["llm-agents", "ai-agent"]);
+    expect(vendors).toEqual(["Stripe", "Twilio", "Anthropic", "Inngest"]);
     expect(r?.config?.["yourEdge"]).toBe("unified SDK");
   });
 
@@ -69,9 +67,7 @@ describe("parseStrategistAction — edge cases", () => {
 
   it("returns null on a partial marker (no closing -->)", () => {
     expect(
-      parseStrategistAction(
-        "<!--ACTION:apply-config:agent-builders:{\"limit\":25,\"yourEdge\":\"x",
-      ),
+      parseStrategistAction('<!--ACTION:apply-config:github-topics:{"limit":25,"yourEdge":"x'),
     ).toBeNull();
   });
 

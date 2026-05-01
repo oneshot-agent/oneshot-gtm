@@ -1,4 +1,4 @@
-import { loadConfig, logEvent, startRun } from "@oneshot-gtm/core";
+import { loadConfig, logEvent, startRun, webSearch } from "@oneshot-gtm/core";
 import { complete, loadPrompt } from "@oneshot-gtm/intel";
 import { effectiveIntervalMs, TRIGGERS } from "@oneshot-gtm/find";
 import type { StrategistFrame, StrategistRequest } from "@oneshot-gtm/shared-types";
@@ -102,9 +102,19 @@ export async function strategistRoute(req: Request): Promise<Response> {
     return jsonResponse({ error: cfgCheck.error }, cfgCheck.status, req);
   }
 
+  // Pre-search the web for accelerator data when the founder's latest message
+  // is about cohort selection. Strategist's training-data knowledge of which
+  // accelerators exist + are accepting applications is stale by months; live
+  // search gives it fresh context to ground its proposal in. Empty string when
+  // not applicable — composeSystemPrompt then renders no extra section.
+  const latestUserMessage =
+    messages.toReversed().find((m) => m.role === "user")?.content ?? "";
+  const webContext = await maybeAcceleratorWebContext(latestUserMessage, cfg.icpOneLiner!);
+
   const systemPrompt = composeSystemPrompt({
     productOneLiner: cfg.productOneLiner!,
     icpOneLiner: cfg.icpOneLiner!,
+    webContext,
   });
 
   const stream = new ReadableStream<Uint8Array>({
@@ -135,9 +145,9 @@ export async function strategistRoute(req: Request): Promise<Response> {
           ],
           temperature: 0.4,
           // 800 tokens truncated apply-config markers when the proposed JSON
-          // ran long (agent-builders combos easily hit ~600 chars of JSON +
-          // prose). Bumped to 4096 so a multi-combo config never gets clipped
-          // mid-marker.
+          // ran long (a fully-populated github-topics config with topics +
+          // vendors + yourEdge easily hits ~600 chars of JSON + prose). Bumped
+          // to 4096 so a multi-field config never gets clipped mid-marker.
           maxTokens: 4096,
         });
         // Fake-stream the assistant content in chunks so the UI gets
@@ -201,13 +211,78 @@ export async function strategistRoute(req: Request): Promise<Response> {
   return new Response(stream, { status: 200, headers: sseHeaders });
 }
 
-function composeSystemPrompt(args: { productOneLiner: string; icpOneLiner: string }): string {
+function composeSystemPrompt(args: {
+  productOneLiner: string;
+  icpOneLiner: string;
+  webContext: string;
+}): string {
   const template = loadPrompt("strategist-trigger");
   const triggerCatalog = buildTriggerCatalog();
   return template
     .replace("{{productOneLiner}}", args.productOneLiner)
     .replace("{{icpOneLiner}}", args.icpOneLiner)
-    .replace("{{triggerCatalog}}", triggerCatalog);
+    .replace("{{triggerCatalog}}", triggerCatalog)
+    .replace("{{webContext}}", args.webContext);
+}
+
+/**
+ * Trigger phrases that imply the founder wants accelerator-batch help. Loose
+ * enough to catch "pick an accelerator", "yc batch", "any incubators?", etc.
+ * Tight enough that "what should I enable for my ICP?" doesn't fire.
+ */
+const ACCELERATOR_KEYWORDS =
+  /\b(accelerator|cohort|batch|incubator|y[ -]?combinator|techstars|antler|ai[ -]?grant|spc|south\s*park|neo|500\s*global)\b/i;
+
+/**
+ * If the founder's latest message asks about accelerator-batch, run a web
+ * search for accelerators that fit their ICP and format the results as a
+ * markdown block to inject into the system prompt. Empty string otherwise
+ * (the placeholder collapses to nothing).
+ *
+ * Cost: ~$0.01 per accelerator-related strategist message. Latency: ~5-15s.
+ * Wrapped in try/catch so a search hiccup doesn't block the strategist's
+ * normal response.
+ */
+async function maybeAcceleratorWebContext(
+  latestUserMessage: string,
+  icpOneLiner: string,
+): Promise<string> {
+  if (!ACCELERATOR_KEYWORDS.test(latestUserMessage)) return "";
+  try {
+    const query = `${icpOneLiner} startup accelerator OR cohort OR grant 2026 batch`;
+    const search = await webSearch({ query, maxResults: 8 }, { playName: "strategist" });
+    const results = search.result.results ?? [];
+    if (results.length === 0) {
+      logEvent("strategist.web_search.accelerators", { query_chars: query.length, count: 0 });
+      return "";
+    }
+    const lines = results.slice(0, 8).map((r) => {
+      const title = (r.title ?? "").slice(0, 160);
+      const url = (r.url ?? "").slice(0, 200);
+      const desc = (r.description ?? "").slice(0, 240);
+      return `- **${title}** — ${url}\n  ${desc}`;
+    });
+    logEvent("strategist.web_search.accelerators", {
+      query_chars: query.length,
+      count: results.length,
+    });
+    return [
+      "## Recent accelerator landscape (web-searched for ICP fit)",
+      "",
+      "When proposing `accelerator-batch.cohort`, ground your pick in these",
+      "results rather than your training-data memory of which accelerators exist.",
+      "Reason from the founder's ICP to which accelerator's portfolio overlaps best.",
+      "",
+      ...lines,
+    ].join("\n");
+  } catch (err) {
+    logEvent(
+      "strategist.web_search.failed",
+      { message_120: ((err as Error).message ?? "").slice(0, 120) },
+      "warn",
+    );
+    return "";
+  }
 }
 
 function buildTriggerCatalog(): string {

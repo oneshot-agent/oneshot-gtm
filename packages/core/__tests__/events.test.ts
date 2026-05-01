@@ -26,9 +26,7 @@ describe("buildEventLine — required shape", () => {
 
 describe("buildEventLine — optional fields are conditional", () => {
   it("omits ctx when undefined", () => {
-    const parsed = parseLine(
-      buildEventLine("k", undefined, "info", null, null, FIXED_NOW),
-    );
+    const parsed = parseLine(buildEventLine("k", undefined, "info", null, null, FIXED_NOW));
     expect("ctx" in parsed).toBe(false);
   });
 
@@ -40,30 +38,22 @@ describe("buildEventLine — optional fields are conditional", () => {
   });
 
   it("omits client_id when null", () => {
-    const parsed = parseLine(
-      buildEventLine("k", undefined, "info", "run-1", null, FIXED_NOW),
-    );
+    const parsed = parseLine(buildEventLine("k", undefined, "info", "run-1", null, FIXED_NOW));
     expect("client_id" in parsed).toBe(false);
   });
 
   it("includes client_id when provided", () => {
-    const parsed = parseLine(
-      buildEventLine("k", undefined, "info", null, "abc-123", FIXED_NOW),
-    );
+    const parsed = parseLine(buildEventLine("k", undefined, "info", null, "abc-123", FIXED_NOW));
     expect(parsed["client_id"]).toBe("abc-123");
   });
 
   it("omits run_id when null", () => {
-    const parsed = parseLine(
-      buildEventLine("k", undefined, "info", null, "cid", FIXED_NOW),
-    );
+    const parsed = parseLine(buildEventLine("k", undefined, "info", null, "cid", FIXED_NOW));
     expect("run_id" in parsed).toBe(false);
   });
 
   it("includes run_id when provided", () => {
-    const parsed = parseLine(
-      buildEventLine("k", undefined, "info", "run-7", null, FIXED_NOW),
-    );
+    const parsed = parseLine(buildEventLine("k", undefined, "info", "run-7", null, FIXED_NOW));
     expect(parsed["run_id"]).toBe("run-7");
   });
 });
@@ -77,9 +67,7 @@ describe("buildEventLine — every level is honored verbatim", () => {
 
 describe("buildEventLine — failure modes", () => {
   it("throws on a BigInt in ctx (caller's try/catch swallows; logEvent never crashes)", () => {
-    expect(() =>
-      buildEventLine("k", { n: BigInt(42) }, "info", null, null, FIXED_NOW),
-    ).toThrow();
+    expect(() => buildEventLine("k", { n: BigInt(42) }, "info", null, null, FIXED_NOW)).toThrow();
   });
 
   it("throws on a circular ref in ctx", () => {

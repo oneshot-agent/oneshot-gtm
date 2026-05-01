@@ -67,6 +67,8 @@ export function runBreakupReviveFinder(opts: BreakupReviveFinderOpts): FinderRes
       company: p.company,
       daysCold,
       lastEventAt: p.last_event_at,
+      linkedinUrl: p.linkedin_url ?? null,
+      phone: p.phone ?? null,
     };
 
     if (opts.dryRun) {

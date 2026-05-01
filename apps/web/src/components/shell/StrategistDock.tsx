@@ -18,10 +18,14 @@ import {
   type ParsedStrategistAction,
 } from "../../lib/strategistAction.ts";
 
+// Pills are quick-start jumps into the strategist's actual capabilities. Keep
+// them concrete + outcome-oriented (not vague "tune everything"). Each one
+// should map cleanly to a single proactive proposal the strategist can make.
 const SUGGESTIONS = [
-  "What should I enable for my ICP?",
-  "Configure agent-builders for me",
-  "Tune everything for my product",
+  "Which triggers fit my ICP?",
+  "Propose github-topics topics + vendors",
+  "Pick an accelerator-batch cohort for my ICP",
+  "Audit my current trigger config",
 ];
 
 /**

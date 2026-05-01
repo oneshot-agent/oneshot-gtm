@@ -17,6 +17,7 @@ export interface ConciergeTarget {
   phone: string;
   signupContext?: string;
   callWindow?: string;
+  linkedinUrl?: string;
 }
 
 export interface ConciergeRunOptions {
@@ -111,6 +112,7 @@ export async function runConcierge(opts: ConciergeRunOptions): Promise<Concierge
         name: t.name,
         email: t.email,
         company: null,
+        linkedin_url: t.linkedinUrl ?? null,
         source: "concierge",
         ...({ phone: t.phone } as Record<string, unknown>),
       });

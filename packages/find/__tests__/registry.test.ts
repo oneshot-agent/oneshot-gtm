@@ -44,14 +44,14 @@ describe("TRIGGERS registry", () => {
   it("exposes the expected built-in triggers", () => {
     const names = TRIGGERS.map((t) => t.name).toSorted();
     expect(names).toEqual([
-      "agent-builders",
+      "accelerator-batch",
       "breakup-revive",
+      "github-topics",
       "hiring-signal",
       "job-change",
       "podcast-guest",
       "post-funding-auto",
       "show-hn",
-      "yc-w26",
     ]);
   });
 
@@ -64,7 +64,14 @@ describe("TRIGGERS registry", () => {
   });
 
   it("opt-in triggers are disabled by default", () => {
-    const optIn = ["job-change", "hiring-signal", "podcast-guest", "breakup-revive"];
+    const optIn = [
+      "job-change",
+      "hiring-signal",
+      "podcast-guest",
+      "breakup-revive",
+      "github-topics",
+      "accelerator-batch",
+    ];
     for (const name of optIn) {
       const spec = TRIGGERS.find((t) => t.name === name);
       expect(spec?.enabledByDefault, `${name} should be opt-in`).toBe(false);
@@ -137,46 +144,75 @@ describe("checkReadiness", () => {
     if (!out.ready) expect(out.reason).toMatch(/threw/);
   });
 
-  it("agent-builders is not ready with its empty default config", () => {
-    const spec = TRIGGERS.find((t) => t.name === "agent-builders");
-    expect(spec).toBeDefined();
-    expect(spec!.readiness).toBeDefined();
-    const out = checkReadiness(spec!, spec!.defaultConfig);
+  it("github-topics is not ready with its empty default config (topics required first)", () => {
+    const spec = TRIGGERS.find((t) => t.name === "github-topics")!;
+    expect(spec.readiness).toBeDefined();
+    const out = checkReadiness(spec, spec.defaultConfig);
     expect(out.ready).toBe(false);
-    if (!out.ready) expect(out.reason).toMatch(/combos/);
+    if (!out.ready) expect(out.reason).toMatch(/topics/);
   });
 
-  it("agent-builders is not ready when yourEdge is empty even with combos set", () => {
-    const spec = TRIGGERS.find((t) => t.name === "agent-builders")!;
+  it("github-topics is not ready when vendors is empty even with topics set", () => {
+    const spec = TRIGGERS.find((t) => t.name === "github-topics")!;
     const out = checkReadiness(spec, {
       ...spec.defaultConfig,
-      combos: [{ query: 'site:github.com "stripe" "openai"', vendors: ["stripe", "openai"] }],
-      yourEdge: "   ",
+      topics: ["llm-agents"],
+      vendors: [],
+    });
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/vendors/);
+  });
+
+  it("github-topics is not ready when yourEdge is blank/whitespace", () => {
+    const spec = TRIGGERS.find((t) => t.name === "github-topics")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      topics: ["llm-agents"],
+      vendors: ["langchain"],
+      yourEdge: "  \t\n  ",
     });
     expect(out.ready).toBe(false);
     if (!out.ready) expect(out.reason).toMatch(/yourEdge/);
   });
 
-  it("agent-builders becomes ready with both combos and yourEdge set", () => {
-    const spec = TRIGGERS.find((t) => t.name === "agent-builders")!;
+  it("github-topics becomes ready with topics, vendors, and yourEdge set", () => {
+    const spec = TRIGGERS.find((t) => t.name === "github-topics")!;
     const out = checkReadiness(spec, {
       ...spec.defaultConfig,
-      combos: [{ query: 'site:github.com "stripe" "openai"', vendors: ["stripe", "openai"] }],
+      topics: ["llm-agents", "ai-agent"],
+      vendors: ["langchain", "openai"],
       yourEdge: "one SDK instead of six dependencies",
     });
     expect(out).toEqual({ ready: true });
   });
 
-  it("every other registered trigger is ready with its own default config", () => {
-    // Regression guard: only agent-builders declares readiness today. If that
-    // changes, update this list — the mechanism is generic but the opt-ins are
-    // explicit.
+  it("every registered trigger is ready with its own default config (incl. opt-in declarers)", () => {
+    // Regression guard. Most triggers ship ready out-of-the-box; ones that
+    // require founder-supplied config (topics, etc.) ship unready by design
+    // and are excluded here.
+    const intentionallyUnreadyByDefault = new Set(["github-topics", "accelerator-batch"]);
     for (const spec of TRIGGERS) {
-      if (spec.name === "agent-builders") continue;
+      if (intentionallyUnreadyByDefault.has(spec.name)) continue;
       expect(checkReadiness(spec, spec.defaultConfig), `${spec.name} should be ready`).toEqual({
         ready: true,
       });
     }
+  });
+
+  it("accelerator-batch is not ready when cohort is empty", () => {
+    const spec = TRIGGERS.find((t) => t.name === "accelerator-batch");
+    expect(spec).toBeDefined();
+    expect(spec!.readiness).toBeDefined();
+    const out = checkReadiness(spec!, { ...spec!.defaultConfig, cohort: "" });
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/cohort/);
+  });
+
+  it("accelerator-batch is ready with cohort + cohortLabel set", () => {
+    const spec = TRIGGERS.find((t) => t.name === "accelerator-batch")!;
+    expect(checkReadiness(spec, { cohort: "yc-w26", cohortLabel: "YC W26" })).toEqual({
+      ready: true,
+    });
   });
 });
 
@@ -218,8 +254,8 @@ describe("freshRunningStartedAtMs — freshness gate", () => {
   });
 
   it("returns null when the timestamp exceeds MAX_RUN_AGE_MS", () => {
-    // 16 minutes before NOW — outside the 15-min window.
-    const startedAt = "2026-04-24T18:44:00Z";
+    // 5 hours before NOW — well outside the 4h window.
+    const startedAt = new Date(NOW - 5 * 60 * 60 * 1000).toISOString();
     expect(freshRunningStartedAtMs(startedAt, NOW)).toBeNull();
   });
 

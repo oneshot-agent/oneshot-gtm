@@ -89,9 +89,7 @@ describe("bootstrapClientId", () => {
   it("mints a UUID-shaped clientId when none is stored", () => {
     const { cfg, minted } = bootstrapClientId(baseCfg);
     expect(minted).toBe(true);
-    expect(cfg.clientId).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
-    );
+    expect(cfg.clientId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
   });
 
   it("preserves an existing clientId verbatim and signals not minted", () => {

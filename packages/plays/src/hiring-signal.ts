@@ -15,6 +15,8 @@ export interface HiringSignalTarget {
   jobPostUrl?: string;
   /** Your one-line claim about how your product compresses ramp time for this role. */
   yourClaim: string;
+  linkedinUrl?: string;
+  phone?: string;
 }
 
 export interface HiringSignalRunOptions {
@@ -99,6 +101,8 @@ export async function runHiringSignal(
         name: t.name,
         email: t.email,
         company: t.company,
+        linkedin_url: t.linkedinUrl ?? null,
+        phone: t.phone ?? null,
         source: "hiring-signal",
       },
       metadata: { jobTitle: t.jobTitle, jobPostUrl: t.jobPostUrl ?? null },

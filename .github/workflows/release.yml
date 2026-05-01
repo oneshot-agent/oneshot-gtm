@@ -1,0 +1,55 @@
+name: release
+
+# Tag-driven release of `oneshot-gtm-server` to npmjs.com.
+#
+# Trigger: push a tag matching `v*` (e.g. `v0.1.0`) — the convenience script
+# `bun run release:server` handles the local-side tag/push.
+#
+# Auth: `secrets.NPM_TOKEN` must be an npmjs.com **Automation** token with
+# publish scope on `oneshot-gtm-server`. See README → Publishing.
+#
+# Provenance: requires `id-token: write` so npm can mint an OIDC token and
+# attach a signed build attestation. Free, makes the package noticeably
+# more trustworthy on npmjs.com.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish-server:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Bun runs the workspace install + the tsdown build (matches local dev).
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.13" # match `packageManager` in root package.json
+
+      # Node + registry-url is what configures the implicit ~/.npmrc auth that
+      # `npm publish` reads from NODE_AUTH_TOKEN. Bun has no equivalent flow
+      # for `--provenance` yet, so we use npm for the publish step itself.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install workspace deps
+        run: bun install --frozen-lockfile
+
+      - name: Build web (vite → apps/web/dist)
+        run: bun run --cwd apps/web build
+
+      - name: Build server (tsdown → apps/server/dist + copy web)
+        run: bun run --cwd apps/server build
+
+      - name: Publish to npmjs.com with provenance
+        run: npm publish --access public --provenance
+        working-directory: apps/server
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -8,6 +8,8 @@ export interface ShowHnTarget {
   founderName: string;
   founderEmail: string;
   hookSummary: string;
+  linkedinUrl?: string;
+  phone?: string;
 }
 
 export interface ShowHnRunOptions {
@@ -81,6 +83,8 @@ export async function runShowHn(opts: ShowHnRunOptions): Promise<ShowHnRunResult
         name: target.founderName,
         email: target.founderEmail,
         company: extractCompany(target.postTitle),
+        linkedin_url: target.linkedinUrl ?? null,
+        phone: target.phone ?? null,
         source: "show-hn",
       },
       metadata: { postUrl: target.postUrl, postTitle: target.postTitle },

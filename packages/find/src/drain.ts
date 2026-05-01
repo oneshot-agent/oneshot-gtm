@@ -2,6 +2,7 @@ import { getLedger, type ProspectRecord } from "@oneshot-gtm/core";
 import {
   runAcceleratorBatch,
   runBreakupRevive,
+  runCompetitorSwitch,
   runHiringSignal,
   runJobChange,
   runPodcastGuest,
@@ -9,6 +10,7 @@ import {
   runShowHn,
   type AcceleratorBatchTarget,
   type BreakupReviveTarget,
+  type CompetitorSwitchTarget,
   type HiringSignalTarget,
   type JobChangeTarget,
   type PodcastGuestTarget,
@@ -111,6 +113,11 @@ async function dispatchPlay(opts: DrainOpts, rows: QueueRow[]): Promise<number[]
     case "breakup-revive": {
       const targets = rows.map((r) => JSON.parse(r.payload_json) as BreakupReviveTarget);
       const result = await runBreakupRevive({ dryRun: opts.dryRun, targets });
+      return idsForSentDrafts(result.drafted, rows, opts.dryRun);
+    }
+    case "competitor-switch": {
+      const targets = rows.map((r) => JSON.parse(r.payload_json) as CompetitorSwitchTarget);
+      const result = await runCompetitorSwitch({ dryRun: opts.dryRun, targets });
       return idsForSentDrafts(result.drafted, rows, opts.dryRun);
     }
     default:

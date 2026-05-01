@@ -222,6 +222,41 @@ describe("trigger run-state persistence (survives restart)", () => {
     expect(ledger.markTriggerRunning("show-hn", "2026-04-24T18:30:00Z")).toBe(true);
   });
 
+  it("markTriggerRunning reclaims a stale row when staleCutoffIso passes", () => {
+    // Real finder runs hit ~60min average + 2h+ tail, so a stuck
+    // running_started_at without the reclaim path means the founder is
+    // permanently 409'd until the next cold boot. Cutoff opens the gate.
+    ledger.upsertTrigger({ name: "show-hn", configJson: "{}" });
+    expect(ledger.markTriggerRunning("show-hn", "2026-04-24T10:00:00Z")).toBe(true);
+    // 5 hours later: the existing flag is older than the 4h cutoff.
+    const nowIso = "2026-04-24T15:00:00Z";
+    const staleCutoffIso = "2026-04-24T11:00:00Z";
+    expect(ledger.markTriggerRunning("show-hn", nowIso, staleCutoffIso)).toBe(true);
+    // Reclaim overwrites the start timestamp so the new run gets a fresh
+    // anchor for the 4h freshness gate.
+    expect(ledger.getTrigger("show-hn")?.running_started_at).toBe(nowIso);
+  });
+
+  it("markTriggerRunning still rejects when the existing flag is fresh (within cutoff)", () => {
+    ledger.upsertTrigger({ name: "show-hn", configJson: "{}" });
+    expect(ledger.markTriggerRunning("show-hn", "2026-04-24T18:00:00Z")).toBe(true);
+    // Only 30 minutes later — well inside the 4h freshness window. A click
+    // here would double-spend on a still-genuinely-running finder.
+    const nowIso = "2026-04-24T18:30:00Z";
+    const staleCutoffIso = "2026-04-24T14:30:00Z";
+    expect(ledger.markTriggerRunning("show-hn", nowIso, staleCutoffIso)).toBe(false);
+    // Original timestamp preserved.
+    expect(ledger.getTrigger("show-hn")?.running_started_at).toBe("2026-04-24T18:00:00Z");
+  });
+
+  it("markTriggerRunning without a cutoff keeps the strict IS NULL gate", () => {
+    // Backwards compat: callers that don't pass a cutoff get the old
+    // behavior — any in-flight flag (fresh or stale) blocks the claim.
+    ledger.upsertTrigger({ name: "show-hn", configJson: "{}" });
+    expect(ledger.markTriggerRunning("show-hn", "2026-04-24T10:00:00Z")).toBe(true);
+    expect(ledger.markTriggerRunning("show-hn", "2026-04-24T20:00:00Z")).toBe(false);
+  });
+
   it("updateTriggerLastPoll clears running_started_at in the same write", () => {
     ledger.upsertTrigger({ name: "show-hn", configJson: "{}" });
     ledger.markTriggerRunning("show-hn", "2026-04-24T18:23:54.607Z");
@@ -243,28 +278,26 @@ describe("trigger run-state persistence (survives restart)", () => {
   });
 
   it("sweepStaleRunningTriggers spares fresh in-flight rows", () => {
-    ledger.upsertTrigger({ name: "agent-builders", configJson: "{}" });
-    ledger.markTriggerRunning("agent-builders", "2026-04-24T18:55:00Z");
+    ledger.upsertTrigger({ name: "github-topics", configJson: "{}" });
+    ledger.markTriggerRunning("github-topics", "2026-04-24T18:55:00Z");
     const swept = ledger.sweepStaleRunningTriggers({
       now: new Date("2026-04-24T19:00:00Z"), // 5 min in
       maxAgeMs: 15 * 60_000,
     });
     expect(swept).toEqual([]);
-    expect(ledger.getTrigger("agent-builders")?.running_started_at).toBe(
-      "2026-04-24T18:55:00Z",
-    );
+    expect(ledger.getTrigger("github-topics")?.running_started_at).toBe("2026-04-24T18:55:00Z");
   });
 
   it("sweepStaleRunningTriggers sweeps stale rows + writes killed_by_restart", () => {
-    ledger.upsertTrigger({ name: "agent-builders", configJson: "{}" });
-    ledger.markTriggerRunning("agent-builders", "2026-04-24T18:23:54.607Z");
+    ledger.upsertTrigger({ name: "github-topics", configJson: "{}" });
+    ledger.markTriggerRunning("github-topics", "2026-04-24T18:23:54.607Z");
     const now = new Date("2026-04-24T19:30:00Z"); // > 15 min after start
     const swept = ledger.sweepStaleRunningTriggers({ now, maxAgeMs: 15 * 60_000 });
     expect(swept).toHaveLength(1);
-    expect(swept[0]?.name).toBe("agent-builders");
+    expect(swept[0]?.name).toBe("github-topics");
     expect(swept[0]?.startedAt).toBe("2026-04-24T18:23:54.607Z");
     expect(swept[0]?.ageMs).toBeGreaterThan(15 * 60_000);
-    const t = ledger.getTrigger("agent-builders");
+    const t = ledger.getTrigger("github-topics");
     expect(t?.running_started_at).toBeNull();
     expect(t?.last_polled_at).toBe(now.toISOString());
     const summary = JSON.parse(t!.last_run_summary ?? "{}") as { error: string; ageMs: number };
@@ -282,9 +315,10 @@ describe("trigger run-state persistence (survives restart)", () => {
     // Garbage isn't reported as a successful sweep (no ageMs), but the row
     // is still cleared so it doesn't perpetually re-trip.
     expect(ledger.getTrigger("show-hn")?.running_started_at).toBeNull();
-    const summary = JSON.parse(
-      ledger.getTrigger("show-hn")!.last_run_summary ?? "{}",
-    ) as { error: string; reason?: string };
+    const summary = JSON.parse(ledger.getTrigger("show-hn")!.last_run_summary ?? "{}") as {
+      error: string;
+      reason?: string;
+    };
     expect(summary.error).toBe("killed_by_restart");
     expect(summary.reason).toContain("unparseable");
     expect(swept).toEqual([]);

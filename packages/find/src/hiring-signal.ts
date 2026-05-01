@@ -3,6 +3,7 @@ import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { HiringSignalTarget } from "@oneshot-gtm/plays";
 import { isDuplicate } from "./_dedupe.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
+import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
 import type { FinderResult, HiringSignalExtract, RunOpts } from "./_types.ts";
 
 const PLAY_NAME = "hiring-signal";
@@ -203,13 +204,30 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
       continue;
     }
 
+    const recipientName = extract.hiringManagerName ?? found.result.full_name ?? null;
+    let linkedinUrl: string | null = isLinkedInProfileUrl(extract.linkedinUrl)
+      ? extract.linkedinUrl
+      : null;
+    if (!linkedinUrl && recipientName) {
+      linkedinUrl = await findLinkedInUrl({
+        fullName: recipientName,
+        disambiguators: [extract.company],
+        accumCost: (c) => {
+          result.costUsd += c ?? 0;
+        },
+        errKindPrefix: "hiring-signal",
+      });
+    }
+
     const target: HiringSignalTarget = {
-      name: extract.hiringManagerName ?? found.result.full_name ?? "team",
+      name: recipientName ?? "team",
       email,
       company: extract.company,
       jobTitle: extract.jobTitle,
       jobPostUrl: extract.jobUrl ?? hit.url,
       yourClaim,
+      ...(linkedinUrl ? { linkedinUrl } : {}),
+      ...(extract.phone ? { phone: extract.phone } : {}),
     };
     const id = ledger.enqueueTarget({
       playName: PLAY_NAME,
@@ -321,6 +339,8 @@ export function parseHiringSignalExtract(raw: string): HiringSignalExtract {
     hiringManagerRole: null,
     team: null,
     postedAt: null,
+    linkedinUrl: null,
+    phone: null,
     summary: null,
   });
 }

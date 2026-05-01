@@ -5,6 +5,7 @@ import type { PostFundingTarget } from "@oneshot-gtm/plays";
 import { readFileSync } from "node:fs";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { isDuplicate } from "./_dedupe.ts";
+import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
 import type { FinderResult, PostFundingExtract, RunOpts } from "./_types.ts";
 
 const PLAY_NAME = "post-funding";
@@ -169,6 +170,20 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
       continue;
     }
 
+    let linkedinUrl: string | null = isLinkedInProfileUrl(extract.linkedinUrl)
+      ? extract.linkedinUrl
+      : null;
+    if (!linkedinUrl) {
+      linkedinUrl = await findLinkedInUrl({
+        fullName: extract.founderName,
+        disambiguators: [extract.company],
+        accumCost: (c) => {
+          result.costUsd += c ?? 0;
+        },
+        errKindPrefix: "post-funding",
+      });
+    }
+
     const target: PostFundingTarget = {
       name: extract.founderName,
       email,
@@ -177,6 +192,8 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
       amountUsd: extract.amountUsd ?? 0,
       sourceUrl: url,
       ...(extract.leadInvestor ? { leadInvestor: extract.leadInvestor } : {}),
+      ...(linkedinUrl ? { linkedinUrl } : {}),
+      ...(extract.phone ? { phone: extract.phone } : {}),
     };
     const id = ledger.enqueueTarget({
       playName: PLAY_NAME,
@@ -221,6 +238,8 @@ export function parsePostFundingExtract(raw: string): PostFundingExtract {
     founderName: null,
     founderRole: null,
     industry: null,
+    linkedinUrl: null,
+    phone: null,
     summary: null,
   });
 }

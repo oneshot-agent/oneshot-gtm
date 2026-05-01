@@ -1,6 +1,7 @@
 import {
   OneShot,
   type BrowserResult,
+  type DeepResearchPersonResult,
   type EmailResult,
   type EnrichProfileResult,
   type FindEmailResult,
@@ -106,6 +107,42 @@ export async function enrichProfile(input: EnrichInput, ctx: CallContext) {
   const receiptId = getLedger().recordReceipt({
     playName: ctx.playName,
     callType: "enrich.profile",
+    signedReceipt: result,
+    oneshotRequestId: result.request_id,
+  });
+  return { result, receiptId };
+}
+
+export interface DeepResearchPersonInput {
+  /** A known email address — feeds dossier lookup. */
+  email?: string;
+  /** Any social URL (LinkedIn, Twitter, GitHub) the engine can chase. */
+  socialMediaUrl?: string;
+  /** Best-guess full name. */
+  name?: string;
+  /** Best-guess company name (free text — can be a domain or a brand). */
+  company?: string;
+}
+
+/**
+ * Multi-source person dossier: emails (work + personal + alts), phones,
+ * org history, social profiles. Higher cost (~$0.05) and 2–5 min async vs.
+ * findEmail's seconds-and-half-a-cent — use when you don't have a
+ * `companyDomain` to feed findEmail (e.g. GitHub repo owners with no
+ * resolvable company), not as a default first-pass.
+ */
+export async function deepResearchPerson(input: DeepResearchPersonInput, ctx: CallContext) {
+  const agent = await getAgent();
+  const opts: Parameters<OneShot["deepResearchPerson"]>[0] = {};
+  if (input.email) opts.email = input.email;
+  if (input.socialMediaUrl) opts.social_media_url = input.socialMediaUrl;
+  if (input.name) opts.name = input.name;
+  if (input.company) opts.company = input.company;
+
+  const result: DeepResearchPersonResult = await agent.deepResearchPerson(opts);
+  const receiptId = getLedger().recordReceipt({
+    playName: ctx.playName,
+    callType: "research.person",
     signedReceipt: result,
     oneshotRequestId: result.request_id,
   });
@@ -335,6 +372,7 @@ export async function browserTask(input: BrowserTaskInput, ctx: CallContext) {
 
 export type {
   BrowserResult,
+  DeepResearchPersonResult,
   InboxEmail,
   InboxListResult,
   SmsSendResult,

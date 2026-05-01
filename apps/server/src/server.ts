@@ -126,12 +126,6 @@ async function serveStatic(staticDir: string, pathname: string): Promise<Respons
   return null;
 }
 
-/**
- * Build the fetch handler. Factored out of `startServer` so `bin.ts` can
- * hand a fresh handler to an existing Bun.serve instance via `server.reload`
- * on a `bun --watch` re-entry — which runs in the same process, so re-binding
- * the port would fail with EADDRINUSE.
- */
 export function buildFetchHandler(): (req: Request) => Promise<Response> | Response {
   const staticDir = getStaticDir();
   const viteDevUrl = process.env["VITE_DEV_SERVER_URL"] ?? null;
@@ -200,11 +194,7 @@ export function buildFetchHandler(): (req: Request) => Promise<Response> | Respo
   };
 }
 
-/**
- * Bun.serve options shared between first-boot and hot-reload. `idleTimeout`
- * is the safety net for any synchronous handler that might still do slow
- * upstream work (max 255s; Bun's default is 10).
- */
+/** Shared options; idleTimeout 255 is the max — Bun defaults to 10s which is short for sync handlers. */
 export const SERVER_BASE_OPTS = { idleTimeout: 255 } as const;
 
 export async function startServer(

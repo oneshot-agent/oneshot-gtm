@@ -3,6 +3,7 @@ import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { JobChangeTarget } from "@oneshot-gtm/plays";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
+import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
 import type { FinderResult, JobChangeExtract, RunOpts } from "./_types.ts";
 
 const PLAY_NAME = "job-change";
@@ -188,6 +189,20 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
       continue;
     }
 
+    let linkedinUrl: string | null = isLinkedInProfileUrl(extract.linkedinUrl)
+      ? extract.linkedinUrl
+      : null;
+    if (!linkedinUrl) {
+      linkedinUrl = await findLinkedInUrl({
+        fullName: extract.fullName,
+        disambiguators: [extract.newCompany],
+        accumCost: (c) => {
+          result.costUsd += c ?? 0;
+        },
+        errKindPrefix: "job-change",
+      });
+    }
+
     const target: JobChangeTarget = {
       name: extract.fullName,
       email,
@@ -195,7 +210,8 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
       newCompany: extract.newCompany,
       ...(extract.previousRole ? { previousRole: extract.previousRole } : {}),
       ...(extract.previousCompany ? { previousCompany: extract.previousCompany } : {}),
-      ...(extract.linkedinUrl ? { linkedinUrl: extract.linkedinUrl } : {}),
+      ...(linkedinUrl ? { linkedinUrl } : {}),
+      ...(extract.phone ? { phone: extract.phone } : {}),
     };
     const id = ledger.enqueueTarget({
       playName: PLAY_NAME,
@@ -220,6 +236,7 @@ export function parseJobChangeExtract(raw: string): JobChangeExtract {
     previousRole: null,
     previousCompany: null,
     linkedinUrl: null,
+    phone: null,
     summary: null,
   });
 }

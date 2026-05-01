@@ -10,6 +10,7 @@ export interface JobChangeTarget {
   previousRole?: string;
   previousCompany?: string;
   linkedinUrl?: string;
+  phone?: string;
 }
 
 export interface JobChangeRunOptions {
@@ -88,6 +89,7 @@ export async function runJobChange(
         email: target.email,
         company: target.newCompany,
         linkedin_url: target.linkedinUrl ?? null,
+        phone: target.phone ?? null,
         source: "job-change",
       },
       metadata: { newRole: target.newRole, newCompany: target.newCompany },

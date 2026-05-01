@@ -400,10 +400,12 @@ export class Ledger {
     name: string | null;
     email: string | null;
     company: string | null;
+    linkedin_url: string | null;
+    phone: string | null;
     last_event_at: string | null;
   }> {
     const sql = `
-      SELECT p.id, p.name, p.email, p.company, MAX(s.created_at) AS last_event_at
+      SELECT p.id, p.name, p.email, p.company, p.linkedin_url, p.phone, MAX(s.created_at) AS last_event_at
       FROM prospects p
       LEFT JOIN sequence_events s ON s.prospect_id = p.id
       GROUP BY p.id
@@ -732,16 +734,32 @@ export class Ledger {
    * running. Returns true when the claim succeeded (caller may proceed to
    * fire), false when another caller already holds the slot.
    *
-   * The conditional UPDATE (`WHERE running_started_at IS NULL`) closes the
-   * TOCTOU race that would otherwise let two concurrent `fireTriggerNow`
-   * calls both pass an `isTriggerRunning()` check, both write, both fire —
-   * burning real $ on duplicate API spend. SQLite serializes writes per
-   * process, so the second UPDATE's `changes` count is 0.
+   * The conditional UPDATE closes the TOCTOU race that would otherwise let
+   * two concurrent `fireTriggerNow` calls both pass an `isTriggerRunning()`
+   * check, both write, both fire — burning real $ on duplicate API spend.
+   * SQLite serializes writes per process, so the second UPDATE's `changes`
+   * count is 0.
+   *
+   * `staleCutoffIso` (optional): when provided, the claim ALSO succeeds if
+   * the existing `running_started_at` is older than the cutoff — a stale
+   * marker (process killed, never cleared, freshness gate already says "not
+   * running"). Without this, a 4h-stale row would 409 every retry until
+   * the next cold-boot sweep, leaving the founder stuck.
    *
    * Cleared by `updateTriggerLastPoll` on completion or by
    * `sweepStaleRunningTriggers` on the next cold boot.
    */
-  markTriggerRunning(name: string, startedAtIso: string): boolean {
+  markTriggerRunning(name: string, startedAtIso: string, staleCutoffIso?: string): boolean {
+    if (staleCutoffIso) {
+      const result = this.db
+        .prepare(
+          `UPDATE triggers
+           SET running_started_at = ?
+           WHERE name = ? AND (running_started_at IS NULL OR running_started_at < ?)`,
+        )
+        .run(startedAtIso, name, staleCutoffIso);
+      return result.changes > 0;
+    }
     const result = this.db
       .prepare(
         `UPDATE triggers

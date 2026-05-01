@@ -11,6 +11,7 @@ export interface PostFundingTarget {
   leadInvestor?: string;
   sourceUrl: string;
   linkedinUrl?: string;
+  phone?: string;
 }
 
 export interface PostFundingRunOptions {
@@ -90,6 +91,7 @@ export async function runPostFunding(
         email: target.email,
         company: target.company,
         linkedin_url: target.linkedinUrl ?? null,
+        phone: target.phone ?? null,
         source: "post-funding",
       },
       metadata: {

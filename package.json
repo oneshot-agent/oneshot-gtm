@@ -26,7 +26,8 @@
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
     "cli": "bun run apps/cli/src/index.ts",
-    "ui": "bun run apps/server/src/bin.ts"
+    "ui": "bun run apps/server/src/bin.ts",
+    "release:server": "git tag v$(node -p \"require('./apps/server/package.json').version\") && git push --follow-tags"
   },
   "dependencies": {
     "@fontsource-variable/host-grotesk": "^5.2.8"

@@ -1,43 +1,50 @@
 import { findEmail, getLedger, logEvent, verifyEmail, webRead } from "@oneshot-gtm/core";
-import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
+import { complete, loadPrompt } from "@oneshot-gtm/intel";
 import type { AcceleratorBatchTarget } from "@oneshot-gtm/plays";
-import { icpFilter, resolveIcp } from "./_filter.ts";
+import {
+  fetchAcceleratorSearch,
+  parseAcceleratorLaunchExtract,
+} from "./_accelerator-search-adapter.ts";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
-import type { AcceleratorListExtract, FinderResult, RunOpts } from "./_types.ts";
+import { icpFilter, resolveIcp } from "./_filter.ts";
+import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
+import { parallelMap } from "./_parallel.ts";
+import { fetchYcOssBatch } from "./_yc-oss-adapter.ts";
+import type { CompanyRecord, FinderResult, RunOpts } from "./_types.ts";
+
+/**
+ * Pulls an accelerator-cohort directory, ICP-filters, finds founder contact,
+ * enqueues for outreach. Two adapters:
+ *
+ * - `yc-oss` — free structured directory at yc-oss.github.io (auto-selected
+ *   when cohort matches `^yc-`). The right path for any YC batch.
+ * - `websearch` — combo-search fallback for accelerators without a public API
+ *   (Techstars, Antler, 500 Global, AI Grant, …). Less reliable recall but
+ *   works for any cohortLabel.
+ *
+ * The per-company pipeline is shared: dedupe → ICP filter → findEmail →
+ * verifyEmail → enqueue, all under `parallelMap` (concurrency 3, mirrors
+ * github-topics).
+ */
 
 const PLAY_NAME = "accelerator-batch";
 
 export interface AcceleratorBatchFinderOpts extends RunOpts {
-  /** Cohort tag, e.g. "yc-w26", "yc-s26", "od-current", "spc-current", "antler-current", "techstars-current". */
+  /** Cohort tag — e.g. `yc-w26`, `yc-s25`, `techstars-toronto-2025`. */
   cohort: string;
-  /** Override the cohort index URL (lets founders point at any program page). */
-  indexUrl?: string;
+  /** Human-readable label fed into search queries + the email prompt. */
+  cohortLabel: string;
+  /** Force a specific adapter. Default: yc-* → yc-oss, everything else → websearch. */
+  adapter?: "yc-oss" | "websearch";
+  /** Concurrency for the per-company pipeline. Default 3. */
+  concurrency?: number;
 }
-
-interface BatchListExtract {
-  companies: AcceleratorListExtract[];
-}
-
-const COHORT_INDEX_URL: Record<string, string> = {
-  // YC
-  "yc-w26": "https://www.ycombinator.com/launches/?batch=W26",
-  "yc-s26": "https://www.ycombinator.com/launches/?batch=S26",
-  "yc-w25": "https://www.ycombinator.com/launches/?batch=W25",
-  "yc-s25": "https://www.ycombinator.com/launches/?batch=S25",
-  // On Deck — Founder Fellowship
-  "od-current": "https://www.beondeck.com/founders",
-  // South Park Commons
-  "spc-current": "https://www.southparkcommons.com/founders",
-  // Antler
-  "antler-current": "https://www.antler.co/portfolio",
-  // Techstars
-  "techstars-current": "https://www.techstars.com/portfolio",
-};
 
 export async function runAcceleratorBatchFinder(
   opts: AcceleratorBatchFinderOpts,
 ): Promise<FinderResult> {
   const limit = opts.limit ?? 25;
+  const concurrency = opts.concurrency ?? 3;
   const icp = resolveIcp(opts.icpOverride);
   const ledger = getLedger();
   const source = `find:accelerator-batch:${opts.cohort}`;
@@ -52,102 +59,104 @@ export async function runAcceleratorBatchFinder(
     costUsd: 0,
   };
 
-  const indexUrl = opts.indexUrl ?? COHORT_INDEX_URL[opts.cohort];
-  if (!indexUrl) {
-    throw new Error(
-      `cohort '${opts.cohort}' has no built-in index URL. Pass --index-url <url> to point at the program's portfolio/launch page, or use one of: ${Object.keys(COHORT_INDEX_URL).join(", ")}.`,
-    );
+  // Step 1: discover cohort companies via the adapter.
+  const adapterName = pickAdapter(opts.cohort, opts.adapter);
+  const adapter =
+    adapterName === "yc-oss"
+      ? () => fetchYcOssBatch(opts.cohort, limit)
+      : () => fetchAcceleratorSearch(opts.cohort, opts.cohortLabel, limit);
+  const fetched = await adapter();
+  result.costUsd += fetched.costUsd;
+  if (fetched.records.length === 0) {
+    // Surface the adapter's diagnostic on the run summary so the trigger
+    // card explains WHY zero — better than the silent-success the previous
+    // implementation produced.
+    result.halted = fetched.diagnostic ?? "adapter returned 0 records";
+    return result;
   }
+  result.candidates = fetched.records.length;
 
-  // Step 1: pull the launch index, LLM-extract company list.
-  let companies: AcceleratorListExtract[] = [];
-  if (!opts.dryRun) {
-    const indexRead = await webRead({ url: indexUrl }, { playName: PLAY_NAME });
-    result.costUsd += extractCost(indexRead.result) ?? 0.02;
-    const system = loadPrompt("accelerator-batch-extract");
-    const llm = await complete({
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: (indexRead.result.markdown ?? "").slice(0, 16000) },
-      ],
-      temperature: 0.1,
-      maxTokens: 1500,
-    });
-    companies = parseAcceleratorList(llm.content);
-  }
-  result.candidates = companies.length;
+  // Step 2: per-company pipeline (parallel, ICP-first like github-topics).
+  // `halted` is a soft cap — workers may overshoot by up to (concurrency - 1)
+  // candidates. Acceptable at our scale.
+  let halted = false;
 
-  for (const c of companies.slice(0, limit)) {
+  await parallelMap(fetched.records, concurrency, async (record) => {
+    if (halted) return;
+    if (result.enqueued >= limit) {
+      halted = true;
+      return;
+    }
     if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
       result.halted = `max-cost cap (${opts.maxCostUsd})`;
-      break;
+      halted = true;
+      return;
     }
 
-    const dedupeKey = `${c.name.toLowerCase().replace(/\s+/g, "-")}|${opts.cohort}`;
+    const dedupeKey = makeDedupeKey(record, opts.cohort);
     if (ledger.isQueueDuplicate(PLAY_NAME, dedupeKey)) {
       result.droppedDuplicate++;
-      continue;
-    }
-
-    // ICP filter on the one-liner.
-    const filter = await icpFilter({
-      icp,
-      candidate: {
-        title: c.name,
-        url: c.launchUrl,
-        summary: c.oneLiner,
-      },
-    });
-    if (!filter.match) {
-      result.droppedIcp++;
-      if (!opts.dryRun) {
-        ledger.enqueueTarget({
-          playName: PLAY_NAME,
-          payload: { company: c.name, launchUrl: c.launchUrl, oneLiner: c.oneLiner },
-          dedupeKey,
-          source,
-          initialStatus: "rejected",
-          notes: `auto: ICP — ${filter.reason}`,
-        });
-      }
-      continue;
+      return;
     }
 
     if (opts.dryRun) {
       result.enqueued++;
-      continue;
+      return;
     }
 
-    // Step 2: read the per-company launch page for founder + website.
-    let founderName: string | null = null;
-    let companyWebsite: string | null = null;
-    try {
-      const read = await webRead({ url: c.launchUrl }, { playName: PLAY_NAME });
-      result.costUsd += extractCost(read.result) ?? 0.02;
-      ({ founderName, companyWebsite } = parseLaunchPage(read.result.markdown ?? ""));
-    } catch (err) {
-      logEvent(
-        "error.swallowed",
-        {
-          kind: "accelerator-batch.launchPage.webRead",
-          message_120: ((err as Error).message ?? "").slice(0, 120),
-        },
-        "warn",
-      );
-      result.droppedEnrichment++;
-      continue;
+    // ICP filter — cheapest gate first ($0.001). Uses the structured
+    // one-liner + tags so the classifier sees more signal than a bare title.
+    const filter = await icpFilter({
+      icp,
+      candidate: {
+        title: record.name,
+        url: record.website ?? record.ycUrl,
+        summary: buildIcpSummary(record),
+      },
+    });
+    if (!filter.match) {
+      result.droppedIcp++;
+      ledger.enqueueTarget({
+        playName: PLAY_NAME,
+        payload: rejectionPayload(record, opts.cohort),
+        dedupeKey,
+        source,
+        initialStatus: "rejected",
+        notes: `auto: ICP — ${filter.reason}`,
+      });
+      return;
+    }
+
+    // Resolve a founder name for this record. yc-oss directory rows ship
+    // without one; the SDK's findEmail requires `full_name` (or first+last)
+    // so we MUST acquire a person name before the enrichment call.
+    //
+    // Strategy: webRead the YC profile page (or fall back to the company
+    // website) and run the same `accelerator-launch-extract` prompt the
+    // websearch adapter uses. ~$0.02 per ICP-pass — only paid for candidates
+    // that survived the cheaper ICP gate.
+    let founderName = record.founderName?.trim() || null;
+    let resolvedLinkedin: string | null = isLinkedInProfileUrl(record.founderLinkedinUrl)
+      ? record.founderLinkedinUrl
+      : null;
+    let resolvedPhone: string | null = record.founderPhone ?? null;
+    if (!founderName) {
+      const resolved = await resolveFounderName(record);
+      result.costUsd += resolved.costUsd;
+      founderName = resolved.founderName;
+      resolvedLinkedin = resolvedLinkedin ?? resolved.linkedinUrl;
+      resolvedPhone = resolvedPhone ?? resolved.phone;
     }
     if (!founderName) {
       result.droppedEnrichment++;
-      continue;
+      return;
     }
 
-    const domain = urlDomain(companyWebsite ?? c.launchUrl);
+    const domain = record.website ? urlDomain(record.website) : null;
     if (!domain) {
       result.droppedEnrichment++;
-      continue;
+      return;
     }
-
     const found = await findEmail(
       { fullName: founderName, companyDomain: domain },
       { playName: PLAY_NAME },
@@ -155,31 +164,51 @@ export async function runAcceleratorBatchFinder(
     result.costUsd += extractCost(found.result) ?? 0.05;
     if (!found.result.found || !found.result.email) {
       result.droppedEnrichment++;
-      continue;
+      return;
     }
     const email = found.result.email;
+    // Prefer the SDK's resolved name when available — it's the actual owner of
+    // the email — and fall back to the founder name we resolved upstream.
+    const fullName = found.result.full_name?.trim() || founderName;
 
     if (isDuplicate({ playName: PLAY_NAME, dedupeKey, prospectEmail: email })) {
       result.droppedDuplicate++;
-      continue;
+      return;
     }
 
     const verified = await verifyEmail({ email }, { playName: PLAY_NAME });
     result.costUsd += extractCost(verified.result) ?? 0.01;
     if (!verified.result.deliverable) {
       result.droppedEnrichment++;
-      continue;
+      return;
+    }
+
+    let linkedinUrl = resolvedLinkedin;
+    if (!linkedinUrl) {
+      linkedinUrl = await findLinkedInUrl({
+        fullName,
+        disambiguators: [record.name],
+        accumCost: (c) => {
+          result.costUsd += c ?? 0;
+        },
+        errKindPrefix: "accelerator-batch",
+      });
     }
 
     const target: AcceleratorBatchTarget = {
-      name: founderName,
+      name: fullName,
       email,
-      company: c.name,
+      company: record.name,
       cohort: opts.cohort,
-      ...(c.launchUrl ? { launchUrl: c.launchUrl } : {}),
-      ...(c.oneLiner ? { productOneLiner: c.oneLiner } : {}),
+      ...(record.ycUrl
+        ? { launchUrl: record.ycUrl }
+        : record.website
+          ? { launchUrl: record.website }
+          : {}),
+      ...(record.oneLiner ? { productOneLiner: record.oneLiner } : {}),
+      ...(linkedinUrl ? { linkedinUrl } : {}),
+      ...(resolvedPhone ? { phone: resolvedPhone } : {}),
     };
-
     const id = ledger.enqueueTarget({
       playName: PLAY_NAME,
       payload: target,
@@ -189,55 +218,113 @@ export async function runAcceleratorBatchFinder(
     });
     if (id != null) result.enqueued++;
     else result.droppedDuplicate++;
-  }
+  });
 
   return result;
 }
 
-export function parseAcceleratorList(raw: string): AcceleratorListExtract[] {
-  const parsed = tryParseJsonObject<BatchListExtract>(raw, { companies: [] });
-  return Array.isArray(parsed.companies) ? parsed.companies : [];
+/**
+ * Pick which adapter handles the cohort. yc-* tags hit the free yc-oss
+ * directory; everything else falls back to web search. An explicit override
+ * always wins so founders can force a path for testing.
+ */
+export function pickAdapter(cohort: string, override?: string): "yc-oss" | "websearch" {
+  if (override === "yc-oss" || override === "websearch") return override;
+  if (/^yc-/i.test(cohort.trim())) return "yc-oss";
+  return "websearch";
 }
 
-/**
- * Lightweight HTML/markdown scraper for a YC launch page.
- * Looks for "Founders" or "Founder:" or first proper-noun pair under "Team".
- * Looks for the company's website link (often labeled as such).
- */
-export function parseLaunchPage(markdown: string): {
-  founderName: string | null;
-  companyWebsite: string | null;
-} {
-  const lines = markdown.split(/\r?\n/);
-  let founderName: string | null = null;
-  let companyWebsite: string | null = null;
+function makeDedupeKey(record: CompanyRecord, cohort: string): string {
+  const slug = record.name
+    .toLowerCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "");
+  return `${slug}|${cohort}`;
+}
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i] ?? "";
-    if (!founderName) {
-      const m = line.match(
-        /(?:founder|founders|ceo|co-?founder)[:\s]+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/i,
-      );
-      if (m && m[1]) founderName = m[1].trim();
-    }
-    if (!companyWebsite) {
-      const m = line.match(/\[(?:website|home|product|visit)\]\((https?:\/\/[^\s)]+)\)/i);
-      if (m && m[1]) companyWebsite = m[1].trim();
-    }
-    if (founderName && companyWebsite) break;
-  }
-  // Fallback: any bare https URL not pointing to a known program domain.
-  if (!companyWebsite) {
-    const m = markdown.match(
-      /https?:\/\/(?!(?:www\.)?(?:ycombinator|beondeck|southparkcommons|antler|techstars)\.com)[^\s)]+/,
-    );
-    if (m) companyWebsite = m[0].trim();
-  }
-  return { founderName, companyWebsite };
+function rejectionPayload(record: CompanyRecord, cohort: string): Record<string, unknown> {
+  return {
+    company: record.name,
+    cohort,
+    ...(record.ycUrl
+      ? { launchUrl: record.ycUrl }
+      : record.website
+        ? { launchUrl: record.website }
+        : {}),
+    ...(record.oneLiner ? { oneLiner: record.oneLiner } : {}),
+  };
+}
+
+function buildIcpSummary(record: CompanyRecord): string {
+  const parts: string[] = [];
+  if (record.oneLiner) parts.push(record.oneLiner);
+  if (record.longDescription) parts.push(record.longDescription.slice(0, 600));
+  if (record.industry) parts.push(`Industry: ${record.industry}`);
+  if (record.tags.length > 0) parts.push(`Tags: ${record.tags.join(", ")}`);
+  return parts.join("\n\n");
 }
 
 function extractCost(r: unknown): number | undefined {
   if (!r || typeof r !== "object") return undefined;
   const v = (r as Record<string, unknown>)["cost"];
   return typeof v === "number" ? v : undefined;
+}
+
+/**
+ * webRead a per-company URL (YC profile preferred, company website as
+ * fallback) and run the `accelerator-launch-extract` prompt to grab a
+ * founder name. Returns `{founderName: null}` if no URL is available, the
+ * read fails, or the LLM can't surface a name.
+ *
+ * Only called for ICP-passing candidates so we don't pay this cost on
+ * candidates the cheap classifier already rejected.
+ */
+export async function resolveFounderName(record: CompanyRecord): Promise<{
+  founderName: string | null;
+  linkedinUrl: string | null;
+  phone: string | null;
+  costUsd: number;
+}> {
+  const url = record.ycUrl ?? record.website;
+  if (!url) return { founderName: null, linkedinUrl: null, phone: null, costUsd: 0 };
+  let costUsd = 0;
+  try {
+    const read = await webRead({ url }, { playName: PLAY_NAME });
+    costUsd += extractCost(read.result) ?? 0.02;
+    const system = loadPrompt("accelerator-launch-extract");
+    const llm = await complete({
+      messages: [
+        { role: "system", content: system },
+        {
+          role: "user",
+          content: JSON.stringify({
+            url,
+            company: record.name,
+            markdown: (read.result.markdown ?? "").slice(0, 12000),
+          }),
+        },
+      ],
+      temperature: 0.1,
+      maxTokens: 400,
+    });
+    const extract = parseAcceleratorLaunchExtract(llm.content);
+    const name = extract.founderName?.trim();
+    const linkedinUrl = extract.linkedinUrl?.trim() || null;
+    return {
+      founderName: name && name.length > 0 ? name : null,
+      linkedinUrl: isLinkedInProfileUrl(linkedinUrl) ? linkedinUrl : null,
+      phone: extract.phone?.trim() || null,
+      costUsd,
+    };
+  } catch (err) {
+    logEvent(
+      "error.swallowed",
+      {
+        kind: "accelerator-batch.resolveFounderName",
+        message_120: ((err as Error).message ?? "").slice(0, 120),
+      },
+      "warn",
+    );
+    return { founderName: null, linkedinUrl: null, phone: null, costUsd };
+  }
 }

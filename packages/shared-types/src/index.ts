@@ -160,6 +160,14 @@ export interface TriggerView {
   running: boolean;
   /** ISO timestamp of when the current in-flight run started. Null when `running=false`. */
   runningSince: string | null;
+  /**
+   * False when the spec declares a `readiness` fn that returns not-ready for
+   * the current config (e.g. github-topics without `topics`). The UI uses
+   * this to disable the Enable toggle + Run button.
+   */
+  ready: boolean;
+  /** Human-readable reason when `ready === false`; null otherwise. */
+  notReadyReason: string | null;
 }
 
 export interface DeriveIcpResult {

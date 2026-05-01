@@ -12,6 +12,7 @@ export interface ProspectRecord {
   id: number;
   name: string | null;
   email: string | null;
+  phone: string | null;
   company: string | null;
   linkedin_url: string | null;
   dossier_json: string | null;

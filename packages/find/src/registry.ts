@@ -1,8 +1,8 @@
 import { getLedger, logEvent, startRun } from "@oneshot-gtm/core";
 import { runAcceleratorBatchFinder } from "./accelerator-batch.ts";
-import { runAgentBuildersFinder } from "./agent-builders.ts";
-import { parseCombos, type ComboQuery } from "./_agent-builder-combos.ts";
+import { deriveCohortLabel } from "./_yc-oss-adapter.ts";
 import { runBreakupReviveFinder } from "./breakup-revive.ts";
+import { runGitHubTopicsFinder } from "./github-topics.ts";
 import { runHiringSignalFinder } from "./hiring-signal.ts";
 import { runJobChangeFinder } from "./job-change.ts";
 import { runPodcastGuestFinder } from "./podcast-guest.ts";
@@ -24,8 +24,8 @@ export interface TriggerSpec {
   configBrief?: string;
   /**
    * Optional readiness gate. Return `{ready:false, reason}` when the stored
-   * config lacks required founder-supplied inputs (e.g. agent-builders without
-   * `combos`). Consulted by the server's enable/run endpoints and by the watch
+   * config lacks required founder-supplied inputs (e.g. github-topics without
+   * `topics`). Consulted by the server's enable/run endpoints and by the watch
    * loop to avoid pointless runs. When absent, the trigger is always ready.
    */
   readiness?: (
@@ -66,18 +66,51 @@ export const TRIGGERS: TriggerSpec[] = [
       }),
   },
   {
-    name: "yc-w26",
+    name: "accelerator-batch",
     defaultIntervalMs: 24 * ONE_HOUR,
-    defaultConfig: { cohort: "yc-w26", limit: 25, maxCostUsd: 5 },
+    enabledByDefault: false,
+    // Ships empty so the strategist is forced to propose a cohort tuned to the
+    // founder's ICP rather than reflexively defaulting to YC. Each accelerator
+    // (YC, Techstars, Antler, AI Grant, SPC, Neo, 500 Global, etc.) attracts a
+    // different founder population — the right pick depends on who buys.
+    defaultConfig: {
+      cohort: "",
+      cohortLabel: "",
+      limit: 25,
+      maxCostUsd: 5,
+    },
     configBrief:
-      "Pulls a YC batch's launch index, extracts each company, ICP-filters, enriches the founder contact. Config: `cohort` (yc-w26 / yc-s25 / etc — pick a batch tag), `limit`, `maxCostUsd`. Useful when your ICP overlaps with a current/recent YC cohort. To target a different accelerator, ask the founder if they want a fresh trigger pointed at a different cohort URL.",
-    run: (cfg) =>
-      runAcceleratorBatchFinder({
+      "Pulls an accelerator cohort directory, ICP-filters companies, finds founder contact, enqueues for outreach. SHIPS EMPTY — pick a cohort that matches your ICP. Each accelerator surfaces a different founder population: YC for AI/infra-heavy startups, Techstars for vertical SaaS + corporate-partnered batches, Antler for solo founders + day-zero, AI Grant for AI-only research-product founders, SPC / Neo for senior-engineer founders, 500 Global for international + emerging markets. Config: `cohort` (tag — e.g. `yc-w26`, `techstars-toronto-2025`, `antler-nyc-q1-2026`, `ai-grant-2026`), `cohortLabel` (human label fed to email + search queries; auto-derived from cohort when not set), optional `adapter` (`yc-oss` | `websearch`; auto-picked from cohort prefix — yc-* tags use the free yc-oss/api directory, everything else falls back to web search), `limit`, `maxCostUsd`. STRATEGIST DUTY: when proposing this trigger, anchor the cohort recommendation in the founder's ICP — don't reflexively pick YC. If multiple accelerators fit, propose the top match and mention 1-2 alternatives in prose so the founder can swap.",
+    readiness: (cfg) => {
+      const cohort = cfg["cohort"];
+      if (typeof cohort !== "string" || cohort.trim().length === 0) {
+        return {
+          ready: false,
+          reason: "set `cohort` (ask the strategist to propose one tuned to your ICP)",
+        };
+      }
+      return { ready: true };
+    },
+    run: (cfg) => {
+      const cohort = (cfg["cohort"] as string) ?? "yc-w26";
+      // Derive cohortLabel from cohort when the founder didn't set one
+      // explicitly. This matters most after a `cohort` change — without
+      // derivation the label would stay "YC W26" while the cohort points
+      // at e.g. techstars, and the websearch adapter would query the wrong
+      // program. Explicit override always wins.
+      const labelFromCfg = typeof cfg["cohortLabel"] === "string" ? cfg["cohortLabel"].trim() : "";
+      const cohortLabel = labelFromCfg.length > 0 ? labelFromCfg : deriveCohortLabel(cohort);
+      return runAcceleratorBatchFinder({
         dryRun: false,
-        cohort: (cfg["cohort"] as string) ?? "yc-w26",
+        cohort,
+        cohortLabel,
+        ...(cfg["adapter"] === "yc-oss" || cfg["adapter"] === "websearch"
+          ? { adapter: cfg["adapter"] as "yc-oss" | "websearch" }
+          : {}),
         limit: (cfg["limit"] as number) ?? 25,
         maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
-      }),
+      });
+    },
   },
   {
     name: "post-funding-auto",
@@ -174,49 +207,73 @@ export const TRIGGERS: TriggerSpec[] = [
       }),
   },
   {
-    // GitHub-sourced: repos stitching together multiple vendor SDKs. Feeds
-    // competitor-switch (migration-honesty pitch). Config-driven — the
-    // founder supplies their own combos + edge via /queue; ships empty so
-    // nothing fires until it's explicitly configured.
-    name: "agent-builders",
+    // GitHub-Topic-driven repo finder. Discovers via the (free) GitHub Search
+    // API filtered by `topic:<slug>` — topic-tagged repos are pre-curated by
+    // maintainers self-tagging, much higher signal-per-fetch than the
+    // retired combo-search approach. Feeds competitor-switch (migration-
+    // honesty pitch). Config-driven — the founder supplies topics + vendors
+    // + edge via /queue; ships empty so nothing fires until configured.
+    name: "github-topics",
     defaultIntervalMs: 12 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
+      topics: [] as string[],
+      vendors: [] as string[],
+      yourEdge: "",
+      minStars: 5,
+      maxAgeDays: 90,
+      minVendors: 1,
+      concurrency: 3,
+      useDeepResearch: true,
       limit: 25,
       maxCostUsd: 5,
-      minVendors: 2,
-      yourEdge: "",
-      combos: [] as ComboQuery[],
     },
     configBrief:
-      "Searches GitHub for repos that stitch together multiple vendor SDKs which OVERLAP with the founder's product, then pitches consolidation via the competitor-switch motion play. Config: `combos` (array of {label, query, vendors} — each query is a `site:github.com \"VendorA\" \"VendorB\"` Google-style search; vendors lists the names matched. Aim for 4-8 combos covering vendor pairs the founder COMPETES WITH — name actual vendors from the founder's product context, not generic ones), `yourEdge` (one-sentence migration pitch handed to the email — what's the consolidation value?), `minVendors` (gate: how many distinct vendors must appear in a candidate repo's README; 2 is right for 'consolidation pitch holds'), `limit`, `maxCostUsd`. SHIPS EMPTY — no candidates fire until combos + yourEdge are set.",
+      "Discovers repos via GitHub Topic pages (`topic:<slug>` queries on the GitHub Search API), then scans each candidate's package.json / pyproject.toml / requirements.txt / .env.example via the GitHub Contents API to detect which API vendors the repo actually uses. Feeds the competitor-switch motion play. Required config: `topics` (GitHub topic slugs the founder's ICP overlaps with — lowercase, hyphenated, EXACT GitHub-canonical form; singular vs plural matters), `vendors` (the founder's competitive landscape — the API vendors they aim to replace), `yourEdge` (one-sentence pitch handed to the email). VOCAB SEMANTICS: each `vendors` string is substring-matched (case-insensitive) against manifest deps + env-var keys — so `twilio` matches `twilio`, `twilio-node`, `@twilio/voice-sdk`, AND `TWILIO_ACCOUNT_SID`. There is NO hardcoded vendor list; oneshot-gtm is a generic founder tool and competitive vocabularies vary entirely by founder. STRATEGIST DUTY: when you (the strategist) have enough context about the founder's product/ICP, proactively propose BOTH `topics` AND `vendors` via apply-config — topics are GitHub category slugs aligned to ICP; vendors are the API competitors the founder replaces. The founder shouldn't have to enumerate either by hand. Other config: `minStars` (filter, default 5), `maxAgeDays` (default 90), `minVendors` (gate: how many distinct vocab vendors must match in a candidate's manifests; default 1), `concurrency` (in-flight workers; default 3), `useDeepResearch` (default true), `limit`, `maxCostUsd`.",
     readiness: (cfg) => {
-      const combos = cfg["combos"];
-      if (!Array.isArray(combos) || combos.length === 0) {
+      const topics = cfg["topics"];
+      if (!Array.isArray(topics) || topics.length === 0) {
         return {
           ready: false,
-          reason: "set `combos` in config (one or more `{query, vendors}` entries)",
+          reason: "set `topics` (one or more GitHub topic slugs, e.g. 'llm-agents')",
+        };
+      }
+      const vendors = cfg["vendors"];
+      if (!Array.isArray(vendors) || vendors.length === 0) {
+        return {
+          ready: false,
+          reason: "set `vendors` — your competitive landscape (ask the strategist to propose one)",
         };
       }
       const edge = cfg["yourEdge"];
       if (typeof edge !== "string" || edge.trim().length === 0) {
         return {
           ready: false,
-          reason: "set `yourEdge` — one-sentence reason your SDK beats the status quo",
+          reason: "set `yourEdge` — one-sentence consolidation pitch",
         };
       }
       return { ready: true };
     },
     run: (cfg) => {
-      const combos = parseCombos(cfg["combos"]) ?? [];
+      const topics = Array.isArray(cfg["topics"])
+        ? (cfg["topics"] as unknown[]).filter((t): t is string => typeof t === "string")
+        : [];
+      const vendors = Array.isArray(cfg["vendors"])
+        ? (cfg["vendors"] as unknown[]).filter((v): v is string => typeof v === "string")
+        : [];
       const yourEdge = typeof cfg["yourEdge"] === "string" ? cfg["yourEdge"] : "";
-      return runAgentBuildersFinder({
+      return runGitHubTopicsFinder({
         dryRun: false,
-        combos,
+        topics,
+        vendors,
         yourEdge,
+        minStars: (cfg["minStars"] as number) ?? 5,
+        maxAgeDays: (cfg["maxAgeDays"] as number) ?? 90,
+        minVendors: (cfg["minVendors"] as number) ?? 2,
+        concurrency: (cfg["concurrency"] as number) ?? 3,
+        useDeepResearch: cfg["useDeepResearch"] !== false,
         limit: (cfg["limit"] as number) ?? 25,
         maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
-        minVendors: (cfg["minVendors"] as number) ?? 2,
       });
     },
   },
@@ -267,15 +324,21 @@ export interface TriggerRunOutcome {
 
 /**
  * Maximum age before an in-flight `running_started_at` is considered a
- * killed-by-restart zombie and swept by `sweepStaleRunningTriggers`. Real
- * finder runs cap at ~5 min (max-cost gate, webSearch loop limit, idleTimeout
- * 255s), so 15 min is a generous floor. Tighten when a trigger genuinely
- * needs longer.
+ * killed-by-restart zombie and swept by `sweepStaleRunningTriggers`.
  *
- * Also gates `isTriggerRunning` — a stale `running_started_at` shouldn't
- * read as "still running" in the UI.
+ * Real finder runtimes are dominated by the per-candidate pipeline (icpFilter
+ * LLM + findEmail + verifyEmail, occasionally + webRead + deepResearchPerson).
+ * github-topics with concurrency=3 typically completes 25 candidates in
+ * 5-15 min; the deepResearchPerson tier (2-5 min async per call) sets the
+ * realistic upper bound when many candidates fall into the hard-recovery bucket.
+ *
+ * 4h is set with generous headroom so a genuinely-running finder is never
+ * mistakenly classified as zombie. If a run actually exceeds this, the
+ * sweep marks it killed and `markTriggerRunning` lets a follow-up click
+ * re-claim — bounded duplicate spend is preferable to the permanently-
+ * stuck 409 state.
  */
-export const MAX_RUN_AGE_MS = 15 * 60 * 1000;
+export const MAX_RUN_AGE_MS = 4 * 60 * 60 * 1000;
 
 /**
  * Truth of "is this trigger running" lives in the ledger
@@ -364,7 +427,15 @@ export function fireTriggerNow(name: string): void {
   // Atomic claim — no TOCTOU race. Two concurrent fires both calling
   // markTriggerRunning will see exactly one `true` and one `false`, so
   // only one finder run actually launches.
-  const claimed = ledger.markTriggerRunning(name, new Date().toISOString());
+  //
+  // The `staleCutoffIso` lets a fresh click reclaim a row whose previous
+  // `running_started_at` is older than `MAX_RUN_AGE_MS` — i.e. the freshness
+  // gate already says "not running" but the DB flag never got cleared
+  // (process killed, no cold-boot sweep yet). Without this the user would
+  // see Run-button-enabled, click, and get 409'd every retry.
+  const nowIso = new Date().toISOString();
+  const staleCutoffIso = new Date(Date.now() - MAX_RUN_AGE_MS).toISOString();
+  const claimed = ledger.markTriggerRunning(name, nowIso, staleCutoffIso);
   if (!claimed) {
     throw new Error(`trigger '${name}' is already running`);
   }
@@ -377,11 +448,7 @@ export function fireTriggerNow(name: string): void {
   // the next boot sweep.
   runTriggerNow(name).catch((err) => {
     const message = (err as Error).message ?? "runTriggerNow rejected";
-    logEvent(
-      "trigger.run.fire_failed",
-      { name, message_120: message.slice(0, 120) },
-      "error",
-    );
+    logEvent("trigger.run.fire_failed", { name, message_120: message.slice(0, 120) }, "error");
     try {
       ledger.updateTriggerLastPoll({
         name,

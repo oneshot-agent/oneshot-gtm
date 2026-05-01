@@ -9,6 +9,8 @@ export interface BreakupReviveTarget {
   company: string | null;
   daysCold: number;
   lastEventAt: string | null;
+  linkedinUrl?: string | null;
+  phone?: string | null;
 }
 
 export interface BreakupReviveOptions {
@@ -75,6 +77,8 @@ export async function runBreakupRevive(
         name: t.name,
         email: t.email,
         company: t.company,
+        linkedin_url: t.linkedinUrl ?? null,
+        phone: t.phone ?? null,
         source: "breakup-revive",
       },
       metadata: { daysCold: t.daysCold, lastEventAt: t.lastEventAt },
@@ -113,5 +117,7 @@ function ledgerScanTargets(opts: BreakupReviveOptions): BreakupReviveTarget[] {
         ? Math.floor((Date.now() - new Date(p.last_event_at).getTime()) / (24 * 3600 * 1000))
         : 0,
       lastEventAt: p.last_event_at,
+      linkedinUrl: p.linkedin_url ?? null,
+      phone: p.phone ?? null,
     }));
 }

@@ -3,6 +3,7 @@ import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { PodcastGuestTarget } from "@oneshot-gtm/plays";
 import { isDuplicate } from "./_dedupe.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
+import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
 import type { FinderResult, PodcastGuestExtract, RunOpts } from "./_types.ts";
 
 const PLAY_NAME = "podcast-guest";
@@ -176,6 +177,20 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
       continue;
     }
 
+    let linkedinUrl: string | null = isLinkedInProfileUrl(extract.linkedinUrl)
+      ? extract.linkedinUrl
+      : null;
+    if (!linkedinUrl) {
+      linkedinUrl = await findLinkedInUrl({
+        fullName: extract.guestName,
+        disambiguators: [extract.podcastName],
+        accumCost: (c) => {
+          result.costUsd += c ?? 0;
+        },
+        errKindPrefix: "podcast-guest",
+      });
+    }
+
     const target: PodcastGuestTarget = {
       name: extract.guestName,
       email,
@@ -183,6 +198,8 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
       podcast: extract.podcastName,
       episodeTitle: extract.episodeTitle ?? hit.title,
       hookQuote: (extract.summary ?? hit.description ?? "").slice(0, 240),
+      ...(linkedinUrl ? { linkedinUrl } : {}),
+      ...(extract.phone ? { phone: extract.phone } : {}),
     };
     const id = ledger.enqueueTarget({
       playName: PLAY_NAME,
@@ -208,6 +225,8 @@ export function parsePodcastGuestExtract(raw: string): PodcastGuestExtract {
     guestCompany: null,
     guestCompanyDomain: null,
     publishedAt: null,
+    linkedinUrl: null,
+    phone: null,
     summary: null,
   });
 }

@@ -1,28 +1,35 @@
 import { useEffect, useState } from "react";
 
 /**
- * Per-trigger "is running" tracker, persisted to localStorage so a refresh
- * mid-run doesn't lose the spinner. The server-side work continues either
- * way (runTriggerNow writes last_polled_at when done); this just lets the
- * UI show "still running · 1m 12s" instead of falling back to "run now".
+ * Per-trigger "is running" tracker persisted to localStorage, so a mid-run
+ * refresh preserves the spinner. Entries are cleared when the server
+ * confirms completion (lastPolledAt > startedAt and MIN_VISIBLE_MS has
+ * elapsed), or when MAX_RUNTIME_MS zombie-cleans them.
  *
- * Storage shape: localStorage["oneshot-gtm:trigger-running:<name>"] = "<unix-ms>"
- *
- * Cleared automatically when:
- *   - the React mutation onSuccess/onError fires (in-process completion)
- *   - the trigger's stored lastPolledAt advances past startedAt (cross-refresh
- *     completion — the work finished while we were gone)
- *   - more than MAX_RUNTIME_MS has passed (zombie cleanup; assume something
- *     went wrong server-side and the client hasn't been notified)
+ * Storage: localStorage["oneshot-gtm:trigger-running:<name>"] = "<unix-ms>"
  */
 const KEY_PREFIX = "oneshot-gtm:trigger-running:";
-const MAX_RUNTIME_MS = 15 * 60 * 1000;
+/**
+ * Client-side zombie cleanup for the localStorage spinner marker. Set to
+ * 4h to match `MAX_RUN_AGE_MS` in @oneshot-gtm/find — generous headroom
+ * over realistic finder runtimes (github-topics with concurrency=3 typically
+ * completes in 5-15 min; the deepResearchPerson tier sets the upper bound
+ * at 2-5 min per call). The spinner shouldn't disappear mid-run on a
+ * genuinely-long execution.
+ */
+const MAX_RUNTIME_MS = 4 * 60 * 60 * 1000;
+/**
+ * Minimum visible duration after a click. Without this floor the
+ * unconfigured-halt + ledger-only finders complete in <10ms, flipping the
+ * button back to "run now" before the user perceives the spinner.
+ */
+const MIN_VISIBLE_MS = 1500;
 
 export function markTriggerRunning(name: string): void {
   try {
     localStorage.setItem(KEY_PREFIX + name, String(Date.now()));
   } catch {
-    // private mode / SSR — degrades gracefully (no resume but no crash)
+    // private mode / SSR — no-op
   }
 }
 
@@ -34,11 +41,6 @@ export function clearTriggerRunning(name: string): void {
   }
 }
 
-/**
- * Cheap check used by the triggers query's refetchInterval — bumps polling
- * to a few seconds while anything is in flight, then back to 30s. Reads
- * directly from localStorage so it works even outside React tree.
- */
 export function hasAnyRunningTrigger(): boolean {
   try {
     for (let i = 0; i < localStorage.length; i++) {
@@ -68,16 +70,15 @@ interface RunningInfo {
 }
 
 /**
- * Returns a Map<triggerName, RunningInfo> reflecting which triggers are
- * currently believed to be running. Re-evaluates every TICK_MS so elapsed
- * counters update smoothly.
- *
- * Caller passes `lastPolledByName` so we can clear entries whose work the
- * server has already confirmed done (lastPolledAt > startedAt).
+ * Merge local (localStorage) + server (`runningSince` from the triggers
+ * poll) start times into a per-name running map with a live-ticking
+ * elapsedMs. Local wins when both are present; server fills in for fresh
+ * tabs that never set a marker.
  */
 export function useRunningTriggers(
   names: string[],
   lastPolledByName: Map<string, string | null>,
+  serverRunningSinceByName: Map<string, string | null>,
 ): Map<string, RunningInfo> {
   const [tick, setTick] = useState(0);
   useEffect(() => {
@@ -88,27 +89,32 @@ export function useRunningTriggers(
   const out = new Map<string, RunningInfo>();
   const now = Date.now();
   for (const name of names) {
-    const startedAt = readStartedAt(name);
+    const localStartedAt = readStartedAt(name);
+    const serverSinceIso = serverRunningSinceByName.get(name);
+    const serverStartedAt = serverSinceIso ? new Date(serverSinceIso).getTime() : null;
+    const startedAt = localStartedAt ?? serverStartedAt;
     if (startedAt == null) continue;
 
-    // Server confirmed completion since we marked it running → clear + skip.
-    const polledIso = lastPolledByName.get(name);
-    const polledMs = polledIso ? new Date(polledIso).getTime() : 0;
-    if (polledMs > startedAt) {
-      clearTriggerRunning(name);
-      continue;
-    }
-
-    // Zombie cleanup — work has been "running" implausibly long.
-    if (now - startedAt > MAX_RUNTIME_MS) {
-      clearTriggerRunning(name);
-      continue;
+    if (localStartedAt != null) {
+      const polledIso = lastPolledByName.get(name);
+      const polledMs = polledIso ? new Date(polledIso).getTime() : 0;
+      const visibleFor = now - localStartedAt;
+      if (polledMs > localStartedAt && visibleFor >= MIN_VISIBLE_MS) {
+        clearTriggerRunning(name);
+        if (serverStartedAt != null && serverStartedAt > polledMs) {
+          out.set(name, { startedAt: serverStartedAt, elapsedMs: now - serverStartedAt });
+        }
+        continue;
+      }
+      if (visibleFor > MAX_RUNTIME_MS) {
+        clearTriggerRunning(name);
+        continue;
+      }
     }
 
     out.set(name, { startedAt, elapsedMs: now - startedAt });
   }
-  // Reference `tick` so the hook re-runs on each interval; otherwise React
-  // would treat the map as stable and never update the elapsed counter.
+  // Ref `tick` so the elapsed counter re-computes on the interval.
   void tick;
   return out;
 }

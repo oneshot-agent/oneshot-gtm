@@ -45,11 +45,12 @@ export async function commandUi(opts: UiOpts): Promise<void> {
       stdio: "inherit",
       env,
     });
-    // --watch makes Bun re-exec the server when any imported file changes.
-    // The web client auto-reloads via Vite HMR; the server side gets a hard
-    // restart, which is fast (<1s) and picks up new routes / shared-types
-    // changes without manual intervention.
-    const server = spawn("bun", ["--watch", "run", serverBin], {
+    // --hot makes Bun re-evaluate the entrypoint (and its imports) on file
+    // change within the same process, and — unlike --watch — preserves
+    // `globalThis` across reloads. `bin.ts` caches the Bun.serve instance
+    // there and calls `server.reload({fetch})` on re-entry to swap handlers
+    // without rebinding the port (which would fail with EADDRINUSE).
+    const server = spawn("bun", ["--hot", "run", serverBin], {
       stdio: "inherit",
       env: { ...env, ONESHOT_GTM_NO_BROWSER: "1" },
     });

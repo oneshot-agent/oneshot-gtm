@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { parseAcceleratorList } from "../src/accelerator-batch.ts";
 import { parseJobChangeExtract } from "../src/job-change.ts";
 import { parsePodcastGuestExtract } from "../src/podcast-guest.ts";
 
@@ -57,28 +56,3 @@ describe("parsePodcastGuestExtract", () => {
   });
 });
 
-describe("parseAcceleratorList", () => {
-  it("returns the companies array", () => {
-    const raw = JSON.stringify({
-      companies: [
-        { name: "Acme", launchUrl: "https://ycombinator.com/launches/1", oneLiner: "does X" },
-        { name: "Beta", launchUrl: "https://ycombinator.com/launches/2", oneLiner: "does Y" },
-      ],
-    });
-    const out = parseAcceleratorList(raw);
-    expect(out).toHaveLength(2);
-    expect(out[0]?.name).toBe("Acme");
-  });
-
-  it("returns an empty array when companies is missing", () => {
-    expect(parseAcceleratorList('{"companies": null}')).toEqual([]);
-    expect(parseAcceleratorList("{}")).toEqual([]);
-    expect(parseAcceleratorList("garbage")).toEqual([]);
-  });
-
-  it("handles a fenced block", () => {
-    const raw =
-      '```json\n{"companies":[{"name":"Acme","launchUrl":"https://x","oneLiner":null}]}\n```';
-    expect(parseAcceleratorList(raw)).toHaveLength(1);
-  });
-});

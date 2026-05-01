@@ -8,6 +8,8 @@ export interface FinderResult {
   droppedDuplicate: number;
   /** How many were dropped because enrichment failed (no email, undeliverable, etc). */
   droppedEnrichment: number;
+  /** How many were dropped because a per-finder low-signal threshold wasn't met (e.g. show-hn minPoints). Optional — not every finder has such a gate. */
+  droppedLowSignal?: number;
   /** How many were enqueued. */
   enqueued: number;
   /** Approximate USD spent on OneShot calls during this run. */
@@ -44,13 +46,49 @@ export interface PostFundingExtract {
   founderName: string | null;
   founderRole: string | null;
   industry: string | null;
+  linkedinUrl: string | null;
+  phone: string | null;
   summary: string | null;
 }
 
-export interface AcceleratorListExtract {
+/**
+ * Normalized accelerator-cohort company record. Both adapters (yc-oss
+ * directory + websearch fallback) return this shape so the per-company
+ * pipeline in `accelerator-batch.ts` doesn't care where a record came from.
+ */
+export interface CompanyRecord {
   name: string;
-  launchUrl: string;
+  /** Best-known company website. May be null when only a YC profile URL is available. */
+  website: string | null;
   oneLiner: string | null;
+  longDescription: string | null;
+  industry: string | null;
+  tags: string[];
+  /** Canonical YC profile URL when sourced from yc-oss; null for websearch records. */
+  ycUrl: string | null;
+  /**
+   * Founder/CEO name when known up-front (websearch path extracts it; yc-oss
+   * path leaves it null). The pipeline resolves null values via a per-company
+   * webRead+extract before calling findEmail — the OneShot SDK requires a
+   * person name for email-by-domain to work.
+   */
+  founderName: string | null;
+  /** LinkedIn URL of the founder when surfaced by the source (websearch extract) — null otherwise. */
+  founderLinkedinUrl: string | null;
+  /** Phone number of the founder when surfaced by the source — rare; null otherwise. */
+  founderPhone: string | null;
+  source: "yc-oss" | "websearch";
+}
+
+export interface AcceleratorLaunchExtract {
+  company: string | null;
+  companyDomain: string | null;
+  oneLiner: string | null;
+  founderName: string | null;
+  founderRole: string | null;
+  launchUrl: string | null;
+  linkedinUrl: string | null;
+  phone: string | null;
 }
 
 export interface JobChangeExtract {
@@ -61,6 +99,7 @@ export interface JobChangeExtract {
   previousRole: string | null;
   previousCompany: string | null;
   linkedinUrl: string | null;
+  phone: string | null;
   summary: string | null;
 }
 
@@ -73,6 +112,8 @@ export interface HiringSignalExtract {
   hiringManagerRole: string | null;
   team: string | null;
   postedAt: string | null;
+  linkedinUrl: string | null;
+  phone: string | null;
   summary: string | null;
 }
 
@@ -85,6 +126,20 @@ export interface PodcastGuestExtract {
   guestCompany: string | null;
   guestCompanyDomain: string | null;
   publishedAt: string | null;
+  linkedinUrl: string | null;
+  phone: string | null;
+  summary: string | null;
+}
+
+export interface AgentBuilderExtract {
+  repoUrl: string | null;
+  githubHandle: string | null;
+  authorFullName: string | null;
+  authorRole: string | null;
+  companyName: string | null;
+  companyDomain: string | null;
+  personalDomain: string | null;
+  stackDetected: string[];
   summary: string | null;
 }
 

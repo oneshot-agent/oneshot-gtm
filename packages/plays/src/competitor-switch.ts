@@ -15,6 +15,8 @@ export interface CompetitorSwitchTarget {
   evidenceText?: string;
   /** Your product's specific advantage over this competitor (one fact). */
   yourEdge: string;
+  linkedinUrl?: string;
+  phone?: string;
 }
 
 export interface CompetitorSwitchRunOptions {
@@ -111,6 +113,8 @@ export async function runCompetitorSwitch(
         name: t.name,
         email: t.email,
         company: t.company,
+        linkedin_url: t.linkedinUrl ?? null,
+        phone: t.phone ?? null,
         source: "competitor-switch",
       },
       metadata: { competitor: t.competitor, evidenceUrl: t.evidenceUrl ?? null },
