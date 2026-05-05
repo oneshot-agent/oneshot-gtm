@@ -587,6 +587,26 @@ export async function runDueTriggers(): Promise<TriggerRunOutcome[]> {
       continue;
     }
 
+    // Atomic claim — same pattern as fireTriggerNow (line 436-441) so the
+    // scheduled-fire path can't race with a manual click on the same trigger
+    // and double-spend. `staleCutoffIso` lets a fresh tick reclaim a row
+    // whose previous `running_started_at` is older than MAX_RUN_AGE_MS (the
+    // freshness gate already says "not running" but the marker never got
+    // cleared — process killed before updateTriggerLastPoll ran, no boot
+    // sweep yet). Cleared by updateTriggerLastPoll on success/error.
+    const claimNowIso = new Date().toISOString();
+    const staleCutoffIso = new Date(Date.now() - MAX_RUN_AGE_MS).toISOString();
+    const claimed = ledger.markTriggerRunning(spec.name, claimNowIso, staleCutoffIso);
+    if (!claimed) {
+      outcomes.push({ name: spec.name, fired: false, nextDueInMs: intervalMs });
+      logEvent("trigger.run.skipped", {
+        name: spec.name,
+        source: "watch",
+        reason: "already-running",
+      });
+      continue;
+    }
+
     const startedAt = Date.now();
     logEvent("trigger.run.start", { name: spec.name, source: "watch" });
     try {

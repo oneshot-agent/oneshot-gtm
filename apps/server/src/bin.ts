@@ -1,6 +1,7 @@
 import open from "open";
 import { getLedger, logEvent } from "@oneshot-gtm/core";
 import { buildFetchHandler, SERVER_BASE_OPTS, startServer } from "./server.ts";
+import { startScheduler, type SchedulerHandle } from "./scheduler.ts";
 
 // Runtime guard: this binary depends on Bun (bun:sqlite, Bun.serve, Bun.stdin).
 // If invoked under plain node, fail loudly with an install hint.
@@ -20,9 +21,14 @@ const noBrowser = process.env["ONESHOT_GTM_NO_BROWSER"] === "1";
 // process) can swap handlers via `server.reload({fetch})` instead of
 // rebinding the port, which would fail with EADDRINUSE.
 type BunServer = Awaited<ReturnType<typeof startServer>>["server"];
-const cache = globalThis as { __oneshotGtmServer?: BunServer };
+const cache = globalThis as {
+  __oneshotGtmServer?: BunServer;
+  __oneshotGtmScheduler?: SchedulerHandle;
+};
 
 if (cache.__oneshotGtmServer) {
+  // Hot reload: keep the existing scheduler running. The reloaded module
+  // graph picks up source changes on its next tick (5s-1h away).
   cache.__oneshotGtmServer.reload({
     ...SERVER_BASE_OPTS,
     fetch: buildFetchHandler(),
@@ -70,6 +76,13 @@ if (cache.__oneshotGtmServer) {
   const { url, server } = await startServer({ port });
   cache.__oneshotGtmServer = server;
 
+  // Background trigger scheduler — polls due triggers, fires them, sleeps
+  // for `nextSleepMs` between ticks. Replaces the need to run a separate
+  // `bun run cli -- find watch` daemon. Survives `bun --hot` re-execs by
+  // staying anchored to globalThis.
+  const scheduler = startScheduler();
+  cache.__oneshotGtmScheduler = scheduler;
+
   process.stdout.write(`\n  oneshot-gtm dashboard: ${url}\n\n`);
 
   if (!noBrowser) {
@@ -82,6 +95,7 @@ if (cache.__oneshotGtmServer) {
 
   const shutdown = (): void => {
     process.stdout.write("\n  shutting down...\n");
+    scheduler.stop();
     server.stop();
     process.exit(0);
   };
