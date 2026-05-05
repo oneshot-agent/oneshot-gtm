@@ -77,6 +77,8 @@ Motion plays don't require hand-curated JSON anymore. Eight **finders** auto-dis
 
 Each finder runs as a **trigger** with its own interval + spend cap. Captured per-prospect signals (LinkedIn URL via webSearch + phone via passive enrichment when surfaced) show next to the email + company in `/queue`. Approved rows ship via `bun run cli -- find drain <play>` or the per-play **Drain** button on the Queue page.
 
+The dashboard server runs an in-process scheduler that fires enabled triggers on their interval automatically — open `bun run cli -- ui`, enable a trigger, and it polls without you needing a separate `find watch` daemon. The CLI watch command stays useful for cron + headless deployments where you don't want the dashboard.
+
 ---
 
 ## 60-second setup

@@ -80,8 +80,22 @@ if (cache.__oneshotGtmServer) {
   // for `nextSleepMs` between ticks. Replaces the need to run a separate
   // `bun run cli -- find watch` daemon. Survives `bun --hot` re-execs by
   // staying anchored to globalThis.
-  const scheduler = startScheduler();
-  cache.__oneshotGtmScheduler = scheduler;
+  //
+  // Wrapped: scheduler init failure must not take down the server (founder
+  // can still drive triggers manually via /queue Run). The cold-boot sweep
+  // pattern above does the same thing for ledger-init resilience.
+  let scheduler: SchedulerHandle | null = null;
+  try {
+    scheduler = startScheduler();
+    cache.__oneshotGtmScheduler = scheduler;
+  } catch (err) {
+    logEvent(
+      "scheduler.start.failed",
+      { message_120: ((err as Error).message ?? "").slice(0, 120) },
+      "error",
+    );
+    process.stderr.write(`  warn: scheduler failed to start: ${(err as Error).message}\n`);
+  }
 
   process.stdout.write(`\n  oneshot-gtm dashboard: ${url}\n\n`);
 
@@ -95,7 +109,7 @@ if (cache.__oneshotGtmServer) {
 
   const shutdown = (): void => {
     process.stdout.write("\n  shutting down...\n");
-    scheduler.stop();
+    if (scheduler) scheduler.stop();
     server.stop();
     process.exit(0);
   };
