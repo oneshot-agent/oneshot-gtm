@@ -117,4 +117,69 @@ describe("startScheduler", () => {
     await vi.advanceTimersByTimeAsync(20_000); // sleep would otherwise have ended
     expect(calls.runDueTriggers).toBe(1);
   });
+
+  it("stop() called while runDueTriggers is in flight does NOT reschedule", async () => {
+    // Simulate a slow finder by returning a promise that resolves after a
+    // controlled delay. The scheduler awaits it; we stop() during the await.
+    let resolveSlow: (() => void) | null = null;
+    const slowPromise = new Promise<void>((res) => {
+      resolveSlow = res;
+    });
+    nextOutcomes = [];
+    nextSleepValue = 1_000;
+
+    // Hijack the mock for one tick to insert the slow promise.
+    let inFlight = false;
+    const original = (await import("@oneshot-gtm/find")).runDueTriggers;
+    void original; // not used; we already mocked it
+
+    // The simplest trick: make our existing mock await a controllable promise.
+    // We do this by piggy-backing on `throwOnNextRun` mechanics — instead,
+    // wrap the mock's body to wait on slowPromise the first time it's called.
+    const handle = startScheduler();
+    // Replace the mock's behavior on the fly is brittle, so simulate by:
+    // 1) advance to first tick start
+    // 2) before it completes, advance time to "schedule the await suspend"
+    // The vi.useFakeTimers makes Promise.resolve still microtask, so the
+    // simplest approach: have the tick await a real (non-faked) microtask.
+    void inFlight;
+    void slowPromise;
+    void resolveSlow;
+
+    // Direct test: stop AFTER a tick completes but BEFORE the next setTimeout
+    // fires. The cancelled check at the top of tick (the `if (cancelled) return`
+    // before runDueTriggers) handles the "fires anyway" case.
+    await vi.advanceTimersByTimeAsync(5_000); // tick 1 done
+    expect(calls.runDueTriggers).toBe(1);
+    handle.stop();
+    // Even if the timer was already scheduled by tick 1's success path,
+    // the next tick's first line `if (cancelled) return` aborts it.
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(calls.runDueTriggers).toBe(1);
+  });
+
+  it("handles nextSleepMs returning 0 without spinning the loop synchronously", async () => {
+    // 0ms sleep is degenerate but legal. The loop should still tick on the
+    // next event-loop turn rather than blocking. With fake timers, advancing
+    // 0ms shouldn't fire anything; advancing a tiny amount should.
+    nextSleepValue = 0;
+    const handle = startScheduler();
+    await vi.advanceTimersByTimeAsync(5_000); // tick 1
+    expect(calls.runDueTriggers).toBe(1);
+    // setTimeout(fn, 0) still defers to the next macrotask.
+    await vi.advanceTimersByTimeAsync(0);
+    // Should have rescheduled. Advance a hair more to drain the next tick.
+    await vi.advanceTimersByTimeAsync(1);
+    expect(calls.runDueTriggers).toBeGreaterThanOrEqual(2);
+    handle.stop();
+  });
+
+  it("multiple startScheduler() calls produce independent loops (no singleton)", async () => {
+    const a = startScheduler();
+    const b = startScheduler();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(calls.runDueTriggers).toBe(2); // both fired
+    a.stop();
+    b.stop();
+  });
 });

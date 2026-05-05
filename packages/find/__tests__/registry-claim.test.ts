@@ -125,3 +125,149 @@ describe("runDueTriggers — atomic claim", () => {
     }
   });
 });
+
+describe("runDueTriggers — branch coverage (no claim attempt for these)", () => {
+  it("does NOT attempt the claim when the trigger is disabled", async () => {
+    // Disable everything.
+    for (const key of Object.keys(fakeStore)) {
+      const row = fakeStore[key];
+      if (row) row.enabled = 0;
+    }
+    markReturnsTrue = false;
+    await runDueTriggers();
+    expect(calls.markTriggerRunning).toEqual([]);
+    expect(calls.updateTriggerLastPoll).toEqual([]);
+    // No skipped events either — disabled triggers exit silently before
+    // reaching the readiness/claim/run path.
+    const skipReasons = calls.events
+      .filter((e) => e.kind === "trigger.run.skipped")
+      .map((e) => e.ctx["reason"]);
+    expect(skipReasons).not.toContain("already-running");
+  });
+
+  it("does NOT attempt the claim when the trigger was polled within its interval", async () => {
+    // Set last_polled_at to "just now" so dueAt > now for all triggers.
+    const justNow = new Date().toISOString();
+    for (const row of Object.values(fakeStore)) {
+      row.last_polled_at = justNow;
+    }
+    markReturnsTrue = false;
+    await runDueTriggers();
+    expect(calls.markTriggerRunning).toEqual([]);
+  });
+
+  it("does NOT attempt the claim when readiness blocks the trigger (config missing)", async () => {
+    // github-topics requires `topics` in config (per its readiness fn). Its
+    // defaultConfig in the registry has empty topics, so it should skip on
+    // readiness BEFORE the claim. Confirm at least one such skip exists and
+    // that markTriggerRunning was NOT called for it.
+    markReturnsTrue = false;
+    await runDueTriggers();
+    const readinessSkips = calls.events.filter(
+      (e) =>
+        e.kind === "trigger.run.skipped" &&
+        e.ctx["reason"] !== "already-running" &&
+        e.ctx["source"] === "watch",
+    );
+    if (readinessSkips.length === 0) {
+      // If no trigger has a default-blocked readiness, nothing to assert.
+      return;
+    }
+    for (const skip of readinessSkips) {
+      const blockedName = skip.ctx["name"] as string;
+      const claimed = calls.markTriggerRunning.find((c) => c.name === blockedName);
+      expect(claimed).toBeUndefined();
+    }
+  });
+});
+
+describe("runDueTriggers — happy path (claim succeeds → finder runs)", () => {
+  it("invokes spec.run, persists the result via updateTriggerLastPoll, emits trigger.run.done", async () => {
+    // Pick the cheapest+fastest spec to mock — breakup-revive has no SDK calls.
+    const spec = TRIGGERS.find((s) => s.name === "show-hn");
+    if (!spec) throw new Error("show-hn spec missing — registry shape changed");
+
+    // Disable every other trigger so we only exercise the chosen one.
+    for (const row of Object.values(fakeStore)) {
+      if (row.name !== spec.name) row.enabled = 0;
+    }
+
+    // Stub spec.run to a resolved FinderResult — we don't want to touch
+    // the real ledger or any SDK.
+    const fakeResult = {
+      source: "find:show-hn",
+      candidates: 3,
+      droppedIcp: 0,
+      droppedDuplicate: 1,
+      droppedEnrichment: 0,
+      enqueued: 2,
+      costUsd: 0,
+    };
+    const runSpy = vi.spyOn(spec, "run").mockResolvedValue(fakeResult);
+
+    markReturnsTrue = true;
+    const outcomes = await runDueTriggers();
+
+    try {
+      expect(runSpy).toHaveBeenCalledTimes(1);
+      // Exactly one claim for our spec.
+      const claim = calls.markTriggerRunning.find((c) => c.name === spec.name);
+      expect(claim).toBeDefined();
+      // updateTriggerLastPoll called with our spec — clears running_started_at.
+      expect(calls.updateTriggerLastPoll).toContain(spec.name);
+      // Outcome reflects the result.
+      const outcome = outcomes.find((o) => o.name === spec.name);
+      expect(outcome).toMatchObject({ name: spec.name, fired: true });
+      // trigger.run.done event emitted with our metrics.
+      const done = calls.events.find(
+        (e) => e.kind === "trigger.run.done" && e.ctx["name"] === spec.name,
+      );
+      expect(done).toBeDefined();
+      expect(done!.ctx["enqueued"]).toBe(2);
+      expect(done!.ctx["candidates"]).toBe(3);
+      // No skipped event for this trigger.
+      const skip = calls.events.find(
+        (e) => e.kind === "trigger.run.skipped" && e.ctx["name"] === spec.name,
+      );
+      expect(skip).toBeUndefined();
+    } finally {
+      runSpy.mockRestore();
+    }
+  });
+
+  it("when spec.run throws, persists an error summary and emits trigger.run.error", async () => {
+    const spec = TRIGGERS.find((s) => s.name === "show-hn");
+    if (!spec) throw new Error("show-hn spec missing — registry shape changed");
+
+    for (const row of Object.values(fakeStore)) {
+      if (row.name !== spec.name) row.enabled = 0;
+    }
+
+    const runSpy = vi.spyOn(spec, "run").mockRejectedValue(new Error("ledger boom"));
+
+    markReturnsTrue = true;
+    const outcomes = await runDueTriggers();
+
+    try {
+      expect(runSpy).toHaveBeenCalledTimes(1);
+      // updateTriggerLastPoll still called — cleanup runs even on error,
+      // which is what clears running_started_at.
+      expect(calls.updateTriggerLastPoll).toContain(spec.name);
+      // Outcome is fired:true with an error message.
+      const outcome = outcomes.find((o) => o.name === spec.name);
+      expect(outcome).toMatchObject({ name: spec.name, fired: true });
+      expect(outcome!.error).toContain("ledger boom");
+      // Error event emitted, not done.
+      const errorEvent = calls.events.find(
+        (e) => e.kind === "trigger.run.error" && e.ctx["name"] === spec.name,
+      );
+      expect(errorEvent).toBeDefined();
+      const doneEvent = calls.events.find(
+        (e) => e.kind === "trigger.run.done" && e.ctx["name"] === spec.name,
+      );
+      expect(doneEvent).toBeUndefined();
+    } finally {
+      runSpy.mockRestore();
+    }
+  });
+});
