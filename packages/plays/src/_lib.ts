@@ -175,17 +175,33 @@ export async function verifyAndFilterTargets<T>(
   }
 
   const uniqueEmails = [...new Set(emailFor.values())];
+  // Catch SDK throws (transient network / rate-limit / invalid-format errors)
+  // and treat the affected target as dropped rather than aborting the whole
+  // run. Mirrors the per-candidate handling finders already do — one bad
+  // verify call shouldn't kill a 25-target batch.
   const verifications = await Promise.all(
     uniqueEmails.map(async (email) => {
-      const r = await verifyEmail({ email }, { playName: opts.playName });
-      const rawCost = (r.result as unknown as Record<string, unknown>)["cost"];
-      const cost = typeof rawCost === "number" ? rawCost : 0.01;
-      return {
-        email,
-        deliverable: Boolean(r.result.deliverable),
-        receiptId: r.receiptId,
-        costUsd: cost,
-      };
+      try {
+        const r = await verifyEmail({ email }, { playName: opts.playName });
+        const rawCost = (r.result as unknown as Record<string, unknown>)["cost"];
+        const cost = typeof rawCost === "number" ? rawCost : 0.01;
+        return {
+          email,
+          deliverable: Boolean(r.result.deliverable),
+          receiptId: r.receiptId,
+          costUsd: cost,
+          errored: false as const,
+        };
+      } catch (err) {
+        return {
+          email,
+          deliverable: false,
+          receiptId: 0,
+          costUsd: 0,
+          errored: true as const,
+          message: ((err as Error).message ?? "verify failed").slice(0, 120),
+        };
+      }
     }),
   );
   const byEmail = new Map(verifications.map((v) => [v.email, v]));
@@ -196,7 +212,7 @@ export async function verifyAndFilterTargets<T>(
   const receiptIds: number[] = [];
   for (const v of verifications) {
     costUsd += v.costUsd;
-    receiptIds.push(v.receiptId);
+    if (v.receiptId > 0) receiptIds.push(v.receiptId);
   }
 
   for (const t of targets) {
@@ -206,7 +222,15 @@ export async function verifyAndFilterTargets<T>(
       continue;
     }
     const v = byEmail.get(email);
-    if (!v || !v.deliverable) {
+    if (!v) {
+      dropped.push({ target: t, email, reason: "undeliverable" });
+      continue;
+    }
+    if (v.errored) {
+      dropped.push({ target: t, email, reason: `verify-error: ${v.message}` });
+      continue;
+    }
+    if (!v.deliverable) {
       dropped.push({ target: t, email, reason: "undeliverable" });
       continue;
     }

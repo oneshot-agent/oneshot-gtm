@@ -83,6 +83,14 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
             dropped: verify.dropped.map((d) => ({ email: d.email, reason: d.reason })),
           });
         }
+        // If verify dropped every target, skip dispatch entirely — no point
+        // calling the play with an empty array (the play would either
+        // return empty drafted[] or throw on a "founder profile incomplete"
+        // pre-check that's irrelevant when there's nothing to send).
+        if (verify.verified.length === 0 && inputCount > 0) {
+          send({ kind: "done", total: 0, sent: 0 });
+          return;
+        }
         const filteredBody: RunPlayRequest = { ...body, targets: verify.verified };
 
         const drafted = await dispatchPlay(playName, filteredBody);

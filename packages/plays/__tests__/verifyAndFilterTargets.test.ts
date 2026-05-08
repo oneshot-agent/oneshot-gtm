@@ -199,4 +199,61 @@ describe("verifyAndFilterTargets", () => {
     });
     expect(calls.verifyEmail[0]?.playName).toBe("post-funding");
   });
+
+  it("treats verifyEmail SDK throws as dropped instead of crashing the whole batch", async () => {
+    const targets: T[] = [
+      { email: "good@x.dev", name: "Good" },
+      { email: "bad-throw@y.dev", name: "BadThrow" },
+      { email: "also-good@z.dev", name: "AlsoGood" },
+    ];
+    verifyResponseFor = (email) => {
+      if (email === "bad-throw@y.dev") {
+        throw new Error("rate-limited by upstream");
+      }
+      return {
+        status: "ok",
+        email,
+        valid: true,
+        deliverable: true,
+        catch_all: false,
+        disposable: false,
+        cost: 0.005,
+      };
+    };
+    const r = await verifyAndFilterTargets(targets, (t) => t.email, {
+      playName: "p",
+      dryRun: false,
+    });
+    expect(r.verified.map((t) => t.name).toSorted()).toEqual(["AlsoGood", "Good"]);
+    expect(r.dropped).toHaveLength(1);
+    expect(r.dropped[0]?.email).toBe("bad-throw@y.dev");
+    expect(r.dropped[0]?.reason).toContain("verify-error");
+    expect(r.dropped[0]?.reason).toContain("rate-limited");
+  });
+
+  it("does not include the failed verify's receiptId (it's 0/synthetic)", async () => {
+    verifyResponseFor = (email) => {
+      if (email === "bad@y.dev") throw new Error("boom");
+      return {
+        status: "ok",
+        email,
+        valid: true,
+        deliverable: true,
+        catch_all: false,
+        disposable: false,
+        cost: 0.005,
+      };
+    };
+    const r = await verifyAndFilterTargets(
+      [
+        { email: "ok@x.dev", name: "OK" },
+        { email: "bad@y.dev", name: "Bad" },
+      ] as T[],
+      (t) => t.email,
+      { playName: "p", dryRun: false },
+    );
+    // One real receipt for the successful verify; the throw produces no receipt.
+    expect(r.receiptIds).toHaveLength(1);
+    expect(r.receiptIds.every((id) => id > 0)).toBe(true);
+  });
 });
