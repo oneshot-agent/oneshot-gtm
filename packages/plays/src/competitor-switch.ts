@@ -62,7 +62,21 @@ export async function runCompetitorSwitch(
       receiptIds.push(enr.receiptId);
       dossier = JSON.stringify(enr.result, null, 2).slice(0, 3500);
 
-      if (t.evidenceUrl && !opts.skipBrowserScrape) {
+      // Skip the browserTask scrape when evidenceText was already supplied
+      // (or when the founder explicitly opts out). Two reasons:
+      // 1. The github-topics finder enqueues both — it builds evidenceText
+      //    from the manifest scan and sets evidenceUrl to the repo. Scraping
+      //    a code page for "pain points" returns nothing useful; the manifest-
+      //    derived stitch line IS the evidence.
+      // 2. browserTask is the slowest call in the SDK (maxSteps:12, easily
+      //    30s-3min on JS-heavy pages). Re-scraping when we already have
+      //    evidence wastes time + ~$0.30+ in browser-task spend.
+      // The scrape still fires when the founder pasted only an evidenceUrl
+      // (e.g. a G2 review page) — that's when extracting structured pain-
+      // points actually pays off.
+      const haveEvidenceText =
+        typeof t.evidenceText === "string" && t.evidenceText.trim().length > 0;
+      if (t.evidenceUrl && !opts.skipBrowserScrape && !haveEvidenceText) {
         const browse = await browserTask(
           {
             task: `Read the page at ${t.evidenceUrl} and extract: (1) any specific complaints or pain points the user mentioned about ${t.competitor}, (2) any mentions of features they wished existed, (3) any context about company size or use case. Return concise structured JSON.`,
