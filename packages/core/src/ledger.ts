@@ -14,6 +14,39 @@ import type {
 
 const DEFAULT_DB_PATH = join(configDir(), "ledger.sqlite");
 
+/**
+ * Canonical USD-per-call defaults the finder budget-cap math has used since
+ * F1 (every `extractCost(result) ?? <default>` site). These mirror OneShot's
+ * published per-call pricing for the call types we exercise. Used by
+ * `recordReceipt` when the SDK result didn't include a `cost` field, so the
+ * dashboard's CAC / RoCS / Spend tables don't show $0 across the board.
+ *
+ * Returns undefined for call types whose pricing is per-step or per-minute
+ * (voice.call, browser.task) — those need an explicit costUsd from the caller.
+ */
+export function defaultCostUsdForCallType(callType: string): number | undefined {
+  switch (callType) {
+    case "web.search":
+      return 0.01;
+    case "web.read":
+      return 0.02;
+    case "email.find":
+      return 0.05;
+    case "email.verify":
+      return 0.01;
+    case "enrich.profile":
+      return 0.005;
+    case "research.person":
+      return 0.05;
+    case "email.send":
+      return 0.005;
+    case "sms.send":
+      return 0.01;
+    default:
+      return undefined;
+  }
+}
+
 export class Ledger {
   private db: Database;
 
@@ -256,6 +289,26 @@ export class Ledger {
     signedReceipt?: unknown;
     oneshotRequestId?: string;
   }): number {
+    // Resolve cost in priority order:
+    //   1. explicit `costUsd` from the caller
+    //   2. `cost` field on the signedReceipt JSON (when the SDK includes it)
+    //   3. canonical per-call-type fallback (matches the values finders use
+    //      in their per-run budget caps via `extractCost(...) ?? <default>`)
+    //
+    // Without (3) the dashboard's Spend / CAC / RoCS tables show $0 for
+    // every call because the typed SDK interfaces don't expose `cost` and
+    // the wrappers in core/src/oneshot.ts never forwarded it explicitly.
+    let costUsd = input.costUsd;
+    if (costUsd == null && input.signedReceipt && typeof input.signedReceipt === "object") {
+      const rawCost = (input.signedReceipt as Record<string, unknown>)["cost"];
+      if (typeof rawCost === "number" && Number.isFinite(rawCost)) {
+        costUsd = rawCost;
+      }
+    }
+    if (costUsd == null) {
+      const fallback = defaultCostUsdForCallType(input.callType);
+      if (fallback != null) costUsd = fallback;
+    }
     const stmt = this.db.prepare(`
       INSERT INTO receipts(play_name, call_type, cost_usd, signed_receipt, oneshot_request_id)
       VALUES(?, ?, ?, ?, ?)
@@ -263,7 +316,7 @@ export class Ledger {
     const result = stmt.run(
       input.playName,
       input.callType,
-      input.costUsd ?? null,
+      costUsd ?? null,
       input.signedReceipt ? JSON.stringify(input.signedReceipt) : null,
       input.oneshotRequestId ?? null,
     );

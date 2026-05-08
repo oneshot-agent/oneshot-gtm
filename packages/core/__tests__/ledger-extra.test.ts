@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { Ledger } from "../src/ledger.ts";
+import { defaultCostUsdForCallType, Ledger } from "../src/ledger.ts";
 
 let dbPath: string;
 let ledger: Ledger;
@@ -52,12 +52,107 @@ describe("listReceipts filters", () => {
   });
 });
 
+describe("defaultCostUsdForCallType", () => {
+  it("returns the canonical fallback for known call types", () => {
+    expect(defaultCostUsdForCallType("web.search")).toBe(0.01);
+    expect(defaultCostUsdForCallType("web.read")).toBe(0.02);
+    expect(defaultCostUsdForCallType("email.find")).toBe(0.05);
+    expect(defaultCostUsdForCallType("email.verify")).toBe(0.01);
+    expect(defaultCostUsdForCallType("enrich.profile")).toBe(0.005);
+    expect(defaultCostUsdForCallType("research.person")).toBe(0.05);
+    expect(defaultCostUsdForCallType("email.send")).toBe(0.005);
+    expect(defaultCostUsdForCallType("sms.send")).toBe(0.01);
+  });
+
+  it("returns undefined for per-step / per-minute call types (caller must pass costUsd)", () => {
+    expect(defaultCostUsdForCallType("voice.call")).toBeUndefined();
+    expect(defaultCostUsdForCallType("browser.task")).toBeUndefined();
+    expect(defaultCostUsdForCallType("research.deep")).toBeUndefined();
+    expect(defaultCostUsdForCallType("nonexistent.op")).toBeUndefined();
+  });
+});
+
+describe("recordReceipt — cost resolution priority", () => {
+  it("uses explicit costUsd when provided (overrides everything else)", () => {
+    const id = ledger.recordReceipt({
+      playName: "p",
+      callType: "web.search",
+      costUsd: 0.99,
+      signedReceipt: { cost: 0.01 }, // would normally win over fallback
+    });
+    const row = ledger.getReceipt(id);
+    expect(row?.cost_usd).toBe(0.99);
+  });
+
+  it("reads cost from the signedReceipt JSON when explicit costUsd is absent", () => {
+    const id = ledger.recordReceipt({
+      playName: "p",
+      callType: "web.search",
+      signedReceipt: { cost: 0.0123 },
+    });
+    expect(ledger.getReceipt(id)?.cost_usd).toBeCloseTo(0.0123);
+  });
+
+  it("falls back to the per-call-type default when neither costUsd nor signedReceipt.cost is present", () => {
+    const id = ledger.recordReceipt({
+      playName: "p",
+      callType: "email.find",
+      signedReceipt: { found: true, email: "x@y.dev" }, // no cost field
+    });
+    expect(ledger.getReceipt(id)?.cost_usd).toBe(0.05);
+  });
+
+  it("ignores non-numeric cost values on the signedReceipt and falls through to the fallback", () => {
+    const id = ledger.recordReceipt({
+      playName: "p",
+      callType: "web.read",
+      signedReceipt: { cost: "0.05" }, // string, not number
+    });
+    expect(ledger.getReceipt(id)?.cost_usd).toBe(0.02); // falls through to fallback
+  });
+
+  it("ignores Infinity / NaN on signedReceipt.cost and falls through", () => {
+    const id1 = ledger.recordReceipt({
+      playName: "p",
+      callType: "web.search",
+      signedReceipt: { cost: Infinity },
+    });
+    const id2 = ledger.recordReceipt({
+      playName: "p",
+      callType: "web.search",
+      signedReceipt: { cost: Number.NaN },
+    });
+    expect(ledger.getReceipt(id1)?.cost_usd).toBe(0.01); // fallback
+    expect(ledger.getReceipt(id2)?.cost_usd).toBe(0.01); // fallback
+  });
+
+  it("leaves cost_usd null when the call type has no fallback and nothing was passed", () => {
+    const id = ledger.recordReceipt({ playName: "p", callType: "voice.call" });
+    expect(ledger.getReceipt(id)?.cost_usd).toBeNull();
+  });
+
+  it("works with no signedReceipt — pure fallback path", () => {
+    const id = ledger.recordReceipt({ playName: "p", callType: "web.search" });
+    expect(ledger.getReceipt(id)?.cost_usd).toBe(0.01);
+  });
+});
+
 describe("totalSpendUsd", () => {
-  it("sums non-null cost_usd values only", () => {
+  it("sums explicit cost_usd values + per-call-type fallback for unspecified", () => {
     ledger.recordReceipt({ playName: "show-hn", callType: "email.send", costUsd: 0.1 });
     ledger.recordReceipt({ playName: "show-hn", callType: "email.send", costUsd: 0.25 });
-    ledger.recordReceipt({ playName: "show-hn", callType: "email.send" }); // null cost
-    expect(ledger.totalSpendUsd()).toBeCloseTo(0.35);
+    // No explicit cost — recordReceipt now applies the canonical email.send
+    // default ($0.005) so the dashboard's spend tile reflects real activity.
+    ledger.recordReceipt({ playName: "show-hn", callType: "email.send" });
+    expect(ledger.totalSpendUsd()).toBeCloseTo(0.355);
+  });
+
+  it("leaves cost_usd null for call types with no canonical fallback (e.g. voice.call)", () => {
+    // voice.call is per-minute — pricing depends on duration, so recordReceipt
+    // can't guess. Without an explicit costUsd it stays null and is excluded.
+    ledger.recordReceipt({ playName: "concierge", callType: "voice.call" });
+    ledger.recordReceipt({ playName: "concierge", callType: "voice.call", costUsd: 0.42 });
+    expect(ledger.totalSpendUsd()).toBeCloseTo(0.42);
   });
 
   it("filters by playName", () => {
