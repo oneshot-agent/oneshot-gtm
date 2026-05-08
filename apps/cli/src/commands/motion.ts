@@ -7,6 +7,7 @@ import {
   runHiringSignal,
   runPodcastGuest,
   runPostFunding,
+  verifyAndFilterTargets,
   type CompetitorSwitchTarget,
   type ConciergeTarget,
   type DemoNoShowTarget,
@@ -16,6 +17,30 @@ import {
 } from "@oneshot-gtm/plays";
 import { readFileSync } from "node:fs";
 import { box, c, fail, header, note, ok, warn } from "../output.ts";
+
+/**
+ * Verify all target emails upfront so undeliverable rows are dropped
+ * before drafting cost is spent. Skipped on dryRun. Returns the filtered
+ * target list — caller hands it to the play.
+ */
+async function preVerify<T>(
+  targets: T[],
+  getEmail: (t: T) => string | null | undefined,
+  opts: { playName: string; dryRun: boolean },
+): Promise<T[]> {
+  const r = await verifyAndFilterTargets(targets, getEmail, opts);
+  if (r.dropped.length > 0) {
+    warn(
+      `dropped ${r.dropped.length} of ${targets.length} target(s) — undeliverable email:\n  ${r.dropped
+        .map((d) => `${d.email || "(missing)"} — ${d.reason}`)
+        .join("\n  ")}`,
+    );
+  }
+  if (r.costUsd > 0) {
+    note(`verify spend: $${r.costUsd.toFixed(3)} (${r.receiptIds.length} verify call(s))\n`);
+  }
+  return r.verified;
+}
 
 interface DraftedView {
   label: string;
@@ -51,8 +76,12 @@ export async function commandMotionPostFunding(opts: {
   dryRun: boolean;
 }): Promise<void> {
   header(`motion post-funding ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
-  const targets = readJson<PostFundingTarget[]>(opts.targetFile);
-  note(`${targets.length} target(s) loaded from ${c.cyan(opts.targetFile)}\n`);
+  const raw = readJson<PostFundingTarget[]>(opts.targetFile);
+  note(`${raw.length} target(s) loaded from ${c.cyan(opts.targetFile)}\n`);
+  const targets = await preVerify(raw, (t) => t.email, {
+    playName: "post-funding",
+    dryRun: opts.dryRun,
+  });
   const result = await runPostFunding({ dryRun: opts.dryRun, targets });
   printDrafts(
     result.drafted.map((d) => ({
@@ -119,8 +148,12 @@ export async function commandMotionDemoNoShow(opts: {
   skipSms: boolean;
 }): Promise<void> {
   header(`motion demo-no-show ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
-  const targets = readJson<DemoNoShowTarget[]>(opts.targetFile);
-  note(`${targets.length} no-show(s) loaded from ${c.cyan(opts.targetFile)}\n`);
+  const raw = readJson<DemoNoShowTarget[]>(opts.targetFile);
+  note(`${raw.length} no-show(s) loaded from ${c.cyan(opts.targetFile)}\n`);
+  const targets = await preVerify(raw, (t) => t.email, {
+    playName: "demo-no-show",
+    dryRun: opts.dryRun,
+  });
   const result = await runDemoNoShow({ dryRun: opts.dryRun, targets, skipSms: opts.skipSms });
   for (const o of result.outcomes) {
     box(`${o.target.name} — ${o.target.company} (missed ${o.target.missedAt})`, "");
@@ -146,8 +179,12 @@ export async function commandMotionCompetitorSwitch(opts: {
   skipBrowser: boolean;
 }): Promise<void> {
   header(`motion competitor-switch ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
-  const targets = readJson<CompetitorSwitchTarget[]>(opts.targetFile);
-  note(`${targets.length} target(s) loaded from ${c.cyan(opts.targetFile)}\n`);
+  const raw = readJson<CompetitorSwitchTarget[]>(opts.targetFile);
+  note(`${raw.length} target(s) loaded from ${c.cyan(opts.targetFile)}\n`);
+  const targets = await preVerify(raw, (t) => t.email, {
+    playName: "competitor-switch",
+    dryRun: opts.dryRun,
+  });
   const result = await runCompetitorSwitch({
     dryRun: opts.dryRun,
     targets,
@@ -172,8 +209,12 @@ export async function commandMotionHiringSignal(opts: {
   skipScrape: boolean;
 }): Promise<void> {
   header(`motion hiring-signal ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
-  const targets = readJson<HiringSignalTarget[]>(opts.targetFile);
-  note(`${targets.length} target(s) loaded from ${c.cyan(opts.targetFile)}\n`);
+  const raw = readJson<HiringSignalTarget[]>(opts.targetFile);
+  note(`${raw.length} target(s) loaded from ${c.cyan(opts.targetFile)}\n`);
+  const targets = await preVerify(raw, (t) => t.email, {
+    playName: "hiring-signal",
+    dryRun: opts.dryRun,
+  });
   const result = await runHiringSignal({
     dryRun: opts.dryRun,
     targets,
@@ -201,8 +242,12 @@ export async function commandMotionPodcastGuest(opts: {
   skipSearch: boolean;
 }): Promise<void> {
   header(`motion podcast-guest ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
-  const targets = readJson<PodcastGuestTarget[]>(opts.targetFile);
-  note(`${targets.length} guest(s) loaded from ${c.cyan(opts.targetFile)}\n`);
+  const raw = readJson<PodcastGuestTarget[]>(opts.targetFile);
+  note(`${raw.length} guest(s) loaded from ${c.cyan(opts.targetFile)}\n`);
+  const targets = await preVerify(raw, (t) => t.email, {
+    playName: "podcast-guest",
+    dryRun: opts.dryRun,
+  });
   const result = await runPodcastGuest({
     dryRun: opts.dryRun,
     targets,

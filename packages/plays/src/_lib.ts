@@ -1,4 +1,4 @@
-import { getLedger, loadConfig, receiptUrlForId, sendEmail } from "@oneshot-gtm/core";
+import { getLedger, loadConfig, receiptUrlForId, sendEmail, verifyEmail } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 
 export const SLOP_PHRASES: Array<[RegExp, string]> = [
@@ -136,4 +136,82 @@ export async function sendDraftedEmail(opts: SendDraftedOpts): Promise<SendDraft
 
 export function receiptUrls(receiptIds: number[]): string[] {
   return receiptIds.map(receiptUrlForId);
+}
+
+export interface VerifyAndFilterResult<T> {
+  verified: T[];
+  dropped: Array<{ target: T; email: string; reason: string }>;
+  receiptIds: number[];
+  costUsd: number;
+}
+
+/**
+ * Verify a batch of target emails BEFORE drafting + sending. Used by
+ * direct-input entry points (CLI motion commands + dashboard /run) where
+ * the founder pastes targets directly without going through a finder.
+ * Drops undeliverable rows so the caller skips ~$0.005-0.02 of LLM
+ * drafting cost per bad email AND avoids the send attempt itself.
+ *
+ * Skips on dryRun (no real spend during preview) and on empty input.
+ * De-dupes the underlying verifyEmail calls so a duplicated email in
+ * the input doesn't double-bill.
+ *
+ * Finder-sourced rows that flow through /queue → drain do NOT call this
+ * — they were already verified at finder enqueue time.
+ */
+export async function verifyAndFilterTargets<T>(
+  targets: T[],
+  getEmail: (target: T) => string | null | undefined,
+  opts: { playName: string; dryRun: boolean },
+): Promise<VerifyAndFilterResult<T>> {
+  if (opts.dryRun || targets.length === 0) {
+    return { verified: targets, dropped: [], receiptIds: [], costUsd: 0 };
+  }
+
+  const emailFor = new Map<T, string>();
+  for (const t of targets) {
+    const e = (getEmail(t) ?? "").trim().toLowerCase();
+    if (e.length > 0) emailFor.set(t, e);
+  }
+
+  const uniqueEmails = [...new Set(emailFor.values())];
+  const verifications = await Promise.all(
+    uniqueEmails.map(async (email) => {
+      const r = await verifyEmail({ email }, { playName: opts.playName });
+      const rawCost = (r.result as unknown as Record<string, unknown>)["cost"];
+      const cost = typeof rawCost === "number" ? rawCost : 0.01;
+      return {
+        email,
+        deliverable: Boolean(r.result.deliverable),
+        receiptId: r.receiptId,
+        costUsd: cost,
+      };
+    }),
+  );
+  const byEmail = new Map(verifications.map((v) => [v.email, v]));
+
+  const verified: T[] = [];
+  const dropped: VerifyAndFilterResult<T>["dropped"] = [];
+  let costUsd = 0;
+  const receiptIds: number[] = [];
+  for (const v of verifications) {
+    costUsd += v.costUsd;
+    receiptIds.push(v.receiptId);
+  }
+
+  for (const t of targets) {
+    const email = emailFor.get(t);
+    if (!email) {
+      dropped.push({ target: t, email: "", reason: "missing email" });
+      continue;
+    }
+    const v = byEmail.get(email);
+    if (!v || !v.deliverable) {
+      dropped.push({ target: t, email, reason: "undeliverable" });
+      continue;
+    }
+    verified.push(t);
+  }
+
+  return { verified, dropped, receiptIds, costUsd };
 }

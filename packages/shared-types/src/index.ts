@@ -233,6 +233,12 @@ export interface RunPlayRequest {
 
 /** Server-Sent Events frame contract for /api/run/$playName. */
 export type RunPlayEvent =
+  | {
+      kind: "verify";
+      total: number;
+      verified: number;
+      dropped: Array<{ email: string; reason: string }>;
+    }
   | { kind: "draft"; index: number; subject: string; body: string; flags: string[] }
   | { kind: "send"; index: number; receiptIds: number[] }
   | { kind: "error"; index: number; message: string }

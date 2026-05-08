@@ -1,11 +1,14 @@
 import {
   runAcceleratorBatch,
+  runCompetitorSwitch,
   runHiringSignal,
   runJobChange,
   runPodcastGuest,
   runPostFunding,
   runShowHn,
+  verifyAndFilterTargets,
   type AcceleratorBatchTarget,
+  type CompetitorSwitchTarget,
   type HiringSignalTarget,
   type JobChangeTarget,
   type PodcastGuestTarget,
@@ -22,6 +25,7 @@ const SUPPORTED = new Set([
   "accelerator-batch",
   "hiring-signal",
   "podcast-guest",
+  "competitor-switch",
 ]);
 
 interface DraftedView {
@@ -61,7 +65,27 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
       };
 
       try {
-        const drafted = await dispatchPlay(playName, body);
+        // Verify all target emails BEFORE dispatching to the play, so
+        // undeliverable rows are dropped before we spend on LLM drafting.
+        // Skipped on dryRun (no real spend during preview). The verify
+        // event tells the UI which rows were dropped + why.
+        const inputCount = body.targets.length;
+        const verify = await verifyAndFilterTargets(
+          body.targets as Array<{ email?: string; founderEmail?: string }>,
+          (t) => t.email ?? t.founderEmail ?? null,
+          { playName, dryRun: body.dryRun },
+        );
+        if (verify.dropped.length > 0) {
+          send({
+            kind: "verify",
+            total: inputCount,
+            verified: verify.verified.length,
+            dropped: verify.dropped.map((d) => ({ email: d.email, reason: d.reason })),
+          });
+        }
+        const filteredBody: RunPlayRequest = { ...body, targets: verify.verified };
+
+        const drafted = await dispatchPlay(playName, filteredBody);
         let sentCount = 0;
         drafted.forEach((d, index) => {
           send({ kind: "draft", index, subject: d.subject, body: d.body, flags: d.flags });
@@ -151,6 +175,13 @@ async function dispatchPlay(playName: string, body: RunPlayRequest): Promise<Dra
       const result = await runPodcastGuest({
         dryRun: body.dryRun,
         targets: body.targets as PodcastGuestTarget[],
+      });
+      return result.drafted.map(toDraftedView);
+    }
+    case "competitor-switch": {
+      const result = await runCompetitorSwitch({
+        dryRun: body.dryRun,
+        targets: body.targets as CompetitorSwitchTarget[],
       });
       return result.drafted.map(toDraftedView);
     }
