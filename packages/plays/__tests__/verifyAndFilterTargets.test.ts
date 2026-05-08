@@ -175,7 +175,10 @@ describe("verifyAndFilterTargets", () => {
     expect(r.costUsd).toBeCloseTo(0.024, 5);
   });
 
-  it("falls back to a default cost when the SDK doesn't return one", async () => {
+  it("contributes 0 to costUsd when the SDK omits cost (no fallback)", async () => {
+    // Post-SDK-0.15.2 every result type declares `cost?: number`. If the SDK
+    // omits it for some reason, the helper accumulates 0 (not a hardcoded
+    // approximation) — surfaces as a NULL receipt downstream so it's visible.
     verifyResponseFor = (email) => ({
       status: "ok",
       email,
@@ -185,11 +188,15 @@ describe("verifyAndFilterTargets", () => {
       disposable: false,
       // no cost field
     });
-    const r = await verifyAndFilterTargets([{ email: "a@x.dev", name: "A" }] as T[], (t) => t.email, {
-      playName: "p",
-      dryRun: false,
-    });
-    expect(r.costUsd).toBe(0.01);
+    const r = await verifyAndFilterTargets(
+      [{ email: "a@x.dev", name: "A" }] as T[],
+      (t) => t.email,
+      {
+        playName: "p",
+        dryRun: false,
+      },
+    );
+    expect(r.costUsd).toBe(0);
   });
 
   it("forwards the playName to verifyEmail so receipts are tagged correctly", async () => {

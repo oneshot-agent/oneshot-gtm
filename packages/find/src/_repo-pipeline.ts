@@ -162,15 +162,12 @@ export async function processRepoCandidate(
   ]);
 
   if (stack.detected.length < ctx.minVendors) {
-    logEvent(
-      "github-topics.dropped.min_vendors",
-      {
-        repo: `${owner}/${repoName}`,
-        detected_count: stack.detected.length,
-        manifests_found: stack.manifestsFound,
-        min_vendors: ctx.minVendors,
-      },
-    );
+    logEvent("github-topics.dropped.min_vendors", {
+      repo: `${owner}/${repoName}`,
+      detected_count: stack.detected.length,
+      manifests_found: stack.manifestsFound,
+      min_vendors: ctx.minVendors,
+    });
     result.droppedEnrichment++;
     return;
   }
@@ -231,7 +228,7 @@ export async function processRepoCandidate(
     result.droppedEnrichment++;
     return;
   }
-  accumCost(extractCost(verified.result) ?? 0.01);
+  accumCost(verified.result.cost ?? 0);
   if (!verified.result.deliverable) {
     result.droppedEnrichment++;
     return;
@@ -360,7 +357,7 @@ export async function resolveContact(args: {
       discoveredLinkedinUrl = linkedinUrl;
       try {
         const enriched = await enrichProfile({ linkedinUrl }, { playName: PLAY_NAME });
-        accumCost(extractCost(enriched.result) ?? 0.005);
+        accumCost(enriched.result.cost ?? 0);
         const profile = enriched.result.profile;
         // PersonResult exposes phone (string) AND fullphone (array) — extractFirstPhone
         // reads either. Capture once and reuse on every return path so we don't drop
@@ -434,13 +431,15 @@ export async function resolveContact(args: {
       },
       { playName: PLAY_NAME },
     );
-    accumCost(extractCost(dr.result) ?? 0.05);
+    accumCost(dr.result.cost ?? 0);
     const enr = dr.result.result?.enrichment;
-    const drEmail =
-      enr?.best_work_email ?? enr?.best_personal_email ?? enr?.altemails?.[0] ?? null;
+    const drEmail = enr?.best_work_email ?? enr?.best_personal_email ?? enr?.altemails?.[0] ?? null;
     if (!drEmail) return null;
     const drFullName =
-      [enr?.firstname, enr?.lastname].filter((p): p is string => Boolean(p)).join(" ").trim() ||
+      [enr?.firstname, enr?.lastname]
+        .filter((p): p is string => Boolean(p))
+        .join(" ")
+        .trim() ||
       enr?.displayname ||
       null;
     const drPhone = extractFirstPhone(enr);
@@ -499,7 +498,7 @@ async function tryFindEmail(
     );
     return null;
   }
-  accumCost(extractCost(found.result) ?? 0.005);
+  accumCost(found.result.cost ?? 0);
   if (found.result.found && found.result.email) {
     return { email: found.result.email, fullName: found.result.full_name ?? null };
   }
@@ -530,10 +529,3 @@ export function describeForIcp(hit: RepoCandidate): string {
 function truncate(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
 }
-
-function extractCost(r: unknown): number | undefined {
-  if (!r || typeof r !== "object") return undefined;
-  const v = (r as Record<string, unknown>)["cost"];
-  return typeof v === "number" ? v : undefined;
-}
-

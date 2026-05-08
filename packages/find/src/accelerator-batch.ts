@@ -161,7 +161,7 @@ export async function runAcceleratorBatchFinder(
       { fullName: founderName, companyDomain: domain },
       { playName: PLAY_NAME },
     );
-    result.costUsd += extractCost(found.result) ?? 0.05;
+    result.costUsd += found.result.cost ?? 0;
     if (!found.result.found || !found.result.email) {
       result.droppedEnrichment++;
       return;
@@ -177,7 +177,7 @@ export async function runAcceleratorBatchFinder(
     }
 
     const verified = await verifyEmail({ email }, { playName: PLAY_NAME });
-    result.costUsd += extractCost(verified.result) ?? 0.01;
+    result.costUsd += verified.result.cost ?? 0;
     if (!verified.result.deliverable) {
       result.droppedEnrichment++;
       return;
@@ -264,12 +264,6 @@ function buildIcpSummary(record: CompanyRecord): string {
   return parts.join("\n\n");
 }
 
-function extractCost(r: unknown): number | undefined {
-  if (!r || typeof r !== "object") return undefined;
-  const v = (r as Record<string, unknown>)["cost"];
-  return typeof v === "number" ? v : undefined;
-}
-
 /**
  * webRead a per-company URL (YC profile preferred, company website as
  * fallback) and run the `accelerator-launch-extract` prompt to grab a
@@ -290,7 +284,7 @@ export async function resolveFounderName(record: CompanyRecord): Promise<{
   let costUsd = 0;
   try {
     const read = await webRead({ url }, { playName: PLAY_NAME });
-    costUsd += extractCost(read.result) ?? 0.02;
+    costUsd += read.result.cost ?? 0;
     const system = loadPrompt("accelerator-launch-extract");
     const llm = await complete({
       messages: [

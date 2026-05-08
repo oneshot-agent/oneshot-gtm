@@ -15,8 +15,7 @@ const PLAY_NAME = "linkedin-lookup";
 /** Match `linkedin.com/in/<slug>` profile URLs. The slug class is permissive
  *  enough to cover URL-encoded unicode slugs (e.g. `%E7%8E%8B`) which LinkedIn
  *  does serve for non-Latin display names. */
-const LINKEDIN_PROFILE_RX =
-  /^https?:\/\/(?:[a-z0-9-]+\.)*linkedin\.com\/in\/[a-z0-9-_.%]+/i;
+const LINKEDIN_PROFILE_RX = /^https?:\/\/(?:[a-z0-9-]+\.)*linkedin\.com\/in\/[a-z0-9-_.%]+/i;
 
 /** Per-process cache so the same `(fullName, disambiguators)` doesn't re-search
  *  within a run. `null` is a real cached value (means "we tried and missed"). */
@@ -68,15 +67,20 @@ export async function findLinkedInUrl(args: {
   const fullName = args.fullName.trim();
   if (fullName.length === 0) return null;
 
-  const disambiguators = (args.disambiguators ?? []).map((s) => s.trim()).filter((s) => s.length > 0);
-  const cacheKey = JSON.stringify([fullName.toLowerCase(), disambiguators.map((s) => s.toLowerCase())]);
+  const disambiguators = (args.disambiguators ?? [])
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  const cacheKey = JSON.stringify([
+    fullName.toLowerCase(),
+    disambiguators.map((s) => s.toLowerCase()),
+  ]);
   if (cache.has(cacheKey)) return cache.get(cacheKey) ?? null;
 
   const tokens = [fullName, ...disambiguators];
   const query = `${tokens.map((t) => `"${t}"`).join(" ")} site:linkedin.com/in`;
   try {
     const search = await webSearch({ query, maxResults: 5 }, { playName: PLAY_NAME });
-    args.accumCost(extractCost(search.result) ?? 0.01);
+    args.accumCost(search.result.cost ?? 0);
     for (const r of search.result.results ?? []) {
       const url = typeof r.url === "string" ? r.url : "";
       if (LINKEDIN_PROFILE_RX.test(url)) {
@@ -137,10 +141,4 @@ export function extractFirstPhone(source: unknown): string | null {
   if (typeof phone === "string" && phone.trim().length > 0) return phone.trim();
 
   return null;
-}
-
-function extractCost(r: unknown): number | undefined {
-  if (!r || typeof r !== "object") return undefined;
-  const v = (r as Record<string, unknown>)["cost"];
-  return typeof v === "number" ? v : undefined;
 }

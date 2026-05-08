@@ -77,7 +77,7 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
         { query, maxResults: Math.min(15, limit) },
         { playName: PLAY_NAME },
       );
-      result.costUsd += extractCost(search.result) ?? 0.01;
+      result.costUsd += search.result.cost ?? 0;
       for (const hit of search.result.results ?? []) {
         if (!hit.url || seen.has(hit.url) || !isAtsUrl(hit.url)) continue;
         seen.add(hit.url);
@@ -133,7 +133,7 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
     let extract: HiringSignalExtract;
     try {
       const read = await webRead({ url: hit.url }, { playName: PLAY_NAME });
-      result.costUsd += extractCost(read.result) ?? 0.02;
+      result.costUsd += read.result.cost ?? 0;
       const llm = await complete({
         messages: [
           { role: "system", content: system },
@@ -185,7 +185,7 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
         ? { fullName: extract.hiringManagerName, companyDomain: domain }
         : { companyDomain: domain };
     const found = await findEmail(findInput, { playName: PLAY_NAME });
-    result.costUsd += extractCost(found.result) ?? 0.05;
+    result.costUsd += found.result.cost ?? 0;
     if (!found.result.found || !found.result.email) {
       result.droppedEnrichment++;
       continue;
@@ -198,7 +198,7 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
     }
 
     const verified = await verifyEmail({ email }, { playName: PLAY_NAME });
-    result.costUsd += extractCost(verified.result) ?? 0.01;
+    result.costUsd += verified.result.cost ?? 0;
     if (!verified.result.deliverable) {
       result.droppedEnrichment++;
       continue;
@@ -290,7 +290,7 @@ async function resolveCorporateDomain(
       { query: `"${company}" official site`, maxResults: 5 },
       { playName: PLAY_NAME },
     );
-    costUsd += extractCost(search.result) ?? 0.01;
+    costUsd += search.result.cost ?? 0;
     for (const hit of search.result.results ?? []) {
       const host = pickCorporateHost(hit.url);
       if (host) {
@@ -343,10 +343,4 @@ export function parseHiringSignalExtract(raw: string): HiringSignalExtract {
     phone: null,
     summary: null,
   });
-}
-
-function extractCost(r: unknown): number | undefined {
-  if (!r || typeof r !== "object") return undefined;
-  const v = (r as Record<string, unknown>)["cost"];
-  return typeof v === "number" ? v : undefined;
 }

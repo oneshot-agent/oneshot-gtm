@@ -89,7 +89,7 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
     let extract: PostFundingExtract;
     try {
       const read = await webRead({ url }, { playName: PLAY_NAME });
-      result.costUsd += extractCost(read.result) ?? 0.02;
+      result.costUsd += read.result.cost ?? 0;
       const llm = await complete({
         messages: [
           { role: "system", content: system },
@@ -150,7 +150,7 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
       { fullName: extract.founderName, companyDomain: extract.companyDomain },
       { playName: PLAY_NAME },
     );
-    result.costUsd += extractCost(found.result) ?? 0.05;
+    result.costUsd += found.result.cost ?? 0;
     if (!found.result.found || !found.result.email) {
       result.droppedEnrichment++;
       continue;
@@ -164,7 +164,7 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
     }
 
     const verified = await verifyEmail({ email }, { playName: PLAY_NAME });
-    result.costUsd += extractCost(verified.result) ?? 0.01;
+    result.costUsd += verified.result.cost ?? 0;
     if (!verified.result.deliverable) {
       result.droppedEnrichment++;
       continue;
@@ -244,12 +244,6 @@ export function parsePostFundingExtract(raw: string): PostFundingExtract {
   });
 }
 
-function extractCost(r: unknown): number | undefined {
-  if (!r || typeof r !== "object") return undefined;
-  const v = (r as Record<string, unknown>)["cost"];
-  return typeof v === "number" ? v : undefined;
-}
-
 interface HarvestArgs {
   rounds: string[];
   industry: string;
@@ -296,7 +290,7 @@ async function harvestAutoUrls(args: HarvestArgs): Promise<{ urls: string[]; cos
         { query, maxResults: Math.min(20, Math.max(5, args.limit - urls.length)) },
         { playName: PLAY_NAME },
       );
-      costUsd += extractCost(search.result) ?? 0.01;
+      costUsd += search.result.cost ?? 0;
       for (const hit of search.result.results ?? []) {
         if (urls.length >= args.limit) break;
         if (!hit.url) continue;

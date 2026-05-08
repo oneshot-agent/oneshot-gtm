@@ -71,7 +71,7 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
         { query, maxResults: Math.min(15, limit) },
         { playName: PLAY_NAME },
       );
-      result.costUsd += extractCost(search.result) ?? 0.01;
+      result.costUsd += search.result.cost ?? 0;
       for (const hit of search.result.results ?? []) {
         if (!hit.url || seenUrls.has(hit.url)) continue;
         seenUrls.add(hit.url);
@@ -170,7 +170,7 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
       { fullName: extract.fullName, companyDomain: domain },
       { playName: PLAY_NAME },
     );
-    result.costUsd += extractCost(found.result) ?? 0.05;
+    result.costUsd += found.result.cost ?? 0;
     if (!found.result.found || !found.result.email) {
       result.droppedEnrichment++;
       continue;
@@ -183,7 +183,7 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
     }
 
     const verified = await verifyEmail({ email }, { playName: PLAY_NAME });
-    result.costUsd += extractCost(verified.result) ?? 0.01;
+    result.costUsd += verified.result.cost ?? 0;
     if (!verified.result.deliverable) {
       result.droppedEnrichment++;
       continue;
@@ -239,10 +239,4 @@ export function parseJobChangeExtract(raw: string): JobChangeExtract {
     phone: null,
     summary: null,
   });
-}
-
-function extractCost(r: unknown): number | undefined {
-  if (!r || typeof r !== "object") return undefined;
-  const v = (r as Record<string, unknown>)["cost"];
-  return typeof v === "number" ? v : undefined;
 }

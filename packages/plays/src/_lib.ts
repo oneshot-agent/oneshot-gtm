@@ -58,6 +58,37 @@ export interface DraftedEmail {
   body: string;
 }
 
+/**
+ * Deterministic, semantics-preserving cleanups that the LLM occasionally
+ * slips through despite the humanizer rules being in its system prompt.
+ * Applied silently inside `draftEmailFromPrompt` so these four flags never
+ * surface in the UI.
+ */
+export function humanizeDraft(input: DraftedEmail): DraftedEmail {
+  return {
+    subject: applyAutofixes(input.subject),
+    body: applyAutofixes(input.body),
+  };
+}
+
+function applyAutofixes(s: string): string {
+  return (
+    s
+      // Collapse surrounding spaces so `a — b` becomes `a, b`, not `a ,  b`.
+      .replace(/\s*—\s*/g, ", ")
+      .replace(/[“”]/g, '"')
+      .replace(/[‘’]/g, "'")
+      // Strip emoji + the trailing variation-selector (U+FE0F) and ZWJ
+      // (U+200D) that compound emoji rely on; otherwise `☀️` leaves a
+      // dangling U+FE0F glyph behind. Two passes so the character class
+      // doesn't form a combining sequence the linter flags.
+      .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "")
+      .replace(/\u{FE0F}|\u{200D}/gu, "")
+      .replace(/!\s*!+/g, "!")
+      .trim()
+  );
+}
+
 export async function draftEmailFromPrompt(opts: {
   promptName: string;
   inputBlock: string;
@@ -73,7 +104,7 @@ export async function draftEmailFromPrompt(opts: {
     temperature: opts.temperature ?? 0.65,
     maxTokens: opts.maxTokens ?? 500,
   });
-  return parseSubjectBody(res.content);
+  return humanizeDraft(parseSubjectBody(res.content));
 }
 
 function parseSubjectBody(raw: string): DraftedEmail {
@@ -183,13 +214,11 @@ export async function verifyAndFilterTargets<T>(
     uniqueEmails.map(async (email) => {
       try {
         const r = await verifyEmail({ email }, { playName: opts.playName });
-        const rawCost = (r.result as unknown as Record<string, unknown>)["cost"];
-        const cost = typeof rawCost === "number" ? rawCost : 0.01;
         return {
           email,
           deliverable: Boolean(r.result.deliverable),
           receiptId: r.receiptId,
-          costUsd: cost,
+          costUsd: r.result.cost ?? 0,
           errored: false as const,
         };
       } catch (err) {

@@ -62,7 +62,7 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
         { query, maxResults: Math.min(15, limit) },
         { playName: PLAY_NAME },
       );
-      result.costUsd += extractCost(search.result) ?? 0.01;
+      result.costUsd += search.result.cost ?? 0;
       for (const hit of search.result.results ?? []) {
         if (!hit.url || seen.has(hit.url)) continue;
         seen.add(hit.url);
@@ -124,7 +124,7 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
       };
       if (!opts.skipRead) {
         const read = await webRead({ url: hit.url }, { playName: PLAY_NAME });
-        result.costUsd += extractCost(read.result) ?? 0.02;
+        result.costUsd += read.result.cost ?? 0;
         payload = { ...payload, markdown: (read.result.markdown ?? "").slice(0, 12000) };
       }
       const llm = await complete({
@@ -158,7 +158,7 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
       { fullName: extract.guestName, companyDomain: extract.guestCompanyDomain },
       { playName: PLAY_NAME },
     );
-    result.costUsd += extractCost(found.result) ?? 0.05;
+    result.costUsd += found.result.cost ?? 0;
     if (!found.result.found || !found.result.email) {
       result.droppedEnrichment++;
       continue;
@@ -171,7 +171,7 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
     }
 
     const verified = await verifyEmail({ email }, { playName: PLAY_NAME });
-    result.costUsd += extractCost(verified.result) ?? 0.01;
+    result.costUsd += verified.result.cost ?? 0;
     if (!verified.result.deliverable) {
       result.droppedEnrichment++;
       continue;
@@ -229,10 +229,4 @@ export function parsePodcastGuestExtract(raw: string): PodcastGuestExtract {
     phone: null,
     summary: null,
   });
-}
-
-function extractCost(r: unknown): number | undefined {
-  if (!r || typeof r !== "object") return undefined;
-  const v = (r as Record<string, unknown>)["cost"];
-  return typeof v === "number" ? v : undefined;
 }

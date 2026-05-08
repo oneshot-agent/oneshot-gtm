@@ -100,7 +100,7 @@ export async function fetchAcceleratorSearch(
         { query, maxResults: Math.min(15, limit) },
         { playName: PLAY_NAME },
       );
-      costUsd += extractCost(search.result) ?? 0.01;
+      costUsd += search.result.cost ?? 0;
       for (const raw of search.result.results ?? []) {
         if (!raw.url || seen.has(raw.url)) continue;
         if (looksLikeAcceleratorNoise(raw.url)) continue;
@@ -133,7 +133,7 @@ export async function fetchAcceleratorSearch(
     let extract: AcceleratorLaunchExtract | null = null;
     try {
       const read = await webRead({ url: hit.url }, { playName: PLAY_NAME });
-      costUsd += extractCost(read.result) ?? 0.02;
+      costUsd += read.result.cost ?? 0;
       const llm = await complete({
         messages: [
           { role: "system", content: system },
@@ -236,10 +236,4 @@ export function parseAcceleratorLaunchExtract(raw: string): AcceleratorLaunchExt
     linkedinUrl: null,
     phone: null,
   });
-}
-
-function extractCost(r: unknown): number | undefined {
-  if (!r || typeof r !== "object") return undefined;
-  const v = (r as Record<string, unknown>)["cost"];
-  return typeof v === "number" ? v : undefined;
 }

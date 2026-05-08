@@ -119,7 +119,7 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
     const findInput: FindEmailInput = { companyDomain: domain };
     if (fullName) findInput.fullName = fullName;
     const found = await findEmail(findInput, { playName: PLAY_NAME });
-    result.costUsd += extractCost(found.result) ?? 0.05;
+    result.costUsd += found.result.cost ?? 0;
 
     if (!found.result.found || !found.result.email) {
       result.droppedEnrichment++;
@@ -129,7 +129,7 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
 
     // Verify deliverability.
     const verified = await verifyEmail({ email }, { playName: PLAY_NAME });
-    result.costUsd += extractCost(verified.result) ?? 0.01;
+    result.costUsd += verified.result.cost ?? 0;
     if (!verified.result.deliverable) {
       result.droppedEnrichment++;
       continue;
@@ -146,7 +146,7 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
     if (hookSummary.length < 40 && hit.url) {
       try {
         const read = await webRead({ url: hit.url }, { playName: PLAY_NAME });
-        result.costUsd += extractCost(read.result) ?? 0.02;
+        result.costUsd += read.result.cost ?? 0;
         hookSummary = (read.result.markdown ?? "").trim().slice(0, 280);
       } catch (err) {
         // best-effort; fall through to whatever we have
@@ -205,10 +205,4 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
     halted: result.halted ?? null,
   });
   return result;
-}
-
-function extractCost(r: unknown): number | undefined {
-  if (!r || typeof r !== "object") return undefined;
-  const v = (r as Record<string, unknown>)["cost"];
-  return typeof v === "number" ? v : undefined;
 }
