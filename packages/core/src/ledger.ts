@@ -252,27 +252,18 @@ export class Ledger {
   recordReceipt(input: {
     playName: string;
     callType: string;
+    /** Per-call USD cost. Every wrapper in `oneshot.ts` reads `result.cost`
+     *  from the SDK response (declared on every result type in
+     *  `@oneshot-agent/sdk@0.15.2+`) and forwards it here. NULL in the
+     *  column when undefined — visible signal that the SDK omitted cost. */
     costUsd?: number;
     signedReceipt?: unknown;
     oneshotRequestId?: string;
   }): number {
-    // Resolve cost in priority order:
-    //   1. explicit `costUsd` from the caller
-    //   2. `cost` field on the signedReceipt JSON (every SDK result type
-    //      now declares `cost?: number` in @oneshot-agent/sdk@0.15.2+)
-    //
-    // Anything past that → NULL in the column. The previous canonical
-    // per-call-type fallback was removed when the SDK started returning
-    // real cost — if a future SDK call type lands without `cost`, the
-    // dashboard shows blank for those rows (visible signal) rather than
-    // a hardcoded approximation that drifts from real pricing.
-    let costUsd = input.costUsd;
-    if (costUsd == null && input.signedReceipt && typeof input.signedReceipt === "object") {
-      const rawCost = (input.signedReceipt as Record<string, unknown>)["cost"];
-      if (typeof rawCost === "number" && Number.isFinite(rawCost)) {
-        costUsd = rawCost;
-      }
-    }
+    // Number.isFinite guard rejects undefined / Infinity / NaN — those land
+    // as NULL in the column, NOT silently distorted into a number.
+    const costUsd =
+      typeof input.costUsd === "number" && Number.isFinite(input.costUsd) ? input.costUsd : null;
     const stmt = this.db.prepare(`
       INSERT INTO receipts(play_name, call_type, cost_usd, signed_receipt, oneshot_request_id)
       VALUES(?, ?, ?, ?, ?)
@@ -280,7 +271,7 @@ export class Ledger {
     const result = stmt.run(
       input.playName,
       input.callType,
-      costUsd ?? null,
+      costUsd,
       input.signedReceipt ? JSON.stringify(input.signedReceipt) : null,
       input.oneshotRequestId ?? null,
     );

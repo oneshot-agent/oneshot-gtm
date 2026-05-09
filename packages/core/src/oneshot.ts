@@ -76,6 +76,7 @@ export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
     playName: ctx.playName,
     callType: "email.send",
     signedReceipt: result,
+    costUsd: result.cost,
     oneshotRequestId: emailRequestId(result) ?? undefined,
   });
   return { result, receiptId };
@@ -91,6 +92,7 @@ export async function deepResearch(input: ResearchInput, ctx: CallContext) {
     playName: ctx.playName,
     callType: "research.deep",
     signedReceipt: result,
+    costUsd: result.cost,
   });
   return { result, receiptId };
 }
@@ -108,6 +110,7 @@ export async function enrichProfile(input: EnrichInput, ctx: CallContext) {
     playName: ctx.playName,
     callType: "enrich.profile",
     signedReceipt: result,
+    costUsd: result.cost,
     oneshotRequestId: result.request_id,
   });
   return { result, receiptId };
@@ -144,6 +147,7 @@ export async function deepResearchPerson(input: DeepResearchPersonInput, ctx: Ca
     playName: ctx.playName,
     callType: "research.person",
     signedReceipt: result,
+    costUsd: result.cost,
     oneshotRequestId: result.request_id,
   });
   return { result, receiptId };
@@ -170,6 +174,7 @@ export async function findEmail(input: FindEmailInput, ctx: CallContext) {
     playName: ctx.playName,
     callType: "email.find",
     signedReceipt: result,
+    costUsd: result.cost,
     oneshotRequestId: result.request_id,
   });
   return { result, receiptId };
@@ -186,6 +191,7 @@ export async function verifyEmail(input: VerifyEmailInput, ctx: CallContext) {
     playName: ctx.playName,
     callType: "email.verify",
     signedReceipt: result,
+    costUsd: result.cost,
     oneshotRequestId: result.request_id,
   });
   return { result, receiptId };
@@ -251,6 +257,7 @@ export async function buildSite(input: BuildSiteInput, ctx: CallContext) {
     playName: ctx.playName,
     callType: "build.website",
     signedReceipt: result,
+    costUsd: result.cost,
   });
   return { result, receiptId };
 }
@@ -273,6 +280,7 @@ export async function sendSms(input: SendSmsInput, ctx: CallContext) {
     playName: ctx.playName,
     callType: "sms.send",
     signedReceipt: result,
+    costUsd: result.cost,
     oneshotRequestId: result.details[0]?.message_sid ?? undefined,
   });
   return { result, receiptId };
@@ -321,6 +329,7 @@ export async function webSearch(input: WebSearchInput, ctx: CallContext) {
     playName: ctx.playName,
     callType: "web.search",
     signedReceipt: result,
+    costUsd: result.cost,
   });
   return { result, receiptId };
 }
@@ -336,6 +345,8 @@ export async function webRead(input: WebReadInput, ctx: CallContext) {
     playName: ctx.playName,
     callType: "web.read",
     signedReceipt: result,
+    costUsd: result.cost,
+    oneshotRequestId: result.request_id,
   });
   return { result, receiptId };
 }

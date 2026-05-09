@@ -52,68 +52,63 @@ describe("listReceipts filters", () => {
   });
 });
 
-describe("recordReceipt — cost resolution priority", () => {
-  // Priority order (post-SDK-0.15.2): explicit costUsd > signedReceipt.cost > NULL.
-  // The canonical per-call-type fallback was removed when the SDK started
-  // returning real cost on every result type.
+describe("recordReceipt — cost handling", () => {
+  // Post-SDK-0.15.2 + post-wrapper-cleanup: every wrapper in core/oneshot.ts
+  // forwards `result.cost` as explicit costUsd. recordReceipt no longer
+  // re-reads cost from the signedReceipt JSON (one source of truth).
+  // Anything not a finite number → NULL in the column.
 
-  it("uses explicit costUsd when provided (overrides signedReceipt.cost)", () => {
+  it("persists an explicit numeric costUsd", () => {
     const id = ledger.recordReceipt({
       playName: "p",
       callType: "web.search",
-      costUsd: 0.99,
-      signedReceipt: { cost: 0.01 },
-    });
-    expect(ledger.getReceipt(id)?.cost_usd).toBe(0.99);
-  });
-
-  it("reads cost from the signedReceipt JSON when explicit costUsd is absent", () => {
-    const id = ledger.recordReceipt({
-      playName: "p",
-      callType: "web.search",
-      signedReceipt: { cost: 0.0123 },
+      costUsd: 0.0123,
     });
     expect(ledger.getReceipt(id)?.cost_usd).toBeCloseTo(0.0123);
   });
 
-  it("leaves cost_usd NULL when neither costUsd nor signedReceipt.cost is provided", () => {
-    // Without the old per-call-type fallback, missing cost surfaces as NULL
-    // in the dashboard — visible signal that the SDK didn't supply a value.
+  it("ignores any `cost` field on signedReceipt — only explicit costUsd counts", () => {
+    // Verifies the cleanup: the JSON-extract fallback path is gone.
     const id = ledger.recordReceipt({
       playName: "p",
-      callType: "email.find",
-      signedReceipt: { found: true, email: "x@y.dev" },
+      callType: "web.search",
+      signedReceipt: { cost: 0.05 },
+      // no explicit costUsd
     });
     expect(ledger.getReceipt(id)?.cost_usd).toBeNull();
   });
 
-  it("ignores non-numeric cost values on the signedReceipt", () => {
-    const id = ledger.recordReceipt({
-      playName: "p",
-      callType: "web.read",
-      signedReceipt: { cost: "0.05" }, // string, not number
-    });
+  it("leaves cost_usd NULL when costUsd is omitted entirely", () => {
+    const id = ledger.recordReceipt({ playName: "p", callType: "web.search" });
     expect(ledger.getReceipt(id)?.cost_usd).toBeNull();
   });
 
-  it("ignores Infinity / NaN on signedReceipt.cost", () => {
+  it("rejects non-finite costUsd (Infinity / NaN) as NULL", () => {
+    // Number.isFinite guard — undefined / Infinity / NaN never get coerced
+    // into a number that distorts CAC math.
     const id1 = ledger.recordReceipt({
       playName: "p",
       callType: "web.search",
-      signedReceipt: { cost: Infinity },
+      costUsd: Infinity,
     });
     const id2 = ledger.recordReceipt({
       playName: "p",
       callType: "web.search",
-      signedReceipt: { cost: Number.NaN },
+      costUsd: Number.NaN,
     });
     expect(ledger.getReceipt(id1)?.cost_usd).toBeNull();
     expect(ledger.getReceipt(id2)?.cost_usd).toBeNull();
   });
 
-  it("leaves cost_usd NULL when called with no costUsd and no signedReceipt", () => {
-    const id = ledger.recordReceipt({ playName: "p", callType: "web.search" });
-    expect(ledger.getReceipt(id)?.cost_usd).toBeNull();
+  it("persists signedReceipt JSON for forensic queries even when costUsd is null", () => {
+    const id = ledger.recordReceipt({
+      playName: "p",
+      callType: "web.search",
+      signedReceipt: { found: true, email: "x@y.dev" },
+    });
+    const row = ledger.getReceipt(id);
+    expect(row?.cost_usd).toBeNull();
+    expect(row?.signed_receipt).toContain('"email":"x@y.dev"');
   });
 });
 
