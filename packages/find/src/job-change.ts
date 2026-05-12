@@ -202,7 +202,9 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
       errKindPrefix: "job-change",
     });
     result.costUsd += enr.costUsd;
-    const phone = enr.phone ?? (extract.phone || null);
+    // Priority mirrors LinkedIn chain: page-specific extract beats generic
+    // enrichment lookup when both are set.
+    const phone = (extract.phone || null) ?? enr.phone;
     let linkedinUrl: string | null = isLinkedInProfileUrl(extract.linkedinUrl)
       ? extract.linkedinUrl
       : null;

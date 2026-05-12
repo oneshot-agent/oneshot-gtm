@@ -221,7 +221,9 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
       errKindPrefix: "hiring-signal",
     });
     result.costUsd += enr.costUsd;
-    const phone = enr.phone ?? (extract.phone || null);
+    // Priority mirrors LinkedIn chain: page-specific extract beats generic
+    // enrichment lookup when both are set.
+    const phone = (extract.phone || null) ?? enr.phone;
     let linkedinUrl: string | null = isLinkedInProfileUrl(extract.linkedinUrl)
       ? extract.linkedinUrl
       : null;

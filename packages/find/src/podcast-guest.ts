@@ -193,7 +193,9 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
       errKindPrefix: "podcast-guest",
     });
     result.costUsd += enr.costUsd;
-    const phone = enr.phone ?? (extract.phone || null);
+    // Priority mirrors LinkedIn chain: page-specific extract beats generic
+    // enrichment lookup when both are set.
+    const phone = (extract.phone || null) ?? enr.phone;
     let linkedinUrl: string | null = isLinkedInProfileUrl(extract.linkedinUrl)
       ? extract.linkedinUrl
       : null;
