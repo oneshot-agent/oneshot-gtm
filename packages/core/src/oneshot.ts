@@ -93,6 +93,7 @@ export async function deepResearch(input: ResearchInput, ctx: CallContext) {
     callType: "research.deep",
     signedReceipt: result,
     costUsd: result.cost,
+    oneshotRequestId: result.request_id,
   });
   return { result, receiptId };
 }
