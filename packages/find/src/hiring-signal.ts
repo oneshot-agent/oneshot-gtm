@@ -2,7 +2,9 @@ import { findEmail, getLedger, logEvent, verifyEmail, webRead, webSearch } from 
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { HiringSignalTarget } from "@oneshot-gtm/plays";
 import { isDuplicate } from "./_dedupe.ts";
+import { shouldSkipFindEmail } from "./_findemail-prescreen.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
+import { enrichVerifiedContact } from "./_enrich.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
 import type { FinderResult, HiringSignalExtract, RunOpts } from "./_types.ts";
 
@@ -180,10 +182,19 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
 
     // Email target = the hiring manager when extracted, else fall back to a
     // best-effort search on the company domain (no name).
-    const findInput =
+    const managerName =
       extract.hiringManagerName && extract.hiringManagerName.length > 0
-        ? { fullName: extract.hiringManagerName, companyDomain: domain }
-        : { companyDomain: domain };
+        ? extract.hiringManagerName
+        : null;
+    const skip = shouldSkipFindEmail({ fullName: managerName, companyDomain: domain });
+    if (!skip.ok) {
+      result.droppedEnrichment++;
+      logEvent("finder.skipped_findemail", { name: PLAY_NAME, reason: skip.reason }, "info");
+      continue;
+    }
+    const findInput = managerName
+      ? { fullName: managerName, companyDomain: domain }
+      : { companyDomain: domain };
     const found = await findEmail(findInput, { playName: PLAY_NAME });
     result.costUsd += found.result.cost ?? 0;
     if (!found.result.found || !found.result.email) {
@@ -205,9 +216,16 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
     }
 
     const recipientName = extract.hiringManagerName ?? found.result.full_name ?? null;
+    const enr = await enrichVerifiedContact(email, {
+      playName: PLAY_NAME,
+      errKindPrefix: "hiring-signal",
+    });
+    result.costUsd += enr.costUsd;
+    const phone = enr.phone ?? (extract.phone || null);
     let linkedinUrl: string | null = isLinkedInProfileUrl(extract.linkedinUrl)
       ? extract.linkedinUrl
       : null;
+    linkedinUrl = linkedinUrl ?? enr.linkedinUrl;
     if (!linkedinUrl && recipientName) {
       linkedinUrl = await findLinkedInUrl({
         fullName: recipientName,
@@ -227,7 +245,7 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
       jobPostUrl: extract.jobUrl ?? hit.url,
       yourClaim,
       ...(linkedinUrl ? { linkedinUrl } : {}),
-      ...(extract.phone ? { phone: extract.phone } : {}),
+      ...(phone ? { phone } : {}),
     };
     const id = ledger.enqueueTarget({
       playName: PLAY_NAME,

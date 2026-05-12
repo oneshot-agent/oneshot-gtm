@@ -6,7 +6,9 @@ import {
   parseAcceleratorLaunchExtract,
 } from "./_accelerator-search-adapter.ts";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
+import { shouldSkipFindEmail } from "./_findemail-prescreen.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
+import { enrichVerifiedContact } from "./_enrich.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
 import { parallelMap } from "./_parallel.ts";
 import { fetchYcOssBatch } from "./_yc-oss-adapter.ts";
@@ -157,6 +159,12 @@ export async function runAcceleratorBatchFinder(
       result.droppedEnrichment++;
       return;
     }
+    const skip = shouldSkipFindEmail({ fullName: founderName, companyDomain: domain });
+    if (!skip.ok) {
+      result.droppedEnrichment++;
+      logEvent("finder.skipped_findemail", { name: PLAY_NAME, reason: skip.reason }, "info");
+      return;
+    }
     const found = await findEmail(
       { fullName: founderName, companyDomain: domain },
       { playName: PLAY_NAME },
@@ -183,7 +191,13 @@ export async function runAcceleratorBatchFinder(
       return;
     }
 
-    let linkedinUrl = resolvedLinkedin;
+    const enr = await enrichVerifiedContact(email, {
+      playName: PLAY_NAME,
+      errKindPrefix: "accelerator-batch",
+    });
+    result.costUsd += enr.costUsd;
+    const phone = resolvedPhone ?? enr.phone;
+    let linkedinUrl = resolvedLinkedin ?? enr.linkedinUrl;
     if (!linkedinUrl) {
       linkedinUrl = await findLinkedInUrl({
         fullName,
@@ -207,7 +221,7 @@ export async function runAcceleratorBatchFinder(
           : {}),
       ...(record.oneLiner ? { productOneLiner: record.oneLiner } : {}),
       ...(linkedinUrl ? { linkedinUrl } : {}),
-      ...(resolvedPhone ? { phone: resolvedPhone } : {}),
+      ...(phone ? { phone } : {}),
     };
     const id = ledger.enqueueTarget({
       playName: PLAY_NAME,

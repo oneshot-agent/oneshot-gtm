@@ -89,6 +89,7 @@ interface MockProfile {
   full_name?: string;
   company?: string;
   company_domain?: string;
+  linkedin_url?: string;
   phone?: string;
   fullphone?: Array<{ fullphone: string }>;
 }
@@ -99,8 +100,7 @@ let nextEnrichProfile: MockProfile | null = null;
 const calls2 = { webSearch: 0, enrichProfile: 0 };
 
 vi.mock("@oneshot-gtm/core", async () => {
-  const actual =
-    await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
+  const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
   return {
     ...actual,
     loadConfig: () => ({
@@ -173,8 +173,7 @@ vi.mock("@oneshot-gtm/core", async () => {
 });
 
 vi.mock("@oneshot-gtm/intel", async () => {
-  const actual =
-    await vi.importActual<typeof import("@oneshot-gtm/intel")>("@oneshot-gtm/intel");
+  const actual = await vi.importActual<typeof import("@oneshot-gtm/intel")>("@oneshot-gtm/intel");
   return {
     ...actual,
     complete: async () => {
@@ -330,7 +329,13 @@ describe("repo pipeline — GitHub user fallback in resolveContact", () => {
   it("uses GitHub blog domain when extract.companyDomain is null", async () => {
     nextSearchHits = [makeRepo("https://github.com/ada/agent")];
     // blog domain only — no other companyDomain available
-    defaultGhUser = { login: "ada", name: "Ada", email: null, blogDomain: "ada.dev", company: null };
+    defaultGhUser = {
+      login: "ada",
+      name: "Ada Lovelace",
+      email: null,
+      blogDomain: "ada.dev",
+      company: null,
+    };
     const out = await runGitHubTopicsFinder(baseOpts);
     expect(calls.findEmail).toBe(1);
     expect(out.enqueued).toBe(1);
@@ -340,7 +345,7 @@ describe("repo pipeline — GitHub user fallback in resolveContact", () => {
     nextSearchHits = [makeRepo("https://github.com/ada/agent")];
     defaultGhUser = {
       login: "ada",
-      name: "Ada",
+      name: "Ada Lovelace",
       email: "ada@personal.dev",
       blogDomain: null,
       company: null,
@@ -357,7 +362,7 @@ describe("repo pipeline — GitHub user fallback in resolveContact", () => {
     nextFindEmailQueue = [{ found: false }]; // first findEmail returns no result
     defaultGhUser = {
       login: "ada",
-      name: "Ada",
+      name: "Ada Lovelace",
       email: "ada@personal.dev",
       blogDomain: "acme.dev", // same as extract — but we'll fall back to direct email
       company: null,
@@ -415,7 +420,13 @@ describe("repo pipeline — deepResearchPerson last-resort", () => {
 
   it("passes repo URL + author name + company to deepResearchPerson", async () => {
     nextSearchHits = [makeRepo("https://github.com/ada/agent")];
-    defaultGhUser = { login: "ada", name: "Ada Lovelace", email: null, blogDomain: null, company: "Acme Agents" };
+    defaultGhUser = {
+      login: "ada",
+      name: "Ada Lovelace",
+      email: null,
+      blogDomain: null,
+      company: "Acme Agents",
+    };
     nextDeepResearch = { best_personal_email: "ada@personal.dev" };
     await runGitHubTopicsFinder(baseOpts);
     expect(deepResearchInputs).toHaveLength(1);
@@ -431,7 +442,7 @@ describe("repo pipeline — deepResearchPerson last-resort", () => {
     // Need name + company to clear the deep-research gate.
     defaultGhUser = {
       login: "ada",
-      name: "Ada",
+      name: "Ada Lovelace",
       email: null,
       blogDomain: null,
       company: "Acme Agents",
@@ -504,7 +515,9 @@ describe("repo pipeline — Path B' (linkedin discovery via webSearch + enrichPr
     };
     const out = await runGitHubTopicsFinder(baseOpts);
     expect(calls2.webSearch).toBe(1);
-    expect(calls2.enrichProfile).toBe(1);
+    // enrichProfile fires twice now: once on Path B' to recover the email,
+    // and once post-verify to capture phone (the always-on enrichment step).
+    expect(calls2.enrichProfile).toBe(2);
     // enrichProfile gave us the email directly — no further findEmail / deep-research.
     expect(calls.findEmail).toBe(0);
     expect(calls.deepResearch).toBe(0);
@@ -524,9 +537,14 @@ describe("repo pipeline — Path B' (linkedin discovery via webSearch + enrichPr
     nextWebSearchUrls = ["https://www.linkedin.com/in/ada-lovelace"];
     // No email + no company_domain on the profile — but a company name.
     nextEnrichProfile = { full_name: "Ada Lovelace", company: "Stealth Agents" };
-    nextDeepResearch = { best_work_email: "ada@stealth.dev", firstname: "Ada", lastname: "Lovelace" };
+    nextDeepResearch = {
+      best_work_email: "ada@stealth.dev",
+      firstname: "Ada",
+      lastname: "Lovelace",
+    };
     const out = await runGitHubTopicsFinder(baseOpts);
-    expect(calls2.enrichProfile).toBe(1);
+    // Path B' enrich (no email) + post-verify enrich after Path C found the email.
+    expect(calls2.enrichProfile).toBe(2);
     // Path C now fires because companyForGate was populated by Path B'.
     expect(calls.deepResearch).toBe(1);
     expect(deepResearchInputs[0]).toMatchObject({ company: "Stealth Agents" });
@@ -613,6 +631,37 @@ describe("repo pipeline — Path B' (linkedin discovery via webSearch + enrichPr
     expect(calls.enqueued[0]?.["payload"]).toMatchObject({
       email: "ada@stealth.dev",
       phone: "+15559998888",
+    });
+  });
+
+  it("ALWAYS calls enrichProfile post-verify even when Path A resolved the contact", async () => {
+    // Path A: extract has a domain (via ghUser.blogDomain) → findEmail succeeds.
+    // Path B' is skipped (no need for LinkedIn lookup). New behavior: the
+    // post-verify enrichVerifiedContact still fires to capture phone +
+    // linkedin from PersonResult — closes the gap where Path A candidates
+    // were never enriched in the past.
+    nextSearchHits = [makeRepo("https://github.com/ada/agent")];
+    defaultGhUser = {
+      login: "ada",
+      name: "Ada Lovelace",
+      email: null,
+      blogDomain: "acme.dev",
+      company: "Acme",
+    };
+    nextFindEmailResult = { found: true, email: "ada@acme.dev", full_name: "Ada Lovelace" };
+    nextEnrichProfile = {
+      phone: "+15553334444",
+      linkedin_url: "https://www.linkedin.com/in/ada-lovelace",
+    };
+    await runGitHubTopicsFinder(baseOpts);
+    // Path A succeeded: no Path B' webSearch + no Path B' enrichProfile.
+    // Post-verify enrichProfile = the only enrichProfile call.
+    expect(calls2.webSearch).toBe(0);
+    expect(calls2.enrichProfile).toBe(1);
+    expect(calls.enqueued[0]?.["payload"]).toMatchObject({
+      email: "ada@acme.dev",
+      phone: "+15553334444",
+      linkedinUrl: "https://www.linkedin.com/in/ada-lovelace",
     });
   });
 });

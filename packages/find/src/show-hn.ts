@@ -3,6 +3,8 @@ import { findEmail, verifyEmail, webRead } from "@oneshot-gtm/core";
 import type { ShowHnTarget } from "@oneshot-gtm/plays";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
+import { shouldSkipFindEmail } from "./_findemail-prescreen.ts";
+import { enrichVerifiedContact } from "./_enrich.ts";
 import { findLinkedInUrl } from "./_linkedin.ts";
 import type { FinderResult, RunOpts, ShowHnHit } from "./_types.ts";
 
@@ -116,6 +118,12 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
     // Read the landing page so we have content for the hookSummary fallback +
     // a crude "founder name" guess (use the HN handle as fullName if present).
     const fullName = hit.author && hit.author.length > 0 ? hit.author : undefined;
+    const skip = shouldSkipFindEmail({ fullName, companyDomain: domain });
+    if (!skip.ok) {
+      result.droppedEnrichment++;
+      logEvent("finder.skipped_findemail", { name: PLAY_NAME, reason: skip.reason }, "info");
+      continue;
+    }
     const findInput: FindEmailInput = { companyDomain: domain };
     if (fullName) findInput.fullName = fullName;
     const found = await findEmail(findInput, { playName: PLAY_NAME });
@@ -165,14 +173,25 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
     }
 
     const founderName = found.result.full_name ?? hit.author;
-    const linkedinUrl = await findLinkedInUrl({
-      fullName: founderName,
-      disambiguators: ["hacker news", domain],
-      accumCost: (c) => {
-        result.costUsd += c ?? 0;
-      },
+    // Always enrich after verify to capture phone + linkedin from the SDK.
+    const enr = await enrichVerifiedContact(email, {
+      playName: PLAY_NAME,
       errKindPrefix: "show-hn",
     });
+    result.costUsd += enr.costUsd;
+    const phone = enr.phone;
+    let linkedinUrl: string | null = enr.linkedinUrl;
+    if (!linkedinUrl) {
+      // Last-resort webSearch fallback when enrichProfile didn't surface one.
+      linkedinUrl = await findLinkedInUrl({
+        fullName: founderName,
+        disambiguators: ["hacker news", domain],
+        accumCost: (c) => {
+          result.costUsd += c ?? 0;
+        },
+        errKindPrefix: "show-hn",
+      });
+    }
 
     const target: ShowHnTarget = {
       postTitle: hit.title,
@@ -181,6 +200,7 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
       founderEmail: email,
       hookSummary,
       ...(linkedinUrl ? { linkedinUrl } : {}),
+      ...(phone ? { phone } : {}),
     };
     const id = ledger.enqueueTarget({
       playName: PLAY_NAME,

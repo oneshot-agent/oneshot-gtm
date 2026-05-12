@@ -8,6 +8,7 @@ import {
 } from "@oneshot-gtm/core";
 import type { CompetitorSwitchTarget } from "@oneshot-gtm/plays";
 import { isDuplicate } from "./_dedupe.ts";
+import { shouldSkipFindEmail } from "./_findemail-prescreen.ts";
 import { icpFilter } from "./_filter.ts";
 import {
   fetchGitHubUser,
@@ -15,6 +16,7 @@ import {
   repoNameFromRepoUrl,
   type GitHubUserInfo,
 } from "./_github-user.ts";
+import { enrichVerifiedContact } from "./_enrich.ts";
 import { extractFirstPhone, findLinkedInUrl } from "./_linkedin.ts";
 import { detectRepoStack } from "./_repo-stack.ts";
 import type { AgentBuilderExtract, FinderResult } from "./_types.ts";
@@ -232,6 +234,19 @@ export async function processRepoCandidate(
   if (!verified.result.deliverable) {
     result.droppedEnrichment++;
     return;
+  }
+
+  // Always-on post-verify enrichment so phone + linkedin land on every
+  // queue row. Path B' may have already populated both — skip the call
+  // when so. ~$0.005 per call when fired (per OneShot pricing).
+  if (!contact.phone || !contact.linkedinUrl) {
+    const enr = await enrichVerifiedContact(contact.email, {
+      playName: PLAY_NAME,
+      errKindPrefix,
+    });
+    accumCost(enr.costUsd);
+    contact.phone = contact.phone ?? enr.phone;
+    contact.linkedinUrl = contact.linkedinUrl ?? enr.linkedinUrl;
   }
 
   const stackLine = extract.stackDetected.join(", ");
@@ -478,6 +493,18 @@ async function tryFindEmail(
   errKindPrefix: string,
 ): Promise<{ email: string; fullName: string | null } | null> {
   if (!extract.authorFullName || extract.authorFullName.length === 0) {
+    return null;
+  }
+  const skip = shouldSkipFindEmail({
+    fullName: extract.authorFullName,
+    companyDomain: domain,
+  });
+  if (!skip.ok) {
+    logEvent(
+      "finder.skipped_findemail",
+      { name: PLAY_NAME, reason: skip.reason, kind: `${errKindPrefix}.find_email` },
+      "info",
+    );
     return null;
   }
   let found: Awaited<ReturnType<typeof findEmail>>;

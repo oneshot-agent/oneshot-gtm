@@ -5,6 +5,8 @@ import type { PostFundingTarget } from "@oneshot-gtm/plays";
 import { readFileSync } from "node:fs";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { isDuplicate } from "./_dedupe.ts";
+import { shouldSkipFindEmail } from "./_findemail-prescreen.ts";
+import { enrichVerifiedContact } from "./_enrich.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
 import type { FinderResult, PostFundingExtract, RunOpts } from "./_types.ts";
 
@@ -146,6 +148,15 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
     }
 
     // Enrich email.
+    const skip = shouldSkipFindEmail({
+      fullName: extract.founderName,
+      companyDomain: extract.companyDomain,
+    });
+    if (!skip.ok) {
+      result.droppedEnrichment++;
+      logEvent("finder.skipped_findemail", { name: PLAY_NAME, reason: skip.reason }, "info");
+      continue;
+    }
     const found = await findEmail(
       { fullName: extract.founderName, companyDomain: extract.companyDomain },
       { playName: PLAY_NAME },
@@ -170,9 +181,16 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
       continue;
     }
 
+    const enr = await enrichVerifiedContact(email, {
+      playName: PLAY_NAME,
+      errKindPrefix: "post-funding",
+    });
+    result.costUsd += enr.costUsd;
+    const phone = enr.phone ?? (extract.phone || null);
     let linkedinUrl: string | null = isLinkedInProfileUrl(extract.linkedinUrl)
       ? extract.linkedinUrl
       : null;
+    linkedinUrl = linkedinUrl ?? enr.linkedinUrl;
     if (!linkedinUrl) {
       linkedinUrl = await findLinkedInUrl({
         fullName: extract.founderName,
@@ -193,7 +211,7 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
       sourceUrl: url,
       ...(extract.leadInvestor ? { leadInvestor: extract.leadInvestor } : {}),
       ...(linkedinUrl ? { linkedinUrl } : {}),
-      ...(extract.phone ? { phone: extract.phone } : {}),
+      ...(phone ? { phone } : {}),
     };
     const id = ledger.enqueueTarget({
       playName: PLAY_NAME,

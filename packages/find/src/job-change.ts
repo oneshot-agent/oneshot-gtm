@@ -2,7 +2,9 @@ import { findEmail, getLedger, logEvent, verifyEmail, webSearch } from "@oneshot
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { JobChangeTarget } from "@oneshot-gtm/plays";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
+import { shouldSkipFindEmail } from "./_findemail-prescreen.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
+import { enrichVerifiedContact } from "./_enrich.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
 import type { FinderResult, JobChangeExtract, RunOpts } from "./_types.ts";
 
@@ -165,6 +167,12 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
       result.droppedEnrichment++;
       continue;
     }
+    const skip = shouldSkipFindEmail({ fullName: extract.fullName, companyDomain: domain });
+    if (!skip.ok) {
+      result.droppedEnrichment++;
+      logEvent("finder.skipped_findemail", { name: PLAY_NAME, reason: skip.reason }, "info");
+      continue;
+    }
 
     const found = await findEmail(
       { fullName: extract.fullName, companyDomain: domain },
@@ -189,9 +197,16 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
       continue;
     }
 
+    const enr = await enrichVerifiedContact(email, {
+      playName: PLAY_NAME,
+      errKindPrefix: "job-change",
+    });
+    result.costUsd += enr.costUsd;
+    const phone = enr.phone ?? (extract.phone || null);
     let linkedinUrl: string | null = isLinkedInProfileUrl(extract.linkedinUrl)
       ? extract.linkedinUrl
       : null;
+    linkedinUrl = linkedinUrl ?? enr.linkedinUrl;
     if (!linkedinUrl) {
       linkedinUrl = await findLinkedInUrl({
         fullName: extract.fullName,
@@ -211,7 +226,7 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
       ...(extract.previousRole ? { previousRole: extract.previousRole } : {}),
       ...(extract.previousCompany ? { previousCompany: extract.previousCompany } : {}),
       ...(linkedinUrl ? { linkedinUrl } : {}),
-      ...(extract.phone ? { phone: extract.phone } : {}),
+      ...(phone ? { phone } : {}),
     };
     const id = ledger.enqueueTarget({
       playName: PLAY_NAME,
