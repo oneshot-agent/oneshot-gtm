@@ -70,6 +70,14 @@ export interface PlayDescriptor {
   followupCount: number;
   hasBreakup: boolean;
   cliInvocation: string;
+  /**
+   * Follow-up steps with effective (override-applied) CUMULATIVE day from the
+   * day-0 initial send. The initial send itself isn't listed (always day 0,
+   * not editable). Empty for one-touch plays.
+   */
+  steps: { day: number; label: string; channel: StepChannel }[];
+  /** Code-default cumulative days for the same steps — lets the UI offer "reset". */
+  defaultDays: number[];
 }
 
 export type LlmProvider = "openrouter" | "openai" | "anthropic";
@@ -87,6 +95,8 @@ export interface SetupRequest {
   founderName?: string;
   founderEmail?: string;
   productOneLiner?: string;
+  productDomain?: string;
+  sendingDomain?: string;
   icpOneLiner?: string;
   llmProvider?: LlmProvider;
   llmModel?: string;
@@ -120,6 +130,56 @@ export interface QueueRowView {
   sentAt: string | null;
   notes: string | null;
   prospectId: number | null;
+  /**
+   * Most-recent draft generated for this row by the /api/run SSE endpoint.
+   * Null on rows that have never been through a /run pass. The /queue UI
+   * uses this to render the draft block in the expanded row.
+   */
+  lastDraft: LastDraft | null;
+  /** ISO timestamp of `lastDraft`. Null when no draft persisted. */
+  lastDraftedAt: string | null;
+}
+
+/**
+ * Per-row draft envelope persisted after each /api/run dispatch. `dryRun`
+ * distinguishes preview-only drafts from real-send attempts; `sent` is
+ * true only when the SDK actually emitted the email (false for dryRun
+ * and for lint-blocked drafts).
+ */
+export interface LastDraft {
+  subject: string;
+  body: string;
+  flags: string[];
+  sent: boolean;
+  receiptIds: number[];
+  dryRun: boolean;
+  draftedAt: string;
+}
+
+/** A single inbox email (reply to outreach), with prospect/play context when matched. */
+export interface InboxReplyView {
+  id: string;
+  /** Normalized sender address (lowercased, display-name stripped). */
+  fromEmail: string;
+  /** Raw From header as received (may include a display name). */
+  fromRaw: string;
+  subject: string;
+  receivedAt: string;
+  body: string;
+  /** Set when the sender matches a known prospect; null for unmatched mail. */
+  matched: {
+    name: string | null;
+    company: string | null;
+    playName: string | null;
+    cadenceStatus: string | null;
+  } | null;
+}
+
+export interface InboxResult {
+  replies: InboxReplyView[];
+  hasMore: boolean;
+  /** Present when the inbox fetch failed; replies will be empty. */
+  error?: string;
 }
 
 export interface QueueCounts {
@@ -226,6 +286,14 @@ export interface RunPlayRequest {
   dryRun: boolean;
   /** Free-form per-play target rows; the server validates per-play shape. */
   targets: unknown[];
+  /**
+   * Optional parallel array of `target_queue.dedupe_key` values, one per
+   * `targets[i]`. When present and length-matched, the SSE endpoint persists
+   * each generated draft back to the matching queue row (`last_draft_json`).
+   * Manual /run entries omit this so the persist hook is skipped — the
+   * /queue is the authoritative archive only for queue-originated runs.
+   */
+  dedupeKeys?: (string | null)[];
   /** For accelerator-batch: sender cohort + free offer text. */
   senderCohort?: string;
   freeForCohortOffer?: string;
@@ -239,6 +307,7 @@ export type RunPlayEvent =
       verified: number;
       dropped: Array<{ email: string; reason: string }>;
     }
+  | { kind: "stage"; stage: string }
   | { kind: "draft"; index: number; subject: string; body: string; flags: string[] }
   | { kind: "send"; index: number; receiptIds: number[] }
   | { kind: "error"; index: number; message: string }

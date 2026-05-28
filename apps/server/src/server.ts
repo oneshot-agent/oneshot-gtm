@@ -4,7 +4,8 @@ import { fileURLToPath } from "node:url";
 import { homeMetrics } from "./api/home.ts";
 import { listCadences, getCadence, stopCadence } from "./api/cadences.ts";
 import { listReceipts, getReceipt } from "./api/receipts.ts";
-import { listPlays } from "./api/plays.ts";
+import { listInboxRoute } from "./api/inbox.ts";
+import { listPlays, setCadenceRoute } from "./api/plays.ts";
 import { measureCac, measureRocs, recordOutcome } from "./api/measure.ts";
 import { setup, getSetupStatus } from "./api/setup.ts";
 import { deriveIcpRoute } from "./api/derive-icp.ts";
@@ -16,7 +17,9 @@ import {
   approveQueueRoute,
   drainQueueRoute,
   listQueueRoute,
+  regenerateDraftRoute,
   rejectQueueRoute,
+  sendDraftRoute,
 } from "./api/queue.ts";
 import {
   listTriggersRoute,
@@ -56,7 +59,9 @@ const routes: RouteEntry[] = [
   route("POST", "/api/cadences/:id/stop", stopCadence),
   route("GET", "/api/receipts", listReceipts),
   route("GET", "/api/receipts/:id", getReceipt),
+  route("GET", "/api/inbox", listInboxRoute),
   route("GET", "/api/plays", listPlays),
+  route("POST", "/api/plays/:name/cadence", setCadenceRoute),
   route("GET", "/api/measure/cac", measureCac),
   route("GET", "/api/measure/rocs", measureRocs),
   route("POST", "/api/measure/outcome", recordOutcome),
@@ -71,6 +76,8 @@ const routes: RouteEntry[] = [
   route("POST", "/api/queue/drain", drainQueueRoute),
   route("POST", "/api/queue/:id/approve", approveQueueRoute),
   route("POST", "/api/queue/:id/reject", rejectQueueRoute),
+  route("POST", "/api/queue/:id/regenerate", regenerateDraftRoute),
+  route("POST", "/api/queue/:id/send-draft", sendDraftRoute),
   route("GET", "/api/triggers", listTriggersRoute),
   route("POST", "/api/triggers/:name/enabled", setTriggerEnabledRoute),
   route("POST", "/api/triggers/:name/config", setTriggerConfigRoute),

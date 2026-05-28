@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
   Check,
   ChevronDown,
@@ -7,6 +7,7 @@ import {
   Loader2,
   Pencil,
   Play,
+  RotateCw,
   Send,
   Target,
   X,
@@ -23,7 +24,9 @@ import { Modal } from "../components/primitives/Modal.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { Toggle } from "../components/primitives/Toggle.tsx";
 import { cn, timeAgo } from "../lib/cn.ts";
+import { humanInterval } from "../lib/humanInterval.ts";
 import { buildSignalDays } from "../lib/signalDays.ts";
+import { summarizeRun } from "../lib/summarizeRun.ts";
 import {
   clearTriggerRunning,
   hasAnyRunningTrigger,
@@ -45,6 +48,9 @@ const STATUSES: Array<QueueStatusView | "all"> = [
   "expired",
 ];
 
+// Finder-fed plays whose queue rows can be drained. github-topics routes
+// candidates to stack-consolidation (vendor sprawl) or competitor-switch
+// (when a detected vendor is on its directCompetitors list), so both appear.
 const DRAINABLE_PLAYS = [
   "show-hn",
   "job-change",
@@ -53,6 +59,7 @@ const DRAINABLE_PLAYS = [
   "hiring-signal",
   "podcast-guest",
   "competitor-switch",
+  "stack-consolidation",
 ];
 
 function statusTone(
@@ -90,6 +97,7 @@ interface EditingState {
 
 function QueuePage() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const [statusFilter, setStatusFilter] = useState<QueueStatusView | "all">("pending");
   const [playFilter, setPlayFilter] = useState<string>("all");
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -180,27 +188,34 @@ function QueuePage() {
       toast.success(`rejected ${ok} of ${total}`);
     },
   });
-  const drain = useMutation({
-    mutationFn: () => {
-      if (!drainModal) throw new Error("no drain modal open");
-      return api.drainQueue({
-        playName: drainModal.playName,
-        limit: drainLimit,
-        dryRun: drainDryRun,
-        ...(drainSenderCohort ? { senderCohort: drainSenderCohort } : {}),
-        ...(drainOffer ? { freeForCohortOffer: drainOffer } : {}),
-      });
-    },
-    onSuccess: () => {
-      setDrainModal(null);
-      setDrainSenderCohort("");
-      setDrainOffer("");
-      void qc.invalidateQueries({ queryKey: ["queue"] });
-      void qc.invalidateQueries({ queryKey: ["receipts"] });
-      void qc.invalidateQueries({ queryKey: ["cadences"] });
-      void qc.invalidateQueries({ queryKey: ["home"] });
-    },
-  });
+  // Drain modal submit → navigate to /run/<play>?fromQueue=1&… instead of
+  // hitting POST /api/queue/drain. The drain endpoint dropped draft content
+  // on the floor (counts only); the /run page streams every draft live with
+  // its lint flags so partial batches and lint-blocked sends are visible.
+  // Both dryRun and real-send paths route through here — the founder picks
+  // mode via the modal toggle and /run honors it via the URL param.
+  //
+  // accelerator-batch requires senderCohort server-side (run.ts:136); we
+  // pre-validate here so an empty value can't sneak through to a 400 on the
+  // /run page after the founder already navigated.
+  const drainNeedsSenderCohort =
+    drainModal?.playName === "accelerator-batch" && drainSenderCohort.trim().length === 0;
+  const submitDrainViaRun = (): void => {
+    if (!drainModal) return;
+    if (drainNeedsSenderCohort) return;
+    const search: Record<string, string> = {
+      fromQueue: "1",
+      limit: String(drainLimit),
+      dryRun: drainDryRun ? "1" : "0",
+    };
+    if (drainSenderCohort.trim()) search["senderCohort"] = drainSenderCohort.trim();
+    if (drainOffer.trim()) search["freeForCohortOffer"] = drainOffer.trim();
+    void navigate({
+      to: "/run/$playName",
+      params: { playName: drainModal.playName },
+      search,
+    });
+  };
 
   const counts = queueQuery.data?.counts ?? {
     pending: 0,
@@ -484,13 +499,9 @@ function QueuePage() {
             <Button variant="ghost" onClick={() => setDrainModal(null)}>
               Cancel
             </Button>
-            <Button onClick={() => drain.mutate()} disabled={drain.isPending}>
+            <Button onClick={submitDrainViaRun} disabled={drainNeedsSenderCohort}>
               <Send size={12} />
-              {drain.isPending
-                ? "Draining…"
-                : drainDryRun
-                  ? "Preview drain (no send)"
-                  : `Send up to ${drainLimit}`}
+              {drainDryRun ? "Preview drafts (no send)" : `Send up to ${drainLimit}`}
             </Button>
           </>
         }
@@ -528,25 +539,16 @@ function QueuePage() {
           )}
           <label className="inline-flex cursor-pointer items-center gap-2.5 text-[13px] text-ink-cream-2 hover:text-ink-cream">
             <Toggle checked={drainDryRun} onChange={setDrainDryRun} label="dry run" />
-            <span>Dry run — preview drafts, no send, no spend</span>
+            <span>Dry run — preview drafts only, no send (a one-time enrich lookup may apply)</span>
           </label>
-          {drain.isError && (
-            <div className="font-mono text-[11.5px] text-[color:var(--ink-blocked-2)]">
-              {drain.error.message}
-            </div>
-          )}
-          {drain.data && (
-            <div className="font-mono text-[11.5px] text-[color:var(--ink-receipt-2)]">
-              {drainDryRun
-                ? `would send ${drain.data.sent} of ${drain.data.drained}`
-                : `sent ${drain.data.sent} of ${drain.data.drained}`}
-              {drain.data.errors.length > 0 && (
-                <div className="mt-1 text-[color:var(--ink-blocked-2)]">
-                  {drain.data.errors.length} error(s) ·{" "}
-                  {drain.data.errors.map((e) => e.message).join(" · ")}
-                </div>
-              )}
-            </div>
+          <p className="font-mono text-[11px] text-ink-faint">
+            Drafts stream live on the next page — every lint flag and send confirmation is visible
+            per row.
+          </p>
+          {drainNeedsSenderCohort && (
+            <p className="font-mono text-[11px] text-[color:var(--ink-blocked-2)]">
+              accelerator-batch needs a sender cohort tag before it can run.
+            </p>
           )}
         </div>
       </Modal>
@@ -640,7 +642,29 @@ function QueueRow({
         </td>
         <td className="py-2 text-ink-cream-2">{row.playName}</td>
         <td className="py-2">
-          <Badge tone={statusTone(row.status)}>{row.status}</Badge>
+          <div className="flex items-center gap-1.5">
+            <Badge tone={statusTone(row.status)}>{row.status}</Badge>
+            {row.lastDraft && (
+              <Badge
+                tone={
+                  row.lastDraft.sent
+                    ? "receipt"
+                    : row.lastDraft.flags.length > 0
+                      ? "blocked"
+                      : "neutral"
+                }
+                title={
+                  row.lastDraft.sent
+                    ? "draft sent"
+                    : row.lastDraft.flags.length > 0
+                      ? `draft held · ${row.lastDraft.flags.length} flag(s)`
+                      : "draft preview"
+                }
+              >
+                draft
+              </Badge>
+            )}
+          </div>
         </td>
         <td className="py-2 font-mono text-[11px] text-ink-faint">{row.source}</td>
         <td className="py-2 text-right font-mono text-[12px] text-ink-muted">
@@ -670,16 +694,180 @@ function QueueRow({
       {expanded && (
         <tr className="border-b border-ink-rule/60 bg-ink-bg-deep/50">
           <td colSpan={9} className="px-6 py-3">
-            <div className="text-[12px] text-ink-muted">
-              {row.notes ? <div className="mb-2 ln-note">{row.notes}</div> : null}
-              <pre className="max-h-[300px] overflow-auto rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep p-3 font-mono text-[11.5px] leading-[1.55] text-ink-cream-2">
-                {JSON.stringify(row.payload, null, 2)}
-              </pre>
+            <div className="flex flex-col gap-3 text-[12px] text-ink-muted">
+              {row.notes ? <div className="ln-note">{row.notes}</div> : null}
+              <DraftSection
+                id={row.id}
+                playName={row.playName}
+                status={row.status}
+                draft={row.lastDraft}
+                draftedAt={row.lastDraftedAt}
+              />
+              <details className="text-ink-faint">
+                <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.14em] hover:text-ink-cream-2">
+                  payload json
+                </summary>
+                <pre className="mt-2 max-h-[300px] overflow-auto rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep p-3 font-mono text-[11.5px] leading-[1.55] text-ink-cream-2">
+                  {JSON.stringify(row.payload, null, 2)}
+                </pre>
+              </details>
             </div>
           </td>
         </tr>
       )}
     </>
+  );
+}
+
+/**
+ * Expanded-row draft area. Shows the persisted draft (subject + body + lint
+ * flags + send state + receipt links) when one exists, with a regenerate
+ * action; when none exists yet, shows a thin "no draft" bar with a generate
+ * action. Both actions hit the same preview-only endpoint (dry-run, never
+ * sends). Hidden for accelerator-batch (needs a sender cohort not on the row)
+ * and for already-sent drafts (re-rolling would only overwrite the preview).
+ */
+function DraftSection({
+  id,
+  playName,
+  status,
+  draft,
+  draftedAt,
+}: {
+  id: number;
+  playName: string;
+  status: QueueStatusView;
+  draft: QueueRowView["lastDraft"];
+  draftedAt: string | null;
+}): React.ReactElement {
+  const qc = useQueryClient();
+  const regenerate = useMutation({
+    mutationFn: () => api.regenerateDraft(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["queue"] });
+      toast.success("draft ready · preview only, not sent");
+    },
+    onError: (err) => toast.error(`couldn't draft · ${err.message}`),
+  });
+  const send = useMutation({
+    mutationFn: () => api.sendDraft(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["queue"] });
+      void qc.invalidateQueries({ queryKey: ["home"] });
+      toast.success("sent · the reviewed draft went out as-is");
+    },
+    onError: (err) => toast.error(`couldn't send · ${err.message}`),
+  });
+  const canDraft = playName !== "accelerator-batch" && !(draft?.sent ?? false);
+  const verb = draft ? "regenerate" : "generate draft";
+  const pendingVerb = draft ? "regenerating…" : "generating…";
+  const draftButton = canDraft ? (
+    <Button
+      variant="ghost"
+      size="sm"
+      disabled={regenerate.isPending}
+      onClick={() => regenerate.mutate()}
+      title="Draft this row in preview mode — dry-run, never sends"
+    >
+      {regenerate.isPending ? (
+        <Loader2 size={11} className="animate-spin" />
+      ) : (
+        <RotateCw size={11} />
+      )}
+      {regenerate.isPending ? pendingVerb : verb}
+    </Button>
+  ) : null;
+
+  // Send THIS prospect now, using the reviewed draft VERBATIM (no LLM re-roll).
+  // Enabled only for an approved row with a clean (lint-flag-free), not-yet-sent
+  // draft — that's the review gate: regenerate until clean, then send exactly
+  // that. Disabled (with a hint) when there's no draft or it's flagged.
+  const cleanDraft = draft != null && draft.flags.length === 0 && !draft.sent;
+  const sendButton =
+    status === "approved" && !(draft?.sent ?? false) ? (
+      <Button
+        variant="secondary"
+        size="sm"
+        disabled={send.isPending || !cleanDraft}
+        onClick={() => send.mutate()}
+        title={
+          cleanDraft
+            ? "Send this prospect now — sends the reviewed draft above, as-is"
+            : draft == null
+              ? "Generate a draft first, then send it"
+              : "Draft has lint flags — regenerate to clear them, then send"
+        }
+      >
+        {send.isPending ? (
+          <Loader2 size={11} className="animate-spin" />
+        ) : (
+          <Send size={11} />
+        )}
+        {send.isPending ? "sending…" : "send this one"}
+      </Button>
+    ) : null;
+
+  if (!draft) {
+    return (
+      <div className="flex items-center justify-between gap-2 rounded-[var(--radius-sm)] border border-dashed border-ink-rule bg-ink-bg-deep px-3 py-2.5">
+        <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+          no draft yet
+        </span>
+        <span className="flex items-center gap-2">
+          {sendButton}
+          {draftButton}
+        </span>
+      </div>
+    );
+  }
+
+  const tone: "receipt" | "spend" | "blocked" | "neutral" = draft.sent
+    ? "receipt"
+    : draft.flags.length > 0
+      ? "blocked"
+      : draft.dryRun
+        ? "spend"
+        : "neutral";
+  const stateLabel = draft.sent
+    ? "sent"
+    : draft.flags.length > 0
+      ? "held · lint"
+      : draft.dryRun
+        ? "preview"
+        : "drafted";
+  return (
+    <div className="rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep">
+      <div className="flex items-center gap-2 border-b border-ink-rule/60 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+        <span>last draft</span>
+        {draftedAt ? <span className="text-ink-muted">· {timeAgo(draftedAt)}</span> : null}
+        <Badge tone={tone}>{stateLabel}</Badge>
+        {draft.flags.length > 0 &&
+          draft.flags.map((f) => (
+            <Badge key={f} tone="blocked">
+              {f}
+            </Badge>
+          ))}
+        <span className="ml-auto flex items-center gap-2 normal-case tracking-normal">
+          {draft.receiptIds.map((rid) => (
+            <Link
+              key={rid}
+              to="/receipts"
+              className="font-mono text-[10px] text-ink-faint underline decoration-ink-rule underline-offset-2 hover:text-ink-cream-2"
+            >
+              receipt #{rid}
+            </Link>
+          ))}
+          {sendButton}
+          {draftButton}
+        </span>
+      </div>
+      <div className="px-3 py-2.5">
+        <div className="text-[13px] font-medium text-ink-cream">{draft.subject}</div>
+        <pre className="mt-2 max-h-[360px] overflow-auto whitespace-pre-wrap font-mono text-[11.5px] leading-[1.55] text-ink-cream-2">
+          {draft.body}
+        </pre>
+      </div>
+    </div>
   );
 }
 
@@ -718,8 +906,7 @@ function SignalStrip({ rows }: { rows: QueueRowView[] }) {
       <div className="font-mono text-[11px] text-ink-muted">
         {total} enqueued
         <span className="ml-2 text-ink-faint">
-          · <span className="text-ink-cream-2">{days[days.length - 1]?.count ?? 0}</span>{" "}
-          today
+          · <span className="text-ink-cream-2">{days[days.length - 1]?.count ?? 0}</span> today
         </span>
       </div>
     </div>
@@ -1200,34 +1387,6 @@ function EmptyQueueHelp({ filterActive }: { filterActive: boolean }) {
       />
     </div>
   );
-}
-
-function summarizeRun(summary: unknown): string {
-  if (!summary || typeof summary !== "object") return "—";
-  const s = summary as Record<string, unknown>;
-  if (typeof s["error"] === "string") return `error: ${(s["error"] as string).slice(0, 60)}`;
-  if (typeof s["halted"] === "string" && s["halted"]) {
-    return `halted · ${(s["halted"] as string).slice(0, 80)}`;
-  }
-  const parts: string[] = [];
-  if (typeof s["candidates"] === "number") parts.push(`cand=${s["candidates"]}`);
-  if (typeof s["enqueued"] === "number") parts.push(`kept=${s["enqueued"]}`);
-  if (typeof s["droppedIcp"] === "number") parts.push(`icp=${s["droppedIcp"]}`);
-  if (typeof s["droppedLowSignal"] === "number" && (s["droppedLowSignal"] as number) > 0) {
-    parts.push(`low=${s["droppedLowSignal"]}`);
-  }
-  if (typeof s["costUsd"] === "number") {
-    parts.push(`$${(s["costUsd"] as number).toFixed(2)}`);
-  }
-  return parts.length > 0 ? parts.join(" · ") : "—";
-}
-
-function humanInterval(ms: number): string {
-  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
-  if (ms < 3600_000) return `${Math.round(ms / 60_000)}m`;
-  const hours = ms / 3600_000;
-  if (hours >= 48) return `${(hours / 24).toFixed(hours % 24 === 0 ? 0 : 1)}d`;
-  return `${hours.toFixed(hours % 1 === 0 ? 0 : 1)}h`;
 }
 
 function emailFor(payload: unknown): string | null {

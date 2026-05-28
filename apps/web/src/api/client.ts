@@ -5,6 +5,8 @@ import type {
   DrainResult,
   EventsByPlay,
   HomeMetrics,
+  InboxResult,
+  LastDraft,
   OutcomeByPlay,
   OutcomeRequest,
   PlayDescriptor,
@@ -59,8 +61,13 @@ export const api = {
     const qs = q.toString();
     return getJson<{ receipts: ReceiptView[] }>(`/receipts${qs ? `?${qs}` : ""}`);
   },
+  inbox: () => getJson<InboxResult>("/inbox"),
   receipt: (id: number) => getJson<{ receipt: ReceiptDetail }>(`/receipts/${id}`),
   plays: () => getJson<{ plays: PlayDescriptor[] }>("/plays"),
+  // Set per-play cadence timing (cumulative days from send), or null to reset
+  // to code defaults. Timing only — step structure is fixed in code.
+  setCadence: (name: string, days: number[] | null) =>
+    postJson<{ ok: boolean }>(`/plays/${name}/cadence`, { days }),
   measureCac: (sinceDays?: number) =>
     getJson<{ spend: SpendByPlay[]; events: EventsByPlay[] }>(
       `/measure/cac${sinceDays != null ? `?sinceDays=${sinceDays}` : ""}`,
@@ -101,6 +108,16 @@ export const api = {
     postJson<{ ok: boolean }>(`/queue/${id}/reject`, reason ? { reason } : {}),
   approveAllQueue: (play?: string) =>
     postJson<{ approved: number }>("/queue/approve-all", play ? { play } : {}),
+  // Re-draft a single row in preview mode (dry-run, never sends) and return
+  // the fresh draft. Overwrites the row's persisted last_draft_json.
+  regenerateDraft: (id: number) => postJson<LastDraft>(`/queue/${id}/regenerate`, {}),
+  // Send the row's already-reviewed draft verbatim (no LLM re-roll). Requires
+  // a clean, not-yet-sent persisted draft; marks the row sent on success.
+  sendDraft: (id: number) =>
+    postJson<{ sent: boolean; receiptIds: number[] }>(`/queue/${id}/send-draft`, {}),
+  // Web UI no longer calls this — the drain modal navigates to /run/$playName
+  // so drafts + lint flags are visible per row. Kept for the CLI's HTTP path
+  // (`oneshot-gtm find drain`) and any external scripted callers.
   drainQueue: (req: DrainRequest) => postJson<DrainResult>("/queue/drain", req),
   triggers: () => getJson<{ triggers: TriggerView[] }>("/triggers"),
   setTriggerEnabled: (name: string, enabled: boolean) =>

@@ -1,14 +1,44 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowLeft, Play, Plus, Trash2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { RunPlayEvent, RunPlayRequest } from "@oneshot-gtm/shared-types";
+import { api } from "../api/client.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
 import { Checkbox, Field, Input, Textarea } from "../components/primitives/Field.tsx";
 import { cn } from "../lib/cn.ts";
 
+/**
+ * Search-param contract for arrivals from the `/queue` drain modal.
+ * `fromQueue=1` triggers a one-time fetch of approved rows for this play
+ * which then hydrates the targets editor. The other params round-trip the
+ * modal's collected fields so the founder can submit from /run as if they
+ * never left /queue.
+ */
+interface RunSearch {
+  fromQueue?: "1";
+  limit?: number;
+  dryRun?: "0" | "1";
+  senderCohort?: string;
+  freeForCohortOffer?: string;
+}
+
 export const Route = createFileRoute("/run/$playName")({
   component: RunPage,
+  validateSearch: (search: Record<string, unknown>): RunSearch => {
+    const out: RunSearch = {};
+    if (search["fromQueue"] === "1") out.fromQueue = "1";
+    if (typeof search["limit"] === "number") out.limit = search["limit"];
+    else if (typeof search["limit"] === "string" && /^\d+$/.test(search["limit"])) {
+      out.limit = Number.parseInt(search["limit"], 10);
+    }
+    if (search["dryRun"] === "0" || search["dryRun"] === "1") out.dryRun = search["dryRun"];
+    if (typeof search["senderCohort"] === "string") out.senderCohort = search["senderCohort"];
+    if (typeof search["freeForCohortOffer"] === "string") {
+      out.freeForCohortOffer = search["freeForCohortOffer"];
+    }
+    return out;
+  },
 });
 
 interface FieldSpec {
@@ -223,20 +253,184 @@ const PLAY_SCHEMAS: Record<string, PlaySchema> = {
       bridge: "",
     },
   },
+  "competitor-switch": {
+    description:
+      "Migration-honesty pitch to a prospect using a vendor you replace. Cites a specific evidence URL or claim, includes one yourEdge fact.",
+    fields: [
+      { key: "name", label: "Prospect name", type: "text", required: true },
+      { key: "email", label: "Prospect email", type: "email", required: true },
+      { key: "company", label: "Company", type: "text", required: true },
+      {
+        key: "competitor",
+        label: "Competitor (incumbent)",
+        type: "text",
+        required: true,
+        placeholder: "Apollo.io",
+      },
+      {
+        key: "yourEdge",
+        label: "Your edge (one sentence)",
+        type: "textarea",
+        required: true,
+        hint: "One specific advantage, not a feature list. e.g. 'we don't sell scraped emails'.",
+      },
+      {
+        key: "evidenceUrl",
+        label: "Evidence URL (optional)",
+        type: "url",
+        placeholder: "https://...",
+      },
+      {
+        key: "evidenceText",
+        label: "Evidence text (optional — paste a quote/snippet)",
+        type: "textarea",
+      },
+      { key: "linkedinUrl", label: "LinkedIn URL (optional)", type: "url" },
+    ],
+    defaultRow: {
+      name: "",
+      email: "",
+      company: "",
+      competitor: "",
+      yourEdge: "",
+      evidenceUrl: "",
+      evidenceText: "",
+      linkedinUrl: "",
+    },
+  },
+  "stack-consolidation": {
+    description:
+      "Consolidation-honesty pitch to a developer whose repo wires up several separate API vendors. One SDK collapses the sprawl; cites the detected stack and one yourEdge fact.",
+    fields: [
+      { key: "name", label: "Prospect name", type: "text", required: true },
+      { key: "email", label: "Prospect email", type: "email", required: true },
+      { key: "company", label: "Company", type: "text", required: true },
+      {
+        key: "vendorStack",
+        label: "Vendor stack (comma-separated)",
+        type: "textarea",
+        required: true,
+        placeholder: "stripe, twilio, sendgrid",
+        hint: "API vendors detected in their repo. Comma-separated.",
+      },
+      {
+        key: "yourEdge",
+        label: "Your edge (one sentence)",
+        type: "textarea",
+        required: true,
+        hint: "One specific way you collapse the sprawl. e.g. 'one SDK + on-chain receipts replaces vendor stitching'.",
+      },
+      {
+        key: "evidenceUrl",
+        label: "Repo URL (optional)",
+        type: "url",
+        placeholder: "https://github.com/...",
+      },
+      { key: "linkedinUrl", label: "LinkedIn URL (optional)", type: "url" },
+    ],
+    defaultRow: {
+      name: "",
+      email: "",
+      company: "",
+      vendorStack: "",
+      yourEdge: "",
+      evidenceUrl: "",
+      linkedinUrl: "",
+    },
+  },
 };
 
 function RunPage() {
   const { playName } = Route.useParams();
+  const search = Route.useSearch();
   const schema = PLAY_SCHEMAS[playName];
 
   const [rows, setRows] = useState<Record<string, string>[]>(
     schema ? [{ ...schema.defaultRow }] : [],
   );
+  // Parallel to `rows`: each entry is the originating queue row's dedupeKey
+  // (when hydrated from `?fromQueue=1`) or null (manual entry / added row).
+  // The server uses these to persist drafts back to the matching queue row;
+  // null entries get skipped (correct — there's nothing to update).
+  const [dedupeKeys, setDedupeKeys] = useState<(string | null)[]>(schema ? [null] : []);
   const [extras, setExtras] = useState<Record<string, string>>({});
-  const [dryRun, setDryRun] = useState(true);
+  // dryRun mirrors what the founder picked in the drain modal when arriving
+  // via `?fromQueue=1`. Default true otherwise — manual /run entry is more
+  // commonly a preview than a real send.
+  const [dryRun, setDryRun] = useState(search.dryRun !== "0");
   const [running, setRunning] = useState(false);
   const [events, setEvents] = useState<RunPlayEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // Set when navigated from /queue with fromQueue=1 AND the approved-rows
+  // fetch returned zero. Surfaces a one-line empty-state hint so the
+  // founder isn't confused by the schema's default empty row.
+  const [hydrationEmpty, setHydrationEmpty] = useState(false);
+
+  // Mount-only hydrate-from-queue.
+  //
+  // StrictMode (dev) double-invokes this effect; we use a closure-scoped
+  // `cancelled` flag so the first invocation's fetch resolves into a no-op
+  // and the second invocation's fetch is the one that updates state. A
+  // `useRef`-based "ran-once" guard would persist across the remount and
+  // make the SECOND invocation skip — leaving state un-hydrated even though
+  // we ran a fetch (silent dev-only failure).
+  //
+  // Net cost: 1 extra GET in dev StrictMode; 1 GET total in production.
+  useEffect(() => {
+    if (search.fromQueue !== "1") return;
+    if (!schema) return;
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await api.queue({
+          play: playName,
+          status: "approved",
+          limit: search.limit ?? 50,
+        });
+        if (cancelled) return;
+        // Pair each row with its dedupeKey before filtering, so the parallel
+        // arrays stay aligned even if some payloads are malformed.
+        const pairs = res.rows
+          .map((r) => ({ payload: r.payload, dedupeKey: r.dedupeKey }))
+          .filter((p): p is { payload: Record<string, unknown>; dedupeKey: string } => {
+            return Boolean(p.payload) && typeof p.payload === "object";
+          });
+        const targets = pairs.map(({ payload }) => {
+          // Coerce every value to a string for the form editor — it stores
+          // the row as `Record<string, string>` and re-serializes to JSON
+          // when submitting. Null/undefined become "".
+          const out: Record<string, string> = Object.assign({}, schema.defaultRow);
+          for (const k of Object.keys(payload)) {
+            const v = payload[k];
+            out[k] = v == null ? "" : typeof v === "string" ? v : JSON.stringify(v);
+          }
+          return out;
+        });
+        if (targets.length === 0) {
+          setHydrationEmpty(true);
+          return;
+        }
+        setRows(targets);
+        setDedupeKeys(pairs.map((p) => p.dedupeKey));
+        // Round-trip the modal's per-play extras (accelerator-batch only
+        // today) so the founder doesn't have to retype senderCohort/offer.
+        const ex: Record<string, string> = {};
+        if (search.senderCohort) ex["senderCohort"] = search.senderCohort;
+        if (search.freeForCohortOffer) ex["freeForCohortOffer"] = search.freeForCohortOffer;
+        if (Object.keys(ex).length > 0) setExtras((prev) => ({ ...prev, ...ex }));
+      } catch (err) {
+        if (cancelled) return;
+        setError(`failed to load approved targets from queue: ${(err as Error).message}`);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Mount-only on purpose — re-running on search-param edits would clobber
+    // founder edits to the loaded rows.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const draftedByIndex = useMemo(() => {
     const m = new Map<
@@ -256,6 +450,10 @@ function RunPage() {
 
   const doneEvent = events.find((e) => e.kind === "done");
   const errorEvents = events.filter((e) => e.kind === "error");
+  const verifyEvent = events.find((e) => e.kind === "verify");
+  // Latest pipeline stage ("verifying" / "drafting + sending"), shown while the
+  // run is in flight so it doesn't read as frozen on a slow real send.
+  const latestStage = events.findLast((e) => e.kind === "stage");
 
   const aggregate = useMemo(() => {
     const drafts = draftedByIndex.size;
@@ -317,10 +515,14 @@ function RunPage() {
 
   const addRow = (): void => {
     setRows((prev) => [...prev, { ...schema.defaultRow }]);
+    // New rows have no queue origin → null in the parallel array. Keeps
+    // indices aligned so server-side persistence skips them cleanly.
+    setDedupeKeys((prev) => [...prev, null]);
   };
 
   const removeRow = (rowIdx: number): void => {
     setRows((prev) => prev.filter((_, i) => i !== rowIdx));
+    setDedupeKeys((prev) => prev.filter((_, i) => i !== rowIdx));
   };
 
   const submit = async (): Promise<void> => {
@@ -329,9 +531,14 @@ function RunPage() {
     setRunning(true);
 
     const targets = rows.map((r) => stripEmpty(r));
+    // Only attach dedupeKeys when at least one row has one (i.e. arrived
+    // from /queue). Pure-manual sessions skip the field; the server then
+    // skips persistence entirely.
+    const hasAnyDedupeKey = dedupeKeys.some((k) => k != null);
     const body: RunPlayRequest = {
       dryRun,
       targets,
+      ...(hasAnyDedupeKey ? { dedupeKeys } : {}),
       ...(extras["senderCohort"] ? { senderCohort: extras["senderCohort"] } : {}),
       ...(extras["freeForCohortOffer"] ? { freeForCohortOffer: extras["freeForCohortOffer"] } : {}),
     };
@@ -407,6 +614,16 @@ function RunPage() {
         <p className="ln-note mt-3 max-w-[72ch] text-[14px] text-ink-cream-2">
           {schema.description}
         </p>
+        {hydrationEmpty && (
+          <p className="mt-3 font-mono text-[12px] text-ink-spend-2">
+            no approved targets in <code>{playName}</code> queue right now — add rows below or
+            approve some on the{" "}
+            <Link to="/queue" className="underline decoration-ink-faint underline-offset-2">
+              queue page
+            </Link>
+            .
+          </p>
+        )}
       </section>
 
       {schema.extras && (
@@ -492,7 +709,7 @@ function RunPage() {
       {/* Action bar — sticky. Live aggregates appear in the middle once drafts land. */}
       <section className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-t border-ink-rule bg-ink-bg/90 px-6 py-3 backdrop-blur-[2px]">
         <Checkbox
-          label="Dry run — draft only, no send, no spend"
+          label="Dry run — draft only, no send (a one-time enrich lookup may apply)"
           checked={dryRun}
           onChange={(e) => setDryRun(e.target.checked)}
         />
@@ -521,7 +738,9 @@ function RunPage() {
               {doneEvent?.kind === "done" && <span className="text-ink-muted">· done</span>}
             </>
           )}
-          {running && aggregate.drafts === 0 && <span>preparing…</span>}
+          {running && aggregate.drafts === 0 && (
+            <span>{latestStage?.kind === "stage" ? `${latestStage.stage}…` : "preparing…"}</span>
+          )}
         </div>
         <Button onClick={submit} disabled={running}>
           <Play size={14} />
@@ -534,6 +753,23 @@ function RunPage() {
           <div className="flex items-start gap-2">
             <Badge tone="blocked">error</Badge>
             <span className="font-mono text-[12px] text-[color:var(--ink-blocked-2)]">{error}</span>
+          </div>
+        </section>
+      )}
+
+      {verifyEvent && verifyEvent.kind === "verify" && verifyEvent.dropped.length > 0 && (
+        <section className="border-b border-ink-rule border-l-2 border-l-ink-rule bg-ink-surface/40 px-6 py-3">
+          <div className="font-mono text-[11.5px] text-ink-faint">
+            verify · {verifyEvent.verified} of {verifyEvent.total} deliverable
+            {" · "}
+            {verifyEvent.dropped.length} dropped
+          </div>
+          <div className="mt-1 font-mono text-[11px] text-ink-muted">
+            {verifyEvent.dropped.map((d) => (
+              <div key={`${d.email}::${d.reason}`}>
+                {d.email || "(missing)"} — {d.reason}
+              </div>
+            ))}
           </div>
         </section>
       )}

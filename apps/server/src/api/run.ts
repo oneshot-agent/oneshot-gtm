@@ -1,22 +1,8 @@
-import {
-  runAcceleratorBatch,
-  runCompetitorSwitch,
-  runHiringSignal,
-  runJobChange,
-  runPodcastGuest,
-  runPostFunding,
-  runShowHn,
-  verifyAndFilterTargets,
-  type AcceleratorBatchTarget,
-  type CompetitorSwitchTarget,
-  type HiringSignalTarget,
-  type JobChangeTarget,
-  type PodcastGuestTarget,
-  type PostFundingTarget,
-  type ShowHnTarget,
-} from "@oneshot-gtm/plays";
+import { getLedger, logEvent } from "@oneshot-gtm/core";
+import { verifyAndFilterTargets } from "@oneshot-gtm/plays";
 import type { RunPlayEvent, RunPlayRequest } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
+import { dispatchPlay, type DraftedView } from "./_play-dispatch.ts";
 
 const SUPPORTED = new Set([
   "show-hn",
@@ -26,15 +12,8 @@ const SUPPORTED = new Set([
   "hiring-signal",
   "podcast-guest",
   "competitor-switch",
+  "stack-consolidation",
 ]);
-
-interface DraftedView {
-  subject: string;
-  body: string;
-  flags: string[];
-  receiptIds: number[];
-  sent: boolean;
-}
 
 export async function runPlay(req: Request, params: Record<string, string>): Promise<Response> {
   const playName = params["playName"] ?? "";
@@ -61,20 +40,54 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
     async start(controller) {
       const encoder = new TextEncoder();
       const send = (event: RunPlayEvent): void => {
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        // The client may disconnect mid-run (closed tab, navigation, or a
+        // request timeout) — the controller is then closed and enqueue throws.
+        // Swallow it: the server-side work (incl. any real send) still happened
+        // and there's nothing to stream to. Avoids a false pipeline_error.
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
+        } catch {
+          // client gone — ignore
+        }
       };
 
       try {
+        // Build email → dedupeKey map BEFORE the verify filter potentially
+        // drops rows. The verify pass changes target indices but not target
+        // emails, so we can recover the dedupe key per drafted target by
+        // looking up the email later. Manual /run entries (no fromQueue)
+        // omit `dedupeKeys`; the map stays empty and the persist hook is
+        // a no-op.
+        const emailToDedupeKey = new Map<string, string>();
+        if (body.dedupeKeys && body.dedupeKeys.length === body.targets.length) {
+          body.targets.forEach((t, i) => {
+            const target = t as { email?: string; founderEmail?: string };
+            const email = target.email ?? target.founderEmail;
+            const key = body.dedupeKeys?.[i];
+            if (email && key) emailToDedupeKey.set(email, key);
+          });
+        }
+
         // Verify all target emails BEFORE dispatching to the play, so
         // undeliverable rows are dropped before we spend on LLM drafting.
-        // Skipped on dryRun (no real spend during preview). The verify
-        // event tells the UI which rows were dropped + why.
+        // Skipped on dryRun (no real spend during preview), AND skipped for
+        // queue-sourced runs (dedupeKeys present) — those rows were already
+        // verified at finder-enqueue time, so re-verifying just adds latency.
+        // The verify event tells the UI which rows were dropped + why.
         const inputCount = body.targets.length;
-        const verify = await verifyAndFilterTargets(
-          body.targets as Array<{ email?: string; founderEmail?: string }>,
-          (t) => t.email ?? t.founderEmail ?? null,
-          { playName, dryRun: body.dryRun },
-        );
+        const fromQueue =
+          Array.isArray(body.dedupeKeys) && body.dedupeKeys.length === body.targets.length;
+        let verify: Awaited<ReturnType<typeof verifyAndFilterTargets>>;
+        if (fromQueue) {
+          verify = { verified: body.targets, dropped: [], receiptIds: [], costUsd: 0 };
+        } else {
+          send({ kind: "stage", stage: "verifying" });
+          verify = await verifyAndFilterTargets(
+            body.targets as Array<{ email?: string; founderEmail?: string }>,
+            (t) => t.email ?? t.founderEmail ?? null,
+            { playName, dryRun: body.dryRun },
+          );
+        }
         if (verify.dropped.length > 0) {
           send({
             kind: "verify",
@@ -93,6 +106,7 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
         }
         const filteredBody: RunPlayRequest = { ...body, targets: verify.verified };
 
+        send({ kind: "stage", stage: body.dryRun ? "drafting" : "drafting + sending" });
         const drafted = await dispatchPlay(playName, filteredBody);
         let sentCount = 0;
         drafted.forEach((d, index) => {
@@ -103,10 +117,70 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
           if (d.sent) sentCount++;
         });
         send({ kind: "done", total: drafted.length, sent: sentCount });
+
+        // Persist drafts to their originating queue rows so the founder can
+        // review subject/body/flags later via /queue. Best-effort — the
+        // SSE stream has already finished by here, so a SQLite hiccup
+        // shouldn't surface as a user-visible error.
+        if (emailToDedupeKey.size > 0) {
+          persistDraftsToQueue({
+            playName,
+            verifiedTargets: verify.verified as Array<{ email?: string; founderEmail?: string }>,
+            drafted,
+            dryRun: body.dryRun,
+            emailToDedupeKey,
+          });
+        }
       } catch (err) {
-        send({ kind: "error", index: -1, message: (err as Error).message });
+        // Log the full error server-side — the SSE error event only carries a
+        // short message (e.g. the SDK's generic "Tool request failed"), which
+        // is useless for diagnosis. The stack reveals which call failed
+        // (sendEmail / enrichProfile / verifyEmail in oneshot.ts).
+        const e = err as Error & {
+          cause?: unknown;
+          statusCode?: number;
+          responseBody?: string;
+        };
+        const causeMsg =
+          e?.cause instanceof Error ? e.cause.message : e?.cause ? String(e.cause) : null;
+        logEvent(
+          "run.pipeline_error",
+          {
+            play: playName,
+            message_200: (e?.message ?? "").slice(0, 200),
+            // OneShot SDK ToolError carries the failing call's HTTP status +
+            // server response body — the actual reason, vs the generic message.
+            status_code: typeof e?.statusCode === "number" ? e.statusCode : null,
+            response_body_400: typeof e?.responseBody === "string" ? e.responseBody.slice(0, 400) : null,
+            cause_200: causeMsg ? causeMsg.slice(0, 200) : null,
+            stack_300: (e?.stack ?? "").slice(0, 300),
+          },
+          "error",
+        );
+        // Surface the real reason to the UI. The SDK's bare "Tool request
+        // failed" is useless; the server response body carries the actual
+        // error (e.g. {"error":"domain_not_owned","message":"…"}).
+        let uiMessage = e?.message ?? "run failed";
+        if (typeof e?.statusCode === "number") {
+          let detail = "";
+          try {
+            const parsed = JSON.parse(e.responseBody ?? "") as {
+              message?: string;
+              error?: string;
+            };
+            detail = parsed.message ?? parsed.error ?? "";
+          } catch {
+            detail = (e.responseBody ?? "").slice(0, 160);
+          }
+          uiMessage = `${uiMessage} (HTTP ${e.statusCode})${detail ? ` — ${detail}` : ""}`;
+        }
+        send({ kind: "error", index: -1, message: uiMessage });
       } finally {
-        controller.close();
+        try {
+          controller.close();
+        } catch {
+          // already closed (client disconnected) — ignore
+        }
       }
     },
   });
@@ -137,79 +211,60 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
   });
 }
 
-async function dispatchPlay(playName: string, body: RunPlayRequest): Promise<DraftedView[]> {
-  switch (playName) {
-    case "show-hn": {
-      const result = await runShowHn({
-        dryRun: body.dryRun,
-        targets: body.targets as ShowHnTarget[],
+/**
+ * After the SSE stream completes, write each generated draft to its
+ * originating `target_queue` row. Best-effort: a SQL hiccup during
+ * persistence is logged via `error.swallowed` and doesn't affect what the
+ * UI already saw on the wire. Indices match because `verifiedTargets[i]`
+ * corresponds to `drafted[i]` (both come from the same dispatch).
+ */
+function persistDraftsToQueue(input: {
+  playName: string;
+  verifiedTargets: Array<{ email?: string; founderEmail?: string }>;
+  drafted: DraftedView[];
+  dryRun: boolean;
+  emailToDedupeKey: Map<string, string>;
+}): void {
+  const ledger = getLedger();
+  for (let i = 0; i < input.drafted.length; i++) {
+    const target = input.verifiedTargets[i];
+    const draft = input.drafted[i];
+    if (!target || !draft) continue;
+    const email = target.email ?? target.founderEmail;
+    if (!email) continue;
+    const dedupeKey = input.emailToDedupeKey.get(email);
+    if (!dedupeKey) continue;
+    try {
+      const row = ledger.getQueueRowByDedupe(input.playName, dedupeKey);
+      if (!row) continue;
+      ledger.setQueueDraft({
+        id: row.id,
+        draft: {
+          subject: draft.subject,
+          body: draft.body,
+          flags: draft.flags,
+          sent: draft.sent,
+          receiptIds: draft.receiptIds,
+          dryRun: input.dryRun,
+        },
       });
-      return result.drafted.map(toDraftedView);
-    }
-    case "job-change": {
-      const result = await runJobChange({
-        dryRun: body.dryRun,
-        targets: body.targets as JobChangeTarget[],
-      });
-      return result.drafted.map(toDraftedView);
-    }
-    case "post-funding": {
-      const result = await runPostFunding({
-        dryRun: body.dryRun,
-        targets: body.targets as PostFundingTarget[],
-      });
-      return result.drafted.map(toDraftedView);
-    }
-    case "accelerator-batch": {
-      if (!body.senderCohort || body.senderCohort.length === 0) {
-        throw new Error("accelerator-batch requires senderCohort");
+      // A real, successful send must leave the approved pool — otherwise the
+      // row stays `approved` and every subsequent drain (esp. limit 1) re-loads
+      // the same first approved target forever. Held drafts (lint flags →
+      // sent:false) and dry-run previews intentionally stay approved.
+      if (draft.sent && !input.dryRun) {
+        ledger.setQueueStatus({ id: row.id, status: "sent" });
       }
-      const result = await runAcceleratorBatch({
-        dryRun: body.dryRun,
-        targets: body.targets as AcceleratorBatchTarget[],
-        senderCohort: body.senderCohort,
-        ...(body.freeForCohortOffer ? { freeForCohortOffer: body.freeForCohortOffer } : {}),
-      });
-      return result.drafted.map(toDraftedView);
+    } catch (err) {
+      logEvent(
+        "error.swallowed",
+        {
+          kind: "run.persistDraftsToQueue",
+          play: input.playName,
+          message_120: ((err as Error).message ?? "").slice(0, 120),
+        },
+        "warn",
+      );
     }
-    case "hiring-signal": {
-      const result = await runHiringSignal({
-        dryRun: body.dryRun,
-        targets: body.targets as HiringSignalTarget[],
-      });
-      return result.drafted.map(toDraftedView);
-    }
-    case "podcast-guest": {
-      const result = await runPodcastGuest({
-        dryRun: body.dryRun,
-        targets: body.targets as PodcastGuestTarget[],
-      });
-      return result.drafted.map(toDraftedView);
-    }
-    case "competitor-switch": {
-      const result = await runCompetitorSwitch({
-        dryRun: body.dryRun,
-        targets: body.targets as CompetitorSwitchTarget[],
-      });
-      return result.drafted.map(toDraftedView);
-    }
-    default:
-      throw new Error(`unsupported play: ${playName}`);
   }
-}
-
-function toDraftedView(d: {
-  subject: string;
-  body: string;
-  flags: string[];
-  receiptIds: number[];
-  sent: boolean;
-}): DraftedView {
-  return {
-    subject: d.subject,
-    body: d.body,
-    flags: d.flags,
-    receiptIds: d.receiptIds,
-    sent: d.sent,
-  };
 }
