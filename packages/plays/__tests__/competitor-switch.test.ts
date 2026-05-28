@@ -43,6 +43,8 @@ vi.mock("@oneshot-gtm/core", async () => {
       upsertProspect: () => 1,
       recordSequenceEvent: () => 1,
       findProspectByEmail: () => null,
+      getCachedEnrichment: () => null,
+      setCachedEnrichment: () => {},
     }),
     receiptUrlForId: (id: number) => `oneshot://receipt/${id}`,
   };
@@ -170,7 +172,7 @@ describe("runCompetitorSwitch — browserTask gating", () => {
     expect(calls.llmInputBlocks[0]).toContain("EVIDENCE: (no evidence supplied)");
   });
 
-  it("dryRun skips ALL paid steps regardless of evidence shape", async () => {
+  it("dryRun enriches for the dossier but skips the browser scrape + send", async () => {
     await runCompetitorSwitch({
       dryRun: true,
       targets: [
@@ -184,10 +186,11 @@ describe("runCompetitorSwitch — browserTask gating", () => {
         },
       ],
     });
-    expect(calls.enrichProfile).toBe(0);
+    // Enrich now runs on previews too (cached by email) so the reviewed draft
+    // is personalized — but the heavy browser scrape and the send stay gated.
+    expect(calls.enrichProfile).toBe(1);
     expect(calls.browserTask).toBe(0);
     expect(calls.sendEmail).toBe(0);
-    // LLM draft still runs in dryRun (so the founder sees what would be sent).
     expect(calls.llm).toBe(1);
   });
 });

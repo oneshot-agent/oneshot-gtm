@@ -1,5 +1,5 @@
-import { browserTask, enrichProfile, getLedger, loadConfig } from "@oneshot-gtm/core";
-import { draftEmailFromPrompt, lintEmail, sendDraftedEmail } from "./_lib.ts";
+import { browserTask, getLedger, loadConfig } from "@oneshot-gtm/core";
+import { draftEmailFromPrompt, lintEmail, safeEnrich, sendDraftedEmail } from "./_lib.ts";
 import { buildFollowUpEmail, enrollInCadence, registerSequence } from "./_cadence.ts";
 
 const PLAY_NAME = "competitor-switch";
@@ -48,20 +48,22 @@ export async function runCompetitorSwitch(
   for (const t of opts.targets) {
     const receiptIds: number[] = [];
     let scrapedEvidence: string | undefined;
-    let dossier = "";
+
+    // Enrich on both preview and real send so the reviewed draft is
+    // personalized. Cached by email — repeated previews / a later verbatim
+    // send reuse the lookup (no extra ~70s or spend).
+    const enr = await safeEnrich(
+      {
+        ...(t.email ? { email: t.email } : {}),
+        name: t.name,
+        companyDomain: extractDomain(t.email),
+      },
+      { playName: PLAY_NAME },
+    );
+    if (enr.receiptId) receiptIds.push(enr.receiptId);
+    const dossier = JSON.stringify(enr.result, null, 2).slice(0, 3500);
 
     if (!opts.dryRun) {
-      const enr = await enrichProfile(
-        {
-          ...(t.email ? { email: t.email } : {}),
-          name: t.name,
-          companyDomain: extractDomain(t.email),
-        },
-        { playName: PLAY_NAME },
-      );
-      receiptIds.push(enr.receiptId);
-      dossier = JSON.stringify(enr.result, null, 2).slice(0, 3500);
-
       // Skip the browserTask scrape when evidenceText was already supplied
       // (or when the founder explicitly opts out). Two reasons:
       // 1. The github-topics finder enqueues both — it builds evidenceText
@@ -165,14 +167,26 @@ registerSequence({
   playName: PLAY_NAME,
   steps: [
     {
-      dayOffset: 7,
+      dayOffset: 3,
+      channel: "email",
+      breakOnReply: true,
+      label: "value follow-up",
+      builder: buildFollowUpEmail({
+        promptName: "competitor-switch-followup",
+        contextLines: [
+          `PLAY: competitor-switch. Day-3 value follow-up after the migration-honesty pitch.`,
+        ],
+      }),
+    },
+    {
+      dayOffset: 8,
       channel: "email",
       breakOnReply: true,
       label: "breakup",
       builder: buildFollowUpEmail({
         promptName: "breakup-email",
         contextLines: [
-          `PLAY: competitor-switch. Single follow-up after the migration-honesty pitch.`,
+          `PLAY: competitor-switch. Final breakup after the migration-honesty pitch.`,
         ],
       }),
     },

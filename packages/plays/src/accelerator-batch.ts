@@ -1,5 +1,5 @@
-import { deepResearch, enrichProfile, getLedger, loadConfig } from "@oneshot-gtm/core";
-import { draftEmailFromPrompt, lintEmail, sendDraftedEmail } from "./_lib.ts";
+import { deepResearch, getLedger, loadConfig } from "@oneshot-gtm/core";
+import { draftEmailFromPrompt, lintEmail, safeEnrich, sendDraftedEmail } from "./_lib.ts";
 import { buildFollowUpEmail, enrollInCadence, registerSequence } from "./_cadence.ts";
 
 export type AcceleratorCohort =
@@ -55,20 +55,21 @@ export async function runAcceleratorBatch(
 
   for (const target of opts.targets) {
     const receiptIds: number[] = [];
-    let dossier = "";
+
+    // Enrich on both preview and real send (cached by email) so the reviewed
+    // draft is personalized; the heavier deepResearch stays real-send only.
+    const enr = await safeEnrich(
+      {
+        ...(target.email ? { email: target.email } : {}),
+        ...(target.linkedinUrl ? { linkedinUrl: target.linkedinUrl } : {}),
+        name: target.name,
+      },
+      { playName: PLAY_NAME },
+    );
+    if (enr.receiptId) receiptIds.push(enr.receiptId);
+    let dossier = JSON.stringify(enr.result, null, 2).slice(0, 3500);
 
     if (!opts.dryRun) {
-      const enr = await enrichProfile(
-        {
-          ...(target.email ? { email: target.email } : {}),
-          ...(target.linkedinUrl ? { linkedinUrl: target.linkedinUrl } : {}),
-          name: target.name,
-        },
-        { playName: PLAY_NAME },
-      );
-      receiptIds.push(enr.receiptId);
-      dossier = JSON.stringify(enr.result, null, 2).slice(0, 3500);
-
       if (target.launchUrl) {
         const research = await deepResearch(
           {

@@ -1,5 +1,5 @@
-import { deepResearch, enrichProfile, loadConfig } from "@oneshot-gtm/core";
-import { draftEmailFromPrompt, lintEmail, sendDraftedEmail } from "./_lib.ts";
+import { deepResearch, loadConfig } from "@oneshot-gtm/core";
+import { draftEmailFromPrompt, lintEmail, safeEnrich, sendDraftedEmail } from "./_lib.ts";
 export { receiptUrls } from "./_lib.ts";
 
 export interface ShowHnTarget {
@@ -39,16 +39,17 @@ export async function runShowHn(opts: ShowHnRunOptions): Promise<ShowHnRunResult
 
   for (const target of opts.targets) {
     const receiptIds: number[] = [];
-    let dossier = "";
+
+    // Enrich on both preview and real send (cached by email) so the reviewed
+    // draft is personalized; the heavier deepResearch stays real-send only.
+    const enr = await safeEnrich(
+      { email: target.founderEmail, name: target.founderName },
+      { playName: PLAY_NAME },
+    );
+    if (enr.receiptId) receiptIds.push(enr.receiptId);
+    let dossier = JSON.stringify(enr.result, null, 2).slice(0, 3500);
 
     if (!opts.dryRun) {
-      const enr = await enrichProfile(
-        { email: target.founderEmail, name: target.founderName },
-        { playName: PLAY_NAME },
-      );
-      receiptIds.push(enr.receiptId);
-      dossier = JSON.stringify(enr.result, null, 2).slice(0, 3500);
-
       const research = await deepResearch(
         {
           topic: `Recent public work and engineering decisions by ${target.founderName} on ${target.postTitle}`,

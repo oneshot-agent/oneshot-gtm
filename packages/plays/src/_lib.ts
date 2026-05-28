@@ -1,5 +1,66 @@
-import { getLedger, loadConfig, receiptUrlForId, sendEmail, verifyEmail } from "@oneshot-gtm/core";
+import {
+  enrichProfile,
+  getLedger,
+  loadConfig,
+  logEvent,
+  receiptUrlForId,
+  sendEmail,
+  verifyEmail,
+} from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
+
+/** Profiles change slowly — reuse a cached enrichment for this long before refetching. */
+const ENRICH_CACHE_TTL_MS = 30 * 24 * 3600 * 1000;
+
+/**
+ * enrichProfile that (a) never throws and (b) caches by email. The dossier is a
+ * nice-to-have for drafting, the SDK call is slow (~70s) and billed, and the
+ * same person can recur across plays / repeated previews / re-sends — so we
+ * cache the result by email (TTL) and reuse it. A cache hit returns receiptId 0
+ * (no new SDK call, no spend). On failure: log a warn and return an empty
+ * result so callers' `enr.result` / `enr.receiptId` usage keeps working.
+ */
+export async function safeEnrich(
+  input: Parameters<typeof enrichProfile>[0],
+  ctx: Parameters<typeof enrichProfile>[1],
+): Promise<Awaited<ReturnType<typeof enrichProfile>>> {
+  const ledger = getLedger();
+  const email = typeof input.email === "string" ? input.email.trim().toLowerCase() : null;
+
+  if (email) {
+    const cached = ledger.getCachedEnrichment(email);
+    if (cached && Date.now() - new Date(cached.fetched_at).getTime() < ENRICH_CACHE_TTL_MS) {
+      try {
+        return { result: JSON.parse(cached.result_json), receiptId: 0 } as Awaited<
+          ReturnType<typeof enrichProfile>
+        >;
+      } catch {
+        // corrupt cache row — fall through and refetch
+      }
+    }
+  }
+
+  try {
+    const out = await enrichProfile(input, ctx);
+    if (email) {
+      try {
+        ledger.setCachedEnrichment(email, JSON.stringify(out.result));
+      } catch {
+        // cache write is best-effort
+      }
+    }
+    return out;
+  } catch (err) {
+    logEvent(
+      "enrich.failed",
+      { play: ctx.playName, message_120: ((err as Error)?.message ?? "").slice(0, 120) },
+      "warn",
+    );
+    return { result: { status: "failed", profile: null, cost: 0 }, receiptId: 0 } as unknown as Awaited<
+      ReturnType<typeof enrichProfile>
+    >;
+  }
+}
 
 export const SLOP_PHRASES: Array<[RegExp, string]> = [
   [/\bI noticed\b/i, "banned-opener:I-noticed"],
@@ -74,19 +135,52 @@ export function humanizeDraft(input: DraftedEmail): DraftedEmail {
 function applyAutofixes(s: string): string {
   return (
     s
-      // Collapse surrounding spaces so `a — b` becomes `a, b`, not `a ,  b`.
-      .replace(/\s*—\s*/g, ", ")
+      // Collapse only horizontal whitespace around the em-dash. Using `\s*`
+      // here would eat a trailing newline when an em-dash ends a paragraph,
+      // silently merging paragraphs.
+      .replace(/[ \t]*—[ \t]*/g, ", ")
       .replace(/[“”]/g, '"')
       .replace(/[‘’]/g, "'")
-      // Strip emoji + the trailing variation-selector (U+FE0F) and ZWJ
-      // (U+200D) that compound emoji rely on; otherwise `☀️` leaves a
-      // dangling U+FE0F glyph behind. Two passes so the character class
-      // doesn't form a combining sequence the linter flags.
-      .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, "")
+      // Emoji ranges: main BMP+SMP block, dingbats, and the regional-
+      // indicator pair used for country flags (🇺🇸 = 1F1FA + 1F1F8).
+      .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{1F1E6}-\u{1F1FF}]/gu, "")
+      // Variation-selector + ZWJ stripped in a second pass — leaving them
+      // would produce a dangling glyph after the emoji itself is gone
+      // (e.g. `☀️` → `️`).
       .replace(/\u{FE0F}|\u{200D}/gu, "")
       .replace(/!\s*!+/g, "!")
+      // Strip trailing horizontal whitespace before a newline. Catches the
+      // `paragraph,_\n` artifact left by an em-dash at end-of-line, plus
+      // any stray trailing space from emoji removal.
+      .replace(/[ \t]+\n/g, "\n")
       .trim()
   );
+}
+
+/**
+ * Binding sign-off directive appended to every email system prompt. Forces
+ * the founder's product domain onto its own line beneath their name, even on
+ * prompts that say "no links / no tagline" (a bare domain is a signature, not
+ * a hyperlink). Returns "" when no domain is configured, so founders who
+ * haven't set one keep the prior name-only sign-off. Loaded fresh each call
+ * so a /setup change takes effect without a process restart.
+ */
+export function signatureDirective(): string {
+  const cfg = loadConfig();
+  const domain = (cfg.productDomain ?? "").trim();
+  if (!domain) return "";
+  const name = (cfg.founderName ?? "").trim() || "[founder name]";
+  return [
+    "",
+    "",
+    "## Signature (binding — overrides any sign-off rule above)",
+    "End the email with the founder's name, then their domain on the very next line:",
+    "",
+    name,
+    domain,
+    "",
+    `Always include the domain line, even if a rule above says "no links" or "no tagline" — a bare domain beneath the name is the signature, not an inline link. Write it plain: no "https://", no "www.", no hyperlink, no text after it.`,
+  ].join("\n");
 }
 
 export async function draftEmailFromPrompt(opts: {
@@ -95,7 +189,7 @@ export async function draftEmailFromPrompt(opts: {
   temperature?: number;
   maxTokens?: number;
 }): Promise<DraftedEmail> {
-  const system = loadPrompt(opts.promptName);
+  const system = loadPrompt(opts.promptName) + signatureDirective();
   const res = await complete({
     messages: [
       { role: "system", content: system },

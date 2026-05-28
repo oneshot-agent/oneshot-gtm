@@ -1,4 +1,4 @@
-import { enrichProfile, getLedger, loadConfig, webRead, webSearch } from "@oneshot-gtm/core";
+import { getLedger, loadConfig, webRead, webSearch } from "@oneshot-gtm/core";
 import { draftEmailFromPrompt, lintEmail, sendDraftedEmail } from "./_lib.ts";
 import { buildFollowUpEmail, enrollInCadence, registerSequence } from "./_cadence.ts";
 
@@ -50,9 +50,6 @@ export async function runHiringSignal(
     let jobPostHook = "(no specific job post phrase scraped)";
 
     if (!opts.dryRun) {
-      const enr = await enrichProfile({ email: t.email, name: t.name }, { playName: PLAY_NAME });
-      receiptIds.push(enr.receiptId);
-
       let jobUrl: string | undefined = t.jobPostUrl;
       if (!jobUrl && !opts.skipScrape) {
         const search = await webSearch(
@@ -133,13 +130,23 @@ registerSequence({
   playName: PLAY_NAME,
   steps: [
     {
-      dayOffset: 7,
+      dayOffset: 3,
+      channel: "email",
+      breakOnReply: true,
+      label: "value follow-up",
+      builder: buildFollowUpEmail({
+        promptName: "hiring-signal-followup",
+        contextLines: [`PLAY: hiring-signal. Day-3 value follow-up about the open role.`],
+      }),
+    },
+    {
+      dayOffset: 8,
       channel: "email",
       breakOnReply: true,
       label: "breakup",
       builder: buildFollowUpEmail({
         promptName: "breakup-email",
-        contextLines: [`PLAY: hiring-signal. Single follow-up.`],
+        contextLines: [`PLAY: hiring-signal. Final breakup.`],
       }),
     },
   ],

@@ -1,4 +1,4 @@
-import { enrichProfile, getLedger, loadConfig, webSearch } from "@oneshot-gtm/core";
+import { getLedger, loadConfig, webSearch } from "@oneshot-gtm/core";
 import { draftEmailFromPrompt, lintEmail, sendDraftedEmail } from "./_lib.ts";
 import { enrollInCadence, registerSequence } from "./_cadence.ts";
 
@@ -50,9 +50,6 @@ export async function runPodcastGuest(
     let extra = "";
 
     if (!opts.dryRun) {
-      const enr = await enrichProfile({ email: t.email, name: t.name }, { playName: PLAY_NAME });
-      receiptIds.push(enr.receiptId);
-
       if (!opts.skipSearch) {
         const s = await webSearch(
           {
