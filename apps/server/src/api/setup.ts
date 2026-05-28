@@ -63,7 +63,10 @@ export async function setup(req: Request): Promise<Response> {
     founderName: mergeString(body.founderName, current.founderName),
     founderEmail: mergeString(body.founderEmail, current.founderEmail),
     productOneLiner: mergeString(body.productOneLiner, current.productOneLiner),
+    productDomain: mergeString(body.productDomain, current.productDomain),
+    sendingDomain: mergeString(body.sendingDomain, current.sendingDomain),
     icpOneLiner: mergeString(body.icpOneLiner, current.icpOneLiner),
+    cadenceOverrides: current.cadenceOverrides,
     clientId: current.clientId,
   });
 

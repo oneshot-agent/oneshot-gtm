@@ -7,6 +7,6 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@oneshot-agent/sdk": "^0.16.1"
+    "@oneshot-agent/sdk": "0.16.2"
   }
 }

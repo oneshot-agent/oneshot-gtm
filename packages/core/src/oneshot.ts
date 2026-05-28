@@ -15,7 +15,7 @@ import {
   type WebSearchResult,
 } from "@oneshot-agent/sdk";
 import { getLedger } from "./ledger.ts";
-import { oneshotEnvReady } from "./config.ts";
+import { loadConfig, oneshotEnvReady } from "./config.ts";
 
 export interface SendEmailInput {
   to: string;
@@ -63,15 +63,58 @@ function emailRequestId(r: EmailResult): string | undefined {
   return r.email?.id;
 }
 
+/**
+ * Derive the From localpart from the founder's name (first token, lowercased,
+ * non-alphanumerics stripped) so sends read e.g. `jerry@yourdomain`. Falls back
+ * to `agent` when the name yields nothing usable. ("J. Nicolas" → "j".)
+ */
+function fromLocalpart(name: string | null): string {
+  const first = (name ?? "").trim().split(/\s+/)[0] ?? "";
+  const clean = first.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return clean.length > 0 ? clean : "agent";
+}
+
+/**
+ * OneShot renders the email `body` as HTML, so plain-text newlines collapse
+ * into one run-on paragraph. Escape HTML metacharacters and turn newlines into
+ * <br> so paragraphs + the signature lines render the way the draft intended.
+ */
+function toHtmlBody(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\r\n/g, "\n")
+    .replace(/\n/g, "<br>\n");
+}
+
 export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
   const agent = await getAgent();
+  const cfg = loadConfig();
+  // The send domain MUST be one the wallet owns, or OneShot 403s
+  // (`domain_not_owned`). The SDK's typed email() defaults from_domain to its
+  // own demo domain — so an unset sendingDomain is the current broken state.
+  const fromDomain = input.fromDomain ?? cfg.sendingDomain ?? null;
+
   const opts: Parameters<OneShot["email"]>[0] = {
     to: input.to,
     subject: input.subject,
-    body: input.body,
+    body: toHtmlBody(input.body),
   };
-  if (input.fromDomain) opts.from_domain = input.fromDomain;
+  if (fromDomain) {
+    // sendingDomain must be wallet-owned (else OneShot 403s `domain_not_owned`,
+    // since the SDK otherwise defaults to its demo domain). Send from
+    // <first-name>@<domain> with the founder's name as the display name.
+    // from_mailbox (localpart) + from_name (display name) are native fields in
+    // SDK ≥0.16.2 — from_name ships as a separate field, so the bare
+    // from_address still passes the server's strict email validation.
+    opts.from_domain = fromDomain;
+    opts.from_mailbox = fromLocalpart(cfg.founderName);
+    const name = (cfg.founderName ?? "").trim();
+    if (name) opts.from_name = name;
+  }
   const result = await agent.email(opts);
+
   const receiptId = getLedger().recordReceipt({
     playName: ctx.playName,
     callType: "email.send",

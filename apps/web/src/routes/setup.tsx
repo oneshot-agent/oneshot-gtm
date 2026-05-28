@@ -36,6 +36,8 @@ function SetupPage() {
   const [founderName, setFounderName] = useState("");
   const [founderEmail, setFounderEmail] = useState("");
   const [productOneLiner, setProductOneLiner] = useState("");
+  const [productDomain, setProductDomain] = useState("");
+  const [sendingDomain, setSendingDomain] = useState("");
   const [icpOneLiner, setIcpOneLiner] = useState("");
   const [icpDomain, setIcpDomain] = useState("");
   const [icpDeriveError, setIcpDeriveError] = useState<string | null>(null);
@@ -57,6 +59,8 @@ function SetupPage() {
     setFounderName(c.founderName ?? "");
     setFounderEmail(c.founderEmail ?? "");
     setProductOneLiner(c.productOneLiner ?? "");
+    setProductDomain(c.productDomain ?? "");
+    setSendingDomain(c.sendingDomain ?? "");
     setIcpOneLiner(c.icpOneLiner ?? "");
     setLlmProvider(c.llmProvider);
     setLlmModel(c.llmModel || LLM_DEFAULTS[c.llmProvider] || "");
@@ -108,6 +112,8 @@ function SetupPage() {
         founderName,
         founderEmail,
         productOneLiner,
+        productDomain,
+        sendingDomain,
         icpOneLiner,
         llmProvider,
         llmModel,
@@ -191,6 +197,26 @@ function SetupPage() {
                 value={founderEmail}
                 onChange={(e) => setFounderEmail(e.target.value)}
                 placeholder="jane@yourcompany.com"
+              />
+            </Field>
+            <Field
+              label="Signature domain"
+              hint="Bare domain shown under your name in every email signature, e.g. oneshotagent.com. Leave blank for no domain line."
+            >
+              <Input
+                value={productDomain}
+                onChange={(e) => setProductDomain(e.target.value)}
+                placeholder="oneshotagent.com"
+              />
+            </Field>
+            <Field
+              label="Sending domain"
+              hint="The domain your OneShot wallet OWNS. Emails send from <your-first-name>@thisdomain. Must be wallet-owned or OneShot rejects the send. Leave blank to use the SDK default."
+            >
+              <Input
+                value={sendingDomain}
+                onChange={(e) => setSendingDomain(e.target.value)}
+                placeholder="oneshotagents.com"
               />
             </Field>
             <Field

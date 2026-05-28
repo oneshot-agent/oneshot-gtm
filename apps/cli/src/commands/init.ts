@@ -76,7 +76,10 @@ export async function runInit(): Promise<void> {
     founderName: (answers["founderName"] ?? cfg.founderName) || null,
     founderEmail: (answers["founderEmail"] ?? cfg.founderEmail) || null,
     productOneLiner: (answers["productOneLiner"] ?? cfg.productOneLiner) || null,
+    productDomain: cfg.productDomain,
+    sendingDomain: cfg.sendingDomain,
     icpOneLiner: cfg.icpOneLiner,
+    cadenceOverrides: cfg.cadenceOverrides,
     // Preserve the anonymous install id (loadConfig already bootstrapped it
     // by the time we got here). Omitting it would silently drop it from disk
     // and the next loadConfig() would mint a fresh one.
