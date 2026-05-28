@@ -1,9 +1,12 @@
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Check, Copy, Mail, MessageSquare, Phone, Play } from "lucide-react";
-import { useState } from "react";
+import { Check, Clock, Copy, Mail, MessageSquare, Phone, Play } from "lucide-react";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
+import type { PlayDescriptor } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { Button } from "../components/primitives/Button.tsx";
+import { Input } from "../components/primitives/Field.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { CadenceTimeline, type CadenceStep } from "../components/plays/CadenceTimeline.tsx";
 import { cn } from "../lib/cn.ts";
@@ -28,6 +31,7 @@ const RUNNABLE_PLAYS = new Set([
   "accelerator-batch",
   "hiring-signal",
   "podcast-guest",
+  "stack-consolidation",
 ]);
 
 /**
@@ -88,6 +92,11 @@ const PLAY_META: Record<string, { description: string; steps: CadenceStep[] }> =
   "competitor-switch": {
     description:
       "Migration-honesty pitch for prospects using a competing vendor. Optional G2 / BuiltWith scrape.",
+    steps: [{ day: 0, label: "send" }],
+  },
+  "stack-consolidation": {
+    description:
+      "Consolidation-honesty pitch for repos wiring up several API vendors. Fed by the github-topics finder.",
     steps: [{ day: 0, label: "send" }],
   },
   "hiring-signal": {
@@ -232,7 +241,7 @@ function PlaysPage() {
                     {meta?.description && (
                       <p className="ln-note text-[13px] text-ink-cream-2">{meta.description}</p>
                     )}
-                    {meta?.steps && meta.steps.length > 0 && <CadenceTimeline steps={meta.steps} />}
+                    <CadenceEditor play={p} />
                     <code
                       className={cn(
                         "block overflow-x-auto whitespace-nowrap rounded-[var(--radius-sm)]",
@@ -294,4 +303,114 @@ function groupByPlay<T extends { playName: string }>(rows: T[]): Map<string, num
   const m = new Map<string, number>();
   for (const r of rows) m.set(r.playName, (m.get(r.playName) ?? 0) + 1);
   return m;
+}
+
+/**
+ * Cadence timeline + inline timing editor for a play. The day-0 send is fixed;
+ * the founder edits each follow-up's cumulative day (1–120, strictly
+ * increasing). Save persists a per-play override; reset clears it back to the
+ * code default. Structure (which prompts, breakup position) isn't editable.
+ */
+function CadenceEditor({ play }: { play: PlayDescriptor }) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [days, setDays] = useState<number[]>(play.steps.map((s) => s.day));
+
+  // Re-sync local state from the server after save/reset — but never while the
+  // founder is mid-edit (a background refetch, e.g. on window focus, must not
+  // clobber in-progress input).
+  useEffect(() => {
+    if (!editing) setDays(play.steps.map((s) => s.day));
+  }, [play.steps, editing]);
+
+  const save = useMutation({
+    mutationFn: (next: number[] | null) => api.setCadence(play.name, next),
+    onSuccess: (_data, next) => {
+      void qc.invalidateQueries({ queryKey: ["plays"] });
+      setEditing(false);
+      toast.success(next === null ? `${play.name} · cadence reset` : `${play.name} · timing saved`);
+    },
+    onError: (err) => toast.error(`couldn't save · ${err.message}`),
+  });
+
+  const timeline: CadenceStep[] = [
+    { day: 0, label: "send" },
+    ...play.steps.map((s) => ({
+      day: s.day,
+      label: s.label,
+      breakup: s.label.toLowerCase().includes("breakup"),
+    })),
+  ];
+  const hasFollowups = play.steps.length > 0;
+  const isModified = JSON.stringify(days) !== JSON.stringify(play.defaultDays);
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-3">
+        <CadenceTimeline steps={timeline} />
+        {hasFollowups && !editing && (
+          <button
+            type="button"
+            onClick={() => setEditing(true)}
+            className="inline-flex items-center gap-1 font-mono text-[10px] text-ink-faint underline decoration-ink-rule underline-offset-2 hover:text-ink-cream-2"
+          >
+            <Clock size={10} /> edit timing
+          </button>
+        )}
+      </div>
+      {editing && (
+        <div className="flex flex-col gap-2 rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep p-3">
+          <div className="flex flex-wrap items-end gap-3">
+            {play.steps.map((s, i) => (
+              <label key={s.label} className="flex flex-col gap-1">
+                <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+                  {s.label} · day
+                </span>
+                <Input
+                  type="number"
+                  min={1}
+                  max={120}
+                  value={days[i] ?? 1}
+                  onChange={(e) => {
+                    const v = Math.max(1, Math.min(120, Number.parseInt(e.target.value, 10) || 1));
+                    setDays((prev) => prev.map((d, j) => (j === i ? v : d)));
+                  }}
+                  className="w-20 font-mono text-[12px]"
+                />
+              </label>
+            ))}
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Button size="sm" disabled={save.isPending} onClick={() => save.mutate(days)}>
+              {save.isPending ? "saving…" : "save"}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={save.isPending || !isModified}
+              onClick={() => save.mutate(null)}
+              title="Restore the code-default timing"
+            >
+              reset to default
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={save.isPending}
+              onClick={() => {
+                setDays(play.steps.map((s) => s.day));
+                setEditing(false);
+              }}
+            >
+              cancel
+            </Button>
+          </div>
+          <p className="font-mono text-[10px] text-ink-faint">
+            cumulative days from the day-0 send · strictly increasing · 1–120 · default{" "}
+            {play.defaultDays.map((d) => `d${d}`).join(" · ")}
+          </p>
+        </div>
+      )}
+    </div>
+  );
 }

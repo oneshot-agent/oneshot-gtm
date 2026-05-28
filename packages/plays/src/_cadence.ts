@@ -9,6 +9,7 @@ import {
   type ProspectRecord,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
+import { signatureDirective } from "./_lib.ts";
 
 export interface CadenceContext {
   prospect: ProspectRecord;
@@ -51,11 +52,41 @@ export function registerSequence(seq: Sequence): void {
 }
 
 export function getSequence(playName: string): Sequence | undefined {
+  return effectiveSequence(playName);
+}
+
+/** The registered (code) sequence, ignoring any founder override. For "reset". */
+export function defaultSequence(playName: string): Sequence | undefined {
   return playSequences.get(playName);
 }
 
+/**
+ * The registered (code) sequence with the founder's per-play timing overrides
+ * applied. The code sequence defines the structure (which prompts fire, where
+ * the breakup sits); a matching-length `cadenceOverrides[playName]` in config
+ * replaces each step's RELATIVE dayOffset. A length mismatch (e.g. after a
+ * later structural change) is ignored — the code default wins, never throws.
+ * Read fresh each call so a /plays edit takes effect without a restart.
+ */
+export function effectiveSequence(playName: string): Sequence | undefined {
+  const base = playSequences.get(playName);
+  if (!base) return undefined;
+  const override = loadConfig().cadenceOverrides?.[playName];
+  if (!Array.isArray(override) || override.length !== base.steps.length) return base;
+  return {
+    playName: base.playName,
+    steps: base.steps.map((step, i) => ({
+      dayOffset: override[i] as number,
+      channel: step.channel,
+      breakOnReply: step.breakOnReply,
+      label: step.label,
+      builder: step.builder,
+    })),
+  };
+}
+
 export function enrollInCadence(input: { prospectId: number; playName: string }): void {
-  const seq = playSequences.get(input.playName);
+  const seq = effectiveSequence(input.playName);
   if (!seq || seq.steps.length === 0) return;
   const next = seq.steps[0];
   if (!next) return;
@@ -140,7 +171,7 @@ export async function advanceCadence(
   const due = ledger.listActiveCadences({ dueByIso: nowIso });
 
   for (const cad of due) {
-    const seq = playSequences.get(cad.play_name);
+    const seq = effectiveSequence(cad.play_name);
     if (!seq) {
       result.details.push({
         prospectEmail: cad.prospect_email,
@@ -375,7 +406,7 @@ export function buildFollowUpEmail(opts: {
   contextLines: string[];
 }): SequenceStep["builder"] {
   return async (ctx: CadenceContext) => {
-    const system = loadPrompt(opts.promptName);
+    const system = loadPrompt(opts.promptName) + signatureDirective();
     const user = [
       `FOUNDER: ${ctx.cfg.founderName}`,
       `PRODUCT: ${ctx.cfg.productOneLiner}`,

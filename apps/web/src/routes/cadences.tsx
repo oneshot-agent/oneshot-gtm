@@ -24,8 +24,9 @@ const PLAY_STEPS: Record<string, number> = {
   "accelerator-batch": 3,
   concierge: 3,
   "demo-no-show": 2,
-  "competitor-switch": 1,
-  "hiring-signal": 1,
+  "competitor-switch": 2,
+  "stack-consolidation": 2,
+  "hiring-signal": 2,
   "podcast-guest": 1,
   "breakup-revive": 1,
 };
