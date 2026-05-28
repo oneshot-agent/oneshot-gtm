@@ -17,7 +17,7 @@ on:
     tags: ["v*"]
 
 permissions:
-  contents: read
+  contents: write # needed for the GitHub Release step below
   id-token: write
 
 jobs:
@@ -53,3 +53,22 @@ jobs:
         working-directory: apps/server
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # Populate the GitHub repo's "Releases" rail. Auto-generates the body
+      # from commit messages since the previous tag — re-runs are idempotent
+      # (the action no-ops if a release for this tag already exists).
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          body: |
+            Published to npm: https://www.npmjs.com/package/oneshot-gtm-server/v/${{ github.ref_name }}
+
+            Install (requires [Bun](https://bun.sh)):
+
+            ```bash
+            bun add -g oneshot-gtm-server
+            bun x oneshot-gtm-server
+            ```

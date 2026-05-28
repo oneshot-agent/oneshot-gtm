@@ -190,7 +190,7 @@ describe("checkReadiness", () => {
     // Regression guard. Most triggers ship ready out-of-the-box; ones that
     // require founder-supplied config (topics, etc.) ship unready by design
     // and are excluded here.
-    const intentionallyUnreadyByDefault = new Set(["github-topics", "accelerator-batch"]);
+    const intentionallyUnreadyByDefault = new Set(["github-topics"]);
     for (const spec of TRIGGERS) {
       if (intentionallyUnreadyByDefault.has(spec.name)) continue;
       expect(checkReadiness(spec, spec.defaultConfig), `${spec.name} should be ready`).toEqual({
@@ -199,20 +199,48 @@ describe("checkReadiness", () => {
     }
   });
 
-  it("accelerator-batch is not ready when cohort is empty", () => {
+  it("accelerator-batch is not ready when both `cohorts` and legacy `cohort` are missing", () => {
     const spec = TRIGGERS.find((t) => t.name === "accelerator-batch");
     expect(spec).toBeDefined();
     expect(spec!.readiness).toBeDefined();
-    const out = checkReadiness(spec!, { ...spec!.defaultConfig, cohort: "" });
+    // Explicitly drop the curated default to simulate a manually-emptied config.
+    const out = checkReadiness(spec!, { cohorts: [], cohort: "" });
     expect(out.ready).toBe(false);
     if (!out.ready) expect(out.reason).toMatch(/cohort/);
   });
 
-  it("accelerator-batch is ready with cohort + cohortLabel set", () => {
+  it("accelerator-batch is ready with the curated cohorts default", () => {
+    const spec = TRIGGERS.find((t) => t.name === "accelerator-batch")!;
+    expect(checkReadiness(spec, spec.defaultConfig)).toEqual({ ready: true });
+  });
+
+  it("accelerator-batch is still ready with the legacy single-cohort shape (back compat)", () => {
     const spec = TRIGGERS.find((t) => t.name === "accelerator-batch")!;
     expect(checkReadiness(spec, { cohort: "yc-w26", cohortLabel: "YC W26" })).toEqual({
       ready: true,
     });
+  });
+
+  it("accelerator-batch ships with a multi-incubator default sweep", () => {
+    const spec = TRIGGERS.find((t) => t.name === "accelerator-batch")!;
+    const cohorts = spec.defaultConfig["cohorts"] as Array<{
+      cohort: string;
+      cohortLabel: string;
+    }>;
+    expect(Array.isArray(cohorts)).toBe(true);
+    expect(cohorts.length).toBeGreaterThan(1);
+    expect(cohorts.length).toBeLessThanOrEqual(30); // sanity ceiling
+    // Each entry has both a tag + a label, both non-empty.
+    for (const c of cohorts) {
+      expect(typeof c.cohort).toBe("string");
+      expect(c.cohort.length).toBeGreaterThan(0);
+      expect(typeof c.cohortLabel).toBe("string");
+      expect(c.cohortLabel.length).toBeGreaterThan(0);
+    }
+    // Sweep must cover more than just YC — the whole point is multi-incubator.
+    const ycCount = cohorts.filter((c) => /^yc-/i.test(c.cohort)).length;
+    expect(ycCount).toBeGreaterThan(0);
+    expect(cohorts.length - ycCount).toBeGreaterThan(0);
   });
 });
 

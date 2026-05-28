@@ -48,17 +48,18 @@ bun run cli -- ui --port 4000    # custom port
 bun run cli -- ui --no-browser   # don't auto-open
 ```
 
-Seven pages, all reading the same `~/.oneshot-gtm/ledger.sqlite`:
+Eight pages, all reading the same `~/.oneshot-gtm/ledger.sqlite`:
 
 - **Home** — spend (7d / 30d), reply rate trend, in-flight cadences, recent receipts
-- **Queue** — triggers table (enable, edit JSON config, fire) + target queue (status + play filters, bulk approve, per-play drain modal). Per-row spinner + locked button while a trigger is running.
+- **Queue** — triggers table (enable, edit JSON config, fire) + target queue (status + play filters, bulk approve). Per-play **Drain** opens a modal that hands off to `/run/<play>` with approved rows pre-loaded — every draft + lint flag streams live, and the latest draft persists on the queue row so you can re-read it later by expanding the row (subject + body + flags + receipt links). Per-row spinner + locked button while a trigger is running.
+- **Replies** (`/inbox`) — read-only view of the OneShot inbox; each reply matched to its prospect + play + cadence status by sender address
 - **Cadences** — table view with inline **Stop** + **Log outcome** buttons; outcome modal supports `meeting_booked / sql_qualified / deal_won / deal_lost / ghosted`
 - **Receipts** — paginated table; click a row → modal with the signed receipt payload
-- **Plays** — cards with channel badges + **Run** button (for `show-hn` / `job-change` / `post-funding` / `accelerator-batch` / `hiring-signal` / `podcast-guest`) + **Copy CLI** button
+- **Plays** — cards with channel badges + **Run** button (for `show-hn` / `job-change` / `post-funding` / `accelerator-batch` / `hiring-signal` / `podcast-guest` / `stack-consolidation`) + **Copy CLI** button
 - **Measure** — CAC + RoCS tables filterable by time range
 - **Setup** — editable wizard: founder profile, LLM provider/model, OneShot wallet keys (hidden inputs), telemetry toggle. Saves to chmod-600 `~/.oneshot-gtm/.env`.
 
-The `Run a play` form (`/run/$playName`) takes editable target rows + a dry-run toggle and streams drafted emails back via Server-Sent Events with lint flags + clickable receipt links.
+The `Run a play` form (`/run/$playName`) takes editable target rows + a dry-run toggle and streams drafted emails back via Server-Sent Events with lint flags + clickable receipt links. When arriving from `/queue` via the Drain button, target rows auto-hydrate from approved queue rows and each generated draft persists back to its originating row on completion — re-readable from `/queue` at any time.
 
 A floating **strategist dock** is mounted on every page. Open it to chat through trigger config: it reads your ICP + product one-liner and proposes JSON configs as confirmation chips you click to apply. Endpoint: `POST /api/strategist/stream` (SSE).
 
@@ -78,6 +79,12 @@ Motion plays don't require hand-curated JSON anymore. Eight **finders** auto-dis
 Each finder runs as a **trigger** with its own interval + spend cap. Captured per-prospect signals (LinkedIn URL via webSearch + phone via passive enrichment when surfaced) show next to the email + company in `/queue`. Approved rows ship via `bun run cli -- find drain <play>` or the per-play **Drain** button on the Queue page.
 
 The dashboard server runs an in-process scheduler that fires enabled triggers on their interval automatically — open `bun run cli -- ui`, enable a trigger, and it polls without you needing a separate `find watch` daemon. The CLI watch command stays useful for cron + headless deployments where you don't want the dashboard.
+
+`/home` surfaces a **Scheduler** section per trigger — state pill, last-run summary (the `cand=N · kept=M · icp=K · $X.YY` line you see on `/queue`), last polled, next due — so "is the scheduler alive?" is a glance, not a `grep events.jsonl`. Overdue triggers show in oxblood; disabled ones collapse behind a chevron.
+
+A trigger whose stored config is missing required inputs (e.g. `accelerator-batch` without a `cohort`) reads as **not ready** on `/queue` — the Enable toggle and Run Now button are disabled with the reason in a tooltip. Edit config via the pencil icon to clear it; nothing fires while a trigger is unready. The same gate returns `409` on `POST /api/triggers/:name/enabled` and `:name/run`, so scripted callers can't bypass it.
+
+Before any `findEmail` call, a pre-flight check skips dud domains (free-tier subdomains like `*.vercel.app`/`*.github.io`, social hosts, link aggregators, personal email providers) and inputs where the "name" is obviously a username (`samaralihussain`, no whitespace or period). On a 50-candidate Show HN run that historically dropped ~37 of 50 at the SDK, the prescreen now eliminates the wasted spend at ~$0.05/call — roughly $1–2 saved per run. Skipped rows log a `finder.skipped_findemail` event with the reason for later blocklist tuning.
 
 ---
 
@@ -162,7 +169,7 @@ oneshot-gtm
 │   ├── podcast-guest --target <file>        reference a specific quote from a recent podcast
 │   └── breakup-revive                       pattern-interrupt for cold ledger leads
 │
-│   show-hn / job-change / accelerator-batch live in the dashboard /run page
+│   show-hn / job-change / accelerator-batch / stack-consolidation live in the dashboard /run page
 │
 ├── cadence
 │   └── advance [--dry-run]                  poll inbound + fire due follow-ups
@@ -234,7 +241,7 @@ Bun-native, all the modern picks:
 
 - **Runtime**: [Bun](https://bun.sh) 1.3+
 - **Monorepo**: [Turborepo](https://turbo.build) + Bun catalog for shared dep versions
-- **Test**: [Vitest 4](https://vitest.dev) (422 cases across 32 files; ledger, lint, finder pipelines, strategist endpoint, web bucketing helpers)
+- **Test**: [Vitest 4](https://vitest.dev) (585 cases across 43 files; ledger, lint, finder pipelines, strategist endpoint, web bucketing helpers)
 - **Lint / format**: [oxlint](https://oxc.rs) + [oxfmt](https://oxc.rs) (Rust-based, ~50× faster than ESLint/Prettier)
 - **TypeScript**: 6.x with `verbatimModuleSyntax`, `noUncheckedIndexedAccess`, `noImplicitOverride`
 - **Web**: [Vite 8](https://vite.dev) + [React 19](https://react.dev) + [TanStack Router](https://tanstack.com/router) + [TanStack Query](https://tanstack.com/query) + [Base UI](https://base-ui.com) primitives + [Tailwind 4](https://tailwindcss.com) + [class-variance-authority](https://cva.style) + [lucide-react](https://lucide.dev)
@@ -254,11 +261,11 @@ oneshot-gtm/
 │   ├── cli/         ~30-command CLI (commander)
 │   ├── server/      Bun.serve + SSE — REST + /queue + /run + strategist + trigger fire-and-forget;
 │   │                tsdown bundle, publishable as `oneshot-gtm-server`
-│   └── web/         Vite + React 19 + TanStack + Base UI dashboard (7 pages + StrategistDock)
+│   └── web/         Vite + React 19 + TanStack + Base UI dashboard (8 pages + StrategistDock)
 ├── packages/
 │   ├── core/        OneShot SDK wrapper, SQLite ledger, config + secrets, JSONL event log
 │   ├── intel/       LLM client (OpenRouter/OpenAI/Anthropic), advise, personalize, triage, weekly-review
-│   ├── plays/       10 outreach plays + handoff/icp/pmf modules + multichannel cadence engine
+│   ├── plays/       11 outreach plays + handoff/icp/pmf modules + multichannel cadence engine
 │   ├── find/        8 finders + shared pipeline (manifest scan, parallel infra, dedupe, ICP filter,
 │   │                drain dispatcher, trigger registry)
 │   ├── prompts/     Markdown prompt files (humanizer canon + per-play + per-extract prompts)
@@ -287,7 +294,7 @@ bun run typecheck        # tsc --noEmit across cli + server + packages
 bun run lint             # oxlint
 bun run fmt              # oxfmt --write
 bun run fmt:check        # CI-style format check
-bun run test             # vitest run (422 cases)
+bun run test             # vitest run (585 cases)
 bun run cli -- doctor    # smoke check
 ```
 

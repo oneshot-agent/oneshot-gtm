@@ -132,7 +132,12 @@ TWILIO_AUTH_TOKEN=
 SENDGRID_API_KEY="SG.xxx"
 `;
     const out = namesFromManifest(".env.example", content);
-    expect(out).toEqual(["OPENAI_API_KEY", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN", "SENDGRID_API_KEY"]);
+    expect(out).toEqual([
+      "OPENAI_API_KEY",
+      "TWILIO_ACCOUNT_SID",
+      "TWILIO_AUTH_TOKEN",
+      "SENDGRID_API_KEY",
+    ]);
   });
 
   it("ignores blank lines and comments", () => {
@@ -146,7 +151,7 @@ SENDGRID_API_KEY="SG.xxx"
 
 describe("namesFromManifest — unknown path", () => {
   it("returns [] for paths we don't know how to parse", () => {
-    expect(namesFromManifest("Cargo.toml", "[dependencies]\nopenai = \"1.0\"")).toEqual([]);
+    expect(namesFromManifest("Cargo.toml", '[dependencies]\nopenai = "1.0"')).toEqual([]);
   });
 });
 

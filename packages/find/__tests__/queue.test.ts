@@ -150,6 +150,103 @@ describe("target_queue lifecycle", () => {
   });
 });
 
+describe("getQueueRowByDedupe", () => {
+  it("returns the row when (play_name, dedupe_key) matches", () => {
+    const id = ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: { x: 1 },
+      dedupeKey: "k-find",
+      source: "x",
+    });
+    const row = ledger.getQueueRowByDedupe("show-hn", "k-find");
+    expect(row).not.toBeNull();
+    expect(row?.id).toBe(id);
+    expect(row?.play_name).toBe("show-hn");
+  });
+
+  it("returns null when nothing matches", () => {
+    expect(ledger.getQueueRowByDedupe("show-hn", "nope")).toBeNull();
+  });
+
+  it("scopes by play_name (same dedupe_key in different play is not a match)", () => {
+    ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: {},
+      dedupeKey: "shared",
+      source: "x",
+    });
+    expect(ledger.getQueueRowByDedupe("post-funding", "shared")).toBeNull();
+  });
+});
+
+describe("setQueueDraft", () => {
+  it("round-trips draft envelope and sets last_drafted_at", () => {
+    const id = ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: {},
+      dedupeKey: "d1",
+      source: "x",
+    });
+    expect(ledger.getQueueRow(id!)?.last_draft_json).toBeNull();
+    expect(ledger.getQueueRow(id!)?.last_drafted_at).toBeNull();
+
+    ledger.setQueueDraft({
+      id: id!,
+      draft: {
+        subject: "Hi Alice",
+        body: "two-line body\nsecond line",
+        flags: ["spammy-word"],
+        sent: false,
+        receiptIds: [],
+        dryRun: true,
+      },
+    });
+
+    const row = ledger.getQueueRow(id!);
+    expect(row?.last_drafted_at).toMatch(/\d{4}-\d{2}-\d{2}T/);
+    const parsed = JSON.parse(row!.last_draft_json!);
+    expect(parsed.subject).toBe("Hi Alice");
+    expect(parsed.body).toBe("two-line body\nsecond line");
+    expect(parsed.flags).toEqual(["spammy-word"]);
+    expect(parsed.sent).toBe(false);
+    expect(parsed.dryRun).toBe(true);
+    expect(typeof parsed.draftedAt).toBe("string");
+  });
+
+  it("re-runs overwrite the previous draft (most-recent-wins, no history)", async () => {
+    const id = ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: {},
+      dedupeKey: "d2",
+      source: "x",
+    });
+    ledger.setQueueDraft({
+      id: id!,
+      draft: { subject: "v1", body: "first", flags: [], sent: false, receiptIds: [], dryRun: true },
+    });
+    const first = ledger.getQueueRow(id!)?.last_drafted_at;
+    // Force a small wall-time gap so the new ISO string is strictly greater.
+    await new Promise((r) => setTimeout(r, 5));
+    ledger.setQueueDraft({
+      id: id!,
+      draft: {
+        subject: "v2",
+        body: "second",
+        flags: [],
+        sent: true,
+        receiptIds: [42],
+        dryRun: false,
+      },
+    });
+    const row = ledger.getQueueRow(id!);
+    const parsed = JSON.parse(row!.last_draft_json!);
+    expect(parsed.subject).toBe("v2");
+    expect(parsed.sent).toBe(true);
+    expect(parsed.receiptIds).toEqual([42]);
+    expect(row!.last_drafted_at! > first!).toBe(true);
+  });
+});
+
 describe("trigger registry state", () => {
   it("upsert + getTrigger round-trips config", () => {
     ledger.upsertTrigger({

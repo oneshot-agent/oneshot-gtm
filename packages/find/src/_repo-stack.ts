@@ -99,11 +99,7 @@ export async function detectRepoStack(args: {
  * network error, or unexpected content type. Same fault-tolerance pattern
  * as `fetchGitHubUser`.
  */
-async function fetchRepoFile(
-  owner: string,
-  repo: string,
-  path: string,
-): Promise<string | null> {
+async function fetchRepoFile(owner: string, repo: string, path: string): Promise<string | null> {
   const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${path}`;
   try {
     const headers = { ...githubHeaders(), Accept: "application/vnd.github.raw" };

@@ -2,7 +2,7 @@
 
 Snapshot of what's known to work end-to-end against the live OneShot API. Updated manually after each dogfood run; CI auto-update is on the Phase 3 roadmap.
 
-Last manual update: **2026-04-25** · Bun **1.3.13** · OneShot SDK **0.15.0**
+Last manual update: **2026-05-29** · Bun **1.3.13** · OneShot SDK **0.16.2**
 
 ---
 
@@ -25,34 +25,35 @@ Last manual update: **2026-04-25** · Bun **1.3.13** · OneShot SDK **0.15.0**
 | `pmf survey`         | ⚠️ untested | Build + email + inbox | Requires OneShot Build endpoint to be live; landing page deploys but not yet exercised end-to-end |
 | `pmf survey-collect` | ⚠️ untested | inbox + LLM           | Depends on actual replies in your OneShot inbox                                                   |
 
-## `motion` (10 plays)
+## `motion` (11 plays)
 
-| Play                | State       | OneShot calls                        | Cadence steps                                                           |
-| ------------------- | ----------- | ------------------------------------ | ----------------------------------------------------------------------- |
-| `show-hn`           | ✅ green    | enrich + research + email            | one-touch (no follow-up)                                                |
-| `job-change`        | ✅ green    | enrich + research + email            | day-5 follow-up + day-14 breakup                                        |
-| `post-funding`      | ✅ green    | enrich + research + email            | day-9 follow-up + day-18 breakup                                        |
-| `accelerator-batch` | ✅ green    | enrich + (research?) + email         | day-5 single follow-up + breakup                                        |
-| `concierge`         | ⚠️ untested | voice + email                        | Requires real phone number for full test                                |
-| `demo-no-show`      | ⚠️ untested | sms + email                          | Requires real phone number for SMS leg                                  |
-| `competitor-switch` | ⚠️ untested | enrich + browser + email             | Browser scrape against G2/BuiltWith; drains `find agent-builders` queue |
-| `hiring-signal`     | ⚠️ untested | enrich + websearch + webread + email | Web search against Lever/Greenhouse/Ashby                               |
-| `podcast-guest`     | ✅ green    | enrich + websearch + email           | Single touch, no follow-up                                              |
-| `breakup-revive`    | ✅ green    | email only                           | Pulls from `listColdProspects`                                          |
+| Play                | State       | OneShot calls                        | Cadence steps                                                                                       |
+| ------------------- | ----------- | ------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| `show-hn`           | ✅ green    | enrich + research + email            | one-touch (no follow-up)                                                                            |
+| `job-change`        | ✅ green    | enrich + research + email            | day-5 follow-up + day-14 breakup                                                                    |
+| `post-funding`      | ✅ green    | enrich + research + email            | day-9 follow-up + day-18 breakup                                                                    |
+| `accelerator-batch` | ✅ green    | enrich + (research?) + email         | day-5 single follow-up + breakup                                                                    |
+| `concierge`         | ⚠️ untested | voice + email                        | Requires real phone number for full test                                                            |
+| `demo-no-show`      | ⚠️ untested | sms + email                          | Requires real phone number for SMS leg                                                              |
+| `competitor-switch` | ✅ green    | enrich + browser + email             | Migration-honesty pitch; drains the `find github-topics` queue; day-3 follow-up + day-8 breakup     |
+| `stack-consolidation` | ✅ green  | enrich + email                       | Consolidation-honesty pitch for repos wiring up several API vendors; drains `find github-topics`; day-3 follow-up + day-8 breakup; on `/run/stack-consolidation` |
+| `hiring-signal`     | ⚠️ untested | enrich + websearch + webread + email | Web search against Lever/Greenhouse/Ashby; day-3 follow-up + day-8 breakup                           |
+| `podcast-guest`     | ✅ green    | enrich + websearch + email           | Single touch, no follow-up                                                                          |
+| `breakup-revive`    | ✅ green    | email only                           | Pulls from `listColdProspects`                                                                      |
 
 ## `find` (upstream discovery → target_queue)
 
-| Command                                         | State     | OneShot calls                                 | Notes                                                                                        |
-| ----------------------------------------------- | --------- | --------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| `find show-hn`                                  | ✅ green  | findEmail + verifyEmail                       | HN Algolia poller                                                                            |
-| `find post-funding`                             | ✅ green  | webRead + findEmail + verifyEmail             | `--source-urls <file>` or `--auto` (webSearch by ICP + round)                                |
-| `find accelerator-batch`                        | ✅ green  | webRead + findEmail + verifyEmail             | `--cohort yc-w26 / od / spc / antler / techstars` + `--index-url` override                   |
-| `find job-change`                               | ⚠️ opt-in | webSearch + findEmail + verifyEmail           | Disabled by default; `--personas` + `--companies` filters                                    |
-| `find hiring-signal`                            | ⚠️ opt-in | webSearch + webRead + findEmail + verifyEmail | Disabled by default; ATS search + corporate-domain lookup                                    |
-| `find podcast-guest`                            | ⚠️ opt-in | webSearch + webRead + findEmail + verifyEmail | Disabled by default                                                                          |
-| `find breakup-revive`                           | ✅ green  | none (ledger-only)                            | Scans cold prospects; opt-in trigger (7d interval)                                           |
-| `find agent-builders`                           | ⚠️ opt-in | webSearch + webRead + findEmail + verifyEmail | Config-driven GitHub finder — paste combos + yourEdge into /queue; feeds `competitor-switch` |
-| `find queue / approve / reject / drain / watch` | ✅ green  | —                                             | Review lifecycle; `watch` has `--once` and daemon modes                                      |
+| Command                                         | State     | OneShot calls                                  | Notes                                                                                                                                                                                                                                                                 |
+| ----------------------------------------------- | --------- | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `find show-hn`                                  | ✅ green  | findEmail + verifyEmail                        | HN Algolia poller                                                                                                                                                                                                                                                     |
+| `find post-funding`                             | ✅ green  | webRead + findEmail + verifyEmail              | `--source-urls <file>` or `--auto` (webSearch by ICP + round)                                                                                                                                                                                                         |
+| `find accelerator-batch`                        | ✅ green  | findEmail + verifyEmail (+ webSearch fallback) | `cohort: yc-*` → free yc-oss/api directory; anything else → websearch adapter (Techstars / Antler / 500 / AI Grant). Rewrote out of the launch-index scrape.                                                                                                          |
+| `find job-change`                               | ⚠️ opt-in | webSearch + findEmail + verifyEmail            | Disabled by default; `--personas` + `--companies` filters                                                                                                                                                                                                             |
+| `find hiring-signal`                            | ⚠️ opt-in | webSearch + webRead + findEmail + verifyEmail  | Disabled by default; ATS search + corporate-domain lookup                                                                                                                                                                                                             |
+| `find podcast-guest`                            | ⚠️ opt-in | webSearch + webRead + findEmail + verifyEmail  | Disabled by default                                                                                                                                                                                                                                                   |
+| `find breakup-revive`                           | ✅ green  | none (ledger-only)                             | Scans cold prospects; opt-in trigger (7d interval)                                                                                                                                                                                                                    |
+| `find github-topics`                            | ✅ green  | gh-api manifest scan + findEmail + verifyEmail | Topic-driven GitHub finder — paste `topics` + `vendors` + `yourEdge` into /queue. Manifest-scan (`package.json`, `pyproject.toml`, `requirements.txt`) replaces the retired `agent-builders` Google-scrape. Feeds `competitor-switch` via shared `_repo-pipeline.ts`. |
+| `find queue / approve / reject / drain / watch` | ✅ green  | —                                              | Review lifecycle; `watch` has `--once` and daemon modes                                                                                                                                                                                                               |
 
 ## `cadence`
 
@@ -90,46 +91,53 @@ Last manual update: **2026-04-25** · Bun **1.3.13** · OneShot SDK **0.15.0**
 
 ## Web dashboard (`apps/web`)
 
-| Route                    | State                                             |
-| ------------------------ | ------------------------------------------------- |
-| `/` (Home)               | ✅ green                                                              |
-| `/queue`                 | ✅ green — target queue + triggers table + strategist dock + filters  |
-| `/cadences`              | ✅ green (with stop + log-outcome actions)                            |
-| `/receipts`              | ✅ green (with signed-receipt modal)                                  |
-| `/plays`                 | ✅ green (with run + copy-CLI buttons)                                |
-| `/measure`               | ✅ green                                                              |
-| `/setup`                 | ✅ green (editable wizard with hidden-input keys)                     |
-| `/run/show-hn`           | ✅ green (SSE-streamed drafts)                                        |
-| `/run/job-change`        | ✅ green (SSE-streamed drafts)                                        |
-| `/run/post-funding`      | ✅ green (SSE-streamed drafts)                                        |
-| `/run/accelerator-batch` | ✅ green (SSE-streamed drafts)                                        |
-| `/run/hiring-signal`     | ✅ green (SSE-streamed drafts)                                        |
-| `/run/podcast-guest`     | ✅ green (SSE-streamed drafts)                                        |
-| Strategist dock          | ✅ green — global floating launcher; renders SSE chat + action chips  |
+| Route                    | State                                                                                                                           |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| `/` (Home)               | ✅ green — KPIs + signal feed + Scheduler strip (per-trigger last-run + next-due)                                               |
+| `/queue`                 | ✅ green — target queue + triggers table + strategist dock + filters + per-row draft archive (subject/body/flags/receipt links) |
+| `/inbox` (Replies)       | ✅ green — read-only OneShot inbox; replies matched to prospect + play + cadence status                                         |
+| `/cadences`              | ✅ green (with stop + log-outcome actions)                                                                                      |
+| `/receipts`              | ✅ green (with signed-receipt modal)                                                                                            |
+| `/plays`                 | ✅ green (with run + copy-CLI buttons)                                                                                          |
+| `/measure`               | ✅ green                                                                                                                        |
+| `/setup`                 | ✅ green (editable wizard with hidden-input keys)                                                                               |
+| `/run/show-hn`           | ✅ green (SSE-streamed drafts)                                                                                                  |
+| `/run/job-change`        | ✅ green (SSE-streamed drafts)                                                                                                  |
+| `/run/post-funding`      | ✅ green (SSE-streamed drafts)                                                                                                  |
+| `/run/accelerator-batch` | ✅ green (SSE-streamed drafts)                                                                                                  |
+| `/run/hiring-signal`     | ✅ green (SSE-streamed drafts)                                                                                                  |
+| `/run/podcast-guest`     | ✅ green (SSE-streamed drafts)                                                                                                  |
+| `/run/competitor-switch` | ✅ green (SSE-streamed drafts)                                                                                                  |
+| `/run/stack-consolidation` | ✅ green (SSE-streamed drafts)                                                                                                |
+| Strategist dock          | ✅ green — global floating launcher; renders SSE chat + action chips                                                            |
 
 ## Server (`apps/server`)
 
-| Route                                         | State                                                                                                    |
-| --------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| `GET /api/home`                               | ✅ green                                                                                                 |
-| `GET /api/cadences[?all=1]`                   | ✅ green                                                                                                 |
-| `GET /api/cadences/:id`                       | ✅ green                                                                                                 |
-| `POST /api/cadences/:id/stop`                 | ✅ green                                                                                                 |
-| `GET /api/receipts[?play=&sinceDays=&limit=]` | ✅ green                                                                                                 |
-| `GET /api/receipts/:id`                       | ✅ green                                                                                                 |
-| `GET /api/plays`                              | ✅ green                                                                                                 |
-| `GET /api/measure/cac[?sinceDays=]`           | ✅ green                                                                                                 |
-| `GET /api/measure/rocs[?sinceDays=]`          | ✅ green                                                                                                 |
-| `POST /api/measure/outcome`                   | ✅ green                                                                                                 |
-| `GET /api/setup`                              | ✅ green                                                                                                 |
-| `POST /api/setup`                             | ✅ green                                                                                                 |
-| `GET /api/doctor`                             | ✅ green                                                                                                 |
-| `POST /api/run/:playName` (SSE)               | ✅ green — dispatches show-hn, job-change, post-funding, accelerator-batch, hiring-signal, podcast-guest |
-| `GET /api/triggers`                           | ✅ green — includes `running`, `runningSince`, `ready`, `notReadyReason`                                |
-| `POST /api/triggers/:name/enabled`            | ✅ green — 409 when readiness gate rejects                                                              |
-| `POST /api/triggers/:name/config`             | ✅ green                                                                                                |
-| `POST /api/triggers/:name/run`                | ✅ green — fire-and-forget; 202 + `pending:true`, 409 on duplicate or not-ready                         |
-| `POST /api/strategist/stream` (SSE)           | ✅ green — chat endpoint backed by ICP + per-trigger briefs; emits `<!--ACTION:...-->` markers          |
+| Route                                         | State                                                                                                                                                                                                                     |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/home`                               | ✅ green                                                                                                                                                                                                                  |
+| `GET /api/cadences[?all=1]`                   | ✅ green                                                                                                                                                                                                                  |
+| `GET /api/cadences/:id`                       | ✅ green                                                                                                                                                                                                                  |
+| `POST /api/cadences/:id/stop`                 | ✅ green                                                                                                                                                                                                                  |
+| `GET /api/receipts[?play=&sinceDays=&limit=]` | ✅ green                                                                                                                                                                                                                  |
+| `GET /api/receipts/:id`                       | ✅ green                                                                                                                                                                                                                  |
+| `GET /api/plays`                              | ✅ green                                                                                                                                                                                                                  |
+| `POST /api/plays/:name/cadence`               | ✅ green — edit a play's cadence step offsets                                                                                                                                                                             |
+| `GET /api/inbox`                              | ✅ green — read-only OneShot inbox, replies matched to prospects (SDK exposes list only)                                                                                                                                  |
+| `POST /api/queue/:id/regenerate`              | ✅ green — re-draft a single queue row                                                                                                                                                                                    |
+| `POST /api/queue/:id/send-draft`              | ✅ green — send the persisted draft for one queue row                                                                                                                                                                     |
+| `GET /api/measure/cac[?sinceDays=]`           | ✅ green                                                                                                                                                                                                                  |
+| `GET /api/measure/rocs[?sinceDays=]`          | ✅ green                                                                                                                                                                                                                  |
+| `POST /api/measure/outcome`                   | ✅ green                                                                                                                                                                                                                  |
+| `GET /api/setup`                              | ✅ green                                                                                                                                                                                                                  |
+| `POST /api/setup`                             | ✅ green                                                                                                                                                                                                                  |
+| `GET /api/doctor`                             | ✅ green                                                                                                                                                                                                                  |
+| `POST /api/run/:playName` (SSE)               | ✅ green — dispatches show-hn, job-change, post-funding, accelerator-batch, hiring-signal, podcast-guest, competitor-switch, stack-consolidation. Accepts optional `dedupeKeys[]` to persist drafts back onto originating `target_queue` rows. |
+| `GET /api/triggers`                           | ✅ green — includes `running`, `runningSince`, `ready`, `notReadyReason`                                                                                                                                                  |
+| `POST /api/triggers/:name/enabled`            | ✅ green — 409 when readiness gate rejects                                                                                                                                                                                |
+| `POST /api/triggers/:name/config`             | ✅ green                                                                                                                                                                                                                  |
+| `POST /api/triggers/:name/run`                | ✅ green — fire-and-forget; 202 + `pending:true`, 409 on duplicate or not-ready                                                                                                                                           |
+| `POST /api/strategist/stream` (SSE)           | ✅ green — chat endpoint backed by ICP + per-trigger briefs; emits `<!--ACTION:...-->` markers                                                                                                                            |
 
 ## Distribution
 
@@ -147,7 +155,7 @@ Last manual update: **2026-04-25** · Bun **1.3.13** · OneShot SDK **0.15.0**
 | `bun run --cwd apps/web build` | ✅ ~1850 modules transformed, ~300 kB main chunk gzip ~94 kB |
 | `bun run lint`                 | ✅ 0 warnings, 0 errors (oxlint, 109 files)                  |
 | `bun run fmt:check`            | ✅ all 184 files pass oxfmt                                  |
-| `bun run test`                 | ✅ 146/146 vitest cases passing (17 test files)              |
+| `bun run test`                 | ✅ 585/585 vitest cases passing (43 test files)              |
 | `bun run cli -- doctor`        | ✅ all systems go                                            |
 
 ---

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { pickAdapter } from "../src/accelerator-batch.ts";
+import {
+  dedupeRecordsBySlug,
+  interleaveByCohort,
+  normalizeCohorts,
+  pickAdapter,
+} from "../src/accelerator-batch.ts";
 import {
   buildCohortQueries,
   looksLikeAcceleratorNoise,
@@ -7,6 +12,7 @@ import {
   sanitizeCompanyDomain,
 } from "../src/_accelerator-search-adapter.ts";
 import { cohortToBatchSlug, deriveCohortLabel, mapYcOssCompany } from "../src/_yc-oss-adapter.ts";
+import type { CompanyRecord } from "../src/_types.ts";
 
 describe("cohortToBatchSlug", () => {
   it("maps short YC tags to yc-oss slugs", () => {
@@ -241,5 +247,182 @@ describe("deriveCohortLabel", () => {
   it("returns empty string for empty input", () => {
     expect(deriveCohortLabel("")).toBe("");
     expect(deriveCohortLabel("   ")).toBe("");
+  });
+});
+
+describe("normalizeCohorts", () => {
+  it("returns the explicit cohorts list verbatim when present", () => {
+    const list = [
+      { cohort: "yc-w26", cohortLabel: "YC W26" },
+      { cohort: "techstars-spring-2026", cohortLabel: "Techstars Spring 2026" },
+    ];
+    expect(normalizeCohorts({ cohorts: list })).toEqual(list);
+  });
+
+  it("wraps legacy single-cohort opts and derives a label when none was set", () => {
+    expect(normalizeCohorts({ cohort: "yc-w26" })).toEqual([
+      { cohort: "yc-w26", cohortLabel: "YC W26" },
+    ]);
+  });
+
+  it("uses an explicit legacy cohortLabel when set", () => {
+    expect(normalizeCohorts({ cohort: "yc-w26", cohortLabel: "Custom Label" })).toEqual([
+      { cohort: "yc-w26", cohortLabel: "Custom Label" },
+    ]);
+  });
+
+  it("trims whitespace from legacy single-cohort input", () => {
+    expect(normalizeCohorts({ cohort: "  yc-w26  " })).toEqual([
+      { cohort: "yc-w26", cohortLabel: "YC W26" },
+    ]);
+  });
+
+  it("prefers `cohorts` over the legacy single-cohort fields when both are set", () => {
+    const cohorts = [{ cohort: "yc-w26", cohortLabel: "YC W26" }];
+    expect(normalizeCohorts({ cohorts, cohort: "yc-f25", cohortLabel: "YC F25" })).toEqual(cohorts);
+  });
+
+  it("trims whitespace from each cohorts[] entry and fills missing labels", () => {
+    const out = normalizeCohorts({
+      cohorts: [
+        { cohort: "  yc-w26  ", cohortLabel: "" },
+        { cohort: "techstars-spring-2026", cohortLabel: "  Techstars Spring 2026  " },
+      ],
+    });
+    expect(out).toEqual([
+      { cohort: "yc-w26", cohortLabel: "YC W26" },
+      { cohort: "techstars-spring-2026", cohortLabel: "Techstars Spring 2026" },
+    ]);
+  });
+
+  it("drops malformed cohorts[] entries (empty / non-string tags)", () => {
+    const out = normalizeCohorts({
+      cohorts: [
+        { cohort: "yc-w26", cohortLabel: "YC W26" },
+        { cohort: "", cohortLabel: "blank" },
+        { cohort: "   ", cohortLabel: "whitespace" },
+        // @ts-expect-error — runtime guard
+        { cohort: 42, cohortLabel: "wrong type" },
+        { cohort: "yc-f25", cohortLabel: "YC F25" },
+      ],
+    });
+    expect(out).toEqual([
+      { cohort: "yc-w26", cohortLabel: "YC W26" },
+      { cohort: "yc-f25", cohortLabel: "YC F25" },
+    ]);
+  });
+
+  it("falls through to legacy fields when every cohorts[] entry is malformed", () => {
+    const out = normalizeCohorts({
+      cohorts: [{ cohort: "", cohortLabel: "blank" }],
+      cohort: "yc-w26",
+    });
+    expect(out).toEqual([{ cohort: "yc-w26", cohortLabel: "YC W26" }]);
+  });
+
+  it("throws when neither field supplies any cohort", () => {
+    expect(() => normalizeCohorts({})).toThrow();
+    expect(() => normalizeCohorts({ cohorts: [] })).toThrow();
+    expect(() => normalizeCohorts({ cohort: "   " })).toThrow();
+    expect(() => normalizeCohorts({ cohorts: [{ cohort: "", cohortLabel: "x" }] })).toThrow();
+  });
+});
+
+describe("interleaveByCohort", () => {
+  it("round-robins records across cohorts (one per cohort, then next)", () => {
+    const records = [
+      { name: "A1", cohort: "a" },
+      { name: "A2", cohort: "a" },
+      { name: "A3", cohort: "a" },
+      { name: "B1", cohort: "b" },
+      { name: "B2", cohort: "b" },
+      { name: "C1", cohort: "c" },
+    ];
+    const out = interleaveByCohort(records);
+    expect(out.map((r) => r.name)).toEqual(["A1", "B1", "C1", "A2", "B2", "A3"]);
+  });
+
+  it("preserves first-seen cohort order across the rotation", () => {
+    const records = [
+      { name: "X1", cohort: "techstars-spring-2026" },
+      { name: "Y1", cohort: "yc-w26" },
+      { name: "X2", cohort: "techstars-spring-2026" },
+      { name: "Y2", cohort: "yc-w26" },
+    ];
+    const out = interleaveByCohort(records);
+    expect(out.map((r) => r.name)).toEqual(["X1", "Y1", "X2", "Y2"]);
+  });
+
+  it("preserves input order within a single cohort", () => {
+    const records = [
+      { name: "A1", cohort: "a" },
+      { name: "A2", cohort: "a" },
+      { name: "A3", cohort: "a" },
+    ];
+    expect(interleaveByCohort(records).map((r) => r.name)).toEqual(["A1", "A2", "A3"]);
+  });
+
+  it("returns [] for empty input", () => {
+    expect(interleaveByCohort([])).toEqual([]);
+  });
+
+  it("never loses or duplicates records", () => {
+    const records = [
+      { name: "A1", cohort: "a" },
+      { name: "A2", cohort: "a" },
+      { name: "B1", cohort: "b" },
+      { name: "C1", cohort: "c" },
+      { name: "C2", cohort: "c" },
+      { name: "C3", cohort: "c" },
+    ];
+    const out = interleaveByCohort(records);
+    expect(out).toHaveLength(records.length);
+    expect(new Set(out.map((r) => r.name))).toEqual(new Set(records.map((r) => r.name)));
+  });
+});
+
+const makeRecord = (name: string, extra: Partial<CompanyRecord> = {}): CompanyRecord => ({
+  name,
+  website: null,
+  oneLiner: null,
+  longDescription: null,
+  industry: null,
+  tags: [],
+  ycUrl: null,
+  founderName: null,
+  founderLinkedinUrl: null,
+  founderPhone: null,
+  source: "yc-oss",
+  ...extra,
+});
+
+describe("dedupeRecordsBySlug", () => {
+  it("keeps the first occurrence when the same company appears twice", () => {
+    const records = [makeRecord("Acme"), makeRecord("Beta"), makeRecord("Acme")];
+    const out = dedupeRecordsBySlug(records);
+    expect(out).toHaveLength(2);
+    expect(out.map((r) => r.name)).toEqual(["Acme", "Beta"]);
+  });
+
+  it("collapses spacing / case variants of the same name", () => {
+    const records = [makeRecord("Acme Inc"), makeRecord("ACME  inc"), makeRecord("acme-inc")];
+    const out = dedupeRecordsBySlug(records);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.name).toBe("Acme Inc");
+  });
+
+  it("preserves extension fields on the kept record (generic)", () => {
+    type Tagged = CompanyRecord & { cohort: string };
+    const records: Tagged[] = [
+      { ...makeRecord("Acme"), cohort: "yc-w26" },
+      { ...makeRecord("Acme"), cohort: "yc-f25" },
+    ];
+    const out = dedupeRecordsBySlug(records);
+    expect(out).toHaveLength(1);
+    expect(out[0]!.cohort).toBe("yc-w26");
+  });
+
+  it("returns [] for empty input", () => {
+    expect(dedupeRecordsBySlug([])).toEqual([]);
   });
 });

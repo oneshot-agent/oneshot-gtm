@@ -65,10 +65,17 @@ export async function fetchGitHubUser(login: string): Promise<GitHubUserInfo | n
     const json = (await res.json()) as Record<string, unknown>;
     const info: GitHubUserInfo = {
       login: typeof json["login"] === "string" ? (json["login"] as string) : login,
-      name: typeof json["name"] === "string" && json["name"] !== "" ? (json["name"] as string) : null,
-      email: typeof json["email"] === "string" && json["email"] !== "" ? (json["email"] as string) : null,
+      name:
+        typeof json["name"] === "string" && json["name"] !== "" ? (json["name"] as string) : null,
+      email:
+        typeof json["email"] === "string" && json["email"] !== ""
+          ? (json["email"] as string)
+          : null,
       blogDomain: extractBlogDomain(json["blog"]),
-      company: typeof json["company"] === "string" && json["company"] !== "" ? (json["company"] as string) : null,
+      company:
+        typeof json["company"] === "string" && json["company"] !== ""
+          ? (json["company"] as string)
+          : null,
     };
     cache.set(key, info);
     logEvent("github.user.fetch", {

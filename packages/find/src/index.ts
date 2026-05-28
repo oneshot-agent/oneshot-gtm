@@ -1,6 +1,7 @@
 export * from "./_types.ts";
 export * from "./_filter.ts";
 export * from "./_dedupe.ts";
+export * from "./_findemail-prescreen.ts";
 export * from "./show-hn.ts";
 export * from "./post-funding.ts";
 export * from "./accelerator-batch.ts";

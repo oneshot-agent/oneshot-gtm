@@ -107,8 +107,7 @@ export async function strategistRoute(req: Request): Promise<Response> {
   // accelerators exist + are accepting applications is stale by months; live
   // search gives it fresh context to ground its proposal in. Empty string when
   // not applicable — composeSystemPrompt then renders no extra section.
-  const latestUserMessage =
-    messages.toReversed().find((m) => m.role === "user")?.content ?? "";
+  const latestUserMessage = messages.toReversed().find((m) => m.role === "user")?.content ?? "";
   const webContext = await maybeAcceleratorWebContext(latestUserMessage, cfg.icpOneLiner!);
 
   const systemPrompt = composeSystemPrompt({

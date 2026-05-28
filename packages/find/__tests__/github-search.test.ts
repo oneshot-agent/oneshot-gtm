@@ -1,9 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  isoDateNDaysAgo,
-  parseSearchItem,
-  searchTopicRepos,
-} from "../src/_github-search.ts";
+import { isoDateNDaysAgo, parseSearchItem, searchTopicRepos } from "../src/_github-search.ts";
 
 const realFetch = globalThis.fetch;
 

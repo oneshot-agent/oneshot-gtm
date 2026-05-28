@@ -15,6 +15,8 @@ function row(id: number): QueueRow {
     sent_at: null,
     notes: null,
     prospect_id: null,
+    last_draft_json: null,
+    last_drafted_at: null,
   };
 }
 

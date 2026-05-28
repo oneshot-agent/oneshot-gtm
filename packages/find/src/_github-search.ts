@@ -54,14 +54,17 @@ export async function searchTopicRepos(args: {
       return [];
     }
     const json = (await res.json()) as Record<string, unknown>;
-    const items = Array.isArray(json["items"]) ? (json["items"] as Array<Record<string, unknown>>) : [];
+    const items = Array.isArray(json["items"])
+      ? (json["items"] as Array<Record<string, unknown>>)
+      : [];
     const repos = items.map(parseSearchItem).filter((r): r is GitHubSearchRepo => r !== null);
     // Detect GitHub's silent soft-block: 200 OK + empty items + total_count
     // reported as 0 even on slugs that should match (e.g. `langchain`). When
     // the unauth IP gets flagged for abuse, this is the failure mode — no
     // 429, just 0 hits forever for an hour or two. Surface a hint so the
     // caller can stop hammering and the operator can act (set GITHUB_TOKEN).
-    const totalCount = typeof json["total_count"] === "number" ? (json["total_count"] as number) : null;
+    const totalCount =
+      typeof json["total_count"] === "number" ? (json["total_count"] as number) : null;
     const authed = Boolean(process.env["GITHUB_TOKEN"]);
     const ratelimitHint = !authed && repos.length === 0 && totalCount === 0;
     logEvent("github.topic.search", {

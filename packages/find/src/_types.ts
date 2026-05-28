@@ -16,6 +16,13 @@ export interface FinderResult {
   costUsd: number;
   /** Reason the run halted early, if any (e.g. "max-cost cap"). */
   halted?: string;
+  /**
+   * Per-cohort fetch outcomes for the multi-cohort accelerator-batch sweep.
+   * Surfaces "yc-w26: 28, spc-2026-1: 0 (no hits)" on the trigger card so
+   * the operator can see which incubators had signal without grepping logs.
+   * Only set by `accelerator-batch`; other finders leave it unset.
+   */
+  perCohort?: Array<{ cohort: string; records: number; error?: string }>;
 }
 
 export interface CandidateBase {

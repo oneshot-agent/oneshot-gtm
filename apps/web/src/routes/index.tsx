@@ -3,6 +3,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowRight } from "lucide-react";
 import { api } from "../api/client.ts";
 import { NextStep } from "../components/home/NextStep.tsx";
+import { SchedulerStrip } from "../components/home/SchedulerStrip.tsx";
 import { SignalFeed } from "../components/home/SignalFeed.tsx";
 import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
@@ -94,6 +95,9 @@ function HomePage() {
         loading={recent.isLoading || queueRecent.isLoading}
         limit={10}
       />
+
+      {/* Scheduler — per-trigger last-run + next-due strip */}
+      <SchedulerStrip />
 
       {/* Receipts ledger — full-bleed table, no card, newspaper-style */}
       <section className="flex flex-col border-b border-ink-rule">

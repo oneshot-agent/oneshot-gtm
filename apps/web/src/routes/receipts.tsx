@@ -20,6 +20,11 @@ interface DayGroup {
   rows: ReceiptView[];
 }
 
+// Synchronous OneShot primitives don't return a `request_id` (request and
+// response complete in one hop, no async job to reference). Render a `sync`
+// chip so a missing ID reads as by-design, not as a missing field.
+const SYNC_CALL_TYPES = new Set(["web.search"]);
+
 function ReceiptsPage() {
   const [activeId, setActiveId] = useState<number | null>(null);
   const receipts = useQuery({
@@ -163,7 +168,18 @@ function DaySection({ group, onClickRow }: { group: DayGroup; onClickRow: (id: n
                 {timeAgo(r.createdAt)}
               </td>
               <td className="w-[200px] px-6 py-2 text-right font-mono text-[11px] text-ink-faint truncate">
-                {r.oneshotRequestId ?? "—"}
+                {r.oneshotRequestId ? (
+                  r.oneshotRequestId
+                ) : SYNC_CALL_TYPES.has(r.callType) ? (
+                  <span
+                    className="inline-flex items-center rounded-[var(--radius-xs)] border border-ink-rule/60 px-1.5 py-[1.5px] text-[10px] uppercase tracking-[0.08em] text-ink-faint"
+                    title="Synchronous call — no async request ID by design"
+                  >
+                    sync
+                  </span>
+                ) : (
+                  "—"
+                )}
               </td>
             </tr>
           ))}

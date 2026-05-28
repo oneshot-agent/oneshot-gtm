@@ -89,7 +89,11 @@ describe("findLinkedInUrl", () => {
 
   it("matches URL-encoded slugs (non-Latin display names)", async () => {
     nextResults = [
-      { url: "https://www.linkedin.com/in/%E7%8E%8B%E5%B0%8F%E6%98%8E", title: "", description: "" },
+      {
+        url: "https://www.linkedin.com/in/%E7%8E%8B%E5%B0%8F%E6%98%8E",
+        title: "",
+        description: "",
+      },
     ];
     const url = await findLinkedInUrl({
       fullName: "王小明",

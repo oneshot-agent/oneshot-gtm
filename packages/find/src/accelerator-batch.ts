@@ -11,7 +11,7 @@ import { icpFilter, resolveIcp } from "./_filter.ts";
 import { enrichVerifiedContact } from "./_enrich.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
 import { parallelMap } from "./_parallel.ts";
-import { fetchYcOssBatch } from "./_yc-oss-adapter.ts";
+import { deriveCohortLabel, fetchYcOssBatch } from "./_yc-oss-adapter.ts";
 import type { CompanyRecord, FinderResult, RunOpts } from "./_types.ts";
 
 /**
@@ -31,15 +31,130 @@ import type { CompanyRecord, FinderResult, RunOpts } from "./_types.ts";
 
 const PLAY_NAME = "accelerator-batch";
 
-export interface AcceleratorBatchFinderOpts extends RunOpts {
-  /** Cohort tag — e.g. `yc-w26`, `yc-s25`, `techstars-toronto-2025`. */
+export interface CohortEntry {
+  /** Cohort tag — e.g. `yc-w26`, `techstars-spring-2026`, `spc-2026-1`. */
   cohort: string;
   /** Human-readable label fed into search queries + the email prompt. */
   cohortLabel: string;
-  /** Force a specific adapter. Default: yc-* → yc-oss, everything else → websearch. */
+}
+
+export interface AcceleratorBatchFinderOpts extends RunOpts {
+  /**
+   * Multi-cohort sweep. Each entry routes to its own adapter — yc-* → yc-oss,
+   * everything else → websearch. Per-cohort failures are isolated; the run
+   * only halts if EVERY cohort returns 0 records.
+   */
+  cohorts?: CohortEntry[];
+  /** Legacy single-cohort tag. Ignored when `cohorts` is set. */
+  cohort?: string;
+  /** Legacy human label. Ignored when `cohorts` is set. */
+  cohortLabel?: string;
+  /** Force a specific adapter for ALL entries. Default: yc-* → yc-oss, else → websearch. */
   adapter?: "yc-oss" | "websearch";
-  /** Concurrency for the per-company pipeline. Default 3. */
+  /** Concurrency for the per-company pipeline (over the unified pool). Default 3. */
   concurrency?: number;
+}
+
+/**
+ * Normalize the legacy single-cohort opts shape into the new multi-cohort
+ * list. Old trigger rows with `{cohort, cohortLabel}` keep working — they
+ * become a one-entry list. Each entry's `cohort` is trimmed and an empty
+ * `cohortLabel` is filled via `deriveCohortLabel`. Malformed entries
+ * (missing or empty cohort tag) are dropped silently. Throws when zero
+ * usable entries remain — readiness gate is supposed to prevent this.
+ */
+export function normalizeCohorts(
+  opts: Pick<AcceleratorBatchFinderOpts, "cohorts" | "cohort" | "cohortLabel">,
+): CohortEntry[] {
+  if (opts.cohorts && opts.cohorts.length > 0) {
+    const normalized = opts.cohorts
+      .map((entry): CohortEntry | null => {
+        if (!entry || typeof entry.cohort !== "string") return null;
+        const cohort = entry.cohort.trim();
+        if (cohort.length === 0) return null;
+        const labelRaw = typeof entry.cohortLabel === "string" ? entry.cohortLabel.trim() : "";
+        return { cohort, cohortLabel: labelRaw.length > 0 ? labelRaw : deriveCohortLabel(cohort) };
+      })
+      .filter((e): e is CohortEntry => e !== null);
+    if (normalized.length > 0) return normalized;
+    // All entries malformed — fall through to the legacy fields below before
+    // throwing, in case the operator set both fields.
+  }
+  if (typeof opts.cohort === "string" && opts.cohort.trim().length > 0) {
+    const cohort = opts.cohort.trim();
+    const cohortLabel =
+      typeof opts.cohortLabel === "string" && opts.cohortLabel.trim().length > 0
+        ? opts.cohortLabel.trim()
+        : deriveCohortLabel(cohort);
+    return [{ cohort, cohortLabel }];
+  }
+  throw new Error("accelerator-batch: at least one cohort required");
+}
+
+/**
+ * Round-robin interleave records by their source cohort. Without this, the
+ * per-company `parallelMap` would chew through every yc-w26 candidate before
+ * touching Techstars — so the global `limit` enqueue cap (25 by default)
+ * would be hit before any non-YC cohort got a chance. Interleaving picks
+ * one record per cohort in turn until all cohort lists are exhausted, so
+ * the eventual queue has a balanced cross-incubator footprint.
+ *
+ * Stable: ordering within a cohort matches input order. Empty input → [].
+ */
+export function interleaveByCohort<T extends { cohort: string }>(records: T[]): T[] {
+  if (records.length === 0) return [];
+  const byCohort = new Map<string, T[]>();
+  // Preserve cohort first-seen order so the output is deterministic.
+  const order: string[] = [];
+  for (const r of records) {
+    let list = byCohort.get(r.cohort);
+    if (!list) {
+      list = [];
+      byCohort.set(r.cohort, list);
+      order.push(r.cohort);
+    }
+    list.push(r);
+  }
+  const out: T[] = [];
+  let idx = 0;
+  while (out.length < records.length) {
+    let pushed = false;
+    for (const cohort of order) {
+      const list = byCohort.get(cohort);
+      if (list && idx < list.length) {
+        out.push(list[idx]!);
+        pushed = true;
+      }
+    }
+    if (!pushed) break;
+    idx++;
+  }
+  return out;
+}
+
+/** Source-tagged company record. Each entry carries the cohort it was fetched under. */
+export type TaggedCompanyRecord = CompanyRecord & { cohort: string; cohortLabel: string };
+
+/**
+ * Cross-cohort dedupe by company name slug. A company appearing in two
+ * cohorts (e.g. a YC alum joining Techstars) is rare but possible — keep the
+ * first occurrence so the per-company pipeline doesn't pay enrichment cost
+ * twice. Slug = lowercase + whitespace→hyphens + non-alphanumerics stripped,
+ * matching the dedupeKey shape downstream.
+ */
+export function dedupeRecordsBySlug<T extends CompanyRecord>(records: T[]): T[] {
+  const seen = new Set<string>();
+  const out: T[] = [];
+  for (const r of records) {
+    const slug = r.name
+      .toLowerCase()
+      .replace(/\s+/g, "-")
+      .replace(/[^a-z0-9-]/g, "");
+    if (seen.has(slug)) continue;
+    seen.add(slug);
+    out.push(r);
+  }
+  return out;
 }
 
 export async function runAcceleratorBatchFinder(
@@ -49,7 +164,13 @@ export async function runAcceleratorBatchFinder(
   const concurrency = opts.concurrency ?? 3;
   const icp = resolveIcp(opts.icpOverride);
   const ledger = getLedger();
-  const source = `find:accelerator-batch:${opts.cohort}`;
+  const cohorts = normalizeCohorts(opts);
+  // Source string reflects whether this is a sweep or a single-cohort run.
+  // Keeps the per-target `source` column on the queue readable.
+  const source =
+    cohorts.length === 1
+      ? `find:accelerator-batch:${cohorts[0]!.cohort}`
+      : `find:accelerator-batch:sweep`;
 
   const result: FinderResult = {
     source,
@@ -61,29 +182,117 @@ export async function runAcceleratorBatchFinder(
     costUsd: 0,
   };
 
-  // Step 1: discover cohort companies via the adapter.
-  const adapterName = pickAdapter(opts.cohort, opts.adapter);
-  const adapter =
-    adapterName === "yc-oss"
-      ? () => fetchYcOssBatch(opts.cohort, limit)
-      : () => fetchAcceleratorSearch(opts.cohort, opts.cohortLabel, limit);
-  const fetched = await adapter();
-  result.costUsd += fetched.costUsd;
-  if (fetched.records.length === 0) {
-    // Surface the adapter's diagnostic on the run summary so the trigger
-    // card explains WHY zero — better than the silent-success the previous
-    // implementation produced.
-    result.halted = fetched.diagnostic ?? "adapter returned 0 records";
+  // Step 1: discover cohort companies — one adapter call per cohort entry.
+  // Per-cohort failures (adapter throws, 0 hits) log and continue; we only
+  // halt the run when EVERY cohort came back empty.
+  //
+  // Parallelized at `concurrency` to keep wall-clock reasonable: with 12
+  // websearch cohorts at ~30s each, a sequential loop would burn 6+ minutes
+  // of pure discovery before the first per-company pipeline starts. The
+  // cost-cap check is best-effort under parallelism — workers in flight
+  // can overshoot by ~(concurrency - 1) × (per-cohort cost) — acceptable
+  // since the per-company loop also overshoots by the same factor.
+  type CohortOutcome = {
+    records: TaggedCompanyRecord[];
+    summary: { cohort: string; records: number; error?: string };
+  };
+  const cohortResults = await parallelMap<CohortEntry, CohortOutcome>(
+    cohorts,
+    concurrency,
+    async (entry) => {
+      // Best-effort cost-cap check before we start the fetch. Workers in
+      // flight at cap-trip time still finish their adapter call.
+      if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
+        return {
+          records: [],
+          summary: { cohort: entry.cohort, records: 0, error: "skipped: cost cap" },
+        };
+      }
+      const adapterName = pickAdapter(entry.cohort, opts.adapter);
+      try {
+        const fetched =
+          adapterName === "yc-oss"
+            ? await fetchYcOssBatch(entry.cohort, limit)
+            : await fetchAcceleratorSearch(entry.cohort, entry.cohortLabel, limit);
+        result.costUsd += fetched.costUsd;
+        if (fetched.records.length === 0) {
+          return {
+            records: [],
+            summary: {
+              cohort: entry.cohort,
+              records: 0,
+              error: fetched.diagnostic ?? "no records",
+            },
+          };
+        }
+        // Tag each record with its source cohort so the per-company callback
+        // can build dedupe keys, rejection payloads, and final targets without
+        // needing the cohort plumbed through opts.
+        const tagged = fetched.records.map<TaggedCompanyRecord>((r) => ({
+          ...r,
+          cohort: entry.cohort,
+          cohortLabel: entry.cohortLabel,
+        }));
+        return {
+          records: tagged,
+          summary: { cohort: entry.cohort, records: fetched.records.length },
+        };
+      } catch (err) {
+        const message = ((err as Error).message ?? "").slice(0, 120);
+        logEvent(
+          "error.swallowed",
+          { kind: "accelerator-batch.adapter", cohort: entry.cohort, message_120: message },
+          "warn",
+        );
+        return {
+          records: [],
+          summary: { cohort: entry.cohort, records: 0, error: message },
+        };
+      }
+    },
+  );
+
+  // Reassemble in registry order so the per-cohort summary lines up with
+  // the operator's config visually.
+  const allRecords: TaggedCompanyRecord[] = [];
+  const perCohortOutcomes: Array<{ cohort: string; records: number; error?: string }> = [];
+  for (const r of cohortResults) {
+    allRecords.push(...r.records);
+    perCohortOutcomes.push(r.summary);
+  }
+  result.perCohort = perCohortOutcomes;
+
+  // Interleave + cross-cohort dedupe. Interleave first so the per-company
+  // pipeline sees a balanced rotation; dedupe by slug after so a company
+  // appearing in two cohorts gets enriched once (kept under its first
+  // surfacing cohort).
+  const deduped = dedupeRecordsBySlug(interleaveByCohort(allRecords));
+  result.candidates = deduped.length;
+  if (deduped.length === 0) {
+    // Every cohort came back empty. Surface the right diagnostic:
+    // - Single-cohort run → the adapter's own message
+    // - All cohorts skipped due to cost cap → that
+    // - Otherwise → generic sweep-empty
+    if (cohorts.length === 1) {
+      const first = perCohortOutcomes[0];
+      result.halted = first?.error ?? "adapter returned 0 records";
+    } else if (
+      opts.maxCostUsd != null &&
+      perCohortOutcomes.every((o) => o.error === "skipped: cost cap")
+    ) {
+      result.halted = `max-cost cap (${opts.maxCostUsd}) during discovery`;
+    } else {
+      result.halted = `all ${cohorts.length} cohorts returned 0 candidates`;
+    }
     return result;
   }
-  result.candidates = fetched.records.length;
 
   // Step 2: per-company pipeline (parallel, ICP-first like github-topics).
   // `halted` is a soft cap — workers may overshoot by up to (concurrency - 1)
   // candidates. Acceptable at our scale.
   let halted = false;
 
-  await parallelMap(fetched.records, concurrency, async (record) => {
+  await parallelMap(deduped, concurrency, async (record) => {
     if (halted) return;
     if (result.enqueued >= limit) {
       halted = true;
@@ -95,7 +304,7 @@ export async function runAcceleratorBatchFinder(
       return;
     }
 
-    const dedupeKey = makeDedupeKey(record, opts.cohort);
+    const dedupeKey = makeDedupeKey(record, record.cohort);
     if (ledger.isQueueDuplicate(PLAY_NAME, dedupeKey)) {
       result.droppedDuplicate++;
       return;
@@ -120,11 +329,11 @@ export async function runAcceleratorBatchFinder(
       result.droppedIcp++;
       ledger.enqueueTarget({
         playName: PLAY_NAME,
-        payload: rejectionPayload(record, opts.cohort),
+        payload: rejectionPayload(record, record.cohort),
         dedupeKey,
         source,
         initialStatus: "rejected",
-        notes: `auto: ICP — ${filter.reason}`,
+        notes: `auto: ICP — ${record.cohortLabel} — ${filter.reason}`,
       });
       return;
     }
@@ -213,7 +422,7 @@ export async function runAcceleratorBatchFinder(
       name: fullName,
       email,
       company: record.name,
-      cohort: opts.cohort,
+      cohort: record.cohort,
       ...(record.ycUrl
         ? { launchUrl: record.ycUrl }
         : record.website
@@ -228,7 +437,7 @@ export async function runAcceleratorBatchFinder(
       payload: target,
       dedupeKey,
       source,
-      notes: filter.reason,
+      notes: `${record.cohortLabel} — ${filter.reason}`,
     });
     if (id != null) result.enqueued++;
     else result.droppedDuplicate++;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadPrompt } from "../src/prompts.ts";
+import { _resetPromptCache, loadPrompt } from "../src/prompts.ts";
 
 describe("loadPrompt — name validation", () => {
   it("rejects path traversal", () => {
@@ -37,5 +37,34 @@ describe("loadPrompt — name validation", () => {
     const body = loadPrompt("icp-filter");
     expect(typeof body).toBe("string");
     expect(body.length).toBeGreaterThan(0);
+  });
+});
+
+describe("loadPrompt — humanizer inlining", () => {
+  it("replaces the [See _humanizer.md ...] reference with the doc's content", () => {
+    _resetPromptCache();
+    const out = loadPrompt("competitor-switch-email");
+    // The bracketed marker line should be gone…
+    expect(out).not.toMatch(/^\[See _humanizer\.md/m);
+    // …and replaced with the humanizer body (sample a few canonical lines).
+    expect(out).toMatch(/Anti-AI-slop rules/);
+    expect(out).toMatch(/Banned vocabulary/);
+    expect(out).toMatch(/Banned email openers/);
+    expect(out).toMatch(/I noticed/);
+  });
+
+  it("leaves prompts without a humanizer reference unchanged", () => {
+    _resetPromptCache();
+    const out = loadPrompt("agent-builder-extract");
+    // Sanity: the extract prompt doesn't include any humanizer content.
+    expect(out).not.toMatch(/Anti-AI-slop rules/);
+    expect(out).not.toMatch(/Banned vocabulary/);
+  });
+
+  it("memoizes the humanizer read across calls", () => {
+    _resetPromptCache();
+    const a = loadPrompt("competitor-switch-email");
+    const b = loadPrompt("competitor-switch-email");
+    expect(a).toEqual(b);
   });
 });
