@@ -1,5 +1,5 @@
 import { getLedger, logEvent, startRun } from "@oneshot-gtm/core";
-import { runAcceleratorBatchFinder } from "./accelerator-batch.ts";
+import { type CohortEntry, runAcceleratorBatchFinder } from "./accelerator-batch.ts";
 import { deriveCohortLabel } from "./_yc-oss-adapter.ts";
 import { runBreakupReviveFinder } from "./breakup-revive.ts";
 import { runGitHubTopicsFinder } from "./github-topics.ts";
@@ -50,6 +50,36 @@ export function checkReadiness(spec: TriggerSpec, config: Record<string, unknown
 
 const ONE_HOUR = 3600 * 1000;
 
+/**
+ * Default cohort sweep for the `accelerator-batch` trigger. Covers seven
+ * incubators × {latest, previous-latest} cohorts as of 2026-05-20. Only the
+ * yc-* entries hit the structured yc-oss/api directory; the other 12 route
+ * to the websearch + LLM-extract adapter and will have spotty per-cohort
+ * recall (Neo is invite-only, SPC publishes thin web footprint, etc.).
+ * Per-cohort failures are isolated — the run only halts when EVERY cohort
+ * comes back empty.
+ *
+ * ROTATION: this list goes stale within ~3 months as YC announces W27,
+ * Techstars rolls Fall 2026, etc. Founders should edit `cohorts[]` via the
+ * trigger config UI on /queue when new batches announce.
+ */
+const DEFAULT_COHORTS: CohortEntry[] = [
+  { cohort: "yc-w26", cohortLabel: "YC W26" },
+  { cohort: "yc-f25", cohortLabel: "YC F25" },
+  { cohort: "techstars-spring-2026", cohortLabel: "Techstars Spring 2026" },
+  { cohort: "techstars-fall-2025", cohortLabel: "Techstars Fall 2025" },
+  { cohort: "antler-q1-2026", cohortLabel: "Antler Q1 2026" },
+  { cohort: "antler-q4-2025", cohortLabel: "Antler Q4 2025" },
+  { cohort: "500global-batch-38", cohortLabel: "500 Global Batch 38" },
+  { cohort: "500global-batch-37", cohortLabel: "500 Global Batch 37" },
+  { cohort: "ai-grant-cohort-5", cohortLabel: "AI Grant Cohort 5" },
+  { cohort: "ai-grant-cohort-4", cohortLabel: "AI Grant Cohort 4" },
+  { cohort: "spc-2026-1", cohortLabel: "South Park Commons F1 2026-1" },
+  { cohort: "spc-2025-2", cohortLabel: "South Park Commons F1 2025-2" },
+  { cohort: "neo-class-2026", cohortLabel: "Neo Class 2026" },
+  { cohort: "neo-class-2025", cohortLabel: "Neo Class 2025" },
+];
+
 export const TRIGGERS: TriggerSpec[] = [
   {
     name: "show-hn",
@@ -69,46 +99,62 @@ export const TRIGGERS: TriggerSpec[] = [
     name: "accelerator-batch",
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
-    // Ships empty so the strategist is forced to propose a cohort tuned to the
-    // founder's ICP rather than reflexively defaulting to YC. Each accelerator
-    // (YC, Techstars, Antler, AI Grant, SPC, Neo, 500 Global, etc.) attracts a
-    // different founder population — the right pick depends on who buys.
+    // Default sweep: every known incubator × {latest, previous-latest} cohorts.
+    // Founders can trim or edit the list in /queue → trigger config; per-cohort
+    // failures don't halt the run, so spotty incubators (Neo, SPC) coexist
+    // with high-recall ones (YC, Techstars) in one trigger fire.
     defaultConfig: {
-      cohort: "",
-      cohortLabel: "",
+      cohorts: DEFAULT_COHORTS,
       limit: 25,
-      maxCostUsd: 5,
+      maxCostUsd: 15,
     },
     configBrief:
-      "Pulls an accelerator cohort directory, ICP-filters companies, finds founder contact, enqueues for outreach. SHIPS EMPTY — pick a cohort that matches your ICP. Each accelerator surfaces a different founder population: YC for AI/infra-heavy startups, Techstars for vertical SaaS + corporate-partnered batches, Antler for solo founders + day-zero, AI Grant for AI-only research-product founders, SPC / Neo for senior-engineer founders, 500 Global for international + emerging markets. Config: `cohort` (tag — e.g. `yc-w26`, `techstars-toronto-2025`, `antler-nyc-q1-2026`, `ai-grant-2026`), `cohortLabel` (human label fed to email + search queries; auto-derived from cohort when not set), optional `adapter` (`yc-oss` | `websearch`; auto-picked from cohort prefix — yc-* tags use the free yc-oss/api directory, everything else falls back to web search), `limit`, `maxCostUsd`. STRATEGIST DUTY: when proposing this trigger, anchor the cohort recommendation in the founder's ICP — don't reflexively pick YC. If multiple accelerators fit, propose the top match and mention 1-2 alternatives in prose so the founder can swap.",
+      "Sweeps every known incubator (YC, Techstars, Antler, 500 Global, AI Grant, SPC, Neo) at its latest + previous-latest cohorts in one run. Config: `cohorts` (array of `{cohort, cohortLabel}` — defaults to the 14-entry curated list; edit to add/remove batches as new cohorts announce), optional `cohort` + `cohortLabel` (legacy single-cohort shape; still accepted), optional `adapter` (`yc-oss` | `websearch`; auto-picked per cohort — yc-* tags use the free yc-oss/api directory, everything else falls back to web search), `limit` (global enqueue cap across all cohorts), `maxCostUsd`. Per-cohort failures (spotty incubator, network blip) log and continue; the run only halts when EVERY cohort returns 0 candidates. ROTATION: the default list goes stale within ~3 months — edit when YC announces W27, Techstars rolls Fall 2026, etc. STRATEGIST DUTY: when the founder's ICP overlaps strongly with one incubator population, narrow the cohorts list rather than sweeping all seven — e.g. AI/infra startups → keep yc-* + ai-grant-*, drop the rest.",
     readiness: (cfg) => {
-      const cohort = cfg["cohort"];
-      if (typeof cohort !== "string" || cohort.trim().length === 0) {
+      const cohorts = Array.isArray(cfg["cohorts"]) ? cfg["cohorts"] : null;
+      const legacyCohort =
+        typeof cfg["cohort"] === "string" ? (cfg["cohort"] as string).trim() : "";
+      if ((!cohorts || cohorts.length === 0) && legacyCohort.length === 0) {
         return {
           ready: false,
-          reason: "set `cohort` (ask the strategist to propose one tuned to your ICP)",
+          reason: "set `cohorts[]` (or legacy `cohort`)",
         };
       }
       return { ready: true };
     },
     run: (cfg) => {
-      const cohort = (cfg["cohort"] as string) ?? "yc-w26";
-      // Derive cohortLabel from cohort when the founder didn't set one
-      // explicitly. This matters most after a `cohort` change — without
-      // derivation the label would stay "YC W26" while the cohort points
-      // at e.g. techstars, and the websearch adapter would query the wrong
-      // program. Explicit override always wins.
-      const labelFromCfg = typeof cfg["cohortLabel"] === "string" ? cfg["cohortLabel"].trim() : "";
-      const cohortLabel = labelFromCfg.length > 0 ? labelFromCfg : deriveCohortLabel(cohort);
+      // Multi-cohort path: new `cohorts` array wins. Filter to well-formed
+      // entries so a single malformed row doesn't kill the run.
+      const cohortsRaw = Array.isArray(cfg["cohorts"]) ? (cfg["cohorts"] as unknown[]) : [];
+      const cohorts: CohortEntry[] = cohortsRaw
+        .map((entry) => {
+          if (!entry || typeof entry !== "object") return null;
+          const e = entry as Record<string, unknown>;
+          const cohort = typeof e["cohort"] === "string" ? e["cohort"].trim() : "";
+          if (cohort.length === 0) return null;
+          const labelRaw =
+            typeof e["cohortLabel"] === "string" ? (e["cohortLabel"] as string).trim() : "";
+          const cohortLabel = labelRaw.length > 0 ? labelRaw : deriveCohortLabel(cohort);
+          return { cohort, cohortLabel };
+        })
+        .filter((e): e is CohortEntry => e !== null);
+
+      // Legacy single-cohort path: only used when `cohorts` is empty/missing.
+      const legacyCohort = typeof cfg["cohort"] === "string" ? (cfg["cohort"] as string) : "";
+      const legacyLabel =
+        typeof cfg["cohortLabel"] === "string" ? (cfg["cohortLabel"] as string) : "";
+
       return runAcceleratorBatchFinder({
         dryRun: false,
-        cohort,
-        cohortLabel,
+        ...(cohorts.length > 0 ? { cohorts } : {}),
+        ...(cohorts.length === 0 && legacyCohort.trim().length > 0
+          ? { cohort: legacyCohort, cohortLabel: legacyLabel }
+          : {}),
         ...(cfg["adapter"] === "yc-oss" || cfg["adapter"] === "websearch"
           ? { adapter: cfg["adapter"] as "yc-oss" | "websearch" }
           : {}),
         limit: (cfg["limit"] as number) ?? 25,
-        maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
+        maxCostUsd: (cfg["maxCostUsd"] as number) ?? 15,
       });
     },
   },
@@ -210,15 +256,17 @@ export const TRIGGERS: TriggerSpec[] = [
     // GitHub-Topic-driven repo finder. Discovers via the (free) GitHub Search
     // API filtered by `topic:<slug>` — topic-tagged repos are pre-curated by
     // maintainers self-tagging, much higher signal-per-fetch than the
-    // retired combo-search approach. Feeds competitor-switch (migration-
-    // honesty pitch). Config-driven — the founder supplies topics + vendors
-    // + edge via /queue; ships empty so nothing fires until configured.
+    // retired combo-search approach. Feeds stack-consolidation (vendor-
+    // sprawl pitch) by default, or competitor-switch when a detected vendor
+    // is on `directCompetitors`. Config-driven — the founder supplies topics
+    // + vendors + edge via /queue; ships empty so nothing fires until configured.
     name: "github-topics",
     defaultIntervalMs: 12 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
       topics: [] as string[],
       vendors: [] as string[],
+      directCompetitors: [] as string[],
       yourEdge: "",
       minStars: 5,
       maxAgeDays: 90,
@@ -229,7 +277,7 @@ export const TRIGGERS: TriggerSpec[] = [
       maxCostUsd: 5,
     },
     configBrief:
-      "Discovers repos via GitHub Topic pages (`topic:<slug>` queries on the GitHub Search API), then scans each candidate's package.json / pyproject.toml / requirements.txt / .env.example via the GitHub Contents API to detect which API vendors the repo actually uses. Feeds the competitor-switch motion play. Required config: `topics` (GitHub topic slugs the founder's ICP overlaps with — lowercase, hyphenated, EXACT GitHub-canonical form; singular vs plural matters), `vendors` (the founder's competitive landscape — the API vendors they aim to replace), `yourEdge` (one-sentence pitch handed to the email). VOCAB SEMANTICS: each `vendors` string is substring-matched (case-insensitive) against manifest deps + env-var keys — so `twilio` matches `twilio`, `twilio-node`, `@twilio/voice-sdk`, AND `TWILIO_ACCOUNT_SID`. There is NO hardcoded vendor list; oneshot-gtm is a generic founder tool and competitive vocabularies vary entirely by founder. STRATEGIST DUTY: when you (the strategist) have enough context about the founder's product/ICP, proactively propose BOTH `topics` AND `vendors` via apply-config — topics are GitHub category slugs aligned to ICP; vendors are the API competitors the founder replaces. The founder shouldn't have to enumerate either by hand. Other config: `minStars` (filter, default 5), `maxAgeDays` (default 90), `minVendors` (gate: how many distinct vocab vendors must match in a candidate's manifests; default 1), `concurrency` (in-flight workers; default 3), `useDeepResearch` (default true), `limit`, `maxCostUsd`.",
+      "Discovers repos via GitHub Topic pages (`topic:<slug>` queries on the GitHub Search API), then scans each candidate's package.json / pyproject.toml / requirements.txt / .env.example via the GitHub Contents API to detect which API vendors the repo actually uses. Routes each candidate to one of two motion plays: stack-consolidation (default — pitch collapsing the vendor sprawl into one SDK) or competitor-switch (when a detected vendor is on `directCompetitors` — a head-on 'switch from X' pitch). Required config: `topics` (GitHub topic slugs the founder's ICP overlaps with — lowercase, hyphenated, EXACT GitHub-canonical form; singular vs plural matters), `vendors` (the founder's competitive landscape — the API vendors they aim to replace), `yourEdge` (one-sentence pitch handed to the email). Optional `directCompetitors`: a subset of `vendors` the founder competes with head-on (same canonical spelling, matched case-insensitively); a candidate using one routes to competitor-switch instead of stack-consolidation. Empty by default, so every candidate is stack-consolidation until set. VOCAB SEMANTICS: each `vendors` string is substring-matched (case-insensitive) against manifest deps + env-var keys — so `twilio` matches `twilio`, `twilio-node`, `@twilio/voice-sdk`, AND `TWILIO_ACCOUNT_SID`. There is NO hardcoded vendor list; oneshot-gtm is a generic founder tool and competitive vocabularies vary entirely by founder. STRATEGIST DUTY: when you (the strategist) have enough context about the founder's product/ICP, proactively propose BOTH `topics` AND `vendors` via apply-config — topics are GitHub category slugs aligned to ICP; vendors are the API competitors the founder replaces. The founder shouldn't have to enumerate either by hand. Other config: `minStars` (filter, default 5), `maxAgeDays` (default 90), `minVendors` (gate: how many distinct vocab vendors must match in a candidate's manifests; default 1), `concurrency` (in-flight workers; default 3), `useDeepResearch` (default true), `limit`, `maxCostUsd`.",
     readiness: (cfg) => {
       const topics = cfg["topics"];
       if (!Array.isArray(topics) || topics.length === 0) {
@@ -261,11 +309,15 @@ export const TRIGGERS: TriggerSpec[] = [
       const vendors = Array.isArray(cfg["vendors"])
         ? (cfg["vendors"] as unknown[]).filter((v): v is string => typeof v === "string")
         : [];
+      const directCompetitors = Array.isArray(cfg["directCompetitors"])
+        ? (cfg["directCompetitors"] as unknown[]).filter((v): v is string => typeof v === "string")
+        : [];
       const yourEdge = typeof cfg["yourEdge"] === "string" ? cfg["yourEdge"] : "";
       return runGitHubTopicsFinder({
         dryRun: false,
         topics,
         vendors,
+        directCompetitors,
         yourEdge,
         minStars: (cfg["minStars"] as number) ?? 5,
         maxAgeDays: (cfg["maxAgeDays"] as number) ?? 90,

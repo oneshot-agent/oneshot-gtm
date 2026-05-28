@@ -11,6 +11,7 @@ export * from "./handoff.ts";
 export * from "./concierge.ts";
 export * from "./demo-no-show.ts";
 export * from "./competitor-switch.ts";
+export * from "./stack-consolidation.ts";
 export * from "./hiring-signal.ts";
 export * from "./podcast-guest.ts";
 export * from "./breakup-revive.ts";

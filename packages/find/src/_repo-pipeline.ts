@@ -6,7 +6,7 @@ import {
   logEvent,
   verifyEmail,
 } from "@oneshot-gtm/core";
-import type { CompetitorSwitchTarget } from "@oneshot-gtm/plays";
+import type { CompetitorSwitchTarget, StackConsolidationTarget } from "@oneshot-gtm/plays";
 import { isDuplicate } from "./_dedupe.ts";
 import { shouldSkipFindEmail } from "./_findemail-prescreen.ts";
 import { icpFilter } from "./_filter.ts";
@@ -36,7 +36,7 @@ import type { AgentBuilderExtract, FinderResult } from "./_types.ts";
  * directly from package.json / pyproject.toml / requirements.txt /
  * .env.example via the GitHub Contents API. Free, fast, deterministic.
  */
-const PLAY_NAME = "competitor-switch";
+const PLAY_NAME = "stack-consolidation";
 
 export interface RepoCandidate {
   /** Normalized github.com/<owner>/<repo>. */
@@ -61,6 +61,13 @@ export interface RepoPipelineCtx {
   icp: string | null;
   /** Founder's vendor list — passed to detectRepoStack as the matching vocabulary. */
   vocab: string[];
+  /**
+   * Subset of `vocab` the founder competes with head-on. A candidate whose
+   * detected stack includes one routes to competitor-switch; otherwise
+   * stack-consolidation. Matched case-insensitively. Empty = always
+   * stack-consolidation.
+   */
+  directCompetitors?: string[];
   yourEdge: string;
   minVendors: number;
   useDeepResearch: boolean;
@@ -103,7 +110,12 @@ export async function processRepoCandidate(
     return;
   }
   const ledger = getLedger();
-  if (ledger.isQueueDuplicate(PLAY_NAME, hit.url)) {
+  // The play isn't known until the stack is detected below, so check both
+  // possible routes — a repo enqueued under either play is a duplicate.
+  if (
+    ledger.isQueueDuplicate("stack-consolidation", hit.url) ||
+    ledger.isQueueDuplicate("competitor-switch", hit.url)
+  ) {
     result.droppedDuplicate++;
     return;
   }
@@ -192,6 +204,16 @@ export async function processRepoCandidate(
     summary: null,
   };
 
+  // Route by direct-competitor match: a candidate whose detected stack
+  // includes one of the founder's head-on rivals gets the competitor-switch
+  // motion ("switch from X"); everything else is a stack-consolidation
+  // (vendor-sprawl) pitch. directCompetitors is empty by default → always
+  // stack-consolidation. The resolved play name is used for the rest of this
+  // candidate's pipeline (dedupe, receipt tags, enqueue).
+  const directSet = new Set((ctx.directCompetitors ?? []).map((s) => s.toLowerCase()));
+  const matchedCompetitor = extract.stackDetected.find((v) => directSet.has(v.toLowerCase()));
+  const playName = matchedCompetitor ? "competitor-switch" : "stack-consolidation";
+
   // 3) Resolve a contact (3-tier: extract domain → GitHub user → deepResearch).
   // Pass the already-fetched ghUserInfo so resolveContact doesn't re-fetch.
   const contact = await resolveContact({
@@ -201,13 +223,14 @@ export async function processRepoCandidate(
     accumCost,
     useDeepResearch: ctx.useDeepResearch,
     errKindPrefix,
+    playName,
   });
   if (!contact) {
     result.droppedEnrichment++;
     return;
   }
 
-  if (isDuplicate({ playName: PLAY_NAME, dedupeKey: hit.url, prospectEmail: contact.email })) {
+  if (isDuplicate({ playName, dedupeKey: hit.url, prospectEmail: contact.email })) {
     result.droppedDuplicate++;
     return;
   }
@@ -217,7 +240,7 @@ export async function processRepoCandidate(
   // identical reasoning to the findEmail wrap in resolveContact.tryFindEmail.
   let verified: Awaited<ReturnType<typeof verifyEmail>>;
   try {
-    verified = await verifyEmail({ email: contact.email }, { playName: PLAY_NAME });
+    verified = await verifyEmail({ email: contact.email }, { playName });
   } catch (err) {
     logEvent(
       "error.swallowed",
@@ -241,7 +264,7 @@ export async function processRepoCandidate(
   // when so. ~$0.005 per call when fired (per OneShot pricing).
   if (!contact.phone || !contact.linkedinUrl) {
     const enr = await enrichVerifiedContact(contact.email, {
-      playName: PLAY_NAME,
+      playName,
       errKindPrefix,
     });
     accumCost(enr.costUsd);
@@ -251,29 +274,43 @@ export async function processRepoCandidate(
 
   const stackLine = extract.stackDetected.join(", ");
   const vendorCount = extract.stackDetected.length;
-  const evidenceText =
-    `Their repo stitches together ${stackLine} — ${vendorCount} separate auth ` +
-    `surfaces and ${vendorCount} bills to manage.`;
-  const competitorLabel = extract.stackDetected[0] as string;
   const companyFallback = contact.domain ?? contact.email.split("@")[1] ?? "";
-
-  const target: CompetitorSwitchTarget = {
-    name: extract.authorFullName ?? contact.fullName ?? extract.githubHandle ?? "there",
-    email: contact.email,
-    company: extract.companyName ?? extract.githubHandle ?? companyFallback,
-    competitor: competitorLabel,
-    evidenceUrl: hit.url,
-    evidenceText,
-    yourEdge: ctx.yourEdge,
+  const name = extract.authorFullName ?? contact.fullName ?? extract.githubHandle ?? "there";
+  const company = extract.companyName ?? extract.githubHandle ?? companyFallback;
+  const contactExtras = {
     ...(contact.linkedinUrl ? { linkedinUrl: contact.linkedinUrl } : {}),
     ...(contact.phone ? { phone: contact.phone } : {}),
   };
+
+  const target: CompetitorSwitchTarget | StackConsolidationTarget = matchedCompetitor
+    ? {
+        name,
+        email: contact.email,
+        company,
+        competitor: matchedCompetitor,
+        evidenceUrl: hit.url,
+        // Honest, specific evidence — no fabricated "auth surfaces". Single
+        // vendor, so no rule-of-three risk. Setting evidenceText also makes
+        // competitor-switch skip its (expensive) browser scrape.
+        evidenceText: `Their public repo uses ${matchedCompetitor} (found in ${stack.manifestsFound.join(", ")}).`,
+        yourEdge: ctx.yourEdge,
+        ...contactExtras,
+      }
+    : {
+        name,
+        email: contact.email,
+        company,
+        vendorStack: stackLine,
+        evidenceUrl: hit.url,
+        yourEdge: ctx.yourEdge,
+        ...contactExtras,
+      };
   const notes = truncate(
     `${ctx.notesPrefix}: ${stackLine} (${vendorCount} vendors) — ${snippetFilter.reason}`,
     220,
   );
   const id = ledger.enqueueTarget({
-    playName: PLAY_NAME,
+    playName,
     payload: target,
     dedupeKey: hit.url,
     source: ctx.sourceTag,
@@ -318,15 +355,18 @@ export async function resolveContact(args: {
   useDeepResearch: boolean;
   /** Used in the deep-research error event kind, e.g. "github-topics". */
   errKindPrefix?: string;
+  /** Resolved motion play, used to tag the receipts this resolution spends on. */
+  playName?: string;
 }): Promise<ResolvedContact | null> {
   const { extract, repoUrl, ghUser, accumCost, useDeepResearch } = args;
   const errKindPrefix = args.errKindPrefix ?? "repo-pipeline";
+  const playName = args.playName ?? PLAY_NAME;
   const extractDomain = extract.companyDomain ?? extract.personalDomain ?? null;
   let discoveredLinkedinUrl: string | null = null;
 
   // Path A: extract has a domain. Try findEmail with it.
   if (extractDomain) {
-    const direct = await tryFindEmail(extractDomain, extract, accumCost, errKindPrefix);
+    const direct = await tryFindEmail(extractDomain, extract, accumCost, errKindPrefix, playName);
     if (direct)
       return {
         ...direct,
@@ -371,7 +411,7 @@ export async function resolveContact(args: {
     if (linkedinUrl) {
       discoveredLinkedinUrl = linkedinUrl;
       try {
-        const enriched = await enrichProfile({ linkedinUrl }, { playName: PLAY_NAME });
+        const enriched = await enrichProfile({ linkedinUrl }, { playName });
         accumCost(enriched.result.cost ?? 0);
         const profile = enriched.result.profile;
         // PersonResult exposes phone (string) AND fullphone (array) — extractFirstPhone
@@ -395,6 +435,7 @@ export async function resolveContact(args: {
             { ...extract, authorFullName: profile.full_name ?? extract.authorFullName },
             accumCost,
             errKindPrefix,
+            playName,
           );
           if (viaEnriched)
             return {
@@ -444,7 +485,7 @@ export async function resolveContact(args: {
         ...(hasName ? { name: extract.authorFullName as string } : {}),
         ...(hasCompany ? { company: companyForGate as string } : {}),
       },
-      { playName: PLAY_NAME },
+      { playName },
     );
     accumCost(dr.result.cost ?? 0);
     const enr = dr.result.result?.enrichment;
@@ -491,6 +532,7 @@ async function tryFindEmail(
   extract: AgentBuilderExtract,
   accumCost: (c: number | undefined) => void,
   errKindPrefix: string,
+  playName: string,
 ): Promise<{ email: string; fullName: string | null } | null> {
   if (!extract.authorFullName || extract.authorFullName.length === 0) {
     return null;
@@ -502,7 +544,7 @@ async function tryFindEmail(
   if (!skip.ok) {
     logEvent(
       "finder.skipped_findemail",
-      { name: PLAY_NAME, reason: skip.reason, kind: `${errKindPrefix}.find_email` },
+      { name: playName, reason: skip.reason, kind: `${errKindPrefix}.find_email` },
       "info",
     );
     return null;
@@ -511,7 +553,7 @@ async function tryFindEmail(
   try {
     found = await findEmail(
       { fullName: extract.authorFullName, companyDomain: domain },
-      { playName: PLAY_NAME },
+      { playName },
     );
   } catch (err) {
     logEvent(

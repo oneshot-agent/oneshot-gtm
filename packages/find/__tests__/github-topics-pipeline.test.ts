@@ -57,8 +57,7 @@ let nextFindEmailResult: { found: boolean; email?: string; full_name?: string } 
 };
 
 vi.mock("@oneshot-gtm/core", async () => {
-  const actual =
-    await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
+  const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
   return {
     ...actual,
     loadConfig: () => ({
@@ -117,8 +116,7 @@ vi.mock("@oneshot-gtm/core", async () => {
 });
 
 vi.mock("@oneshot-gtm/intel", async () => {
-  const actual =
-    await vi.importActual<typeof import("@oneshot-gtm/intel")>("@oneshot-gtm/intel");
+  const actual = await vi.importActual<typeof import("@oneshot-gtm/intel")>("@oneshot-gtm/intel");
   return {
     ...actual,
     complete: async (input: { messages: Array<{ role: string; content: string }> }) => {
@@ -287,9 +285,7 @@ describe("github-topics — discovery", () => {
 
   it("stops fetching new topics once hits >= limit*2", async () => {
     nextSearchByTopic = {
-      "llm-agents": Array.from({ length: 60 }, (_, i) =>
-        makeRepo(`https://github.com/repo${i}/x`),
-      ),
+      "llm-agents": Array.from({ length: 60 }, (_, i) => makeRepo(`https://github.com/repo${i}/x`)),
       "ai-agent": [makeRepo("https://github.com/extra/repo")],
     };
     await runGitHubTopicsFinder({ ...baseOpts, limit: 25 });
@@ -324,6 +320,54 @@ describe("github-topics — pipeline ordering", () => {
     expect(calls.verifyEmail).toBe(1);
     expect(out.enqueued).toBe(1);
     expect(calls.enqueued[0]?.["notes"]).toMatch(/^github-topic:/);
+  });
+
+  it("enqueues a stack-consolidation target — vendorStack, no competitor, no fabricated 'auth surfaces'", async () => {
+    nextSearchByTopic = {
+      "llm-agents": [makeRepo("https://github.com/ada/agent")],
+    };
+    nextDetectedStack = ["playwright", "ses", "tavily"];
+    const out = await runGitHubTopicsFinder({ ...baseOpts, topics: ["llm-agents"] });
+    expect(out.enqueued).toBe(1);
+    const row = calls.enqueued[0] ?? {};
+    expect(row["playName"]).toBe("stack-consolidation");
+    const payload = row["payload"] as Record<string, unknown>;
+    expect(payload["vendorStack"]).toBe("playwright, ses, tavily");
+    expect(payload).not.toHaveProperty("competitor");
+    expect(payload).not.toHaveProperty("evidenceText");
+    // The old hardcoded template fabricated "N separate auth surfaces" for
+    // every target regardless of what the vendors actually were.
+    expect(JSON.stringify(payload)).not.toMatch(/auth surface/i);
+  });
+
+  it("routes to competitor-switch when a detected vendor is on directCompetitors", async () => {
+    nextSearchByTopic = { "llm-agents": [makeRepo("https://github.com/ada/agent")] };
+    nextDetectedStack = ["langchain", "twilio"];
+    const out = await runGitHubTopicsFinder({
+      ...baseOpts,
+      topics: ["llm-agents"],
+      directCompetitors: ["twilio"],
+    });
+    expect(out.enqueued).toBe(1);
+    const row = calls.enqueued[0] ?? {};
+    expect(row["playName"]).toBe("competitor-switch");
+    const payload = row["payload"] as Record<string, unknown>;
+    expect(payload["competitor"]).toBe("twilio");
+    expect(typeof payload["evidenceText"]).toBe("string");
+    expect(payload).not.toHaveProperty("vendorStack");
+    expect(JSON.stringify(payload)).not.toMatch(/auth surface/i);
+  });
+
+  it("stays stack-consolidation when no detected vendor is on directCompetitors", async () => {
+    nextSearchByTopic = { "llm-agents": [makeRepo("https://github.com/ada/agent")] };
+    nextDetectedStack = ["langchain", "twilio"];
+    const out = await runGitHubTopicsFinder({
+      ...baseOpts,
+      topics: ["llm-agents"],
+      directCompetitors: ["pinecone"],
+    });
+    expect(out.enqueued).toBe(1);
+    expect(calls.enqueued[0]?.["playName"]).toBe("stack-consolidation");
   });
 
   it("ICP snippet summary embeds the repo's topic tags (not vendors)", async () => {

@@ -8,6 +8,7 @@ import {
   runPodcastGuest,
   runPostFunding,
   runShowHn,
+  runStackConsolidation,
   type AcceleratorBatchTarget,
   type BreakupReviveTarget,
   type CompetitorSwitchTarget,
@@ -16,6 +17,7 @@ import {
   type PodcastGuestTarget,
   type PostFundingTarget,
   type ShowHnTarget,
+  type StackConsolidationTarget,
 } from "@oneshot-gtm/plays";
 import type { QueueRow } from "@oneshot-gtm/core";
 
@@ -118,6 +120,11 @@ async function dispatchPlay(opts: DrainOpts, rows: QueueRow[]): Promise<number[]
     case "competitor-switch": {
       const targets = rows.map((r) => JSON.parse(r.payload_json) as CompetitorSwitchTarget);
       const result = await runCompetitorSwitch({ dryRun: opts.dryRun, targets });
+      return idsForSentDrafts(result.drafted, rows, opts.dryRun);
+    }
+    case "stack-consolidation": {
+      const targets = rows.map((r) => JSON.parse(r.payload_json) as StackConsolidationTarget);
+      const result = await runStackConsolidation({ dryRun: opts.dryRun, targets });
       return idsForSentDrafts(result.drafted, rows, opts.dryRun);
     }
     default:

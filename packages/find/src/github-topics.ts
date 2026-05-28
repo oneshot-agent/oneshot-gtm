@@ -29,6 +29,13 @@ export interface GitHubTopicsFinderOpts extends RunOpts {
   topics: string[];
   /** Canonical vendor names handed to the LLM extract for stack detection. */
   vendors: string[];
+  /**
+   * Subset of `vendors` the founder competes with head-on. When a candidate's
+   * detected stack includes one of these, it routes to the competitor-switch
+   * play ("switch from X") instead of stack-consolidation. Empty = every
+   * candidate is stack-consolidation. Matched case-insensitively.
+   */
+  directCompetitors?: string[];
   /** YOUR EDGE line handed to the email prompt. */
   yourEdge: string;
   /** Min stars filter. Default 5 (drops abandoned/empty repos). */
@@ -43,9 +50,7 @@ export interface GitHubTopicsFinderOpts extends RunOpts {
   useDeepResearch?: boolean;
 }
 
-export async function runGitHubTopicsFinder(
-  opts: GitHubTopicsFinderOpts,
-): Promise<FinderResult> {
+export async function runGitHubTopicsFinder(opts: GitHubTopicsFinderOpts): Promise<FinderResult> {
   const limit = opts.limit ?? 25;
   const minStars = Math.max(0, opts.minStars ?? 5);
   const maxAgeDays = Math.max(1, opts.maxAgeDays ?? 90);
@@ -115,6 +120,7 @@ export async function runGitHubTopicsFinder(
   const ctx: RepoPipelineCtx = {
     icp,
     vocab: opts.vendors,
+    directCompetitors: opts.directCompetitors ?? [],
     yourEdge: opts.yourEdge,
     minVendors,
     useDeepResearch,
