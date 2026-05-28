@@ -111,6 +111,8 @@ export class Ledger {
         sent_at TEXT,
         notes TEXT,
         prospect_id INTEGER,
+        last_draft_json TEXT,
+        last_drafted_at TEXT,
         FOREIGN KEY(prospect_id) REFERENCES prospects(id)
       );
       CREATE UNIQUE INDEX IF NOT EXISTS idx_queue_dedupe ON target_queue(play_name, dedupe_key);
@@ -126,10 +128,16 @@ export class Ledger {
         running_started_at TEXT
       );
 
+      CREATE TABLE IF NOT EXISTS enrichment_cache (
+        email TEXT PRIMARY KEY,
+        result_json TEXT NOT NULL,
+        fetched_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS schema_version (
         version INTEGER PRIMARY KEY
       );
-      INSERT OR IGNORE INTO schema_version(version) VALUES(5);
+      INSERT OR IGNORE INTO schema_version(version) VALUES(6);
     `);
 
     // Lightweight migrations for installs that pre-date a column.
@@ -138,6 +146,12 @@ export class Ledger {
     // strand fire-and-forget runs as silent stale rows. See
     // sweepStaleRunningTriggers + fireTriggerNow.
     this.addColumnIfMissing("triggers", "running_started_at", "TEXT");
+    // v6 (2026-05): persist drafts per target_queue row so the founder can
+    // review subject/body/flags after the SSE stream finishes (the /run
+    // page itself is ephemeral). See `setQueueDraft` + the persist hook in
+    // `apps/server/src/api/run.ts`.
+    this.addColumnIfMissing("target_queue", "last_draft_json", "TEXT");
+    this.addColumnIfMissing("target_queue", "last_drafted_at", "TEXT");
   }
 
   private addColumnIfMissing(table: string, column: string, type: string): void {
@@ -247,6 +261,33 @@ export class Ledger {
       (this.db.query("SELECT id FROM prospects WHERE email = ?").get(email) as { id: number }) ??
       null
     );
+  }
+
+  /** Full prospect record by email — used to attach name/company to inbox replies. */
+  getProspectByEmail(email: string): ProspectRecord | null {
+    return (
+      (this.db.query("SELECT * FROM prospects WHERE email = ?").get(email) as ProspectRecord) ??
+      null
+    );
+  }
+
+  /** Cached enrichProfile result for an email (profiles are stable; reused with a TTL). */
+  getCachedEnrichment(email: string): { result_json: string; fetched_at: string } | null {
+    return (
+      (this.db
+        .query("SELECT result_json, fetched_at FROM enrichment_cache WHERE email = ?")
+        .get(email) as { result_json: string; fetched_at: string }) ?? null
+    );
+  }
+
+  setCachedEnrichment(email: string, resultJson: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO enrichment_cache(email, result_json, fetched_at)
+         VALUES(?, ?, ?)
+         ON CONFLICT(email) DO UPDATE SET result_json = excluded.result_json, fetched_at = excluded.fetched_at`,
+      )
+      .run(email, resultJson, new Date().toISOString());
   }
 
   recordReceipt(input: {
@@ -595,6 +636,19 @@ export class Ledger {
     return row !== null && row !== undefined;
   }
 
+  /**
+   * Look up a queue row by its (play_name, dedupe_key) — the unique pair.
+   * Used by the SSE /run endpoint to map drafts back to the originating
+   * row so we can persist `last_draft_json`. Returns null when absent.
+   */
+  getQueueRowByDedupe(playName: string, dedupeKey: string): QueueRow | null {
+    return (
+      (this.db
+        .query("SELECT * FROM target_queue WHERE play_name = ? AND dedupe_key = ?")
+        .get(playName, dedupeKey) as QueueRow) ?? null
+    );
+  }
+
   listQueue(opts: { playName?: string; status?: QueueStatus; limit?: number } = {}): QueueRow[] {
     const where: string[] = [];
     const args: unknown[] = [];
@@ -850,6 +904,35 @@ export class Ledger {
    */
   setQueueProspectId(id: number, prospectId: number): void {
     this.db.prepare(`UPDATE target_queue SET prospect_id = ? WHERE id = ?`).run(prospectId, id);
+  }
+
+  /**
+   * Persist the most-recent draft generated for this queue row. Called by
+   * the SSE /run endpoint after the play returns drafted output, so the
+   * founder can review subject/body/flags on /queue at any later time
+   * (the /run page itself is ephemeral).
+   *
+   * Most-recent-wins — re-runs overwrite without history. `last_drafted_at`
+   * is stored as ISO so it sorts/compares cleanly with the rest of the
+   * timestamp columns; the JSON envelope also embeds `draftedAt` for
+   * callers that already have the row payload.
+   */
+  setQueueDraft(input: {
+    id: number;
+    draft: {
+      subject: string;
+      body: string;
+      flags: string[];
+      sent: boolean;
+      receiptIds: number[];
+      dryRun: boolean;
+    };
+  }): void {
+    const draftedAtIso = new Date().toISOString();
+    const json = JSON.stringify({ ...input.draft, draftedAt: draftedAtIso });
+    this.db
+      .prepare(`UPDATE target_queue SET last_draft_json = ?, last_drafted_at = ? WHERE id = ?`)
+      .run(json, draftedAtIso, input.id);
   }
 
   close(): void {
