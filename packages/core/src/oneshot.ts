@@ -2,7 +2,6 @@ import {
   OneShot,
   type BrowserResult,
   type DeepResearchPersonResult,
-  type EmailResult,
   type EnrichProfileResult,
   type FindEmailResult,
   type InboxEmail,
@@ -57,10 +56,6 @@ async function initAgent(): Promise<OneShot> {
 async function getAgent(): Promise<OneShot> {
   if (!agentSingleton) agentSingleton = await initAgent();
   return agentSingleton;
-}
-
-function emailRequestId(r: EmailResult): string | undefined {
-  return r.email?.id;
 }
 
 /**
@@ -120,7 +115,7 @@ export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
     callType: "email.send",
     signedReceipt: result,
     costUsd: result.cost,
-    oneshotRequestId: emailRequestId(result) ?? undefined,
+    oneshotRequestId: result.request_id,
   });
   return { result, receiptId };
 }
