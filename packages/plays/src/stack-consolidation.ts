@@ -123,6 +123,7 @@ registerSequence({
       breakOnReply: true,
       label: "value follow-up",
       builder: buildFollowUpEmail({
+        playName: PLAY_NAME,
         promptName: "stack-consolidation-followup",
         contextLines: [
           `PLAY: stack-consolidation. Day-3 value follow-up after the consolidation-honesty pitch.`,
@@ -135,6 +136,7 @@ registerSequence({
       breakOnReply: true,
       label: "breakup",
       builder: buildFollowUpEmail({
+        playName: PLAY_NAME,
         promptName: "breakup-email",
         contextLines: [
           `PLAY: stack-consolidation. Final breakup after the consolidation-honesty pitch.`,

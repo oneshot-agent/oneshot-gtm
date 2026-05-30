@@ -144,6 +144,7 @@ registerSequence({
       breakOnReply: true,
       label: "day-3 follow-up",
       builder: buildFollowUpEmail({
+        playName: PLAY_NAME,
         promptName: "demo-no-show-followup",
         contextLines: [`PLAY: demo-no-show day-3 follow-up. After this, drop the lead.`],
       }),

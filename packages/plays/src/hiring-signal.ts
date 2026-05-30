@@ -135,6 +135,7 @@ registerSequence({
       breakOnReply: true,
       label: "value follow-up",
       builder: buildFollowUpEmail({
+        playName: PLAY_NAME,
         promptName: "hiring-signal-followup",
         contextLines: [`PLAY: hiring-signal. Day-3 value follow-up about the open role.`],
       }),
@@ -145,6 +146,7 @@ registerSequence({
       breakOnReply: true,
       label: "breakup",
       builder: buildFollowUpEmail({
+        playName: PLAY_NAME,
         promptName: "breakup-email",
         contextLines: [`PLAY: hiring-signal. Final breakup.`],
       }),

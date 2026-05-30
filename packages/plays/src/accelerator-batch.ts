@@ -150,6 +150,7 @@ registerSequence({
       breakOnReply: true,
       label: "single follow-up + breakup",
       builder: buildFollowUpEmail({
+        playName: PLAY_NAME,
         promptName: "breakup-email",
         contextLines: [
           `PLAY: accelerator-batch. The accelerator-batch motion is one-touch + one breakup; this is the final note. Lean very short.`,

@@ -491,6 +491,20 @@ export class Ledger {
     return Number(result.lastInsertRowid);
   }
 
+  listSequenceEventsForProspectPlay(
+    prospectId: number,
+    playName: string,
+  ): SequenceEventRecord[] {
+    return this.db
+      .query(
+        `SELECT * FROM sequence_events
+         WHERE prospect_id = ? AND play_name = ?
+           AND status IN ('sent','delivered','replied')
+         ORDER BY step_index ASC, id ASC`,
+      )
+      .all(prospectId, playName) as SequenceEventRecord[];
+  }
+
   recordInterview(input: Omit<InterviewRecord, "id" | "created_at">): number {
     const stmt = this.db.prepare(`
       INSERT INTO interviews(person, transcript_path, jtbd, pain_quotes_json)

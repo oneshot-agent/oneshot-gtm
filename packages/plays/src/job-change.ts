@@ -127,6 +127,7 @@ registerSequence({
       breakOnReply: true,
       label: "value follow-up",
       builder: buildFollowUpEmail({
+        playName: PLAY_NAME,
         promptName: "job-change-followup",
         contextLines: [
           `CONTEXT: prospect recently joined a new role; first email went unanswered ~5 days ago.`,
@@ -139,6 +140,7 @@ registerSequence({
       breakOnReply: true,
       label: "breakup",
       builder: buildFollowUpEmail({
+        playName: PLAY_NAME,
         promptName: "breakup-email",
         contextLines: [`PLAY: job-change. Sender is closing the file.`],
       }),

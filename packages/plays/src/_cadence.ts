@@ -331,7 +331,11 @@ async function dispatchStep(input: {
       stepIndex: input.stepIndex,
       channel: "email",
       status: "sent",
-      metadata: { subject: input.payload.subject, label: input.label },
+      metadata: {
+        subject: input.payload.subject,
+        body: input.payload.body,
+        label: input.label,
+      },
     });
     return { receiptIds };
   }
@@ -402,11 +406,13 @@ function loadProspect(id: number): ProspectRecord | null {
 }
 
 export function buildFollowUpEmail(opts: {
+  playName: string;
   promptName: string;
   contextLines: string[];
 }): SequenceStep["builder"] {
   return async (ctx: CadenceContext) => {
     const system = loadPrompt(opts.promptName) + signatureDirective();
+    const priorBlock = buildPriorEmailsBlock(ctx.prospect.id, opts.playName);
     const user = [
       `FOUNDER: ${ctx.cfg.founderName}`,
       `PRODUCT: ${ctx.cfg.productOneLiner}`,
@@ -414,6 +420,7 @@ export function buildFollowUpEmail(opts: {
       `EMAIL: ${ctx.prospect.email ?? ""}`,
       `COMPANY: ${ctx.prospect.company ?? "(unknown)"}`,
       ...opts.contextLines,
+      ...(priorBlock ? ["", priorBlock] : []),
     ].join("\n");
     const res = await complete({
       messages: [
@@ -427,6 +434,44 @@ export function buildFollowUpEmail(opts: {
     if (!parsed.subject || !parsed.body) return null;
     return { kind: "email", subject: parsed.subject.trim(), body: parsed.body.trim() };
   };
+}
+
+function buildPriorEmailsBlock(prospectId: number, playName: string): string | null {
+  if (!prospectId) return null;
+  let rows: Array<{ step_index: number; metadata_json: string | null }>;
+  try {
+    rows = getLedger().listSequenceEventsForProspectPlay(prospectId, playName) as Array<{
+      step_index: number;
+      metadata_json: string | null;
+    }>;
+  } catch {
+    return null;
+  }
+  const usable = rows.flatMap((r) => {
+    const meta = tryParseJsonObject<{ subject?: string; body?: string; label?: string }>(
+      r.metadata_json ?? "",
+      {},
+    );
+    if (!meta.body) return [];
+    return [
+      {
+        step: r.step_index,
+        subject: meta.subject ?? "(no subject)",
+        body: meta.body,
+        label: meta.label ?? (r.step_index === 0 ? "initial send" : "follow-up"),
+      },
+    ];
+  });
+  if (usable.length === 0) return null;
+  const lines = [
+    "PRIOR EMAILS (your previous touches to this prospect on this play; do not repeat their angles, hooks, openers, or closes):",
+  ];
+  for (const row of usable) {
+    lines.push(`--- step ${row.step} (${row.label}) ---`);
+    lines.push(`Subject: ${row.subject}`);
+    lines.push(row.body);
+  }
+  return lines.join("\n");
 }
 
 export function buildSmsStep(opts: {

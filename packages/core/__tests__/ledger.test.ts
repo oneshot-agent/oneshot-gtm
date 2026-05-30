@@ -84,6 +84,55 @@ describe("Ledger receipts + prospects + spend rollups", () => {
     expect(jc?.total_usd).toBeCloseTo(0.2);
   });
 
+  it("listSequenceEventsForProspectPlay filters by prospect+play+status and orders by step", () => {
+    const pidA = ledger.upsertProspect({ name: "A", email: "a@x.com", source: "t" });
+    const pidB = ledger.upsertProspect({ name: "B", email: "b@x.com", source: "t" });
+    ledger.recordSequenceEvent({
+      prospectId: pidA,
+      playName: "stack-consolidation",
+      stepIndex: 1,
+      channel: "email",
+      status: "sent",
+      metadata: { subject: "s1", body: "b1" },
+    });
+    ledger.recordSequenceEvent({
+      prospectId: pidA,
+      playName: "stack-consolidation",
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+      metadata: { subject: "s0", body: "b0" },
+    });
+    // Wrong play — should be excluded.
+    ledger.recordSequenceEvent({
+      prospectId: pidA,
+      playName: "show-hn",
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+    });
+    // Non-final status — should be excluded.
+    ledger.recordSequenceEvent({
+      prospectId: pidA,
+      playName: "stack-consolidation",
+      stepIndex: 2,
+      channel: "email",
+      status: "queued",
+    });
+    // Wrong prospect — should be excluded.
+    ledger.recordSequenceEvent({
+      prospectId: pidB,
+      playName: "stack-consolidation",
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+    });
+    const rows = ledger.listSequenceEventsForProspectPlay(pidA, "stack-consolidation");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]?.step_index).toBe(0);
+    expect(rows[1]?.step_index).toBe(1);
+  });
+
   it("eventsByPlay aggregates sequence statuses", () => {
     const id = ledger.upsertProspect({ name: "A", email: "a@x.com", source: "t" });
     ledger.recordSequenceEvent({

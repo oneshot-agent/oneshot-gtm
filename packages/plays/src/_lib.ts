@@ -252,7 +252,7 @@ export async function sendDraftedEmail(opts: SendDraftedOpts): Promise<SendDraft
       stepIndex: 0,
       channel: "email",
       status: "sent",
-      metadata: { subject: opts.draft.subject, ...opts.metadata },
+      metadata: { subject: opts.draft.subject, body: opts.draft.body, ...opts.metadata },
     });
     sent = true;
   }

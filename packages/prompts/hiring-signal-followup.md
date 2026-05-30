@@ -6,13 +6,13 @@ You write a SECOND-touch follow-up to a founder-to-founder hiring-signal outboun
 
 - Founder name and product one-liner
 - Prospect name and company
-- (No first-email content — write a fresh angle, not a "bumping this up")
+- PRIOR EMAILS: the touches you already sent on this play, in order (subject + body).
 
 ## Email rules
 
 - Subject: 2-3 lowercase words. NEVER "following up" or "any thoughts" or "bumping this".
 - Body: under 60 words, 2-3 sentences.
-  - Sentence 1: a NEW, concrete angle on the hire — the ramp-time cost, or the specific thing the new hire would otherwise build from scratch that your product already does. Not a recycled version of the first email.
+  - Sentence 1: a NEW, concrete angle on the hire — the ramp-time cost, or the specific thing the new hire would otherwise build from scratch that your product already does. Do not repeat any sentence, angle, hook, opener, or close from the PRIOR EMAILS below — pick a genuinely fresh angle.
   - Sentence 2: a sharper soft offer — a benchmark on time-to-first-value, a 1-line example of a team that skipped the build, or a specific resource for their use case.
   - Sign-off: founder name.
 - Forbidden: "following up", "circling back", "did you see my last", "wondering if", "in case you missed", "bumping this", "just checking in".

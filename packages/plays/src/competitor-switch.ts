@@ -172,6 +172,7 @@ registerSequence({
       breakOnReply: true,
       label: "value follow-up",
       builder: buildFollowUpEmail({
+        playName: PLAY_NAME,
         promptName: "competitor-switch-followup",
         contextLines: [
           `PLAY: competitor-switch. Day-3 value follow-up after the migration-honesty pitch.`,
@@ -184,6 +185,7 @@ registerSequence({
       breakOnReply: true,
       label: "breakup",
       builder: buildFollowUpEmail({
+        playName: PLAY_NAME,
         promptName: "breakup-email",
         contextLines: [
           `PLAY: competitor-switch. Final breakup after the migration-honesty pitch.`,

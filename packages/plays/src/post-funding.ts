@@ -133,6 +133,7 @@ registerSequence({
       breakOnReply: true,
       label: "case-study follow-up",
       builder: buildFollowUpEmail({
+        playName: PLAY_NAME,
         promptName: "post-funding-followup",
         contextLines: [
           `CONTEXT: prospect's company recently raised; first email sent ~9 days ago, no reply.`,
@@ -145,6 +146,7 @@ registerSequence({
       breakOnReply: true,
       label: "breakup",
       builder: buildFollowUpEmail({
+        playName: PLAY_NAME,
         promptName: "breakup-email",
         contextLines: [`PLAY: post-funding.`],
       }),
