@@ -1,12 +1,13 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowLeft, Play, Plus, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { ArrowLeft, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { RunPlayEvent, RunPlayRequest } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
 import { Checkbox, Field, Input, Textarea } from "../components/primitives/Field.tsx";
 import { cn } from "../lib/cn.ts";
+import { pruneSentRows } from "../lib/pruneSentRows.ts";
 
 /**
  * Search-param contract for arrivals from the `/queue` drain modal.
@@ -376,30 +377,22 @@ function RunPage() {
   // we ran a fetch (silent dev-only failure).
   //
   // Net cost: 1 extra GET in dev StrictMode; 1 GET total in production.
-  useEffect(() => {
-    if (search.fromQueue !== "1") return;
-    if (!schema) return;
-
-    let cancelled = false;
-    void (async () => {
+  const hydrateFromQueue = useCallback(
+    async (cancelledRef?: { cancelled: boolean }): Promise<void> => {
+      if (!schema) return;
       try {
         const res = await api.queue({
           play: playName,
           status: "approved",
           limit: search.limit ?? 50,
         });
-        if (cancelled) return;
-        // Pair each row with its dedupeKey before filtering, so the parallel
-        // arrays stay aligned even if some payloads are malformed.
+        if (cancelledRef?.cancelled) return;
         const pairs = res.rows
           .map((r) => ({ payload: r.payload, dedupeKey: r.dedupeKey }))
           .filter((p): p is { payload: Record<string, unknown>; dedupeKey: string } => {
             return Boolean(p.payload) && typeof p.payload === "object";
           });
         const targets = pairs.map(({ payload }) => {
-          // Coerce every value to a string for the form editor — it stores
-          // the row as `Record<string, string>` and re-serializes to JSON
-          // when submitting. Null/undefined become "".
           const out: Record<string, string> = Object.assign({}, schema.defaultRow);
           for (const k of Object.keys(payload)) {
             const v = payload[k];
@@ -409,26 +402,40 @@ function RunPage() {
         });
         if (targets.length === 0) {
           setHydrationEmpty(true);
+          setRows([{ ...schema.defaultRow }]);
+          setDedupeKeys([null]);
           return;
         }
+        setHydrationEmpty(false);
         setRows(targets);
         setDedupeKeys(pairs.map((p) => p.dedupeKey));
-        // Round-trip the modal's per-play extras (accelerator-batch only
-        // today) so the founder doesn't have to retype senderCohort/offer.
-        const ex: Record<string, string> = {};
-        if (search.senderCohort) ex["senderCohort"] = search.senderCohort;
-        if (search.freeForCohortOffer) ex["freeForCohortOffer"] = search.freeForCohortOffer;
-        if (Object.keys(ex).length > 0) setExtras((prev) => ({ ...prev, ...ex }));
       } catch (err) {
-        if (cancelled) return;
+        if (cancelledRef?.cancelled) return;
         setError(`failed to load approved targets from queue: ${(err as Error).message}`);
       }
+    },
+    [playName, schema, search.limit],
+  );
+
+  useEffect(() => {
+    if (search.fromQueue !== "1") return;
+    const ref = { cancelled: false };
+    void (async () => {
+      await hydrateFromQueue(ref);
+      if (ref.cancelled) return;
+      // Round-trip the modal's per-play extras (accelerator-batch only
+      // today) so the founder doesn't have to retype senderCohort/offer.
+      const ex: Record<string, string> = {};
+      if (search.senderCohort) ex["senderCohort"] = search.senderCohort;
+      if (search.freeForCohortOffer) ex["freeForCohortOffer"] = search.freeForCohortOffer;
+      if (Object.keys(ex).length > 0) setExtras((prev) => ({ ...prev, ...ex }));
     })();
     return () => {
-      cancelled = true;
+      ref.cancelled = true;
     };
     // Mount-only on purpose — re-running on search-param edits would clobber
-    // founder edits to the loaded rows.
+    // founder edits to the loaded rows. The manual "Refresh from queue"
+    // button invokes hydrateFromQueue directly on demand.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -530,6 +537,13 @@ function RunPage() {
     setEvents([]);
     setRunning(true);
 
+    // Snapshot rows/dedupeKeys at submit time so the post-run auto-prune
+    // can reconcile by original index even though the form is disabled
+    // during the run (state can't drift here, but the closure capture is
+    // explicit and avoids any future foot-gun).
+    const rowsSnapshot = rows;
+    const dedupeKeysSnapshot = dedupeKeys;
+
     const targets = rows.map((r) => stripEmpty(r));
     // Only attach dedupeKeys when at least one row has one (i.e. arrived
     // from /queue). Pure-manual sessions skip the field; the server then
@@ -542,6 +556,11 @@ function RunPage() {
       ...(extras["senderCohort"] ? { senderCohort: extras["senderCohort"] } : {}),
       ...(extras["freeForCohortOffer"] ? { freeForCohortOffer: extras["freeForCohortOffer"] } : {}),
     };
+
+    // Local mirror of the SSE event stream — avoids reading React state in
+    // the finally block (which would be stale due to async update batching)
+    // and keeps setState calls below pure (one setter per concern).
+    const streamedEvents: RunPlayEvent[] = [];
 
     try {
       const res = await fetch(`/api/run/${encodeURIComponent(playName)}`, {
@@ -567,6 +586,7 @@ function RunPage() {
           if (!line) continue;
           try {
             const ev = JSON.parse(line.slice(5).trim()) as RunPlayEvent;
+            streamedEvents.push(ev);
             setEvents((prev) => [...prev, ev]);
           } catch {
             // ignore parse errors
@@ -577,6 +597,18 @@ function RunPage() {
       setError((err as Error).message);
     } finally {
       setRunning(false);
+      // After a real-send run, drop rows whose draft actually shipped so
+      // they can't be resent by a second submission of the same form.
+      // Held / errored / unsent rows stay so the founder can edit and retry.
+      const pruned = pruneSentRows(streamedEvents, rowsSnapshot, dedupeKeysSnapshot);
+      if (pruned.prunedCount > 0) {
+        setRows(pruned.rows);
+        setDedupeKeys(pruned.dedupeKeys);
+        // The per-index draft/send details from the just-finished run no
+        // longer line up with the surviving rows — clear so the UI doesn't
+        // show stale previews under freshly-shifted indices.
+        setEvents([]);
+      }
     }
   };
 
@@ -598,6 +630,17 @@ function RunPage() {
           >
             {playName}
           </code>
+          {search.fromQueue === "1" && (
+            <button
+              type="button"
+              onClick={() => void hydrateFromQueue()}
+              disabled={running}
+              title="Re-load approved rows from the queue (drops your in-form edits)"
+              className="ml-2 inline-flex items-center gap-1 font-mono text-[11px] text-ink-muted hover:text-ink-cream disabled:opacity-40"
+            >
+              <RefreshCw size={11} /> refresh from queue
+            </button>
+          )}
         </div>
         <h1
           className="mt-1 text-ink-cream"
