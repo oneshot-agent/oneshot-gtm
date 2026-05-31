@@ -189,6 +189,63 @@ describe("expirePendingOlderThan", () => {
   });
 });
 
+describe("dequeueApproved atomic lease", () => {
+  function enqueueApproved(dedupe: string): number {
+    const id = ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: {},
+      dedupeKey: dedupe,
+      source: "x",
+    });
+    ledger.setQueueStatus({ id: id!, status: "approved" });
+    return id!;
+  }
+
+  it("marks claimed rows with drain_claimed_at", () => {
+    const id = enqueueApproved("a");
+    const rows = ledger.dequeueApproved({ playName: "show-hn", limit: 1 });
+    expect(rows.map((r) => r.id)).toEqual([id]);
+    const fresh = ledger.getQueueRow(id) as { drain_claimed_at: string | null } | null;
+    expect(fresh?.drain_claimed_at).not.toBeNull();
+  });
+
+  it("two sequential calls return disjoint row sets (second sees first's lease)", () => {
+    const idA = enqueueApproved("a");
+    const idB = enqueueApproved("b");
+    const idC = enqueueApproved("c");
+    const first = ledger.dequeueApproved({ playName: "show-hn", limit: 2 });
+    const second = ledger.dequeueApproved({ playName: "show-hn", limit: 5 });
+    const firstIds = new Set(first.map((r) => r.id));
+    const secondIds = new Set(second.map((r) => r.id));
+    expect(firstIds.size).toBe(2);
+    expect(secondIds.size).toBe(1);
+    for (const id of firstIds) expect(secondIds.has(id)).toBe(false);
+    expect([...firstIds, ...secondIds].toSorted((a, b) => a - b)).toEqual(
+      [idA, idB, idC].toSorted((a, b) => a - b),
+    );
+  });
+
+  it("an expired claim (lease elapsed) becomes re-claimable", () => {
+    const id = enqueueApproved("a");
+    ledger.dequeueApproved({ playName: "show-hn", limit: 1 });
+    // Backdate the claim to 20 min ago — older than the 15 min default lease.
+    const stale = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    (ledger as unknown as { db: { prepare(s: string): { run(...a: unknown[]): unknown } } }).db
+      .prepare("UPDATE target_queue SET drain_claimed_at = ? WHERE id = ?")
+      .run(stale, id);
+    const second = ledger.dequeueApproved({ playName: "show-hn", limit: 1 });
+    expect(second.map((r) => r.id)).toEqual([id]);
+  });
+
+  it("setQueueStatus({sent}) excludes the row even when drain_claimed_at is set", () => {
+    const id = enqueueApproved("a");
+    ledger.dequeueApproved({ playName: "show-hn", limit: 1 });
+    ledger.setQueueStatus({ id, status: "sent" });
+    const second = ledger.dequeueApproved({ playName: "show-hn", limit: 1, leaseSeconds: 0 });
+    expect(second).toEqual([]);
+  });
+});
+
 describe("recordInterview", () => {
   it("round-trips an interview record", () => {
     const id = ledger.recordInterview({

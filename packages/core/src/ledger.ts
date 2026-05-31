@@ -152,6 +152,13 @@ export class Ledger {
     // `apps/server/src/api/run.ts`.
     this.addColumnIfMissing("target_queue", "last_draft_json", "TEXT");
     this.addColumnIfMissing("target_queue", "last_drafted_at", "TEXT");
+    // v7 (2026-05): lease column for atomic drain claiming. Two concurrent
+    // /api/queue/drain calls used to see the same `approved` rows and both
+    // start sending; dequeueApproved now atomically flips this column inside
+    // a transaction so each drain sees a disjoint slice. Lease defaults to
+    // 15 min — long enough for a slow per-target SDK send, short enough that
+    // a crashed drain self-heals without a sweeper.
+    this.addColumnIfMissing("target_queue", "drain_claimed_at", "TEXT");
   }
 
   private addColumnIfMissing(table: string, column: string, type: string): void {
@@ -732,14 +739,50 @@ export class Ledger {
     return Number(result.changes);
   }
 
-  dequeueApproved(opts: { playName: string; limit?: number }): QueueRow[] {
-    const sql = `
-      SELECT * FROM target_queue
-      WHERE play_name = ? AND status = 'approved'
-      ORDER BY found_at ASC
-      LIMIT ?
-    `;
-    return this.db.query(sql).all(opts.playName, opts.limit ?? 50) as QueueRow[];
+  /**
+   * Atomic claim-and-return. SELECTs approved rows whose lease has expired
+   * (or was never set) and UPDATEs their `drain_claimed_at` inside a single
+   * transaction so two concurrent drains can't return overlapping row sets.
+   * Default lease: 15 min — a crashed drain's claims self-heal after that
+   * without any sweeper. Held/error rows naturally back off for the lease
+   * duration (no LLM-burn loops on stuck-flagged content).
+   */
+  dequeueApproved(opts: {
+    playName: string;
+    limit?: number;
+    leaseSeconds?: number;
+  }): QueueRow[] {
+    const leaseSeconds = opts.leaseSeconds ?? 900;
+    const claimedAt = new Date().toISOString();
+    const cutoff = new Date(Date.now() - leaseSeconds * 1000).toISOString();
+    const limit = opts.limit ?? 50;
+    const txn = this.db.transaction((): QueueRow[] => {
+      const rows = this.db
+        .query(
+          `SELECT * FROM target_queue
+           WHERE play_name = ? AND status = 'approved'
+             AND (drain_claimed_at IS NULL OR drain_claimed_at < ?)
+           ORDER BY found_at ASC
+           LIMIT ?`,
+        )
+        .all(opts.playName, cutoff, limit) as QueueRow[];
+      if (rows.length === 0) return [];
+      const ids = rows.map((r) => r.id);
+      const placeholders = ids.map(() => "?").join(",");
+      this.db
+        .prepare(
+          `UPDATE target_queue SET drain_claimed_at = ? WHERE id IN (${placeholders})`,
+        )
+        .run(...([claimedAt, ...ids] as never[]));
+      return rows;
+    });
+    // BEGIN IMMEDIATE takes a RESERVED lock at the start of the transaction
+    // instead of the default DEFERRED (which only locks on the first write).
+    // In WAL mode with two processes, DEFERRED lets both transactions pass
+    // the SELECT before either holds the write lock, then the second UPDATE
+    // silently overwrites the first's claim — both drains would consider the
+    // rows theirs. IMMEDIATE serializes the whole thing across connections.
+    return txn.immediate();
   }
 
   expirePendingOlderThan(days: number): number {
