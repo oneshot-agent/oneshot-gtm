@@ -1,5 +1,11 @@
 import { deepResearch, getLedger, loadConfig } from "@oneshot-gtm/core";
-import { draftEmailFromPrompt, lintEmail, safeEnrich, sendDraftedEmail } from "./_lib.ts";
+import {
+  draftEmailFromPrompt,
+  errorDraft,
+  lintEmail,
+  safeEnrich,
+  sendDraftedEmail,
+} from "./_lib.ts";
 import { buildFollowUpEmail, enrollInCadence, registerSequence } from "./_cadence.ts";
 
 export type AcceleratorCohort =
@@ -54,6 +60,7 @@ export async function runAcceleratorBatch(
   const drafted: AcceleratorBatchDraft[] = [];
 
   for (const target of opts.targets) {
+   try {
     const receiptIds: number[] = [];
 
     // Enrich on both preview and real send (cached by email) so the reviewed
@@ -136,6 +143,9 @@ export async function runAcceleratorBatch(
       sent: send.sent,
       flags,
     });
+   } catch (err) {
+    drafted.push({ target, ...errorDraft((err as Error)?.message) });
+   }
   }
 
   return { drafted };

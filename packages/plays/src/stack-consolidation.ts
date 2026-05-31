@@ -1,5 +1,11 @@
 import { getLedger, loadConfig } from "@oneshot-gtm/core";
-import { draftEmailFromPrompt, lintEmail, safeEnrich, sendDraftedEmail } from "./_lib.ts";
+import {
+  draftEmailFromPrompt,
+  errorDraft,
+  lintEmail,
+  safeEnrich,
+  sendDraftedEmail,
+} from "./_lib.ts";
 import { buildFollowUpEmail, enrollInCadence, registerSequence } from "./_cadence.ts";
 
 const PLAY_NAME = "stack-consolidation";
@@ -42,6 +48,7 @@ export async function runStackConsolidation(
   const drafted: StackConsolidationDraft[] = [];
 
   for (const t of opts.targets) {
+   try {
     const receiptIds: number[] = [];
 
     // Enrich on both preview and real send so the reviewed draft is
@@ -103,6 +110,9 @@ export async function runStackConsolidation(
       sent: send.sent,
       flags,
     });
+   } catch (err) {
+    drafted.push({ target: t, ...errorDraft((err as Error)?.message) });
+   }
   }
 
   return { drafted };

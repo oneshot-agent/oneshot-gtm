@@ -1,5 +1,11 @@
 import { deepResearch, getLedger, loadConfig } from "@oneshot-gtm/core";
-import { draftEmailFromPrompt, lintEmail, safeEnrich, sendDraftedEmail } from "./_lib.ts";
+import {
+  draftEmailFromPrompt,
+  errorDraft,
+  lintEmail,
+  safeEnrich,
+  sendDraftedEmail,
+} from "./_lib.ts";
 import { buildFollowUpEmail, enrollInCadence, registerSequence } from "./_cadence.ts";
 
 export interface PostFundingTarget {
@@ -40,6 +46,7 @@ export async function runPostFunding(
   const drafted: PostFundingDraft[] = [];
 
   for (const target of opts.targets) {
+   try {
     const receiptIds: number[] = [];
 
     // Enrich on both preview and real send (cached by email) so the reviewed
@@ -119,6 +126,9 @@ export async function runPostFunding(
       sent: send.sent,
       flags,
     });
+   } catch (err) {
+    drafted.push({ target, ...errorDraft((err as Error)?.message) });
+   }
   }
 
   return { drafted };

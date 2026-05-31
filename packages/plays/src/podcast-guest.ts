@@ -1,5 +1,5 @@
 import { getLedger, loadConfig, webSearch } from "@oneshot-gtm/core";
-import { draftEmailFromPrompt, lintEmail, sendDraftedEmail } from "./_lib.ts";
+import { draftEmailFromPrompt, errorDraft, lintEmail, sendDraftedEmail } from "./_lib.ts";
 import { enrollInCadence, registerSequence } from "./_cadence.ts";
 
 const PLAY_NAME = "podcast-guest";
@@ -46,6 +46,7 @@ export async function runPodcastGuest(
   const drafted: PodcastGuestDraft[] = [];
 
   for (const t of opts.targets) {
+   try {
     const receiptIds: number[] = [];
     let extra = "";
 
@@ -113,6 +114,9 @@ export async function runPodcastGuest(
       sent: send.sent,
       flags,
     });
+   } catch (err) {
+    drafted.push({ target: t, ...errorDraft((err as Error)?.message) });
+   }
   }
 
   return { drafted };

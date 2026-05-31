@@ -8,6 +8,11 @@ const calls = {
   llmInputBlocks: [] as string[],
 };
 
+/** Set to a 1-based call index to make the Nth LLM call throw. */
+let throwOnLlmCallNumber: number | null = null;
+/** Set to a 1-based call index to make the Nth sendEmail call throw. */
+let throwOnSendEmailCallNumber: number | null = null;
+
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
   return {
@@ -37,6 +42,9 @@ vi.mock("@oneshot-gtm/core", async () => {
     },
     sendEmail: async () => {
       calls.sendEmail++;
+      if (throwOnSendEmailCallNumber === calls.sendEmail) {
+        throw new Error("Job timed out");
+      }
       return { receiptId: 3 };
     },
     getLedger: () => ({
@@ -57,6 +65,9 @@ vi.mock("@oneshot-gtm/intel", async () => {
     loadPrompt: () => "system",
     complete: async (input: { messages: Array<{ role: string; content: string }> }) => {
       calls.llm++;
+      if (throwOnLlmCallNumber === calls.llm) {
+        throw new Error("LLM API down");
+      }
       const userMsg = input.messages.find((m) => m.role === "user")?.content ?? "";
       calls.llmInputBlocks.push(userMsg);
       return {
@@ -76,6 +87,8 @@ beforeEach(() => {
   calls.sendEmail = 0;
   calls.llm = 0;
   calls.llmInputBlocks = [];
+  throwOnLlmCallNumber = null;
+  throwOnSendEmailCallNumber = null;
 });
 
 afterEach(() => {
@@ -170,6 +183,84 @@ describe("runCompetitorSwitch — browserTask gating", () => {
     });
     expect(calls.browserTask).toBe(0);
     expect(calls.llmInputBlocks[0]).toContain("EVIDENCE: (no evidence supplied)");
+  });
+
+  it("per-target try/catch: LLM throws on target 2 → targets 1 and 3 still complete", async () => {
+    throwOnLlmCallNumber = 2;
+    const out = await runCompetitorSwitch({
+      dryRun: false,
+      targets: [
+        {
+          name: "A",
+          email: "a@x.com",
+          company: "AC",
+          competitor: "Apollo",
+          evidenceText: "rivals share their stack",
+          yourEdge: "x",
+        },
+        {
+          name: "B",
+          email: "b@x.com",
+          company: "BC",
+          competitor: "Apollo",
+          evidenceText: "another fact",
+          yourEdge: "x",
+        },
+        {
+          name: "C",
+          email: "c@x.com",
+          company: "CC",
+          competitor: "Apollo",
+          evidenceText: "third fact",
+          yourEdge: "x",
+        },
+      ],
+    });
+    expect(out.drafted).toHaveLength(3);
+    expect(out.drafted[0]?.sent).toBe(true);
+    expect(out.drafted[1]?.sent).toBe(false);
+    expect(out.drafted[1]?.flags).toEqual(["error: LLM API down"]);
+    expect(out.drafted[2]?.sent).toBe(true);
+    // Targets 1 + 3 each fired sendEmail; target 2 didn't.
+    expect(calls.sendEmail).toBe(2);
+  });
+
+  it("per-target try/catch: sendEmail throws on target 2 → targets 1 and 3 still complete", async () => {
+    throwOnSendEmailCallNumber = 2;
+    const out = await runCompetitorSwitch({
+      dryRun: false,
+      targets: [
+        {
+          name: "A",
+          email: "a@x.com",
+          company: "AC",
+          competitor: "Apollo",
+          evidenceText: "fact",
+          yourEdge: "x",
+        },
+        {
+          name: "B",
+          email: "b@x.com",
+          company: "BC",
+          competitor: "Apollo",
+          evidenceText: "fact",
+          yourEdge: "x",
+        },
+        {
+          name: "C",
+          email: "c@x.com",
+          company: "CC",
+          competitor: "Apollo",
+          evidenceText: "fact",
+          yourEdge: "x",
+        },
+      ],
+    });
+    expect(out.drafted).toHaveLength(3);
+    expect(out.drafted[0]?.sent).toBe(true);
+    expect(out.drafted[1]?.sent).toBe(false);
+    expect(out.drafted[1]?.flags).toEqual(["error: Job timed out"]);
+    expect(out.drafted[2]?.sent).toBe(true);
   });
 
   it("dryRun enriches for the dossier but skips the browser scrape + send", async () => {

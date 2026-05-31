@@ -1,5 +1,5 @@
 import { getLedger, loadConfig, webRead, webSearch } from "@oneshot-gtm/core";
-import { draftEmailFromPrompt, lintEmail, sendDraftedEmail } from "./_lib.ts";
+import { draftEmailFromPrompt, errorDraft, lintEmail, sendDraftedEmail } from "./_lib.ts";
 import { buildFollowUpEmail, enrollInCadence, registerSequence } from "./_cadence.ts";
 
 const PLAY_NAME = "hiring-signal";
@@ -46,6 +46,7 @@ export async function runHiringSignal(
   const drafted: HiringSignalDraft[] = [];
 
   for (const t of opts.targets) {
+   try {
     const receiptIds: number[] = [];
     let jobPostHook = "(no specific job post phrase scraped)";
 
@@ -121,6 +122,13 @@ export async function runHiringSignal(
       sent: send.sent,
       flags,
     });
+   } catch (err) {
+    drafted.push({
+      target: t,
+      jobPostHook: "(error)",
+      ...errorDraft((err as Error)?.message),
+    });
+   }
   }
 
   return { drafted };

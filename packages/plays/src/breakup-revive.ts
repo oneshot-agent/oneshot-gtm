@@ -1,5 +1,5 @@
 import { getLedger, loadConfig } from "@oneshot-gtm/core";
-import { draftEmailFromPrompt, lintEmail, sendDraftedEmail } from "./_lib.ts";
+import { draftEmailFromPrompt, errorDraft, lintEmail, sendDraftedEmail } from "./_lib.ts";
 
 const PLAY_NAME = "breakup-revive";
 
@@ -55,6 +55,7 @@ export async function runBreakupRevive(
 
   for (const t of targets) {
     if (!t.email) continue;
+   try {
     const draft = await draftEmailFromPrompt({
       promptName: "breakup-revive-email",
       inputBlock: [
@@ -95,6 +96,19 @@ export async function runBreakupRevive(
       sent: send.sent,
       flags,
     });
+   } catch (err) {
+    const stub = errorDraft((err as Error)?.message);
+    drafted.push({
+      prospectEmail: t.email,
+      prospectName: t.name,
+      daysCold: t.daysCold,
+      subject: stub.subject,
+      body: stub.body,
+      receiptIds: stub.receiptIds,
+      sent: stub.sent,
+      flags: stub.flags,
+    });
+   }
   }
 
   return { drafted };

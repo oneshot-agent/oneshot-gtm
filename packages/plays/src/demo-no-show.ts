@@ -1,6 +1,6 @@
 import { getLedger, loadConfig, sendSms } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
-import { draftEmailFromPrompt, lintEmail, sendDraftedEmail } from "./_lib.ts";
+import { draftEmailFromPrompt, errorDraft, lintEmail, sendDraftedEmail } from "./_lib.ts";
 import { buildFollowUpEmail, enrollInCadence, registerSequence } from "./_cadence.ts";
 
 const PLAY_NAME = "demo-no-show";
@@ -40,6 +40,7 @@ export async function runDemoNoShow(opts: DemoNoShowRunOptions): Promise<DemoNoS
   const outcomes: DemoNoShowResult["outcomes"] = [];
 
   for (const t of opts.targets) {
+   try {
     const receiptIds: number[] = [];
 
     // SMS first (same-day)
@@ -106,6 +107,15 @@ export async function runDemoNoShow(opts: DemoNoShowRunOptions): Promise<DemoNoS
       },
       receiptIds,
     });
+   } catch (err) {
+    const stub = errorDraft((err as Error)?.message);
+    outcomes.push({
+      target: t,
+      sms: null,
+      email: { subject: stub.subject, body: stub.body, sent: stub.sent, flags: stub.flags },
+      receiptIds: stub.receiptIds,
+    });
+   }
   }
 
   return { outcomes };

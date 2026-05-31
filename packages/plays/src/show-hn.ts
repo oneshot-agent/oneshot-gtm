@@ -1,5 +1,11 @@
 import { deepResearch, loadConfig } from "@oneshot-gtm/core";
-import { draftEmailFromPrompt, lintEmail, safeEnrich, sendDraftedEmail } from "./_lib.ts";
+import {
+  draftEmailFromPrompt,
+  errorDraft,
+  lintEmail,
+  safeEnrich,
+  sendDraftedEmail,
+} from "./_lib.ts";
 export { receiptUrls } from "./_lib.ts";
 
 export interface ShowHnTarget {
@@ -38,6 +44,7 @@ export async function runShowHn(opts: ShowHnRunOptions): Promise<ShowHnRunResult
   const drafted: ShowHnRunResult["drafted"] = [];
 
   for (const target of opts.targets) {
+   try {
     const receiptIds: number[] = [];
 
     // Enrich on both preview and real send (cached by email) so the reviewed
@@ -100,6 +107,9 @@ export async function runShowHn(opts: ShowHnRunOptions): Promise<ShowHnRunResult
       sent: send.sent,
       flags,
     });
+   } catch (err) {
+    drafted.push({ target, ...errorDraft((err as Error)?.message) });
+   }
   }
 
   return { drafted };

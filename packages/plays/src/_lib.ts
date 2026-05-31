@@ -120,6 +120,31 @@ export interface DraftedEmail {
 }
 
 /**
+ * Stub drafted-row for a target whose per-target processing threw (LLM API
+ * error, SDK JobTimeoutError, ledger write failure, etc.). Plays wrap their
+ * per-target body in try/catch and push this on failure so the rest of the
+ * batch can keep going. Same shape `drain.ts` synthesizes when its outer
+ * `dispatchOneTarget` catches — one source of truth for the error envelope.
+ */
+export interface ErrorDraft {
+  subject: string;
+  body: string;
+  flags: string[];
+  sent: boolean;
+  receiptIds: number[];
+}
+export function errorDraft(message: string | null | undefined): ErrorDraft {
+  const msg = (message ?? "play failed").slice(0, 80);
+  return {
+    subject: "(error)",
+    body: "",
+    flags: [`error: ${msg}`],
+    sent: false,
+    receiptIds: [],
+  };
+}
+
+/**
  * Deterministic, semantics-preserving cleanups that the LLM occasionally
  * slips through despite the humanizer rules being in its system prompt.
  * Applied silently inside `draftEmailFromPrompt` so these four flags never
@@ -240,6 +265,18 @@ export async function sendDraftedEmail(opts: SendDraftedOpts): Promise<SendDraft
   const receiptIds: number[] = [];
   let sent = false;
   if (!opts.dryRun && opts.flags.length === 0) {
+    // Pre-send dedupe: refuse to send step-0 a second time to the same
+    // (prospect, play). Catches double-fire from drain-after-drain, /run
+    // resubmits, two-tab races, etc. Residual race window is microseconds
+    // between this read and recordSequenceEvent; documented as acceptable.
+    const existing = ledger.findProspectByEmail(opts.to);
+    if (existing) {
+      const prior = ledger.listSequenceEventsForProspectPlay(existing.id, opts.playName);
+      if (prior.some((e) => e.step_index === 0)) {
+        opts.flags.push("already-enrolled");
+        return { receiptIds: [], sent: false };
+      }
+    }
     const send = await sendEmail(
       { to: opts.to, subject: opts.draft.subject, body: opts.draft.body },
       { playName: opts.playName },

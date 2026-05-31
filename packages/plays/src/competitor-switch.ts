@@ -1,5 +1,11 @@
 import { browserTask, getLedger, loadConfig } from "@oneshot-gtm/core";
-import { draftEmailFromPrompt, lintEmail, safeEnrich, sendDraftedEmail } from "./_lib.ts";
+import {
+  draftEmailFromPrompt,
+  errorDraft,
+  lintEmail,
+  safeEnrich,
+  sendDraftedEmail,
+} from "./_lib.ts";
 import { buildFollowUpEmail, enrollInCadence, registerSequence } from "./_cadence.ts";
 
 const PLAY_NAME = "competitor-switch";
@@ -46,6 +52,7 @@ export async function runCompetitorSwitch(
   const drafted: CompetitorSwitchDraft[] = [];
 
   for (const t of opts.targets) {
+   try {
     const receiptIds: number[] = [];
     let scrapedEvidence: string | undefined;
 
@@ -152,6 +159,9 @@ export async function runCompetitorSwitch(
       flags,
       ...(scrapedEvidence ? { scrapedEvidence } : {}),
     });
+   } catch (err) {
+    drafted.push({ target: t, ...errorDraft((err as Error)?.message) });
+   }
   }
 
   return { drafted };
