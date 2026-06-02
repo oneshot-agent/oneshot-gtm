@@ -18,7 +18,7 @@
     },
     "apps/cli": {
       "name": "oneshot-gtm",
-      "version": "0.1.0",
+      "version": "0.3.0",
       "bin": {
         "oneshot-gtm": "./src/index.ts",
       },
@@ -37,7 +37,7 @@
     },
     "apps/server": {
       "name": "oneshot-gtm-server",
-      "version": "0.1.0",
+      "version": "0.3.0",
       "bin": {
         "oneshot-gtm-server": "./dist/bin.mjs",
       },
@@ -57,7 +57,7 @@
     },
     "apps/web": {
       "name": "@oneshot-gtm/web",
-      "version": "0.1.0",
+      "version": "0.3.0",
       "dependencies": {
         "@assistant-ui/react": "^0.12.25",
         "@base-ui/react": "^1.2.0",
@@ -89,21 +89,21 @@
     },
     "packages/core": {
       "name": "@oneshot-gtm/core",
-      "version": "0.1.0",
+      "version": "0.3.0",
       "dependencies": {
         "@oneshot-agent/sdk": "0.16.2",
       },
     },
     "packages/doctor": {
       "name": "@oneshot-gtm/doctor",
-      "version": "0.1.0",
+      "version": "0.3.0",
       "dependencies": {
         "@oneshot-gtm/core": "workspace:*",
       },
     },
     "packages/find": {
       "name": "@oneshot-gtm/find",
-      "version": "0.1.0",
+      "version": "0.3.0",
       "dependencies": {
         "@oneshot-gtm/core": "workspace:*",
         "@oneshot-gtm/intel": "workspace:*",
@@ -112,18 +112,14 @@
     },
     "packages/intel": {
       "name": "@oneshot-gtm/intel",
-      "version": "0.1.0",
+      "version": "0.3.0",
       "dependencies": {
         "@oneshot-gtm/core": "workspace:*",
       },
     },
-    "packages/ledger": {
-      "name": "@oneshot-gtm/ledger",
-      "version": "0.1.0",
-    },
     "packages/plays": {
       "name": "@oneshot-gtm/plays",
-      "version": "0.1.0",
+      "version": "0.3.0",
       "dependencies": {
         "@oneshot-gtm/core": "workspace:*",
         "@oneshot-gtm/intel": "workspace:*",
@@ -131,11 +127,11 @@
     },
     "packages/prompts": {
       "name": "@oneshot-gtm/prompts",
-      "version": "0.1.0",
+      "version": "0.3.0",
     },
     "packages/shared-types": {
       "name": "@oneshot-gtm/shared-types",
-      "version": "0.1.0",
+      "version": "0.3.0",
     },
   },
   "catalog": {
@@ -295,8 +291,6 @@
     "@oneshot-gtm/find": ["@oneshot-gtm/find@workspace:packages/find"],
 
     "@oneshot-gtm/intel": ["@oneshot-gtm/intel@workspace:packages/intel"],
-
-    "@oneshot-gtm/ledger": ["@oneshot-gtm/ledger@workspace:packages/ledger"],
 
     "@oneshot-gtm/plays": ["@oneshot-gtm/plays@workspace:packages/plays"],
 
