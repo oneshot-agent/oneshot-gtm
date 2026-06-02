@@ -1,5 +1,11 @@
 import { loadConfig, saveConfig } from "@oneshot-gtm/core";
-import { defaultSequence, getSequence, type Sequence } from "@oneshot-gtm/plays";
+import {
+  defaultSequence,
+  getSequence,
+  isBreakupLabel,
+  isBreakupStepAt,
+  type Sequence,
+} from "@oneshot-gtm/plays";
 import type { PlayDescriptor, StepChannel } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 
@@ -69,12 +75,22 @@ export function listPlays(req: Request): Response {
       ? Array.from(new Set(seq.steps.map((s) => s.channel as StepChannel)))
       : ["email"];
     const followupCount = seq?.steps.length ?? 0;
-    const hasBreakup = seq?.steps.some((s) => s.label?.toLowerCase().includes("breakup")) ?? false;
+    // hasBreakup uses the same step-position rule as the cadence runtime so
+    // accelerator-batch (which uses the breakup PROMPT as its only follow-up
+    // at index 0) doesn't get flagged as having a breakup step here.
+    const hasBreakup = seq ? isBreakupStepAt(seq, seq.steps.length - 1) : false;
     const days = cumulativeDays(seq);
-    const steps = (seq?.steps ?? []).map((s, i) => ({
+    const stepsArr = seq?.steps ?? [];
+    const steps = stepsArr.map((s, i) => ({
       day: days[i] ?? 0,
       label: s.label ?? `step ${i + 1}`,
       channel: s.channel as StepChannel,
+      // Per-step breakup flag using the SAME label rule the cadence engine
+      // uses. Note: the /cadences progress UI only treats the FINAL such
+      // step as the cadence-terminal breakup (see isBreakupStepAt). Here
+      // we surface the label-level signal so /plays can hint a per-step
+      // visual without re-deriving the substring.
+      isBreakup: isBreakupLabel(s.label),
     }));
     return {
       name: p.name,

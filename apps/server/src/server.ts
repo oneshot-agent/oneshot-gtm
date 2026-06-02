@@ -2,7 +2,15 @@ import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homeMetrics } from "./api/home.ts";
-import { listCadences, getCadence, stopCadence } from "./api/cadences.ts";
+import {
+  listCadences,
+  getCadence,
+  stopCadence,
+  previewCadenceStepRoute,
+  sendCadenceStepRoute,
+  previewCadenceBatchRoute,
+  sendCadenceBatchRoute,
+} from "./api/cadences.ts";
 import { listReceipts, getReceipt } from "./api/receipts.ts";
 import { listInboxRoute } from "./api/inbox.ts";
 import { listPlays, setCadenceRoute } from "./api/plays.ts";
@@ -57,6 +65,10 @@ const routes: RouteEntry[] = [
   route("GET", "/api/cadences", listCadences),
   route("GET", "/api/cadences/:id", getCadence),
   route("POST", "/api/cadences/:id/stop", stopCadence),
+  route("POST", "/api/cadences/:id/preview-next", previewCadenceStepRoute),
+  route("POST", "/api/cadences/:id/send-next", sendCadenceStepRoute),
+  route("POST", "/api/cadences/preview-batch", previewCadenceBatchRoute),
+  route("POST", "/api/cadences/send-batch", sendCadenceBatchRoute),
   route("GET", "/api/receipts", listReceipts),
   route("GET", "/api/receipts/:id", getReceipt),
   route("GET", "/api/inbox", listInboxRoute),
