@@ -71,6 +71,19 @@ describe("Ledger receipts + prospects + spend rollups", () => {
     expect(a).toBe(b);
   });
 
+  it("normalizes prospect email on store + lookup (reply matching is case-insensitive)", () => {
+    // A prospect created from a mixed-case address must still be found when a
+    // reply comes in normalized to lowercase (cadence inbox poll), and we must
+    // not create a duplicate row for the same address in a different case.
+    const id = ledger.upsertProspect({ name: "Sophia", email: "Sophia@AgenticArchitect.AI", source: "t" });
+    expect(ledger.findProspectByEmail("sophia@agenticarchitect.ai")?.id).toBe(id);
+    expect(ledger.findProspectByEmail("SOPHIA@AGENTICARCHITECT.AI")?.id).toBe(id);
+    expect(ledger.getProspectByEmail("sophia@agenticarchitect.ai")?.id).toBe(id);
+    // Re-upsert under yet another casing → same row, no duplicate.
+    const again = ledger.upsertProspect({ name: "Sophia", email: "sophia@AGENTICARCHITECT.ai", source: "t" });
+    expect(again).toBe(id);
+  });
+
   it("spendByPlay groups receipts and sums cost", () => {
     ledger.recordReceipt({ playName: "show-hn", callType: "email.send", costUsd: 0.1 });
     ledger.recordReceipt({ playName: "show-hn", callType: "research.deep", costUsd: 0.4 });

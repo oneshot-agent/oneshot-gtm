@@ -25,6 +25,11 @@ import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { Toggle } from "../components/primitives/Toggle.tsx";
 import { cn, timeAgo } from "../lib/cn.ts";
 import { humanInterval } from "../lib/humanInterval.ts";
+import {
+  clearDraftGenerating,
+  markDraftGenerating,
+  useGeneratingDrafts,
+} from "../lib/draftRunState.ts";
 import { buildSignalDays } from "../lib/signalDays.ts";
 import { summarizeRun } from "../lib/summarizeRun.ts";
 import {
@@ -194,15 +199,8 @@ function QueuePage() {
   // its lint flags so partial batches and lint-blocked sends are visible.
   // Both dryRun and real-send paths route through here — the founder picks
   // mode via the modal toggle and /run honors it via the URL param.
-  //
-  // accelerator-batch requires senderCohort server-side (run.ts:136); we
-  // pre-validate here so an empty value can't sneak through to a 400 on the
-  // /run page after the founder already navigated.
-  const drainNeedsSenderCohort =
-    drainModal?.playName === "accelerator-batch" && drainSenderCohort.trim().length === 0;
   const submitDrainViaRun = (): void => {
     if (!drainModal) return;
-    if (drainNeedsSenderCohort) return;
     const search: Record<string, string> = {
       fromQueue: "1",
       limit: String(drainLimit),
@@ -225,6 +223,14 @@ function QueuePage() {
     expired: 0,
   };
   const rows = queueQuery.data?.rows ?? [];
+
+  // Per-row "generating draft" spinners, reconstructed from localStorage so they
+  // survive navigating away + back (the regenerate mutation's isPending is local
+  // to the row and dies on unmount). Cleared when `lastDraftedAt` advances.
+  const generating = useGeneratingDrafts(
+    rows.map((r) => r.id),
+    new Map(rows.map((r) => [r.id, r.lastDraftedAt])),
+  );
 
   const playList = Array.from(new Set(rows.map((r) => r.playName))).toSorted();
 
@@ -407,6 +413,7 @@ function QueuePage() {
                     });
                   }}
                   onToggle={() => setExpanded(expanded === row.id ? null : row.id)}
+                  generating={generating.has(row.id)}
                   onApprove={() => approve.mutate(row.id)}
                   onReject={() =>
                     setRejectModal({ id: row.id, email: emailFor(row.payload) ?? `#${row.id}` })
@@ -499,7 +506,7 @@ function QueuePage() {
             <Button variant="ghost" onClick={() => setDrainModal(null)}>
               Cancel
             </Button>
-            <Button onClick={submitDrainViaRun} disabled={drainNeedsSenderCohort}>
+            <Button onClick={submitDrainViaRun}>
               <Send size={12} />
               {drainDryRun ? "Preview drafts (no send)" : `Send up to ${drainLimit}`}
             </Button>
@@ -518,21 +525,20 @@ function QueuePage() {
           {drainModal?.playName === "accelerator-batch" && (
             <>
               <Field
-                label="Sender cohort (required)"
-                hint="Your accelerator/cohort tag, e.g. yc-w23"
+                label="Sender cohort (optional)"
+                hint="Overrides the cohort stamped on each row. Leave blank to use the row's own (set on the trigger)."
               >
                 <Input
                   value={drainSenderCohort}
                   onChange={(e) => setDrainSenderCohort(e.target.value)}
-                  placeholder="yc-w23"
-                  required
+                  placeholder="e.g. yc-w23 · od-2 · (leave blank)"
                 />
               </Field>
               <Field label="Free-for-cohort offer (optional)">
                 <Input
                   value={drainOffer}
                   onChange={(e) => setDrainOffer(e.target.value)}
-                  placeholder="Free for current YC W26 through demo day, just reply with your batch."
+                  placeholder="e.g. Free for your batch through demo day — reply with your cohort."
                 />
               </Field>
             </>
@@ -545,11 +551,6 @@ function QueuePage() {
             Drafts stream live on the next page — every lint flag and send confirmation is visible
             per row.
           </p>
-          {drainNeedsSenderCohort && (
-            <p className="font-mono text-[11px] text-[color:var(--ink-blocked-2)]">
-              accelerator-batch needs a sender cohort tag before it can run.
-            </p>
-          )}
         </div>
       </Modal>
     </div>
@@ -564,6 +565,7 @@ function QueueRow({
   anySelected,
   onToggleSelect,
   onToggle,
+  generating,
   onApprove,
   onReject,
   busy,
@@ -575,6 +577,7 @@ function QueueRow({
   anySelected: boolean;
   onToggleSelect: () => void;
   onToggle: () => void;
+  generating: boolean;
   onApprove: () => void;
   onReject: () => void;
   busy: boolean;
@@ -698,10 +701,10 @@ function QueueRow({
               {row.notes ? <div className="ln-note">{row.notes}</div> : null}
               <DraftSection
                 id={row.id}
-                playName={row.playName}
                 status={row.status}
                 draft={row.lastDraft}
                 draftedAt={row.lastDraftedAt}
+                generating={generating}
               />
               <details className="text-ink-faint">
                 <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.14em] hover:text-ink-cream-2">
@@ -724,31 +727,43 @@ function QueueRow({
  * flags + send state + receipt links) when one exists, with a regenerate
  * action; when none exists yet, shows a thin "no draft" bar with a generate
  * action. Both actions hit the same preview-only endpoint (dry-run, never
- * sends). Hidden for accelerator-batch (needs a sender cohort not on the row)
- * and for already-sent drafts (re-rolling would only overwrite the preview).
+ * sends). Hidden for already-sent drafts (re-rolling would only overwrite the
+ * preview). All plays are self-contained now — accelerator-batch rows carry
+ * their senderCohort (stamped from trigger config), so they generate inline too.
  */
 function DraftSection({
   id,
-  playName,
   status,
   draft,
   draftedAt,
+  generating,
 }: {
   id: number;
-  playName: string;
   status: QueueStatusView;
   draft: QueueRowView["lastDraft"];
   draftedAt: string | null;
+  generating: boolean;
 }): React.ReactElement {
   const qc = useQueryClient();
   const regenerate = useMutation({
     mutationFn: () => api.regenerateDraft(id),
+    // Persist a localStorage marker so the spinner survives leaving + returning
+    // to /queue while the draft generates server-side; cleared on settle (and,
+    // for the unmounted case, reconciled away once lastDraftedAt advances).
+    onMutate: () => markDraftGenerating(id),
     onSuccess: () => {
+      clearDraftGenerating(id);
       void qc.invalidateQueries({ queryKey: ["queue"] });
       toast.success("draft ready · preview only, not sent");
     },
-    onError: (err) => toast.error(`couldn't draft · ${err.message}`),
+    onError: (err) => {
+      clearDraftGenerating(id);
+      toast.error(`couldn't draft · ${err.message}`);
+    },
   });
+  // Instant spinner while mounted (isPending) OR restored-from-localStorage
+  // after a remount (generating).
+  const isGenerating = generating || regenerate.isPending;
   const send = useMutation({
     mutationFn: () => api.sendDraft(id),
     onSuccess: () => {
@@ -758,23 +773,19 @@ function DraftSection({
     },
     onError: (err) => toast.error(`couldn't send · ${err.message}`),
   });
-  const canDraft = playName !== "accelerator-batch" && !(draft?.sent ?? false);
+  const canDraft = !(draft?.sent ?? false);
   const verb = draft ? "regenerate" : "generate draft";
   const pendingVerb = draft ? "regenerating…" : "generating…";
   const draftButton = canDraft ? (
     <Button
       variant="ghost"
       size="sm"
-      disabled={regenerate.isPending}
+      disabled={isGenerating}
       onClick={() => regenerate.mutate()}
       title="Draft this row in preview mode — dry-run, never sends"
     >
-      {regenerate.isPending ? (
-        <Loader2 size={11} className="animate-spin" />
-      ) : (
-        <RotateCw size={11} />
-      )}
-      {regenerate.isPending ? pendingVerb : verb}
+      {isGenerating ? <Loader2 size={11} className="animate-spin" /> : <RotateCw size={11} />}
+      {isGenerating ? pendingVerb : verb}
     </Button>
   ) : null;
 
@@ -1216,7 +1227,9 @@ function TriggerRowFragment(props: TriggerRowProps) {
         <td
           className={cn(
             "py-2 font-mono text-[11.5px]",
-            notReady ? "text-[color:var(--ink-blocked-2)]" : "text-ink-muted",
+            notReady || props.summary.startsWith("error:") || props.summary.startsWith("halted")
+              ? "text-[color:var(--ink-blocked-2)]"
+              : "text-ink-muted",
           )}
         >
           {notReady ? `not ready · ${notReadyReason}` : props.summary}

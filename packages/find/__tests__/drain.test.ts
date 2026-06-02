@@ -40,17 +40,23 @@ vi.mock("@oneshot-gtm/core", () => ({
   getLedger: () => ledgerStub,
 }));
 
-vi.mock("@oneshot-gtm/plays", () => ({
-  runStackConsolidation: (opts: unknown) => runStackConsolidationMock(opts),
-  runShowHn: vi.fn(),
-  runJobChange: vi.fn(),
-  runPostFunding: vi.fn(),
-  runAcceleratorBatch: vi.fn(),
-  runHiringSignal: vi.fn(),
-  runPodcastGuest: vi.fn(),
-  runBreakupRevive: vi.fn(),
-  runCompetitorSwitch: vi.fn(),
-}));
+vi.mock("@oneshot-gtm/plays", () => {
+  const PLAYS: Record<string, { run: (o: unknown) => unknown }> = {
+    "stack-consolidation": { run: (opts: unknown) => runStackConsolidationMock(opts) },
+    "show-hn": { run: vi.fn() },
+    "job-change": { run: vi.fn() },
+    "post-funding": { run: vi.fn() },
+    "accelerator-batch": { run: vi.fn() },
+    "hiring-signal": { run: vi.fn() },
+    "podcast-guest": { run: vi.fn() },
+    "competitor-switch": { run: vi.fn() },
+    "breakup-revive": { run: vi.fn() },
+  };
+  return {
+    PLAYS,
+    isSupportedPlay: (name: string) => Object.prototype.hasOwnProperty.call(PLAYS, name),
+  };
+});
 
 const { drainQueue, idsForSentDrafts } = await import("../src/drain.ts");
 
@@ -198,11 +204,13 @@ describe("drainQueue per-target dispatch + persistence", () => {
     expect(ledgerStub.setQueueStatus).not.toHaveBeenCalled();
   });
 
-  it("global preconditions still fail the drain up-front", async () => {
+  it("an unsupported play fails the drain up-front (the only global precondition left)", async () => {
+    // accelerator-batch no longer needs a drain-level senderCohort — it rides on
+    // the row now — so the only up-front failure is an unknown play.
     ledgerStub.dequeueApproved.mockReturnValue([row(10)]);
-    const out = await drainQueue({ playName: "accelerator-batch", dryRun: false });
+    const out = await drainQueue({ playName: "no-such-play", dryRun: false });
     expect(out.errors[0]?.id).toBe(-1);
-    expect(out.errors[0]?.message).toMatch(/sender-cohort/);
+    expect(out.errors[0]?.message).toMatch(/unsupported/);
     expect(ledgerStub.setQueueDraft).not.toHaveBeenCalled();
   });
 });

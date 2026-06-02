@@ -6,6 +6,7 @@ import { isDuplicate, urlDomain } from "./_dedupe.ts";
 import { shouldSkipFindEmail } from "./_findemail-prescreen.ts";
 import { enrichVerifiedContact } from "./_enrich.ts";
 import { findLinkedInUrl } from "./_linkedin.ts";
+import { parallelMap } from "./_parallel.ts";
 import type { FinderResult, RunOpts, ShowHnHit } from "./_types.ts";
 
 const HN_ALGOLIA = "https://hn.algolia.com/api/v1/search_by_date";
@@ -17,6 +18,8 @@ export interface ShowHnFinderOpts extends RunOpts {
   sinceDays?: number;
   /** Skip posts with fewer points than this. Default 5. */
   minPoints?: number;
+  /** Max per-candidate pipelines in flight at once. Default 3. */
+  concurrency?: number;
 }
 
 interface SearchHitsResponse {
@@ -56,21 +59,35 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
   result.candidates = data.hits.length;
   logEvent("finder.fetched", { name: PLAY_NAME, candidates: result.candidates });
 
-  for (const hit of data.hits) {
-    if (result.enqueued >= limit) break;
+  // Per-candidate pipeline runs at `concurrency` (mirrors accelerator-batch /
+  // github-topics) — the serial version spent ~70s on 50 candidates waiting on
+  // findEmail/verify/enrich one at a time. `halted` is a soft cap: workers in
+  // flight when the limit/cost-cap trips may overshoot by up to
+  // (concurrency - 1) candidates. The `result.*` accumulators are mutated in
+  // place; safe because JS interleaves (never truly parallel) between awaits.
+  const concurrency = opts.concurrency ?? 3;
+  let halted = false;
+
+  await parallelMap(data.hits, concurrency, async (hit) => {
+    if (halted) return;
+    if (result.enqueued >= limit) {
+      halted = true;
+      return;
+    }
     if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
       result.halted = `max-cost cap (${opts.maxCostUsd})`;
-      break;
+      halted = true;
+      return;
     }
     if (hit.points < minPoints) {
       result.droppedLowSignal = (result.droppedLowSignal ?? 0) + 1;
-      continue;
+      return;
     }
 
     // Dedupe BEFORE any LLM/OneShot spend.
     if (ledger.isQueueDuplicate(PLAY_NAME, hit.objectID)) {
       result.droppedDuplicate++;
-      continue;
+      return;
     }
 
     // ICP filter.
@@ -99,20 +116,20 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
           notes: `auto: ICP — ${filter.reason}`,
         });
       }
-      continue;
+      return;
     }
 
     if (opts.dryRun) {
       // Just count — don't enrich or enqueue.
       result.enqueued++;
-      continue;
+      return;
     }
 
     // Enrich: try to find the founder's email via the landing-page domain + author handle.
     const domain = urlDomain(hit.url);
     if (!domain) {
       result.droppedEnrichment++;
-      continue;
+      return;
     }
 
     // Read the landing page so we have content for the hookSummary fallback +
@@ -122,7 +139,7 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
     if (!skip.ok) {
       result.droppedEnrichment++;
       logEvent("finder.skipped_findemail", { name: PLAY_NAME, reason: skip.reason }, "info");
-      continue;
+      return;
     }
     const findInput: FindEmailInput = { companyDomain: domain };
     if (fullName) findInput.fullName = fullName;
@@ -131,7 +148,7 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
 
     if (!found.result.found || !found.result.email) {
       result.droppedEnrichment++;
-      continue;
+      return;
     }
     const email = found.result.email;
 
@@ -140,13 +157,13 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
     result.costUsd += verified.result.cost ?? 0;
     if (!verified.result.deliverable) {
       result.droppedEnrichment++;
-      continue;
+      return;
     }
 
     // Cross-table dedupe: same email already a known prospect?
     if (isDuplicate({ playName: PLAY_NAME, dedupeKey: hit.objectID, prospectEmail: email })) {
       result.droppedDuplicate++;
-      continue;
+      return;
     }
 
     // Optional: read the landing page for a richer hookSummary.
@@ -211,7 +228,7 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
     });
     if (id != null) result.enqueued++;
     else result.droppedDuplicate++;
-  }
+  });
 
   logEvent("finder.done", {
     name: PLAY_NAME,

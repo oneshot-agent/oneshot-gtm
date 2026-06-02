@@ -20,18 +20,12 @@ const playCalls: { name: string; targets: unknown[] }[] = [];
 
 vi.mock("@oneshot-gtm/plays", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/plays")>("@oneshot-gtm/plays");
-  return {
-    ...actual,
-    verifyAndFilterTargets: async (
-      targets: unknown[],
-      _getEmail: (t: unknown) => string,
-      opts: { playName: string; dryRun: boolean },
-    ) => {
-      captureVerifyArgs = { targets, playName: opts.playName, dryRun: opts.dryRun };
-      return nextVerify;
-    },
-    runShowHn: async (input: { targets: unknown[] }) => {
-      playCalls.push({ name: "show-hn", targets: input.targets });
+
+  // Dispatch routes through PLAYS[name].run, so override the registry (not the
+  // individual run* exports) to capture calls without hitting the real SDK.
+  const fakeRun = (name: string) => async (input: { targets: unknown[] }) => {
+    playCalls.push({ name, targets: input.targets });
+    if (name === "show-hn") {
       return {
         drafted: input.targets.map((_, i) => ({
           target: { postTitle: `t${i}` },
@@ -42,30 +36,35 @@ vi.mock("@oneshot-gtm/plays", async () => {
           sent: false,
         })),
       };
-    },
-    runJobChange: async (input: { targets: unknown[] }) => {
-      playCalls.push({ name: "job-change", targets: input.targets });
-      return { drafted: [] };
-    },
-    runPostFunding: async (input: { targets: unknown[] }) => {
-      playCalls.push({ name: "post-funding", targets: input.targets });
-      return { drafted: [] };
-    },
-    runAcceleratorBatch: async (input: { targets: unknown[] }) => {
-      playCalls.push({ name: "accelerator-batch", targets: input.targets });
-      return { drafted: [] };
-    },
-    runHiringSignal: async (input: { targets: unknown[] }) => {
-      playCalls.push({ name: "hiring-signal", targets: input.targets });
-      return { drafted: [] };
-    },
-    runPodcastGuest: async (input: { targets: unknown[] }) => {
-      playCalls.push({ name: "podcast-guest", targets: input.targets });
-      return { drafted: [] };
-    },
-    runCompetitorSwitch: async (input: { targets: unknown[] }) => {
-      playCalls.push({ name: "competitor-switch", targets: input.targets });
-      return { drafted: [] };
+    }
+    return { drafted: [] };
+  };
+
+  const names = [
+    "show-hn",
+    "job-change",
+    "post-funding",
+    "accelerator-batch",
+    "hiring-signal",
+    "podcast-guest",
+    "competitor-switch",
+    "stack-consolidation",
+    "breakup-revive",
+  ];
+  const PLAYS: Record<string, { run: ReturnType<typeof fakeRun> }> = {};
+  for (const n of names) PLAYS[n] = { run: fakeRun(n) };
+
+  return {
+    ...actual,
+    PLAYS,
+    isSupportedPlay: (name: string) => Object.prototype.hasOwnProperty.call(PLAYS, name),
+    verifyAndFilterTargets: async (
+      targets: unknown[],
+      _getEmail: (t: unknown) => string,
+      opts: { playName: string; dryRun: boolean },
+    ) => {
+      captureVerifyArgs = { targets, playName: opts.playName, dryRun: opts.dryRun };
+      return nextVerify;
     },
   };
 });

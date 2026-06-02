@@ -186,11 +186,38 @@ describe("checkReadiness", () => {
     expect(out).toEqual({ ready: true });
   });
 
+  it("hiring-signal is not ready with its default config (yourClaim required first)", () => {
+    const spec = TRIGGERS.find((t) => t.name === "hiring-signal")!;
+    expect(spec.readiness).toBeDefined();
+    const out = checkReadiness(spec, spec.defaultConfig);
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/yourClaim/);
+  });
+
+  it("hiring-signal is not ready when yourClaim is blank/whitespace", () => {
+    const spec = TRIGGERS.find((t) => t.name === "hiring-signal")!;
+    const out = checkReadiness(spec, { ...spec.defaultConfig, yourClaim: "  \t\n " });
+    expect(out.ready).toBe(false);
+  });
+
+  it("hiring-signal becomes ready once yourClaim is set", () => {
+    const spec = TRIGGERS.find((t) => t.name === "hiring-signal")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      yourClaim: "we cut onboarding time for new compliance hires",
+    });
+    expect(out).toEqual({ ready: true });
+  });
+
   it("every registered trigger is ready with its own default config (incl. opt-in declarers)", () => {
     // Regression guard. Most triggers ship ready out-of-the-box; ones that
     // require founder-supplied config (topics, etc.) ship unready by design
     // and are excluded here.
-    const intentionallyUnreadyByDefault = new Set(["github-topics"]);
+    const intentionallyUnreadyByDefault = new Set([
+      "github-topics",
+      "hiring-signal",
+      "accelerator-batch",
+    ]);
     for (const spec of TRIGGERS) {
       if (intentionallyUnreadyByDefault.has(spec.name)) continue;
       expect(checkReadiness(spec, spec.defaultConfig), `${spec.name} should be ready`).toEqual({
@@ -209,16 +236,25 @@ describe("checkReadiness", () => {
     if (!out.ready) expect(out.reason).toMatch(/cohort/);
   });
 
-  it("accelerator-batch is ready with the curated cohorts default", () => {
+  it("accelerator-batch is not ready until senderCohort is set (even with cohorts)", () => {
     const spec = TRIGGERS.find((t) => t.name === "accelerator-batch")!;
-    expect(checkReadiness(spec, spec.defaultConfig)).toEqual({ ready: true });
+    const out = checkReadiness(spec, spec.defaultConfig);
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/senderCohort/);
   });
 
-  it("accelerator-batch is still ready with the legacy single-cohort shape (back compat)", () => {
+  it("accelerator-batch is ready with curated cohorts + a senderCohort", () => {
     const spec = TRIGGERS.find((t) => t.name === "accelerator-batch")!;
-    expect(checkReadiness(spec, { cohort: "yc-w26", cohortLabel: "YC W26" })).toEqual({
+    expect(checkReadiness(spec, { ...spec.defaultConfig, senderCohort: "yc-w23" })).toEqual({
       ready: true,
     });
+  });
+
+  it("accelerator-batch is still ready with the legacy single-cohort shape + senderCohort", () => {
+    const spec = TRIGGERS.find((t) => t.name === "accelerator-batch")!;
+    expect(
+      checkReadiness(spec, { cohort: "yc-w26", cohortLabel: "YC W26", senderCohort: "yc-w23" }),
+    ).toEqual({ ready: true });
   });
 
   it("accelerator-batch ships with a multi-incubator default sweep", () => {

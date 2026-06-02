@@ -123,7 +123,7 @@ const PLAY_SCHEMAS: Record<string, PlaySchema> = {
         label: "Cohort tag",
         type: "text",
         required: true,
-        placeholder: "yc-w26",
+        placeholder: "e.g. yc-w26 · tx-s26 · antler-ldn-12",
       },
       { key: "launchUrl", label: "Launch URL (optional)", type: "url" },
       { key: "productOneLiner", label: "Their product one-liner", type: "text" },
@@ -144,13 +144,13 @@ const PLAY_SCHEMAS: Record<string, PlaySchema> = {
         label: "Your cohort tag (sender)",
         type: "text",
         required: true,
-        placeholder: "yc-w23",
+        placeholder: "e.g. yc-w23 · od-2 · (leave blank)",
       },
       {
         key: "freeForCohortOffer",
         label: "Free-for-cohort offer (optional)",
         type: "text",
-        placeholder: "Free for current YC W26 through demo day, just reply with your batch.",
+        placeholder: "e.g. Free for your batch through demo day — reply with your cohort.",
       },
     ],
   },
@@ -266,14 +266,14 @@ const PLAY_SCHEMAS: Record<string, PlaySchema> = {
         label: "Competitor (incumbent)",
         type: "text",
         required: true,
-        placeholder: "Apollo.io",
+        placeholder: "e.g. Salesforce · QuickBooks · Mailchimp",
       },
       {
         key: "yourEdge",
         label: "Your edge (one sentence)",
         type: "textarea",
         required: true,
-        hint: "One specific advantage, not a feature list. e.g. 'we don't sell scraped emails'.",
+        hint: "One specific advantage, not a feature list. e.g. 'setup takes an afternoon, not a quarter'.",
       },
       {
         key: "evidenceUrl",
@@ -311,7 +311,7 @@ const PLAY_SCHEMAS: Record<string, PlaySchema> = {
         label: "Vendor stack (comma-separated)",
         type: "textarea",
         required: true,
-        placeholder: "stripe, twilio, sendgrid",
+        placeholder: "e.g. auth0, stripe, sendgrid, datadog",
         hint: "API vendors detected in their repo. Comma-separated.",
       },
       {
@@ -319,7 +319,7 @@ const PLAY_SCHEMAS: Record<string, PlaySchema> = {
         label: "Your edge (one sentence)",
         type: "textarea",
         required: true,
-        hint: "One specific way you collapse the sprawl. e.g. 'one SDK + on-chain receipts replaces vendor stitching'.",
+        hint: "One specific way you collapse the sprawl. e.g. 'one integration replaces three separate vendors'.",
       },
       {
         key: "evidenceUrl",
@@ -409,6 +409,25 @@ function RunPage() {
         setHydrationEmpty(false);
         setRows(targets);
         setDedupeKeys(pairs.map((p) => p.dedupeKey));
+        // Reflect any per-row extras the finder stamped (e.g. accelerator-batch's
+        // senderCohort) in the form's extras, so the field shows the value that
+        // will actually be used instead of sitting empty. prev wins, so a value
+        // the founder typed (or the drain modal passed) is never clobbered.
+        const stampedString = (key: string): string | undefined => {
+          for (const { payload } of pairs) {
+            const v = payload[key];
+            if (typeof v === "string" && v.trim().length > 0) return v;
+          }
+          return undefined;
+        };
+        const stamped: Record<string, string> = {};
+        for (const key of ["senderCohort", "freeForCohortOffer"]) {
+          const v = stampedString(key);
+          if (v) stamped[key] = v;
+        }
+        if (Object.keys(stamped).length > 0) {
+          setExtras((prev) => ({ ...stamped, ...prev }));
+        }
       } catch (err) {
         if (cancelledRef?.cancelled) return;
         setError(`failed to load approved targets from queue: ${(err as Error).message}`);

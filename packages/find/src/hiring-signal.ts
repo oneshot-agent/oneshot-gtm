@@ -34,8 +34,6 @@ export interface HiringSignalFinderOpts extends RunOpts {
 }
 
 const DEFAULT_ROLES = ["Staff Engineer", "ML Engineer", "Solutions Engineer"];
-const DEFAULT_CLAIM =
-  "we cut new-hire ramp time by ~30% on the team they're hiring for — happy to share how";
 
 interface SearchHit {
   url: string;
@@ -50,7 +48,10 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
   const ledger = getLedger();
   const system = loadPrompt("hiring-signal-extract");
   const roles = opts.roles && opts.roles.length > 0 ? opts.roles : DEFAULT_ROLES;
-  const yourClaim = opts.yourClaim ?? DEFAULT_CLAIM;
+  // No hardcoded fallback claim — a generic one would assert a product capability
+  // the founder may not have. The trigger's readiness gate blocks the scheduled
+  // path; this guards the CLI/direct path so an empty claim never ships.
+  const yourClaim = (opts.yourClaim ?? "").trim();
 
   const result: FinderResult = {
     source: SOURCE,
@@ -61,6 +62,11 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
     enqueued: 0,
     costUsd: 0,
   };
+
+  if (!yourClaim) {
+    result.halted = "set `yourClaim` in the hiring-signal config";
+    return result;
+  }
 
   const seen = new Set<string>();
   const hits: SearchHit[] = [];

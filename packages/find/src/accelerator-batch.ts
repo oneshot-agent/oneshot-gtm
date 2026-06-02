@@ -53,6 +53,11 @@ export interface AcceleratorBatchFinderOpts extends RunOpts {
   adapter?: "yc-oss" | "websearch";
   /** Concurrency for the per-company pipeline (over the unified pool). Default 3. */
   concurrency?: number;
+  /** The sender's own cohort tag — stamped onto every enqueued row so the play
+   *  can draft inline (self-contained), like github-topics stamps `yourEdge`. */
+  senderCohort?: string;
+  /** Optional time-bound offer for the sender's cohort, stamped onto each row. */
+  freeForCohortOffer?: string;
 }
 
 /**
@@ -431,6 +436,10 @@ export async function runAcceleratorBatchFinder(
       ...(record.oneLiner ? { productOneLiner: record.oneLiner } : {}),
       ...(linkedinUrl ? { linkedinUrl } : {}),
       ...(phone ? { phone } : {}),
+      // Stamp the sender's own cohort (+ offer) onto the row so the play can
+      // draft inline without a run-level senderCohort — mirrors yourEdge.
+      ...(opts.senderCohort ? { senderCohort: opts.senderCohort } : {}),
+      ...(opts.freeForCohortOffer ? { freeForCohortOffer: opts.freeForCohortOffer } : {}),
     };
     const id = ledger.enqueueTarget({
       playName: PLAY_NAME,

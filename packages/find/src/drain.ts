@@ -1,25 +1,5 @@
-import { getLedger, type ProspectRecord } from "@oneshot-gtm/core";
-import {
-  runAcceleratorBatch,
-  runBreakupRevive,
-  runCompetitorSwitch,
-  runHiringSignal,
-  runJobChange,
-  runPodcastGuest,
-  runPostFunding,
-  runShowHn,
-  runStackConsolidation,
-  type AcceleratorBatchTarget,
-  type BreakupReviveTarget,
-  type CompetitorSwitchTarget,
-  type HiringSignalTarget,
-  type JobChangeTarget,
-  type PodcastGuestTarget,
-  type PostFundingTarget,
-  type ShowHnTarget,
-  type StackConsolidationTarget,
-} from "@oneshot-gtm/plays";
-import type { QueueRow } from "@oneshot-gtm/core";
+import { getLedger, type ProspectRecord, type QueueRow } from "@oneshot-gtm/core";
+import { type DraftedRow, isSupportedPlay, PLAYS } from "@oneshot-gtm/plays";
 
 export interface DrainOpts {
   playName: string;
@@ -34,15 +14,6 @@ export interface DrainOutcome {
   drained: number;
   sent: number;
   errors: Array<{ id: number; message: string }>;
-}
-
-/** Per-target draft shape returned by every play's runner. */
-interface DraftedRow {
-  subject: string;
-  body: string;
-  flags: string[];
-  sent: boolean;
-  receiptIds: number[];
 }
 
 /**
@@ -60,14 +31,9 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
 
   if (rows.length === 0) return outcome;
 
-  // Global preconditions that should fail the whole drain, not per-row.
-  if (opts.playName === "accelerator-batch" && !opts.senderCohort) {
-    outcome.errors.push({
-      id: -1,
-      message: "--sender-cohort is required for draining accelerator-batch",
-    });
-    return outcome;
-  }
+  // Global precondition: the play must exist. accelerator-batch no longer
+  // needs a drain-level senderCohort — finder rows carry their own (stamped
+  // from trigger config), and the play falls back to the run-level option.
   if (!isSupportedPlay(opts.playName)) {
     outcome.errors.push({ id: -1, message: `drain: unsupported play '${opts.playName}'` });
     return outcome;
@@ -126,77 +92,17 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
   return outcome;
 }
 
-const SUPPORTED_PLAYS = new Set([
-  "show-hn",
-  "job-change",
-  "post-funding",
-  "accelerator-batch",
-  "hiring-signal",
-  "podcast-guest",
-  "breakup-revive",
-  "competitor-switch",
-  "stack-consolidation",
-]);
-
-function isSupportedPlay(name: string): boolean {
-  return SUPPORTED_PLAYS.has(name);
-}
-
 async function dispatchOneTarget(opts: DrainOpts, row: QueueRow): Promise<DraftedRow> {
-  switch (opts.playName) {
-    case "show-hn": {
-      const target = JSON.parse(row.payload_json) as ShowHnTarget;
-      const result = await runShowHn({ dryRun: opts.dryRun, targets: [target] });
-      return firstDraft(result.drafted);
-    }
-    case "job-change": {
-      const target = JSON.parse(row.payload_json) as JobChangeTarget;
-      const result = await runJobChange({ dryRun: opts.dryRun, targets: [target] });
-      return firstDraft(result.drafted);
-    }
-    case "post-funding": {
-      const target = JSON.parse(row.payload_json) as PostFundingTarget;
-      const result = await runPostFunding({ dryRun: opts.dryRun, targets: [target] });
-      return firstDraft(result.drafted);
-    }
-    case "accelerator-batch": {
-      const target = JSON.parse(row.payload_json) as AcceleratorBatchTarget;
-      const result = await runAcceleratorBatch({
-        dryRun: opts.dryRun,
-        targets: [target],
-        senderCohort: opts.senderCohort!,
-        ...(opts.freeForCohortOffer ? { freeForCohortOffer: opts.freeForCohortOffer } : {}),
-      });
-      return firstDraft(result.drafted);
-    }
-    case "hiring-signal": {
-      const target = JSON.parse(row.payload_json) as HiringSignalTarget;
-      const result = await runHiringSignal({ dryRun: opts.dryRun, targets: [target] });
-      return firstDraft(result.drafted);
-    }
-    case "podcast-guest": {
-      const target = JSON.parse(row.payload_json) as PodcastGuestTarget;
-      const result = await runPodcastGuest({ dryRun: opts.dryRun, targets: [target] });
-      return firstDraft(result.drafted);
-    }
-    case "breakup-revive": {
-      const target = JSON.parse(row.payload_json) as BreakupReviveTarget;
-      const result = await runBreakupRevive({ dryRun: opts.dryRun, targets: [target] });
-      return firstDraft(result.drafted);
-    }
-    case "competitor-switch": {
-      const target = JSON.parse(row.payload_json) as CompetitorSwitchTarget;
-      const result = await runCompetitorSwitch({ dryRun: opts.dryRun, targets: [target] });
-      return firstDraft(result.drafted);
-    }
-    case "stack-consolidation": {
-      const target = JSON.parse(row.payload_json) as StackConsolidationTarget;
-      const result = await runStackConsolidation({ dryRun: opts.dryRun, targets: [target] });
-      return firstDraft(result.drafted);
-    }
-    default:
-      throw new Error(`drain: unsupported play '${opts.playName}'`);
-  }
+  const play = PLAYS[opts.playName];
+  if (!play) throw new Error(`drain: unsupported play '${opts.playName}'`);
+  const target = JSON.parse(row.payload_json) as unknown;
+  const result = await play.run({
+    dryRun: opts.dryRun,
+    targets: [target],
+    ...(opts.senderCohort ? { senderCohort: opts.senderCohort } : {}),
+    ...(opts.freeForCohortOffer ? { freeForCohortOffer: opts.freeForCohortOffer } : {}),
+  });
+  return firstDraft(result.drafted);
 }
 
 function firstDraft(drafted: DraftedRow[]): DraftedRow {

@@ -109,7 +109,7 @@ export const TRIGGERS: TriggerSpec[] = [
       maxCostUsd: 15,
     },
     configBrief:
-      "Sweeps every known incubator (YC, Techstars, Antler, 500 Global, AI Grant, SPC, Neo) at its latest + previous-latest cohorts in one run. Config: `cohorts` (array of `{cohort, cohortLabel}` — defaults to the 14-entry curated list; edit to add/remove batches as new cohorts announce), optional `cohort` + `cohortLabel` (legacy single-cohort shape; still accepted), optional `adapter` (`yc-oss` | `websearch`; auto-picked per cohort — yc-* tags use the free yc-oss/api directory, everything else falls back to web search), `limit` (global enqueue cap across all cohorts), `maxCostUsd`. Per-cohort failures (spotty incubator, network blip) log and continue; the run only halts when EVERY cohort returns 0 candidates. ROTATION: the default list goes stale within ~3 months — edit when YC announces W27, Techstars rolls Fall 2026, etc. STRATEGIST DUTY: when the founder's ICP overlaps strongly with one incubator population, narrow the cohorts list rather than sweeping all seven — e.g. AI/infra startups → keep yc-* + ai-grant-*, drop the rest.",
+      "Sweeps every known incubator (YC, Techstars, Antler, 500 Global, AI Grant, SPC, Neo) at its latest + previous-latest cohorts in one run. Config: `cohorts` (array of `{cohort, cohortLabel}` — defaults to the 14-entry curated list; edit to add/remove batches as new cohorts announce), optional `cohort` + `cohortLabel` (legacy single-cohort shape; still accepted), optional `adapter` (`yc-oss` | `websearch`; auto-picked per cohort — yc-* tags use the free yc-oss/api directory, everything else falls back to web search), `senderCohort` (YOUR own cohort tag, e.g. `yc-w23` — the peer angle the email is built on; REQUIRED, stamped onto every enqueued row so rows draft inline), `freeForCohortOffer` (optional time-bound offer, also stamped onto rows), `limit` (global enqueue cap across all cohorts), `maxCostUsd`. Per-cohort failures (spotty incubator, network blip) log and continue; the run only halts when EVERY cohort returns 0 candidates. ROTATION: the default list goes stale within ~3 months — edit when YC announces W27, Techstars rolls Fall 2026, etc. STRATEGIST DUTY: when the founder's ICP overlaps strongly with one incubator population, narrow the cohorts list rather than sweeping all seven — e.g. AI/infra startups → keep yc-* + ai-grant-*, drop the rest.",
     readiness: (cfg) => {
       const cohorts = Array.isArray(cfg["cohorts"]) ? cfg["cohorts"] : null;
       const legacyCohort =
@@ -118,6 +118,14 @@ export const TRIGGERS: TriggerSpec[] = [
         return {
           ready: false,
           reason: "set `cohorts[]` (or legacy `cohort`)",
+        };
+      }
+      const senderCohort =
+        typeof cfg["senderCohort"] === "string" ? (cfg["senderCohort"] as string).trim() : "";
+      if (senderCohort.length === 0) {
+        return {
+          ready: false,
+          reason: "set `senderCohort` (your own cohort tag, e.g. yc-w23)",
         };
       }
       return { ready: true };
@@ -152,6 +160,14 @@ export const TRIGGERS: TriggerSpec[] = [
           : {}),
         ...(cfg["adapter"] === "yc-oss" || cfg["adapter"] === "websearch"
           ? { adapter: cfg["adapter"] as "yc-oss" | "websearch" }
+          : {}),
+        // Sender cohort (+ offer) stamped onto every enqueued row so the play
+        // drafts inline without a run-level value. Readiness gates senderCohort.
+        ...(typeof cfg["senderCohort"] === "string" && cfg["senderCohort"].trim().length > 0
+          ? { senderCohort: (cfg["senderCohort"] as string).trim() }
+          : {}),
+        ...(typeof cfg["freeForCohortOffer"] === "string" && cfg["freeForCohortOffer"].trim().length > 0
+          ? { freeForCohortOffer: (cfg["freeForCohortOffer"] as string).trim() }
           : {}),
         limit: (cfg["limit"] as number) ?? 25,
         maxCostUsd: (cfg["maxCostUsd"] as number) ?? 15,
@@ -217,7 +233,13 @@ export const TRIGGERS: TriggerSpec[] = [
       maxCostUsd: 5,
     },
     configBrief:
-      "Scans Greenhouse / Lever / Workable / Ashby ATS pages for open roles that signal the company would buy THIS product. Config: `roles` (job titles whose existence implies a need for the product — e.g. 'Founding ML Engineer' for AI-infra products, 'Head of Compliance' for compliance products), `companies` (optional whitelist), `yourClaim` (one-sentence pitch about why your product makes that role's first 90 days easier — fed into the email), `sinceDays`, `limit`, `maxCostUsd`. The roles + yourClaim need to be tightly coupled to the product.",
+      "Scans Greenhouse / Lever / Workable / Ashby ATS pages for open roles that signal the company would buy THIS product. Config: `roles` (job titles whose existence implies a need for the product — e.g. 'Founding ML Engineer' for AI-infra products, 'Head of Compliance' for compliance products), `companies` (optional whitelist), `yourClaim` (one-sentence pitch about why your product makes that role's first 90 days easier — fed into the email; REQUIRED), `sinceDays`, `limit`, `maxCostUsd`. The roles + yourClaim need to be tightly coupled to the product.",
+    readiness: (cfg) => {
+      const claim = typeof cfg["yourClaim"] === "string" ? (cfg["yourClaim"] as string).trim() : "";
+      return claim.length > 0
+        ? { ready: true }
+        : { ready: false, reason: "set `yourClaim` (your one-line pitch)" };
+    },
     run: (cfg) =>
       runHiringSignalFinder({
         dryRun: false,
