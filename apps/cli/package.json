@@ -1,6 +1,6 @@
 {
   "name": "oneshot-gtm",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Open-source GTM agent for technical founders. Pay-per-result, signed receipts.",
   "license": "MIT",
   "bin": {
