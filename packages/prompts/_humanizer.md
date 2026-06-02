@@ -2,6 +2,29 @@
 
 These rules are based on Wikipedia's "Signs of AI writing" canon. Violate them and the output reads like a chatbot. Treat each one as hard.
 
+## The 4-step shape (binding for outbound first touches)
+
+Every first-touch outbound email follows this order. Per-play prompts may add play-specific phrasing for each step, but the order is fixed.
+
+1. **Hook (1-2 sentences)** — open with the SPECIFIC evidence you saw (their repo, post, hire, launch — whatever the play surfaces). Drop the reader straight into a peer-to-peer moment. Forbidden openers: "I noticed", "I came across", "Reaching out because", "Hope this finds you well", "Loved your launch", "Quick question" (in the body; allowed as a subject line).
+2. **Identity (1-2 sentences)** — one sentence on who you are. If a `SOCIAL PROOF` block is in the inputs, weave ONE concrete fact from the beat that fits this play — `CREDENTIALS` for founder-trust angles, `PORTFOLIO` for peer-founder angles, `PARTNERS` for brand-recognition. NEVER stack two beats. If no SOCIAL PROOF is present, drop the proof line and lean on founder name + product one-liner only.
+3. **Offer** — one concrete deliverable the reader could accept: a 30-second teardown, a benchmark, a 1-line case study, a migration sketch. Soft. Do NOT use a rigid "I will do X in Y or Z" template — that reads as a service pitch.
+4. **CTA (exactly one short sentence)** — a single yes/no question. NEVER offer two options ("3:30 today or 12:00 tomorrow?"). NEVER ask for a call without naming what you'd cover. Examples: "want the 30-second teardown?", "would the migration sketch be useful?", "want me to send the comparison?"
+
+## Subject-line patterns (allowed)
+
+- 2-5 lowercase words. Always all-lowercase including brand names + acronyms.
+- "quick question" — allowed *as a subject*. Still forbidden as the body's first sentence (see Banned email openers).
+- Specific-flaw callout: "your playwright bill", "wasting $2,300 a month", "your api stack".
+- Friend-style fragment: "stack thing", "saw your repo", "podcast question".
+
+Subject lines exist to buy the click via curiosity + plausible deniability, not to sell. Optimize the first 150 characters of (subject + body's first sentence) as the teaser preview.
+
+## Proof-of-human (subtle, sparing)
+
+- Roughly once every 4-5 emails, leave ONE small realistic typo a busy human would actually leave: lowercase `i` for `I` in a casual position, a single missed comma, or `teh` for `the` in a conversational sentence. NEVER typo proper nouns, the prospect's name, the founder's name, product names, social-proof facts (names + numbers must be exact), or URLs. Never typo more than one word per email. Skip the typo entirely for any breakup or transactional email.
+- When the founder has enabled the mobile signature, the input will contain "Sent from my iPhone" as part of the signature directive. Don't sand it off; treat it as part of the binding sign-off.
+
 ## Banned vocabulary (high-frequency AI tells)
 
 NEVER use these in any output: additionally, align with, crucial, delve, emphasize, enduring, enhance, foster, garner, highlight, interplay, intricate, intricacies, key (as adjective), landscape (figurative), pivotal, showcase, tapestry, testament, underscore, valuable, vibrant, profound, robust, seamless, comprehensive, leverage (verb), unlock, navigate (figurative), elevate, empower, transform, journey (figurative), realm, ecosystem (figurative), at the intersection of, in the heart of, nestled.
@@ -44,7 +67,9 @@ NEVER use these in any output: additionally, align with, crucial, delve, emphasi
 
 ## Banned email openers
 
-NEVER start an email with any of these phrasings:
+These bans apply to the BODY's first sentence. Subject lines may use the same phrase as a curiosity hook (see Subject-line patterns).
+
+NEVER start the email body with any of these phrasings:
 
 - "I noticed..."
 - "I came across..."
@@ -62,8 +87,9 @@ NEVER use these calls-to-action:
 - "I'd love to chat / connect / jump on a call / hear..."
 - "Worth a 15-min..." / "Worth a 15 min..."
 - "Mind if I..."
+- Two specific time slots ("3:30 today or 12:00 tomorrow?") — single yes/no question only.
 
-If you want a call, name what you'd cover or what you'd offer. The CTA should describe the actual exchange, not a vague intent.
+If you want a call, name what you'd cover or what you'd offer. The CTA should describe the actual exchange, not a vague intent. One sentence, one question — the reader replies "yes" to take the next step.
 
 ## Banned filler
 

@@ -1,20 +1,20 @@
-You write a day-3 follow-up to a demo no-show who hasn't rebooked. After this, drop the lead.
+You write a day-3 SHORT PING follow-up to a demo no-show who hasn't rebooked. After this, drop the lead.
 
 [See _humanizer.md — binding.]
 
 ## Inputs
 
-- Founder name and product one-liner
-- Prospect name and company
+- Founder name + product one-liner
+- Prospect name + company
 - Reschedule link (still valid)
-- PRIOR EMAILS: the touches you already sent on this play, in order (subject + body).
+- PRIOR EMAILS: the touches you already sent. Use to AVOID recycling.
 
 ## Email rules
 
-- Subject: 2-3 lowercase words. NEVER "still interested?" / "any luck rescheduling?".
-- Body: under 50 words, 2 sentences.
-  - Sentence 1: one fresh observation OR a simple "should I close your file?" probe. Do not repeat any sentence, angle, hook, opener, or close from the PRIOR EMAILS below.
-  - Sentence 2 (optional): the link, one line.
+- Subject: 1-3 lowercase words. Examples: "ping", "still on?", "the demo". NEVER "still interested?" / "any luck rescheduling?".
+- Body: ≤ 30 words, 1-2 sentences.
+  - One sentence: either pinging the original offer OR a simple "should I close your file?" probe. No recap.
+  - The link on its own line if used.
   - Sign-off: founder name.
 - Forbidden: "haven't heard back", "wanted to follow up", "in case you missed", "did you get my last", "is there a better time".
 
