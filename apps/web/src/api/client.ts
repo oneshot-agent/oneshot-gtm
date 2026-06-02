@@ -53,6 +53,32 @@ export const api = {
       `/cadences/${id}/stop${playName ? `?play=${encodeURIComponent(playName)}` : ""}`,
       {},
     ),
+  previewCadenceNext: (id: number, playName: string) =>
+    postJson<{
+      subject: string;
+      body: string;
+      flags: string[];
+      draftedAt: string;
+      stepLabel: string | null;
+      isBreakup: boolean;
+    }>(`/cadences/${id}/preview-next?play=${encodeURIComponent(playName)}`, {}),
+  sendCadenceNext: (id: number, playName: string) =>
+    postJson<{ accepted: true }>(
+      `/cadences/${id}/send-next?play=${encodeURIComponent(playName)}`,
+      {},
+    ),
+  previewCadenceBatch: (items: Array<{ prospectId: number; playName: string }>) =>
+    postJson<{
+      results: Array<{
+        prospectId: number;
+        playName: string;
+        ok: boolean;
+        preview?: { subject: string; body: string; flags: string[]; draftedAt: string };
+        error?: string;
+      }>;
+    }>(`/cadences/preview-batch`, { items }),
+  sendCadenceBatch: (items: Array<{ prospectId: number; playName: string }>) =>
+    postJson<{ accepted: number }>(`/cadences/send-batch`, { items }),
   receipts: (opts?: { play?: string; sinceDays?: number; limit?: number }) => {
     const q = new URLSearchParams();
     if (opts?.play) q.set("play", opts.play);
@@ -84,7 +110,13 @@ export const api = {
         founderName: string | null;
         founderEmail: string | null;
         productOneLiner: string | null;
+        productDomain: string | null;
+        sendingDomain: string | null;
         icpOneLiner: string | null;
+        founderCredentials: string | null;
+        productPortfolio: string | null;
+        partners: string | null;
+        mobileSignature: boolean;
         llmProvider: "openrouter" | "openai" | "anthropic";
         llmModel: string;
         telemetryEnabled: boolean;

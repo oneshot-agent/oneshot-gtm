@@ -338,7 +338,7 @@ function CadenceEditor({ play }: { play: PlayDescriptor }) {
     ...play.steps.map((s) => ({
       day: s.day,
       label: s.label,
-      breakup: s.label.toLowerCase().includes("breakup"),
+      breakup: s.isBreakup,
     })),
   ];
   const hasFollowups = play.steps.length > 0;
