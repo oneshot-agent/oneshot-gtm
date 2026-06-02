@@ -55,6 +55,43 @@ export async function configFounder(): Promise<void> {
         message: "Product one-liner",
         initial: cfg.productOneLiner ?? "",
       },
+      // Optional — press enter to skip. Mirrors the `init` wizard + /setup page.
+      {
+        type: "text",
+        name: "icpOneLiner",
+        message: "ICP one-liner — who you sell to (blank = no filtering)",
+        initial: cfg.icpOneLiner ?? "",
+      },
+      {
+        type: "text",
+        name: "productDomain",
+        message: "Signature domain — bare domain under your name in emails (blank = none)",
+        initial: cfg.productDomain ?? "",
+      },
+      {
+        type: "text",
+        name: "sendingDomain",
+        message: "Sending domain — the domain your OneShot wallet owns (blank = SDK default)",
+        initial: cfg.sendingDomain ?? "",
+      },
+      {
+        type: "text",
+        name: "founderCredentials",
+        message: "Founder background — prior roles/companies that build trust (optional)",
+        initial: cfg.founderCredentials ?? "",
+      },
+      {
+        type: "text",
+        name: "productPortfolio",
+        message: "Products you've shipped — comma-separated (optional)",
+        initial: cfg.productPortfolio ?? "",
+      },
+      {
+        type: "text",
+        name: "partners",
+        message: "Notable partners / customers — brand names that open doors (optional)",
+        initial: cfg.partners ?? "",
+      },
     ],
     { onCancel: () => process.exit(0) },
   );
@@ -63,6 +100,12 @@ export async function configFounder(): Promise<void> {
     founderName: (answers["founderName"] ?? cfg.founderName) || null,
     founderEmail: (answers["founderEmail"] ?? cfg.founderEmail) || null,
     productOneLiner: (answers["productOneLiner"] ?? cfg.productOneLiner) || null,
+    productDomain: (answers["productDomain"] ?? cfg.productDomain) || null,
+    sendingDomain: (answers["sendingDomain"] ?? cfg.sendingDomain) || null,
+    icpOneLiner: (answers["icpOneLiner"] ?? cfg.icpOneLiner) || null,
+    founderCredentials: (answers["founderCredentials"] ?? cfg.founderCredentials) || null,
+    productPortfolio: (answers["productPortfolio"] ?? cfg.productPortfolio) || null,
+    partners: (answers["partners"] ?? cfg.partners) || null,
   });
   ok("Saved.");
 }

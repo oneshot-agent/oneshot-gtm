@@ -31,6 +31,10 @@ const DEFAULTS: OneShotConfig = {
   sendingDomain: null,
   icpOneLiner: null,
   cadenceOverrides: null,
+  founderCredentials: null,
+  productPortfolio: null,
+  partners: null,
+  mobileSignature: false,
   clientId: null,
 };
 

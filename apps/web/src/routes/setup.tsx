@@ -50,6 +50,10 @@ function SetupPage() {
   const [llmModel, setLlmModel] = useState("");
   const [telemetryEnabled, setTelemetryEnabled] = useState(true);
   const [walletMode, setWalletMode] = useState<"cdp" | "private-key">("cdp");
+  const [founderCredentials, setFounderCredentials] = useState("");
+  const [productPortfolio, setProductPortfolio] = useState("");
+  const [partners, setPartners] = useState("");
+  const [mobileSignature, setMobileSignature] = useState(false);
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
@@ -62,6 +66,10 @@ function SetupPage() {
     setProductDomain(c.productDomain ?? "");
     setSendingDomain(c.sendingDomain ?? "");
     setIcpOneLiner(c.icpOneLiner ?? "");
+    setFounderCredentials(c.founderCredentials ?? "");
+    setProductPortfolio(c.productPortfolio ?? "");
+    setPartners(c.partners ?? "");
+    setMobileSignature(c.mobileSignature ?? false);
     setLlmProvider(c.llmProvider);
     setLlmModel(c.llmModel || LLM_DEFAULTS[c.llmProvider] || "");
     setTelemetryEnabled(c.telemetryEnabled);
@@ -115,6 +123,10 @@ function SetupPage() {
         productDomain,
         sendingDomain,
         icpOneLiner,
+        founderCredentials,
+        productPortfolio,
+        partners,
+        mobileSignature,
         llmProvider,
         llmModel,
         telemetryEnabled,
@@ -201,12 +213,12 @@ function SetupPage() {
             </Field>
             <Field
               label="Signature domain"
-              hint="Bare domain shown under your name in every email signature, e.g. oneshotagent.com. Leave blank for no domain line."
+              hint="Bare domain shown under your name in every email signature, e.g. yourcompany.com. Leave blank for no domain line."
             >
               <Input
                 value={productDomain}
                 onChange={(e) => setProductDomain(e.target.value)}
-                placeholder="oneshotagent.com"
+                placeholder="yourcompany.com"
               />
             </Field>
             <Field
@@ -216,7 +228,7 @@ function SetupPage() {
               <Input
                 value={sendingDomain}
                 onChange={(e) => setSendingDomain(e.target.value)}
-                placeholder="oneshotagents.com"
+                placeholder="yourcompany-mail.com"
               />
             </Field>
             <Field
@@ -227,7 +239,7 @@ function SetupPage() {
               <Textarea
                 value={productOneLiner}
                 onChange={(e) => setProductOneLiner(e.target.value)}
-                placeholder="Open-source GTM agent for technical founders, paid per-result."
+                placeholder={'e.g. "Stripe for freight" · "AI bookkeeping for restaurants" · "scheduling for dog groomers"'}
                 rows={2}
               />
             </Field>
@@ -302,7 +314,7 @@ function SetupPage() {
               <Textarea
                 value={icpOneLiner}
                 onChange={(e) => setIcpOneLiner(e.target.value)}
-                placeholder="Developers shipping autonomous AI agents who need deterministic spend tracking and on-chain receipts."
+                placeholder={'e.g. "CFOs at Series-B SaaS" · "Shopify stores doing $1M+/yr" · "indie iOS devs"'}
                 rows={3}
               />
             </Field>
@@ -310,7 +322,53 @@ function SetupPage() {
         </LedgerSection>
 
         <LedgerSection
-          eyebrow="03 · LLM provider"
+          eyebrow="03 · Social proof"
+          lede="All optional. Each maps to a different play type. Used by the LLM when drafting the second sentence of a first-touch email — never more than one beat per email."
+        >
+          <div className="grid grid-cols-1 gap-4">
+            <Field
+              label="Founder background"
+              hint="Prior companies, named past roles, anything that lets a stranger trust you. Used by job-change / podcast-guest / post-funding / breakup-revive."
+            >
+              <Textarea
+                value={founderCredentials}
+                onChange={(e) => setFounderCredentials(e.target.value)}
+                placeholder={'e.g. "ex-Stripe eng" · "VP Sales at Salesforce" · "ran a $2M Shopify store"'}
+                rows={2}
+              />
+            </Field>
+            <Field
+              label="Products you've shipped"
+              hint="Used in peer-founder outreach to show you've actually built things. Stack-consolidation / competitor-switch / show-hn / hiring-signal."
+            >
+              <Textarea
+                value={productPortfolio}
+                onChange={(e) => setProductPortfolio(e.target.value)}
+                placeholder="Comma-separated list of products or projects you've shipped."
+                rows={2}
+              />
+            </Field>
+            <Field
+              label="Notable partners / customers"
+              hint="Brand names that open doors. Helps when the prospect doesn't know you yet. Accelerator-batch / demo-no-show."
+            >
+              <Textarea
+                value={partners}
+                onChange={(e) => setPartners(e.target.value)}
+                placeholder="Comma-separated brand-name integrations or customers."
+                rows={2}
+              />
+            </Field>
+            <Checkbox
+              checked={mobileSignature}
+              onChange={(e) => setMobileSignature(e.target.checked)}
+              label={'Append "Sent from my iPhone" to every email signature'}
+            />
+          </div>
+        </LedgerSection>
+
+        <LedgerSection
+          eyebrow="04 · LLM provider"
           lede="Bring your own key. Swap providers freely; nothing is locked in."
         >
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -358,7 +416,7 @@ function SetupPage() {
         </LedgerSection>
 
         <LedgerSection
-          eyebrow="04 · OneShot wallet"
+          eyebrow="05 · OneShot wallet"
           lede="Keys live only in ~/.oneshot-gtm/.env chmod 600. Nothing leaves your machine."
         >
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -424,7 +482,7 @@ function SetupPage() {
         </LedgerSection>
 
         <LedgerSection
-          eyebrow="05 · Telemetry"
+          eyebrow="06 · Telemetry"
           lede="Off by default for your data, on by default for command-run counts. Opt out at will."
         >
           <Checkbox

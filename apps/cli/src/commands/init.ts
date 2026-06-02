@@ -38,6 +38,44 @@ export async function runInit(): Promise<void> {
         initial: cfg.productOneLiner ?? "",
         validate: (s) => (s.trim().length >= 10 ? true : "be specific"),
       },
+      // All of the following are optional — press enter to skip. They sharpen
+      // discovery + email personalization but aren't required to get started.
+      {
+        type: "text",
+        name: "icpOneLiner",
+        message: "ICP one-liner — who you sell to (blank = no filtering)",
+        initial: cfg.icpOneLiner ?? "",
+      },
+      {
+        type: "text",
+        name: "productDomain",
+        message: "Signature domain — bare domain under your name in emails (blank = none)",
+        initial: cfg.productDomain ?? "",
+      },
+      {
+        type: "text",
+        name: "sendingDomain",
+        message: "Sending domain — the domain your OneShot wallet owns (blank = SDK default)",
+        initial: cfg.sendingDomain ?? "",
+      },
+      {
+        type: "text",
+        name: "founderCredentials",
+        message: "Founder background — prior roles/companies that build trust (optional)",
+        initial: cfg.founderCredentials ?? "",
+      },
+      {
+        type: "text",
+        name: "productPortfolio",
+        message: "Products you've shipped — comma-separated (optional)",
+        initial: cfg.productPortfolio ?? "",
+      },
+      {
+        type: "text",
+        name: "partners",
+        message: "Notable partners / customers — brand names that open doors (optional)",
+        initial: cfg.partners ?? "",
+      },
       {
         type: "select",
         name: "llmProvider",
@@ -76,10 +114,14 @@ export async function runInit(): Promise<void> {
     founderName: (answers["founderName"] ?? cfg.founderName) || null,
     founderEmail: (answers["founderEmail"] ?? cfg.founderEmail) || null,
     productOneLiner: (answers["productOneLiner"] ?? cfg.productOneLiner) || null,
-    productDomain: cfg.productDomain,
-    sendingDomain: cfg.sendingDomain,
-    icpOneLiner: cfg.icpOneLiner,
+    productDomain: (answers["productDomain"] ?? cfg.productDomain) || null,
+    sendingDomain: (answers["sendingDomain"] ?? cfg.sendingDomain) || null,
+    icpOneLiner: (answers["icpOneLiner"] ?? cfg.icpOneLiner) || null,
     cadenceOverrides: cfg.cadenceOverrides,
+    founderCredentials: (answers["founderCredentials"] ?? cfg.founderCredentials) || null,
+    productPortfolio: (answers["productPortfolio"] ?? cfg.productPortfolio) || null,
+    partners: (answers["partners"] ?? cfg.partners) || null,
+    mobileSignature: cfg.mobileSignature,
     // Preserve the anonymous install id (loadConfig already bootstrapped it
     // by the time we got here). Omitting it would silently drop it from disk
     // and the next loadConfig() would mint a fresh one.
