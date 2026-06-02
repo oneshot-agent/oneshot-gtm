@@ -246,6 +246,81 @@ describe("dequeueApproved atomic lease", () => {
   });
 });
 
+describe("cadence next-step draft round-trip", () => {
+  it("set/get round-trip + advanceCadence clears it", () => {
+    const pid = ledger.upsertProspect({ name: "P", email: "p@x.com", source: "t" });
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "stack-consolidation",
+      nextDueAt: new Date().toISOString(),
+    });
+    ledger.setCadenceDraft({
+      prospectId: pid,
+      playName: "stack-consolidation",
+      draft: {
+        subject: "follow-up",
+        body: "the value angle",
+        flags: [],
+        payload: { kind: "email", subject: "follow-up", body: "the value angle" },
+      },
+    });
+    const stored = ledger.getCadenceDraft({
+      prospectId: pid,
+      playName: "stack-consolidation",
+    });
+    expect(stored?.subject).toBe("follow-up");
+    expect(stored?.body).toBe("the value angle");
+    expect(stored?.flags).toEqual([]);
+    expect(stored?.draftedAt).toBeTruthy();
+
+    // advanceCadence atomically clears the draft (stale for the new step).
+    ledger.advanceCadence({
+      prospectId: pid,
+      playName: "stack-consolidation",
+      newStep: 1,
+      nextDueAt: null,
+    });
+    const after = ledger.getCadenceDraft({
+      prospectId: pid,
+      playName: "stack-consolidation",
+    });
+    expect(after).toBeNull();
+  });
+
+  it("clearCadenceDraft is a no-op when no draft exists", () => {
+    const pid = ledger.upsertProspect({ name: "P2", email: "p2@x.com", source: "t" });
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "show-hn",
+      nextDueAt: new Date().toISOString(),
+    });
+    expect(() =>
+      ledger.clearCadenceDraft({ prospectId: pid, playName: "show-hn" }),
+    ).not.toThrow();
+  });
+
+  it("setCadenceStatus to a non-active state clears the persisted draft", () => {
+    const pid = ledger.upsertProspect({ name: "P3", email: "p3@x.com", source: "t" });
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "show-hn",
+      nextDueAt: new Date().toISOString(),
+    });
+    ledger.setCadenceDraft({
+      prospectId: pid,
+      playName: "show-hn",
+      draft: { subject: "s", body: "b", flags: [], payload: {} },
+    });
+    expect(ledger.getCadenceDraft({ prospectId: pid, playName: "show-hn" })).not.toBeNull();
+    ledger.setCadenceStatus({
+      prospectId: pid,
+      playName: "show-hn",
+      status: "replied",
+    });
+    expect(ledger.getCadenceDraft({ prospectId: pid, playName: "show-hn" })).toBeNull();
+  });
+});
+
 describe("recordInterview", () => {
   it("round-trips an interview record", () => {
     const id = ledger.recordInterview({

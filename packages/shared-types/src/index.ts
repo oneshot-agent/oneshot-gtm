@@ -3,7 +3,26 @@
  * These are the API contracts for /api/* endpoints. Keep stable.
  */
 
-export type CadenceStatus = "active" | "replied" | "breakup" | "completed";
+export type CadenceStatus = "active" | "replied" | "breakup" | "completed" | "paused";
+
+export interface CadenceNextStepDraft {
+  subject: string;
+  body: string;
+  flags: string[];
+  draftedAt: string;
+}
+
+export interface CadenceSentStep {
+  /** 0 = initial send; 1..N = registered cadence follow-ups in order. */
+  stepIndex: number;
+  /** Step label from the play registry ("initial send", "value follow-up", "breakup", …). */
+  label: string;
+  subject: string;
+  /** Null when this row was written before subject/body persistence landed (pre-v8). */
+  body: string | null;
+  /** ISO timestamp of when the email actually sent. */
+  sentAt: string;
+}
 export type StepChannel = "email" | "sms" | "voice" | "linkedin";
 
 export interface CadenceView {
@@ -17,6 +36,25 @@ export interface CadenceView {
   enrolledAt: string;
   nextDueAt: string | null;
   lastPolledAt: string | null;
+  /** Persisted next-step preview (set by Preview, cleared on advance). */
+  nextStepDraft: CadenceNextStepDraft | null;
+  /** Label of the next step ("value follow-up", "breakup", …). Null when
+   *  no next step exists (cadence is at or past the last step). */
+  nextStepLabel: string | null;
+  /** Whether the next step is the final breakup. Derived from the cadence
+   *  engine's registered sequence — single source of truth. */
+  nextStepIsBreakup: boolean;
+  /** Total registered follow-up steps for this play (excludes day-0).
+   *  The UI uses `followupCount + 1` for the step-progress dot count. */
+  followupCount: number;
+  /** Touches already sent for this cadence (step 0 + cadence follow-ups), oldest first.
+   *  Empty array when the cadence has just been enrolled and nothing has fired yet. */
+  priorSteps: CadenceSentStep[];
+  /** True when a fire-and-forget background send is currently in flight for this
+   *  cadence step (set by the API layer when /send-next or /send-batch kicks off,
+   *  cleared as each row's SDK call resolves). Drives the "sending…" badge on
+   *  /cadences and gates the row out of further Send actions until it completes. */
+  isSending: boolean;
 }
 
 export interface ReceiptView {
@@ -75,7 +113,7 @@ export interface PlayDescriptor {
    * day-0 initial send. The initial send itself isn't listed (always day 0,
    * not editable). Empty for one-touch plays.
    */
-  steps: { day: number; label: string; channel: StepChannel }[];
+  steps: { day: number; label: string; channel: StepChannel; isBreakup: boolean }[];
   /** Code-default cumulative days for the same steps — lets the UI offer "reset". */
   defaultDays: number[];
 }
@@ -98,6 +136,14 @@ export interface SetupRequest {
   productDomain?: string;
   sendingDomain?: string;
   icpOneLiner?: string;
+  /** Founder background — résumé, prior companies, named roles. Founder-trust proof. */
+  founderCredentials?: string;
+  /** Products / projects you've shipped (free text, e.g. comma-separated). Peer-founder proof. */
+  productPortfolio?: string;
+  /** Notable partners / customers (free text, brand names). Brand-recognition proof. */
+  partners?: string;
+  /** When true, signature appends a literal "Sent from my iPhone" line. */
+  mobileSignature?: boolean;
   llmProvider?: LlmProvider;
   llmModel?: string;
   telemetryEnabled?: boolean;

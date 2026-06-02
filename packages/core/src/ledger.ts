@@ -14,6 +14,16 @@ import type {
 
 const DEFAULT_DB_PATH = join(configDir(), "ledger.sqlite");
 
+/**
+ * Canonical form for matching prospect emails — trim + lowercase. Inbound reply
+ * addresses (cadence inbox poll) are normalized the same way, so a prospect
+ * stored from a mixed-case address still matches when they reply. Applied on
+ * both store (upsertProspect) and every lookup so the two never diverge.
+ */
+function canonEmail(email: string): string {
+  return email.trim().toLowerCase();
+}
+
 export class Ledger {
   private db: Database;
 
@@ -62,6 +72,10 @@ export class Ledger {
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         FOREIGN KEY(prospect_id) REFERENCES prospects(id)
       );
+      -- sequence_events is read by listColdProspects (MAX(created_at) per
+      -- prospect), per-play send counts, and cadence scans — all by
+      -- prospect_id and/or created_at. Without this it's a full table scan.
+      CREATE INDEX IF NOT EXISTS idx_sequence_events_prospect_created ON sequence_events(prospect_id, created_at);
 
       CREATE TABLE IF NOT EXISTS interviews (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -118,6 +132,9 @@ export class Ledger {
       CREATE UNIQUE INDEX IF NOT EXISTS idx_queue_dedupe ON target_queue(play_name, dedupe_key);
       CREATE INDEX IF NOT EXISTS idx_queue_status ON target_queue(status);
       CREATE INDEX IF NOT EXISTS idx_queue_play ON target_queue(play_name);
+      -- The /queue page filters by (status, play) together; the composite
+      -- serves that pair without falling back to a single-column scan.
+      CREATE INDEX IF NOT EXISTS idx_queue_status_play ON target_queue(status, play_name);
 
       CREATE TABLE IF NOT EXISTS triggers (
         name TEXT PRIMARY KEY,
@@ -159,6 +176,12 @@ export class Ledger {
     // 15 min — long enough for a slow per-target SDK send, short enough that
     // a crashed drain self-heals without a sweeper.
     this.addColumnIfMissing("target_queue", "drain_claimed_at", "TEXT");
+    // v8 (2026-05): persist per-cadence next-step draft so /cadences can
+    // preview the 2nd/3rd email before firing (mirrors /queue's
+    // last_draft_json). JSON envelope = {subject, body, flags, payload,
+    // draftedAt}; cleared on cadence advance.
+    this.addColumnIfMissing("cadence_state", "next_step_draft_json", "TEXT");
+    this.addColumnIfMissing("cadence_state", "next_step_drafted_at", "TEXT");
   }
 
   private addColumnIfMissing(table: string, column: string, type: string): void {
@@ -197,6 +220,8 @@ export class Ledger {
     enrolled_at: string;
     next_due_at: string | null;
     last_polled_at: string | null;
+    next_step_draft_json: string | null;
+    next_step_drafted_at: string | null;
     prospect_email: string | null;
     prospect_name: string | null;
     prospect_company: string | null;
@@ -225,6 +250,8 @@ export class Ledger {
     enrolled_at: string;
     next_due_at: string | null;
     last_polled_at: string | null;
+    next_step_draft_json: string | null;
+    next_step_drafted_at: string | null;
     prospect_email: string | null;
     prospect_name: string | null;
     prospect_company: string | null;
@@ -244,10 +271,14 @@ export class Ledger {
     newStep: number;
     nextDueAt: string | null;
   }): void {
+    // Also clear any persisted next-step draft — it was for the OLD next
+    // step; advancing makes it stale and unsafe to send against the new
+    // step. /cadences will surface a fresh "no preview yet" state.
     this.db
       .prepare(
         `UPDATE cadence_state
-         SET current_step = ?, next_due_at = ?, last_polled_at = datetime('now')
+         SET current_step = ?, next_due_at = ?, last_polled_at = datetime('now'),
+             next_step_draft_json = NULL, next_step_drafted_at = NULL
          WHERE prospect_id = ? AND play_name = ?`,
       )
       .run(input.newStep, input.nextDueAt, input.prospectId, input.playName);
@@ -258,23 +289,96 @@ export class Ledger {
     playName: string;
     status: "active" | "replied" | "breakup" | "completed";
   }): void {
+    // Non-active terminal states clear the persisted draft too — a replied /
+    // breakup / completed cadence shouldn't have a sendable preview hanging
+    // around (the founder might click Send by accident, but the send route
+    // also re-checks status='active', so this is defense in depth).
     this.db
-      .prepare(`UPDATE cadence_state SET status = ? WHERE prospect_id = ? AND play_name = ?`)
-      .run(input.status, input.prospectId, input.playName);
+      .prepare(
+        `UPDATE cadence_state
+         SET status = ?,
+             next_step_draft_json = CASE WHEN ? = 'active' THEN next_step_draft_json ELSE NULL END,
+             next_step_drafted_at = CASE WHEN ? = 'active' THEN next_step_drafted_at ELSE NULL END
+         WHERE prospect_id = ? AND play_name = ?`,
+      )
+      .run(input.status, input.status, input.status, input.prospectId, input.playName);
+  }
+
+  setCadenceDraft(input: {
+    prospectId: number;
+    playName: string;
+    draft: {
+      subject: string;
+      body: string;
+      flags: string[];
+      payload: unknown;
+    };
+  }): void {
+    const draftedAtIso = new Date().toISOString();
+    const json = JSON.stringify({ ...input.draft, draftedAt: draftedAtIso });
+    this.db
+      .prepare(
+        `UPDATE cadence_state
+         SET next_step_draft_json = ?, next_step_drafted_at = ?
+         WHERE prospect_id = ? AND play_name = ?`,
+      )
+      .run(json, draftedAtIso, input.prospectId, input.playName);
+  }
+
+  getCadenceDraft(input: {
+    prospectId: number;
+    playName: string;
+  }): {
+    subject: string;
+    body: string;
+    flags: string[];
+    payload: unknown;
+    draftedAt: string;
+  } | null {
+    const row = this.db
+      .query(
+        `SELECT next_step_draft_json AS j FROM cadence_state
+         WHERE prospect_id = ? AND play_name = ?`,
+      )
+      .get(input.prospectId, input.playName) as { j: string | null } | null;
+    if (!row?.j) return null;
+    try {
+      return JSON.parse(row.j) as {
+        subject: string;
+        body: string;
+        flags: string[];
+        payload: unknown;
+        draftedAt: string;
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  clearCadenceDraft(input: { prospectId: number; playName: string }): void {
+    this.db
+      .prepare(
+        `UPDATE cadence_state
+         SET next_step_draft_json = NULL, next_step_drafted_at = NULL
+         WHERE prospect_id = ? AND play_name = ?`,
+      )
+      .run(input.prospectId, input.playName);
   }
 
   findProspectByEmail(email: string): { id: number } | null {
     return (
-      (this.db.query("SELECT id FROM prospects WHERE email = ?").get(email) as { id: number }) ??
-      null
+      (this.db
+        .query("SELECT id FROM prospects WHERE email = ?")
+        .get(canonEmail(email)) as { id: number }) ?? null
     );
   }
 
   /** Full prospect record by email — used to attach name/company to inbox replies. */
   getProspectByEmail(email: string): ProspectRecord | null {
     return (
-      (this.db.query("SELECT * FROM prospects WHERE email = ?").get(email) as ProspectRecord) ??
-      null
+      (this.db
+        .query("SELECT * FROM prospects WHERE email = ?")
+        .get(canonEmail(email)) as ProspectRecord) ?? null
     );
   }
 
@@ -349,10 +453,13 @@ export class Ledger {
   }
 
   upsertProspect(input: Partial<ProspectRecord> & { email?: string | null }): number {
-    if (input.email) {
-      const existing = this.db
-        .query("SELECT id FROM prospects WHERE email = ?")
-        .get(input.email) as { id: number } | undefined;
+    // Store the canonical (lowercased) email so reply matching — which
+    // normalizes the inbound from-address the same way — always lands.
+    const email = input.email ? canonEmail(input.email) : null;
+    if (email) {
+      const existing = this.db.query("SELECT id FROM prospects WHERE email = ?").get(email) as
+        | { id: number }
+        | undefined;
       if (existing) return existing.id;
     }
     const stmt = this.db.prepare(`
@@ -361,7 +468,7 @@ export class Ledger {
     `);
     const result = stmt.run(
       input.name ?? null,
-      input.email ?? null,
+      email,
       (input as { phone?: string | null }).phone ?? null,
       input.company ?? null,
       input.linkedin_url ?? null,
