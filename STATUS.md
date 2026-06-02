@@ -155,7 +155,7 @@ Last manual update: **2026-05-29** · Bun **1.3.13** · OneShot SDK **0.16.2**
 | `bun run --cwd apps/web build` | ✅ ~1850 modules transformed, ~300 kB main chunk gzip ~94 kB |
 | `bun run lint`                 | ✅ 0 warnings, 0 errors (oxlint, 109 files)                  |
 | `bun run fmt:check`            | ✅ all 184 files pass oxfmt                                  |
-| `bun run test`                 | ✅ 585/585 vitest cases passing (43 test files)              |
+| `bun run test`                 | ✅ 630/630 vitest cases passing (48 test files)              |
 | `bun run cli -- doctor`        | ✅ all systems go                                            |
 
 ---

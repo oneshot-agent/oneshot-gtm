@@ -241,7 +241,7 @@ Bun-native, all the modern picks:
 
 - **Runtime**: [Bun](https://bun.sh) 1.3+
 - **Monorepo**: [Turborepo](https://turbo.build) + Bun catalog for shared dep versions
-- **Test**: [Vitest 4](https://vitest.dev) (585 cases across 43 files; ledger, lint, finder pipelines, strategist endpoint, web bucketing helpers)
+- **Test**: [Vitest 4](https://vitest.dev) (630 cases across 48 files; ledger, lint, finder pipelines, play registry, strategist endpoint, web bucketing helpers)
 - **Lint / format**: [oxlint](https://oxc.rs) + [oxfmt](https://oxc.rs) (Rust-based, ~50× faster than ESLint/Prettier)
 - **TypeScript**: 6.x with `verbatimModuleSyntax`, `noUncheckedIndexedAccess`, `noImplicitOverride`
 - **Web**: [Vite 8](https://vite.dev) + [React 19](https://react.dev) + [TanStack Router](https://tanstack.com/router) + [TanStack Query](https://tanstack.com/query) + [Base UI](https://base-ui.com) primitives + [Tailwind 4](https://tailwindcss.com) + [class-variance-authority](https://cva.style) + [lucide-react](https://lucide.dev)
@@ -270,7 +270,6 @@ oneshot-gtm/
 │   │                drain dispatcher, trigger registry)
 │   ├── prompts/     Markdown prompt files (humanizer canon + per-play + per-extract prompts)
 │   ├── doctor/      Wallet + ledger + key health checks
-│   ├── ledger/      Empty placeholder for future ledger-only consumers
 │   └── shared-types/ Wire types shared across CLI / server / web
 ├── examples/        Runnable target files for every motion play
 ├── launch/          Draft launch posts (HN, Bookface, IH, Twitter/X, Reddit)
@@ -294,7 +293,7 @@ bun run typecheck        # tsc --noEmit across cli + server + packages
 bun run lint             # oxlint
 bun run fmt              # oxfmt --write
 bun run fmt:check        # CI-style format check
-bun run test             # vitest run (585 cases)
+bun run test             # vitest run (630 cases)
 bun run cli -- doctor    # smoke check
 ```
 

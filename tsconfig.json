@@ -8,7 +8,6 @@
       "@oneshot-gtm/plays": ["./packages/plays/src/index.ts"],
       "@oneshot-gtm/doctor": ["./packages/doctor/src/index.ts"],
       "@oneshot-gtm/find": ["./packages/find/src/index.ts"],
-      "@oneshot-gtm/ledger": ["./packages/ledger/src/index.ts"],
       "@oneshot-gtm/shared-types": ["./packages/shared-types/src/index.ts"]
     }
   },
