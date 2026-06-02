@@ -9,7 +9,7 @@ import {
   type ProspectRecord,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
-import { signatureDirective } from "./_lib.ts";
+import { humanizeDraft, lintEmail, signatureDirective, socialProofBlock } from "./_lib.ts";
 
 export interface CadenceContext {
   prospect: ProspectRecord;
@@ -49,6 +49,69 @@ const playSequences = new Map<string, Sequence>();
 
 export function registerSequence(seq: Sequence): void {
   playSequences.set(seq.playName, seq);
+}
+
+/**
+ * "Does this label name a breakup step?" — single source of truth for the
+ * label-substring check. Used by isBreakupStepAt for the cadence-final
+ * semantic check AND by /plays for per-step rendering where each row is
+ * already a step.
+ */
+export function isBreakupLabel(label: string | null | undefined): boolean {
+  return Boolean(label && label.toLowerCase().includes("breakup"));
+}
+
+/**
+ * Centralized breakup-step detection for cadence-progress semantics. A
+ * step is "the breakup" iff (a) it sits at the END of the sequence and
+ * (b) its label is a breakup label. Both clauses matter: the
+ * breakup-email PROMPT is also used as accelerator-batch's only
+ * follow-up — at index 0 — and that one isn't semantically a breakup
+ * for cadence UX purposes (no value follow-up preceded it).
+ */
+export function isBreakupStepAt(seq: Sequence, stepEntryIndex: number): boolean {
+  if (stepEntryIndex !== seq.steps.length - 1) return false;
+  return isBreakupLabel(seq.steps[stepEntryIndex]?.label);
+}
+
+export interface NextStepInfo {
+  /** Label of the next step (e.g. "value follow-up", "breakup"). */
+  label: string | null;
+  /** True when the next step is the final breakup. */
+  isBreakup: boolean;
+  /** 1-based index of the next step within the follow-up steps array. */
+  nextStepNumber: number;
+}
+
+/**
+ * Number of follow-up steps registered for this play (excludes day-0).
+ * Always returns the registered total regardless of current_step — the UI
+ * uses `playFollowupCount + 1` for the StepProgress dot count which should
+ * be stable for completed cadences too.
+ */
+export function playFollowupCount(playName: string): number {
+  return effectiveSequence(playName)?.steps.length ?? 0;
+}
+
+/**
+ * Given a play + the cadence's current_step, describe the NEXT step
+ * scheduled to fire. Returns null when the cadence is at or past the
+ * last step (no more steps to send). Source of truth for both the
+ * server's CadenceView and the /cadences UI — avoids hardcoded
+ * play→step-count Records in the web layer.
+ */
+export function nextStepInfo(playName: string, currentStep: number): NextStepInfo | null {
+  const seq = effectiveSequence(playName);
+  if (!seq) return null;
+  const nextIndex = currentStep + 1;
+  const stepEntryIndex = nextIndex - 1;
+  if (stepEntryIndex < 0 || stepEntryIndex >= seq.steps.length) return null;
+  const step = seq.steps[stepEntryIndex];
+  return {
+    label: step?.label ?? null,
+    isBreakup: isBreakupStepAt(seq, stepEntryIndex),
+    nextStepNumber: nextIndex,
+  };
 }
 
 export function getSequence(playName: string): Sequence | undefined {
@@ -117,7 +180,6 @@ export async function advanceCadence(
   opts: { dryRun: boolean } = { dryRun: false },
 ): Promise<AdvanceResult> {
   const ledger = getLedger();
-  const cfg = loadConfig();
   const result: AdvanceResult = {
     polled: 0,
     repliesDetected: 0,
@@ -171,139 +233,362 @@ export async function advanceCadence(
   const due = ledger.listActiveCadences({ dueByIso: nowIso });
 
   for (const cad of due) {
-    const seq = effectiveSequence(cad.play_name);
-    if (!seq) {
-      result.details.push({
-        prospectEmail: cad.prospect_email,
-        playName: cad.play_name,
-        action: "skipped",
-        note: "no registered sequence",
-        receiptIds: [],
-      });
-      continue;
-    }
-    const nextIndex = cad.current_step + 1; // current_step starts at 0 (initial send), step 1 is first follow-up
-    const stepEntryIndex = nextIndex - 1; // sequence array is 0-indexed for follow-ups
-    if (stepEntryIndex < 0 || stepEntryIndex >= seq.steps.length) {
-      ledger.setCadenceStatus({
-        prospectId: cad.prospect_id,
-        playName: cad.play_name,
-        status: "completed",
-      });
-      result.completed++;
-      result.details.push({
-        prospectEmail: cad.prospect_email,
-        playName: cad.play_name,
-        action: "completed",
-        receiptIds: [],
-      });
-      continue;
-    }
-    const step = seq.steps[stepEntryIndex];
-    if (!step) continue;
-
-    const prospect = loadProspect(cad.prospect_id);
-    if (!prospect) continue;
-
-    const built = await step.builder({
-      prospect,
-      cfg,
-      metadata: {},
+    const out = await runCadenceStepForProspect({
+      prospectId: cad.prospect_id,
+      playName: cad.play_name,
+      dryRun: opts.dryRun,
     });
-
-    if (!built) {
-      // Skip this step; advance to next.
-      const next = seq.steps[stepEntryIndex + 1];
-      ledger.advanceCadence({
-        prospectId: cad.prospect_id,
-        playName: cad.play_name,
-        newStep: nextIndex,
-        nextDueAt: next
-          ? new Date(Date.now() + next.dayOffset * 24 * 3600 * 1000).toISOString()
-          : null,
-      });
-      if (!next) {
-        ledger.setCadenceStatus({
-          prospectId: cad.prospect_id,
-          playName: cad.play_name,
-          status: "completed",
-        });
-        result.completed++;
-      }
-      result.details.push({
-        prospectEmail: cad.prospect_email,
-        playName: cad.play_name,
-        action: "skipped",
-        note: step.label ?? `step ${nextIndex} builder returned null`,
-        receiptIds: [],
-      });
-      continue;
-    }
-
-    const receiptIds: number[] = [];
-    if (!opts.dryRun) {
-      const channelOutcome = await dispatchStep({
-        playName: cad.play_name,
-        prospectId: cad.prospect_id,
-        prospectEmail: cad.prospect_email,
-        stepIndex: nextIndex,
-        step,
-        payload: built,
-        label: step.label,
-      });
-      if (channelOutcome.skipReason) {
-        result.details.push({
-          prospectEmail: cad.prospect_email,
-          playName: cad.play_name,
-          action: "skipped",
-          note: channelOutcome.skipReason,
-          receiptIds: [],
-        });
-        continue;
-      }
-      receiptIds.push(...channelOutcome.receiptIds);
-    }
-
-    const isBreakup =
-      stepEntryIndex === seq.steps.length - 1 && step.label?.toLowerCase().includes("breakup");
-    if (isBreakup) {
-      ledger.setCadenceStatus({
-        prospectId: cad.prospect_id,
-        playName: cad.play_name,
-        status: "breakup",
-      });
-      result.breakups++;
-    } else {
-      const next = seq.steps[stepEntryIndex + 1];
-      ledger.advanceCadence({
-        prospectId: cad.prospect_id,
-        playName: cad.play_name,
-        newStep: nextIndex,
-        nextDueAt: next
-          ? new Date(Date.now() + next.dayOffset * 24 * 3600 * 1000).toISOString()
-          : null,
-      });
-      if (!next) {
-        ledger.setCadenceStatus({
-          prospectId: cad.prospect_id,
-          playName: cad.play_name,
-          status: "completed",
-        });
-        result.completed++;
-      }
-    }
-
-    result.stepsExecuted++;
     result.details.push({
       prospectEmail: cad.prospect_email,
       playName: cad.play_name,
-      action: "step-sent",
-      note: step.label ?? `step ${nextIndex}`,
-      receiptIds,
+      action: out.action,
+      ...(out.note ? { note: out.note } : {}),
+      receiptIds: out.receiptIds,
     });
+    if (out.action === "step-sent") result.stepsExecuted++;
+    else if (out.action === "breakup") result.breakups++;
+    else if (out.action === "completed") result.completed++;
   }
 
   return result;
+}
+
+export interface RunCadenceStepOptions {
+  prospectId: number;
+  playName: string;
+  dryRun: boolean;
+  /** Skip the step's builder and send this verbatim (mirrors /queue's
+      send-this-one — used by the /cadences UI after a Preview round-trip). */
+  persistedPayload?: StepPayload;
+}
+
+export interface RunCadenceStepResult {
+  action: AdvanceResult["details"][number]["action"];
+  payload: StepPayload | null;
+  receiptIds: number[];
+  note?: string;
+}
+
+/**
+ * Per-prospect cadence step runner. Single source of truth for both the
+ * batch `advanceCadence` (CLI) and the per-row /cadences UI (preview + send).
+ * Caller decides dryRun (no send) or persistedPayload (send a previously
+ * built draft verbatim). On a successful send, advances `current_step`
+ * to `nextIndex` and sets `next_due_at` to the next step's offset; clears
+ * any persisted preview draft via ledger.advanceCadence.
+ */
+export async function runCadenceStepForProspect(
+  opts: RunCadenceStepOptions,
+): Promise<RunCadenceStepResult> {
+  const ledger = getLedger();
+  const cfg = loadConfig();
+  const cadence = ledger
+    .listAllCadences()
+    .find((c) => c.prospect_id === opts.prospectId && c.play_name === opts.playName);
+  if (!cadence) {
+    return { action: "skipped", payload: null, receiptIds: [], note: "no cadence" };
+  }
+  if (cadence.status !== "active") {
+    return {
+      action: "skipped",
+      payload: null,
+      receiptIds: [],
+      note: `cadence is ${cadence.status}`,
+    };
+  }
+  const seq = effectiveSequence(opts.playName);
+  if (!seq) {
+    return { action: "skipped", payload: null, receiptIds: [], note: "no registered sequence" };
+  }
+  const nextIndex = cadence.current_step + 1;
+  const stepEntryIndex = nextIndex - 1;
+  if (stepEntryIndex < 0 || stepEntryIndex >= seq.steps.length) {
+    ledger.setCadenceStatus({
+      prospectId: opts.prospectId,
+      playName: opts.playName,
+      status: "completed",
+    });
+    return { action: "completed", payload: null, receiptIds: [] };
+  }
+  const step = seq.steps[stepEntryIndex];
+  if (!step) return { action: "skipped", payload: null, receiptIds: [] };
+
+  const prospect = loadProspect(opts.prospectId);
+  if (!prospect) {
+    return { action: "skipped", payload: null, receiptIds: [], note: "prospect not found" };
+  }
+
+  const built: StepPayload | null = opts.persistedPayload
+    ? opts.persistedPayload
+    : await step.builder({ prospect, cfg, metadata: {} });
+
+  if (!built) {
+    const next = seq.steps[stepEntryIndex + 1];
+    ledger.advanceCadence({
+      prospectId: opts.prospectId,
+      playName: opts.playName,
+      newStep: nextIndex,
+      nextDueAt: next
+        ? new Date(Date.now() + next.dayOffset * 24 * 3600 * 1000).toISOString()
+        : null,
+    });
+    if (!next) {
+      ledger.setCadenceStatus({
+        prospectId: opts.prospectId,
+        playName: opts.playName,
+        status: "completed",
+      });
+      return {
+        action: "completed",
+        payload: null,
+        receiptIds: [],
+        note: step.label ?? `step ${nextIndex} builder returned null`,
+      };
+    }
+    return {
+      action: "skipped",
+      payload: null,
+      receiptIds: [],
+      note: step.label ?? `step ${nextIndex} builder returned null`,
+    };
+  }
+
+  const receiptIds: number[] = [];
+  if (!opts.dryRun) {
+    const channelOutcome = await dispatchStep({
+      playName: opts.playName,
+      prospectId: opts.prospectId,
+      prospectEmail: cadence.prospect_email,
+      stepIndex: nextIndex,
+      step,
+      payload: built,
+      ...(step.label !== undefined ? { label: step.label } : {}),
+    });
+    if (channelOutcome.skipReason) {
+      return {
+        action: "skipped",
+        payload: built,
+        receiptIds: [],
+        note: channelOutcome.skipReason,
+      };
+    }
+    receiptIds.push(...channelOutcome.receiptIds);
+  }
+
+  if (isBreakupStepAt(seq, stepEntryIndex)) {
+    ledger.setCadenceStatus({
+      prospectId: opts.prospectId,
+      playName: opts.playName,
+      status: "breakup",
+    });
+    return {
+      action: "breakup",
+      payload: built,
+      receiptIds,
+      note: step.label ?? `step ${nextIndex}`,
+    };
+  }
+  const next = seq.steps[stepEntryIndex + 1];
+  ledger.advanceCadence({
+    prospectId: opts.prospectId,
+    playName: opts.playName,
+    newStep: nextIndex,
+    nextDueAt: next
+      ? new Date(Date.now() + next.dayOffset * 24 * 3600 * 1000).toISOString()
+      : null,
+  });
+  if (!next) {
+    ledger.setCadenceStatus({
+      prospectId: opts.prospectId,
+      playName: opts.playName,
+      status: "completed",
+    });
+  }
+  return {
+    action: "step-sent",
+    payload: built,
+    receiptIds,
+    note: step.label ?? `step ${nextIndex}`,
+  };
+}
+
+export interface CadenceStepPreview {
+  subject: string;
+  body: string;
+  flags: string[];
+  payload: StepPayload;
+  draftedAt: string;
+  stepLabel: string | null;
+  isBreakup: boolean;
+}
+
+/**
+ * Build the next step's draft and persist it via setCadenceDraft. Never
+ * sends. Mirrors the /queue regenerate route — the founder reviews on
+ * /cadences, then clicks Send next which calls sendCadenceStep.
+ */
+export async function previewCadenceStep(input: {
+  prospectId: number;
+  playName: string;
+}): Promise<CadenceStepPreview> {
+  const ledger = getLedger();
+  const cfg = loadConfig();
+  const cadence = ledger
+    .listAllCadences()
+    .find((c) => c.prospect_id === input.prospectId && c.play_name === input.playName);
+  if (!cadence) throw new Error("no cadence for that prospect+play");
+  if (cadence.status !== "active") {
+    throw new Error(`cadence is ${cadence.status}, can only preview an active cadence`);
+  }
+  const seq = effectiveSequence(input.playName);
+  if (!seq) throw new Error(`no registered sequence for play '${input.playName}'`);
+  const nextIndex = cadence.current_step + 1;
+  const stepEntryIndex = nextIndex - 1;
+  if (stepEntryIndex < 0 || stepEntryIndex >= seq.steps.length) {
+    throw new Error("no next step (cadence is at or past the last step)");
+  }
+  const step = seq.steps[stepEntryIndex];
+  if (!step) throw new Error("step undefined");
+  const prospect = loadProspect(input.prospectId);
+  if (!prospect) throw new Error("prospect not found");
+  const built = await step.builder({ prospect, cfg, metadata: {} });
+  if (!built) throw new Error("builder returned null — nothing to preview");
+
+  const subject = built.kind === "email" ? built.subject : "(non-email step)";
+  const body =
+    built.kind === "email"
+      ? built.body
+      : built.kind === "sms"
+        ? built.message
+        : built.kind === "voice"
+          ? built.objective
+          : "";
+  const flags = built.kind === "email" ? lintEmail(subject, body, 100) : [];
+  ledger.setCadenceDraft({
+    prospectId: input.prospectId,
+    playName: input.playName,
+    draft: { subject, body, flags, payload: built },
+  });
+  const draft = ledger.getCadenceDraft({
+    prospectId: input.prospectId,
+    playName: input.playName,
+  });
+  const draftedAt = draft?.draftedAt ?? new Date().toISOString();
+  return {
+    subject,
+    body,
+    flags,
+    payload: built,
+    draftedAt,
+    stepLabel: step.label ?? null,
+    isBreakup: isBreakupStepAt(seq, stepEntryIndex),
+  };
+}
+
+/**
+ * Send a previously-previewed cadence step verbatim. Reads the persisted
+ * draft (or 409s if none), dispatches it through runCadenceStepForProspect,
+ * and advances the cadence. The advance clears the persisted draft so a
+ * subsequent Preview rebuilds against the new current_step.
+ */
+export async function sendCadenceStep(input: {
+  prospectId: number;
+  playName: string;
+}): Promise<RunCadenceStepResult> {
+  const ledger = getLedger();
+  const draft = ledger.getCadenceDraft(input);
+  if (!draft) throw new Error("no persisted preview — click Preview first");
+  return runCadenceStepForProspect({
+    prospectId: input.prospectId,
+    playName: input.playName,
+    dryRun: false,
+    persistedPayload: draft.payload as StepPayload,
+  });
+}
+
+export interface BatchItem {
+  prospectId: number;
+  playName: string;
+}
+
+export interface BatchPreviewResult {
+  prospectId: number;
+  playName: string;
+  ok: boolean;
+  preview?: CadenceStepPreview;
+  error?: string;
+}
+
+export interface BatchSendResult {
+  prospectId: number;
+  playName: string;
+  ok: boolean;
+  action?: RunCadenceStepResult["action"];
+  receiptIds?: number[];
+  error?: string;
+}
+
+/**
+ * Serial preview of a list of cadence rows. Each per-prospect failure is
+ * captured in the result array — the batch never throws. Sequential
+ * iteration is deliberate: parallel LLM calls would risk burst rate-limits
+ * and the founder is waiting on us anyway (~10s/row).
+ */
+export async function previewCadenceStepBatch(items: BatchItem[]): Promise<BatchPreviewResult[]> {
+  const out: BatchPreviewResult[] = [];
+  for (const item of items) {
+    try {
+      const preview = await previewCadenceStep(item);
+      out.push({ prospectId: item.prospectId, playName: item.playName, ok: true, preview });
+    } catch (err) {
+      out.push({
+        prospectId: item.prospectId,
+        playName: item.playName,
+        ok: false,
+        error: ((err as Error)?.message ?? "preview failed").slice(0, 120),
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Serial send of a list of previewed cadence rows. Each per-prospect failure
+ * is captured; the batch never throws. Used by `POST /api/cadences/send-batch`
+ * as a background promise — caller returns 202 immediately and the UI sees
+ * progress via subsequent `/api/cadences` refetches (the existing
+ * `advanceCadence` clears `next_step_draft_json` as each row completes).
+ */
+export async function sendCadenceStepBatch(
+  items: BatchItem[],
+  /** Fires after each item resolves (ok OR error) — lets the API layer
+   *  track per-row in-flight state without splitting the iteration. */
+  onItemSettled?: (item: BatchItem, result: BatchSendResult) => void,
+): Promise<BatchSendResult[]> {
+  const out: BatchSendResult[] = [];
+  for (const item of items) {
+    let result: BatchSendResult;
+    try {
+      const r = await sendCadenceStep(item);
+      result = {
+        prospectId: item.prospectId,
+        playName: item.playName,
+        ok: true,
+        action: r.action,
+        receiptIds: r.receiptIds,
+      };
+    } catch (err) {
+      result = {
+        prospectId: item.prospectId,
+        playName: item.playName,
+        ok: false,
+        error: ((err as Error)?.message ?? "send failed").slice(0, 120),
+      };
+    }
+    out.push(result);
+    onItemSettled?.(item, result);
+  }
+  return out;
 }
 
 async function dispatchStep(input: {
@@ -413,6 +698,7 @@ export function buildFollowUpEmail(opts: {
   return async (ctx: CadenceContext) => {
     const system = loadPrompt(opts.promptName) + signatureDirective();
     const priorBlock = buildPriorEmailsBlock(ctx.prospect.id, opts.playName);
+    const proofBlock = socialProofBlock();
     const user = [
       `FOUNDER: ${ctx.cfg.founderName}`,
       `PRODUCT: ${ctx.cfg.productOneLiner}`,
@@ -421,6 +707,7 @@ export function buildFollowUpEmail(opts: {
       `COMPANY: ${ctx.prospect.company ?? "(unknown)"}`,
       ...opts.contextLines,
       ...(priorBlock ? ["", priorBlock] : []),
+      ...(proofBlock ? ["", proofBlock] : []),
     ].join("\n");
     const res = await complete({
       messages: [
@@ -432,42 +719,83 @@ export function buildFollowUpEmail(opts: {
     });
     const parsed = tryParseJsonObject<{ subject?: string; body?: string }>(res.content, {});
     if (!parsed.subject || !parsed.body) return null;
-    return { kind: "email", subject: parsed.subject.trim(), body: parsed.body.trim() };
+    // Apply the deterministic autofixer (em-dash → ", ", curly quotes → ASCII,
+    // emoji strip, etc.) — same humanization the initial-send plays get via
+    // draftEmailFromPrompt. Without this, cadence follow-ups ship em-dashes
+    // raw even though lintEmail flags them.
+    const cleaned = humanizeDraft({
+      subject: parsed.subject.trim(),
+      body: parsed.body.trim(),
+    });
+    return { kind: "email", subject: cleaned.subject, body: cleaned.body };
   };
 }
 
-function buildPriorEmailsBlock(prospectId: number, playName: string): string | null {
-  if (!prospectId) return null;
-  let rows: Array<{ step_index: number; metadata_json: string | null }>;
+export interface PriorStepRow {
+  stepIndex: number;
+  /** "initial send" for step 0; the registered step label for 1+; "follow-up" if missing. */
+  label: string;
+  subject: string;
+  /** Null for legacy pre-v8 rows whose metadata_json didn't include the body. */
+  body: string | null;
+  /** sequence_events.created_at (UTC ISO). */
+  sentAt: string;
+  status: "sent" | "delivered" | "replied";
+}
+
+/**
+ * Parse a prospect's prior sends for a given play into clean per-step rows.
+ * Source of truth shared by the LLM PRIOR-EMAILS injection (which filters
+ * legacy rows) and the /api/cadences view (which surfaces them with a
+ * "body not captured" placeholder).
+ */
+export function getPriorStepsForProspect(
+  prospectId: number,
+  playName: string,
+): PriorStepRow[] {
+  if (!prospectId) return [];
+  let rows: Array<{
+    step_index: number;
+    metadata_json: string | null;
+    status: string;
+    created_at: string;
+  }>;
   try {
     rows = getLedger().listSequenceEventsForProspectPlay(prospectId, playName) as Array<{
       step_index: number;
       metadata_json: string | null;
+      status: string;
+      created_at: string;
     }>;
   } catch {
-    return null;
+    return [];
   }
-  const usable = rows.flatMap((r) => {
+  return rows.map((r) => {
     const meta = tryParseJsonObject<{ subject?: string; body?: string; label?: string }>(
       r.metadata_json ?? "",
       {},
     );
-    if (!meta.body) return [];
-    return [
-      {
-        step: r.step_index,
-        subject: meta.subject ?? "(no subject)",
-        body: meta.body,
-        label: meta.label ?? (r.step_index === 0 ? "initial send" : "follow-up"),
-      },
-    ];
+    return {
+      stepIndex: r.step_index,
+      label: meta.label ?? (r.step_index === 0 ? "initial send" : "follow-up"),
+      subject: meta.subject ?? "(no subject)",
+      body: meta.body ?? null,
+      sentAt: r.created_at,
+      status: (r.status as PriorStepRow["status"]) ?? "sent",
+    };
   });
-  if (usable.length === 0) return null;
+}
+
+function buildPriorEmailsBlock(prospectId: number, playName: string): string | null {
+  const prior = getPriorStepsForProspect(prospectId, playName).filter(
+    (r): r is PriorStepRow & { body: string } => r.body !== null && r.body.length > 0,
+  );
+  if (prior.length === 0) return null;
   const lines = [
     "PRIOR EMAILS (your previous touches to this prospect on this play; do not repeat their angles, hooks, openers, or closes):",
   ];
-  for (const row of usable) {
-    lines.push(`--- step ${row.step} (${row.label}) ---`);
+  for (const row of prior) {
+    lines.push(`--- step ${row.stepIndex} (${row.label}) ---`);
     lines.push(`Subject: ${row.subject}`);
     lines.push(row.body);
   }

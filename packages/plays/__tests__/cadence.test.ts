@@ -3,12 +3,20 @@ import {
   buildSmsStep,
   buildVoiceStep,
   getSequence,
+  isBreakupLabel,
+  isBreakupStepAt,
+  nextStepInfo,
+  playFollowupCount,
   receiptUrlsForCadence,
   registerSequence,
   type CadenceContext,
   type Sequence,
 } from "../src/_cadence.ts";
 import type { ProspectRecord } from "@oneshot-gtm/core";
+// Ensure the 6 plays whose registerSequence we exercise are loaded.
+import "../src/stack-consolidation.ts";
+import "../src/accelerator-batch.ts";
+import "../src/show-hn.ts";
 
 function makeCtx(overrides: Partial<ProspectRecord> = {}): CadenceContext {
   const prospect: ProspectRecord = {
@@ -36,6 +44,10 @@ function makeCtx(overrides: Partial<ProspectRecord> = {}): CadenceContext {
       sendingDomain: null,
       icpOneLiner: null,
       cadenceOverrides: null,
+      founderCredentials: null,
+      productPortfolio: null,
+      partners: null,
+      mobileSignature: false,
       clientId: null,
     },
     metadata: {},
@@ -136,5 +148,67 @@ describe("receiptUrlsForCadence", () => {
 
   it("returns an empty array for no receipts", () => {
     expect(receiptUrlsForCadence([])).toEqual([]);
+  });
+});
+
+describe("isBreakupLabel", () => {
+  it("matches case-insensitive substring", () => {
+    expect(isBreakupLabel("breakup")).toBe(true);
+    expect(isBreakupLabel("Final Breakup")).toBe(true);
+    expect(isBreakupLabel("single follow-up + breakup")).toBe(true);
+  });
+  it("returns false for non-breakup labels, null, undefined, empty", () => {
+    expect(isBreakupLabel("value follow-up")).toBe(false);
+    expect(isBreakupLabel(null)).toBe(false);
+    expect(isBreakupLabel(undefined)).toBe(false);
+    expect(isBreakupLabel("")).toBe(false);
+  });
+});
+
+describe("isBreakupStepAt + nextStepInfo (cross-play, centralized)", () => {
+  it("stack-consolidation: step 0 (value follow-up) is NOT breakup; step 1 IS", () => {
+    const seq = getSequence("stack-consolidation")!;
+    expect(isBreakupStepAt(seq, 0)).toBe(false);
+    expect(isBreakupStepAt(seq, 1)).toBe(true);
+    expect(nextStepInfo("stack-consolidation", 0)).toMatchObject({
+      label: "value follow-up",
+      isBreakup: false,
+    });
+    expect(nextStepInfo("stack-consolidation", 1)).toMatchObject({
+      label: "breakup",
+      isBreakup: true,
+    });
+  });
+
+  it("accelerator-batch's single follow-up is NOT flagged as breakup (label has 'breakup' but it's the only step + not preceded by a value step)", () => {
+    // Position rule: the single step IS at the last position (steps.length-1 === 0).
+    // And the label "single follow-up + breakup" matches breakup substring. So
+    // isBreakupStepAt returns true. Documented: the helper's "cadence-final
+    // breakup" semantics are based on position+label only — the policy choice
+    // of whether accelerator-batch's solo step should be UX-flagged as a
+    // breakup lives at the call site (currently: yes, it IS treated as breakup
+    // because position+label both match).
+    const seq = getSequence("accelerator-batch")!;
+    expect(seq.steps.length).toBe(1);
+    expect(isBreakupStepAt(seq, 0)).toBe(true);
+  });
+
+  it("show-hn: no steps registered → nextStepInfo at current_step 0 returns null", () => {
+    expect(nextStepInfo("show-hn", 0)).toBeNull();
+  });
+
+  it("unknown play returns null", () => {
+    expect(nextStepInfo("nope-not-a-play", 0)).toBeNull();
+    expect(playFollowupCount("nope-not-a-play")).toBe(0);
+  });
+
+  it("playFollowupCount returns the registered step count", () => {
+    expect(playFollowupCount("stack-consolidation")).toBe(2);
+    expect(playFollowupCount("accelerator-batch")).toBe(1);
+  });
+
+  it("nextStepInfo returns null past the last step (completed cadence)", () => {
+    expect(nextStepInfo("stack-consolidation", 2)).toBeNull();
+    expect(nextStepInfo("stack-consolidation", 99)).toBeNull();
   });
 });

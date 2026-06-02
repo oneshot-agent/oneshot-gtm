@@ -1,12 +1,5 @@
-import { deepResearch, getLedger, loadConfig } from "@oneshot-gtm/core";
-import {
-  draftEmailFromPrompt,
-  errorDraft,
-  lintEmail,
-  safeEnrich,
-  sendDraftedEmail,
-} from "./_lib.ts";
-import { buildFollowUpEmail, enrollInCadence, registerSequence } from "./_cadence.ts";
+import { type EmailPlayDef, runEmailPlay, standardEnrich } from "./_run-play.ts";
+import { buildFollowUpEmail, registerSequence } from "./_cadence.ts";
 
 export type AcceleratorCohort =
   | "yc-w26"
@@ -30,12 +23,19 @@ export interface AcceleratorBatchTarget {
   productOneLiner?: string;
   linkedinUrl?: string;
   phone?: string;
+  /** The SENDER's own cohort (peer angle). Stamped onto finder rows from the
+   *  trigger config so the row is self-contained; falls back to the run-level
+   *  option for manually-entered /run targets. */
+  senderCohort?: string;
+  /** Optional time-bound offer for the sender's cohort. Same fallback rules. */
+  freeForCohortOffer?: string;
 }
 
 export interface AcceleratorBatchRunOptions {
   dryRun: boolean;
   targets: AcceleratorBatchTarget[];
-  senderCohort: string;
+  /** Run-level fallback applied to any target that doesn't carry its own. */
+  senderCohort?: string;
   freeForCohortOffer?: string;
 }
 
@@ -50,105 +50,69 @@ export interface AcceleratorBatchDraft {
 
 const PLAY_NAME = "accelerator-batch";
 
-export async function runAcceleratorBatch(
+export function runAcceleratorBatch(
   opts: AcceleratorBatchRunOptions,
 ): Promise<{ drafted: AcceleratorBatchDraft[] }> {
-  const cfg = loadConfig();
-  if (!cfg.founderName || !cfg.productOneLiner) {
-    throw new Error("founder profile incomplete. Run: oneshot-gtm config founder");
-  }
-  const drafted: AcceleratorBatchDraft[] = [];
-
-  for (const target of opts.targets) {
-   try {
-    const receiptIds: number[] = [];
-
-    // Enrich on both preview and real send (cached by email) so the reviewed
-    // draft is personalized; the heavier deepResearch stays real-send only.
-    const enr = await safeEnrich(
-      {
-        ...(target.email ? { email: target.email } : {}),
-        ...(target.linkedinUrl ? { linkedinUrl: target.linkedinUrl } : {}),
-        name: target.name,
-      },
-      { playName: PLAY_NAME },
-    );
-    if (enr.receiptId) receiptIds.push(enr.receiptId);
-    let dossier = JSON.stringify(enr.result, null, 2).slice(0, 3500);
-
-    if (!opts.dryRun) {
-      if (target.launchUrl) {
-        const research = await deepResearch(
-          {
-            topic: `Recent public work and decisions by ${target.name} at ${target.company} (${target.cohort}). Pull launch context from ${target.launchUrl}.`,
-            depth: "quick",
-          },
-          { playName: PLAY_NAME },
-        );
-        receiptIds.push(research.receiptId);
-        dossier += "\n\n---\n\n" + JSON.stringify(research.result, null, 2).slice(0, 4000);
-      }
-    }
-
-    const draft = await draftEmailFromPrompt({
-      promptName: "accelerator-batch-email",
-      inputBlock: [
+  // senderCohort / freeForCohortOffer are read target-first (finder rows carry
+  // their own, stamped from trigger config) with the run-level option as a
+  // fallback for manually-entered /run targets. Built per-call to close over
+  // that fallback.
+  const senderCohortFor = (t: AcceleratorBatchTarget): string =>
+    (t.senderCohort?.trim() || opts.senderCohort || "").trim();
+  const offerFor = (t: AcceleratorBatchTarget): string | undefined =>
+    t.freeForCohortOffer ?? opts.freeForCohortOffer;
+  const def: EmailPlayDef<AcceleratorBatchTarget> = {
+    playName: PLAY_NAME,
+    promptName: "accelerator-batch-email",
+    maxBodyWords: 100,
+    enrollCadence: true,
+    toEmail: (t) => t.email,
+    // Enrich on both preview and real send (cached by email); deepResearch is
+    // real-send only AND only when a launch URL is present to anchor it.
+    prepare: (t, dryRun) =>
+      standardEnrich({
+        playName: PLAY_NAME,
+        enrichInput: {
+          ...(t.email ? { email: t.email } : {}),
+          ...(t.linkedinUrl ? { linkedinUrl: t.linkedinUrl } : {}),
+          name: t.name,
+        },
+        enrichSlice: 3500,
+        ...(!dryRun && t.launchUrl
+          ? {
+              research: {
+                topic: `Recent public work and decisions by ${t.name} at ${t.company} (${t.cohort}). Pull launch context from ${t.launchUrl}.`,
+              },
+            }
+          : {}),
+      }),
+    buildInputBlock: (t, prep, cfg) =>
+      [
         `FOUNDER: ${cfg.founderName}`,
         `PRODUCT: ${cfg.productOneLiner}`,
-        `SENDER COHORT: ${opts.senderCohort}`,
-        `PROSPECT: ${target.name} at ${target.company}`,
-        `PROSPECT COHORT: ${target.cohort}`,
-        `PROSPECT PRODUCT: ${target.productOneLiner ?? "(unknown)"}`,
-        `LAUNCH URL: ${target.launchUrl ?? "(none)"}`,
-        `FREE-FOR-COHORT OFFER: ${opts.freeForCohortOffer ?? "(no active offer for this cohort)"}`,
-        `DOSSIER:\n${dossier || "(dry-run; rely on the cohort match only)"}`,
+        `SENDER COHORT: ${senderCohortFor(t) || "(unspecified)"}`,
+        `PROSPECT: ${t.name} at ${t.company}`,
+        `PROSPECT COHORT: ${t.cohort}`,
+        `PROSPECT PRODUCT: ${t.productOneLiner ?? "(unknown)"}`,
+        `LAUNCH URL: ${t.launchUrl ?? "(none)"}`,
+        `FREE-FOR-COHORT OFFER: ${offerFor(t) ?? "(no active offer for this cohort)"}`,
+        `DOSSIER:\n${prep.dossier || "(dry-run; rely on the cohort match only)"}`,
       ].join("\n"),
-    });
+    prospectMeta: (t) => ({
+      name: t.name,
+      email: t.email,
+      company: t.company,
+      linkedin_url: t.linkedinUrl ?? null,
+      phone: t.phone ?? null,
+      source: `accelerator-${t.cohort}`,
+    }),
+    metadata: (t) => ({
+      senderCohort: senderCohortFor(t),
+      prospectCohort: t.cohort,
+    }),
+  };
 
-    const flags = lintEmail(draft.subject, draft.body, 100);
-
-    const send = await sendDraftedEmail({
-      playName: PLAY_NAME,
-      to: target.email,
-      draft,
-      flags,
-      prospectMeta: {
-        name: target.name,
-        email: target.email,
-        company: target.company,
-        linkedin_url: target.linkedinUrl ?? null,
-        phone: target.phone ?? null,
-        source: `accelerator-${target.cohort}`,
-      },
-      metadata: {
-        senderCohort: opts.senderCohort,
-        prospectCohort: target.cohort,
-      },
-      dryRun: opts.dryRun,
-    });
-
-    if (send.sent) {
-      const ledger = getLedger();
-      const prospect = ledger.findProspectByEmail(target.email);
-      if (prospect) {
-        enrollInCadence({ prospectId: prospect.id, playName: PLAY_NAME });
-      }
-    }
-
-    drafted.push({
-      target,
-      subject: draft.subject,
-      body: draft.body,
-      receiptIds: [...receiptIds, ...send.receiptIds],
-      sent: send.sent,
-      flags,
-    });
-   } catch (err) {
-    drafted.push({ target, ...errorDraft((err as Error)?.message) });
-   }
-  }
-
-  return { drafted };
+  return runEmailPlay(def, opts);
 }
 
 registerSequence({

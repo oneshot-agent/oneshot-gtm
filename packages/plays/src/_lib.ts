@@ -195,16 +195,48 @@ export function signatureDirective(): string {
   const domain = (cfg.productDomain ?? "").trim();
   if (!domain) return "";
   const name = (cfg.founderName ?? "").trim() || "[founder name]";
+  const mobile = cfg.mobileSignature === true;
+  const sigLines = [name, domain];
+  if (mobile) sigLines.push("Sent from my iPhone");
   return [
     "",
     "",
     "## Signature (binding — overrides any sign-off rule above)",
-    "End the email with the founder's name, then their domain on the very next line:",
+    mobile
+      ? "End the email with the founder's name, then their domain, then a literal 'Sent from my iPhone' line. Three lines total, in this order:"
+      : "End the email with the founder's name, then their domain on the very next line:",
     "",
-    name,
-    domain,
+    ...sigLines,
     "",
     `Always include the domain line, even if a rule above says "no links" or "no tagline" — a bare domain beneath the name is the signature, not an inline link. Write it plain: no "https://", no "www.", no hyperlink, no text after it.`,
+    ...(mobile
+      ? [
+          `The "Sent from my iPhone" line is a literal proof-of-human artifact. Always exactly that string, no variation, no quotes.`,
+        ]
+      : []),
+  ].join("\n");
+}
+
+/**
+ * Build a SOCIAL PROOF input block from the founder's three optional config
+ * fields. Returns null when none are set — callers skip the line entirely
+ * so the prompt's "if SOCIAL PROOF is in the inputs" conditional kicks in.
+ * Each prompt should weave AT MOST ONE beat (credentials OR built-with OR
+ * partners) into the email, not stack them.
+ */
+export function socialProofBlock(): string | null {
+  const cfg = loadConfig();
+  const lines: string[] = [];
+  const cred = cfg.founderCredentials?.trim();
+  const built = cfg.productPortfolio?.trim();
+  const partners = cfg.partners?.trim();
+  if (cred) lines.push(`CREDENTIALS: ${cred}`);
+  if (built) lines.push(`PORTFOLIO: ${built}`);
+  if (partners) lines.push(`PARTNERS: ${partners}`);
+  if (lines.length === 0) return null;
+  return [
+    "SOCIAL PROOF (pick the ONE beat that best fits this play — CREDENTIALS for founder-trust, PORTFOLIO for peer-founder, PARTNERS for brand-recognition; never stack two):",
+    ...lines,
   ].join("\n");
 }
 
@@ -298,6 +330,13 @@ export async function sendDraftedEmail(opts: SendDraftedOpts): Promise<SendDraft
 
 export function receiptUrls(receiptIds: number[]): string[] {
   return receiptIds.map(receiptUrlForId);
+}
+
+/** Domain portion of an email address, or undefined if it has no `@`. */
+export function emailDomain(email: string): string | undefined {
+  const at = email.indexOf("@");
+  if (at < 0) return undefined;
+  return email.slice(at + 1);
 }
 
 export interface VerifyAndFilterResult<T> {

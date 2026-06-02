@@ -1,12 +1,6 @@
-import { getLedger, loadConfig } from "@oneshot-gtm/core";
-import {
-  draftEmailFromPrompt,
-  errorDraft,
-  lintEmail,
-  safeEnrich,
-  sendDraftedEmail,
-} from "./_lib.ts";
-import { buildFollowUpEmail, enrollInCadence, registerSequence } from "./_cadence.ts";
+import { emailDomain } from "./_lib.ts";
+import { type EmailPlayDef, runEmailPlay, standardEnrich } from "./_run-play.ts";
+import { buildFollowUpEmail, registerSequence } from "./_cadence.ts";
 
 const PLAY_NAME = "stack-consolidation";
 
@@ -38,90 +32,48 @@ export interface StackConsolidationDraft {
   flags: string[];
 }
 
-export async function runStackConsolidation(
-  opts: StackConsolidationRunOptions,
-): Promise<{ drafted: StackConsolidationDraft[] }> {
-  const cfg = loadConfig();
-  if (!cfg.founderName || !cfg.productOneLiner) {
-    throw new Error("founder profile incomplete. Run: oneshot-gtm config founder");
-  }
-  const drafted: StackConsolidationDraft[] = [];
-
-  for (const t of opts.targets) {
-   try {
-    const receiptIds: number[] = [];
-
-    // Enrich on both preview and real send so the reviewed draft is
-    // personalized. safeEnrich is cached by email, so repeated previews / a
-    // later verbatim send reuse the same lookup (no extra ~70s or spend).
-    const enr = await safeEnrich(
-      {
+const stackConsolidationDef: EmailPlayDef<StackConsolidationTarget> = {
+  playName: PLAY_NAME,
+  promptName: "stack-consolidation-email",
+  maxBodyWords: 100,
+  enrollCadence: true,
+  toEmail: (t) => t.email,
+  // Enrich on both preview and real send (cached by email). No deepResearch —
+  // the manifest-derived vendor stack is the load-bearing signal here.
+  prepare: (t) =>
+    standardEnrich({
+      playName: PLAY_NAME,
+      enrichInput: {
         ...(t.email ? { email: t.email } : {}),
         name: t.name,
-        companyDomain: extractDomain(t.email),
+        companyDomain: emailDomain(t.email),
       },
-      { playName: PLAY_NAME },
-    );
-    if (enr.receiptId) receiptIds.push(enr.receiptId);
-    const dossier = JSON.stringify(enr.result, null, 2).slice(0, 3500);
+      enrichSlice: 3500,
+    }),
+  buildInputBlock: (t, prep, cfg) =>
+    [
+      `FOUNDER: ${cfg.founderName}`,
+      `PRODUCT: ${cfg.productOneLiner}`,
+      `PROSPECT: ${t.name} at ${t.company}`,
+      `STACK: ${t.vendorStack}`,
+      `YOUR EDGE: ${t.yourEdge}`,
+      `DOSSIER:\n${prep.dossier || "(dry-run)"}`,
+    ].join("\n"),
+  prospectMeta: (t) => ({
+    name: t.name,
+    email: t.email,
+    company: t.company,
+    linkedin_url: t.linkedinUrl ?? null,
+    phone: t.phone ?? null,
+    source: "stack-consolidation",
+  }),
+  metadata: (t) => ({ vendorStack: t.vendorStack, evidenceUrl: t.evidenceUrl ?? null }),
+};
 
-    const draft = await draftEmailFromPrompt({
-      promptName: "stack-consolidation-email",
-      inputBlock: [
-        `FOUNDER: ${cfg.founderName}`,
-        `PRODUCT: ${cfg.productOneLiner}`,
-        `PROSPECT: ${t.name} at ${t.company}`,
-        `STACK: ${t.vendorStack}`,
-        `YOUR EDGE: ${t.yourEdge}`,
-        `DOSSIER:\n${dossier || "(dry-run)"}`,
-      ].join("\n"),
-    });
-
-    const flags = lintEmail(draft.subject, draft.body, 100);
-
-    const send = await sendDraftedEmail({
-      playName: PLAY_NAME,
-      to: t.email,
-      draft,
-      flags,
-      prospectMeta: {
-        name: t.name,
-        email: t.email,
-        company: t.company,
-        linkedin_url: t.linkedinUrl ?? null,
-        phone: t.phone ?? null,
-        source: "stack-consolidation",
-      },
-      metadata: { vendorStack: t.vendorStack, evidenceUrl: t.evidenceUrl ?? null },
-      dryRun: opts.dryRun,
-    });
-
-    if (send.sent) {
-      const ledger = getLedger();
-      const prospect = ledger.findProspectByEmail(t.email);
-      if (prospect) enrollInCadence({ prospectId: prospect.id, playName: PLAY_NAME });
-    }
-
-    drafted.push({
-      target: t,
-      subject: draft.subject,
-      body: draft.body,
-      receiptIds: [...receiptIds, ...send.receiptIds],
-      sent: send.sent,
-      flags,
-    });
-   } catch (err) {
-    drafted.push({ target: t, ...errorDraft((err as Error)?.message) });
-   }
-  }
-
-  return { drafted };
-}
-
-function extractDomain(email: string): string | undefined {
-  const at = email.indexOf("@");
-  if (at < 0) return undefined;
-  return email.slice(at + 1);
+export function runStackConsolidation(
+  opts: StackConsolidationRunOptions,
+): Promise<{ drafted: StackConsolidationDraft[] }> {
+  return runEmailPlay(stackConsolidationDef, opts);
 }
 
 registerSequence({

@@ -1,11 +1,4 @@
-import { deepResearch, loadConfig } from "@oneshot-gtm/core";
-import {
-  draftEmailFromPrompt,
-  errorDraft,
-  lintEmail,
-  safeEnrich,
-  sendDraftedEmail,
-} from "./_lib.ts";
+import { type EmailPlayDef, runEmailPlay, standardEnrich } from "./_run-play.ts";
 export { receiptUrls } from "./_lib.ts";
 
 export interface ShowHnTarget {
@@ -36,83 +29,48 @@ export interface ShowHnRunResult {
 
 const PLAY_NAME = "show-hn";
 
-export async function runShowHn(opts: ShowHnRunOptions): Promise<ShowHnRunResult> {
-  const cfg = loadConfig();
-  if (!cfg.founderName || !cfg.productOneLiner) {
-    throw new Error("founder profile incomplete. Run: oneshot-gtm config founder");
-  }
-  const drafted: ShowHnRunResult["drafted"] = [];
-
-  for (const target of opts.targets) {
-   try {
-    const receiptIds: number[] = [];
-
-    // Enrich on both preview and real send (cached by email) so the reviewed
-    // draft is personalized; the heavier deepResearch stays real-send only.
-    const enr = await safeEnrich(
-      { email: target.founderEmail, name: target.founderName },
-      { playName: PLAY_NAME },
-    );
-    if (enr.receiptId) receiptIds.push(enr.receiptId);
-    let dossier = JSON.stringify(enr.result, null, 2).slice(0, 3500);
-
-    if (!opts.dryRun) {
-      const research = await deepResearch(
-        {
-          topic: `Recent public work and engineering decisions by ${target.founderName} on ${target.postTitle}`,
-          depth: "quick",
-        },
-        { playName: PLAY_NAME },
-      );
-      receiptIds.push(research.receiptId);
-      dossier += "\n\n---\n\n" + JSON.stringify(research.result, null, 2).slice(0, 4000);
-    }
-
-    const draft = await draftEmailFromPrompt({
-      promptName: "show-hn-email",
-      inputBlock: [
-        `FOUNDER: ${cfg.founderName}`,
-        `PRODUCT: ${cfg.productOneLiner}`,
-        `SHOW HN: ${target.postTitle}`,
-        `URL: ${target.postUrl}`,
-        `HOOK: ${target.hookSummary}`,
-        `DOSSIER:\n${dossier || "(dry-run; rely on the hook only)"}`,
-      ].join("\n"),
-    });
-
-    const flags = lintEmail(draft.subject, draft.body, 90);
-
-    const send = await sendDraftedEmail({
+const showHnDef: EmailPlayDef<ShowHnTarget> = {
+  playName: PLAY_NAME,
+  promptName: "show-hn-email",
+  maxBodyWords: 90,
+  toEmail: (t) => t.founderEmail,
+  // Enrich on both preview and real send (cached by email) so the reviewed
+  // draft is personalized; the heavier deepResearch stays real-send only.
+  prepare: (t, dryRun) =>
+    standardEnrich({
       playName: PLAY_NAME,
-      to: target.founderEmail,
-      draft,
-      flags,
-      prospectMeta: {
-        name: target.founderName,
-        email: target.founderEmail,
-        company: extractCompany(target.postTitle),
-        linkedin_url: target.linkedinUrl ?? null,
-        phone: target.phone ?? null,
-        source: "show-hn",
-      },
-      metadata: { postUrl: target.postUrl, postTitle: target.postTitle },
-      dryRun: opts.dryRun,
-    });
+      enrichInput: { email: t.founderEmail, name: t.founderName },
+      enrichSlice: 3500,
+      ...(dryRun
+        ? {}
+        : {
+            research: {
+              topic: `Recent public work and engineering decisions by ${t.founderName} on ${t.postTitle}`,
+            },
+          }),
+    }),
+  buildInputBlock: (t, prep, cfg) =>
+    [
+      `FOUNDER: ${cfg.founderName}`,
+      `PRODUCT: ${cfg.productOneLiner}`,
+      `SHOW HN: ${t.postTitle}`,
+      `URL: ${t.postUrl}`,
+      `HOOK: ${t.hookSummary}`,
+      `DOSSIER:\n${prep.dossier || "(dry-run; rely on the hook only)"}`,
+    ].join("\n"),
+  prospectMeta: (t) => ({
+    name: t.founderName,
+    email: t.founderEmail,
+    company: extractCompany(t.postTitle),
+    linkedin_url: t.linkedinUrl ?? null,
+    phone: t.phone ?? null,
+    source: "show-hn",
+  }),
+  metadata: (t) => ({ postUrl: t.postUrl, postTitle: t.postTitle }),
+};
 
-    drafted.push({
-      target,
-      subject: draft.subject,
-      body: draft.body,
-      receiptIds: [...receiptIds, ...send.receiptIds],
-      sent: send.sent,
-      flags,
-    });
-   } catch (err) {
-    drafted.push({ target, ...errorDraft((err as Error)?.message) });
-   }
-  }
-
-  return { drafted };
+export function runShowHn(opts: ShowHnRunOptions): Promise<ShowHnRunResult> {
+  return runEmailPlay(showHnDef, opts);
 }
 
 function extractCompany(title: string): string | null {

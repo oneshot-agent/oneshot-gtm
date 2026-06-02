@@ -1,12 +1,5 @@
-import { deepResearch, getLedger, loadConfig } from "@oneshot-gtm/core";
-import {
-  draftEmailFromPrompt,
-  errorDraft,
-  lintEmail,
-  safeEnrich,
-  sendDraftedEmail,
-} from "./_lib.ts";
-import { buildFollowUpEmail, enrollInCadence, registerSequence } from "./_cadence.ts";
+import { type EmailPlayDef, runEmailPlay, standardEnrich } from "./_run-play.ts";
+import { buildFollowUpEmail, registerSequence } from "./_cadence.ts";
 
 export interface PostFundingTarget {
   name: string;
@@ -36,102 +29,60 @@ export interface PostFundingDraft {
 
 const PLAY_NAME = "post-funding";
 
-export async function runPostFunding(
+const postFundingDef: EmailPlayDef<PostFundingTarget> = {
+  playName: PLAY_NAME,
+  promptName: "post-funding-email",
+  maxBodyWords: 100,
+  enrollCadence: true,
+  toEmail: (t) => t.email,
+  // Enrich on both preview and real send (cached by email) so the reviewed
+  // draft is personalized; the heavier deepResearch stays real-send only.
+  prepare: (t, dryRun) =>
+    standardEnrich({
+      playName: PLAY_NAME,
+      enrichInput: {
+        ...(t.email ? { email: t.email } : {}),
+        ...(t.linkedinUrl ? { linkedinUrl: t.linkedinUrl } : {}),
+        name: t.name,
+      },
+      enrichSlice: 3500,
+      ...(dryRun
+        ? {}
+        : {
+            research: {
+              topic: `${t.company} ${t.round} announcement: open job postings, hiring page, public roadmap, named challenges in the press release. Source: ${t.sourceUrl}`,
+            },
+          }),
+    }),
+  buildInputBlock: (t, prep, cfg) =>
+    [
+      `FOUNDER: ${cfg.founderName}`,
+      `PRODUCT: ${cfg.productOneLiner}`,
+      `PROSPECT: ${t.name} at ${t.company}`,
+      `ROUND: ${t.round} ($${t.amountUsd.toLocaleString()})`,
+      `LEAD INVESTOR: ${t.leadInvestor ?? "(unspecified)"}`,
+      `SOURCE: ${t.sourceUrl}`,
+      `DOSSIER:\n${prep.dossier || "(dry-run; rely on the round details only)"}`,
+    ].join("\n"),
+  prospectMeta: (t) => ({
+    name: t.name,
+    email: t.email,
+    company: t.company,
+    linkedin_url: t.linkedinUrl ?? null,
+    phone: t.phone ?? null,
+    source: "post-funding",
+  }),
+  metadata: (t) => ({
+    round: t.round,
+    amountUsd: t.amountUsd,
+    leadInvestor: t.leadInvestor,
+  }),
+};
+
+export function runPostFunding(
   opts: PostFundingRunOptions,
 ): Promise<{ drafted: PostFundingDraft[] }> {
-  const cfg = loadConfig();
-  if (!cfg.founderName || !cfg.productOneLiner) {
-    throw new Error("founder profile incomplete. Run: oneshot-gtm config founder");
-  }
-  const drafted: PostFundingDraft[] = [];
-
-  for (const target of opts.targets) {
-   try {
-    const receiptIds: number[] = [];
-
-    // Enrich on both preview and real send (cached by email) so the reviewed
-    // draft is personalized; the heavier deepResearch stays real-send only.
-    const enr = await safeEnrich(
-      {
-        ...(target.email ? { email: target.email } : {}),
-        ...(target.linkedinUrl ? { linkedinUrl: target.linkedinUrl } : {}),
-        name: target.name,
-      },
-      { playName: PLAY_NAME },
-    );
-    if (enr.receiptId) receiptIds.push(enr.receiptId);
-    let dossier = JSON.stringify(enr.result, null, 2).slice(0, 3500);
-
-    if (!opts.dryRun) {
-      const research = await deepResearch(
-        {
-          topic: `${target.company} ${target.round} announcement: open job postings, hiring page, public roadmap, named challenges in the press release. Source: ${target.sourceUrl}`,
-          depth: "quick",
-        },
-        { playName: PLAY_NAME },
-      );
-      receiptIds.push(research.receiptId);
-      dossier += "\n\n---\n\n" + JSON.stringify(research.result, null, 2).slice(0, 4000);
-    }
-
-    const draft = await draftEmailFromPrompt({
-      promptName: "post-funding-email",
-      inputBlock: [
-        `FOUNDER: ${cfg.founderName}`,
-        `PRODUCT: ${cfg.productOneLiner}`,
-        `PROSPECT: ${target.name} at ${target.company}`,
-        `ROUND: ${target.round} ($${target.amountUsd.toLocaleString()})`,
-        `LEAD INVESTOR: ${target.leadInvestor ?? "(unspecified)"}`,
-        `SOURCE: ${target.sourceUrl}`,
-        `DOSSIER:\n${dossier || "(dry-run; rely on the round details only)"}`,
-      ].join("\n"),
-    });
-
-    const flags = lintEmail(draft.subject, draft.body, 100);
-
-    const send = await sendDraftedEmail({
-      playName: PLAY_NAME,
-      to: target.email,
-      draft,
-      flags,
-      prospectMeta: {
-        name: target.name,
-        email: target.email,
-        company: target.company,
-        linkedin_url: target.linkedinUrl ?? null,
-        phone: target.phone ?? null,
-        source: "post-funding",
-      },
-      metadata: {
-        round: target.round,
-        amountUsd: target.amountUsd,
-        leadInvestor: target.leadInvestor,
-      },
-      dryRun: opts.dryRun,
-    });
-
-    if (send.sent) {
-      const ledger = getLedger();
-      const prospect = ledger.findProspectByEmail(target.email);
-      if (prospect) {
-        enrollInCadence({ prospectId: prospect.id, playName: PLAY_NAME });
-      }
-    }
-
-    drafted.push({
-      target,
-      subject: draft.subject,
-      body: draft.body,
-      receiptIds: [...receiptIds, ...send.receiptIds],
-      sent: send.sent,
-      flags,
-    });
-   } catch (err) {
-    drafted.push({ target, ...errorDraft((err as Error)?.message) });
-   }
-  }
-
-  return { drafted };
+  return runEmailPlay(postFundingDef, opts);
 }
 
 registerSequence({

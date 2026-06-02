@@ -1,6 +1,6 @@
-import { getLedger, loadConfig, webSearch } from "@oneshot-gtm/core";
-import { draftEmailFromPrompt, errorDraft, lintEmail, sendDraftedEmail } from "./_lib.ts";
-import { enrollInCadence, registerSequence } from "./_cadence.ts";
+import { webSearch } from "@oneshot-gtm/core";
+import { type EmailPlayDef, runEmailPlay } from "./_run-play.ts";
+import { registerSequence } from "./_cadence.ts";
 
 const PLAY_NAME = "podcast-guest";
 
@@ -36,22 +36,20 @@ export interface PodcastGuestDraft {
   flags: string[];
 }
 
-export async function runPodcastGuest(
+export function runPodcastGuest(
   opts: PodcastGuestRunOptions,
 ): Promise<{ drafted: PodcastGuestDraft[] }> {
-  const cfg = loadConfig();
-  if (!cfg.founderName || !cfg.productOneLiner) {
-    throw new Error("founder profile incomplete. Run: oneshot-gtm config founder");
-  }
-  const drafted: PodcastGuestDraft[] = [];
+  const def: EmailPlayDef<PodcastGuestTarget> = {
+    playName: PLAY_NAME,
+    promptName: "podcast-guest-email",
+    maxBodyWords: 90,
+    enrollCadence: true,
+    toEmail: (t) => t.email,
+    prepare: async (t, dryRun) => {
+      const receiptIds: number[] = [];
+      let dossier = "";
 
-  for (const t of opts.targets) {
-   try {
-    const receiptIds: number[] = [];
-    let extra = "";
-
-    if (!opts.dryRun) {
-      if (!opts.skipSearch) {
+      if (!dryRun && !opts.skipSearch) {
         const s = await webSearch(
           {
             query: `${t.name} ${t.podcast} "${t.episodeTitle}" notes OR transcript`,
@@ -60,16 +58,16 @@ export async function runPodcastGuest(
           { playName: PLAY_NAME },
         );
         receiptIds.push(s.receiptId);
-        extra = s.result.results
+        dossier = s.result.results
           .slice(0, 2)
           .map((r) => `- ${r.title}: ${r.description}`)
           .join("\n");
       }
-    }
 
-    const draft = await draftEmailFromPrompt({
-      promptName: "podcast-guest-email",
-      inputBlock: [
+      return { receiptIds, dossier };
+    },
+    buildInputBlock: (t, prep, cfg) =>
+      [
         `FOUNDER: ${cfg.founderName}`,
         `PRODUCT: ${cfg.productOneLiner}`,
         `PROSPECT: ${t.name} at ${t.company}`,
@@ -77,49 +75,20 @@ export async function runPodcastGuest(
         `EPISODE: ${t.episodeTitle}`,
         `HOOK QUOTE: ${t.hookQuote}`,
         `BRIDGE TO YOUR WORK: ${t.bridge ?? "(none — keep the email purely about their point)"}`,
-        `EXTRA CONTEXT FROM SEARCH:\n${extra || "(none)"}`,
+        `EXTRA CONTEXT FROM SEARCH:\n${prep.dossier || "(none)"}`,
       ].join("\n"),
-    });
+    prospectMeta: (t) => ({
+      name: t.name,
+      email: t.email,
+      company: t.company,
+      linkedin_url: t.linkedinUrl ?? null,
+      phone: t.phone ?? null,
+      source: "podcast-guest",
+    }),
+    metadata: (t) => ({ podcast: t.podcast, episodeTitle: t.episodeTitle }),
+  };
 
-    const flags = lintEmail(draft.subject, draft.body, 90);
-
-    const send = await sendDraftedEmail({
-      playName: PLAY_NAME,
-      to: t.email,
-      draft,
-      flags,
-      prospectMeta: {
-        name: t.name,
-        email: t.email,
-        company: t.company,
-        linkedin_url: t.linkedinUrl ?? null,
-        phone: t.phone ?? null,
-        source: "podcast-guest",
-      },
-      metadata: { podcast: t.podcast, episodeTitle: t.episodeTitle },
-      dryRun: opts.dryRun,
-    });
-
-    if (send.sent) {
-      const ledger = getLedger();
-      const prospect = ledger.findProspectByEmail(t.email);
-      if (prospect) enrollInCadence({ prospectId: prospect.id, playName: PLAY_NAME });
-    }
-
-    drafted.push({
-      target: t,
-      subject: draft.subject,
-      body: draft.body,
-      receiptIds: [...receiptIds, ...send.receiptIds],
-      sent: send.sent,
-      flags,
-    });
-   } catch (err) {
-    drafted.push({ target: t, ...errorDraft((err as Error)?.message) });
-   }
-  }
-
-  return { drafted };
+  return runEmailPlay(def, opts);
 }
 
 registerSequence({

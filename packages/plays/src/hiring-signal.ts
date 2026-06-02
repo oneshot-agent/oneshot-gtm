@@ -1,6 +1,6 @@
-import { getLedger, loadConfig, webRead, webSearch } from "@oneshot-gtm/core";
-import { draftEmailFromPrompt, errorDraft, lintEmail, sendDraftedEmail } from "./_lib.ts";
-import { buildFollowUpEmail, enrollInCadence, registerSequence } from "./_cadence.ts";
+import { webRead, webSearch } from "@oneshot-gtm/core";
+import { type EmailPlayDef, runEmailPlay } from "./_run-play.ts";
+import { buildFollowUpEmail, registerSequence } from "./_cadence.ts";
 
 const PLAY_NAME = "hiring-signal";
 
@@ -36,102 +36,73 @@ export interface HiringSignalDraft {
   flags: string[];
 }
 
-export async function runHiringSignal(
+type HiringSignalExtra = { jobPostHook: string };
+
+const NO_HOOK = "(no specific job post phrase scraped)";
+
+export function runHiringSignal(
   opts: HiringSignalRunOptions,
 ): Promise<{ drafted: HiringSignalDraft[] }> {
-  const cfg = loadConfig();
-  if (!cfg.founderName || !cfg.productOneLiner) {
-    throw new Error("founder profile incomplete. Run: oneshot-gtm config founder");
-  }
-  const drafted: HiringSignalDraft[] = [];
+  const def: EmailPlayDef<HiringSignalTarget, HiringSignalExtra> = {
+    playName: PLAY_NAME,
+    promptName: "hiring-signal-email",
+    maxBodyWords: 100,
+    enrollCadence: true,
+    errorExtra: { jobPostHook: "(error)" },
+    toEmail: (t) => t.email,
+    prepare: async (t, dryRun) => {
+      const receiptIds: number[] = [];
+      let jobPostHook = NO_HOOK;
 
-  for (const t of opts.targets) {
-   try {
-    const receiptIds: number[] = [];
-    let jobPostHook = "(no specific job post phrase scraped)";
+      if (!dryRun) {
+        let jobUrl: string | undefined = t.jobPostUrl;
+        if (!jobUrl && !opts.skipScrape) {
+          const search = await webSearch(
+            {
+              query: `${t.company} careers ${t.jobTitle} site:lever.co OR site:greenhouse.io OR site:workable.com OR site:ashbyhq.com`,
+              maxResults: 5,
+            },
+            { playName: PLAY_NAME },
+          );
+          receiptIds.push(search.receiptId);
+          jobUrl = search.result.results[0]?.url;
+        }
 
-    if (!opts.dryRun) {
-      let jobUrl: string | undefined = t.jobPostUrl;
-      if (!jobUrl && !opts.skipScrape) {
-        const search = await webSearch(
-          {
-            query: `${t.company} careers ${t.jobTitle} site:lever.co OR site:greenhouse.io OR site:workable.com OR site:ashbyhq.com`,
-            maxResults: 5,
-          },
-          { playName: PLAY_NAME },
-        );
-        receiptIds.push(search.receiptId);
-        jobUrl = search.result.results[0]?.url;
+        if (jobUrl) {
+          const read = await webRead({ url: jobUrl }, { playName: PLAY_NAME });
+          receiptIds.push(read.receiptId);
+          const md = read.result.markdown ?? "";
+          // Find a load-bearing phrase: first non-trivial sentence after 'About the role' or 'Responsibilities' if present.
+          const hookMatch = md.match(
+            /(?:About the role|Responsibilities|Requirements|What you[' ]?ll do)[^\n]*\n+([\s\S]{40,300})/i,
+          );
+          jobPostHook = (hookMatch?.[1] ?? md.slice(0, 400)).replace(/\s+/g, " ").trim();
+        }
       }
 
-      if (jobUrl) {
-        const read = await webRead({ url: jobUrl }, { playName: PLAY_NAME });
-        receiptIds.push(read.receiptId);
-        const md = read.result.markdown ?? "";
-        // Find a load-bearing phrase: first non-trivial sentence after 'About the role' or 'Responsibilities' if present.
-        const hookMatch = md.match(
-          /(?:About the role|Responsibilities|Requirements|What you[' ]?ll do)[^\n]*\n+([\s\S]{40,300})/i,
-        );
-        jobPostHook = (hookMatch?.[1] ?? md.slice(0, 400)).replace(/\s+/g, " ").trim();
-      }
-    }
-
-    const draft = await draftEmailFromPrompt({
-      promptName: "hiring-signal-email",
-      inputBlock: [
+      return { receiptIds, dossier: "", extra: { jobPostHook } };
+    },
+    buildInputBlock: (t, prep, cfg) =>
+      [
         `FOUNDER: ${cfg.founderName}`,
         `PRODUCT: ${cfg.productOneLiner}`,
         `PROSPECT: ${t.name} at ${t.company}`,
         `JOB TITLE: ${t.jobTitle}`,
-        `JOB POST HOOK (real phrase from the post): ${jobPostHook}`,
+        `JOB POST HOOK (real phrase from the post): ${prep.extra?.jobPostHook ?? NO_HOOK}`,
         `YOUR CLAIM: ${t.yourClaim}`,
       ].join("\n"),
-    });
+    prospectMeta: (t) => ({
+      name: t.name,
+      email: t.email,
+      company: t.company,
+      linkedin_url: t.linkedinUrl ?? null,
+      phone: t.phone ?? null,
+      source: "hiring-signal",
+    }),
+    metadata: (t) => ({ jobTitle: t.jobTitle, jobPostUrl: t.jobPostUrl ?? null }),
+  };
 
-    const flags = lintEmail(draft.subject, draft.body, 100);
-
-    const send = await sendDraftedEmail({
-      playName: PLAY_NAME,
-      to: t.email,
-      draft,
-      flags,
-      prospectMeta: {
-        name: t.name,
-        email: t.email,
-        company: t.company,
-        linkedin_url: t.linkedinUrl ?? null,
-        phone: t.phone ?? null,
-        source: "hiring-signal",
-      },
-      metadata: { jobTitle: t.jobTitle, jobPostUrl: t.jobPostUrl ?? null },
-      dryRun: opts.dryRun,
-    });
-
-    if (send.sent) {
-      const ledger = getLedger();
-      const prospect = ledger.findProspectByEmail(t.email);
-      if (prospect) enrollInCadence({ prospectId: prospect.id, playName: PLAY_NAME });
-    }
-
-    drafted.push({
-      target: t,
-      subject: draft.subject,
-      body: draft.body,
-      jobPostHook,
-      receiptIds: [...receiptIds, ...send.receiptIds],
-      sent: send.sent,
-      flags,
-    });
-   } catch (err) {
-    drafted.push({
-      target: t,
-      jobPostHook: "(error)",
-      ...errorDraft((err as Error)?.message),
-    });
-   }
-  }
-
-  return { drafted };
+  return runEmailPlay(def, opts);
 }
 
 registerSequence({
