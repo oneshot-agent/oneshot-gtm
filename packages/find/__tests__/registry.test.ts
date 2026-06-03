@@ -46,6 +46,7 @@ describe("TRIGGERS registry", () => {
     expect(names).toEqual([
       "accelerator-batch",
       "breakup-revive",
+      "github-stars",
       "github-topics",
       "hiring-signal",
       "job-change",
@@ -70,6 +71,7 @@ describe("TRIGGERS registry", () => {
       "podcast-guest",
       "breakup-revive",
       "github-topics",
+      "github-stars",
       "accelerator-batch",
     ];
     for (const name of optIn) {
@@ -144,6 +146,44 @@ describe("checkReadiness", () => {
     if (!out.ready) expect(out.reason).toMatch(/threw/);
   });
 
+  it("github-stars is not ready with its empty default config (repos required)", () => {
+    const spec = TRIGGERS.find((t) => t.name === "github-stars")!;
+    expect(spec.readiness).toBeDefined();
+    const out = checkReadiness(spec, spec.defaultConfig);
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/repos/);
+  });
+
+  it("github-stars is not ready when repos lack a valid rel", () => {
+    const spec = TRIGGERS.find((t) => t.name === "github-stars")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      repos: [{ repo: "owner/name", rel: "nonsense" }],
+      yourEdge: "we help",
+    });
+    expect(out.ready).toBe(false);
+  });
+
+  it("github-stars is not ready without yourEdge even when repos are set", () => {
+    const spec = TRIGGERS.find((t) => t.name === "github-stars")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      repos: [{ repo: "owner/name", rel: "adjacent" }],
+    });
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/yourEdge/);
+  });
+
+  it("github-stars becomes ready with a valid repo + rel + yourEdge", () => {
+    const spec = TRIGGERS.find((t) => t.name === "github-stars")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      repos: [{ repo: "apollographql/router", rel: "competitor", label: "Apollo" }],
+      yourEdge: "one SDK for the tools they wire up",
+    });
+    expect(out).toEqual({ ready: true });
+  });
+
   it("github-topics is not ready with its empty default config (topics required first)", () => {
     const spec = TRIGGERS.find((t) => t.name === "github-topics")!;
     expect(spec.readiness).toBeDefined();
@@ -215,6 +255,7 @@ describe("checkReadiness", () => {
     // and are excluded here.
     const intentionallyUnreadyByDefault = new Set([
       "github-topics",
+      "github-stars",
       "hiring-signal",
       "accelerator-batch",
     ]);

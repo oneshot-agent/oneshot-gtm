@@ -339,6 +339,45 @@ const PLAY_SCHEMAS: Record<string, PlaySchema> = {
       linkedinUrl: "",
     },
   },
+  "repo-interest": {
+    description:
+      "Complementary intro to someone who starred a repo in your space (an adjacent tool, not a competitor). References the repo + one fact about how your product helps. One touch, no follow-up.",
+    fields: [
+      { key: "name", label: "Prospect name", type: "text", required: true },
+      { key: "email", label: "Prospect email", type: "email", required: true },
+      { key: "company", label: "Company", type: "text", required: true },
+      {
+        key: "repo",
+        label: "Repo they starred (owner/name)",
+        type: "text",
+        required: true,
+        placeholder: "e.g. modelcontextprotocol/servers",
+      },
+      {
+        key: "yourEdge",
+        label: "Your edge (one sentence)",
+        type: "textarea",
+        required: true,
+        hint: "How your product helps someone working in this space. e.g. 'one SDK for the tools they're already wiring up'.",
+      },
+      {
+        key: "evidenceUrl",
+        label: "Repo URL (optional)",
+        type: "url",
+        placeholder: "https://github.com/...",
+      },
+      { key: "linkedinUrl", label: "LinkedIn URL (optional)", type: "url" },
+    ],
+    defaultRow: {
+      name: "",
+      email: "",
+      company: "",
+      repo: "",
+      yourEdge: "",
+      evidenceUrl: "",
+      linkedinUrl: "",
+    },
+  },
 };
 
 function RunPage() {

@@ -12,6 +12,8 @@ export * from "./hiring-signal.ts";
 export * from "./podcast-guest.ts";
 export * from "./breakup-revive.ts";
 export * from "./github-topics.ts";
+export * from "./github-stars.ts";
+export * from "./_stargazers.ts";
 export * from "./_repo-utils.ts";
 export * from "./_repo-pipeline.ts";
 export * from "./registry.ts";

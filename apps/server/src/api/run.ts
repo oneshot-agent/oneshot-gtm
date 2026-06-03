@@ -13,6 +13,7 @@ const SUPPORTED = new Set([
   "podcast-guest",
   "competitor-switch",
   "stack-consolidation",
+  "repo-interest",
 ]);
 
 export async function runPlay(req: Request, params: Record<string, string>): Promise<Response> {
@@ -151,7 +152,8 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
             // OneShot SDK ToolError carries the failing call's HTTP status +
             // server response body — the actual reason, vs the generic message.
             status_code: typeof e?.statusCode === "number" ? e.statusCode : null,
-            response_body_400: typeof e?.responseBody === "string" ? e.responseBody.slice(0, 400) : null,
+            response_body_400:
+              typeof e?.responseBody === "string" ? e.responseBody.slice(0, 400) : null,
             cause_200: causeMsg ? causeMsg.slice(0, 200) : null,
             stack_300: (e?.stack ?? "").slice(0, 300),
           },

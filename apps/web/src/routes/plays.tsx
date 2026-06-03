@@ -32,6 +32,7 @@ const RUNNABLE_PLAYS = new Set([
   "hiring-signal",
   "podcast-guest",
   "stack-consolidation",
+  "repo-interest",
 ]);
 
 /**
@@ -97,6 +98,11 @@ const PLAY_META: Record<string, { description: string; steps: CadenceStep[] }> =
   "stack-consolidation": {
     description:
       "Consolidation-honesty pitch for repos wiring up several API vendors. Fed by the github-topics finder.",
+    steps: [{ day: 0, label: "send" }],
+  },
+  "repo-interest": {
+    description:
+      "Complementary intro to someone who starred an adjacent repo in your space. Fed by the github-stars finder.",
     steps: [{ day: 0, label: "send" }],
   },
   "hiring-signal": {

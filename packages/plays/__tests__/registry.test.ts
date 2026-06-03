@@ -13,6 +13,7 @@ const EXPECTED = [
   "podcast-guest",
   "competitor-switch",
   "stack-consolidation",
+  "repo-interest",
   "breakup-revive",
 ];
 

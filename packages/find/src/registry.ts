@@ -2,6 +2,7 @@ import { getLedger, logEvent, startRun } from "@oneshot-gtm/core";
 import { type CohortEntry, runAcceleratorBatchFinder } from "./accelerator-batch.ts";
 import { deriveCohortLabel } from "./_yc-oss-adapter.ts";
 import { runBreakupReviveFinder } from "./breakup-revive.ts";
+import { type RepoWatch, runGitHubStarsFinder } from "./github-stars.ts";
 import { runGitHubTopicsFinder } from "./github-topics.ts";
 import { runHiringSignalFinder } from "./hiring-signal.ts";
 import { runJobChangeFinder } from "./job-change.ts";
@@ -166,7 +167,8 @@ export const TRIGGERS: TriggerSpec[] = [
         ...(typeof cfg["senderCohort"] === "string" && cfg["senderCohort"].trim().length > 0
           ? { senderCohort: (cfg["senderCohort"] as string).trim() }
           : {}),
-        ...(typeof cfg["freeForCohortOffer"] === "string" && cfg["freeForCohortOffer"].trim().length > 0
+        ...(typeof cfg["freeForCohortOffer"] === "string" &&
+        cfg["freeForCohortOffer"].trim().length > 0
           ? { freeForCohortOffer: (cfg["freeForCohortOffer"] as string).trim() }
           : {}),
         limit: (cfg["limit"] as number) ?? 25,
@@ -346,6 +348,68 @@ export const TRIGGERS: TriggerSpec[] = [
         minVendors: (cfg["minVendors"] as number) ?? 2,
         concurrency: (cfg["concurrency"] as number) ?? 3,
         useDeepResearch: cfg["useDeepResearch"] !== false,
+        limit: (cfg["limit"] as number) ?? 25,
+        maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
+      });
+    },
+  },
+  {
+    name: "github-stars",
+    defaultIntervalMs: 12 * ONE_HOUR,
+    enabledByDefault: false,
+    defaultConfig: {
+      repos: [] as Array<{ repo: string; rel: string; label?: string }>,
+      yourEdge: "",
+      sinceDays: 30,
+      concurrency: 3,
+      limit: 25,
+      maxCostUsd: 5,
+    },
+    configBrief:
+      'Finds recent stargazers of repos you watch and turns them into prospects. Config: `repos` (array of `{repo:"owner/name", rel:"competitor"|"adjacent", label?}` — tag a repo `competitor` to pitch a switch (→ competitor-switch) or `adjacent` for a complementary intro (→ repo-interest); `label` is the human name, else derived from the repo), `yourEdge` (one-line pitch fed to whichever play, REQUIRED), `sinceDays` (recency window, default 30), `limit`, `maxCostUsd`. Needs `GITHUB_TOKEN` for any volume. STRATEGIST DUTY: pick repos your buyers\' current tools live in; tag the ones you replace as `competitor`, the rest `adjacent`.',
+    readiness: (cfg) => {
+      const repos = Array.isArray(cfg["repos"]) ? cfg["repos"] : [];
+      const valid = repos.filter((r) => {
+        if (!r || typeof r !== "object") return false;
+        const e = r as Record<string, unknown>;
+        return (
+          typeof e["repo"] === "string" &&
+          e["repo"].trim().length > 0 &&
+          (e["rel"] === "competitor" || e["rel"] === "adjacent")
+        );
+      });
+      if (valid.length === 0) {
+        return {
+          ready: false,
+          reason: "set `repos` (each `{repo, rel:'competitor'|'adjacent'}`)",
+        };
+      }
+      const edge = cfg["yourEdge"];
+      if (typeof edge !== "string" || edge.trim().length === 0) {
+        return { ready: false, reason: "set `yourEdge` — your one-line pitch" };
+      }
+      return { ready: true };
+    },
+    run: (cfg) => {
+      const repos: RepoWatch[] = (Array.isArray(cfg["repos"]) ? cfg["repos"] : [])
+        .map((r): RepoWatch | null => {
+          if (!r || typeof r !== "object") return null;
+          const e = r as Record<string, unknown>;
+          const repo = typeof e["repo"] === "string" ? e["repo"].trim() : "";
+          const rel = e["rel"];
+          if (repo.length === 0 || (rel !== "competitor" && rel !== "adjacent")) return null;
+          const label = typeof e["label"] === "string" ? e["label"].trim() : "";
+          const watch: RepoWatch = { repo, rel };
+          if (label) watch.label = label;
+          return watch;
+        })
+        .filter((r): r is RepoWatch => r !== null);
+      return runGitHubStarsFinder({
+        dryRun: false,
+        repos,
+        yourEdge: typeof cfg["yourEdge"] === "string" ? cfg["yourEdge"] : "",
+        sinceDays: (cfg["sinceDays"] as number) ?? 30,
+        concurrency: (cfg["concurrency"] as number) ?? 3,
         limit: (cfg["limit"] as number) ?? 25,
         maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
       });

@@ -5,6 +5,7 @@ import { type HiringSignalTarget, runHiringSignal } from "./hiring-signal.ts";
 import { type JobChangeTarget, runJobChange } from "./job-change.ts";
 import { type PodcastGuestTarget, runPodcastGuest } from "./podcast-guest.ts";
 import { type PostFundingTarget, runPostFunding } from "./post-funding.ts";
+import { type RepoInterestTarget, runRepoInterest } from "./repo-interest.ts";
 import { type ShowHnTarget, runShowHn } from "./show-hn.ts";
 import { type StackConsolidationTarget, runStackConsolidation } from "./stack-consolidation.ts";
 
@@ -73,6 +74,9 @@ export const PLAYS: Record<string, PlayDispatch> = {
   "stack-consolidation": {
     run: (o) =>
       runStackConsolidation({ dryRun: o.dryRun, targets: o.targets as StackConsolidationTarget[] }),
+  },
+  "repo-interest": {
+    run: (o) => runRepoInterest({ dryRun: o.dryRun, targets: o.targets as RepoInterestTarget[] }),
   },
   "breakup-revive": {
     run: (o) => runBreakupRevive({ dryRun: o.dryRun, targets: o.targets as BreakupReviveTarget[] }),
