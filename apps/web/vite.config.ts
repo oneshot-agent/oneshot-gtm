@@ -24,6 +24,7 @@ export default defineConfig({
   },
   build: {
     outDir: "dist",
-    sourcemap: true,
+    // No prod source maps — they added ~2.5 MB to dist/ and exposed source.
+    sourcemap: false,
   },
 });
