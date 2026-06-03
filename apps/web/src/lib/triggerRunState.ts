@@ -81,10 +81,17 @@ export function useRunningTriggers(
   serverRunningSinceByName: Map<string, string | null>,
 ): Map<string, RunningInfo> {
   const [tick, setTick] = useState(0);
+  // Only run the 1s elapsed-counter tick while something is actually running —
+  // an idle page shouldn't re-render every second. Re-subscribes when the
+  // boolean flips (a run starts/finishes).
+  const anyRunning = names.some(
+    (name) => readStartedAt(name) != null || (serverRunningSinceByName.get(name) ?? null) != null,
+  );
   useEffect(() => {
+    if (!anyRunning) return;
     const t = setInterval(() => setTick((n) => n + 1), 1000);
     return () => clearInterval(t);
-  }, []);
+  }, [anyRunning]);
 
   const out = new Map<string, RunningInfo>();
   const now = Date.now();

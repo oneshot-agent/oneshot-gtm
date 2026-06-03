@@ -92,17 +92,24 @@ export function useGeneratingDrafts(
   lastDraftedAtById: Map<number, string | null>,
 ): Set<number> {
   const [tick, setTick] = useState(0);
-  useEffect(() => {
-    const t = setInterval(() => setTick((n) => n + 1), 1000);
-    return () => clearInterval(t);
-  }, []);
-  void tick; // re-read localStorage + re-check expiry every tick
 
   const startedAtById = new Map<number, number>();
   for (const id of ids) {
     const startedAt = readStartedAt(id);
     if (startedAt != null) startedAtById.set(id, startedAt);
   }
+
+  // Only tick while at least one draft is generating — otherwise the queue page
+  // re-renders every second for nothing. On remount with an active marker the
+  // first render sets this true and starts the interval; it stops once all
+  // markers clear (draft landed / zombie-expired).
+  const anyGenerating = startedAtById.size > 0;
+  useEffect(() => {
+    if (!anyGenerating) return;
+    const t = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [anyGenerating]);
+  void tick; // re-read localStorage + re-check expiry every tick
 
   const lastDraftedMs = new Map<number, number | null>();
   for (const id of ids) {
