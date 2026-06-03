@@ -65,6 +65,7 @@ const DRAINABLE_PLAYS = [
   "podcast-guest",
   "competitor-switch",
   "stack-consolidation",
+  "repo-interest",
 ];
 
 function statusTone(
@@ -128,7 +129,6 @@ function QueuePage() {
 
   const invalidate = (): void => {
     void qc.invalidateQueries({ queryKey: ["queue"] });
-    void qc.invalidateQueries({ queryKey: ["home"] });
   };
 
   const approve = useMutation({
@@ -768,7 +768,6 @@ function DraftSection({
     mutationFn: () => api.sendDraft(id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["queue"] });
-      void qc.invalidateQueries({ queryKey: ["home"] });
       toast.success("sent · the reviewed draft went out as-is");
     },
     onError: (err) => toast.error(`couldn't send · ${err.message}`),
@@ -809,11 +808,7 @@ function DraftSection({
               : "Draft has lint flags — regenerate to clear them, then send"
         }
       >
-        {send.isPending ? (
-          <Loader2 size={11} className="animate-spin" />
-        ) : (
-          <Send size={11} />
-        )}
+        {send.isPending ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
         {send.isPending ? "sending…" : "send this one"}
       </Button>
     ) : null;
@@ -967,7 +962,6 @@ function TriggersCard() {
       }
       clearTriggerRunning(name);
       void qc.invalidateQueries({ queryKey: ["queue"] });
-      void qc.invalidateQueries({ queryKey: ["home"] });
       if (data.error) {
         toast.error(`${name} · ${data.error}`);
         return;
@@ -1021,7 +1015,6 @@ function TriggersCard() {
     const stillRunning = new Set(nowNames);
     if (prevNames.some((n) => !stillRunning.has(n))) {
       void qc.invalidateQueries({ queryKey: ["queue"] });
-      void qc.invalidateQueries({ queryKey: ["home"] });
     }
   }, [runningKey, qc]);
 

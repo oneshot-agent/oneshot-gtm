@@ -1,6 +1,6 @@
 import { getLedger, logEvent } from "@oneshot-gtm/core";
 import {
-  getPriorStepsForProspect,
+  getPriorStepsBulk,
   nextStepInfo,
   playFollowupCount,
   previewCadenceStep,
@@ -8,7 +8,10 @@ import {
   sendCadenceStep,
   sendCadenceStepBatch,
   type BatchItem,
+  type PriorStepRow,
 } from "@oneshot-gtm/plays";
+import type { CadenceNextStepDraft, CadenceStatus, CadenceView } from "@oneshot-gtm/shared-types";
+import { jsonResponse } from "../server.ts";
 
 /**
  * In-process tracker of cadence steps that have a fire-and-forget send in
@@ -20,17 +23,46 @@ import {
  * calls die with the process anyway).
  */
 const inFlightSends = new Set<string>();
-const inFlightKey = (prospectId: number, playName: string): string =>
-  `${prospectId}|${playName}`;
-import type {
-  CadenceNextStepDraft,
-  CadenceStatus,
-  CadenceView,
-} from "@oneshot-gtm/shared-types";
-import { jsonResponse } from "../server.ts";
+const inFlightKey = (prospectId: number, playName: string): string => `${prospectId}|${playName}`;
+
+/**
+ * Per-play info that doesn't change between rows of the same play. Computed
+ * once per unique play_name and reused for every row to avoid re-walking the
+ * sequence registry + re-reading config from disk per row.
+ */
+interface PlayInfo {
+  nextLabelByStep: Map<number, { label: string | null; isBreakup: boolean }>;
+  followupCount: number;
+}
+
+function buildPlayInfoMap(
+  rows: ReadonlyArray<{ play_name: string; current_step: number }>,
+): Map<string, PlayInfo> {
+  const map = new Map<string, PlayInfo>();
+  for (const row of rows) {
+    let info = map.get(row.play_name);
+    if (!info) {
+      info = {
+        nextLabelByStep: new Map(),
+        followupCount: playFollowupCount(row.play_name),
+      };
+      map.set(row.play_name, info);
+    }
+    if (!info.nextLabelByStep.has(row.current_step)) {
+      const next = nextStepInfo(row.play_name, row.current_step);
+      info.nextLabelByStep.set(row.current_step, {
+        label: next?.label ?? null,
+        isBreakup: next?.isBreakup ?? false,
+      });
+    }
+  }
+  return map;
+}
 
 function toView(
   row: ReturnType<ReturnType<typeof getLedger>["listAllCadences"]>[number],
+  priorByKey: Map<string, PriorStepRow[]>,
+  playInfo: Map<string, PlayInfo>,
 ): CadenceView {
   let nextStepDraft: CadenceNextStepDraft | null = null;
   if (row.next_step_draft_json) {
@@ -50,8 +82,10 @@ function toView(
       nextStepDraft = null;
     }
   }
-  const next = nextStepInfo(row.play_name, row.current_step);
-  const priorSteps = getPriorStepsForProspect(row.prospect_id, row.play_name).map((s) => ({
+  const info = playInfo.get(row.play_name);
+  const next = info?.nextLabelByStep.get(row.current_step) ?? null;
+  const followupCount = info?.followupCount ?? 0;
+  const priorSteps = (priorByKey.get(`${row.prospect_id}|${row.play_name}`) ?? []).map((s) => ({
     stepIndex: s.stepIndex,
     label: s.label,
     subject: s.subject,
@@ -72,10 +106,23 @@ function toView(
     nextStepDraft,
     nextStepLabel: next?.label ?? null,
     nextStepIsBreakup: next?.isBreakup ?? false,
-    followupCount: playFollowupCount(row.play_name),
+    followupCount,
     priorSteps,
     isSending: inFlightSends.has(inFlightKey(row.prospect_id, row.play_name)),
   };
+}
+
+function viewsForRows(
+  rows: ReadonlyArray<ReturnType<ReturnType<typeof getLedger>["listAllCadences"]>[number]>,
+): CadenceView[] {
+  // Single SQL fetch for ALL (prospect_id, play_name) pairs — replaces the
+  // N+1 of one listSequenceEventsForProspectPlay per row.
+  const pairs = rows.map((r) => ({ prospectId: r.prospect_id, playName: r.play_name }));
+  const priorByKey = getPriorStepsBulk(pairs);
+  // Compute play-level info (nextStepInfo + playFollowupCount) once per
+  // unique play_name — each calls effectiveSequence → loadConfig (readFileSync).
+  const playInfo = buildPlayInfoMap(rows);
+  return rows.map((r) => toView(r, priorByKey, playInfo));
 }
 
 export function listCadences(req: Request): Response {
@@ -83,16 +130,16 @@ export function listCadences(req: Request): Response {
   const all = url.searchParams.get("all") === "1";
   const ledger = getLedger();
   const rows = all ? ledger.listAllCadences() : ledger.listActiveCadences();
-  return jsonResponse({ cadences: rows.map(toView) }, 200, req);
+  return jsonResponse({ cadences: viewsForRows(rows) }, 200, req);
 }
 
 export function getCadence(req: Request, params: Record<string, string>): Response {
   const id = Number.parseInt(params["id"] ?? "", 10);
   if (!Number.isFinite(id)) return jsonResponse({ error: "bad id" }, 400, req);
   const ledger = getLedger();
-  const all = ledger.listAllCadences().filter((c) => c.prospect_id === id);
+  const all = ledger.listCadencesForProspect(id);
   if (all.length === 0) return jsonResponse({ error: "no cadences for prospect" }, 404, req);
-  return jsonResponse({ cadences: all.map(toView) }, 200, req);
+  return jsonResponse({ cadences: viewsForRows(all) }, 200, req);
 }
 
 export function stopCadence(req: Request, params: Record<string, string>): Response {
@@ -101,8 +148,7 @@ export function stopCadence(req: Request, params: Record<string, string>): Respo
   const url = new URL(req.url);
   const playName = url.searchParams.get("play");
   const ledger = getLedger();
-  const cadences = ledger.listAllCadences().filter((c) => {
-    if (c.prospect_id !== id) return false;
+  const cadences = ledger.listCadencesForProspect(id).filter((c) => {
     if (playName && c.play_name !== playName) return false;
     return c.status === "active";
   });
@@ -169,11 +215,7 @@ export async function sendCadenceStepRoute(
   try {
     const draft = getLedger().getCadenceDraft(parsed);
     if (!draft) {
-      return jsonResponse(
-        { error: "no persisted preview — click Preview first" },
-        409,
-        req,
-      );
+      return jsonResponse({ error: "no persisted preview — click Preview first" }, 409, req);
     }
   } catch (err) {
     return jsonResponse({ error: (err as Error).message ?? "send failed" }, 500, req);
@@ -249,8 +291,7 @@ export async function sendCadenceBatchRoute(req: Request): Promise<Response> {
     } catch (err) {
       // Belt-and-suspenders: the wrapper catches per-item; this catch only
       // fires if the wrapper itself throws (shouldn't, but defense in depth).
-      for (const item of items)
-        inFlightSends.delete(inFlightKey(item.prospectId, item.playName));
+      for (const item of items) inFlightSends.delete(inFlightKey(item.prospectId, item.playName));
       logEvent(
         "cadence.batch.failed",
         { message_120: ((err as Error)?.message ?? "").slice(0, 120) },

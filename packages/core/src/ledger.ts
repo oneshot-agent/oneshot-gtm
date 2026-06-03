@@ -24,6 +24,22 @@ function canonEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
+/** A `cadence_state` row joined with its prospect's email/name/company. */
+export interface CadenceWithProspect {
+  prospect_id: number;
+  play_name: string;
+  current_step: number;
+  status: string;
+  enrolled_at: string;
+  next_due_at: string | null;
+  last_polled_at: string | null;
+  next_step_draft_json: string | null;
+  next_step_drafted_at: string | null;
+  prospect_email: string | null;
+  prospect_name: string | null;
+  prospect_company: string | null;
+}
+
 export class Ledger {
   private db: Database;
 
@@ -47,6 +63,9 @@ export class Ledger {
       );
       CREATE INDEX IF NOT EXISTS idx_receipts_play ON receipts(play_name);
       CREATE INDEX IF NOT EXISTS idx_receipts_created ON receipts(created_at);
+      -- listReceipts / spend rollups filter (play_name, created_at) together and
+      -- sort by created_at; the composite serves both without a separate sort scan.
+      CREATE INDEX IF NOT EXISTS idx_receipts_play_created ON receipts(play_name, created_at);
 
       CREATE TABLE IF NOT EXISTS prospects (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -76,6 +95,11 @@ export class Ledger {
       -- prospect), per-play send counts, and cadence scans — all by
       -- prospect_id and/or created_at. Without this it's a full table scan.
       CREATE INDEX IF NOT EXISTS idx_sequence_events_prospect_created ON sequence_events(prospect_id, created_at);
+      -- listSequenceEventsForProspectPlay (per-row in /api/cadences toView)
+      -- and listSequenceEventsForCadences (bulk variant) both filter on
+      -- (prospect_id, play_name) and ORDER BY step_index — composite index
+      -- serves both the seek and the sort, no temp B-tree.
+      CREATE INDEX IF NOT EXISTS idx_sequence_events_prospect_play ON sequence_events(prospect_id, play_name, step_index);
 
       CREATE TABLE IF NOT EXISTS interviews (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -242,20 +266,7 @@ export class Ledger {
     return this.db.query(sql).all(...(args as never[])) as never;
   }
 
-  listAllCadences(): Array<{
-    prospect_id: number;
-    play_name: string;
-    current_step: number;
-    status: string;
-    enrolled_at: string;
-    next_due_at: string | null;
-    last_polled_at: string | null;
-    next_step_draft_json: string | null;
-    next_step_drafted_at: string | null;
-    prospect_email: string | null;
-    prospect_name: string | null;
-    prospect_company: string | null;
-  }> {
+  listAllCadences(): CadenceWithProspect[] {
     const sql = `
       SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company
       FROM cadence_state c
@@ -263,6 +274,33 @@ export class Ledger {
       ORDER BY c.status ASC, c.next_due_at ASC NULLS LAST
     `;
     return this.db.query(sql).all() as never;
+  }
+
+  /**
+   * Single cadence (joined with its prospect) by (prospect_id, play_name) — an
+   * index seek on the `cadence_state` PRIMARY KEY. Replaces the O(n)
+   * `listAllCadences().find(...)` scan callers used to do per row.
+   */
+  getCadence(prospectId: number, playName: string): CadenceWithProspect | null {
+    const sql = `
+      SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company
+      FROM cadence_state c
+      JOIN prospects p ON p.id = c.prospect_id
+      WHERE c.prospect_id = ? AND c.play_name = ?
+    `;
+    return (this.db.query(sql).get(prospectId, playName) as CadenceWithProspect) ?? null;
+  }
+
+  /** All cadences for one prospect — index seek on cadence_state.prospect_id (PK prefix). */
+  listCadencesForProspect(prospectId: number): CadenceWithProspect[] {
+    const sql = `
+      SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company
+      FROM cadence_state c
+      JOIN prospects p ON p.id = c.prospect_id
+      WHERE c.prospect_id = ?
+      ORDER BY c.status ASC, c.next_due_at ASC NULLS LAST
+    `;
+    return this.db.query(sql).all(prospectId) as never;
   }
 
   advanceCadence(input: {
@@ -325,10 +363,7 @@ export class Ledger {
       .run(json, draftedAtIso, input.prospectId, input.playName);
   }
 
-  getCadenceDraft(input: {
-    prospectId: number;
-    playName: string;
-  }): {
+  getCadenceDraft(input: { prospectId: number; playName: string }): {
     subject: string;
     body: string;
     flags: string[];
@@ -367,9 +402,9 @@ export class Ledger {
 
   findProspectByEmail(email: string): { id: number } | null {
     return (
-      (this.db
-        .query("SELECT id FROM prospects WHERE email = ?")
-        .get(canonEmail(email)) as { id: number }) ?? null
+      (this.db.query("SELECT id FROM prospects WHERE email = ?").get(canonEmail(email)) as {
+        id: number;
+      }) ?? null
     );
   }
 
@@ -379,6 +414,13 @@ export class Ledger {
       (this.db
         .query("SELECT * FROM prospects WHERE email = ?")
         .get(canonEmail(email)) as ProspectRecord) ?? null
+    );
+  }
+
+  /** Full prospect record by id (PK seek). Avoids loading every prospect to find one. */
+  getProspectById(id: number): ProspectRecord | null {
+    return (
+      (this.db.query("SELECT * FROM prospects WHERE id = ?").get(id) as ProspectRecord) ?? null
     );
   }
 
@@ -605,10 +647,7 @@ export class Ledger {
     return Number(result.lastInsertRowid);
   }
 
-  listSequenceEventsForProspectPlay(
-    prospectId: number,
-    playName: string,
-  ): SequenceEventRecord[] {
+  listSequenceEventsForProspectPlay(prospectId: number, playName: string): SequenceEventRecord[] {
     return this.db
       .query(
         `SELECT * FROM sequence_events
@@ -617,6 +656,46 @@ export class Ledger {
          ORDER BY step_index ASC, id ASC`,
       )
       .all(prospectId, playName) as SequenceEventRecord[];
+  }
+
+  /**
+   * Bulk variant of listSequenceEventsForProspectPlay: one SQL round-trip for
+   * many (prospect_id, play_name) pairs. Returns a Map keyed by
+   * `${prospect_id}|${play_name}` so callers can index in O(1). The
+   * per-key arrays preserve the same (step_index ASC, id ASC) ordering the
+   * single-row method returns. Empty input → empty map (no query).
+   *
+   * Index-served by idx_sequence_events_prospect_play; the OR-chain is
+   * expanded into per-pair index seeks by the query planner.
+   */
+  listSequenceEventsForCadences(
+    pairs: ReadonlyArray<{ prospectId: number; playName: string }>,
+  ): Map<string, SequenceEventRecord[]> {
+    const map = new Map<string, SequenceEventRecord[]>();
+    if (pairs.length === 0) return map;
+    const conditions = pairs.map(() => "(prospect_id = ? AND play_name = ?)").join(" OR ");
+    const args: unknown[] = [];
+    for (const p of pairs) {
+      args.push(p.prospectId, p.playName);
+    }
+    const rows = this.db
+      .query(
+        `SELECT * FROM sequence_events
+         WHERE (${conditions})
+           AND status IN ('sent','delivered','replied')
+         ORDER BY prospect_id ASC, play_name ASC, step_index ASC, id ASC`,
+      )
+      .all(...(args as never[])) as SequenceEventRecord[];
+    for (const r of rows) {
+      const key = `${r.prospect_id}|${r.play_name}`;
+      let list = map.get(key);
+      if (!list) {
+        list = [];
+        map.set(key, list);
+      }
+      list.push(r);
+    }
+    return map;
   }
 
   recordInterview(input: Omit<InterviewRecord, "id" | "created_at">): number {
@@ -854,11 +933,7 @@ export class Ledger {
    * without any sweeper. Held/error rows naturally back off for the lease
    * duration (no LLM-burn loops on stuck-flagged content).
    */
-  dequeueApproved(opts: {
-    playName: string;
-    limit?: number;
-    leaseSeconds?: number;
-  }): QueueRow[] {
+  dequeueApproved(opts: { playName: string; limit?: number; leaseSeconds?: number }): QueueRow[] {
     const leaseSeconds = opts.leaseSeconds ?? 900;
     const claimedAt = new Date().toISOString();
     const cutoff = new Date(Date.now() - leaseSeconds * 1000).toISOString();
@@ -877,9 +952,7 @@ export class Ledger {
       const ids = rows.map((r) => r.id);
       const placeholders = ids.map(() => "?").join(",");
       this.db
-        .prepare(
-          `UPDATE target_queue SET drain_claimed_at = ? WHERE id IN (${placeholders})`,
-        )
+        .prepare(`UPDATE target_queue SET drain_claimed_at = ? WHERE id IN (${placeholders})`)
         .run(...([claimedAt, ...ids] as never[]));
       return rows;
     });

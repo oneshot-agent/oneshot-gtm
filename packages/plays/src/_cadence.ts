@@ -2,6 +2,7 @@ import {
   getLedger,
   listInbox,
   loadConfig,
+  parallelMap,
   receiptUrlForId,
   sendEmail,
   sendSms,
@@ -198,9 +199,10 @@ export async function advanceCadence(
         const from = normalizeEmail(e.from);
         const prospect = ledger.findProspectByEmail(from);
         if (!prospect) continue;
+        // Index seek per matched sender, not a full-table scan per inbox email.
         const activeForProspect = ledger
-          .listAllCadences()
-          .filter((c) => c.prospect_id === prospect.id && c.status === "active");
+          .listCadencesForProspect(prospect.id)
+          .filter((c) => c.status === "active");
         for (const cad of activeForProspect) {
           ledger.setCadenceStatus({
             prospectId: prospect.id,
@@ -229,15 +231,23 @@ export async function advanceCadence(
   }
 
   // 2. For each active cadence with next_due_at <= now, execute the next step.
+  // Parallelized (concurrency 3): each step is an LLM draft + send (~5-90s), and
+  // `due` rows are distinct (prospect, play) pairs, so there's no shared-write
+  // contention. Results are collected in input order before counting.
   const nowIso = new Date().toISOString();
   const due = ledger.listActiveCadences({ dueByIso: nowIso });
 
-  for (const cad of due) {
-    const out = await runCadenceStepForProspect({
+  const outs = await parallelMap(due, 3, (cad) =>
+    runCadenceStepForProspect({
       prospectId: cad.prospect_id,
       playName: cad.play_name,
       dryRun: opts.dryRun,
-    });
+    }),
+  );
+
+  for (let i = 0; i < due.length; i++) {
+    const cad = due[i]!;
+    const out = outs[i]!;
     result.details.push({
       prospectEmail: cad.prospect_email,
       playName: cad.play_name,
@@ -282,9 +292,7 @@ export async function runCadenceStepForProspect(
 ): Promise<RunCadenceStepResult> {
   const ledger = getLedger();
   const cfg = loadConfig();
-  const cadence = ledger
-    .listAllCadences()
-    .find((c) => c.prospect_id === opts.prospectId && c.play_name === opts.playName);
+  const cadence = ledger.getCadence(opts.prospectId, opts.playName);
   if (!cadence) {
     return { action: "skipped", payload: null, receiptIds: [], note: "no cadence" };
   }
@@ -393,9 +401,7 @@ export async function runCadenceStepForProspect(
     prospectId: opts.prospectId,
     playName: opts.playName,
     newStep: nextIndex,
-    nextDueAt: next
-      ? new Date(Date.now() + next.dayOffset * 24 * 3600 * 1000).toISOString()
-      : null,
+    nextDueAt: next ? new Date(Date.now() + next.dayOffset * 24 * 3600 * 1000).toISOString() : null,
   });
   if (!next) {
     ledger.setCadenceStatus({
@@ -433,9 +439,7 @@ export async function previewCadenceStep(input: {
 }): Promise<CadenceStepPreview> {
   const ledger = getLedger();
   const cfg = loadConfig();
-  const cadence = ledger
-    .listAllCadences()
-    .find((c) => c.prospect_id === input.prospectId && c.play_name === input.playName);
+  const cadence = ledger.getCadence(input.prospectId, input.playName);
   if (!cadence) throw new Error("no cadence for that prospect+play");
   if (cadence.status !== "active") {
     throw new Error(`cadence is ${cadence.status}, can only preview an active cadence`);
@@ -529,27 +533,27 @@ export interface BatchSendResult {
 }
 
 /**
- * Serial preview of a list of cadence rows. Each per-prospect failure is
- * captured in the result array — the batch never throws. Sequential
- * iteration is deliberate: parallel LLM calls would risk burst rate-limits
- * and the founder is waiting on us anyway (~10s/row).
+ * Parallel preview of a list of cadence rows (concurrency 3). Each
+ * per-prospect failure is captured in the result array — the batch never
+ * throws. `parallelMap` preserves input order so the returned array matches
+ * `items` 1:1. Concurrency mirrors `runEmailPlay` + `advanceCadence`; the
+ * founder is waiting at the UI, so 3× speedup on a 10-row preview drops
+ * wall-clock from ~100s to ~35s.
  */
 export async function previewCadenceStepBatch(items: BatchItem[]): Promise<BatchPreviewResult[]> {
-  const out: BatchPreviewResult[] = [];
-  for (const item of items) {
+  return parallelMap(items, 3, async (item) => {
     try {
       const preview = await previewCadenceStep(item);
-      out.push({ prospectId: item.prospectId, playName: item.playName, ok: true, preview });
+      return { prospectId: item.prospectId, playName: item.playName, ok: true, preview };
     } catch (err) {
-      out.push({
+      return {
         prospectId: item.prospectId,
         playName: item.playName,
         ok: false,
         error: ((err as Error)?.message ?? "preview failed").slice(0, 120),
-      });
+      };
     }
-  }
-  return out;
+  });
 }
 
 /**
@@ -558,6 +562,11 @@ export async function previewCadenceStepBatch(items: BatchItem[]): Promise<Batch
  * as a background promise — caller returns 202 immediately and the UI sees
  * progress via subsequent `/api/cadences` refetches (the existing
  * `advanceCadence` clears `next_step_draft_json` as each row completes).
+ *
+ * Sends stay serial (unlike previewCadenceStepBatch) for two reasons: the
+ * `onItemSettled` callback drives the in-flight UI badge per row (parallel
+ * would batch-flash all rows at once), and parallel SMTP to the same
+ * domain risks soft-bounces.
  */
 export async function sendCadenceStepBatch(
   items: BatchItem[],
@@ -681,13 +690,7 @@ function normalizeEmail(raw: string): string {
 }
 
 function loadProspect(id: number): ProspectRecord | null {
-  // Lightweight read; ledger doesn't expose getProspect yet.
-  const row = (
-    getLedger() as unknown as { db: { query: (s: string) => { get: (id: number) => unknown } } }
-  ).db
-    .query("SELECT * FROM prospects WHERE id = ?")
-    .get(id);
-  return (row as ProspectRecord | null) ?? null;
+  return getLedger().getProspectById(id);
 }
 
 export function buildFollowUpEmail(opts: {
@@ -749,10 +752,7 @@ export interface PriorStepRow {
  * legacy rows) and the /api/cadences view (which surfaces them with a
  * "body not captured" placeholder).
  */
-export function getPriorStepsForProspect(
-  prospectId: number,
-  playName: string,
-): PriorStepRow[] {
+export function getPriorStepsForProspect(prospectId: number, playName: string): PriorStepRow[] {
   if (!prospectId) return [];
   let rows: Array<{
     step_index: number;
@@ -770,20 +770,67 @@ export function getPriorStepsForProspect(
   } catch {
     return [];
   }
-  return rows.map((r) => {
-    const meta = tryParseJsonObject<{ subject?: string; body?: string; label?: string }>(
-      r.metadata_json ?? "",
-      {},
-    );
-    return {
-      stepIndex: r.step_index,
-      label: meta.label ?? (r.step_index === 0 ? "initial send" : "follow-up"),
-      subject: meta.subject ?? "(no subject)",
-      body: meta.body ?? null,
-      sentAt: r.created_at,
-      status: (r.status as PriorStepRow["status"]) ?? "sent",
-    };
-  });
+  return rows.map(rowToPriorStep);
+}
+
+function rowToPriorStep(r: {
+  step_index: number;
+  metadata_json: string | null;
+  status: string;
+  created_at: string;
+}): PriorStepRow {
+  const meta = tryParseJsonObject<{ subject?: string; body?: string; label?: string }>(
+    r.metadata_json ?? "",
+    {},
+  );
+  return {
+    stepIndex: r.step_index,
+    label: meta.label ?? (r.step_index === 0 ? "initial send" : "follow-up"),
+    subject: meta.subject ?? "(no subject)",
+    body: meta.body ?? null,
+    sentAt: r.created_at,
+    status: (r.status as PriorStepRow["status"]) ?? "sent",
+  };
+}
+
+/**
+ * Bulk variant of getPriorStepsForProspect: one SQL round-trip for many
+ * (prospect_id, play_name) pairs. Returns a Map keyed by
+ * `${prospectId}|${playName}` so /api/cadences's toView can index in O(1)
+ * instead of issuing one query per row. Pairs the founder hasn't sent for
+ * are absent from the map (callers should default to []).
+ */
+export function getPriorStepsBulk(
+  pairs: ReadonlyArray<{ prospectId: number; playName: string }>,
+): Map<string, PriorStepRow[]> {
+  if (pairs.length === 0) return new Map();
+  let bulk: Map<
+    string,
+    Array<{
+      step_index: number;
+      metadata_json: string | null;
+      status: string;
+      created_at: string;
+    }>
+  >;
+  try {
+    bulk = getLedger().listSequenceEventsForCadences(pairs) as Map<
+      string,
+      Array<{
+        step_index: number;
+        metadata_json: string | null;
+        status: string;
+        created_at: string;
+      }>
+    >;
+  } catch {
+    return new Map();
+  }
+  const out = new Map<string, PriorStepRow[]>();
+  for (const [key, rows] of bulk) {
+    out.set(key, rows.map(rowToPriorStep));
+  }
+  return out;
 }
 
 function buildPriorEmailsBlock(prospectId: number, playName: string): string | null {

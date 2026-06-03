@@ -75,12 +75,20 @@ describe("Ledger receipts + prospects + spend rollups", () => {
     // A prospect created from a mixed-case address must still be found when a
     // reply comes in normalized to lowercase (cadence inbox poll), and we must
     // not create a duplicate row for the same address in a different case.
-    const id = ledger.upsertProspect({ name: "Sophia", email: "Sophia@AgenticArchitect.AI", source: "t" });
+    const id = ledger.upsertProspect({
+      name: "Sophia",
+      email: "Sophia@AgenticArchitect.AI",
+      source: "t",
+    });
     expect(ledger.findProspectByEmail("sophia@agenticarchitect.ai")?.id).toBe(id);
     expect(ledger.findProspectByEmail("SOPHIA@AGENTICARCHITECT.AI")?.id).toBe(id);
     expect(ledger.getProspectByEmail("sophia@agenticarchitect.ai")?.id).toBe(id);
     // Re-upsert under yet another casing → same row, no duplicate.
-    const again = ledger.upsertProspect({ name: "Sophia", email: "sophia@AGENTICARCHITECT.ai", source: "t" });
+    const again = ledger.upsertProspect({
+      name: "Sophia",
+      email: "sophia@AGENTICARCHITECT.ai",
+      source: "t",
+    });
     expect(again).toBe(id);
   });
 
@@ -146,6 +154,83 @@ describe("Ledger receipts + prospects + spend rollups", () => {
     expect(rows[1]?.step_index).toBe(1);
   });
 
+  it("listSequenceEventsForCadences batches many pairs in one query, preserving per-key order", () => {
+    const pidA = ledger.upsertProspect({ name: "A", email: "ba@x.com", source: "t" });
+    const pidB = ledger.upsertProspect({ name: "B", email: "bb@x.com", source: "t" });
+    // pidA · stack-consolidation: steps 1 then 0 inserted → expect (0, 1) on read.
+    ledger.recordSequenceEvent({
+      prospectId: pidA,
+      playName: "stack-consolidation",
+      stepIndex: 1,
+      channel: "email",
+      status: "sent",
+    });
+    ledger.recordSequenceEvent({
+      prospectId: pidA,
+      playName: "stack-consolidation",
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+    });
+    // pidA · show-hn: should land in its own bucket, not mixed with stack-consolidation.
+    ledger.recordSequenceEvent({
+      prospectId: pidA,
+      playName: "show-hn",
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+    });
+    // pidB · stack-consolidation: separate bucket again.
+    ledger.recordSequenceEvent({
+      prospectId: pidB,
+      playName: "stack-consolidation",
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+    });
+    // queued status — should be filtered out everywhere.
+    ledger.recordSequenceEvent({
+      prospectId: pidA,
+      playName: "stack-consolidation",
+      stepIndex: 2,
+      channel: "email",
+      status: "queued",
+    });
+
+    const map = ledger.listSequenceEventsForCadences([
+      { prospectId: pidA, playName: "stack-consolidation" },
+      { prospectId: pidA, playName: "show-hn" },
+      { prospectId: pidB, playName: "stack-consolidation" },
+    ]);
+    expect(map.size).toBe(3);
+    expect(map.get(`${pidA}|stack-consolidation`)?.map((r) => r.step_index)).toEqual([0, 1]);
+    expect(map.get(`${pidA}|show-hn`)?.map((r) => r.step_index)).toEqual([0]);
+    expect(map.get(`${pidB}|stack-consolidation`)?.map((r) => r.step_index)).toEqual([0]);
+  });
+
+  it("listSequenceEventsForCadences returns empty map on empty input", () => {
+    const map = ledger.listSequenceEventsForCadences([]);
+    expect(map.size).toBe(0);
+  });
+
+  it("listSequenceEventsForCadences omits pairs with no matching rows", () => {
+    const pid = ledger.upsertProspect({ name: "P", email: "p@x.com", source: "t" });
+    ledger.recordSequenceEvent({
+      prospectId: pid,
+      playName: "show-hn",
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+    });
+    const map = ledger.listSequenceEventsForCadences([
+      { prospectId: pid, playName: "show-hn" },
+      { prospectId: pid, playName: "no-such-play" },
+      { prospectId: 999999, playName: "show-hn" },
+    ]);
+    expect(map.size).toBe(1);
+    expect(map.has(`${pid}|show-hn`)).toBe(true);
+  });
+
   it("eventsByPlay aggregates sequence statuses", () => {
     const id = ledger.upsertProspect({ name: "A", email: "a@x.com", source: "t" });
     ledger.recordSequenceEvent({
@@ -186,6 +271,30 @@ describe("Ledger cadence state", () => {
     const after = ledger.listAllCadences();
     expect(after[0]?.current_step).toBe(1);
     expect(after[0]?.status).toBe("replied");
+  });
+
+  it("getCadence + listCadencesForProspect + getProspectById are index-seek single lookups", () => {
+    const pid = ledger.upsertProspect({ name: "Q", email: "q@x.com", company: "QCo", source: "t" });
+    const due = new Date().toISOString();
+    ledger.enrollCadence({ prospectId: pid, playName: "job-change", nextDueAt: due });
+    ledger.enrollCadence({ prospectId: pid, playName: "show-hn", nextDueAt: due });
+
+    // getCadence: exact (prospect, play) seek, joined with prospect fields.
+    const c = ledger.getCadence(pid, "job-change");
+    expect(c?.play_name).toBe("job-change");
+    expect(c?.prospect_email).toBe("q@x.com");
+    expect(c?.prospect_company).toBe("QCo");
+    expect(ledger.getCadence(pid, "no-such-play")).toBeNull();
+    expect(ledger.getCadence(999999, "job-change")).toBeNull();
+
+    // listCadencesForProspect: all cadences for one prospect.
+    const list = ledger.listCadencesForProspect(pid);
+    expect(list.map((r) => r.play_name).toSorted()).toEqual(["job-change", "show-hn"]);
+    expect(ledger.listCadencesForProspect(999999)).toEqual([]);
+
+    // getProspectById: PK seek.
+    expect(ledger.getProspectById(pid)?.email).toBe("q@x.com");
+    expect(ledger.getProspectById(999999)).toBeNull();
   });
 
   it("listActiveCadences filters by due date", () => {

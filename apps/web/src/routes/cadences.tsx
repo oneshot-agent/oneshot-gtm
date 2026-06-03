@@ -73,7 +73,6 @@ function CadencesPage() {
       api.stopCadence(vars.prospectId, vars.playName),
     onSuccess: (data, vars) => {
       void qc.invalidateQueries({ queryKey: ["cadences"] });
-      void qc.invalidateQueries({ queryKey: ["home"] });
       toast.success(`stopped cadence · ${vars.playName}`);
     },
     onError: (err) => toast.error(`couldn't stop cadence: ${err.message}`),
@@ -85,7 +84,9 @@ function CadencesPage() {
     onSuccess: (data, vars) => {
       void qc.invalidateQueries({ queryKey: ["cadences"] });
       setExpandedKeys((prev) => new Set([...prev, `${vars.prospectId}|${vars.playName}`]));
-      toast.success(`drafted next step · ${vars.playName}${data.flags.length > 0 ? ` (${data.flags.length} flag(s))` : ""}`);
+      toast.success(
+        `drafted next step · ${vars.playName}${data.flags.length > 0 ? ` (${data.flags.length} flag(s))` : ""}`,
+      );
     },
     onError: (err) => toast.error(`preview failed: ${err.message}`),
   });
@@ -99,7 +100,6 @@ function CadencesPage() {
       // so the founder isn't stuck staring at a "Sending…" button; the next
       // refetch will show the row's preview cleared once the send completes.
       void qc.invalidateQueries({ queryKey: ["cadences"] });
-      void qc.invalidateQueries({ queryKey: ["home"] });
       void qc.invalidateQueries({ queryKey: ["receipts"] });
       setExpandedKeys((prev) => {
         const next = new Set(prev);
@@ -121,8 +121,7 @@ function CadencesPage() {
       const errCount = data.results.length - okItems.length;
       // Auto-expand every successfully-previewed row.
       setExpandedKeys(
-        (prev) =>
-          new Set([...prev, ...okItems.map((r) => `${r.prospectId}|${r.playName}`)]),
+        (prev) => new Set([...prev, ...okItems.map((r) => `${r.prospectId}|${r.playName}`)]),
       );
       const tail = errCount > 0 ? ` · ${errCount} skipped` : "";
       toast.success(`previewed ${okItems.length}${tail}`);
@@ -137,9 +136,7 @@ function CadencesPage() {
       void qc.invalidateQueries({ queryKey: ["cadences"] });
       setSelected(new Set());
       setBulkSendConfirmOpen(false);
-      toast.success(
-        `started send of ${data.accepted} — drafts will clear as each completes`,
-      );
+      toast.success(`started send of ${data.accepted} — drafts will clear as each completes`);
     },
     onError: (err) => toast.error(`bulk send failed: ${err.message}`),
   });
@@ -182,7 +179,6 @@ function CadencesPage() {
       ? `${sendNext.variables.prospectId}|${sendNext.variables.playName}`
       : null;
 
-
   const logOutcome = useMutation({
     mutationFn: async () => {
       if (!outcomeModal) throw new Error("no modal open");
@@ -215,8 +211,7 @@ function CadencesPage() {
   // Bulk-action derived state.
   const selectableActive = useMemo(() => list.filter((c) => c.status === "active"), [list]);
   const allActiveSelected =
-    selectableActive.length > 0 &&
-    selectableActive.every((c) => selected.has(rowKey(c)));
+    selectableActive.length > 0 && selectableActive.every((c) => selected.has(rowKey(c)));
   const someActiveSelected =
     selectableActive.some((c) => selected.has(rowKey(c))) && !allActiveSelected;
   const selectedRows = useMemo(
@@ -431,165 +426,210 @@ function CadencesPage() {
                 const hasExpandable = c.priorSteps.length > 0 || c.nextStepDraft != null;
                 return (
                   <Fragment key={`${c.prospectId}-${c.playName}`}>
-                  <tr
-                    onClick={
-                      hasExpandable
-                        ? (e) => {
-                            // Ignore clicks that originated on interactive
-                            // controls inside the row (buttons / inputs /
-                            // links / labels). Without this guard, clicking
-                            // Preview / Send / Stop / the checkbox would
-                            // ALSO toggle the row expansion.
-                            const t = e.target as HTMLElement;
-                            if (t.closest("button, input, a, label, [role='button']")) return;
-                            toggleExpanded(rowKey(c));
-                          }
-                        : undefined
-                    }
-                    className={cn(
-                      "border-b border-ink-rule/60 transition-colors duration-[var(--dur-stamp)]",
-                      "hover:bg-ink-surface/60",
-                      i % 2 === 1 && "bg-ink-surface/20",
-                      hasExpandable && "cursor-pointer",
-                    )}
-                  >
-                    <td className="px-3 py-2" style={{ width: 32 }}>
-                      <input
-                        type="checkbox"
-                        aria-label={`select ${c.prospectName ?? c.prospectEmail ?? "row"}`}
-                        title={
-                          c.status === "active"
-                            ? `select for batch preview / send`
-                            : `only active cadences can be selected (status: ${c.status})`
-                        }
-                        disabled={c.status !== "active"}
-                        checked={selected.has(rowKey(c))}
-                        onChange={() => toggleSelected(rowKey(c))}
-                        className="cursor-pointer disabled:cursor-not-allowed disabled:opacity-30"
-                      />
-                    </td>
-                    <td className="px-6 py-2">
-                      <div className="text-ink-cream">{c.prospectName ?? "(unknown)"}</div>
-                      <div className="font-mono text-[11px] text-ink-faint">
-                        {c.prospectEmail ?? "—"}
-                      </div>
-                    </td>
-                    <td className="py-2 text-ink-cream-2">{c.playName}</td>
-                    <td className="py-2">
-                      <Badge tone={statusTone(c.status)}>{c.status}</Badge>
-                      {c.isSending && (
-                        <Badge tone="receipt" className="ml-1.5 animate-pulse">
-                          sending…
-                        </Badge>
-                      )}
-                    </td>
-                    <td className="py-2">
-                      <div className="flex items-center gap-2">
-                        <StepProgress
-                          current={Math.min(c.currentStep + 1, totalSteps)}
-                          total={totalSteps}
-                          tone={
-                            c.status === "replied"
-                              ? "signal"
-                              : c.status === "breakup"
-                                ? "spend"
-                                : "receipt"
-                          }
-                        />
-                        <span className="font-mono text-[11px] text-ink-faint">
-                          {c.currentStep + 1}/{totalSteps}
-                        </span>
-                      </div>
-                    </td>
-                    <td
+                    <tr
+                      onClick={
+                        hasExpandable
+                          ? (e) => {
+                              // Ignore clicks that originated on interactive
+                              // controls inside the row (buttons / inputs /
+                              // links / labels). Without this guard, clicking
+                              // Preview / Send / Stop / the checkbox would
+                              // ALSO toggle the row expansion.
+                              const t = e.target as HTMLElement;
+                              if (t.closest("button, input, a, label, [role='button']")) return;
+                              toggleExpanded(rowKey(c));
+                            }
+                          : undefined
+                      }
                       className={cn(
-                        "py-2 text-right font-mono text-[12px]",
-                        isOverdue ? "text-[color:var(--ink-spend-2)]" : "text-ink-muted",
+                        "border-b border-ink-rule/60 transition-colors duration-[var(--dur-stamp)]",
+                        "hover:bg-ink-surface/60",
+                        i % 2 === 1 && "bg-ink-surface/20",
+                        hasExpandable && "cursor-pointer",
                       )}
                     >
-                      {timeAgo(c.nextDueAt)}
-                      {isOverdue && <span className="ml-1 text-[10px]">· overdue</span>}
-                    </td>
-                    <td className="py-2 text-right font-mono text-[11px] text-ink-faint">
-                      {timeAgo(c.enrolledAt)}
-                    </td>
-                    <td className="px-6 py-2 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        {c.status === "active" && (() => {
-                          const key = `${c.prospectId}|${c.playName}`;
-                          const draft = c.nextStepDraft;
-                          const sendDisabled =
-                            !draft ||
-                            draft.flags.length > 0 ||
-                            pendingSendKey != null ||
-                            pendingPreviewKey != null ||
-                            c.isSending;
-                          return (
-                            <>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                title={
-                                  draft
-                                    ? `re-preview next step (current preview drafted ${timeAgo(draft.draftedAt)})`
-                                    : "preview next step (LLM draft, no send)"
-                                }
-                                disabled={pendingPreviewKey != null}
-                                onClick={() =>
-                                  previewNext.mutate({
-                                    prospectId: c.prospectId,
-                                    playName: c.playName,
-                                  })
-                                }
-                              >
-                                <Eye size={12} />
-                              </Button>
-                              <Button
-                                variant={!sendDisabled ? "primary" : "ghost"}
-                                size="sm"
-                                title={
-                                  !draft
-                                    ? "click Preview first"
-                                    : draft.flags.length > 0
-                                      ? `draft held by lint (${draft.flags.length} flag(s)) — re-preview`
-                                      : c.nextStepIsBreakup
-                                        ? "send breakup (final touch) — confirms first"
-                                        : "send next step — confirms first"
-                                }
-                                disabled={sendDisabled}
-                                onClick={() => {
-                                  if (!draft) return;
-                                  setSendConfirm({
-                                    prospectId: c.prospectId,
-                                    playName: c.playName,
-                                    prospectEmail: c.prospectEmail,
-                                    prospectName: c.prospectName,
-                                    subject: draft.subject,
-                                    isBreakup: c.nextStepIsBreakup,
-                                    nextDueAt: c.nextDueAt,
-                                    isEarly:
-                                      c.nextDueAt != null && c.nextDueAt > new Date().toISOString(),
-                                  });
-                                }}
-                              >
-                                <Send size={12} />
-                              </Button>
-                              {(draft || c.priorSteps.length > 0) && (
+                      <td className="px-3 py-2" style={{ width: 32 }}>
+                        <input
+                          type="checkbox"
+                          aria-label={`select ${c.prospectName ?? c.prospectEmail ?? "row"}`}
+                          title={
+                            c.status === "active"
+                              ? `select for batch preview / send`
+                              : `only active cadences can be selected (status: ${c.status})`
+                          }
+                          disabled={c.status !== "active"}
+                          checked={selected.has(rowKey(c))}
+                          onChange={() => toggleSelected(rowKey(c))}
+                          className="cursor-pointer disabled:cursor-not-allowed disabled:opacity-30"
+                        />
+                      </td>
+                      <td className="px-6 py-2">
+                        <div className="text-ink-cream">{c.prospectName ?? "(unknown)"}</div>
+                        <div className="font-mono text-[11px] text-ink-faint">
+                          {c.prospectEmail ?? "—"}
+                        </div>
+                      </td>
+                      <td className="py-2 text-ink-cream-2">{c.playName}</td>
+                      <td className="py-2">
+                        <Badge tone={statusTone(c.status)}>{c.status}</Badge>
+                        {c.isSending && (
+                          <Badge tone="receipt" className="ml-1.5 animate-pulse">
+                            sending…
+                          </Badge>
+                        )}
+                      </td>
+                      <td className="py-2">
+                        <div className="flex items-center gap-2">
+                          <StepProgress
+                            current={Math.min(c.currentStep + 1, totalSteps)}
+                            total={totalSteps}
+                            tone={
+                              c.status === "replied"
+                                ? "signal"
+                                : c.status === "breakup"
+                                  ? "spend"
+                                  : "receipt"
+                            }
+                          />
+                          <span className="font-mono text-[11px] text-ink-faint">
+                            {c.currentStep + 1}/{totalSteps}
+                          </span>
+                        </div>
+                      </td>
+                      <td
+                        className={cn(
+                          "py-2 text-right font-mono text-[12px]",
+                          isOverdue ? "text-[color:var(--ink-spend-2)]" : "text-ink-muted",
+                        )}
+                      >
+                        {timeAgo(c.nextDueAt)}
+                        {isOverdue && <span className="ml-1 text-[10px]">· overdue</span>}
+                      </td>
+                      <td className="py-2 text-right font-mono text-[11px] text-ink-faint">
+                        {timeAgo(c.enrolledAt)}
+                      </td>
+                      <td className="px-6 py-2 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          {c.status === "active" &&
+                            (() => {
+                              const key = `${c.prospectId}|${c.playName}`;
+                              const draft = c.nextStepDraft;
+                              const sendDisabled =
+                                !draft ||
+                                draft.flags.length > 0 ||
+                                pendingSendKey != null ||
+                                pendingPreviewKey != null ||
+                                c.isSending;
+                              return (
+                                <>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    title={
+                                      draft
+                                        ? `re-preview next step (current preview drafted ${timeAgo(draft.draftedAt)})`
+                                        : "preview next step (LLM draft, no send)"
+                                    }
+                                    disabled={pendingPreviewKey != null}
+                                    onClick={() =>
+                                      previewNext.mutate({
+                                        prospectId: c.prospectId,
+                                        playName: c.playName,
+                                      })
+                                    }
+                                  >
+                                    <Eye size={12} />
+                                  </Button>
+                                  <Button
+                                    variant={!sendDisabled ? "primary" : "ghost"}
+                                    size="sm"
+                                    title={
+                                      !draft
+                                        ? "click Preview first"
+                                        : draft.flags.length > 0
+                                          ? `draft held by lint (${draft.flags.length} flag(s)) — re-preview`
+                                          : c.nextStepIsBreakup
+                                            ? "send breakup (final touch) — confirms first"
+                                            : "send next step — confirms first"
+                                    }
+                                    disabled={sendDisabled}
+                                    onClick={() => {
+                                      if (!draft) return;
+                                      setSendConfirm({
+                                        prospectId: c.prospectId,
+                                        playName: c.playName,
+                                        prospectEmail: c.prospectEmail,
+                                        prospectName: c.prospectName,
+                                        subject: draft.subject,
+                                        isBreakup: c.nextStepIsBreakup,
+                                        nextDueAt: c.nextDueAt,
+                                        isEarly:
+                                          c.nextDueAt != null &&
+                                          c.nextDueAt > new Date().toISOString(),
+                                      });
+                                    }}
+                                  >
+                                    <Send size={12} />
+                                  </Button>
+                                  {(draft || c.priorSteps.length > 0) && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      title={
+                                        expandedKeys.has(key)
+                                          ? "collapse"
+                                          : c.priorSteps.length > 0 && draft
+                                            ? `view ${c.priorSteps.length} sent + next-step preview`
+                                            : c.priorSteps.length > 0
+                                              ? `view ${c.priorSteps.length} sent so far`
+                                              : "view next-step preview"
+                                      }
+                                      onClick={() => toggleExpanded(key)}
+                                    >
+                                      <ChevronDown
+                                        size={12}
+                                        className={cn(
+                                          "transition-transform",
+                                          expandedKeys.has(key) && "rotate-180",
+                                        )}
+                                      />
+                                    </Button>
+                                  )}
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    title="stop cadence"
+                                    disabled={stop.isPending}
+                                    onClick={() =>
+                                      stop.mutate({
+                                        prospectId: c.prospectId,
+                                        playName: c.playName,
+                                      })
+                                    }
+                                  >
+                                    <CircleStop size={12} />
+                                  </Button>
+                                </>
+                              );
+                            })()}
+                          {/* Chevron also for NON-active rows that still have history
+                            (breakup / replied / completed / paused). The active-status
+                            block already renders its own chevron above when there's a
+                            draft OR history; this one covers the non-active case. */}
+                          {c.status !== "active" &&
+                            c.priorSteps.length > 0 &&
+                            (() => {
+                              const key = `${c.prospectId}|${c.playName}`;
+                              return (
                                 <Button
                                   variant="ghost"
                                   size="sm"
                                   title={
                                     expandedKeys.has(key)
                                       ? "collapse"
-                                      : c.priorSteps.length > 0 && draft
-                                        ? `view ${c.priorSteps.length} sent + next-step preview`
-                                        : c.priorSteps.length > 0
-                                          ? `view ${c.priorSteps.length} sent so far`
-                                          : "view next-step preview"
+                                      : `view ${c.priorSteps.length} sent so far`
                                   }
-                                  onClick={() =>
-                                    toggleExpanded(key)
-                                  }
+                                  onClick={() => toggleExpanded(key)}
                                 >
                                   <ChevronDown
                                     size={12}
@@ -599,129 +639,86 @@ function CadencesPage() {
                                     )}
                                   />
                                 </Button>
-                              )}
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                title="stop cadence"
-                                disabled={stop.isPending}
-                                onClick={() =>
-                                  stop.mutate({ prospectId: c.prospectId, playName: c.playName })
-                                }
-                              >
-                                <CircleStop size={12} />
-                              </Button>
-                            </>
-                          );
-                        })()}
-                        {/* Chevron also for NON-active rows that still have history
-                            (breakup / replied / completed / paused). The active-status
-                            block already renders its own chevron above when there's a
-                            draft OR history; this one covers the non-active case. */}
-                        {c.status !== "active" && c.priorSteps.length > 0 && (() => {
-                          const key = `${c.prospectId}|${c.playName}`;
-                          return (
+                              );
+                            })()}
+                          {c.prospectEmail && (
                             <Button
                               variant="ghost"
                               size="sm"
-                              title={
-                                expandedKeys.has(key)
-                                  ? "collapse"
-                                  : `view ${c.priorSteps.length} sent so far`
-                              }
+                              title="log outcome"
                               onClick={() =>
-                                toggleExpanded(key)
+                                setOutcomeModal({
+                                  email: c.prospectEmail as string,
+                                  prospectName: c.prospectName,
+                                  playName: c.playName,
+                                })
                               }
                             >
-                              <ChevronDown
-                                size={12}
-                                className={cn(
-                                  "transition-transform",
-                                  expandedKeys.has(key) && "rotate-180",
-                                )}
-                              />
+                              <Trophy size={12} />
                             </Button>
-                          );
-                        })()}
-                        {c.prospectEmail && (
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            title="log outcome"
-                            onClick={() =>
-                              setOutcomeModal({
-                                email: c.prospectEmail as string,
-                                prospectName: c.prospectName,
-                                playName: c.playName,
-                              })
-                            }
-                          >
-                            <Trophy size={12} />
-                          </Button>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                  {(c.priorSteps.length > 0 || c.nextStepDraft) &&
-                    expandedKeys.has(rowKey(c)) && (
-                      <tr className="border-b border-ink-rule/60 bg-ink-surface/30">
-                        <td colSpan={8} className="px-6 py-3">
-                          {c.priorSteps.length > 0 && (
-                            <>
-                              <div className="ln-eyebrow mb-1">
-                                Sent so far ({c.priorSteps.length})
-                              </div>
-                              <div className="flex flex-col gap-3">
-                                {c.priorSteps.map((s) => (
-                                  <div
-                                    key={s.stepIndex}
-                                    className="border-l-2 border-ink-rule pl-3"
-                                  >
-                                    <div className="font-mono text-[11px] text-ink-faint">
-                                      step {s.stepIndex} ({s.label}) · sent{" "}
-                                      {timeAgo(s.sentAt)}
-                                    </div>
-                                    <div className="mt-1 font-mono text-[12px] text-ink-cream">
-                                      Subject: {s.subject}
-                                    </div>
-                                    {s.body ? (
-                                      <pre className="mt-1 whitespace-pre-wrap text-[12px] text-ink-cream-2">
-{s.body}
-                                      </pre>
-                                    ) : (
-                                      <div className="mt-1 font-mono text-[11px] italic text-ink-faint">
-                                        (body not captured — sent before per-touch body persistence
-                                        landed)
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                    {(c.priorSteps.length > 0 || c.nextStepDraft) &&
+                      expandedKeys.has(rowKey(c)) && (
+                        <tr className="border-b border-ink-rule/60 bg-ink-surface/30">
+                          <td colSpan={8} className="px-6 py-3">
+                            {c.priorSteps.length > 0 && (
+                              <>
+                                <div className="ln-eyebrow mb-1">
+                                  Sent so far ({c.priorSteps.length})
+                                </div>
+                                <div className="flex flex-col gap-3">
+                                  {c.priorSteps.map((s) => (
+                                    <div
+                                      key={s.stepIndex}
+                                      className="border-l-2 border-ink-rule pl-3"
+                                    >
+                                      <div className="font-mono text-[11px] text-ink-faint">
+                                        step {s.stepIndex} ({s.label}) · sent {timeAgo(s.sentAt)}
                                       </div>
-                                    )}
-                                  </div>
-                                ))}
+                                      <div className="mt-1 font-mono text-[12px] text-ink-cream">
+                                        Subject: {s.subject}
+                                      </div>
+                                      {s.body ? (
+                                        <pre className="mt-1 whitespace-pre-wrap text-[12px] text-ink-cream-2">
+                                          {s.body}
+                                        </pre>
+                                      ) : (
+                                        <div className="mt-1 font-mono text-[11px] italic text-ink-faint">
+                                          (body not captured — sent before per-touch body
+                                          persistence landed)
+                                        </div>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              </>
+                            )}
+                            {c.nextStepDraft && (
+                              <div className={c.priorSteps.length > 0 ? "mt-5" : ""}>
+                                <div className="ln-eyebrow mb-1">Next-step preview</div>
+                                <div className="font-mono text-[11px] text-ink-faint">
+                                  drafted {timeAgo(c.nextStepDraft.draftedAt)}
+                                  {c.nextStepDraft.flags.length > 0 && (
+                                    <span className="ml-2 text-[color:var(--ink-spend-2)]">
+                                      · {c.nextStepDraft.flags.length} flag(s):{" "}
+                                      {c.nextStepDraft.flags.join(", ")}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="mt-2 font-mono text-[12px] text-ink-cream">
+                                  Subject: {c.nextStepDraft.subject}
+                                </div>
+                                <pre className="mt-1 whitespace-pre-wrap text-[12px] text-ink-cream-2">
+                                  {c.nextStepDraft.body}
+                                </pre>
                               </div>
-                            </>
-                          )}
-                          {c.nextStepDraft && (
-                            <div className={c.priorSteps.length > 0 ? "mt-5" : ""}>
-                              <div className="ln-eyebrow mb-1">Next-step preview</div>
-                              <div className="font-mono text-[11px] text-ink-faint">
-                                drafted {timeAgo(c.nextStepDraft.draftedAt)}
-                                {c.nextStepDraft.flags.length > 0 && (
-                                  <span className="ml-2 text-[color:var(--ink-spend-2)]">
-                                    · {c.nextStepDraft.flags.length} flag(s):{" "}
-                                    {c.nextStepDraft.flags.join(", ")}
-                                  </span>
-                                )}
-                              </div>
-                              <div className="mt-2 font-mono text-[12px] text-ink-cream">
-                                Subject: {c.nextStepDraft.subject}
-                              </div>
-                              <pre className="mt-1 whitespace-pre-wrap text-[12px] text-ink-cream-2">
-{c.nextStepDraft.body}
-                              </pre>
-                            </div>
-                          )}
-                        </td>
-                      </tr>
-                    )}
+                            )}
+                          </td>
+                        </tr>
+                      )}
                   </Fragment>
                 );
               })}
@@ -750,9 +747,7 @@ function CadencesPage() {
               }
               disabled={sendBatch.isPending || sendableRows.length === 0}
             >
-              {sendBatch.isPending
-                ? "Sending…"
-                : `Send ${sendableRows.length}`}
+              {sendBatch.isPending ? "Sending…" : `Send ${sendableRows.length}`}
             </Button>
           </>
         }
@@ -800,7 +795,8 @@ function CadencesPage() {
             </table>
           </div>
           <div className="ln-eyebrow text-[10px] text-ink-faint">
-            Server processes serially; ~2 min per email. The UI refreshes every 15s and rows clear their preview as each completes.
+            Server processes serially; ~2 min per email. The UI refreshes every 15s and rows clear
+            their preview as each completes.
           </div>
         </div>
       </Modal>
@@ -828,11 +824,7 @@ function CadencesPage() {
               }}
               disabled={sendNext.isPending}
             >
-              {sendNext.isPending
-                ? "Sending…"
-                : sendConfirm?.isBreakup
-                  ? "Send breakup"
-                  : "Send"}
+              {sendNext.isPending ? "Sending…" : sendConfirm?.isBreakup ? "Send breakup" : "Send"}
             </Button>
           </>
         }
@@ -841,21 +833,23 @@ function CadencesPage() {
           {sendConfirm?.isEarly && sendConfirm.nextDueAt && (
             <div className="rounded border border-ink-rule bg-ink-surface/40 px-3 py-2 text-[12px] text-ink-cream-2">
               Heads up: this step isn't scheduled to fire until{" "}
-              <span className="text-ink-cream">{timeAgo(sendConfirm.nextDueAt)}</span>
-              {" "}({earlyByCopy(sendConfirm.nextDueAt)}). Sending now fires it ahead of
-              schedule; the remaining cadence steps will recompute their due dates from
-              today, not the original schedule.
+              <span className="text-ink-cream">{timeAgo(sendConfirm.nextDueAt)}</span> (
+              {earlyByCopy(sendConfirm.nextDueAt)}). Sending now fires it ahead of schedule; the
+              remaining cadence steps will recompute their due dates from today, not the original
+              schedule.
             </div>
           )}
           {sendConfirm?.isBreakup && (
             <div className="rounded border border-ink-rule bg-ink-surface/40 px-3 py-2 text-[12px] text-[color:var(--ink-spend-2)]">
-              This is the breakup — the final touch in <code className="font-mono text-[11px]">{sendConfirm.playName}</code>.
-              After this, no more emails will go to this prospect.
+              This is the breakup — the final touch in{" "}
+              <code className="font-mono text-[11px]">{sendConfirm.playName}</code>. After this, no
+              more emails will go to this prospect.
             </div>
           )}
           <div className="font-mono text-[12px] text-ink-muted">
             <div>
-              To: <span className="text-ink-cream-2">{sendConfirm?.prospectEmail ?? "(no email)"}</span>
+              To:{" "}
+              <span className="text-ink-cream-2">{sendConfirm?.prospectEmail ?? "(no email)"}</span>
             </div>
             <div>
               Play: <span className="text-ink-cream-2">{sendConfirm?.playName}</span>

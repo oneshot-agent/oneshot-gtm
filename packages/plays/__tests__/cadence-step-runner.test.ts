@@ -65,6 +65,26 @@ vi.mock("@oneshot-gtm/core", async () => {
     getLedger: () => ({
       listAllCadences: () => cadenceRows,
       listActiveCadences: () => cadenceRows.filter((c) => c.status === "active"),
+      listCadencesForProspect: (prospectId: number) =>
+        cadenceRows.filter((c) => c.prospect_id === prospectId),
+      getCadence: (prospectId: number, playName: string) =>
+        cadenceRows.find((c) => c.prospect_id === prospectId && c.play_name === playName) ?? null,
+      getProspectById: (id: number) => {
+        const row = cadenceRows.find((c) => c.prospect_id === id);
+        return row
+          ? {
+              id: row.prospect_id,
+              name: row.prospect_name,
+              email: row.prospect_email,
+              company: row.prospect_company,
+              linkedin_url: null,
+              dossier_json: null,
+              source: "test",
+              phone: null,
+              created_at: "now",
+            }
+          : null;
+      },
       findProspectByEmail: () => null,
       listSequenceEventsForProspectPlay: () => [],
       recordSequenceEvent: () => 0,
@@ -143,9 +163,8 @@ vi.mock("@oneshot-gtm/intel", async () => {
   };
 });
 
-const { previewCadenceStep, sendCadenceStep, runCadenceStepForProspect } = await import(
-  "../src/_cadence.ts"
-);
+const { previewCadenceStep, sendCadenceStep, runCadenceStepForProspect } =
+  await import("../src/_cadence.ts");
 // Ensure stack-consolidation's sequence is registered.
 await import("../src/stack-consolidation.ts");
 
