@@ -12,9 +12,7 @@ vi.mock("@oneshot-gtm/plays", async () => {
   };
 });
 
-const { previewCadenceBatchRoute, sendCadenceBatchRoute } = await import(
-  "../src/api/cadences.ts"
-);
+const { previewCadenceBatchRoute, sendCadenceBatchRoute } = await import("../src/api/cadences.ts");
 
 function jsonBody(body: unknown): Request {
   return new Request("http://localhost/api/cadences/preview-batch", {
@@ -73,7 +71,12 @@ describe("previewCadenceBatchRoute", () => {
 
   it("silently drops malformed entries when at least one is valid", async () => {
     previewBatchMock.mockResolvedValue([
-      { prospectId: 1, playName: "show-hn", ok: true, preview: { subject: "s", body: "b", flags: [], draftedAt: "now" } },
+      {
+        prospectId: 1,
+        playName: "show-hn",
+        ok: true,
+        preview: { subject: "s", body: "b", flags: [], draftedAt: "now" },
+      },
     ]);
     const res = await previewCadenceBatchRoute(
       jsonBody({
@@ -101,7 +104,12 @@ describe("previewCadenceBatchRoute", () => {
 
   it("200s with results pass-through when wrapper returns mixed ok/error", async () => {
     previewBatchMock.mockResolvedValue([
-      { prospectId: 1, playName: "show-hn", ok: true, preview: { subject: "s", body: "b", flags: [], draftedAt: "now" } },
+      {
+        prospectId: 1,
+        playName: "show-hn",
+        ok: true,
+        preview: { subject: "s", body: "b", flags: [], draftedAt: "now" },
+      },
       { prospectId: 2, playName: "show-hn", ok: false, error: "cadence is replied" },
     ]);
     const res = await previewCadenceBatchRoute(

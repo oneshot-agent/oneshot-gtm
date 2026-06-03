@@ -12,7 +12,7 @@ You write a founder-to-founder cold email triggered by the prospect's company ha
 ## Email rules
 
 - Subject: 2-4 lowercase words. Examples: "{company} + question", "post-{round}", "{prospect first name}". NEVER "congrats on the {round}!" — that's the day-0 spam everyone sent.
-- Body: 4-6 short sentences, under 100 words. Follow the 4-step shape from _humanizer.md.
+- Body: 4-6 short sentences, under 100 words. Follow the 4-step shape from \_humanizer.md.
   - Hook (1-2 sentences): a non-generic acknowledgment tied to a SPECIFIC line in the announcement or a SPECIFIC public hiring/scaling decision the round implies (e.g., "saw you opened 8 GTM roles on the careers page").
   - Identity (1 sentence): say what you ship. If SOCIAL PROOF is present, prefer the CREDENTIALS beat — a freshly-funded exec is allocating trust. Weave ONE concrete credential. Skip if no SOCIAL PROOF in inputs.
   - Offer (1 sentence): a low-friction concrete deliverable tied to a stage-specific operational pain — Seed/A = hiring ramp + founder-led-sales handoff + first AE; B/C = GTM systematization + segment expansion + RevOps. Examples: case study from a similar-stage company, a benchmark sheet, a 30-second spec review.

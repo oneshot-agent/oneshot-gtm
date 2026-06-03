@@ -40,82 +40,82 @@ export async function runDemoNoShow(opts: DemoNoShowRunOptions): Promise<DemoNoS
   const outcomes: DemoNoShowResult["outcomes"] = [];
 
   for (const t of opts.targets) {
-   try {
-    const receiptIds: number[] = [];
+    try {
+      const receiptIds: number[] = [];
 
-    // SMS first (same-day)
-    let smsResult: DemoNoShowResult["outcomes"][number]["sms"] = null;
-    if (!opts.skipSms && t.phone) {
-      const sms = await draftSmsBody(cfg.founderName, cfg.productOneLiner, t);
-      let sent = false;
-      if (!opts.dryRun && sms.length > 0 && sms.length <= 320) {
-        const r = await sendSms({ to: t.phone, message: sms }, { playName: PLAY_NAME });
-        receiptIds.push(r.receiptId);
-        sent = true;
+      // SMS first (same-day)
+      let smsResult: DemoNoShowResult["outcomes"][number]["sms"] = null;
+      if (!opts.skipSms && t.phone) {
+        const sms = await draftSmsBody(cfg.founderName, cfg.productOneLiner, t);
+        let sent = false;
+        if (!opts.dryRun && sms.length > 0 && sms.length <= 320) {
+          const r = await sendSms({ to: t.phone, message: sms }, { playName: PLAY_NAME });
+          receiptIds.push(r.receiptId);
+          sent = true;
+        }
+        smsResult = { message: sms, sent };
       }
-      smsResult = { message: sms, sent };
-    }
 
-    // Same-day email
-    const draft = await draftEmailFromPrompt({
-      promptName: "demo-no-show-email",
-      inputBlock: [
-        `FOUNDER: ${cfg.founderName}`,
-        `PRODUCT: ${cfg.productOneLiner}`,
-        `PROSPECT: ${t.name} at ${t.company}`,
-        `MISSED AT: ${t.missedAt}`,
-        `RESCHEDULE LINK: ${t.rescheduleLink}`,
-        `WHAT THEY WANTED: ${t.whatTheyWanted ?? "(not captured at booking)"}`,
-      ].join("\n"),
-    });
-    const flags = lintEmail(draft.subject, draft.body, 100);
+      // Same-day email
+      const draft = await draftEmailFromPrompt({
+        promptName: "demo-no-show-email",
+        inputBlock: [
+          `FOUNDER: ${cfg.founderName}`,
+          `PRODUCT: ${cfg.productOneLiner}`,
+          `PROSPECT: ${t.name} at ${t.company}`,
+          `MISSED AT: ${t.missedAt}`,
+          `RESCHEDULE LINK: ${t.rescheduleLink}`,
+          `WHAT THEY WANTED: ${t.whatTheyWanted ?? "(not captured at booking)"}`,
+        ].join("\n"),
+      });
+      const flags = lintEmail(draft.subject, draft.body, 100);
 
-    const send = await sendDraftedEmail({
-      playName: PLAY_NAME,
-      to: t.email,
-      draft,
-      flags,
-      prospectMeta: {
-        name: t.name,
-        email: t.email,
-        company: t.company,
-        linkedin_url: t.linkedinUrl ?? null,
-        phone: t.phone ?? null,
-        source: "demo-no-show",
-      },
-      metadata: { missedAt: t.missedAt, rescheduleLink: t.rescheduleLink },
-      dryRun: opts.dryRun,
-    });
-    receiptIds.push(...send.receiptIds);
-
-    if (send.sent) {
-      const ledger = getLedger();
-      const prospect = ledger.findProspectByEmail(t.email);
-      if (prospect) {
-        enrollInCadence({ prospectId: prospect.id, playName: PLAY_NAME });
-      }
-    }
-
-    outcomes.push({
-      target: t,
-      sms: smsResult,
-      email: {
-        subject: draft.subject,
-        body: draft.body,
-        sent: send.sent,
+      const send = await sendDraftedEmail({
+        playName: PLAY_NAME,
+        to: t.email,
+        draft,
         flags,
-      },
-      receiptIds,
-    });
-   } catch (err) {
-    const stub = errorDraft((err as Error)?.message);
-    outcomes.push({
-      target: t,
-      sms: null,
-      email: { subject: stub.subject, body: stub.body, sent: stub.sent, flags: stub.flags },
-      receiptIds: stub.receiptIds,
-    });
-   }
+        prospectMeta: {
+          name: t.name,
+          email: t.email,
+          company: t.company,
+          linkedin_url: t.linkedinUrl ?? null,
+          phone: t.phone ?? null,
+          source: "demo-no-show",
+        },
+        metadata: { missedAt: t.missedAt, rescheduleLink: t.rescheduleLink },
+        dryRun: opts.dryRun,
+      });
+      receiptIds.push(...send.receiptIds);
+
+      if (send.sent) {
+        const ledger = getLedger();
+        const prospect = ledger.findProspectByEmail(t.email);
+        if (prospect) {
+          enrollInCadence({ prospectId: prospect.id, playName: PLAY_NAME });
+        }
+      }
+
+      outcomes.push({
+        target: t,
+        sms: smsResult,
+        email: {
+          subject: draft.subject,
+          body: draft.body,
+          sent: send.sent,
+          flags,
+        },
+        receiptIds,
+      });
+    } catch (err) {
+      const stub = errorDraft((err as Error)?.message);
+      outcomes.push({
+        target: t,
+        sms: null,
+        email: { subject: stub.subject, body: stub.body, sent: stub.sent, flags: stub.flags },
+        receiptIds: stub.receiptIds,
+      });
+    }
   }
 
   return { outcomes };

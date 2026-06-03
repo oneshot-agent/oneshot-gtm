@@ -160,9 +160,7 @@ registerSequence({
       builder: buildFollowUpEmail({
         playName: PLAY_NAME,
         promptName: "breakup-email",
-        contextLines: [
-          `PLAY: competitor-switch. Final breakup after the migration-honesty pitch.`,
-        ],
+        contextLines: [`PLAY: competitor-switch. Final breakup after the migration-honesty pitch.`],
       }),
     },
   ],

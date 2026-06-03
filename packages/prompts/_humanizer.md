@@ -14,7 +14,7 @@ Every first-touch outbound email follows this order. Per-play prompts may add pl
 ## Subject-line patterns (allowed)
 
 - 2-5 lowercase words. Always all-lowercase including brand names + acronyms.
-- "quick question" — allowed *as a subject*. Still forbidden as the body's first sentence (see Banned email openers).
+- "quick question" — allowed _as a subject_. Still forbidden as the body's first sentence (see Banned email openers).
 - Specific-flaw callout: "your playwright bill", "wasting $2,300 a month", "your api stack".
 - Friend-style fragment: "stack thing", "saw your repo", "podcast question".
 

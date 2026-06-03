@@ -55,60 +55,60 @@ export async function runBreakupRevive(
 
   for (const t of targets) {
     if (!t.email) continue;
-   try {
-    const draft = await draftEmailFromPrompt({
-      promptName: "breakup-revive-email",
-      inputBlock: [
-        `FOUNDER: ${cfg.founderName}`,
-        `PRODUCT: ${cfg.productOneLiner}`,
-        `PROSPECT: ${t.name ?? "(unknown)"} at ${t.company ?? "(unknown)"}`,
-        `DAYS SINCE LAST ACTIVITY: ${t.daysCold}`,
-        `OPTIONAL VALUE DROP: ${opts.valueDrop ?? "(none — go with a probe question instead)"}`,
-      ].join("\n"),
-    });
+    try {
+      const draft = await draftEmailFromPrompt({
+        promptName: "breakup-revive-email",
+        inputBlock: [
+          `FOUNDER: ${cfg.founderName}`,
+          `PRODUCT: ${cfg.productOneLiner}`,
+          `PROSPECT: ${t.name ?? "(unknown)"} at ${t.company ?? "(unknown)"}`,
+          `DAYS SINCE LAST ACTIVITY: ${t.daysCold}`,
+          `OPTIONAL VALUE DROP: ${opts.valueDrop ?? "(none — go with a probe question instead)"}`,
+        ].join("\n"),
+      });
 
-    const flags = lintEmail(draft.subject, draft.body, 80);
+      const flags = lintEmail(draft.subject, draft.body, 80);
 
-    const send = await sendDraftedEmail({
-      playName: PLAY_NAME,
-      to: t.email,
-      draft,
-      flags,
-      prospectMeta: {
-        name: t.name,
-        email: t.email,
-        company: t.company,
-        linkedin_url: t.linkedinUrl ?? null,
-        phone: t.phone ?? null,
-        source: "breakup-revive",
-      },
-      metadata: { daysCold: t.daysCold, lastEventAt: t.lastEventAt },
-      dryRun: opts.dryRun,
-    });
+      const send = await sendDraftedEmail({
+        playName: PLAY_NAME,
+        to: t.email,
+        draft,
+        flags,
+        prospectMeta: {
+          name: t.name,
+          email: t.email,
+          company: t.company,
+          linkedin_url: t.linkedinUrl ?? null,
+          phone: t.phone ?? null,
+          source: "breakup-revive",
+        },
+        metadata: { daysCold: t.daysCold, lastEventAt: t.lastEventAt },
+        dryRun: opts.dryRun,
+      });
 
-    drafted.push({
-      prospectEmail: t.email,
-      prospectName: t.name,
-      daysCold: t.daysCold,
-      subject: draft.subject,
-      body: draft.body,
-      receiptIds: send.receiptIds,
-      sent: send.sent,
-      flags,
-    });
-   } catch (err) {
-    const stub = errorDraft((err as Error)?.message);
-    drafted.push({
-      prospectEmail: t.email,
-      prospectName: t.name,
-      daysCold: t.daysCold,
-      subject: stub.subject,
-      body: stub.body,
-      receiptIds: stub.receiptIds,
-      sent: stub.sent,
-      flags: stub.flags,
-    });
-   }
+      drafted.push({
+        prospectEmail: t.email,
+        prospectName: t.name,
+        daysCold: t.daysCold,
+        subject: draft.subject,
+        body: draft.body,
+        receiptIds: send.receiptIds,
+        sent: send.sent,
+        flags,
+      });
+    } catch (err) {
+      const stub = errorDraft((err as Error)?.message);
+      drafted.push({
+        prospectEmail: t.email,
+        prospectName: t.name,
+        daysCold: t.daysCold,
+        subject: stub.subject,
+        body: stub.body,
+        receiptIds: stub.receiptIds,
+        sent: stub.sent,
+        flags: stub.flags,
+      });
+    }
   }
 
   return { drafted };

@@ -15,7 +15,7 @@ You write a founder-to-founder cold email triggered by a job post the prospect's
 ## Email rules
 
 - Subject: 2-4 lowercase words. Examples: "{job title} ramp", "before your {role} starts", "{role} day-1 stack". NEVER "saw you're hiring!".
-- Body: 4-6 short sentences, under 100 words. Follow the 4-step shape from _humanizer.md.
+- Body: 4-6 short sentences, under 100 words. Follow the 4-step shape from \_humanizer.md.
   - Hook (1-2 sentences): reference the specific job post phrase from HOOK — proves you read it, not just the title. Avoid restating the role title.
   - Identity (1 sentence): say what you ship. If SOCIAL PROOF is present, prefer the PORTFOLIO beat — peer founders care that you've shipped things the new hire would otherwise build from scratch. Weave ONE concrete product name. Skip if no SOCIAL PROOF in inputs.
   - Offer (1 sentence): the implication — what the new hire will spend their first month on, and how your product compresses that. Concrete deliverable: a setup checklist, a 30-second spec, a free month while they ramp.

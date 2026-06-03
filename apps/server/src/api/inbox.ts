@@ -42,7 +42,10 @@ export async function listInboxRoute(req: Request): Promise<Response> {
     if (!c.prospect_email) continue;
     const key = c.prospect_email.trim().toLowerCase();
     const existing = byEmail.get(key);
-    const better = !existing || c.status === "replied" || (c.status === "active" && existing.status !== "replied");
+    const better =
+      !existing ||
+      c.status === "replied" ||
+      (c.status === "active" && existing.status !== "replied");
     if (better) {
       byEmail.set(key, {
         name: c.prospect_name,

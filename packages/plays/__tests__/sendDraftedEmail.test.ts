@@ -98,10 +98,7 @@ describe("sendDraftedEmail pre-send cadence check", () => {
 
   it("C: prospect found but only step-≥1 events (follow-ups only, no original) — guard passes", async () => {
     findProspectByEmailMock.mockReturnValue({ id: 7 });
-    listSequenceEventsForProspectPlayMock.mockReturnValue([
-      { step_index: 1 },
-      { step_index: 2 },
-    ]);
+    listSequenceEventsForProspectPlayMock.mockReturnValue([{ step_index: 1 }, { step_index: 2 }]);
     const opts = baseOpts();
     const out = await sendDraftedEmail(opts);
     expect(sendEmailMock).toHaveBeenCalledTimes(1);

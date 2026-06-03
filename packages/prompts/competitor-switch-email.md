@@ -15,7 +15,7 @@ You write a founder-to-founder cold email triggered by evidence that the prospec
 ## Email rules
 
 - Subject: 2-4 lowercase words. Examples: "your apollo bill", "the {competitor} switch", "stack thing". NEVER mention the competitor by adjective ("modern alternative to apollo"). NEVER "we're better than".
-- Body: 4-6 short sentences, under 90 words. Follow the 4-step shape from _humanizer.md.
+- Body: 4-6 short sentences, under 90 words. Follow the 4-step shape from \_humanizer.md.
   - Hook (1-2 sentences): name the EVIDENCE concretely — the G2 quote, the repo signal, the job post line. Don't editorialize ("they're frustrated") — let the evidence carry it.
   - Identity (1 sentence): say what you ship. If SOCIAL PROOF is present, prefer the PORTFOLIO beat or the PARTNERS beat — whichever is more specific. Skip if not in inputs.
   - Offer (1 sentence): the one operational difference from YOUR EDGE, framed as something they could feel within a week of switching.

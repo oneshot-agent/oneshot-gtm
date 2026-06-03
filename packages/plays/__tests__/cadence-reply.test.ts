@@ -36,7 +36,14 @@ vi.mock("@oneshot-gtm/core", async () => {
     getLedger: () => ({
       listAllCadences: () => rows,
       listActiveCadences: ({ dueByIso }: { dueByIso: string }) =>
-        rows.filter((r) => r.status === "active" && r.next_due_at != null && r.next_due_at <= dueByIso),
+        rows.filter(
+          (r) => r.status === "active" && r.next_due_at != null && r.next_due_at <= dueByIso,
+        ),
+      listCadencesForProspect: (prospectId: number) =>
+        rows.filter((r) => r.prospect_id === prospectId),
+      getCadence: (prospectId: number, playName: string) =>
+        rows.find((r) => r.prospect_id === prospectId && r.play_name === playName) ?? null,
+      getProspectById: (id: number) => ({ id, name: "P", email: STORED_EMAIL, company: "Co" }),
       findProspectByEmail: (email: string) => {
         const canon = email.trim().toLowerCase();
         lookupArgs.push(canon);
@@ -83,7 +90,9 @@ afterEach(() => {
 
 describe("advanceCadence — reply detection", () => {
   it("a mixed-case inbound reply marks the cadence replied and skips the due step", async () => {
-    inboxEmails = [{ from: "Sophia Stein <Sophia@AgenticArchitect.AI>", subject: "re: your agent stack" }];
+    inboxEmails = [
+      { from: "Sophia Stein <Sophia@AgenticArchitect.AI>", subject: "re: your agent stack" },
+    ];
 
     const result = await advanceCadence({ dryRun: false });
 

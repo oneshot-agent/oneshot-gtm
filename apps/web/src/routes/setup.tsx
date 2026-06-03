@@ -239,7 +239,9 @@ function SetupPage() {
               <Textarea
                 value={productOneLiner}
                 onChange={(e) => setProductOneLiner(e.target.value)}
-                placeholder={'e.g. "Stripe for freight" · "AI bookkeeping for restaurants" · "scheduling for dog groomers"'}
+                placeholder={
+                  'e.g. "Stripe for freight" · "AI bookkeeping for restaurants" · "scheduling for dog groomers"'
+                }
                 rows={2}
               />
             </Field>
@@ -314,7 +316,9 @@ function SetupPage() {
               <Textarea
                 value={icpOneLiner}
                 onChange={(e) => setIcpOneLiner(e.target.value)}
-                placeholder={'e.g. "CFOs at Series-B SaaS" · "Shopify stores doing $1M+/yr" · "indie iOS devs"'}
+                placeholder={
+                  'e.g. "CFOs at Series-B SaaS" · "Shopify stores doing $1M+/yr" · "indie iOS devs"'
+                }
                 rows={3}
               />
             </Field>
@@ -333,7 +337,9 @@ function SetupPage() {
               <Textarea
                 value={founderCredentials}
                 onChange={(e) => setFounderCredentials(e.target.value)}
-                placeholder={'e.g. "ex-Stripe eng" · "VP Sales at Salesforce" · "ran a $2M Shopify store"'}
+                placeholder={
+                  'e.g. "ex-Stripe eng" · "VP Sales at Salesforce" · "ran a $2M Shopify store"'
+                }
                 rows={2}
               />
             </Field>

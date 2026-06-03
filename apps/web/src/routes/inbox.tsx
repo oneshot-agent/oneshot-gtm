@@ -14,9 +14,7 @@ export const Route = createFileRoute("/inbox")({
   component: InboxPage,
 });
 
-function statusTone(
-  status: string | null,
-): "receipt" | "spend" | "blocked" | "signal" | "neutral" {
+function statusTone(status: string | null): "receipt" | "spend" | "blocked" | "signal" | "neutral" {
   switch (status) {
     case "replied":
       return "signal";
@@ -167,9 +165,7 @@ function ReplyRow({
       </button>
       {expanded && (
         <div className="border-b border-ink-rule/60 bg-ink-bg-deep/50 px-6 py-3">
-          <div className="mb-2 font-mono text-[11px] text-ink-faint">
-            from {reply.fromRaw}
-          </div>
+          <div className="mb-2 font-mono text-[11px] text-ink-faint">from {reply.fromRaw}</div>
           <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap font-mono text-[12px] leading-[1.6] text-ink-cream-2">
             {reply.body || "(no body)"}
           </pre>

@@ -41,9 +41,7 @@ describe("pruneSentRows", () => {
   it("send event with empty receiptIds is treated as not-sent", () => {
     const rows = [r("a")];
     const keys = ["k-a"];
-    const events: RunPlayEvent[] = [
-      { kind: "send", index: 0, receiptIds: [] },
-    ];
+    const events: RunPlayEvent[] = [{ kind: "send", index: 0, receiptIds: [] }];
     const out = pruneSentRows(events, rows, keys);
     expect(out.prunedCount).toBe(0);
     expect(out.rows).toEqual([r("a")]);

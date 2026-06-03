@@ -168,9 +168,10 @@ export async function regenerateDraftRoute(
   // Carry through any per-play extras the payload happens to hold. Only
   // accelerator-batch needs senderCohort, which usually isn't on the row —
   // dispatchPlay then throws a clear error, surfaced here as a 400.
-  const payloadObj = (
-    target && typeof target === "object" ? target : {}
-  ) as Record<string, unknown>;
+  const payloadObj = (target && typeof target === "object" ? target : {}) as Record<
+    string,
+    unknown
+  >;
   const body: RunPlayRequest = {
     dryRun: true,
     targets: [target],

@@ -294,9 +294,7 @@ describe("cadence next-step draft round-trip", () => {
       playName: "show-hn",
       nextDueAt: new Date().toISOString(),
     });
-    expect(() =>
-      ledger.clearCadenceDraft({ prospectId: pid, playName: "show-hn" }),
-    ).not.toThrow();
+    expect(() => ledger.clearCadenceDraft({ prospectId: pid, playName: "show-hn" })).not.toThrow();
   });
 
   it("setCadenceStatus to a non-active state clears the persisted draft", () => {

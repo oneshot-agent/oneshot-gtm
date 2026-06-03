@@ -56,9 +56,10 @@ export async function safeEnrich(
       { play: ctx.playName, message_120: ((err as Error)?.message ?? "").slice(0, 120) },
       "warn",
     );
-    return { result: { status: "failed", profile: null, cost: 0 }, receiptId: 0 } as unknown as Awaited<
-      ReturnType<typeof enrichProfile>
-    >;
+    return {
+      result: { status: "failed", profile: null, cost: 0 },
+      receiptId: 0,
+    } as unknown as Awaited<ReturnType<typeof enrichProfile>>;
   }
 }
 

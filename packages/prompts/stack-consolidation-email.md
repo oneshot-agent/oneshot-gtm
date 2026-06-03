@@ -13,8 +13,8 @@ You write a founder-to-founder cold email to a developer whose public repo wires
 
 ## Email rules
 
-- Subject: 2-4 lowercase words. See _humanizer.md → Subject-line patterns. Examples that fit: "your api stack", "one sdk fewer bills", "stack thing", "your playwright setup". NEVER name a vendor as a rival, NEVER "we're better!".
-- Body: 4-6 short sentences, under 90 words. Follow the 4-step shape from _humanizer.md.
+- Subject: 2-4 lowercase words. See \_humanizer.md → Subject-line patterns. Examples that fit: "your api stack", "one sdk fewer bills", "stack thing", "your playwright setup". NEVER name a vendor as a rival, NEVER "we're better!".
+- Body: 4-6 short sentences, under 90 words. Follow the 4-step shape from \_humanizer.md.
   - Hook (1-2 sentences): name the sprawl from real evidence WITHOUT listing three or more vendors in a row. Say "your repo wires up a handful of separate API vendors" or name AT MOST ONE ("you're running {one vendor} alongside a few others"). NEVER write "X, Y, and Z" — a three-item comma series reads as boilerplate.
   - Identity (1 sentence): say what you ship in a peer tone. If SOCIAL PROOF is present, prefer the PORTFOLIO beat (peer founders care that the SDK works for real products) — weave ONE concrete product name from it. Skip the proof line entirely if no SOCIAL PROOF is in the inputs.
   - Offer (1 sentence): the one specific reason it might still be worth collapsing — one fact from YOUR EDGE, not three.
