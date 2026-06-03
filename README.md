@@ -53,9 +53,9 @@ Eight pages, all reading the same `~/.oneshot-gtm/ledger.sqlite`:
 - **Home** — spend (7d / 30d), reply rate trend, in-flight cadences, recent receipts
 - **Queue** — triggers table (enable, edit JSON config, fire) + target queue (status + play filters, bulk approve). Per-play **Drain** opens a modal that hands off to `/run/<play>` with approved rows pre-loaded — every draft + lint flag streams live, and the latest draft persists on the queue row so you can re-read it later by expanding the row (subject + body + flags + receipt links). Per-row spinner + locked button while a trigger is running.
 - **Replies** (`/inbox`) — read-only view of the OneShot inbox; each reply matched to its prospect + play + cadence status by sender address
-- **Cadences** — table view with inline **Stop** + **Log outcome** buttons; outcome modal supports `meeting_booked / sql_qualified / deal_won / deal_lost / ghosted`
+- **Cadences** — table view with inline **Stop** + **Log outcome** buttons; outcome modal supports `meeting_booked / sql_qualified / deal_won / deal_lost / ghosted`. Per-row chevron exposes the next-step draft preview before send; bulk select for batch preview/send; sent-step history collapsible inline; pulsing "sending" badge while a fire-and-forget send is in flight.
 - **Receipts** — paginated table; click a row → modal with the signed receipt payload
-- **Plays** — cards with channel badges + **Run** button (for `show-hn` / `job-change` / `post-funding` / `accelerator-batch` / `hiring-signal` / `podcast-guest` / `stack-consolidation`) + **Copy CLI** button
+- **Plays** — cards with channel badges + **Run** button (for `show-hn` / `job-change` / `post-funding` / `accelerator-batch` / `hiring-signal` / `podcast-guest` / `stack-consolidation` / `repo-interest`) + **Copy CLI** button
 - **Measure** — CAC + RoCS tables filterable by time range
 - **Setup** — editable wizard: founder profile, LLM provider/model, OneShot wallet keys (hidden inputs), telemetry toggle. Saves to chmod-600 `~/.oneshot-gtm/.env`.
 
@@ -65,7 +65,7 @@ A floating **strategist dock** is mounted on every page. Open it to chat through
 
 ### Discovery — where targets come from
 
-Motion plays don't require hand-curated JSON anymore. Eight **finders** auto-discover prospects, ICP-filter them, and enqueue into `/queue` for one-click approve / reject:
+Motion plays don't require hand-curated JSON anymore. Nine **finders** auto-discover prospects, ICP-filter them, and enqueue into `/queue` for one-click approve / reject:
 
 - **`show-hn`** — HN Algolia poller, surfaces same-day Show HN posts
 - **`post-funding`** — webSearch by ICP-derived industry × round (auto), or a TC/Crunchbase URL list
@@ -74,6 +74,7 @@ Motion plays don't require hand-curated JSON anymore. Eight **finders** auto-dis
 - **`podcast-guest`** — recent-guest discovery across Latent Space, Lenny's, 20VC, Acquired, Invest Like the Best
 - **`accelerator-batch`** — yc-oss directory + websearch fallback for non-YC cohorts (Techstars, Antler, 500 Global, AI Grant)
 - **`github-topics`** — GitHub-API manifest scan (`package.json`, `pyproject.toml`, `requirements.txt`) detects vendor stack deterministically; finds repos stitching together N agent vendors as competitor-switch targets
+- **`github-stars`** — recent stargazers of repos you watch, routed per repo: tag a repo `competitor` (→ competitor-switch) or `adjacent` (→ repo-interest, a "you're into X, my product helps" intro)
 - **`breakup-revive`** — scans the local ledger for prospects cold for 60-90 days
 
 Each finder runs as a **trigger** with its own interval + spend cap. Captured per-prospect signals (LinkedIn URL via webSearch + phone via passive enrichment when surfaced) show next to the email + company in `/queue`. Approved rows ship via `bun run cli -- find drain <play>` or the per-play **Drain** button on the Queue page.
@@ -169,7 +170,7 @@ oneshot-gtm
 │   ├── podcast-guest --target <file>        reference a specific quote from a recent podcast
 │   └── breakup-revive                       pattern-interrupt for cold ledger leads
 │
-│   show-hn / job-change / accelerator-batch / stack-consolidation live in the dashboard /run page
+│   show-hn / job-change / accelerator-batch / stack-consolidation / repo-interest live in the dashboard /run page
 │
 ├── cadence
 │   └── advance [--dry-run]                  poll inbound + fire due follow-ups
@@ -241,7 +242,7 @@ Bun-native, all the modern picks:
 
 - **Runtime**: [Bun](https://bun.sh) 1.3+
 - **Monorepo**: [Turborepo](https://turbo.build) + Bun catalog for shared dep versions
-- **Test**: [Vitest 4](https://vitest.dev) (630 cases across 48 files; ledger, lint, finder pipelines, play registry, strategist endpoint, web bucketing helpers)
+- **Test**: [Vitest 4](https://vitest.dev) (701 cases across 59 files; ledger, lint, finder pipelines, play registry, strategist endpoint, web bucketing helpers)
 - **Lint / format**: [oxlint](https://oxc.rs) + [oxfmt](https://oxc.rs) (Rust-based, ~50× faster than ESLint/Prettier)
 - **TypeScript**: 6.x with `verbatimModuleSyntax`, `noUncheckedIndexedAccess`, `noImplicitOverride`
 - **Web**: [Vite 8](https://vite.dev) + [React 19](https://react.dev) + [TanStack Router](https://tanstack.com/router) + [TanStack Query](https://tanstack.com/query) + [Base UI](https://base-ui.com) primitives + [Tailwind 4](https://tailwindcss.com) + [class-variance-authority](https://cva.style) + [lucide-react](https://lucide.dev)
@@ -265,8 +266,8 @@ oneshot-gtm/
 ├── packages/
 │   ├── core/        OneShot SDK wrapper, SQLite ledger, config + secrets, JSONL event log
 │   ├── intel/       LLM client (OpenRouter/OpenAI/Anthropic), advise, personalize, triage, weekly-review
-│   ├── plays/       11 outreach plays + handoff/icp/pmf modules + multichannel cadence engine
-│   ├── find/        8 finders + shared pipeline (manifest scan, parallel infra, dedupe, ICP filter,
+│   ├── plays/       12 outreach plays + handoff/icp/pmf modules + multichannel cadence engine
+│   ├── find/        9 finders + shared pipeline (manifest scan, parallel infra, dedupe, ICP filter,
 │   │                drain dispatcher, trigger registry)
 │   ├── prompts/     Markdown prompt files (humanizer canon + per-play + per-extract prompts)
 │   ├── doctor/      Wallet + ledger + key health checks
@@ -293,7 +294,7 @@ bun run typecheck        # tsc --noEmit across cli + server + packages
 bun run lint             # oxlint
 bun run fmt              # oxfmt --write
 bun run fmt:check        # CI-style format check
-bun run test             # vitest run (630 cases)
+bun run test             # vitest run (701 cases)
 bun run cli -- doctor    # smoke check
 ```
 
