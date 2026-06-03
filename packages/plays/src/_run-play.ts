@@ -1,4 +1,4 @@
-import { deepResearch, getLedger, loadConfig } from "@oneshot-gtm/core";
+import { deepResearch, getLedger, loadConfig, parallelMap } from "@oneshot-gtm/core";
 import {
   draftEmailFromPrompt,
   errorDraft,
@@ -76,9 +76,17 @@ export async function runEmailPlay<T, X = Record<string, never>>(
   if (!cfg.founderName || !cfg.productOneLiner) {
     throw new Error("founder profile incomplete. Run: oneshot-gtm config founder");
   }
-  const drafted: Array<PlayDraft<T, X>> = [];
 
-  for (const target of opts.targets) {
+  // Process targets in parallel (each is an LLM draft + send, ~5-90s). Drop to
+  // serial when the batch has duplicate emails: sendDraftedEmail's per-(prospect,
+  // play) step-0 dedupe is read-then-write, and only the serial order guarantees
+  // a duplicate doesn't slip a second send through the window. Finder-drained
+  // batches are already unique, so they get the full concurrency.
+  const emails = opts.targets.map((t) => def.toEmail(t).trim().toLowerCase());
+  const hasDupeEmails = new Set(emails).size !== emails.length;
+  const concurrency = hasDupeEmails ? 1 : 3;
+
+  const drafted = await parallelMap(opts.targets, concurrency, async (target) => {
     try {
       const prep = await def.prepare(target, opts.dryRun);
 
@@ -111,7 +119,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         if (prospect) enrollInCadence({ prospectId: prospect.id, playName: def.playName });
       }
 
-      drafted.push({
+      return {
         target,
         subject: draft.subject,
         body: draft.body,
@@ -119,15 +127,15 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         sent: send.sent,
         flags,
         ...(prep.extra ?? ({} as X)),
-      } as PlayDraft<T, X>);
+      } as PlayDraft<T, X>;
     } catch (err) {
-      drafted.push({
+      return {
         target,
         ...errorDraft((err as Error)?.message),
         ...(def.errorExtra ?? ({} as X)),
-      } as PlayDraft<T, X>);
+      } as PlayDraft<T, X>;
     }
-  }
+  });
 
   return { drafted };
 }
@@ -157,7 +165,8 @@ export async function standardEnrich(opts: {
     );
     receiptIds.push(research.receiptId);
     dossier +=
-      "\n\n---\n\n" + JSON.stringify(research.result, null, 2).slice(0, opts.research.slice ?? 4000);
+      "\n\n---\n\n" +
+      JSON.stringify(research.result, null, 2).slice(0, opts.research.slice ?? 4000);
   }
 
   return { receiptIds, dossier };
