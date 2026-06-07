@@ -84,6 +84,9 @@ export async function runBreakupRevive(
         },
         metadata: { daysCold: t.daysCold, lastEventAt: t.lastEventAt },
         dryRun: opts.dryRun,
+        // Re-engaging an already-contacted cold prospect is the whole point —
+        // opt out of the cross-play first-touch guard.
+        allowRecontact: true,
       });
 
       drafted.push({

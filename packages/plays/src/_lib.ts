@@ -5,6 +5,7 @@ import {
   logEvent,
   receiptUrlForId,
   sendEmail,
+  trackSend,
   verifyEmail,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
@@ -41,7 +42,19 @@ export async function safeEnrich(
   }
 
   try {
-    const out = await enrichProfile(input, ctx);
+    // Default audit context so even ad-hoc callers that pass only {playName}
+    // get a useful decisionContext on the receipt. Caller-supplied keys win.
+    const enrichedCtx = {
+      ...ctx,
+      decisionContext: {
+        source: "play.enrich",
+        ...(email ? { prospectEmail: email } : {}),
+        ...(input.linkedinUrl ? { linkedinUrl: input.linkedinUrl } : {}),
+        ...(input.companyDomain ? { companyDomain: input.companyDomain } : {}),
+        ...ctx.decisionContext,
+      },
+    };
+    const out = await enrichProfile(input, enrichedCtx);
     if (email) {
       try {
         ledger.setCachedEnrichment(email, JSON.stringify(out.result));
@@ -96,13 +109,55 @@ export const SLOP_PHRASES: Array<[RegExp, string]> = [
   [/\b(?:hope this helps|let me know if you'?d like|happy to expand)\b/i, "servile-closer"],
 ];
 
+/**
+ * Trailing signature lines that the signatureDirective forces the LLM to
+ * append (founder name, then product domain, then optional "Sent from my
+ * iPhone"). Returned in last-line-first order so callers can peel from the
+ * end. Empty when neither name nor domain is configured (no sig to strip).
+ */
+function configuredSigLines(): string[] {
+  const cfg = loadConfig();
+  const out: string[] = [];
+  if (cfg.mobileSignature === true) out.push("Sent from my iPhone");
+  const domain = (cfg.productDomain ?? "").trim();
+  if (domain) out.push(domain);
+  const name = (cfg.founderName ?? "").trim();
+  if (name) out.push(name);
+  return out;
+}
+
+/**
+ * Word count for body-too-long lint. Strips the trailing signature lines so
+ * the LLM isn't penalized for the 2-3 deterministic words the
+ * signatureDirective forces it to append. Otherwise a prompt that says "≤110
+ * words" only really gives the LLM ~107 for content, and borderline drafts
+ * trip body-too-long even when they're inside the contract.
+ *
+ * `sigLines` (last-line-first order) is exposed for tests so they don't have
+ * to mock loadConfig — production passes nothing and reads config.
+ */
+export function bodyWordsForLint(body: string, sigLines?: string[]): number {
+  const lines = sigLines ?? configuredSigLines();
+  let trimmed = body.replace(/\s+$/, "");
+  // Peel each sig line off the tail, but only if it matches the current
+  // last line — guarantees we never chop content that happens to contain
+  // the founder's name mid-paragraph.
+  for (const line of lines) {
+    const i = trimmed.lastIndexOf("\n");
+    const last = (i < 0 ? trimmed : trimmed.slice(i + 1)).trim();
+    if (last !== line) break;
+    trimmed = trimmed.slice(0, i < 0 ? 0 : i).replace(/\s+$/, "");
+  }
+  return trimmed.split(/\s+/).filter(Boolean).length;
+}
+
 export function lintEmail(subject: string, body: string, maxBodyWords = 110): string[] {
   const flags: string[] = [];
   if (subject.length === 0) flags.push("empty-subject");
   if (subject.length > 60) flags.push("subject-too-long");
   if (/[A-Z]{2,}/.test(subject)) flags.push("subject-shouty");
   if (body.length === 0) flags.push("empty-body");
-  if (body.split(/\s+/).length > maxBodyWords) flags.push("body-too-long");
+  if (bodyWordsForLint(body) > maxBodyWords) flags.push("body-too-long");
   if (body.includes("—")) flags.push("em-dash");
   if (/[“”‘’]/.test(body)) flags.push("curly-quotes");
   if (/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(body)) flags.push("emoji");
@@ -282,6 +337,13 @@ export interface SendDraftedOpts {
   };
   metadata?: Record<string, unknown>;
   dryRun: boolean;
+  /**
+   * Allow a first-touch even if the prospect was already touched by ANOTHER
+   * play. Off by default (we never first-touch the same person twice). Only
+   * breakup-revive sets this — deliberately re-contacting cold prospects is its
+   * whole job, mirroring how its finder bypasses isDuplicate.
+   */
+  allowRecontact?: boolean;
 }
 
 export interface SendDraftedResult {
@@ -309,21 +371,44 @@ export async function sendDraftedEmail(opts: SendDraftedOpts): Promise<SendDraft
         opts.flags.push("already-enrolled");
         return { receiptIds: [], sent: false };
       }
+      // Cross-play guard: never first-touch someone a DIFFERENT play already
+      // first-touched. The authoritative dedup for the "same person queued
+      // under two plays before either sent" race. breakup-revive opts out.
+      if (!opts.allowRecontact && ledger.prospectHasFirstTouch(existing.id)) {
+        opts.flags.push("already-contacted");
+        return { receiptIds: [], sent: false };
+      }
     }
-    const send = await sendEmail(
-      { to: opts.to, subject: opts.draft.subject, body: opts.draft.body },
-      { playName: opts.playName },
-    );
-    receiptIds.push(send.receiptId);
-    const prospectId = ledger.upsertProspect(opts.prospectMeta);
-    ledger.recordSequenceEvent({
-      prospectId,
-      playName: opts.playName,
-      stepIndex: 0,
-      channel: "email",
-      status: "sent",
-      metadata: { subject: opts.draft.subject, body: opts.draft.body, ...opts.metadata },
+    // Track as in-flight for the WHOLE send-and-record span (SDK call →
+    // sequence_events row), so a graceful shutdown drains it before exiting and
+    // never leaves a sent-but-unrecorded email the dedup can't see.
+    const receiptId = await trackSend(async () => {
+      const send = await sendEmail(
+        { to: opts.to, subject: opts.draft.subject, body: opts.draft.body },
+        {
+          playName: opts.playName,
+          memo: `${opts.playName} step 0 → ${opts.to}`,
+          decisionContext: {
+            source: "play.initial",
+            prospectEmail: opts.to,
+            prospectName: opts.prospectMeta.name ?? null,
+            company: opts.prospectMeta.company ?? null,
+            subject: opts.draft.subject,
+          },
+        },
+      );
+      const prospectId = ledger.upsertProspect(opts.prospectMeta);
+      ledger.recordSequenceEvent({
+        prospectId,
+        playName: opts.playName,
+        stepIndex: 0,
+        channel: "email",
+        status: "sent",
+        metadata: { subject: opts.draft.subject, body: opts.draft.body, ...opts.metadata },
+      });
+      return send.receiptId;
     });
+    receiptIds.push(receiptId);
     sent = true;
   }
   return { receiptIds, sent };
@@ -338,6 +423,52 @@ export function emailDomain(email: string): string | undefined {
   const at = email.indexOf("@");
   if (at < 0) return undefined;
   return email.slice(at + 1);
+}
+
+const HONORIFIC_TOKENS = new Set([
+  "dr.",
+  "dr",
+  "mr.",
+  "mr",
+  "mrs.",
+  "mrs",
+  "ms.",
+  "ms",
+  "prof.",
+  "prof",
+  "sr.",
+  "sr",
+  "jr.",
+  "jr",
+]);
+
+/**
+ * Best-effort first-name extraction from a prospect's `name` field. Returns
+ * `null` when we shouldn't use a greeting at all: missing data, the placeholder
+ * "(unknown)", a username-looking handle, or a non-capitalized opening token
+ * (which usually signals a handle fragment rather than a real first name).
+ *
+ * Used to optionally surface `PROSPECT_FIRST_NAME` to the LLM input block so
+ * prompts can occasionally open with `Hey {firstName},`. The LLM owns the
+ * decision to actually greet — this helper just gates whether the field is
+ * present.
+ */
+export function firstNameFrom(name: string | null | undefined): string | null {
+  if (!name) return null;
+  const trimmed = name.trim();
+  if (trimmed.length === 0 || trimmed === "(unknown)") return null;
+  const tokens = trimmed.split(/\s+/);
+  let i = 0;
+  while (i < tokens.length && HONORIFIC_TOKENS.has(tokens[i]!.toLowerCase())) {
+    i++;
+  }
+  const first = tokens[i];
+  if (!first) return null;
+  // Handle-looking inputs ("schen", "samaralihussain") almost always come from
+  // a finder pre-screen failure; greeting "Hey schen," is worse than no greeting.
+  if (!/^[A-Z]/.test(first)) return null;
+  // Strip a trailing comma if it slipped through (e.g. "Sarah, PhD").
+  return first.replace(/,$/, "");
 }
 
 export interface VerifyAndFilterResult<T> {

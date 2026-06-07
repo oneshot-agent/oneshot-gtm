@@ -150,6 +150,74 @@ describe("countSends", () => {
   });
 });
 
+describe("prospectHasFirstTouch (cross-play first-touch guard)", () => {
+  it("false with no events; true once a step-0 send/replied exists; ignores step-1 and non-sent status", () => {
+    const pid = ledger.upsertProspect({ name: "P", email: "p@x.com", source: "t" });
+    expect(ledger.prospectHasFirstTouch(pid)).toBe(false);
+
+    // step-1 only (a follow-up with no recorded original) — still false.
+    ledger.recordSequenceEvent({
+      prospectId: pid,
+      playName: "stack-consolidation",
+      stepIndex: 1,
+      channel: "email",
+      status: "sent",
+    });
+    expect(ledger.prospectHasFirstTouch(pid)).toBe(false);
+
+    // step-0 but bounced — status filter excludes it.
+    const bounced = ledger.upsertProspect({ name: "B", email: "b@x.com", source: "t" });
+    ledger.recordSequenceEvent({
+      prospectId: bounced,
+      playName: "show-hn",
+      stepIndex: 0,
+      channel: "email",
+      status: "bounced",
+    });
+    expect(ledger.prospectHasFirstTouch(bounced)).toBe(false);
+
+    // step-0 sent under ANY play — now true (cross-play: different play name).
+    ledger.recordSequenceEvent({
+      prospectId: pid,
+      playName: "show-hn",
+      stepIndex: 0,
+      channel: "email",
+      status: "replied",
+    });
+    expect(ledger.prospectHasFirstTouch(pid)).toBe(true);
+  });
+});
+
+describe("isEmailPendingInQueue (cross-play pending dedup)", () => {
+  it("matches pending/approved rows by email or founderEmail; ignores terminal rows + non-matches", () => {
+    const pendingId = ledger.enqueueTarget({
+      playName: "repo-interest",
+      payload: { email: "Dup@X.com" }, // mixed case in payload
+      dedupeKey: "a",
+      source: "x",
+    });
+    expect(ledger.isEmailPendingInQueue("dup@x.com")).toBe(true); // case-insensitive match
+    expect(ledger.isEmailPendingInQueue("  DUP@x.COM  ")).toBe(true); // trimmed + lowercased
+
+    // founderEmail field (show-hn-style recipient), set to approved.
+    const approvedId = ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: { founderEmail: "founder@x.com" },
+      dedupeKey: "b",
+      source: "x",
+    });
+    ledger.setQueueStatus({ id: approvedId!, status: "approved" });
+    expect(ledger.isEmailPendingInQueue("founder@x.com")).toBe(true);
+
+    // non-matching address.
+    expect(ledger.isEmailPendingInQueue("nobody@x.com")).toBe(false);
+
+    // terminal rows don't block future work.
+    ledger.setQueueStatus({ id: pendingId!, status: "rejected" });
+    expect(ledger.isEmailPendingInQueue("dup@x.com")).toBe(false);
+  });
+});
+
 describe("expirePendingOlderThan", () => {
   it("flips only pending rows older than the cutoff", () => {
     // Fresh pending row — should NOT be expired.

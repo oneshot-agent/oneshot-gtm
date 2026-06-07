@@ -6,6 +6,7 @@ const recordSequenceEventMock = vi.fn();
 const findProspectByEmailMock = vi.fn<(email: string) => { id: number } | null>();
 const listSequenceEventsForProspectPlayMock =
   vi.fn<(pid: number, play: string) => Array<{ step_index: number }>>();
+const prospectHasFirstTouchMock = vi.fn<(pid: number) => boolean>();
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -18,7 +19,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       telemetryEnabled: false,
       founderName: "J",
       founderEmail: "j@x.dev",
-      productOneLiner: "OneShot",
+      productOneLiner: "TestProduct",
       productDomain: null,
       sendingDomain: null,
       icpOneLiner: null,
@@ -35,6 +36,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       recordSequenceEvent: recordSequenceEventMock,
       findProspectByEmail: findProspectByEmailMock,
       listSequenceEventsForProspectPlay: listSequenceEventsForProspectPlayMock,
+      prospectHasFirstTouch: prospectHasFirstTouchMock,
     }),
     receiptUrlForId: (id: number) => `local://receipt/${id}`,
   };
@@ -68,6 +70,7 @@ beforeEach(() => {
   recordSequenceEventMock.mockReset();
   findProspectByEmailMock.mockReset().mockReturnValue(null);
   listSequenceEventsForProspectPlayMock.mockReset().mockReturnValue([]);
+  prospectHasFirstTouchMock.mockReset().mockReturnValue(false);
 });
 
 afterEach(() => {
@@ -142,5 +145,44 @@ describe("sendDraftedEmail pre-send cadence check", () => {
     expect(findProspectByEmailMock).not.toHaveBeenCalled();
     expect(out.sent).toBe(false);
     expect(opts.flags).toEqual(["ai-vocab"]); // unchanged
+  });
+
+  it("H: prospect first-touched by ANOTHER play — cross-play guard fires, no send", async () => {
+    findProspectByEmailMock.mockReturnValue({ id: 7 });
+    listSequenceEventsForProspectPlayMock.mockReturnValue([]); // none for THIS play
+    prospectHasFirstTouchMock.mockReturnValue(true); // but some play touched them
+    const opts = baseOpts();
+    const out = await sendDraftedEmail(opts);
+    expect(sendEmailMock).not.toHaveBeenCalled();
+    expect(out).toEqual({ receiptIds: [], sent: false });
+    expect(opts.flags).toEqual(["already-contacted"]);
+  });
+
+  it("I: allowRecontact bypasses the cross-play guard (breakup-revive path)", async () => {
+    findProspectByEmailMock.mockReturnValue({ id: 7 });
+    listSequenceEventsForProspectPlayMock.mockReturnValue([]);
+    prospectHasFirstTouchMock.mockReturnValue(true);
+    const opts = baseOpts({ allowRecontact: true });
+    const out = await sendDraftedEmail(opts);
+    expect(sendEmailMock).toHaveBeenCalledTimes(1);
+    expect(out.sent).toBe(true);
+    expect(opts.flags).toEqual([]);
+  });
+
+  it("G: audit context — memo + decisionContext attached to the sendEmail call", async () => {
+    findProspectByEmailMock.mockReturnValue(null);
+    const opts = baseOpts();
+    await sendDraftedEmail(opts);
+    expect(sendEmailMock).toHaveBeenCalledTimes(1);
+    const [, ctx] = sendEmailMock.mock.calls[0]!;
+    expect(ctx).toMatchObject({
+      playName: opts.playName,
+      memo: `${opts.playName} step 0 → ${opts.to}`,
+      decisionContext: expect.objectContaining({
+        source: "play.initial",
+        prospectEmail: opts.to,
+        subject: opts.draft.subject,
+      }),
+    });
   });
 });

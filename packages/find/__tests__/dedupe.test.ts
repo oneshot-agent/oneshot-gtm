@@ -1,5 +1,37 @@
-import { describe, expect, it } from "vitest";
-import { emailDomain, urlDomain } from "../src/_dedupe.ts";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const ledgerStub = {
+  isQueueDuplicate: vi.fn(() => false),
+  findProspectByEmail: vi.fn(() => null as { id: number } | null),
+  isEmailPendingInQueue: vi.fn(() => false),
+};
+vi.mock("@oneshot-gtm/core", () => ({ getLedger: () => ledgerStub }));
+
+const { emailDomain, urlDomain, isDuplicate } = await import("../src/_dedupe.ts");
+
+describe("isDuplicate (cross-play)", () => {
+  beforeEach(() => {
+    ledgerStub.isQueueDuplicate.mockReset().mockReturnValue(false);
+    ledgerStub.findProspectByEmail.mockReset().mockReturnValue(null);
+    ledgerStub.isEmailPendingInQueue.mockReset().mockReturnValue(false);
+  });
+
+  it("true when the email is pending in the queue under another play", () => {
+    ledgerStub.isQueueDuplicate.mockReturnValue(false);
+    ledgerStub.findProspectByEmail.mockReturnValue(null);
+    ledgerStub.isEmailPendingInQueue.mockReturnValue(true);
+    expect(isDuplicate({ playName: "repo-interest", dedupeKey: "k", prospectEmail: "a@x.com" })).toBe(
+      true,
+    );
+  });
+
+  it("bypasses the email checks when prospectEmail is undefined (breakup-revive)", () => {
+    ledgerStub.isQueueDuplicate.mockReturnValue(false);
+    ledgerStub.isEmailPendingInQueue.mockReturnValue(true); // would match if consulted
+    expect(isDuplicate({ playName: "breakup-revive", dedupeKey: "k" })).toBe(false);
+    expect(ledgerStub.isEmailPendingInQueue).not.toHaveBeenCalled();
+  });
+});
 
 describe("emailDomain", () => {
   it("extracts the domain and lowercases it", () => {

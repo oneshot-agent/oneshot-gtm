@@ -1,4 +1,4 @@
-import { getLedger, type QueueRow, type QueueStatus } from "@oneshot-gtm/core";
+import { getLedger, isDraining, type QueueRow, type QueueStatus } from "@oneshot-gtm/core";
 import { drainQueue } from "@oneshot-gtm/find";
 import { enrollInCadence, sendDraftedEmail } from "@oneshot-gtm/plays";
 import type {
@@ -54,6 +54,7 @@ function toView(row: QueueRow): QueueRowView {
     prospectId: row.prospect_id,
     lastDraft,
     lastDraftedAt: row.last_drafted_at,
+    isSending: row.send_started_at != null,
   };
 }
 
@@ -231,6 +232,11 @@ export async function sendDraftRoute(
 ): Promise<Response> {
   const id = Number.parseInt(params["id"] ?? "", 10);
   if (!Number.isFinite(id)) return jsonResponse({ error: "bad id" }, 400, req);
+  // Server is draining for shutdown — don't start a new send that the drain
+  // would then have to wait on or abandon. Retry once it's back.
+  if (isDraining()) {
+    return jsonResponse({ error: "server restarting — retry in a moment" }, 503, req);
+  }
   const ledger = getLedger();
   const row = ledger.getQueueRow(id);
   if (!row) return jsonResponse({ error: `row #${id} not found` }, 404, req);
@@ -260,6 +266,25 @@ export async function sendDraftRoute(
   }
   if (parsed.sent === true) return jsonResponse({ error: "draft already sent" }, 400, req);
 
+  // Atomic claim of the sending marker — survives server restart so the UI's
+  // spinner doesn't get stranded by a `bun --watch` reload mid-SDK-call. Stale
+  // cutoff matches the cadence-send window (5 min); past that, a fresh click
+  // can reclaim. Cleared automatically on success by setQueueStatus('sent',…);
+  // explicitly in the catch on failure.
+  const QUEUE_SEND_MAX_AGE_MS = 5 * 60 * 1000;
+  const claimed = ledger.claimQueueSendingMarker({
+    id,
+    startedAtIso: new Date().toISOString(),
+    staleCutoffIso: new Date(Date.now() - QUEUE_SEND_MAX_AGE_MS).toISOString(),
+  });
+  if (!claimed) {
+    return jsonResponse(
+      { error: "already sending — wait for the in-flight send to complete" },
+      409,
+      req,
+    );
+  }
+
   let payload: Record<string, unknown> = {};
   try {
     const p = JSON.parse(row.payload_json);
@@ -271,13 +296,17 @@ export async function sendDraftRoute(
   const email = str("email") ?? str("founderEmail");
   if (!email) return jsonResponse({ error: "row has no recipient email" }, 400, req);
 
+  // sendDraftedEmail pushes dedup outcomes ("already-enrolled" / "already-
+  // contacted") onto this array, so we can tell a deliberate skip apart from a
+  // genuine send failure below.
+  const sendFlags: string[] = [];
   let result: Awaited<ReturnType<typeof sendDraftedEmail>>;
   try {
     result = await sendDraftedEmail({
       playName: row.play_name,
       to: email,
       draft: { subject, body },
-      flags: [],
+      flags: sendFlags,
       prospectMeta: {
         name: str("name") ?? str("founderName"),
         email,
@@ -289,9 +318,37 @@ export async function sendDraftRoute(
       dryRun: false,
     });
   } catch (err) {
+    // Release the marker so the founder can retry without waiting for the
+    // cold-boot sweep. setQueueStatus would also clear it, but we only run
+    // that on success.
+    try {
+      ledger.clearQueueSendingMarker(id);
+    } catch {
+      /* sweeper safety net */
+    }
     return jsonResponse({ error: (err as Error).message ?? "send failed" }, 400, req);
   }
-  if (!result.sent) return jsonResponse({ error: "send did not complete" }, 500, req);
+  if (!result.sent) {
+    try {
+      ledger.clearQueueSendingMarker(id);
+    } catch {
+      /* sweeper safety net */
+    }
+    // Deliberate dedup skip (not a failure): this person was already first-
+    // touched (same play, or another play via the cross-play guard). Mark the
+    // row rejected with the reason so it leaves the actionable queue and the
+    // founder isn't stuck re-clicking a Send that will never go through.
+    const dedup = sendFlags.find((f) => f === "already-contacted" || f === "already-enrolled");
+    if (dedup) {
+      const reason =
+        dedup === "already-contacted"
+          ? "already contacted via another play"
+          : "already sent this play";
+      ledger.setQueueStatus({ id, status: "rejected", notes: `auto: ${reason} — not re-sent` });
+      return jsonResponse({ error: `${reason} — not re-sent`, skipped: true, reason: dedup }, 409, req);
+    }
+    return jsonResponse({ error: "send did not complete" }, 500, req);
+  }
 
   const prospect = ledger.findProspectByEmail(email);
   if (prospect) enrollInCadence({ prospectId: prospect.id, playName: row.play_name });

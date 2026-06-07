@@ -6,11 +6,18 @@ import {
   receiptUrlForId,
   sendEmail,
   sendSms,
+  trackSend,
   voiceCall,
   type ProspectRecord,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
-import { humanizeDraft, lintEmail, signatureDirective, socialProofBlock } from "./_lib.ts";
+import {
+  firstNameFrom,
+  humanizeDraft,
+  lintEmail,
+  signatureDirective,
+  socialProofBlock,
+} from "./_lib.ts";
 
 export interface CadenceContext {
   prospect: ProspectRecord;
@@ -600,7 +607,15 @@ export async function sendCadenceStepBatch(
   return out;
 }
 
-async function dispatchStep(input: {
+function dispatchStep(
+  input: Parameters<typeof dispatchStepImpl>[0],
+): ReturnType<typeof dispatchStepImpl> {
+  // Count the whole dispatch as one in-flight send so a graceful shutdown
+  // drains it (SDK call + its sequence_events write) before the process exits.
+  return trackSend(() => dispatchStepImpl(input));
+}
+
+async function dispatchStepImpl(input: {
   playName: string;
   prospectId: number;
   prospectEmail: string | null;
@@ -612,11 +627,26 @@ async function dispatchStep(input: {
   const ledger = getLedger();
   const receiptIds: number[] = [];
 
+  // Per-step audit envelope: same shape across all channels so receipts can
+  // be grouped/filtered by (prospectId, stepIndex, label) on the OneShot side.
+  const cadenceAudit = {
+    source: "cadence" as const,
+    prospectId: input.prospectId,
+    prospectEmail: input.prospectEmail,
+    stepIndex: input.stepIndex,
+    label: input.label ?? null,
+  };
+  const labelTail = input.label ? ` ${input.label}` : "";
+
   if (input.payload.kind === "email") {
     if (!input.prospectEmail) return { receiptIds, skipReason: "prospect has no email" };
     const send = await sendEmail(
       { to: input.prospectEmail, subject: input.payload.subject, body: input.payload.body },
-      { playName: input.playName },
+      {
+        playName: input.playName,
+        memo: `${input.playName} step ${input.stepIndex}${labelTail} → ${input.prospectEmail}`,
+        decisionContext: { ...cadenceAudit, subject: input.payload.subject },
+      },
     );
     receiptIds.push(send.receiptId);
     ledger.recordSequenceEvent({
@@ -640,7 +670,11 @@ async function dispatchStep(input: {
     }
     const send = await sendSms(
       { to: input.payload.toPhone, message: input.payload.message },
-      { playName: input.playName },
+      {
+        playName: input.playName,
+        memo: `${input.playName} step ${input.stepIndex}${labelTail} SMS → ${input.payload.toPhone}`,
+        decisionContext: { ...cadenceAudit, toPhone: input.payload.toPhone },
+      },
     );
     receiptIds.push(send.receiptId);
     ledger.recordSequenceEvent({
@@ -667,7 +701,15 @@ async function dispatchStep(input: {
           ? { maxDurationMinutes: input.payload.maxDurationMinutes }
           : {}),
       },
-      { playName: input.playName },
+      {
+        playName: input.playName,
+        memo: `${input.playName} step ${input.stepIndex}${labelTail} voice → ${input.payload.toPhone}`,
+        decisionContext: {
+          ...cadenceAudit,
+          toPhone: input.payload.toPhone,
+          objective: input.payload.objective.slice(0, 120),
+        },
+      },
     );
     receiptIds.push(call.receiptId);
     ledger.recordSequenceEvent({
@@ -702,6 +744,9 @@ export function buildFollowUpEmail(opts: {
     const system = loadPrompt(opts.promptName) + signatureDirective();
     const priorBlock = buildPriorEmailsBlock(ctx.prospect.id, opts.playName);
     const proofBlock = socialProofBlock();
+    // Optional first-name field: prompt rule lets the LLM occasionally open
+    // with "Hey {firstName},". Absent when name is null / (unknown) / handle.
+    const firstName = firstNameFrom(ctx.prospect.name);
     const user = [
       `FOUNDER: ${ctx.cfg.founderName}`,
       `PRODUCT: ${ctx.cfg.productOneLiner}`,
@@ -711,6 +756,7 @@ export function buildFollowUpEmail(opts: {
       ...opts.contextLines,
       ...(priorBlock ? ["", priorBlock] : []),
       ...(proofBlock ? ["", proofBlock] : []),
+      ...(firstName ? ["", `PROSPECT_FIRST_NAME: ${firstName}`] : []),
     ].join("\n");
     const res = await complete({
       messages: [

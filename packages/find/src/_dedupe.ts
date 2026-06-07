@@ -1,8 +1,14 @@
 import { getLedger } from "@oneshot-gtm/core";
 
 /**
- * True if this (play, dedupe-key) pair is already in the queue
- * OR a prospect with the same email is already known.
+ * True if this (play, dedupe-key) pair is already in the queue,
+ * OR a prospect with the same email is already known,
+ * OR the same email is already pending in the queue under ANOTHER play
+ * (cross-play dedup — don't queue + enrich someone a different play already
+ * surfaced and is about to email).
+ *
+ * The email-based checks are gated on `prospectEmail`, so callers that pass
+ * `undefined` (breakup-revive, by design) still bypass them to re-engage.
  */
 export function isDuplicate(opts: {
   playName: string;
@@ -14,6 +20,7 @@ export function isDuplicate(opts: {
   if (opts.prospectEmail) {
     const existing = ledger.findProspectByEmail(opts.prospectEmail);
     if (existing) return true;
+    if (ledger.isEmailPendingInQueue(opts.prospectEmail)) return true;
   }
   return false;
 }

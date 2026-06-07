@@ -24,6 +24,15 @@ function canonEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
+function safeParseJsonArray(raw: string): unknown[] {
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
 /** A `cadence_state` row joined with its prospect's email/name/company. */
 export interface CadenceWithProspect {
   prospect_id: number;
@@ -35,6 +44,12 @@ export interface CadenceWithProspect {
   last_polled_at: string | null;
   next_step_draft_json: string | null;
   next_step_drafted_at: string | null;
+  /**
+   * ISO timestamp when a fire-and-forget send was claimed for this cadence.
+   * Null = no send in flight. Survives server restart so the UI's "sending"
+   * spinner doesn't get stranded by a `bun --watch` reload mid-SDK-call.
+   */
+  sending_started_at: string | null;
   prospect_email: string | null;
   prospect_name: string | null;
   prospect_company: string | null;
@@ -175,6 +190,24 @@ export class Ledger {
         fetched_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        play_name TEXT NOT NULL,
+        dry_run INTEGER NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('running','done','interrupted')),
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        target_count INTEGER NOT NULL,
+        drafted_count INTEGER NOT NULL DEFAULT 0,
+        sent_count INTEGER NOT NULL DEFAULT 0,
+        error_count INTEGER NOT NULL DEFAULT 0,
+        targets_json TEXT NOT NULL,
+        events_json TEXT NOT NULL DEFAULT '[]',
+        prospect_emails_json TEXT NOT NULL DEFAULT '[]'
+      );
+      CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(started_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
+
       CREATE TABLE IF NOT EXISTS schema_version (
         version INTEGER PRIMARY KEY
       );
@@ -206,6 +239,83 @@ export class Ledger {
     // draftedAt}; cleared on cadence advance.
     this.addColumnIfMissing("cadence_state", "next_step_draft_json", "TEXT");
     this.addColumnIfMissing("cadence_state", "next_step_drafted_at", "TEXT");
+    // v9 (2026-06): persist "send in flight" marker so a fire-and-forget
+    // cadence-send survives a server restart. The in-memory `inFlightSends`
+    // Set was lost on every bun --watch reload, leaving the founder with no
+    // loading state AND no email delivered. Claimed via the atomic
+    // claimCadenceSendingMarker CAS update; cleared on success (inside
+    // advanceCadence) and on failure (catch). sweepStaleCadenceSends on cold
+    // boot treats every existing marker as stranded.
+    this.addColumnIfMissing("cadence_state", "sending_started_at", "TEXT");
+    // v10 (2026-06): Mirror of v9 for the queue Send-draft path. Same bug
+    // shape — fire-and-forget background SDK send died on every server
+    // restart, leaving the founder with no UI feedback and no record. Wired
+    // via claimQueueSendingMarker + sweepStaleQueueSends; auto-cleared by
+    // setQueueStatus when the row flips to a terminal state.
+    this.addColumnIfMissing("target_queue", "send_started_at", "TEXT");
+  }
+
+  /**
+   * CAS-claim a timestamp marker on a single row. Returns true when the row's
+   * marker was NULL (or older than `staleCutoffIso` when provided) and we set
+   * it to `startedAtIso`; false when another caller already holds the claim.
+   *
+   * Shared by every in-flight marker in the ledger: triggers.running_started_at,
+   * cadence_state.sending_started_at, target_queue.send_started_at. Each domain
+   * just supplies its own table + primary-key WHERE fragment.
+   *
+   * Identifier validation (table + column) mirrors `addColumnIfMissing` —
+   * SQLite has no parameter binding for table/column names, so we whitelist
+   * to bare ASCII to slam the door on any injection vector.
+   */
+  private claimMarker(opts: {
+    table: string;
+    pkeyWhere: string;
+    column: string;
+    pkeyValues: unknown[];
+    startedAtIso: string;
+    staleCutoffIso?: string;
+  }): boolean {
+    this.assertSafeIdentifiers(opts.table, opts.column);
+    const staleClause = opts.staleCutoffIso
+      ? ` AND (${opts.column} IS NULL OR ${opts.column} < ?)`
+      : ` AND ${opts.column} IS NULL`;
+    const args = opts.staleCutoffIso
+      ? [opts.startedAtIso, ...opts.pkeyValues, opts.staleCutoffIso]
+      : [opts.startedAtIso, ...opts.pkeyValues];
+    const result = this.db
+      .prepare(
+        `UPDATE ${opts.table}
+         SET ${opts.column} = ?
+         WHERE ${opts.pkeyWhere}${staleClause}`,
+      )
+      .run(...(args as never[]));
+    return result.changes > 0;
+  }
+
+  /**
+   * Release a timestamp marker (set to NULL). Idempotent — no-op if the row
+   * doesn't exist or the column is already NULL.
+   */
+  private clearMarker(opts: {
+    table: string;
+    pkeyWhere: string;
+    column: string;
+    pkeyValues: unknown[];
+  }): void {
+    this.assertSafeIdentifiers(opts.table, opts.column);
+    this.db
+      .prepare(
+        `UPDATE ${opts.table} SET ${opts.column} = NULL WHERE ${opts.pkeyWhere}`,
+      )
+      .run(...(opts.pkeyValues as never[]));
+  }
+
+  private assertSafeIdentifiers(table: string, column: string): void {
+    const ident = /^[A-Za-z_][A-Za-z0-9_]*$/;
+    if (!ident.test(table) || !ident.test(column)) {
+      throw new Error(`unsafe identifier in marker helper: ${table}.${column}`);
+    }
   }
 
   private addColumnIfMissing(table: string, column: string, type: string): void {
@@ -236,20 +346,7 @@ export class Ledger {
       .run(input.prospectId, input.playName, input.nextDueAt);
   }
 
-  listActiveCadences(opts: { dueByIso?: string } = {}): Array<{
-    prospect_id: number;
-    play_name: string;
-    current_step: number;
-    status: string;
-    enrolled_at: string;
-    next_due_at: string | null;
-    last_polled_at: string | null;
-    next_step_draft_json: string | null;
-    next_step_drafted_at: string | null;
-    prospect_email: string | null;
-    prospect_name: string | null;
-    prospect_company: string | null;
-  }> {
+  listActiveCadences(opts: { dueByIso?: string } = {}): CadenceWithProspect[] {
     const where: string[] = ["c.status = 'active'"];
     const args: unknown[] = [];
     if (opts.dueByIso) {
@@ -309,14 +406,16 @@ export class Ledger {
     newStep: number;
     nextDueAt: string | null;
   }): void {
-    // Also clear any persisted next-step draft — it was for the OLD next
-    // step; advancing makes it stale and unsafe to send against the new
-    // step. /cadences will surface a fresh "no preview yet" state.
+    // Also clear any persisted next-step draft AND the sending marker — the
+    // draft was for the OLD next step (stale after advance), and a successful
+    // advance means the in-flight send for this row is done. /cadences will
+    // surface a fresh "no preview yet" state.
     this.db
       .prepare(
         `UPDATE cadence_state
          SET current_step = ?, next_due_at = ?, last_polled_at = datetime('now'),
-             next_step_draft_json = NULL, next_step_drafted_at = NULL
+             next_step_draft_json = NULL, next_step_drafted_at = NULL,
+             sending_started_at = NULL
          WHERE prospect_id = ? AND play_name = ?`,
       )
       .run(input.newStep, input.nextDueAt, input.prospectId, input.playName);
@@ -327,19 +426,26 @@ export class Ledger {
     playName: string;
     status: "active" | "replied" | "breakup" | "completed";
   }): void {
-    // Non-active terminal states clear the persisted draft too — a replied /
-    // breakup / completed cadence shouldn't have a sendable preview hanging
-    // around (the founder might click Send by accident, but the send route
-    // also re-checks status='active', so this is defense in depth).
+    // Non-active terminal states clear the persisted draft AND any send
+    // marker — a replied / breakup / completed cadence shouldn't have a
+    // sendable preview hanging around or a stuck "sending" flag.
     this.db
       .prepare(
         `UPDATE cadence_state
          SET status = ?,
              next_step_draft_json = CASE WHEN ? = 'active' THEN next_step_draft_json ELSE NULL END,
-             next_step_drafted_at = CASE WHEN ? = 'active' THEN next_step_drafted_at ELSE NULL END
+             next_step_drafted_at = CASE WHEN ? = 'active' THEN next_step_drafted_at ELSE NULL END,
+             sending_started_at = CASE WHEN ? = 'active' THEN sending_started_at ELSE NULL END
          WHERE prospect_id = ? AND play_name = ?`,
       )
-      .run(input.status, input.status, input.status, input.prospectId, input.playName);
+      .run(
+        input.status,
+        input.status,
+        input.status,
+        input.status,
+        input.prospectId,
+        input.playName,
+      );
   }
 
   setCadenceDraft(input: {
@@ -398,6 +504,118 @@ export class Ledger {
          WHERE prospect_id = ? AND play_name = ?`,
       )
       .run(input.prospectId, input.playName);
+  }
+
+  /**
+   * Atomic claim of the sending marker. Returns `true` when the row had a
+   * NULL `sending_started_at` and the marker was set; `false` if another
+   * caller already holds the claim. Mirrors triggers' `markTriggerRunning`
+   * CAS pattern so two concurrent Send clicks can't double-fire.
+   *
+   * `staleCutoffIso` (optional): allows a fresh click to reclaim a marker
+   * whose `sending_started_at` is older than the cutoff — for the case where
+   * a previous send was stranded by a server restart and the cold-boot
+   * sweeper hasn't cleared it yet. Without this, the row would 409 every
+   * retry until the next boot sweep.
+   */
+  claimCadenceSendingMarker(input: {
+    prospectId: number;
+    playName: string;
+    startedAtIso: string;
+    staleCutoffIso?: string;
+  }): boolean {
+    return this.claimMarker({
+      table: "cadence_state",
+      pkeyWhere: "prospect_id = ? AND play_name = ?",
+      column: "sending_started_at",
+      pkeyValues: [input.prospectId, input.playName],
+      startedAtIso: input.startedAtIso,
+      ...(input.staleCutoffIso ? { staleCutoffIso: input.staleCutoffIso } : {}),
+    });
+  }
+
+  /** Release the sending marker for this cadence (sets sending_started_at = NULL). */
+  clearCadenceSendingMarker(input: { prospectId: number; playName: string }): void {
+    this.clearMarker({
+      table: "cadence_state",
+      pkeyWhere: "prospect_id = ? AND play_name = ?",
+      column: "sending_started_at",
+      pkeyValues: [input.prospectId, input.playName],
+    });
+  }
+
+  /**
+   * Sweep cadence rows whose `sending_started_at` is older than the cutoff
+   * (or any non-null value when `staleAgeMs` is 0 — cold-boot semantics).
+   * For each match, classify by whether a `sequence_events` row for the
+   * (prospect, play, current_step) already exists:
+   *   - event present → the send actually went out; clear the marker only.
+   *   - event absent  → the send was stranded (server died mid-call); clear
+   *     the marker but leave the draft so the founder can re-click Send.
+   * Returns the swept rows so the caller can log them.
+   *
+   * Pure-ish (takes `now` + `maxAgeMs` as args) — tests can drive both
+   * "fresh markers spared" and "stale markers swept" without faking the clock.
+   */
+  sweepStaleCadenceSends(input: { now: Date; maxAgeMs: number }): Array<{
+    prospectId: number;
+    playName: string;
+    startedAt: string;
+    ageMs: number;
+    actuallySent: boolean;
+  }> {
+    const cutoffMs = input.now.getTime() - input.maxAgeMs;
+    const rows = this.db
+      .query(
+        `SELECT prospect_id, play_name, current_step, sending_started_at
+         FROM cadence_state
+         WHERE sending_started_at IS NOT NULL`,
+      )
+      .all() as Array<{
+      prospect_id: number;
+      play_name: string;
+      current_step: number;
+      sending_started_at: string;
+    }>;
+    const swept: Array<{
+      prospectId: number;
+      playName: string;
+      startedAt: string;
+      ageMs: number;
+      actuallySent: boolean;
+    }> = [];
+    const checkEvent = this.db.prepare(
+      `SELECT 1 FROM sequence_events
+       WHERE prospect_id = ? AND play_name = ? AND step_index = ?
+         AND status IN ('sent','delivered','replied')
+       LIMIT 1`,
+    );
+    const clear = this.db.prepare(
+      `UPDATE cadence_state
+       SET sending_started_at = NULL
+       WHERE prospect_id = ? AND play_name = ?`,
+    );
+    for (const row of rows) {
+      const startedMs = new Date(row.sending_started_at).getTime();
+      if (Number.isFinite(startedMs) && startedMs > cutoffMs) continue; // still fresh
+      const ageMs = Number.isFinite(startedMs) ? input.now.getTime() - startedMs : -1;
+      // The send is "done" if there's a sequence_event for this row's current_step
+      // (the step that was about to advance). If advanceCadence ran, current_step
+      // is past the sent step — check current_step - 1. We check both to handle
+      // race orderings: marker cleared after advance vs marker cleared before.
+      const sentNow = checkEvent.get(row.prospect_id, row.play_name, row.current_step);
+      const sentPrev = checkEvent.get(row.prospect_id, row.play_name, row.current_step - 1);
+      const actuallySent = sentNow != null || sentPrev != null;
+      clear.run(row.prospect_id, row.play_name);
+      swept.push({
+        prospectId: row.prospect_id,
+        playName: row.play_name,
+        startedAt: row.sending_started_at,
+        ageMs,
+        actuallySent,
+      });
+    }
+    return swept;
   }
 
   findProspectByEmail(email: string): { id: number } | null {
@@ -844,6 +1062,50 @@ export class Ledger {
   }
 
   /**
+   * Cross-play dedup (finder side): is this email already sitting in a
+   * non-terminal queue row under ANY play? Catches the window where the same
+   * person is queued under two plays before either has sent (so no prospect row
+   * exists yet for findProspectByEmail to catch). Terminal rows
+   * (sent/rejected/expired) are excluded so they never block future work.
+   * Matches both `email` (most plays) and `founderEmail` (show-hn-style).
+   */
+  isEmailPendingInQueue(email: string): boolean {
+    // Case-insensitive to match findProspectByEmail/upsertProspect, which store
+    // and look up the canonical (lowercased) email — otherwise a casing mismatch
+    // between two finders would slip a dup through. LOWER() on the JSON side,
+    // canonEmail() on the arg.
+    const row = this.db
+      .query(
+        `SELECT 1 FROM target_queue
+         WHERE status IN ('pending','approved')
+           AND (LOWER(json_extract(payload_json, '$.email')) = ?1
+                OR LOWER(json_extract(payload_json, '$.founderEmail')) = ?1)
+         LIMIT 1`,
+      )
+      .get(canonEmail(email));
+    return row !== null && row !== undefined;
+  }
+
+  /**
+   * Cross-play dedup (send side): has this prospect already received an initial
+   * (step-0) touch under ANY play? The authoritative guard against first-touching
+   * the same person twice. Mirrors the step-0 existence check in
+   * sweepStaleCadenceSends. Note: deliberate re-engagement (breakup-revive)
+   * bypasses this via sendDraftedEmail's `allowRecontact`.
+   */
+  prospectHasFirstTouch(prospectId: number): boolean {
+    const row = this.db
+      .query(
+        `SELECT 1 FROM sequence_events
+         WHERE prospect_id = ? AND step_index = 0
+           AND status IN ('sent','delivered','replied')
+         LIMIT 1`,
+      )
+      .get(prospectId);
+    return row !== null && row !== undefined;
+  }
+
+  /**
    * Look up a queue row by its (play_name, dedupe_key) — the unique pair.
    * Used by the SSE /run endpoint to map drafts back to the originating
    * row so we can persist `last_draft_json`. Returns null when absent.
@@ -883,10 +1145,14 @@ export class Ledger {
 
   setQueueStatus(input: { id: number; status: QueueStatus; notes?: string }): void {
     const now = new Date().toISOString();
+    // Every status transition clears `send_started_at` — a deliberate status
+    // change means the previous "sending" attempt (if any) is settled. Terminal
+    // states (sent/rejected/expired) clear naturally. Approved → approved
+    // doesn't need to preserve a marker (caller re-claims on the next send).
     if (input.status === "sent") {
       this.db
         .prepare(
-          `UPDATE target_queue SET status = ?, sent_at = ?, reviewed_at = COALESCE(reviewed_at, ?) ${input.notes ? ", notes = ?" : ""} WHERE id = ?`,
+          `UPDATE target_queue SET status = ?, sent_at = ?, reviewed_at = COALESCE(reviewed_at, ?), send_started_at = NULL ${input.notes ? ", notes = ?" : ""} WHERE id = ?`,
         )
         .run(
           ...(input.notes
@@ -896,7 +1162,7 @@ export class Ledger {
     } else if (input.status === "approved" || input.status === "rejected") {
       this.db
         .prepare(
-          `UPDATE target_queue SET status = ?, reviewed_at = ? ${input.notes ? ", notes = ?" : ""} WHERE id = ?`,
+          `UPDATE target_queue SET status = ?, reviewed_at = ?, send_started_at = NULL ${input.notes ? ", notes = ?" : ""} WHERE id = ?`,
         )
         .run(
           ...(input.notes
@@ -905,9 +1171,83 @@ export class Ledger {
         );
     } else {
       this.db
-        .prepare(`UPDATE target_queue SET status = ? WHERE id = ?`)
+        .prepare(`UPDATE target_queue SET status = ?, send_started_at = NULL WHERE id = ?`)
         .run(input.status, input.id);
     }
+  }
+
+  /**
+   * Atomic claim of the queue-send marker on `target_queue.send_started_at`.
+   * Mirrors `claimCadenceSendingMarker` semantics — survives server restart so
+   * `/queue` Send-draft UI doesn't lose its spinner on `bun --watch` reloads.
+   * Cleared on success via `setQueueStatus('sent', …)`, on failure via
+   * `clearQueueSendingMarker`, on cold boot via `sweepStaleQueueSends`.
+   */
+  claimQueueSendingMarker(input: {
+    id: number;
+    startedAtIso: string;
+    staleCutoffIso?: string;
+  }): boolean {
+    return this.claimMarker({
+      table: "target_queue",
+      pkeyWhere: "id = ?",
+      column: "send_started_at",
+      pkeyValues: [input.id],
+      startedAtIso: input.startedAtIso,
+      ...(input.staleCutoffIso ? { staleCutoffIso: input.staleCutoffIso } : {}),
+    });
+  }
+
+  clearQueueSendingMarker(id: number): void {
+    this.clearMarker({
+      table: "target_queue",
+      pkeyWhere: "id = ?",
+      column: "send_started_at",
+      pkeyValues: [id],
+    });
+  }
+
+  /**
+   * Sweep queue rows whose `send_started_at` is older than `maxAgeMs` (or any
+   * non-null when 0 — cold-boot semantics). For each: classify by current
+   * status. status='sent' means the SDK call landed before the kill (clear
+   * the marker only); otherwise the send was stranded (clear the marker,
+   * draft is still on the row for retry).
+   */
+  sweepStaleQueueSends(input: { now: Date; maxAgeMs: number }): Array<{
+    id: number;
+    startedAt: string;
+    ageMs: number;
+    actuallySent: boolean;
+  }> {
+    const cutoffMs = input.now.getTime() - input.maxAgeMs;
+    const rows = this.db
+      .query(
+        `SELECT id, status, send_started_at FROM target_queue WHERE send_started_at IS NOT NULL`,
+      )
+      .all() as Array<{ id: number; status: string; send_started_at: string }>;
+    const swept: Array<{
+      id: number;
+      startedAt: string;
+      ageMs: number;
+      actuallySent: boolean;
+    }> = [];
+    const clear = this.db.prepare(
+      `UPDATE target_queue SET send_started_at = NULL WHERE id = ?`,
+    );
+    for (const row of rows) {
+      const startedMs = new Date(row.send_started_at).getTime();
+      if (Number.isFinite(startedMs) && startedMs > cutoffMs) continue;
+      const ageMs = Number.isFinite(startedMs) ? input.now.getTime() - startedMs : -1;
+      clear.run(row.id);
+      swept.push({
+        id: row.id,
+        startedAt: row.send_started_at,
+        ageMs,
+        actuallySent: row.status === "sent",
+      });
+    }
+    return swept;
   }
 
   approveAllPending(opts: { playName?: string } = {}): number {
@@ -990,6 +1330,252 @@ export class Ledger {
     return out;
   }
 
+  // ── runs (per-/run-page dispatch records) ──────────────────────────────────
+  //
+  // Each click of the /run page's Execute CTA creates one `runs` row. The SSE
+  // endpoint persists every draft / send / error event to the row's
+  // `events_json` and updates counters atomically. The UI reads this row to
+  // rebuild progress on nav-back, and inspects `status` to decide whether to
+  // poll (running) or stop (done / interrupted). Cold-boot sweep flips any
+  // stranded `running` rows to `interrupted` so the founder sees the truth
+  // instead of an eternal spinner.
+
+  createRun(input: {
+    playName: string;
+    dryRun: boolean;
+    targets: unknown[];
+  }): { runId: number; startedAt: string } {
+    const startedAt = new Date().toISOString();
+    const result = this.db
+      .prepare(
+        `INSERT INTO runs(play_name, dry_run, status, started_at, target_count, targets_json)
+         VALUES(?, ?, 'running', ?, ?, ?)`,
+      )
+      .run(
+        input.playName,
+        input.dryRun ? 1 : 0,
+        startedAt,
+        input.targets.length,
+        JSON.stringify(input.targets),
+      );
+    return { runId: Number(result.lastInsertRowid), startedAt };
+  }
+
+  /**
+   * Append a single event to a run's events_json and bump the matching
+   * counter. Cheap re-serialize is fine — events_json fits in a single row;
+   * runs are bounded at ~25 targets typically.
+   */
+  appendRunEvent(input: { runId: number; event: unknown }): void {
+    const row = this.db
+      .query(
+        `SELECT events_json, drafted_count, sent_count, error_count
+         FROM runs WHERE id = ?`,
+      )
+      .get(input.runId) as
+      | {
+          events_json: string;
+          drafted_count: number;
+          sent_count: number;
+          error_count: number;
+        }
+      | null;
+    if (!row) return;
+    let events: unknown[];
+    try {
+      events = JSON.parse(row.events_json) as unknown[];
+      if (!Array.isArray(events)) events = [];
+    } catch {
+      events = [];
+    }
+    events.push(input.event);
+    // Counter bump driven by event.kind — keeps the writer side simple and
+    // the read side stable. Unknown kinds are appended without counter change.
+    const kind =
+      input.event && typeof input.event === "object"
+        ? (input.event as { kind?: string }).kind ?? null
+        : null;
+    let drafted = row.drafted_count;
+    let sent = row.sent_count;
+    let errors = row.error_count;
+    if (kind === "draft") drafted++;
+    else if (kind === "send") sent++;
+    else if (kind === "error") errors++;
+    this.db
+      .prepare(
+        `UPDATE runs
+         SET events_json = ?, drafted_count = ?, sent_count = ?, error_count = ?
+         WHERE id = ?`,
+      )
+      .run(JSON.stringify(events), drafted, sent, errors, input.runId);
+  }
+
+  markRunComplete(input: {
+    runId: number;
+    status: "done" | "interrupted";
+    sentEmails?: string[];
+  }): void {
+    const completedAt = new Date().toISOString();
+    this.db
+      .prepare(
+        `UPDATE runs
+         SET status = ?, completed_at = ?, prospect_emails_json = ?
+         WHERE id = ? AND status = 'running'`,
+      )
+      .run(
+        input.status,
+        completedAt,
+        JSON.stringify(input.sentEmails ?? []),
+        input.runId,
+      );
+  }
+
+  getRun(runId: number): {
+    id: number;
+    playName: string;
+    dryRun: boolean;
+    status: "running" | "done" | "interrupted";
+    startedAt: string;
+    completedAt: string | null;
+    targetCount: number;
+    draftedCount: number;
+    sentCount: number;
+    errorCount: number;
+    targets: unknown[];
+    events: unknown[];
+    prospectEmails: string[];
+  } | null {
+    const row = this.db.query(`SELECT * FROM runs WHERE id = ?`).get(runId) as
+      | {
+          id: number;
+          play_name: string;
+          dry_run: number;
+          status: "running" | "done" | "interrupted";
+          started_at: string;
+          completed_at: string | null;
+          target_count: number;
+          drafted_count: number;
+          sent_count: number;
+          error_count: number;
+          targets_json: string;
+          events_json: string;
+          prospect_emails_json: string;
+        }
+      | null;
+    if (!row) return null;
+    return {
+      id: row.id,
+      playName: row.play_name,
+      dryRun: row.dry_run === 1,
+      status: row.status,
+      startedAt: row.started_at,
+      completedAt: row.completed_at,
+      targetCount: row.target_count,
+      draftedCount: row.drafted_count,
+      sentCount: row.sent_count,
+      errorCount: row.error_count,
+      targets: safeParseJsonArray(row.targets_json),
+      events: safeParseJsonArray(row.events_json),
+      prospectEmails: safeParseJsonArray(row.prospect_emails_json) as string[],
+    };
+  }
+
+  /**
+   * Compact run listing for dashboards. Returns lightweight columns only —
+   * `events_json` + `targets_json` stay on the row but aren't read here so
+   * `/api/home` doesn't pay to ship them on every 30s poll. Default order:
+   * newest started_at first; capped at `limit` rows (default 5). When
+   * `status` is set, filters via the existing `idx_runs_status` index.
+   */
+  listRuns(opts: { status?: "running" | "done" | "interrupted"; limit?: number } = {}): Array<{
+    id: number;
+    playName: string;
+    status: "running" | "done" | "interrupted";
+    startedAt: string;
+    completedAt: string | null;
+    targetCount: number;
+    draftedCount: number;
+    sentCount: number;
+    errorCount: number;
+  }> {
+    const limit = Math.max(1, Math.min(50, opts.limit ?? 5));
+    const where = opts.status ? "WHERE status = ?" : "";
+    const args = opts.status ? [opts.status, limit] : [limit];
+    const rows = this.db
+      .query(
+        `SELECT id, play_name, status, started_at, completed_at,
+                target_count, drafted_count, sent_count, error_count
+         FROM runs
+         ${where}
+         ORDER BY started_at DESC
+         LIMIT ?`,
+      )
+      .all(...(args as never[])) as Array<{
+      id: number;
+      play_name: string;
+      status: "running" | "done" | "interrupted";
+      started_at: string;
+      completed_at: string | null;
+      target_count: number;
+      drafted_count: number;
+      sent_count: number;
+      error_count: number;
+    }>;
+    return rows.map((r) => ({
+      id: r.id,
+      playName: r.play_name,
+      status: r.status,
+      startedAt: r.started_at,
+      completedAt: r.completed_at,
+      targetCount: r.target_count,
+      draftedCount: r.drafted_count,
+      sentCount: r.sent_count,
+      errorCount: r.error_count,
+    }));
+  }
+
+  /**
+   * Sweep run rows whose status is still 'running' but predate the cutoff
+   * (or any non-null when 0 — cold-boot semantics). Marks them as
+   * 'interrupted' so the UI shows a truthful banner instead of an eternal
+   * spinner. Returns the swept rows so the caller can log them.
+   */
+  sweepStaleRuns(input: { now: Date; maxAgeMs: number }): Array<{
+    id: number;
+    playName: string;
+    startedAt: string;
+    ageMs: number;
+  }> {
+    const cutoffMs = input.now.getTime() - input.maxAgeMs;
+    const rows = this.db
+      .query(
+        `SELECT id, play_name, started_at FROM runs WHERE status = 'running'`,
+      )
+      .all() as Array<{ id: number; play_name: string; started_at: string }>;
+    const swept: Array<{
+      id: number;
+      playName: string;
+      startedAt: string;
+      ageMs: number;
+    }> = [];
+    const update = this.db.prepare(
+      `UPDATE runs SET status = 'interrupted', completed_at = ? WHERE id = ?`,
+    );
+    for (const row of rows) {
+      const startedMs = new Date(row.started_at).getTime();
+      if (Number.isFinite(startedMs) && startedMs > cutoffMs) continue;
+      const ageMs = Number.isFinite(startedMs) ? input.now.getTime() - startedMs : -1;
+      update.run(input.now.toISOString(), row.id);
+      swept.push({
+        id: row.id,
+        playName: row.play_name,
+        startedAt: row.started_at,
+        ageMs,
+      });
+    }
+    return swept;
+  }
+
   // ── triggers (find watch state) ────────────────────────────────────────────
 
   upsertTrigger(input: { name: string; configJson: string; enabled?: boolean }): void {
@@ -1049,24 +1635,14 @@ export class Ledger {
    * `sweepStaleRunningTriggers` on the next cold boot.
    */
   markTriggerRunning(name: string, startedAtIso: string, staleCutoffIso?: string): boolean {
-    if (staleCutoffIso) {
-      const result = this.db
-        .prepare(
-          `UPDATE triggers
-           SET running_started_at = ?
-           WHERE name = ? AND (running_started_at IS NULL OR running_started_at < ?)`,
-        )
-        .run(startedAtIso, name, staleCutoffIso);
-      return result.changes > 0;
-    }
-    const result = this.db
-      .prepare(
-        `UPDATE triggers
-         SET running_started_at = ?
-         WHERE name = ? AND running_started_at IS NULL`,
-      )
-      .run(startedAtIso, name);
-    return result.changes > 0;
+    return this.claimMarker({
+      table: "triggers",
+      pkeyWhere: "name = ?",
+      column: "running_started_at",
+      pkeyValues: [name],
+      startedAtIso,
+      ...(staleCutoffIso ? { staleCutoffIso } : {}),
+    });
   }
 
   /**

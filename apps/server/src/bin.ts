@@ -1,5 +1,11 @@
 import open from "open";
-import { getLedger, logEvent } from "@oneshot-gtm/core";
+import {
+  activeSendCount,
+  beginDraining,
+  getLedger,
+  logEvent,
+  waitForSendsToDrain,
+} from "@oneshot-gtm/core";
 import { buildFetchHandler, SERVER_BASE_OPTS, startServer } from "./server.ts";
 import { startScheduler, type SchedulerHandle } from "./scheduler.ts";
 
@@ -73,6 +79,110 @@ if (cache.__oneshotGtmServer) {
     process.stderr.write(`  warn: stale-run sweep failed: ${(err as Error).message}\n`);
   }
 
+  // Same idea for fire-and-forget cadence sends. Any cadence_state row whose
+  // `sending_started_at` predates this process was either (a) the previous
+  // process succeeded — in which case the sequence_events row landed and the
+  // sweep just clears the now-meaningless marker, or (b) the previous process
+  // died mid-SDK-call — in which case the marker is stranded, the draft is
+  // still there, and the founder can re-click Send. The sweeper logs both
+  // cases so the founder can see "send was lost" in events.jsonl.
+  try {
+    const swept = getLedger().sweepStaleCadenceSends({
+      now: new Date(),
+      maxAgeMs: 0,
+    });
+    for (const s of swept) {
+      logEvent(
+        s.actuallySent ? "cadence.send.cleared_marker" : "cadence.send.killed_by_restart",
+        {
+          prospect_id: s.prospectId,
+          play_name: s.playName,
+          age_ms: s.ageMs,
+          actually_sent: s.actuallySent,
+        },
+        s.actuallySent ? "info" : "warn",
+      );
+      if (!s.actuallySent) {
+        process.stdout.write(
+          `  swept stale cadence send: ${s.playName} (prospect ${s.prospectId}, ${Math.round(s.ageMs / 1000)}s old) — re-click Send to retry\n`,
+        );
+      }
+    }
+  } catch (err) {
+    logEvent(
+      "cadence.send.sweep_failed",
+      { message_120: ((err as Error).message ?? "").slice(0, 120) },
+      "error",
+    );
+    process.stderr.write(
+      `  warn: stale-send sweep failed: ${(err as Error).message}\n`,
+    );
+  }
+
+  // Mirror of the cadence sweep for `target_queue.send_started_at`. A queue
+  // row with a marker from a previous process either (a) had its SDK call
+  // complete before the kill — `status === 'sent'`, we just clear the marker —
+  // or (b) was stranded mid-call — clear the marker, the draft is still on the
+  // row for retry. Either way: cold boot wipes every existing marker.
+  try {
+    const swept = getLedger().sweepStaleQueueSends({
+      now: new Date(),
+      maxAgeMs: 0,
+    });
+    for (const s of swept) {
+      logEvent(
+        s.actuallySent ? "queue.send.cleared_marker" : "queue.send.killed_by_restart",
+        {
+          queue_id: s.id,
+          age_ms: s.ageMs,
+          actually_sent: s.actuallySent,
+        },
+        s.actuallySent ? "info" : "warn",
+      );
+      if (!s.actuallySent) {
+        process.stdout.write(
+          `  swept stale queue send: row ${s.id} (${Math.round(s.ageMs / 1000)}s old) — re-click Send to retry\n`,
+        );
+      }
+    }
+  } catch (err) {
+    logEvent(
+      "queue.send.sweep_failed",
+      { message_120: ((err as Error).message ?? "").slice(0, 120) },
+      "error",
+    );
+    process.stderr.write(
+      `  warn: stale queue-send sweep failed: ${(err as Error).message}\n`,
+    );
+  }
+
+  // Cold-boot sweep for /run dispatches: any run still marked 'running' from
+  // a previous process is a zombie — the SSE stream is gone, the dispatch was
+  // killed. Flipping to 'interrupted' lets the /run page show a truthful
+  // banner instead of an eternal "running" view. Counters on the row are
+  // already accurate from the per-event appends, so the founder still sees
+  // what landed before the crash.
+  try {
+    const swept = getLedger().sweepStaleRuns({ now: new Date(), maxAgeMs: 0 });
+    for (const s of swept) {
+      logEvent(
+        "run.killed_by_restart",
+        { run_id: s.id, play_name: s.playName, age_ms: s.ageMs },
+        "warn",
+      );
+      process.stdout.write(
+        `  swept stale run: #${s.id} ${s.playName} (${Math.round(s.ageMs / 1000)}s old)\n`,
+      );
+    }
+  } catch (err) {
+    logEvent(
+      "run.sweep_failed",
+      { message_120: ((err as Error).message ?? "").slice(0, 120) },
+      "error",
+    );
+    process.stderr.write(`  warn: stale-run sweep failed: ${(err as Error).message}\n`);
+  }
+
   const { url, server } = await startServer({ port });
   cache.__oneshotGtmServer = server;
 
@@ -107,13 +217,46 @@ if (cache.__oneshotGtmServer) {
     }
   }
 
-  const shutdown = (): void => {
-    process.stdout.write("\n  shutting down...\n");
+  // Graceful drain: on a signal, stop taking new sends and wait for any
+  // in-flight send to finish writing its sequence_events row before exiting —
+  // closing the window where a sent-but-unrecorded email could be re-sent on
+  // retry. A SIGKILL skips this; the cold-boot sweep above is the backstop.
+  // Default 30s; a long voice call past that is force-exited and reconciled.
+  const drainTimeoutMs = Number.parseInt(
+    process.env["ONESHOT_GTM_DRAIN_TIMEOUT_MS"] ?? "30000",
+    10,
+  );
+  let shuttingDown = false;
+  const shutdown = async (signal: string): Promise<void> => {
+    // Second signal while draining → the operator wants out now. Honor it.
+    if (shuttingDown) {
+      process.stdout.write("\n  forced exit.\n");
+      process.exit(1);
+    }
+    shuttingDown = true;
+    beginDraining();
     if (scheduler) scheduler.stop();
+    const inflight = activeSendCount();
+    if (inflight > 0) {
+      process.stdout.write(
+        `\n  ${signal} — draining ${inflight} in-flight send(s)... (Ctrl-C again to force)\n`,
+      );
+      const { drained, remaining } = await waitForSendsToDrain({ timeoutMs: drainTimeoutMs });
+      if (drained) {
+        process.stdout.write("  drained — all sends recorded.\n");
+      } else {
+        logEvent("server.drain.timeout", { remaining, timeout_ms: drainTimeoutMs }, "warn");
+        process.stdout.write(
+          `  WARN: ${remaining} send(s) still in-flight after ${drainTimeoutMs}ms — exiting; boot sweep will reconcile.\n`,
+        );
+      }
+    } else {
+      process.stdout.write("\n  shutting down...\n");
+    }
     server.stop();
     process.exit(0);
   };
 
-  process.on("SIGINT", shutdown);
-  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", () => void shutdown("SIGINT"));
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
 }
