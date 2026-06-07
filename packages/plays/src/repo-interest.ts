@@ -1,5 +1,6 @@
 import { emailDomain } from "./_lib.ts";
 import { type EmailPlayDef, runEmailPlay, standardEnrich } from "./_run-play.ts";
+import { buildFollowUpEmail, registerSequence } from "./_cadence.ts";
 
 const PLAY_NAME = "repo-interest";
 
@@ -13,6 +14,12 @@ export interface RepoInterestTarget {
   repoLabel?: string;
   /** One fact about how your product helps someone working in this space. */
   yourEdge: string;
+  /**
+   * Optional: one true line on why THIS repo is notable + the respectful
+   * bridge to your offer. Used as a peer-level shared-taste nod (never
+   * flattery) that also shapes how the offer is framed.
+   */
+  repoEdge?: string;
   /** The repo URL — founder reference only. */
   evidenceUrl?: string;
   linkedinUrl?: string;
@@ -22,6 +29,11 @@ export interface RepoInterestTarget {
 export interface RepoInterestRunOptions {
   dryRun: boolean;
   targets: RepoInterestTarget[];
+  /** Per-target progress hook installed by /api/run SSE handler. */
+  onProgress?: (
+    index: number,
+    draft: { subject: string; body: string; flags: string[]; sent: boolean; receiptIds: number[] },
+  ) => void;
 }
 
 export interface RepoInterestDraft {
@@ -36,9 +48,13 @@ export interface RepoInterestDraft {
 const repoInterestDef: EmailPlayDef<RepoInterestTarget> = {
   playName: PLAY_NAME,
   promptName: "repo-interest-email",
-  maxBodyWords: 90,
-  // One-touch: a cold interest signal doesn't earn a multi-touch chase, so no
-  // cadence enroll (mirrors show-hn / podcast-guest).
+  // 150 across all plays — generous safety net. The prompt-side AIM stays
+  // tight (under ~90 reads tighter); the lint just stops gating drafts that
+  // miss the aim by a few words. Real run-on slop still gets flagged.
+  maxBodyWords: 150,
+  // Two-touch: the intro plus one soft day-3 ping (no breakup). A peer who
+  // starred an adjacent repo earns a single gentle nudge, not a full chase.
+  enrollCadence: true,
   toEmail: (t) => t.email,
   // Enrich on preview + send (cached by email). No deepResearch — the starred
   // repo is the load-bearing signal, like stack-consolidation's vendor stack.
@@ -59,6 +75,9 @@ const repoInterestDef: EmailPlayDef<RepoInterestTarget> = {
       `PROSPECT: ${t.name} at ${t.company}`,
       `STARRED REPO: ${t.repoLabel ?? t.repo}`,
       `YOUR EDGE: ${t.yourEdge}`,
+      ...(t.repoEdge
+        ? [`WHY THIS REPO IS NOTABLE (peer nod + how your offer fits — see prompt): ${t.repoEdge}`]
+        : []),
       `DOSSIER:\n${prep.dossier || "(dry-run)"}`,
     ].join("\n"),
   prospectMeta: (t) => ({
@@ -77,3 +96,24 @@ export function runRepoInterest(
 ): Promise<{ drafted: RepoInterestDraft[] }> {
   return runEmailPlay(repoInterestDef, opts);
 }
+
+// Two-touch cadence: one soft day-3 ping, no breakup. Mirrors
+// stack-consolidation's structure minus the final breakup step.
+registerSequence({
+  playName: PLAY_NAME,
+  steps: [
+    {
+      dayOffset: 3,
+      channel: "email",
+      breakOnReply: true,
+      label: "value follow-up",
+      builder: buildFollowUpEmail({
+        playName: PLAY_NAME,
+        promptName: "repo-interest-followup",
+        contextLines: [
+          `PLAY: repo-interest. Day-3 soft nudge after the peer-to-peer intro about a repo they starred.`,
+        ],
+      }),
+    },
+  ],
+});

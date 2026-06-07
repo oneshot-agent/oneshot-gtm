@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Verifies the repo-interest play drafts a complementary intro: the inputBlock
-// carries the STARRED REPO + yourEdge, and it's one-touch (no cadence enroll).
+// carries the STARRED REPO + yourEdge (+ optional repoEdge), and it enrolls a
+// 2-touch cadence (intro + one soft day-3 value follow-up) on a real send.
 
 const calls = { llmInputBlocks: [] as string[], enrolled: 0 };
 
@@ -26,10 +27,14 @@ vi.mock("@oneshot-gtm/core", async () => {
     getLedger: () => ({
       upsertProspect: () => 1,
       recordSequenceEvent: () => 1,
-      findProspectByEmail: () => null,
+      // After a real send the prospect exists, so the enroll lookup resolves —
+      // repo-interest is 2-touch and must enroll a cadence here. [] prior events
+      // means no step-0 yet, so sendDraftedEmail's dedup lets the send proceed.
+      findProspectByEmail: () => ({ id: 1 }),
+      listSequenceEventsForProspectPlay: () => [],
+      prospectHasFirstTouch: () => false,
       getCachedEnrichment: () => null,
       setCachedEnrichment: () => {},
-      // If repo-interest ever tried to enroll, this would fire — it must not.
       enrollCadence: () => {
         calls.enrolled++;
       },
@@ -85,13 +90,31 @@ describe("runRepoInterest", () => {
     expect(calls.llmInputBlocks[0]).toContain("STARRED REPO: owner/name");
   });
 
-  it("is one-touch: never enrolls a cadence on send", async () => {
+  it("includes the per-repo repoEdge line when set, omits it when absent", async () => {
+    await runRepoInterest({
+      dryRun: true,
+      targets: [
+        { ...base, repo: "owner/name", yourEdge: "x", repoEdge: "writes its own skills" },
+      ],
+    });
+    expect(calls.llmInputBlocks[0]).toContain("WHY THIS REPO IS NOTABLE");
+    expect(calls.llmInputBlocks[0]).toContain("writes its own skills");
+
+    calls.llmInputBlocks = [];
+    await runRepoInterest({
+      dryRun: true,
+      targets: [{ ...base, repo: "owner/name", yourEdge: "x" }],
+    });
+    expect(calls.llmInputBlocks[0]).not.toContain("WHY THIS REPO IS NOTABLE");
+  });
+
+  it("is 2-touch: enrolls a cadence on a real send", async () => {
     const out = await runRepoInterest({
       dryRun: false,
       targets: [{ ...base, repo: "owner/name", yourEdge: "x" }],
     });
     expect(out.drafted).toHaveLength(1);
     expect(out.drafted[0]?.sent).toBe(true);
-    expect(calls.enrolled).toBe(0);
+    expect(calls.enrolled).toBe(1);
   });
 });

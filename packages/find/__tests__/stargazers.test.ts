@@ -23,11 +23,27 @@ describe("recentStargazers", () => {
         res([star("old", "2020-01-01T00:00:00Z"), star("fresh", "2026-06-01T00:00:00Z")], null),
       ),
     );
-    const { stargazers, error } = await recentStargazers("o/r", {
+    const { stargazers, error, newestSeen } = await recentStargazers("o/r", {
       sinceIso: "2026-05-01T00:00:00Z",
     });
     expect(error).toBeUndefined();
     expect(stargazers.map((s) => s.login)).toEqual(["fresh"]);
+    // newestSeen tracks the most-recent star regardless of the window.
+    expect(newestSeen).toBe("2026-06-01T00:00:00Z");
+  });
+
+  it("surfaces a non-2xx on a backward page as an error (not a silent empty)", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      const page = Number(/[?&]page=(\d+)/.exec(String(url))?.[1] ?? "1");
+      if (page === 1) {
+        return res([star("p1", "2020-01-01T00:00:00Z")], '<https://x?per_page=100&page=3>; rel="last"');
+      }
+      // Backward page → rate-limited.
+      return { ok: false, status: 403, headers: { get: () => null }, json: async () => [] };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await recentStargazers("o/r", { sinceIso: "2026-05-01T00:00:00Z" });
+    expect(out.error).toMatch(/403/);
   });
 
   it("walks from the last page backward and stops once a page is all older", async () => {

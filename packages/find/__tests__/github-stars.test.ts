@@ -18,9 +18,13 @@ let stargazersByRepo: Record<
   string,
   Array<{ login: string; userUrl: string; starredAt: string }>
 > = {};
+let newestSeenByRepo: Record<string, string | null> = {};
 
 vi.mock("../src/_stargazers.ts", () => ({
-  recentStargazers: async (repo: string) => ({ stargazers: stargazersByRepo[repo] ?? [] }),
+  recentStargazers: async (repo: string) => ({
+    stargazers: stargazersByRepo[repo] ?? [],
+    newestSeen: newestSeenByRepo[repo] ?? null,
+  }),
 }));
 vi.mock("../src/_github-user.ts", () => ({
   fetchGitHubUser: async (login: string) => ({
@@ -70,6 +74,7 @@ const { runGitHubStarsFinder } = await import("../src/github-stars.ts");
 beforeEach(() => {
   enqueued.length = 0;
   icpMatch = true;
+  newestSeenByRepo = {};
   stargazersByRepo = {
     "apollographql/router": [
       { login: "alice", userUrl: "https://github.com/alice", starredAt: "2026-06-01T00:00:00Z" },
@@ -137,5 +142,18 @@ describe("runGitHubStarsFinder — per-repo rel routing", () => {
       repos: [{ repo: "o/r", rel: "adjacent" }],
     });
     expect(out.enqueued).toBe(2);
+  });
+
+  it("halts with the newest-star age when the window is empty", async () => {
+    stargazersByRepo = { "o/r": [] };
+    newestSeenByRepo = { "o/r": new Date(Date.now() - 55 * 86_400_000).toISOString() };
+    const out = await runGitHubStarsFinder({
+      dryRun: false,
+      yourEdge: "x",
+      sinceDays: 30,
+      repos: [{ repo: "o/r", rel: "adjacent" }],
+    });
+    expect(out.candidates).toBe(0);
+    expect(out.halted).toMatch(/no stars in last 30d — newest was 5[45]d ago/);
   });
 });

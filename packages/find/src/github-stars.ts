@@ -19,6 +19,14 @@ export interface RepoWatch {
   rel: "competitor" | "adjacent";
   /** Display label (e.g. "Apollo"); falls back to the repo's name segment. */
   label?: string;
+  /**
+   * Optional, per-repo: one true line about why THIS repo is notable plus how
+   * your offer bridges to it respectfully. Surfaced to the email as a
+   * shared-taste nod (never flattery) that also shapes the offer's framing —
+   * e.g. a privacy-first repo's edge leads the pitch with control/auditability
+   * rather than "we do it for you". Adjacent repos only (→ repo-interest).
+   */
+  repoEdge?: string;
 }
 
 export interface GitHubStarsFinderOpts extends RunOpts {
@@ -31,7 +39,12 @@ export interface GitHubStarsFinderOpts extends RunOpts {
   concurrency?: number;
 }
 
-type Candidate = Stargazer & { repo: string; rel: RepoWatch["rel"]; label: string };
+type Candidate = Stargazer & {
+  repo: string;
+  rel: RepoWatch["rel"];
+  label: string;
+  repoEdge?: string;
+};
 
 function deriveLabel(repo: string): string {
   return repo.split("/")[1]?.trim() || repo;
@@ -77,12 +90,19 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
   // Step 1: gather recent stargazers across all watched repos, tagged with the
   // repo's rel/label. Per-repo errors log + continue (handled in _stargazers).
   const tagged: Candidate[] = [];
-  let anyRepoOk = false;
+  let firstError: string | null = null;
+  let newestSeen: string | null = null; // newest star across all repos, ignoring the window
   for (const w of opts.repos) {
-    const { stargazers, error } = await recentStargazers(w.repo, { sinceIso });
-    if (!error) anyRepoOk = true;
+    const { stargazers, error, newestSeen: repoNewest } = await recentStargazers(w.repo, {
+      sinceIso,
+    });
+    if (error && !firstError) firstError = `${w.repo}: ${error}`;
+    if (repoNewest && (!newestSeen || repoNewest > newestSeen)) newestSeen = repoNewest;
     const label = w.label?.trim() || deriveLabel(w.repo);
-    for (const s of stargazers) tagged.push({ ...s, repo: w.repo, rel: w.rel, label });
+    const repoEdge = w.repoEdge?.trim();
+    for (const s of stargazers) {
+      tagged.push({ ...s, repo: w.repo, rel: w.rel, label, ...(repoEdge ? { repoEdge } : {}) });
+    }
   }
 
   // Cross-repo dedupe by login (someone starring two watched repos surfaces once).
@@ -96,9 +116,17 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
   result.candidates = candidates.length;
 
   if (candidates.length === 0) {
-    result.halted = anyRepoOk
-      ? "no recent stargazers in the window"
-      : "all repos failed (check GITHUB_TOKEN / repo names)";
+    // Distinguish a fetch failure (usually the unauth rate limit) from an honest
+    // empty window, and when empty, say how stale the newest star is so the
+    // founder knows to widen `sinceDays` rather than wonder what broke.
+    if (firstError) {
+      result.halted = `github fetch failed (${firstError}) — set GITHUB_TOKEN for higher rate limits`;
+    } else if (newestSeen) {
+      const ageDays = Math.floor((Date.now() - new Date(newestSeen).getTime()) / 86_400_000);
+      result.halted = `no stars in last ${sinceDays}d — newest was ${ageDays}d ago; widen sinceDays`;
+    } else {
+      result.halted = "no stargazers found (check repo names / GITHUB_TOKEN)";
+    }
     logEvent("finder.done", { name: PLAY_NAME, candidates: 0, halted: result.halted });
     return result;
   }
@@ -233,6 +261,7 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
             repo: c.repo,
             repoLabel: c.label,
             yourEdge: opts.yourEdge,
+            ...(c.repoEdge ? { repoEdge: c.repoEdge } : {}),
             evidenceUrl: repoUrl,
             ...contactExtras,
           };

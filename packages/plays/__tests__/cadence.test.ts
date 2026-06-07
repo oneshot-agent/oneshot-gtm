@@ -13,10 +13,11 @@ import {
   type Sequence,
 } from "../src/_cadence.ts";
 import type { ProspectRecord } from "@oneshot-gtm/core";
-// Ensure the 6 plays whose registerSequence we exercise are loaded.
+// Ensure the plays whose registerSequence we exercise are loaded.
 import "../src/stack-consolidation.ts";
 import "../src/accelerator-batch.ts";
 import "../src/show-hn.ts";
+import "../src/repo-interest.ts";
 
 function makeCtx(overrides: Partial<ProspectRecord> = {}): CadenceContext {
   const prospect: ProspectRecord = {
@@ -197,6 +198,18 @@ describe("isBreakupStepAt + nextStepInfo (cross-play, centralized)", () => {
     expect(nextStepInfo("show-hn", 0)).toBeNull();
   });
 
+  it("repo-interest: one 'value follow-up' step, NOT a breakup (2-touch total)", () => {
+    const seq = getSequence("repo-interest")!;
+    expect(seq.steps.length).toBe(1);
+    expect(isBreakupStepAt(seq, 0)).toBe(false);
+    expect(nextStepInfo("repo-interest", 0)).toMatchObject({
+      label: "value follow-up",
+      isBreakup: false,
+    });
+    // No second step → after the follow-up the cadence completes, no breakup.
+    expect(nextStepInfo("repo-interest", 1)).toBeNull();
+  });
+
   it("unknown play returns null", () => {
     expect(nextStepInfo("nope-not-a-play", 0)).toBeNull();
     expect(playFollowupCount("nope-not-a-play")).toBe(0);
@@ -205,6 +218,7 @@ describe("isBreakupStepAt + nextStepInfo (cross-play, centralized)", () => {
   it("playFollowupCount returns the registered step count", () => {
     expect(playFollowupCount("stack-consolidation")).toBe(2);
     expect(playFollowupCount("accelerator-batch")).toBe(1);
+    expect(playFollowupCount("repo-interest")).toBe(1);
   });
 
   it("nextStepInfo returns null past the last step (completed cadence)", () => {
