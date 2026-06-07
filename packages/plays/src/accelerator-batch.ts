@@ -34,6 +34,11 @@ export interface AcceleratorBatchTarget {
 export interface AcceleratorBatchRunOptions {
   dryRun: boolean;
   targets: AcceleratorBatchTarget[];
+  /** Per-target progress hook installed by /api/run SSE handler. */
+  onProgress?: (
+    index: number,
+    draft: { subject: string; body: string; flags: string[]; sent: boolean; receiptIds: number[] },
+  ) => void;
   /** Run-level fallback applied to any target that doesn't carry its own. */
   senderCohort?: string;
   freeForCohortOffer?: string;
@@ -64,7 +69,7 @@ export function runAcceleratorBatch(
   const def: EmailPlayDef<AcceleratorBatchTarget> = {
     playName: PLAY_NAME,
     promptName: "accelerator-batch-email",
-    maxBodyWords: 100,
+    maxBodyWords: 150,
     enrollCadence: true,
     toEmail: (t) => t.email,
     // Enrich on both preview and real send (cached by email); deepResearch is

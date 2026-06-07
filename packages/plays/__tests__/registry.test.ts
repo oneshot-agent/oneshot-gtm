@@ -14,6 +14,7 @@ const EXPECTED = [
   "competitor-switch",
   "stack-consolidation",
   "repo-interest",
+  "luma-events",
   "breakup-revive",
 ];
 

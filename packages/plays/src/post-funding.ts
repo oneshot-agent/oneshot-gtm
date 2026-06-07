@@ -16,6 +16,11 @@ export interface PostFundingTarget {
 export interface PostFundingRunOptions {
   dryRun: boolean;
   targets: PostFundingTarget[];
+  /** Per-target progress hook installed by /api/run SSE handler. */
+  onProgress?: (
+    index: number,
+    draft: { subject: string; body: string; flags: string[]; sent: boolean; receiptIds: number[] },
+  ) => void;
 }
 
 export interface PostFundingDraft {
@@ -32,7 +37,7 @@ const PLAY_NAME = "post-funding";
 const postFundingDef: EmailPlayDef<PostFundingTarget> = {
   playName: PLAY_NAME,
   promptName: "post-funding-email",
-  maxBodyWords: 100,
+  maxBodyWords: 150,
   enrollCadence: true,
   toEmail: (t) => t.email,
   // Enrich on both preview and real send (cached by email) so the reviewed

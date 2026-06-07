@@ -4,6 +4,11 @@ const calls = {
   sendEmail: 0,
   llm: 0,
   lastSendEmailArgs: null as { to: string; subject: string; body: string } | null,
+  lastSendEmailCtx: null as {
+    playName: string;
+    memo?: string;
+    decisionContext?: Record<string, unknown>;
+  } | null,
 };
 
 let cadenceRows: Array<{
@@ -45,7 +50,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       telemetryEnabled: false,
       founderName: "J",
       founderEmail: "j@x.dev",
-      productOneLiner: "OneShot",
+      productOneLiner: "TestProduct",
       productDomain: null,
       sendingDomain: null,
       icpOneLiner: null,
@@ -56,9 +61,17 @@ vi.mock("@oneshot-gtm/core", async () => {
       mobileSignature: false,
       clientId: null,
     }),
-    sendEmail: async (input: { to: string; subject: string; body: string }) => {
+    sendEmail: async (
+      input: { to: string; subject: string; body: string },
+      ctx: {
+        playName: string;
+        memo?: string;
+        decisionContext?: Record<string, unknown>;
+      },
+    ) => {
       calls.sendEmail++;
       calls.lastSendEmailArgs = input;
+      calls.lastSendEmailCtx = ctx;
       return { receiptId: 7 };
     },
     listInbox: async () => ({ emails: [], has_more: false }),
@@ -191,6 +204,7 @@ beforeEach(() => {
   calls.sendEmail = 0;
   calls.llm = 0;
   calls.lastSendEmailArgs = null;
+  calls.lastSendEmailCtx = null;
   persistedDraft = null;
   advanceCalls.length = 0;
   seedActiveCadence();
@@ -257,6 +271,21 @@ describe("sendCadenceStep", () => {
     await expect(
       sendCadenceStep({ prospectId: 1, playName: "stack-consolidation" }),
     ).rejects.toThrow(/no persisted preview/);
+  });
+
+  it("attaches audit context (memo + decisionContext.source='cadence') to the SDK call", async () => {
+    await previewCadenceStep({ prospectId: 1, playName: "stack-consolidation" });
+    await sendCadenceStep({ prospectId: 1, playName: "stack-consolidation" });
+    expect(calls.lastSendEmailCtx).toMatchObject({
+      playName: "stack-consolidation",
+      memo: expect.stringMatching(/^stack-consolidation step 1.*→ p@x\.dev$/),
+      decisionContext: expect.objectContaining({
+        source: "cadence",
+        prospectId: 1,
+        prospectEmail: "p@x.dev",
+        stepIndex: 1,
+      }),
+    });
   });
 });
 

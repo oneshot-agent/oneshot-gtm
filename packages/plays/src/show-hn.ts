@@ -14,6 +14,11 @@ export interface ShowHnTarget {
 export interface ShowHnRunOptions {
   dryRun: boolean;
   targets: ShowHnTarget[];
+  /** Per-target progress hook installed by /api/run SSE handler. */
+  onProgress?: (
+    index: number,
+    draft: { subject: string; body: string; flags: string[]; sent: boolean; receiptIds: number[] },
+  ) => void;
 }
 
 export interface ShowHnRunResult {
@@ -32,7 +37,7 @@ const PLAY_NAME = "show-hn";
 const showHnDef: EmailPlayDef<ShowHnTarget> = {
   playName: PLAY_NAME,
   promptName: "show-hn-email",
-  maxBodyWords: 90,
+  maxBodyWords: 150,
   toEmail: (t) => t.founderEmail,
   // Enrich on both preview and real send (cached by email) so the reviewed
   // draft is personalized; the heavier deepResearch stays real-send only.

@@ -21,6 +21,11 @@ export interface StackConsolidationTarget {
 export interface StackConsolidationRunOptions {
   dryRun: boolean;
   targets: StackConsolidationTarget[];
+  /** Per-target progress hook installed by /api/run SSE handler. */
+  onProgress?: (
+    index: number,
+    draft: { subject: string; body: string; flags: string[]; sent: boolean; receiptIds: number[] },
+  ) => void;
 }
 
 export interface StackConsolidationDraft {
@@ -35,7 +40,7 @@ export interface StackConsolidationDraft {
 const stackConsolidationDef: EmailPlayDef<StackConsolidationTarget> = {
   playName: PLAY_NAME,
   promptName: "stack-consolidation-email",
-  maxBodyWords: 100,
+  maxBodyWords: 150,
   enrollCadence: true,
   toEmail: (t) => t.email,
   // Enrich on both preview and real send (cached by email). No deepResearch —

@@ -23,6 +23,11 @@ export interface CompetitorSwitchTarget {
 export interface CompetitorSwitchRunOptions {
   dryRun: boolean;
   targets: CompetitorSwitchTarget[];
+  /** Per-target progress hook installed by /api/run SSE handler. */
+  onProgress?: (
+    index: number,
+    draft: { subject: string; body: string; flags: string[]; sent: boolean; receiptIds: number[] },
+  ) => void;
   /** Skip the browser-scraping step even if evidenceUrl is set. */
   skipBrowserScrape?: boolean;
 }
@@ -45,7 +50,7 @@ export function runCompetitorSwitch(
   const def: EmailPlayDef<CompetitorSwitchTarget, CompetitorSwitchExtra> = {
     playName: PLAY_NAME,
     promptName: "competitor-switch-email",
-    maxBodyWords: 100,
+    maxBodyWords: 150,
     enrollCadence: true,
     toEmail: (t) => t.email,
     prepare: async (t, dryRun) => {

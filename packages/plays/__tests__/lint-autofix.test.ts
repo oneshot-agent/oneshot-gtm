@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { humanizeDraft, lintEmail } from "../src/_lib.ts";
+import { bodyWordsForLint, humanizeDraft, lintEmail } from "../src/_lib.ts";
 
 describe("humanizeDraft — deterministic auto-fix", () => {
   it("replaces em-dashes with `, ` and collapses surrounding spaces", () => {
@@ -98,5 +98,53 @@ describe("humanizeDraft + lintEmail — pipeline coverage", () => {
     });
     const flags = lintEmail(cleaned.subject, cleaned.body);
     expect(flags).toContain("rule-of-three");
+  });
+});
+
+/**
+ * Locks in the fix for "every borderline draft trips body-too-long". The
+ * signatureDirective forces the LLM to append name + domain at the bottom
+ * of every body, but those 2-3 deterministic words used to count against
+ * the per-play maxBodyWords budget — so a prompt that said "≤110 words"
+ * effectively gave the LLM ~107 for content, making /repo-interest reject
+ * drafts that were inside the contract.
+ */
+describe("bodyWordsForLint — strips trailing signature lines", () => {
+  // Last-line-first order: peel mobile tag → domain → name.
+  const SIG = ["Sent from my iPhone", "example.com", "Jane Doe"];
+
+  it("counts only the content body when name + domain are appended", () => {
+    const body = ["one two three four five", "", "Jane Doe", "example.com"].join("\n");
+    expect(bodyWordsForLint(body, ["example.com", "Jane Doe"])).toBe(5);
+  });
+
+  it("also strips the mobile sentinel line when configured", () => {
+    const body = [
+      "one two three four five",
+      "",
+      "Jane Doe",
+      "example.com",
+      "Sent from my iPhone",
+    ].join("\n");
+    expect(bodyWordsForLint(body, SIG)).toBe(5);
+  });
+
+  it("does not chop content that just happens to contain the founder's name mid-paragraph", () => {
+    // "Jane Doe" appears inside the body, but the trailing lines aren't a
+    // sig — strip stops at the first non-match and counts everything.
+    const body = "Jane Doe shipped this last week and it worked";
+    // 9 content words; no trailing sig present.
+    expect(bodyWordsForLint(body, ["example.com", "Jane Doe"])).toBe(9);
+  });
+
+  it("is a no-op when no sig is configured (defaults to splitting the whole body)", () => {
+    const body = "one two three four five\n\nJane Doe\nexample.com";
+    // Empty sigLines → no peel → counts every word including the trailing lines.
+    expect(bodyWordsForLint(body, [])).toBe(8);
+  });
+
+  it("survives the absence of a final newline", () => {
+    const body = "one two three\n\nJane Doe\nexample.com";
+    expect(bodyWordsForLint(body, ["example.com", "Jane Doe"])).toBe(3);
   });
 });

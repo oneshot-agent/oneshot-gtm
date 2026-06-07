@@ -15,6 +15,11 @@ export interface JobChangeTarget {
 export interface JobChangeRunOptions {
   dryRun: boolean;
   targets: JobChangeTarget[];
+  /** Per-target progress hook installed by /api/run SSE handler. */
+  onProgress?: (
+    index: number,
+    draft: { subject: string; body: string; flags: string[]; sent: boolean; receiptIds: number[] },
+  ) => void;
 }
 
 export interface JobChangeDraft {
@@ -31,7 +36,7 @@ const PLAY_NAME = "job-change";
 const jobChangeDef: EmailPlayDef<JobChangeTarget> = {
   playName: PLAY_NAME,
   promptName: "job-change-email",
-  maxBodyWords: 100,
+  maxBodyWords: 150,
   enrollCadence: true,
   toEmail: (t) => t.email,
   // Enrich on both preview and real send (cached by email) so the reviewed

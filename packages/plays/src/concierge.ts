@@ -81,19 +81,15 @@ export async function runConcierge(opts: ConciergeRunOptions): Promise<Concierge
     // 2. Voice call
     let voice: VoiceCallResult | null = null;
     if (!opts.dryRun) {
-      const objective = [
-        `Introduce yourself as the OneShot agent for ${cfg.founderName}, calling on behalf of ${cfg.productOneLiner}.`,
-        `Confirm the customer (${t.name}) is who you're talking to.`,
-        `Ask: "What's the one thing you're trying to get out of ${cfg.productOneLiner.split(/[.,]/)[0]} this week?"`,
-        `Listen and probe for the SPECIFIC use case and the ONE blocker stopping them from getting value.`,
-        `If they have a clear blocker, offer to have ${cfg.founderName} follow up by email today.`,
-        `Keep it under 5 minutes. End with a clear next step.`,
-      ].join(" ");
-      const context = [
-        `Signup context: ${t.signupContext ?? "new signup"}.`,
-        `This is an autonomous onboarding call running on OneShot voice infra.`,
-        `Be direct and helpful. Not salesy.`,
-      ].join(" ");
+      const voiceVars = {
+        founderName: cfg.founderName,
+        productOneLiner: cfg.productOneLiner,
+        productHeadline: cfg.productOneLiner.split(/[.,]/)[0] ?? cfg.productOneLiner,
+        customerName: t.name,
+        signupContext: t.signupContext ?? "new signup",
+      };
+      const objective = fillTemplate(loadPrompt("concierge-voice-objective"), voiceVars);
+      const context = fillTemplate(loadPrompt("concierge-voice-context"), voiceVars);
       const call = await voiceCall(
         {
           objective,
@@ -182,4 +178,8 @@ async function draftWithPrompt(opts: { promptName: string; inputBlock: string })
 
 export function conciergeReceiptUrls(receiptIds: number[]): string[] {
   return receiptIds.map(receiptUrlForId);
+}
+
+function fillTemplate(raw: string, vars: Record<string, string>): string {
+  return raw.replace(/\{\{(\w+)\}\}/g, (_, k: string) => vars[k] ?? "").trim();
 }

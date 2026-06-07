@@ -2,6 +2,7 @@ import { deepResearch, getLedger, loadConfig, parallelMap } from "@oneshot-gtm/c
 import {
   draftEmailFromPrompt,
   errorDraft,
+  firstNameFrom,
   lintEmail,
   safeEnrich,
   sendDraftedEmail,
@@ -70,7 +71,21 @@ export interface EmailPlayDef<T, X = Record<string, never>> {
  */
 export async function runEmailPlay<T, X = Record<string, never>>(
   def: EmailPlayDef<T, X>,
-  opts: { dryRun: boolean; targets: T[] },
+  opts: {
+    dryRun: boolean;
+    targets: T[];
+    /**
+     * Optional per-target progress callback. Fires once per target after the
+     * full prepare → draft → lint → send chain resolves (or throws + lands as
+     * an errorDraft). The /api/run SSE handler uses this to emit `draft` +
+     * `send` events live so the UI's progress counters tick as each target
+     * finishes, instead of jumping from 0/N to N/N at the very end.
+     *
+     * Order: fires in completion order across the worker pool, not input
+     * order. Consumers that need stable indexing read the `index` arg.
+     */
+    onProgress?: (index: number, draft: PlayDraft<T, X>) => void;
+  },
 ): Promise<{ drafted: Array<PlayDraft<T, X>> }> {
   const cfg = loadConfig();
   if (!cfg.founderName || !cfg.productOneLiner) {
@@ -82,11 +97,20 @@ export async function runEmailPlay<T, X = Record<string, never>>(
   // play) step-0 dedupe is read-then-write, and only the serial order guarantees
   // a duplicate doesn't slip a second send through the window. Finder-drained
   // batches are already unique, so they get the full concurrency.
+  //
+  // Concurrency 6 (was 3): the per-target chain is mostly I/O bound on the
+  // OneShot SDK + LLM provider, both of which handle parallel calls fine. With
+  // the find→cache→/run cache-hit path warm, the residual draft+send time is
+  // small enough that 6 workers comfortably halve wall-clock without tripping
+  // SDK rate limits in observed runs.
   const emails = opts.targets.map((t) => def.toEmail(t).trim().toLowerCase());
   const hasDupeEmails = new Set(emails).size !== emails.length;
-  const concurrency = hasDupeEmails ? 1 : 3;
+  const concurrency = hasDupeEmails ? 1 : 6;
 
-  const drafted = await parallelMap(opts.targets, concurrency, async (target) => {
+  const drafted = await parallelMap(
+    opts.targets,
+    concurrency,
+    async (target) => {
     try {
       const prep = await def.prepare(target, opts.dryRun);
 
@@ -94,9 +118,16 @@ export async function runEmailPlay<T, X = Record<string, never>>(
       // set. Prompts treat it as conditional input — present only when set,
       // and the prompt picks ONE beat per email (never stacks).
       const proof = socialProofBlock();
-      const inputBlock = proof
+      let inputBlock = proof
         ? `${def.buildInputBlock(target, prep, cfg)}\n\n${proof}`
         : def.buildInputBlock(target, prep, cfg);
+      // Surface a real first name when extractable so the prompt can
+      // occasionally open with "Hey {firstName},". Absent → prompt rule
+      // says never invent a greeting; LLM dives into the Hook.
+      const firstName = firstNameFrom(def.prospectMeta(target).name ?? null);
+      if (firstName) {
+        inputBlock = `${inputBlock}\n\nPROSPECT_FIRST_NAME: ${firstName}`;
+      }
       const draft = await draftEmailFromPrompt({
         promptName: def.promptName,
         inputBlock,
@@ -135,7 +166,14 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         ...(def.errorExtra ?? ({} as X)),
       } as PlayDraft<T, X>;
     }
-  });
+    },
+    // parallelMap's per-completion hook — forward through if the caller wired
+    // a progress sink. Stays in completion order (not index order); the SSE
+    // consumer keys by the `index` arg.
+    opts.onProgress
+      ? (_target, result, index) => opts.onProgress?.(index, result)
+      : undefined,
+  );
 
   return { drafted };
 }

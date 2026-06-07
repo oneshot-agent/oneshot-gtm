@@ -22,6 +22,11 @@ export interface HiringSignalTarget {
 export interface HiringSignalRunOptions {
   dryRun: boolean;
   targets: HiringSignalTarget[];
+  /** Per-target progress hook installed by /api/run SSE handler. */
+  onProgress?: (
+    index: number,
+    draft: { subject: string; body: string; flags: string[]; sent: boolean; receiptIds: number[] },
+  ) => void;
   /** Skip the web-search/read steps. */
   skipScrape?: boolean;
 }
@@ -46,7 +51,7 @@ export function runHiringSignal(
   const def: EmailPlayDef<HiringSignalTarget, HiringSignalExtra> = {
     playName: PLAY_NAME,
     promptName: "hiring-signal-email",
-    maxBodyWords: 100,
+    maxBodyWords: 150,
     enrollCadence: true,
     errorExtra: { jobPostHook: "(error)" },
     toEmail: (t) => t.email,

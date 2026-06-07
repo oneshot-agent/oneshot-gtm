@@ -23,7 +23,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       telemetryEnabled: false,
       founderName: "Founder",
       founderEmail: "f@x.dev",
-      productOneLiner: "OneShot SDK",
+      productOneLiner: "TestProduct SDK",
       icpOneLiner: "Engineers",
       clientId: "test",
     }),

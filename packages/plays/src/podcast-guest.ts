@@ -23,6 +23,11 @@ export interface PodcastGuestTarget {
 export interface PodcastGuestRunOptions {
   dryRun: boolean;
   targets: PodcastGuestTarget[];
+  /** Per-target progress hook installed by /api/run SSE handler. */
+  onProgress?: (
+    index: number,
+    draft: { subject: string; body: string; flags: string[]; sent: boolean; receiptIds: number[] },
+  ) => void;
   /** Skip the optional web-search dossier enrichment. */
   skipSearch?: boolean;
 }
@@ -42,7 +47,7 @@ export function runPodcastGuest(
   const def: EmailPlayDef<PodcastGuestTarget> = {
     playName: PLAY_NAME,
     promptName: "podcast-guest-email",
-    maxBodyWords: 90,
+    maxBodyWords: 150,
     enrollCadence: true,
     toEmail: (t) => t.email,
     prepare: async (t, dryRun) => {

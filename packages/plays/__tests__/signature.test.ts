@@ -4,7 +4,7 @@ let cfgOverride: {
   founderName: string | null;
   productDomain: string | null;
   mobileSignature: boolean;
-} = { founderName: "J. Nicolas", productDomain: "example.com", mobileSignature: false };
+} = { founderName: "Jane Doe", productDomain: "example.com", mobileSignature: false };
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -34,7 +34,7 @@ vi.mock("@oneshot-gtm/core", async () => {
 const { signatureDirective } = await import("../src/_lib.ts");
 
 beforeEach(() => {
-  cfgOverride = { founderName: "J. Nicolas", productDomain: "example.com", mobileSignature: false };
+  cfgOverride = { founderName: "Jane Doe", productDomain: "example.com", mobileSignature: false };
 });
 
 afterEach(() => {
@@ -44,7 +44,7 @@ afterEach(() => {
 describe("signatureDirective — mobile sig", () => {
   it("two-line signature when mobileSignature is false", () => {
     const out = signatureDirective();
-    expect(out).toContain("J. Nicolas");
+    expect(out).toContain("Jane Doe");
     expect(out).toContain("example.com");
     expect(out).not.toContain("Sent from my iPhone");
   });
@@ -52,7 +52,7 @@ describe("signatureDirective — mobile sig", () => {
   it("three-line signature when mobileSignature is true", () => {
     cfgOverride.mobileSignature = true;
     const out = signatureDirective();
-    expect(out).toContain("J. Nicolas");
+    expect(out).toContain("Jane Doe");
     expect(out).toContain("example.com");
     expect(out).toContain("Sent from my iPhone");
     // Mobile sig instruction line replaces the two-line instruction.
@@ -60,7 +60,7 @@ describe("signatureDirective — mobile sig", () => {
     // The three sig lines land in order: name, domain, mobile.
     // (Used lastIndexOf because "Sent from my iPhone" also appears in the
     // instruction header above the sig block.)
-    const nameIdx = out.lastIndexOf("J. Nicolas");
+    const nameIdx = out.lastIndexOf("Jane Doe");
     const domainIdx = out.lastIndexOf("example.com");
     const mobileIdx = out.lastIndexOf("Sent from my iPhone");
     expect(nameIdx).toBeLessThan(domainIdx);
