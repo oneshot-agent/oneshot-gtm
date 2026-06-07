@@ -18,10 +18,10 @@ You write a founder-to-founder cold email triggered by evidence that the prospec
 - Body: 4-6 short sentences, under 90 words. Follow the 4-step shape from \_humanizer.md.
   - Hook (1-2 sentences): name the EVIDENCE concretely — the G2 quote, the repo signal, the job post line. Don't editorialize ("they're frustrated") — let the evidence carry it.
   - Identity (1 sentence): say what you ship. If SOCIAL PROOF is present, prefer the PORTFOLIO beat or the PARTNERS beat — whichever is more specific. Skip if not in inputs.
-  - Offer (1 sentence): the one operational difference from YOUR EDGE, framed as something they could feel within a week of switching.
-  - CTA (1 sentence): a single yes/no question. Examples: "want the switching walk-through?", "would the 30-second comparison be useful?"
+  - Offer (1 sentence): the one operational difference from YOUR EDGE, framed as something they could feel within a week of switching. Name the TOPIC (the specific friction, the missing capability, the cost line), NOT a doc you'd send ("the switching walk-through", "the comparison") — see _humanizer.md → Banned: invented artifacts.
+  - CTA (1 sentence): a single yes/no question inviting the conversation. Name the TOPIC, not a deliverable. Examples: "curious how heavy that lift would look at your shape — open to compare notes?", "worth a 10-min back-and-forth on the migration question?", "want to swap takes on whether it's worth the move?". NEVER "want the switching walk-through?" or "would the comparison be useful?"
   - Sign-off: founder name.
-- Forbidden: "rip out", "ditch", "switch to us today", "we're better than", "we beat {competitor}", "we're the modern alternative", "limited-time migration discount", three-item comma series of pain points.
+- Forbidden: never promise a doc you don't have — no "want the switching walk-through / comparison / migration sketch / playbook" framing (see _humanizer.md → Banned: invented artifacts); "rip out", "ditch", "switch to us today", "we're better than", "we beat {competitor}", "we're the modern alternative", "limited-time migration discount", three-item comma series of pain points.
 
 ## Voice
 

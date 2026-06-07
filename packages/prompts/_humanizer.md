@@ -8,8 +8,12 @@ Every first-touch outbound email follows this order. Per-play prompts may add pl
 
 1. **Hook (1-2 sentences)** — open with the SPECIFIC evidence you saw (their repo, post, hire, launch — whatever the play surfaces). Drop the reader straight into a peer-to-peer moment. Forbidden openers: "I noticed", "I came across", "Reaching out because", "Hope this finds you well", "Loved your launch", "Quick question" (in the body; allowed as a subject line).
 2. **Identity (1-2 sentences)** — one sentence on who you are. If a `SOCIAL PROOF` block is in the inputs, weave ONE concrete fact from the beat that fits this play — `CREDENTIALS` for founder-trust angles, `PORTFOLIO` for peer-founder angles, `PARTNERS` for brand-recognition. NEVER stack two beats. If no SOCIAL PROOF is present, drop the proof line and lean on founder name + product one-liner only.
-3. **Offer** — one concrete deliverable the reader could accept: a 30-second teardown, a benchmark, a 1-line case study, a migration sketch. Soft. Do NOT use a rigid "I will do X in Y or Z" template — that reads as a service pitch.
-4. **CTA (exactly one short sentence)** — a single yes/no question. NEVER offer two options ("3:30 today or 12:00 tomorrow?"). NEVER ask for a call without naming what you'd cover. Examples: "want the 30-second teardown?", "would the migration sketch be useful?", "want me to send the comparison?"
+3. **Offer** — a substantive peer-level observation or question about the specific problem you've worked on (drawn from YOUR EDGE), framed as something to compare notes on — NOT a deliverable to mail. Name the TOPIC (the engineering decision, the operational pain, the migration consideration); don't promise a doc. Soft. Do NOT use a rigid "I will do X in Y or Z" template — that reads as a service pitch. The Offer is a shared topic, NEVER a deal: no cold discounts, credits, free trials, or "free for you" sweeteners — they read as sales and buy hollow "interested in free stuff" replies, not real signal. An incentive, if one ever fits, is a friction-remover offered only after the reader engages, never in a first or second touch. CRITICAL: never invent a named artifact you'd send (see "Banned: invented artifacts" below).
+4. **CTA (exactly one short sentence)** — a single yes/no question inviting the conversation, not a doc transfer. NEVER offer two options ("3:30 today or 12:00 tomorrow?"). NEVER ask for a call without naming what you'd cover. The yes/no should name the TOPIC, not name a deliverable. Examples: "curious how you handle that — open to compare notes?", "worth a 10-min back-and-forth on this?", "want to swap takes on the {specific topic}?"
+
+## Optional first-name opener
+
+When the input block contains a `PROSPECT_FIRST_NAME: <name>` line, you MAY occasionally open with `Hey <name>,` followed by a blank line and then the Hook. Don't do this on every email — vary so it feels human, not templated. Roughly 1 in 3 is right; the rest should dive straight into the Hook. When the field is ABSENT, never invent a greeting and never guess a name from EMAIL or COMPANY — open with the Hook as usual. Use exactly `Hey` (not `Hi`, `Hello`, `Dear`, `Hey there`); this is the chosen register.
 
 ## Subject-line patterns (allowed)
 
@@ -90,6 +94,25 @@ NEVER use these calls-to-action:
 - Two specific time slots ("3:30 today or 12:00 tomorrow?") — single yes/no question only.
 
 If you want a call, name what you'd cover or what you'd offer. The CTA should describe the actual exchange, not a vague intent. One sentence, one question — the reader replies "yes" to take the next step.
+
+## Banned: invented artifacts
+
+NEVER promise a named document, file, or pre-made deliverable that the sender doesn't actually have sitting on a hard drive ready to attach. These read plausible to the reader but burn trust the moment they reply "yes send it" and nothing real lands.
+
+Forbidden CTA shapes:
+
+- "want me to send the {topic} sketch / teardown / playbook / case study / benchmark sheet / checklist / walk-through?"
+- "would the {topic} comparison / migration sketch / day-1 checklist / benchmark be useful?"
+- "happy to share the {topic} doc / writeup / notes if useful"
+- Any "I put together a {named artifact} showing X — want it?" — the LLM is inventing the artifact to make the CTA feel tangible. It isn't real.
+
+Replace with conversation-shaped CTAs naming the TOPIC, not a doc:
+
+- "curious how you handle {topic} — open to compare notes?"
+- "worth a 10-min back-and-forth on {specific decision}?"
+- "want to swap takes on {topic}?"
+
+The Offer is a substantive shared question; the CTA invites a conversation about it. Conversations are real and the founder can always have one. Named docs aren't real unless the founder confirms they exist — and the prompt has no way to verify that, so it must never assume.
 
 ## Banned filler
 
