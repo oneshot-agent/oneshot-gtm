@@ -138,6 +138,24 @@ export interface PodcastGuestExtract {
   summary: string | null;
 }
 
+export interface LumaPublicAttendee {
+  name: string;
+  profileUrl: string | null;
+  websiteUrl: string | null;
+  linkedinUrl: string | null;
+  twitterUrl: string | null;
+  bio: string | null;
+  role: string | null;
+}
+
+export interface LumaEventExtract {
+  eventTitle: string | null;
+  eventDateIso: string | null;
+  eventCity: string | null;
+  eventHasPassed: boolean;
+  publicAttendees: LumaPublicAttendee[];
+}
+
 export interface AgentBuilderExtract {
   repoUrl: string | null;
   githubHandle: string | null;

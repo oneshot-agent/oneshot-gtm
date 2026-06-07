@@ -50,6 +50,7 @@ describe("TRIGGERS registry", () => {
       "github-topics",
       "hiring-signal",
       "job-change",
+      "luma-events",
       "podcast-guest",
       "post-funding-auto",
       "show-hn",
@@ -73,6 +74,7 @@ describe("TRIGGERS registry", () => {
       "github-topics",
       "github-stars",
       "accelerator-batch",
+      "luma-events",
     ];
     for (const name of optIn) {
       const spec = TRIGGERS.find((t) => t.name === name);
@@ -184,6 +186,45 @@ describe("checkReadiness", () => {
     expect(out).toEqual({ ready: true });
   });
 
+  it("luma-events is not ready with its default config (yourEdge missing)", () => {
+    const spec = TRIGGERS.find((t) => t.name === "luma-events")!;
+    expect(spec.readiness).toBeDefined();
+    const out = checkReadiness(spec, spec.defaultConfig);
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/yourEdge/);
+  });
+
+  it("luma-events is not ready when topics is empty", () => {
+    const spec = TRIGGERS.find((t) => t.name === "luma-events")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      topics: [],
+      yourEdge: "a teardown",
+    });
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/topics/);
+  });
+
+  it("luma-events is not ready when cities is empty", () => {
+    const spec = TRIGGERS.find((t) => t.name === "luma-events")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      cities: [],
+      yourEdge: "a teardown",
+    });
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/cities/);
+  });
+
+  it("luma-events becomes ready with topics + cities + yourEdge", () => {
+    const spec = TRIGGERS.find((t) => t.name === "luma-events")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      yourEdge: "a 30-second teardown of how X handles Y",
+    });
+    expect(out).toEqual({ ready: true });
+  });
+
   it("github-topics is not ready with its empty default config (topics required first)", () => {
     const spec = TRIGGERS.find((t) => t.name === "github-topics")!;
     expect(spec.readiness).toBeDefined();
@@ -258,6 +299,7 @@ describe("checkReadiness", () => {
       "github-stars",
       "hiring-signal",
       "accelerator-batch",
+      "luma-events",
     ]);
     for (const spec of TRIGGERS) {
       if (intentionallyUnreadyByDefault.has(spec.name)) continue;

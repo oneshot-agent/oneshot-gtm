@@ -66,7 +66,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       telemetryEnabled: false,
       founderName: null,
       founderEmail: null,
-      productOneLiner: "OneShot SDK",
+      productOneLiner: "TestProduct SDK",
       icpOneLiner: "Engineers building agents",
       clientId: "test",
     }),
@@ -103,6 +103,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     }),
     getLedger: () => ({
       isQueueDuplicate: () => false,
+      isEmailPendingInQueue: () => false,
       enqueueTarget: (row: Record<string, unknown>) => {
         calls.enqueued.push(row);
         return calls.enqueued.length;
@@ -213,7 +214,7 @@ const baseOpts = {
   dryRun: false as const,
   topics: ["llm-agents", "ai-agent"],
   vendors: ["langchain", "openai", "anthropic", "twilio", "stripe"],
-  yourEdge: "OneShot bundles every vendor into one signed action.",
+  yourEdge: "TestProduct bundles every vendor into one signed action.",
   limit: 25,
   maxCostUsd: 5,
 };

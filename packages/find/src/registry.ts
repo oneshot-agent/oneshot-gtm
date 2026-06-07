@@ -6,6 +6,7 @@ import { type RepoWatch, runGitHubStarsFinder } from "./github-stars.ts";
 import { runGitHubTopicsFinder } from "./github-topics.ts";
 import { runHiringSignalFinder } from "./hiring-signal.ts";
 import { runJobChangeFinder } from "./job-change.ts";
+import { runLumaFinder } from "./luma.ts";
 import { runPodcastGuestFinder } from "./podcast-guest.ts";
 import { runPostFundingFinder } from "./post-funding.ts";
 import { runShowHnFinder } from "./show-hn.ts";
@@ -277,6 +278,54 @@ export const TRIGGERS: TriggerSpec[] = [
       }),
   },
   {
+    // Luma upcoming-event attendees. Public-only mode (no login cookie):
+    // pulls speakers / featured guests / approved-going names whose hosts
+    // enabled "Show Who's Coming". Resolves contact via LinkedIn enrichProfile
+    // (employer domain) or attendee websiteUrl, then standard findEmail chain.
+    name: "luma-events",
+    defaultIntervalMs: 24 * ONE_HOUR,
+    enabledByDefault: false,
+    defaultConfig: {
+      topics: ["AI", "founders"] as string[],
+      cities: ["San Francisco", "New York"] as string[],
+      sinceDays: 14,
+      yourEdge: "",
+      limit: 25,
+      maxCostUsd: 5,
+    },
+    configBrief:
+      "Discovers upcoming Luma events whose topic + city overlap with the founder's ICP, then pitches the publicly-visible attendees — speakers, sponsors, featured guests, and whoever the organizer surfaced via 'Show Who's Coming'. Coverage per event is 5-30 attendees (the highest-signal subset Luma exposes without login). Config: `topics` (phrases combined with cities into webSearch queries — e.g. ['AI', 'founders', 'product']), `cities` (e.g. ['San Francisco', 'New York']), `yourEdge` (one-line angle on why your product helps event-going people, REQUIRED), `sinceDays` (forward-looking window in days — events further out than this are dropped), `limit`, `maxCostUsd`. STRATEGIST DUTY: align topics to your ICP's actual gathering spots (AI hackers ≠ growth marketers); city list narrows search recall.",
+    readiness: (cfg) => {
+      const topics = Array.isArray(cfg["topics"]) ? cfg["topics"] : null;
+      if (!topics || topics.filter((t) => typeof t === "string" && t.trim()).length === 0) {
+        return { ready: false, reason: "set `topics` (e.g. ['AI','founders'])" };
+      }
+      const cities = Array.isArray(cfg["cities"]) ? cfg["cities"] : null;
+      if (!cities || cities.filter((c) => typeof c === "string" && c.trim()).length === 0) {
+        return { ready: false, reason: "set `cities` (e.g. ['San Francisco'])" };
+      }
+      const edge = cfg["yourEdge"];
+      if (typeof edge !== "string" || edge.trim().length === 0) {
+        return { ready: false, reason: "set `yourEdge` — one-line pitch for event attendees" };
+      }
+      return { ready: true };
+    },
+    run: (cfg) =>
+      runLumaFinder({
+        dryRun: false,
+        ...(Array.isArray(cfg["topics"])
+          ? { topics: (cfg["topics"] as unknown[]).filter((t): t is string => typeof t === "string") }
+          : {}),
+        ...(Array.isArray(cfg["cities"])
+          ? { cities: (cfg["cities"] as unknown[]).filter((c): c is string => typeof c === "string") }
+          : {}),
+        ...(typeof cfg["yourEdge"] === "string" ? { yourEdge: cfg["yourEdge"] as string } : {}),
+        sinceDays: (cfg["sinceDays"] as number) ?? 14,
+        limit: (cfg["limit"] as number) ?? 25,
+        maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
+      }),
+  },
+  {
     // GitHub-Topic-driven repo finder. Discovers via the (free) GitHub Search
     // API filtered by `topic:<slug>` — topic-tagged repos are pre-curated by
     // maintainers self-tagging, much higher signal-per-fetch than the
@@ -358,7 +407,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 12 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
-      repos: [] as Array<{ repo: string; rel: string; label?: string }>,
+      repos: [] as Array<{ repo: string; rel: string; label?: string; repoEdge?: string }>,
       yourEdge: "",
       sinceDays: 30,
       concurrency: 3,
@@ -366,7 +415,7 @@ export const TRIGGERS: TriggerSpec[] = [
       maxCostUsd: 5,
     },
     configBrief:
-      'Finds recent stargazers of repos you watch and turns them into prospects. Config: `repos` (array of `{repo:"owner/name", rel:"competitor"|"adjacent", label?}` — tag a repo `competitor` to pitch a switch (→ competitor-switch) or `adjacent` for a complementary intro (→ repo-interest); `label` is the human name, else derived from the repo), `yourEdge` (one-line pitch fed to whichever play, REQUIRED), `sinceDays` (recency window, default 30), `limit`, `maxCostUsd`. Needs `GITHUB_TOKEN` for any volume. STRATEGIST DUTY: pick repos your buyers\' current tools live in; tag the ones you replace as `competitor`, the rest `adjacent`.',
+      'Finds recent stargazers of repos you watch and turns them into prospects. Config: `repos` (array of `{repo:"owner/name", rel:"competitor"|"adjacent", label?, repoEdge?}` — tag a repo `competitor` to pitch a switch (→ competitor-switch) or `adjacent` for a complementary intro (→ repo-interest); `label` is the human name, else derived from the repo; `repoEdge` is an OPTIONAL per-repo line on why THAT repo is notable + the respectful bridge to your offer, used by repo-interest as a shared-taste nod that also shapes the pitch — e.g. a privacy-first repo leads with control/auditability, not "we do it for you"), `yourEdge` (one-line pitch fed to whichever play, REQUIRED), `sinceDays` (recency window, default 30), `limit`, `maxCostUsd`. Needs `GITHUB_TOKEN` for any volume. STRATEGIST DUTY: pick repos your buyers\' current tools live in; tag the ones you replace as `competitor`, the rest `adjacent`; give each adjacent repo a `repoEdge` so the intro nods to why they chose THAT tool.',
     readiness: (cfg) => {
       const repos = Array.isArray(cfg["repos"]) ? cfg["repos"] : [];
       const valid = repos.filter((r) => {
@@ -399,8 +448,10 @@ export const TRIGGERS: TriggerSpec[] = [
           const rel = e["rel"];
           if (repo.length === 0 || (rel !== "competitor" && rel !== "adjacent")) return null;
           const label = typeof e["label"] === "string" ? e["label"].trim() : "";
+          const repoEdge = typeof e["repoEdge"] === "string" ? e["repoEdge"].trim() : "";
           const watch: RepoWatch = { repo, rel };
           if (label) watch.label = label;
+          if (repoEdge) watch.repoEdge = repoEdge;
           return watch;
         })
         .filter((r): r is RepoWatch => r !== null);
@@ -423,7 +474,7 @@ export const TRIGGERS: TriggerSpec[] = [
     enabledByDefault: false,
     defaultConfig: { minDays: 60, maxDays: 90, limit: 25 },
     configBrief:
-      "Scans the founder's local prospect ledger for cold leads (no reply, marketable) within the day window and re-enqueues them for a pattern-interrupt revive. No OneShot/LLM spend (ledger-only). Config: `minDays` / `maxDays` (the cold-window — defaults 60-90), `limit`. Only enable when the founder has been sending for ≥2 months — empty ledger = no revives.",
+      "Scans the founder's local prospect ledger for cold leads (no reply, marketable) within the day window and re-enqueues them for a pattern-interrupt revive. No agent/LLM spend (ledger-only). Config: `minDays` / `maxDays` (the cold-window — defaults 60-90), `limit`. Only enable when the founder has been sending for ≥2 months — empty ledger = no revives.",
     run: async (cfg) =>
       runBreakupReviveFinder({
         dryRun: false,

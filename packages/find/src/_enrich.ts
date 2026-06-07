@@ -1,5 +1,10 @@
-import { enrichProfile, logEvent } from "@oneshot-gtm/core";
+import { enrichProfile, getLedger, logEvent } from "@oneshot-gtm/core";
 import { extractFirstPhone, isLinkedInProfileUrl } from "./_linkedin.ts";
+
+// Same value as ENRICH_CACHE_TTL_MS in packages/plays/src/_lib.ts:14 (the
+// constant is file-private there). Duplicated here to avoid a cross-package
+// import for a single literal; both must stay in sync if either changes.
+const ENRICH_CACHE_TTL_MS = 30 * 24 * 3600 * 1000;
 
 export interface EnrichedContact {
   phone: string | null;
@@ -28,8 +33,61 @@ export async function enrichVerifiedContact(
   email: string,
   opts: { playName: string; errKindPrefix?: string },
 ): Promise<EnrichedContact> {
+  const ledger = getLedger();
+  const key = email.trim().toLowerCase();
+
+  // Cache-read short-circuit. If a prior find pass already enriched this email
+  // (either via this function OR via the linkedin-keyed sites in luma.ts /
+  // _repo-pipeline.ts that ALSO populate the same cache by surfaced email),
+  // skip the SDK call entirely — phone + linkedin can be derived from the
+  // cached profile. This eliminates the double-enrich on linkedin-bearing
+  // candidates (find used to pay $0.005 twice + ~70s twice per such person).
+  // Mirrors the read pattern in safeEnrich at packages/plays/src/_lib.ts:31.
   try {
-    const enriched = await enrichProfile({ email }, { playName: opts.playName });
+    const cached = ledger.getCachedEnrichment(key);
+    if (cached && Date.now() - new Date(cached.fetched_at).getTime() < ENRICH_CACHE_TTL_MS) {
+      try {
+        const cachedResult = JSON.parse(cached.result_json) as {
+          profile?: Parameters<typeof extractFirstPhone>[0];
+        };
+        const profile = cachedResult.profile ?? null;
+        const linkedinRaw =
+          (profile as { linkedin_url?: string | null } | null)?.linkedin_url ?? null;
+        return {
+          phone: extractFirstPhone(profile),
+          linkedinUrl: isLinkedInProfileUrl(linkedinRaw) ? linkedinRaw : null,
+          // Cache hit: no new SDK call, so no new spend and no new receipt
+          // attributed to this call. The original receipt is still on file
+          // from whatever finder first paid for the enrichment.
+          costUsd: 0,
+          receiptId: null,
+        };
+      } catch {
+        // Corrupt cache row — fall through to a fresh SDK call.
+      }
+    }
+  } catch {
+    // Ledger read failed — fall through to the SDK path.
+  }
+
+  try {
+    const enriched = await enrichProfile(
+      { email },
+      {
+        playName: opts.playName,
+        decisionContext: { source: "finder.post_verify", prospectEmail: email },
+      },
+    );
+    // Populate the same per-email enrichment cache that `safeEnrich` reads on
+    // /run dispatch. Without this, every queue-sourced run pays the ~70s SDK
+    // call a second time on the same email even though the result is already
+    // on disk.
+    try {
+      ledger.setCachedEnrichment(key, JSON.stringify(enriched.result));
+    } catch {
+      // cache write is best-effort — find's contract is phone + linkedin, not
+      // populating a cache. A SQLite hiccup here shouldn't break the enqueue.
+    }
     const profile = enriched.result.profile;
     const linkedinRaw = profile?.linkedin_url ?? null;
     return {

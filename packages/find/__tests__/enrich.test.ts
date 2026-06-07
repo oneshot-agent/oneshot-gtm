@@ -13,6 +13,15 @@ let nextCost = 0.005;
 let throwOnNextCall = false;
 const calls = { enrichProfile: 0, lastEmail: "" };
 
+// Captures every interaction with the cache so cases can assert read/write
+// behavior without spinning up a real SQLite. `cachedRow` is what the next
+// getCachedEnrichment call returns; cases preload it to test the short-circuit.
+const cache = {
+  setCalls: [] as Array<{ key: string; resultJson: string }>,
+  getCalls: [] as string[],
+  cachedRow: null as { result_json: string; fetched_at: string } | null,
+};
+
 vi.mock("@oneshot-gtm/core", () => ({
   enrichProfile: async (input: { email?: string }) => {
     calls.enrichProfile++;
@@ -26,6 +35,15 @@ vi.mock("@oneshot-gtm/core", () => ({
       receiptId: 42,
     };
   },
+  getLedger: () => ({
+    setCachedEnrichment: (key: string, resultJson: string) => {
+      cache.setCalls.push({ key, resultJson });
+    },
+    getCachedEnrichment: (key: string) => {
+      cache.getCalls.push(key);
+      return cache.cachedRow;
+    },
+  }),
   logEvent: () => {},
 }));
 
@@ -37,6 +55,9 @@ beforeEach(() => {
   nextProfile = null;
   nextCost = 0.005;
   throwOnNextCall = false;
+  cache.setCalls = [];
+  cache.getCalls = [];
+  cache.cachedRow = null;
 });
 
 afterEach(() => {
@@ -114,5 +135,76 @@ describe("enrichVerifiedContact", () => {
     // Reassign so the mock returns no cost
     const r = await enrichVerifiedContact("x@y.dev", { playName: "show-hn" });
     expect(r.costUsd).toBe(0);
+  });
+});
+
+/**
+ * Locks in the cache write/read contract that makes find→/run avoid
+ * double-enriching the same email. If a future contributor inlines
+ * enrichProfile without populating cached_enrichments, or removes the
+ * cache-read short-circuit, these cases fail.
+ */
+describe("enrichVerifiedContact — cache write + read contract", () => {
+  it("writes the enriched result to the cache on success (key + JSON value match safeEnrich)", async () => {
+    nextProfile = {
+      email: "ada@acme.dev",
+      phone: "+1 415-555-0100",
+      linkedin_url: "https://www.linkedin.com/in/ada-lovelace",
+    };
+    await enrichVerifiedContact("  Ada@Acme.dev  ", { playName: "show-hn" });
+    expect(cache.setCalls).toHaveLength(1);
+    expect(cache.setCalls[0]?.key).toBe("ada@acme.dev");
+    // The value MUST be JSON.stringify(enriched.result) so safeEnrich's
+    // read-side (JSON.parse) reconstructs the same shape.
+    expect(JSON.parse(cache.setCalls[0]!.resultJson)).toMatchObject({
+      profile: { email: "ada@acme.dev" },
+      cost: 0.005,
+    });
+  });
+
+  it("skips the cache write when enrichProfile throws", async () => {
+    throwOnNextCall = true;
+    await enrichVerifiedContact("x@y.dev", { playName: "show-hn" });
+    expect(cache.setCalls).toHaveLength(0);
+  });
+
+  it("short-circuits to cache when the key is warm (no SDK call)", async () => {
+    cache.cachedRow = {
+      result_json: JSON.stringify({
+        profile: {
+          phone: "+1 555-9999",
+          linkedin_url: "https://www.linkedin.com/in/cached-person",
+        },
+        cost: 0.005,
+      }),
+      fetched_at: new Date().toISOString(),
+    };
+    const r = await enrichVerifiedContact("warm@x.dev", { playName: "show-hn" });
+    expect(calls.enrichProfile).toBe(0);
+    expect(r.phone).toBe("+1 555-9999");
+    expect(r.linkedinUrl).toBe("https://www.linkedin.com/in/cached-person");
+    // Cache hit means no new SDK call, so no new spend / receipt is attributed
+    // to this invocation — the original receipt still lives where it was paid.
+    expect(r.costUsd).toBe(0);
+    expect(r.receiptId).toBeNull();
+  });
+
+  it("falls through to SDK when the cache row is older than the TTL", async () => {
+    // 31 days old > 30-day TTL
+    const ttlPlusOneDayMs = 31 * 24 * 3600 * 1000;
+    cache.cachedRow = {
+      result_json: JSON.stringify({
+        profile: { phone: "+1 555-0000" },
+        cost: 0.005,
+      }),
+      fetched_at: new Date(Date.now() - ttlPlusOneDayMs).toISOString(),
+    };
+    nextProfile = { phone: "+1 555-7777" };
+    const r = await enrichVerifiedContact("stale@x.dev", { playName: "show-hn" });
+    expect(calls.enrichProfile).toBe(1);
+    // Fresh result, not the stale cached one.
+    expect(r.phone).toBe("+1 555-7777");
+    // Fresh result → fresh cache write.
+    expect(cache.setCalls).toHaveLength(1);
   });
 });

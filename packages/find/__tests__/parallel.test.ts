@@ -85,6 +85,29 @@ describe("parallelMap", () => {
     ).rejects.toThrow("boom");
   });
 
+  it("fires onItem per completion with (item, result, index) and once per item", async () => {
+    const items = ["a", "b", "c", "d"];
+    const calls: Array<{ item: string; result: string; index: number }> = [];
+    const out = await parallelMap(
+      items,
+      2,
+      async (s, i) => `${s}-done-${i}`,
+      (item, result, index) => {
+        calls.push({ item, result, index });
+      },
+    );
+    expect(out).toEqual(["a-done-0", "b-done-1", "c-done-2", "d-done-3"]);
+    expect(calls).toHaveLength(4);
+    // Same set of (index → result) pairs as `out`, but the callback may have
+    // fired in completion order rather than index order — sort before assert.
+    expect(calls.toSorted((a, b) => a.index - b.index)).toEqual([
+      { item: "a", result: "a-done-0", index: 0 },
+      { item: "b", result: "b-done-1", index: 1 },
+      { item: "c", result: "c-done-2", index: 2 },
+      { item: "d", result: "d-done-3", index: 3 },
+    ]);
+  });
+
   it("does not block forever when a slow worker completes after a fast one", async () => {
     // Regression guard: a naive chunk-based implementation would stall on the
     // slow item per chunk; the worker-pool variant should keep pulling.
