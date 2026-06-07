@@ -23,22 +23,41 @@ vi.mock("@oneshot-gtm/plays", async () => {
 
   // Dispatch routes through PLAYS[name].run, so override the registry (not the
   // individual run* exports) to capture calls without hitting the real SDK.
-  const fakeRun = (name: string) => async (input: { targets: unknown[] }) => {
-    playCalls.push({ name, targets: input.targets });
-    if (name === "show-hn") {
-      return {
-        drafted: input.targets.map((_, i) => ({
+  // Mirrors `runEmailPlay`: fires `onProgress(index, draft)` for each drafted
+  // row before resolving — so the SSE handler's per-target draft/send events
+  // exercise the same callback path they do in production.
+  const fakeRun =
+    (name: string) =>
+    async (input: {
+      targets: unknown[];
+      onProgress?: (
+        index: number,
+        draft: {
+          subject: string;
+          body: string;
+          flags: string[];
+          sent: boolean;
+          receiptIds: number[];
+        },
+      ) => void;
+    }) => {
+      playCalls.push({ name, targets: input.targets });
+      if (name === "show-hn") {
+        const drafted = input.targets.map((_, i) => ({
           target: { postTitle: `t${i}` },
           subject: `subj-${i}`,
           body: `body-${i}`,
           flags: [],
           receiptIds: [100 + i],
           sent: false,
-        })),
-      };
-    }
-    return { drafted: [] };
-  };
+        }));
+        if (input.onProgress) {
+          drafted.forEach((d, i) => input.onProgress?.(i, d));
+        }
+        return { drafted };
+      }
+      return { drafted: [] };
+    };
 
   const names = [
     "show-hn",
@@ -187,6 +206,29 @@ describe("runPlay — verify-then-dispatch", () => {
     expect(done).toMatchObject({ kind: "done", total: 0, sent: 0 });
     // No draft/send frames for the dropped targets.
     expect(frames.filter((f) => f.kind === "draft")).toHaveLength(0);
+  });
+
+  it("emits one draft + one send SSE frame per target as onProgress fires", async () => {
+    // Two verified targets → fakeRun fires onProgress(0,...) then onProgress(1,...).
+    // The SSE handler's callback should turn each into a `draft` event AND
+    // (since receiptIds is non-empty) a `send` event, both with the right index.
+    const targets = [
+      { founderEmail: "a@x.dev", postTitle: "T0" },
+      { founderEmail: "b@x.dev", postTitle: "T1" },
+    ];
+    nextVerify = { verified: targets, dropped: [], receiptIds: [], costUsd: 0 };
+    const res = await runPlay(makeRequest("show-hn", { targets, dryRun: false }), {
+      playName: "show-hn",
+    });
+    const frames = await readSseFrames(res.body);
+    const drafts = frames.filter((f) => f.kind === "draft");
+    const sends = frames.filter((f) => f.kind === "send");
+    expect(drafts).toHaveLength(2);
+    expect(sends).toHaveLength(2);
+    expect(drafts.map((f) => (f as { index: number }).index)).toEqual([0, 1]);
+    expect(sends.map((f) => (f as { index: number }).index)).toEqual([0, 1]);
+    const done = frames.find((f) => f.kind === "done");
+    expect(done).toMatchObject({ kind: "done", total: 2 });
   });
 
   it("returns 400 when playName is not in SUPPORTED", async () => {

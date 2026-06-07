@@ -14,6 +14,7 @@ const SUPPORTED = new Set([
   "competitor-switch",
   "stack-consolidation",
   "repo-interest",
+  "luma-events",
 ]);
 
 export async function runPlay(req: Request, params: Record<string, string>): Promise<Response> {
@@ -37,20 +38,44 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
     return jsonResponse({ error: "targets must be a non-empty array" }, 400, req);
   }
 
+  // Create a runs row up-front so the UI gets a runId to navigate to + can
+  // resume on nav-back via GET /api/runs/:id. Every SSE event we emit below
+  // is also appended to the row's events_json so the resume view rebuilds
+  // accurately. Marked 'done' at the end of the try (success) or the catch
+  // (failure); cold-boot sweep flips any stranded 'running' rows to
+  // 'interrupted'.
+  const { runId, startedAt } = getLedger().createRun({
+    playName,
+    dryRun: body.dryRun,
+    targets: body.targets,
+  });
+  // Track which emails actually sent successfully so the UI can deep-link
+  // to /cadences?sinceRun=N filtered to just-enrolled prospects.
+  const sentEmails: string[] = [];
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const encoder = new TextEncoder();
+      const ledger = getLedger();
       const send = (event: RunPlayEvent): void => {
-        // The client may disconnect mid-run (closed tab, navigation, or a
-        // request timeout) — the controller is then closed and enqueue throws.
-        // Swallow it: the server-side work (incl. any real send) still happened
-        // and there's nothing to stream to. Avoids a false pipeline_error.
+        // Persist FIRST — even if the client has disconnected, the resume
+        // view needs every event. SSE write second; swallow if the client
+        // is gone (closed tab, navigation, or timeout). The server-side
+        // work (incl. any real send) still happened — no false pipeline_error.
+        try {
+          ledger.appendRunEvent({ runId, event });
+        } catch {
+          // ledger write failing is the sweeper's problem; keep streaming.
+        }
         try {
           controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`));
         } catch {
           // client gone — ignore
         }
       };
+
+      // First frame: tell the UI its runId so it can switch to progress mode.
+      send({ kind: "runStarted", runId, startedAt });
 
       try {
         // Build email → dedupeKey map BEFORE the verify filter potentially
@@ -108,14 +133,26 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
         const filteredBody: RunPlayRequest = { ...body, targets: verify.verified };
 
         send({ kind: "stage", stage: body.dryRun ? "drafting" : "drafting + sending" });
-        const drafted = await dispatchPlay(playName, filteredBody);
         let sentCount = 0;
-        drafted.forEach((d, index) => {
+        // Per-target callback installed by dispatchPlay → play.run → parallelMap.
+        // Fires the draft + (optional) send events live so the runs row's
+        // counters and the UI tick from 0/N → N/N as each target completes,
+        // instead of jumping at the end.
+        const drafted = await dispatchPlay(playName, filteredBody, (index, d) => {
           send({ kind: "draft", index, subject: d.subject, body: d.body, flags: d.flags });
           if (d.receiptIds.length > 0) {
             send({ kind: "send", index, receiptIds: d.receiptIds });
           }
-          if (d.sent) sentCount++;
+          if (d.sent) {
+            sentCount++;
+            // Pull the email back out of the verified target so /cadences?sinceRun
+            // can later resolve "what was just sent" without re-parsing events.
+            const t = verify.verified[index] as
+              | { email?: string; founderEmail?: string }
+              | undefined;
+            const email = t?.email ?? t?.founderEmail;
+            if (email) sentEmails.push(email);
+          }
         });
         send({ kind: "done", total: drafted.length, sent: sentCount });
 
@@ -178,6 +215,15 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
         }
         send({ kind: "error", index: -1, message: uiMessage });
       } finally {
+        // Flip the runs row to 'done' regardless of success/failure — the
+        // per-event counters on the row are already accurate. Cold-boot sweep
+        // only sees rows still stuck at 'running', so a clean shutdown here
+        // means no false-positive `interrupted` next boot.
+        try {
+          getLedger().markRunComplete({ runId, status: "done", sentEmails });
+        } catch {
+          // sweeper safety net
+        }
         try {
           controller.close();
         } catch {

@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const previewBatchMock = vi.fn();
 const sendBatchMock = vi.fn();
+const claimMarkerMock = vi.fn(() => true);
+const clearMarkerMock = vi.fn();
 
 vi.mock("@oneshot-gtm/plays", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/plays")>("@oneshot-gtm/plays");
@@ -9,6 +11,22 @@ vi.mock("@oneshot-gtm/plays", async () => {
     ...actual,
     previewCadenceStepBatch: (items: unknown) => previewBatchMock(items),
     sendCadenceStepBatch: (items: unknown) => sendBatchMock(items),
+  };
+});
+
+// The route now claims `cadence_state.sending_started_at` before kicking off
+// the background send (atomic CAS). Mock the ledger so claim always succeeds —
+// the tests below assert routing behavior, not the marker semantics (covered
+// in packages/core/__tests__/ledger.test.ts).
+vi.mock("@oneshot-gtm/core", async () => {
+  const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
+  return {
+    ...actual,
+    getLedger: () => ({
+      claimCadenceSendingMarker: claimMarkerMock,
+      clearCadenceSendingMarker: clearMarkerMock,
+      getCadenceDraft: () => ({ subject: "s", body: "b", flags: [], payload: {}, draftedAt: "now" }),
+    }),
   };
 });
 
@@ -33,6 +51,9 @@ function badJsonRequest(): Request {
 beforeEach(() => {
   previewBatchMock.mockReset();
   sendBatchMock.mockReset();
+  claimMarkerMock.mockReset();
+  claimMarkerMock.mockReturnValue(true);
+  clearMarkerMock.mockReset();
 });
 
 afterEach(() => {

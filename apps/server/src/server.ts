@@ -20,6 +20,7 @@ import { deriveIcpRoute } from "./api/derive-icp.ts";
 import { strategistRoute } from "./api/strategist.ts";
 import { doctor } from "./api/doctor.ts";
 import { runPlay } from "./api/run.ts";
+import { getRunRoute } from "./api/runs.ts";
 import {
   approveAllRoute,
   approveQueueRoute,
@@ -83,6 +84,7 @@ const routes: RouteEntry[] = [
   route("POST", "/api/strategist/stream", strategistRoute),
   route("GET", "/api/doctor", doctor),
   route("POST", "/api/run/:playName", runPlay),
+  route("GET", "/api/runs/:id", getRunRoute),
   route("GET", "/api/queue", listQueueRoute),
   route("POST", "/api/queue/approve-all", approveAllRoute),
   route("POST", "/api/queue/drain", drainQueueRoute),

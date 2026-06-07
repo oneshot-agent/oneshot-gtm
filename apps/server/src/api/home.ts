@@ -20,6 +20,10 @@ export function homeMetrics(req: Request): Response {
     sentLast7d: sent7d,
     repliedLast7d: replied7d,
     activeCadences: active.length,
+    // In-flight /run dispatches — surfaces a "Resume" link on the home dashboard
+    // so the founder can hop back to a running batch without remembering the URL.
+    // Capped at 5 (the widget hides itself when empty).
+    currentRuns: ledger.listRuns({ status: "running", limit: 5 }),
   };
 
   return jsonResponse(metrics, 200, req);

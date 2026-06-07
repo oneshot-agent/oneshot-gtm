@@ -52,6 +52,10 @@ const PLAY_CATALOG: PlayMeta[] = [
     cli: "oneshot-gtm find watch  # fed by the github-stars finder (adjacent repos), drained from /queue",
   },
   {
+    name: "luma-events",
+    cli: "oneshot-gtm find watch  # fed by the luma-events finder (publicly-visible attendees), drained from /queue",
+  },
+  {
     name: "hiring-signal",
     cli: "oneshot-gtm motion hiring-signal --target ./examples/hiring-signal.json",
   },

@@ -121,7 +121,7 @@ let mockCfg: {
   telemetryEnabled: true,
   founderName: null,
   founderEmail: null,
-  productOneLiner: "OneShot SDK — unified action API",
+  productOneLiner: "TestProduct — unified action API",
   icpOneLiner: "Engineers shipping autonomous AI agents",
   clientId: "test-client-id",
 };
@@ -199,7 +199,7 @@ beforeEach(() => {
     telemetryEnabled: true,
     founderName: null,
     founderEmail: null,
-    productOneLiner: "OneShot SDK — unified action API",
+    productOneLiner: "TestProduct — unified action API",
     icpOneLiner: "Engineers shipping autonomous AI agents",
     clientId: "test-client-id",
   };
