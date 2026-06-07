@@ -33,6 +33,7 @@ const RUNNABLE_PLAYS = new Set([
   "podcast-guest",
   "stack-consolidation",
   "repo-interest",
+  "luma-events",
 ]);
 
 /**
@@ -103,6 +104,11 @@ const PLAY_META: Record<string, { description: string; steps: CadenceStep[] }> =
   "repo-interest": {
     description:
       "Complementary intro to someone who starred an adjacent repo in your space. Fed by the github-stars finder.",
+    steps: [{ day: 0, label: "send" }],
+  },
+  "luma-events": {
+    description:
+      "Forward-looking pitch to publicly-visible attendees of upcoming Luma events whose topic + city overlap with the founder's ICP. Fed by the luma-events finder.",
     steps: [{ day: 0, label: "send" }],
   },
   "hiring-signal": {

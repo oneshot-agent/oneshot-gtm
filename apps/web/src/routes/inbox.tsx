@@ -81,8 +81,8 @@ function InboxPage() {
 
       <section className="flex items-start gap-3 border-b border-ink-rule px-6 py-3">
         <div className="ln-note text-[12px] text-ink-muted">
-          Replies arrive in your OneShot mailbox. The cadence engine reads them to stop a sequence
-          on reply — to respond, use your own email client.
+          Replies arrive in your mailbox. The cadence engine reads them to stop a sequence on
+          reply — to respond, use your own email client.
         </div>
       </section>
 

@@ -223,7 +223,7 @@ function SetupPage() {
             </Field>
             <Field
               label="Sending domain"
-              hint="The domain your OneShot wallet OWNS. Emails send from <your-first-name>@thisdomain. Must be wallet-owned or OneShot rejects the send. Leave blank to use the SDK default."
+              hint="The domain your wallet OWNS. Emails send from <your-first-name>@thisdomain. Must be wallet-owned or the SDK rejects the send. Leave blank to use the SDK default."
             >
               <Input
                 value={sendingDomain}
@@ -422,7 +422,7 @@ function SetupPage() {
         </LedgerSection>
 
         <LedgerSection
-          eyebrow="05 · OneShot wallet"
+          eyebrow="05 · Wallet"
           lede="Keys live only in ~/.oneshot-gtm/.env chmod 600. Nothing leaves your machine."
         >
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">

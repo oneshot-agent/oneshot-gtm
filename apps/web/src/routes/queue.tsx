@@ -705,6 +705,7 @@ function QueueRow({
                 draft={row.lastDraft}
                 draftedAt={row.lastDraftedAt}
                 generating={generating}
+                isSending={row.isSending}
               />
               <details className="text-ink-faint">
                 <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.14em] hover:text-ink-cream-2">
@@ -737,12 +738,19 @@ function DraftSection({
   draft,
   draftedAt,
   generating,
+  isSending,
 }: {
   id: number;
   status: QueueStatusView;
   draft: QueueRowView["lastDraft"];
   draftedAt: string | null;
   generating: boolean;
+  /**
+   * True when the server's `target_queue.send_started_at` marker is set —
+   * survives nav-away-and-back AND `bun --watch` reloads, unlike the
+   * mutation's local `isPending`. Cleared on terminal status flip.
+   */
+  isSending: boolean;
 }): React.ReactElement {
   const qc = useQueryClient();
   const regenerate = useMutation({
@@ -770,7 +778,14 @@ function DraftSection({
       void qc.invalidateQueries({ queryKey: ["queue"] });
       toast.success("sent · the reviewed draft went out as-is");
     },
-    onError: (err) => toast.error(`couldn't send · ${err.message}`),
+    onError: (err) => {
+      // Always refetch on failure too: a stale already-sent row (or one claimed
+      // by another tab / in-flight) self-corrects — the row flips to `sent` and
+      // the button disappears — instead of leaving a dead-end click to repeat.
+      void qc.invalidateQueries({ queryKey: ["queue"] });
+      if (err.message.includes("already sent")) toast.success("already sent ✓");
+      else toast.error(`couldn't send · ${err.message}`);
+    },
   });
   const canDraft = !(draft?.sent ?? false);
   const verb = draft ? "regenerate" : "generate draft";
@@ -793,12 +808,15 @@ function DraftSection({
   // draft — that's the review gate: regenerate until clean, then send exactly
   // that. Disabled (with a hint) when there's no draft or it's flagged.
   const cleanDraft = draft != null && draft.flags.length === 0 && !draft.sent;
+  // Combine the local mutation spinner with the server-persisted `isSending`
+  // flag so the spinner survives navigate-away-and-back AND server restart.
+  const sending = send.isPending || isSending;
   const sendButton =
     status === "approved" && !(draft?.sent ?? false) ? (
       <Button
         variant="secondary"
         size="sm"
-        disabled={send.isPending || !cleanDraft}
+        disabled={sending || !cleanDraft}
         onClick={() => send.mutate()}
         title={
           cleanDraft
@@ -808,8 +826,8 @@ function DraftSection({
               : "Draft has lint flags — regenerate to clear them, then send"
         }
       >
-        {send.isPending ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
-        {send.isPending ? "sending…" : "send this one"}
+        {sending ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
+        {sending ? "sending…" : "send this one"}
       </Button>
     ) : null;
 
@@ -1242,7 +1260,7 @@ function TriggerRowFragment(props: TriggerRowProps) {
                   ? `Running for ${props.elapsedMs != null ? humanDuration(props.elapsedMs) : "a moment"} — click won't re-fire`
                   : notReady
                     ? `not ready · ${notReadyReason}`
-                    : "Run this finder now — ignores schedule, spends OneShot $"
+                    : "Run this finder now — ignores schedule, spends $"
               }
             >
               {props.running ? (

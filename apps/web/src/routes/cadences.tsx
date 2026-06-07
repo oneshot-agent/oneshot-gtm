@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { ChevronDown, CircleStop, Eye, Send, Trophy } from "lucide-react";
+import { ChevronDown, CircleStop, Eye, Loader2, RotateCw, Send, Trophy } from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
 import { toast } from "sonner";
 import type { CadenceView, OutcomeRequest } from "@oneshot-gtm/shared-types";
@@ -15,6 +15,15 @@ import { StepProgress } from "../components/primitives/StepProgress.tsx";
 import { cn, timeAgo } from "../lib/cn.ts";
 
 export const Route = createFileRoute("/cadences")({
+  // ?sinceRun=N deep-link from /run/<play>?runId=N done-mode — filters the
+  // listing to cadences whose prospect email is in the run's prospect_emails
+  // set. The page shows a clear banner with a [clear filter] CTA.
+  validateSearch: (search: Record<string, unknown>) => ({
+    sinceRun:
+      typeof search["sinceRun"] === "string" && /^\d+$/.test(search["sinceRun"])
+        ? Number.parseInt(search["sinceRun"], 10)
+        : undefined,
+  }),
   component: CadencesPage,
 });
 
@@ -62,11 +71,16 @@ function CadencesPage() {
   const [outcomeAmount, setOutcomeAmount] = useState("");
   const [outcomeNotes, setOutcomeNotes] = useState("");
 
+  const { sinceRun } = Route.useSearch();
   const cadences = useQuery({
-    queryKey: ["cadences", showAll],
-    queryFn: () => api.cadences(showAll),
+    queryKey: ["cadences", showAll, sinceRun],
+    queryFn: () => api.cadences({ all: showAll, ...(sinceRun != null ? { sinceRun } : {}) }),
     refetchInterval: 15_000,
   });
+  const cadenceNavigate = Route.useNavigate();
+  const clearSinceRun = (): void => {
+    void cadenceNavigate({ search: {} });
+  };
 
   const stop = useMutation({
     mutationFn: (vars: { prospectId: number; playName: string }) =>
@@ -283,6 +297,19 @@ function CadencesPage() {
         </div>
       </section>
 
+      {/* sinceRun filter banner — deep-link from /run/<play>?runId=N done mode. */}
+      {sinceRun != null && (
+        <section className="flex items-center justify-between border-b border-ink-rule bg-ink-surface/60 px-6 py-2.5">
+          <div className="text-[12px] text-ink-muted">
+            Filtering to {list.length} cadence{list.length === 1 ? "" : "s"} just enrolled by
+            <span className="ml-1 font-mono text-ink-cream">run #{sinceRun}</span>
+          </div>
+          <Button variant="ghost" size="sm" onClick={clearSinceRun}>
+            clear filter
+          </Button>
+        </section>
+      )}
+
       {/* Aggregate strip — 4 columns divided by vertical hairlines. */}
       <section className="grid grid-cols-2 divide-x divide-ink-rule border-b border-ink-rule md:grid-cols-4">
         <CadenceSummary
@@ -423,7 +450,12 @@ function CadencesPage() {
                 const totalSteps = c.followupCount + 1;
                 const isOverdue =
                   c.status === "active" && c.nextDueAt !== null && c.nextDueAt <= nowIso;
-                const hasExpandable = c.priorSteps.length > 0 || c.nextStepDraft != null;
+                // Expandable when there's something to show OR something to do:
+                // prior sends, a persisted draft, or a remaining step to generate.
+                const hasExpandable =
+                  c.priorSteps.length > 0 ||
+                  c.nextStepDraft != null ||
+                  (c.status === "active" && c.nextStepLabel != null);
                 return (
                   <Fragment key={`${c.prospectId}-${c.playName}`}>
                     <tr
@@ -696,24 +728,76 @@ function CadencesPage() {
                                 </div>
                               </>
                             )}
-                            {c.nextStepDraft && (
+                            {c.status === "active" && c.nextStepLabel != null && (
                               <div className={c.priorSteps.length > 0 ? "mt-5" : ""}>
-                                <div className="ln-eyebrow mb-1">Next-step preview</div>
-                                <div className="font-mono text-[11px] text-ink-faint">
-                                  drafted {timeAgo(c.nextStepDraft.draftedAt)}
-                                  {c.nextStepDraft.flags.length > 0 && (
-                                    <span className="ml-2 text-[color:var(--ink-spend-2)]">
-                                      · {c.nextStepDraft.flags.length} flag(s):{" "}
-                                      {c.nextStepDraft.flags.join(", ")}
-                                    </span>
-                                  )}
+                                <div className="mb-1 flex items-center justify-between gap-2">
+                                  <div className="ln-eyebrow">
+                                    Next-step preview
+                                    {c.nextStepIsBreakup && (
+                                      <span className="ml-2 normal-case tracking-normal text-ink-faint">
+                                        · breakup
+                                      </span>
+                                    )}
+                                  </div>
+                                  {(() => {
+                                    const pending =
+                                      pendingPreviewKey === `${c.prospectId}|${c.playName}`;
+                                    return (
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        disabled={pendingPreviewKey != null}
+                                        title={
+                                          c.nextStepDraft
+                                            ? `regenerate next step (drafted ${timeAgo(c.nextStepDraft.draftedAt)})`
+                                            : "generate next-step draft — dry-run LLM, never sends"
+                                        }
+                                        onClick={() =>
+                                          previewNext.mutate({
+                                            prospectId: c.prospectId,
+                                            playName: c.playName,
+                                          })
+                                        }
+                                      >
+                                        {pending ? (
+                                          <Loader2 size={11} className="animate-spin" />
+                                        ) : (
+                                          <RotateCw size={11} />
+                                        )}
+                                        {pending
+                                          ? c.nextStepDraft
+                                            ? "regenerating…"
+                                            : "generating…"
+                                          : c.nextStepDraft
+                                            ? "regenerate"
+                                            : "generate draft"}
+                                      </Button>
+                                    );
+                                  })()}
                                 </div>
-                                <div className="mt-2 font-mono text-[12px] text-ink-cream">
-                                  Subject: {c.nextStepDraft.subject}
-                                </div>
-                                <pre className="mt-1 whitespace-pre-wrap text-[12px] text-ink-cream-2">
-                                  {c.nextStepDraft.body}
-                                </pre>
+                                {c.nextStepDraft ? (
+                                  <>
+                                    <div className="font-mono text-[11px] text-ink-faint">
+                                      drafted {timeAgo(c.nextStepDraft.draftedAt)}
+                                      {c.nextStepDraft.flags.length > 0 && (
+                                        <span className="ml-2 text-[color:var(--ink-spend-2)]">
+                                          · {c.nextStepDraft.flags.length} flag(s):{" "}
+                                          {c.nextStepDraft.flags.join(", ")}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="mt-2 font-mono text-[12px] text-ink-cream">
+                                      Subject: {c.nextStepDraft.subject}
+                                    </div>
+                                    <pre className="mt-1 whitespace-pre-wrap text-[12px] text-ink-cream-2">
+                                      {c.nextStepDraft.body}
+                                    </pre>
+                                  </>
+                                ) : (
+                                  <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-ink-faint">
+                                    no draft yet
+                                  </div>
+                                )}
                               </div>
                             )}
                           </td>

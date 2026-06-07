@@ -1,11 +1,12 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowLeft, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { ArrowLeft, CheckCircle2, Loader2, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { RunPlayEvent, RunPlayRequest } from "@oneshot-gtm/shared-types";
+import type { RunPlayEvent, RunPlayRequest, RunRecord } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
-import { Checkbox, Field, Input, Textarea } from "../components/primitives/Field.tsx";
+import { Field, Input, Textarea } from "../components/primitives/Field.tsx";
 import { cn } from "../lib/cn.ts";
 import { pruneSentRows } from "../lib/pruneSentRows.ts";
 
@@ -22,6 +23,13 @@ interface RunSearch {
   dryRun?: "0" | "1";
   senderCohort?: string;
   freeForCohortOffer?: string;
+  /**
+   * When set, the page is in progress / done / interrupted mode. The page
+   * fetches GET /api/runs/:runId and renders the per-target state read from
+   * the server, polling every 2s while status === 'running'. Survives
+   * navigate-away-and-back; on cold-boot sweep it shows as 'interrupted'.
+   */
+  runId?: number;
 }
 
 export const Route = createFileRoute("/run/$playName")({
@@ -37,6 +45,10 @@ export const Route = createFileRoute("/run/$playName")({
     if (typeof search["senderCohort"] === "string") out.senderCohort = search["senderCohort"];
     if (typeof search["freeForCohortOffer"] === "string") {
       out.freeForCohortOffer = search["freeForCohortOffer"];
+    }
+    if (typeof search["runId"] === "number") out.runId = search["runId"];
+    else if (typeof search["runId"] === "string" && /^\d+$/.test(search["runId"])) {
+      out.runId = Number.parseInt(search["runId"], 10);
     }
     return out;
   },
@@ -378,6 +390,70 @@ const PLAY_SCHEMAS: Record<string, PlaySchema> = {
       linkedinUrl: "",
     },
   },
+  "luma-events": {
+    description:
+      "Forward-looking pitch to a publicly-visible attendee of an upcoming Luma event. Hook references the specific event + city + date. One touch, no follow-up.",
+    fields: [
+      { key: "name", label: "Attendee name", type: "text", required: true },
+      { key: "email", label: "Attendee email", type: "email", required: true },
+      { key: "company", label: "Company (optional)", type: "text" },
+      {
+        key: "attendeeBio",
+        label: "Attendee bio / role (optional)",
+        type: "text",
+        placeholder: 'e.g. "Founder @ AcmeAI"',
+      },
+      {
+        key: "eventTitle",
+        label: "Event title",
+        type: "text",
+        required: true,
+        placeholder: "e.g. SF AI Builders Meetup",
+      },
+      {
+        key: "eventDate",
+        label: "Event date (ISO)",
+        type: "text",
+        required: true,
+        placeholder: "2026-06-10",
+        hint: "ISO date or datetime; prompt humanizes to 'tomorrow' / 'next Tuesday'.",
+      },
+      {
+        key: "eventCity",
+        label: "Event city",
+        type: "text",
+        required: true,
+        placeholder: "San Francisco",
+      },
+      {
+        key: "eventUrl",
+        label: "Luma event URL",
+        type: "url",
+        required: true,
+        placeholder: "https://luma.com/...",
+      },
+      {
+        key: "yourEdge",
+        label: "Your edge (one sentence)",
+        type: "textarea",
+        required: true,
+        hint: "How your product helps people going to events like this. e.g. 'a teardown of how X handles Y for hosts/attendees'.",
+      },
+      { key: "linkedinUrl", label: "LinkedIn URL (optional)", type: "url" },
+    ],
+    defaultRow: {
+      name: "",
+      email: "",
+      company: "",
+      attendeeBio: "",
+      eventTitle: "",
+      eventDate: "",
+      eventCity: "",
+      eventUrl: "",
+      yourEdge: "",
+      linkedinUrl: "",
+    },
+  },
 };
 
 function RunPage() {
@@ -401,6 +477,51 @@ function RunPage() {
   const [running, setRunning] = useState(false);
   const [events, setEvents] = useState<RunPlayEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const navigate = Route.useNavigate();
+  // Cross-route navigation (e.g. to /cadences for the deep-link from done mode).
+  const globalNavigate = useNavigate();
+
+  // Run state machine: edit | progress | done | interrupted. Driven by
+  // `search.runId`. When set, we fetch GET /api/runs/:id and re-render the
+  // per-target view from server-persisted events — so the page is fully
+  // resumable across nav-away-and-back AND across server restarts (the
+  // cold-boot sweep flips stranded runs to 'interrupted').
+  const runQuery = useQuery({
+    queryKey: ["run", search.runId],
+    queryFn: () => (search.runId ? api.run(search.runId) : Promise.resolve(null)),
+    enabled: search.runId != null,
+    refetchInterval: (q): false | number => {
+      const data = q.state.data as RunRecord | null | undefined;
+      return data && data.status === "running" ? 2000 : false;
+    },
+  });
+  const runRecord: RunRecord | null = (runQuery.data as RunRecord | null | undefined) ?? null;
+  // A 404 from /api/runs/:id (run was deleted, or the URL was hand-edited
+  // with a bad id) shouldn't pin the page on "progress" forever — flag the
+  // missing-id case so the page can recover to edit mode.
+  const runNotFound =
+    search.runId != null &&
+    runQuery.isError &&
+    /\b404\b/.test(((runQuery.error as Error | null)?.message ?? ""));
+  const mode: "edit" | "progress" | "done" | "interrupted" =
+    search.runId == null || runNotFound
+      ? "edit"
+      : runRecord == null
+        ? "progress" // still loading
+        : runRecord.status === "running"
+          ? "progress"
+          : runRecord.status === "interrupted"
+            ? "interrupted"
+            : "done";
+  // When the server-persisted record arrives, mirror its events into the
+  // local stream array so the existing per-target rendering keeps working
+  // unmodified. Local SSE writes still hit setEvents during a live submit;
+  // when search.runId flips on, this overrides with the durable copy.
+  useEffect(() => {
+    if (runRecord) {
+      setEvents(runRecord.events);
+    }
+  }, [runRecord]);
   // Set when navigated from /queue with fromQueue=1 AND the approved-rows
   // fetch returned zero. Surfaces a one-line empty-state hint so the
   // founder isn't confused by the schema's default empty row.
@@ -646,6 +767,14 @@ function RunPage() {
             const ev = JSON.parse(line.slice(5).trim()) as RunPlayEvent;
             streamedEvents.push(ev);
             setEvents((prev) => [...prev, ev]);
+            // First frame is always { kind: "runStarted", runId }. Navigate
+            // to the same page with `?runId=N` so the page is now in
+            // progress mode AND survives nav-away (the URL is the durable
+            // handle). The SSE stream keeps feeding `setEvents` for instant
+            // updates; `runQuery` takes over once the user returns later.
+            if (ev.kind === "runStarted") {
+              void navigate({ search: (prev) => ({ ...prev, runId: ev.runId }) });
+            }
           } catch {
             // ignore parse errors
           }
@@ -724,6 +853,26 @@ function RunPage() {
             </Link>
             .
           </p>
+        )}
+        {mode === "progress" && runRecord && (
+          <p className="mt-3 font-mono text-[12px] text-ink-cream-2">
+            Run #{runRecord.id} · {runRecord.draftedCount}/{runRecord.targetCount} drafted ·{" "}
+            {runRecord.sentCount} sent · {runRecord.errorCount} errors · in progress
+          </p>
+        )}
+        {mode === "done" && runRecord && (
+          <p className="mt-3 font-mono text-[12px] text-ink-cream-2">
+            Run #{runRecord.id} complete · {runRecord.sentCount} of {runRecord.targetCount} sent ·{" "}
+            {runRecord.errorCount} errors
+          </p>
+        )}
+        {mode === "interrupted" && runRecord && (
+          <div className="mt-3 rounded-[var(--radius-sm)] border border-[color:var(--ink-blocked-2)] bg-[color:var(--ink-blocked-2)]/10 px-3 py-2 font-mono text-[12px] text-[color:var(--ink-blocked-2)]">
+            Run #{runRecord.id} was interrupted by a server restart. {runRecord.sentCount} of{" "}
+            {runRecord.targetCount} drafted before the kill. Click <em>Run again</em> below to
+            re-fire the remaining targets — already-sent emails won't fire twice (per-prospect
+            step-0 dedupe).
+          </div>
         )}
       </section>
 
@@ -807,13 +956,27 @@ function RunPage() {
         </div>
       </RunLedgerSection>
 
-      {/* Action bar — sticky. Live aggregates appear in the middle once drafts land. */}
+      {/* Action bar — sticky. The visible controls + label depend on `mode`. */}
       <section className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-t border-ink-rule bg-ink-bg/90 px-6 py-3 backdrop-blur-[2px]">
-        <Checkbox
-          label="Dry run — draft only, no send (a one-time enrich lookup may apply)"
-          checked={dryRun}
-          onChange={(e) => setDryRun(e.target.checked)}
-        />
+        {mode === "edit" && (
+          <button
+            type="button"
+            onClick={() => setDryRun((d) => !d)}
+            className={cn(
+              "font-mono text-[11px] uppercase tracking-[0.14em] rounded-[var(--radius-sm)] border px-2.5 py-1 transition-colors",
+              dryRun
+                ? "border-ink-rule text-ink-muted hover:text-ink-cream-2"
+                : "border-[color:var(--ink-spend-2)] text-[color:var(--ink-spend-2)] hover:bg-[color:var(--ink-spend-2)]/10",
+            )}
+            title={
+              dryRun
+                ? "MODE: DRY RUN — drafts only, no SDK send. Click to switch to real send."
+                : "MODE: SEND FOR REAL — every drafted row will leave the inbox. Click to switch to dry run."
+            }
+          >
+            {dryRun ? "MODE: DRY RUN" : "MODE: SEND FOR REAL"}
+          </button>
+        )}
         <div className="flex items-center gap-4 font-mono text-[11.5px] text-ink-faint">
           {aggregate.drafts > 0 && (
             <>
@@ -843,10 +1006,57 @@ function RunPage() {
             <span>{latestStage?.kind === "stage" ? `${latestStage.stage}…` : "preparing…"}</span>
           )}
         </div>
-        <Button onClick={submit} disabled={running}>
-          <Play size={14} />
-          {running ? "Running…" : dryRun ? "Generate drafts" : "Send for real"}
-        </Button>
+        {mode === "edit" && (
+          <Button onClick={submit} disabled={running}>
+            <Play size={14} />
+            {running
+              ? "Running…"
+              : dryRun
+                ? `Generate ${rows.length} draft${rows.length === 1 ? "" : "s"}`
+                : `Send ${rows.length} draft${rows.length === 1 ? "" : "s"} for real`}
+          </Button>
+        )}
+        {mode === "progress" && (
+          <div className="flex items-center gap-2 text-[12px] text-ink-muted">
+            <Loader2 size={14} className="animate-spin" />
+            <span>
+              Run #{search.runId} in progress · your progress is saved · feel free to navigate
+              away.
+            </span>
+          </div>
+        )}
+        {(mode === "done" || mode === "interrupted") && (
+          <div className="flex items-center gap-2">
+            {search.runId != null && (runRecord?.sentCount ?? 0) > 0 && (
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  if (search.runId == null) return;
+                  // TanStack navigate keeps the SPA mounted — no full reload,
+                  // dev state intact, instant route swap.
+                  void globalNavigate({
+                    to: "/cadences",
+                    search: { sinceRun: search.runId },
+                  });
+                }}
+              >
+                <CheckCircle2 size={14} />
+                View {runRecord?.sentCount} just-sent in cadences
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setEvents([]);
+                setError(null);
+                void navigate({ search: (prev) => ({ ...prev, runId: undefined }) });
+              }}
+            >
+              <RefreshCw size={14} />
+              Run again
+            </Button>
+          </div>
+        )}
       </section>
 
       {error && (

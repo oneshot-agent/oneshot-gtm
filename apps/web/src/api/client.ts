@@ -16,6 +16,7 @@ import type {
   DeriveIcpResult,
   ReceiptDetail,
   ReceiptView,
+  RunRecord,
   RunTriggerResult,
   SetupRequest,
   SpendByPlay,
@@ -45,8 +46,15 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
 
 export const api = {
   home: () => getJson<HomeMetrics>("/home"),
-  cadences: (all = false) =>
-    getJson<{ cadences: CadenceView[] }>(`/cadences${all ? "?all=1" : ""}`),
+  cadences: (opts: { all?: boolean; sinceRun?: number } = {}) => {
+    const qs: string[] = [];
+    if (opts.all) qs.push("all=1");
+    if (opts.sinceRun != null) qs.push(`sinceRun=${opts.sinceRun}`);
+    return getJson<{ cadences: CadenceView[] }>(
+      `/cadences${qs.length > 0 ? `?${qs.join("&")}` : ""}`,
+    );
+  },
+  run: (id: number) => getJson<RunRecord>(`/runs/${id}`),
   cadenceForProspect: (id: number) => getJson<{ cadences: CadenceView[] }>(`/cadences/${id}`),
   stopCadence: (id: number, playName?: string) =>
     postJson<{ stopped: number }>(

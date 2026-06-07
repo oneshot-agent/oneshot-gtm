@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowRight } from "lucide-react";
 import { api } from "../api/client.ts";
+import { CurrentRunsStrip } from "../components/home/CurrentRunsStrip.tsx";
 import { NextStep } from "../components/home/NextStep.tsx";
 import { SchedulerStrip } from "../components/home/SchedulerStrip.tsx";
 import { SignalFeed } from "../components/home/SignalFeed.tsx";
@@ -14,7 +15,17 @@ export const Route = createFileRoute("/")({
 });
 
 function HomePage() {
-  const home = useQuery({ queryKey: ["home"], queryFn: api.home, refetchInterval: 30_000 });
+  // Drop the poll to 5s while any /run dispatch is in flight so the In-flight
+  // strip's counters tick visibly (drafted/sent climb 0/N → N/N as targets
+  // complete). Idle pages stay at 30s to avoid hammering the server.
+  const home = useQuery({
+    queryKey: ["home"],
+    queryFn: api.home,
+    refetchInterval: (q): number => {
+      const data = q.state.data as { currentRuns?: unknown[] } | null | undefined;
+      return data?.currentRuns && data.currentRuns.length > 0 ? 5_000 : 30_000;
+    },
+  });
   const recent = useQuery({
     queryKey: ["receipts", "recent"],
     queryFn: () => api.receipts({ limit: 16 }),
@@ -78,7 +89,7 @@ function HomePage() {
         <LedgerNumber
           label="Spend · 7d"
           value={d ? formatUsd(d.spendUsd7d) : undefined}
-          caption={d ? `${d.callsLast7d} OneShot calls` : undefined}
+          caption={d ? `${d.callsLast7d} agent calls` : undefined}
           tone="spend"
         />
         <LedgerNumber
@@ -87,6 +98,9 @@ function HomePage() {
           caption="in flight, awaiting reply"
         />
       </section>
+
+      {/* In-flight /run dispatches — Resume link back to /run/<play>?runId=N */}
+      <CurrentRunsStrip runs={home.data?.currentRuns ?? []} />
 
       {/* Signal feed — reverse-chron timeline mixing receipts and queue events */}
       <SignalFeed
