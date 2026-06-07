@@ -37,6 +37,35 @@ export interface EnrichInput {
 
 export interface CallContext {
   playName: string;
+  /**
+   * Short human-readable reason for this tool call. Lands on the signed
+   * receipt's `memo` field via SDK 0.16.2+. SDK truncates at 1000 chars and
+   * warns (not errors) when omitted on a paid call. Defaults to
+   * `"{playName} {callType}"` when unset.
+   */
+  memo?: string;
+  /**
+   * Machine-readable decision rationale. Merged with `{playName, callType}`
+   * defaults; caller-supplied keys win. Lands on the receipt's
+   * `decisionContext` for supervisor-agent / external auditor consumption.
+   */
+  decisionContext?: Record<string, unknown>;
+}
+
+/**
+ * Build the `{memo, decisionContext}` audit blob the SDK 0.16.2+ accepts as
+ * top-level fields on every paid tool's option bag. Sensible defaults (playName
+ * + callType) so even call sites that don't enrich still emit a usable audit
+ * trail; callers that DO enrich override / extend via `ctx.decisionContext`.
+ */
+export function buildAuditOpts(
+  ctx: CallContext,
+  callType: string,
+): { memo: string; decisionContext: Record<string, unknown> } {
+  return {
+    memo: ctx.memo ?? `${ctx.playName} ${callType}`,
+    decisionContext: { playName: ctx.playName, callType, ...ctx.decisionContext },
+  };
 }
 
 let agentSingleton: OneShot | null = null;
@@ -44,7 +73,7 @@ let agentSingleton: OneShot | null = null;
 async function initAgent(): Promise<OneShot> {
   if (!oneshotEnvReady()) {
     throw new Error(
-      "OneShot credentials missing. Set CDP_API_KEY_ID + CDP_API_KEY_SECRET + CDP_WALLET_SECRET, or AGENT_PRIVATE_KEY. Run `oneshot-gtm doctor` for details.",
+      "Agent wallet credentials missing. Set CDP_API_KEY_ID + CDP_API_KEY_SECRET + CDP_WALLET_SECRET, or AGENT_PRIVATE_KEY. Run `oneshot-gtm doctor` for details.",
     );
   }
   if (process.env["AGENT_PRIVATE_KEY"]) {
@@ -61,7 +90,7 @@ async function getAgent(): Promise<OneShot> {
 /**
  * Derive the From localpart from the founder's name (first token, lowercased,
  * non-alphanumerics stripped) so sends read e.g. `jerry@yourdomain`. Falls back
- * to `agent` when the name yields nothing usable. ("J. Nicolas" → "j".)
+ * to `agent` when the name yields nothing usable. ("Jane Doe" → "jane".)
  */
 function fromLocalpart(name: string | null): string {
   const first = (name ?? "").trim().split(/\s+/)[0] ?? "";
@@ -95,6 +124,7 @@ export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
     to: input.to,
     subject: input.subject,
     body: toHtmlBody(input.body),
+    ...buildAuditOpts(ctx, "email.send"),
   };
   if (fromDomain) {
     // sendingDomain must be wallet-owned (else OneShot 403s `domain_not_owned`,
@@ -125,6 +155,7 @@ export async function deepResearch(input: ResearchInput, ctx: CallContext) {
   const result: ResearchResult = await agent.research({
     topic: input.topic,
     depth: input.depth ?? "quick",
+    ...buildAuditOpts(ctx, "research.deep"),
   });
   const receiptId = getLedger().recordReceipt({
     playName: ctx.playName,
@@ -138,7 +169,9 @@ export async function deepResearch(input: ResearchInput, ctx: CallContext) {
 
 export async function enrichProfile(input: EnrichInput, ctx: CallContext) {
   const agent = await getAgent();
-  const opts: Parameters<OneShot["enrichProfile"]>[0] = {};
+  const opts: Parameters<OneShot["enrichProfile"]>[0] = {
+    ...buildAuditOpts(ctx, "enrich.profile"),
+  };
   if (input.email) opts.email = input.email;
   if (input.linkedinUrl) opts.linkedin_url = input.linkedinUrl;
   if (input.name) opts.name = input.name;
@@ -175,7 +208,9 @@ export interface DeepResearchPersonInput {
  */
 export async function deepResearchPerson(input: DeepResearchPersonInput, ctx: CallContext) {
   const agent = await getAgent();
-  const opts: Parameters<OneShot["deepResearchPerson"]>[0] = {};
+  const opts: Parameters<OneShot["deepResearchPerson"]>[0] = {
+    ...buildAuditOpts(ctx, "research.person"),
+  };
   if (input.email) opts.email = input.email;
   if (input.socialMediaUrl) opts.social_media_url = input.socialMediaUrl;
   if (input.name) opts.name = input.name;
@@ -204,6 +239,7 @@ export async function findEmail(input: FindEmailInput, ctx: CallContext) {
   const agent = await getAgent();
   const opts: Parameters<OneShot["findEmail"]>[0] = {
     company_domain: input.companyDomain,
+    ...buildAuditOpts(ctx, "email.find"),
   };
   if (input.fullName) opts.full_name = input.fullName;
   if (input.firstName) opts.first_name = input.firstName;
@@ -225,7 +261,10 @@ export interface VerifyEmailInput {
 
 export async function verifyEmail(input: VerifyEmailInput, ctx: CallContext) {
   const agent = await getAgent();
-  const result: VerifyEmailResult = await agent.verifyEmail({ email: input.email });
+  const result: VerifyEmailResult = await agent.verifyEmail({
+    email: input.email,
+    ...buildAuditOpts(ctx, "email.verify"),
+  });
   const receiptId = getLedger().recordReceipt({
     playName: ctx.playName,
     callType: "email.verify",
@@ -278,6 +317,7 @@ export async function buildSite(input: BuildSiteInput, ctx: CallContext) {
   const agent = await getAgent();
   const opts: Parameters<OneShot["build"]>[0] = {
     product: { name: input.name, description: input.description },
+    ...buildAuditOpts(ctx, "build.website"),
   };
   if (input.type) opts.type = input.type;
   if (input.sections) opts.sections = input.sections;
@@ -312,6 +352,7 @@ export async function sendSms(input: SendSmsInput, ctx: CallContext) {
   const opts: Parameters<OneShot["sms"]>[0] = {
     to_number: input.to,
     message: input.message,
+    ...buildAuditOpts(ctx, "sms.send"),
   };
   if (input.maxCost) opts.maxCost = input.maxCost;
   const result: SmsSendResult = await agent.sms(opts);
@@ -339,6 +380,7 @@ export async function voiceCall(input: VoiceCallInput, ctx: CallContext) {
   const opts: Parameters<OneShot["voice"]>[0] = {
     objective: input.objective,
     target_number: input.to,
+    ...buildAuditOpts(ctx, "voice.call"),
   };
   if (input.callerPersona) opts.caller_persona = input.callerPersona;
   if (input.context) opts.context = input.context;
@@ -361,7 +403,10 @@ export interface WebSearchInput {
 
 export async function webSearch(input: WebSearchInput, ctx: CallContext) {
   const agent = await getAgent();
-  const opts: Parameters<OneShot["webSearch"]>[0] = { query: input.query };
+  const opts: Parameters<OneShot["webSearch"]>[0] = {
+    query: input.query,
+    ...buildAuditOpts(ctx, "web.search"),
+  };
   if (input.maxResults) opts.max_results = input.maxResults;
   const result: WebSearchResult = await agent.webSearch(opts);
   const receiptId = getLedger().recordReceipt({
@@ -379,7 +424,10 @@ export interface WebReadInput {
 
 export async function webRead(input: WebReadInput, ctx: CallContext) {
   const agent = await getAgent();
-  const result: WebReadResult = await agent.webRead({ url: input.url });
+  const result: WebReadResult = await agent.webRead({
+    url: input.url,
+    ...buildAuditOpts(ctx, "web.read"),
+  });
   const receiptId = getLedger().recordReceipt({
     playName: ctx.playName,
     callType: "web.read",
@@ -402,7 +450,10 @@ export interface BrowserTaskInput {
 
 export async function browserTask(input: BrowserTaskInput, ctx: CallContext) {
   const agent = await getAgent();
-  const opts: Parameters<OneShot["browser"]>[0] = { task: input.task };
+  const opts: Parameters<OneShot["browser"]>[0] = {
+    task: input.task,
+    ...buildAuditOpts(ctx, "browser.task"),
+  };
   if (input.startUrl) opts.start_url = input.startUrl;
   if (input.allowedDomains) opts.allowed_domains = input.allowedDomains;
   if (input.outputSchema) opts.output_schema = input.outputSchema;

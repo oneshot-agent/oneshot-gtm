@@ -265,7 +265,7 @@ describe("Ledger cadence state", () => {
     expect(active[0]?.status).toBe("active");
     expect(active[0]?.current_step).toBe(0);
 
-    ledger.advanceCadence({ prospectId: pid, playName: "job-change", newStep: 1, nextDueAt: null });
+    ledger.advanceCadence({ prospectId: pid, playName: "job-change", newStep: 1, nextDueAt: new Date().toISOString() });
     ledger.setCadenceStatus({ prospectId: pid, playName: "job-change", status: "replied" });
 
     const after = ledger.listAllCadences();
@@ -308,6 +308,467 @@ describe("Ledger cadence state", () => {
     const due = ledger.listActiveCadences({ dueByIso: new Date().toISOString() });
     expect(due).toHaveLength(1);
     expect(due[0]?.prospect_email).toBe("p1@x.com");
+  });
+});
+
+describe("Ledger cadence sending marker", () => {
+  it("claim succeeds when marker is NULL; second claim fails (atomic CAS)", () => {
+    const pid = ledger.upsertProspect({ name: "S", email: "s@x.com", source: "t" });
+    ledger.enrollCadence({ prospectId: pid, playName: "show-hn", nextDueAt: new Date().toISOString() });
+    const first = ledger.claimCadenceSendingMarker({
+      prospectId: pid,
+      playName: "show-hn",
+      startedAtIso: new Date().toISOString(),
+    });
+    expect(first).toBe(true);
+    const second = ledger.claimCadenceSendingMarker({
+      prospectId: pid,
+      playName: "show-hn",
+      startedAtIso: new Date().toISOString(),
+    });
+    expect(second).toBe(false);
+  });
+
+  it("claim succeeds when previous marker is older than the stale cutoff", () => {
+    const pid = ledger.upsertProspect({ name: "S", email: "s2@x.com", source: "t" });
+    ledger.enrollCadence({ prospectId: pid, playName: "show-hn", nextDueAt: new Date().toISOString() });
+    const oldIso = new Date(Date.now() - 10 * 60 * 1000).toISOString(); // 10 min ago
+    ledger.claimCadenceSendingMarker({
+      prospectId: pid,
+      playName: "show-hn",
+      startedAtIso: oldIso,
+    });
+    const reclaim = ledger.claimCadenceSendingMarker({
+      prospectId: pid,
+      playName: "show-hn",
+      startedAtIso: new Date().toISOString(),
+      staleCutoffIso: new Date(Date.now() - 5 * 60 * 1000).toISOString(), // 5 min cutoff
+    });
+    expect(reclaim).toBe(true);
+  });
+
+  it("clearCadenceSendingMarker sets the marker back to NULL", () => {
+    const pid = ledger.upsertProspect({ name: "S", email: "s3@x.com", source: "t" });
+    ledger.enrollCadence({ prospectId: pid, playName: "show-hn", nextDueAt: new Date().toISOString() });
+    ledger.claimCadenceSendingMarker({
+      prospectId: pid,
+      playName: "show-hn",
+      startedAtIso: new Date().toISOString(),
+    });
+    expect(ledger.getCadence(pid, "show-hn")?.sending_started_at).not.toBeNull();
+    ledger.clearCadenceSendingMarker({ prospectId: pid, playName: "show-hn" });
+    expect(ledger.getCadence(pid, "show-hn")?.sending_started_at).toBeNull();
+  });
+
+  it("advanceCadence also clears sending_started_at as part of the same UPDATE", () => {
+    const pid = ledger.upsertProspect({ name: "S", email: "s4@x.com", source: "t" });
+    ledger.enrollCadence({ prospectId: pid, playName: "show-hn", nextDueAt: new Date().toISOString() });
+    ledger.claimCadenceSendingMarker({
+      prospectId: pid,
+      playName: "show-hn",
+      startedAtIso: new Date().toISOString(),
+    });
+    ledger.advanceCadence({
+      prospectId: pid,
+      playName: "show-hn",
+      newStep: 1,
+      nextDueAt: null,
+    });
+    expect(ledger.getCadence(pid, "show-hn")?.sending_started_at).toBeNull();
+  });
+
+  it("setCadenceStatus to non-active terminal state clears the marker", () => {
+    const pid = ledger.upsertProspect({ name: "S", email: "s5@x.com", source: "t" });
+    ledger.enrollCadence({ prospectId: pid, playName: "show-hn", nextDueAt: new Date().toISOString() });
+    ledger.claimCadenceSendingMarker({
+      prospectId: pid,
+      playName: "show-hn",
+      startedAtIso: new Date().toISOString(),
+    });
+    ledger.setCadenceStatus({ prospectId: pid, playName: "show-hn", status: "replied" });
+    expect(ledger.getCadence(pid, "show-hn")?.sending_started_at).toBeNull();
+  });
+});
+
+describe("Ledger sweepStaleCadenceSends", () => {
+  it("maxAgeMs:0 (cold-boot semantics) sweeps every existing marker", () => {
+    const pid = ledger.upsertProspect({ name: "S", email: "sa@x.com", source: "t" });
+    ledger.enrollCadence({ prospectId: pid, playName: "show-hn", nextDueAt: new Date().toISOString() });
+    ledger.claimCadenceSendingMarker({
+      prospectId: pid,
+      playName: "show-hn",
+      startedAtIso: new Date(Date.now() - 1000).toISOString(),
+    });
+    const swept = ledger.sweepStaleCadenceSends({ now: new Date(), maxAgeMs: 0 });
+    expect(swept).toHaveLength(1);
+    expect(swept[0]?.actuallySent).toBe(false);
+    expect(ledger.getCadence(pid, "show-hn")?.sending_started_at).toBeNull();
+  });
+
+  it("classifies as actuallySent when a sequence_event for current_step exists", () => {
+    const pid = ledger.upsertProspect({ name: "S", email: "sb@x.com", source: "t" });
+    ledger.enrollCadence({ prospectId: pid, playName: "show-hn", nextDueAt: new Date().toISOString() });
+    ledger.recordSequenceEvent({
+      prospectId: pid,
+      playName: "show-hn",
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+    });
+    ledger.claimCadenceSendingMarker({
+      prospectId: pid,
+      playName: "show-hn",
+      startedAtIso: new Date(Date.now() - 1000).toISOString(),
+    });
+    const swept = ledger.sweepStaleCadenceSends({ now: new Date(), maxAgeMs: 0 });
+    expect(swept[0]?.actuallySent).toBe(true);
+  });
+
+  it("leaves fresh markers untouched (maxAgeMs > 0)", () => {
+    const pid = ledger.upsertProspect({ name: "S", email: "sc@x.com", source: "t" });
+    ledger.enrollCadence({ prospectId: pid, playName: "show-hn", nextDueAt: new Date().toISOString() });
+    ledger.claimCadenceSendingMarker({
+      prospectId: pid,
+      playName: "show-hn",
+      startedAtIso: new Date().toISOString(),
+    });
+    const swept = ledger.sweepStaleCadenceSends({
+      now: new Date(),
+      maxAgeMs: 5 * 60 * 1000,
+    });
+    expect(swept).toHaveLength(0);
+    expect(ledger.getCadence(pid, "show-hn")?.sending_started_at).not.toBeNull();
+  });
+});
+
+describe("Ledger queue sending marker", () => {
+  function enqueue(): number {
+    const id = ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: { email: "x@y.dev" },
+      dedupeKey: `key-${Math.random()}`,
+      source: "test",
+      initialStatus: "approved",
+    });
+    if (id == null) throw new Error("enqueue failed");
+    return id;
+  }
+
+  it("claim succeeds when marker is NULL; second claim fails", () => {
+    const id = enqueue();
+    expect(
+      ledger.claimQueueSendingMarker({ id, startedAtIso: new Date().toISOString() }),
+    ).toBe(true);
+    expect(
+      ledger.claimQueueSendingMarker({ id, startedAtIso: new Date().toISOString() }),
+    ).toBe(false);
+  });
+
+  it("reclaim succeeds when previous marker is older than the stale cutoff", () => {
+    const id = enqueue();
+    ledger.claimQueueSendingMarker({
+      id,
+      startedAtIso: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
+    });
+    expect(
+      ledger.claimQueueSendingMarker({
+        id,
+        startedAtIso: new Date().toISOString(),
+        staleCutoffIso: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+      }),
+    ).toBe(true);
+  });
+
+  it("clearQueueSendingMarker sets the marker back to NULL", () => {
+    const id = enqueue();
+    ledger.claimQueueSendingMarker({ id, startedAtIso: new Date().toISOString() });
+    expect(ledger.getQueueRow(id)?.send_started_at).not.toBeNull();
+    ledger.clearQueueSendingMarker(id);
+    expect(ledger.getQueueRow(id)?.send_started_at).toBeNull();
+  });
+
+  it("setQueueStatus(sent/rejected/expired) auto-clears the marker", () => {
+    for (const status of ["sent", "rejected", "expired"] as const) {
+      const id = enqueue();
+      ledger.claimQueueSendingMarker({ id, startedAtIso: new Date().toISOString() });
+      ledger.setQueueStatus({ id, status });
+      expect(ledger.getQueueRow(id)?.send_started_at).toBeNull();
+    }
+  });
+
+  it("sweepStaleQueueSends classifies a stranded (non-sent) marker as actuallySent: false", () => {
+    const id = enqueue();
+    ledger.claimQueueSendingMarker({
+      id,
+      startedAtIso: new Date(Date.now() - 1000).toISOString(),
+    });
+    const swept = ledger.sweepStaleQueueSends({ now: new Date(), maxAgeMs: 0 });
+    expect(swept).toHaveLength(1);
+    expect(swept[0]?.actuallySent).toBe(false);
+    expect(ledger.getQueueRow(id)?.send_started_at).toBeNull();
+  });
+
+  it("sweepStaleQueueSends classifies a sent row's stale marker as actuallySent: true", () => {
+    // Race scenario: SDK send completed AND setQueueStatus('sent') landed, then
+    // the process died before some other path could clear send_started_at.
+    // Simulate by writing the marker AFTER the status flip.
+    const id = enqueue();
+    ledger.setQueueStatus({ id, status: "sent" });
+    // setQueueStatus('sent') auto-clears the marker; re-claim to simulate the
+    // pre-clear stranded state.
+    ledger.claimQueueSendingMarker({
+      id,
+      startedAtIso: new Date(Date.now() - 1000).toISOString(),
+    });
+    const swept = ledger.sweepStaleQueueSends({ now: new Date(), maxAgeMs: 0 });
+    expect(swept).toHaveLength(1);
+    expect(swept[0]?.actuallySent).toBe(true);
+    expect(ledger.getQueueRow(id)?.send_started_at).toBeNull();
+  });
+
+  it("sweep with maxAgeMs > 0 leaves fresh markers untouched", () => {
+    const id = enqueue();
+    ledger.claimQueueSendingMarker({ id, startedAtIso: new Date().toISOString() });
+    const swept = ledger.sweepStaleQueueSends({
+      now: new Date(),
+      maxAgeMs: 5 * 60 * 1000,
+    });
+    expect(swept).toHaveLength(0);
+    expect(ledger.getQueueRow(id)?.send_started_at).not.toBeNull();
+  });
+});
+
+describe("Ledger runs", () => {
+  it("createRun inserts a 'running' row with the right counters", () => {
+    const { runId, startedAt } = ledger.createRun({
+      playName: "repo-interest",
+      dryRun: false,
+      targets: [
+        { email: "a@x.dev", name: "A" },
+        { email: "b@x.dev", name: "B" },
+      ],
+    });
+    expect(runId).toBeGreaterThan(0);
+    expect(startedAt).toMatch(/^\d{4}-/);
+    const run = ledger.getRun(runId);
+    expect(run).toMatchObject({
+      playName: "repo-interest",
+      dryRun: false,
+      status: "running",
+      targetCount: 2,
+      draftedCount: 0,
+      sentCount: 0,
+      errorCount: 0,
+      completedAt: null,
+    });
+    expect(run?.targets).toHaveLength(2);
+    expect(run?.events).toEqual([]);
+  });
+
+  it("appendRunEvent bumps the right counter per event kind", () => {
+    const { runId } = ledger.createRun({
+      playName: "show-hn",
+      dryRun: false,
+      targets: [{ email: "a@x.dev" }, { email: "b@x.dev" }, { email: "c@x.dev" }],
+    });
+    ledger.appendRunEvent({ runId, event: { kind: "draft", index: 0, subject: "s" } });
+    ledger.appendRunEvent({ runId, event: { kind: "draft", index: 1, subject: "s" } });
+    ledger.appendRunEvent({ runId, event: { kind: "send", index: 0, receiptIds: [1] } });
+    ledger.appendRunEvent({ runId, event: { kind: "error", index: 2, message: "boom" } });
+    ledger.appendRunEvent({ runId, event: { kind: "stage", stage: "done" } });
+    const run = ledger.getRun(runId)!;
+    expect(run.draftedCount).toBe(2);
+    expect(run.sentCount).toBe(1);
+    expect(run.errorCount).toBe(1);
+    expect(run.events).toHaveLength(5);
+  });
+
+  it("appendRunEvent is a no-op for an unknown runId (doesn't throw)", () => {
+    expect(() =>
+      ledger.appendRunEvent({ runId: 999999, event: { kind: "draft" } }),
+    ).not.toThrow();
+  });
+
+  it("markRunComplete flips status + stamps completedAt + records sent emails", () => {
+    const { runId } = ledger.createRun({
+      playName: "show-hn",
+      dryRun: false,
+      targets: [{ email: "a@x.dev" }],
+    });
+    ledger.markRunComplete({
+      runId,
+      status: "done",
+      sentEmails: ["a@x.dev"],
+    });
+    const run = ledger.getRun(runId)!;
+    expect(run.status).toBe("done");
+    expect(run.completedAt).toMatch(/^\d{4}-/);
+    expect(run.prospectEmails).toEqual(["a@x.dev"]);
+  });
+
+  it("markRunComplete on an already-completed row is a no-op (won't overwrite)", () => {
+    const { runId } = ledger.createRun({
+      playName: "show-hn",
+      dryRun: false,
+      targets: [{ email: "a@x.dev" }],
+    });
+    ledger.markRunComplete({ runId, status: "done", sentEmails: ["a@x.dev"] });
+    const firstCompletedAt = ledger.getRun(runId)?.completedAt;
+    ledger.markRunComplete({ runId, status: "interrupted", sentEmails: [] });
+    expect(ledger.getRun(runId)?.status).toBe("done"); // unchanged
+    expect(ledger.getRun(runId)?.completedAt).toBe(firstCompletedAt);
+  });
+
+  it("sweepStaleRuns flips all running rows to interrupted on cold boot (maxAgeMs: 0)", () => {
+    ledger.createRun({ playName: "a", dryRun: false, targets: [{}] });
+    ledger.createRun({ playName: "b", dryRun: true, targets: [{}] });
+    const swept = ledger.sweepStaleRuns({ now: new Date(), maxAgeMs: 0 });
+    expect(swept).toHaveLength(2);
+    for (const s of swept) {
+      expect(ledger.getRun(s.id)?.status).toBe("interrupted");
+      expect(ledger.getRun(s.id)?.completedAt).not.toBeNull();
+    }
+  });
+
+  it("sweepStaleRuns leaves fresh runs alone when maxAgeMs > 0", () => {
+    const { runId } = ledger.createRun({ playName: "a", dryRun: false, targets: [{}] });
+    const swept = ledger.sweepStaleRuns({
+      now: new Date(),
+      maxAgeMs: 5 * 60 * 1000,
+    });
+    expect(swept).toHaveLength(0);
+    expect(ledger.getRun(runId)?.status).toBe("running");
+  });
+
+  it("run.prospectEmails round-trips intact for the /cadences ?sinceRun filter", () => {
+    const { runId } = ledger.createRun({
+      playName: "show-hn",
+      dryRun: false,
+      targets: [{ email: "a@x.dev" }, { email: "b@x.dev" }],
+    });
+    ledger.markRunComplete({
+      runId,
+      status: "done",
+      sentEmails: ["A@X.DEV", "b@x.dev"],
+    });
+    const run = ledger.getRun(runId)!;
+    expect(run.prospectEmails).toEqual(["A@X.DEV", "b@x.dev"]);
+    // Downstream filter (in /api/cadences) lowercases before set-lookup; the
+    // ledger stores verbatim. Verifying the stored shape so we don't regress
+    // case-handling expectations on consumer side.
+  });
+
+  it("appendRunEvent leaves counters alone for non-counter events", () => {
+    const { runId } = ledger.createRun({
+      playName: "show-hn",
+      dryRun: false,
+      targets: [{}],
+    });
+    // verify / stage / runStarted / done / unknown — none of these should
+    // touch drafted/sent/error counters.
+    ledger.appendRunEvent({ runId, event: { kind: "verify", total: 1, verified: 1, dropped: [] } });
+    ledger.appendRunEvent({ runId, event: { kind: "stage", stage: "drafting" } });
+    ledger.appendRunEvent({ runId, event: { kind: "runStarted", runId, startedAt: "now" } });
+    ledger.appendRunEvent({ runId, event: { kind: "done", total: 1, sent: 1 } });
+    ledger.appendRunEvent({ runId, event: { kind: "mystery", foo: "bar" } });
+    const run = ledger.getRun(runId)!;
+    expect(run.draftedCount).toBe(0);
+    expect(run.sentCount).toBe(0);
+    expect(run.errorCount).toBe(0);
+    expect(run.events).toHaveLength(5);
+  });
+
+  it("appendRunEvent recovers when events_json is corrupt (starts a fresh array)", async () => {
+    const { runId } = ledger.createRun({
+      playName: "show-hn",
+      dryRun: false,
+      targets: [{}],
+    });
+    // Stomp events_json with garbage to simulate a partial-write corruption.
+    // We open a parallel Database connection (same file) to issue raw SQL —
+    // ledger.ts intentionally keeps its `db` field private.
+    const { Database } = await import("bun:sqlite");
+    const raw = new Database(dbPath);
+    raw.prepare("UPDATE runs SET events_json = 'not-json' WHERE id = ?").run(runId);
+    raw.close();
+    // appendRunEvent silently parses garbage as [] and appends the new event.
+    ledger.appendRunEvent({ runId, event: { kind: "draft", index: 0 } });
+    const run = ledger.getRun(runId)!;
+    expect(run.events).toHaveLength(1);
+    expect(run.draftedCount).toBe(1);
+  });
+
+  it("listRuns returns empty array when no rows exist", () => {
+    expect(ledger.listRuns()).toEqual([]);
+  });
+
+  it("listRuns filters by status and orders newest-first", async () => {
+    const { runId: a } = ledger.createRun({ playName: "a", dryRun: false, targets: [{}] });
+    // Ensure b's started_at is strictly later than a's.
+    await new Promise<void>((r) => {
+      setTimeout(r, 10);
+    });
+    const { runId: b } = ledger.createRun({ playName: "b", dryRun: false, targets: [{}] });
+    ledger.markRunComplete({ runId: a, status: "done" });
+    const running = ledger.listRuns({ status: "running" });
+    expect(running.map((r) => r.id)).toEqual([b]); // a is done; only b matches
+    const all = ledger.listRuns({});
+    expect(all.map((r) => r.id)).toEqual([b, a]); // newest first
+  });
+
+  it("listRuns returns the slim shape only — no targets/events leakage to the home dashboard", () => {
+    ledger.createRun({
+      playName: "p",
+      dryRun: false,
+      targets: [
+        { email: "a@x.dev", padding: "x".repeat(500) },
+        { email: "b@x.dev", padding: "y".repeat(500) },
+      ],
+    });
+    const rows = ledger.listRuns();
+    expect(rows).toHaveLength(1);
+    // Lock in the slim projection: only these 9 keys come back.
+    expect(Object.keys(rows[0]!).toSorted()).toEqual(
+      [
+        "completedAt",
+        "draftedCount",
+        "errorCount",
+        "id",
+        "playName",
+        "sentCount",
+        "startedAt",
+        "status",
+        "targetCount",
+      ],
+    );
+    // Negative assertion: heavy fields stay on the by-id endpoint (getRun).
+    const row = rows[0] as Record<string, unknown>;
+    expect(row["targets"]).toBeUndefined();
+    expect(row["events"]).toBeUndefined();
+    expect(row["prospectEmails"]).toBeUndefined();
+    expect(row["targets_json"]).toBeUndefined();
+    expect(row["events_json"]).toBeUndefined();
+  });
+
+  it("listRuns respects the limit cap", () => {
+    for (let i = 0; i < 7; i++) {
+      ledger.createRun({ playName: `p${i}`, dryRun: false, targets: [{}] });
+    }
+    expect(ledger.listRuns({ limit: 3 })).toHaveLength(3);
+    // Out-of-range limits clamp to [1, 50].
+    expect(ledger.listRuns({ limit: 0 })).toHaveLength(1);
+    expect(ledger.listRuns({ limit: 9999 })).toHaveLength(7);
+  });
+
+  it("sweepStaleRuns skips runs that are already done/interrupted", () => {
+    const { runId: a } = ledger.createRun({ playName: "p", dryRun: false, targets: [{}] });
+    const { runId: b } = ledger.createRun({ playName: "p", dryRun: false, targets: [{}] });
+    ledger.markRunComplete({ runId: a, status: "done" });
+    ledger.markRunComplete({ runId: b, status: "interrupted" });
+    const swept = ledger.sweepStaleRuns({ now: new Date(), maxAgeMs: 0 });
+    expect(swept).toHaveLength(0);
+    expect(ledger.getRun(a)?.status).toBe("done");
+    expect(ledger.getRun(b)?.status).toBe("interrupted");
   });
 });
 

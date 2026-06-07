@@ -65,7 +65,7 @@ A floating **strategist dock** is mounted on every page. Open it to chat through
 
 ### Discovery — where targets come from
 
-Motion plays don't require hand-curated JSON anymore. Nine **finders** auto-discover prospects, ICP-filter them, and enqueue into `/queue` for one-click approve / reject:
+Motion plays don't require hand-curated JSON anymore. Ten **finders** auto-discover prospects, ICP-filter them, and enqueue into `/queue` for one-click approve / reject:
 
 - **`show-hn`** — HN Algolia poller, surfaces same-day Show HN posts
 - **`post-funding`** — webSearch by ICP-derived industry × round (auto), or a TC/Crunchbase URL list
@@ -75,6 +75,7 @@ Motion plays don't require hand-curated JSON anymore. Nine **finders** auto-disc
 - **`accelerator-batch`** — yc-oss directory + websearch fallback for non-YC cohorts (Techstars, Antler, 500 Global, AI Grant)
 - **`github-topics`** — GitHub-API manifest scan (`package.json`, `pyproject.toml`, `requirements.txt`) detects vendor stack deterministically; finds repos stitching together N agent vendors as competitor-switch targets
 - **`github-stars`** — recent stargazers of repos you watch, routed per repo: tag a repo `competitor` (→ competitor-switch) or `adjacent` (→ repo-interest, a "you're into X, my product helps" intro)
+- **`luma-events`** — upcoming Luma events by topic + city; pitches publicly-visible attendees (speakers / sponsors / featured guests). Optional `LUMA_SESSION_COOKIE` env var unlocks the full guest list via Luma's internal API; public-only without it
 - **`breakup-revive`** — scans the local ledger for prospects cold for 60-90 days
 
 Each finder runs as a **trigger** with its own interval + spend cap. Captured per-prospect signals (LinkedIn URL via webSearch + phone via passive enrichment when surfaced) show next to the email + company in `/queue`. Approved rows ship via `bun run cli -- find drain <play>` or the per-play **Drain** button on the Queue page.
@@ -266,8 +267,8 @@ oneshot-gtm/
 ├── packages/
 │   ├── core/        OneShot SDK wrapper, SQLite ledger, config + secrets, JSONL event log
 │   ├── intel/       LLM client (OpenRouter/OpenAI/Anthropic), advise, personalize, triage, weekly-review
-│   ├── plays/       12 outreach plays + handoff/icp/pmf modules + multichannel cadence engine
-│   ├── find/        9 finders + shared pipeline (manifest scan, parallel infra, dedupe, ICP filter,
+│   ├── plays/       13 outreach plays + handoff/icp/pmf modules + multichannel cadence engine
+│   ├── find/        10 finders + shared pipeline (manifest scan, parallel infra, dedupe, ICP filter,
 │   │                drain dispatcher, trigger registry)
 │   ├── prompts/     Markdown prompt files (humanizer canon + per-play + per-extract prompts)
 │   ├── doctor/      Wallet + ledger + key health checks

@@ -47,7 +47,7 @@ export async function weeklyReview(extraContext?: string): Promise<WeeklyReviewO
     "",
     "AGGREGATES:",
     `- Total spend: $${totalSpend.toFixed(2)}`,
-    `- Total OneShot calls: ${totalCalls}`,
+    `- Total agent calls: ${totalCalls}`,
     `- Total sends: ${totalSent}`,
     `- Total replies: ${totalReplied}`,
     `- Reply rate: ${totalSent > 0 ? ((totalReplied / totalSent) * 100).toFixed(1) + "%" : "n/a"}`,

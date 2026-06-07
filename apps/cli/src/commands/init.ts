@@ -55,7 +55,7 @@ export async function runInit(): Promise<void> {
       {
         type: "text",
         name: "sendingDomain",
-        message: "Sending domain — the domain your OneShot wallet owns (blank = SDK default)",
+        message: "Sending domain — the domain your wallet owns (blank = SDK default)",
         initial: cfg.sendingDomain ?? "",
       },
       {
@@ -151,7 +151,7 @@ export async function runInit(): Promise<void> {
       {
         type: "select",
         name: "walletMode",
-        message: "OneShot wallet mode",
+        message: "Wallet mode",
         choices: [
           { title: "Coinbase CDP server wallet (recommended)", value: "cdp" },
           { title: "Raw private key", value: "private-key" },
@@ -204,7 +204,7 @@ export async function runInit(): Promise<void> {
     "Next steps",
     [
       `1. Sanity check: ${c.cyan(`${cmd} doctor`)}`,
-      `2. Try the coach (no OneShot calls — just your LLM key): ${c.cyan(`${cmd} intel advise`)}`,
+      `2. Try the coach (no agent calls — just your LLM key): ${c.cyan(`${cmd} intel advise`)}`,
       `3. Run a play in dry-run: ${c.cyan(`${cmd} motion show-hn --dry-run --target ./examples/show-hn.json`)}`,
       `4. Drop --dry-run when you're ready to send.`,
       "",

@@ -50,16 +50,16 @@ export interface OneShotConfig {
   productOneLiner: string | null;
   /**
    * Brand/product domain appended to every generated email signature beneath
-   * the founder's name (e.g. "oneshotagent.com"). Bare domain, no scheme.
+   * the founder's name (e.g. "yourcompany.com"). Bare domain, no scheme.
    * Null = no domain line (founderEmail can't stand in — it's often a personal
    * inbox). Set via /setup.
    */
   productDomain: string | null;
   /**
-   * Domain the founder's OneShot wallet OWNS, used as the email From domain
+   * Domain the founder's agent wallet OWNS, used as the email From domain
    * (sends as `<founder-first-name>@<sendingDomain>`). Distinct from
    * productDomain (signature display): the send domain must be wallet-owned or
-   * OneShot 403s with `domain_not_owned`. Null = fall back to the SDK default
+   * the SDK 403s with `domain_not_owned`. Null = fall back to the SDK default
    * (which only works for whoever owns that demo domain). Set via /setup.
    */
   sendingDomain: string | null;
@@ -131,6 +131,14 @@ export interface QueueRow {
   last_draft_json: string | null;
   /** ISO timestamp of `last_draft_json`. Null when no draft persisted. */
   last_drafted_at: string | null;
+  /**
+   * ISO timestamp when a Send-draft is in flight. Survives server restart so
+   * the `/queue` UI's spinner doesn't get stranded by a `bun --watch` reload
+   * mid-SDK-call. Claimed atomically by `claimQueueSendingMarker` before the
+   * send fires; cleared on success via `setQueueStatus('sent', …)`; cleared
+   * on failure or stale by the cold-boot `sweepStaleQueueSends` sweep.
+   */
+  send_started_at: string | null;
 }
 
 export interface TriggerRow {

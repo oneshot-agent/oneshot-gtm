@@ -65,7 +65,7 @@ function truncate(s: string, max: number): string {
 export async function commandPmfClassify(): Promise<void> {
   header("discover pmf classify");
   note(
-    "Classifies your startup against Sequoia Arc + Balfour Four Fits. 6 questions, no OneShot calls.\n",
+    "Classifies your startup against Sequoia Arc + Balfour Four Fits. 6 questions, no agent calls.\n",
   );
 
   const answers = await prompts(

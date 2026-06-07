@@ -71,7 +71,7 @@ export async function configFounder(): Promise<void> {
       {
         type: "text",
         name: "sendingDomain",
-        message: "Sending domain — the domain your OneShot wallet owns (blank = SDK default)",
+        message: "Sending domain — the domain your wallet owns (blank = SDK default)",
         initial: cfg.sendingDomain ?? "",
       },
       {
@@ -136,7 +136,7 @@ export async function configKeys(): Promise<void> {
       {
         type: "select",
         name: "walletMode",
-        message: "Update OneShot wallet keys?",
+        message: "Update wallet keys?",
         choices: [
           { title: "CDP (Coinbase server wallet)", value: "cdp" },
           { title: "Raw private key", value: "private-key" },

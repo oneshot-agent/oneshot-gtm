@@ -14,6 +14,20 @@ export async function parallelMap<T, R>(
   items: readonly T[],
   concurrency: number,
   fn: (item: T, index: number) => Promise<R>,
+  /**
+   * Optional per-completion hook. Fires once per item AFTER `fn(item, i)`
+   * resolves, with the (item, result, index). Used by /api/run's SSE handler
+   * to emit `draft` + `send` frames as each target finishes — instead of
+   * batching them all at the end when the whole `Promise.all` resolves.
+   *
+   * Order: callbacks fire in COMPLETION order across workers, not input
+   * order. Consumers that care about index (the SSE event already does)
+   * key by the `index` argument.
+   *
+   * Throws inside the callback propagate as if `fn` threw — keep handlers
+   * defensive.
+   */
+  onItem?: (item: T, result: R, index: number) => void,
 ): Promise<R[]> {
   const out: R[] = Array.from({ length: items.length });
   if (items.length === 0) return out;
@@ -23,7 +37,10 @@ export async function parallelMap<T, R>(
     while (true) {
       const i = cursor++;
       if (i >= items.length) return;
-      out[i] = await fn(items[i] as T, i);
+      const item = items[i] as T;
+      const result = await fn(item, i);
+      out[i] = result;
+      if (onItem) onItem(item, result, i);
     }
   }
   await Promise.all(Array.from({ length: workers }, () => worker()));

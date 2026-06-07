@@ -58,7 +58,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
   const pkSrc = secretSource("AGENT_PRIVATE_KEY");
   const walletSrc = process.env.AGENT_PRIVATE_KEY ? pkSrc : cdpSrc;
   results.push({
-    name: "oneshot wallet env",
+    name: "wallet env",
     severity: oneshotEnvReady() ? "ok" : "fail",
     message: oneshotEnvReady()
       ? `${process.env.AGENT_PRIVATE_KEY ? "AGENT_PRIVATE_KEY" : "CDP wallet"} set (${walletSrc ?? "?"})`

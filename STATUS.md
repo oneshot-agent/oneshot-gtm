@@ -25,7 +25,7 @@ Last manual update: **2026-06-03** · Bun **1.3.13** · OneShot SDK **0.16.2**
 | `pmf survey`         | ⚠️ untested | Build + email + inbox | Requires OneShot Build endpoint to be live; landing page deploys but not yet exercised end-to-end |
 | `pmf survey-collect` | ⚠️ untested | inbox + LLM           | Depends on actual replies in your OneShot inbox                                                   |
 
-## `motion` (12 plays)
+## `motion` (13 plays)
 
 | Play                  | State       | OneShot calls                        | Cadence steps                                                                                                                                                    |
 | --------------------- | ----------- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -38,6 +38,7 @@ Last manual update: **2026-06-03** · Bun **1.3.13** · OneShot SDK **0.16.2**
 | `competitor-switch`   | ✅ green    | enrich + browser + email             | Migration-honesty pitch; drains the `find github-topics` queue; day-3 follow-up + day-8 breakup                                                                  |
 | `stack-consolidation` | ✅ green    | enrich + email                       | Consolidation-honesty pitch for repos wiring up several API vendors; drains `find github-topics`; day-3 follow-up + day-8 breakup; on `/run/stack-consolidation` |
 | `repo-interest`       | ✅ green    | enrich + email                       | Complementary "you starred X → my product helps" intro; one-touch; drains the `find github-stars` queue (adjacent repos); on `/run/repo-interest`                |
+| `luma-events`         | ✅ green    | enrich + email                       | Forward-looking "saw you're going to X next Tuesday" pitch to publicly-visible attendees of upcoming Luma events; one-touch; drains the `find luma-events` queue |
 | `hiring-signal`       | ⚠️ untested | enrich + websearch + webread + email | Web search against Lever/Greenhouse/Ashby; day-3 follow-up + day-8 breakup                                                                                       |
 | `podcast-guest`       | ✅ green    | enrich + websearch + email           | Single touch, no follow-up                                                                                                                                       |
 | `breakup-revive`      | ✅ green    | email only                           | Pulls from `listColdProspects`                                                                                                                                   |
@@ -55,6 +56,7 @@ Last manual update: **2026-06-03** · Bun **1.3.13** · OneShot SDK **0.16.2**
 | `find breakup-revive`                           | ✅ green  | none (ledger-only)                             | Scans cold prospects; opt-in trigger (7d interval)                                                                                                                                                                                                                    |
 | `find github-topics`                            | ✅ green  | gh-api manifest scan + findEmail + verifyEmail | Topic-driven GitHub finder — paste `topics` + `vendors` + `yourEdge` into /queue. Manifest-scan (`package.json`, `pyproject.toml`, `requirements.txt`) replaces the retired `agent-builders` Google-scrape. Feeds `competitor-switch` via shared `_repo-pipeline.ts`. |
 | `find github-stars`                             | ⚠️ opt-in | gh-api stargazers + findEmail + verifyEmail    | Recent stargazers of watched repos. Per-repo `rel`: `competitor` → competitor-switch, `adjacent` → repo-interest. Needs `GITHUB_TOKEN`; readiness-gated on `repos` + `yourEdge`.                                                                                      |
+| `find luma-events`                              | ⚠️ opt-in | webSearch + webRead + LLM-extract + findEmail + verifyEmail | Discovers upcoming Luma events by topic + city; LLM-extracts publicly-visible attendees (speakers / sponsors / featured guests) per event; resolves contact via LinkedIn enrichProfile or attendee websiteUrl. Readiness-gated on `topics` + `cities` + `yourEdge`. Optional `LUMA_SESSION_COOKIE` env var (browser session for luma.com) unlocks the full guest list via Luma's internal API; without it, capped at the public-visible subset. |
 | `find queue / approve / reject / drain / watch` | ✅ green  | —                                              | Review lifecycle; `watch` has `--once` and daemon modes                                                                                                                                                                                                               |
 
 ## `cadence`

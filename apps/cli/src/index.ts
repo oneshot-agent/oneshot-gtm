@@ -320,17 +320,17 @@ const pmf = discover
   .description("Product-market-fit measurement and classification");
 pmf
   .command("classify")
-  .description("Sequoia Arc + Balfour Four Fits classifier (6 questions, no OneShot calls)")
+  .description("Sequoia Arc + Balfour Four Fits classifier (6 questions, no agent calls)")
   .action(runOrFail(commandPmfClassify));
 pmf
   .command("survey")
   .requiredOption("-c, --cohort <file>", "file with cohort emails (one per line, or JSON array)")
   .option("--product-name <name>", "product name for the landing page")
   .option("--product-description <text>", "10-200 char description for the landing page")
-  .option("--custom-survey-url <url>", "skip OneShot Build and use this URL instead")
+  .option("--custom-survey-url <url>", "skip the SDK Build step and use this URL instead")
   .option("--primary-color <hex>", "brand primary color (e.g. #FF5733)")
   .option("--dry-run", "draft only; do not build site or send", false)
-  .description("Deploy a Superhuman 5-question PMF survey via OneShot Build + Email")
+  .description("Deploy a Superhuman 5-question PMF survey via SDK Build + Email")
   .action(runOrFail(commandPmfSurvey));
 pmf
   .command("survey-collect")

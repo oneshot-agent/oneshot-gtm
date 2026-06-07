@@ -61,7 +61,7 @@ function ledgerContextBlock(cfg: ReturnType<typeof loadConfig>): string {
     "",
     "LAST 7 DAYS:",
     `- Total spend (signed receipts): $${totalSpend.toFixed(2)}`,
-    `- OneShot calls: ${recentReceipts.length}`,
+    `- Agent calls: ${recentReceipts.length}`,
     `- Hand-tracked sends (lifetime): ${sendsTotal}`,
     `- Receipts by play: ${summarizeByPlay(recentReceipts)}`,
   ].join("\n");

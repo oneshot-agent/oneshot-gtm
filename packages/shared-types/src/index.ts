@@ -93,6 +93,24 @@ export interface OutcomeByPlay {
   ghosted: number;
 }
 
+/**
+ * Lightweight projection of a `runs` row for the home dashboard's "In flight"
+ * strip. Slim shape — `targets` and `events` stay on the `RunRecord` returned
+ * by `GET /api/runs/:id` where they're actually needed for the per-target
+ * rendering. Avoids paying to serialize event arrays on every 30s home poll.
+ */
+export interface RunSummary {
+  id: number;
+  playName: string;
+  status: RunStatus;
+  startedAt: string;
+  completedAt: string | null;
+  targetCount: number;
+  draftedCount: number;
+  sentCount: number;
+  errorCount: number;
+}
+
 export interface HomeMetrics {
   spendUsd7d: number;
   spendUsd30d: number;
@@ -100,6 +118,11 @@ export interface HomeMetrics {
   sentLast7d: number;
   repliedLast7d: number;
   activeCadences: number;
+  /**
+   * Runs currently `running` (in-flight). Capped at 5 for the home widget.
+   * The `CurrentRunsStrip` on /home hides itself when this is empty.
+   */
+  currentRuns: RunSummary[];
 }
 
 export interface PlayDescriptor {
@@ -184,6 +207,13 @@ export interface QueueRowView {
   lastDraft: LastDraft | null;
   /** ISO timestamp of `lastDraft`. Null when no draft persisted. */
   lastDraftedAt: string | null;
+  /**
+   * True when a Send-draft is in flight on this row. Backed by the persisted
+   * `target_queue.send_started_at` marker so the `/queue` UI's spinner
+   * survives navigate-away-and-back AND server restart. Cleared automatically
+   * when the row's status flips to a terminal state.
+   */
+  isSending: boolean;
 }
 
 /**
@@ -357,4 +387,35 @@ export type RunPlayEvent =
   | { kind: "draft"; index: number; subject: string; body: string; flags: string[] }
   | { kind: "send"; index: number; receiptIds: number[] }
   | { kind: "error"; index: number; message: string }
-  | { kind: "done"; total: number; sent: number };
+  | { kind: "done"; total: number; sent: number }
+  /** First frame the server emits — gives the UI the runId so it can resume on nav-back. */
+  | { kind: "runStarted"; runId: number; startedAt: string };
+
+/** Lifecycle status of a /run-page dispatch persisted in the `runs` table. */
+export type RunStatus = "running" | "done" | "interrupted";
+
+/**
+ * Snapshot of one /run-page dispatch — returned by GET /api/runs/:id so the UI
+ * can rebuild the per-target progress view after navigate-away-and-back, AND
+ * decide whether to keep polling (status === 'running') or stop (done /
+ * interrupted). `events` is the accumulated SSE stream (same shape callers
+ * see live), so the client renderer can be source-shared.
+ */
+export interface RunRecord {
+  id: number;
+  playName: string;
+  dryRun: boolean;
+  status: RunStatus;
+  startedAt: string;
+  completedAt: string | null;
+  targetCount: number;
+  draftedCount: number;
+  sentCount: number;
+  errorCount: number;
+  /** Original targets array as posted to /api/run/:playName. */
+  targets: unknown[];
+  /** All SSE events accumulated so far (or all of them, when status !== 'running'). */
+  events: RunPlayEvent[];
+  /** Emails that were actually sent — used by /cadences?sinceRun to filter. */
+  prospectEmails: string[];
+}
