@@ -647,7 +647,7 @@ function QueueRow({
         <td className="py-2">
           <div className="flex items-center gap-1.5">
             <Badge tone={statusTone(row.status)}>{row.status}</Badge>
-            {row.lastDraft && (
+            {row.status !== "sent" && row.lastDraft && (
               <Badge
                 tone={
                   row.lastDraft.sent
@@ -787,7 +787,10 @@ function DraftSection({
       else toast.error(`couldn't send · ${err.message}`);
     },
   });
-  const canDraft = !(draft?.sent ?? false);
+  // Once the row is sent, the server rejects regenerate (queue.ts guard) — also
+  // hide the button client-side so post-send stale rows (draft.sent=false but
+  // status=sent) don't tempt a click that would error.
+  const canDraft = status !== "sent" && !(draft?.sent ?? false);
   const verb = draft ? "regenerate" : "generate draft";
   const pendingVerb = draft ? "regenerating…" : "generating…";
   const draftButton = canDraft ? (
@@ -859,12 +862,18 @@ function DraftSection({
       : draft.dryRun
         ? "preview"
         : "drafted";
+  // Row was sent but lastDraft.sent is false → a post-send regenerate landed
+  // before the server-side guard was added. The card body is NOT the email
+  // that went out (the original is only in the prospect's inbox now).
+  const isStalePostSend = status === "sent" && !draft.sent;
+  const headerLabel = draft.sent ? "sent" : "last draft";
   return (
     <div className="rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep">
       <div className="flex items-center gap-2 border-b border-ink-rule/60 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
-        <span>last draft</span>
+        <span>{headerLabel}</span>
         {draftedAt ? <span className="text-ink-muted">· {timeAgo(draftedAt)}</span> : null}
         <Badge tone={tone}>{stateLabel}</Badge>
+        {isStalePostSend && <Badge tone="blocked">post-send regenerate · not sent</Badge>}
         {draft.flags.length > 0 &&
           draft.flags.map((f) => (
             <Badge key={f} tone="blocked">

@@ -158,6 +158,9 @@ export async function regenerateDraftRoute(
   const ledger = getLedger();
   const row = ledger.getQueueRow(id);
   if (!row) return jsonResponse({ error: `row #${id} not found` }, 404, req);
+  // Once sent, last_draft_json IS the frozen sent content — never overwrite it
+  // with a fresh dry-run draft. Mirrors the guard in sendDraftRoute.
+  if (row.status === "sent") return jsonResponse({ error: "row already sent" }, 400, req);
 
   let target: unknown;
   try {
