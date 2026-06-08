@@ -5,7 +5,7 @@ import { isDuplicate } from "./_dedupe.ts";
 import { enrichVerifiedContact } from "./_enrich.ts";
 import { shouldSkipFindEmail } from "./_findemail-prescreen.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
-import { fetchGitHubUser } from "./_github-user.ts";
+import { fetchGitHubUser, fetchTopRepos } from "./_github-user.ts";
 import { recentStargazers, type Stargazer } from "./_stargazers.ts";
 import type { FinderResult, RunOpts } from "./_types.ts";
 
@@ -240,6 +240,13 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
       ...(enr.phone ? { phone: enr.phone } : {}),
     };
 
+    // repo-interest is a peer-builder pitch — what the candidate ships gives
+    // the LLM concrete shared-taste evidence. competitor-switch is a head-on
+    // pitch where the starred repo IS the signal; candidate's own repos add
+    // noise, so we only fetch for the repo-interest branch.
+    const candidateRepos =
+      c.rel === "competitor" ? undefined : (await fetchTopRepos(c.login)) ?? undefined;
+
     const target: CompetitorSwitchTarget | RepoInterestTarget =
       c.rel === "competitor"
         ? {
@@ -263,6 +270,8 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
             yourEdge: opts.yourEdge,
             ...(c.repoEdge ? { repoEdge: c.repoEdge } : {}),
             evidenceUrl: repoUrl,
+            candidateLogin: c.login,
+            ...(candidateRepos ? { candidateRepos } : {}),
             ...contactExtras,
           };
 
