@@ -1,4 +1,5 @@
-import { findEmail, getLedger, logEvent, verifyEmail, webRead, webSearch } from "@oneshot-gtm/core";
+import { getLedger, logEvent, webRead, webSearch } from "@oneshot-gtm/core";
+import { safeFindEmail, safeVerifyEmail } from "./_sdk-safe.ts";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { HiringSignalTarget } from "@oneshot-gtm/plays";
 import { isDuplicate } from "./_dedupe.ts";
@@ -201,7 +202,7 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
     const findInput = managerName
       ? { fullName: managerName, companyDomain: domain }
       : { companyDomain: domain };
-    const found = await findEmail(findInput, { playName: PLAY_NAME });
+    const found = await safeFindEmail(findInput, { playName: PLAY_NAME });
     result.costUsd += found.result.cost ?? 0;
     if (!found.result.found || !found.result.email) {
       result.droppedEnrichment++;
@@ -214,7 +215,7 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
       continue;
     }
 
-    const verified = await verifyEmail({ email }, { playName: PLAY_NAME });
+    const verified = await safeVerifyEmail({ email }, { playName: PLAY_NAME });
     result.costUsd += verified.result.cost ?? 0;
     if (!verified.result.deliverable) {
       result.droppedEnrichment++;

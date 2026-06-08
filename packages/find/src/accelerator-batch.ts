@@ -1,4 +1,5 @@
-import { findEmail, getLedger, logEvent, verifyEmail, webRead } from "@oneshot-gtm/core";
+import { getLedger, logEvent, webRead } from "@oneshot-gtm/core";
+import { safeFindEmail, safeVerifyEmail } from "./_sdk-safe.ts";
 import { complete, loadPrompt } from "@oneshot-gtm/intel";
 import type { AcceleratorBatchTarget } from "@oneshot-gtm/plays";
 import {
@@ -379,7 +380,7 @@ export async function runAcceleratorBatchFinder(
       logEvent("finder.skipped_findemail", { name: PLAY_NAME, reason: skip.reason }, "info");
       return;
     }
-    const found = await findEmail(
+    const found = await safeFindEmail(
       { fullName: founderName, companyDomain: domain },
       { playName: PLAY_NAME },
     );
@@ -398,7 +399,7 @@ export async function runAcceleratorBatchFinder(
       return;
     }
 
-    const verified = await verifyEmail({ email }, { playName: PLAY_NAME });
+    const verified = await safeVerifyEmail({ email }, { playName: PLAY_NAME });
     result.costUsd += verified.result.cost ?? 0;
     if (!verified.result.deliverable) {
       result.droppedEnrichment++;

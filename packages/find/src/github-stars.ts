@@ -1,4 +1,4 @@
-import { findEmail, getLedger, logEvent, parallelMap, verifyEmail } from "@oneshot-gtm/core";
+import { getLedger, logEvent, parallelMap } from "@oneshot-gtm/core";
 import type { FindEmailInput } from "@oneshot-gtm/core";
 import type { CompetitorSwitchTarget, RepoInterestTarget } from "@oneshot-gtm/plays";
 import { isDuplicate } from "./_dedupe.ts";
@@ -6,6 +6,7 @@ import { enrichVerifiedContact } from "./_enrich.ts";
 import { shouldSkipFindEmail } from "./_findemail-prescreen.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { fetchGitHubUser, fetchTopRepos } from "./_github-user.ts";
+import { safeFindEmail, safeVerifyEmail } from "./_sdk-safe.ts";
 import { recentStargazers, type Stargazer } from "./_stargazers.ts";
 import type { FinderResult, RunOpts } from "./_types.ts";
 
@@ -206,7 +207,7 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
         return;
       }
       const findInput: FindEmailInput = { companyDomain: domain, fullName };
-      const found = await findEmail(findInput, { playName: PLAY_NAME });
+      const found = await safeFindEmail(findInput, { playName: PLAY_NAME });
       result.costUsd += found.result.cost ?? 0;
       if (!found.result.found || !found.result.email) {
         result.droppedEnrichment++;
@@ -215,7 +216,7 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
       email = found.result.email;
     }
 
-    const verified = await verifyEmail({ email }, { playName: PLAY_NAME });
+    const verified = await safeVerifyEmail({ email }, { playName: PLAY_NAME });
     result.costUsd += verified.result.cost ?? 0;
     if (!verified.result.deliverable) {
       result.droppedEnrichment++;

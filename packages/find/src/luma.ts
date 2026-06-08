@@ -1,13 +1,12 @@
 import {
   enrichProfile,
-  findEmail,
   getLedger,
   logEvent,
   parallelMap,
-  verifyEmail,
   webRead,
   webSearch,
 } from "@oneshot-gtm/core";
+import { safeFindEmail, safeVerifyEmail } from "./_sdk-safe.ts";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { LumaEventsTarget } from "@oneshot-gtm/plays";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
@@ -465,7 +464,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
         logEvent("finder.skipped_findemail", { name: PLAY_NAME, reason: skip.reason }, "info");
         continue;
       }
-      const found = await findEmail(
+      const found = await safeFindEmail(
         { fullName: work.attendee.name, companyDomain },
         {
           playName: PLAY_NAME,
@@ -490,7 +489,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
       continue;
     }
 
-    const verified = await verifyEmail(
+    const verified = await safeVerifyEmail(
       { email },
       {
         playName: PLAY_NAME,

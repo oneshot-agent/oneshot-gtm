@@ -1,5 +1,5 @@
 import { getLedger, logEvent, webRead, webSearch } from "@oneshot-gtm/core";
-import { findEmail, verifyEmail } from "@oneshot-gtm/core";
+import { safeFindEmail, safeVerifyEmail } from "./_sdk-safe.ts";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { PostFundingTarget } from "@oneshot-gtm/plays";
 import { readFileSync } from "node:fs";
@@ -157,7 +157,7 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
       logEvent("finder.skipped_findemail", { name: PLAY_NAME, reason: skip.reason }, "info");
       continue;
     }
-    const found = await findEmail(
+    const found = await safeFindEmail(
       { fullName: extract.founderName, companyDomain: extract.companyDomain },
       { playName: PLAY_NAME },
     );
@@ -174,7 +174,7 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
       continue;
     }
 
-    const verified = await verifyEmail({ email }, { playName: PLAY_NAME });
+    const verified = await safeVerifyEmail({ email }, { playName: PLAY_NAME });
     result.costUsd += verified.result.cost ?? 0;
     if (!verified.result.deliverable) {
       result.droppedEnrichment++;

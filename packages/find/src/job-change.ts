@@ -1,4 +1,5 @@
-import { findEmail, getLedger, logEvent, verifyEmail, webSearch } from "@oneshot-gtm/core";
+import { getLedger, logEvent, webSearch } from "@oneshot-gtm/core";
+import { safeFindEmail, safeVerifyEmail } from "./_sdk-safe.ts";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { JobChangeTarget } from "@oneshot-gtm/plays";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
@@ -174,7 +175,7 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
       continue;
     }
 
-    const found = await findEmail(
+    const found = await safeFindEmail(
       { fullName: extract.fullName, companyDomain: domain },
       { playName: PLAY_NAME },
     );
@@ -190,7 +191,7 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
       continue;
     }
 
-    const verified = await verifyEmail({ email }, { playName: PLAY_NAME });
+    const verified = await safeVerifyEmail({ email }, { playName: PLAY_NAME });
     result.costUsd += verified.result.cost ?? 0;
     if (!verified.result.deliverable) {
       result.droppedEnrichment++;

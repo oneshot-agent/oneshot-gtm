@@ -1,5 +1,5 @@
-import { getLedger, logEvent, type FindEmailInput } from "@oneshot-gtm/core";
-import { findEmail, verifyEmail, webRead } from "@oneshot-gtm/core";
+import { getLedger, logEvent, type FindEmailInput, webRead } from "@oneshot-gtm/core";
+import { safeFindEmail, safeVerifyEmail } from "./_sdk-safe.ts";
 import type { ShowHnTarget } from "@oneshot-gtm/plays";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
@@ -143,7 +143,7 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
     }
     const findInput: FindEmailInput = { companyDomain: domain };
     if (fullName) findInput.fullName = fullName;
-    const found = await findEmail(findInput, { playName: PLAY_NAME });
+    const found = await safeFindEmail(findInput, { playName: PLAY_NAME });
     result.costUsd += found.result.cost ?? 0;
 
     if (!found.result.found || !found.result.email) {
@@ -153,7 +153,7 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
     const email = found.result.email;
 
     // Verify deliverability.
-    const verified = await verifyEmail({ email }, { playName: PLAY_NAME });
+    const verified = await safeVerifyEmail({ email }, { playName: PLAY_NAME });
     result.costUsd += verified.result.cost ?? 0;
     if (!verified.result.deliverable) {
       result.droppedEnrichment++;

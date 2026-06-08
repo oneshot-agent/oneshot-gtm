@@ -1,4 +1,5 @@
-import { findEmail, getLedger, logEvent, verifyEmail, webRead, webSearch } from "@oneshot-gtm/core";
+import { getLedger, logEvent, webRead, webSearch } from "@oneshot-gtm/core";
+import { safeFindEmail, safeVerifyEmail } from "./_sdk-safe.ts";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { PodcastGuestTarget } from "@oneshot-gtm/plays";
 import { isDuplicate } from "./_dedupe.ts";
@@ -165,7 +166,7 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
       continue;
     }
 
-    const found = await findEmail(
+    const found = await safeFindEmail(
       { fullName: extract.guestName, companyDomain: extract.guestCompanyDomain },
       { playName: PLAY_NAME },
     );
@@ -181,7 +182,7 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
       continue;
     }
 
-    const verified = await verifyEmail({ email }, { playName: PLAY_NAME });
+    const verified = await safeVerifyEmail({ email }, { playName: PLAY_NAME });
     result.costUsd += verified.result.cost ?? 0;
     if (!verified.result.deliverable) {
       result.droppedEnrichment++;
