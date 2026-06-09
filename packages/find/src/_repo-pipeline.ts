@@ -43,17 +43,9 @@ export interface RepoCandidate {
   url: string;
   title: string;
   description: string;
-  /**
-   * Pre-discovery vendor hints. github-topics leaves this empty — vendors are
-   * detected later via `detectRepoStack` against the repo's manifests.
-   * Reserved for future repo-finders that arrive with a known vendor signal
-   * at discovery time (would short-circuit the manifest scan).
-   */
+  /** Pre-discovery vendor hints; github-topics leaves empty (manifest scan later). */
   vendors: string[];
-  /**
-   * GitHub topic tags (self-tagged by maintainers). github-topics fills these
-   * for the snippet ICP signal.
-   */
+  /** GitHub topic tags, used as the snippet-ICP signal when present. */
   topics?: string[];
 }
 
@@ -329,13 +321,13 @@ export async function processRepoCandidate(
 
 interface ResolvedContact {
   email: string;
-  /** Best-effort full name from findEmail; null when GitHub provided the email directly. */
+  /** From findEmail; null when GitHub gave us the email directly. */
   fullName: string | null;
-  /** The domain we ultimately used. Null only when we got a direct GitHub email and no blog/extract domain. */
+  /** The domain we used; null only on a direct GitHub email with no blog/extract domain. */
   domain: string | null;
-  /** LinkedIn URL surfaced during contact resolution (Path B' webSearch or enrichProfile). Null when none found. */
+  /** Surfaced via Path B' webSearch / enrichProfile. */
   linkedinUrl: string | null;
-  /** Phone number surfaced during contact resolution (Path C deepResearch enrichment). Null when none found. */
+  /** Surfaced via Path C deepResearch enrichment. */
   phone: string | null;
 }
 

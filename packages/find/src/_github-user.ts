@@ -3,22 +3,14 @@ import { githubHeaders } from "./_github-search.ts";
 
 export interface GitHubUserInfo {
   login: string;
-  /** Human-friendly display name (e.g. "Ada Lovelace") when set. Falls back
-   *  to null — many users leave this blank. */
   name: string | null;
   email: string | null;
-  /** A bare hostname extracted from the user's blog URL when present. */
+  /** Bare hostname extracted from the user's blog URL. */
   blogDomain: string | null;
-  /** company string from the user's profile (e.g. "@acme" or "Acme Inc"). */
   company: string | null;
 }
 
-/**
- * Per-process cache of GitHub user lookups. Keyed by login (lowercased to
- * dedupe `Foo` vs `foo` from different combos that surface the same author).
- * `null` is a real cached value — it means we've already tried and the API
- * returned 404 / 429 / network error, so don't retry within the run.
- */
+/** Lowercase-keyed cache; `null` = "tried, got 404/429/network error". */
 const cache = new Map<string, GitHubUserInfo | null>();
 
 /** Test-only: drop the in-memory cache between cases. */
@@ -27,16 +19,13 @@ export function _resetGitHubUserCache(): void {
 }
 
 /**
- * Fetch a GitHub user's public profile via the unauthenticated REST API.
- * Returns null on 404, 403 (GitHub's actual unauth rate-limit signal), 429,
- * any other non-2xx, network error, or malformed response — caller should
- * fall through to the next enrichment strategy rather than treat this as
- * fatal.
+ * Fetch a GitHub user's public profile via the unauth REST API. 403 is
+ * GitHub's actual unauth rate-limit signal (not 429); treat both as
+ * back-off. Null on any failure — caller falls through to the next
+ * enrichment strategy.
  *
- * Unauthenticated quota is 60 req/hour per IP, which is fine for the ~50
- * candidates a single github-topics run inspects. Same-author dedupe via
- * the cache keeps actual fetches down further (a popular author appearing
- * in multiple combos hits the API once).
+ * Unauth quota is 60 req/hour per IP. The cache keeps a popular author
+ * surfaced by multiple combos at one API hit.
  */
 export async function fetchGitHubUser(login: string): Promise<GitHubUserInfo | null> {
   const key = login.toLowerCase();
@@ -101,13 +90,9 @@ export async function fetchGitHubUser(login: string): Promise<GitHubUserInfo | n
 }
 
 /**
- * One of the candidate's own public repos, stripped to the fields the email
- * prompt actually weaves in. Forks are excluded CLIENT-SIDE in fetchTopRepos's
- * filter chain (GitHub's `type=owner` query param filters by ownership
- * relation — owner vs collaborator-via-member — NOT by fork status; a fork the
- * user owns is still returned). Star count + dates are intentionally dropped
- * to keep token budget tight — the LLM picks ONE repo (if any) by topical fit,
- * not by metrics.
+ * One of the candidate's own public repos. Star count + dates intentionally
+ * dropped to keep token budget tight — the LLM picks ONE by topical fit, not
+ * metrics.
  */
 export interface TopRepo {
   name: string;
@@ -115,11 +100,7 @@ export interface TopRepo {
   language: string | null;
 }
 
-/**
- * Per-process cache of `/users/{login}/repos` lookups. Same shape + semantics
- * as the user-profile cache above: `null` is a real value meaning "we tried
- * and got 404 / 429 / network error, don't retry within the run."
- */
+/** `null` = "we tried and got 404/429/network error, don't retry within the run." */
 const reposCache = new Map<string, TopRepo[] | null>();
 
 /** Test-only: drop the in-memory repos cache between cases. */
@@ -128,22 +109,11 @@ export function _resetTopReposCache(): void {
 }
 
 /**
- * Fetch the candidate's top 10 OWN public repos, sorted by most-recent push
- * — i.e. "what they actively ship." No star filter (a one-star repo can still
- * be the most-telling signal of what they care about right now). Forks are
- * dropped client-side in the filter chain below — they're a weak signal of
- * authorship AND with `sort=pushed` a fork tracking a busy upstream
- * (kubernetes, next.js) would float to the top and get framed to the LLM as
- * shipping evidence.
+ * Fetch the candidate's top 10 OWN public repos, sorted by most-recent push.
  *
- * Note: GitHub's `type=owner` URL param filters by OWNERSHIP relation (owner
- * vs collaborator-via-member), NOT by fork status. The endpoint has no
- * `fork=false` param; client-side filtering on the response is the only way.
- *
- * Returns null on any non-2xx / network error / parse failure — caller treats
- * an absent enrichment as "skip the repos block in the prompt," never fatal.
- * Empty array (user has no public repos / all private) stays `[]`, distinct
- * from null, so callers can tell "no data" from "no repos."
+ * `null` return: any non-2xx / network error / parse failure — caller skips
+ * the repos block in the prompt. Empty `[]` is distinct from `null` and means
+ * "we asked, user has no public repos".
  */
 export async function fetchTopRepos(login: string): Promise<TopRepo[] | null> {
   const key = login.toLowerCase();
@@ -177,15 +147,10 @@ export async function fetchTopRepos(login: string): Promise<TopRepo[] | null> {
       logEvent("github.repos.fetch", { login, ok: false, status: res.status, malformed: true });
       return null;
     }
-    // Drop:
-    //   - forks (type=owner doesn't exclude them; daily-syncing forks of
-    //     popular OSS would float to the top via sort=pushed and read as
-    //     shipping evidence to the LLM)
-    //   - archived repos (sort=pushed can float a recently-archived repo)
-    //   - entries without a usable name (defensive against API drift)
-    // Cap description length so a few wordy READMEs can't blow up the prompt
-    // token budget — 160 chars is roughly one full sentence, enough for the
-    // LLM to judge topical fit.
+    // Drop forks (GitHub's `type=owner` filters by ownership relation, NOT
+    // fork status — a daily-syncing fork of kubernetes/next.js would float to
+    // the top via sort=pushed and read as shipping evidence to the LLM).
+    // Drop archived + missing-name entries. Cap description at 160 chars.
     const repos: TopRepo[] = json
       .filter(
         (r) =>

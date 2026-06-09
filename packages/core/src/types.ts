@@ -52,7 +52,7 @@ export interface OneShotConfig {
    * Brand/product domain appended to every generated email signature beneath
    * the founder's name (e.g. "yourcompany.com"). Bare domain, no scheme.
    * Null = no domain line (founderEmail can't stand in — it's often a personal
-   * inbox). Set via /setup.
+   * inbox).
    */
   productDomain: string | null;
   /**
@@ -60,7 +60,7 @@ export interface OneShotConfig {
    * (sends as `<founder-first-name>@<sendingDomain>`). Distinct from
    * productDomain (signature display): the send domain must be wallet-owned or
    * the SDK 403s with `domain_not_owned`. Null = fall back to the SDK default
-   * (which only works for whoever owns that demo domain). Set via /setup.
+   * (which only works for whoever owns that demo domain).
    */
   sendingDomain: string | null;
   /** Free-text ICP statement; the find layer's LLM filter uses it as a yes/no classifier. */
@@ -69,29 +69,15 @@ export interface OneShotConfig {
    * Per-play cadence timing overrides, keyed by play name. Each value is an
    * array of RELATIVE day offsets (one per follow-up step, in order) that
    * replaces the code-default offsets when its length matches the play's step
-   * count. Null/absent = code defaults. Edited from /plays. Structure (which
-   * prompts fire, breakup position) is NOT overridable — timing only.
+   * count. Null/absent = code defaults. Structure (which prompts fire,
+   * breakup position) is NOT overridable — timing only.
    */
   cadenceOverrides: Record<string, number[]> | null;
-  /**
-   * Founder's résumé / credentials beat for outbound social proof. Free text:
-   * prior companies, named past roles, anything that lets a stranger trust
-   * you. Used by plays where the prospect cares who's writing (job-change,
-   * podcast-guest, post-funding, breakup-revive). Null = omit the beat.
-   */
+  /** Founder's résumé / credentials — the founder-trust social-proof beat. */
   founderCredentials: string | null;
-  /**
-   * Products you've shipped — the peer-founder proof. Free text or a
-   * comma-separated list. Used by plays where the recipient cares that
-   * you've actually built things (stack-consolidation, competitor-switch,
-   * show-hn, hiring-signal). Null = omit the beat.
-   */
+  /** Products you've shipped — the peer-founder social-proof beat. */
   productPortfolio: string | null;
-  /**
-   * Notable partners / customers — brand-recognition proof. Free text or a
-   * comma-separated list of brand names. Helpful when the prospect doesn't
-   * know you yet (accelerator-batch, demo-no-show). Null = omit the beat.
-   */
+  /** Notable partners / customers — the brand-recognition social-proof beat. */
   partners: string | null;
   /**
    * When true, the signature directive appends a literal "Sent from my iPhone"
