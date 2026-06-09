@@ -787,13 +787,20 @@ function DraftSection({
       else toast.error(`couldn't send · ${err.message}`);
     },
   });
+  // Combine the local mutation spinner with the server-persisted `isSending`
+  // flag so the spinner survives navigate-away-and-back AND server restart.
+  // Hoisted above canDraft so the regenerate gate uses the same definition as
+  // the send button below (asymmetry would re-open the UX window between
+  // send.mutate() firing and the queue refetch landing the server marker).
+  const sending = send.isPending || isSending;
   // Once the row is sent (or a send is in flight), the server rejects
   // regenerate (queue.ts guards: row.status === "sent" → 400; send_started_at
   // != null → 409). Hide the button client-side too so post-send stale rows
   // (draft.sent=false but status=sent) and mid-send rows don't tempt a click
-  // that would error. `isSending` is the server-persisted marker exposed on
-  // the row view, surviving navigate-away-and-back AND server restart.
-  const canDraft = status !== "sent" && !isSending && !(draft?.sent ?? false);
+  // that would error. Gate on `sending` (not just `isSending`) so the mid-
+  // mutation window (send.mutate() fired but server marker not yet refetched)
+  // is also covered — symmetric with the sendButton's own gate below.
+  const canDraft = status !== "sent" && !sending && !(draft?.sent ?? false);
   const verb = draft ? "regenerate" : "generate draft";
   const pendingVerb = draft ? "regenerating…" : "generating…";
   const draftButton = canDraft ? (
@@ -814,9 +821,6 @@ function DraftSection({
   // draft — that's the review gate: regenerate until clean, then send exactly
   // that. Disabled (with a hint) when there's no draft or it's flagged.
   const cleanDraft = draft != null && draft.flags.length === 0 && !draft.sent;
-  // Combine the local mutation spinner with the server-persisted `isSending`
-  // flag so the spinner survives navigate-away-and-back AND server restart.
-  const sending = send.isPending || isSending;
   const sendButton =
     status === "approved" && !(draft?.sent ?? false) ? (
       <Button
