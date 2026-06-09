@@ -787,10 +787,13 @@ function DraftSection({
       else toast.error(`couldn't send · ${err.message}`);
     },
   });
-  // Once the row is sent, the server rejects regenerate (queue.ts guard) — also
-  // hide the button client-side so post-send stale rows (draft.sent=false but
-  // status=sent) don't tempt a click that would error.
-  const canDraft = status !== "sent" && !(draft?.sent ?? false);
+  // Once the row is sent (or a send is in flight), the server rejects
+  // regenerate (queue.ts guards: row.status === "sent" → 400; send_started_at
+  // != null → 409). Hide the button client-side too so post-send stale rows
+  // (draft.sent=false but status=sent) and mid-send rows don't tempt a click
+  // that would error. `isSending` is the server-persisted marker exposed on
+  // the row view, surviving navigate-away-and-back AND server restart.
+  const canDraft = status !== "sent" && !isSending && !(draft?.sent ?? false);
   const verb = draft ? "regenerate" : "generate draft";
   const pendingVerb = draft ? "regenerating…" : "generating…";
   const draftButton = canDraft ? (
