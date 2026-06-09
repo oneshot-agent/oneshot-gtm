@@ -1,8 +1,8 @@
-import { findEmail, getLedger, logEvent, verifyEmail, webRead, webSearch } from "@oneshot-gtm/core";
+import { getLedger, logEvent, webRead, webSearch } from "@oneshot-gtm/core";
+import { resolveAndVerifyContact } from "./_contact.ts";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { HiringSignalTarget } from "@oneshot-gtm/plays";
 import { isDuplicate } from "./_dedupe.ts";
-import { shouldSkipFindEmail } from "./_findemail-prescreen.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { enrichVerifiedContact } from "./_enrich.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
@@ -125,6 +125,13 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
       icp,
       candidate: { title: hit.title, url: hit.url, summary: hit.description },
     });
+    if (filter.match === null) {
+      // Transient classifier failure (Anthropic 5xx, timeout, rate limit) —
+      // drop without persisting. A rejection would burn the dedupeKey for
+      // every future watch tick since isQueueDuplicate ignores status.
+      result.droppedEnrichment++;
+      continue;
+    }
     if (!filter.match) {
       result.droppedIcp++;
       ledger.enqueueTarget({
@@ -192,36 +199,22 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
       extract.hiringManagerName && extract.hiringManagerName.length > 0
         ? extract.hiringManagerName
         : null;
-    const skip = shouldSkipFindEmail({ fullName: managerName, companyDomain: domain });
-    if (!skip.ok) {
-      result.droppedEnrichment++;
-      logEvent("finder.skipped_findemail", { name: PLAY_NAME, reason: skip.reason }, "info");
+    const contact = await resolveAndVerifyContact({
+      playName: PLAY_NAME,
+      fullName: managerName,
+      companyDomain: domain,
+      isDuplicate: (email) =>
+        isDuplicate({ playName: PLAY_NAME, dedupeKey: hit.url, prospectEmail: email }),
+    });
+    result.costUsd += contact.costUsd;
+    if (!contact.ok) {
+      if (contact.reason === "duplicate") result.droppedDuplicate++;
+      else result.droppedEnrichment++;
       continue;
     }
-    const findInput = managerName
-      ? { fullName: managerName, companyDomain: domain }
-      : { companyDomain: domain };
-    const found = await findEmail(findInput, { playName: PLAY_NAME });
-    result.costUsd += found.result.cost ?? 0;
-    if (!found.result.found || !found.result.email) {
-      result.droppedEnrichment++;
-      continue;
-    }
-    const email = found.result.email;
+    const email = contact.email;
 
-    if (isDuplicate({ playName: PLAY_NAME, dedupeKey: hit.url, prospectEmail: email })) {
-      result.droppedDuplicate++;
-      continue;
-    }
-
-    const verified = await verifyEmail({ email }, { playName: PLAY_NAME });
-    result.costUsd += verified.result.cost ?? 0;
-    if (!verified.result.deliverable) {
-      result.droppedEnrichment++;
-      continue;
-    }
-
-    const recipientName = extract.hiringManagerName ?? found.result.full_name ?? null;
+    const recipientName = extract.hiringManagerName ?? contact.fullName;
     const enr = await enrichVerifiedContact(email, {
       playName: PLAY_NAME,
       errKindPrefix: "hiring-signal",

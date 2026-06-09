@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   _resetGitHubUserCache,
+  _resetTopReposCache,
   extractBlogDomain,
   fetchGitHubUser,
+  fetchTopRepos,
   ownerFromRepoUrl,
 } from "../src/_github-user.ts";
 
@@ -44,6 +46,7 @@ function mockFetchThrows(message: string) {
 
 beforeEach(() => {
   _resetGitHubUserCache();
+  _resetTopReposCache();
 });
 
 afterEach(() => {
@@ -187,6 +190,125 @@ describe("fetchGitHubUser", () => {
     await fetchGitHubUser("weird name");
     expect(fn).toHaveBeenCalledWith(
       "https://api.github.com/users/weird%20name",
+      expect.any(Object),
+    );
+  });
+});
+
+describe("fetchTopRepos", () => {
+  it("returns a 3-field shape (name/description/language), dropping noise fields", async () => {
+    mockFetchOnceJson(200, [
+      {
+        name: "agent-loop",
+        description: "self-rewriting skill loop for autonomous agents",
+        language: "Python",
+        stargazers_count: 42,
+        forks_count: 3,
+        pushed_at: "2026-05-01T00:00:00Z",
+      },
+      { name: "tiny-llm", description: null, language: "Rust" },
+    ]);
+    const out = await fetchTopRepos("ada");
+    expect(out).toEqual([
+      {
+        name: "agent-loop",
+        description: "self-rewriting skill loop for autonomous agents",
+        language: "Python",
+      },
+      { name: "tiny-llm", description: null, language: "Rust" },
+    ]);
+  });
+
+  it("hits the per_page=10&sort=pushed&type=owner endpoint", async () => {
+    const fn = mockFetchOnceJson(200, []);
+    await fetchTopRepos("ada");
+    expect(fn).toHaveBeenCalledWith(
+      "https://api.github.com/users/ada/repos?per_page=10&sort=pushed&type=owner",
+      expect.any(Object),
+    );
+  });
+
+  it("treats empty array as a real value (zero public repos != null)", async () => {
+    mockFetchOnceJson(200, []);
+    expect(await fetchTopRepos("ada")).toEqual([]);
+  });
+
+  it("filters out archived + forked + missing-name entries", async () => {
+    // Regression guard for ultrareview bug_001. type=owner does NOT exclude
+    // forks (it filters by ownership relation, not fork status) — a fork of
+    // kubernetes the user owns would be returned and, with sort=pushed,
+    // float to the top because forks track upstream pushes. Client-side
+    // filter on r.fork drops them.
+    mockFetchOnceJson(200, [
+      { name: "live-repo", description: "still maintained", language: "Go", archived: false },
+      { name: "old-thing", description: "shelved last year", language: "C", archived: true },
+      { name: "kubernetes", description: "fork of upstream", language: "Go", fork: true },
+      { name: "", description: "no name somehow", language: null },
+      { description: "no name field at all", language: "JS" },
+      { name: "another-live", description: null, language: null },
+    ]);
+    const out = await fetchTopRepos("ada");
+    expect(out).toEqual([
+      { name: "live-repo", description: "still maintained", language: "Go" },
+      { name: "another-live", description: null, language: null },
+    ]);
+    // Explicit: the fork must not be in the output (the test above already
+    // covers this transitively, but being explicit makes the intent obvious
+    // for future readers).
+    expect(out?.some((r) => r.name === "kubernetes")).toBe(false);
+  });
+
+  it("truncates descriptions over 160 chars with an ellipsis", async () => {
+    const longDesc = "x".repeat(400);
+    mockFetchOnceJson(200, [{ name: "wordy", description: longDesc, language: "MD" }]);
+    const out = await fetchTopRepos("ada");
+    expect(out).not.toBeNull();
+    expect(out![0]!.description).toHaveLength(160);
+    expect(out![0]!.description?.endsWith("…")).toBe(true);
+  });
+
+  it("returns null on 404 / 429 / 403 / non-array body", async () => {
+    mockFetchOnceJson(404, { message: "Not Found" });
+    expect(await fetchTopRepos("ada")).toBeNull();
+    _resetTopReposCache();
+    mockFetchOnceJson(429, "");
+    expect(await fetchTopRepos("ada")).toBeNull();
+    _resetTopReposCache();
+    mockFetchOnceJson(403, { message: "rate limit" });
+    expect(await fetchTopRepos("ada")).toBeNull();
+    _resetTopReposCache();
+    mockFetchOnceJson(200, { not: "an array" });
+    expect(await fetchTopRepos("ada")).toBeNull();
+  });
+
+  it("returns null on network throw", async () => {
+    mockFetchThrows("ECONNRESET");
+    expect(await fetchTopRepos("ada")).toBeNull();
+  });
+
+  it("caches positive results across casing (single fetch)", async () => {
+    const fn = mockFetchOnceJson(200, [{ name: "x", description: null, language: null }]);
+    await fetchTopRepos("Ada");
+    await fetchTopRepos("ada");
+    await fetchTopRepos("ADA");
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("caches negative results too (no retry on a known 404 within the run)", async () => {
+    const fn = mockFetchSequence([
+      { status: 404, body: {} },
+      { status: 200, body: [] },
+    ]);
+    expect(await fetchTopRepos("zed")).toBeNull();
+    expect(await fetchTopRepos("zed")).toBeNull();
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("URL-encodes the login", async () => {
+    const fn = mockFetchOnceJson(200, []);
+    await fetchTopRepos("weird name");
+    expect(fn).toHaveBeenCalledWith(
+      expect.stringContaining("/users/weird%20name/repos"),
       expect.any(Object),
     );
   });

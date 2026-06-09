@@ -1,11 +1,10 @@
-import { findEmail, getLedger, logEvent, parallelMap, verifyEmail } from "@oneshot-gtm/core";
-import type { FindEmailInput } from "@oneshot-gtm/core";
+import { getLedger, logEvent, parallelMap } from "@oneshot-gtm/core";
 import type { CompetitorSwitchTarget, RepoInterestTarget } from "@oneshot-gtm/plays";
+import { resolveAndVerifyContact } from "./_contact.ts";
 import { isDuplicate } from "./_dedupe.ts";
 import { enrichVerifiedContact } from "./_enrich.ts";
-import { shouldSkipFindEmail } from "./_findemail-prescreen.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
-import { fetchGitHubUser } from "./_github-user.ts";
+import { fetchGitHubUser, fetchTopRepos } from "./_github-user.ts";
 import { recentStargazers, type Stargazer } from "./_stargazers.ts";
 import type { FinderResult, RunOpts } from "./_types.ts";
 
@@ -93,7 +92,11 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
   let firstError: string | null = null;
   let newestSeen: string | null = null; // newest star across all repos, ignoring the window
   for (const w of opts.repos) {
-    const { stargazers, error, newestSeen: repoNewest } = await recentStargazers(w.repo, {
+    const {
+      stargazers,
+      error,
+      newestSeen: repoNewest,
+    } = await recentStargazers(w.repo, {
       sinceIso,
     });
     if (error && !firstError) firstError = `${w.repo}: ${error}`;
@@ -168,6 +171,13 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
         summary: [user.company, `starred ${c.repo}`].filter(Boolean).join(" · "),
       },
     });
+    if (filter.match === null) {
+      // Transient classifier failure (Anthropic 5xx, timeout, rate limit) —
+      // drop without persisting. A rejection would burn the dedupeKey for
+      // every future watch tick since isQueueDuplicate ignores status.
+      result.droppedEnrichment++;
+      return;
+    }
     if (!filter.match) {
       result.droppedIcp++;
       // Persist the auto-rejection for review (skipped on dry-run previews).
@@ -190,42 +200,22 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
       return;
     }
 
-    // Resolve an email: public profile email first, else findEmail via the
-    // blog domain (gated by the prescreen). No domain + no public email → drop.
-    let email = user.email;
-    if (!email) {
-      const domain = user.blogDomain;
-      if (!domain) {
-        result.droppedEnrichment++;
-        return;
-      }
-      const skip = shouldSkipFindEmail({ fullName, companyDomain: domain });
-      if (!skip.ok) {
-        result.droppedEnrichment++;
-        logEvent("finder.skipped_findemail", { name: PLAY_NAME, reason: skip.reason }, "info");
-        return;
-      }
-      const findInput: FindEmailInput = { companyDomain: domain, fullName };
-      const found = await findEmail(findInput, { playName: PLAY_NAME });
-      result.costUsd += found.result.cost ?? 0;
-      if (!found.result.found || !found.result.email) {
-        result.droppedEnrichment++;
-        return;
-      }
-      email = found.result.email;
-    }
-
-    const verified = await verifyEmail({ email }, { playName: PLAY_NAME });
-    result.costUsd += verified.result.cost ?? 0;
-    if (!verified.result.deliverable) {
-      result.droppedEnrichment++;
+    // Resolve + verify an email: public profile email first, else findEmail via
+    // the blog domain (gated by the prescreen). No domain + no public email → drop.
+    const contact = await resolveAndVerifyContact({
+      playName: PLAY_NAME,
+      fullName,
+      knownEmail: user.email,
+      companyDomain: user.blogDomain,
+      isDuplicate: (email) => isDuplicate({ playName, dedupeKey, prospectEmail: email }),
+    });
+    result.costUsd += contact.costUsd;
+    if (!contact.ok) {
+      if (contact.reason === "duplicate") result.droppedDuplicate++;
+      else result.droppedEnrichment++;
       return;
     }
-
-    if (isDuplicate({ playName, dedupeKey, prospectEmail: email })) {
-      result.droppedDuplicate++;
-      return;
-    }
+    const email = contact.email;
 
     const enr = await enrichVerifiedContact(email, {
       playName: PLAY_NAME,
@@ -239,6 +229,13 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
       ...(enr.linkedinUrl ? { linkedinUrl: enr.linkedinUrl } : {}),
       ...(enr.phone ? { phone: enr.phone } : {}),
     };
+
+    // repo-interest is a peer-builder pitch — what the candidate ships gives
+    // the LLM concrete shared-taste evidence. competitor-switch is a head-on
+    // pitch where the starred repo IS the signal; candidate's own repos add
+    // noise, so we only fetch for the repo-interest branch.
+    const candidateRepos =
+      c.rel === "competitor" ? undefined : ((await fetchTopRepos(c.login)) ?? undefined);
 
     const target: CompetitorSwitchTarget | RepoInterestTarget =
       c.rel === "competitor"
@@ -263,6 +260,8 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
             yourEdge: opts.yourEdge,
             ...(c.repoEdge ? { repoEdge: c.repoEdge } : {}),
             evidenceUrl: repoUrl,
+            candidateLogin: c.login,
+            ...(candidateRepos ? { candidateRepos } : {}),
             ...contactExtras,
           };
 

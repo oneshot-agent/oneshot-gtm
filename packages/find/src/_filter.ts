@@ -2,7 +2,17 @@ import { loadConfig, logEvent } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 
 export interface IcpFilterResult {
-  match: boolean;
+  /**
+   * Tri-state:
+   *   - `true`  → candidate matches the ICP (or no ICP set; pass-through)
+   *   - `false` → real ICP miss → callers persist a rejected row (audit trail
+   *               + manual override path)
+   *   - `null`  → TRANSIENT classifier failure (LLM 5xx / timeout / rate-limit).
+   *               Callers must DROP the candidate without persisting — the
+   *               dedupeKey would otherwise burn for every future watch tick
+   *               (isQueueDuplicate ignores status).
+   */
+  match: boolean | null;
   reason: string;
 }
 
@@ -37,15 +47,32 @@ export async function icpFilter(input: {
     icp: input.icp,
     candidate: input.candidate,
   });
-  const res = await complete({
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ],
-    temperature: 0.1,
-    maxTokens: 200,
-  });
-  const decision = parseIcpJson(res.content);
+  let decision: IcpFilterResult;
+  try {
+    const res = await complete({
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      temperature: 0.1,
+      maxTokens: 200,
+    });
+    decision = parseIcpJson(res.content);
+  } catch (err) {
+    // A classifier failure (LLM timeout / provider error) must not abort the
+    // whole finder run — drop just this candidate. Drop-on-error (not
+    // pass-through) keeps a systematic outage visible as an empty run rather
+    // than flooding the queue with unfiltered candidates.
+    logEvent(
+      "error.swallowed",
+      {
+        kind: "icp-filter",
+        message_120: ((err as Error).message ?? "").slice(0, 120),
+      },
+      "warn",
+    );
+    return { match: null, reason: "icp classifier unavailable" };
+  }
   // Title is a category-ish label sourced from public listings (post titles,
   // job titles, episode titles); reason is the LLM's own classifier output.
   // Neither is user-typed prospect data — safe to log.
@@ -59,8 +86,16 @@ export async function icpFilter(input: {
 
 function parseIcpJson(raw: string): IcpFilterResult {
   const parsed = tryParseJsonObject<{ match?: unknown; reason?: unknown }>(raw, {});
+  // A malformed / truncated / refused response yields the `{}` fallback (no
+  // boolean `match`). Treat that as a transient failure (`null`) — same as a
+  // thrown classifier error — so callers drop WITHOUT persisting a rejected
+  // row. Collapsing it to `false` would burn the dedupeKey forever, since
+  // isQueueDuplicate ignores status.
+  if (typeof parsed.match !== "boolean") {
+    return { match: null, reason: "icp classifier malformed response" };
+  }
   return {
-    match: parsed.match === true,
+    match: parsed.match,
     reason: typeof parsed.reason === "string" ? parsed.reason : "no reason given",
   };
 }

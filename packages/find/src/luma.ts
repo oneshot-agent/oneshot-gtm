@@ -1,18 +1,16 @@
 import {
   enrichProfile,
-  findEmail,
   getLedger,
   logEvent,
   parallelMap,
-  verifyEmail,
   webRead,
   webSearch,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { LumaEventsTarget } from "@oneshot-gtm/plays";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
+import { resolveAndVerifyContact } from "./_contact.ts";
 import { enrichVerifiedContact } from "./_enrich.ts";
-import { shouldSkipFindEmail } from "./_findemail-prescreen.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
 import { fetchAuthedGuestList, mergeAttendees } from "./_luma-auth.ts";
@@ -217,11 +215,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
         });
         const extract = parseLumaEventExtract(llm.content);
         if (!extract.eventTitle) {
-          logEvent(
-            "finder.skipped_non_event",
-            { name: PLAY_NAME, url: hit.url },
-            "info",
-          );
+          logEvent("finder.skipped_non_event", { name: PLAY_NAME, url: hit.url }, "info");
           return null;
         }
         if (extract.eventHasPassed) {
@@ -371,6 +365,13 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
         summary: `Going to: ${work.event.title} in ${work.event.city}. ${work.attendee.bio ?? ""}`,
       },
     });
+    if (filter.match === null) {
+      // Transient classifier failure (Anthropic 5xx, timeout, rate limit) —
+      // drop without persisting. A rejection would burn the dedupeKey for
+      // every future watch tick since isQueueDuplicate ignores status.
+      result.droppedEnrichment++;
+      continue;
+    }
     if (!filter.match) {
       result.droppedIcp++;
       ledger.enqueueTarget({
@@ -442,66 +443,33 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
       companyDomain = urlDomain(work.attendee.websiteUrl);
     }
 
-    let email: string;
-    if (surfacedEmail) {
-      // LinkedIn enrichment already gave us a usable email. Skip findEmail.
-      email = surfacedEmail;
-    } else {
-      if (!companyDomain) {
-        result.droppedEnrichment++;
+    const contact = await resolveAndVerifyContact({
+      playName: PLAY_NAME,
+      fullName: work.attendee.name,
+      knownEmail: surfacedEmail,
+      companyDomain,
+      isDuplicate: (email) => isDuplicate({ playName: PLAY_NAME, dedupeKey, prospectEmail: email }),
+      decisionContext: {
+        source: "finder",
+        attendeeName: work.attendee.name,
+        companyDomain,
+        eventUrl: work.event.url,
+      },
+    });
+    result.costUsd += contact.costUsd;
+    if (!contact.ok) {
+      if (contact.reason === "no-domain") {
         logEvent(
           "finder.skipped_no_contact_domain",
           { name: PLAY_NAME, attendeeName: work.attendee.name, eventUrl: work.event.url },
           "info",
         );
-        continue;
       }
-      const skip = shouldSkipFindEmail({
-        fullName: work.attendee.name,
-        companyDomain,
-      });
-      if (!skip.ok) {
-        result.droppedEnrichment++;
-        logEvent("finder.skipped_findemail", { name: PLAY_NAME, reason: skip.reason }, "info");
-        continue;
-      }
-      const found = await findEmail(
-        { fullName: work.attendee.name, companyDomain },
-        {
-          playName: PLAY_NAME,
-          decisionContext: {
-            source: "finder",
-            attendeeName: work.attendee.name,
-            companyDomain,
-            eventUrl: work.event.url,
-          },
-        },
-      );
-      result.costUsd += found.result.cost ?? 0;
-      if (!found.result.found || !found.result.email) {
-        result.droppedEnrichment++;
-        continue;
-      }
-      email = found.result.email;
-    }
-
-    if (isDuplicate({ playName: PLAY_NAME, dedupeKey, prospectEmail: email })) {
-      result.droppedDuplicate++;
+      if (contact.reason === "duplicate") result.droppedDuplicate++;
+      else result.droppedEnrichment++;
       continue;
     }
-
-    const verified = await verifyEmail(
-      { email },
-      {
-        playName: PLAY_NAME,
-        decisionContext: { source: "finder", prospectEmail: email },
-      },
-    );
-    result.costUsd += verified.result.cost ?? 0;
-    if (!verified.result.deliverable) {
-      result.droppedEnrichment++;
-      continue;
-    }
+    const email = contact.email;
 
     const enr = await enrichVerifiedContact(email, {
       playName: PLAY_NAME,

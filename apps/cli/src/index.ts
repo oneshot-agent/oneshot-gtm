@@ -44,7 +44,7 @@ program
   )
   .version("0.1.0");
 
-// ── Bootstrap + launcher ─────────────────────────────────────────────────────
+// Bootstrap + launcher
 
 program.command("init").description("First-run setup wizard").action(runOrFail(runInit));
 program.command("doctor").description("Check setup health").action(runOrFail(commandDoctor));
@@ -65,7 +65,7 @@ program
     }),
   );
 
-// ── Config (founder profile + LLM + secrets only; ICP lives in the dashboard)
+// Config (founder profile + LLM + secrets only; ICP lives in the dashboard)
 const config = program.command("config").description("Configure providers and profile");
 config.command("llm").description("Pick LLM provider and model").action(runOrFail(configLlm));
 config
@@ -83,7 +83,7 @@ config
   .description("Enable or disable opt-out telemetry (on|off)")
   .action(runOrFail((state: string) => configTelemetry(state === "on" ? "on" : "off")));
 
-// ── Find: scheduled / cron-able only. Ad-hoc finder runs are in the dashboard.
+// Find: scheduled / cron-able only. Ad-hoc finder runs are in the dashboard.
 const find = program
   .command("find")
   .description("Scheduled discovery (daemon + drain). Ad-hoc runs live in the dashboard.");
@@ -121,7 +121,7 @@ find
     ),
   );
 
-// ── Cadence: cron-able advance. List/stop are in the dashboard.
+// Cadence: cron-able advance. List/stop are in the dashboard.
 const cadence = program
   .command("cadence")
   .description("Multi-touch sequence engine for in-flight prospects");
@@ -131,7 +131,7 @@ cadence
   .description("Poll inbound for replies, then execute due follow-up steps for active cadences")
   .action(runOrFail(commandCadenceAdvance));
 
-// ── Motion plays without a /run page yet (CLI is the only path). Drop as
+// Motion plays without a /run page yet (CLI is the only path). Drop as
 //    UI lands. show-hn / job-change / accelerator-batch already live in /run.
 const motion = program
   .command("motion")
@@ -285,7 +285,7 @@ motion
     ),
   );
 
-// ── Discover: ICP discovery + PMF survey workflows (no UI yet)
+// Discover: ICP discovery + PMF survey workflows (no UI yet)
 const discover = program.command("discover").description("Find your people, prove they want it");
 const icp = discover.command("icp").description("ICP discovery loop");
 icp
@@ -341,7 +341,7 @@ pmf
   .description("Collect inbound replies and synthesize a Sean Ellis report")
   .action(runOrFail(commandPmfSurveyCollect));
 
-// ── Intel: interactive coaching + reply triage + personalize (no UI yet)
+// Intel: interactive coaching + reply triage + personalize (no UI yet)
 const intel = program.command("intel").description("LLM-powered intelligence layer");
 intel
   .command("advise")
@@ -373,7 +373,7 @@ intel
   .description("Generate one anti-slop founder-to-founder opener for a single prospect")
   .action(runOrFail(commandIntelPersonalize));
 
-// ── Handoff: PMF→scale gates (no UI yet)
+// Handoff: PMF→scale gates (no UI yet)
 const handoff = program.command("handoff").description("PMF→scale graduation gates");
 handoff
   .command("readiness")

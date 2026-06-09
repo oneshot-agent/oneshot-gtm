@@ -13,12 +13,22 @@ interface EnqueuedRow {
   notes?: string;
 }
 const enqueued: EnqueuedRow[] = [];
-let icpMatch = true;
+let icpMatch: boolean | null = true;
 let stargazersByRepo: Record<
   string,
   Array<{ login: string; userUrl: string; starredAt: string }>
 > = {};
 let newestSeenByRepo: Record<string, string | null> = {};
+// Per-test override of what fetchTopRepos returns. `null` simulates an API
+// failure / rate-limit; `[]` simulates a user with no public repos. The call
+// tracker doubles as a regression guard: candidate-repo fetching is for the
+// repo-interest branch only, never for competitor-switch.
+let nextFetchTopReposResult: Array<{
+  name: string;
+  description: string | null;
+  language: string | null;
+}> | null = [{ name: "agent-loop", description: "self-rewriting skills", language: "Python" }];
+const fetchTopReposCalls: string[] = [];
 
 vi.mock("../src/_stargazers.ts", () => ({
   recentStargazers: async (repo: string) => ({
@@ -34,10 +44,17 @@ vi.mock("../src/_github-user.ts", () => ({
     blogDomain: "acme.dev",
     company: "Acme",
   }),
+  fetchTopRepos: async (login: string) => {
+    fetchTopReposCalls.push(login);
+    return nextFetchTopReposResult;
+  },
 }));
 vi.mock("../src/_filter.ts", () => ({
   resolveIcp: () => "icp",
-  icpFilter: async () => ({ match: icpMatch, reason: icpMatch ? "fits" : "nope" }),
+  icpFilter: async () => ({
+    match: icpMatch,
+    reason: icpMatch === null ? "icp classifier unavailable" : icpMatch ? "fits" : "nope",
+  }),
 }));
 vi.mock("../src/_enrich.ts", () => ({
   enrichVerifiedContact: async () => ({
@@ -75,6 +92,10 @@ beforeEach(() => {
   enqueued.length = 0;
   icpMatch = true;
   newestSeenByRepo = {};
+  fetchTopReposCalls.length = 0;
+  nextFetchTopReposResult = [
+    { name: "agent-loop", description: "self-rewriting skills", language: "Python" },
+  ];
   stargazersByRepo = {
     "apollographql/router": [
       { login: "alice", userUrl: "https://github.com/alice", starredAt: "2026-06-01T00:00:00Z" },
@@ -112,6 +133,43 @@ describe("runGitHubStarsFinder — per-repo rel routing", () => {
     expect(adj).toBeDefined();
     expect(adj?.payload["repo"]).toBe("modelcontextprotocol/servers");
     expect(adj?.payload["repoLabel"]).toBe("MCP");
+    // candidate-repo enrichment: present on repo-interest payloads, never on
+    // competitor-switch (the head-on pitch leans on the starred repo alone).
+    expect(adj?.payload["candidateLogin"]).toBeTruthy();
+    expect(adj?.payload["candidateRepos"]).toEqual([
+      { name: "agent-loop", description: "self-rewriting skills", language: "Python" },
+    ]);
+    expect(comp?.payload["candidateLogin"]).toBeUndefined();
+    expect(comp?.payload["candidateRepos"]).toBeUndefined();
+    // Call-count guard: only the adjacent stargazer (bob) triggers fetchTopRepos.
+    // alice (competitor) must not — repo enrichment is repo-interest-only.
+    expect(fetchTopReposCalls).toEqual(["bob"]);
+  });
+
+  it("enqueues the repo-interest row without candidateRepos when fetchTopRepos returns null (rate-limited)", async () => {
+    nextFetchTopReposResult = null;
+    await runGitHubStarsFinder({
+      dryRun: false,
+      yourEdge: "x",
+      repos: [{ repo: "modelcontextprotocol/servers", rel: "adjacent", label: "MCP" }],
+    });
+    expect(enqueued).toHaveLength(1);
+    const row = enqueued[0]!;
+    expect(row.playName).toBe("repo-interest");
+    expect(row.payload["candidateLogin"]).toBeTruthy();
+    expect("candidateRepos" in row.payload).toBe(false);
+  });
+
+  it("keeps an empty candidateRepos array on the payload when the user has no public repos", async () => {
+    nextFetchTopReposResult = [];
+    await runGitHubStarsFinder({
+      dryRun: false,
+      yourEdge: "x",
+      repos: [{ repo: "modelcontextprotocol/servers", rel: "adjacent", label: "MCP" }],
+    });
+    expect(enqueued).toHaveLength(1);
+    const row = enqueued[0]!;
+    expect(row.payload["candidateRepos"]).toEqual([]);
   });
 
   it("enqueues an ICP-rejected row instead of a target when the filter misses", async () => {
@@ -124,6 +182,21 @@ describe("runGitHubStarsFinder — per-repo rel routing", () => {
     expect(enqueued).toHaveLength(1);
     expect(enqueued[0]?.initialStatus).toBe("rejected");
     expect(enqueued[0]?.playName).toBe("competitor-switch");
+  });
+
+  it("does NOT persist a rejected row when classifier is transiently unavailable (match=null)", async () => {
+    // Regression guard for ultrareview bug 003. With the old behavior, a
+    // transient classifier failure persisted a rejected row keyed by
+    // dedupeKey, and isQueueDuplicate (no status filter) would lock the
+    // candidate out of every future tick. The fix: callers drop on
+    // match=null instead of persisting.
+    icpMatch = null;
+    await runGitHubStarsFinder({
+      dryRun: false,
+      yourEdge: "x",
+      repos: [{ repo: "apollographql/router", rel: "competitor", label: "Apollo" }],
+    });
+    expect(enqueued).toHaveLength(0);
   });
 
   it("respects the enqueue limit", async () => {

@@ -158,6 +158,15 @@ export async function regenerateDraftRoute(
   const ledger = getLedger();
   const row = ledger.getQueueRow(id);
   if (!row) return jsonResponse({ error: `row #${id} not found` }, 404, req);
+  // Once sent, last_draft_json IS the frozen sent content — never overwrite it
+  // with a fresh dry-run draft. Mirrors the guard in sendDraftRoute.
+  if (row.status === "sent") return jsonResponse({ error: "row already sent" }, 400, req);
+  // A send claimed the row but hasn't flipped status yet — refuse to start a
+  // regenerate that would race it. Mirrors the claimQueueSendingMarker
+  // primitive sendDraftRoute uses. Catches Scenario B (send started first).
+  if (row.send_started_at != null) {
+    return jsonResponse({ error: "send in flight, can't regenerate" }, 409, req);
+  }
 
   let target: unknown;
   try {
@@ -192,6 +201,19 @@ export async function regenerateDraftRoute(
   }
   const draft = drafted[0];
   if (!draft) return jsonResponse({ error: "no draft produced" }, 500, req);
+
+  // TOCTOU close: re-read the row after the multi-second dispatchPlay await.
+  // Catches Scenario A — a concurrent send completed during our LLM call.
+  // Without this, setQueueDraft below would overwrite the canonical sent
+  // body + wipe the receiptIds list.
+  const fresh = ledger.getQueueRow(id);
+  if (!fresh || fresh.status === "sent" || fresh.send_started_at != null) {
+    return jsonResponse(
+      { error: "send completed (or started) during regenerate" },
+      409,
+      req,
+    );
+  }
 
   ledger.setQueueDraft({
     id,

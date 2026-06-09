@@ -4,7 +4,7 @@
 
 **Body:**
 
-After 8 months building OneShot (pay-per-use APIs for email, voice, research, enrichment with on-chain signed receipts), we kept hearing the same thing from indie founders: "the API is great but I don't want to wire up Clay + Smartlead + Apollo + Outreach + an LLM just to send 30 cold emails this week."
+After 8 months building [your product] on top of OneShot (pay-per-use APIs for email, voice, research, enrichment with on-chain signed receipts), we kept hearing the same thing from indie founders: "the API is great but I don't want to wire up Clay + Smartlead + Apollo + Outreach + an LLM just to send 30 cold emails this week."
 
 So we open-sourced the wrapper. `oneshot-gtm` is a TypeScript CLI that ships ~10 named GTM plays — Show HN founder-to-founder outreach, post-funding triggers, customer-discovery interviews, PMF surveys, concierge onboarding voice calls — and runs them on top of OneShot's pay-per-result infra.
 

@@ -90,6 +90,43 @@ describe("runRepoInterest", () => {
     expect(calls.llmInputBlocks[0]).toContain("STARRED REPO: owner/name");
   });
 
+  it("includes a CANDIDATE REPOS block when candidateRepos is set, with name/[language]/desc", async () => {
+    await runRepoInterest({
+      dryRun: true,
+      targets: [
+        {
+          ...base,
+          repo: "owner/name",
+          yourEdge: "x",
+          candidateLogin: "ada",
+          candidateRepos: [
+            { name: "agent-loop", description: "self-rewriting skills", language: "Python" },
+            { name: "tiny-llm", description: null, language: "Rust" },
+          ],
+        },
+      ],
+    });
+    const block = calls.llmInputBlocks[0] ?? "";
+    expect(block).toContain("CANDIDATE REPOS");
+    expect(block).toContain("- agent-loop [Python]: self-rewriting skills");
+    expect(block).toContain("- tiny-llm [Rust]: (no description)");
+  });
+
+  it("omits the CANDIDATE REPOS block entirely when absent or empty", async () => {
+    await runRepoInterest({
+      dryRun: true,
+      targets: [{ ...base, repo: "owner/name", yourEdge: "x" }],
+    });
+    expect(calls.llmInputBlocks[0]).not.toContain("CANDIDATE REPOS");
+
+    calls.llmInputBlocks = [];
+    await runRepoInterest({
+      dryRun: true,
+      targets: [{ ...base, repo: "owner/name", yourEdge: "x", candidateRepos: [] }],
+    });
+    expect(calls.llmInputBlocks[0]).not.toContain("CANDIDATE REPOS");
+  });
+
   it("includes the per-repo repoEdge line when set, omits it when absent", async () => {
     await runRepoInterest({
       dryRun: true,

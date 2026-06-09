@@ -24,6 +24,20 @@ export interface RepoInterestTarget {
   evidenceUrl?: string;
   linkedinUrl?: string;
   phone?: string;
+  /** Candidate's GitHub login — kept on the payload so a future regenerate can
+   *  re-fetch their repos if we ever want it. Not consumed by the prompt today. */
+  candidateLogin?: string;
+  /**
+   * Candidate's own top public repos (sorted by recent push, forks excluded).
+   * Optional context fed to the prompt — the LLM picks at most one to weave
+   * as shared-taste evidence, or ignores when nothing fits. Absent / empty =
+   * the prompt's no-candidate-repos path kicks in.
+   */
+  candidateRepos?: Array<{
+    name: string;
+    description: string | null;
+    language: string | null;
+  }>;
 }
 
 export interface RepoInterestRunOptions {
@@ -77,6 +91,15 @@ const repoInterestDef: EmailPlayDef<RepoInterestTarget> = {
       `YOUR EDGE: ${t.yourEdge}`,
       ...(t.repoEdge
         ? [`WHY THIS REPO IS NOTABLE (peer nod + how your offer fits — see prompt): ${t.repoEdge}`]
+        : []),
+      ...(t.candidateRepos && t.candidateRepos.length > 0
+        ? [
+            `CANDIDATE REPOS (their public work, sorted by recent push):`,
+            ...t.candidateRepos.map(
+              (r) =>
+                `- ${r.name}${r.language ? ` [${r.language}]` : ""}: ${r.description ?? "(no description)"}`,
+            ),
+          ]
         : []),
       `DOSSIER:\n${prep.dossier || "(dry-run)"}`,
     ].join("\n"),
