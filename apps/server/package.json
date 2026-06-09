@@ -1,6 +1,6 @@
 {
   "name": "oneshot-gtm-server",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Local dashboard server for oneshot-gtm. Boots Bun.serve, opens the browser to your GTM operating state.",
   "homepage": "https://github.com/oneshot-agent/oneshot-gtm",
   "license": "MIT",
