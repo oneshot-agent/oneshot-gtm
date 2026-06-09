@@ -370,6 +370,13 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
         summary: `Going to: ${work.event.title} in ${work.event.city}. ${work.attendee.bio ?? ""}`,
       },
     });
+    if (filter.match === null) {
+      // Transient classifier failure (Anthropic 5xx, timeout, rate limit) —
+      // drop without persisting. A rejection would burn the dedupeKey for
+      // every future watch tick since isQueueDuplicate ignores status.
+      result.droppedEnrichment++;
+      continue;
+    }
     if (!filter.match) {
       result.droppedIcp++;
       ledger.enqueueTarget({

@@ -141,6 +141,13 @@ export async function processRepoCandidate(
       summary: describeForIcp(hit),
     },
   });
+  if (snippetFilter.match === null) {
+    // Transient classifier failure (Anthropic 5xx, timeout, rate limit) —
+    // drop without persisting. A rejection would burn the dedupeKey for
+    // every future watch tick since isQueueDuplicate ignores status.
+    result.droppedEnrichment++;
+    return;
+  }
   if (!snippetFilter.match) {
     result.droppedIcp++;
     ledger.enqueueTarget({

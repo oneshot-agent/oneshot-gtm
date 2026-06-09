@@ -1,12 +1,10 @@
 import { getLedger, logEvent, parallelMap } from "@oneshot-gtm/core";
-import type { FindEmailInput } from "@oneshot-gtm/core";
 import type { CompetitorSwitchTarget, RepoInterestTarget } from "@oneshot-gtm/plays";
+import { resolveAndVerifyContact } from "./_contact.ts";
 import { isDuplicate } from "./_dedupe.ts";
 import { enrichVerifiedContact } from "./_enrich.ts";
-import { shouldSkipFindEmail } from "./_findemail-prescreen.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { fetchGitHubUser, fetchTopRepos } from "./_github-user.ts";
-import { safeFindEmail, safeVerifyEmail } from "./_sdk-safe.ts";
 import { recentStargazers, type Stargazer } from "./_stargazers.ts";
 import type { FinderResult, RunOpts } from "./_types.ts";
 
@@ -169,6 +167,13 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
         summary: [user.company, `starred ${c.repo}`].filter(Boolean).join(" · "),
       },
     });
+    if (filter.match === null) {
+      // Transient classifier failure (Anthropic 5xx, timeout, rate limit) —
+      // drop without persisting. A rejection would burn the dedupeKey for
+      // every future watch tick since isQueueDuplicate ignores status.
+      result.droppedEnrichment++;
+      return;
+    }
     if (!filter.match) {
       result.droppedIcp++;
       // Persist the auto-rejection for review (skipped on dry-run previews).
@@ -191,42 +196,22 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
       return;
     }
 
-    // Resolve an email: public profile email first, else findEmail via the
-    // blog domain (gated by the prescreen). No domain + no public email → drop.
-    let email = user.email;
-    if (!email) {
-      const domain = user.blogDomain;
-      if (!domain) {
-        result.droppedEnrichment++;
-        return;
-      }
-      const skip = shouldSkipFindEmail({ fullName, companyDomain: domain });
-      if (!skip.ok) {
-        result.droppedEnrichment++;
-        logEvent("finder.skipped_findemail", { name: PLAY_NAME, reason: skip.reason }, "info");
-        return;
-      }
-      const findInput: FindEmailInput = { companyDomain: domain, fullName };
-      const found = await safeFindEmail(findInput, { playName: PLAY_NAME });
-      result.costUsd += found.result.cost ?? 0;
-      if (!found.result.found || !found.result.email) {
-        result.droppedEnrichment++;
-        return;
-      }
-      email = found.result.email;
-    }
-
-    const verified = await safeVerifyEmail({ email }, { playName: PLAY_NAME });
-    result.costUsd += verified.result.cost ?? 0;
-    if (!verified.result.deliverable) {
-      result.droppedEnrichment++;
+    // Resolve + verify an email: public profile email first, else findEmail via
+    // the blog domain (gated by the prescreen). No domain + no public email → drop.
+    const contact = await resolveAndVerifyContact({
+      playName: PLAY_NAME,
+      fullName,
+      knownEmail: user.email,
+      companyDomain: user.blogDomain,
+      isDuplicate: (email) => isDuplicate({ playName, dedupeKey, prospectEmail: email }),
+    });
+    result.costUsd += contact.costUsd;
+    if (!contact.ok) {
+      if (contact.reason === "duplicate") result.droppedDuplicate++;
+      else result.droppedEnrichment++;
       return;
     }
-
-    if (isDuplicate({ playName, dedupeKey, prospectEmail: email })) {
-      result.droppedDuplicate++;
-      return;
-    }
+    const email = contact.email;
 
     const enr = await enrichVerifiedContact(email, {
       playName: PLAY_NAME,

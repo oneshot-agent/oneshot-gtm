@@ -1,5 +1,5 @@
 import { getLedger, logEvent, webRead } from "@oneshot-gtm/core";
-import { safeFindEmail, safeVerifyEmail } from "./_sdk-safe.ts";
+import { resolveAndVerifyContact } from "./_contact.ts";
 import { complete, loadPrompt } from "@oneshot-gtm/intel";
 import type { AcceleratorBatchTarget } from "@oneshot-gtm/plays";
 import {
@@ -7,7 +7,6 @@ import {
   parseAcceleratorLaunchExtract,
 } from "./_accelerator-search-adapter.ts";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
-import { shouldSkipFindEmail } from "./_findemail-prescreen.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { enrichVerifiedContact } from "./_enrich.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
@@ -331,6 +330,13 @@ export async function runAcceleratorBatchFinder(
         summary: buildIcpSummary(record),
       },
     });
+    if (filter.match === null) {
+      // Transient classifier failure (Anthropic 5xx, timeout, rate limit) —
+      // drop without persisting. A rejection would burn the dedupeKey for
+      // every future watch tick since isQueueDuplicate ignores status.
+      result.droppedEnrichment++;
+      return;
+    }
     if (!filter.match) {
       result.droppedIcp++;
       ledger.enqueueTarget({
@@ -374,37 +380,22 @@ export async function runAcceleratorBatchFinder(
       result.droppedEnrichment++;
       return;
     }
-    const skip = shouldSkipFindEmail({ fullName: founderName, companyDomain: domain });
-    if (!skip.ok) {
-      result.droppedEnrichment++;
-      logEvent("finder.skipped_findemail", { name: PLAY_NAME, reason: skip.reason }, "info");
+    const contact = await resolveAndVerifyContact({
+      playName: PLAY_NAME,
+      fullName: founderName,
+      companyDomain: domain,
+      isDuplicate: (email) => isDuplicate({ playName: PLAY_NAME, dedupeKey, prospectEmail: email }),
+    });
+    result.costUsd += contact.costUsd;
+    if (!contact.ok) {
+      if (contact.reason === "duplicate") result.droppedDuplicate++;
+      else result.droppedEnrichment++;
       return;
     }
-    const found = await safeFindEmail(
-      { fullName: founderName, companyDomain: domain },
-      { playName: PLAY_NAME },
-    );
-    result.costUsd += found.result.cost ?? 0;
-    if (!found.result.found || !found.result.email) {
-      result.droppedEnrichment++;
-      return;
-    }
-    const email = found.result.email;
+    const email = contact.email;
     // Prefer the SDK's resolved name when available — it's the actual owner of
     // the email — and fall back to the founder name we resolved upstream.
-    const fullName = found.result.full_name?.trim() || founderName;
-
-    if (isDuplicate({ playName: PLAY_NAME, dedupeKey, prospectEmail: email })) {
-      result.droppedDuplicate++;
-      return;
-    }
-
-    const verified = await safeVerifyEmail({ email }, { playName: PLAY_NAME });
-    result.costUsd += verified.result.cost ?? 0;
-    if (!verified.result.deliverable) {
-      result.droppedEnrichment++;
-      return;
-    }
+    const fullName = contact.fullName?.trim() || founderName;
 
     const enr = await enrichVerifiedContact(email, {
       playName: PLAY_NAME,

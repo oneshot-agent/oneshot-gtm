@@ -1,9 +1,8 @@
 import { getLedger, logEvent, webSearch } from "@oneshot-gtm/core";
-import { safeFindEmail, safeVerifyEmail } from "./_sdk-safe.ts";
+import { resolveAndVerifyContact } from "./_contact.ts";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { JobChangeTarget } from "@oneshot-gtm/plays";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
-import { shouldSkipFindEmail } from "./_findemail-prescreen.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { enrichVerifiedContact } from "./_enrich.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
@@ -114,6 +113,13 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
       icp,
       candidate: { title: hit.title, url: hit.url, summary: hit.description },
     });
+    if (filter.match === null) {
+      // Transient classifier failure (Anthropic 5xx, timeout, rate limit) —
+      // drop without persisting. A rejection would burn the dedupeKey for
+      // every future watch tick since isQueueDuplicate ignores status.
+      result.droppedEnrichment++;
+      continue;
+    }
     if (!filter.match) {
       result.droppedIcp++;
       ledger.enqueueTarget({
@@ -168,35 +174,19 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
       result.droppedEnrichment++;
       continue;
     }
-    const skip = shouldSkipFindEmail({ fullName: extract.fullName, companyDomain: domain });
-    if (!skip.ok) {
-      result.droppedEnrichment++;
-      logEvent("finder.skipped_findemail", { name: PLAY_NAME, reason: skip.reason }, "info");
+    const contact = await resolveAndVerifyContact({
+      playName: PLAY_NAME,
+      fullName: extract.fullName,
+      companyDomain: domain,
+      isDuplicate: (email) => isDuplicate({ playName: PLAY_NAME, dedupeKey: hit.url, prospectEmail: email }),
+    });
+    result.costUsd += contact.costUsd;
+    if (!contact.ok) {
+      if (contact.reason === "duplicate") result.droppedDuplicate++;
+      else result.droppedEnrichment++;
       continue;
     }
-
-    const found = await safeFindEmail(
-      { fullName: extract.fullName, companyDomain: domain },
-      { playName: PLAY_NAME },
-    );
-    result.costUsd += found.result.cost ?? 0;
-    if (!found.result.found || !found.result.email) {
-      result.droppedEnrichment++;
-      continue;
-    }
-    const email = found.result.email;
-
-    if (isDuplicate({ playName: PLAY_NAME, dedupeKey: hit.url, prospectEmail: email })) {
-      result.droppedDuplicate++;
-      continue;
-    }
-
-    const verified = await safeVerifyEmail({ email }, { playName: PLAY_NAME });
-    result.costUsd += verified.result.cost ?? 0;
-    if (!verified.result.deliverable) {
-      result.droppedEnrichment++;
-      continue;
-    }
+    const email = contact.email;
 
     const enr = await enrichVerifiedContact(email, {
       playName: PLAY_NAME,

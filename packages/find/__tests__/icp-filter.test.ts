@@ -29,10 +29,13 @@ vi.mock("@oneshot-gtm/core", async () => {
 const { icpFilter } = await import("../src/_filter.ts");
 
 describe("icpFilter — failure isolation", () => {
-  it("drops the candidate (no throw) when the classifier errors", async () => {
+  it("returns match=null (transient, drop without persisting) when the classifier errors", async () => {
+    // null is distinct from false: callers must skip the candidate entirely
+    // (no rejected-row persist), otherwise the dedupeKey burns and the
+    // candidate is locked out of every future watch tick.
     completeShouldThrow = true;
     const res = await icpFilter({ icp: "B2B SaaS for eng teams", candidate: { title: "Acme" } });
-    expect(res.match).toBe(false);
+    expect(res.match).toBeNull();
     expect(res.reason).toMatch(/unavailable/i);
   });
 

@@ -1,9 +1,8 @@
-import { getLedger, logEvent, type FindEmailInput, webRead } from "@oneshot-gtm/core";
-import { safeFindEmail, safeVerifyEmail } from "./_sdk-safe.ts";
+import { getLedger, logEvent, webRead } from "@oneshot-gtm/core";
+import { resolveAndVerifyContact } from "./_contact.ts";
 import type { ShowHnTarget } from "@oneshot-gtm/plays";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
-import { shouldSkipFindEmail } from "./_findemail-prescreen.ts";
 import { enrichVerifiedContact } from "./_enrich.ts";
 import { findLinkedInUrl } from "./_linkedin.ts";
 import { parallelMap } from "./_parallel.ts";
@@ -101,6 +100,13 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
       },
     });
     // Rough cost: ~$0.001 per filter call (LLM tokens; not OneShot $).
+    if (filter.match === null) {
+      // Transient classifier failure (Anthropic 5xx, timeout, rate limit) —
+      // drop without persisting. A rejection would burn the dedupeKey for
+      // every future watch tick since isQueueDuplicate ignores status.
+      result.droppedEnrichment++;
+      return;
+    }
     if (!filter.match) {
       result.droppedIcp++;
       // Persist the auto-rejection so the founder can review what got
@@ -134,37 +140,21 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
 
     // Read the landing page so we have content for the hookSummary fallback +
     // a crude "founder name" guess (use the HN handle as fullName if present).
-    const fullName = hit.author && hit.author.length > 0 ? hit.author : undefined;
-    const skip = shouldSkipFindEmail({ fullName, companyDomain: domain });
-    if (!skip.ok) {
-      result.droppedEnrichment++;
-      logEvent("finder.skipped_findemail", { name: PLAY_NAME, reason: skip.reason }, "info");
+    const fullName = hit.author && hit.author.length > 0 ? hit.author : null;
+    const contact = await resolveAndVerifyContact({
+      playName: PLAY_NAME,
+      fullName,
+      companyDomain: domain,
+      isDuplicate: (email) =>
+        isDuplicate({ playName: PLAY_NAME, dedupeKey: hit.objectID, prospectEmail: email }),
+    });
+    result.costUsd += contact.costUsd;
+    if (!contact.ok) {
+      if (contact.reason === "duplicate") result.droppedDuplicate++;
+      else result.droppedEnrichment++;
       return;
     }
-    const findInput: FindEmailInput = { companyDomain: domain };
-    if (fullName) findInput.fullName = fullName;
-    const found = await safeFindEmail(findInput, { playName: PLAY_NAME });
-    result.costUsd += found.result.cost ?? 0;
-
-    if (!found.result.found || !found.result.email) {
-      result.droppedEnrichment++;
-      return;
-    }
-    const email = found.result.email;
-
-    // Verify deliverability.
-    const verified = await safeVerifyEmail({ email }, { playName: PLAY_NAME });
-    result.costUsd += verified.result.cost ?? 0;
-    if (!verified.result.deliverable) {
-      result.droppedEnrichment++;
-      return;
-    }
-
-    // Cross-table dedupe: same email already a known prospect?
-    if (isDuplicate({ playName: PLAY_NAME, dedupeKey: hit.objectID, prospectEmail: email })) {
-      result.droppedDuplicate++;
-      return;
-    }
+    const email = contact.email;
 
     // Optional: read the landing page for a richer hookSummary.
     let hookSummary = (hit.story_text ?? "").trim().slice(0, 280);
@@ -189,7 +179,7 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
       hookSummary = `Show HN post: ${hit.title}. ${hit.points} points.`;
     }
 
-    const founderName = found.result.full_name ?? hit.author;
+    const founderName = contact.fullName ?? hit.author;
     // Always enrich after verify to capture phone + linkedin from the SDK.
     const enr = await enrichVerifiedContact(email, {
       playName: PLAY_NAME,

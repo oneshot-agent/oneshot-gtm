@@ -13,7 +13,7 @@ interface EnqueuedRow {
   notes?: string;
 }
 const enqueued: EnqueuedRow[] = [];
-let icpMatch = true;
+let icpMatch: boolean | null = true;
 let stargazersByRepo: Record<
   string,
   Array<{ login: string; userUrl: string; starredAt: string }>
@@ -51,7 +51,10 @@ vi.mock("../src/_github-user.ts", () => ({
 }));
 vi.mock("../src/_filter.ts", () => ({
   resolveIcp: () => "icp",
-  icpFilter: async () => ({ match: icpMatch, reason: icpMatch ? "fits" : "nope" }),
+  icpFilter: async () => ({
+    match: icpMatch,
+    reason: icpMatch === null ? "icp classifier unavailable" : icpMatch ? "fits" : "nope",
+  }),
 }));
 vi.mock("../src/_enrich.ts", () => ({
   enrichVerifiedContact: async () => ({
@@ -179,6 +182,21 @@ describe("runGitHubStarsFinder — per-repo rel routing", () => {
     expect(enqueued).toHaveLength(1);
     expect(enqueued[0]?.initialStatus).toBe("rejected");
     expect(enqueued[0]?.playName).toBe("competitor-switch");
+  });
+
+  it("does NOT persist a rejected row when classifier is transiently unavailable (match=null)", async () => {
+    // Regression guard for ultrareview bug 003. With the old behavior, a
+    // transient classifier failure persisted a rejected row keyed by
+    // dedupeKey, and isQueueDuplicate (no status filter) would lock the
+    // candidate out of every future tick. The fix: callers drop on
+    // match=null instead of persisting.
+    icpMatch = null;
+    await runGitHubStarsFinder({
+      dryRun: false,
+      yourEdge: "x",
+      repos: [{ repo: "apollographql/router", rel: "competitor", label: "Apollo" }],
+    });
+    expect(enqueued).toHaveLength(0);
   });
 
   it("respects the enqueue limit", async () => {
