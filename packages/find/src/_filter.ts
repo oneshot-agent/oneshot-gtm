@@ -86,8 +86,16 @@ export async function icpFilter(input: {
 
 function parseIcpJson(raw: string): IcpFilterResult {
   const parsed = tryParseJsonObject<{ match?: unknown; reason?: unknown }>(raw, {});
+  // A malformed / truncated / refused response yields the `{}` fallback (no
+  // boolean `match`). Treat that as a transient failure (`null`) — same as a
+  // thrown classifier error — so callers drop WITHOUT persisting a rejected
+  // row. Collapsing it to `false` would burn the dedupeKey forever, since
+  // isQueueDuplicate ignores status.
+  if (typeof parsed.match !== "boolean") {
+    return { match: null, reason: "icp classifier malformed response" };
+  }
   return {
-    match: parsed.match === true,
+    match: parsed.match,
     reason: typeof parsed.reason === "string" ? parsed.reason : "no reason given",
   };
 }

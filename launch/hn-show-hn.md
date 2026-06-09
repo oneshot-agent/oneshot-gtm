@@ -31,7 +31,7 @@ Looking for feedback on:
 
 1. The plays we picked for Phase 0 vs Phase 1 — are we missing the obvious one?
 2. The "soft gates" pattern — useful or paternalistic?
-3. Anyone want to dogfood with us? Free credits for HN folks for the first 30 days; just email [your email] with your project.
+3. Anyone want to dogfood with us? [your offer — e.g. free credits for HN folks for the first 30 days]; just email [your email] with your project.
 
 — [your name], [your company]
 

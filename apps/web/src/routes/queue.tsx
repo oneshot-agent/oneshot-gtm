@@ -766,6 +766,11 @@ function DraftSection({
     },
     onError: (err) => {
       clearDraftGenerating(id);
+      // Refetch on failure too: if a concurrent send completed/claimed the row
+      // during the regenerate (server returns a 409 TOCTOU), the cached row is
+      // stale-`approved` and would keep the regenerate button live. Mirrors
+      // send.onError so the row flips to `sent` and the button disappears.
+      void qc.invalidateQueries({ queryKey: ["queue"] });
       toast.error(`couldn't draft · ${err.message}`);
     },
   });
