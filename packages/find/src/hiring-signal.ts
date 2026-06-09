@@ -203,7 +203,8 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
       playName: PLAY_NAME,
       fullName: managerName,
       companyDomain: domain,
-      isDuplicate: (email) => isDuplicate({ playName: PLAY_NAME, dedupeKey: hit.url, prospectEmail: email }),
+      isDuplicate: (email) =>
+        isDuplicate({ playName: PLAY_NAME, dedupeKey: hit.url, prospectEmail: email }),
     });
     result.costUsd += contact.costUsd;
     if (!contact.ok) {

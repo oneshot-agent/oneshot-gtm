@@ -158,7 +158,8 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
       playName: PLAY_NAME,
       fullName: extract.founderName,
       companyDomain: extract.companyDomain,
-      isDuplicate: (email) => isDuplicate({ playName: PLAY_NAME, dedupeKey: url, prospectEmail: email }),
+      isDuplicate: (email) =>
+        isDuplicate({ playName: PLAY_NAME, dedupeKey: url, prospectEmail: email }),
     });
     result.costUsd += contact.costUsd;
     if (!contact.ok) {

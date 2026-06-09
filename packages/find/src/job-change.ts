@@ -178,7 +178,8 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
       playName: PLAY_NAME,
       fullName: extract.fullName,
       companyDomain: domain,
-      isDuplicate: (email) => isDuplicate({ playName: PLAY_NAME, dedupeKey: hit.url, prospectEmail: email }),
+      isDuplicate: (email) =>
+        isDuplicate({ playName: PLAY_NAME, dedupeKey: hit.url, prospectEmail: email }),
     });
     result.costUsd += contact.costUsd;
     if (!contact.ok) {

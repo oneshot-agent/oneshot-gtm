@@ -92,7 +92,11 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
   let firstError: string | null = null;
   let newestSeen: string | null = null; // newest star across all repos, ignoring the window
   for (const w of opts.repos) {
-    const { stargazers, error, newestSeen: repoNewest } = await recentStargazers(w.repo, {
+    const {
+      stargazers,
+      error,
+      newestSeen: repoNewest,
+    } = await recentStargazers(w.repo, {
       sinceIso,
     });
     if (error && !firstError) firstError = `${w.repo}: ${error}`;
@@ -231,7 +235,7 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
     // pitch where the starred repo IS the signal; candidate's own repos add
     // noise, so we only fetch for the repo-interest branch.
     const candidateRepos =
-      c.rel === "competitor" ? undefined : (await fetchTopRepos(c.login)) ?? undefined;
+      c.rel === "competitor" ? undefined : ((await fetchTopRepos(c.login)) ?? undefined);
 
     const target: CompetitorSwitchTarget | RepoInterestTarget =
       c.rel === "competitor"

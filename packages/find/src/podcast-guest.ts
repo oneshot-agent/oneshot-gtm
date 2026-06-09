@@ -166,7 +166,8 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
       playName: PLAY_NAME,
       fullName: extract.guestName,
       companyDomain: extract.guestCompanyDomain,
-      isDuplicate: (email) => isDuplicate({ playName: PLAY_NAME, dedupeKey: hit.url, prospectEmail: email }),
+      isDuplicate: (email) =>
+        isDuplicate({ playName: PLAY_NAME, dedupeKey: hit.url, prospectEmail: email }),
     });
     result.costUsd += contact.costUsd;
     if (!contact.ok) {
