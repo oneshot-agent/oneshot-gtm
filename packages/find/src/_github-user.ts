@@ -102,9 +102,12 @@ export async function fetchGitHubUser(login: string): Promise<GitHubUserInfo | n
 
 /**
  * One of the candidate's own public repos, stripped to the fields the email
- * prompt actually weaves in. Forks are excluded at the API level via
- * `type=owner`; star count + dates are intentionally dropped to keep token
- * budget tight — the LLM picks ONE repo (if any) by topical fit, not by metrics.
+ * prompt actually weaves in. Forks are excluded CLIENT-SIDE in fetchTopRepos's
+ * filter chain (GitHub's `type=owner` query param filters by ownership
+ * relation — owner vs collaborator-via-member — NOT by fork status; a fork the
+ * user owns is still returned). Star count + dates are intentionally dropped
+ * to keep token budget tight — the LLM picks ONE repo (if any) by topical fit,
+ * not by metrics.
  */
 export interface TopRepo {
   name: string;
@@ -128,7 +131,14 @@ export function _resetTopReposCache(): void {
  * Fetch the candidate's top 10 OWN public repos, sorted by most-recent push
  * — i.e. "what they actively ship." No star filter (a one-star repo can still
  * be the most-telling signal of what they care about right now). Forks are
- * excluded because they're a weak signal of authorship.
+ * dropped client-side in the filter chain below — they're a weak signal of
+ * authorship AND with `sort=pushed` a fork tracking a busy upstream
+ * (kubernetes, next.js) would float to the top and get framed to the LLM as
+ * shipping evidence.
+ *
+ * Note: GitHub's `type=owner` URL param filters by OWNERSHIP relation (owner
+ * vs collaborator-via-member), NOT by fork status. The endpoint has no
+ * `fork=false` param; client-side filtering on the response is the only way.
  *
  * Returns null on any non-2xx / network error / parse failure — caller treats
  * an absent enrichment as "skip the repos block in the prompt," never fatal.
@@ -167,12 +177,23 @@ export async function fetchTopRepos(login: string): Promise<TopRepo[] | null> {
       logEvent("github.repos.fetch", { login, ok: false, status: res.status, malformed: true });
       return null;
     }
-    // Drop archived repos (sort=pushed can float a recently-archived repo to
-    // the top) and entries without a usable name. Cap description length so a
-    // few wordy READMEs can't blow up the prompt token budget — 160 chars is
-    // roughly one full sentence, enough for the LLM to judge topical fit.
+    // Drop:
+    //   - forks (type=owner doesn't exclude them; daily-syncing forks of
+    //     popular OSS would float to the top via sort=pushed and read as
+    //     shipping evidence to the LLM)
+    //   - archived repos (sort=pushed can float a recently-archived repo)
+    //   - entries without a usable name (defensive against API drift)
+    // Cap description length so a few wordy READMEs can't blow up the prompt
+    // token budget — 160 chars is roughly one full sentence, enough for the
+    // LLM to judge topical fit.
     const repos: TopRepo[] = json
-      .filter((r) => r["archived"] !== true && typeof r["name"] === "string" && r["name"] !== "")
+      .filter(
+        (r) =>
+          r["archived"] !== true &&
+          r["fork"] !== true &&
+          typeof r["name"] === "string" &&
+          r["name"] !== "",
+      )
       .map((r) => {
         const rawDesc =
           typeof r["description"] === "string" && r["description"] !== ""

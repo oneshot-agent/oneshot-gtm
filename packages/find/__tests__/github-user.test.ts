@@ -233,10 +233,16 @@ describe("fetchTopRepos", () => {
     expect(await fetchTopRepos("ada")).toEqual([]);
   });
 
-  it("filters out archived repos and missing-name entries", async () => {
+  it("filters out archived + forked + missing-name entries", async () => {
+    // Regression guard for ultrareview bug_001. type=owner does NOT exclude
+    // forks (it filters by ownership relation, not fork status) — a fork of
+    // kubernetes the user owns would be returned and, with sort=pushed,
+    // float to the top because forks track upstream pushes. Client-side
+    // filter on r.fork drops them.
     mockFetchOnceJson(200, [
       { name: "live-repo", description: "still maintained", language: "Go", archived: false },
       { name: "old-thing", description: "shelved last year", language: "C", archived: true },
+      { name: "kubernetes", description: "fork of upstream", language: "Go", fork: true },
       { name: "", description: "no name somehow", language: null },
       { description: "no name field at all", language: "JS" },
       { name: "another-live", description: null, language: null },
@@ -246,6 +252,10 @@ describe("fetchTopRepos", () => {
       { name: "live-repo", description: "still maintained", language: "Go" },
       { name: "another-live", description: null, language: null },
     ]);
+    // Explicit: the fork must not be in the output (the test above already
+    // covers this transitively, but being explicit makes the intent obvious
+    // for future readers).
+    expect(out?.some((r) => r.name === "kubernetes")).toBe(false);
   });
 
   it("truncates descriptions over 160 chars with an ellipsis", async () => {
