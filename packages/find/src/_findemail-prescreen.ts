@@ -159,8 +159,6 @@ export function looksLikeUserHandle(name: string | null | undefined): boolean {
   return /^[a-z0-9_-]+$/i.test(trimmed);
 }
 
-export type PrescreenReason = "no-domain" | "dud-domain" | "no-fullname" | "handle-not-name";
-
 /**
  * Pre-flight guard. Returns `{ok:true}` to proceed with the SDK call, or
  * `{ok:false, reason}` to skip. The reason is human-readable and stable

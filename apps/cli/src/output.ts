@@ -18,10 +18,6 @@ export function header(s: string): void {
   process.stdout.write(`\n${c.bold(c.cyan(s))}\n`);
 }
 
-export function bullet(s: string): void {
-  process.stdout.write(`  ${c.dim("•")} ${s}\n`);
-}
-
 export function ok(s: string): void {
   process.stdout.write(`  ${c.green("✓")} ${s}\n`);
 }
@@ -43,6 +39,3 @@ export function box(title: string, body: string): void {
   process.stdout.write(`\n${line}\n${c.bold(title)}\n${line}\n${body}\n${line}\n\n`);
 }
 
-export function diag(label: string, value: string): void {
-  process.stdout.write(`  ${c.dim(label.padEnd(16))} ${value}\n`);
-}

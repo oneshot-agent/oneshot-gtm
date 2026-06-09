@@ -1,19 +1,6 @@
 import { type EmailPlayDef, runEmailPlay, standardEnrich } from "./_run-play.ts";
 import { buildFollowUpEmail, registerSequence } from "./_cadence.ts";
 
-export type AcceleratorCohort =
-  | "yc-w26"
-  | "yc-s26"
-  | "yc-w25"
-  | "yc-s25"
-  | "od"
-  | "spc"
-  | "antler"
-  | "techstars"
-  | "neo"
-  | "soma"
-  | "other";
-
 export interface AcceleratorBatchTarget {
   name: string;
   email: string;

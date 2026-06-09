@@ -149,7 +149,3 @@ export function _resetClientIdCacheForTests(): void {
   runId = null;
 }
 
-/** Path the JSONL log lives at — exposed so docs/CLI hints can reference it. */
-export function eventsLogPath(): string {
-  return EVENTS_PATH;
-}

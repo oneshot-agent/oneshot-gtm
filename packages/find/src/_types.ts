@@ -25,13 +25,6 @@ export interface FinderResult {
   perCohort?: Array<{ cohort: string; records: number; error?: string }>;
 }
 
-export interface CandidateBase {
-  /** Unique key for dedupe within this play. */
-  dedupeKey: string;
-  /** Free-text description used for ICP filtering. */
-  description: string;
-}
-
 export interface ShowHnHit {
   objectID: string;
   title: string;

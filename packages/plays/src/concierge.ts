@@ -1,7 +1,6 @@
 import {
   getLedger,
   loadConfig,
-  receiptUrlForId,
   sendEmail,
   voiceCall,
   type VoiceCallResult,
@@ -174,10 +173,6 @@ async function draftWithPrompt(opts: { promptName: string; inputBlock: string })
   });
   const parsed = tryParseJsonObject<{ subject?: string; body?: string }>(res.content, {});
   return { subject: (parsed.subject ?? "").trim(), body: (parsed.body ?? "").trim() };
-}
-
-export function conciergeReceiptUrls(receiptIds: number[]): string[] {
-  return receiptIds.map(receiptUrlForId);
 }
 
 function fillTemplate(raw: string, vars: Record<string, string>): string {

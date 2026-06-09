@@ -565,14 +565,6 @@ export function getTriggerRunningSince(name: string): number | null {
   return freshRunningStartedAtMs(getLedger().getTrigger(name)?.running_started_at, Date.now());
 }
 
-export function listRunningTriggers(): string[] {
-  const now = Date.now();
-  return getLedger()
-    .listTriggers()
-    .filter((r) => freshRunningStartedAtMs(r.running_started_at, now) !== null)
-    .map((r) => r.name);
-}
-
 /**
  * Fire-and-forget wrapper around `runTriggerNow`: returns immediately after
  * marking the trigger as running in the ledger; the actual finder work runs

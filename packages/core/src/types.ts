@@ -156,15 +156,3 @@ export interface TriggerRow {
   running_started_at: string | null;
 }
 
-export type PlayName =
-  | "show-hn"
-  | "job-change"
-  | "post-funding"
-  | "accelerator-batch"
-  | "competitor-switch"
-  | "stack-consolidation"
-  | "hiring-signal"
-  | "podcast-guest"
-  | "demo-no-show"
-  | "concierge"
-  | "breakup-revive";
