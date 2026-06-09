@@ -24,7 +24,7 @@ jobs:
   publish-server:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # Bun runs the workspace install + the tsdown build (matches local dev).
       - uses: oven-sh/setup-bun@v2
@@ -34,7 +34,7 @@ jobs:
       # Node + registry-url is what configures the implicit ~/.npmrc auth that
       # `npm publish` reads from NODE_AUTH_TOKEN. Bun has no equivalent flow
       # for `--provenance` yet, so we use npm for the publish step itself.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
