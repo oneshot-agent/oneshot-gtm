@@ -29,6 +29,12 @@ export interface LumaEventsTarget {
   company?: string;
   /** One-line bio / role pulled from the prospect's Luma profile (e.g. "Founder @ AcmeAI"). */
   attendeeBio?: string;
+  /**
+   * Relationship to the event: "Host" (organizer) vs "Guest" (featured
+   * attendee). Surfaced in the queue for review and fed to the prompt so a
+   * host isn't pitched as if they're merely attending their own event.
+   */
+  role?: string;
   /** Event display name, e.g. "SF AI Builders Meetup". */
   eventTitle: string;
   /** ISO date or datetime; UI/prompt humanizes to "next Tuesday". */
@@ -53,7 +59,7 @@ export interface LumaEventsRunOptions {
   ) => void;
 }
 
-export interface LumaEventsDraft {
+interface LumaEventsDraft {
   target: LumaEventsTarget;
   subject: string;
   body: string;
@@ -88,6 +94,8 @@ const lumaEventsDef: EmailPlayDef<LumaEventsTarget> = {
       `PRODUCT: ${cfg.productOneLiner}`,
       `PROSPECT: ${t.name}${t.company ? ` at ${t.company}` : ""}`,
       `ATTENDEE BIO/ROLE: ${t.attendeeBio ?? "(none)"}`,
+      // "Host" = they RUN the event — never write as if they're merely going.
+      `RELATIONSHIP TO EVENT: ${t.role ?? "(unknown — assume attendee)"}`,
       `EVENT TITLE: ${t.eventTitle}`,
       `EVENT CITY: ${t.eventCity}`,
       `EVENT DATE: ${humanizeEventDate(t.eventDate)} (${t.eventDate})`,
@@ -106,8 +114,6 @@ const lumaEventsDef: EmailPlayDef<LumaEventsTarget> = {
   metadata: (t) => ({ eventTitle: t.eventTitle, eventUrl: t.eventUrl, eventDate: t.eventDate }),
 };
 
-export function runLumaEvents(
-  opts: LumaEventsRunOptions,
-): Promise<{ drafted: LumaEventsDraft[] }> {
+export function runLumaEvents(opts: LumaEventsRunOptions): Promise<{ drafted: LumaEventsDraft[] }> {
   return runEmailPlay(lumaEventsDef, opts);
 }

@@ -75,7 +75,7 @@ Motion plays don't require hand-curated JSON anymore. Ten **finders** auto-disco
 - **`accelerator-batch`** — yc-oss directory + websearch fallback for non-YC cohorts (Techstars, Antler, 500 Global, AI Grant)
 - **`github-topics`** — GitHub-API manifest scan (`package.json`, `pyproject.toml`, `requirements.txt`) detects vendor stack deterministically; finds repos stitching together N agent vendors as competitor-switch targets
 - **`github-stars`** — recent stargazers of repos you watch, routed per repo: tag a repo `competitor` (→ competitor-switch) or `adjacent` (→ repo-interest, a "you're into X, my product helps" intro)
-- **`luma-events`** — upcoming Luma events by topic + city; pitches publicly-visible attendees (speakers / sponsors / featured guests). Optional `LUMA_SESSION_COOKIE` env var unlocks the full guest list via Luma's internal API; public-only without it
+- **`luma-events`** — upcoming events from Luma's own city pages (genuinely upcoming, not search-indexed leftovers), gated per event by a topic + ICP check before any spend; pitches the hosts + featured guests Luma exposes publicly per event — with their LinkedIn/website, so contact resolution actually lands. Each queue row is tagged `Host` or `Guest` and drafted accordingly
 - **`breakup-revive`** — scans the local ledger for prospects cold for 60-90 days
 
 Each finder runs as a **trigger** with its own interval + spend cap. Captured per-prospect signals (LinkedIn URL via webSearch + phone via passive enrichment when surfaced) show next to the email + company in `/queue`. Approved rows ship via `bun run cli -- find drain <play>` or the per-play **Drain** button on the Queue page.

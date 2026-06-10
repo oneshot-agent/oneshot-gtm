@@ -278,10 +278,12 @@ export const TRIGGERS: TriggerSpec[] = [
       }),
   },
   {
-    // Luma upcoming-event attendees. Public-only mode (no login cookie):
-    // pulls speakers / featured guests / approved-going names whose hosts
-    // enabled "Show Who's Coming". Resolves contact via LinkedIn enrichProfile
-    // (employer domain) or attendee websiteUrl, then standard findEmail chain.
+    // Luma upcoming-event hosts + featured guests. Discovery reads Luma's
+    // per-city pages (genuinely upcoming; webSearch fallback for unmapped
+    // cities); each event passes a keyword + LLM topic/ICP gate before any
+    // paid read; attendees come structured (with linkedin/website) from
+    // Luma's public event JSON. Contact via LinkedIn enrichProfile or
+    // website domain, then the standard findEmail chain.
     name: "luma-events",
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
@@ -294,7 +296,7 @@ export const TRIGGERS: TriggerSpec[] = [
       maxCostUsd: 5,
     },
     configBrief:
-      "Discovers upcoming Luma events whose topic + city overlap with the founder's ICP, then pitches the publicly-visible attendees — speakers, sponsors, featured guests, and whoever the organizer surfaced via 'Show Who's Coming'. Coverage per event is 5-30 attendees (the highest-signal subset Luma exposes without login). Config: `topics` (phrases combined with cities into webSearch queries — e.g. ['AI', 'founders', 'product']), `cities` (e.g. ['San Francisco', 'New York']), `yourEdge` (one-line angle on why your product helps event-going people, REQUIRED), `sinceDays` (forward-looking window in days — events further out than this are dropped), `limit`, `maxCostUsd`. STRATEGIST DUTY: align topics to your ICP's actual gathering spots (AI hackers ≠ growth marketers); city list narrows search recall.",
+      "Discovers upcoming Luma events from Luma's per-city pages, gates each event on the founder's topics + ICP (a free keyword pre-filter, then one LLM relevance call on the event name) BEFORE any paid read, then pitches the event's hosts + featured guests — Luma's public event JSON carries their LinkedIn/website, so contact resolution lands. Coverage per event: the hosts (always public) + up to ~10 featured guests when the organizer shows 'Who's Coming'. Each row is tagged Host or Guest and the email is drafted role-aware. Config: `topics` (phrases whose words must appear in / relate to the event name — e.g. ['AI agents', 'MCP']; they gate events, not search queries), `cities` (major hubs work best — San Francisco, New York, LA, London, etc. map to Luma city pages; other cities fall back to webSearch), `yourEdge` (one-line angle on why your product helps event-going people, REQUIRED), `sinceDays` (forward-looking window in days — events further out than this are dropped), `limit`, `maxCostUsd`. STRATEGIST DUTY: align topics to your ICP's actual gathering spots (AI hackers ≠ growth marketers) and include the vocabulary event names actually use (e.g. 'agents', 'hackathon', 'MCP').",
     readiness: (cfg) => {
       const topics = Array.isArray(cfg["topics"]) ? cfg["topics"] : null;
       if (!topics || topics.filter((t) => typeof t === "string" && t.trim()).length === 0) {
@@ -314,10 +316,18 @@ export const TRIGGERS: TriggerSpec[] = [
       runLumaFinder({
         dryRun: false,
         ...(Array.isArray(cfg["topics"])
-          ? { topics: (cfg["topics"] as unknown[]).filter((t): t is string => typeof t === "string") }
+          ? {
+              topics: (cfg["topics"] as unknown[]).filter(
+                (t): t is string => typeof t === "string",
+              ),
+            }
           : {}),
         ...(Array.isArray(cfg["cities"])
-          ? { cities: (cfg["cities"] as unknown[]).filter((c): c is string => typeof c === "string") }
+          ? {
+              cities: (cfg["cities"] as unknown[]).filter(
+                (c): c is string => typeof c === "string",
+              ),
+            }
           : {}),
         ...(typeof cfg["yourEdge"] === "string" ? { yourEdge: cfg["yourEdge"] as string } : {}),
         sinceDays: (cfg["sinceDays"] as number) ?? 14,

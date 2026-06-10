@@ -20,9 +20,10 @@ interface FetchSpyCall {
   cookie: string;
 }
 
-function makeFetch(
-  responses: Array<{ status: number; body?: unknown; throws?: Error }>,
-): { fn: typeof globalThis.fetch; calls: FetchSpyCall[] } {
+function makeFetch(responses: Array<{ status: number; body?: unknown; throws?: Error }>): {
+  fn: typeof globalThis.fetch;
+  calls: FetchSpyCall[];
+} {
   const calls: FetchSpyCall[] = [];
   let i = 0;
   const fn = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -75,9 +76,7 @@ describe("fetchAuthedGuestList — request shape", () => {
     globalThis.fetch = fn;
     await fetchAuthedGuestList(SLUG, COOKIE);
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.url).toBe(
-      `https://api.lu.ma/event/admin/get-guest-list?event_api_id=${SLUG}`,
-    );
+    expect(calls[0]?.url).toBe(`https://api.lu.ma/event/admin/get-guest-list?event_api_id=${SLUG}`);
     expect(calls[0]?.cookie).toBe(`luma.auth-session-key=${COOKIE}`);
   });
 
@@ -132,9 +131,7 @@ describe("fetchAuthedGuestList — response handling", () => {
   });
 
   it("falls back to the `guests` array shape when `entries` is absent", async () => {
-    const { fn } = makeFetch([
-      { status: 200, body: { guests: [{ user: { name: "Pat" } }] } },
-    ]);
+    const { fn } = makeFetch([{ status: 200, body: { guests: [{ user: { name: "Pat" } }] } }]);
     globalThis.fetch = fn;
     const out = await fetchAuthedGuestList(SLUG, COOKIE);
     expect(out).toHaveLength(1);
@@ -170,7 +167,8 @@ describe("fetchAuthedGuestList — response handling", () => {
 
   it("returns null when JSON parse fails", async () => {
     // Raw fetch with a non-JSON body.
-    const fn = (async () => new Response("not json", { status: 200 })) as unknown as typeof globalThis.fetch;
+    const fn = (async () =>
+      new Response("not json", { status: 200 })) as unknown as typeof globalThis.fetch;
     globalThis.fetch = fn;
     expect(await fetchAuthedGuestList(SLUG, COOKIE)).toBeNull();
   });
@@ -197,12 +195,7 @@ describe("fetchAuthedGuestList — response handling", () => {
       {
         status: 200,
         body: {
-          entries: [
-            { user: { name: "" } },
-            { user: null },
-            {},
-            { user: { name: "Real Person" } },
-          ],
+          entries: [{ user: { name: "" } }, { user: null }, {}, { user: { name: "Real Person" } }],
         },
       },
     ]);
@@ -226,6 +219,10 @@ describe("buildLinkedinUrl", () => {
     // No-scheme variants previously double-prefixed — now stripped correctly.
     ["linkedin.com/in/sarah", "https://www.linkedin.com/in/sarah"],
     ["www.linkedin.com/in/sarah", "https://www.linkedin.com/in/sarah"],
+    // Bare-path shape returned by api.lu.ma's linkedin_handle field.
+    ["/in/sarah", "https://www.linkedin.com/in/sarah"],
+    ["in/sarah", "https://www.linkedin.com/in/sarah"],
+    ["/sarah", "https://www.linkedin.com/in/sarah"],
   ];
   for (const [input, expected] of cases) {
     it(`${JSON.stringify(input)} → ${JSON.stringify(expected)}`, () => {

@@ -2,12 +2,18 @@ import { logEvent } from "@oneshot-gtm/core";
 import type { LumaPublicAttendee } from "./_types.ts";
 
 /**
- * Optional v2 path for the luma-events finder. When the founder has pasted
+ * Optional auth path for the luma-events finder. When the founder has pasted
  * their `luma.auth-session-key` cookie into `LUMA_SESSION_COOKIE`, this helper
- * fetches the FULL guest list from Luma's internal API — the same call the
- * logged-in dashboard makes. Public-only mode (no cookie) caps coverage at
- * the 5-30 attendees Luma chose to surface; auth'd mode unlocks everyone
- * the founder could see by clicking the event in their browser.
+ * tries to fetch the FULL guest list from Luma's internal API.
+ *
+ * KNOWN LIMIT (verified live, 2026-06): the guest-list endpoint is HOST-ONLY —
+ * a valid cookie on someone else's event returns 403 "You don't have access to
+ * this event", even when the host shows "Who's Coming". So this path only adds
+ * coverage for events the FOUNDER hosts. (It also expects the `evt-` api_id
+ * where the caller passes the URL slug, which 404s first — moot for cold
+ * discovery given the 403.) Cold-discovery contact data comes from the public
+ * `api.lu.ma/url` event JSON instead — see `fetchEventDetails` in
+ * `_luma-discover.ts`.
  *
  * The endpoint is undocumented and may change. We try two URL shapes (the
  * `/admin/` and the bare variant) and fall back gracefully to null on any
@@ -58,9 +64,13 @@ export function buildLinkedinUrl(input: string | null | undefined): string | nul
   const v = String(input).trim();
   if (v.length === 0) return null;
   if (/^https?:\/\//i.test(v)) return v;
-  // Handle no-scheme variants like "linkedin.com/in/sarah" or "www.linkedin.com/in/sarah":
-  // strip the host prefix so we don't end up with "/in/linkedin.com/in/sarah".
-  const cleaned = v.replace(/^(?:www\.)?linkedin\.com\/in\//i, "");
+  // Handle no-scheme variants like "linkedin.com/in/sarah", "www.linkedin.com/in/sarah",
+  // and the bare-path shape the lu.ma API returns ("/in/sarah" or "in/sarah"):
+  // strip those prefixes so we don't end up with "/in//in/sarah".
+  const cleaned = v
+    .replace(/^(?:www\.)?linkedin\.com\/in\//i, "")
+    .replace(/^\/?in\//i, "")
+    .replace(/^\//, "");
   return `https://www.linkedin.com/in/${cleaned.replace(/^@/, "")}`;
 }
 
@@ -134,11 +144,7 @@ export async function fetchAuthedGuestList(
     lastStatus = res.status;
     if (res.status === 404) continue; // try next endpoint shape
     if (res.status === 401 || res.status === 403) {
-      logEvent(
-        "luma-events.auth_unauthorized",
-        { slug: eventSlug, status: res.status },
-        "warn",
-      );
+      logEvent("luma-events.auth_unauthorized", { slug: eventSlug, status: res.status }, "warn");
       return null;
     }
     if (!res.ok) {
@@ -153,21 +159,13 @@ export async function fetchAuthedGuestList(
     try {
       body = await res.json();
     } catch {
-      logEvent(
-        "error.swallowed",
-        { kind: "luma-events.auth_parse", slug: eventSlug },
-        "warn",
-      );
+      logEvent("error.swallowed", { kind: "luma-events.auth_parse", slug: eventSlug }, "warn");
       return null;
     }
     const parsed = body as RawResponse | null;
     const raws = parsed?.entries ?? parsed?.guests ?? null;
     if (!Array.isArray(raws)) {
-      logEvent(
-        "error.swallowed",
-        { kind: "luma-events.auth_shape", slug: eventSlug },
-        "warn",
-      );
+      logEvent("error.swallowed", { kind: "luma-events.auth_shape", slug: eventSlug }, "warn");
       return null;
     }
     const projected: LumaPublicAttendee[] = [];
