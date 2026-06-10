@@ -6,7 +6,7 @@
  * trigger).
  */
 
-export type StrategistActionKind = "enable" | "disable" | "apply-config";
+type StrategistActionKind = "enable" | "disable" | "apply-config";
 
 export interface ParsedStrategistAction {
   kind: StrategistActionKind;
@@ -25,7 +25,7 @@ export interface ParsedStrategistAction {
  * handle JSON with multiple `-->` substrings (rare, but possible if a vendor
  * name contains them).
  */
-export const ACTION_RE = /<!--ACTION:(enable|disable|apply-config):([^:>]+?)(?::([\s\S]*?))?-->/;
+const ACTION_RE = /<!--ACTION:(enable|disable|apply-config):([^:>]+?)(?::([\s\S]*?))?-->/;
 
 /**
  * Looser match for partial markers mid-stream. Used to strip "<!--ACTION:..."
@@ -33,7 +33,7 @@ export const ACTION_RE = /<!--ACTION:(enable|disable|apply-config):([^:>]+?)(?::
  * founder doesn't see marker scaffolding flicker into view as the SSE
  * stream paints chunk by chunk.
  */
-export const PARTIAL_ACTION_RE = /<!--ACTION:[\s\S]*$/;
+const PARTIAL_ACTION_RE = /<!--ACTION:[\s\S]*$/;
 
 export function parseStrategistAction(text: string): ParsedStrategistAction | null {
   const m = text.match(ACTION_RE);

@@ -2,7 +2,7 @@ import { getLedger } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 
 export type Verdict = "green" | "yellow" | "red";
-export type SignalStatus = "met" | "partial" | "not_met" | "unknown";
+type SignalStatus = "met" | "partial" | "not_met" | "unknown";
 
 export interface ReadinessAnswers {
   seanEllisAboveForty: "yes" | "no" | "not_yet";
@@ -82,7 +82,7 @@ export interface TemplatizeResult {
   raw: string;
 }
 
-export interface PreflightResult {
+interface PreflightResult {
   status: "earned" | "not_earned";
   handSends: number;
   threshold: number;

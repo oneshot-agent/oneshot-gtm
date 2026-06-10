@@ -31,7 +31,7 @@ export interface BreakupReviveOptions {
   valueDrop?: string;
 }
 
-export interface BreakupReviveDraft {
+interface BreakupReviveDraft {
   prospectEmail: string | null;
   prospectName: string | null;
   daysCold: number;

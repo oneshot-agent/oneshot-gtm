@@ -37,7 +37,7 @@ const badgeStyles = cva(
   },
 );
 
-export interface BadgeProps
+interface BadgeProps
   extends HTMLAttributes<HTMLSpanElement>, VariantProps<typeof badgeStyles> {}
 
 export function Badge({ className, tone, ...rest }: BadgeProps) {

@@ -10,9 +10,9 @@ import {
   secretSource,
 } from "@oneshot-gtm/core";
 
-export type CheckSeverity = "ok" | "warn" | "fail";
+type CheckSeverity = "ok" | "warn" | "fail";
 
-export interface CheckResult {
+interface CheckResult {
   name: string;
   severity: CheckSeverity;
   message: string;

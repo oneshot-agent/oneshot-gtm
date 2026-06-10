@@ -31,7 +31,7 @@ export interface HiringSignalRunOptions {
   skipScrape?: boolean;
 }
 
-export interface HiringSignalDraft {
+interface HiringSignalDraft {
   target: HiringSignalTarget;
   subject: string;
   body: string;

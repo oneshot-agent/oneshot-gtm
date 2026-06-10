@@ -46,7 +46,7 @@ const dotStyles = cva("h-[6px] w-[6px] rounded-full", {
   defaultVariants: { tone: "neutral" },
 });
 
-export interface StatusPillProps
+interface StatusPillProps
   extends HTMLAttributes<HTMLSpanElement>, VariantProps<typeof pillStyles> {
   label: string;
   value?: string | number;

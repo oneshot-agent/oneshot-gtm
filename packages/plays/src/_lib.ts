@@ -182,7 +182,7 @@ export interface DraftedEmail {
  * batch can keep going. Same shape `drain.ts` synthesizes when its outer
  * `dispatchOneTarget` catches — one source of truth for the error envelope.
  */
-export interface ErrorDraft {
+interface ErrorDraft {
   subject: string;
   body: string;
   flags: string[];
@@ -471,7 +471,7 @@ export function firstNameFrom(name: string | null | undefined): string | null {
   return first.replace(/,$/, "");
 }
 
-export interface VerifyAndFilterResult<T> {
+interface VerifyAndFilterResult<T> {
   verified: T[];
   dropped: Array<{ target: T; email: string; reason: string }>;
   receiptIds: number[];

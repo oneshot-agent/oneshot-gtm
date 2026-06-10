@@ -32,7 +32,7 @@ export interface CompetitorSwitchRunOptions {
   skipBrowserScrape?: boolean;
 }
 
-export interface CompetitorSwitchDraft {
+interface CompetitorSwitchDraft {
   target: CompetitorSwitchTarget;
   subject: string;
   body: string;

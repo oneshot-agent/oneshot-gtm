@@ -22,7 +22,7 @@ export interface JobChangeRunOptions {
   ) => void;
 }
 
-export interface JobChangeDraft {
+interface JobChangeDraft {
   target: JobChangeTarget;
   subject: string;
   body: string;

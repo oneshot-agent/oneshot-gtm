@@ -31,7 +31,7 @@ export interface AcceleratorBatchRunOptions {
   freeForCohortOffer?: string;
 }
 
-export interface AcceleratorBatchDraft {
+interface AcceleratorBatchDraft {
   target: AcceleratorBatchTarget;
   subject: string;
   body: string;

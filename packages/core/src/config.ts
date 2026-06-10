@@ -42,7 +42,7 @@ export function configDir(): string {
   return CONFIG_DIR;
 }
 
-export function ensureConfigDir(): void {
+function ensureConfigDir(): void {
   if (!existsSync(CONFIG_DIR)) mkdirSync(CONFIG_DIR, { recursive: true });
 }
 
@@ -97,7 +97,7 @@ export function secretsPath(): string {
   return SECRETS_PATH;
 }
 
-export function loadSecretsFile(): Record<string, string> {
+function loadSecretsFile(): Record<string, string> {
   if (!existsSync(SECRETS_PATH)) return {};
   const out: Record<string, string> = {};
   for (const raw of readFileSync(SECRETS_PATH, "utf8").split(/\r?\n/)) {
@@ -115,7 +115,7 @@ export function loadSecretsFile(): Record<string, string> {
   return out;
 }
 
-export function applySecretsToEnv(): void {
+function applySecretsToEnv(): void {
   const stored = loadSecretsFile();
   for (const [k, v] of Object.entries(stored)) {
     if (process.env[k] === undefined || process.env[k] === "") {

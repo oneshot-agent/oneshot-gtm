@@ -1,6 +1,6 @@
 import type { QueueRowView } from "@oneshot-gtm/shared-types";
 
-export interface SignalDay {
+interface SignalDay {
   /** Local-formatted day label, e.g. "Mon · Apr 21". */
   label: string;
   count: number;

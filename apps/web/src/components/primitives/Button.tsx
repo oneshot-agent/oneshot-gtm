@@ -60,7 +60,7 @@ const buttonStyles = cva(
   },
 );
 
-export interface ButtonProps
+interface ButtonProps
   extends ButtonHTMLAttributes<HTMLButtonElement>, VariantProps<typeof buttonStyles> {}
 
 export function Button({ className, variant, size, ...rest }: ButtonProps) {

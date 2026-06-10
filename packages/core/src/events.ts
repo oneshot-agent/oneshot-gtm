@@ -28,9 +28,9 @@ import { configDir } from "./config.ts";
  * dropped silently.
  */
 
-export type EventLevel = "debug" | "info" | "warn" | "error";
+type EventLevel = "debug" | "info" | "warn" | "error";
 
-export interface DevEvent {
+interface DevEvent {
   ts: string;
   kind: string;
   level: EventLevel;

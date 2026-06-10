@@ -36,7 +36,7 @@ export type StepPayload =
       maxDurationMinutes?: number;
     };
 
-export interface SequenceStep {
+interface SequenceStep {
   /** Days after enrollment (step 0 was the original send). step 1 is the first follow-up. */
   dayOffset: number;
   channel: "email" | "sms" | "voice";
@@ -522,7 +522,7 @@ export interface BatchItem {
   playName: string;
 }
 
-export interface BatchPreviewResult {
+interface BatchPreviewResult {
   prospectId: number;
   playName: string;
   ok: boolean;

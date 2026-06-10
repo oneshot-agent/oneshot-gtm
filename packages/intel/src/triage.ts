@@ -2,7 +2,7 @@ import { listInbox, type InboxEmail } from "@oneshot-gtm/core";
 import { complete } from "./client.ts";
 import { loadPrompt } from "./prompts.ts";
 
-export type TriageCategory =
+type TriageCategory =
   | "interested"
   | "not_now"
   | "wrong_person"
@@ -12,7 +12,7 @@ export type TriageCategory =
   | "auto_reply"
   | "other";
 
-export interface TriagedReply {
+interface TriagedReply {
   id: string;
   from: string;
   subject: string;
