@@ -25,6 +25,7 @@ import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { Toggle } from "../components/primitives/Toggle.tsx";
 import { cn, timeAgo } from "../lib/cn.ts";
 import { humanInterval } from "../lib/humanInterval.ts";
+import { INTERVAL_PRESETS_MS, withIntervalOverride } from "../lib/triggerInterval.ts";
 import {
   clearDraftGenerating,
   markDraftGenerating,
@@ -978,10 +979,19 @@ function TriggersCard() {
     onError: (err) => toast.error(err.message),
   });
   const setConfig = useMutation({
-    mutationFn: (vars: { name: string; config: unknown }) =>
+    mutationFn: (vars: { name: string; config: unknown; source: "editor" | "inline" }) =>
       api.setTriggerConfig(vars.name, vars.config),
-    onSuccess: () => {
-      setEditing(null);
+    onSuccess: (_data, vars) => {
+      // Close the JSON editor only when the save CAME from it — an inline
+      // interval change on another row must not discard unsaved editor text.
+      if (vars.source === "editor") {
+        setEditing(null);
+      } else {
+        const ms = (vars.config as Record<string, unknown> | null)?.["intervalMs"];
+        toast.success(
+          `${vars.name} · ${typeof ms === "number" ? `polls every ${humanInterval(ms)}` : "interval reset to default"}`,
+        );
+      }
       void qc.invalidateQueries({ queryKey: ["triggers"] });
     },
     onError: (err) => toast.error(err.message),
@@ -1122,6 +1132,13 @@ function TriggersCard() {
                     editError={isEditing ? editError : null}
                     onToggleEnabled={(next) => setEnabled.mutate({ name: t.name, enabled: next })}
                     onRun={() => runTrigger.mutate(t.name)}
+                    onSetInterval={(ms) =>
+                      setConfig.mutate({
+                        name: t.name,
+                        config: withIntervalOverride(t.config, ms),
+                        source: "inline",
+                      })
+                    }
                     onStartEdit={() => {
                       setEditing({
                         name: t.name,
@@ -1161,7 +1178,7 @@ function TriggersCard() {
                         return;
                       }
                       setEditError(null);
-                      setConfig.mutate({ name: editing.name, config: parsed });
+                      setConfig.mutate({ name: editing.name, config: parsed, source: "editor" });
                     }}
                     setEnabledPending={setEnabled.isPending}
                     setConfigPending={setConfig.isPending}
@@ -1188,6 +1205,8 @@ interface TriggerRowProps {
   editError: string | null;
   onToggleEnabled: (next: boolean) => void;
   onRun: () => void;
+  /** Write an `intervalMs` override into the trigger config; null = revert to default. */
+  onSetInterval: (intervalMs: number | null) => void;
   onStartEdit: () => void;
   onCancelEdit: () => void;
   onChangeEditText: (text: string) => void;
@@ -1199,6 +1218,8 @@ interface TriggerRowProps {
 
 function TriggerRowFragment(props: TriggerRowProps) {
   const t = props.trigger;
+  // Click-to-edit state for the interval cell (select swaps in over the text).
+  const [editingInterval, setEditingInterval] = useState(false);
   // Missing `ready` field = treat as ready (tolerate older servers).
   const notReady = t.ready === false;
   const notReadyReason = t.notReadyReason ?? "missing required config";
@@ -1246,11 +1267,49 @@ function TriggerRowFragment(props: TriggerRowProps) {
           />
         </td>
         <td className="py-2 font-mono text-[12px] text-ink-muted">
-          {humanInterval(t.intervalMs)}
-          {t.intervalMs !== t.defaultIntervalMs && (
-            <span className="ml-1 text-ink-faint">
-              · default {humanInterval(t.defaultIntervalMs)}
-            </span>
+          {editingInterval ? (
+            <select
+              autoFocus
+              aria-label={`polling interval for ${t.name}`}
+              className="rounded border border-ink-rule bg-ink-surface px-1 py-0.5 font-mono text-[12px] text-ink-cream"
+              value={String(t.intervalMs)}
+              disabled={props.setConfigPending}
+              onBlur={() => setEditingInterval(false)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setEditingInterval(false);
+              }}
+              onChange={(e) => {
+                const v = e.target.value;
+                props.onSetInterval(v === "default" ? null : Number(v));
+                setEditingInterval(false);
+              }}
+            >
+              {/* A custom value set via the JSON editor still displays selected. */}
+              {!INTERVAL_PRESETS_MS.includes(t.intervalMs) && (
+                <option value={String(t.intervalMs)}>{humanInterval(t.intervalMs)}</option>
+              )}
+              {INTERVAL_PRESETS_MS.map((ms) => (
+                <option key={ms} value={String(ms)}>
+                  {humanInterval(ms)}
+                </option>
+              ))}
+              <option value="default">default ({humanInterval(t.defaultIntervalMs)})</option>
+            </select>
+          ) : (
+            <button
+              type="button"
+              title="change polling interval"
+              disabled={props.setConfigPending}
+              className="cursor-pointer underline decoration-ink-faint decoration-dotted underline-offset-2 hover:text-ink-cream disabled:cursor-default disabled:opacity-60"
+              onClick={() => setEditingInterval(true)}
+            >
+              {humanInterval(t.intervalMs)}
+              {t.intervalMs !== t.defaultIntervalMs && (
+                <span className="ml-1 text-ink-faint">
+                  · default {humanInterval(t.defaultIntervalMs)}
+                </span>
+              )}
+            </button>
           )}
         </td>
         <td className="py-2 font-mono text-[12px] text-ink-muted">
