@@ -557,6 +557,18 @@ describe("runLumaFinder — limits", () => {
     expect(out.enqueued).toBe(4);
   });
 
+  it("limit stays exact even when it is smaller than the phase-3 concurrency", async () => {
+    // 6 candidates race through 3 parallel workers; the synchronous
+    // pre-enqueue re-check must keep the cap exact (spend may overshoot,
+    // the queue may not).
+    event("https://luma.com/e1");
+    event("https://luma.com/e2");
+    event("https://luma.com/e3");
+    const out = await runLumaFinder({ ...baseConfig, limit: 1 });
+    expect(out.enqueued).toBe(1);
+    expect(enqueued).toHaveLength(1);
+  });
+
   it("dry-run mode short-circuits enqueue (counts as enqueued but no SDK fan-out)", async () => {
     event("https://luma.com/abc");
     const out = await runLumaFinder({ ...baseConfig, dryRun: true });
