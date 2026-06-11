@@ -181,6 +181,29 @@ describe("runDueTriggers — branch coverage (no claim attempt for these)", () =
   });
 });
 
+describe("runDueTriggers — corrupt config_json", () => {
+  it("survives a corrupt row: falls back to defaults with a warning, other triggers still process", async () => {
+    const corruptRow = fakeStore["show-hn"];
+    if (!corruptRow) throw new Error("show-hn row missing — registry shape changed");
+    corruptRow.config_json = "{definitely not json";
+
+    markReturnsTrue = false;
+    // Pre-fix, the bare JSON.parse threw out of the loop and rejected the
+    // whole tick — every trigger stopped firing until the row was hand-fixed.
+    const outcomes = await runDueTriggers();
+
+    // The tick completed and produced an outcome for every registered trigger.
+    expect(outcomes.length).toBe(TRIGGERS.length);
+    // The corrupt one fell back to defaultConfig and still reached the claim.
+    expect(calls.markTriggerRunning.some((c) => c.name === "show-hn")).toBe(true);
+    // And the corruption was surfaced as a warning event.
+    const warn = calls.events.find(
+      (e) => e.kind === "trigger.config.corrupt" && e.ctx["name"] === "show-hn",
+    );
+    expect(warn).toBeDefined();
+  });
+});
+
 describe("runDueTriggers — happy path (claim succeeds → finder runs)", () => {
   it("invokes spec.run, persists the result via updateTriggerLastPoll, emits trigger.run.done", async () => {
     // Pick the cheapest+fastest spec to mock — breakup-revive has no SDK calls.

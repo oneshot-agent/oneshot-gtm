@@ -5,6 +5,7 @@ import {
   fireTriggerNow,
   getTriggerRunningSince,
   isTriggerRunning,
+  storedTriggerConfig,
   TRIGGERS,
   type Readiness,
   type TriggerSpec,
@@ -99,9 +100,7 @@ export async function setTriggerEnabledRoute(
   // Readiness gate: block *enabling* an unready trigger so the scheduler
   // doesn't sit in a loop skipping it every tick. Disabling is always allowed.
   if (body.enabled && spec) {
-    const config = stored?.config_json
-      ? (JSON.parse(stored.config_json) as Record<string, unknown>)
-      : spec.defaultConfig;
+    const config = storedTriggerConfig(stored, spec);
     const readiness = checkReadiness(spec, config);
     if (!readiness.ready) {
       return jsonResponse(

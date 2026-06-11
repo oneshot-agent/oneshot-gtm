@@ -1,3 +1,4 @@
+import type { TriggerRow } from "@oneshot-gtm/core";
 import { describe, expect, it } from "vitest";
 import {
   checkReadiness,
@@ -5,6 +6,7 @@ import {
   freshRunningStartedAtMs,
   MAX_RUN_AGE_MS,
   nextSleepMs,
+  storedTriggerConfig,
   TRIGGERS,
   type TriggerRunOutcome,
   type TriggerSpec,
@@ -360,6 +362,53 @@ describe("checkReadiness", () => {
     const ycCount = cohorts.filter((c) => /^yc-/i.test(c.cohort)).length;
     expect(ycCount).toBeGreaterThan(0);
     expect(cohorts.length - ycCount).toBeGreaterThan(0);
+  });
+});
+
+const cfgTestRow = (config_json: string | null): TriggerRow => ({
+  name: "cfg-test",
+  last_polled_at: null,
+  last_run_summary: null,
+  enabled: 1,
+  config_json,
+  running_started_at: null,
+});
+
+describe("storedTriggerConfig — corruption fallback", () => {
+  const spec: TriggerSpec = {
+    name: "cfg-test",
+    defaultIntervalMs: 60_000,
+    defaultConfig: { limit: 25 },
+    run: async () => ({
+      source: "test",
+      candidates: 0,
+      droppedIcp: 0,
+      droppedDuplicate: 0,
+      droppedEnrichment: 0,
+      enqueued: 0,
+      costUsd: 0,
+    }),
+  };
+  it("returns defaultConfig when there is no stored row", () => {
+    expect(storedTriggerConfig(null, spec)).toEqual({ limit: 25 });
+  });
+
+  it("returns defaultConfig when config_json is null", () => {
+    expect(storedTriggerConfig(cfgTestRow(null), spec)).toEqual({ limit: 25 });
+  });
+
+  it("returns the parsed stored config when valid", () => {
+    expect(storedTriggerConfig(cfgTestRow('{"limit":5}'), spec)).toEqual({ limit: 5 });
+  });
+
+  it("falls back to defaultConfig on corrupt JSON instead of throwing", () => {
+    expect(storedTriggerConfig(cfgTestRow("{not json"), spec)).toEqual({ limit: 25 });
+  });
+
+  it("falls back to defaultConfig on valid-but-non-object JSON", () => {
+    expect(storedTriggerConfig(cfgTestRow("[1,2,3]"), spec)).toEqual({ limit: 25 });
+    expect(storedTriggerConfig(cfgTestRow("42"), spec)).toEqual({ limit: 25 });
+    expect(storedTriggerConfig(cfgTestRow("null"), spec)).toEqual({ limit: 25 });
   });
 });
 

@@ -1,4 +1,10 @@
-import { getLedger, logEvent, startRun } from "@oneshot-gtm/core";
+import {
+  getLedger,
+  logEvent,
+  safeParseJsonRecord,
+  startRun,
+  type TriggerRow,
+} from "@oneshot-gtm/core";
 import { type CohortEntry, runAcceleratorBatchFinder } from "./accelerator-batch.ts";
 import { deriveCohortLabel } from "./_yc-oss-adapter.ts";
 import { runBreakupReviveFinder } from "./breakup-revive.ts";
@@ -576,6 +582,25 @@ export function getTriggerRunningSince(name: string): number | null {
 }
 
 /**
+ * Stored config with corruption fallback. A bare JSON.parse here used to let
+ * one corrupt config_json row throw out of runDueTriggers' loop and stall
+ * every trigger until the row was fixed by hand; now the trigger runs on its
+ * defaults with a warning instead.
+ */
+export function storedTriggerConfig(
+  stored: TriggerRow | null,
+  spec: TriggerSpec,
+): Record<string, unknown> {
+  if (!stored?.config_json) return spec.defaultConfig;
+  const parsed = safeParseJsonRecord(stored.config_json);
+  if (parsed == null) {
+    logEvent("trigger.config.corrupt", { name: spec.name }, "warn");
+    return spec.defaultConfig;
+  }
+  return parsed;
+}
+
+/**
  * Fire-and-forget wrapper around `runTriggerNow`: returns immediately after
  * marking the trigger as running in the ledger; the actual finder work runs
  * on the event loop. Throws synchronously if the trigger is unknown,
@@ -599,9 +624,7 @@ export function fireTriggerNow(name: string): void {
   // Readiness gate: block the run synchronously so the server route can map
   // this to a 409 without the finder ever being invoked on a dead config.
   const stored = ledger.getTrigger(name);
-  const config = stored?.config_json
-    ? (JSON.parse(stored.config_json) as Record<string, unknown>)
-    : spec.defaultConfig;
+  const config = storedTriggerConfig(stored, spec);
   const readiness = checkReadiness(spec, config);
   if (!readiness.ready) {
     throw new Error(`not ready: ${readiness.reason}`);
@@ -671,9 +694,7 @@ export async function runTriggerNow(name: string): Promise<TriggerRunOutcome> {
       enabled: spec.enabledByDefault !== false,
     });
   }
-  const config = stored?.config_json
-    ? (JSON.parse(stored.config_json) as Record<string, unknown>)
-    : spec.defaultConfig;
+  const config = storedTriggerConfig(stored, spec);
   const intervalMs = effectiveIntervalMs(spec, config);
   // Readiness re-check: fireTriggerNow already gates ad-hoc runs, but a direct
   // CLI/test caller hitting runTriggerNow should get the same protection.
@@ -746,9 +767,7 @@ export async function runDueTriggers(): Promise<TriggerRunOutcome[]> {
       });
     }
 
-    const config = stored?.config_json
-      ? (JSON.parse(stored.config_json) as Record<string, unknown>)
-      : spec.defaultConfig;
+    const config = storedTriggerConfig(stored, spec);
     const intervalMs = effectiveIntervalMs(spec, config);
 
     const enabled = stored ? Boolean(stored.enabled) : defaultEnabled;
