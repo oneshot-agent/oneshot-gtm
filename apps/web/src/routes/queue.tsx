@@ -1382,7 +1382,7 @@ function TriggerRowFragment(props: TriggerRowProps) {
                   <code className="ln-mono text-[11.5px] text-[color:var(--ink-signal-2)]">
                     "intervalMs"
                   </code>{" "}
-                  to override the watch cadence · min 60000
+                  to override the watch cadence · min 60000 · or just click the interval in the row
                 </div>
               </div>
               <Textarea

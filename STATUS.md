@@ -95,26 +95,26 @@ Last manual update: **2026-06-03** · Bun **1.3.13** · OneShot SDK **0.16.2**
 
 ## Web dashboard (`apps/web`)
 
-| Route                      | State                                                                                                                           |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `/` (Home)                 | ✅ green — KPIs + signal feed + Scheduler strip (per-trigger last-run + next-due)                                               |
-| `/queue`                   | ✅ green — target queue + triggers table + strategist dock + filters + per-row draft archive (subject/body/flags/receipt links) |
-| `/inbox` (Replies)         | ✅ green — read-only OneShot inbox; replies matched to prospect + play + cadence status                                         |
-| `/cadences`                | ✅ green (per-row preview + send + bulk + history + in-flight badge)                                                            |
-| `/receipts`                | ✅ green (with signed-receipt modal)                                                                                            |
-| `/plays`                   | ✅ green (with run + copy-CLI buttons)                                                                                          |
-| `/measure`                 | ✅ green                                                                                                                        |
-| `/setup`                   | ✅ green (editable wizard with hidden-input keys)                                                                               |
-| `/run/show-hn`             | ✅ green (SSE-streamed drafts)                                                                                                  |
-| `/run/job-change`          | ✅ green (SSE-streamed drafts)                                                                                                  |
-| `/run/post-funding`        | ✅ green (SSE-streamed drafts)                                                                                                  |
-| `/run/accelerator-batch`   | ✅ green (SSE-streamed drafts)                                                                                                  |
-| `/run/hiring-signal`       | ✅ green (SSE-streamed drafts)                                                                                                  |
-| `/run/podcast-guest`       | ✅ green (SSE-streamed drafts)                                                                                                  |
-| `/run/competitor-switch`   | ✅ green (SSE-streamed drafts)                                                                                                  |
-| `/run/stack-consolidation` | ✅ green (SSE-streamed drafts)                                                                                                  |
-| `/run/repo-interest`       | ✅ green (SSE-streamed drafts)                                                                                                  |
-| Strategist dock            | ✅ green — global floating launcher; renders SSE chat + action chips                                                            |
+| Route                      | State                                                                                                                                                            |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/` (Home)                 | ✅ green — KPIs + signal feed + Scheduler strip (per-trigger last-run + next-due)                                                                                |
+| `/queue`                   | ✅ green — target queue + triggers table (click-to-edit polling interval) + strategist dock + filters + per-row draft archive (subject/body/flags/receipt links) |
+| `/inbox` (Replies)         | ✅ green — read-only OneShot inbox; replies matched to prospect + play + cadence status                                                                          |
+| `/cadences`                | ✅ green (per-row preview + send + bulk + history + in-flight badge)                                                                                             |
+| `/receipts`                | ✅ green (with signed-receipt modal)                                                                                                                             |
+| `/plays`                   | ✅ green (with run + copy-CLI buttons)                                                                                                                           |
+| `/measure`                 | ✅ green                                                                                                                                                         |
+| `/setup`                   | ✅ green (editable wizard with hidden-input keys)                                                                                                                |
+| `/run/show-hn`             | ✅ green (SSE-streamed drafts)                                                                                                                                   |
+| `/run/job-change`          | ✅ green (SSE-streamed drafts)                                                                                                                                   |
+| `/run/post-funding`        | ✅ green (SSE-streamed drafts)                                                                                                                                   |
+| `/run/accelerator-batch`   | ✅ green (SSE-streamed drafts)                                                                                                                                   |
+| `/run/hiring-signal`       | ✅ green (SSE-streamed drafts)                                                                                                                                   |
+| `/run/podcast-guest`       | ✅ green (SSE-streamed drafts)                                                                                                                                   |
+| `/run/competitor-switch`   | ✅ green (SSE-streamed drafts)                                                                                                                                   |
+| `/run/stack-consolidation` | ✅ green (SSE-streamed drafts)                                                                                                                                   |
+| `/run/repo-interest`       | ✅ green (SSE-streamed drafts)                                                                                                                                   |
+| Strategist dock            | ✅ green — global floating launcher; renders SSE chat + action chips                                                                                             |
 
 ## Server (`apps/server`)
 

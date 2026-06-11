@@ -140,7 +140,7 @@ The motion plays needed hand-curated JSON target lists; founders kept asking "wh
 - [ ] **Bulk Clay / Apollo CSV import** — `find import --csv <file> --play <name>` with column mapping; drop-in for cohorts you already paid to source
 - [ ] **ICP-filter learning loop v2** — periodic LLM job that proposes a tighter ICP one-liner from accumulated decisions; founder approves the rewrite in `/queue`
 - [ ] **Per-source weighting** in the watch loop — track approval rate per finder; deprioritize noisy sources automatically
-- [ ] **Per-trigger interval UI input** — dedicated number field instead of editing JSON (small polish on F2)
+- [x] **Per-trigger interval UI** — the interval cell in the /queue triggers table is click-to-edit: preset select (1h–7d) + a revert-to-default option, writing the same `intervalMs` config override the JSON editor uses; scheduler picks the new cadence up on its next tick
 - [ ] **Webhook signing + replay protection** for the F3 endpoints
 
 ## Phase 3 — Distribution flywheel
