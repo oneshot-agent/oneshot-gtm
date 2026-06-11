@@ -18,6 +18,11 @@ const HUMANIZER_REF_RE = /^\[See _humanizer\.md[^\]]*\]\s*$/gm;
 
 let humanizerCache: string | null = null;
 
+// Final (post-humanizer-inline) prompt text by name. Prompt files ship with
+// the package and aren't founder-edited at runtime, so caching is safe; in a
+// 50-target batch drain this saves 49 re-reads of the same file.
+const promptCache = new Map<string, string>();
+
 function readPromptFile(name: string): string | null {
   for (const dir of candidates) {
     const path = join(dir, `${name}.md`);
@@ -40,6 +45,8 @@ export function loadPrompt(name: string): string {
   if (!/^[A-Za-z0-9_-]+$/.test(name)) {
     throw new Error(`invalid prompt name: ${JSON.stringify(name)}`);
   }
+  const cached = promptCache.get(name);
+  if (cached != null) return cached;
   const raw = readPromptFile(name);
   if (raw == null) {
     throw new Error(`prompt not found: ${name}.md (searched: ${candidates.join(", ")})`);
@@ -48,13 +55,13 @@ export function loadPrompt(name: string): string {
   // false promise: the LLM read "see X" but the content was never attached.
   // Inline it here so every prompt that opts in (by including the reference)
   // actually receives the humanizer rules.
-  if (HUMANIZER_REF_RE.test(raw)) {
-    return raw.replace(HUMANIZER_REF_RE, loadHumanizer());
-  }
-  return raw;
+  const final = HUMANIZER_REF_RE.test(raw) ? raw.replace(HUMANIZER_REF_RE, loadHumanizer()) : raw;
+  promptCache.set(name, final);
+  return final;
 }
 
-/** Test-only: clears the memoized humanizer read. Not used in production. */
+/** Test-only: clears the memoized humanizer + prompt reads. Not used in production. */
 export function _resetPromptCache(): void {
   humanizerCache = null;
+  promptCache.clear();
 }

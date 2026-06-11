@@ -1,5 +1,20 @@
-import { describe, expect, it } from "vitest";
-import { _resetPromptCache, loadPrompt } from "../src/prompts.ts";
+import { describe, expect, it, vi } from "vitest";
+
+// Pass-through node:fs mock that counts readFileSync calls so the
+// memoization tests can observe cache hits vs. disk reads.
+const fsReads = vi.hoisted(() => ({ count: 0 }));
+vi.mock("node:fs", async () => {
+  const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+  return {
+    ...actual,
+    readFileSync: ((...args: Parameters<typeof actual.readFileSync>) => {
+      fsReads.count++;
+      return actual.readFileSync(...args);
+    }) as typeof actual.readFileSync,
+  };
+});
+
+const { _resetPromptCache, loadPrompt } = await import("../src/prompts.ts");
 
 describe("loadPrompt — name validation", () => {
   it("rejects path traversal", () => {
@@ -66,5 +81,37 @@ describe("loadPrompt — humanizer inlining", () => {
     const a = loadPrompt("competitor-switch-email");
     const b = loadPrompt("competitor-switch-email");
     expect(a).toEqual(b);
+  });
+});
+
+describe("loadPrompt — per-prompt memoization", () => {
+  it("hits the disk once per prompt; repeat calls are served from cache", () => {
+    _resetPromptCache();
+    loadPrompt("agent-builder-extract");
+    const after1 = fsReads.count;
+    expect(after1).toBeGreaterThan(0);
+    const a = loadPrompt("agent-builder-extract");
+    const b = loadPrompt("agent-builder-extract");
+    expect(fsReads.count).toBe(after1);
+    expect(a).toEqual(b);
+  });
+
+  it("_resetPromptCache forces a re-read", () => {
+    _resetPromptCache();
+    loadPrompt("agent-builder-extract");
+    const after1 = fsReads.count;
+    _resetPromptCache();
+    loadPrompt("agent-builder-extract");
+    expect(fsReads.count).toBeGreaterThan(after1);
+  });
+
+  it("caches the post-inline result for humanizer-referencing prompts", () => {
+    _resetPromptCache();
+    const first = loadPrompt("competitor-switch-email");
+    const afterFirst = fsReads.count;
+    const second = loadPrompt("competitor-switch-email");
+    expect(fsReads.count).toBe(afterFirst);
+    expect(second).toEqual(first);
+    expect(second).toMatch(/Anti-AI-slop rules/);
   });
 });
