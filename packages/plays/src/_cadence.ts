@@ -1,5 +1,7 @@
 import {
   getLedger,
+  hasAnySendCapacity,
+  isSendDeferred,
   listInbox,
   loadConfig,
   parallelMap,
@@ -244,13 +246,44 @@ export async function advanceCadence(
   const nowIso = new Date().toISOString();
   const due = ledger.listActiveCadences({ dueByIso: nowIso });
 
-  const outs = await parallelMap(due, 3, (cad) =>
-    runCadenceStepForProspect({
-      prospectId: cad.prospect_id,
-      playName: cad.play_name,
-      dryRun: opts.dryRun,
-    }),
-  );
+  // Capacity gate BEFORE drafting: when every sender identity is at its daily
+  // cap, a step would burn an LLM draft and then fail the send anyway. Steps
+  // stay due; tomorrow's poll picks them up with fresh capacity.
+  if (!opts.dryRun && due.length > 0 && !hasAnySendCapacity()) {
+    for (const cad of due) {
+      result.details.push({
+        prospectEmail: cad.prospect_email,
+        playName: cad.play_name,
+        action: "skipped",
+        note: "deferred: daily send caps reached",
+        receiptIds: [],
+      });
+    }
+    return result;
+  }
+
+  const outs = await parallelMap(due, 3, async (cad): Promise<RunCadenceStepResult> => {
+    try {
+      return await runCadenceStepForProspect({
+        prospectId: cad.prospect_id,
+        playName: cad.play_name,
+        dryRun: opts.dryRun,
+      });
+    } catch (err) {
+      // Deferral mid-pass (caps filled while this batch ran): the step simply
+      // stays due. Anything else propagates — parallelMap rejects the whole
+      // pass, matching pre-rotation behavior for unexpected errors.
+      if (isSendDeferred(err)) {
+        return {
+          action: "skipped",
+          payload: null,
+          receiptIds: [],
+          note: "deferred: daily send caps reached",
+        };
+      }
+      throw err;
+    }
+  });
 
   for (let i = 0; i < due.length; i++) {
     const cad = due[i]!;

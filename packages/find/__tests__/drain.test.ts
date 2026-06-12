@@ -39,6 +39,7 @@ const runStackConsolidationMock = vi.fn();
 
 vi.mock("@oneshot-gtm/core", () => ({
   getLedger: () => ledgerStub,
+  isSendDeferred: (err: unknown) => err instanceof Error && err.name === "SendDeferredError",
 }));
 
 vi.mock("@oneshot-gtm/plays", () => {
@@ -148,6 +149,29 @@ describe("drainQueue per-target dispatch + persistence", () => {
         dryRun: false,
       },
     });
+    expect(ledgerStub.setQueueStatus).toHaveBeenCalledTimes(1);
+    expect(ledgerStub.setQueueStatus).toHaveBeenCalledWith({ id: 10, status: "sent" });
+  });
+
+  it("daily-cap deferral stops the batch and leaves remaining rows untouched (no draft stomp)", async () => {
+    ledgerStub.dequeueApproved.mockReturnValue([row(10), row(20), row(30)]);
+    const deferred = new Error("all sender identities have reached their daily cap");
+    deferred.name = "SendDeferredError";
+    runStackConsolidationMock
+      .mockResolvedValueOnce({
+        drafted: [{ subject: "ok-1", body: "b1", flags: [], sent: true, receiptIds: [1] }],
+      })
+      .mockRejectedValueOnce(deferred);
+
+    const out = await drainQueue({ playName: "stack-consolidation", dryRun: false });
+
+    expect(out.sent).toBe(1); // only row 10 shipped
+    expect(out.deferred).toBe(2); // rows 20 + 30 left for tomorrow
+    expect(out.errors).toEqual([]); // deferral is not an error
+    // Row 20's reviewed draft was NOT overwritten with an "(error)" stub, and
+    // row 30 was never dispatched (loop broke).
+    expect(ledgerStub.setQueueDraft).toHaveBeenCalledTimes(1);
+    expect(runStackConsolidationMock).toHaveBeenCalledTimes(2);
     expect(ledgerStub.setQueueStatus).toHaveBeenCalledTimes(1);
     expect(ledgerStub.setQueueStatus).toHaveBeenCalledWith({ id: 10, status: "sent" });
   });

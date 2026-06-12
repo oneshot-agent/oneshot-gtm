@@ -43,6 +43,8 @@ function makeCtx(overrides: Partial<ProspectRecord> = {}): CadenceContext {
       productOneLiner: "does X",
       productDomain: null,
       sendingDomain: null,
+      emailProvider: "oneshot" as const,
+      emailIdentities: null,
       icpOneLiner: null,
       cadenceOverrides: null,
       founderCredentials: null,

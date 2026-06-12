@@ -1,4 +1,4 @@
-import { deepResearch, getLedger, loadConfig, parallelMap } from "@oneshot-gtm/core";
+import { deepResearch, getLedger, isSendDeferred, loadConfig, parallelMap } from "@oneshot-gtm/core";
 import {
   draftEmailFromPrompt,
   errorDraft,
@@ -160,6 +160,9 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         ...(prep.extra ?? ({} as X)),
       } as PlayDraft<T, X>;
     } catch (err) {
+      // Daily-cap deferral is not a per-target failure — propagate so the
+      // caller (drain / SSE run) leaves remaining targets queued.
+      if (isSendDeferred(err)) throw err;
       return {
         target,
         ...errorDraft((err as Error)?.message),

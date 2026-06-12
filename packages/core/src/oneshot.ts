@@ -2,6 +2,7 @@ import {
   OneShot,
   type BrowserResult,
   type DeepResearchPersonResult,
+  type EmailResult,
   type EnrichProfileResult,
   type FindEmailResult,
   type InboxEmail,
@@ -15,11 +16,18 @@ import {
 } from "@oneshot-agent/sdk";
 import { getLedger } from "./ledger.ts";
 import { loadConfig, oneshotEnvReady } from "./config.ts";
+import { logEvent } from "./events.ts";
+import { getGmailProfile, listGmailReplies, sendGmailMessage } from "./gmail.ts";
+import { gmailAccountFor, resolveIdentities } from "./identities.ts";
+import { parallelMap } from "./parallel.ts";
+import { resolveSenderIdentity } from "./send-routing.ts";
+import type { EmailIdentity } from "./types.ts";
 
 export interface SendEmailInput {
   to: string;
   subject: string;
   body: string;
+  /** OneShot provider only — ignored when config.emailProvider is "gmail" (Gmail always sends from the authenticated account). */
   fromDomain?: string;
 }
 
@@ -103,7 +111,7 @@ function fromLocalpart(name: string | null): string {
  * into one run-on paragraph. Escape HTML metacharacters and turn newlines into
  * <br> so paragraphs + the signature lines render the way the draft intended.
  */
-function toHtmlBody(text: string): string {
+export function toHtmlBody(text: string): string {
   return text
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
@@ -112,13 +120,73 @@ function toHtmlBody(text: string): string {
     .replace(/\n/g, "<br>\n");
 }
 
+/**
+ * Gmail-path send. Same return contract as the OneShot path: callers consume
+ * `receiptId` plus `result.cost` / `result.request_id`. Receipts are recorded
+ * with cost 0 (Gmail sends are free) and the Gmail message id as request id,
+ * so /receipts and spend rollups stay truthful.
+ */
+async function sendEmailViaGmail(input: SendEmailInput, ctx: CallContext, identity: EmailIdentity) {
+  const cfg = loadConfig();
+  const account = gmailAccountFor(identity);
+  // Hard stop, never fall through to the legacy env token: that token may
+  // belong to a DIFFERENT account, and sending through it would switch the
+  // thread's From address mid-conversation.
+  if (!account) {
+    throw new Error(
+      `no Gmail refresh token stored for sender identity '${identity.id}' — re-authorize it (bun run cli -- gmail auth)`,
+    );
+  }
+  const { emailAddress } = await getGmailProfile(account);
+  const sent = await sendGmailMessage(
+    {
+      to: input.to,
+      fromEmail: emailAddress,
+      fromName: cfg.founderName,
+      subject: input.subject,
+      htmlBody: toHtmlBody(input.body),
+    },
+    account,
+  );
+  const result: EmailResult = {
+    status: "sent",
+    request_id: sent.id,
+    cost: 0,
+    email: { id: sent.id, provider_message_id: sent.id, status: "sent" },
+  };
+  const receiptId = getLedger().recordReceipt({
+    playName: ctx.playName,
+    callType: "email.send",
+    signedReceipt: {
+      provider: "gmail",
+      message_id: sent.id,
+      thread_id: sent.threadId,
+      from: emailAddress,
+      to: input.to,
+      subject: input.subject,
+      memo: ctx.memo ?? `${ctx.playName} email.send`,
+    },
+    costUsd: 0,
+    oneshotRequestId: sent.id,
+    senderIdentity: identity.id,
+  });
+  return { result, receiptId };
+}
+
 export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
+  // Sender rotation: resolve the sticky per-prospect identity BEFORE any
+  // network call. Throws SendDeferredError when every identity is at its
+  // daily cap — callers leave the work queued for tomorrow.
+  const identity = resolveSenderIdentity(input.to);
+  if (identity.provider === "gmail") {
+    return sendEmailViaGmail(input, ctx, identity);
+  }
   const agent = await getAgent();
   const cfg = loadConfig();
   // The send domain MUST be one the wallet owns, or OneShot 403s
   // (`domain_not_owned`). The SDK's typed email() defaults from_domain to its
   // own demo domain — so an unset sendingDomain is the current broken state.
-  const fromDomain = input.fromDomain ?? cfg.sendingDomain ?? null;
+  const fromDomain = input.fromDomain ?? identity.sendingDomain ?? cfg.sendingDomain ?? null;
 
   const opts: Parameters<OneShot["email"]>[0] = {
     to: input.to,
@@ -134,7 +202,7 @@ export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
     // SDK ≥0.16.2 — from_name ships as a separate field, so the bare
     // from_address still passes the server's strict email validation.
     opts.from_domain = fromDomain;
-    opts.from_mailbox = fromLocalpart(cfg.founderName);
+    opts.from_mailbox = identity.mailbox?.trim() || fromLocalpart(cfg.founderName);
     const name = (cfg.founderName ?? "").trim();
     if (name) opts.from_name = name;
   }
@@ -146,6 +214,7 @@ export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
     signedReceipt: result,
     costUsd: result.cost,
     oneshotRequestId: result.request_id,
+    senderIdentity: identity.id,
   });
   return { result, receiptId };
 }
@@ -283,7 +352,7 @@ export async function getBalance(
   return { balance: raw, raw };
 }
 
-export async function listInbox(opts?: {
+async function listOneShotInbox(opts?: {
   since?: string;
   limit?: number;
 }): Promise<InboxListResult> {
@@ -292,6 +361,76 @@ export async function listInbox(opts?: {
   if (opts?.since) out.since = opts.since;
   if (opts?.limit) out.limit = opts.limit;
   return agent.inboxList(out);
+}
+
+/**
+ * Replies across the WHOLE sender pool: the OneShot inbox (once, if any
+ * oneshot identity exists) merged with every authorized Gmail account.
+ * Stop-on-reply must see a reply no matter which identity sent the thread.
+ * With multiple sources each is fetched under its own try/catch — one
+ * revoked Gmail token must not blind reply detection for everything else.
+ * A single source keeps legacy throw semantics (the /inbox route maps a
+ * throw to its "couldn't reach the inbox" state).
+ */
+export async function listInbox(opts?: {
+  since?: string;
+  limit?: number;
+}): Promise<InboxListResult> {
+  const identities = resolveIdentities(loadConfig());
+  const sources: Array<{ label: string; fetch: () => Promise<InboxListResult> }> = [];
+  if (identities.some((i) => i.provider === "oneshot")) {
+    sources.push({ label: "oneshot", fetch: () => listOneShotInbox(opts) });
+  }
+  for (const identity of identities.filter((i) => i.provider === "gmail")) {
+    sources.push({
+      label: identity.id,
+      fetch: () => {
+        const account = gmailAccountFor(identity);
+        if (!account) {
+          // Reject (not fall back to the env token — possibly a different
+          // account's inbox). Multi-source: logged + skipped; single-source:
+          // propagates like any other inbox failure.
+          return Promise.reject(
+            new Error(
+              `no Gmail refresh token stored for sender identity '${identity.id}' — re-authorize it (bun run cli -- gmail auth)`,
+            ),
+          );
+        }
+        return listGmailReplies(opts, account);
+      },
+    });
+  }
+
+  if (sources.length === 1) return sources[0]!.fetch();
+
+  const results = await parallelMap(sources, 3, async (source) => {
+    try {
+      return await source.fetch();
+    } catch (err) {
+      logEvent(
+        "inbox.source_failed",
+        { source: source.label, message_120: ((err as Error).message ?? "").slice(0, 120) },
+        "warn",
+      );
+      return null;
+    }
+  });
+  const ok = results.filter((r): r is InboxListResult => r != null);
+  if (ok.length === 0) {
+    throw new Error("all inbox sources failed — check doctor for identity auth status");
+  }
+  const seen = new Set<string>();
+  const emails = ok
+    .flatMap((r) => r.emails)
+    .filter((e) => (seen.has(e.id) ? false : (seen.add(e.id), true)))
+    .toSorted((a, b) => (a.received_at < b.received_at ? 1 : a.received_at > b.received_at ? -1 : 0))
+    .slice(0, opts?.limit ?? 50);
+  return {
+    emails,
+    count: emails.length,
+    has_more: ok.some((r) => r.has_more),
+    agent_id: ok.map((r) => r.agent_id).join("+"),
+  };
 }
 
 export interface BuildSiteInput {

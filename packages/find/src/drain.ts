@@ -1,4 +1,4 @@
-import { getLedger, type ProspectRecord, type QueueRow } from "@oneshot-gtm/core";
+import { getLedger, isSendDeferred, type ProspectRecord, type QueueRow } from "@oneshot-gtm/core";
 import { type DraftedRow, isSupportedPlay, PLAYS } from "@oneshot-gtm/plays";
 
 export interface DrainOpts {
@@ -13,6 +13,8 @@ export interface DrainOpts {
 export interface DrainOutcome {
   drained: number;
   sent: number;
+  /** Rows left approved because every sender identity hit its daily cap. */
+  deferred: number;
   errors: Array<{ id: number; message: string }>;
 }
 
@@ -27,7 +29,7 @@ export interface DrainOutcome {
 export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
   const ledger = getLedger();
   const rows = ledger.dequeueApproved({ playName: opts.playName, limit: opts.limit ?? 50 });
-  const outcome: DrainOutcome = { drained: rows.length, sent: 0, errors: [] };
+  const outcome: DrainOutcome = { drained: rows.length, sent: 0, deferred: 0, errors: [] };
 
   if (rows.length === 0) return outcome;
 
@@ -39,11 +41,20 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
     return outcome;
   }
 
-  for (const row of rows) {
+  for (let r = 0; r < rows.length; r++) {
+    const row = rows[r]!;
     let draft: DraftedRow;
     try {
       draft = await dispatchOneTarget(opts, row);
     } catch (err) {
+      // Daily caps exhausted: leave this row (and the rest of the batch)
+      // approved with their reviewed drafts intact — the 15-min drain lease
+      // expires and tomorrow's drain picks them up with fresh capacity.
+      // Writing the "(error)" stub here would stomp a founder-reviewed draft.
+      if (isSendDeferred(err)) {
+        outcome.deferred += rows.length - r;
+        break;
+      }
       const msg = ((err as Error).message ?? "play failed").slice(0, 200);
       draft = {
         subject: "(error)",
