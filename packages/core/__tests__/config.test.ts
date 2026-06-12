@@ -84,6 +84,8 @@ describe("bootstrapClientId", () => {
     productOneLiner: null,
     productDomain: null,
     sendingDomain: null,
+    emailProvider: "oneshot" as const,
+    emailIdentities: null,
     icpOneLiner: null,
     cadenceOverrides: null,
     founderCredentials: null,

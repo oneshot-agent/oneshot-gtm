@@ -5,7 +5,31 @@ export interface ReceiptRecord {
   cost_usd: number | null;
   signed_receipt: string | null;
   oneshot_request_id: string | null;
+  /** Which EmailIdentity sent this (email.send receipts only); null pre-rotation. */
+  sender_identity: string | null;
   created_at: string;
+}
+
+/**
+ * One sending identity in the rotation pool. Either an OneShot wallet-owned
+ * domain or a Gmail/Workspace account (refresh token lives in the chmod-600
+ * gmail-tokens.json store, keyed by `id` — never in this config).
+ */
+export interface EmailIdentity {
+  /** Stable key, e.g. "legacy-oneshot", "gmail:jn@freebutter.ai". Referenced by sender_assignments rows — never rename a live id. */
+  id: string;
+  provider: "oneshot" | "gmail";
+  label?: string | null;
+  /** OneShot only: wallet-owned From domain. */
+  sendingDomain?: string | null;
+  /** OneShot only: From localpart override (default: founder first name). */
+  mailbox?: string | null;
+  /** Gmail only: the account address (informational; the OAuth token decides the real From). */
+  address?: string | null;
+  /** Hard daily ceiling. Null = uncapped (only sensible for OneShot identities). */
+  maxPerDay: number | null;
+  /** Auto ramp from first send: cap(day) = start + floor(weeks)*increment, clamped to maxPerDay. Null = no ramp. */
+  warmup: { startPerDay: number; incrementPerWeek: number } | null;
 }
 
 export interface ProspectRecord {
@@ -63,6 +87,22 @@ export interface OneShotConfig {
    * (which only works for whoever owns that demo domain).
    */
   sendingDomain: string | null;
+  /**
+   * Which transport sends email. "oneshot" (default) = OneShot SDK from a
+   * wallet-owned sendingDomain; "gmail" = the founder's own Gmail / Google
+   * Workspace account via OAuth (GMAIL_* secrets, `gmail auth` CLI). In gmail
+   * mode the From address is the authenticated account (sendingDomain is
+   * ignored) and replies are read from Gmail instead of the OneShot inbox.
+   */
+  emailProvider: "oneshot" | "gmail";
+  /**
+   * Sender rotation pool. Null = legacy single-identity mode: behave exactly
+   * per `emailProvider` + `sendingDomain` (a synthetic identity is derived at
+   * runtime). Once set, `emailProvider` is ignored — routing is per-prospect
+   * sticky: the identity that sent the first touch sends every later email
+   * to that prospect.
+   */
+  emailIdentities: EmailIdentity[] | null;
   /** Free-text ICP statement; the find layer's LLM filter uses it as a yes/no classifier. */
   icpOneLiner: string | null;
   /**

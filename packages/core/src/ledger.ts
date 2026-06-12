@@ -253,6 +253,23 @@ export class Ledger {
     // via claimQueueSendingMarker + sweepStaleQueueSends; auto-cleared by
     // setQueueStatus when the row flips to a terminal state.
     this.addColumnIfMissing("target_queue", "send_started_at", "TEXT");
+    // v11 (2026-06): sender rotation. `receipts.sender_identity` records which
+    // EmailIdentity (config emailIdentities[].id) sent each email.send — the
+    // per-identity daily counter + warm-up first-send date both derive from
+    // it. `sender_assignments` pins each prospect (canonical email) to the
+    // identity that sent their first touch so follow-ups never switch From
+    // address mid-thread. Keyed by email, NOT prospect_id: some sends happen
+    // before any prospect row exists (concierge prep email).
+    this.addColumnIfMissing("receipts", "sender_identity", "TEXT");
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS sender_assignments (
+        email TEXT PRIMARY KEY,
+        identity_id TEXT NOT NULL,
+        assigned_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_receipts_calltype_sender
+        ON receipts(call_type, sender_identity, created_at);
+    `);
   }
 
   /**
@@ -671,14 +688,16 @@ export class Ledger {
     costUsd?: number;
     signedReceipt?: unknown;
     oneshotRequestId?: string;
+    /** EmailIdentity id for email.send receipts — drives per-identity daily caps. */
+    senderIdentity?: string;
   }): number {
     // Number.isFinite guard rejects undefined / Infinity / NaN — those land
     // as NULL in the column, NOT silently distorted into a number.
     const costUsd =
       typeof input.costUsd === "number" && Number.isFinite(input.costUsd) ? input.costUsd : null;
     const stmt = this.db.prepare(`
-      INSERT INTO receipts(play_name, call_type, cost_usd, signed_receipt, oneshot_request_id)
-      VALUES(?, ?, ?, ?, ?)
+      INSERT INTO receipts(play_name, call_type, cost_usd, signed_receipt, oneshot_request_id, sender_identity)
+      VALUES(?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
       input.playName,
@@ -686,8 +705,75 @@ export class Ledger {
       costUsd,
       input.signedReceipt ? JSON.stringify(input.signedReceipt) : null,
       input.oneshotRequestId ?? null,
+      input.senderIdentity ?? null,
     );
     return Number(result.lastInsertRowid);
+  }
+
+  getSenderAssignment(email: string): string | null {
+    const row = this.db
+      .query("SELECT identity_id FROM sender_assignments WHERE email = ?")
+      .get(canonEmail(email)) as { identity_id: string } | undefined;
+    return row?.identity_id ?? null;
+  }
+
+  /**
+   * Pin a prospect email to a sending identity. INSERT OR IGNORE + read-back
+   * makes concurrent first-touches race-safe: both callers end up using the
+   * single winning assignment instead of splitting the thread across senders.
+   */
+  assignSender(email: string, identityId: string): string {
+    const canon = canonEmail(email);
+    this.db
+      .prepare("INSERT OR IGNORE INTO sender_assignments(email, identity_id) VALUES(?, ?)")
+      .run(canon, identityId);
+    return this.getSenderAssignment(canon) ?? identityId;
+  }
+
+  /**
+   * Sends by an identity since `sinceUtcSqlite`. The timestamp MUST be in
+   * SQLite datetime('now') format ("YYYY-MM-DD HH:MM:SS", UTC) — receipts
+   * default created_at to that format, and an ISO string with its 'T'
+   * separator compares GREATER than any same-day SQLite timestamp, silently
+   * excluding today's rows.
+   */
+  countEmailSendsSince(identityId: string, sinceUtcSqlite: string): number {
+    const row = this.db
+      .query(
+        `SELECT COUNT(*) AS n FROM receipts
+         WHERE call_type = 'email.send' AND sender_identity = ? AND created_at >= ?`,
+      )
+      .get(identityId, sinceUtcSqlite) as { n: number };
+    return row.n;
+  }
+
+  /**
+   * Did we ever email this address pre-rotation? Used to lazy-pin legacy
+   * prospects (e.g. in-flight cadences) to the legacy identity instead of
+   * letting the rotation picker move their thread to a new From address.
+   */
+  hasPriorEmailSend(email: string): boolean {
+    const row = this.db
+      .query(
+        `SELECT 1 FROM sequence_events se
+         JOIN prospects p ON p.id = se.prospect_id
+         WHERE p.email = ? AND se.channel = 'email'
+           AND se.status IN ('sent','delivered','replied')
+         LIMIT 1`,
+      )
+      .get(canonEmail(email)) as 1 | undefined;
+    return row != null;
+  }
+
+  /** First email.send by this identity (warm-up ramp anchor). SQLite-format UTC or null. */
+  firstEmailSendAt(identityId: string): string | null {
+    const row = this.db
+      .query(
+        `SELECT MIN(created_at) AS first FROM receipts
+         WHERE call_type = 'email.send' AND sender_identity = ?`,
+      )
+      .get(identityId) as { first: string | null };
+    return row.first;
   }
 
   getReceipt(id: number): ReceiptRecord | null {

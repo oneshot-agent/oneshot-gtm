@@ -4,5 +4,8 @@ export * from "./ledger.ts";
 export * from "./config.ts";
 export * from "./events.ts";
 export * from "./json.ts";
+export * from "./gmail.ts";
+export * from "./identities.ts";
+export * from "./send-routing.ts";
 export * from "./parallel.ts";
 export * from "./types.ts";

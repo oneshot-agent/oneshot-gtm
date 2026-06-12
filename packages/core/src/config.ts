@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
+import { safeParseJsonRecord } from "./json.ts";
 import type { OneShotConfig } from "./types.ts";
 
 const CONFIG_DIR = join(homedir(), ".oneshot-gtm");
@@ -16,6 +17,9 @@ export const SECRET_KEYS = [
   "CDP_API_KEY_SECRET",
   "CDP_WALLET_SECRET",
   "AGENT_PRIVATE_KEY",
+  "GMAIL_CLIENT_ID",
+  "GMAIL_CLIENT_SECRET",
+  "GMAIL_REFRESH_TOKEN",
 ] as const;
 export type SecretKey = (typeof SECRET_KEYS)[number];
 
@@ -29,6 +33,8 @@ const DEFAULTS: OneShotConfig = {
   productOneLiner: null,
   productDomain: null,
   sendingDomain: null,
+  emailProvider: "oneshot",
+  emailIdentities: null,
   icpOneLiner: null,
   cadenceOverrides: null,
   founderCredentials: null,
@@ -167,6 +173,56 @@ export function secretSource(key: SecretKey): "env" | "file" | null {
 
 // Auto-apply on first import so downstream code sees keys in process.env without ceremony.
 applySecretsToEnv();
+
+const GMAIL_TOKENS_PATH = join(CONFIG_DIR, "gmail-tokens.json");
+
+export interface GmailTokenEntry {
+  refreshToken: string;
+  address: string;
+}
+
+/**
+ * Per-identity Gmail refresh tokens. Lives outside the .env SECRET_KEYS
+ * whitelist because the key set is dynamic (one token per authorized
+ * account). Same trust level as .env: chmod 600, local-only.
+ */
+export function loadGmailTokens(): Record<string, GmailTokenEntry> {
+  if (!existsSync(GMAIL_TOKENS_PATH)) return {};
+  let raw: string;
+  try {
+    raw = readFileSync(GMAIL_TOKENS_PATH, "utf8");
+  } catch {
+    return {};
+  }
+  const parsed = safeParseJsonRecord(raw) ?? {};
+  const out: Record<string, GmailTokenEntry> = {};
+  for (const [id, entry] of Object.entries(parsed)) {
+    const e = entry as Partial<GmailTokenEntry> | null;
+    if (e && typeof e === "object" && typeof e.refreshToken === "string" && e.refreshToken) {
+      out[id] = { refreshToken: e.refreshToken, address: typeof e.address === "string" ? e.address : "" };
+    }
+  }
+  return out;
+}
+
+export function saveGmailToken(identityId: string, entry: GmailTokenEntry): void {
+  ensureConfigDir();
+  const all = loadGmailTokens();
+  all[identityId] = entry;
+  writeFileSync(GMAIL_TOKENS_PATH, JSON.stringify(all, null, 2));
+  try {
+    chmodSync(GMAIL_TOKENS_PATH, 0o600);
+  } catch {
+    // chmod may fail on Windows; the file is still in $HOME so reasonably scoped.
+  }
+}
+
+export function deleteGmailToken(identityId: string): void {
+  const all = loadGmailTokens();
+  if (!(identityId in all)) return;
+  delete all[identityId];
+  writeFileSync(GMAIL_TOKENS_PATH, JSON.stringify(all, null, 2));
+}
 
 export function llmApiKey(provider: OneShotConfig["llmProvider"]): string | null {
   switch (provider) {
