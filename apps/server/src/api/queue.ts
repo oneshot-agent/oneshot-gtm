@@ -1,4 +1,10 @@
-import { getLedger, isDraining, type QueueRow, type QueueStatus } from "@oneshot-gtm/core";
+import {
+  getLedger,
+  isDraining,
+  isSendDeferred,
+  type QueueRow,
+  type QueueStatus,
+} from "@oneshot-gtm/core";
 import { drainQueue } from "@oneshot-gtm/find";
 import { enrollInCadence, sendDraftedEmail } from "@oneshot-gtm/plays";
 import type {
@@ -347,6 +353,11 @@ export async function sendDraftRoute(
       ledger.clearQueueSendingMarker(id);
     } catch {
       /* sweeper safety net */
+    }
+    // Daily caps exhausted — not a failure. Row stays approved with its
+    // reviewed draft; 429 tells the UI "try again tomorrow".
+    if (isSendDeferred(err)) {
+      return jsonResponse({ error: (err as Error).message, deferred: true }, 429, req);
     }
     return jsonResponse({ error: (err as Error).message ?? "send failed" }, 400, req);
   }

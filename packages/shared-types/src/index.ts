@@ -158,6 +158,12 @@ export interface SetupRequest {
   productOneLiner?: string;
   productDomain?: string;
   sendingDomain?: string;
+  /** Email transport: OneShot SDK (wallet-owned domain) or the founder's own Gmail/Workspace account. Legacy — ignored once the identities pool exists. */
+  emailProvider?: "oneshot" | "gmail";
+  /** Per-identity daily-cap edits ({ id, maxPerDay }). Null maxPerDay = uncapped. */
+  identityUpdates?: Array<{ id: string; maxPerDay: number | null }>;
+  /** Identities to drop from the rotation pool. Existing prospect pins to a removed id will refuse to send until restored. */
+  removeIdentityIds?: string[];
   icpOneLiner?: string;
   /** Founder background — résumé, prior companies, named roles. Founder-trust proof. */
   founderCredentials?: string;
@@ -179,10 +185,29 @@ export interface SetupRequest {
       | "CDP_API_KEY_ID"
       | "CDP_API_KEY_SECRET"
       | "CDP_WALLET_SECRET"
-      | "AGENT_PRIVATE_KEY",
+      | "AGENT_PRIVATE_KEY"
+      | "GMAIL_CLIENT_ID"
+      | "GMAIL_CLIENT_SECRET"
+      | "GMAIL_REFRESH_TOKEN",
       string
     >
   >;
+}
+
+/** One sender identity as shown on /setup: pool entry + today's usage. */
+export interface SenderIdentityView {
+  id: string;
+  provider: "oneshot" | "gmail";
+  label: string | null;
+  address: string | null;
+  sendingDomain: string | null;
+  maxPerDay: number | null;
+  warmup: { startPerDay: number; incrementPerWeek: number } | null;
+  sentToday: number;
+  /** Today's effective ceiling after the warm-up ramp; null = uncapped. */
+  capToday: number | null;
+  /** True when synthesized from legacy single-provider config (not yet a persisted pool). */
+  legacy: boolean;
 }
 
 export type QueueStatusView = "pending" | "approved" | "rejected" | "sent" | "expired";

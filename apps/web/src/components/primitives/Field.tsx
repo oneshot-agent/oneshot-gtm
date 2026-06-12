@@ -1,3 +1,4 @@
+import { ChevronDown } from "lucide-react";
 import type { InputHTMLAttributes, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
 import { cn } from "../../lib/cn.ts";
 import { Toggle } from "./Toggle.tsx";
@@ -64,7 +65,19 @@ export function Textarea({ className, ...rest }: TextareaHTMLAttributes<HTMLText
 }
 
 export function Select({ className, ...rest }: SelectHTMLAttributes<HTMLSelectElement>) {
-  return <select className={cn(baseInput, "appearance-none pr-8", className)} {...rest} />;
+  // `appearance-none` strips the native arrow, so without a replacement the
+  // control reads as a text input — overlay a chevron to restore the
+  // "this opens a menu" affordance.
+  return (
+    <span className={cn("relative block w-full", className)}>
+      <select className={cn(baseInput, "cursor-pointer appearance-none pr-8")} {...rest} />
+      <ChevronDown
+        size={14}
+        aria-hidden
+        className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-ink-muted"
+      />
+    </span>
+  );
 }
 
 /**

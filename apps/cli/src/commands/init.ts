@@ -116,6 +116,8 @@ export async function runInit(): Promise<void> {
     productOneLiner: (answers["productOneLiner"] ?? cfg.productOneLiner) || null,
     productDomain: (answers["productDomain"] ?? cfg.productDomain) || null,
     sendingDomain: (answers["sendingDomain"] ?? cfg.sendingDomain) || null,
+    emailProvider: cfg.emailProvider,
+    emailIdentities: cfg.emailIdentities,
     icpOneLiner: (answers["icpOneLiner"] ?? cfg.icpOneLiner) || null,
     cadenceOverrides: cfg.cadenceOverrides,
     founderCredentials: (answers["founderCredentials"] ?? cfg.founderCredentials) || null,

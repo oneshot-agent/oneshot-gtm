@@ -3,11 +3,18 @@ import { join } from "node:path";
 import {
   configDir,
   getBalance,
+  getGmailProfile,
   getLedger,
+  GMAIL_AUTH_HINT,
+  gmailAccountFor,
   llmApiKey,
   loadConfig,
+  missingGmailSecrets,
   oneshotEnvReady,
+  resolveIdentities,
   secretSource,
+  todayStartSqliteUtc,
+  warmupCap,
 } from "@oneshot-gtm/core";
 
 type CheckSeverity = "ok" | "warn" | "fail";
@@ -79,6 +86,60 @@ export async function runDoctor(): Promise<CheckResult[]> {
       name: "ledger",
       severity: "fail",
       message: `error opening ledger: ${(err as Error).message}`,
+    });
+  }
+
+  // One line per sender identity in the rotation pool. Legacy installs
+  // (emailIdentities unset) get their single synthesized identity, so this
+  // doubles as the old single-provider gmail check.
+  try {
+    const ledger = getLedger();
+    const todayStart = todayStartSqliteUtc();
+    for (const identity of resolveIdentities(cfg)) {
+      const sentToday = ledger.countEmailSendsSince(identity.id, todayStart);
+      const cap = warmupCap(identity, ledger.firstEmailSendAt(identity.id));
+      const usage = `today ${sentToday}/${cap === Infinity ? "∞" : cap}`;
+      const name = `sender ${identity.id}`;
+      if (identity.provider === "gmail") {
+        const missing = missingGmailSecrets().filter((k) => k !== "GMAIL_REFRESH_TOKEN");
+        const account = gmailAccountFor(identity);
+        if (missing.length > 0 || !account) {
+          results.push({
+            name,
+            severity: "fail",
+            message:
+              missing.length > 0 ? `missing: ${missing.join(", ")}` : "no refresh token stored",
+            hint: GMAIL_AUTH_HINT,
+          });
+          continue;
+        }
+        try {
+          const { emailAddress } = await getGmailProfile(account);
+          results.push({ name, severity: "ok", message: `sending as ${emailAddress} · ${usage}` });
+        } catch (err) {
+          results.push({
+            name,
+            severity: "fail",
+            message: `auth check failed: ${(err as Error).message}`,
+            hint: GMAIL_AUTH_HINT,
+          });
+        }
+      } else {
+        const domain = identity.sendingDomain ?? cfg.sendingDomain;
+        results.push({
+          name,
+          severity: domain ? "ok" : "warn",
+          message: domain
+            ? `sending from ${domain} · ${usage}`
+            : `no sendingDomain — SDK default domain · ${usage}`,
+        });
+      }
+    }
+  } catch (err) {
+    results.push({
+      name: "sender identities",
+      severity: "warn",
+      message: `could not evaluate: ${(err as Error).message}`,
     });
   }
 

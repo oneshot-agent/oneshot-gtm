@@ -1,12 +1,23 @@
 import {
+  deleteGmailToken,
+  getLedger,
   loadConfig,
+  resolveIdentities,
   saveConfig,
   saveSecrets,
   secretSource,
   secretsPath,
+  todayStartSqliteUtc,
+  warmupCap,
+  type EmailIdentity,
   type OneShotConfig,
 } from "@oneshot-gtm/core";
-import type { LlmProvider, SetupRequest, WalletMode } from "@oneshot-gtm/shared-types";
+import type {
+  LlmProvider,
+  SenderIdentityView,
+  SetupRequest,
+  WalletMode,
+} from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 
 /**
@@ -24,11 +35,33 @@ export function publicCfg(cfg: OneShotConfig): Omit<OneShotConfig, "clientId"> {
   return rest;
 }
 
+function identityViews(cfg: OneShotConfig): SenderIdentityView[] {
+  const ledger = getLedger();
+  const todayStart = todayStartSqliteUtc();
+  const legacy = cfg.emailIdentities == null;
+  return resolveIdentities(cfg).map((i) => {
+    const cap = warmupCap(i, ledger.firstEmailSendAt(i.id));
+    return {
+      id: i.id,
+      provider: i.provider,
+      label: i.label ?? null,
+      address: i.address ?? null,
+      sendingDomain: i.sendingDomain ?? null,
+      maxPerDay: i.maxPerDay,
+      warmup: i.warmup,
+      sentToday: ledger.countEmailSendsSince(i.id, todayStart),
+      capToday: cap === Infinity ? null : cap,
+      legacy,
+    };
+  });
+}
+
 export function getSetupStatus(req: Request): Response {
   const cfg = loadConfig();
   return jsonResponse(
     {
       cfg: publicCfg(cfg),
+      identities: identityViews(cfg),
       secretsPath: secretsPath(),
       sources: {
         OPENROUTER_API_KEY: secretSource("OPENROUTER_API_KEY"),
@@ -38,6 +71,9 @@ export function getSetupStatus(req: Request): Response {
         CDP_API_KEY_SECRET: secretSource("CDP_API_KEY_SECRET"),
         CDP_WALLET_SECRET: secretSource("CDP_WALLET_SECRET"),
         AGENT_PRIVATE_KEY: secretSource("AGENT_PRIVATE_KEY"),
+        GMAIL_CLIENT_ID: secretSource("GMAIL_CLIENT_ID"),
+        GMAIL_CLIENT_SECRET: secretSource("GMAIL_CLIENT_SECRET"),
+        GMAIL_REFRESH_TOKEN: secretSource("GMAIL_REFRESH_TOKEN"),
       },
     },
     200,
@@ -50,6 +86,34 @@ export async function setup(req: Request): Promise<Response> {
   const current = loadConfig();
   const llmProvider: LlmProvider = body.llmProvider ?? current.llmProvider;
   const walletMode: WalletMode = body.walletMode ?? current.walletMode;
+
+  // Identity-pool edits (cap changes / removals). The first edit materializes
+  // the pool from legacy config so the change has somewhere to persist.
+  let emailIdentities = current.emailIdentities;
+  const hasIdentityEdits =
+    (body.identityUpdates?.length ?? 0) > 0 || (body.removeIdentityIds?.length ?? 0) > 0;
+  if (hasIdentityEdits) {
+    let pool: EmailIdentity[] = current.emailIdentities ?? resolveIdentities(current);
+    for (const upd of body.identityUpdates ?? []) {
+      const cap =
+        typeof upd.maxPerDay === "number" && Number.isFinite(upd.maxPerDay) && upd.maxPerDay >= 0
+          ? Math.floor(upd.maxPerDay)
+          : null;
+      pool = pool.map((i) => (i.id === upd.id ? { ...i, maxPerDay: cap } : i));
+    }
+    const remove = new Set(body.removeIdentityIds ?? []);
+    if (remove.size > 0) {
+      pool = pool.filter((i) => !remove.has(i.id));
+      for (const id of remove) {
+        try {
+          deleteGmailToken(id);
+        } catch {
+          // token-store cleanup is best-effort; the identity is gone either way.
+        }
+      }
+    }
+    emailIdentities = pool;
+  }
 
   // clientId is preserved from current — body.clientId is intentionally
   // ignored so a malicious or accidental web POST can't rotate the anonymous
@@ -65,6 +129,11 @@ export async function setup(req: Request): Promise<Response> {
     productOneLiner: mergeString(body.productOneLiner, current.productOneLiner),
     productDomain: mergeString(body.productDomain, current.productDomain),
     sendingDomain: mergeString(body.sendingDomain, current.sendingDomain),
+    emailProvider:
+      body.emailProvider === "gmail" || body.emailProvider === "oneshot"
+        ? body.emailProvider
+        : current.emailProvider,
+    emailIdentities,
     icpOneLiner: mergeString(body.icpOneLiner, current.icpOneLiner),
     cadenceOverrides: current.cadenceOverrides,
     founderCredentials: mergeString(body.founderCredentials, current.founderCredentials),

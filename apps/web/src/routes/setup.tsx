@@ -26,6 +26,9 @@ const SECRET_LABELS: Record<string, string> = {
   CDP_API_KEY_SECRET: "CDP_API_KEY_SECRET",
   CDP_WALLET_SECRET: "CDP_WALLET_SECRET",
   AGENT_PRIVATE_KEY: "AGENT_PRIVATE_KEY",
+  GMAIL_CLIENT_ID: "GMAIL_CLIENT_ID",
+  GMAIL_CLIENT_SECRET: "GMAIL_CLIENT_SECRET",
+  GMAIL_REFRESH_TOKEN: "GMAIL_REFRESH_TOKEN",
 };
 
 function SetupPage() {
@@ -50,6 +53,11 @@ function SetupPage() {
   const [llmModel, setLlmModel] = useState("");
   const [telemetryEnabled, setTelemetryEnabled] = useState(true);
   const [walletMode, setWalletMode] = useState<"cdp" | "private-key">("cdp");
+  const [emailProvider, setEmailProvider] = useState<"oneshot" | "gmail">("oneshot");
+  // Sender-rotation pool edits, applied on Save: per-identity cap inputs
+  // (string so the field can be temporarily empty) + pending removals.
+  const [capEdits, setCapEdits] = useState<Record<string, string>>({});
+  const [removedIdentityIds, setRemovedIdentityIds] = useState<string[]>([]);
   const [founderCredentials, setFounderCredentials] = useState("");
   const [productPortfolio, setProductPortfolio] = useState("");
   const [partners, setPartners] = useState("");
@@ -74,6 +82,7 @@ function SetupPage() {
     setLlmModel(c.llmModel || LLM_DEFAULTS[c.llmProvider] || "");
     setTelemetryEnabled(c.telemetryEnabled);
     setWalletMode(c.walletMode);
+    setEmailProvider(c.emailProvider);
   }, [status.data?.cfg]);
 
   const deriveIcp = useMutation({
@@ -116,7 +125,13 @@ function SetupPage() {
       for (const [k, v] of Object.entries(secrets)) {
         if (v.trim().length > 0) filteredSecrets[k] = v.trim();
       }
+      const identityUpdates = Object.entries(capEdits).map(([id, raw]) => {
+        const n = Number.parseInt(raw, 10);
+        return { id, maxPerDay: Number.isFinite(n) && n >= 0 ? n : null };
+      });
       await api.setup({
+        ...(identityUpdates.length > 0 ? { identityUpdates } : {}),
+        ...(removedIdentityIds.length > 0 ? { removeIdentityIds: removedIdentityIds } : {}),
         founderName,
         founderEmail,
         productOneLiner,
@@ -131,11 +146,14 @@ function SetupPage() {
         llmModel,
         telemetryEnabled,
         walletMode,
+        emailProvider,
         secrets: filteredSecrets as never,
       });
     },
     onSuccess: () => {
       setSecrets({});
+      setCapEdits({});
+      setRemovedIdentityIds([]);
       setSavedAt(Date.now());
       void qc.invalidateQueries({ queryKey: ["setup"] });
       void qc.invalidateQueries({ queryKey: ["doctor"] });
@@ -144,6 +162,10 @@ function SetupPage() {
   });
 
   const sources = status.data?.sources ?? {};
+  // Legacy single-identity mode = the pool is auto-derived from emailProvider.
+  // Once a real pool exists, the provider select / manual Gmail secrets are
+  // inert (routing is pool-driven) — hide them instead of misleading.
+  const isLegacyPool = status.data?.identities?.[0]?.legacy ?? true;
   const llmSecretKey =
     llmProvider === "openrouter"
       ? "OPENROUTER_API_KEY"
@@ -488,7 +510,128 @@ function SetupPage() {
         </LedgerSection>
 
         <LedgerSection
-          eyebrow="06 · Telemetry"
+          eyebrow="06 · Email transport"
+          lede="The sender rotation pool. Each prospect sticks to the identity that first emailed them; new prospects go to the identity with the most capacity left today."
+        >
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {(status.data?.identities?.length ?? 0) > 0 && (
+              <div className="md:col-span-2 flex flex-col gap-2">
+                <span className="ln-eyebrow">Sender identities</span>
+                {status.data!.identities
+                  .filter((i) => !removedIdentityIds.includes(i.id))
+                  .map((i) => (
+                    <div
+                      key={i.id}
+                      className="flex items-center gap-3 border border-ink-rule rounded-[var(--radius-sm)] px-3 py-2"
+                    >
+                      <Badge tone={i.provider === "gmail" ? "signal" : "receipt"}>
+                        {i.provider}
+                      </Badge>
+                      <div className="flex min-w-0 flex-col">
+                        <span className="truncate text-[13px] text-ink-cream">
+                          {i.address ?? i.sendingDomain ?? i.label ?? i.id}
+                        </span>
+                        <span className="ln-mono text-[11px] text-ink-muted">
+                          today {i.sentToday}/{i.capToday ?? "∞"}
+                          {i.warmup
+                            ? ` · warm-up ${i.warmup.startPerDay}+${i.warmup.incrementPerWeek}/wk`
+                            : ""}
+                          {i.legacy ? " · legacy (auto-derived)" : ""}
+                        </span>
+                      </div>
+                      <div className="ml-auto flex items-center gap-2">
+                        <Input
+                          className="h-7 w-20 text-[12px]"
+                          placeholder={i.maxPerDay == null ? "∞" : String(i.maxPerDay)}
+                          value={capEdits[i.id] ?? ""}
+                          onChange={(e) =>
+                            setCapEdits((m) => ({ ...m, [i.id]: e.target.value }))
+                          }
+                          aria-label={`max sends per day for ${i.id}`}
+                        />
+                        <span className="ln-mono text-[10.5px] text-ink-faint">max/day</span>
+                        {!i.legacy && (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            className="h-7 px-2 text-[11px]"
+                            onClick={() => setRemovedIdentityIds((ids) => [...ids, i.id])}
+                          >
+                            Remove
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                <span className="text-[12px] text-ink-faint">
+                  Add another Gmail account with{" "}
+                  <code className="ln-mono text-[11.5px] text-ink-cream-2">
+                    bun run cli -- gmail auth
+                  </code>
+                  . Cap and removal changes apply on Save. Removing an identity blocks sends to
+                  prospects pinned to it until it's restored.
+                </span>
+              </div>
+            )}
+            {isLegacyPool && (
+              <Field label="Provider" className="md:col-span-2">
+                <Select
+                  value={emailProvider}
+                  onChange={(e) => setEmailProvider(e.target.value as typeof emailProvider)}
+                >
+                  <option value="oneshot">OneShot SDK (wallet-owned sending domain)</option>
+                  <option value="gmail">Gmail / Google Workspace (your own account)</option>
+                </Select>
+              </Field>
+            )}
+            {isLegacyPool && emailProvider === "gmail" && (
+              <>
+                <div className="ln-note text-[12px] text-ink-muted md:col-span-2">
+                  Emails send from your authenticated Gmail address — the sending domain above is
+                  ignored. Easiest path: run{" "}
+                  <code className="ln-mono text-[11.5px] text-ink-cream-2">
+                    bun run cli -- gmail auth
+                  </code>{" "}
+                  to authorize in the browser and fill all three values automatically.
+                </div>
+                <Field label="GMAIL_CLIENT_ID" hint={hintFor(sources["GMAIL_CLIENT_ID"])}>
+                  <Input
+                    type="password"
+                    placeholder={sources["GMAIL_CLIENT_ID"] ? "(unchanged)" : ""}
+                    value={secrets["GMAIL_CLIENT_ID"] ?? ""}
+                    onChange={(e) => setSecret("GMAIL_CLIENT_ID", e.target.value)}
+                    autoComplete="new-password"
+                  />
+                </Field>
+                <Field label="GMAIL_CLIENT_SECRET" hint={hintFor(sources["GMAIL_CLIENT_SECRET"])}>
+                  <Input
+                    type="password"
+                    placeholder={sources["GMAIL_CLIENT_SECRET"] ? "(unchanged)" : ""}
+                    value={secrets["GMAIL_CLIENT_SECRET"] ?? ""}
+                    onChange={(e) => setSecret("GMAIL_CLIENT_SECRET", e.target.value)}
+                    autoComplete="new-password"
+                  />
+                </Field>
+                <Field
+                  label="GMAIL_REFRESH_TOKEN"
+                  hint={hintFor(sources["GMAIL_REFRESH_TOKEN"])}
+                  className="md:col-span-2"
+                >
+                  <Input
+                    type="password"
+                    placeholder={sources["GMAIL_REFRESH_TOKEN"] ? "(unchanged)" : ""}
+                    value={secrets["GMAIL_REFRESH_TOKEN"] ?? ""}
+                    onChange={(e) => setSecret("GMAIL_REFRESH_TOKEN", e.target.value)}
+                    autoComplete="new-password"
+                  />
+                </Field>
+              </>
+            )}
+          </div>
+        </LedgerSection>
+
+        <LedgerSection
+          eyebrow="07 · Telemetry"
           lede="Off by default for your data, on by default for command-run counts. Opt out at will."
         >
           <Checkbox

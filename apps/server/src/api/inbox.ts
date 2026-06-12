@@ -1,4 +1,11 @@
-import { getLedger, listInbox, loadConfig, logEvent } from "@oneshot-gtm/core";
+import {
+  getGmailProfile,
+  getLedger,
+  listInbox,
+  loadConfig,
+  logEvent,
+  resolveIdentities,
+} from "@oneshot-gtm/core";
 import type { InboxReplyView, InboxResult } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 
@@ -88,9 +95,29 @@ export async function listInboxRoute(req: Request): Promise<Response> {
   // Drop mail from the founder's own sending domain — the mailbox accumulates
   // the agent's own sends + platform/system test mail (agent@/info@<domain>),
   // which are never genuine prospect replies. Then newest-first.
-  const selfDomain = (loadConfig().sendingDomain ?? "").trim().toLowerCase();
+  const cfg = loadConfig();
+  const selfDomain = (cfg.sendingDomain ?? "").trim().toLowerCase();
+  // Gmail self-sends: the Gmail query already excludes `from:me`, but
+  // belt-and-braces against forwarded copies of the founder's own address.
+  // Pool identities carry their address in config — no network call needed.
+  // Only the legacy synthesized identity (no address field) needs a live
+  // profile lookup, and that failing shouldn't break the replies page.
+  const gmailIdentities = resolveIdentities(cfg).filter((i) => i.provider === "gmail");
+  const selfAddresses = new Set(
+    gmailIdentities
+      .map((i) => (i.address ?? "").trim().toLowerCase())
+      .filter((a) => a.length > 0),
+  );
+  if (gmailIdentities.some((i) => !i.address)) {
+    try {
+      selfAddresses.add((await getGmailProfile()).emailAddress.trim().toLowerCase());
+    } catch {
+      // best-effort — `-from:me` already filters at the source.
+    }
+  }
   const visible = replies
     .filter((r) => !selfDomain || !r.fromEmail.endsWith(`@${selfDomain}`))
+    .filter((r) => !selfAddresses.has(r.fromEmail))
     .toSorted((a, b) => (a.receivedAt < b.receivedAt ? 1 : a.receivedAt > b.receivedAt ? -1 : 0));
 
   const out: InboxResult = { replies: visible, hasMore: false };

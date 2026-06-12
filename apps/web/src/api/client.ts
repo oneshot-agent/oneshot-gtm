@@ -18,6 +18,7 @@ import type {
   ReceiptView,
   RunRecord,
   RunTriggerResult,
+  SenderIdentityView,
   SetupRequest,
   SpendByPlay,
   TriggerView,
@@ -114,12 +115,14 @@ export const api = {
   doctor: () => getJson<{ checks: DoctorCheck[] }>("/doctor"),
   setupStatus: () =>
     getJson<{
+      identities: SenderIdentityView[];
       cfg: {
         founderName: string | null;
         founderEmail: string | null;
         productOneLiner: string | null;
         productDomain: string | null;
         sendingDomain: string | null;
+        emailProvider: "oneshot" | "gmail";
         icpOneLiner: string | null;
         founderCredentials: string | null;
         productPortfolio: string | null;

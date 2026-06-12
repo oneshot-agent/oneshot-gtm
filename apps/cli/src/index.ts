@@ -23,6 +23,7 @@ import {
   commandHandoffTemplatize,
 } from "./commands/handoff.ts";
 import { commandCadenceAdvance } from "./commands/cadence.ts";
+import { commandGmailAuth } from "./commands/gmail.ts";
 import { commandUi } from "./commands/ui.ts";
 import { commandFindDrain, commandFindWatch } from "./commands/find.ts";
 import {
@@ -82,6 +83,15 @@ config
   .command("telemetry <state>")
   .description("Enable or disable opt-out telemetry (on|off)")
   .action(runOrFail((state: string) => configTelemetry(state === "on" ? "on" : "off")));
+
+// Gmail send path: OAuth consent flow for the alternate (non-OneShot) provider.
+const gmail = program
+  .command("gmail")
+  .description("Gmail / Google Workspace send path (alternate email provider)");
+gmail
+  .command("auth")
+  .description("Authorize Gmail via OAuth and store the refresh token (chmod 600 ~/.oneshot-gtm/.env)")
+  .action(runOrFail(commandGmailAuth));
 
 // Find: scheduled / cron-able only. Ad-hoc finder runs are in the dashboard.
 const find = program
