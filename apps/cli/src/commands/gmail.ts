@@ -1,22 +1,17 @@
 import { randomUUID } from "node:crypto";
 import {
   _resetGmailCache,
+  exchangeGmailAuthCode,
   getGmailProfile,
   GMAIL_IDENTITY_DEFAULTS,
-  loadConfig,
-  resolveIdentities,
-  saveConfig,
-  saveGmailToken,
+  gmailConsentUrl,
+  registerGmailIdentity,
   saveSecrets,
   secretsPath,
-  type EmailIdentity,
 } from "@oneshot-gtm/core";
 import prompts from "prompts";
 import { c, header, note, ok, warn } from "../output.ts";
 
-const SCOPES = "https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly";
-const AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
-const TOKEN_URL = "https://oauth2.googleapis.com/token";
 const AUTH_TIMEOUT_MS = 5 * 60 * 1000;
 
 function tryOpenBrowser(url: string): void {
@@ -100,15 +95,7 @@ export async function commandGmailAuth(): Promise<void> {
 
   try {
     const redirectUri = `http://127.0.0.1:${server.port}`;
-    const consentUrl = `${AUTH_URL}?${new URLSearchParams({
-      client_id: clientId,
-      redirect_uri: redirectUri,
-      response_type: "code",
-      scope: SCOPES,
-      access_type: "offline",
-      prompt: "consent",
-      state,
-    })}`;
+    const consentUrl = gmailConsentUrl({ clientId, redirectUri, state });
 
     note(`Opening browser for consent — if it doesn't open, visit:\n  ${c.cyan(consentUrl)}`);
     tryOpenBrowser(consentUrl);
@@ -124,29 +111,16 @@ export async function commandGmailAuth(): Promise<void> {
       return;
     }
 
-    const tokenRes = await fetch(TOKEN_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
+    let refreshToken: string;
+    try {
+      refreshToken = await exchangeGmailAuthCode({
         code: outcome.code,
-        client_id: clientId,
-        client_secret: clientSecret,
-        redirect_uri: redirectUri,
-        grant_type: "authorization_code",
-      }),
-    });
-    const tokens = (await tokenRes.json()) as {
-      refresh_token?: string;
-      error?: string;
-      error_description?: string;
-    };
-    if (!tokenRes.ok || !tokens.refresh_token) {
-      warn(
-        `Token exchange failed: ${tokens.error ?? tokenRes.status} ${tokens.error_description ?? ""}`,
-      );
-      if (!tokens.refresh_token && tokenRes.ok) {
-        note("No refresh_token returned — revoke prior access at myaccount.google.com/permissions and retry.");
-      }
+        clientId,
+        clientSecret,
+        redirectUri,
+      });
+    } catch (err) {
+      warn((err as Error).message);
       return;
     }
 
@@ -155,40 +129,21 @@ export async function commandGmailAuth(): Promise<void> {
     saveSecrets({ GMAIL_CLIENT_ID: clientId, GMAIL_CLIENT_SECRET: clientSecret });
     _resetGmailCache();
 
-    const { emailAddress } = await getGmailProfile({
-      id: "pending",
-      refreshToken: tokens.refresh_token,
-    });
-    const identityId = `gmail:${emailAddress.toLowerCase()}`;
-    saveGmailToken(identityId, { refreshToken: tokens.refresh_token, address: emailAddress });
+    const { emailAddress } = await getGmailProfile({ id: "pending", refreshToken });
     _resetGmailCache();
+    const { identityId, created } = registerGmailIdentity({ address: emailAddress, refreshToken });
     ok(`Saved refresh token for ${c.cyan(emailAddress)} (${c.dim(secretsPath())} dir)`);
 
-    // Materialize the rotation pool: legacy single-identity installs get
-    // their synthesized identity persisted first so existing prospects keep
-    // their original From address, then this account joins with warm-up caps.
-    const cfg = loadConfig();
-    const pool: EmailIdentity[] = cfg.emailIdentities ? [...cfg.emailIdentities] : resolveIdentities(cfg);
-    const existing = pool.findIndex((i) => i.id === identityId);
-    const entry: EmailIdentity = {
-      id: identityId,
-      provider: "gmail",
-      label: emailAddress,
-      address: emailAddress,
-      ...GMAIL_IDENTITY_DEFAULTS,
-    };
-    if (existing >= 0) {
-      // Re-auth of a known account: keep its tuned caps, just confirm identity.
-      ok(`Identity ${c.cyan(identityId)} re-authorized (caps unchanged).`);
-    } else {
-      pool.push(entry);
-      saveConfig({ ...cfg, emailIdentities: pool });
+    if (created) {
       ok(
         `Identity ${c.cyan(identityId)} added to the rotation pool ` +
           `(warm-up: ${GMAIL_IDENTITY_DEFAULTS.warmup!.startPerDay}/day, ` +
           `+${GMAIL_IDENTITY_DEFAULTS.warmup!.incrementPerWeek}/week, max ${GMAIL_IDENTITY_DEFAULTS.maxPerDay}/day).`,
       );
       note("New prospects rotate across the pool; existing threads keep their original sender.");
+    } else {
+      // Re-auth of a known account: token refreshed, tuned caps untouched.
+      ok(`Identity ${c.cyan(identityId)} re-authorized (caps unchanged).`);
     }
   } finally {
     server.stop(true);

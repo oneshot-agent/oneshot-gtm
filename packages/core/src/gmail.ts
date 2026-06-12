@@ -14,6 +14,62 @@ const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
 
 export const GMAIL_AUTH_HINT = "run: bun run cli -- gmail auth";
 
+export const GMAIL_OAUTH_SCOPES =
+  "https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly";
+
+/** Google consent URL for the loopback OAuth flow (CLI command and /setup button share it). */
+export function gmailConsentUrl(opts: {
+  clientId: string;
+  redirectUri: string;
+  state: string;
+}): string {
+  return `https://accounts.google.com/o/oauth2/v2/auth?${new URLSearchParams({
+    client_id: opts.clientId,
+    redirect_uri: opts.redirectUri,
+    response_type: "code",
+    scope: GMAIL_OAUTH_SCOPES,
+    access_type: "offline",
+    prompt: "consent",
+    state: opts.state,
+  })}`;
+}
+
+/** Exchange an authorization code for a refresh token. Throws with an actionable message on any failure. */
+export async function exchangeGmailAuthCode(opts: {
+  code: string;
+  clientId: string;
+  clientSecret: string;
+  redirectUri: string;
+}): Promise<string> {
+  const res = await fetch(TOKEN_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      code: opts.code,
+      client_id: opts.clientId,
+      client_secret: opts.clientSecret,
+      redirect_uri: opts.redirectUri,
+      grant_type: "authorization_code",
+    }),
+  });
+  const data = (await res.json()) as {
+    refresh_token?: string;
+    error?: string;
+    error_description?: string;
+  };
+  if (!res.ok || !data.refresh_token) {
+    const detail = data.error
+      ? `${data.error}${data.error_description ? ` — ${data.error_description}` : ""}`
+      : `http ${res.status}`;
+    const hint =
+      res.ok && !data.refresh_token
+        ? " (no refresh_token returned — revoke prior access at myaccount.google.com/permissions and retry)"
+        : "";
+    throw new Error(`Gmail token exchange failed: ${detail}${hint}`);
+  }
+  return data.refresh_token;
+}
+
 export function missingGmailSecrets(): string[] {
   return ["GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN"].filter(
     (k) => !(process.env[k] ?? "").trim(),

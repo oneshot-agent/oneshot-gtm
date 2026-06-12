@@ -1,4 +1,4 @@
-import { loadGmailTokens } from "./config.ts";
+import { loadConfig, loadGmailTokens, saveConfig, saveGmailToken } from "./config.ts";
 import type { EmailIdentity, OneShotConfig } from "./types.ts";
 
 export const LEGACY_ONESHOT_ID = "legacy-oneshot";
@@ -41,6 +41,33 @@ export function resolveIdentities(cfg: OneShotConfig): EmailIdentity[] {
       warmup: null,
     },
   ];
+}
+
+/**
+ * Persist a freshly authorized Gmail account: refresh token into the
+ * chmod-600 store, identity into the rotation pool with warm-up defaults.
+ * Legacy installs get their synthesized identity persisted first so existing
+ * prospects keep their original From address. Re-auth of a known account
+ * only refreshes the token — tuned caps are left alone.
+ */
+export function registerGmailIdentity(input: {
+  address: string;
+  refreshToken: string;
+}): { identityId: string; created: boolean } {
+  const identityId = `gmail:${input.address.trim().toLowerCase()}`;
+  saveGmailToken(identityId, { refreshToken: input.refreshToken, address: input.address });
+  const cfg = loadConfig();
+  const pool: EmailIdentity[] = cfg.emailIdentities ? [...cfg.emailIdentities] : resolveIdentities(cfg);
+  if (pool.some((i) => i.id === identityId)) return { identityId, created: false };
+  pool.push({
+    id: identityId,
+    provider: "gmail",
+    label: input.address,
+    address: input.address,
+    ...GMAIL_IDENTITY_DEFAULTS,
+  });
+  saveConfig({ ...cfg, emailIdentities: pool });
+  return { identityId, created: true };
 }
 
 /**

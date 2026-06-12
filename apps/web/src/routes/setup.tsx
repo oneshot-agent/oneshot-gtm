@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Save, Wand2 } from "lucide-react";
+import { Mail, Save, Wand2 } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { api } from "../api/client.ts";
@@ -166,6 +166,26 @@ function SetupPage() {
   // Once a real pool exists, the provider select / manual Gmail secrets are
   // inert (routing is pool-driven) — hide them instead of misleading.
   const isLegacyPool = status.data?.identities?.[0]?.legacy ?? true;
+  // The Connect button needs the shared OAuth-app creds saved first.
+  const gmailCredsReady = Boolean(sources["GMAIL_CLIENT_ID"] && sources["GMAIL_CLIENT_SECRET"]);
+
+  // Round-trip result from the browser OAuth flow (/api/gmail/auth/callback
+  // redirects back here with ?gmailAuth=ok:<address> | error:<reason>).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const outcome = params.get("gmailAuth");
+    if (!outcome) return;
+    if (outcome.startsWith("ok:")) {
+      toast.success(`Gmail connected · ${outcome.slice(3)} joined the rotation pool`);
+    } else {
+      toast.error(`Gmail auth failed · ${outcome.replace(/^error:/, "")}`);
+    }
+    params.delete("gmailAuth");
+    const qs = params.toString();
+    window.history.replaceState({}, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`);
+    void qc.invalidateQueries({ queryKey: ["setup"] });
+    void qc.invalidateQueries({ queryKey: ["doctor"] });
+  }, [qc]);
   const llmSecretKey =
     llmProvider === "openrouter"
       ? "OPENROUTER_API_KEY"
@@ -563,8 +583,26 @@ function SetupPage() {
                       </div>
                     </div>
                   ))}
+                <div className="mt-1 flex flex-wrap items-center gap-3">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={!gmailCredsReady}
+                    onClick={() => {
+                      window.location.href = "/api/gmail/auth/start";
+                    }}
+                  >
+                    <Mail size={12} />
+                    Connect Gmail account
+                  </Button>
+                  <span className="text-[12px] text-ink-faint">
+                    {gmailCredsReady
+                      ? "Opens Google consent — sign in as the account you want to send from."
+                      : "Save GMAIL_CLIENT_ID + GMAIL_CLIENT_SECRET below first (Google Cloud OAuth client, Desktop type, Gmail API enabled)."}
+                  </span>
+                </div>
                 <span className="text-[12px] text-ink-faint">
-                  Add another Gmail account with{" "}
+                  CLI alternative:{" "}
                   <code className="ln-mono text-[11.5px] text-ink-cream-2">
                     bun run cli -- gmail auth
                   </code>
@@ -572,6 +610,28 @@ function SetupPage() {
                   prospects pinned to it until it's restored.
                 </span>
               </div>
+            )}
+            {!isLegacyPool && !gmailCredsReady && (
+              <>
+                <Field label="GMAIL_CLIENT_ID" hint={hintFor(sources["GMAIL_CLIENT_ID"])}>
+                  <Input
+                    type="password"
+                    placeholder={sources["GMAIL_CLIENT_ID"] ? "(unchanged)" : ""}
+                    value={secrets["GMAIL_CLIENT_ID"] ?? ""}
+                    onChange={(e) => setSecret("GMAIL_CLIENT_ID", e.target.value)}
+                    autoComplete="new-password"
+                  />
+                </Field>
+                <Field label="GMAIL_CLIENT_SECRET" hint={hintFor(sources["GMAIL_CLIENT_SECRET"])}>
+                  <Input
+                    type="password"
+                    placeholder={sources["GMAIL_CLIENT_SECRET"] ? "(unchanged)" : ""}
+                    value={secrets["GMAIL_CLIENT_SECRET"] ?? ""}
+                    onChange={(e) => setSecret("GMAIL_CLIENT_SECRET", e.target.value)}
+                    autoComplete="new-password"
+                  />
+                </Field>
+              </>
             )}
             {isLegacyPool && (
               <Field label="Provider" className="md:col-span-2">
