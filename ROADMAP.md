@@ -141,6 +141,8 @@ The motion plays needed hand-curated JSON target lists; founders kept asking "wh
 - [ ] **ICP-filter learning loop v2** — periodic LLM job that proposes a tighter ICP one-liner from accumulated decisions; founder approves the rewrite in `/queue`
 - [ ] **Per-source weighting** in the watch loop — track approval rate per finder; deprioritize noisy sources automatically
 - [x] **Per-trigger interval UI** — the interval cell in the /queue triggers table is click-to-edit: preset select (1h–7d) + a revert-to-default option, writing the same `intervalMs` config override the JSON editor uses; scheduler picks the new cadence up on its next tick
+- [x] **Gmail / Google Workspace send path** — plain-fetch OAuth2 + Gmail REST (zero new deps); `gmail auth` CLI loopback consent flow; replies are read from Gmail so cadence stop-on-reply and /inbox keep working
+- [x] **Sender rotation** — identity pool (OneShot domains + N Gmail accounts) with sticky per-prospect routing (`sender_assignments`, ledger v11), auto warm-up daily caps (10/day → +10/wk → max 50), defer-don't-exceed across cadence/drain/queue sends, merged multi-inbox reply polling, per-identity doctor checks + /setup identities table
 - [ ] **Webhook signing + replay protection** for the F3 endpoints
 
 ## Phase 3 — Distribution flywheel

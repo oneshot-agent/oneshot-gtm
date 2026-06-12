@@ -88,6 +88,17 @@ A trigger whose stored config is missing required inputs (e.g. `accelerator-batc
 
 Before any `findEmail` call, a pre-flight check skips dud domains (free-tier subdomains like `*.vercel.app`/`*.github.io`, social hosts, link aggregators, personal email providers) and inputs where the "name" is obviously a username (`samaralihussain`, no whitespace or period). On a 50-candidate Show HN run that historically dropped ~37 of 50 at the SDK, the prescreen now eliminates the wasted spend at ~$0.05/call — roughly $1–2 saved per run. Skipped rows log a `finder.skipped_findemail` event with the reason for later blocklist tuning.
 
+## Sender rotation — OneShot domains or your own Gmail
+
+Outbound ships through a **sender identity pool**: any mix of OneShot wallet-owned domains and your own Gmail / Google Workspace accounts. Routing rules:
+
+- **Sticky threads** — every email to a given prospect comes from the identity that sent their first touch, across plays and cadence steps. In-flight conversations never switch From address.
+- **Warm-up caps** — a freshly added Gmail account ramps automatically (10/day, +10/week, max 50 by default; edit per identity on `/setup`). OneShot identities are uncapped and absorb overflow.
+- **Defer, don't exceed** — when every identity hits its daily cap, cadence steps stay due and queue rows stay approved until capacity resets at midnight. Nothing sends over cap.
+- **Replies follow the pool** — the inbox poll merges the OneShot inbox with every authorized Gmail account, so stop-on-reply works no matter which identity sent.
+
+Add a Gmail account with `bun run cli -- gmail auth` (one-time browser OAuth consent; needs a Google Cloud OAuth client of type *Desktop* with the Gmail API enabled — `GMAIL_CLIENT_ID`/`GMAIL_CLIENT_SECRET` are shared across accounts, per-account refresh tokens live chmod-600 in `~/.oneshot-gtm/gmail-tokens.json`). `oneshot-gtm doctor` reports each identity's auth status and today's usage. With no pool configured, behavior is exactly the classic single OneShot identity.
+
 ---
 
 ## 60-second setup

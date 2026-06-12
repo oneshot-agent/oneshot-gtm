@@ -2,7 +2,7 @@
 
 Snapshot of what's known to work end-to-end against the live OneShot API. Updated manually after each dogfood run; CI auto-update is on the Phase 3 roadmap.
 
-Last manual update: **2026-06-03** · Bun **1.3.13** · OneShot SDK **0.16.2**
+Last manual update: **2026-06-12** · Bun **1.3.13** · OneShot SDK **0.18.0**
 
 ---
 
@@ -104,7 +104,7 @@ Last manual update: **2026-06-03** · Bun **1.3.13** · OneShot SDK **0.16.2**
 | `/receipts`                | ✅ green (with signed-receipt modal)                                                                                                                             |
 | `/plays`                   | ✅ green (with run + copy-CLI buttons)                                                                                                                           |
 | `/measure`                 | ✅ green                                                                                                                                                         |
-| `/setup`                   | ✅ green (editable wizard with hidden-input keys)                                                                                                                |
+| `/setup`                   | ✅ green (editable wizard with hidden-input keys + sender-identity pool: per-identity usage/caps, remove)                                                        |
 | `/run/show-hn`             | ✅ green (SSE-streamed drafts)                                                                                                                                   |
 | `/run/job-change`          | ✅ green (SSE-streamed drafts)                                                                                                                                   |
 | `/run/post-funding`        | ✅ green (SSE-streamed drafts)                                                                                                                                   |
@@ -132,7 +132,7 @@ Last manual update: **2026-06-03** · Bun **1.3.13** · OneShot SDK **0.16.2**
 | `GET /api/receipts/:id`                       | ✅ green                                                                                                                                                                                                                                                      |
 | `GET /api/plays`                              | ✅ green                                                                                                                                                                                                                                                      |
 | `POST /api/plays/:name/cadence`               | ✅ green — edit a play's cadence step offsets                                                                                                                                                                                                                 |
-| `GET /api/inbox`                              | ✅ green — read-only OneShot inbox, replies matched to prospects (SDK exposes list only)                                                                                                                                                                      |
+| `GET /api/inbox`                              | ✅ green — read-only replies merged across ALL sender identities (OneShot inbox + each Gmail account), matched to prospects                                                                                                                                   |
 | `POST /api/queue/:id/regenerate`              | ✅ green — re-draft a single queue row                                                                                                                                                                                                                        |
 | `POST /api/queue/:id/send-draft`              | ✅ green — send the persisted draft for one queue row                                                                                                                                                                                                         |
 | `GET /api/measure/cac[?sinceDays=]`           | ✅ green                                                                                                                                                                                                                                                      |
@@ -162,9 +162,9 @@ Last manual update: **2026-06-03** · Bun **1.3.13** · OneShot SDK **0.16.2**
 | ------------------------------ | ------------------------------------------------------------ |
 | `bun run typecheck`            | ✅ 0 errors across apps/cli + apps/server + packages/\*      |
 | `bun run --cwd apps/web build` | ✅ ~1850 modules transformed, ~300 kB main chunk gzip ~94 kB |
-| `bun run lint`                 | ✅ 0 warnings, 0 errors (oxlint, 202 files)                  |
+| `bun run lint`                 | ✅ 0 warnings, 0 errors (oxlint, 234 files)                  |
 | `bun run fmt:check`            | ✅ all files pass oxfmt                                      |
-| `bun run test`                 | ✅ 701/701 vitest cases passing (59 test files)              |
+| `bun run test`                 | ✅ 1006/1006 vitest cases passing (79 test files)            |
 | `bun run cli -- doctor`        | ✅ all systems go                                            |
 
 ---
