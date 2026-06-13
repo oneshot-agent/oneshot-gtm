@@ -3,11 +3,13 @@ import { createFileRoute } from "@tanstack/react-router";
 import { ChevronDown, CircleStop, Eye, Loader2, RotateCw, Send, Trophy } from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
 import { toast } from "sonner";
-import type { CadenceView, OutcomeRequest } from "@oneshot-gtm/shared-types";
+import type { CadenceCounts, CadenceView, OutcomeRequest } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
 import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
+import { Pii } from "../components/primitives/Pii.tsx";
+import { useMask } from "../lib/privacy.tsx";
 import { Field, Input, Select, Textarea } from "../components/primitives/Field.tsx";
 import { Modal } from "../components/primitives/Modal.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
@@ -219,7 +221,11 @@ function CadencesPage() {
   // render because of the `?? []` fallback, which would thrash useMemo's
   // cache.
   const list = useMemo(() => cadences.data?.cadences ?? [], [cadences.data]);
-  const aggregate = useMemo(() => buildAggregate(list, showAll), [list, showAll]);
+  // Tiles read the server's full-status counts (scoped only by sinceRun), NOT
+  // the table rows — so REPLIED/BREAKUP/COMPLETED stay accurate even while the
+  // table is filtered to active.
+  const counts = cadences.data?.counts ?? EMPTY_COUNTS;
+  const mask = useMask();
   const nowIso = new Date().toISOString();
 
   // Bulk-action derived state.
@@ -314,23 +320,23 @@ function CadencesPage() {
       <section className="grid grid-cols-2 divide-x divide-ink-rule border-b border-ink-rule md:grid-cols-4">
         <CadenceSummary
           label="Active"
-          value={aggregate.active}
-          caption={aggregate.overdue > 0 ? `${aggregate.overdue} overdue` : "awaiting reply"}
-          tone={aggregate.overdue > 0 ? "spend" : "receipt"}
+          value={counts.active}
+          caption={counts.overdue > 0 ? `${counts.overdue} overdue` : "awaiting reply"}
+          tone={counts.overdue > 0 ? "spend" : "receipt"}
         />
         <CadenceSummary
           label="Replied"
-          value={aggregate.replied}
+          value={counts.replied}
           caption="signal over noise"
           tone="signal"
         />
         <CadenceSummary
           label="Breakup"
-          value={aggregate.breakup}
+          value={counts.breakup}
           caption="final touch sent"
           tone="spend"
         />
-        <CadenceSummary label="Completed" value={aggregate.completed} caption="full cadence done" />
+        <CadenceSummary label="Completed" value={counts.completed} caption="full cadence done" />
       </section>
 
       {/* Meta strip */}
@@ -496,9 +502,11 @@ function CadencesPage() {
                         />
                       </td>
                       <td className="px-6 py-2">
-                        <div className="text-ink-cream">{c.prospectName ?? "(unknown)"}</div>
+                        <div className="text-ink-cream">
+                          {c.prospectName ? <Pii kind="name">{c.prospectName}</Pii> : "(unknown)"}
+                        </div>
                         <div className="font-mono text-[11px] text-ink-faint">
-                          {c.prospectEmail ?? "—"}
+                          {c.prospectEmail ? <Pii kind="email">{c.prospectEmail}</Pii> : "—"}
                         </div>
                       </td>
                       <td className="py-2 text-ink-cream-2">{c.playName}</td>
@@ -867,7 +875,7 @@ function CadencesPage() {
                 {sendableRows.map((c) => (
                   <tr key={rowKey(c)} className="border-t border-ink-rule/40">
                     <td className="px-2 py-1 font-mono text-ink-cream-2">
-                      {c.prospectEmail ?? "(no email)"}
+                      {c.prospectEmail ? <Pii kind="email">{c.prospectEmail}</Pii> : "(no email)"}
                     </td>
                     <td className="px-2 py-1 text-ink-cream-2">{c.playName}</td>
                     <td className="px-2 py-1 text-ink-cream-2">
@@ -890,8 +898,8 @@ function CadencesPage() {
         onClose={() => setSendConfirm(null)}
         title={
           sendConfirm?.isBreakup
-            ? `Send breakup — ${sendConfirm?.prospectName ?? sendConfirm?.prospectEmail ?? "(prospect)"}`
-            : `Send next step — ${sendConfirm?.prospectName ?? sendConfirm?.prospectEmail ?? "(prospect)"}`
+            ? `Send breakup — ${mask("auto", sendConfirm?.prospectName ?? sendConfirm?.prospectEmail ?? "(prospect)")}`
+            : `Send next step — ${mask("auto", sendConfirm?.prospectName ?? sendConfirm?.prospectEmail ?? "(prospect)")}`
         }
         footer={
           <>
@@ -933,7 +941,11 @@ function CadencesPage() {
           <div className="font-mono text-[12px] text-ink-muted">
             <div>
               To:{" "}
-              <span className="text-ink-cream-2">{sendConfirm?.prospectEmail ?? "(no email)"}</span>
+              <span className="text-ink-cream-2">
+                {sendConfirm?.prospectEmail
+                  ? mask("email", sendConfirm.prospectEmail)
+                  : "(no email)"}
+              </span>
             </div>
             <div>
               Play: <span className="text-ink-cream-2">{sendConfirm?.playName}</span>
@@ -951,7 +963,7 @@ function CadencesPage() {
       <Modal
         open={outcomeModal != null}
         onClose={() => setOutcomeModal(null)}
-        title={`Log outcome${outcomeModal?.prospectName ? ` — ${outcomeModal.prospectName}` : ""}`}
+        title={`Log outcome${outcomeModal?.prospectName ? ` — ${mask("name", outcomeModal.prospectName)}` : ""}`}
         footer={
           <>
             <Button variant="ghost" onClick={() => setOutcomeModal(null)}>
@@ -965,7 +977,7 @@ function CadencesPage() {
       >
         <div className="flex flex-col gap-4">
           <div className="font-mono text-[12px] text-ink-muted">
-            Prospect: <span className="text-ink-cream-2">{outcomeModal?.email}</span>
+            Prospect: <span className="text-ink-cream-2">{mask("email", outcomeModal?.email)}</span>
             <br />
             Play: <span className="text-ink-cream-2">{outcomeModal?.playName}</span>
           </div>
@@ -1041,38 +1053,11 @@ function CadenceSummary({
   );
 }
 
-function buildAggregate(
-  cadences: CadenceView[],
-  showingAll: boolean,
-): {
-  active: number;
-  replied: number;
-  breakup: number;
-  completed: number;
-  overdue: number;
-} {
-  const now = Date.now();
-  let active = 0;
-  let replied = 0;
-  let breakup = 0;
-  let completed = 0;
-  let overdue = 0;
-
-  for (const c of cadences) {
-    if (c.status === "active") {
-      active++;
-      if (c.nextDueAt && new Date(c.nextDueAt).getTime() <= now) overdue++;
-    } else if (c.status === "replied") replied++;
-    else if (c.status === "breakup") breakup++;
-    else if (c.status === "completed") completed++;
-  }
-
-  // When the user toggles off "all", the server already filtered to active
-  // only. Zero out the other buckets for honesty.
-  if (!showingAll) {
-    replied = 0;
-    breakup = 0;
-    completed = 0;
-  }
-  return { active, replied, breakup, completed, overdue };
-}
+const EMPTY_COUNTS: CadenceCounts = {
+  active: 0,
+  replied: 0,
+  breakup: 0,
+  completed: 0,
+  paused: 0,
+  overdue: 0,
+};

@@ -35,7 +35,11 @@ vi.mock("@oneshot-gtm/plays", async () => {
 
 const { listCadences } = await import("../src/api/cadences.ts");
 
-function makeRow(email: string, name = "X", company = "Acme"): {
+function makeRow(
+  email: string,
+  name = "X",
+  company = "Acme",
+): {
   prospect_id: number;
   play_name: string;
   current_step: number;
@@ -78,8 +82,8 @@ describe("listCadences — ?sinceRun filter", () => {
     listAllCadencesMock.mockReset();
   });
 
-  it("no sinceRun → returns the unfiltered listActiveCadences set", async () => {
-    listActiveCadencesMock.mockReturnValue([makeRow("a@x.dev"), makeRow("b@x.dev")]);
+  it("no sinceRun → returns the unfiltered active set", async () => {
+    listAllCadencesMock.mockReturnValue([makeRow("a@x.dev"), makeRow("b@x.dev")]);
     const res = listCadences(req("/api/cadences"));
     const body = (await res.json()) as { cadences: Array<{ prospectEmail: string }> };
     expect(body.cadences.map((c) => c.prospectEmail).toSorted()).toEqual(["a@x.dev", "b@x.dev"]);
@@ -87,7 +91,7 @@ describe("listCadences — ?sinceRun filter", () => {
   });
 
   it("sinceRun=N → filters to prospect_emails on the run row", async () => {
-    listActiveCadencesMock.mockReturnValue([
+    listAllCadencesMock.mockReturnValue([
       makeRow("a@x.dev"),
       makeRow("b@x.dev"),
       makeRow("c@x.dev"),
@@ -100,7 +104,7 @@ describe("listCadences — ?sinceRun filter", () => {
   });
 
   it("sinceRun=N with case-mismatched emails on either side still matches", async () => {
-    listActiveCadencesMock.mockReturnValue([makeRow("Sarah@AcmeAI.com"), makeRow("b@x.dev")]);
+    listAllCadencesMock.mockReturnValue([makeRow("Sarah@AcmeAI.com"), makeRow("b@x.dev")]);
     // Run stores the email in whatever casing the SDK send returned; filter
     // canonicalizes (trim + lowercase) on both sides before set-lookup.
     getRunMock.mockReturnValue({ prospectEmails: ["sarah@acmeai.com"] });
@@ -110,7 +114,7 @@ describe("listCadences — ?sinceRun filter", () => {
   });
 
   it("sinceRun=N with an unknown runId returns ZERO rows (clearer signal than fall-through)", async () => {
-    listActiveCadencesMock.mockReturnValue([makeRow("a@x.dev"), makeRow("b@x.dev")]);
+    listAllCadencesMock.mockReturnValue([makeRow("a@x.dev"), makeRow("b@x.dev")]);
     getRunMock.mockReturnValue(null);
     const res = listCadences(req("/api/cadences?sinceRun=999999"));
     const body = (await res.json()) as { cadences: unknown[] };
@@ -128,11 +132,30 @@ describe("listCadences — ?sinceRun filter", () => {
     const body = (await res.json()) as { cadences: Array<{ prospectEmail: string }> };
     expect(body.cadences.map((c) => c.prospectEmail)).toEqual(["b@x.dev"]);
     expect(listAllCadencesMock).toHaveBeenCalled();
-    expect(listActiveCadencesMock).not.toHaveBeenCalled();
+  });
+
+  it("tiles count ALL statuses even while the table is filtered to active", async () => {
+    // The bug this fixes: REPLIED/BREAKUP/COMPLETED read 0 in the default active
+    // view. Counts come from the full set; the table is filtered to active.
+    const replied = makeRow("r@x.dev");
+    replied.status = "replied";
+    const breakup = makeRow("k@x.dev");
+    breakup.status = "breakup";
+    listAllCadencesMock.mockReturnValue([makeRow("a@x.dev"), replied, breakup]);
+
+    const res = listCadences(req("/api/cadences")); // active view (no all=1)
+    const body = (await res.json()) as {
+      cadences: Array<{ prospectEmail: string; status: string }>;
+      counts: { active: number; replied: number; breakup: number; completed: number };
+    };
+    // Table shows only the active row…
+    expect(body.cadences.map((c) => c.status)).toEqual(["active"]);
+    // …but the tiles still reflect every status.
+    expect(body.counts).toMatchObject({ active: 1, replied: 1, breakup: 1, completed: 0 });
   });
 
   it("malformed sinceRun (non-numeric) is ignored — falls through to unfiltered", async () => {
-    listActiveCadencesMock.mockReturnValue([makeRow("a@x.dev")]);
+    listAllCadencesMock.mockReturnValue([makeRow("a@x.dev")]);
     const res = listCadences(req("/api/cadences?sinceRun=abc"));
     const body = (await res.json()) as { cadences: Array<{ prospectEmail: string }> };
     expect(body.cadences).toHaveLength(1);

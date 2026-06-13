@@ -10,7 +10,12 @@ import {
   type BatchItem,
   type PriorStepRow,
 } from "@oneshot-gtm/plays";
-import type { CadenceNextStepDraft, CadenceStatus, CadenceView } from "@oneshot-gtm/shared-types";
+import type {
+  CadenceCounts,
+  CadenceNextStepDraft,
+  CadenceStatus,
+  CadenceView,
+} from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 
 /**
@@ -143,23 +148,59 @@ export function listCadences(req: Request): Response {
       ? Number.parseInt(sinceRunRaw, 10)
       : null;
   const ledger = getLedger();
-  let rows = all ? ledger.listAllCadences() : ledger.listActiveCadences();
+  // Full status-complete set for the summary tiles. The active/all toggle only
+  // narrows the TABLE; the tiles must reflect every status (else REPLIED reads 0
+  // whenever the default "active" filter is on). Both derive from this one set.
+  const allRows = ledger.listAllCadences();
+  let countRows = allRows;
+  let rows = all ? allRows : allRows.filter((r) => r.status === "active");
   if (sinceRunId != null) {
     const run = ledger.getRun(sinceRunId);
     // Unknown runId → return zero rows. The UI shows "0 cadences filtered to
     // run #N" with a [clear filter] CTA, which is clearer than silently
     // ignoring the filter and showing everything.
     const wantedEmails = new Set(
-      (run?.prospectEmails ?? [])
-        .map((e) => e.trim().toLowerCase())
-        .filter((e) => e.length > 0),
+      (run?.prospectEmails ?? []).map((e) => e.trim().toLowerCase()).filter((e) => e.length > 0),
     );
-    rows = rows.filter((r) => {
+    const inRun = (r: { prospect_email: string | null }): boolean => {
       const email = r.prospect_email?.trim().toLowerCase();
       return email != null && wantedEmails.has(email);
-    });
+    };
+    rows = rows.filter(inRun);
+    // Scope the tiles to the run too, so they describe the same filtered view.
+    countRows = countRows.filter(inRun);
   }
-  return jsonResponse({ cadences: viewsForRows(rows) }, 200, req);
+  return jsonResponse({ cadences: viewsForRows(rows), counts: tallyCounts(countRows) }, 200, req);
+}
+
+/** Status breakdown for the summary tiles — `overdue` = active & past due. */
+function tallyCounts(
+  rows: ReadonlyArray<{ status: string; next_due_at: string | null }>,
+): CadenceCounts {
+  const now = Date.now();
+  const counts: CadenceCounts = {
+    active: 0,
+    replied: 0,
+    breakup: 0,
+    completed: 0,
+    paused: 0,
+    overdue: 0,
+  };
+  for (const r of rows) {
+    if (
+      r.status === "active" ||
+      r.status === "replied" ||
+      r.status === "breakup" ||
+      r.status === "completed" ||
+      r.status === "paused"
+    ) {
+      counts[r.status]++;
+      if (r.status === "active" && r.next_due_at && new Date(r.next_due_at).getTime() <= now) {
+        counts.overdue++;
+      }
+    }
+  }
+  return counts;
 }
 
 export function getCadence(req: Request, params: Record<string, string>): Response {
@@ -265,7 +306,11 @@ export async function sendCadenceStepRoute(
     staleCutoffIso,
   });
   if (!claimed) {
-    return jsonResponse({ error: "already sending — wait for the in-flight send to complete" }, 409, req);
+    return jsonResponse(
+      { error: "already sending — wait for the in-flight send to complete" },
+      409,
+      req,
+    );
   }
   void (async () => {
     try {
