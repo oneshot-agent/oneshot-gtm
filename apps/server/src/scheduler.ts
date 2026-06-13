@@ -1,5 +1,6 @@
 import { logEvent } from "@oneshot-gtm/core";
 import { nextSleepMs, runDueTriggers } from "@oneshot-gtm/find";
+import { pollInboxReplies } from "@oneshot-gtm/plays";
 
 /**
  * Background scheduler that polls registered triggers on their interval and
@@ -15,6 +16,13 @@ import { nextSleepMs, runDueTriggers } from "@oneshot-gtm/find";
  * - In-flight finder runs that haven't returned when the process exits get
  *   killed mid-run; the cold-boot `sweepStaleRunningTriggers` cleans up
  *   the orphaned `running_started_at` markers on the next start.
+ *
+ * The tick also polls the inbox for prospect replies and stops their cadences
+ * (`pollInboxReplies`). That detection otherwise only ran when the founder
+ * manually advanced a cadence, so a reply could sit unrecognized for days while
+ * the sequence kept emailing. It's read-only apart from the status flip — no
+ * step is sent — so it never spends. Tick cadence is clamped to REPLY_POLL_MAX
+ * so replies surface within minutes even when no trigger is due for an hour.
  */
 export interface SchedulerHandle {
   stop(): void;
@@ -22,6 +30,7 @@ export interface SchedulerHandle {
 
 const FIRST_TICK_DELAY_MS = 5_000;
 const ERROR_BACKOFF_MS = 60_000;
+const REPLY_POLL_MAX_MS = 5 * 60_000;
 
 export function startScheduler(): SchedulerHandle {
   let cancelled = false;
@@ -32,9 +41,21 @@ export function startScheduler(): SchedulerHandle {
     try {
       const outcomes = await runDueTriggers();
       const fired = outcomes.filter((o) => o.fired).length;
-      logEvent("scheduler.tick.done", { fired, source: "server" });
+      // Reply detection is isolated: an inbox outage must not skip trigger
+      // scheduling (or vice-versa), and it never sends, so it can't double-spend.
+      let repliesDetected = 0;
+      try {
+        repliesDetected = (await pollInboxReplies()).repliesDetected;
+      } catch (err) {
+        logEvent(
+          "scheduler.reply_poll.failed",
+          { message_120: ((err as Error).message ?? "").slice(0, 120) },
+          "warn",
+        );
+      }
+      logEvent("scheduler.tick.done", { fired, repliesDetected, source: "server" });
       if (cancelled) return;
-      const sleepMs = nextSleepMs(outcomes);
+      const sleepMs = Math.min(nextSleepMs(outcomes), REPLY_POLL_MAX_MS);
       timer = setTimeout(() => void tick(), sleepMs);
     } catch (err) {
       logEvent(

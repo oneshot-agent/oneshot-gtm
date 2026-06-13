@@ -186,6 +186,49 @@ export interface AdvanceResult {
   }>;
 }
 
+export interface ReplyPollResult {
+  /** Inbox emails examined. */
+  polled: number;
+  /** Active cadences flipped to `replied` this poll. */
+  repliesDetected: number;
+  details: Array<{ prospectEmail: string; playName: string; subject: string }>;
+}
+
+/**
+ * Poll the inbox and mark any active cadence `replied` when an inbound email's
+ * from-address matches its prospect. Read-only except for the status flip — it
+ * never drafts or sends, so it's safe to run on a background timer (the server
+ * scheduler) as well as inside `advanceCadence`. Without a background caller,
+ * replies are only noticed when the founder manually advances/sends a cadence,
+ * so a reply can sit unrecognized for days and the sequence keeps emailing.
+ */
+export async function pollInboxReplies(): Promise<ReplyPollResult> {
+  const ledger = getLedger();
+  const out: ReplyPollResult = { polled: 0, repliesDetected: 0, details: [] };
+  const inbox = await listInbox({ limit: 50 });
+  out.polled = inbox.emails.length;
+  for (const e of inbox.emails) {
+    const from = normalizeEmail(e.from);
+    const prospect = ledger.findProspectByEmail(from);
+    if (!prospect) continue;
+    // Index seek per matched sender, not a full-table scan per inbox email.
+    // recordCadenceReply atomically flips control state + records the analytics
+    // event; it decides per-status (active flips & counts, already-replied just
+    // backfills the event idempotently, terminal states are left alone).
+    for (const cad of ledger.listCadencesForProspect(prospect.id)) {
+      const { newlyReplied } = ledger.recordCadenceReply({
+        prospectId: prospect.id,
+        playName: cad.play_name,
+      });
+      if (newlyReplied) {
+        out.repliesDetected++;
+        out.details.push({ prospectEmail: from, playName: cad.play_name, subject: e.subject });
+      }
+    }
+  }
+  return out;
+}
+
 export async function advanceCadence(
   opts: { dryRun: boolean } = { dryRun: false },
 ): Promise<AdvanceResult> {
@@ -202,31 +245,17 @@ export async function advanceCadence(
   // 1. Poll inbox for new replies, mark cadences as replied where we recognize the from-address.
   if (!opts.dryRun) {
     try {
-      const inbox = await listInbox({ limit: 50 });
-      result.polled = inbox.emails.length;
-      for (const e of inbox.emails) {
-        const from = normalizeEmail(e.from);
-        const prospect = ledger.findProspectByEmail(from);
-        if (!prospect) continue;
-        // Index seek per matched sender, not a full-table scan per inbox email.
-        const activeForProspect = ledger
-          .listCadencesForProspect(prospect.id)
-          .filter((c) => c.status === "active");
-        for (const cad of activeForProspect) {
-          ledger.setCadenceStatus({
-            prospectId: prospect.id,
-            playName: cad.play_name,
-            status: "replied",
-          });
-          result.repliesDetected++;
-          result.details.push({
-            prospectEmail: from,
-            playName: cad.play_name,
-            action: "marked-replied",
-            note: `inbound: ${e.subject}`,
-            receiptIds: [],
-          });
-        }
+      const poll = await pollInboxReplies();
+      result.polled = poll.polled;
+      result.repliesDetected = poll.repliesDetected;
+      for (const d of poll.details) {
+        result.details.push({
+          prospectEmail: d.prospectEmail,
+          playName: d.playName,
+          action: "marked-replied",
+          note: `inbound: ${d.subject}`,
+          receiptIds: [],
+        });
       }
     } catch (err) {
       result.details.push({
