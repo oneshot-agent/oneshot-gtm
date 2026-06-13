@@ -2,6 +2,8 @@ import { Link } from "@tanstack/react-router";
 import { ArrowRight, Inbox, Receipt } from "lucide-react";
 import type { QueueRowView, ReceiptView } from "@oneshot-gtm/shared-types";
 import { cn, timeAgo } from "../../lib/cn.ts";
+import { applyMask } from "../../lib/mask.ts";
+import { usePrivacy } from "../../lib/privacy.tsx";
 
 /**
  * A reverse-chron signal feed — the "what's happening right now" list
@@ -35,7 +37,8 @@ export function SignalFeed({
   loading: boolean;
   limit?: number;
 }) {
-  const events = merge(receipts, queue, limit);
+  const { masked } = usePrivacy();
+  const events = merge(receipts, queue, limit, masked);
 
   return (
     <section className="flex flex-col border-b border-ink-rule">
@@ -115,7 +118,12 @@ function FeedLine({ event }: { event: FeedEvent }) {
   return <li className={classes}>{body}</li>;
 }
 
-function merge(receipts: ReceiptView[], queue: QueueRowView[], limit: number): FeedEvent[] {
+function merge(
+  receipts: ReceiptView[],
+  queue: QueueRowView[],
+  limit: number,
+  masked: boolean,
+): FeedEvent[] {
   const events: FeedEvent[] = [];
 
   for (const r of receipts) {
@@ -131,11 +139,12 @@ function merge(receipts: ReceiptView[], queue: QueueRowView[], limit: number): F
 
   for (const q of queue) {
     const email = extractEmail(q.payload);
+    const shownEmail = email ? applyMask(masked, "email", email) : "(no email)";
     events.push({
       id: `q-${q.id}`,
       kind: "queue",
       at: q.foundAt,
-      headline: `${q.playName} · ${email ?? "(no email)"}`,
+      headline: `${q.playName} · ${shownEmail}`,
       meta: `from ${q.source}`,
       href: "/queue",
     });

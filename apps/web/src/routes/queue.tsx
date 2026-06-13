@@ -21,6 +21,8 @@ import { Button } from "../components/primitives/Button.tsx";
 import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
 import { Field, Input, Textarea } from "../components/primitives/Field.tsx";
 import { Modal } from "../components/primitives/Modal.tsx";
+import { Pii } from "../components/primitives/Pii.tsx";
+import { useMask } from "../lib/privacy.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { Toggle } from "../components/primitives/Toggle.tsx";
 import { cn, timeAgo } from "../lib/cn.ts";
@@ -224,6 +226,7 @@ function QueuePage() {
     expired: 0,
   };
   const rows = queueQuery.data?.rows ?? [];
+  const mask = useMask();
 
   // Per-row "generating draft" spinners, reconstructed from localStorage so they
   // survive navigating away + back (the regenerate mutation's isPending is local
@@ -469,7 +472,7 @@ function QueuePage() {
       <Modal
         open={rejectModal != null}
         onClose={() => setRejectModal(null)}
-        title={`Reject #${rejectModal?.id} — ${rejectModal?.email ?? ""}`}
+        title={`Reject #${rejectModal?.id} — ${mask("auto", rejectModal?.email)}`}
         footer={
           <>
             <Button variant="ghost" onClick={() => setRejectModal(null)}>
@@ -626,10 +629,15 @@ function QueueRow({
         </td>
         <td className="px-6 py-2 font-mono text-[11px] text-ink-faint">#{row.id}</td>
         <td className="py-2">
-          <div className="text-ink-cream">{name ?? "(unknown)"}</div>
+          <div className="text-ink-cream">{name ? <Pii kind="name">{name}</Pii> : "(unknown)"}</div>
           <div className="font-mono text-[11px] text-ink-faint">
-            {email ?? "—"}
-            {company ? ` · ${company}` : ""}
+            {email ? <Pii kind="email">{email}</Pii> : "—"}
+            {company ? (
+              <>
+                {" · "}
+                <Pii kind="company">{company}</Pii>
+              </>
+            ) : null}
             {linkedinUrl ? (
               <a
                 href={linkedinUrl}
@@ -641,7 +649,11 @@ function QueueRow({
                 [in]
               </a>
             ) : null}
-            {phone ? <span className="ml-1 text-ink-faint">· {phone}</span> : null}
+            {phone ? (
+              <span className="ml-1 text-ink-faint">
+                · <Pii kind="phone">{phone}</Pii>
+              </span>
+            ) : null}
           </div>
         </td>
         <td className="py-2 text-ink-cream-2">{row.playName}</td>
@@ -887,6 +899,11 @@ function DraftSection({
         {draftedAt ? <span className="text-ink-muted">· {timeAgo(draftedAt)}</span> : null}
         <Badge tone={tone}>{stateLabel}</Badge>
         {isStalePostSend && <Badge tone="blocked">post-send regenerate · not sent</Badge>}
+        {draft.enrichmentFailed && (
+          <span title="enrichment failed — drafted from payload context only; retries automatically after ~3 days">
+            <Badge tone="spend">no enrichment</Badge>
+          </span>
+        )}
         {draft.flags.length > 0 &&
           draft.flags.map((f) => (
             <Badge key={f} tone="blocked">

@@ -6,6 +6,8 @@ import {
   BarChart3,
   Check,
   Copy,
+  Eye,
+  EyeOff,
   Feather,
   Inbox,
   Layers,
@@ -16,6 +18,7 @@ import {
 import { useEffect } from "react";
 import { toast } from "sonner";
 import { api } from "../../api/client.ts";
+import { usePrivacy } from "../../lib/privacy.tsx";
 
 type NavTarget = "/" | "/queue" | "/cadences" | "/receipts" | "/measure" | "/plays" | "/setup";
 
@@ -33,6 +36,7 @@ export function CommandPalette({
 }) {
   const navigate = useNavigate();
   const qc = useQueryClient();
+  const { masked, setMasked } = usePrivacy();
   const triggers = useQuery({
     queryKey: ["triggers"],
     queryFn: api.triggers,
@@ -127,6 +131,16 @@ export function CommandPalette({
             disabled={approveAll.isPending}
           >
             <Check size={14} /> Approve all pending
+          </Command.Item>
+        </Command.Group>
+
+        <Command.Group heading="View">
+          <Command.Item
+            value="privacy mode mask pii screenshot redact contacts"
+            onSelect={act(() => setMasked(!masked))}
+          >
+            {masked ? <EyeOff size={14} /> : <Eye size={14} />}{" "}
+            {masked ? "Disable privacy mode" : "Privacy mode — mask PII for screenshots"}
           </Command.Item>
         </Command.Group>
 

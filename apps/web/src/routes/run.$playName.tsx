@@ -8,6 +8,7 @@ import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
 import { Field, Input, Textarea } from "../components/primitives/Field.tsx";
 import { cn } from "../lib/cn.ts";
+import { useMask } from "../lib/privacy.tsx";
 import { pruneSentRows } from "../lib/pruneSentRows.ts";
 
 /**
@@ -460,6 +461,7 @@ function RunPage() {
   const { playName } = Route.useParams();
   const search = Route.useSearch();
   const schema = PLAY_SCHEMAS[playName];
+  const mask = useMask();
 
   const [rows, setRows] = useState<Record<string, string>[]>(
     schema ? [{ ...schema.defaultRow }] : [],
@@ -502,7 +504,7 @@ function RunPage() {
   const runNotFound =
     search.runId != null &&
     runQuery.isError &&
-    /\b404\b/.test(((runQuery.error as Error | null)?.message ?? ""));
+    /\b404\b/.test((runQuery.error as Error | null)?.message ?? "");
   const mode: "edit" | "progress" | "done" | "interrupted" =
     search.runId == null || runNotFound
       ? "edit"
@@ -1020,8 +1022,7 @@ function RunPage() {
           <div className="flex items-center gap-2 text-[12px] text-ink-muted">
             <Loader2 size={14} className="animate-spin" />
             <span>
-              Run #{search.runId} in progress · your progress is saved · feel free to navigate
-              away.
+              Run #{search.runId} in progress · your progress is saved · feel free to navigate away.
             </span>
           </div>
         )}
@@ -1078,7 +1079,7 @@ function RunPage() {
           <div className="mt-1 font-mono text-[11px] text-ink-muted">
             {verifyEvent.dropped.map((d) => (
               <div key={`${d.email}::${d.reason}`}>
-                {d.email || "(missing)"} — {d.reason}
+                {d.email ? mask("email", d.email) : "(missing)"} — {d.reason}
               </div>
             ))}
           </div>
