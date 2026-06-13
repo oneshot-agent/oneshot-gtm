@@ -21,14 +21,14 @@
     "access": "public"
   },
   "scripts": {
-    "dev": "bun run --watch src/bin.ts",
+    "dev": "ONESHOT_GTM_NO_BROWSER=1 VITE_DEV_SERVER_URL=http://localhost:5173 bun run --watch src/bin.ts",
     "start": "bun run src/bin.ts",
     "build": "tsdown && bun run copy:web",
     "copy:web": "rm -rf dist/web && cp -R ../web/dist dist/web",
     "prepublishOnly": "bun run --cwd ../web build && bun run build"
   },
   "dependencies": {
-    "@oneshot-agent/sdk": "0.18.0",
+    "@oneshot-agent/sdk": "0.19.0",
     "open": "^11.0.0"
   },
   "devDependencies": {
