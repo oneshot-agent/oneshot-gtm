@@ -57,6 +57,26 @@ export interface CadenceView {
   isSending: boolean;
 }
 
+/**
+ * Status breakdown for the /cadences summary tiles. Always computed over the
+ * full set (scoped only by a sinceRun deep-link), independent of the active/all
+ * table toggle — so REPLIED/BREAKUP/COMPLETED never read 0 just because the
+ * table is filtered to active rows. `overdue` counts active cadences past due.
+ */
+export interface CadenceCounts {
+  active: number;
+  replied: number;
+  breakup: number;
+  completed: number;
+  paused: number;
+  overdue: number;
+}
+
+export interface CadencesResult {
+  cadences: CadenceView[];
+  counts: CadenceCounts;
+}
+
 export interface ReceiptView {
   id: number;
   playName: string;
@@ -255,6 +275,8 @@ export interface LastDraft {
   receiptIds: number[];
   dryRun: boolean;
   draftedAt: string;
+  /** Enrichment SDK failed for this prospect — draft built from payload only. Non-blocking (send stays enabled). */
+  enrichmentFailed?: boolean;
 }
 
 /** A single inbox email (reply to outreach), with prospect/play context when matched. */
@@ -267,6 +289,14 @@ export interface InboxReplyView {
   subject: string;
   receivedAt: string;
   body: string;
+  /** Sender identity whose mailbox received this email — the reply goes out from it. Null on legacy/unattributed rows. */
+  sourceIdentityId: string | null;
+  /** Provider of the receiving identity. Gmail replies thread properly; oneshot replies are best-effort fresh sends (paid, subject-threading only). */
+  sourceProvider: "gmail" | "oneshot" | null;
+  /** Gmail thread id (gmail sources only) — passed back on send to thread the reply. */
+  threadId: string | null;
+  /** RFC 2822 Message-ID of the inbound email (gmail sources only) — In-Reply-To on the reply. */
+  messageId: string | null;
   /** Set when the sender matches a known prospect; null for unmatched mail. */
   matched: {
     name: string | null;
@@ -274,6 +304,25 @@ export interface InboxReplyView {
     playName: string | null;
     cadenceStatus: string | null;
   } | null;
+  /**
+   * Persisted reply activity for this thread: the saved (auto-saved) draft, and
+   * the append-only history of replies already sent. Null when nothing has been
+   * drafted or sent yet. Keyed server-side by `inboxThreadKey`.
+   */
+  thread: {
+    draftBody: string | null;
+    sent: { body: string; sentAt: string }[];
+  } | null;
+}
+
+/**
+ * Stable key for an inbox thread, shared by the server (persistence) and the
+ * web composer (send payload) so both sides agree. Gmail rows carry a
+ * thread_id; OneShot rows fall back to the email id (best-effort — OneShot has
+ * no thread API).
+ */
+export function inboxThreadKey(v: { threadId: string | null; id: string }): string {
+  return v.threadId ?? v.id;
 }
 
 export interface InboxResult {
@@ -281,6 +330,51 @@ export interface InboxResult {
   hasMore: boolean;
   /** Present when the inbox fetch failed; replies will be empty. */
   error?: string;
+}
+
+/** POST /api/inbox/draft-reply — generate an LLM reply draft for an inbound email. */
+export interface InboxDraftReplyRequest {
+  fromEmail: string;
+  subject: string;
+  body: string;
+}
+
+export interface InboxDraftReplyResult {
+  body: string;
+}
+
+/** POST /api/inbox/draft — persist the in-progress draft for a thread (auto-save). */
+export interface InboxSaveDraftRequest {
+  threadKey: string;
+  inboundEmailId: string;
+  toEmail: string;
+  subject: string;
+  identityId: string | null;
+  body: string;
+}
+
+export interface InboxSaveDraftResult {
+  saved: boolean;
+}
+
+/** POST /api/inbox/reply — send a (possibly edited) reply. */
+export interface InboxSendReplyRequest {
+  to: string;
+  subject: string;
+  body: string;
+  identityId: string;
+  /** Thread key for persisting the sent reply (see `inboxThreadKey`). */
+  threadKey: string;
+  threadId?: string | null;
+  inReplyTo?: string | null;
+  /** OneShot inbox email id for server-side threading (OneShot-source rows). */
+  replyToEmailId?: string | null;
+}
+
+export interface InboxSendReplyResult {
+  sent: boolean;
+  id: string;
+  costUsd: number;
 }
 
 export interface QueueCounts {

@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { health } from "./api/health.ts";
 import { homeMetrics } from "./api/home.ts";
 import {
   listCadences,
@@ -12,7 +13,7 @@ import {
   sendCadenceBatchRoute,
 } from "./api/cadences.ts";
 import { listReceipts, getReceipt } from "./api/receipts.ts";
-import { listInboxRoute } from "./api/inbox.ts";
+import { draftReplyRoute, listInboxRoute, saveDraftRoute, sendReplyRoute } from "./api/inbox.ts";
 import { listPlays, setCadenceRoute } from "./api/plays.ts";
 import { measureCac, measureRocs, recordOutcome } from "./api/measure.ts";
 import { setup, getSetupStatus } from "./api/setup.ts";
@@ -63,6 +64,7 @@ function route(method: string, pattern: string, handler: RouteHandler): RouteEnt
 }
 
 const routes: RouteEntry[] = [
+  route("GET", "/api/health", health),
   route("GET", "/api/home", homeMetrics),
   route("GET", "/api/cadences", listCadences),
   route("GET", "/api/cadences/:id", getCadence),
@@ -74,6 +76,9 @@ const routes: RouteEntry[] = [
   route("GET", "/api/receipts", listReceipts),
   route("GET", "/api/receipts/:id", getReceipt),
   route("GET", "/api/inbox", listInboxRoute),
+  route("POST", "/api/inbox/draft-reply", draftReplyRoute),
+  route("POST", "/api/inbox/draft", saveDraftRoute),
+  route("POST", "/api/inbox/reply", sendReplyRoute),
   route("GET", "/api/plays", listPlays),
   route("POST", "/api/plays/:name/cadence", setCadenceRoute),
   route("GET", "/api/measure/cac", measureCac),
@@ -195,20 +200,19 @@ export function buildFetchHandler(): (req: Request) => Promise<Response> | Respo
       }
     }
 
-    // Static / SPA serving
+    // Dev: the real UI is served by Vite (with HMR), so redirect non-API
+    // requests there — preserving the path so a bookmarked deep-link like
+    // :3030/cadences lands on :5173/cadences. This takes precedence over the
+    // built `dist`: in dev that bundle is stale (frontend changes only land in
+    // `dist` on a rebuild), and serving it silently is a footgun.
+    if (viteDevUrl) {
+      return Response.redirect(`${viteDevUrl}${url.pathname}${url.search}`, 302);
+    }
+
+    // Static / SPA serving (production / built dashboard).
     if (staticDir) {
       const r = await serveStatic(staticDir, url.pathname);
       if (r) return r;
-    }
-
-    // Dev: tell the user where the UI is hosted by Vite.
-    if (viteDevUrl) {
-      return new Response(
-        `<!doctype html><title>oneshot-gtm dev</title>` +
-          `<p>API is running at <code>${url.origin}/api</code>.</p>` +
-          `<p>Vite dev server should be at <a href="${viteDevUrl}">${viteDevUrl}</a>.</p>`,
-        { headers: { "content-type": "text/html" } },
-      );
     }
 
     return new Response(

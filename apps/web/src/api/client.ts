@@ -1,11 +1,18 @@
 import type {
+  CadencesResult,
   CadenceView,
   DoctorCheck,
   DrainRequest,
   DrainResult,
   EventsByPlay,
   HomeMetrics,
+  InboxDraftReplyRequest,
+  InboxDraftReplyResult,
   InboxResult,
+  InboxSaveDraftRequest,
+  InboxSaveDraftResult,
+  InboxSendReplyRequest,
+  InboxSendReplyResult,
   LastDraft,
   OutcomeByPlay,
   OutcomeRequest,
@@ -51,9 +58,7 @@ export const api = {
     const qs: string[] = [];
     if (opts.all) qs.push("all=1");
     if (opts.sinceRun != null) qs.push(`sinceRun=${opts.sinceRun}`);
-    return getJson<{ cadences: CadenceView[] }>(
-      `/cadences${qs.length > 0 ? `?${qs.join("&")}` : ""}`,
-    );
+    return getJson<CadencesResult>(`/cadences${qs.length > 0 ? `?${qs.join("&")}` : ""}`);
   },
   run: (id: number) => getJson<RunRecord>(`/runs/${id}`),
   cadenceForProspect: (id: number) => getJson<{ cadences: CadenceView[] }>(`/cadences/${id}`),
@@ -97,6 +102,12 @@ export const api = {
     return getJson<{ receipts: ReceiptView[] }>(`/receipts${qs ? `?${qs}` : ""}`);
   },
   inbox: () => getJson<InboxResult>("/inbox"),
+  draftInboxReply: (req: InboxDraftReplyRequest) =>
+    postJson<InboxDraftReplyResult>("/inbox/draft-reply", req),
+  saveInboxDraft: (req: InboxSaveDraftRequest) =>
+    postJson<InboxSaveDraftResult>("/inbox/draft", req),
+  sendInboxReply: (req: InboxSendReplyRequest) =>
+    postJson<InboxSendReplyResult>("/inbox/reply", req),
   receipt: (id: number) => getJson<{ receipt: ReceiptDetail }>(`/receipts/${id}`),
   plays: () => getJson<{ plays: PlayDescriptor[] }>("/plays"),
   // Set per-play cadence timing (cumulative days from send), or null to reset

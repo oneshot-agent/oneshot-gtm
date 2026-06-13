@@ -55,6 +55,33 @@ describe("Ledger receipts + prospects + spend rollups", () => {
     expect(r?.oneshot_request_id).toBe("abc-123");
   });
 
+  it("recordReceipt is idempotent on a non-null oneshot_request_id (SDK replay / double-fire)", () => {
+    const first = ledger.recordReceipt({
+      playName: "inbox-reply",
+      callType: "email.reply",
+      costUsd: 0.01,
+      oneshotRequestId: "job-xyz",
+    });
+    // A retry of the same send (idempotency replay returns the original job id)
+    // must NOT create a second receipt or double-count spend.
+    const replay = ledger.recordReceipt({
+      playName: "inbox-reply",
+      callType: "email.reply",
+      costUsd: 0.01,
+      oneshotRequestId: "job-xyz",
+    });
+    expect(replay).toBe(first);
+    const spend = ledger.spendByPlay().find((r) => r.play_name === "inbox-reply");
+    expect(spend?.calls).toBe(1);
+    expect(spend?.total_usd).toBeCloseTo(0.01);
+  });
+
+  it("recordReceipt does NOT collapse receipts with a null request_id", () => {
+    const a = ledger.recordReceipt({ playName: "p", callType: "email.send", costUsd: 0.02 });
+    const b = ledger.recordReceipt({ playName: "p", callType: "email.send", costUsd: 0.02 });
+    expect(b).not.toBe(a);
+  });
+
   it("upsertProspect dedupes by email", () => {
     const a = ledger.upsertProspect({
       name: "Sam",
@@ -265,7 +292,12 @@ describe("Ledger cadence state", () => {
     expect(active[0]?.status).toBe("active");
     expect(active[0]?.current_step).toBe(0);
 
-    ledger.advanceCadence({ prospectId: pid, playName: "job-change", newStep: 1, nextDueAt: new Date().toISOString() });
+    ledger.advanceCadence({
+      prospectId: pid,
+      playName: "job-change",
+      newStep: 1,
+      nextDueAt: new Date().toISOString(),
+    });
     ledger.setCadenceStatus({ prospectId: pid, playName: "job-change", status: "replied" });
 
     const after = ledger.listAllCadences();
@@ -314,7 +346,11 @@ describe("Ledger cadence state", () => {
 describe("Ledger cadence sending marker", () => {
   it("claim succeeds when marker is NULL; second claim fails (atomic CAS)", () => {
     const pid = ledger.upsertProspect({ name: "S", email: "s@x.com", source: "t" });
-    ledger.enrollCadence({ prospectId: pid, playName: "show-hn", nextDueAt: new Date().toISOString() });
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "show-hn",
+      nextDueAt: new Date().toISOString(),
+    });
     const first = ledger.claimCadenceSendingMarker({
       prospectId: pid,
       playName: "show-hn",
@@ -331,7 +367,11 @@ describe("Ledger cadence sending marker", () => {
 
   it("claim succeeds when previous marker is older than the stale cutoff", () => {
     const pid = ledger.upsertProspect({ name: "S", email: "s2@x.com", source: "t" });
-    ledger.enrollCadence({ prospectId: pid, playName: "show-hn", nextDueAt: new Date().toISOString() });
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "show-hn",
+      nextDueAt: new Date().toISOString(),
+    });
     const oldIso = new Date(Date.now() - 10 * 60 * 1000).toISOString(); // 10 min ago
     ledger.claimCadenceSendingMarker({
       prospectId: pid,
@@ -349,7 +389,11 @@ describe("Ledger cadence sending marker", () => {
 
   it("clearCadenceSendingMarker sets the marker back to NULL", () => {
     const pid = ledger.upsertProspect({ name: "S", email: "s3@x.com", source: "t" });
-    ledger.enrollCadence({ prospectId: pid, playName: "show-hn", nextDueAt: new Date().toISOString() });
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "show-hn",
+      nextDueAt: new Date().toISOString(),
+    });
     ledger.claimCadenceSendingMarker({
       prospectId: pid,
       playName: "show-hn",
@@ -362,7 +406,11 @@ describe("Ledger cadence sending marker", () => {
 
   it("advanceCadence also clears sending_started_at as part of the same UPDATE", () => {
     const pid = ledger.upsertProspect({ name: "S", email: "s4@x.com", source: "t" });
-    ledger.enrollCadence({ prospectId: pid, playName: "show-hn", nextDueAt: new Date().toISOString() });
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "show-hn",
+      nextDueAt: new Date().toISOString(),
+    });
     ledger.claimCadenceSendingMarker({
       prospectId: pid,
       playName: "show-hn",
@@ -379,7 +427,11 @@ describe("Ledger cadence sending marker", () => {
 
   it("setCadenceStatus to non-active terminal state clears the marker", () => {
     const pid = ledger.upsertProspect({ name: "S", email: "s5@x.com", source: "t" });
-    ledger.enrollCadence({ prospectId: pid, playName: "show-hn", nextDueAt: new Date().toISOString() });
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "show-hn",
+      nextDueAt: new Date().toISOString(),
+    });
     ledger.claimCadenceSendingMarker({
       prospectId: pid,
       playName: "show-hn",
@@ -393,7 +445,11 @@ describe("Ledger cadence sending marker", () => {
 describe("Ledger sweepStaleCadenceSends", () => {
   it("maxAgeMs:0 (cold-boot semantics) sweeps every existing marker", () => {
     const pid = ledger.upsertProspect({ name: "S", email: "sa@x.com", source: "t" });
-    ledger.enrollCadence({ prospectId: pid, playName: "show-hn", nextDueAt: new Date().toISOString() });
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "show-hn",
+      nextDueAt: new Date().toISOString(),
+    });
     ledger.claimCadenceSendingMarker({
       prospectId: pid,
       playName: "show-hn",
@@ -407,7 +463,11 @@ describe("Ledger sweepStaleCadenceSends", () => {
 
   it("classifies as actuallySent when a sequence_event for current_step exists", () => {
     const pid = ledger.upsertProspect({ name: "S", email: "sb@x.com", source: "t" });
-    ledger.enrollCadence({ prospectId: pid, playName: "show-hn", nextDueAt: new Date().toISOString() });
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "show-hn",
+      nextDueAt: new Date().toISOString(),
+    });
     ledger.recordSequenceEvent({
       prospectId: pid,
       playName: "show-hn",
@@ -426,7 +486,11 @@ describe("Ledger sweepStaleCadenceSends", () => {
 
   it("leaves fresh markers untouched (maxAgeMs > 0)", () => {
     const pid = ledger.upsertProspect({ name: "S", email: "sc@x.com", source: "t" });
-    ledger.enrollCadence({ prospectId: pid, playName: "show-hn", nextDueAt: new Date().toISOString() });
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "show-hn",
+      nextDueAt: new Date().toISOString(),
+    });
     ledger.claimCadenceSendingMarker({
       prospectId: pid,
       playName: "show-hn",
@@ -456,12 +520,12 @@ describe("Ledger queue sending marker", () => {
 
   it("claim succeeds when marker is NULL; second claim fails", () => {
     const id = enqueue();
-    expect(
-      ledger.claimQueueSendingMarker({ id, startedAtIso: new Date().toISOString() }),
-    ).toBe(true);
-    expect(
-      ledger.claimQueueSendingMarker({ id, startedAtIso: new Date().toISOString() }),
-    ).toBe(false);
+    expect(ledger.claimQueueSendingMarker({ id, startedAtIso: new Date().toISOString() })).toBe(
+      true,
+    );
+    expect(ledger.claimQueueSendingMarker({ id, startedAtIso: new Date().toISOString() })).toBe(
+      false,
+    );
   });
 
   it("reclaim succeeds when previous marker is older than the stale cutoff", () => {
@@ -584,9 +648,7 @@ describe("Ledger runs", () => {
   });
 
   it("appendRunEvent is a no-op for an unknown runId (doesn't throw)", () => {
-    expect(() =>
-      ledger.appendRunEvent({ runId: 999999, event: { kind: "draft" } }),
-    ).not.toThrow();
+    expect(() => ledger.appendRunEvent({ runId: 999999, event: { kind: "draft" } })).not.toThrow();
   });
 
   it("markRunComplete flips status + stamps completedAt + records sent emails", () => {
@@ -728,19 +790,17 @@ describe("Ledger runs", () => {
     const rows = ledger.listRuns();
     expect(rows).toHaveLength(1);
     // Lock in the slim projection: only these 9 keys come back.
-    expect(Object.keys(rows[0]!).toSorted()).toEqual(
-      [
-        "completedAt",
-        "draftedCount",
-        "errorCount",
-        "id",
-        "playName",
-        "sentCount",
-        "startedAt",
-        "status",
-        "targetCount",
-      ],
-    );
+    expect(Object.keys(rows[0]!).toSorted()).toEqual([
+      "completedAt",
+      "draftedCount",
+      "errorCount",
+      "id",
+      "playName",
+      "sentCount",
+      "startedAt",
+      "status",
+      "targetCount",
+    ]);
     // Negative assertion: heavy fields stay on the by-id endpoint (getRun).
     const row = rows[0] as Record<string, unknown>;
     expect(row["targets"]).toBeUndefined();
@@ -806,5 +866,193 @@ describe("Ledger outcomes + cold prospects", () => {
       maxDaysSinceLastEvent: 90,
     });
     expect(fresh).toHaveLength(0);
+  });
+});
+
+describe("enrichment cache — negative entries", () => {
+  it("failure write is readable with status 'failed' and the message payload", () => {
+    ledger.setCachedEnrichmentFailure("bad@x.dev", "Job failed: Tool execution failed");
+    const row = ledger.getCachedEnrichment("bad@x.dev");
+    expect(row?.status).toBe("failed");
+    expect(JSON.parse(row!.result_json)).toEqual({
+      failed: true,
+      message: "Job failed: Tool execution failed",
+    });
+  });
+
+  it("a later success upsert clears the failed status", () => {
+    ledger.setCachedEnrichmentFailure("flaky@x.dev", "timeout");
+    ledger.setCachedEnrichment("flaky@x.dev", JSON.stringify({ profile: { phone: "+1 555" } }));
+    const row = ledger.getCachedEnrichment("flaky@x.dev");
+    expect(row?.status).toBeNull();
+    expect(JSON.parse(row!.result_json).profile.phone).toBe("+1 555");
+  });
+
+  it("a later failure overwrites a success entry", () => {
+    ledger.setCachedEnrichment("was-ok@x.dev", JSON.stringify({ profile: {} }));
+    ledger.setCachedEnrichmentFailure("was-ok@x.dev", "revoked");
+    expect(ledger.getCachedEnrichment("was-ok@x.dev")?.status).toBe("failed");
+  });
+});
+
+describe("Ledger recordCadenceReply — atomic control + analytics write", () => {
+  function enrollWithSentStep(): number {
+    const id = ledger.upsertProspect({ name: "Pat", email: "pat@co.com", source: "repo-interest" });
+    ledger.enrollCadence({
+      prospectId: id,
+      playName: "repo-interest",
+      nextDueAt: "2026-01-01T00:00:00Z",
+    });
+    ledger.recordSequenceEvent({
+      prospectId: id,
+      playName: "repo-interest",
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+    });
+    return id;
+  }
+
+  it("flips the cadence to replied AND marks the sent step replied in one call", () => {
+    const id = enrollWithSentStep();
+
+    const { newlyReplied } = ledger.recordCadenceReply({
+      prospectId: id,
+      playName: "repo-interest",
+    });
+
+    expect(newlyReplied).toBe(true);
+    expect(ledger.getCadence(id, "repo-interest")?.status).toBe("replied");
+    const events = ledger.listSequenceEventsForProspectPlay(id, "repo-interest");
+    expect(events.map((e) => e.status)).toEqual(["replied"]);
+    // Reply rate stays sane: the replied step is still counted as sent.
+    const ev = ledger.eventsByPlay().find((e) => e.play_name === "repo-interest");
+    expect(ev).toMatchObject({ sent: 1, replied: 1 });
+  });
+
+  it("is idempotent — a second call doesn't re-count or mark a second step", () => {
+    const id = enrollWithSentStep();
+    // A second sent step (e.g. a follow-up) before the reply lands.
+    ledger.recordSequenceEvent({
+      prospectId: id,
+      playName: "repo-interest",
+      stepIndex: 1,
+      channel: "email",
+      status: "sent",
+    });
+
+    expect(
+      ledger.recordCadenceReply({ prospectId: id, playName: "repo-interest" }).newlyReplied,
+    ).toBe(true);
+    // Re-running (the every-5-min poll) must not flip a second step to replied.
+    expect(
+      ledger.recordCadenceReply({ prospectId: id, playName: "repo-interest" }).newlyReplied,
+    ).toBe(false);
+
+    const ev = ledger.eventsByPlay().find((e) => e.play_name === "repo-interest");
+    expect(ev).toMatchObject({ sent: 2, replied: 1 });
+  });
+
+  it("backfills the analytics event for a cadence already marked replied", () => {
+    const id = enrollWithSentStep();
+    // Simulate the pre-existing-data case: control plane already replied, but no
+    // sequence_events row was ever marked (the old detection path).
+    ledger.setCadenceStatus({ prospectId: id, playName: "repo-interest", status: "replied" });
+    expect(
+      ledger.listSequenceEventsForProspectPlay(id, "repo-interest").map((e) => e.status),
+    ).toEqual(["sent"]);
+
+    const { newlyReplied } = ledger.recordCadenceReply({
+      prospectId: id,
+      playName: "repo-interest",
+    });
+
+    expect(newlyReplied).toBe(false); // not a new reply — don't recount
+    expect(
+      ledger.listSequenceEventsForProspectPlay(id, "repo-interest").map((e) => e.status),
+    ).toEqual(["replied"]); // but the event is backfilled
+  });
+
+  it("leaves a terminal (breakup) cadence untouched", () => {
+    const id = enrollWithSentStep();
+    ledger.setCadenceStatus({ prospectId: id, playName: "repo-interest", status: "breakup" });
+
+    const { newlyReplied } = ledger.recordCadenceReply({
+      prospectId: id,
+      playName: "repo-interest",
+    });
+
+    expect(newlyReplied).toBe(false);
+    expect(ledger.getCadence(id, "repo-interest")?.status).toBe("breakup");
+    expect(
+      ledger.listSequenceEventsForProspectPlay(id, "repo-interest").map((e) => e.status),
+    ).toEqual(["sent"]);
+  });
+});
+
+describe("Ledger inbox drafts + sent replies", () => {
+  const draft = {
+    threadKey: "thread-1",
+    inboundEmailId: "msg-1",
+    toEmail: "founder@acme.com",
+    subject: "Re: hello",
+    identityId: "gmail:me@x.com",
+    body: "first pass",
+  };
+
+  it("saves and reads back a draft via getInboxThreads", () => {
+    ledger.upsertInboxDraft(draft);
+    const t = ledger.getInboxThreads().get("thread-1");
+    expect(t?.draftBody).toBe("first pass");
+    expect(t?.sent).toEqual([]);
+  });
+
+  it("upsert overwrites the existing draft (one row per thread)", () => {
+    ledger.upsertInboxDraft(draft);
+    ledger.upsertInboxDraft({ ...draft, body: "second pass" });
+    expect(ledger.getInboxThreads().get("thread-1")?.draftBody).toBe("second pass");
+  });
+
+  it("clearInboxDraft removes the draft", () => {
+    ledger.upsertInboxDraft(draft);
+    ledger.clearInboxDraft("thread-1");
+    expect(ledger.getInboxThreads().get("thread-1")).toBeUndefined();
+  });
+
+  it("recordInboxSent appends to history and clears the draft", () => {
+    ledger.upsertInboxDraft(draft);
+    ledger.recordInboxSent({
+      threadKey: "thread-1",
+      toEmail: draft.toEmail,
+      subject: draft.subject,
+      body: "the reply we sent",
+      identityId: draft.identityId,
+      requestId: "req-1",
+    });
+    const t = ledger.getInboxThreads().get("thread-1");
+    expect(t?.draftBody).toBeNull();
+    expect(t?.sent.map((s) => s.body)).toEqual(["the reply we sent"]);
+  });
+
+  it("accumulates multiple sent replies (reply-again) in chronological order", () => {
+    ledger.recordInboxSent({
+      threadKey: "thread-1",
+      toEmail: draft.toEmail,
+      subject: draft.subject,
+      body: "first reply",
+      identityId: draft.identityId,
+      requestId: "req-1",
+    });
+    ledger.recordInboxSent({
+      threadKey: "thread-1",
+      toEmail: draft.toEmail,
+      subject: draft.subject,
+      body: "second reply",
+      identityId: draft.identityId,
+      requestId: "req-2",
+    });
+    const sent = ledger.getInboxThreads().get("thread-1")?.sent ?? [];
+    expect(sent.map((s) => s.body)).toEqual(["first reply", "second reply"]);
+    expect(sent.every((s) => typeof s.sentAt === "string" && s.sentAt.length > 0)).toBe(true);
   });
 });

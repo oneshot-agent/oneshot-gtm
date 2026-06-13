@@ -14,6 +14,17 @@ import type {
 
 const DEFAULT_DB_PATH = join(configDir(), "ledger.sqlite");
 
+/** How long a SUCCESSFUL enrichment is reused before refetching (profiles are stable). */
+export const ENRICH_CACHE_TTL_MS = 30 * 24 * 3600 * 1000;
+/** How long a FAILED enrichment suppresses retries — long enough to ride out an SDK outage, short enough to self-heal. */
+export const ENRICH_FAILURE_TTL_MS = 3 * 24 * 3600 * 1000;
+/**
+ * Hard ceiling on waiting for one enrichProfile call. The platform's enrich
+ * tool has been observed HANGING (no error, no result, 5+ min) rather than
+ * failing — callers race against this and treat a deadline as a failure.
+ */
+export const ENRICH_DEADLINE_MS = 120_000;
+
 /**
  * Canonical form for matching prospect emails — trim + lowercase. Inbound reply
  * addresses (cadence inbox poll) are normalized the same way, so a prospect
@@ -62,6 +73,12 @@ export class Ledger {
     if (!existsSync(dirname(path))) mkdirSync(dirname(path), { recursive: true });
     this.db = new Database(path);
     this.db.exec("PRAGMA journal_mode = WAL");
+    // Wait (don't immediately throw) when another connection holds the write
+    // lock — e.g. a background send and a request both opening the ledger, or
+    // parallel test workers running first-run migrations against a shared file.
+    // Without this, concurrent DDL surfaces as a spurious "database is locked"
+    // / "no such table" mid-migration.
+    this.db.exec("PRAGMA busy_timeout = 5000");
     this.migrate();
   }
 
@@ -81,6 +98,10 @@ export class Ledger {
       -- listReceipts / spend rollups filter (play_name, created_at) together and
       -- sort by created_at; the composite serves both without a separate sort scan.
       CREATE INDEX IF NOT EXISTS idx_receipts_play_created ON receipts(play_name, created_at);
+      -- Backs recordReceipt's dedup-by-job-id lookup. Partial (non-null only):
+      -- many receipts have no request_id and must NOT collapse together.
+      CREATE INDEX IF NOT EXISTS idx_receipts_request ON receipts(oneshot_request_id)
+        WHERE oneshot_request_id IS NOT NULL;
 
       CREATE TABLE IF NOT EXISTS prospects (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -261,6 +282,12 @@ export class Ledger {
     // address mid-thread. Keyed by email, NOT prospect_id: some sends happen
     // before any prospect row exists (concierge prep email).
     this.addColumnIfMissing("receipts", "sender_identity", "TEXT");
+    // v12 (2026-06): negative enrichment caching. NULL/"ok" = success row,
+    // "failed" = the enrich SDK job failed for this email — readers skip the
+    // retry within ENRICH_FAILURE_TTL_MS so drafts stop re-paying ~70s
+    // timeouts for known-bad emails (229 such failures on 2026-06-06..08
+    // left 154 queue rows re-enriching on every draft).
+    this.addColumnIfMissing("enrichment_cache", "status", "TEXT");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sender_assignments (
         email TEXT PRIMARY KEY,
@@ -269,6 +296,37 @@ export class Ledger {
       );
       CREATE INDEX IF NOT EXISTS idx_receipts_calltype_sender
         ON receipts(call_type, sender_identity, created_at);
+    `);
+    // v13 (2026-06): persist inbox reply activity. The /inbox composer used to
+    // hold the draft + "replied" state only in React useState, so a refresh
+    // discarded the draft and reverted the row to a blank composer; the sent
+    // body was never stored anywhere (receipts hold metadata only). Keyed by
+    // thread_key = Gmail thread_id (else the email id) so follow-ups in a
+    // thread share one draft + sent history. `inbox_drafts` is the single
+    // mutable draft per thread (cleared on send); `inbox_sent` is the
+    // append-only history of replies actually sent (we allow replying again).
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS inbox_drafts (
+        thread_key       TEXT PRIMARY KEY,
+        inbound_email_id TEXT NOT NULL,
+        to_email         TEXT NOT NULL,
+        subject          TEXT,
+        identity_id      TEXT,
+        body             TEXT NOT NULL,
+        updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS inbox_sent (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        thread_key  TEXT NOT NULL,
+        to_email    TEXT NOT NULL,
+        subject     TEXT,
+        body        TEXT NOT NULL,
+        identity_id TEXT,
+        request_id  TEXT,
+        sent_at     TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_inbox_sent_thread
+        ON inbox_sent(thread_key, sent_at);
     `);
   }
 
@@ -322,9 +380,7 @@ export class Ledger {
   }): void {
     this.assertSafeIdentifiers(opts.table, opts.column);
     this.db
-      .prepare(
-        `UPDATE ${opts.table} SET ${opts.column} = NULL WHERE ${opts.pkeyWhere}`,
-      )
+      .prepare(`UPDATE ${opts.table} SET ${opts.column} = NULL WHERE ${opts.pkeyWhere}`)
       .run(...(opts.pkeyValues as never[]));
   }
 
@@ -524,6 +580,111 @@ export class Ledger {
   }
 
   /**
+   * Save (or overwrite) the single in-progress draft for an inbox thread.
+   * Backs the /inbox composer's debounced auto-save so a refresh or navigation
+   * away no longer discards the draft. Keyed by thread_key (see `inboxThreadKey`
+   * in shared-types) — Gmail thread_id, else the email id.
+   */
+  upsertInboxDraft(input: {
+    threadKey: string;
+    inboundEmailId: string;
+    toEmail: string;
+    subject: string;
+    identityId: string | null;
+    body: string;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO inbox_drafts(thread_key, inbound_email_id, to_email, subject, identity_id, body, updated_at)
+         VALUES(?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(thread_key) DO UPDATE SET
+           inbound_email_id = excluded.inbound_email_id,
+           to_email = excluded.to_email,
+           subject = excluded.subject,
+           identity_id = excluded.identity_id,
+           body = excluded.body,
+           updated_at = excluded.updated_at`,
+      )
+      .run(
+        input.threadKey,
+        input.inboundEmailId,
+        input.toEmail,
+        input.subject,
+        input.identityId,
+        input.body,
+        new Date().toISOString(),
+      );
+  }
+
+  clearInboxDraft(threadKey: string): void {
+    this.db.prepare(`DELETE FROM inbox_drafts WHERE thread_key = ?`).run(threadKey);
+  }
+
+  /**
+   * Record a reply that was actually sent (append to history) and clear the
+   * thread's draft in one transaction. History is append-only because we let
+   * the founder reply again on the same thread.
+   */
+  recordInboxSent(input: {
+    threadKey: string;
+    toEmail: string;
+    subject: string;
+    body: string;
+    identityId: string | null;
+    requestId: string | null;
+  }): void {
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          `INSERT INTO inbox_sent(thread_key, to_email, subject, body, identity_id, request_id, sent_at)
+           VALUES(?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          input.threadKey,
+          input.toEmail,
+          input.subject,
+          input.body,
+          input.identityId,
+          input.requestId,
+          new Date().toISOString(),
+        );
+      this.db.prepare(`DELETE FROM inbox_drafts WHERE thread_key = ?`).run(input.threadKey);
+    })();
+  }
+
+  /**
+   * Bulk-read persisted reply state for the inbox list route: the saved draft
+   * (if any) plus the sent history per thread. Mirrors the `byEmail` map the
+   * list route builds for cadence context — one read, indexed by thread_key.
+   */
+  getInboxThreads(): Map<
+    string,
+    { draftBody: string | null; sent: { body: string; sentAt: string }[] }
+  > {
+    const map = new Map<
+      string,
+      { draftBody: string | null; sent: { body: string; sentAt: string }[] }
+    >();
+    const ensure = (key: string) => {
+      let entry = map.get(key);
+      if (!entry) {
+        entry = { draftBody: null, sent: [] };
+        map.set(key, entry);
+      }
+      return entry;
+    };
+    const drafts = this.db
+      .query(`SELECT thread_key AS k, body AS b FROM inbox_drafts`)
+      .all() as Array<{ k: string; b: string }>;
+    for (const d of drafts) ensure(d.k).draftBody = d.b;
+    const sent = this.db
+      .query(`SELECT thread_key AS k, body AS b, sent_at AS t FROM inbox_sent ORDER BY sent_at ASC`)
+      .all() as Array<{ k: string; b: string; t: string }>;
+    for (const s of sent) ensure(s.k).sent.push({ body: s.b, sentAt: s.t });
+    return map;
+  }
+
+  /**
    * Atomic claim of the sending marker. Returns `true` when the row had a
    * NULL `sending_started_at` and the marker was set; `false` if another
    * caller already holds the claim. Mirrors triggers' `markTriggerRunning`
@@ -659,23 +820,54 @@ export class Ledger {
     );
   }
 
-  /** Cached enrichProfile result for an email (profiles are stable; reused with a TTL). */
-  getCachedEnrichment(email: string): { result_json: string; fetched_at: string } | null {
+  /**
+   * Cached enrichProfile result for an email (profiles are stable; reused
+   * with a TTL). `status` is NULL/"ok" for success rows, "failed" for
+   * negative entries (the SDK job failed — readers skip re-attempting within
+   * ENRICH_FAILURE_TTL_MS instead of paying the ~70s call again).
+   */
+  getCachedEnrichment(
+    email: string,
+  ): { result_json: string; fetched_at: string; status: string | null } | null {
     return (
       (this.db
-        .query("SELECT result_json, fetched_at FROM enrichment_cache WHERE email = ?")
-        .get(email) as { result_json: string; fetched_at: string }) ?? null
+        .query("SELECT result_json, fetched_at, status FROM enrichment_cache WHERE email = ?")
+        .get(email) as { result_json: string; fetched_at: string; status: string | null }) ?? null
     );
   }
 
   setCachedEnrichment(email: string, resultJson: string): void {
+    // status reset to NULL: a fresh success must clear any prior "failed"
+    // marker — luma/_repo-pipeline write success rows through this method
+    // without knowing about negative entries.
     this.db
       .prepare(
-        `INSERT INTO enrichment_cache(email, result_json, fetched_at)
-         VALUES(?, ?, ?)
-         ON CONFLICT(email) DO UPDATE SET result_json = excluded.result_json, fetched_at = excluded.fetched_at`,
+        `INSERT INTO enrichment_cache(email, result_json, fetched_at, status)
+         VALUES(?, ?, ?, NULL)
+         ON CONFLICT(email) DO UPDATE SET
+           result_json = excluded.result_json,
+           fetched_at = excluded.fetched_at,
+           status = NULL`,
       )
       .run(email, resultJson, new Date().toISOString());
+  }
+
+  /** Negative cache entry: the enrichment SDK job failed for this email. */
+  setCachedEnrichmentFailure(email: string, message: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO enrichment_cache(email, result_json, fetched_at, status)
+         VALUES(?, ?, ?, 'failed')
+         ON CONFLICT(email) DO UPDATE SET
+           result_json = excluded.result_json,
+           fetched_at = excluded.fetched_at,
+           status = 'failed'`,
+      )
+      .run(
+        email,
+        JSON.stringify({ failed: true, message: message.slice(0, 300) }),
+        new Date().toISOString(),
+      );
   }
 
   recordReceipt(input: {
@@ -691,6 +883,19 @@ export class Ledger {
     /** EmailIdentity id for email.send receipts — drives per-identity daily caps. */
     senderIdentity?: string;
   }): number {
+    // Idempotent on the job id: the SDK's idempotency replay returns the
+    // ORIGINAL request_id when a timed-out/double-fired send is retried, and a
+    // Gmail message id is unique per send — so a non-null request_id already in
+    // the table means "same underlying send". Return the existing receipt
+    // instead of inserting a duplicate that would double-count spend and caps.
+    // Null request_ids (cache hits, SDK omissions) are distinct events and skip
+    // this — they must never collapse together.
+    if (input.oneshotRequestId) {
+      const existing = this.db
+        .query("SELECT id FROM receipts WHERE oneshot_request_id = ?")
+        .get(input.oneshotRequestId) as { id: number } | undefined;
+      if (existing) return existing.id;
+    }
     // Number.isFinite guard rejects undefined / Infinity / NaN — those land
     // as NULL in the column, NOT silently distorted into a number.
     const costUsd =
@@ -949,6 +1154,72 @@ export class Ledger {
       input.metadata ? JSON.stringify(input.metadata) : null,
     );
     return Number(result.lastInsertRowid);
+  }
+
+  /**
+   * Mark a prospect's latest sent step `replied` (the reply-rate signal behind
+   * the home dashboard + measure/CAC, which all read `status='replied'` from
+   * sequence_events — nothing else writes it). A reply is modelled as a state
+   * transition of an existing sent step, NOT a new event, so `sent` counts that
+   * read `status IN ('sent','delivered','replied')` stay correct.
+   *
+   * Idempotent and safe to call on every poll: the `NOT EXISTS` guard means once
+   * any step for this (prospect, play) is `replied`, further calls are no-ops —
+   * so it never walks backwards marking earlier steps too. Returns true on the
+   * one call that flips a row.
+   */
+  markLatestStepReplied(input: { prospectId: number; playName: string }): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE sequence_events SET status = 'replied'
+         WHERE id = (
+           SELECT id FROM sequence_events
+           WHERE prospect_id = ? AND play_name = ? AND status IN ('sent','delivered')
+           ORDER BY created_at DESC, id DESC LIMIT 1
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM sequence_events
+           WHERE prospect_id = ? AND play_name = ? AND status = 'replied'
+         )`,
+      )
+      .run(input.prospectId, input.playName, input.prospectId, input.playName);
+    return result.changes > 0;
+  }
+
+  /**
+   * Single source of truth for "a prospect replied to a cadence". Atomically
+   * writes BOTH planes so they can't drift:
+   *  - control plane: `cadence_state.status='replied'` (stops further sends), and
+   *  - analytics plane: the latest sent step → `replied` in sequence_events
+   *    (the event log behind every reply metric — home, CAC, weekly review).
+   * The two surfaces read different tables on purpose (a lifetime status snapshot
+   * vs a 7-day count), but a reply now updates them together in one transaction.
+   *
+   * Reads the current status inside the transaction and acts on it, so callers
+   * just hand it a (prospect, play): an `active` cadence flips + records; an
+   * already-`replied` one only backfills the event (idempotent); a terminal
+   * `breakup`/`completed` cadence is left untouched. Returns `newlyReplied` —
+   * true only on the active→replied transition, so callers count a reply once.
+   */
+  recordCadenceReply(input: { prospectId: number; playName: string }): { newlyReplied: boolean } {
+    return this.db.transaction(() => {
+      const cad = this.getCadence(input.prospectId, input.playName);
+      const newlyReplied = cad?.status === "active";
+      if (newlyReplied) {
+        this.setCadenceStatus({
+          prospectId: input.prospectId,
+          playName: input.playName,
+          status: "replied",
+        });
+      }
+      if (newlyReplied || cad?.status === "replied") {
+        this.markLatestStepReplied({
+          prospectId: input.prospectId,
+          playName: input.playName,
+        });
+      }
+      return { newlyReplied };
+    })();
   }
 
   listSequenceEventsForProspectPlay(prospectId: number, playName: string): SequenceEventRecord[] {
@@ -1318,9 +1589,7 @@ export class Ledger {
       ageMs: number;
       actuallySent: boolean;
     }> = [];
-    const clear = this.db.prepare(
-      `UPDATE target_queue SET send_started_at = NULL WHERE id = ?`,
-    );
+    const clear = this.db.prepare(`UPDATE target_queue SET send_started_at = NULL WHERE id = ?`);
     for (const row of rows) {
       const startedMs = new Date(row.send_started_at).getTime();
       if (Number.isFinite(startedMs) && startedMs > cutoffMs) continue;
@@ -1426,11 +1695,10 @@ export class Ledger {
   // stranded `running` rows to `interrupted` so the founder sees the truth
   // instead of an eternal spinner.
 
-  createRun(input: {
-    playName: string;
-    dryRun: boolean;
-    targets: unknown[];
-  }): { runId: number; startedAt: string } {
+  createRun(input: { playName: string; dryRun: boolean; targets: unknown[] }): {
+    runId: number;
+    startedAt: string;
+  } {
     const startedAt = new Date().toISOString();
     const result = this.db
       .prepare(
@@ -1458,14 +1726,12 @@ export class Ledger {
         `SELECT events_json, drafted_count, sent_count, error_count
          FROM runs WHERE id = ?`,
       )
-      .get(input.runId) as
-      | {
-          events_json: string;
-          drafted_count: number;
-          sent_count: number;
-          error_count: number;
-        }
-      | null;
+      .get(input.runId) as {
+      events_json: string;
+      drafted_count: number;
+      sent_count: number;
+      error_count: number;
+    } | null;
     if (!row) return;
     let events: unknown[];
     try {
@@ -1479,7 +1745,7 @@ export class Ledger {
     // the read side stable. Unknown kinds are appended without counter change.
     const kind =
       input.event && typeof input.event === "object"
-        ? (input.event as { kind?: string }).kind ?? null
+        ? ((input.event as { kind?: string }).kind ?? null)
         : null;
     let drafted = row.drafted_count;
     let sent = row.sent_count;
@@ -1508,12 +1774,7 @@ export class Ledger {
          SET status = ?, completed_at = ?, prospect_emails_json = ?
          WHERE id = ? AND status = 'running'`,
       )
-      .run(
-        input.status,
-        completedAt,
-        JSON.stringify(input.sentEmails ?? []),
-        input.runId,
-      );
+      .run(input.status, completedAt, JSON.stringify(input.sentEmails ?? []), input.runId);
   }
 
   getRun(runId: number): {
@@ -1531,23 +1792,21 @@ export class Ledger {
     events: unknown[];
     prospectEmails: string[];
   } | null {
-    const row = this.db.query(`SELECT * FROM runs WHERE id = ?`).get(runId) as
-      | {
-          id: number;
-          play_name: string;
-          dry_run: number;
-          status: "running" | "done" | "interrupted";
-          started_at: string;
-          completed_at: string | null;
-          target_count: number;
-          drafted_count: number;
-          sent_count: number;
-          error_count: number;
-          targets_json: string;
-          events_json: string;
-          prospect_emails_json: string;
-        }
-      | null;
+    const row = this.db.query(`SELECT * FROM runs WHERE id = ?`).get(runId) as {
+      id: number;
+      play_name: string;
+      dry_run: number;
+      status: "running" | "done" | "interrupted";
+      started_at: string;
+      completed_at: string | null;
+      target_count: number;
+      drafted_count: number;
+      sent_count: number;
+      error_count: number;
+      targets_json: string;
+      events_json: string;
+      prospect_emails_json: string;
+    } | null;
     if (!row) return null;
     return {
       id: row.id,
@@ -1634,9 +1893,7 @@ export class Ledger {
   }> {
     const cutoffMs = input.now.getTime() - input.maxAgeMs;
     const rows = this.db
-      .query(
-        `SELECT id, play_name, started_at FROM runs WHERE status = 'running'`,
-      )
+      .query(`SELECT id, play_name, started_at FROM runs WHERE status = 'running'`)
       .all() as Array<{ id: number; play_name: string; started_at: string }>;
     const swept: Array<{
       id: number;
@@ -1825,6 +2082,7 @@ export class Ledger {
       sent: boolean;
       receiptIds: number[];
       dryRun: boolean;
+      enrichmentFailed?: boolean;
     };
   }): void {
     const draftedAtIso = new Date().toISOString();
