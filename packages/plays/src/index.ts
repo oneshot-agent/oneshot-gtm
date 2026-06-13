@@ -1,6 +1,7 @@
 export * from "./_lib.ts";
 export * from "./_cadence.ts";
 export * from "./_run-play.ts";
+export * from "./reply.ts";
 export * from "./registry.ts";
 export * from "./show-hn.ts";
 export * from "./icp.ts";

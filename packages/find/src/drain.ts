@@ -76,6 +76,7 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
           sent: draft.sent,
           receiptIds: draft.receiptIds,
           dryRun: opts.dryRun,
+          ...(draft.enrichmentFailed ? { enrichmentFailed: true } : {}),
         },
       });
       if (draft.sent && !opts.dryRun) {

@@ -10,6 +10,32 @@
  * Lives in core so both `find` (candidate pipelines) and `plays` (batch send
  * loops) can share it without a cross-package dependency.
  */
+/**
+ * Bound a promise to `ms`. On deadline: rejects with `<label> deadline
+ * exceeded` — the underlying promise keeps running (callers that care attach
+ * their own late-settle handlers; an abandoned SDK job is harmless). Guards
+ * against platform endpoints that hang instead of failing (observed on both
+ * the inbox and enrichment tools 2026-06).
+ */
+export function withDeadline<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label} deadline exceeded (${Math.round(ms / 1000)}s)`)),
+      ms,
+    );
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e as Error);
+      },
+    );
+  });
+}
+
 export async function parallelMap<T, R>(
   items: readonly T[],
   concurrency: number,

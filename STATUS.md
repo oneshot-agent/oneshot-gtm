@@ -2,7 +2,7 @@
 
 Snapshot of what's known to work end-to-end against the live OneShot API. Updated manually after each dogfood run; CI auto-update is on the Phase 3 roadmap.
 
-Last manual update: **2026-06-12** · Bun **1.3.13** · OneShot SDK **0.18.0**
+Last manual update: **2026-06-13** · Bun **1.3.13** · OneShot SDK **0.19.0**
 
 ---
 
@@ -99,7 +99,7 @@ Last manual update: **2026-06-12** · Bun **1.3.13** · OneShot SDK **0.18.0**
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/` (Home)                 | ✅ green — KPIs + signal feed + Scheduler strip (per-trigger last-run + next-due)                                                                                |
 | `/queue`                   | ✅ green — target queue + triggers table (click-to-edit polling interval) + strategist dock + filters + per-row draft archive (subject/body/flags/receipt links) |
-| `/inbox` (Replies)         | ✅ green — read-only OneShot inbox; replies matched to prospect + play + cadence status                                                                          |
+| `/inbox` (Replies)         | ✅ green — replies matched to prospect + play + cadence status; expand a row to reply in-place (editable draft + optional LLM generation; sends from the receiving identity, Gmail threaded)                  |
 | `/cadences`                | ✅ green (per-row preview + send + bulk + history + in-flight badge)                                                                                             |
 | `/receipts`                | ✅ green (with signed-receipt modal)                                                                                                                             |
 | `/plays`                   | ✅ green (with run + copy-CLI buttons)                                                                                                                           |
@@ -132,7 +132,9 @@ Last manual update: **2026-06-12** · Bun **1.3.13** · OneShot SDK **0.18.0**
 | `GET /api/receipts/:id`                       | ✅ green                                                                                                                                                                                                                                                      |
 | `GET /api/plays`                              | ✅ green                                                                                                                                                                                                                                                      |
 | `POST /api/plays/:name/cadence`               | ✅ green — edit a play's cadence step offsets                                                                                                                                                                                                                 |
-| `GET /api/inbox`                              | ✅ green — read-only replies merged across ALL sender identities (OneShot inbox + each Gmail account), matched to prospects                                                                                                                                   |
+| `GET /api/inbox`                              | ✅ green — replies merged across ALL sender identities (OneShot inbox + each Gmail account), matched to prospects, tagged with the receiving identity for reply routing                                                                                       |
+| `POST /api/inbox/draft-reply`                 | ✅ green — LLM-generates an editable founder-voice reply draft for an inbound email (prior touches + quoted-chain stripped); 400 on LLM/provider error                                                                                                        |
+| `POST /api/inbox/reply`                       | ✅ green — sends a reply via `replyEmail()` from the receiving identity, threaded on both transports (Gmail headers; OneShot `reply_to_email_id`, SDK 0.19) + idempotency key; `email.reply` receipt, outside cap counting; 503 while draining            |
 | `POST /api/queue/:id/regenerate`              | ✅ green — re-draft a single queue row                                                                                                                                                                                                                        |
 | `POST /api/queue/:id/send-draft`              | ✅ green — send the persisted draft for one queue row                                                                                                                                                                                                         |
 | `GET /api/measure/cac[?sinceDays=]`           | ✅ green                                                                                                                                                                                                                                                      |

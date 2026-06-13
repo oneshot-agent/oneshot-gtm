@@ -82,6 +82,36 @@ describe("buildRawMessage", () => {
     expect(msg).toContain("To: a@b.com Bcc: evil@x.com");
   });
 
+  it("emits In-Reply-To and References headers for a threaded reply", () => {
+    const msg = decodeRaw(
+      buildRawMessage({
+        to: "prospect@acme.com",
+        fromEmail: "jane@gmail.com",
+        fromName: "Jane Doe",
+        subject: "Re: quick question",
+        htmlBody: "b",
+        inReplyTo: "<abc123@mail.gmail.com>",
+        references: ["<abc123@mail.gmail.com>"],
+      }),
+    );
+    expect(msg).toMatch(/^In-Reply-To: <abc123@mail\.gmail\.com>$/m);
+    expect(msg).toMatch(/^References: <abc123@mail\.gmail\.com>$/m);
+  });
+
+  it("omits threading headers when not provided", () => {
+    const msg = decodeRaw(
+      buildRawMessage({
+        to: "a@b.com",
+        fromEmail: "j@g.com",
+        fromName: null,
+        subject: "s",
+        htmlBody: "b",
+      }),
+    );
+    expect(msg).not.toMatch(/^In-Reply-To:/m);
+    expect(msg).not.toMatch(/^References:/m);
+  });
+
   it("RFC 2047-encodes a non-ASCII subject", () => {
     const subject = "métricas página";
     const msg = decodeRaw(
@@ -170,6 +200,7 @@ describe("listGmailReplies", () => {
               headers: [
                 { name: "From", value: "Pat Prospect <pat@acme.com>" },
                 { name: "Subject", value: "Re: quick question" },
+                { name: "Message-ID", value: "<pat-msg-1@mail.acme.com>" },
               ],
               parts: [
                 {
@@ -196,6 +227,8 @@ describe("listGmailReplies", () => {
       received_at: new Date(internalDate).toISOString(),
       thread_id: "t1",
       body: "sounds good!",
+      // Captured for In-Reply-To/References on a threaded reply.
+      message_id: "<pat-msg-1@mail.acme.com>",
     });
     // Query excludes the founder's own sends at the source.
     const listCall = fetchMock.mock.calls.find((c) => String(c[0]).includes("/messages?"));

@@ -40,6 +40,7 @@ function toView(row: QueueRow): QueueRowView {
           receiptIds: Array.isArray(parsed.receiptIds) ? parsed.receiptIds : [],
           dryRun: parsed.dryRun === true,
           draftedAt: typeof parsed.draftedAt === "string" ? parsed.draftedAt : "",
+          ...(parsed.enrichmentFailed === true ? { enrichmentFailed: true } : {}),
         };
       }
     } catch {
@@ -230,6 +231,7 @@ export async function regenerateDraftRoute(
       sent: false,
       receiptIds: [],
       dryRun: true,
+      ...(draft.enrichmentFailed ? { enrichmentFailed: true } : {}),
     },
   });
 
@@ -241,6 +243,7 @@ export async function regenerateDraftRoute(
     receiptIds: [],
     dryRun: true,
     draftedAt: new Date().toISOString(),
+    ...(draft.enrichmentFailed ? { enrichmentFailed: true } : {}),
   };
   return jsonResponse(out, 200, req);
 }

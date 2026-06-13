@@ -21,6 +21,8 @@ export interface DraftedRow {
   flags: string[];
   sent: boolean;
   receiptIds: number[];
+  /** Enrichment SDK failed — draft built from payload only (non-blocking; surfaced on /queue). */
+  enrichmentFailed?: boolean;
 }
 
 /** Run-level options a play may consume. `targets` is play-specific JSON. */

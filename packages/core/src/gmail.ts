@@ -184,6 +184,10 @@ export interface RawMessageInput {
   fromName?: string | null;
   subject: string;
   htmlBody: string;
+  /** RFC 2822 Message-ID of the email being replied to → In-Reply-To header. */
+  inReplyTo?: string;
+  /** Prior Message-IDs of the conversation → References header (recipient-side threading). */
+  references?: string[];
 }
 
 /** Build the base64url-encoded RFC 2822 message Gmail's `messages.send` expects. */
@@ -196,12 +200,18 @@ export function buildRawMessage(input: RawMessageInput): string {
     `From: ${from}`,
     `To: ${headerValue(input.to)}`,
     `Subject: ${encodeHeaderText(headerValue(input.subject))}`,
+  ];
+  if (input.inReplyTo) lines.push(`In-Reply-To: ${headerValue(input.inReplyTo)}`);
+  if (input.references?.length) {
+    lines.push(`References: ${headerValue(input.references.join(" "))}`);
+  }
+  lines.push(
     "MIME-Version: 1.0",
     'Content-Type: text/html; charset="UTF-8"',
     "Content-Transfer-Encoding: 8bit",
     "",
     input.htmlBody,
-  ];
+  );
   return Buffer.from(lines.join("\r\n"), "utf8").toString("base64url");
 }
 
@@ -213,13 +223,16 @@ export interface GmailSendResult {
 export async function sendGmailMessage(
   input: RawMessageInput,
   account?: GmailAccount,
+  /** Gmail thread to attach the send to (threads our copy in the sender's mailbox). */
+  threadId?: string,
 ): Promise<GmailSendResult> {
   return gmailJson<GmailSendResult>(
     "/messages/send",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ raw: buildRawMessage(input) }),
+      // threadId is a field of the Message resource (not a query param).
+      body: JSON.stringify({ raw: buildRawMessage(input), ...(threadId ? { threadId } : {}) }),
     },
     account,
   );
@@ -291,16 +304,27 @@ export async function listGmailReplies(
     account,
   );
   const ids = (list.messages ?? []).map((m) => m.id);
-  const emails = await parallelMap(ids, 4, async (id): Promise<InboxEmail> => {
-    const msg = await gmailJson<GmailMessageMeta>(`/messages/${id}?format=full`, undefined, account);
-    return {
-      id: msg.id,
-      from: header(msg, "From"),
-      subject: header(msg, "Subject"),
-      received_at: new Date(Number(msg.internalDate)).toISOString(),
-      thread_id: msg.threadId,
-      body: extractPlainText(msg.payload),
-    };
-  });
+  const emails = await parallelMap(
+    ids,
+    4,
+    async (id): Promise<InboxEmail & { message_id?: string }> => {
+      const msg = await gmailJson<GmailMessageMeta>(
+        `/messages/${id}?format=full`,
+        undefined,
+        account,
+      );
+      // RFC 2822 Message-ID — needed as In-Reply-To/References on a threaded reply.
+      const messageId = header(msg, "Message-ID");
+      return {
+        id: msg.id,
+        from: header(msg, "From"),
+        subject: header(msg, "Subject"),
+        received_at: new Date(Number(msg.internalDate)).toISOString(),
+        thread_id: msg.threadId,
+        body: extractPlainText(msg.payload),
+        ...(messageId ? { message_id: messageId } : {}),
+      };
+    },
+  );
   return { emails, count: emails.length, has_more: false, agent_id: "gmail" };
 }

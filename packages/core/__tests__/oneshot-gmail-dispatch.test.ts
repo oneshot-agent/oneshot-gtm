@@ -218,5 +218,63 @@ describe("listInbox — multi-identity merge", () => {
     const out = await listInbox({ limit: 10 });
     expect(out.emails.map((e) => e.id)).toEqual(["m-new", "m-dup", "m-old"]);
     expect(out.agent_id).toBe("gmail+gmail");
+    // Source attribution: a reply must go out from the identity whose mailbox
+    // received the email. (m-dup arrived in both — either id is correct.)
+    expect(out.emails.find((e) => e.id === "m-new")?.source_identity_id).toBe("gmail:b@x.com");
+    expect(out.emails.find((e) => e.id === "m-old")?.source_identity_id).toBe("gmail:a@x.com");
+    expect(out.emails.find((e) => e.id === "m-dup")?.source_identity_id).toMatch(
+      /^gmail:(a|b)@x\.com$/,
+    );
+  });
+
+  it("a hung source is dropped at the per-source deadline instead of stalling the merge", async () => {
+    // Regression: the OneShot inbox endpoint has been observed hanging to
+    // Bun's ~300s default fetch timeout, which stalled /inbox and
+    // stop-on-reply for minutes. The deadline must cut the hung source loose
+    // while the healthy one still reports.
+    vi.useFakeTimers();
+    try {
+      cfgOverride = {
+        emailIdentities: [
+          { id: "gmail:hung@x.com", provider: "gmail", maxPerDay: 50, warmup: null },
+          { id: "gmail:ok@x.com", provider: "gmail", maxPerDay: 50, warmup: null },
+        ],
+      };
+      tokenStoreOverride = {
+        "gmail:hung@x.com": { refreshToken: "rt-hung", address: "hung@x.com" },
+        "gmail:ok@x.com": { refreshToken: "rt-ok", address: "ok@x.com" },
+      };
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: string | URL, init?: RequestInit) => {
+          const u = String(url);
+          if (u.includes("oauth2.googleapis.com")) {
+            const refresh = new URLSearchParams(String(init?.body)).get("refresh_token");
+            // The hung account never gets past its token exchange.
+            if (refresh === "rt-hung") return new Promise<Response>(() => {});
+            return new Response(
+              JSON.stringify({ access_token: `at-${refresh}`, expires_in: 3600 }),
+              { status: 200 },
+            );
+          }
+          if (u.includes("/messages?")) {
+            return new Response(JSON.stringify({ messages: [{ id: "m-ok" }] }), { status: 200 });
+          }
+          if (u.includes("/messages/m-ok")) {
+            return new Response(JSON.stringify(mkMsg("m-ok", "2026-06-11T10:00:00Z")), {
+              status: 200,
+            });
+          }
+          throw new Error(`unexpected fetch: ${u}`);
+        }),
+      );
+      const pending = listInbox({ limit: 10 });
+      await vi.advanceTimersByTimeAsync(15_000);
+      const out = await pending;
+      expect(out.emails.map((e) => e.id)).toEqual(["m-ok"]);
+      expect(out.agent_id).toBe("gmail");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

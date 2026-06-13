@@ -23,6 +23,13 @@ type AppConfig = ReturnType<typeof loadConfig>;
 export interface Prepared<X = Record<string, never>> {
   receiptIds: number[];
   dossier: string;
+  /**
+   * The enrichment SDK call failed (live or negative-cached) — the draft was
+   * built from payload context only. Travels to the persisted draft envelope
+   * so /queue can surface it; deliberately NOT a lint flag (flags block
+   * sending, and a payload-only draft is still sendable).
+   */
+  enrichmentFailed?: boolean;
   extra?: X;
 }
 
@@ -34,6 +41,8 @@ export type PlayDraft<T, X = Record<string, never>> = {
   receiptIds: number[];
   sent: boolean;
   flags: string[];
+  /** See Prepared.enrichmentFailed. */
+  enrichmentFailed?: boolean;
 } & X;
 
 /**
@@ -157,6 +166,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         receiptIds: [...prep.receiptIds, ...send.receiptIds],
         sent: send.sent,
         flags,
+        ...(prep.enrichmentFailed ? { enrichmentFailed: true } : {}),
         ...(prep.extra ?? ({} as X)),
       } as PlayDraft<T, X>;
     } catch (err) {
@@ -197,6 +207,7 @@ export async function standardEnrich(opts: {
 
   const enr = await safeEnrich(opts.enrichInput, { playName: opts.playName });
   if (enr.receiptId) receiptIds.push(enr.receiptId);
+  const enrichmentFailed = (enr.result as { status?: string }).status === "failed";
   let dossier = JSON.stringify(enr.result, null, 2).slice(0, opts.enrichSlice);
 
   if (opts.research) {
@@ -210,5 +221,5 @@ export async function standardEnrich(opts: {
       JSON.stringify(research.result, null, 2).slice(0, opts.research.slice ?? 4000);
   }
 
-  return { receiptIds, dossier };
+  return { receiptIds, dossier, ...(enrichmentFailed ? { enrichmentFailed: true } : {}) };
 }

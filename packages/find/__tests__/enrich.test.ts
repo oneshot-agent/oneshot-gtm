@@ -18,11 +18,16 @@ const calls = { enrichProfile: 0, lastEmail: "" };
 // getCachedEnrichment call returns; cases preload it to test the short-circuit.
 const cache = {
   setCalls: [] as Array<{ key: string; resultJson: string }>,
+  failureCalls: [] as Array<{ key: string; message: string }>,
   getCalls: [] as string[],
-  cachedRow: null as { result_json: string; fetched_at: string } | null,
+  cachedRow: null as { result_json: string; fetched_at: string; status?: string | null } | null,
 };
 
 vi.mock("@oneshot-gtm/core", () => ({
+  ENRICH_CACHE_TTL_MS: 30 * 24 * 3600 * 1000,
+  ENRICH_FAILURE_TTL_MS: 3 * 24 * 3600 * 1000,
+  ENRICH_DEADLINE_MS: 120_000,
+  withDeadline: <T,>(p: Promise<T>) => p,
   enrichProfile: async (input: { email?: string }) => {
     calls.enrichProfile++;
     calls.lastEmail = input.email ?? "";
@@ -38,6 +43,9 @@ vi.mock("@oneshot-gtm/core", () => ({
   getLedger: () => ({
     setCachedEnrichment: (key: string, resultJson: string) => {
       cache.setCalls.push({ key, resultJson });
+    },
+    setCachedEnrichmentFailure: (key: string, message: string) => {
+      cache.failureCalls.push({ key, message });
     },
     getCachedEnrichment: (key: string) => {
       cache.getCalls.push(key);
@@ -56,6 +64,7 @@ beforeEach(() => {
   nextCost = 0.005;
   throwOnNextCall = false;
   cache.setCalls = [];
+  cache.failureCalls = [];
   cache.getCalls = [];
   cache.cachedRow = null;
 });
@@ -206,5 +215,39 @@ describe("enrichVerifiedContact — cache write + read contract", () => {
     expect(r.phone).toBe("+1 555-7777");
     // Fresh result → fresh cache write.
     expect(cache.setCalls).toHaveLength(1);
+  });
+});
+
+describe("enrichVerifiedContact — negative caching", () => {
+  it("writes a failure entry when the SDK call throws", async () => {
+    throwOnNextCall = true;
+    const r = await enrichVerifiedContact("boom@x.dev", { playName: "show-hn" });
+    expect(r).toEqual({ phone: null, linkedinUrl: null, costUsd: 0, receiptId: null });
+    expect(cache.failureCalls).toEqual([{ key: "boom@x.dev", message: "rate limited" }]);
+    expect(cache.setCalls).toHaveLength(0); // no success row written
+  });
+
+  it("a fresh failed entry skips the SDK entirely", async () => {
+    cache.cachedRow = {
+      result_json: JSON.stringify({ failed: true, message: "rate limited" }),
+      fetched_at: new Date(Date.now() - 60_000).toISOString(), // 1 min ago
+      status: "failed",
+    };
+    const r = await enrichVerifiedContact("boom@x.dev", { playName: "show-hn" });
+    expect(calls.enrichProfile).toBe(0);
+    expect(r).toEqual({ phone: null, linkedinUrl: null, costUsd: 0, receiptId: null });
+  });
+
+  it("an expired failed entry retries the SDK", async () => {
+    cache.cachedRow = {
+      result_json: JSON.stringify({ failed: true, message: "rate limited" }),
+      fetched_at: new Date(Date.now() - 4 * 24 * 3600 * 1000).toISOString(), // 4 days > 3d TTL
+      status: "failed",
+    };
+    nextProfile = { phone: "+1 555-1234" };
+    const r = await enrichVerifiedContact("boom@x.dev", { playName: "show-hn" });
+    expect(calls.enrichProfile).toBe(1);
+    expect(r.phone).toBe("+1 555-1234");
+    expect(cache.setCalls).toHaveLength(1); // success overwrites the failure
   });
 });

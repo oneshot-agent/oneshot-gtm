@@ -1,4 +1,7 @@
 import {
+  ENRICH_CACHE_TTL_MS,
+  ENRICH_DEADLINE_MS,
+  ENRICH_FAILURE_TTL_MS,
   enrichProfile,
   getLedger,
   loadConfig,
@@ -7,11 +10,12 @@ import {
   sendEmail,
   trackSend,
   verifyEmail,
+  withDeadline,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 
-/** Profiles change slowly — reuse a cached enrichment for this long before refetching. */
-const ENRICH_CACHE_TTL_MS = 30 * 24 * 3600 * 1000;
+/** The shape safeEnrich returns when enrichment failed (live or negative-cached). */
+const FAILED_ENRICH = { status: "failed", profile: null, cost: 0 };
 
 /**
  * enrichProfile that (a) never throws and (b) caches by email. The dossier is a
@@ -30,13 +34,25 @@ export async function safeEnrich(
 
   if (email) {
     const cached = ledger.getCachedEnrichment(email);
-    if (cached && Date.now() - new Date(cached.fetched_at).getTime() < ENRICH_CACHE_TTL_MS) {
-      try {
-        return { result: JSON.parse(cached.result_json), receiptId: 0 } as Awaited<
-          ReturnType<typeof enrichProfile>
-        >;
-      } catch {
-        // corrupt cache row — fall through and refetch
+    if (cached) {
+      const ageMs = Date.now() - new Date(cached.fetched_at).getTime();
+      // Negative entry: the SDK job failed recently — don't burn another ~70s
+      // attempt; draft from payload context. Expired failures fall through
+      // and retry below.
+      if (cached.status === "failed") {
+        if (ageMs < ENRICH_FAILURE_TTL_MS) {
+          return { result: FAILED_ENRICH, receiptId: 0 } as unknown as Awaited<
+            ReturnType<typeof enrichProfile>
+          >;
+        }
+      } else if (ageMs < ENRICH_CACHE_TTL_MS) {
+        try {
+          return { result: JSON.parse(cached.result_json), receiptId: 0 } as Awaited<
+            ReturnType<typeof enrichProfile>
+          >;
+        } catch {
+          // corrupt cache row — fall through and refetch
+        }
       }
     }
   }
@@ -54,23 +70,41 @@ export async function safeEnrich(
         ...ctx.decisionContext,
       },
     };
-    const out = await enrichProfile(input, enrichedCtx);
+    const live = enrichProfile(input, enrichedCtx);
+    // Cache writes ride on the LIVE promise, not the deadline race — a call
+    // that outlives the deadline still records its outcome when it settles
+    // (late success overwrites the failure marker written below).
+    live.then(
+      (out) => {
+        if (email) {
+          try {
+            ledger.setCachedEnrichment(email, JSON.stringify(out.result));
+          } catch {
+            // cache write is best-effort
+          }
+        }
+      },
+      () => {
+        // Rejection is handled by the race's catch below (or already raced
+        // out); this handler only exists to silence unhandled-rejection noise
+        // from the abandoned promise.
+      },
+    );
+    return await withDeadline(live, ENRICH_DEADLINE_MS, "enrichProfile");
+  } catch (err) {
+    const message = (err as Error)?.message ?? "";
+    logEvent("enrich.failed", { play: ctx.playName, message_120: message.slice(0, 120) }, "warn");
     if (email) {
       try {
-        ledger.setCachedEnrichment(email, JSON.stringify(out.result));
+        // Negative-cache the failure so the next draft/regenerate of this
+        // prospect skips the retry within ENRICH_FAILURE_TTL_MS.
+        ledger.setCachedEnrichmentFailure(email, message);
       } catch {
         // cache write is best-effort
       }
     }
-    return out;
-  } catch (err) {
-    logEvent(
-      "enrich.failed",
-      { play: ctx.playName, message_120: ((err as Error)?.message ?? "").slice(0, 120) },
-      "warn",
-    );
     return {
-      result: { status: "failed", profile: null, cost: 0 },
+      result: FAILED_ENRICH,
       receiptId: 0,
     } as unknown as Awaited<ReturnType<typeof enrichProfile>>;
   }

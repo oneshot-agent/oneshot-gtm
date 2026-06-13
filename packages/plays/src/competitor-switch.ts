@@ -67,6 +67,7 @@ export function runCompetitorSwitch(
         { playName: PLAY_NAME },
       );
       if (enr.receiptId) receiptIds.push(enr.receiptId);
+      const enrichmentFailed = (enr.result as { status?: string }).status === "failed";
       const dossier = JSON.stringify(enr.result, null, 2).slice(0, 3500);
 
       if (!dryRun) {
@@ -112,6 +113,7 @@ export function runCompetitorSwitch(
       return {
         receiptIds,
         dossier,
+        ...(enrichmentFailed ? { enrichmentFailed: true } : {}),
         ...(scrapedEvidence ? { extra: { scrapedEvidence } } : {}),
       };
     },

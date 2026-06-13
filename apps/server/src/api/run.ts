@@ -294,6 +294,7 @@ function persistDraftsToQueue(input: {
           sent: draft.sent,
           receiptIds: draft.receiptIds,
           dryRun: input.dryRun,
+          ...(draft.enrichmentFailed ? { enrichmentFailed: true } : {}),
         },
       });
       // A real, successful send must leave the approved pool — otherwise the

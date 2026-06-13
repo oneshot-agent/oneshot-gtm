@@ -14,12 +14,13 @@ import {
   type WebReadResult,
   type WebSearchResult,
 } from "@oneshot-agent/sdk";
+import { createHash } from "node:crypto";
 import { getLedger } from "./ledger.ts";
 import { loadConfig, oneshotEnvReady } from "./config.ts";
 import { logEvent } from "./events.ts";
 import { getGmailProfile, listGmailReplies, sendGmailMessage } from "./gmail.ts";
 import { gmailAccountFor, resolveIdentities } from "./identities.ts";
-import { parallelMap } from "./parallel.ts";
+import { parallelMap, withDeadline } from "./parallel.ts";
 import { resolveSenderIdentity } from "./send-routing.ts";
 import type { EmailIdentity } from "./types.ts";
 
@@ -104,6 +105,21 @@ function fromLocalpart(name: string | null): string {
   const first = (name ?? "").trim().split(/\s+/)[0] ?? "";
   const clean = first.toLowerCase().replace(/[^a-z0-9]/g, "");
   return clean.length > 0 ? clean : "agent";
+}
+
+/**
+ * Stable Idempotency-Key for a OneShot email send (SDK 0.19+, honored by
+ * email.send with a 24h replay window). Derived from the send's content so a
+ * retry of the SAME logical email — a double-click, or a client retry after
+ * the platform hung but actually sent — returns the original job instead of
+ * charging + sending twice. A genuinely different body/subject hashes
+ * differently, so it gets its own key (the server 422s same-key-different-body).
+ */
+function emailIdempotencyKey(parts: Array<string>): string {
+  // NUL separator: it can't appear in an email address, identity id, subject,
+  // or body, so distinct field splits can't realign to the same joined string
+  // (e.g. ["a","b c"] vs ["a b","c"] both → "a b c" under a space separator).
+  return createHash("sha256").update(parts.join(String.fromCharCode(0))).digest("hex").slice(0, 40);
 }
 
 /**
@@ -192,6 +208,10 @@ export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
     to: input.to,
     subject: input.subject,
     body: toHtmlBody(input.body),
+    // Dedupes a retry after the platform hangs-but-sends (the 2026-06 incident)
+    // or a double-fire from the queue/cadence layer. Keyed on content so two
+    // distinct emails to the same prospect don't collide.
+    idempotencyKey: emailIdempotencyKey([identity.id, input.to, input.subject, input.body]),
     ...buildAuditOpts(ctx, "email.send"),
   };
   if (fromDomain) {
@@ -211,6 +231,133 @@ export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
   const receiptId = getLedger().recordReceipt({
     playName: ctx.playName,
     callType: "email.send",
+    signedReceipt: result,
+    costUsd: result.cost,
+    oneshotRequestId: result.request_id,
+    senderIdentity: identity.id,
+  });
+  return { result, receiptId };
+}
+
+export interface ReplyEmailInput {
+  /** Sender identity that RECEIVED the inbound email; the reply goes out from it. */
+  identityId: string;
+  to: string;
+  /** Inbound subject — normalized to "Re: …" here (idempotent). */
+  subject: string;
+  body: string;
+  /** Gmail only: thread to attach the reply to (sender-side threading). */
+  threadId?: string;
+  /** Gmail only: RFC 2822 Message-ID of the inbound email (In-Reply-To/References). */
+  inReplyTo?: string;
+  /**
+   * OneShot only: id of the inbound OneShot inbox email (from inboxList). The
+   * platform resolves In-Reply-To/References/thread_id and can derive
+   * to/subject from it (SDK 0.19+).
+   */
+  replyToEmailId?: string;
+}
+
+/** "Re: " prefix, idempotent and case-insensitive ("RE: x" passes through). */
+export function replySubject(subject: string): string {
+  const s = subject.trim();
+  return /^re:/i.test(s) ? s : `Re: ${s}`;
+}
+
+/**
+ * Reply to an inbound email from the identity whose mailbox received it.
+ * Deliberately NOT routed through sender rotation (resolveSenderIdentity): a
+ * reply must keep the thread's From address, and replies to engaged humans
+ * shouldn't be deferred by warmup caps. Receipts use callType "email.reply",
+ * which also keeps them out of per-identity cap counting (email.send only).
+ * Both transports thread for real: Gmail via threadId + In-Reply-To/References
+ * on the raw message; OneShot via `reply_to_email_id` (SDK 0.19+ — the
+ * platform resolves the threading headers + thread_id server-side). The
+ * OneShot send also carries an idempotency key so a retry can't double-send.
+ */
+export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
+  const cfg = loadConfig();
+  const identity = resolveIdentities(cfg).find((i) => i.id === input.identityId);
+  if (!identity) {
+    throw new Error(
+      `unknown sender identity '${input.identityId}' — it may have been removed from the pool`,
+    );
+  }
+  const subject = replySubject(input.subject);
+
+  if (identity.provider === "gmail") {
+    const account = gmailAccountFor(identity);
+    if (!account) {
+      throw new Error(
+        `no Gmail refresh token stored for sender identity '${identity.id}' — re-authorize it (bun run cli -- gmail auth)`,
+      );
+    }
+    const { emailAddress } = await getGmailProfile(account);
+    const sent = await sendGmailMessage(
+      {
+        to: input.to,
+        fromEmail: emailAddress,
+        fromName: cfg.founderName,
+        subject,
+        htmlBody: toHtmlBody(input.body),
+        ...(input.inReplyTo ? { inReplyTo: input.inReplyTo, references: [input.inReplyTo] } : {}),
+      },
+      account,
+      input.threadId,
+    );
+    const result: EmailResult = {
+      status: "sent",
+      request_id: sent.id,
+      cost: 0,
+      email: { id: sent.id, provider_message_id: sent.id, status: "sent" },
+    };
+    const receiptId = getLedger().recordReceipt({
+      playName: ctx.playName,
+      callType: "email.reply",
+      signedReceipt: {
+        provider: "gmail",
+        message_id: sent.id,
+        thread_id: sent.threadId,
+        from: emailAddress,
+        to: input.to,
+        subject,
+        memo: ctx.memo ?? `${ctx.playName} email.reply`,
+      },
+      costUsd: 0,
+      oneshotRequestId: sent.id,
+      senderIdentity: identity.id,
+    });
+    return { result, receiptId };
+  }
+
+  const agent = await getAgent();
+  const fromDomain = identity.sendingDomain ?? cfg.sendingDomain ?? null;
+  const opts: Parameters<OneShot["email"]>[0] = {
+    to: input.to,
+    subject,
+    body: toHtmlBody(input.body),
+    idempotencyKey: emailIdempotencyKey([
+      identity.id,
+      input.to,
+      input.body,
+      input.replyToEmailId ?? "",
+    ]),
+    ...buildAuditOpts(ctx, "email.reply"),
+  };
+  // Thread server-side when we know the inbound email id. We still pass
+  // to/subject (the SDK forwards them); a missing id degrades to a fresh
+  // "Re:" send, the pre-0.19 behavior.
+  if (input.replyToEmailId) opts.reply_to_email_id = input.replyToEmailId;
+  if (fromDomain) {
+    opts.from_domain = fromDomain;
+    opts.from_mailbox = identity.mailbox?.trim() || fromLocalpart(cfg.founderName);
+    const name = (cfg.founderName ?? "").trim();
+    if (name) opts.from_name = name;
+  }
+  const result = await agent.email(opts);
+  const receiptId = getLedger().recordReceipt({
+    playName: ctx.playName,
+    callType: "email.reply",
     signedReceipt: result,
     costUsd: result.cost,
     oneshotRequestId: result.request_id,
@@ -352,6 +499,15 @@ export async function getBalance(
   return { balance: raw, raw };
 }
 
+/**
+ * Hard deadline for one inbox source. Without it a hung upstream (the OneShot
+ * inbox endpoint has been observed stalling to Bun's ~300s default fetch
+ * timeout) blocks the /inbox route and stop-on-reply for minutes. The
+ * underlying request keeps running after the race loses — fine, we only need
+ * the caller unblocked; the next poll gets a fresh attempt.
+ */
+const INBOX_SOURCE_TIMEOUT_MS = 15_000;
+
 async function listOneShotInbox(opts?: {
   since?: string;
   limit?: number;
@@ -361,6 +517,26 @@ async function listOneShotInbox(opts?: {
   if (opts?.since) out.since = opts.since;
   if (opts?.limit) out.limit = opts.limit;
   return agent.inboxList(out);
+}
+
+/**
+ * InboxEmail plus local-only annotations: `message_id` (RFC 2822, Gmail
+ * sources only — needed for In-Reply-To on a threaded reply) and
+ * `source_identity_id` (which sender identity's mailbox received it — a reply
+ * must go out from that same identity). Extends the SDK type, so existing
+ * consumers (stop-on-reply reads `from` only) are unaffected.
+ */
+export type AnnotatedInboxEmail = InboxEmail & {
+  message_id?: string;
+  source_identity_id?: string;
+};
+
+export interface AnnotatedInboxListResult extends InboxListResult {
+  emails: AnnotatedInboxEmail[];
+}
+
+function annotateInboxResult(r: InboxListResult, identityId: string): AnnotatedInboxListResult {
+  return { ...r, emails: r.emails.map((e) => ({ ...e, source_identity_id: identityId })) };
 }
 
 /**
@@ -375,15 +551,25 @@ async function listOneShotInbox(opts?: {
 export async function listInbox(opts?: {
   since?: string;
   limit?: number;
-}): Promise<InboxListResult> {
+}): Promise<AnnotatedInboxListResult> {
   const identities = resolveIdentities(loadConfig());
-  const sources: Array<{ label: string; fetch: () => Promise<InboxListResult> }> = [];
-  if (identities.some((i) => i.provider === "oneshot")) {
-    sources.push({ label: "oneshot", fetch: () => listOneShotInbox(opts) });
+  const sources: Array<{
+    label: string;
+    identityId: string;
+    fetch: () => Promise<InboxListResult>;
+  }> = [];
+  const oneshotIdentity = identities.find((i) => i.provider === "oneshot");
+  if (oneshotIdentity) {
+    sources.push({
+      label: "oneshot",
+      identityId: oneshotIdentity.id,
+      fetch: () => listOneShotInbox(opts),
+    });
   }
   for (const identity of identities.filter((i) => i.provider === "gmail")) {
     sources.push({
       label: identity.id,
+      identityId: identity.id,
       fetch: () => {
         const account = gmailAccountFor(identity);
         if (!account) {
@@ -401,11 +587,24 @@ export async function listInbox(opts?: {
     });
   }
 
-  if (sources.length === 1) return sources[0]!.fetch();
+  if (sources.length === 1) {
+    const only = sources[0]!;
+    return annotateInboxResult(
+      await withDeadline(only.fetch(), INBOX_SOURCE_TIMEOUT_MS, `inbox source '${only.label}'`),
+      only.identityId,
+    );
+  }
 
   const results = await parallelMap(sources, 3, async (source) => {
     try {
-      return await source.fetch();
+      return annotateInboxResult(
+        await withDeadline(
+          source.fetch(),
+          INBOX_SOURCE_TIMEOUT_MS,
+          `inbox source '${source.label}'`,
+        ),
+        source.identityId,
+      );
     } catch (err) {
       logEvent(
         "inbox.source_failed",
@@ -415,7 +614,7 @@ export async function listInbox(opts?: {
       return null;
     }
   });
-  const ok = results.filter((r): r is InboxListResult => r != null);
+  const ok = results.filter((r): r is AnnotatedInboxListResult => r != null);
   if (ok.length === 0) {
     throw new Error("all inbox sources failed — check doctor for identity auth status");
   }

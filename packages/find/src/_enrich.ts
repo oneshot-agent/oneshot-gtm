@@ -1,10 +1,13 @@
-import { enrichProfile, getLedger, logEvent } from "@oneshot-gtm/core";
+import {
+  ENRICH_CACHE_TTL_MS,
+  ENRICH_DEADLINE_MS,
+  ENRICH_FAILURE_TTL_MS,
+  enrichProfile,
+  getLedger,
+  logEvent,
+  withDeadline,
+} from "@oneshot-gtm/core";
 import { extractFirstPhone, isLinkedInProfileUrl } from "./_linkedin.ts";
-
-// Same value as ENRICH_CACHE_TTL_MS in packages/plays/src/_lib.ts:14 (the
-// constant is file-private there). Duplicated here to avoid a cross-package
-// import for a single literal; both must stay in sync if either changes.
-const ENRICH_CACHE_TTL_MS = 30 * 24 * 3600 * 1000;
 
 export interface EnrichedContact {
   phone: string | null;
@@ -45,7 +48,19 @@ export async function enrichVerifiedContact(
   // Mirrors the read pattern in safeEnrich at packages/plays/src/_lib.ts:31.
   try {
     const cached = ledger.getCachedEnrichment(key);
-    if (cached && Date.now() - new Date(cached.fetched_at).getTime() < ENRICH_CACHE_TTL_MS) {
+    // Fresh negative entry: the SDK job failed recently for this email —
+    // skip the retry, the finder proceeds without phone/linkedin.
+    if (
+      cached?.status === "failed" &&
+      Date.now() - new Date(cached.fetched_at).getTime() < ENRICH_FAILURE_TTL_MS
+    ) {
+      return { phone: null, linkedinUrl: null, costUsd: 0, receiptId: null };
+    }
+    if (
+      cached &&
+      cached.status !== "failed" &&
+      Date.now() - new Date(cached.fetched_at).getTime() < ENRICH_CACHE_TTL_MS
+    ) {
       try {
         const cachedResult = JSON.parse(cached.result_json) as {
           profile?: Parameters<typeof extractFirstPhone>[0];
@@ -71,7 +86,7 @@ export async function enrichVerifiedContact(
   }
 
   try {
-    const enriched = await enrichProfile(
+    const live = enrichProfile(
       { email },
       {
         playName: opts.playName,
@@ -79,15 +94,24 @@ export async function enrichVerifiedContact(
       },
     );
     // Populate the same per-email enrichment cache that `safeEnrich` reads on
-    // /run dispatch. Without this, every queue-sourced run pays the ~70s SDK
-    // call a second time on the same email even though the result is already
-    // on disk.
-    try {
-      ledger.setCachedEnrichment(key, JSON.stringify(enriched.result));
-    } catch {
-      // cache write is best-effort — find's contract is phone + linkedin, not
-      // populating a cache. A SQLite hiccup here shouldn't break the enqueue.
-    }
+    // /run dispatch. Rides on the LIVE promise (not the deadline race) so a
+    // call that outlives the deadline still records its outcome — a late
+    // success overwrites the failure marker the catch below writes.
+    live.then(
+      (out) => {
+        try {
+          ledger.setCachedEnrichment(key, JSON.stringify(out.result));
+        } catch {
+          // cache write is best-effort — find's contract is phone + linkedin,
+          // not populating a cache. A SQLite hiccup shouldn't break the enqueue.
+        }
+      },
+      () => {
+        // Rejections surface through the race below; this only silences the
+        // abandoned promise's unhandled-rejection noise.
+      },
+    );
+    const enriched = await withDeadline(live, ENRICH_DEADLINE_MS, "enrichProfile");
     const profile = enriched.result.profile;
     const linkedinRaw = profile?.linkedin_url ?? null;
     return {
@@ -97,14 +121,22 @@ export async function enrichVerifiedContact(
       receiptId: enriched.receiptId,
     };
   } catch (err) {
+    const message = (err as Error).message ?? "";
     logEvent(
       "error.swallowed",
       {
         kind: `${opts.errKindPrefix ?? "enrich"}.post_verify`,
-        message_120: ((err as Error).message ?? "").slice(0, 120),
+        message_120: message.slice(0, 120),
       },
       "warn",
     );
+    try {
+      // Negative-cache so later drafts/regenerates of this email don't
+      // re-pay the same failing ~70s call (see the 2026-06-06..08 outage).
+      ledger.setCachedEnrichmentFailure(key, message);
+    } catch {
+      // cache write is best-effort
+    }
     return { phone: null, linkedinUrl: null, costUsd: 0, receiptId: null };
   }
 }
