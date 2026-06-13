@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 /**
  * Boolean-flag persistence to localStorage. SSR-safe (initial render uses
@@ -18,13 +18,17 @@ export function useLocalStorage(key: string, initial = false): [boolean, (v: boo
       // private mode / SSR — ignore
     }
   }, [key]);
-  const set = (v: boolean): void => {
-    setValue(v);
-    try {
-      localStorage.setItem(key, v ? "1" : "0");
-    } catch {
-      // ignore
-    }
-  };
+  // Stable setter so consumers can safely memoize on it (e.g. a context value).
+  const set = useCallback(
+    (v: boolean): void => {
+      setValue(v);
+      try {
+        localStorage.setItem(key, v ? "1" : "0");
+      } catch {
+        // ignore
+      }
+    },
+    [key],
+  );
   return [value, set];
 }
