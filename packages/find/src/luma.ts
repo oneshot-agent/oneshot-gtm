@@ -13,6 +13,7 @@ import { resolveAndVerifyContact } from "./_contact.ts";
 import { enrichVerifiedContact } from "./_enrich.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
+import { persistPending, registerPendingRetry } from "./_pending.ts";
 import { fetchAuthedGuestList, mergeAttendees } from "./_luma-auth.ts";
 import {
   cityToSlug,
@@ -511,7 +512,10 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
     // Per-attendee dedupe key = event URL + name (lowercased). Same person across
     // two events is fine to re-pitch with the new event's hook.
     const dedupeKey = `${work.event.url}#${work.attendee.name.toLowerCase()}`;
-    if (ledger.isQueueDuplicate(PLAY_NAME, dedupeKey)) {
+    if (
+      ledger.isQueueDuplicate(PLAY_NAME, dedupeKey) ||
+      ledger.isPendingResolution(PLAY_NAME, dedupeKey)
+    ) {
       result.droppedDuplicate++;
       return;
     }
@@ -522,162 +526,29 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
     }
 
     // No per-attendee ICP filter: the event cleared the event-level topic+ICP
-    // gate in Phase 2, so its public attendees are in-scope. (Filtering bare
-    // attendee names against the ICP rejected even on-topic people — Luma's
-    // public attendee data is too thin to judge.)
-    try {
-      // Resolve a contact domain: linkedin first (richest data, often surfaces
-      // the email directly so we can skip findEmail), then website. Without
-      // either we can't run findEmail safely — skip.
-      let companyDomain: string | null = null;
-      let resolvedLinkedinUrl: string | null = isLinkedInProfileUrl(work.attendee.linkedinUrl)
-        ? work.attendee.linkedinUrl
-        : null;
-      let resolvedCompany: string | null = null;
-      // Email surfaced directly by enrichProfile (LinkedIn path). When present,
-      // we can skip the findEmail call ($0.05 saved per candidate).
-      let surfacedEmail: string | null = null;
-
-      if (resolvedLinkedinUrl) {
-        try {
-          const enr = await enrichProfile(
-            { linkedinUrl: resolvedLinkedinUrl, name: work.attendee.name },
-            {
-              playName: PLAY_NAME,
-              decisionContext: { source: "finder", linkedinUrl: resolvedLinkedinUrl },
-            },
-          );
-          result.costUsd += enr.result.cost ?? 0;
-          // PersonResult shape: company (NAME) + company_domain (DOMAIN) at the
-          // top level — NOT a nested object. Per @oneshot-agent/sdk@0.16.2 .d.ts.
-          const profile = enr.result.profile;
-          companyDomain = profile?.company_domain ?? null;
-          resolvedCompany = profile?.company ?? null;
-          // Prefer best_work_email when surfaced — it's the SDK's already-verified
-          // pick. Fall back to the raw email field. Both can be undefined.
-          surfacedEmail = profile?.best_work_email ?? profile?.email ?? null;
-          // Cache the linkedin-keyed enrich by the SURFACED email so the second
-          // SDK call later in this pipeline (enrichVerifiedContact, by email)
-          // becomes a cache hit — eliminates double-enrich on this candidate.
-          if (surfacedEmail) {
-            try {
-              getLedger().setCachedEnrichment(
-                surfacedEmail.trim().toLowerCase(),
-                JSON.stringify(enr.result),
-              );
-            } catch {
-              // cache write is best-effort — finder's contract isn't cache hygiene.
-            }
-          }
-        } catch (err) {
-          logEvent(
-            "error.swallowed",
-            {
-              kind: "luma-events.enrichProfile",
-              message_120: ((err as Error).message ?? "").slice(0, 120),
-            },
-            "warn",
-          );
-        }
-      }
-      if (!companyDomain && work.attendee.websiteUrl) {
-        companyDomain = urlDomain(work.attendee.websiteUrl);
-      }
-
-      const contact = await resolveAndVerifyContact({
-        playName: PLAY_NAME,
-        fullName: work.attendee.name,
-        knownEmail: surfacedEmail,
-        companyDomain,
-        isDuplicate: (email) =>
-          isDuplicate({ playName: PLAY_NAME, dedupeKey, prospectEmail: email }),
-        decisionContext: {
-          source: "finder",
-          attendeeName: work.attendee.name,
-          companyDomain,
-          eventUrl: work.event.url,
-        },
-      });
-      result.costUsd += contact.costUsd;
-      if (!contact.ok) {
-        if (contact.reason === "no-domain") {
-          logEvent(
-            "finder.skipped_no_contact_domain",
-            { name: PLAY_NAME, attendeeName: work.attendee.name, eventUrl: work.event.url },
-            "info",
-          );
-        }
-        if (contact.reason === "duplicate") result.droppedDuplicate++;
-        else result.droppedEnrichment++;
-        return;
-      }
-      const email = contact.email;
-
-      const enr = await enrichVerifiedContact(email, {
-        playName: PLAY_NAME,
-        errKindPrefix: "luma-events",
-      });
-      result.costUsd += enr.costUsd;
-      const phone = enr.phone;
-      let linkedinUrl: string | null = resolvedLinkedinUrl ?? enr.linkedinUrl;
-      if (!linkedinUrl) {
-        linkedinUrl = await findLinkedInUrl({
-          fullName: work.attendee.name,
-          disambiguators: [work.event.title, work.event.city].filter((s) => s.length > 0),
-          accumCost: (c) => {
-            result.costUsd += c ?? 0;
-          },
-          errKindPrefix: "luma-events",
-        });
-      }
-
-      const target: LumaEventsTarget = {
-        name: work.attendee.name,
-        email,
-        ...(resolvedCompany ? { company: resolvedCompany } : {}),
-        ...(work.attendee.bio || work.attendee.role
-          ? { attendeeBio: work.attendee.bio ?? work.attendee.role ?? "" }
-          : {}),
-        ...(work.attendee.role ? { role: work.attendee.role } : {}),
-        eventTitle: work.event.title,
-        eventDate: work.event.dateIso,
-        eventCity: work.event.city,
-        eventUrl: work.event.url,
-        yourEdge,
-        ...(linkedinUrl ? { linkedinUrl } : {}),
-        ...(phone ? { phone } : {}),
-      };
-      // Re-check the cap synchronously right before the enqueue: a worker that
-      // passed the top gate may have finished enrichment after the cap filled.
-      // No await between this check and enqueued++, so the limit is exact even
-      // under concurrency — spend can overshoot, the queue cannot.
-      if (result.enqueued >= limit) {
-        phase3Halted.value = true;
-        return;
-      }
-      const id = ledger.enqueueTarget({
-        playName: PLAY_NAME,
-        payload: target,
-        dedupeKey,
-        source: SOURCE,
-        notes: `${work.attendee.name} ${work.attendee.role === "Host" ? "hosting" : "going to"} ${work.event.title}`,
-      });
-      if (id != null) result.enqueued++;
-      else result.droppedDuplicate++;
-    } catch (err) {
-      // The SDK calls above swallow their own failures; this catches anything
-      // else (e.g. a ledger hiccup) so one attendee can't reject the whole
-      // parallelMap pool — parallelMap propagates throws via Promise.all.
+    // gate in Phase 2, so its public attendees are in-scope. Shared
+    // resolve→enqueue spine (also used by the outage retry handler).
+    const outcome = await resolveAndEnqueueLumaAttendee(
+      work,
+      yourEdge,
+      (c) => {
+        result.costUsd += c;
+      },
+      () => result.enqueued >= limit,
+      () => {
+        result.enqueued++;
+      },
+    );
+    if (outcome === "enqueued") {
+      // counter already bumped synchronously via onEnqueued
+    } else if (outcome === "capped") phase3Halted.value = true;
+    else if (outcome === "duplicate") result.droppedDuplicate++;
+    else if (outcome === "platform-error") {
+      // Backend outage: the event ages out of "upcoming", so a re-scan can't
+      // recover this attendee — persist for retry once the platform recovers.
+      persistPending({ playName: PLAY_NAME, dedupeKey, source: SOURCE, raw: { work, yourEdge } });
       result.droppedEnrichment++;
-      logEvent(
-        "error.swallowed",
-        {
-          kind: "luma-events.attendee",
-          message_120: ((err as Error).message ?? "").slice(0, 120),
-        },
-        "warn",
-      );
-    }
+    } else result.droppedEnrichment++;
   });
 
   return result;
@@ -698,3 +569,173 @@ export function parseLumaEventExtract(raw: string): LumaEventExtract {
   }
   return parsed;
 }
+
+/**
+ * Resolve + enrich + enqueue one Luma attendee (host or guest) for an
+ * already-gated event. Shared by the live run loop and the outage retry
+ * handler. Depends only on `work` (attendee + event) and `yourEdge`, so it's
+ * fully re-runnable from a persisted candidate. `costSink` accumulates spend
+ * into the caller's running total (a no-op on retry). Returns a coarse outcome
+ * the caller maps to counters / pending persistence.
+ */
+async function resolveAndEnqueueLumaAttendee(
+  work: AttendeeWithEvent,
+  yourEdge: string,
+  costSink: (c: number) => void,
+  /** Checked synchronously right before enqueue so the run's enqueue cap stays
+   *  exact under concurrency (a worker may finish enrichment after the cap
+   *  filled). Omitted on retry (no cap). */
+  capReached?: () => boolean,
+  /** Called synchronously immediately after a successful enqueue — the cap
+   *  re-check, enqueue, and this increment run with no await between them, so
+   *  the queue cap is exact. Omitted on retry. */
+  onEnqueued?: () => void,
+): Promise<"enqueued" | "duplicate" | "dropped" | "platform-error" | "capped"> {
+  const ledger = getLedger();
+  const dedupeKey = `${work.event.url}#${work.attendee.name.toLowerCase()}`;
+  try {
+    // Resolve a contact domain: linkedin first (richest, often surfaces the
+    // email so we can skip findEmail), then website.
+    let companyDomain: string | null = null;
+    const resolvedLinkedinUrl: string | null = isLinkedInProfileUrl(work.attendee.linkedinUrl)
+      ? work.attendee.linkedinUrl
+      : null;
+    let resolvedCompany: string | null = null;
+    let surfacedEmail: string | null = null;
+
+    if (resolvedLinkedinUrl) {
+      try {
+        const enr = await enrichProfile(
+          { linkedinUrl: resolvedLinkedinUrl, name: work.attendee.name },
+          {
+            playName: PLAY_NAME,
+            decisionContext: { source: "finder", linkedinUrl: resolvedLinkedinUrl },
+          },
+        );
+        costSink(enr.result.cost ?? 0);
+        const profile = enr.result.profile;
+        companyDomain = profile?.company_domain ?? null;
+        resolvedCompany = profile?.company ?? null;
+        surfacedEmail = profile?.best_work_email ?? profile?.email ?? null;
+        if (surfacedEmail) {
+          try {
+            ledger.setCachedEnrichment(
+              surfacedEmail.trim().toLowerCase(),
+              JSON.stringify(enr.result),
+            );
+          } catch {
+            // cache write is best-effort
+          }
+        }
+      } catch (err) {
+        logEvent(
+          "error.swallowed",
+          {
+            kind: "luma-events.enrichProfile",
+            message_120: ((err as Error).message ?? "").slice(0, 120),
+          },
+          "warn",
+        );
+      }
+    }
+    if (!companyDomain && work.attendee.websiteUrl) {
+      companyDomain = urlDomain(work.attendee.websiteUrl);
+    }
+
+    const contact = await resolveAndVerifyContact({
+      playName: PLAY_NAME,
+      fullName: work.attendee.name,
+      knownEmail: surfacedEmail,
+      companyDomain,
+      isDuplicate: (email) => isDuplicate({ playName: PLAY_NAME, dedupeKey, prospectEmail: email }),
+      decisionContext: {
+        source: "finder",
+        attendeeName: work.attendee.name,
+        companyDomain,
+        eventUrl: work.event.url,
+      },
+    });
+    costSink(contact.costUsd);
+    if (!contact.ok) {
+      if (contact.reason === "no-domain") {
+        logEvent(
+          "finder.skipped_no_contact_domain",
+          { name: PLAY_NAME, attendeeName: work.attendee.name, eventUrl: work.event.url },
+          "info",
+        );
+      }
+      if (contact.reason === "platform-error") return "platform-error";
+      if (contact.reason === "duplicate") return "duplicate";
+      return "dropped";
+    }
+    const email = contact.email;
+
+    const enr = await enrichVerifiedContact(email, {
+      playName: PLAY_NAME,
+      errKindPrefix: "luma-events",
+    });
+    costSink(enr.costUsd);
+    const phone = enr.phone;
+    let linkedinUrl: string | null = resolvedLinkedinUrl ?? enr.linkedinUrl;
+    if (!linkedinUrl) {
+      linkedinUrl = await findLinkedInUrl({
+        fullName: work.attendee.name,
+        disambiguators: [work.event.title, work.event.city].filter((s) => s.length > 0),
+        accumCost: (c) => costSink(c ?? 0),
+        errKindPrefix: "luma-events",
+      });
+    }
+
+    const target: LumaEventsTarget = {
+      name: work.attendee.name,
+      email,
+      ...(resolvedCompany ? { company: resolvedCompany } : {}),
+      ...(work.attendee.bio || work.attendee.role
+        ? { attendeeBio: work.attendee.bio ?? work.attendee.role ?? "" }
+        : {}),
+      ...(work.attendee.role ? { role: work.attendee.role } : {}),
+      eventTitle: work.event.title,
+      eventDate: work.event.dateIso,
+      eventCity: work.event.city,
+      eventUrl: work.event.url,
+      yourEdge,
+      ...(linkedinUrl ? { linkedinUrl } : {}),
+      ...(phone ? { phone } : {}),
+    };
+    // Synchronous cap re-check right before enqueue — no await between here and
+    // the caller's enqueued++, so the queue cap is exact even under concurrency.
+    if (capReached?.()) return "capped";
+    const id = ledger.enqueueTarget({
+      playName: PLAY_NAME,
+      payload: target,
+      dedupeKey,
+      source: SOURCE,
+      notes: `${work.attendee.name} ${work.attendee.role === "Host" ? "hosting" : "going to"} ${work.event.title}`,
+    });
+    if (id != null) {
+      onEnqueued?.(); // synchronous with the cap check above — keeps the cap exact
+      return "enqueued";
+    }
+    return "duplicate";
+  } catch (err) {
+    // SDK calls swallow their own failures; this catches anything else (e.g. a
+    // ledger hiccup). Treat as a genuine drop, not a retryable platform error,
+    // so it can't loop forever on a real bug.
+    logEvent(
+      "error.swallowed",
+      {
+        kind: "luma-events.attendee",
+        message_120: ((err as Error).message ?? "").slice(0, 120),
+      },
+      "warn",
+    );
+    return "dropped";
+  }
+}
+
+// Outage retry: re-run the resolve→enqueue spine for a persisted attendee.
+registerPendingRetry(PLAY_NAME, async (raw) => {
+  const { work, yourEdge } = raw as { work: AttendeeWithEvent; yourEdge: string };
+  const outcome = await resolveAndEnqueueLumaAttendee(work, yourEdge, () => {});
+  return outcome === "enqueued" ? "enqueued" : outcome === "platform-error" ? "platform-error" : "dropped";
+});

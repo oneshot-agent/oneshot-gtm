@@ -432,15 +432,35 @@ export async function runCadenceStepForProspect(
 
   const receiptIds: number[] = [];
   if (!opts.dryRun) {
-    const channelOutcome = await dispatchStep({
-      playName: opts.playName,
-      prospectId: opts.prospectId,
-      prospectEmail: cadence.prospect_email,
-      stepIndex: nextIndex,
-      step,
-      payload: built,
-      ...(step.label !== undefined ? { label: step.label } : {}),
-    });
+    // Single send convergence point for every path (advance / per-row / batch).
+    // On a hard send failure (e.g. the platform's "Tool execution failed"),
+    // persist it so /cadences can show "send failed · retrying" instead of an
+    // indistinguishable "overdue"; the existing caller catches still log/clear
+    // the in-flight marker. Cleared on the next successful advance.
+    let channelOutcome: Awaited<ReturnType<typeof dispatchStep>>;
+    try {
+      channelOutcome = await dispatchStep({
+        playName: opts.playName,
+        prospectId: opts.prospectId,
+        prospectEmail: cadence.prospect_email,
+        stepIndex: nextIndex,
+        step,
+        payload: built,
+        ...(step.label !== undefined ? { label: step.label } : {}),
+      });
+    } catch (err) {
+      // A daily-cap deferral isn't a failure — the step just stays due for
+      // tomorrow. Only record genuine send errors (e.g. platform "Tool
+      // execution failed"); deferrals propagate untouched as before.
+      if (!isSendDeferred(err)) {
+        ledger.recordCadenceSendError({
+          prospectId: opts.prospectId,
+          playName: opts.playName,
+          error: (err as Error)?.message ?? "send failed",
+        });
+      }
+      throw err;
+    }
     if (channelOutcome.skipReason) {
       return {
         action: "skipped",

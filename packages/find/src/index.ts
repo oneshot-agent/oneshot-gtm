@@ -19,3 +19,4 @@ export * from "./_repo-pipeline.ts";
 export * from "./registry.ts";
 export * from "./drain.ts";
 export * from "./luma.ts";
+export * from "./_pending.ts";

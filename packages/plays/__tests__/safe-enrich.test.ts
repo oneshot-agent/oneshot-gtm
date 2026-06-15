@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const calls = { enrichProfile: 0 };
 let throwOnNextCall = false;
+let nextThrowMessage = "no profile data";
 const cache = {
   setCalls: [] as Array<{ key: string }>,
   failureCalls: [] as Array<{ key: string; message: string }>,
@@ -20,7 +21,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       calls.enrichProfile++;
       if (throwOnNextCall) {
         throwOnNextCall = false;
-        throw new Error("Job failed: Tool execution failed");
+        throw new Error(nextThrowMessage);
       }
       return {
         result: { status: "completed", profile: { full_name: "Pat" }, cost: 0.005 },
@@ -43,6 +44,7 @@ const { standardEnrich } = await import("../src/_run-play.ts");
 beforeEach(() => {
   calls.enrichProfile = 0;
   throwOnNextCall = false;
+  nextThrowMessage = "no profile data";
   cache.setCalls = [];
   cache.failureCalls = [];
   cache.cachedRow = null;
@@ -51,13 +53,22 @@ beforeEach(() => {
 afterEach(() => vi.clearAllMocks());
 
 describe("safeEnrich — negative caching", () => {
-  it("records a failure entry when the SDK throws", async () => {
+  it("records a failure entry for a GENUINE no-data failure", async () => {
     throwOnNextCall = true;
+    nextThrowMessage = "no profile data";
     const out = await safeEnrich({ email: "Bad@X.dev" }, { playName: "show-hn" });
     expect((out.result as { status?: string }).status).toBe("failed");
-    expect(cache.failureCalls).toEqual([
-      { key: "bad@x.dev", message: "Job failed: Tool execution failed" },
-    ]);
+    expect(cache.failureCalls).toEqual([{ key: "bad@x.dev", message: "no profile data" }]);
+  });
+
+  it("does NOT negative-cache a TRANSIENT platform error (avoids the 3-day poison)", async () => {
+    throwOnNextCall = true;
+    nextThrowMessage = "Job failed: Tool execution failed. (ref: abc)";
+    const out = await safeEnrich({ email: "bad@x.dev" }, { playName: "show-hn" });
+    // Still returns the failed shape (draft proceeds without enrichment)...
+    expect((out.result as { status?: string }).status).toBe("failed");
+    // ...but the cache is NOT poisoned, so a later draft re-attempts.
+    expect(cache.failureCalls).toHaveLength(0);
   });
 
   it("a fresh failed entry returns the failed shape with zero SDK calls", async () => {

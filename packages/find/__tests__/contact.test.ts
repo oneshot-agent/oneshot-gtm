@@ -7,6 +7,7 @@ let findFound = true;
 let findCost = 0.01;
 let verifyDeliverable = true;
 let prescreenOk = true;
+let findThrows = false;
 let findCalls = 0;
 let verifyCalls = 0;
 
@@ -17,6 +18,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     logEvent: () => {},
     findEmail: async () => {
       findCalls++;
+      if (findThrows) throw new Error("Job failed: Tool execution failed. (ref: x)");
       return {
         result: {
           status: "ok",
@@ -50,14 +52,17 @@ vi.mock("../src/_findemail-prescreen.ts", () => ({
 }));
 
 const { resolveAndVerifyContact } = await import("../src/_contact.ts");
+const { _resetBreaker } = await import("../src/_breaker.ts");
 
 beforeEach(() => {
   findFound = true;
   findCost = 0.01;
   verifyDeliverable = true;
   prescreenOk = true;
+  findThrows = false;
   findCalls = 0;
   verifyCalls = 0;
+  _resetBreaker();
 });
 
 describe("resolveAndVerifyContact", () => {
@@ -142,5 +147,41 @@ describe("resolveAndVerifyContact", () => {
     });
     expect(findCalls).toBe(0);
     expect(verifyCalls).toBe(1);
+  });
+});
+
+describe("resolveAndVerifyContact — circuit breaker on platform errors", () => {
+  const call = () =>
+    resolveAndVerifyContact({ playName: "t", fullName: "A", companyDomain: "acme.dev" });
+
+  it("a backend throw → reason 'platform-error' (not 'not-found'), with find cost 0", async () => {
+    findThrows = true;
+    const res = await call();
+    expect(res).toEqual({ ok: false, reason: "platform-error", costUsd: 0 });
+  });
+
+  it("opens after 5 consecutive platform errors and then short-circuits (no SDK call)", async () => {
+    findThrows = true;
+    for (let i = 0; i < 5; i++) {
+      const r = await call();
+      expect(r.ok === false && r.reason).toBe("platform-error");
+    }
+    expect(findCalls).toBe(5);
+    // 6th call: breaker open → short-circuit, no new findEmail call.
+    const res = await call();
+    expect(res).toEqual({ ok: false, reason: "platform-error", costUsd: 0 });
+    expect(findCalls).toBe(5); // unchanged — short-circuited
+  });
+
+  it("a genuine outcome resets the breaker (isolated errors don't trip it)", async () => {
+    findThrows = true;
+    for (let i = 0; i < 3; i++) await call(); // 3 errors, below threshold
+    findThrows = false; // backend answers
+    const ok = await call();
+    expect(ok.ok).toBe(true);
+    // Counter reset: a fresh error after a success starts over, doesn't carry 3.
+    findThrows = true;
+    await call();
+    expect(findCalls).toBe(5); // 3 + 1 success + 1 error, all real calls (never short-circuited)
   });
 });

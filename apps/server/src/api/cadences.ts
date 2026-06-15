@@ -119,6 +119,8 @@ function toView(
     followupCount,
     priorSteps,
     isSending: row.sending_started_at != null,
+    lastSendError: row.last_send_error,
+    lastSendErrorAt: row.last_send_error_at,
   };
 }
 

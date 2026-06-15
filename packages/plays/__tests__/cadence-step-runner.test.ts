@@ -38,6 +38,9 @@ const advanceCalls: Array<{
   newStep: number;
   nextDueAt: string | null;
 }> = [];
+const sendErrorCalls: Array<{ prospectId: number; playName: string; error: string }> = [];
+let throwOnSend = false;
+let deferOnSend = false;
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -69,6 +72,12 @@ vi.mock("@oneshot-gtm/core", async () => {
         decisionContext?: Record<string, unknown>;
       },
     ) => {
+      if (deferOnSend) {
+        const e = new Error("deferred: daily send caps reached");
+        e.name = "SendDeferredError";
+        throw e;
+      }
+      if (throwOnSend) throw new Error("Job failed: Tool execution failed. (ref: test123)");
       calls.sendEmail++;
       calls.lastSendEmailArgs = input;
       calls.lastSendEmailCtx = ctx;
@@ -102,6 +111,9 @@ vi.mock("@oneshot-gtm/core", async () => {
       listSequenceEventsForProspectPlay: () => [],
       recordSequenceEvent: () => 0,
       setCadenceStatus: () => {},
+      recordCadenceSendError: (input: { prospectId: number; playName: string; error: string }) => {
+        sendErrorCalls.push(input);
+      },
       advanceCadence: (input: {
         prospectId: number;
         playName: string;
@@ -207,6 +219,9 @@ beforeEach(() => {
   calls.lastSendEmailCtx = null;
   persistedDraft = null;
   advanceCalls.length = 0;
+  sendErrorCalls.length = 0;
+  throwOnSend = false;
+  deferOnSend = false;
   seedActiveCadence();
 });
 
@@ -300,6 +315,37 @@ describe("runCadenceStepForProspect", () => {
     expect(calls.sendEmail).toBe(0);
     expect(result.action).toBe("step-sent");
     expect(advanceCalls).toHaveLength(1); // advance still happens in dryRun (cadence state moves; just no SDK send)
+  });
+
+  it("records the send error and rethrows on a hard send failure, without advancing", async () => {
+    throwOnSend = true;
+    await expect(
+      runCadenceStepForProspect({ prospectId: 1, playName: "stack-consolidation", dryRun: false }),
+    ).rejects.toThrow(/Tool execution failed/);
+    expect(sendErrorCalls).toHaveLength(1);
+    expect(sendErrorCalls[0]).toMatchObject({ prospectId: 1, playName: "stack-consolidation" });
+    expect(sendErrorCalls[0]!.error).toContain("Tool execution failed");
+    // A failed send must NOT advance the cadence (it stays due for retry).
+    expect(advanceCalls).toHaveLength(0);
+  });
+
+  it("does NOT record a send error on a daily-cap deferral (it just stays due)", async () => {
+    deferOnSend = true;
+    await expect(
+      runCadenceStepForProspect({ prospectId: 1, playName: "stack-consolidation", dryRun: false }),
+    ).rejects.toThrow(/deferred/);
+    expect(sendErrorCalls).toHaveLength(0);
+    expect(advanceCalls).toHaveLength(0);
+  });
+
+  it("does not record a send error on a successful send", async () => {
+    await runCadenceStepForProspect({
+      prospectId: 1,
+      playName: "stack-consolidation",
+      dryRun: false,
+    });
+    expect(sendErrorCalls).toHaveLength(0);
+    expect(advanceCalls).toHaveLength(1);
   });
 
   it("skips a now-replied cadence (founder previewed then prospect replied)", async () => {

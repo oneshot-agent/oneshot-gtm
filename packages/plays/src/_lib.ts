@@ -4,6 +4,7 @@ import {
   ENRICH_FAILURE_TTL_MS,
   enrichProfile,
   getLedger,
+  isTransientToolError,
   loadConfig,
   logEvent,
   receiptUrlForId,
@@ -94,10 +95,12 @@ export async function safeEnrich(
   } catch (err) {
     const message = (err as Error)?.message ?? "";
     logEvent("enrich.failed", { play: ctx.playName, message_120: message.slice(0, 120) }, "warn");
-    if (email) {
+    // Only negative-cache a GENUINE failure (no data for this email). A
+    // transient platform/transport error (e.g. "Tool execution failed" during
+    // the 2026-06 outage) must NOT be cached, or every email it touched stays
+    // un-enrichable for ENRICH_FAILURE_TTL_MS even after the platform recovers.
+    if (email && !isTransientToolError(err)) {
       try {
-        // Negative-cache the failure so the next draft/regenerate of this
-        // prospect skips the retry within ENRICH_FAILURE_TTL_MS.
         ledger.setCachedEnrichmentFailure(email, message);
       } catch {
         // cache write is best-effort

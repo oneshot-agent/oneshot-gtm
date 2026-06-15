@@ -517,6 +517,17 @@ function CadencesPage() {
                             sending…
                           </Badge>
                         )}
+                        {!c.isSending && c.status === "active" && c.lastSendError && (
+                          <span
+                            title={`${c.lastSendError}${
+                              c.lastSendErrorAt ? ` · ${timeAgo(c.lastSendErrorAt)}` : ""
+                            } — click Send to retry`}
+                          >
+                            <Badge tone="blocked" className="ml-1.5">
+                              send failed
+                            </Badge>
+                          </span>
+                        )}
                       </td>
                       <td className="py-2">
                         <div className="flex items-center gap-2">

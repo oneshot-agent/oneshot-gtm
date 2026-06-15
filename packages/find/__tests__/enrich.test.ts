@@ -11,6 +11,7 @@ interface MockProfile {
 let nextProfile: MockProfile | null = null;
 let nextCost = 0.005;
 let throwOnNextCall = false;
+let nextThrowMessage = "rate limited";
 const calls = { enrichProfile: 0, lastEmail: "" };
 
 // Captures every interaction with the cache so cases can assert read/write
@@ -33,12 +34,22 @@ vi.mock("@oneshot-gtm/core", () => ({
     calls.lastEmail = input.email ?? "";
     if (throwOnNextCall) {
       throwOnNextCall = false;
-      throw new Error("rate limited");
+      throw new Error(nextThrowMessage);
     }
     return {
       result: { status: "completed", profile: nextProfile ?? {}, cost: nextCost },
       receiptId: 42,
     };
+  },
+  // Mirror the real classifier closely enough for the cases below.
+  isTransientToolError: (err: unknown) => {
+    const m = (err instanceof Error ? err.message : String(err ?? "")).toLowerCase();
+    return (
+      m.includes("tool execution failed") ||
+      m.includes("timed out") ||
+      m.includes("rate limit") ||
+      /\b50[0-9]\b/.test(m)
+    );
   },
   getLedger: () => ({
     setCachedEnrichment: (key: string, resultJson: string) => {
@@ -63,6 +74,7 @@ beforeEach(() => {
   nextProfile = null;
   nextCost = 0.005;
   throwOnNextCall = false;
+  nextThrowMessage = "rate limited";
   cache.setCalls = [];
   cache.failureCalls = [];
   cache.getCalls = [];
@@ -219,12 +231,27 @@ describe("enrichVerifiedContact — cache write + read contract", () => {
 });
 
 describe("enrichVerifiedContact — negative caching", () => {
-  it("writes a failure entry when the SDK call throws", async () => {
+  it("writes a failure entry for a GENUINE no-data failure", async () => {
     throwOnNextCall = true;
+    nextThrowMessage = "no profile data for this person";
     const r = await enrichVerifiedContact("boom@x.dev", { playName: "show-hn" });
     expect(r).toEqual({ phone: null, linkedinUrl: null, costUsd: 0, receiptId: null });
-    expect(cache.failureCalls).toEqual([{ key: "boom@x.dev", message: "rate limited" }]);
+    expect(cache.failureCalls).toEqual([
+      { key: "boom@x.dev", message: "no profile data for this person" },
+    ]);
     expect(cache.setCalls).toHaveLength(0); // no success row written
+  });
+
+  it("does NOT negative-cache a TRANSIENT platform error (so it retries after recovery)", async () => {
+    throwOnNextCall = true;
+    nextThrowMessage = "Job failed: Tool execution failed. (ref: abc)";
+    const r = await enrichVerifiedContact("outage@x.dev", { playName: "show-hn" });
+    expect(r).toEqual({ phone: null, linkedinUrl: null, costUsd: 0, receiptId: null });
+    expect(cache.failureCalls).toHaveLength(0); // NOT poisoned
+    // Next call (platform recovered) re-attempts — nothing suppressing it.
+    nextProfile = { phone: "+1 555-2222" };
+    const r2 = await enrichVerifiedContact("outage@x.dev", { playName: "show-hn" });
+    expect(r2.phone).toBe("+1 555-2222");
   });
 
   it("a fresh failed entry skips the SDK entirely", async () => {

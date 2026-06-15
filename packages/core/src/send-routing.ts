@@ -22,6 +22,42 @@ export function isSendDeferred(err: unknown): boolean {
   return err instanceof Error && err.name === "SendDeferredError";
 }
 
+/**
+ * True when an error is a TRANSIENT platform/transport failure (the OneShot
+ * backend or the network briefly broke) rather than a genuine negative result
+ * (email not found, undeliverable, no enrichment data). Callers must NOT treat
+ * a transient failure as a durable verdict about the candidate: don't drop it,
+ * don't negative-cache it, defer/retry instead. Matches the failure shapes seen
+ * in the 2026-06 worker outage. Message-based so it works across the SDK's
+ * thrown errors, the `withDeadline` rejection, and serialized boundaries.
+ *
+ * Genuine negatives ("not found", "undeliverable", "no profile data") return
+ * false — those ARE durable verdicts and should drop/negative-cache as before.
+ */
+export function isTransientToolError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err ?? "")).toLowerCase();
+  if (!msg) return false;
+  return (
+    msg.includes("tool execution failed") || // OneShot worker crash (generic)
+    msg.includes("timed out") || // job/operation timeout
+    msg.includes("timeout") ||
+    msg.includes("deadline exceeded") || // withDeadline rejection
+    msg.includes("operation timed out") ||
+    msg.includes("fetch failed") || // undici/network
+    msg.includes("could not fetch") ||
+    msg.includes("econnreset") ||
+    msg.includes("econnrefused") ||
+    msg.includes("etimedout") ||
+    msg.includes("socket hang up") ||
+    // Bare "network" over-matches genuine negatives (e.g. "professional
+    // network") — the econn*/fetch-failed/socket checks already cover real
+    // network faults; match only explicit network errors.
+    /network (error|unreachable|timeout)/.test(msg) ||
+    msg.includes("rate limit") || // rate-limited → back off + retry, not a verdict
+    /\b(50[0-9]|429)\b/.test(msg) // 5xx / rate-limit HTTP statuses
+  );
+}
+
 /** "YYYY-MM-DD HH:MM:SS" UTC — the format SQLite's datetime('now') writes into receipts.created_at. */
 function toSqliteUtc(d: Date): string {
   return d.toISOString().slice(0, 19).replace("T", " ");

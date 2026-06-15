@@ -6,6 +6,7 @@ import { isDuplicate, urlDomain } from "./_dedupe.ts";
 import { enrichVerifiedContact } from "./_enrich.ts";
 import { findLinkedInUrl } from "./_linkedin.ts";
 import { parallelMap } from "./_parallel.ts";
+import { persistPending, registerPendingRetry } from "./_pending.ts";
 import type { FinderResult, RunOpts, ShowHnHit } from "./_types.ts";
 
 const HN_ALGOLIA = "https://hn.algolia.com/api/v1/search_by_date";
@@ -83,8 +84,13 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
       return;
     }
 
-    // Dedupe BEFORE any LLM/OneShot spend.
-    if (ledger.isQueueDuplicate(PLAY_NAME, hit.objectID)) {
+    // Dedupe BEFORE any LLM/OneShot spend — against the queue AND the
+    // pending-retry table (so a re-scan doesn't recreate a candidate already
+    // awaiting outage retry).
+    if (
+      ledger.isQueueDuplicate(PLAY_NAME, hit.objectID) ||
+      ledger.isPendingResolution(PLAY_NAME, hit.objectID)
+    ) {
       result.droppedDuplicate++;
       return;
     }
@@ -131,93 +137,23 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
       return;
     }
 
-    // Enrich: try to find the founder's email via the landing-page domain + author handle.
-    const domain = urlDomain(hit.url);
-    if (!domain) {
-      result.droppedEnrichment++;
-      return;
-    }
-
-    // Read the landing page so we have content for the hookSummary fallback +
-    // a crude "founder name" guess (use the HN handle as fullName if present).
-    const fullName = hit.author && hit.author.length > 0 ? hit.author : null;
-    const contact = await resolveAndVerifyContact({
-      playName: PLAY_NAME,
-      fullName,
-      companyDomain: domain,
-      isDuplicate: (email) =>
-        isDuplicate({ playName: PLAY_NAME, dedupeKey: hit.objectID, prospectEmail: email }),
+    // Shared resolve→enqueue spine (also used by the pending-retry handler).
+    const outcome = await resolveAndEnqueueShowHn(hit, filter.reason, (c) => {
+      result.costUsd += c;
     });
-    result.costUsd += contact.costUsd;
-    if (!contact.ok) {
-      if (contact.reason === "duplicate") result.droppedDuplicate++;
-      else result.droppedEnrichment++;
-      return;
-    }
-    const email = contact.email;
-
-    // Optional: read the landing page for a richer hookSummary.
-    let hookSummary = (hit.story_text ?? "").trim().slice(0, 280);
-    if (hookSummary.length < 40 && hit.url) {
-      try {
-        const read = await webRead({ url: hit.url }, { playName: PLAY_NAME });
-        result.costUsd += read.result.cost ?? 0;
-        hookSummary = (read.result.markdown ?? "").trim().slice(0, 280);
-      } catch (err) {
-        // best-effort; fall through to whatever we have
-        logEvent(
-          "error.swallowed",
-          {
-            kind: "show-hn.hookSummary.webRead",
-            message_120: ((err as Error).message ?? "").slice(0, 120),
-          },
-          "warn",
-        );
-      }
-    }
-    if (!hookSummary || hookSummary.length < 20) {
-      hookSummary = `Show HN post: ${hit.title}. ${hit.points} points.`;
-    }
-
-    const founderName = contact.fullName ?? hit.author;
-    // Always enrich after verify to capture phone + linkedin from the SDK.
-    const enr = await enrichVerifiedContact(email, {
-      playName: PLAY_NAME,
-      errKindPrefix: "show-hn",
-    });
-    result.costUsd += enr.costUsd;
-    const phone = enr.phone;
-    let linkedinUrl: string | null = enr.linkedinUrl;
-    if (!linkedinUrl) {
-      // Last-resort webSearch fallback when enrichProfile didn't surface one.
-      linkedinUrl = await findLinkedInUrl({
-        fullName: founderName,
-        disambiguators: ["hacker news", domain],
-        accumCost: (c) => {
-          result.costUsd += c ?? 0;
-        },
-        errKindPrefix: "show-hn",
+    if (outcome === "enqueued") result.enqueued++;
+    else if (outcome === "duplicate") result.droppedDuplicate++;
+    else if (outcome === "platform-error") {
+      // Backend outage: don't lose the candidate (the HN post ages out of the
+      // Algolia window, so a re-scan can't recover it). Persist for retry.
+      persistPending({
+        playName: PLAY_NAME,
+        dedupeKey: hit.objectID,
+        source: SOURCE,
+        raw: { hit, filterReason: filter.reason },
       });
-    }
-
-    const target: ShowHnTarget = {
-      postTitle: hit.title,
-      postUrl: `https://news.ycombinator.com/item?id=${hit.objectID}`,
-      founderName,
-      founderEmail: email,
-      hookSummary,
-      ...(linkedinUrl ? { linkedinUrl } : {}),
-      ...(phone ? { phone } : {}),
-    };
-    const id = ledger.enqueueTarget({
-      playName: PLAY_NAME,
-      payload: target,
-      dedupeKey: hit.objectID,
-      source: SOURCE,
-      notes: filter.reason,
-    });
-    if (id != null) result.enqueued++;
-    else result.droppedDuplicate++;
+      result.droppedEnrichment++;
+    } else result.droppedEnrichment++;
   });
 
   logEvent("finder.done", {
@@ -233,3 +169,97 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
   });
   return result;
 }
+
+/**
+ * Resolve + enrich + enqueue one already-ICP-passed Show HN candidate. Shared
+ * by the live run loop and the outage retry handler. `costSink` accumulates
+ * spend into the caller's running total (a no-op for retries). Returns a coarse
+ * outcome the caller maps to counters / pending persistence.
+ */
+async function resolveAndEnqueueShowHn(
+  hit: ShowHnHit,
+  filterReason: string,
+  costSink: (c: number) => void,
+): Promise<"enqueued" | "duplicate" | "dropped" | "platform-error"> {
+  const ledger = getLedger();
+  const domain = urlDomain(hit.url);
+  if (!domain) return "dropped";
+
+  const fullName = hit.author && hit.author.length > 0 ? hit.author : null;
+  const contact = await resolveAndVerifyContact({
+    playName: PLAY_NAME,
+    fullName,
+    companyDomain: domain,
+    isDuplicate: (email) =>
+      isDuplicate({ playName: PLAY_NAME, dedupeKey: hit.objectID, prospectEmail: email }),
+  });
+  costSink(contact.costUsd);
+  if (!contact.ok) {
+    if (contact.reason === "platform-error") return "platform-error";
+    if (contact.reason === "duplicate") return "duplicate";
+    return "dropped";
+  }
+  const email = contact.email;
+
+  // Optional: read the landing page for a richer hookSummary.
+  let hookSummary = (hit.story_text ?? "").trim().slice(0, 280);
+  if (hookSummary.length < 40 && hit.url) {
+    try {
+      const read = await webRead({ url: hit.url }, { playName: PLAY_NAME });
+      costSink(read.result.cost ?? 0);
+      hookSummary = (read.result.markdown ?? "").trim().slice(0, 280);
+    } catch (err) {
+      logEvent(
+        "error.swallowed",
+        {
+          kind: "show-hn.hookSummary.webRead",
+          message_120: ((err as Error).message ?? "").slice(0, 120),
+        },
+        "warn",
+      );
+    }
+  }
+  if (!hookSummary || hookSummary.length < 20) {
+    hookSummary = `Show HN post: ${hit.title}. ${hit.points} points.`;
+  }
+
+  const founderName = contact.fullName ?? hit.author;
+  const enr = await enrichVerifiedContact(email, { playName: PLAY_NAME, errKindPrefix: "show-hn" });
+  costSink(enr.costUsd);
+  const phone = enr.phone;
+  let linkedinUrl: string | null = enr.linkedinUrl;
+  if (!linkedinUrl) {
+    linkedinUrl = await findLinkedInUrl({
+      fullName: founderName,
+      disambiguators: ["hacker news", domain],
+      accumCost: (c) => costSink(c ?? 0),
+      errKindPrefix: "show-hn",
+    });
+  }
+
+  const target: ShowHnTarget = {
+    postTitle: hit.title,
+    postUrl: `https://news.ycombinator.com/item?id=${hit.objectID}`,
+    founderName,
+    founderEmail: email,
+    hookSummary,
+    ...(linkedinUrl ? { linkedinUrl } : {}),
+    ...(phone ? { phone } : {}),
+  };
+  const id = ledger.enqueueTarget({
+    playName: PLAY_NAME,
+    payload: target,
+    dedupeKey: hit.objectID,
+    source: SOURCE,
+    notes: filterReason,
+  });
+  return id != null ? "enqueued" : "duplicate";
+}
+
+// Outage retry: re-run the resolve→enqueue spine for a persisted candidate.
+// "enqueued" → done; "platform-error" → keep for the next tick; dup/dropped → drop.
+registerPendingRetry(PLAY_NAME, async (raw) => {
+  const { hit, filterReason } = raw as { hit: ShowHnHit; filterReason: string };
+  const outcome = await resolveAndEnqueueShowHn(hit, filterReason, () => {});
+  return outcome === "enqueued" ? "enqueued" : outcome === "platform-error" ? "platform-error" : "dropped";
+});

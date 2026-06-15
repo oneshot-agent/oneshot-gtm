@@ -61,6 +61,12 @@ export interface CadenceWithProspect {
    * spinner doesn't get stranded by a `bun --watch` reload mid-SDK-call.
    */
   sending_started_at: string | null;
+  /** Last send-failure message (truncated); cleared on any forward progress.
+   *  Non-null = the most recent send attempt failed and nothing has succeeded
+   *  since — drives the "send failed · retrying" row indicator. */
+  last_send_error: string | null;
+  /** ISO timestamp of `last_send_error`. */
+  last_send_error_at: string | null;
   prospect_email: string | null;
   prospect_name: string | null;
   prospect_company: string | null;
@@ -328,6 +334,35 @@ export class Ledger {
       CREATE INDEX IF NOT EXISTS idx_inbox_sent_thread
         ON inbox_sent(thread_key, sent_at);
     `);
+    // v14 (2026-06): persist the last cadence send FAILURE so the /cadences row
+    // can show "send failed · retrying" instead of looking identical to a row
+    // that's merely waiting on the founder. A failed send doesn't advance the
+    // cadence, so without this the founder can't tell "blocked upstream" from
+    // "waiting on me". Set by recordCadenceSendError on a dispatch throw;
+    // cleared by advanceCadence / setCadenceStatus on any forward progress.
+    this.addColumnIfMissing("cadence_state", "last_send_error", "TEXT");
+    this.addColumnIfMissing("cadence_state", "last_send_error_at", "TEXT");
+    // v15 (2026-06): persist candidates whose paid contact-resolution failed on
+    // a TRANSIENT platform error (the OneShot outage), so a finder doesn't lose
+    // them — re-scannable finders self-heal, but time-windowed ones (luma,
+    // show-hn) can't re-discover an expired source. `raw_json` holds whatever
+    // the finder's registered handler needs to re-resolve + enqueue. The
+    // scheduler retry pass drains this once the platform recovers; the
+    // (play_name, dedupe_key) PK also serves as the de-dup key against re-scan.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS pending_resolution (
+        play_name       TEXT NOT NULL,
+        dedupe_key      TEXT NOT NULL,
+        source          TEXT NOT NULL,
+        raw_json        TEXT NOT NULL,
+        first_seen_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        last_attempt_at TEXT,
+        attempts        INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (play_name, dedupe_key)
+      );
+      CREATE INDEX IF NOT EXISTS idx_pending_resolution_seen
+        ON pending_resolution(first_seen_at);
+    `);
   }
 
   /**
@@ -414,7 +449,9 @@ export class Ledger {
          ON CONFLICT(prospect_id, play_name) DO UPDATE SET
            status = 'active',
            next_due_at = excluded.next_due_at,
-           last_polled_at = NULL`,
+           last_polled_at = NULL,
+           last_send_error = NULL,
+           last_send_error_at = NULL`,
       )
       .run(input.prospectId, input.playName, input.nextDueAt);
   }
@@ -483,15 +520,33 @@ export class Ledger {
     // draft was for the OLD next step (stale after advance), and a successful
     // advance means the in-flight send for this row is done. /cadences will
     // surface a fresh "no preview yet" state.
+    // A successful advance also clears any prior send-failure marker (the send
+    // that just advanced us obviously succeeded).
     this.db
       .prepare(
         `UPDATE cadence_state
          SET current_step = ?, next_due_at = ?, last_polled_at = datetime('now'),
              next_step_draft_json = NULL, next_step_drafted_at = NULL,
-             sending_started_at = NULL
+             sending_started_at = NULL,
+             last_send_error = NULL, last_send_error_at = NULL
          WHERE prospect_id = ? AND play_name = ?`,
       )
       .run(input.newStep, input.nextDueAt, input.prospectId, input.playName);
+  }
+
+  /**
+   * Record the last cadence send FAILURE so /cadences can show the row is
+   * blocked upstream (vs. waiting on the founder). Cleared by advanceCadence /
+   * setCadenceStatus on any forward progress. No-op if the row is gone.
+   */
+  recordCadenceSendError(input: { prospectId: number; playName: string; error: string }): void {
+    this.db
+      .prepare(
+        `UPDATE cadence_state
+         SET last_send_error = ?, last_send_error_at = datetime('now')
+         WHERE prospect_id = ? AND play_name = ?`,
+      )
+      .run(input.error.slice(0, 200), input.prospectId, input.playName);
   }
 
   setCadenceStatus(input: {
@@ -501,17 +556,22 @@ export class Ledger {
   }): void {
     // Non-active terminal states clear the persisted draft AND any send
     // marker — a replied / breakup / completed cadence shouldn't have a
-    // sendable preview hanging around or a stuck "sending" flag.
+    // sendable preview hanging around or a stuck "sending" flag. A reply /
+    // breakup / completion also clears any stale send-failure marker.
     this.db
       .prepare(
         `UPDATE cadence_state
          SET status = ?,
              next_step_draft_json = CASE WHEN ? = 'active' THEN next_step_draft_json ELSE NULL END,
              next_step_drafted_at = CASE WHEN ? = 'active' THEN next_step_drafted_at ELSE NULL END,
-             sending_started_at = CASE WHEN ? = 'active' THEN sending_started_at ELSE NULL END
+             sending_started_at = CASE WHEN ? = 'active' THEN sending_started_at ELSE NULL END,
+             last_send_error = CASE WHEN ? = 'active' THEN last_send_error ELSE NULL END,
+             last_send_error_at = CASE WHEN ? = 'active' THEN last_send_error_at ELSE NULL END
          WHERE prospect_id = ? AND play_name = ?`,
       )
       .run(
+        input.status,
+        input.status,
         input.status,
         input.status,
         input.status,
@@ -1416,6 +1476,84 @@ export class Ledger {
       .query("SELECT 1 FROM target_queue WHERE play_name = ? AND dedupe_key = ?")
       .get(playName, dedupeKey);
     return row !== null && row !== undefined;
+  }
+
+  /**
+   * Persist a candidate whose paid resolution hit a transient platform error,
+   * so the retry pass can complete it later (and re-scan won't re-create it).
+   * Idempotent: a re-discovered candidate keeps its original first_seen_at and
+   * attempt count (the retry pass owns attempt bookkeeping).
+   */
+  upsertPendingResolution(input: {
+    playName: string;
+    dedupeKey: string;
+    source: string;
+    raw: unknown;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO pending_resolution(play_name, dedupe_key, source, raw_json)
+         VALUES(?, ?, ?, ?)
+         ON CONFLICT(play_name, dedupe_key) DO UPDATE SET
+           source = excluded.source,
+           raw_json = excluded.raw_json`,
+      )
+      .run(input.playName, input.dedupeKey, input.source, JSON.stringify(input.raw));
+  }
+
+  /** True when (play, dedupeKey) is awaiting retry — finders OR this into their dedup. */
+  isPendingResolution(playName: string, dedupeKey: string): boolean {
+    const row = this.db
+      .query("SELECT 1 FROM pending_resolution WHERE play_name = ? AND dedupe_key = ?")
+      .get(playName, dedupeKey);
+    return row !== null && row !== undefined;
+  }
+
+  /** Pending rows (optionally one play), oldest first, for the retry pass. */
+  listPendingResolution(opts?: { playName?: string; limit?: number }): Array<{
+    play_name: string;
+    dedupe_key: string;
+    source: string;
+    raw_json: string;
+    first_seen_at: string;
+    last_attempt_at: string | null;
+    attempts: number;
+  }> {
+    const where = opts?.playName ? "WHERE play_name = ?" : "";
+    const limit = opts?.limit ? `LIMIT ${Math.max(1, Math.floor(opts.limit))}` : "";
+    const sql = `SELECT * FROM pending_resolution ${where} ORDER BY first_seen_at ASC ${limit}`;
+    const q = this.db.query(sql);
+    return (opts?.playName ? q.all(opts.playName) : q.all()) as never;
+  }
+
+  /** Mark a pending row as just-attempted (bumps attempts + last_attempt_at). */
+  markPendingResolutionAttempted(playName: string, dedupeKey: string): void {
+    this.db
+      .prepare(
+        `UPDATE pending_resolution
+         SET attempts = attempts + 1, last_attempt_at = datetime('now')
+         WHERE play_name = ? AND dedupe_key = ?`,
+      )
+      .run(playName, dedupeKey);
+  }
+
+  deletePendingResolution(playName: string, dedupeKey: string): void {
+    this.db
+      .prepare("DELETE FROM pending_resolution WHERE play_name = ? AND dedupe_key = ?")
+      .run(playName, dedupeKey);
+  }
+
+  /**
+   * Purge pending rows older than maxAgeMs (permanently-unresolvable or an
+   * aged-out time-windowed source) so their dedupe_key frees for future
+   * re-discovery and the table doesn't silt. Returns the number removed.
+   */
+  sweepStalePendingResolution(maxAgeMs: number): number {
+    const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
+    const res = this.db
+      .prepare("DELETE FROM pending_resolution WHERE first_seen_at < ?")
+      .run(cutoff);
+    return Number(res.changes ?? 0);
   }
 
   /**

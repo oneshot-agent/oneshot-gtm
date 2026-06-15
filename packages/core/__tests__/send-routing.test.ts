@@ -29,6 +29,7 @@ vi.mock("../src/ledger.ts", async () => {
 const {
   SendDeferredError,
   isSendDeferred,
+  isTransientToolError,
   resolveSenderIdentity,
   hasAnySendCapacity,
   todayStartSqliteUtc,
@@ -209,5 +210,38 @@ describe("resolveSenderIdentity", () => {
   it("assignment race: INSERT OR IGNORE keeps the first winner", () => {
     expect(ledger.assignSender("race@acme.com", gmailA.id)).toBe(gmailA.id);
     expect(ledger.assignSender("race@acme.com", gmailB.id)).toBe(gmailA.id);
+  });
+});
+
+describe("isTransientToolError", () => {
+  it("flags platform/transport failures as transient (must not become a durable verdict)", () => {
+    for (const m of [
+      "Job failed: Tool execution failed. (ref: 35a99138)",
+      "The operation timed out.",
+      "enrichProfile deadline exceeded (120s)",
+      "fetch failed",
+      "could not fetch balance",
+      "read ECONNRESET",
+      "request failed with status 503",
+      "429 Too Many Requests",
+      "network error: connection lost",
+    ]) {
+      expect(isTransientToolError(new Error(m))).toBe(true);
+    }
+  });
+
+  it("does NOT flag genuine negatives (those ARE durable verdicts)", () => {
+    for (const m of [
+      "email not found",
+      "address is undeliverable",
+      "no profile data for this person",
+      "domain_not_owned",
+      // bare "network" must NOT over-match a genuine negative
+      "no profile found on this professional network",
+    ]) {
+      expect(isTransientToolError(new Error(m))).toBe(false);
+    }
+    expect(isTransientToolError(null)).toBe(false);
+    expect(isTransientToolError("")).toBe(false);
   });
 });

@@ -4,6 +4,7 @@ import {
   ENRICH_FAILURE_TTL_MS,
   enrichProfile,
   getLedger,
+  isTransientToolError,
   logEvent,
   withDeadline,
 } from "@oneshot-gtm/core";
@@ -130,12 +131,15 @@ export async function enrichVerifiedContact(
       },
       "warn",
     );
-    try {
-      // Negative-cache so later drafts/regenerates of this email don't
-      // re-pay the same failing ~70s call (see the 2026-06-06..08 outage).
-      ledger.setCachedEnrichmentFailure(key, message);
-    } catch {
-      // cache write is best-effort
+    // Negative-cache only a GENUINE no-data failure. A transient platform error
+    // (worker crash / timeout / 5xx — the 2026-06 outage) must NOT be cached, or
+    // the email stays un-enrichable for ENRICH_FAILURE_TTL_MS after recovery.
+    if (!isTransientToolError(err)) {
+      try {
+        ledger.setCachedEnrichmentFailure(key, message);
+      } catch {
+        // cache write is best-effort
+      }
     }
     return { phone: null, linkedinUrl: null, costUsd: 0, receiptId: null };
   }

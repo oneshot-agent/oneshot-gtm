@@ -1,5 +1,6 @@
 import { logEvent } from "@oneshot-gtm/core";
 import type { CallContext, FindEmailInput } from "@oneshot-gtm/core";
+import { isCircuitOpen, recordResolutionOutcome } from "./_breaker.ts";
 import { shouldSkipFindEmail } from "./_findemail-prescreen.ts";
 import { safeFindEmail, safeVerifyEmail } from "./_sdk-safe.ts";
 
@@ -13,7 +14,15 @@ export type ContactResolution =
   | { ok: true; email: string; fullName: string | null; costUsd: number }
   | {
       ok: false;
-      reason: "no-domain" | "prescreen" | "not-found" | "duplicate" | "undeliverable";
+      reason:
+        | "no-domain"
+        | "prescreen"
+        | "not-found"
+        | "duplicate"
+        | "undeliverable"
+        // The backend threw/timed out — NOT a verdict about the candidate.
+        // Callers should defer/persist-for-retry rather than treat as bad.
+        | "platform-error";
       costUsd: number;
     };
 
@@ -63,10 +72,21 @@ export async function resolveAndVerifyContact(args: {
       logEvent("finder.skipped_findemail", { name: args.playName, reason: skip.reason }, "info");
       return { ok: false, reason: "prescreen", costUsd };
     }
+    // Circuit open (backend outage): skip the paid call entirely — fast-fail as
+    // a platform error so the caller defers instead of burning spend + ~70s.
+    if (isCircuitOpen()) return { ok: false, reason: "platform-error", costUsd };
     const findInput: FindEmailInput = { companyDomain: args.companyDomain };
     if (args.fullName) findInput.fullName = args.fullName;
     const found = await safeFindEmail(findInput, ctx);
     costUsd += found.result.cost ?? 0;
+    // status:"error" = the safe wrapper caught a throw (platform/transport
+    // failure), NOT a genuine "no email for this person". Don't treat as a
+    // verdict; feed the breaker and defer.
+    if (found.result.status === "error") {
+      recordResolutionOutcome(true);
+      return { ok: false, reason: "platform-error", costUsd };
+    }
+    recordResolutionOutcome(false); // backend answered (found or genuinely not)
     if (!found.result.found || !found.result.email) {
       return { ok: false, reason: "not-found", costUsd };
     }
@@ -76,8 +96,14 @@ export async function resolveAndVerifyContact(args: {
 
   if (args.isDuplicate?.(email)) return { ok: false, reason: "duplicate", costUsd };
 
+  if (isCircuitOpen()) return { ok: false, reason: "platform-error", costUsd };
   const verified = await safeVerifyEmail({ email }, ctx);
   costUsd += verified.result.cost ?? 0;
+  if (verified.result.status === "error") {
+    recordResolutionOutcome(true);
+    return { ok: false, reason: "platform-error", costUsd };
+  }
+  recordResolutionOutcome(false);
   if (!verified.result.deliverable) return { ok: false, reason: "undeliverable", costUsd };
 
   return { ok: true, email, fullName, costUsd };

@@ -1,5 +1,5 @@
 import { logEvent } from "@oneshot-gtm/core";
-import { nextSleepMs, runDueTriggers } from "@oneshot-gtm/find";
+import { nextSleepMs, runDueTriggers, runPendingRetries } from "@oneshot-gtm/find";
 import { pollInboxReplies } from "@oneshot-gtm/plays";
 
 /**
@@ -49,6 +49,18 @@ export function startScheduler(): SchedulerHandle {
       } catch (err) {
         logEvent(
           "scheduler.reply_poll.failed",
+          { message_120: ((err as Error).message ?? "").slice(0, 120) },
+          "warn",
+        );
+      }
+      // Drain outage-deferred candidates (time-windowed finders) now the
+      // backend may be healthy again. Isolated like the reply poll — its
+      // failure must not skip trigger scheduling.
+      try {
+        await runPendingRetries();
+      } catch (err) {
+        logEvent(
+          "scheduler.pending_retry.failed",
           { message_120: ((err as Error).message ?? "").slice(0, 120) },
           "warn",
         );

@@ -55,6 +55,13 @@ export interface CadenceView {
    *  cleared as each row's SDK call resolves). Drives the "sending…" badge on
    *  /cadences and gates the row out of further Send actions until it completes. */
   isSending: boolean;
+  /** Last send-failure message (incl. platform `ref:`) when the most recent send
+   *  attempt failed and nothing has succeeded since; null otherwise. Drives the
+   *  "send failed · retrying" row indicator so a row blocked upstream reads
+   *  differently from one merely waiting on the founder. */
+  lastSendError: string | null;
+  /** ISO timestamp of `lastSendError`. */
+  lastSendErrorAt: string | null;
 }
 
 /**

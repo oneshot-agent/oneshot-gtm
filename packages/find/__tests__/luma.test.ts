@@ -140,6 +140,9 @@ vi.mock("@oneshot-gtm/core", async () => {
     },
     getLedger: () => ({
       isQueueDuplicate: () => false,
+      isPendingResolution: () => false,
+      upsertPendingResolution: () => {},
+      setCachedEnrichment: () => {},
       enqueueTarget: (row: EnqueuedRow) => {
         enqueued.push(row);
         return enqueued.length;

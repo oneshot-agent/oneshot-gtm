@@ -305,6 +305,44 @@ describe("Ledger cadence state", () => {
     expect(after[0]?.status).toBe("replied");
   });
 
+  it("records a send error and clears it on advance / status change", () => {
+    const pid = ledger.upsertProspect({ name: "E", email: "e@x.com", source: "t" });
+    ledger.enrollCadence({ prospectId: pid, playName: "repo-interest", nextDueAt: new Date().toISOString() });
+    // Fresh enroll: no error.
+    expect(ledger.getCadence(pid, "repo-interest")?.last_send_error).toBeNull();
+
+    ledger.recordCadenceSendError({
+      prospectId: pid,
+      playName: "repo-interest",
+      error: "Job failed: Tool execution failed. (ref: abc)",
+    });
+    const failed = ledger.getCadence(pid, "repo-interest");
+    expect(failed?.last_send_error).toContain("Tool execution failed");
+    expect(failed?.last_send_error_at).not.toBeNull();
+
+    // A successful advance clears it.
+    ledger.advanceCadence({
+      prospectId: pid,
+      playName: "repo-interest",
+      newStep: 1,
+      nextDueAt: new Date().toISOString(),
+    });
+    expect(ledger.getCadence(pid, "repo-interest")?.last_send_error).toBeNull();
+
+    // Re-fail, then a status change (e.g. replied) also clears it.
+    ledger.recordCadenceSendError({ prospectId: pid, playName: "repo-interest", error: "again" });
+    expect(ledger.getCadence(pid, "repo-interest")?.last_send_error).toBe("again");
+    ledger.setCadenceStatus({ prospectId: pid, playName: "repo-interest", status: "replied" });
+    expect(ledger.getCadence(pid, "repo-interest")?.last_send_error).toBeNull();
+
+    // Re-enrolling the same prospect (play re-run) must clear a stale error —
+    // a re-activated cadence shouldn't show a failure from a prior cycle.
+    ledger.recordCadenceSendError({ prospectId: pid, playName: "repo-interest", error: "stale" });
+    expect(ledger.getCadence(pid, "repo-interest")?.last_send_error).toBe("stale");
+    ledger.enrollCadence({ prospectId: pid, playName: "repo-interest", nextDueAt: new Date().toISOString() });
+    expect(ledger.getCadence(pid, "repo-interest")?.last_send_error).toBeNull();
+  });
+
   it("getCadence + listCadencesForProspect + getProspectById are index-seek single lookups", () => {
     const pid = ledger.upsertProspect({ name: "Q", email: "q@x.com", company: "QCo", source: "t" });
     const due = new Date().toISOString();
@@ -1054,5 +1092,56 @@ describe("Ledger inbox drafts + sent replies", () => {
     const sent = ledger.getInboxThreads().get("thread-1")?.sent ?? [];
     expect(sent.map((s) => s.body)).toEqual(["first reply", "second reply"]);
     expect(sent.every((s) => typeof s.sentAt === "string" && s.sentAt.length > 0)).toBe(true);
+  });
+});
+
+describe("Ledger pending_resolution (outage retry queue)", () => {
+  it("upsert is idempotent, listable, and dedup-checkable", () => {
+    ledger.upsertPendingResolution({
+      playName: "luma-events",
+      dedupeKey: "evt:1:host",
+      source: "luma:sf",
+      raw: { name: "Ada", domain: "acme.dev" },
+    });
+    // Re-discovery upserts the same row (no duplicate, raw refreshed).
+    ledger.upsertPendingResolution({
+      playName: "luma-events",
+      dedupeKey: "evt:1:host",
+      source: "luma:sf",
+      raw: { name: "Ada Lovelace", domain: "acme.dev" },
+    });
+    const rows = ledger.listPendingResolution({ playName: "luma-events" });
+    expect(rows).toHaveLength(1);
+    expect(JSON.parse(rows[0]!.raw_json)).toEqual({ name: "Ada Lovelace", domain: "acme.dev" });
+    expect(rows[0]!.attempts).toBe(0);
+    expect(ledger.isPendingResolution("luma-events", "evt:1:host")).toBe(true);
+    expect(ledger.isPendingResolution("luma-events", "nope")).toBe(false);
+  });
+
+  it("markAttempted bumps the counter; delete removes the row", () => {
+    ledger.upsertPendingResolution({
+      playName: "show-hn",
+      dedupeKey: "post:9",
+      source: "hn",
+      raw: {},
+    });
+    ledger.markPendingResolutionAttempted("show-hn", "post:9");
+    ledger.markPendingResolutionAttempted("show-hn", "post:9");
+    expect(ledger.listPendingResolution({ playName: "show-hn" })[0]!.attempts).toBe(2);
+    ledger.deletePendingResolution("show-hn", "post:9");
+    expect(ledger.isPendingResolution("show-hn", "post:9")).toBe(false);
+  });
+
+  it("sweepStale purges only rows older than the cutoff", () => {
+    ledger.upsertPendingResolution({ playName: "p", dedupeKey: "fresh", source: "s", raw: {} });
+    // Backdate one row to 8 days ago.
+    (ledger as unknown as { db: { prepare(s: string): { run(...a: unknown[]): unknown } } }).db
+      .prepare("UPDATE pending_resolution SET first_seen_at = ? WHERE dedupe_key = 'fresh'")
+      .run(new Date(Date.now() - 8 * 24 * 3600 * 1000).toISOString());
+    ledger.upsertPendingResolution({ playName: "p", dedupeKey: "new", source: "s", raw: {} });
+    const removed = ledger.sweepStalePendingResolution(7 * 24 * 3600 * 1000);
+    expect(removed).toBe(1);
+    expect(ledger.isPendingResolution("p", "fresh")).toBe(false);
+    expect(ledger.isPendingResolution("p", "new")).toBe(true);
   });
 });
