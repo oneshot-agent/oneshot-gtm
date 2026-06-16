@@ -29,6 +29,51 @@ export function normalizeUtcIso(iso: string): string {
   return /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(iso) ? `${iso}Z` : iso;
 }
 
+/**
+ * Humanize an event's ISO date to "today" / "tomorrow" / "this Tuesday" /
+ * "next Tuesday" / "Sat Jun 21" for upcoming events, and "yesterday" /
+ * "last Tuesday" / "last week" / "Sat Jun 21" for passed ones. Mirrors the
+ * server-side prompt humanizer in packages/plays/src/luma-events.ts so the
+ * queue UI reads the same way the LLM was told the date. Unparseable dates
+ * fall back to the raw string.
+ */
+export function humanizeEventDate(iso: string): string {
+  const d = new Date(normalizeUtcIso(iso));
+  if (Number.isNaN(d.getTime())) return iso;
+  const dayMs = 24 * 3600 * 1000;
+  const days = Math.round((d.getTime() - Date.now()) / dayMs);
+  const weekday = d.toLocaleDateString("en-US", { weekday: "long" });
+  const absolute = d.toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+  if (days >= 0) {
+    if (days === 0) return "today";
+    if (days === 1) return "tomorrow";
+    if (days <= 6) return `this ${weekday}`;
+    if (days <= 13) return `next ${weekday}`;
+    return absolute;
+  }
+  // Past: retrospective phrasing mirrors the play's describeEventDate.
+  if (days < -14) return absolute;
+  if (days === -1) return "yesterday";
+  if (days >= -6) return `last ${weekday}`;
+  return "last week";
+}
+
+/**
+ * Whether an event's ISO date is in the past. Uses the SAME day-rounding
+ * threshold as humanizeEventDate so "today" (delta 0) never reads as passed —
+ * an all-day event whose UTC-midnight timestamp already slipped behind the
+ * local clock still counts as today, not passed.
+ */
+export function eventIsPast(iso: string): boolean {
+  const d = new Date(normalizeUtcIso(iso));
+  if (Number.isNaN(d.getTime())) return false;
+  return Math.round((d.getTime() - Date.now()) / (24 * 3600 * 1000)) < 0;
+}
+
 export function timeAgo(iso: string | null): string {
   if (!iso) return "—";
   const seconds = Math.floor((Date.now() - new Date(normalizeUtcIso(iso)).getTime()) / 1000);

@@ -1,9 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
+  CalendarDays,
   Check,
   ChevronDown,
   ChevronRight,
+  ExternalLink,
   Loader2,
   Pencil,
   Play,
@@ -14,7 +16,12 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import type { QueueRowView, QueueStatusView, TriggerView } from "@oneshot-gtm/shared-types";
+import {
+  blockingFlags,
+  type QueueRowView,
+  type QueueStatusView,
+  type TriggerView,
+} from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
@@ -25,7 +32,7 @@ import { Pii } from "../components/primitives/Pii.tsx";
 import { useMask } from "../lib/privacy.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { Toggle } from "../components/primitives/Toggle.tsx";
-import { cn, timeAgo } from "../lib/cn.ts";
+import { cn, eventIsPast, humanizeEventDate, timeAgo } from "../lib/cn.ts";
 import { humanInterval } from "../lib/humanInterval.ts";
 import { INTERVAL_PRESETS_MS, withIntervalOverride } from "../lib/triggerInterval.ts";
 import {
@@ -591,6 +598,12 @@ function QueueRow({
   const company = companyFor(row.payload);
   const linkedinUrl = linkedinUrlFor(row.payload);
   const phone = phoneFor(row.payload);
+  const eventTitle = eventTitleFor(row.payload);
+  const eventDate = eventDateFor(row.payload);
+  const eventCity = eventCityFor(row.payload);
+  const eventUrl = eventUrlFor(row.payload);
+  const eventRole = eventRoleFor(row.payload);
+  const eventPassed = eventDate != null && eventIsPast(eventDate);
   return (
     <>
       <tr
@@ -680,6 +693,19 @@ function QueueRow({
                 draft
               </Badge>
             )}
+            {eventDate && (
+              <span
+                title={eventPassed ? `event passed · ${eventDate}` : eventDate}
+                className={cn(
+                  "inline-flex items-center gap-1 font-mono text-[10.5px]",
+                  eventPassed ? "text-ink-blocked" : "text-ink-muted",
+                )}
+              >
+                <CalendarDays size={11} className={eventPassed ? undefined : "text-ink-faint"} />
+                {humanizeEventDate(eventDate)}
+                {eventPassed && " · passed"}
+              </span>
+            )}
           </div>
         </td>
         <td className="py-2 font-mono text-[11px] text-ink-faint">{row.source}</td>
@@ -689,20 +715,14 @@ function QueueRow({
         <td className="px-6 py-2 text-right" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-end gap-1">
             {row.status === "pending" && (
-              <>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  title="approve"
-                  disabled={busy}
-                  onClick={onApprove}
-                >
-                  <Check size={12} />
-                </Button>
-                <Button variant="ghost" size="sm" title="reject" disabled={busy} onClick={onReject}>
-                  <X size={12} />
-                </Button>
-              </>
+              <Button variant="ghost" size="sm" title="approve" disabled={busy} onClick={onApprove}>
+                <Check size={12} />
+              </Button>
+            )}
+            {(row.status === "pending" || row.status === "approved") && (
+              <Button variant="ghost" size="sm" title="reject" disabled={busy} onClick={onReject}>
+                <X size={12} />
+              </Button>
             )}
           </div>
         </td>
@@ -712,6 +732,44 @@ function QueueRow({
           <td colSpan={9} className="px-6 py-3">
             <div className="flex flex-col gap-3 text-[12px] text-ink-muted">
               {row.notes ? <div className="ln-note">{row.notes}</div> : null}
+              {(eventTitle || eventDate || eventCity || eventUrl) && (
+                <div className="rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep">
+                  <div className="flex items-center gap-2 border-b border-ink-rule/60 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+                    <span>event</span>
+                    {eventRole && <Badge tone="neutral">{eventRole}</Badge>}
+                    {eventPassed && <Badge tone="blocked">passed</Badge>}
+                  </div>
+                  <div className="px-3 py-2.5">
+                    {eventTitle && (
+                      <div className="text-[13px] font-medium text-ink-cream">{eventTitle}</div>
+                    )}
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5 font-mono text-[11.5px] text-ink-cream-2">
+                      {eventCity && <span>{eventCity}</span>}
+                      {eventCity && eventDate && <span className="text-ink-faint">·</span>}
+                      {eventDate && (
+                        <span>
+                          {humanizeEventDate(eventDate)}{" "}
+                          <span className="text-ink-faint">({timeAgo(eventDate)})</span>
+                        </span>
+                      )}
+                      {eventUrl && (
+                        <>
+                          <span className="text-ink-faint">·</span>
+                          <a
+                            href={eventUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 text-ink-cream-2 underline decoration-ink-rule underline-offset-2 hover:text-ink-cream hover:decoration-ink-cream-2"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <ExternalLink size={11} /> event
+                          </a>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
               <DraftSection
                 id={row.id}
                 status={row.status}
@@ -835,10 +893,13 @@ function DraftSection({
   ) : null;
 
   // Send THIS prospect now, using the reviewed draft VERBATIM (no LLM re-roll).
-  // Enabled only for an approved row with a clean (lint-flag-free), not-yet-sent
-  // draft — that's the review gate: regenerate until clean, then send exactly
-  // that. Disabled (with a hint) when there's no draft or it's flagged.
-  const cleanDraft = draft != null && draft.flags.length === 0 && !draft.sent;
+  // Enabled for an approved, not-yet-sent draft with no BLOCKING flags. Lint /
+  // dedup flags block (regenerate until clean, then send); soft review flags
+  // (e.g. stale-event) don't — this button IS their review-then-send override.
+  const blocking = draft ? blockingFlags(draft.flags) : [];
+  const cleanDraft = draft != null && blocking.length === 0 && !draft.sent;
+  // Soft-flagged but otherwise sendable: held for review, founder is overriding.
+  const softHold = cleanDraft && draft != null && draft.flags.length > 0;
   const sendButton =
     status === "approved" && !(draft?.sent ?? false) ? (
       <Button
@@ -847,11 +908,13 @@ function DraftSection({
         disabled={sending || !cleanDraft}
         onClick={() => send.mutate()}
         title={
-          cleanDraft
-            ? "Send this prospect now — sends the reviewed draft above, as-is"
-            : draft == null
-              ? "Generate a draft first, then send it"
-              : "Draft has lint flags — regenerate to clear them, then send"
+          softHold
+            ? "Held for review (event has passed) — send the reviewed draft above, as-is"
+            : cleanDraft
+              ? "Send this prospect now — sends the reviewed draft above, as-is"
+              : draft == null
+                ? "Generate a draft first, then send it"
+                : "Draft has lint flags — regenerate to clear them, then send"
         }
       >
         {sending ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
@@ -1564,4 +1627,43 @@ function phoneFor(payload: unknown): string | null {
   const v = p["phone"];
   if (typeof v === "string" && v.length > 0) return v;
   return null;
+}
+
+// Event metadata — present only on luma-events payloads (the persisted
+// LumaEventsTarget). All return null for other plays so the chip + EVENT strip
+// render nothing on non-luma rows.
+function eventTitleFor(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const v = (payload as Record<string, unknown>)["eventTitle"];
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
+
+function eventDateFor(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const v = (payload as Record<string, unknown>)["eventDate"];
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
+
+function eventCityFor(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const v = (payload as Record<string, unknown>)["eventCity"];
+  return typeof v === "string" && v.length > 0 ? v : null;
+}
+
+function eventUrlFor(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const v = (payload as Record<string, unknown>)["eventUrl"];
+  if (typeof v !== "string" || v.length === 0) return null;
+  // Defense in depth — payload comes from sqlite; only render a real Luma link,
+  // never a javascript:// or data:// URL. Mirrors linkedinUrlFor. The finder
+  // stores luma.com/<slug> (see packages/find/src/luma.ts); lu.ma is the short host.
+  return /^https?:\/\/(?:[a-z0-9-]+\.)*(?:luma\.com|lu\.ma)\//i.test(v) ? v : null;
+}
+
+// Relationship to the event ("Host" vs "Guest") — fed to the prompt and worth
+// surfacing for review so a host isn't read as a mere attendee.
+function eventRoleFor(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const v = (payload as Record<string, unknown>)["role"];
+  return typeof v === "string" && v.length > 0 ? v : null;
 }

@@ -4,23 +4,54 @@ import { type EmailPlayDef, runEmailPlay, standardEnrich } from "./_run-play.ts"
 const PLAY_NAME = "luma-events";
 
 /**
- * Humanize an ISO date to "tomorrow", "this Tuesday", "next Tuesday", or a
- * date like "Tue Jun 10". Keeps the prompt input concrete so the LLM doesn't
- * have to do calendar math (and can't accidentally say "next year").
+ * Past this many days, a passed event's guest-list signal is stale: we still
+ * draft a (retrospective) email but hold it behind a `stale-event` flag for
+ * founder review instead of auto-sending. Mirrored loosely by the queue UI's
+ * "· passed" treatment (apps/web/src/lib/cn.ts).
  */
-function humanizeEventDate(iso: string): string {
+const STALE_AFTER_DAYS = 14;
+
+/**
+ * Classify an event's ISO date relative to now and produce a concrete human
+ * phrase for the prompt. Three states drive the copy + send decision:
+ *   - "upcoming": today or future → forward-looking pitch, auto-sends.
+ *   - "past": within STALE_AFTER_DAYS behind → retrospective pitch, auto-sends.
+ *   - "stale": further back → retrospective pitch but HELD (see runLumaEvents
+ *     extraFlags). Signal too old to cold-open on without a human glance.
+ * The phrase keeps the prompt input concrete so the LLM never does calendar
+ * math (and can't infer a future weekday from a date that's already gone —
+ * the bug this replaces: a passed Friday read back as "this Friday").
+ */
+function describeEventDate(iso: string): {
+  status: "upcoming" | "past" | "stale";
+  phrase: string;
+} {
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  const now = new Date();
+  if (Number.isNaN(d.getTime())) return { status: "upcoming", phrase: iso };
   const dayMs = 24 * 3600 * 1000;
-  const days = Math.round((d.getTime() - now.getTime()) / dayMs);
-  if (days < 0) return d.toISOString().slice(0, 10);
-  if (days === 0) return "today";
-  if (days === 1) return "tomorrow";
+  const days = Math.round((d.getTime() - Date.now()) / dayMs);
   const weekday = d.toLocaleDateString("en-US", { weekday: "long" });
-  if (days <= 6) return `this ${weekday}`;
-  if (days <= 13) return `next ${weekday}`;
-  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+  const absolute = d.toLocaleDateString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+
+  // Future / today: forward-looking.
+  if (days >= 0) {
+    if (days === 0) return { status: "upcoming", phrase: "today" };
+    if (days === 1) return { status: "upcoming", phrase: "tomorrow" };
+    if (days <= 6) return { status: "upcoming", phrase: `this ${weekday}` };
+    if (days <= 13) return { status: "upcoming", phrase: `next ${weekday}` };
+    return { status: "upcoming", phrase: absolute };
+  }
+
+  // Past: retrospective. Beyond the staleness window we still draft, but hold.
+  const status = days < -STALE_AFTER_DAYS ? "stale" : "past";
+  if (status === "stale") return { status, phrase: absolute };
+  if (days === -1) return { status, phrase: "yesterday" };
+  if (days >= -6) return { status, phrase: `last ${weekday}` };
+  return { status, phrase: "last week" };
 }
 
 export interface LumaEventsTarget {
@@ -88,8 +119,15 @@ const lumaEventsDef: EmailPlayDef<LumaEventsTarget> = {
       },
       enrichSlice: 3500,
     }),
-  buildInputBlock: (t, prep, cfg) =>
-    [
+  buildInputBlock: (t, prep, cfg) => {
+    const when = describeEventDate(t.eventDate);
+    // "stale" still reads as PAST to the prompt — it drafts retrospectively;
+    // the staleness only changes whether we hold (see extraFlags below).
+    const timing =
+      when.status === "upcoming"
+        ? "UPCOMING"
+        : "PAST — already happened, write retrospectively (do NOT use future tense)";
+    return [
       `FOUNDER: ${cfg.founderName}`,
       `PRODUCT: ${cfg.productOneLiner}`,
       `PROSPECT: ${t.name}${t.company ? ` at ${t.company}` : ""}`,
@@ -98,11 +136,17 @@ const lumaEventsDef: EmailPlayDef<LumaEventsTarget> = {
       `RELATIONSHIP TO EVENT: ${t.role ?? "(unknown — assume attendee)"}`,
       `EVENT TITLE: ${t.eventTitle}`,
       `EVENT CITY: ${t.eventCity}`,
-      `EVENT DATE: ${humanizeEventDate(t.eventDate)} (${t.eventDate})`,
+      `EVENT DATE: ${when.phrase} (${t.eventDate})`,
+      `EVENT TIMING: ${timing}`,
       `EVENT URL: ${t.eventUrl}`,
       `YOUR EDGE: ${t.yourEdge}`,
       `DOSSIER:\n${prep.dossier || "(dry-run)"}`,
-    ].join("\n"),
+    ].join("\n");
+  },
+  // Hold (don't auto-send) drafts for events past the staleness window — the
+  // guest-list signal is too old to cold-open on without a founder glance. A
+  // non-empty flags array is what holds a draft (see _lib.ts sendDraftedEmail).
+  extraFlags: (t) => (describeEventDate(t.eventDate).status === "stale" ? ["stale-event"] : []),
   prospectMeta: (t) => ({
     name: t.name,
     email: t.email,

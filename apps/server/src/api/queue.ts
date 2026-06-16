@@ -7,13 +7,14 @@ import {
 } from "@oneshot-gtm/core";
 import { drainQueue } from "@oneshot-gtm/find";
 import { enrollInCadence, sendDraftedEmail } from "@oneshot-gtm/plays";
-import type {
-  DrainRequest,
-  DrainResult,
-  LastDraft,
-  QueueCounts,
-  QueueRowView,
-  RunPlayRequest,
+import {
+  blockingFlags,
+  type DrainRequest,
+  type DrainResult,
+  type LastDraft,
+  type QueueCounts,
+  type QueueRowView,
+  type RunPlayRequest,
 } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 import { dispatchPlay } from "./_play-dispatch.ts";
@@ -288,7 +289,10 @@ export async function sendDraftRoute(
   if (!subject || !body) {
     return jsonResponse({ error: "stored draft is empty — regenerate first" }, 400, req);
   }
-  if (flags.length > 0) {
+  // Soft review flags (e.g. stale-event) hold a draft from auto-send but are
+  // founder-overridable here — this IS the review-then-send step. Only genuine
+  // blocking flags (lint, dedup) refuse a manual send.
+  if (blockingFlags(flags).length > 0) {
     return jsonResponse(
       { error: "draft has lint flags — regenerate to clear them before sending" },
       400,

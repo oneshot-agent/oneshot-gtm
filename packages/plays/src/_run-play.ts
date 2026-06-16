@@ -66,6 +66,13 @@ export interface EmailPlayDef<T, X = Record<string, never>> {
   buildInputBlock: (t: T, prep: Prepared<X>, cfg: AppConfig) => string;
   prospectMeta: (t: T) => SendDraftedOpts["prospectMeta"];
   metadata?: (t: T) => Record<string, unknown>;
+  /**
+   * Play-specific flags merged with the lint flags. Any non-empty flag set
+   * holds the draft (sendDraftedEmail won't send when flags are present), so
+   * this is how a play marks a target as draft-but-don't-auto-send for review
+   * (e.g. luma-events flags `stale-event` for long-passed events).
+   */
+  extraFlags?: (t: T) => string[];
   /** Enroll the prospect in this play's cadence after a real send. */
   enrollCadence?: boolean;
   /** Extra fields merged onto the row when a target throws (e.g. jobPostHook). */
@@ -142,7 +149,10 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         inputBlock,
       });
 
-      const flags = lintEmail(draft.subject, draft.body, def.maxBodyWords);
+      const flags = [
+        ...lintEmail(draft.subject, draft.body, def.maxBodyWords),
+        ...(def.extraFlags?.(target) ?? []),
+      ];
 
       const send = await sendDraftedEmail({
         playName: def.playName,

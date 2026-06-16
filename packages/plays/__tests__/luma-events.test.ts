@@ -66,6 +66,10 @@ function inFutureDays(days: number): string {
   return new Date(Date.now() + days * 24 * 3600 * 1000).toISOString();
 }
 
+function inPastDays(days: number): string {
+  return inFutureDays(-days);
+}
+
 beforeEach(() => {
   calls.llmInputBlocks = [];
   calls.enrolled = 0;
@@ -144,14 +148,45 @@ describe("runLumaEvents", () => {
     expect(calls.llmInputBlocks[0]).toMatch(/EVENT DATE: \w{3},? \w{3} \d{1,2} \(/);
   });
 
-  it("humanizes a past date to the bare ISO-date (10 chars)", async () => {
-    const pastIso = new Date(Date.now() - 5 * 24 * 3600 * 1000).toISOString();
+  it("humanizes a recently-passed date to 'last <weekday>'", async () => {
     await runLumaEvents({
       dryRun: true,
-      targets: [{ ...base, eventDate: pastIso }],
+      targets: [{ ...base, eventDate: inPastDays(5) }],
     });
-    // Format: "YYYY-MM-DD ("
-    expect(calls.llmInputBlocks[0]).toMatch(/EVENT DATE: \d{4}-\d{2}-\d{2} \(/);
+    expect(calls.llmInputBlocks[0]).toMatch(/EVENT DATE: last \w+ \(/);
+  });
+
+  it("humanizes yesterday's event to 'yesterday'", async () => {
+    await runLumaEvents({
+      dryRun: true,
+      targets: [{ ...base, eventDate: inPastDays(1) }],
+    });
+    expect(calls.llmInputBlocks[0]).toMatch(/EVENT DATE: yesterday \(/);
+  });
+
+  it("marks upcoming events EVENT TIMING: UPCOMING", async () => {
+    await runLumaEvents({
+      dryRun: true,
+      targets: [{ ...base, eventDate: inFutureDays(7) }],
+    });
+    expect(calls.llmInputBlocks[0]).toContain("EVENT TIMING: UPCOMING");
+  });
+
+  it("marks passed events EVENT TIMING: PAST (retrospective)", async () => {
+    await runLumaEvents({
+      dryRun: true,
+      targets: [{ ...base, eventDate: inPastDays(4) }],
+    });
+    expect(calls.llmInputBlocks[0]).toContain("EVENT TIMING: PAST");
+  });
+
+  it("holds stale (>14d past) events with a stale-event flag instead of sending", async () => {
+    const out = await runLumaEvents({
+      dryRun: false,
+      targets: [{ ...base, eventDate: inPastDays(30) }],
+    });
+    expect(out.drafted[0]?.flags).toContain("stale-event");
+    expect(out.drafted[0]?.sent).toBe(false);
   });
 
   it("omits 'at <company>' from the PROSPECT line when company is unset", async () => {

@@ -286,6 +286,28 @@ export interface LastDraft {
   enrichmentFailed?: boolean;
 }
 
+/**
+ * Draft flags that HOLD a draft from auto-send but are deliberately overridable
+ * by a founder on a manual "send this one" — they mean "needs a human glance,"
+ * not "broken copy." Unlike lint flags (em-dash, rule-of-three, …) or dedup
+ * outcomes (already-contacted), regenerating won't clear these and shouldn't:
+ * the founder either sends as-is or rejects.
+ *
+ * Currently: `stale-event` — a luma-events event >14 days past, where the
+ * guest-list signal is old enough to want confirmation before sending.
+ */
+export const SOFT_REVIEW_FLAGS: readonly string[] = ["stale-event"];
+
+/**
+ * The subset of a draft's flags that genuinely block sending (everything except
+ * the founder-overridable soft-review flags). Empty → the draft is sendable.
+ * Shared by the server send gate and the queue UI's send button so the two
+ * never disagree on whether a held draft can be force-sent.
+ */
+export function blockingFlags(flags: string[]): string[] {
+  return flags.filter((f) => !SOFT_REVIEW_FLAGS.includes(f));
+}
+
 /** A single inbox email (reply to outreach), with prospect/play context when matched. */
 export interface InboxReplyView {
   id: string;
