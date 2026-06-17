@@ -4,6 +4,7 @@ import {
   isSendDeferred,
   listInbox,
   loadConfig,
+  logEvent,
   parallelMap,
   receiptUrlForId,
   sendEmail,
@@ -389,6 +390,62 @@ export async function runCadenceStepForProspect(
   }
   const step = seq.steps[stepEntryIndex];
   if (!step) return { action: "skipped", payload: null, receiptIds: [] };
+
+  // Re-send guard. `current_step` advances only AFTER a successful send, so a
+  // crash between dispatch and `advanceCadence` (e.g. a `bun --watch` reload
+  // killing the fire-and-forget send batch) leaves a prospect that already
+  // received step `nextIndex` still sitting at the old `current_step`. Without
+  // this guard the next due tick re-dispatches that step — and the SDK
+  // idempotency key is content-keyed, not step-keyed, so a redraft drift would
+  // send a real duplicate. If the step already has a terminal-sent event,
+  // reconcile by moving the cadence forward WITHOUT re-sending — running the
+  // SAME terminal transition a successful send would (so a reconciled breakup
+  // step lands in `breakup`, not `completed`), but skipping both the dispatch
+  // and the builder (no LLM redraft). Skipped on dryRun — previews never record
+  // sequence_events, and we don't want a preview to silently advance a real
+  // cadence.
+  if (!opts.dryRun && ledger.hasSentSequenceEvent(opts.prospectId, opts.playName, nextIndex)) {
+    logEvent(
+      "cadence.step.reconciled_already_sent",
+      { prospect_id: opts.prospectId, play_name: opts.playName, step_index: nextIndex },
+      "warn",
+    );
+    if (isBreakupStepAt(seq, stepEntryIndex)) {
+      ledger.setCadenceStatus({
+        prospectId: opts.prospectId,
+        playName: opts.playName,
+        status: "breakup",
+      });
+      return {
+        action: "skipped",
+        payload: null,
+        receiptIds: [],
+        note: `step ${nextIndex} already sent — reconciled (breakup)`,
+      };
+    }
+    const next = seq.steps[stepEntryIndex + 1];
+    ledger.advanceCadence({
+      prospectId: opts.prospectId,
+      playName: opts.playName,
+      newStep: nextIndex,
+      nextDueAt: next
+        ? new Date(Date.now() + next.dayOffset * 24 * 3600 * 1000).toISOString()
+        : null,
+    });
+    if (!next) {
+      ledger.setCadenceStatus({
+        prospectId: opts.prospectId,
+        playName: opts.playName,
+        status: "completed",
+      });
+    }
+    return {
+      action: "skipped",
+      payload: null,
+      receiptIds: [],
+      note: `step ${nextIndex} already sent — reconciled (advanced without re-send)`,
+    };
+  }
 
   const prospect = loadProspect(opts.prospectId);
   if (!prospect) {

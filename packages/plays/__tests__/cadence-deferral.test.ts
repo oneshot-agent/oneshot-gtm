@@ -84,6 +84,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       findProspectByEmail: () => null,
       listSequenceEventsForProspectPlay: () => [],
       recordSequenceEvent: () => 0,
+      hasSentSequenceEvent: () => false,
       setCadenceStatus: () => {},
       advanceCadence: (input: { prospectId: number; playName: string }) => {
         advanceCalls.push(input);

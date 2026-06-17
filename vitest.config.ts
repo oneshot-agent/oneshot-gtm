@@ -5,6 +5,9 @@ export default defineConfig({
   test: {
     include: ["packages/**/__tests__/**/*.test.ts", "apps/**/__tests__/**/*.test.ts"],
     exclude: ["**/node_modules/**", "**/dist/**"],
+    // Redirect every test's data-dir I/O to a throwaway temp dir so the suite
+    // never reads or mutates the developer's real ~/.oneshot-gtm. See setup file.
+    setupFiles: ["./vitest.setup.ts"],
   },
   resolve: {
     alias: [

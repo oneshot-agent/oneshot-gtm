@@ -541,6 +541,50 @@ describe("Ledger sweepStaleCadenceSends", () => {
     expect(swept).toHaveLength(0);
     expect(ledger.getCadence(pid, "show-hn")?.sending_started_at).not.toBeNull();
   });
+
+  it("classifies as actuallySent when the in-flight step (current_step + 1) has an event", () => {
+    // The real crash case: marker claimed while current_step still 0, the send
+    // recorded at nextIndex = 1, then the process died before advanceCadence.
+    // The sweep must look at current_step + 1, not current_step.
+    const pid = ledger.upsertProspect({ name: "S", email: "sd@x.com", source: "t" });
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "show-hn",
+      nextDueAt: new Date().toISOString(),
+    });
+    ledger.recordSequenceEvent({
+      prospectId: pid,
+      playName: "show-hn",
+      stepIndex: 1,
+      channel: "email",
+      status: "sent",
+    });
+    ledger.claimCadenceSendingMarker({
+      prospectId: pid,
+      playName: "show-hn",
+      startedAtIso: new Date(Date.now() - 1000).toISOString(),
+    });
+    const swept = ledger.sweepStaleCadenceSends({ now: new Date(), maxAgeMs: 0 });
+    expect(swept[0]?.actuallySent).toBe(true);
+  });
+});
+
+describe("Ledger hasSentSequenceEvent", () => {
+  it("is false with no event, true once a terminal-sent event exists at that step", () => {
+    const pid = ledger.upsertProspect({ name: "S", email: "se@x.com", source: "t" });
+    expect(ledger.hasSentSequenceEvent(pid, "show-hn", 1)).toBe(false);
+    ledger.recordSequenceEvent({
+      prospectId: pid,
+      playName: "show-hn",
+      stepIndex: 1,
+      channel: "email",
+      status: "sent",
+    });
+    expect(ledger.hasSentSequenceEvent(pid, "show-hn", 1)).toBe(true);
+    // Scoped to the exact (play, step) — a different step / play is still unsent.
+    expect(ledger.hasSentSequenceEvent(pid, "show-hn", 2)).toBe(false);
+    expect(ledger.hasSentSequenceEvent(pid, "job-change", 1)).toBe(false);
+  });
 });
 
 describe("Ledger queue sending marker", () => {

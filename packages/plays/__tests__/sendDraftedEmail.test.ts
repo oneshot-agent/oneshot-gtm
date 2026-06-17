@@ -34,6 +34,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     getLedger: () => ({
       upsertProspect: upsertProspectMock,
       recordSequenceEvent: recordSequenceEventMock,
+      hasSentSequenceEvent: () => false,
       findProspectByEmail: findProspectByEmailMock,
       listSequenceEventsForProspectPlay: listSequenceEventsForProspectPlayMock,
       prospectHasFirstTouch: prospectHasFirstTouchMock,

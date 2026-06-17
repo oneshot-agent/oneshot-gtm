@@ -837,13 +837,15 @@ export class Ledger {
       const startedMs = new Date(row.sending_started_at).getTime();
       if (Number.isFinite(startedMs) && startedMs > cutoffMs) continue; // still fresh
       const ageMs = Number.isFinite(startedMs) ? input.now.getTime() - startedMs : -1;
-      // The send is "done" if there's a sequence_event for this row's current_step
-      // (the step that was about to advance). If advanceCadence ran, current_step
-      // is past the sent step — check current_step - 1. We check both to handle
-      // race orderings: marker cleared after advance vs marker cleared before.
-      const sentNow = checkEvent.get(row.prospect_id, row.play_name, row.current_step);
-      const sentPrev = checkEvent.get(row.prospect_id, row.play_name, row.current_step - 1);
-      const actuallySent = sentNow != null || sentPrev != null;
+      // The in-flight step's step_index is `current_step + 1` (= nextIndex in the
+      // engine): the marker is claimed while current_step still holds the OLD
+      // value, and `recordSequenceEvent` writes at nextIndex. So "did the
+      // in-flight send land?" checks current_step + 1. We also check current_step
+      // to cover the race where advanceCadence already ran (current_step moved to
+      // the sent step) but the marker hadn't been cleared yet.
+      const sentInflight = checkEvent.get(row.prospect_id, row.play_name, row.current_step + 1);
+      const sentAfterAdvance = checkEvent.get(row.prospect_id, row.play_name, row.current_step);
+      const actuallySent = sentInflight != null || sentAfterAdvance != null;
       clear.run(row.prospect_id, row.play_name);
       swept.push({
         prospectId: row.prospect_id,
@@ -1214,6 +1216,27 @@ export class Ledger {
       input.metadata ? JSON.stringify(input.metadata) : null,
     );
     return Number(result.lastInsertRowid);
+  }
+
+  /**
+   * True when a (prospect, play, step) already has a terminal-sent sequence_event
+   * — i.e. that step's email/SMS/voice already went out. Used by the cadence
+   * engine as a pre-dispatch guard so a crash between `recordSequenceEvent` and
+   * `advanceCadence` (which leaves `current_step` lagging the sent step) can't
+   * cause a re-send on the next due tick. Same status predicate as the stale-send
+   * sweep below.
+   */
+  hasSentSequenceEvent(prospectId: number, playName: string, stepIndex: number): boolean {
+    return (
+      this.db
+        .prepare(
+          `SELECT 1 FROM sequence_events
+           WHERE prospect_id = ? AND play_name = ? AND step_index = ?
+             AND status IN ('sent','delivered','replied')
+           LIMIT 1`,
+        )
+        .get(prospectId, playName, stepIndex) != null
+    );
   }
 
   /**

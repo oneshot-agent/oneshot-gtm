@@ -28,6 +28,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     getLedger: () => ({
       upsertProspect: () => 1,
       recordSequenceEvent: () => 1,
+      hasSentSequenceEvent: () => false,
       findProspectByEmail: () => null,
       getCachedEnrichment: () => null,
       setCachedEnrichment: () => {},

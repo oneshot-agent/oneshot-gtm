@@ -39,8 +39,12 @@ const advanceCalls: Array<{
   nextDueAt: string | null;
 }> = [];
 const sendErrorCalls: Array<{ prospectId: number; playName: string; error: string }> = [];
+const statusCalls: Array<{ prospectId: number; playName: string; status: string }> = [];
 let throwOnSend = false;
 let deferOnSend = false;
+// Simulates a sequence_events row already existing at the step about to be sent
+// (nextIndex) — the crash-mid-send state the re-send guard must catch.
+let alreadySentNextStep = false;
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -109,8 +113,11 @@ vi.mock("@oneshot-gtm/core", async () => {
       },
       findProspectByEmail: () => null,
       listSequenceEventsForProspectPlay: () => [],
+      hasSentSequenceEvent: () => alreadySentNextStep,
       recordSequenceEvent: () => 0,
-      setCadenceStatus: () => {},
+      setCadenceStatus: (input: { prospectId: number; playName: string; status: string }) => {
+        statusCalls.push(input);
+      },
       recordCadenceSendError: (input: { prospectId: number; playName: string; error: string }) => {
         sendErrorCalls.push(input);
       },
@@ -220,8 +227,10 @@ beforeEach(() => {
   persistedDraft = null;
   advanceCalls.length = 0;
   sendErrorCalls.length = 0;
+  statusCalls.length = 0;
   throwOnSend = false;
   deferOnSend = false;
+  alreadySentNextStep = false;
   seedActiveCadence();
 });
 
@@ -384,6 +393,74 @@ describe("runCadenceStepForProspect", () => {
     });
     expect(result.action).toBe("skipped");
     expect(result.note).toMatch(/no cadence/i);
+  });
+
+  it("re-send guard: reconciles (advances without sending) when nextIndex already has a sent event", async () => {
+    // The crash-mid-send state: the step was dispatched + recorded but the
+    // process died before advanceCadence, leaving current_step lagging. The
+    // guard must advance past it WITHOUT re-sending — and without even drafting.
+    alreadySentNextStep = true;
+    const result = await runCadenceStepForProspect({
+      prospectId: 1,
+      playName: "stack-consolidation",
+      dryRun: false,
+    });
+    expect(calls.sendEmail).toBe(0);
+    expect(calls.llm).toBe(0); // guard short-circuits before the builder
+    expect(advanceCalls).toHaveLength(1);
+    expect(advanceCalls[0]).toMatchObject({ prospectId: 1, newStep: 1 });
+    expect(result.action).toBe("skipped");
+    expect(result.note).toMatch(/already sent/i);
+  });
+
+  it("re-send guard: does NOT skip when nextIndex has no event (181-186 style — only enrollment sent)", async () => {
+    // current_step 0 with only the enrollment (step_index 0) sent, no step_index
+    // 1 event → the guard keys on nextIndex (1), finds nothing, and the overdue
+    // step-1 follow-up dispatches normally exactly once.
+    alreadySentNextStep = false;
+    const result = await runCadenceStepForProspect({
+      prospectId: 1,
+      playName: "stack-consolidation",
+      dryRun: false,
+    });
+    expect(calls.sendEmail).toBe(1);
+    expect(result.action).toBe("step-sent");
+    expect(advanceCalls).toHaveLength(1);
+  });
+
+  it("re-send guard: a reconciled breakup step lands in 'breakup', not advanced/completed", async () => {
+    // stack-consolidation's last step (index 1) is the breakup. current_step 1 →
+    // nextIndex 2 = the breakup step. If it already went out, reconcile must set
+    // 'breakup' (same terminal transition a real send would), not advance.
+    alreadySentNextStep = true;
+    cadenceRows[0]!.current_step = 1;
+    const result = await runCadenceStepForProspect({
+      prospectId: 1,
+      playName: "stack-consolidation",
+      dryRun: false,
+    });
+    expect(calls.sendEmail).toBe(0);
+    expect(advanceCalls).toHaveLength(0); // breakup sets status, never advances
+    expect(statusCalls).toContainEqual({
+      prospectId: 1,
+      playName: "stack-consolidation",
+      status: "breakup",
+    });
+    expect(result.action).toBe("skipped");
+    expect(result.note).toMatch(/breakup/i);
+  });
+
+  it("re-send guard: does not fire on dryRun (previews never advance a real cadence)", async () => {
+    alreadySentNextStep = true;
+    const result = await runCadenceStepForProspect({
+      prospectId: 1,
+      playName: "stack-consolidation",
+      dryRun: true,
+    });
+    // dryRun bypasses the guard, builds the preview, and takes the normal
+    // dryRun advance path (no send).
+    expect(calls.sendEmail).toBe(0);
+    expect(result.action).toBe("step-sent");
   });
 
   it("returns 'skipped' with 'no registered sequence' note for unknown play", async () => {
