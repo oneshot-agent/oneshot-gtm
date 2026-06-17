@@ -1,7 +1,9 @@
 import {
   deleteGmailToken,
   getLedger,
+  listSendingDomains,
   loadConfig,
+  registerOneShotIdentity,
   resolveIdentities,
   saveConfig,
   saveSecrets,
@@ -9,10 +11,12 @@ import {
   secretsPath,
   todayStartSqliteUtc,
   warmupCap,
+  type DomainPoolEntry,
   type EmailIdentity,
   type OneShotConfig,
 } from "@oneshot-gtm/core";
 import type {
+  DomainPoolView,
   LlmProvider,
   SenderIdentityView,
   SetupRequest,
@@ -47,6 +51,7 @@ function identityViews(cfg: OneShotConfig): SenderIdentityView[] {
       label: i.label ?? null,
       address: i.address ?? null,
       sendingDomain: i.sendingDomain ?? null,
+      mailbox: i.mailbox ?? null,
       maxPerDay: i.maxPerDay,
       warmup: i.warmup,
       sentToday: ledger.countEmailSendsSince(i.id, todayStart),
@@ -56,12 +61,37 @@ function identityViews(cfg: OneShotConfig): SenderIdentityView[] {
   });
 }
 
-export function getSetupStatus(req: Request): Response {
+/** SDK domain-pool entries → the trimmed shape the browser consumes. */
+function domainViews(entries: DomainPoolEntry[]): DomainPoolView[] {
+  return entries.map((d) => ({
+    domain: d.domain,
+    poolStatus: d.pool_status,
+    warmupScore: d.warmup_score,
+    dailySendLimit: d.daily_send_limit,
+    dailySentCount: d.daily_sent_count,
+  }));
+}
+
+/**
+ * Best-effort provisioned-domain pool for the setup UI. Swallows every failure
+ * (transient OR auth) to `[]` so the setup page always renders — a missing
+ * domain list degrades the picker, it shouldn't 500 the whole status call.
+ */
+async function provisionedDomainViews(): Promise<DomainPoolView[]> {
+  try {
+    return domainViews(await listSendingDomains());
+  } catch {
+    return [];
+  }
+}
+
+export async function getSetupStatus(req: Request): Promise<Response> {
   const cfg = loadConfig();
   return jsonResponse(
     {
       cfg: publicCfg(cfg),
       identities: identityViews(cfg),
+      provisionedDomains: await provisionedDomainViews(),
       secretsPath: secretsPath(),
       sources: {
         OPENROUTER_API_KEY: secretSource("OPENROUTER_API_KEY"),
@@ -86,6 +116,17 @@ export async function setup(req: Request): Promise<Response> {
   const current = loadConfig();
   const llmProvider: LlmProvider = body.llmProvider ?? current.llmProvider;
   const walletMode: WalletMode = body.walletMode ?? current.walletMode;
+
+  // NOTE: we deliberately do NOT reject domains absent from the provisioned
+  // pool. A pinned send (we always set from_domain + from_mailbox) names the
+  // domain, which AUTO-PROVISIONS it on the platform on first reference — there
+  // is no `domain_not_owned` error to pre-empt. The /setup picker and CLI steer
+  // toward already-warmed domains; a brand-new one is a legitimate add (it
+  // provisions on the first cadence send). The real risk is deliverability, not
+  // a hard failure: pinned sends bypass the server's warmup gating, so the
+  // client-side warm-up ramp is the only throttle — hence new identities
+  // default to it.
+  const adds = body.addIdentities ?? [];
 
   // Identity-pool edits (cap changes / removals). The first edit materializes
   // the pool from legacy config so the change has somewhere to persist.
@@ -142,6 +183,19 @@ export async function setup(req: Request): Promise<Response> {
     mobileSignature: body.mobileSignature ?? current.mobileSignature,
     clientId: current.clientId,
   });
+
+  // Adds run AFTER the main saveConfig: registerOneShotIdentity reloads the
+  // freshly-persisted config (so it sees the cap/removal edits above and any
+  // legacy-pool materialization) before appending. Validated already.
+  for (const add of adds) {
+    if (!add.sendingDomain?.trim()) continue;
+    registerOneShotIdentity({
+      sendingDomain: add.sendingDomain,
+      mailbox: add.mailbox,
+      label: add.label,
+      ...("maxPerDay" in add ? { maxPerDay: add.maxPerDay ?? null } : {}),
+    });
+  }
 
   if (body.secrets && Object.keys(body.secrets).length > 0) {
     saveSecrets(body.secrets);

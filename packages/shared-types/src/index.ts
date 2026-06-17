@@ -189,6 +189,19 @@ export interface SetupRequest {
   emailProvider?: "oneshot" | "gmail";
   /** Per-identity daily-cap edits ({ id, maxPerDay }). Null maxPerDay = uncapped. */
   identityUpdates?: Array<{ id: string; maxPerDay: number | null }>;
+  /**
+   * New OneShot sending identities to add to the pool (a wallet-owned domain +
+   * a mailbox local-part). `sendingDomain` must be one returned by the
+   * provisioned-domain pool. Omit `maxPerDay` to take the cold-start warm-up
+   * ramp; pass `null` to add uncapped.
+   */
+  addIdentities?: Array<{
+    provider: "oneshot";
+    sendingDomain: string;
+    mailbox?: string;
+    label?: string;
+    maxPerDay?: number | null;
+  }>;
   /** Identities to drop from the rotation pool. Existing prospect pins to a removed id will refuse to send until restored. */
   removeIdentityIds?: string[];
   icpOneLiner?: string;
@@ -221,6 +234,20 @@ export interface SetupRequest {
   >;
 }
 
+/**
+ * One provisioned sending domain as seen by the browser — the wallet-owned
+ * domain pool (SDK 0.19 `listDomains`), trimmed to the fields the setup UI
+ * needs. Mirrors the SDK's DomainPoolEntry without leaking the SDK type into
+ * the web layer.
+ */
+export interface DomainPoolView {
+  domain: string;
+  poolStatus: "active" | "warming" | "paused" | "removed";
+  warmupScore: number | null;
+  dailySendLimit: number;
+  dailySentCount: number;
+}
+
 /** One sender identity as shown on /setup: pool entry + today's usage. */
 export interface SenderIdentityView {
   id: string;
@@ -228,6 +255,8 @@ export interface SenderIdentityView {
   label: string | null;
   address: string | null;
   sendingDomain: string | null;
+  /** OneShot only: the From local-part (mailbox) for this identity. Null for Gmail / legacy. */
+  mailbox: string | null;
   maxPerDay: number | null;
   warmup: { startPerDay: number; incrementPerWeek: number } | null;
   sentToday: number;

@@ -17,6 +17,7 @@ import type {
   OutcomeByPlay,
   OutcomeRequest,
   PlayDescriptor,
+  DomainPoolView,
   QueueCounts,
   QueueRowView,
   QueueStatusView,
@@ -127,6 +128,7 @@ export const api = {
   setupStatus: () =>
     getJson<{
       identities: SenderIdentityView[];
+      provisionedDomains: DomainPoolView[];
       cfg: {
         founderName: string | null;
         founderEmail: string | null;

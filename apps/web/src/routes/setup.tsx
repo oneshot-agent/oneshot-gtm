@@ -58,6 +58,14 @@ function SetupPage() {
   // (string so the field can be temporarily empty) + pending removals.
   const [capEdits, setCapEdits] = useState<Record<string, string>>({});
   const [removedIdentityIds, setRemovedIdentityIds] = useState<string[]>([]);
+  // Pending OneShot sender identities to add on Save. Each is a wallet-owned
+  // domain + mailbox local-part; cap blank = cold-start warm-up ramp.
+  const [pendingAdds, setPendingAdds] = useState<
+    Array<{ sendingDomain: string; mailbox: string; maxPerDay: string }>
+  >([]);
+  const [addDomain, setAddDomain] = useState("");
+  const [addMailbox, setAddMailbox] = useState("");
+  const [addCap, setAddCap] = useState("");
   const [founderCredentials, setFounderCredentials] = useState("");
   const [productPortfolio, setProductPortfolio] = useState("");
   const [partners, setPartners] = useState("");
@@ -129,8 +137,19 @@ function SetupPage() {
         const n = Number.parseInt(raw, 10);
         return { id, maxPerDay: Number.isFinite(n) && n >= 0 ? n : null };
       });
+      const addIdentities = pendingAdds.map((a) => {
+        const n = Number.parseInt(a.maxPerDay, 10);
+        return {
+          provider: "oneshot" as const,
+          sendingDomain: a.sendingDomain,
+          ...(a.mailbox.trim() ? { mailbox: a.mailbox.trim() } : {}),
+          // Blank cap = omit → cold-start ramp; a number = explicit cap.
+          ...(a.maxPerDay.trim() && Number.isFinite(n) && n >= 0 ? { maxPerDay: n } : {}),
+        };
+      });
       await api.setup({
         ...(identityUpdates.length > 0 ? { identityUpdates } : {}),
+        ...(addIdentities.length > 0 ? { addIdentities } : {}),
         ...(removedIdentityIds.length > 0 ? { removeIdentityIds: removedIdentityIds } : {}),
         founderName,
         founderEmail,
@@ -154,6 +173,10 @@ function SetupPage() {
       setSecrets({});
       setCapEdits({});
       setRemovedIdentityIds([]);
+      setPendingAdds([]);
+      setAddDomain("");
+      setAddMailbox("");
+      setAddCap("");
       setSavedAt(Date.now());
       void qc.invalidateQueries({ queryKey: ["setup"] });
       void qc.invalidateQueries({ queryKey: ["doctor"] });
@@ -162,6 +185,10 @@ function SetupPage() {
   });
 
   const sources = status.data?.sources ?? {};
+  const provisionedDomains = status.data?.provisionedDomains ?? [];
+  // Default mailbox shown as a placeholder — founder's first name, normalized.
+  const founderLocalpart =
+    (founderName.trim().split(/\s+/)[0] ?? "").toLowerCase().replace(/[^a-z0-9]/g, "") || "";
   // Legacy single-identity mode = the pool is auto-derived from emailProvider.
   // Once a real pool exists, the provider select / manual Gmail secrets are
   // inert (routing is pool-driven) — hide them instead of misleading.
@@ -537,8 +564,8 @@ function SetupPage() {
             {(status.data?.identities?.length ?? 0) > 0 && (
               <div className="md:col-span-2 flex flex-col gap-2">
                 <span className="ln-eyebrow">Sender identities</span>
-                {status.data!.identities
-                  .filter((i) => !removedIdentityIds.includes(i.id))
+                {status
+                  .data!.identities.filter((i) => !removedIdentityIds.includes(i.id))
                   .map((i) => (
                     <div
                       key={i.id}
@@ -549,7 +576,9 @@ function SetupPage() {
                       </Badge>
                       <div className="flex min-w-0 flex-col">
                         <span className="truncate text-[13px] text-ink-cream">
-                          {i.address ?? i.sendingDomain ?? i.label ?? i.id}
+                          {i.mailbox && i.sendingDomain
+                            ? `${i.mailbox}@${i.sendingDomain}`
+                            : (i.address ?? i.sendingDomain ?? i.label ?? i.id)}
                         </span>
                         <span className="ln-mono text-[11px] text-ink-muted">
                           today {i.sentToday}/{i.capToday ?? "∞"}
@@ -564,9 +593,7 @@ function SetupPage() {
                           className="h-7 w-20 text-[12px]"
                           placeholder={i.maxPerDay == null ? "∞" : String(i.maxPerDay)}
                           value={capEdits[i.id] ?? ""}
-                          onChange={(e) =>
-                            setCapEdits((m) => ({ ...m, [i.id]: e.target.value }))
-                          }
+                          onChange={(e) => setCapEdits((m) => ({ ...m, [i.id]: e.target.value }))}
                           aria-label={`max sends per day for ${i.id}`}
                         />
                         <span className="ln-mono text-[10.5px] text-ink-faint">max/day</span>
@@ -609,6 +636,125 @@ function SetupPage() {
                   . Cap and removal changes apply on Save. Removing an identity blocks sends to
                   prospects pinned to it until it's restored.
                 </span>
+
+                {/* Add OneShot sender: a wallet-owned domain + a mailbox local-part.
+                    Multiple domains, and multiple mailboxes within one domain, all
+                    join the rotation pool. Applied on Save. */}
+                <div className="mt-3 flex flex-col gap-2 border-t border-ink-rule pt-3">
+                  <span className="ln-eyebrow">Add OneShot sender</span>
+                  {pendingAdds.length > 0 && (
+                    <div className="flex flex-col gap-1.5">
+                      {pendingAdds.map((a) => (
+                        <div
+                          key={`${a.mailbox || "agent"}@${a.sendingDomain}`}
+                          className="flex items-center gap-3 border border-dashed border-ink-rule rounded-[var(--radius-sm)] px-3 py-1.5"
+                        >
+                          <Badge tone="receipt">oneshot</Badge>
+                          <span className="truncate text-[13px] text-ink-cream">
+                            {a.mailbox.trim() || "agent"}@{a.sendingDomain}
+                          </span>
+                          <span className="ln-mono text-[11px] text-ink-muted">
+                            {a.maxPerDay.trim() ? `cap ${a.maxPerDay.trim()}/day` : "warm-up ramp"}
+                          </span>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            className="ml-auto h-7 px-2 text-[11px]"
+                            onClick={() => setPendingAdds((p) => p.filter((x) => x !== a))}
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap items-end gap-2">
+                    <Field label="Domain" className="min-w-[200px]">
+                      {/* Free text + suggestions: pick a warmed domain or type a
+                          new one (it auto-provisions on first send). */}
+                      <Input
+                        list="oneshot-domains"
+                        placeholder="acme.com"
+                        value={addDomain}
+                        onChange={(e) => setAddDomain(e.target.value)}
+                        aria-label="sending domain"
+                      />
+                      <datalist id="oneshot-domains">
+                        {provisionedDomains.map((d) => (
+                          <option key={d.domain} value={d.domain}>
+                            {d.poolStatus !== "active" ? d.poolStatus : ""}
+                            {d.warmupScore != null ? ` warmth ${d.warmupScore}` : ""}
+                          </option>
+                        ))}
+                      </datalist>
+                    </Field>
+                    <Field label="Mailbox" className="w-32">
+                      <Input
+                        placeholder={founderLocalpart || "agent"}
+                        value={addMailbox}
+                        onChange={(e) => setAddMailbox(e.target.value)}
+                        aria-label="mailbox local-part"
+                      />
+                    </Field>
+                    <Field label="Max/day" className="w-24">
+                      <Input
+                        placeholder="ramp"
+                        value={addCap}
+                        onChange={(e) => setAddCap(e.target.value)}
+                        aria-label="max sends per day"
+                      />
+                    </Field>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="mb-[2px]"
+                      disabled={!addDomain.trim()}
+                      onClick={() => {
+                        const d = addDomain.trim().toLowerCase();
+                        if (!d) return;
+                        setPendingAdds((p) => [
+                          ...p,
+                          { sendingDomain: d, mailbox: addMailbox, maxPerDay: addCap },
+                        ]);
+                        setAddDomain("");
+                        setAddMailbox("");
+                        setAddCap("");
+                      }}
+                    >
+                      Add
+                    </Button>
+                  </div>
+                  {/* Cold-domain warning: a typed domain that isn't in the warmed
+                      pool will go out cold (pinned sends bypass server warm-up). */}
+                  {addDomain.trim() &&
+                    provisionedDomains.length > 0 &&
+                    !provisionedDomains.some(
+                      (d) => d.domain.toLowerCase() === addDomain.trim().toLowerCase(),
+                    ) && (
+                      <span className="text-[12px] text-ink-blocked">
+                        {addDomain.trim()} isn't in your warmed pool — it auto-provisions on first
+                        send and goes out cold (server warm-up is bypassed for chosen domains). The
+                        client ramp below is your only throttle.
+                      </span>
+                    )}
+                  {/* Shared-reputation note when stacking a 2nd mailbox on a domain
+                      already in the pool — reputation + send limits are per-domain. */}
+                  {addDomain.trim() &&
+                    (status.data?.identities ?? []).some(
+                      (i) => i.sendingDomain?.toLowerCase() === addDomain.trim().toLowerCase(),
+                    ) && (
+                      <span className="text-[12px] text-ink-faint">
+                        Heads up: {addDomain.trim()} already sends in your pool. Reputation and the
+                        platform daily limit are per-domain — extra mailboxes share them, and their
+                        client caps stack on the same domain.
+                      </span>
+                    )}
+                  <span className="text-[12px] text-ink-faint">
+                    Blank mailbox defaults to your first name; blank cap uses the cold-start warm-up
+                    ramp (10/day, +10/week, max 50). Domains you send from are pinned, so the client
+                    ramp — not the server — paces warm-up. New senders join the pool on Save.
+                  </span>
+                </div>
               </div>
             )}
             {!isLegacyPool && !gmailCredsReady && (

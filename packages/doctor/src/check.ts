@@ -7,6 +7,7 @@ import {
   getLedger,
   GMAIL_AUTH_HINT,
   gmailAccountFor,
+  listSendingDomains,
   llmApiKey,
   loadConfig,
   missingGmailSecrets,
@@ -95,7 +96,34 @@ export async function runDoctor(): Promise<CheckResult[]> {
   try {
     const ledger = getLedger();
     const todayStart = todayStartSqliteUtc();
-    for (const identity of resolveIdentities(cfg)) {
+    const identities = resolveIdentities(cfg);
+
+    // Provisioned-domain pool, fetched once and only when it can matter (a
+    // wallet exists AND at least one OneShot identity to report on). Empty map =
+    // "couldn't enumerate" → skip the warmth report rather than cry wolf.
+    // We report warmth, not ownership: a pinned send (we always set from_domain)
+    // AUTO-PROVISIONS an unknown domain and BYPASSES the server's warmup gating,
+    // so there is no domain_not_owned failure to pre-empt — the deliverability
+    // risk is sending from a cold/warming domain with only the client cap as a
+    // throttle.
+    let domainPool: Map<string, { warmupScore: number | null; status: string }> | null = null;
+    if (oneshotEnvReady() && identities.some((i) => i.provider === "oneshot")) {
+      try {
+        const pool = await listSendingDomains();
+        if (pool.length > 0) {
+          domainPool = new Map(
+            pool.map((d) => [
+              d.domain.toLowerCase(),
+              { warmupScore: d.warmup_score, status: d.pool_status },
+            ]),
+          );
+        }
+      } catch {
+        // Leave null — transient/auth failure shouldn't downgrade the check.
+      }
+    }
+
+    for (const identity of identities) {
       const sentToday = ledger.countEmailSendsSince(identity.id, todayStart);
       const cap = warmupCap(identity, ledger.firstEmailSendAt(identity.id));
       const usage = `today ${sentToday}/${cap === Infinity ? "∞" : cap}`;
@@ -126,13 +154,41 @@ export async function runDoctor(): Promise<CheckResult[]> {
         }
       } else {
         const domain = identity.sendingDomain ?? cfg.sendingDomain;
-        results.push({
-          name,
-          severity: domain ? "ok" : "warn",
-          message: domain
-            ? `sending from ${domain} · ${usage}`
-            : `no sendingDomain — SDK default domain · ${usage}`,
-        });
+        const localpart = identity.mailbox ? `${identity.mailbox}@` : "";
+        const entry = domain && domainPool ? domainPool.get(domain.toLowerCase()) : undefined;
+        if (!domain) {
+          results.push({
+            name,
+            severity: "warn",
+            message: `no sendingDomain — SDK default domain · ${usage}`,
+          });
+        } else if (domainPool && !entry) {
+          // Known pool, domain absent: not an error (auto-provisions on first
+          // send) but it'll go out cold with no server warmup — lean on the cap.
+          results.push({
+            name,
+            severity: "warn",
+            message: `${localpart}${domain} not yet provisioned — auto-provisions on first send and bypasses server warm-up; client cap is the only throttle · ${usage}`,
+            hint: "Confirm you control this domain, or pick a warmed one (oneshot-gtm identities list).",
+          });
+        } else if (entry && (entry.status === "paused" || entry.status === "removed")) {
+          results.push({
+            name,
+            severity: "warn",
+            message: `${localpart}${domain} is ${entry.status} in the pool · ${usage}`,
+            hint: "Resume it (agent.resumeDomain) before relying on it.",
+          });
+        } else {
+          const warmth =
+            entry?.status === "warming"
+              ? ` · warming${entry.warmupScore != null ? ` (score ${entry.warmupScore})` : ""} — pinned sends skip server warm-up, client cap throttles`
+              : "";
+          results.push({
+            name,
+            severity: "ok",
+            message: `sending from ${localpart}${domain} · ${usage}${warmth}`,
+          });
+        }
       }
     }
   } catch (err) {

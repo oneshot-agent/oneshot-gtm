@@ -24,6 +24,11 @@ import {
 } from "./commands/handoff.ts";
 import { commandCadenceAdvance } from "./commands/cadence.ts";
 import { commandGmailAuth } from "./commands/gmail.ts";
+import {
+  commandIdentitiesAdd,
+  commandIdentitiesList,
+  commandIdentitiesRemove,
+} from "./commands/identities.ts";
 import { commandUi } from "./commands/ui.ts";
 import { commandFindDrain, commandFindWatch } from "./commands/find.ts";
 import {
@@ -90,8 +95,28 @@ const gmail = program
   .description("Gmail / Google Workspace send path (alternate email provider)");
 gmail
   .command("auth")
-  .description("Authorize Gmail via OAuth and store the refresh token (chmod 600 ~/.oneshot-gtm/.env)")
+  .description(
+    "Authorize Gmail via OAuth and store the refresh token (chmod 600 ~/.oneshot-gtm/.env)",
+  )
   .action(runOrFail(commandGmailAuth));
+
+// Identities: manage the OneShot sender rotation pool (multiple wallet-owned
+// domains + multiple mailboxes per domain). Gmail accounts join via `gmail auth`.
+const identities = program
+  .command("identities")
+  .description("Manage OneShot sending identities (domains + mailboxes) in the rotation pool");
+identities
+  .command("list")
+  .description("Show the rotation pool and the wallet's provisioned domain pool")
+  .action(runOrFail(commandIdentitiesList));
+identities
+  .command("add")
+  .description("Add an OneShot sending identity (wallet-owned domain + mailbox) to the pool")
+  .action(runOrFail(commandIdentitiesAdd));
+identities
+  .command("remove <id>")
+  .description("Remove an identity from the pool (e.g. oneshot:sales@acme.com)")
+  .action(runOrFail(commandIdentitiesRemove));
 
 // Find: scheduled / cron-able only. Ad-hoc finder runs are in the dashboard.
 const find = program

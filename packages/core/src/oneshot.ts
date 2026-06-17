@@ -2,6 +2,7 @@ import {
   OneShot,
   type BrowserResult,
   type DeepResearchPersonResult,
+  type DomainPoolEntry,
   type EmailResult,
   type EnrichProfileResult,
   type FindEmailResult,
@@ -21,8 +22,11 @@ import { logEvent } from "./events.ts";
 import { getGmailProfile, listGmailReplies, sendGmailMessage } from "./gmail.ts";
 import { gmailAccountFor, resolveIdentities } from "./identities.ts";
 import { parallelMap, withDeadline } from "./parallel.ts";
-import { resolveSenderIdentity } from "./send-routing.ts";
+import { isTransientToolError, resolveSenderIdentity } from "./send-routing.ts";
 import type { EmailIdentity } from "./types.ts";
+
+/** Re-exported so callers don't reach into the SDK for the domain-pool shape. */
+export type { DomainPoolEntry } from "@oneshot-agent/sdk";
 
 export interface SendEmailInput {
   to: string;
@@ -97,11 +101,40 @@ async function getAgent(): Promise<OneShot> {
 }
 
 /**
+ * The wallet's provisioned sending-domain pool (SDK 0.19+ `listDomains`), used
+ * to validate a `sendingDomain` is wallet-owned BEFORE a live send 403s with
+ * `domain_not_owned`, and to populate the domain picker in setup.
+ *
+ * Transient-tolerant by design: a brief OneShot/transport outage returns `[]`
+ * ("couldn't enumerate") so it never blocks the founder from saving an identity
+ * — callers must treat an empty list as "unknown", not "no domains owned".
+ * Genuine auth failures (bad/absent wallet creds) DO propagate, since those are
+ * a real config error the founder needs to see.
+ */
+export async function listSendingDomains(): Promise<DomainPoolEntry[]> {
+  try {
+    const agent = await getAgent();
+    const result = await agent.listDomains();
+    return result.domains ?? [];
+  } catch (err) {
+    if (isTransientToolError(err)) {
+      logEvent(
+        "domains.list_transient_failure",
+        { message_120: ((err as Error).message ?? "").slice(0, 120) },
+        "warn",
+      );
+      return [];
+    }
+    throw err;
+  }
+}
+
+/**
  * Derive the From localpart from the founder's name (first token, lowercased,
  * non-alphanumerics stripped) so sends read e.g. `jerry@yourdomain`. Falls back
  * to `agent` when the name yields nothing usable. ("Jane Doe" → "jane".)
  */
-function fromLocalpart(name: string | null): string {
+export function fromLocalpart(name: string | null): string {
   const first = (name ?? "").trim().split(/\s+/)[0] ?? "";
   const clean = first.toLowerCase().replace(/[^a-z0-9]/g, "");
   return clean.length > 0 ? clean : "agent";
@@ -119,7 +152,10 @@ function emailIdempotencyKey(parts: Array<string>): string {
   // NUL separator: it can't appear in an email address, identity id, subject,
   // or body, so distinct field splits can't realign to the same joined string
   // (e.g. ["a","b c"] vs ["a b","c"] both → "a b c" under a space separator).
-  return createHash("sha256").update(parts.join(String.fromCharCode(0))).digest("hex").slice(0, 40);
+  return createHash("sha256")
+    .update(parts.join(String.fromCharCode(0)))
+    .digest("hex")
+    .slice(0, 40);
 }
 
 /**
@@ -199,9 +235,12 @@ export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
   }
   const agent = await getAgent();
   const cfg = loadConfig();
-  // The send domain MUST be one the wallet owns, or OneShot 403s
-  // (`domain_not_owned`). The SDK's typed email() defaults from_domain to its
-  // own demo domain — so an unset sendingDomain is the current broken state.
+  // Pinning from_domain (+ from_mailbox below) opts this send OUT of the
+  // platform's domain rotation: the named domain auto-provisions if unknown and
+  // sends as-is (the worker only requires status='verified'; there's no
+  // domain_not_owned 403). The trade-off is that pinned sends BYPASS the
+  // server's warm-up gating — the per-identity client cap is the only throttle.
+  // An unset domain falls back to the SDK's shared demo domain.
   const fromDomain = input.fromDomain ?? identity.sendingDomain ?? cfg.sendingDomain ?? null;
 
   const opts: Parameters<OneShot["email"]>[0] = {
@@ -215,10 +254,8 @@ export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
     ...buildAuditOpts(ctx, "email.send"),
   };
   if (fromDomain) {
-    // sendingDomain must be wallet-owned (else OneShot 403s `domain_not_owned`,
-    // since the SDK otherwise defaults to its demo domain). Send from
-    // <first-name>@<domain> with the founder's name as the display name.
-    // from_mailbox (localpart) + from_name (display name) are native fields in
+    // Send from <mailbox-or-first-name>@<domain> with the founder's name as the
+    // display name. from_mailbox (localpart) + from_name (display name) are native fields in
     // SDK ≥0.16.2 — from_name ships as a separate field, so the bare
     // from_address still passes the server's strict email validation.
     opts.from_domain = fromDomain;
@@ -622,7 +659,9 @@ export async function listInbox(opts?: {
   const emails = ok
     .flatMap((r) => r.emails)
     .filter((e) => (seen.has(e.id) ? false : (seen.add(e.id), true)))
-    .toSorted((a, b) => (a.received_at < b.received_at ? 1 : a.received_at > b.received_at ? -1 : 0))
+    .toSorted((a, b) =>
+      a.received_at < b.received_at ? 1 : a.received_at > b.received_at ? -1 : 0,
+    )
     .slice(0, opts?.limit ?? 50);
   return {
     emails,
