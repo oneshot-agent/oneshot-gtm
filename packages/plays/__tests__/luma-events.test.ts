@@ -105,6 +105,24 @@ describe("runLumaEvents", () => {
     expect(calls.llmInputBlocks[0]).toMatch(/EVENT DATE: next \w+ \(/);
   });
 
+  it("surfaces EVENT ABOUT when eventDescription is set", async () => {
+    await runLumaEvents({
+      dryRun: true,
+      targets: [
+        { ...base, eventDate: inFutureDays(7), eventDescription: "A deep dive on eval harnesses" },
+      ],
+    });
+    expect(calls.llmInputBlocks[0]).toContain("EVENT ABOUT: A deep dive on eval harnesses");
+  });
+
+  it("falls back to 'EVENT ABOUT: (none)' when eventDescription is unset", async () => {
+    await runLumaEvents({
+      dryRun: true,
+      targets: [{ ...base, eventDate: inFutureDays(7) }],
+    });
+    expect(calls.llmInputBlocks[0]).toContain("EVENT ABOUT: (none)");
+  });
+
   it("surfaces attendeeBio when set", async () => {
     await runLumaEvents({
       dryRun: true,

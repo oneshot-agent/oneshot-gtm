@@ -151,6 +151,14 @@ describe("fetchEventDetails", () => {
       api_id: "evt-abc",
       name: "AI Agents Hackathon",
       start_at: "2026-06-20T18:00:00.000Z",
+      // Real Luma shape: the blurb is a ProseMirror doc, with zero-width spaces.
+      description_mirror: {
+        type: "doc",
+        content: [
+          { type: "paragraph", content: [{ type: "text", text: "​Build autonomous agents in a day." }] },
+          { type: "paragraph", content: [{ type: "text", text: "For builders shipping real tool-use." }] },
+        ],
+      },
       geo_address_info: { city: "San Francisco" },
       hosts: [
         {
@@ -190,6 +198,10 @@ describe("fetchEventDetails", () => {
     expect(d!.eventTitle).toBe("AI Agents Hackathon");
     expect(d!.eventDateIso).toBe("2026-06-20T18:00:00.000Z");
     expect(d!.eventCity).toBe("San Francisco");
+    // ProseMirror flattened to one line; zero-width spaces stripped.
+    expect(d!.eventDescription).toBe(
+      "Build autonomous agents in a day. For builders shipping real tool-use.",
+    );
     expect(d!.attendees).toHaveLength(2);
     const host = d!.attendees.find((a) => a.role === "Host");
     expect(host).toMatchObject({
@@ -227,6 +239,25 @@ describe("fetchEventDetails", () => {
       }),
     ]);
     expect(d!.eventCity).toBeNull();
+    expect(d!.eventDescription).toBeNull();
+  });
+
+  it("falls back to description_short when the event has no description_mirror", async () => {
+    const seriesBlurb = {
+      data: {
+        api_id: "evt-s",
+        name: "Weekly AI Office Hours",
+        start_at: "2026-06-24T18:00:00.000Z",
+        hosts: [{ name: "Host One", linkedin_handle: "in/host1" }],
+        calendar: {
+          api_id: "cal-x",
+          description_short: "Open stage for AI builders to share and transform.",
+        },
+      },
+    };
+    stubJsonFetch(async () => ({ ok: true, status: 200, json: async () => seriesBlurb }));
+    const d = await fetchEventDetails("series1");
+    expect(d!.eventDescription).toBe("Open stage for AI builders to share and transform.");
   });
 
   it("returns null on non-2xx / bad JSON / fetch rejection / empty slug", async () => {

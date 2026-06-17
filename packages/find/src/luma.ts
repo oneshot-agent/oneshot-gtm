@@ -57,6 +57,7 @@ interface AttendeeWithEvent {
     title: string;
     dateIso: string;
     city: string;
+    description: string;
   };
 }
 
@@ -332,6 +333,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
             eventTitle: details.eventTitle,
             eventDateIso: details.eventDateIso,
             eventCity: details.eventCity,
+            eventDescription: details.eventDescription,
             eventHasPassed: false, // the date defense below is the authority
             publicAttendees: details.attendees,
           };
@@ -484,6 +486,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
       title: extract.eventTitle ?? hit.title,
       dateIso: extract.eventDateIso ?? "",
       city: extract.eventCity ?? "",
+      description: extract.eventDescription ?? "",
     };
     for (const attendee of extract.publicAttendees.slice(0, MAX_ATTENDEES_PER_EVENT)) {
       if (!attendee.name || attendee.name.trim().length === 0) continue;
@@ -559,6 +562,7 @@ export function parseLumaEventExtract(raw: string): LumaEventExtract {
     eventTitle: null,
     eventDateIso: null,
     eventCity: null,
+    eventDescription: null,
     eventHasPassed: false,
     publicAttendees: [],
   };
@@ -698,6 +702,7 @@ async function resolveAndEnqueueLumaAttendee(
       eventDate: work.event.dateIso,
       eventCity: work.event.city,
       eventUrl: work.event.url,
+      ...(work.event.description ? { eventDescription: work.event.description } : {}),
       yourEdge,
       ...(linkedinUrl ? { linkedinUrl } : {}),
       ...(phone ? { phone } : {}),

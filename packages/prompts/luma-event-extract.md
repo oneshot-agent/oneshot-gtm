@@ -13,6 +13,7 @@ A JSON object only:
   "eventTitle": string | null,
   "eventDateIso": string | null,
   "eventCity": string | null,
+  "eventDescription": string | null,
   "eventHasPassed": boolean,
   "publicAttendees": Array<{
     "name": string,
@@ -31,6 +32,7 @@ A JSON object only:
 - `eventTitle`: the event name as displayed (e.g. "SF AI Builders Meetup"). Null if not clearly an event page.
 - `eventDateIso`: ISO 8601 date or datetime when stated. If only "Tuesday, June 10" is shown without year, infer the next future occurrence and emit a date-only ISO. Null if not stated.
 - `eventCity`: city or "Online" / "Virtual" / region. Null if not stated.
+- `eventDescription`: the event's own summary of what it's ABOUT — the topic/theme, format, and who it's for. Condense the page's description to 1-3 sentences, cap ~500 chars. Strip pure logistics (parking, sponsors, ticket prices, agenda timings) — keep only what conveys the subject. Null if the page shows no description.
 - `eventHasPassed`: true when the page explicitly shows "this event has ended" / past-tense framing / a date older than today. Default false when unclear.
 - `publicAttendees`: pull from the page's "Featured Guests", "Speakers", "Hosts", and the "Going" / "Approved" grid — whatever Luma surfaces to a logged-out visitor. Cap at 30 entries (most signal-rich first: speakers/featured before generic "going" grid).
   - Skip entries that are only profile photos with no name visible.

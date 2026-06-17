@@ -230,13 +230,42 @@ export async function fetchCityEvents(citySlug: string): Promise<LumaDiscoveredE
 // Per-event structured details (api.lu.ma/url)
 
 const MAX_DETAIL_ATTENDEES = 30;
+// Cap the raw description we keep off the api.lu.ma payload. Matches the
+// luma-event-extract prompt's ~500-char guidance so both discovery paths feed
+// the draft a comparably-sized blurb; the draft prompt slices defensively too.
+const MAX_DETAIL_DESCRIPTION = 500;
 
 export interface LumaEventDetails {
   eventTitle: string | null;
   eventDateIso: string | null;
   eventCity: string | null;
+  /** Plain-text event description, capped at MAX_DETAIL_DESCRIPTION. Null when absent. */
+  eventDescription: string | null;
   /** Hosts (role "Host", listed first) + featured guests (role "Guest"). */
   attendees: LumaPublicAttendee[];
+}
+
+/**
+ * Flatten a Luma `description_mirror` (a ProseMirror/TipTap rich-text doc:
+ * `{ type, content: [...] }`) to plain text by concatenating every `text` leaf.
+ * Drops zero-width spaces Luma sprinkles in, then collapses whitespace so the
+ * result is one clean line (the draft input block is newline-delimited).
+ * Returns "" for anything that isn't a doc with text leaves.
+ */
+function flattenProseMirror(node: unknown): string {
+  const parts: string[] = [];
+  const visit = (n: unknown): void => {
+    if (Array.isArray(n)) {
+      for (const v of n) visit(v);
+      return;
+    }
+    if (!n || typeof n !== "object") return;
+    const o = n as Record<string, unknown>;
+    if (o["type"] === "text" && typeof o["text"] === "string") parts.push(o["text"]);
+    for (const v of Object.values(o)) visit(v);
+  };
+  visit(node);
+  return parts.join(" ").replace(/\u200b/g, "").replace(/\s+/g, " ").trim();
 }
 
 /** Person shape shared by `hosts` and `featured_guests` in the /url payload. */
@@ -315,6 +344,7 @@ export async function fetchEventDetails(slug: string): Promise<LumaEventDetails 
   let eventTitle: string | null = null;
   let eventDateIso: string | null = null;
   let eventCity: string | null = null;
+  let eventDescription: string | null = null;
   let hosts: RawUrlPerson[] | null = null;
   let guests: RawUrlPerson[] | null = null;
   const stack: unknown[] = [data];
@@ -341,6 +371,27 @@ export async function fetchEventDetails(slug: string): Promise<LumaEventDetails 
       if (geo && typeof geo === "object") {
         const c = (geo as Record<string, unknown>)["city"];
         if (typeof c === "string") eventCity = c;
+      }
+    }
+    // The event blurb is NOT on the event node — it sits on the wrapping
+    // `data` object as `description_mirror` (a ProseMirror doc). Capture the
+    // first one found (the page's primary event; `data` is walked early), and
+    // fall back to the calendar/category `description_short` / `description`
+    // strings when an event has no body of its own.
+    if (eventDescription == null) {
+      const mirror = o["description_mirror"];
+      if (mirror && typeof mirror === "object") {
+        const flat = flattenProseMirror(mirror);
+        if (flat) eventDescription = flat.slice(0, MAX_DETAIL_DESCRIPTION);
+      }
+    }
+    if (eventDescription == null) {
+      for (const key of ["description_short", "description"]) {
+        const v = o[key];
+        if (typeof v === "string" && v.trim()) {
+          eventDescription = v.trim().replace(/\s+/g, " ").slice(0, MAX_DETAIL_DESCRIPTION);
+          break;
+        }
       }
     }
     if (hosts == null && Array.isArray(o["hosts"]) && o["hosts"].length > 0) {
@@ -373,5 +424,5 @@ export async function fetchEventDetails(slug: string): Promise<LumaEventDetails 
     logEvent("error.swallowed", { kind: "luma-events.details_shape", slug }, "warn");
     return null;
   }
-  return { eventTitle, eventDateIso, eventCity, attendees };
+  return { eventTitle, eventDateIso, eventCity, eventDescription, attendees };
 }

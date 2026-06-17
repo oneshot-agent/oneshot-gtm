@@ -145,6 +145,8 @@ export interface LumaEventExtract {
   eventTitle: string | null;
   eventDateIso: string | null;
   eventCity: string | null;
+  /** Short summary of what the event is about — grounds the draft's topic. Null when the page has none. */
+  eventDescription: string | null;
   eventHasPassed: boolean;
   publicAttendees: LumaPublicAttendee[];
 }

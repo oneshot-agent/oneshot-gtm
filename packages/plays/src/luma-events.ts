@@ -68,6 +68,13 @@ export interface LumaEventsTarget {
   role?: string;
   /** Event display name, e.g. "SF AI Builders Meetup". */
   eventTitle: string;
+  /**
+   * Short summary of what the event is about (from the Luma page). Grounds the
+   * draft's TOPIC so the Offer/CTA aren't guessed from a vague title. Founder
+   * reference only — the prompt won't quote it verbatim. Absent for events
+   * found before this was wired (falls back to title-only inference).
+   */
+  eventDescription?: string;
   /** ISO date or datetime; UI/prompt humanizes to "next Tuesday". */
   eventDate: string;
   /** City or "Online". */
@@ -135,6 +142,10 @@ const lumaEventsDef: EmailPlayDef<LumaEventsTarget> = {
       // "Host" = they RUN the event — never write as if they're merely going.
       `RELATIONSHIP TO EVENT: ${t.role ?? "(unknown — assume attendee)"}`,
       `EVENT TITLE: ${t.eventTitle}`,
+      // Collapse whitespace defensively: the description is already flattened
+      // upstream, but the LLM-extract path may still return newlines, and a raw
+      // newline here would split the line-delimited input block mid-field.
+      `EVENT ABOUT: ${(t.eventDescription ?? "").replace(/\s+/g, " ").trim().slice(0, 600) || "(none)"}`,
       `EVENT CITY: ${t.eventCity}`,
       `EVENT DATE: ${when.phrase} (${t.eventDate})`,
       `EVENT TIMING: ${timing}`,
