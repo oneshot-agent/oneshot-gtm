@@ -14,6 +14,8 @@ Last manual update: **2026-06-13** · Bun **1.3.13** · OneShot SDK **0.19.0**
 | `doctor` | `oneshot-gtm doctor`             | ✅ green | Reports wallet balance, key sources, ledger integrity                             |
 | `ui`     | `oneshot-gtm ui`                 | ✅ green | Boots `apps/server`, opens browser to `http://127.0.0.1:3030`                     |
 | `config` | llm / founder / keys / telemetry | ✅ green | All four subcommands round-trip to disk                                           |
+| `gmail`  | `oneshot-gtm gmail auth`         | ✅ green | OAuth loopback consent; stores a per-account refresh token in the sender pool     |
+| `identities` | list / add / remove          | ✅ green | Manage the OneShot sender pool — multiple domains + mailboxes; per-domain warm-up |
 
 ## `discover`
 
@@ -104,7 +106,7 @@ Last manual update: **2026-06-13** · Bun **1.3.13** · OneShot SDK **0.19.0**
 | `/receipts`                | ✅ green (with signed-receipt modal)                                                                                                                             |
 | `/plays`                   | ✅ green (with run + copy-CLI buttons)                                                                                                                           |
 | `/measure`                 | ✅ green                                                                                                                                                         |
-| `/setup`                   | ✅ green (editable wizard with hidden-input keys + sender-identity pool: per-identity usage/caps, remove)                                                        |
+| `/setup`                   | ✅ green (editable wizard with hidden-input keys + sender-identity pool: add OneShot domains + mailboxes, per-identity caps, per-domain shared usage, remove)     |
 | `/run/show-hn`             | ✅ green (SSE-streamed drafts)                                                                                                                                   |
 | `/run/job-change`          | ✅ green (SSE-streamed drafts)                                                                                                                                   |
 | `/run/post-funding`        | ✅ green (SSE-streamed drafts)                                                                                                                                   |

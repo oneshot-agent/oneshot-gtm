@@ -90,14 +90,14 @@ Before any `findEmail` call, a pre-flight check skips dud domains (free-tier sub
 
 ## Sender rotation — OneShot domains or your own Gmail
 
-Outbound ships through a **sender identity pool**: any mix of OneShot wallet-owned domains and your own Gmail / Google Workspace accounts. Routing rules:
+Outbound ships through a **sender identity pool**: any mix of OneShot wallet-owned sending domains — multiple domains, and multiple mailboxes within one domain (e.g. `jane@acme.com` + `sales@acme.com`) — plus your own Gmail / Google Workspace accounts. Routing rules:
 
 - **Sticky threads** — every email to a given prospect comes from the identity that sent their first touch, across plays and cadence steps. In-flight conversations never switch From address.
-- **Warm-up caps** — a freshly added Gmail account ramps automatically (10/day, +10/week, max 50 by default; edit per identity on `/setup`). OneShot identities are uncapped and absorb overflow.
+- **Warm-up caps, per domain** — a freshly added identity ramps automatically (10/day, +10/week, max 50 by default; edit per identity on `/setup`). Because OneShot reputation is per-domain, the cap is enforced **per sending domain**: every mailbox on one domain shares a single ramp and daily budget (their sends pool together) rather than each stacking its own. Gmail accounts ramp per account. The legacy single OneShot identity stays uncapped and absorbs overflow.
 - **Defer, don't exceed** — when every identity hits its daily cap, cadence steps stay due and queue rows stay approved until capacity resets at midnight. Nothing sends over cap.
 - **Replies follow the pool** — the inbox poll merges the OneShot inbox with every authorized Gmail account, so stop-on-reply works no matter which identity sent. Answering a reply from `/inbox` sends from that same receiving identity, keeping the thread on one address (and outside warm-up caps — a reply to an engaged human is never deferred).
 
-Add a Gmail account with `bun run cli -- gmail auth` (one-time browser OAuth consent; needs a Google Cloud OAuth client of type *Desktop* with the Gmail API enabled — `GMAIL_CLIENT_ID`/`GMAIL_CLIENT_SECRET` are shared across accounts, per-account refresh tokens live chmod-600 in `~/.oneshot-gtm/gmail-tokens.json`). `oneshot-gtm doctor` reports each identity's auth status and today's usage. With no pool configured, behavior is exactly the classic single OneShot identity.
+Add a OneShot sending domain + mailbox from `/setup` or `oneshot-gtm identities add` — pick a provisioned domain or type a new one (it auto-provisions on first send); `oneshot-gtm identities list` shows the pool and each domain's warm-up state, `identities remove <id>` drops one. Add a Gmail account with `bun run cli -- gmail auth` (one-time browser OAuth consent; needs a Google Cloud OAuth client of type *Desktop* with the Gmail API enabled — `GMAIL_CLIENT_ID`/`GMAIL_CLIENT_SECRET` are shared across accounts, per-account refresh tokens live chmod-600 in `~/.oneshot-gtm/gmail-tokens.json`). `oneshot-gtm doctor` reports each identity's auth status, domain warm-up state, and today's usage. With no pool configured, behavior is exactly the classic single OneShot identity.
 
 ---
 
@@ -158,6 +158,12 @@ oneshot-gtm
 │   ├── founder                              name, reply-to email, product one-liner
 │   ├── keys                                 update API keys (chmod 600 ~/.oneshot-gtm/.env)
 │   └── telemetry on|off
+├── gmail
+│   └── auth                                 authorize a Gmail / Workspace sending account (OAuth)
+├── identities                               manage the OneShot sender pool (domains + mailboxes)
+│   ├── list                                 show the pool + each provisioned domain's warm-up state
+│   ├── add                                  add a sending domain + mailbox to the pool
+│   └── remove <id>                          drop an identity from the pool
 ├── doctor                                   wallet, ledger, keys, founder profile
 ├── ui                                       open the local dashboard
 │
