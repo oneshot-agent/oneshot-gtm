@@ -1,12 +1,14 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
+  capGroupKey,
   configDir,
   getBalance,
   getGmailProfile,
   getLedger,
   GMAIL_AUTH_HINT,
   gmailAccountFor,
+  identityCapacities,
   listSendingDomains,
   llmApiKey,
   loadConfig,
@@ -14,8 +16,6 @@ import {
   oneshotEnvReady,
   resolveIdentities,
   secretSource,
-  todayStartSqliteUtc,
-  warmupCap,
 } from "@oneshot-gtm/core";
 
 type CheckSeverity = "ok" | "warn" | "fail";
@@ -94,9 +94,15 @@ export async function runDoctor(): Promise<CheckResult[]> {
   // (emailIdentities unset) get their single synthesized identity, so this
   // doubles as the old single-provider gmail check.
   try {
-    const ledger = getLedger();
-    const todayStart = todayStartSqliteUtc();
     const identities = resolveIdentities(cfg);
+    // Per cap-group capacity (the shared per-domain budget). Used for the usage
+    // string so doctor reports the real gate, not a per-mailbox illusion.
+    const caps = identityCapacities();
+    const groupSize = new Map<string, number>();
+    for (const i of identities) {
+      const k = capGroupKey(i);
+      groupSize.set(k, (groupSize.get(k) ?? 0) + 1);
+    }
 
     // Provisioned-domain pool, fetched once and only when it can matter (a
     // wallet exists AND at least one OneShot identity to report on). Empty map =
@@ -124,9 +130,14 @@ export async function runDoctor(): Promise<CheckResult[]> {
     }
 
     for (const identity of identities) {
-      const sentToday = ledger.countEmailSendsSince(identity.id, todayStart);
-      const cap = warmupCap(identity, ledger.firstEmailSendAt(identity.id));
-      const usage = `today ${sentToday}/${cap === Infinity ? "∞" : cap}`;
+      const c = caps.get(identity.id);
+      const capStr = c && Number.isFinite(c.capToday) ? String(c.capToday) : "∞";
+      const shared = (groupSize.get(capGroupKey(identity)) ?? 1) > 1;
+      // When mailboxes share a domain, show the shared domain total alongside
+      // this mailbox's own count so the cap reads honestly.
+      const usage = shared
+        ? `today ${c?.identitySentToday ?? 0} · domain ${c?.domainSentToday ?? 0}/${capStr} shared`
+        : `today ${c?.identitySentToday ?? 0}/${capStr}`;
       const name = `sender ${identity.id}`;
       if (identity.provider === "gmail") {
         const missing = missingGmailSecrets().filter((k) => k !== "GMAIL_REFRESH_TOKEN");

@@ -581,7 +581,9 @@ function SetupPage() {
                             : (i.address ?? i.sendingDomain ?? i.label ?? i.id)}
                         </span>
                         <span className="ln-mono text-[11px] text-ink-muted">
-                          today {i.sentToday}/{i.capToday ?? "∞"}
+                          {i.domainSentToday !== i.sentToday
+                            ? `today ${i.sentToday} · domain ${i.domainSentToday}/${i.capToday ?? "∞"} shared`
+                            : `today ${i.sentToday}/${i.capToday ?? "∞"}`}
                           {i.warmup
                             ? ` · warm-up ${i.warmup.startPerDay}+${i.warmup.incrementPerWeek}/wk`
                             : ""}

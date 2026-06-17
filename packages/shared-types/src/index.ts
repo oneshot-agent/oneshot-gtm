@@ -259,8 +259,16 @@ export interface SenderIdentityView {
   mailbox: string | null;
   maxPerDay: number | null;
   warmup: { startPerDay: number; incrementPerWeek: number } | null;
+  /** This mailbox's own sends today. */
   sentToday: number;
-  /** Today's effective ceiling after the warm-up ramp; null = uncapped. */
+  /**
+   * Sends today across the whole cap-group this identity shares — i.e. every
+   * mailbox on the same OneShot sending domain (reputation + the daily limit
+   * are per-domain). Equals `sentToday` when the identity is the only mailbox
+   * on its domain (and for Gmail, which is always per-account).
+   */
+  domainSentToday: number;
+  /** The cap-group's effective ceiling today after the warm-up ramp (shared across the domain's mailboxes); null = uncapped. */
   capToday: number | null;
   /** True when synthesized from legacy single-provider config (not yet a persisted pool). */
   legacy: boolean;

@@ -1,13 +1,12 @@
 import {
+  capGroupKey,
   fromLocalpart,
-  getLedger,
+  identityCapacities,
   listSendingDomains,
   loadConfig,
   registerOneShotIdentity,
   removeIdentity,
   resolveIdentities,
-  todayStartSqliteUtc,
-  warmupCap,
   WARMUP_DEFAULTS,
   type DomainPoolEntry,
 } from "@oneshot-gtm/core";
@@ -28,21 +27,28 @@ async function safeListDomains(): Promise<DomainPoolEntry[]> {
 export async function commandIdentitiesList(): Promise<void> {
   header("Sender identities");
   const cfg = loadConfig();
-  const ledger = getLedger();
-  const todayStart = todayStartSqliteUtc();
   const identities = resolveIdentities(cfg);
   const legacy = cfg.emailIdentities == null;
+  // Per cap-group capacity: caps + counts reflect the shared per-domain budget.
+  const caps = identityCapacities();
+  const groupSize = new Map<string, number>();
+  for (const i of identities)
+    groupSize.set(capGroupKey(i), (groupSize.get(capGroupKey(i)) ?? 0) + 1);
 
   for (const i of identities) {
-    const cap = warmupCap(i, ledger.firstEmailSendAt(i.id));
-    const sent = ledger.countEmailSendsSince(i.id, todayStart);
+    const cap = caps.get(i.id);
+    const capStr = cap && Number.isFinite(cap.capToday) ? String(cap.capToday) : "∞";
+    const shared = (groupSize.get(capGroupKey(i)) ?? 1) > 1;
+    const usage = shared
+      ? `today ${cap?.identitySentToday ?? 0} · domain ${cap?.domainSentToday ?? 0}/${capStr} shared`
+      : `today ${cap?.identitySentToday ?? 0}/${capStr}`;
     const addr =
       i.mailbox && i.sendingDomain
         ? `${i.mailbox}@${i.sendingDomain}`
         : (i.address ?? i.sendingDomain ?? i.label ?? i.id);
     note(
       `${c.cyan(i.provider)}  ${addr}  ` +
-        `[${c.dim(i.id)}]  today ${sent}/${cap === Infinity ? "∞" : cap}` +
+        `[${c.dim(i.id)}]  ${usage}` +
         (legacy ? c.dim(" · legacy (auto-derived)") : ""),
     );
   }

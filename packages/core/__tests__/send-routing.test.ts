@@ -34,6 +34,8 @@ const {
   hasAnySendCapacity,
   todayStartSqliteUtc,
   warmupCap,
+  capGroupKey,
+  identityCapacities,
 } = await import("../src/send-routing.ts");
 const { LEGACY_ONESHOT_ID } = await import("../src/identities.ts");
 
@@ -210,6 +212,123 @@ describe("resolveSenderIdentity", () => {
   it("assignment race: INSERT OR IGNORE keeps the first winner", () => {
     expect(ledger.assignSender("race@acme.com", gmailA.id)).toBe(gmailA.id);
     expect(ledger.assignSender("race@acme.com", gmailB.id)).toBe(gmailA.id);
+  });
+});
+
+describe("per-domain capping (OneShot mailboxes share a domain budget)", () => {
+  const ramp = { startPerDay: 10, incrementPerWeek: 10 };
+  const onA: EmailIdentity = {
+    id: "oneshot:a@acme.com",
+    provider: "oneshot",
+    sendingDomain: "acme.com",
+    mailbox: "a",
+    maxPerDay: 50,
+    warmup: ramp,
+  };
+  const onB: EmailIdentity = {
+    id: "oneshot:b@acme.com",
+    provider: "oneshot",
+    sendingDomain: "acme.com",
+    mailbox: "b",
+    maxPerDay: 50,
+    warmup: ramp,
+  };
+  const onOther: EmailIdentity = {
+    id: "oneshot:c@other.com",
+    provider: "oneshot",
+    sendingDomain: "other.com",
+    mailbox: "c",
+    maxPerDay: 50,
+    warmup: ramp,
+  };
+
+  /** Record a send and back-date its created_at (SQLite UTC) for ramp-anchor tests. */
+  function recordSendAt(identityId: string, createdAtSqlite: string): void {
+    const id = ledger.recordReceipt({
+      playName: "test-play",
+      callType: "email.send",
+      senderIdentity: identityId,
+    });
+    (ledger as unknown as { db: { prepare(s: string): { run(...a: unknown[]): unknown } } }).db
+      .prepare("UPDATE receipts SET created_at = ? WHERE id = ?")
+      .run(createdAtSqlite, id);
+  }
+
+  it("groups oneshot identities by domain, gmail by id", () => {
+    expect(capGroupKey(onA)).toBe(capGroupKey(onB)); // same domain → one group
+    expect(capGroupKey(onA)).not.toBe(capGroupKey(onOther));
+    expect(capGroupKey(gmailA)).not.toBe(capGroupKey(gmailB)); // gmail per-account
+  });
+
+  it("counts both mailboxes on one domain against a single ramp, then defers", () => {
+    mockCfg = { emailIdentities: [onA, onB], emailProvider: "oneshot" };
+    // Fresh-day cap for the domain = startPerDay = 10. Split 6 + 4 across mailboxes.
+    for (let i = 0; i < 6; i++) recordSend(onA.id);
+    for (let i = 0; i < 4; i++) recordSend(onB.id);
+    expect(() => resolveSenderIdentity("fresh@x.com")).toThrow(SendDeferredError);
+    expect(hasAnySendCapacity()).toBe(false);
+  });
+
+  it("keeps separate domains on independent budgets", () => {
+    mockCfg = { emailIdentities: [onA, onOther], emailProvider: "oneshot" };
+    for (let i = 0; i < 10; i++) recordSend(onA.id); // acme.com full (cap 10)
+    expect(resolveSenderIdentity("fresh@x.com").id).toBe(onOther.id);
+  });
+
+  it("spreads new prospects across mailboxes within a domain (tie-break on own sends)", () => {
+    mockCfg = { emailIdentities: [onA, onB], emailProvider: "oneshot" };
+    // Domain not full (3/10). A sent 2, B sent 1 → shared remaining 7; tie breaks to B.
+    for (let i = 0; i < 2; i++) recordSend(onA.id);
+    recordSend(onB.id);
+    expect(resolveSenderIdentity("fresh@x.com").id).toBe(onB.id);
+  });
+
+  it("an uncapped mailbox makes its whole domain uncapped (overflow absorber)", () => {
+    const onUncapped: EmailIdentity = {
+      id: "oneshot:bulk@acme.com",
+      provider: "oneshot",
+      sendingDomain: "acme.com",
+      mailbox: "bulk",
+      maxPerDay: null,
+      warmup: null,
+    };
+    mockCfg = { emailIdentities: [onA, onUncapped], emailProvider: "oneshot" };
+    for (let i = 0; i < 100; i++) recordSend(onA.id); // would blow any finite cap
+    // Domain has an uncapped member → still has capacity (overflow), never defers.
+    expect(() => resolveSenderIdentity("fresh@x.com")).not.toThrow();
+    expect(hasAnySendCapacity()).toBe(true);
+  });
+
+  it("anchors the domain ramp on the EARLIEST mailbox's first send", () => {
+    mockCfg = { emailIdentities: [onA, onB], emailProvider: "oneshot" };
+    // onA's first send was 15 days ago → 2 full weeks → domain ramp 10 + 2*10 = 30.
+    const fifteenDaysAgo = new Date(Date.now() - 15 * 24 * 3600 * 1000)
+      .toISOString()
+      .slice(0, 19)
+      .replace("T", " ");
+    recordSendAt(onA.id, fifteenDaysAgo);
+    const caps = identityCapacities();
+    expect(caps.get(onA.id)?.capToday).toBe(30);
+    expect(caps.get(onB.id)?.capToday).toBe(30); // shared ceiling
+  });
+
+  it("identityCapacities reports the shared domain total vs each mailbox's own sends", () => {
+    mockCfg = { emailIdentities: [onA, onB], emailProvider: "oneshot" };
+    for (let i = 0; i < 3; i++) recordSend(onA.id);
+    recordSend(onB.id);
+    const caps = identityCapacities();
+    expect(caps.get(onA.id)?.identitySentToday).toBe(3);
+    expect(caps.get(onB.id)?.identitySentToday).toBe(1);
+    expect(caps.get(onA.id)?.domainSentToday).toBe(4); // shared
+    expect(caps.get(onB.id)?.domainSentToday).toBe(4);
+  });
+
+  it("gmail accounts on the same email domain do NOT share a cap", () => {
+    const gA: EmailIdentity = { ...gmailA, address: "a@team.com" };
+    const gB: EmailIdentity = { ...gmailB, address: "b@team.com" };
+    mockCfg = { emailIdentities: [gA, gB], emailProvider: "oneshot" };
+    for (let i = 0; i < 10; i++) recordSend(gA.id); // gA full (cap 10), gB untouched
+    expect(resolveSenderIdentity("fresh@x.com").id).toBe(gB.id);
   });
 });
 

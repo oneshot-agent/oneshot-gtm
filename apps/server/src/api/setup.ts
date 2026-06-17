@@ -1,6 +1,6 @@
 import {
   deleteGmailToken,
-  getLedger,
+  identityCapacities,
   listSendingDomains,
   loadConfig,
   registerOneShotIdentity,
@@ -9,8 +9,6 @@ import {
   saveSecrets,
   secretSource,
   secretsPath,
-  todayStartSqliteUtc,
-  warmupCap,
   type DomainPoolEntry,
   type EmailIdentity,
   type OneShotConfig,
@@ -40,11 +38,12 @@ export function publicCfg(cfg: OneShotConfig): Omit<OneShotConfig, "clientId"> {
 }
 
 function identityViews(cfg: OneShotConfig): SenderIdentityView[] {
-  const ledger = getLedger();
-  const todayStart = todayStartSqliteUtc();
   const legacy = cfg.emailIdentities == null;
+  // Per cap-group: capToday + domainSentToday reflect the shared per-domain
+  // budget (all mailboxes on one OneShot domain pool one reputation/limit).
+  const caps = identityCapacities();
   return resolveIdentities(cfg).map((i) => {
-    const cap = warmupCap(i, ledger.firstEmailSendAt(i.id));
+    const cap = caps.get(i.id);
     return {
       id: i.id,
       provider: i.provider,
@@ -54,8 +53,9 @@ function identityViews(cfg: OneShotConfig): SenderIdentityView[] {
       mailbox: i.mailbox ?? null,
       maxPerDay: i.maxPerDay,
       warmup: i.warmup,
-      sentToday: ledger.countEmailSendsSince(i.id, todayStart),
-      capToday: cap === Infinity ? null : cap,
+      sentToday: cap?.identitySentToday ?? 0,
+      domainSentToday: cap?.domainSentToday ?? 0,
+      capToday: cap && Number.isFinite(cap.capToday) ? cap.capToday : null,
       legacy,
     };
   });
