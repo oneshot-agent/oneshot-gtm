@@ -7,19 +7,13 @@ import { jsonResponse } from "../server.ts";
 
 /**
  * SSE chat endpoint for the trigger strategist.
+ * Request: { messages: Array<{ role: "user"|"assistant", content: string }> }.
  *
- * Request: { messages: Array<{ role: "user"|"assistant", content: string }> }
- *
- * The server composes the system prompt by interpolating the founder's
- * ICP/product + a one-paragraph brief per available trigger, then calls
- * `complete()` once per turn. The assistant uses ACTION markers
- * (<!--ACTION:enable:show-hn--> etc) to propose changes; the client renders
- * them as confirmation chips and posts back through the existing trigger
- * REST endpoints when the founder clicks.
- *
- * No native tool calling — keeps the contract simple, mirrors the soul-hunt-web
- * strategist pattern, and works with every provider that supports plain
- * chat completion.
+ * Composes a system prompt from the founder's ICP/product + a brief per trigger,
+ * then calls `complete()` once per turn. The assistant proposes changes via
+ * ACTION markers (<!--ACTION:enable:show-hn-->) that the client renders as
+ * confirmation chips and posts back through the trigger REST endpoints. No native
+ * tool calling — keeps the contract simple and works with any chat provider.
  */
 /**
  * Pure body-shape check, extracted so HTTP tests can exercise the failure

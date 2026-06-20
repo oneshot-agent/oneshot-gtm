@@ -6,11 +6,9 @@ import { safeParseJsonRecord } from "./json.ts";
 import type { OneShotConfig } from "./types.ts";
 
 // Data dir for config.json, .env, ledger.sqlite, events.jsonl, gmail-tokens.json.
-// `ONESHOT_GTM_HOME` overrides the default — used by the test suite to redirect
-// all data-dir I/O to a throwaway temp dir (see vitest.setup.ts) so tests never
-// read or mutate the developer's real ~/.oneshot-gtm, and handy for running
-// multiple isolated installs. Read once at module load; tests set the env in a
-// setupFile that runs before this module is first imported.
+// `ONESHOT_GTM_HOME` overrides the default — tests redirect data-dir I/O to a temp
+// dir (see vitest.setup.ts) so they never touch the real ~/.oneshot-gtm. Read once
+// at module load.
 const CONFIG_DIR = process.env["ONESHOT_GTM_HOME"]?.trim() || join(homedir(), ".oneshot-gtm");
 const CONFIG_PATH = join(CONFIG_DIR, "config.json");
 const SECRETS_PATH = join(CONFIG_DIR, ".env");

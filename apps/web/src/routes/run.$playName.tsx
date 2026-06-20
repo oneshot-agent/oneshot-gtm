@@ -12,11 +12,9 @@ import { useMask } from "../lib/privacy.tsx";
 import { pruneSentRows } from "../lib/pruneSentRows.ts";
 
 /**
- * Search-param contract for arrivals from the `/queue` drain modal.
- * `fromQueue=1` triggers a one-time fetch of approved rows for this play
- * which then hydrates the targets editor. The other params round-trip the
- * modal's collected fields so the founder can submit from /run as if they
- * never left /queue.
+ * Search-param contract for arrivals from the `/queue` drain modal: `fromQueue=1`
+ * fetches approved rows to hydrate the targets editor; the rest round-trip the
+ * modal's fields so the founder can submit from /run as if never leaving /queue.
  */
 interface RunSearch {
   fromQueue?: "1";
@@ -25,10 +23,9 @@ interface RunSearch {
   senderCohort?: string;
   freeForCohortOffer?: string;
   /**
-   * When set, the page is in progress / done / interrupted mode. The page
-   * fetches GET /api/runs/:runId and renders the per-target state read from
-   * the server, polling every 2s while status === 'running'. Survives
-   * navigate-away-and-back; on cold-boot sweep it shows as 'interrupted'.
+   * In-progress / done / interrupted mode: fetch GET /api/runs/:runId and render
+   * server-side per-target state, polling every 2s while running. Survives
+   * navigate-away; a cold-boot sweep shows it as 'interrupted'.
    */
   runId?: number;
 }

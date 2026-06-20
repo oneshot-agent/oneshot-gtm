@@ -1,21 +1,16 @@
 import { useEffect, useState } from "react";
 
 /**
- * Per-row "generating draft" tracker persisted to localStorage, so leaving and
- * returning to /queue (or a full refresh) mid-generation preserves the spinner.
- * Mirrors `triggerRunState.ts`, but draft generation has no server "in-progress"
- * marker (the regenerate endpoint is synchronous, not fire-and-forget), so the
- * completion signal is the row's `lastDraftedAt`: once it advances past the
- * click time, the draft has landed and the marker clears.
- *
- * Storage: localStorage["oneshot-gtm:draft-generating:<id>"] = "<unix-ms>"
+ * Per-row "generating draft" flag in localStorage so returning to /queue mid-
+ * generation keeps the spinner. No server "in-progress" marker (regenerate is
+ * synchronous), so completion = the row's `lastDraftedAt` advancing past the
+ * click time. Key: localStorage["oneshot-gtm:draft-generating:<id>"] = "<ms>".
  */
 const KEY_PREFIX = "oneshot-gtm:draft-generating:";
 /**
- * Zombie cleanup. Drafting a single row (enrich + one LLM call, dry-run — no
- * deepResearch) runs ~5-90s. 5 min is generous headroom and also clears a
- * marker for a run that failed server-side (no draft written → `lastDraftedAt`
- * never advances, so the done-signal would never fire).
+ * Zombie cleanup. A single dry-run draft (enrich + one LLM call) runs ~5-90s;
+ * 5 min is headroom and also clears the marker when a run fails server-side
+ * (no draft written → `lastDraftedAt` never advances → done-signal never fires).
  */
 const MAX_RUNTIME_MS = 5 * 60 * 1000;
 /**
@@ -53,12 +48,9 @@ function readStartedAt(id: number): number | null {
 
 /**
  * Pure reconciliation (unit-tested). For each id with a stored `startedAt`:
- *   done   = a draft was persisted AFTER the click AND it's been visible long
- *            enough (`lastDraftedAt > startedAt && visibleFor >= MIN_VISIBLE_MS`)
- *   zombie = `visibleFor > MAX_RUNTIME_MS` (covers a server-side failure that
- *            never wrote a draft)
- * An id is still "generating" unless done or zombie; done/zombie ids are
- * returned in `toClear` so the caller can drop their localStorage markers.
+ * done = `lastDraftedAt > startedAt && visibleFor >= MIN_VISIBLE_MS`; zombie =
+ * `visibleFor > MAX_RUNTIME_MS` (server-side failure that never wrote a draft).
+ * Done/zombie ids come back in `toClear` so the caller drops their markers.
  */
 export function reconcileGenerating(opts: {
   startedAtById: Map<number, number>;

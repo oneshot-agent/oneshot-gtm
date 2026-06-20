@@ -1,21 +1,15 @@
 import { useEffect, useState } from "react";
 
 /**
- * Per-trigger "is running" tracker persisted to localStorage, so a mid-run
- * refresh preserves the spinner. Entries are cleared when the server
- * confirms completion (lastPolledAt > startedAt and MIN_VISIBLE_MS has
- * elapsed), or when MAX_RUNTIME_MS zombie-cleans them.
- *
- * Storage: localStorage["oneshot-gtm:trigger-running:<name>"] = "<unix-ms>"
+ * Per-trigger "is running" flag in localStorage so a mid-run refresh keeps the
+ * spinner. Cleared on confirmed completion or by MAX_RUNTIME_MS zombie cleanup.
+ * Key: localStorage["oneshot-gtm:trigger-running:<name>"] = "<unix-ms>".
  */
 const KEY_PREFIX = "oneshot-gtm:trigger-running:";
 /**
- * Client-side zombie cleanup for the localStorage spinner marker. Set to
- * 4h to match `MAX_RUN_AGE_MS` in @oneshot-gtm/find — generous headroom
- * over realistic finder runtimes (github-topics with concurrency=3 typically
- * completes in 5-15 min; the deepResearchPerson tier sets the upper bound
- * at 2-5 min per call). The spinner shouldn't disappear mid-run on a
- * genuinely-long execution.
+ * Client-side zombie cleanup for the spinner marker. 4h matches `MAX_RUN_AGE_MS`
+ * in @oneshot-gtm/find — headroom so the spinner doesn't vanish during a
+ * genuinely long finder run.
  */
 const MAX_RUNTIME_MS = 4 * 60 * 60 * 1000;
 /**
@@ -70,10 +64,9 @@ interface RunningInfo {
 }
 
 /**
- * Merge local (localStorage) + server (`runningSince` from the triggers
- * poll) start times into a per-name running map with a live-ticking
- * elapsedMs. Local wins when both are present; server fills in for fresh
- * tabs that never set a marker.
+ * Merge local (localStorage) + server (`runningSince`) start times into a
+ * per-name running map with live-ticking elapsedMs. Local wins; server fills in
+ * for fresh tabs that never set a marker.
  */
 export function useRunningTriggers(
   names: string[],

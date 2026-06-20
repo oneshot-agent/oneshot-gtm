@@ -2,11 +2,8 @@ import { useCallback, useEffect, useState } from "react";
 
 /**
  * Boolean-flag persistence to localStorage. SSR-safe (initial render uses
- * `initial`; the actual stored value is hydrated in an effect). Swallows
- * errors from private mode / disabled storage so the UI never crashes.
- *
- * First localStorage usage in the web app — kept intentionally minimal.
- * Generalize only when a second consumer appears.
+ * `initial`; the stored value hydrates in an effect). Swallows private-mode /
+ * disabled-storage errors so the UI never crashes.
  */
 export function useLocalStorage(key: string, initial = false): [boolean, (v: boolean) => void] {
   const [value, setValue] = useState<boolean>(initial);
@@ -18,7 +15,7 @@ export function useLocalStorage(key: string, initial = false): [boolean, (v: boo
       // private mode / SSR — ignore
     }
   }, [key]);
-  // Stable setter so consumers can safely memoize on it (e.g. a context value).
+  // Stable setter so consumers can memoize on it.
   const set = useCallback(
     (v: boolean): void => {
       setValue(v);
