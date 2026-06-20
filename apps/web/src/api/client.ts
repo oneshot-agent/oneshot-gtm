@@ -24,6 +24,7 @@ import type {
   DeriveIcpResult,
   ReceiptDetail,
   ReceiptView,
+  RocsGoalView,
   RunRecord,
   RunTriggerResult,
   SenderIdentityView,
@@ -111,8 +112,7 @@ export const api = {
     postJson<InboxSendReplyResult>("/inbox/reply", req),
   receipt: (id: number) => getJson<{ receipt: ReceiptDetail }>(`/receipts/${id}`),
   plays: () => getJson<{ plays: PlayDescriptor[] }>("/plays"),
-  // Set per-play cadence timing (cumulative days from send), or null to reset
-  // to code defaults. Timing only — step structure is fixed in code.
+  // Timing only (cumulative days from send); null resets to code defaults. Step structure is fixed.
   setCadence: (name: string, days: number[] | null) =>
     postJson<{ ok: boolean }>(`/plays/${name}/cadence`, { days }),
   measureCac: (sinceDays?: number) =>
@@ -122,6 +122,10 @@ export const api = {
   measureRocs: (sinceDays?: number) =>
     getJson<{ spend: SpendByPlay[]; events: EventsByPlay[]; outcomes: OutcomeByPlay[] }>(
       `/measure/rocs${sinceDays != null ? `?sinceDays=${sinceDays}` : ""}`,
+    ),
+  rocsByGoal: (sinceDays?: number) =>
+    getJson<{ goals: RocsGoalView[] }>(
+      `/measure/rocs-by-goal${sinceDays != null ? `?sinceDays=${sinceDays}` : ""}`,
     ),
   recordOutcome: (req: OutcomeRequest) => postJson<{ id: number }>("/measure/outcome", req),
   doctor: () => getJson<{ checks: DoctorCheck[] }>("/doctor"),
@@ -164,8 +168,7 @@ export const api = {
     postJson<{ ok: boolean }>(`/queue/${id}/reject`, reason ? { reason } : {}),
   approveAllQueue: (play?: string) =>
     postJson<{ approved: number }>("/queue/approve-all", play ? { play } : {}),
-  // Re-draft a single row in preview mode (dry-run, never sends) and return
-  // the fresh draft. Overwrites the row's persisted last_draft_json.
+  // Re-draft a row in preview (dry-run, never sends); overwrites the persisted last_draft_json.
   regenerateDraft: (id: number) => postJson<LastDraft>(`/queue/${id}/regenerate`, {}),
   // Send the row's already-reviewed draft verbatim (no LLM re-roll). Requires
   // a clean, not-yet-sent persisted draft; marks the row sent on success.

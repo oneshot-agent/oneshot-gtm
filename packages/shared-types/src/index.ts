@@ -84,6 +84,13 @@ export interface CadencesResult {
   counts: CadenceCounts;
 }
 
+/** RoCS value tag attached to a receipt once its outcome is known. */
+export interface ReceiptValueTag {
+  type: string;
+  amount?: number;
+  label?: string;
+}
+
 export interface ReceiptView {
   id: number;
   playName: string;
@@ -91,10 +98,16 @@ export interface ReceiptView {
   costUsd: number | null;
   oneshotRequestId: string | null;
   createdAt: string;
+  /** Call-time reason ("why did I make this call?"). */
+  memo: string | null;
+  /** Outcome value ("did this call generate value?"), null until tagged. */
+  valueTag: ReceiptValueTag | null;
 }
 
 export interface ReceiptDetail extends ReceiptView {
   signedReceipt: unknown | null;
+  /** Structured call-time reasoning ("what was the structured reasoning?"). */
+  decisionContext: unknown | null;
 }
 
 export interface SpendByPlay {
@@ -118,6 +131,22 @@ export interface OutcomeByPlay {
   won: number;
   lost: number;
   ghosted: number;
+}
+
+/**
+ * Per-cadence RoCS rollup (OneShot `rocsByGoal`) with local labels. `value` is
+ * confirmed outcome value, `pendingValue` self-reported but unconfirmed; `rocs`
+ * is value ÷ spend.
+ */
+export interface RocsGoalView {
+  goalId: string;
+  playName: string | null;
+  prospect: string | null;
+  spend: number;
+  value: number;
+  pendingValue: number;
+  rocs: number;
+  receiptCount: number;
 }
 
 /**

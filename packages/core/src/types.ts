@@ -7,6 +7,18 @@ export interface ReceiptRecord {
   oneshot_request_id: string | null;
   /** Which EmailIdentity sent this (email.send receipts only); null pre-rotation. */
   sender_identity: string | null;
+  /** Human-readable call reason, mirrored from the call-time SDK `memo`. */
+  memo: string | null;
+  /** JSON of the call-time `decisionContext` blob. */
+  decision_context: string | null;
+  /**
+   * RoCS outcome value, JSON `{type, amount?, label?}`, set once a reply/deal
+   * lands (tagOutcomeValue). Mirrors what we PATCH to OneShot via tagReceiptValue.
+   */
+  value_tag: string | null;
+  value_tagged_at: string | null;
+  /** Cadence correlation key (mirrors decisionContext.goalId); groups a cadence's receipts. */
+  goal_id: string | null;
   created_at: string;
 }
 

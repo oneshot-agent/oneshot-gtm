@@ -15,7 +15,7 @@ import {
 import { listReceipts, getReceipt } from "./api/receipts.ts";
 import { draftReplyRoute, listInboxRoute, saveDraftRoute, sendReplyRoute } from "./api/inbox.ts";
 import { listPlays, setCadenceRoute } from "./api/plays.ts";
-import { measureCac, measureRocs, recordOutcome } from "./api/measure.ts";
+import { measureCac, measureRocs, measureRocsByGoal, recordOutcome } from "./api/measure.ts";
 import { setup, getSetupStatus } from "./api/setup.ts";
 import { gmailAuthCallbackRoute, startGmailAuthRoute } from "./api/gmail-auth.ts";
 import { deriveIcpRoute } from "./api/derive-icp.ts";
@@ -83,6 +83,7 @@ const routes: RouteEntry[] = [
   route("POST", "/api/plays/:name/cadence", setCadenceRoute),
   route("GET", "/api/measure/cac", measureCac),
   route("GET", "/api/measure/rocs", measureRocs),
+  route("GET", "/api/measure/rocs-by-goal", measureRocsByGoal),
   route("POST", "/api/measure/outcome", recordOutcome),
   route("GET", "/api/setup", getSetupStatus),
   route("POST", "/api/setup", setup),

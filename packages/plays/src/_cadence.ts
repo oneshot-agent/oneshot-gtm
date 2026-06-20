@@ -6,9 +6,11 @@ import {
   loadConfig,
   logEvent,
   parallelMap,
+  cadenceGoalId,
   receiptUrlForId,
   sendEmail,
   sendSms,
+  tagOutcomeValue,
   trackSend,
   voiceCall,
   type ProspectRecord,
@@ -224,6 +226,13 @@ export async function pollInboxReplies(): Promise<ReplyPollResult> {
       if (newlyReplied) {
         out.repliesDetected++;
         out.details.push({ prospectEmail: from, playName: cad.play_name, subject: e.subject });
+        // A reply is the first value signal — tag the cadence's send receipts so
+        // RoCS reflects engagement. Best-effort (tagOutcomeValue swallows errors).
+        await tagOutcomeValue({
+          prospectId: prospect.id,
+          playName: cad.play_name,
+          valueTag: { type: "engagement", label: "reply" },
+        });
       }
     }
   }
@@ -774,6 +783,10 @@ async function dispatchStepImpl(input: {
     prospectEmail: input.prospectEmail,
     stepIndex: input.stepIndex,
     label: input.label ?? null,
+    // Cadence correlation key — groups every step's receipts under one goal so an
+    // outcome tags the whole sequence at once. Same key the tagger derives from
+    // (prospect, play) at outcome time.
+    goalId: cadenceGoalId(input.playName, input.prospectEmail ?? `pid:${input.prospectId}`),
   };
   const labelTail = input.label ? ` ${input.label}` : "";
 
@@ -794,6 +807,7 @@ async function dispatchStepImpl(input: {
       stepIndex: input.stepIndex,
       channel: "email",
       status: "sent",
+      receiptId: send.receiptId,
       metadata: {
         subject: input.payload.subject,
         body: input.payload.body,
@@ -822,6 +836,7 @@ async function dispatchStepImpl(input: {
       stepIndex: input.stepIndex,
       channel: "sms",
       status: "sent",
+      receiptId: send.receiptId,
       metadata: { label: input.label },
     });
     return { receiptIds };
@@ -857,6 +872,7 @@ async function dispatchStepImpl(input: {
       stepIndex: input.stepIndex,
       channel: "voice",
       status: "sent",
+      receiptId: call.receiptId,
       metadata: { label: input.label, ended_reason: call.result.ended_reason ?? null },
     });
     return { receiptIds };

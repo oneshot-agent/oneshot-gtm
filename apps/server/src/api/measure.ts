@@ -1,8 +1,15 @@
-import { getLedger } from "@oneshot-gtm/core";
+import {
+  cadenceRocs,
+  getLedger,
+  logEvent,
+  outcomeToValueTag,
+  tagOutcomeValue,
+} from "@oneshot-gtm/core";
 import type {
   EventsByPlay,
   OutcomeByPlay,
   OutcomeRequest,
+  RocsGoalView,
   SpendByPlay,
 } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
@@ -12,6 +19,11 @@ function readSinceDays(req: Request): string | undefined {
   const n = Number.parseInt(url.searchParams.get("sinceDays") ?? "", 10);
   if (!Number.isFinite(n)) return undefined;
   return new Date(Date.now() - n * 24 * 3600 * 1000).toISOString();
+}
+
+function readPeriodDays(req: Request): number | undefined {
+  const n = Number.parseInt(new URL(req.url).searchParams.get("sinceDays") ?? "", 10);
+  return Number.isFinite(n) ? n : undefined;
 }
 
 export function measureCac(req: Request): Response {
@@ -76,5 +88,53 @@ export async function recordOutcome(req: Request): Promise<Response> {
     ...(body.amountUsd != null ? { amountUsd: body.amountUsd } : {}),
     ...(body.notes ? { notes: body.notes } : {}),
   });
+  // Tag the value of the receipts that earned this outcome. When no play is
+  // given, tag every cadence the prospect is in. Best-effort (tagOutcomeValue
+  // swallows its own errors) — never block recording the outcome.
+  const valueTag = outcomeToValueTag(body.outcome, body.amountUsd ?? undefined);
+  if (valueTag) {
+    const plays = body.playName
+      ? [body.playName]
+      : ledger.listCadencesForProspect(prospect.id).map((c) => c.play_name);
+    for (const playName of plays) {
+      await tagOutcomeValue({ prospectId: prospect.id, playName, valueTag });
+    }
+  }
   return jsonResponse({ id }, 200, req);
+}
+
+/**
+ * Per-cadence RoCS: OneShot's goal-level spend-vs-value rollup, labelled with the
+ * local play + prospect. Degrades to an empty list (never 500s the Measure page)
+ * when the platform read fails or the wallet is unconfigured.
+ */
+export async function measureRocsByGoal(req: Request): Promise<Response> {
+  const periodDays = readPeriodDays(req);
+  let goals: RocsGoalView[] = [];
+  try {
+    const rollups = await cadenceRocs(periodDays != null ? { periodDays } : {});
+    const labels = getLedger().goalLabels(rollups.map((g) => g.goalId));
+    // Scope to THIS app's cadences: rocsByGoal returns every goal on the wallet
+    // (other tools' compute goals, other installs sharing the key); keep only
+    // goals we have local receipts for, so the table reads as our cadences.
+    goals = rollups
+      .filter((g) => labels.has(g.goalId))
+      .map((g) => ({
+        goalId: g.goalId,
+        playName: labels.get(g.goalId)?.playName ?? null,
+        prospect: labels.get(g.goalId)?.prospect ?? null,
+        spend: g.spend,
+        value: g.value,
+        pendingValue: g.pendingValue,
+        rocs: g.rocs,
+        receiptCount: g.receiptCount,
+      }));
+  } catch (err) {
+    logEvent(
+      "measure.rocs_by_goal.failed",
+      { message_120: ((err as Error).message ?? "").slice(0, 120) },
+      "warn",
+    );
+  }
+  return jsonResponse({ goals }, 200, req);
 }

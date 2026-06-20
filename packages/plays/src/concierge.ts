@@ -1,4 +1,5 @@
 import {
+  cadenceGoalId,
   getLedger,
   loadConfig,
   sendEmail,
@@ -97,7 +98,16 @@ export async function runConcierge(opts: ConciergeRunOptions): Promise<Concierge
           maxDurationMinutes: opts.maxDurationMinutes ?? 8,
           callerPersona: `${cfg.founderName}'s onboarding agent`,
         },
-        { playName: PLAY_NAME },
+        {
+          playName: PLAY_NAME,
+          memo: `${PLAY_NAME} onboarding call → ${t.name ?? t.phone}`,
+          decisionContext: {
+            source: "concierge.voice",
+            goalId: cadenceGoalId(PLAY_NAME, t.email),
+            customerName: t.name ?? null,
+            signupContext: t.signupContext ?? "new signup",
+          },
+        },
       );
       receiptIds.push(call.receiptId);
       voice = call.result;
@@ -117,6 +127,7 @@ export async function runConcierge(opts: ConciergeRunOptions): Promise<Concierge
         stepIndex: 0,
         channel: "voice",
         status: "sent",
+        receiptId: call.receiptId,
         metadata: {
           summary: voice.summary ?? null,
           ended_reason: voice.ended_reason ?? null,

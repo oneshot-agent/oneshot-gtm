@@ -1,4 +1,11 @@
-import { buildSite, getLedger, listInbox, loadConfig, sendEmail } from "@oneshot-gtm/core";
+import {
+  buildSite,
+  cadenceGoalId,
+  getLedger,
+  listInbox,
+  loadConfig,
+  sendEmail,
+} from "@oneshot-gtm/core";
 import { complete, loadPrompt } from "@oneshot-gtm/intel";
 import { draftEmailFromPrompt, lintEmail } from "./_lib.ts";
 
@@ -94,7 +101,16 @@ export async function deployPmfSurvey(input: PmfSurveyDeployInput): Promise<PmfS
     if (!input.dryRun && flags.length === 0) {
       const send = await sendEmail(
         { to: userEmail, subject: draft.subject, body },
-        { playName: PLAY_NAME },
+        {
+          playName: PLAY_NAME,
+          memo: `${PLAY_NAME} survey invite → ${userEmail}`,
+          decisionContext: {
+            source: "pmf-survey",
+            goalId: cadenceGoalId(PLAY_NAME, userEmail),
+            prospectEmail: userEmail,
+            surveyUrl,
+          },
+        },
       );
       receiptIds.push(send.receiptId);
       totalReceiptIds.push(send.receiptId);
@@ -106,6 +122,7 @@ export async function deployPmfSurvey(input: PmfSurveyDeployInput): Promise<PmfS
         stepIndex: 0,
         channel: "email",
         status: "sent",
+        receiptId: send.receiptId,
         metadata: { surveyUrl, builtSite, subject: draft.subject },
       });
       sent = true;

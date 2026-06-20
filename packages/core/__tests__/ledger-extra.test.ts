@@ -456,3 +456,113 @@ describe("addColumnIfMissing identifier guards", () => {
     );
   });
 });
+
+describe("receipt annotation (memo / decisionContext / value_tag)", () => {
+  it("recordReceipt persists explicit memo + decisionContext", () => {
+    const id = ledger.recordReceipt({
+      playName: "show-hn",
+      callType: "email.send",
+      memo: "show-hn step 0 → p@x.dev",
+      decisionContext: { source: "play.initial", prospectEmail: "p@x.dev" },
+    });
+    const row = ledger.getReceipt(id);
+    expect(row?.memo).toBe("show-hn step 0 → p@x.dev");
+    expect(JSON.parse(row?.decision_context ?? "{}")).toEqual({
+      source: "play.initial",
+      prospectEmail: "p@x.dev",
+    });
+  });
+
+  it("recordReceipt defaults memo + decisionContext to the call identity", () => {
+    const id = ledger.recordReceipt({ playName: "job-change", callType: "enrich.profile" });
+    const row = ledger.getReceipt(id);
+    expect(row?.memo).toBe("job-change enrich.profile");
+    expect(JSON.parse(row?.decision_context ?? "{}")).toEqual({
+      playName: "job-change",
+      callType: "enrich.profile",
+    });
+    expect(row?.value_tag).toBeNull();
+  });
+
+  it("setReceiptValueTag stamps value_tag + value_tagged_at", () => {
+    const id = ledger.recordReceipt({ playName: "show-hn", callType: "email.send" });
+    ledger.setReceiptValueTag(id, JSON.stringify({ type: "revenue", amount: 5000 }));
+    const row = ledger.getReceipt(id);
+    expect(JSON.parse(row?.value_tag ?? "{}")).toEqual({ type: "revenue", amount: 5000 });
+    expect(row?.value_tagged_at).toBeTruthy();
+  });
+
+  it("recordReceipt mirrors decisionContext.goalId into the goal_id column", () => {
+    const id = ledger.recordReceipt({
+      playName: "show-hn",
+      callType: "email.send",
+      decisionContext: { goalId: "goal_abc", source: "cadence" },
+    });
+    expect(ledger.getReceipt(id)?.goal_id).toBe("goal_abc");
+    // no goalId in context → null column
+    const id2 = ledger.recordReceipt({ playName: "show-hn", callType: "email.find" });
+    expect(ledger.getReceipt(id2)?.goal_id).toBeNull();
+  });
+
+  it("setReceiptValueTagByGoal stamps every receipt in the goal; currentGoalValueTag reads it", () => {
+    const r1 = ledger.recordReceipt({
+      playName: "show-hn",
+      callType: "email.send",
+      decisionContext: { goalId: "goal_x" },
+    });
+    const r2 = ledger.recordReceipt({
+      playName: "show-hn",
+      callType: "email.send",
+      decisionContext: { goalId: "goal_x" },
+    });
+    // a receipt in a DIFFERENT goal must not be touched
+    const other = ledger.recordReceipt({
+      playName: "show-hn",
+      callType: "email.send",
+      decisionContext: { goalId: "goal_y" },
+    });
+
+    expect(ledger.currentGoalValueTag("goal_x")).toBeNull();
+    const n = ledger.setReceiptValueTagByGoal(
+      "goal_x",
+      JSON.stringify({ type: "revenue", amount: 5000 }),
+    );
+    expect(n).toBe(2);
+
+    expect(JSON.parse(ledger.getReceipt(r1)?.value_tag ?? "{}")).toEqual({
+      type: "revenue",
+      amount: 5000,
+    });
+    expect(JSON.parse(ledger.getReceipt(r2)?.value_tag ?? "{}")).toEqual({
+      type: "revenue",
+      amount: 5000,
+    });
+    expect(ledger.getReceipt(r1)?.value_tagged_at).toBeTruthy();
+    expect(ledger.getReceipt(other)?.value_tag).toBeNull();
+
+    expect(JSON.parse(ledger.currentGoalValueTag("goal_x") ?? "{}")).toEqual({
+      type: "revenue",
+      amount: 5000,
+    });
+    expect(ledger.setReceiptValueTagByGoal("goal_absent", "{}")).toBe(0);
+  });
+
+  it("goalLabels maps goalIds to play + prospect from local receipts", () => {
+    ledger.recordReceipt({
+      playName: "show-hn",
+      callType: "email.send",
+      decisionContext: { goalId: "goal_1", prospectEmail: "a@x.dev" },
+    });
+    ledger.recordReceipt({
+      playName: "concierge",
+      callType: "voice.call",
+      decisionContext: { goalId: "goal_2", customerName: "Pat" },
+    });
+
+    const labels = ledger.goalLabels(["goal_1", "goal_2", "goal_missing"]);
+    expect(labels.get("goal_1")).toEqual({ playName: "show-hn", prospect: "a@x.dev" });
+    expect(labels.get("goal_2")).toEqual({ playName: "concierge", prospect: "Pat" });
+    expect(labels.has("goal_missing")).toBe(false);
+    expect(ledger.goalLabels([]).size).toBe(0);
+  });
+});

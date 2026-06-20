@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import type { ReceiptView } from "@oneshot-gtm/shared-types";
+import type { ReceiptValueTag, ReceiptView } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
+import { Button } from "../components/primitives/Button.tsx";
 import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
 import { Modal } from "../components/primitives/Modal.tsx";
 import { Skeleton, SkeletonRow } from "../components/primitives/Skeleton.tsx";
@@ -11,6 +12,49 @@ import { cn, formatUsd, timeAgo } from "../lib/cn.ts";
 export const Route = createFileRoute("/receipts")({
   component: ReceiptsPage,
 });
+
+type ValueFilter = "all" | "valued" | "unvalued";
+
+const VALUE_FILTERS: Array<{ key: ValueFilter; label: string }> = [
+  { key: "all", label: "all" },
+  { key: "valued", label: "valued" },
+  { key: "unvalued", label: "unvalued" },
+];
+
+/** Border/text tone for a value chip, by RoCS tag type. */
+function valueChipTone(type: string): string {
+  switch (type) {
+    case "revenue":
+      return "border-[color:var(--ink-spend-2)]/45 text-[color:var(--ink-spend-2)]";
+    case "meeting":
+    case "qualified":
+      return "border-ink-rule text-ink-cream-2";
+    default:
+      return "border-ink-rule/60 text-ink-muted";
+  }
+}
+
+function matchesValueFilter(r: ReceiptView, filter: ValueFilter): boolean {
+  if (filter === "valued") return r.valueTag != null;
+  if (filter === "unvalued") return r.valueTag == null;
+  return true;
+}
+
+function ValueChip({ tag }: { tag: ReceiptValueTag }) {
+  const amount = tag.amount != null ? ` ${formatUsd(tag.amount)}` : "";
+  return (
+    <span
+      className={cn(
+        "inline-flex items-center rounded-[var(--radius-xs)] border px-1.5 py-[1.5px] text-[10px] uppercase tracking-[0.08em]",
+        valueChipTone(tag.type),
+      )}
+      title={tag.label ?? tag.type}
+    >
+      {tag.type}
+      {amount}
+    </span>
+  );
+}
 
 interface DayGroup {
   key: string;
@@ -27,6 +71,7 @@ const SYNC_CALL_TYPES = new Set(["web.search"]);
 
 function ReceiptsPage() {
   const [activeId, setActiveId] = useState<number | null>(null);
+  const [valueFilter, setValueFilter] = useState<ValueFilter>("all");
   const receipts = useQuery({
     queryKey: ["receipts", "list"],
     queryFn: () => api.receipts({ limit: 200 }),
@@ -38,11 +83,13 @@ function ReceiptsPage() {
     enabled: activeId != null,
   });
 
-  const groups = useMemo(() => groupByDay(receipts.data?.receipts ?? []), [receipts.data]);
-  const totalCost = useMemo(
-    () => (receipts.data?.receipts ?? []).reduce((a, r) => a + (r.costUsd ?? 0), 0),
-    [receipts.data],
-  );
+  const all = receipts.data?.receipts ?? [];
+  const valuedCount = all.filter((r) => r.valueTag != null).length;
+  const countFor = (key: ValueFilter): number =>
+    key === "valued" ? valuedCount : key === "unvalued" ? all.length - valuedCount : all.length;
+  const visible = all.filter((r) => matchesValueFilter(r, valueFilter));
+  const groups = useMemo(() => groupByDay(visible), [visible]);
+  const totalCost = useMemo(() => visible.reduce((a, r) => a + (r.costUsd ?? 0), 0), [visible]);
 
   return (
     <div className="-mx-6 -my-6 flex flex-col">
@@ -67,7 +114,7 @@ function ReceiptsPage() {
           {receipts.data ? (
             <>
               <div>
-                <span className="text-ink-cream-2">{receipts.data.receipts.length}</span>{" "}
+                <span className="text-ink-cream-2">{visible.length}</span>{" "}
                 <span className="text-ink-muted">shown</span>
               </div>
               <div className="mt-0.5">
@@ -81,6 +128,23 @@ function ReceiptsPage() {
         </div>
       </section>
 
+      {/* Value filter — "valued" surfaces the calls a reply/meeting/deal tied
+          value to. Mirrors the inbox/queue filter-bar style. */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-ink-rule/60 px-6 py-3">
+        <span className="ln-eyebrow">show</span>
+        {VALUE_FILTERS.map((f) => (
+          <Button
+            key={f.key}
+            variant={valueFilter === f.key ? "primary" : "ghost"}
+            size="sm"
+            onClick={() => setValueFilter(f.key)}
+          >
+            {f.label}
+            {receipts.data && <span className="ml-1 font-mono opacity-60">{countFor(f.key)}</span>}
+          </Button>
+        ))}
+      </div>
+
       {/* Receipts timeline — grouped by day, newest day first */}
       <section>
         {receipts.isLoading ? (
@@ -89,12 +153,16 @@ function ReceiptsPage() {
               <SkeletonRow key={i} />
             ))}
           </div>
-        ) : receipts.data?.receipts.length === 0 ? (
+        ) : all.length === 0 ? (
           <div className="px-6 py-8">
             <EmptyNote
               note="No receipts yet. Every call the agent makes leaves one; one always beats zero."
               cli="oneshot-gtm motion show-hn"
             />
+          </div>
+        ) : visible.length === 0 ? (
+          <div className="px-6 py-8">
+            <EmptyNote note="No receipts have a value tag yet — replies and recorded deals tag the calls that earned them." />
           </div>
         ) : (
           <div>
@@ -115,9 +183,34 @@ function ReceiptsPage() {
         {detail.isLoading ? (
           <Skeleton lines={8} />
         ) : (
-          <pre className="max-h-[60vh] overflow-auto rounded-[var(--radius-md)] border border-ink-rule bg-ink-bg-deep p-3 font-mono text-[12px] leading-[1.55] text-ink-cream-2">
-            {JSON.stringify(detail.data?.receipt.signedReceipt ?? {}, null, 2)}
-          </pre>
+          <div className="flex flex-col gap-3">
+            {detail.data?.receipt.memo && (
+              <div>
+                <div className="ln-eyebrow mb-1">memo · why</div>
+                <div className="text-[13px] text-ink-cream-2">{detail.data.receipt.memo}</div>
+              </div>
+            )}
+            {detail.data?.receipt.valueTag && (
+              <div>
+                <div className="ln-eyebrow mb-1">value</div>
+                <ValueChip tag={detail.data.receipt.valueTag} />
+              </div>
+            )}
+            {detail.data?.receipt.decisionContext != null && (
+              <div>
+                <div className="ln-eyebrow mb-1">decisionContext · reasoning</div>
+                <pre className="max-h-[24vh] overflow-auto rounded-[var(--radius-md)] border border-ink-rule bg-ink-bg-deep p-3 font-mono text-[12px] leading-[1.55] text-ink-cream-2">
+                  {JSON.stringify(detail.data.receipt.decisionContext, null, 2)}
+                </pre>
+              </div>
+            )}
+            <div>
+              <div className="ln-eyebrow mb-1">signed receipt</div>
+              <pre className="max-h-[44vh] overflow-auto rounded-[var(--radius-md)] border border-ink-rule bg-ink-bg-deep p-3 font-mono text-[12px] leading-[1.55] text-ink-cream-2">
+                {JSON.stringify(detail.data?.receipt.signedReceipt ?? {}, null, 2)}
+              </pre>
+            </div>
+          </div>
         )}
       </Modal>
     </div>
@@ -157,6 +250,19 @@ function DaySection({ group, onClickRow }: { group: DayGroup; onClickRow: (id: n
               <td className="w-[72px] px-6 py-2 font-mono text-[11px] text-ink-faint">#{r.id}</td>
               <td className="py-2 text-ink-cream">{r.playName}</td>
               <td className="py-2 font-mono text-[12px] text-ink-muted">{r.callType}</td>
+              <td
+                className="w-[240px] max-w-[240px] truncate py-2 text-[12px] text-ink-muted"
+                title={r.memo ?? undefined}
+              >
+                {r.memo ?? <span className="text-ink-faint">—</span>}
+              </td>
+              <td className="w-[120px] py-2 text-right">
+                {r.valueTag ? (
+                  <ValueChip tag={r.valueTag} />
+                ) : (
+                  <span className="text-ink-faint">—</span>
+                )}
+              </td>
               <td className="w-[88px] py-2 text-right font-mono text-ink-cream">
                 {r.costUsd != null ? (
                   formatUsd(r.costUsd)

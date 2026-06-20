@@ -363,6 +363,34 @@ export class Ledger {
       CREATE INDEX IF NOT EXISTS idx_pending_resolution_seen
         ON pending_resolution(first_seen_at);
     `);
+    // v16 (2026-06): receipt annotation. memo + decision_context mirror the
+    // audit fields already sent to OneShot at call time (buildAuditOpts), stored
+    // locally so the /receipts UI can show "why" without re-fetching the signed
+    // receipt. value_tag (+ value_tagged_at) hold the RoCS outcome value set by
+    // tagOutcomeValue once a reply/deal lands (also PATCHed to OneShot via
+    // tagReceiptValue). sequence_events.receipt_id links a sent step back to its
+    // send receipt so an outcome knows which receipts to tag — SDK 0.21's
+    // tagReceiptValue({requestId}) then resolves each via the stored request_id,
+    // so no platform receipt-id backfill is needed.
+    this.addColumnIfMissing("receipts", "memo", "TEXT");
+    this.addColumnIfMissing("receipts", "decision_context", "TEXT");
+    this.addColumnIfMissing("receipts", "value_tag", "TEXT");
+    this.addColumnIfMissing("receipts", "value_tagged_at", "TEXT");
+    this.addColumnIfMissing("sequence_events", "receipt_id", "INTEGER");
+    this.db.exec(`
+      -- value-tag filter on the /receipts page; partial (tagged rows only).
+      CREATE INDEX IF NOT EXISTS idx_receipts_value_tag
+        ON receipts(value_tag, created_at) WHERE value_tag IS NOT NULL;
+    `);
+    // v17 (2026-06): goal-level value attribution (SDK 0.22). goal_id mirrors the
+    // cadence correlation key sent as decisionContext.goalId, so an outcome tags
+    // every receipt in the cadence at once (setReceiptValueTagByGoal) instead of
+    // walking sequence_events.receipt_id per receipt.
+    this.addColumnIfMissing("receipts", "goal_id", "TEXT");
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_receipts_goal
+        ON receipts(goal_id) WHERE goal_id IS NOT NULL;
+    `);
   }
 
   /**
@@ -944,6 +972,10 @@ export class Ledger {
     oneshotRequestId?: string;
     /** EmailIdentity id for email.send receipts — drives per-identity daily caps. */
     senderIdentity?: string;
+    /** Call-time memo (the same value sent to OneShot); defaults to "{play} {callType}". */
+    memo?: string;
+    /** Call-time decisionContext blob; JSON-stringified into the column. */
+    decisionContext?: unknown;
   }): number {
     // Idempotent on the job id: the SDK's idempotency replay returns the
     // ORIGINAL request_id when a timed-out/double-fired send is retried, and a
@@ -962,9 +994,22 @@ export class Ledger {
     // as NULL in the column, NOT silently distorted into a number.
     const costUsd =
       typeof input.costUsd === "number" && Number.isFinite(input.costUsd) ? input.costUsd : null;
+    // Mirror what buildAuditOpts sends to OneShot so the stored memo/context
+    // match the platform receipt even at call sites that don't enrich.
+    const memo = input.memo ?? `${input.playName} ${input.callType}`;
+    const decisionContext = input.decisionContext ?? {
+      playName: input.playName,
+      callType: input.callType,
+    };
+    // Mirror the cadence correlation key (decisionContext.goalId) into its own
+    // column so an outcome can value-tag the whole goal in one UPDATE.
+    const goalId =
+      typeof (decisionContext as { goalId?: unknown }).goalId === "string"
+        ? (decisionContext as { goalId: string }).goalId
+        : null;
     const stmt = this.db.prepare(`
-      INSERT INTO receipts(play_name, call_type, cost_usd, signed_receipt, oneshot_request_id, sender_identity)
-      VALUES(?, ?, ?, ?, ?, ?)
+      INSERT INTO receipts(play_name, call_type, cost_usd, signed_receipt, oneshot_request_id, sender_identity, memo, decision_context, goal_id)
+      VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
       input.playName,
@@ -973,6 +1018,9 @@ export class Ledger {
       input.signedReceipt ? JSON.stringify(input.signedReceipt) : null,
       input.oneshotRequestId ?? null,
       input.senderIdentity ?? null,
+      memo,
+      JSON.stringify(decisionContext),
+      goalId,
     );
     return Number(result.lastInsertRowid);
   }
@@ -1202,10 +1250,13 @@ export class Ledger {
     channel: SequenceEventRecord["channel"];
     status: SequenceEventRecord["status"];
     metadata?: unknown;
+    /** The send receipt this step produced — links the step to its billable call
+     *  so an outcome (reply/deal) can tag the receipt's value. */
+    receiptId?: number;
   }): number {
     const stmt = this.db.prepare(`
-      INSERT INTO sequence_events(prospect_id, play_name, step_index, channel, status, metadata_json)
-      VALUES(?, ?, ?, ?, ?, ?)
+      INSERT INTO sequence_events(prospect_id, play_name, step_index, channel, status, metadata_json, receipt_id)
+      VALUES(?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
       input.prospectId,
@@ -1214,8 +1265,76 @@ export class Ledger {
       input.channel,
       input.status,
       input.metadata ? JSON.stringify(input.metadata) : null,
+      input.receiptId ?? null,
     );
     return Number(result.lastInsertRowid);
+  }
+
+  /** Persist the RoCS value tag (JSON `{type,amount?,label?}`) on a single receipt. */
+  setReceiptValueTag(receiptId: number, valueTagJson: string): void {
+    this.db
+      .prepare(`UPDATE receipts SET value_tag = ?, value_tagged_at = datetime('now') WHERE id = ?`)
+      .run(valueTagJson, receiptId);
+  }
+
+  /**
+   * Local mirror of a goal-level value tag: stamp every receipt in the cadence
+   * (matching `goal_id`) so the /receipts UI shows the value per row. Returns the
+   * number of receipts touched. The platform records the value once per goal via
+   * `tagReceiptValue({goalId})`; this just keeps the dashboard in sync.
+   */
+  setReceiptValueTagByGoal(goalId: string, valueTagJson: string): number {
+    const res = this.db
+      .prepare(
+        `UPDATE receipts SET value_tag = ?, value_tagged_at = datetime('now') WHERE goal_id = ?`,
+      )
+      .run(valueTagJson, goalId);
+    return res.changes;
+  }
+
+  /** Current local value tag for a goal (any one of its receipts), or null. */
+  currentGoalValueTag(goalId: string): string | null {
+    const row = this.db
+      .query(`SELECT value_tag FROM receipts WHERE goal_id = ? AND value_tag IS NOT NULL LIMIT 1`)
+      .get(goalId) as { value_tag: string } | undefined;
+    return row?.value_tag ?? null;
+  }
+
+  /**
+   * Human labels (play + prospect) for a set of goalIds, derived from the local
+   * receipts so the Measure page can render OneShot's opaque goal_id rollups as
+   * "{play} → {prospect}". First receipt per goal wins.
+   */
+  goalLabels(goalIds: string[]): Map<string, { playName: string | null; prospect: string | null }> {
+    const out = new Map<string, { playName: string | null; prospect: string | null }>();
+    if (goalIds.length === 0) return out;
+    const placeholders = goalIds.map(() => "?").join(",");
+    const rows = this.db
+      .query(
+        `SELECT goal_id, play_name, decision_context FROM receipts WHERE goal_id IN (${placeholders})`,
+      )
+      .all(...goalIds) as Array<{
+      goal_id: string;
+      play_name: string;
+      decision_context: string | null;
+    }>;
+    for (const r of rows) {
+      if (out.has(r.goal_id)) continue;
+      let prospect: string | null = null;
+      if (r.decision_context) {
+        try {
+          const dc = JSON.parse(r.decision_context) as {
+            prospectEmail?: string;
+            customerName?: string;
+          };
+          prospect = dc.prospectEmail ?? dc.customerName ?? null;
+        } catch {
+          prospect = null;
+        }
+      }
+      out.set(r.goal_id, { playName: r.play_name, prospect });
+    }
+    return out;
   }
 
   /**

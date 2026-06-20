@@ -81,6 +81,45 @@ export function buildAuditOpts(
   };
 }
 
+/**
+ * Record a receipt for a billable call, persisting the SAME memo/decisionContext
+ * we send to OneShot (buildAuditOpts) so the local row matches the platform
+ * receipt. Every wrapper below funnels through this instead of calling
+ * `getLedger().recordReceipt` directly.
+ */
+function recordCallReceipt(args: {
+  ctx: CallContext;
+  callType: string;
+  signedReceipt?: unknown;
+  costUsd?: number;
+  oneshotRequestId?: string;
+  senderIdentity?: string;
+}): number {
+  const audit = buildAuditOpts(args.ctx, args.callType);
+  return getLedger().recordReceipt({
+    playName: args.ctx.playName,
+    callType: args.callType,
+    signedReceipt: args.signedReceipt,
+    costUsd: args.costUsd,
+    oneshotRequestId: args.oneshotRequestId,
+    senderIdentity: args.senderIdentity,
+    memo: audit.memo,
+    decisionContext: audit.decisionContext,
+  });
+}
+
+/**
+ * Stable correlation key for a (prospect, play) cadence. Set as
+ * `decisionContext.goalId` on every send so OneShot groups the whole sequence's
+ * spend, and tagged once on outcome via `tagReceiptValue({ goalId })`. Hashed so
+ * no raw email leaks into the id; deterministic so the same cadence always maps
+ * to the same goal.
+ */
+export function cadenceGoalId(playName: string, email: string): string {
+  const canon = email.trim().toLowerCase();
+  return `goal_${createHash("sha256").update(`${playName}:${canon}`).digest("hex").slice(0, 24)}`;
+}
+
 let agentSingleton: OneShot | null = null;
 
 async function initAgent(): Promise<OneShot> {
@@ -206,8 +245,8 @@ async function sendEmailViaGmail(input: SendEmailInput, ctx: CallContext, identi
     cost: 0,
     email: { id: sent.id, provider_message_id: sent.id, status: "sent" },
   };
-  const receiptId = getLedger().recordReceipt({
-    playName: ctx.playName,
+  const receiptId = recordCallReceipt({
+    ctx,
     callType: "email.send",
     signedReceipt: {
       provider: "gmail",
@@ -265,8 +304,8 @@ export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
   }
   const result = await agent.email(opts);
 
-  const receiptId = getLedger().recordReceipt({
-    playName: ctx.playName,
+  const receiptId = recordCallReceipt({
+    ctx,
     callType: "email.send",
     signedReceipt: result,
     costUsd: result.cost,
@@ -348,8 +387,8 @@ export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
       cost: 0,
       email: { id: sent.id, provider_message_id: sent.id, status: "sent" },
     };
-    const receiptId = getLedger().recordReceipt({
-      playName: ctx.playName,
+    const receiptId = recordCallReceipt({
+      ctx,
       callType: "email.reply",
       signedReceipt: {
         provider: "gmail",
@@ -392,8 +431,8 @@ export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
     if (name) opts.from_name = name;
   }
   const result = await agent.email(opts);
-  const receiptId = getLedger().recordReceipt({
-    playName: ctx.playName,
+  const receiptId = recordCallReceipt({
+    ctx,
     callType: "email.reply",
     signedReceipt: result,
     costUsd: result.cost,
@@ -410,8 +449,8 @@ export async function deepResearch(input: ResearchInput, ctx: CallContext) {
     depth: input.depth ?? "quick",
     ...buildAuditOpts(ctx, "research.deep"),
   });
-  const receiptId = getLedger().recordReceipt({
-    playName: ctx.playName,
+  const receiptId = recordCallReceipt({
+    ctx,
     callType: "research.deep",
     signedReceipt: result,
     costUsd: result.cost,
@@ -431,8 +470,8 @@ export async function enrichProfile(input: EnrichInput, ctx: CallContext) {
   if (input.companyDomain) opts.company_domain = input.companyDomain;
 
   const result: EnrichProfileResult = await agent.enrichProfile(opts);
-  const receiptId = getLedger().recordReceipt({
-    playName: ctx.playName,
+  const receiptId = recordCallReceipt({
+    ctx,
     callType: "enrich.profile",
     signedReceipt: result,
     costUsd: result.cost,
@@ -470,8 +509,8 @@ export async function deepResearchPerson(input: DeepResearchPersonInput, ctx: Ca
   if (input.company) opts.company = input.company;
 
   const result: DeepResearchPersonResult = await agent.deepResearchPerson(opts);
-  const receiptId = getLedger().recordReceipt({
-    playName: ctx.playName,
+  const receiptId = recordCallReceipt({
+    ctx,
     callType: "research.person",
     signedReceipt: result,
     costUsd: result.cost,
@@ -498,8 +537,8 @@ export async function findEmail(input: FindEmailInput, ctx: CallContext) {
   if (input.firstName) opts.first_name = input.firstName;
   if (input.lastName) opts.last_name = input.lastName;
   const result: FindEmailResult = await agent.findEmail(opts);
-  const receiptId = getLedger().recordReceipt({
-    playName: ctx.playName,
+  const receiptId = recordCallReceipt({
+    ctx,
     callType: "email.find",
     signedReceipt: result,
     costUsd: result.cost,
@@ -518,8 +557,8 @@ export async function verifyEmail(input: VerifyEmailInput, ctx: CallContext) {
     email: input.email,
     ...buildAuditOpts(ctx, "email.verify"),
   });
-  const receiptId = getLedger().recordReceipt({
-    playName: ctx.playName,
+  const receiptId = recordCallReceipt({
+    ctx,
     callType: "email.verify",
     signedReceipt: result,
     costUsd: result.cost,
@@ -709,8 +748,8 @@ export async function buildSite(input: BuildSiteInput, ctx: CallContext) {
   if (input.domain) opts.domain = input.domain;
 
   const result = await agent.build(opts);
-  const receiptId = getLedger().recordReceipt({
-    playName: ctx.playName,
+  const receiptId = recordCallReceipt({
+    ctx,
     callType: "build.website",
     signedReceipt: result,
     costUsd: result.cost,
@@ -733,8 +772,8 @@ export async function sendSms(input: SendSmsInput, ctx: CallContext) {
   };
   if (input.maxCost) opts.maxCost = input.maxCost;
   const result: SmsSendResult = await agent.sms(opts);
-  const receiptId = getLedger().recordReceipt({
-    playName: ctx.playName,
+  const receiptId = recordCallReceipt({
+    ctx,
     callType: "sms.send",
     signedReceipt: result,
     costUsd: result.cost,
@@ -764,8 +803,8 @@ export async function voiceCall(input: VoiceCallInput, ctx: CallContext) {
   if (input.maxDurationMinutes) opts.max_duration_minutes = input.maxDurationMinutes;
   if (input.maxCost) opts.maxCost = input.maxCost;
   const result: VoiceCallResult = await agent.voice(opts);
-  const receiptId = getLedger().recordReceipt({
-    playName: ctx.playName,
+  const receiptId = recordCallReceipt({
+    ctx,
     callType: "voice.call",
     costUsd: result.cost,
     signedReceipt: result,
@@ -786,8 +825,8 @@ export async function webSearch(input: WebSearchInput, ctx: CallContext) {
   };
   if (input.maxResults) opts.max_results = input.maxResults;
   const result: WebSearchResult = await agent.webSearch(opts);
-  const receiptId = getLedger().recordReceipt({
-    playName: ctx.playName,
+  const receiptId = recordCallReceipt({
+    ctx,
     callType: "web.search",
     signedReceipt: result,
     costUsd: result.cost,
@@ -805,8 +844,8 @@ export async function webRead(input: WebReadInput, ctx: CallContext) {
     url: input.url,
     ...buildAuditOpts(ctx, "web.read"),
   });
-  const receiptId = getLedger().recordReceipt({
-    playName: ctx.playName,
+  const receiptId = recordCallReceipt({
+    ctx,
     callType: "web.read",
     signedReceipt: result,
     costUsd: result.cost,
@@ -838,8 +877,8 @@ export async function browserTask(input: BrowserTaskInput, ctx: CallContext) {
   if (input.maxSteps) opts.max_steps = input.maxSteps;
   if (input.maxCost) opts.maxCost = input.maxCost;
   const result: BrowserResult = await agent.browser(opts);
-  const receiptId = getLedger().recordReceipt({
-    playName: ctx.playName,
+  const receiptId = recordCallReceipt({
+    ctx,
     callType: "browser.task",
     costUsd: result.cost,
     signedReceipt: result,
@@ -861,4 +900,155 @@ export type {
 
 export function receiptUrlForId(receiptId: number): string {
   return `local://receipt/${receiptId}`;
+}
+
+/** RoCS value tag — the shape OneShot's `tagReceiptValue` accepts. */
+export type ValueTag = { type: string; amount?: number; label?: string };
+
+/**
+ * Funnel rank of a value-tag type, so a later outcome never *downgrades* a
+ * receipt's value (e.g. a reply poll firing AFTER a deal is recorded must not
+ * overwrite `revenue` with `engagement`). Unknown types rank 0.
+ */
+function valueTagRank(type: string): number {
+  switch (type) {
+    case "revenue":
+      return 4;
+    case "qualified":
+      return 3;
+    case "meeting":
+      return 2;
+    case "engagement":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+/**
+ * Map a recorded deal outcome to a RoCS value tag, or null when there's no
+ * positive value to attribute (deal_lost / ghosted are left untagged).
+ */
+export function outcomeToValueTag(
+  outcome: "meeting_booked" | "sql_qualified" | "deal_won" | "deal_lost" | "ghosted",
+  amountUsd?: number,
+): ValueTag | null {
+  switch (outcome) {
+    case "meeting_booked":
+      return { type: "meeting", label: "meeting booked" };
+    case "sql_qualified":
+      return { type: "qualified", label: "SQL qualified" };
+    case "deal_won":
+      return Number.isFinite(amountUsd)
+        ? { type: "revenue", amount: amountUsd, label: "deal won" }
+        : { type: "revenue", label: "deal won" };
+    case "deal_lost":
+    case "ghosted":
+      return null;
+  }
+}
+
+/** One cadence's RoCS rollup (spend vs value), keyed by its goalId. */
+export interface CadenceRocsGoal {
+  goalId: string;
+  spend: number;
+  value: number;
+  pendingValue: number;
+  rocs: number;
+  receiptCount: number;
+}
+
+/**
+ * Per-cadence RoCS from OneShot (`rocsByGoal`): spend (receipts grouped by
+ * `decisionContext.goalId`) vs value (outcomes tagged via `tagReceiptValue({goalId})`).
+ * Transient-tolerant — a brief outage returns `[]` rather than blocking the
+ * Measure page; genuine auth errors propagate so misconfig is visible.
+ */
+export async function cadenceRocs(opts: { periodDays?: number } = {}): Promise<CadenceRocsGoal[]> {
+  try {
+    const agent = await getAgent();
+    const res = await agent.rocsByGoal(opts.periodDays != null ? { period: opts.periodDays } : {});
+    return res.goals.map((g) => ({
+      goalId: g.goal_id,
+      spend: Number(g.spend),
+      value: Number(g.value),
+      pendingValue: Number(g.pending_value),
+      rocs: g.rocs,
+      receiptCount: g.receipt_count,
+    }));
+  } catch (err) {
+    if (isTransientToolError(err)) {
+      logEvent(
+        "rocs_by_goal.transient_failure",
+        { message_120: ((err as Error).message ?? "").slice(0, 120) },
+        "warn",
+      );
+      return [];
+    }
+    throw err;
+  }
+}
+
+/**
+ * Tag a cadence's value once its outcome (reply / meeting / deal) is known.
+ * Resolves the cadence correlation key from (prospect, play), records the value
+ * to OneShot in ONE call via `tagReceiptValue({goalId})` (SDK 0.22 fans it out
+ * across the goal's receipts, recorded once so it can't double-count), and
+ * mirrors the tag onto the local receipts for the /receipts UI. Best-effort —
+ * any failure is logged and swallowed so it never breaks the triggering flow.
+ *
+ * A precedence/dedup guard skips an identical re-tag (avoids a duplicate platform
+ * outcome) and never downgrades a higher-value tag (e.g. a reply detected AFTER a
+ * deal is logged must not overwrite `revenue` with `engagement`).
+ */
+export async function tagOutcomeValue(input: {
+  prospectId: number;
+  playName: string;
+  valueTag: ValueTag;
+}): Promise<{ tagged: boolean }> {
+  const ledger = getLedger();
+  const email = ledger.getProspectById(input.prospectId)?.email;
+  const goalId = cadenceGoalId(input.playName, email ?? `pid:${input.prospectId}`);
+  const tagJson = JSON.stringify(input.valueTag);
+
+  // Precedence/dedup guard against the goal's current local tag.
+  const existing = ledger.currentGoalValueTag(goalId);
+  if (existing) {
+    if (existing === tagJson) return { tagged: false };
+    let existingType = "";
+    try {
+      existingType = (JSON.parse(existing) as ValueTag).type ?? "";
+    } catch {
+      existingType = "";
+    }
+    if (valueTagRank(existingType) > valueTagRank(input.valueTag.type)) return { tagged: false };
+  }
+
+  // Mirror locally first so the UI reflects the outcome even if the platform call
+  // can't run (no wallet creds) or fails. No-op when no receipt carries this goal.
+  const mirrored = ledger.setReceiptValueTagByGoal(goalId, tagJson);
+  if (mirrored === 0) return { tagged: false };
+
+  let agent: OneShot | null = null;
+  try {
+    agent = await getAgent();
+  } catch (err) {
+    logEvent(
+      "receipt.value_tag.agent_unavailable",
+      { message_120: ((err as Error).message ?? "").slice(0, 120) },
+      "warn",
+    );
+    return { tagged: false };
+  }
+  try {
+    await agent.tagReceiptValue({ goalId }, input.valueTag);
+    return { tagged: true };
+  } catch (err) {
+    logEvent(
+      "receipt.value_tag.failed",
+      { goal_id: goalId, message_120: ((err as Error).message ?? "").slice(0, 120) },
+      isTransientToolError(err) ? "warn" : "error",
+    );
+    return { tagged: false };
+  }
 }

@@ -29,6 +29,13 @@ function MeasurePage() {
     queryKey: ["measure", "rocs", sinceDays],
     queryFn: () => api.measureRocs(sinceDays),
   });
+  // Per-cadence RoCS from OneShot's goal-level rollup. Hits the platform, so it
+  // can lag the local tables; degrades to empty when the wallet/network is down.
+  const byGoal = useQuery({
+    queryKey: ["measure", "rocs-by-goal", sinceDays],
+    queryFn: () => api.rocsByGoal(sinceDays),
+    staleTime: 30_000,
+  });
 
   // Pull a wide receipts window once so the per-play sparklines can show a
   // daily-spend trend. We grab up to 500 receipts; for heavier founders we'd
@@ -278,6 +285,77 @@ function MeasurePage() {
                   </tr>
                 );
               })}
+            </tbody>
+          </table>
+        )}
+      </section>
+
+      {/* RoCS by cadence — OneShot's goal-level rollup (spend vs tagged value) */}
+      <section className="border-b border-ink-rule">
+        <div className="flex items-baseline justify-between px-6 pb-2 pt-5">
+          <div className="ln-eyebrow">RoCS by cadence · goal-level</div>
+          <div className="font-mono text-[11px] text-ink-faint">{rangeLabel(sinceDays)}</div>
+        </div>
+        {byGoal.isLoading ? (
+          Array.from({ length: 3 }, (_, i) => <SkeletonRow key={i} />)
+        ) : (byGoal.data?.goals.length ?? 0) === 0 ? (
+          <div className="px-6 pb-6">
+            <EmptyNote note="No cadence value attributed yet. As replies and deals get tagged, each cadence's spend-vs-value lands here." />
+          </div>
+        ) : (
+          <table className="w-full text-[13px]">
+            <thead>
+              <tr className="text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+                <th className="px-6 py-2 text-left font-medium">cadence</th>
+                <th className="py-2 text-right font-medium">spend</th>
+                <th className="py-2 text-right font-medium">value</th>
+                <th className="py-2 text-right font-medium">pending</th>
+                <th className="py-2 text-right font-medium">calls</th>
+                <th className="px-6 py-2 text-right font-medium">RoCS</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...(byGoal.data?.goals ?? [])]
+                .toSorted((a, b) => b.value - a.value || b.rocs - a.rocs)
+                .map((g, i) => (
+                  <tr
+                    key={g.goalId}
+                    className={cn(
+                      "border-t border-ink-rule/60",
+                      i % 2 === 1 && "bg-ink-surface/20",
+                    )}
+                  >
+                    <td className="px-6 py-2 text-ink-cream">
+                      <span>{g.playName ?? "—"}</span>
+                      {g.prospect && (
+                        <span className="ml-1.5 font-mono text-[11px] text-ink-muted">
+                          → {g.prospect}
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2 text-right font-mono text-ink-cream">
+                      {formatUsd(g.spend)}
+                    </td>
+                    <td className="py-2 text-right font-mono text-[color:var(--ink-receipt-2)]">
+                      {g.value > 0 ? formatUsd(g.value) : <span className="text-ink-faint">—</span>}
+                    </td>
+                    <td className="py-2 text-right font-mono text-ink-muted">
+                      {g.pendingValue > 0 ? (
+                        formatUsd(g.pendingValue)
+                      ) : (
+                        <span className="text-ink-faint">—</span>
+                      )}
+                    </td>
+                    <td className="py-2 text-right font-mono text-ink-muted">{g.receiptCount}</td>
+                    <td className="px-6 py-2 text-right font-mono text-[color:var(--ink-receipt-2)]">
+                      {g.spend > 0 && g.rocs > 0 ? (
+                        `${g.rocs.toFixed(1)}×`
+                      ) : (
+                        <span className="text-ink-faint">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
             </tbody>
           </table>
         )}

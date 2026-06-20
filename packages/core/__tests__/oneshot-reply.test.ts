@@ -251,6 +251,12 @@ describe("replyEmail — oneshot identity (SDK 0.19 threading + idempotency)", (
         callType: "email.reply",
         costUsd: 0.04,
         senderIdentity: "legacy-oneshot",
+        // recordCallReceipt mirrors the same audit fields it sends to OneShot.
+        memo: expect.any(String),
+        decisionContext: expect.objectContaining({
+          playName: "inbox-reply",
+          callType: "email.reply",
+        }),
       }),
     );
   });
@@ -265,7 +271,9 @@ describe("replyEmail — oneshot identity (SDK 0.19 threading + idempotency)", (
     await replyEmail({ ...base, body: "same body" }, { playName: "inbox-reply" });
     await replyEmail({ ...base, body: "same body" }, { playName: "inbox-reply" });
     await replyEmail({ ...base, body: "DIFFERENT body" }, { playName: "inbox-reply" });
-    const keys = emailMock.mock.calls.map((c) => (c[0] as { idempotencyKey: string }).idempotencyKey);
+    const keys = emailMock.mock.calls.map(
+      (c) => (c[0] as { idempotencyKey: string }).idempotencyKey,
+    );
     expect(keys[0]).toBe(keys[1]);
     expect(keys[2]).not.toBe(keys[0]);
   });

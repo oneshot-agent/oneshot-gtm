@@ -1,4 +1,5 @@
 import {
+  cadenceGoalId,
   ENRICH_CACHE_TTL_MS,
   ENRICH_DEADLINE_MS,
   ENRICH_FAILURE_TTL_MS,
@@ -427,6 +428,7 @@ export async function sendDraftedEmail(opts: SendDraftedOpts): Promise<SendDraft
           memo: `${opts.playName} step 0 → ${opts.to}`,
           decisionContext: {
             source: "play.initial",
+            goalId: cadenceGoalId(opts.playName, opts.to),
             prospectEmail: opts.to,
             prospectName: opts.prospectMeta.name ?? null,
             company: opts.prospectMeta.company ?? null,
@@ -441,6 +443,7 @@ export async function sendDraftedEmail(opts: SendDraftedOpts): Promise<SendDraft
         stepIndex: 0,
         channel: "email",
         status: "sent",
+        receiptId: send.receiptId,
         metadata: { subject: opts.draft.subject, body: opts.draft.body, ...opts.metadata },
       });
       return send.receiptId;

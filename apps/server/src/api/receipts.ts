@@ -1,15 +1,20 @@
 import { getLedger } from "@oneshot-gtm/core";
-import type { ReceiptDetail, ReceiptView } from "@oneshot-gtm/shared-types";
+import type { ReceiptRecord } from "@oneshot-gtm/core";
+import type { ReceiptDetail, ReceiptValueTag, ReceiptView } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 
-function toView(row: {
-  id: number;
-  play_name: string;
-  call_type: string;
-  cost_usd: number | null;
-  oneshot_request_id: string | null;
-  created_at: string;
-}): ReceiptView {
+/** Parse the JSON `value_tag` column to the wire shape; null on absent/garbage. */
+function parseValueTag(raw: string | null): ReceiptValueTag | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw) as ReceiptValueTag;
+    return v && typeof v.type === "string" ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+function toView(row: ReceiptRecord): ReceiptView {
   return {
     id: row.id,
     playName: row.play_name,
@@ -17,6 +22,8 @@ function toView(row: {
     costUsd: row.cost_usd,
     oneshotRequestId: row.oneshot_request_id,
     createdAt: row.created_at,
+    memo: row.memo,
+    valueTag: parseValueTag(row.value_tag),
   };
 }
 
@@ -51,14 +58,18 @@ export function getReceipt(req: Request, params: Record<string, string>): Respon
       parsed = r.signed_receipt;
     }
   }
+  let decisionContext: unknown = null;
+  if (r.decision_context) {
+    try {
+      decisionContext = JSON.parse(r.decision_context);
+    } catch {
+      decisionContext = r.decision_context;
+    }
+  }
   const detail: ReceiptDetail = {
-    id: r.id,
-    playName: r.play_name,
-    callType: r.call_type,
-    costUsd: r.cost_usd,
-    oneshotRequestId: r.oneshot_request_id,
-    createdAt: r.created_at,
+    ...toView(r),
     signedReceipt: parsed,
+    decisionContext,
   };
   return jsonResponse({ receipt: detail }, 200, req);
 }
