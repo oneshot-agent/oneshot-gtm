@@ -13,6 +13,13 @@ import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
 import { Textarea } from "../components/primitives/Field.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { cn, timeAgo } from "../lib/cn.ts";
+import { matchesReplyFilter, type ReplyMatchFilter } from "../lib/replyFilter.ts";
+
+const MATCH_FILTERS: Array<{ key: ReplyMatchFilter; label: string }> = [
+  { key: "all", label: "all" },
+  { key: "matched", label: "matched" },
+  { key: "no-match", label: "no match" },
+];
 
 export const Route = createFileRoute("/inbox")({
   component: InboxPage,
@@ -35,6 +42,10 @@ function statusTone(status: string | null): "receipt" | "spend" | "blocked" | "s
 
 function InboxPage() {
   const [expanded, setExpanded] = useState<string | null>(null);
+  // Default to `matched` — most inbox mail is unmatched noise (newsletters,
+  // bounces, system mail); landing on matched surfaces real prospect replies
+  // first. The founder can switch to `all` / `no match` to see the rest.
+  const [matchFilter, setMatchFilter] = useState<ReplyMatchFilter>("matched");
   const inbox = useQuery({
     queryKey: ["inbox"],
     queryFn: () => api.inbox(),
@@ -43,6 +54,13 @@ function InboxPage() {
 
   const replies = inbox.data?.replies ?? [];
   const error = inbox.data?.error;
+  // Filter is purely client-side over the already-fetched list (the endpoint
+  // takes no params). Counts are off the full list so the buttons show the split.
+  const matchedCount = replies.filter((r) => r.matched != null).length;
+  const noMatchCount = replies.length - matchedCount;
+  const countFor = (key: ReplyMatchFilter): number =>
+    key === "matched" ? matchedCount : key === "no-match" ? noMatchCount : replies.length;
+  const visible = replies.filter((r) => matchesReplyFilter(r, matchFilter));
 
   return (
     <div className="-mx-6 -my-6 flex flex-col">
@@ -65,7 +83,11 @@ function InboxPage() {
         </div>
         <div className="flex items-center gap-3">
           <span className="font-mono text-[11px] text-ink-faint">
-            {inbox.data ? `${replies.length} repl${replies.length === 1 ? "y" : "ies"}` : "…"}
+            {!inbox.data
+              ? "…"
+              : matchFilter === "all"
+                ? `${replies.length} repl${replies.length === 1 ? "y" : "ies"}`
+                : `${visible.length} of ${replies.length}`}
           </span>
           <Button
             variant="ghost"
@@ -90,6 +112,26 @@ function InboxPage() {
         </div>
       </section>
 
+      {/* Match-status filter — most inbox mail is unmatched noise (newsletters,
+          bounces, system mail); filtering to `matched` surfaces real prospect
+          replies. Mirrors the queue page's filter-bar style. */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-ink-rule/60 px-6 py-3">
+        <span className="ln-eyebrow">show</span>
+        {MATCH_FILTERS.map((f) => (
+          <Button
+            key={f.key}
+            variant={matchFilter === f.key ? "primary" : "ghost"}
+            size="sm"
+            onClick={() => setMatchFilter(f.key)}
+          >
+            {f.label}
+            {/* opacity (not a fixed faint color) so the count stays legible on
+                the selected button's cream fill as well as the ghost ones. */}
+            {inbox.data && <span className="ml-1 font-mono opacity-60">{countFor(f.key)}</span>}
+          </Button>
+        ))}
+      </div>
+
       {error && (
         <section className="border-b border-ink-rule/60 px-6 py-3">
           <div className="font-mono text-[12px] text-[color:var(--ink-blocked-2)]">{error}</div>
@@ -102,9 +144,19 @@ function InboxPage() {
         <div className="p-5">
           <EmptyNote note="No replies yet. When a prospect writes back, it shows here." />
         </div>
+      ) : visible.length === 0 ? (
+        <div className="p-5">
+          <EmptyNote
+            note={
+              matchFilter === "matched"
+                ? "No matched replies — none of the mail here maps to a known prospect yet."
+                : "No unmatched replies — every reply here matches a prospect."
+            }
+          />
+        </div>
       ) : (
         <div>
-          {replies.map((r, i) => (
+          {visible.map((r, i) => (
             <ReplyRow
               key={r.id}
               reply={r}

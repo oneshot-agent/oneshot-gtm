@@ -53,7 +53,12 @@ export async function listInboxRoute(req: Request): Promise<Response> {
 
   let emails: Awaited<ReturnType<typeof listInbox>>["emails"];
   try {
-    const result = await listInbox({ limit: 50 });
+    // Fetch a wide window (not just the newest handful): mailboxes fill with
+    // newsletters/bounces/DMARC noise, and matching only runs over what's
+    // fetched — too small a window buries a genuine prospect reply (and its
+    // match) below the noise. The UI defaults to the `matched` filter to surface
+    // those; this gives it enough history to find them.
+    const result = await listInbox({ limit: 200 });
     emails = result.emails;
   } catch (err) {
     logEvent(
