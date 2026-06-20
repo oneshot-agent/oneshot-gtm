@@ -2,7 +2,7 @@
 
 Snapshot of what's known to work end-to-end against the live OneShot API. Updated manually after each dogfood run; CI auto-update is on the Phase 3 roadmap.
 
-Last manual update: **2026-06-13** · Bun **1.3.13** · OneShot SDK **0.19.0**
+Last manual update: **2026-06-20** · Bun **1.3.13** · OneShot SDK **0.22.0**
 
 ---
 
@@ -92,8 +92,8 @@ Last manual update: **2026-06-13** · Bun **1.3.13** · OneShot SDK **0.19.0**
 | ---------------------- | -------- |
 | `measure receipt <id>` | ✅ green |
 | `measure cac`          | ✅ green |
-| `measure rocs`         | ✅ green |
-| `measure outcome`      | ✅ green |
+| `measure rocs`         | ✅ green (per-play; cadence-level RoCS via `rocsByGoal` on `/measure`) |
+| `measure outcome`      | ✅ green — also tags the cadence's value back to OneShot (`tagReceiptValue({goalId})`) |
 
 ## Web dashboard (`apps/web`)
 
@@ -101,11 +101,11 @@ Last manual update: **2026-06-13** · Bun **1.3.13** · OneShot SDK **0.19.0**
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/` (Home)                 | ✅ green — KPIs + signal feed + Scheduler strip (per-trigger last-run + next-due)                                                                                |
 | `/queue`                   | ✅ green — target queue + triggers table (click-to-edit polling interval) + strategist dock + filters + per-row draft archive (subject/body/flags/receipt links) |
-| `/inbox` (Replies)         | ✅ green — replies matched to prospect + play + cadence status; expand a row to reply in-place (editable draft + optional LLM generation; sends from the receiving identity, Gmail threaded)                  |
-| `/cadences`                | ✅ green (per-row preview + send + bulk + history + in-flight badge)                                                                                             |
-| `/receipts`                | ✅ green (with signed-receipt modal)                                                                                                                             |
+| `/inbox` (Replies)         | ✅ green — replies matched to prospect + play + cadence status, with a match-status filter (all / matched / no match); expand a row to reply in-place (editable draft + optional LLM generation; sends from the receiving identity, Gmail threaded)                  |
+| `/cadences`                | ✅ green (per-row preview + send + bulk + history + in-flight badge; logging an outcome tags the cadence's value back to OneShot)                                |
+| `/receipts`                | ✅ green — memo column + value chip + all/valued/unvalued filter; modal shows signed receipt + memo + decisionContext                                            |
 | `/plays`                   | ✅ green (with run + copy-CLI buttons)                                                                                                                           |
-| `/measure`                 | ✅ green                                                                                                                                                         |
+| `/measure`                 | ✅ green — CAC + RoCS by play, plus a RoCS-by-cadence section (spend vs value vs multiple, via `rocsByGoal`)                                                      |
 | `/setup`                   | ✅ green (editable wizard with hidden-input keys + sender-identity pool: add OneShot domains + mailboxes, per-identity caps, per-domain shared usage, remove)     |
 | `/run/show-hn`             | ✅ green (SSE-streamed drafts)                                                                                                                                   |
 | `/run/job-change`          | ✅ green (SSE-streamed drafts)                                                                                                                                   |
@@ -136,16 +136,17 @@ Last manual update: **2026-06-13** · Bun **1.3.13** · OneShot SDK **0.19.0**
 | `POST /api/plays/:name/cadence`               | ✅ green — edit a play's cadence step offsets                                                                                                                                                                                                                 |
 | `GET /api/inbox`                              | ✅ green — replies merged across ALL sender identities (OneShot inbox + each Gmail account), matched to prospects, tagged with the receiving identity for reply routing                                                                                       |
 | `POST /api/inbox/draft-reply`                 | ✅ green — LLM-generates an editable founder-voice reply draft for an inbound email (prior touches + quoted-chain stripped); 400 on LLM/provider error                                                                                                        |
-| `POST /api/inbox/reply`                       | ✅ green — sends a reply via `replyEmail()` from the receiving identity, threaded on both transports (Gmail headers; OneShot `reply_to_email_id`, SDK 0.19) + idempotency key; `email.reply` receipt, outside cap counting; 503 while draining            |
+| `POST /api/inbox/reply`                       | ✅ green — sends a reply via `replyEmail()` from the receiving identity, threaded on both transports (Gmail headers; OneShot `reply_to_email_id`, SDK 0.22) + idempotency key; `email.reply` receipt, outside cap counting; 503 while draining            |
 | `POST /api/queue/:id/regenerate`              | ✅ green — re-draft a single queue row                                                                                                                                                                                                                        |
 | `POST /api/queue/:id/send-draft`              | ✅ green — send the persisted draft for one queue row                                                                                                                                                                                                         |
 | `GET /api/measure/cac[?sinceDays=]`           | ✅ green                                                                                                                                                                                                                                                      |
-| `GET /api/measure/rocs[?sinceDays=]`          | ✅ green                                                                                                                                                                                                                                                      |
-| `POST /api/measure/outcome`                   | ✅ green                                                                                                                                                                                                                                                      |
+| `GET /api/measure/rocs[?sinceDays=]`          | ✅ green — per-play RoCS                                                                                                                                                                                                                                       |
+| `GET /api/measure/rocs-by-goal[?sinceDays=]`  | ✅ green — per-cadence RoCS (OneShot `rocsByGoal`), scoped to this install's goals + labelled play → prospect                                                                                                                                                  |
+| `POST /api/measure/outcome`                   | ✅ green — records the outcome and tags the cadence's value back to OneShot via `tagReceiptValue({goalId})`                                                                                                                                                    |
 | `GET /api/setup`                              | ✅ green                                                                                                                                                                                                                                                      |
 | `POST /api/setup`                             | ✅ green                                                                                                                                                                                                                                                      |
 | `GET /api/doctor`                             | ✅ green                                                                                                                                                                                                                                                      |
-| `POST /api/run/:playName` (SSE)               | ✅ green — dispatches show-hn, job-change, post-funding, accelerator-batch, hiring-signal, podcast-guest, competitor-switch, stack-consolidation, repo-interest. Accepts optional `dedupeKeys[]` to persist drafts back onto originating `target_queue` rows. |
+| `POST /api/run/:playName` (SSE)               | ✅ green — dispatches show-hn, job-change, post-funding, accelerator-batch, hiring-signal, podcast-guest, competitor-switch, stack-consolidation, repo-interest. Each send carries a stable `decisionContext.goalId` for per-cadence value attribution. Accepts optional `dedupeKeys[]` to persist drafts back onto originating `target_queue` rows. |
 | `GET /api/triggers`                           | ✅ green — includes `running`, `runningSince`, `ready`, `notReadyReason`                                                                                                                                                                                      |
 | `POST /api/triggers/:name/enabled`            | ✅ green — 409 when readiness gate rejects                                                                                                                                                                                                                    |
 | `POST /api/triggers/:name/config`             | ✅ green                                                                                                                                                                                                                                                      |
