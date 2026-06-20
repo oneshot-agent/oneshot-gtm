@@ -92,7 +92,7 @@ const repoInterestDef: EmailPlayDef<RepoInterestTarget> = {
       ...(t.repoEdge
         ? [`WHY THIS REPO IS NOTABLE (peer nod + how your offer fits — see prompt): ${t.repoEdge}`]
         : []),
-      ...(t.candidateRepos && t.candidateRepos.length > 0
+      ...(Array.isArray(t.candidateRepos) && t.candidateRepos.length > 0
         ? [
             `CANDIDATE REPOS (their public work, sorted by recent push):`,
             ...t.candidateRepos.map(

@@ -128,6 +128,24 @@ describe("runRepoInterest", () => {
     expect(calls.llmInputBlocks[0]).not.toContain("CANDIDATE REPOS");
   });
 
+  it("degrades gracefully (no crash) when candidateRepos is a non-array — e.g. a legacy string payload", async () => {
+    // A stale/legacy payload once stored candidateRepos as a string; the old
+    // `.length > 0` guard let it through and `.map` threw, blocking the draft.
+    // It must now just skip the block, not error.
+    await runRepoInterest({
+      dryRun: true,
+      targets: [
+        {
+          ...base,
+          repo: "owner/name",
+          yourEdge: "x",
+          candidateRepos: "owner/repo-a, owner/repo-b" as unknown as never,
+        },
+      ],
+    });
+    expect(calls.llmInputBlocks[0]).not.toContain("CANDIDATE REPOS");
+  });
+
   it("includes the per-repo repoEdge line when set, omits it when absent", async () => {
     await runRepoInterest({
       dryRun: true,
