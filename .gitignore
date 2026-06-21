@@ -95,9 +95,9 @@ temp/
 .tmp/
 
 # ── Maintainer ops tooling (not for the public repo) ──────────────────────────
-# Deploy/provisioning scripts for first-party infra (Cloud Run, BigQuery, …).
-# They describe our cloud topology and are maintainer-local; keep them out of
-# the public tree. See apps/telemetry-ingest/README.md for what lives here.
+# First-party backend infra (the telemetry ingest service + its deploy
+# scripts). It describes our hosting/storage topology, so it's maintainer-local
+# and kept out of the public tree. See ops/telemetry-ingest/README.md locally.
 /ops/
 
 # ── User-supplied target / cohort / transcript files (privacy) ────────────────

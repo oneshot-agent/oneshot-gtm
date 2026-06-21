@@ -38,9 +38,9 @@ To point the CLI at a different ingest endpoint (e.g. a local receiver while dev
 
 ## Where it goes
 
-Sent to a single first-party endpoint owned by OneShot: a Cloud Run service on our GCP project (`apps/telemetry-ingest`) that validates the payload against the whitelist above and writes one row to BigQuery. No third-party analytics SDK is bundled in the CLI — it's a plain `fetch` POST, so there's no vendor phoning home from your machine. Aggregated and used to prioritize the public roadmap. Never sold, never shared with third parties.
+Sent to a single first-party endpoint owned by OneShot (`telemetry.oneshotagent.com`), which validates the payload against the whitelist above and stores one row per event. No third-party analytics SDK is bundled in the CLI — it's a plain `fetch` POST, so there's no vendor phoning home from your machine. Aggregated and used to prioritize the public roadmap. Never sold, never shared with third parties.
 
-This file is the authoritative spec. If telemetry is ever extended, this file is updated in the same PR — both the client (`packages/core/src/telemetry.ts`) and the receiver (`apps/telemetry-ingest`) carry the same field whitelist deliberately, and all three must move together. (This is a maintainer convention; it is not yet enforced by CI.)
+This file is the authoritative spec. If telemetry is ever extended, this file is updated in the same PR — the client (`packages/core/src/telemetry.ts`) and the first-party receiver carry the same field whitelist deliberately, and must move together. (This is a maintainer convention; it is not yet enforced by CI.)
 
 ## Local development log (separate from telemetry)
 
