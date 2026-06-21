@@ -59,15 +59,24 @@ export interface TelemetryPayload {
  */
 export const DEFAULT_TELEMETRY_URL = "https://telemetry.oneshotagent.com/v1/cli";
 
-const TELEMETRY_TIMEOUT_MS = 1500;
+// Bounds the worst-case hang on a dead/captive network. The in-flight fetch
+// keeps the event loop alive until it settles, so on the CLI this is also the
+// ceiling on how long a command's exit can be delayed by telemetry. Kept tight:
+// a healthy send is ~100-300ms; past 1s we'd rather drop the event than make
+// the user wait.
+const TELEMETRY_TIMEOUT_MS = 1000;
 
 /**
- * Resolve the ingest URL. `ONESHOT_GTM_TELEMETRY_URL` overrides the default
- * so the receiver can be exercised locally / against staging.
+ * Resolve the ingest URL. `ONESHOT_GTM_TELEMETRY_URL` overrides the default so
+ * the receiver can be exercised locally / against staging. An *explicitly
+ * empty* override (`ONESHOT_GTM_TELEMETRY_URL=""`) resolves to `""` — a hard
+ * no-op (see reportCommand's `if (!url) return`) — honoring the documented kill
+ * path. Only an absent var falls back to the default endpoint.
  */
 export function telemetryUrl(env: NodeJS.ProcessEnv = process.env): string {
-  const override = env["ONESHOT_GTM_TELEMETRY_URL"]?.trim();
-  return override && override.length > 0 ? override : DEFAULT_TELEMETRY_URL;
+  const raw = env["ONESHOT_GTM_TELEMETRY_URL"];
+  if (raw === undefined) return DEFAULT_TELEMETRY_URL;
+  return raw.trim();
 }
 
 /**
