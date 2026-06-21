@@ -83,7 +83,7 @@ Public. Issues mirror the items below. PRs welcome.
 - [x] `motion breakup-revive` — pattern-interrupt for ledger cold leads (60-90 days)
 - [x] `measure rocs` — Return on Cognitive Spend: per-play $/meeting, $/SQL, $/won
 - [x] `measure outcome` — log deal outcomes (meeting_booked / sql_qualified / deal_won / deal_lost / ghosted)
-- [ ] `measure benchmark` — opt-in cohort comparisons (deferred to Phase 3 since it needs a hosted endpoint)
+- [ ] `measure benchmark` — opt-in cohort comparisons (unblocked 2026-06-21: the hosted telemetry endpoint is now live — see Phase 3)
 - [ ] Warm-signal escalation in cadence (open-tracking → auto phone call) — needs OneShot to surface open events
 
 ## Phase F1 — Find layer (shipped)
@@ -152,7 +152,8 @@ The motion plays needed hand-curated JSON target lists; founders kept asking "wh
 
 ## Phase 3 — Distribution flywheel
 
-- [ ] Public benchmarks page powered by opt-in telemetry
+- [x] **Anonymous distribution telemetry (phase 1)** — opt-out, one summary event per CLI invocation (`command`/flags/outcome/duration/version/os), dep-free `fetch` to a first-party endpoint. Receiver is Cloud Run (`oneshot-telemetry-prod`) → BigQuery `telemetry.cli_events` at `telemetry.oneshotagent.com`. Spec + privacy boundary in `TELEMETRY.md`; opt out with `config telemetry off` or `ONESHOT_GTM_TELEMETRY=0`.
+- [ ] Public benchmarks page reading aggregates from the telemetry table (the data pipeline now exists; this is the surface)
 - [ ] CRM adapters: Attio, Folk, Pipedrive
 - [ ] Slack / Linear notification webhooks
 - [ ] Fireship sponsor video
