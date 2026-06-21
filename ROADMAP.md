@@ -152,7 +152,7 @@ The motion plays needed hand-curated JSON target lists; founders kept asking "wh
 
 ## Phase 3 — Distribution flywheel
 
-- [x] **Anonymous distribution telemetry (phase 1)** — opt-out, one summary event per CLI invocation (`command`/flags/outcome/duration/version/os), dep-free `fetch` to a first-party endpoint. Receiver is Cloud Run (`oneshot-telemetry-prod`) → BigQuery `telemetry.cli_events` at `telemetry.oneshotagent.com`. Spec + privacy boundary in `TELEMETRY.md`; opt out with `config telemetry off` or `ONESHOT_GTM_TELEMETRY=0`.
+- [x] **Anonymous distribution telemetry (phase 1)** — opt-out, one summary event per CLI invocation (`command`/flags/outcome/duration/version/os), dep-free `fetch` to a first-party endpoint (`telemetry.oneshotagent.com`). Spec + privacy boundary in `TELEMETRY.md`; opt out with `config telemetry off` or `ONESHOT_GTM_TELEMETRY=0`.
 - [ ] Public benchmarks page reading aggregates from the telemetry table (the data pipeline now exists; this is the surface)
 - [ ] CRM adapters: Attio, Folk, Pipedrive
 - [ ] Slack / Linear notification webhooks

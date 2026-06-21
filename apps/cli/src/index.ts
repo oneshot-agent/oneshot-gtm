@@ -1,9 +1,11 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { reportTelemetryEvent, takeMarkedOutcome, type TelemetryOutcome } from "@oneshot-gtm/core";
+import {
+  readPackageVersion,
+  reportTelemetryEvent,
+  takeMarkedOutcome,
+  type TelemetryOutcome,
+} from "@oneshot-gtm/core";
 import { CommandExit, fail } from "./output.ts";
 import { extractInvocation, type Invocation } from "./dispatch.ts";
 import { runInit } from "./commands/init.ts";
@@ -49,17 +51,7 @@ import {
 // Read the real version from package.json so the `--version` output and the
 // telemetry `version` field can't drift from the published release (the old
 // hardcoded "0.1.0" had gone stale against 0.6.0).
-const CLI_VERSION: string = (() => {
-  try {
-    const here = dirname(fileURLToPath(import.meta.url)); // apps/cli/src
-    const pkg = JSON.parse(readFileSync(join(here, "..", "package.json"), "utf8")) as {
-      version?: string;
-    };
-    return typeof pkg.version === "string" ? pkg.version : "0.0.0";
-  } catch {
-    return "0.0.0";
-  }
-})();
+const CLI_VERSION = readPackageVersion(import.meta.url);
 
 const program = new Command();
 program

@@ -1,4 +1,4 @@
-import { loadConfig } from "./config.ts";
+import { loadConfigCached } from "./config.ts";
 import type { OneShotConfig } from "./types.ts";
 
 /**
@@ -23,7 +23,7 @@ import type { OneShotConfig } from "./types.ts";
  * - Transmission never throws and never blocks process exit — a telemetry
  *   bug or an unreachable endpoint must be invisible to the user.
  * - No telemetry SDK: a plain `fetch` POST keeps the OSS client dependency
- *   free and transparent. The receiver (Cloud Run + BigQuery) is first-party.
+ *   free and transparent. The receiver is a first-party endpoint we operate.
  */
 
 /** Outcome of a single CLI invocation. Mirrors the TELEMETRY.md `outcome` column. */
@@ -51,10 +51,9 @@ export interface TelemetryPayload {
 }
 
 /**
- * Default first-party ingest endpoint. A stable custom domain we own (mapped
- * onto a Cloud Run service) rather than the raw `*.run.app` host — so the
- * backend can move without re-shipping the client, and no GCP project number
- * leaks into the OSS source. Operators can override per-run with
+ * Default first-party ingest endpoint — a stable custom domain we own, so the
+ * backend can move without re-shipping the client and no hosting details leak
+ * into the OSS source. Operators can override per-run with
  * ONESHOT_GTM_TELEMETRY_URL; set it to "" to make telemetry a hard no-op.
  */
 export const DEFAULT_TELEMETRY_URL = "https://telemetry.oneshotagent.com/v1/cli";
@@ -179,7 +178,7 @@ export async function reportTelemetryEvent(
     const url = telemetryUrl(env);
     // No endpoint configured ⇒ skip everything, including the config read.
     if (!url) return;
-    const cfg = loadConfig();
+    const cfg = loadConfigCached();
     if (!shouldSendTelemetry(cfg, env)) return;
     const payload = buildTelemetryPayload({
       command: input.command,

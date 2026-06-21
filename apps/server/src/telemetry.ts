@@ -1,7 +1,4 @@
-import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { reportTelemetryEvent, type TelemetryOutcome } from "@oneshot-gtm/core";
+import { readPackageVersion, reportTelemetryEvent, type TelemetryOutcome } from "@oneshot-gtm/core";
 
 /**
  * Server-side telemetry — the dashboard analogue of the CLI's per-command
@@ -17,24 +14,18 @@ import { reportTelemetryEvent, type TelemetryOutcome } from "@oneshot-gtm/core";
  *  1. `outcome` is passed in explicitly rather than read from the
  *     `markTelemetryOutcome` global — that singleton is unsafe in a concurrent
  *     server where many executions overlap.
- *  2. `command` is prefixed `server.` so the BigQuery table can separate CLI
- *     and server channels (`WHERE command LIKE 'server.%'`).
+ *  2. `command` is prefixed `server.` so the events table can separate CLI
+ *     and server channels (filter on a `server.` prefix).
  *
  * Best-effort and non-blocking: `reportTelemetryEvent` never throws and has its
  * own timeout, so a telemetry failure can't affect a request or the scheduler.
  */
 
-const SERVER_VERSION: string = (() => {
-  try {
-    const here = dirname(fileURLToPath(import.meta.url)); // apps/server/src
-    const pkg = JSON.parse(readFileSync(join(here, "..", "package.json"), "utf8")) as {
-      version?: string;
-    };
-    return typeof pkg.version === "string" ? pkg.version : "0.0.0";
-  } catch {
-    return "0.0.0";
-  }
-})();
+// Resolved lazily (on first emit) rather than at module load: this module is
+// imported by routes/scheduler whose tests sometimes mock @oneshot-gtm/core
+// wholesale, and a top-level call to a (possibly-mocked-away) core export would
+// throw during import. Inside reportServerExecution it's covered by the catch.
+let serverVersion: string | undefined;
 
 export interface ServerExecutionOpts {
   outcome: TelemetryOutcome;
@@ -55,12 +46,13 @@ export async function reportServerExecution(
   // `reportTelemetryEvent` is already best-effort, but this guards the
   // delegation itself (e.g. a partially-mocked core in tests).
   try {
+    serverVersion ??= readPackageVersion(import.meta.url);
     await reportTelemetryEvent({
       command,
       flags: opts.flags ?? [],
       outcome: opts.outcome,
       durationMs: opts.durationMs,
-      version: SERVER_VERSION,
+      version: serverVersion,
     });
   } catch {
     // never surface to a request or the scheduler loop

@@ -73,6 +73,28 @@ export function loadConfig(): OneShotConfig {
   return cfg;
 }
 
+let cachedConfig: OneShotConfig | null = null;
+
+/**
+ * Process-memoized `loadConfig` for hot, read-only callers like the telemetry
+ * send path (`reportTelemetryEvent`), which otherwise does a `readFileSync` on
+ * every emit — once per fired trigger in the server's scheduler loop. The cache
+ * is busted by `saveConfig`, so an in-process write (e.g. the dashboard's
+ * `config telemetry off`) is reflected on the next read. A config edit from a
+ * *separate* process (CLI `config telemetry off`) propagates to a long-running
+ * server on its next own write or on restart; the `ONESHOT_GTM_TELEMETRY=0` env
+ * kill switch (checked live, uncached, in `shouldSendTelemetry`) is the
+ * immediate override for that case.
+ */
+export function loadConfigCached(): OneShotConfig {
+  return (cachedConfig ??= loadConfig());
+}
+
+/** Test-only: drop the memoized config so a case can change the file underneath it. */
+export function _resetConfigCacheForTests(): void {
+  cachedConfig = null;
+}
+
 /**
  * Pure helper for the clientId bootstrap path — extracted so it can be
  * unit-tested without touching the user's real config file. Mints a fresh
@@ -101,6 +123,8 @@ export function saveConfig(cfg: OneShotConfig): void {
   ensureConfigDir();
   if (!existsSync(dirname(CONFIG_PATH))) mkdirSync(dirname(CONFIG_PATH), { recursive: true });
   writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+  // Bust the read cache so loadConfigCached() reflects this write (same process).
+  cachedConfig = null;
 }
 
 export function secretsPath(): string {
