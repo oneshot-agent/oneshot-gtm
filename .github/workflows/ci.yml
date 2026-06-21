@@ -40,5 +40,8 @@ jobs:
       - name: Lint
         run: bun run lint
 
+      # `--bun` forces the Bun runtime for vitest + its worker pool. Without it,
+      # CI runs vitest under Node, where `bun:sqlite` (imported by ledger.ts)
+      # doesn't exist and the suite errors with ERR_MODULE_NOT_FOUND.
       - name: Test
-        run: bun run test
+        run: bun --bun run test
