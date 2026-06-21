@@ -1,7 +1,8 @@
-import { getLedger, logEvent } from "@oneshot-gtm/core";
+import { getLedger, logEvent, type TelemetryOutcome } from "@oneshot-gtm/core";
 import { verifyAndFilterTargets } from "@oneshot-gtm/plays";
 import type { RunPlayEvent, RunPlayRequest } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
+import { reportServerExecution } from "../telemetry.ts";
 import { dispatchPlay, type DraftedView } from "./_play-dispatch.ts";
 
 const SUPPORTED = new Set([
@@ -57,6 +58,10 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
     async start(controller) {
       const encoder = new TextEncoder();
       const ledger = getLedger();
+      // Telemetry bookkeeping for this run — emitted once in `finally`.
+      const t0 = performance.now();
+      let runOutcome: TelemetryOutcome = "ok";
+      let fromQueue = false;
       const send = (event: RunPlayEvent): void => {
         // Persist FIRST — even if the client has disconnected, the resume
         // view needs every event. SSE write second; swallow if the client
@@ -101,7 +106,7 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
         // verified at finder-enqueue time, so re-verifying just adds latency.
         // The verify event tells the UI which rows were dropped + why.
         const inputCount = body.targets.length;
-        const fromQueue =
+        fromQueue =
           Array.isArray(body.dedupeKeys) && body.dedupeKeys.length === body.targets.length;
         let verify: Awaited<ReturnType<typeof verifyAndFilterTargets>>;
         if (fromQueue) {
@@ -170,6 +175,7 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
           });
         }
       } catch (err) {
+        runOutcome = "error";
         // Log the full error server-side — the SSE error event only carries a
         // short message (e.g. the SDK's generic "Tool request failed"), which
         // is useless for diagnosis. The stack reveals which call failed
@@ -229,6 +235,14 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
         } catch {
           // already closed (client disconnected) — ignore
         }
+        const flags: string[] = [];
+        if (body.dryRun) flags.push("dry-run");
+        if (fromQueue) flags.push("from-queue");
+        void reportServerExecution(`server.run.${playName}`, {
+          outcome: runOutcome,
+          durationMs: performance.now() - t0,
+          flags,
+        });
       }
     },
   });

@@ -523,6 +523,10 @@ export interface TriggerRunOutcome {
   fired: boolean;
   result?: FinderResult;
   error?: string;
+  /** Wall-clock of the run, present only when `fired`. Surfaced so callers
+   * (e.g. the dashboard scheduler's telemetry) can attribute duration without
+   * re-deriving it. */
+  duration_ms?: number;
   /** ms until this trigger is next due */
   nextDueInMs: number;
 }
@@ -821,10 +825,11 @@ export async function runDueTriggers(): Promise<TriggerRunOutcome[]> {
     logEvent("trigger.run.start", { name: spec.name, source: "watch" });
     try {
       const result = await spec.run(config);
+      const durationMs = Date.now() - startedAt;
       ledger.updateTriggerLastPoll({ name: spec.name, summary: result });
       logEvent("trigger.run.done", {
         name: spec.name,
-        duration_ms: Date.now() - startedAt,
+        duration_ms: durationMs,
         candidates: result.candidates,
         enqueued: result.enqueued,
         dropped_icp: result.droppedIcp,
@@ -833,8 +838,15 @@ export async function runDueTriggers(): Promise<TriggerRunOutcome[]> {
         cost_usd: result.costUsd,
         halted: result.halted ?? null,
       });
-      outcomes.push({ name: spec.name, fired: true, result, nextDueInMs: intervalMs });
+      outcomes.push({
+        name: spec.name,
+        fired: true,
+        result,
+        duration_ms: durationMs,
+        nextDueInMs: intervalMs,
+      });
     } catch (err) {
+      const durationMs = Date.now() - startedAt;
       const message = (err as Error).message ?? "unknown error";
       ledger.updateTriggerLastPoll({
         name: spec.name,
@@ -844,7 +856,7 @@ export async function runDueTriggers(): Promise<TriggerRunOutcome[]> {
         "trigger.run.error",
         {
           name: spec.name,
-          duration_ms: Date.now() - startedAt,
+          duration_ms: durationMs,
           message_120: message.slice(0, 120),
         },
         "error",
@@ -853,6 +865,7 @@ export async function runDueTriggers(): Promise<TriggerRunOutcome[]> {
         name: spec.name,
         fired: true,
         error: message,
+        duration_ms: durationMs,
         nextDueInMs: intervalMs,
       });
     }

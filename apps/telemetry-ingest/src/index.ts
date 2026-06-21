@@ -11,4 +11,6 @@ Bun.serve({
   fetch: (req) => handleTelemetry(req, sink, now),
 });
 
-console.log(`oneshot-gtm telemetry ingest listening on :${port} (sink=${process.env["TELEMETRY_SINK"] ?? "bigquery"})`);
+console.log(
+  `oneshot-gtm telemetry ingest listening on :${port} (sink=${process.env["TELEMETRY_SINK"] ?? "bigquery"})`,
+);
