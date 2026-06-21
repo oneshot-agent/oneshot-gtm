@@ -8,7 +8,7 @@ import {
 } from "@oneshot-gtm/plays";
 import { readFileSync, writeFileSync } from "node:fs";
 import prompts from "prompts";
-import { box, c, fail, header, note, ok, warn } from "../output.ts";
+import { bail, box, c, header, note, ok, warn } from "../output.ts";
 
 export async function commandIcpInterviewPrep(
   hypothesisArg: string | undefined,
@@ -17,10 +17,9 @@ export async function commandIcpInterviewPrep(
   header(`discover icp interview-prep`);
   const hypothesis = await resolveHypothesis(hypothesisArg, opts);
   if (!hypothesis) {
-    fail(
+    bail(
       "no hypothesis given. Pass it as an arg, with --from-file <path>, --stdin, or run with no args for an interactive prompt.",
     );
-    process.exit(1);
   }
   note(`Hypothesis: ${c.cyan(truncate(hypothesis, 120))}\n`);
   const md = await generateInterviewPrep(hypothesis);
@@ -99,8 +98,7 @@ export async function commandPmfClassify(): Promise<void> {
   );
 
   if (!answers["buyer"] || !answers["painInTheirWords"]) {
-    fail("required answers missing.");
-    process.exit(1);
+    bail("required answers missing.");
   }
 
   const result = await pmfClassify({
@@ -141,8 +139,7 @@ export async function commandPmfSurvey(opts: {
 }): Promise<void> {
   header(`discover pmf survey ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
   if (!opts.cohortFile) {
-    fail("--cohort <file> is required (text file with one email per line, or JSON array)");
-    process.exit(1);
+    bail("--cohort <file> is required (text file with one email per line, or JSON array)");
   }
   const productName = opts.productName ?? (await askText("Product name (for the landing page)"));
   const productDescription =

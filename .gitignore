@@ -94,6 +94,12 @@ tmp/
 temp/
 .tmp/
 
+# ── Maintainer ops tooling (not for the public repo) ──────────────────────────
+# Deploy/provisioning scripts for first-party infra (Cloud Run, BigQuery, …).
+# They describe our cloud topology and are maintainer-local; keep them out of
+# the public tree. See apps/telemetry-ingest/README.md for what lives here.
+/ops/
+
 # ── User-supplied target / cohort / transcript files (privacy) ────────────────
 # Real prospect lists shouldn't end up in git. Keep the example files,
 # ignore anything you write next to them.

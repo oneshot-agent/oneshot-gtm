@@ -1,0 +1,6 @@
+node_modules
+.turbo
+dist
+*.log
+__tests__
+README.md
