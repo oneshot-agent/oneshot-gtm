@@ -150,7 +150,6 @@ describe("validateEvent — caps + coercion", () => {
     expect(r.ok && r.row.llm_provider).toBe("");
   });
 
-
   it("caps flags count and element length", () => {
     const flags = Array.from({ length: 50 }, (_, i) => "f".repeat(100) + i);
     const r = validateEvent({ command: "x", outcome: "ok", flags }, NOW);

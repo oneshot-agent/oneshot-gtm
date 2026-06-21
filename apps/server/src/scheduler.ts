@@ -1,6 +1,7 @@
 import { logEvent } from "@oneshot-gtm/core";
 import { nextSleepMs, runDueTriggers, runPendingRetries } from "@oneshot-gtm/find";
 import { pollInboxReplies } from "@oneshot-gtm/plays";
+import { reportServerExecution } from "./telemetry.ts";
 
 /**
  * Background scheduler that polls registered triggers on their interval and
@@ -41,6 +42,17 @@ export function startScheduler(): SchedulerHandle {
     try {
       const outcomes = await runDueTriggers();
       const fired = outcomes.filter((o) => o.fired).length;
+      // One anonymous telemetry event per trigger that actually ran this tick.
+      // Best-effort and detached — must not delay the next tick or the reply
+      // poll below.
+      for (const o of outcomes) {
+        if (!o.fired) continue;
+        void reportServerExecution(`server.trigger.${o.name}`, {
+          outcome: o.error ? "error" : "ok",
+          durationMs: o.duration_ms ?? 0,
+          flags: ["scheduled"],
+        });
+      }
       // Reply detection is isolated: an inbox outage must not skip trigger
       // scheduling (or vice-versa), and it never sends, so it can't double-spend.
       let repliesDetected = 0;

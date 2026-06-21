@@ -21,7 +21,11 @@ function json(status: number, body: unknown): Response {
  * transient BigQuery hiccup doesn't turn into client-visible 5xx retries
  * (the client is fire-and-forget anyway).
  */
-export async function handleTelemetry(req: Request, sink: Sink, now: () => string): Promise<Response> {
+export async function handleTelemetry(
+  req: Request,
+  sink: Sink,
+  now: () => string,
+): Promise<Response> {
   const url = new URL(req.url);
 
   if (req.method === "GET" && url.pathname === "/") {

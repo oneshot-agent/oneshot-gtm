@@ -4,6 +4,7 @@ import {
   DEFAULT_TELEMETRY_URL,
   markTelemetryOutcome,
   reportCommand,
+  reportTelemetryEvent,
   shouldSendTelemetry,
   takeMarkedOutcome,
   telemetryUrl,
@@ -135,6 +136,44 @@ describe("reportCommand — transport", () => {
   it("never throws when fetch rejects (endpoint down)", async () => {
     vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNREFUSED"));
     await expect(reportCommand(payload, "http://ingest.local/v1/cli")).resolves.toBeUndefined();
+  });
+});
+
+describe("reportTelemetryEvent — shared send path (gate + payload)", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const event = {
+    command: "motion show-hn",
+    flags: ["dry-run"],
+    outcome: "ok" as const,
+    durationMs: 12,
+    version: "9.9.9",
+  };
+
+  it("is a no-op when the env kill-switch disables telemetry", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    await reportTelemetryEvent(event, { ONESHOT_GTM_TELEMETRY: "0" });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("builds and POSTs a payload (caller's version, host-stamped os) when enabled", async () => {
+    const fetchSpy = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValue(new Response(null, { status: 204 }));
+    await reportTelemetryEvent(event, {}); // empty env → not disabled, default URL
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const payload = JSON.parse(fetchSpy.mock.calls[0]![1]?.body as string) as Record<
+      string,
+      unknown
+    >;
+    expect(payload["command"]).toBe("motion show-hn");
+    expect(payload["version"]).toBe("9.9.9");
+    expect(payload["os"]).toBe(process.platform);
+  });
+
+  it("never throws when fetch rejects", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNREFUSED"));
+    await expect(reportTelemetryEvent(event, {})).resolves.toBeUndefined();
   });
 });
 

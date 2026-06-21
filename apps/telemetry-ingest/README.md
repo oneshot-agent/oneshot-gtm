@@ -64,10 +64,10 @@ bq query --use_legacy_sql=false \
 
 ## Environment
 
-| Var              | Default      | Purpose                                  |
-| ---------------- | ------------ | ---------------------------------------- |
-| `PORT`           | `8080`       | Cloud Run injects this.                  |
-| `TELEMETRY_SINK` | `bigquery`   | Set `local` for the in-memory dev sink.  |
-| `GCP_PROJECT`    | (ADC)        | BigQuery project override.               |
-| `BQ_DATASET`     | `telemetry`  | Dataset name.                            |
-| `BQ_TABLE`       | `cli_events` | Table name.                              |
+| Var              | Default      | Purpose                                 |
+| ---------------- | ------------ | --------------------------------------- |
+| `PORT`           | `8080`       | Cloud Run injects this.                 |
+| `TELEMETRY_SINK` | `bigquery`   | Set `local` for the in-memory dev sink. |
+| `GCP_PROJECT`    | (ADC)        | BigQuery project override.              |
+| `BQ_DATASET`     | `telemetry`  | Dataset name.                           |
+| `BQ_TABLE`       | `cli_events` | Table name.                             |

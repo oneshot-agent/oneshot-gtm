@@ -3,15 +3,7 @@ import { Command } from "commander";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import {
-  buildTelemetryPayload,
-  loadConfig,
-  reportCommand,
-  shouldSendTelemetry,
-  takeMarkedOutcome,
-  telemetryUrl,
-  type TelemetryOutcome,
-} from "@oneshot-gtm/core";
+import { reportTelemetryEvent, takeMarkedOutcome, type TelemetryOutcome } from "@oneshot-gtm/core";
 import { CommandExit, fail } from "./output.ts";
 import { extractInvocation, type Invocation } from "./dispatch.ts";
 import { runInit } from "./commands/init.ts";
@@ -494,28 +486,13 @@ async function sendTelemetry(
   outcome: TelemetryOutcome,
   startMs: number,
 ): Promise<void> {
-  try {
-    // No endpoint configured (default OSS build) ⇒ skip everything, including
-    // the config read. The maintainer's release sets the endpoint.
-    const url = telemetryUrl();
-    if (!url) return;
-    const cfg = loadConfig();
-    if (!shouldSendTelemetry(cfg, process.env)) return;
-    const payload = buildTelemetryPayload({
-      command: inv.command,
-      flags: inv.flags,
-      outcome,
-      durationMs: performance.now() - startMs,
-      version: CLI_VERSION,
-      clientId: cfg.clientId,
-      llmProvider: cfg.llmProvider,
-      platform: process.platform,
-      bunVersion: typeof Bun !== "undefined" ? Bun.version : "",
-    });
-    await reportCommand(payload, url);
-  } catch {
-    // never surface telemetry failures to the user
-  }
+  await reportTelemetryEvent({
+    command: inv.command,
+    flags: inv.flags,
+    outcome,
+    durationMs: performance.now() - startMs,
+    version: CLI_VERSION,
+  });
 }
 
 function attachHelpFallbacks(cmd: Command): void {

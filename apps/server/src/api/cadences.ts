@@ -17,6 +17,7 @@ import type {
   CadenceView,
 } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
+import { reportServerExecution } from "../telemetry.ts";
 
 /**
  * In-flight cadence sends are tracked on the cadence_state row's
@@ -314,12 +315,21 @@ export async function sendCadenceStepRoute(
       req,
     );
   }
+  const sendStartedAt = performance.now();
   void (async () => {
     try {
       await sendCadenceStep(parsed);
       // Success path: advanceCadence inside sendCadenceStep already cleared
       // sending_started_at as part of its UPDATE. Nothing to do here.
+      void reportServerExecution("server.cadence.send", {
+        outcome: "ok",
+        durationMs: performance.now() - sendStartedAt,
+      });
     } catch (err) {
+      void reportServerExecution("server.cadence.send", {
+        outcome: "error",
+        durationMs: performance.now() - sendStartedAt,
+      });
       logEvent(
         "cadence.send.failed",
         {
@@ -403,6 +413,7 @@ export async function sendCadenceBatchRoute(req: Request): Promise<Response> {
       req,
     );
   }
+  const batchStartedAt = performance.now();
   void (async () => {
     try {
       // Per-item callback: clear the marker on each settled row. The serial
@@ -416,7 +427,15 @@ export async function sendCadenceBatchRoute(req: Request): Promise<Response> {
           /* sweeper safety net */
         }
       });
+      void reportServerExecution("server.cadence.batch", {
+        outcome: "ok",
+        durationMs: performance.now() - batchStartedAt,
+      });
     } catch (err) {
+      void reportServerExecution("server.cadence.batch", {
+        outcome: "error",
+        durationMs: performance.now() - batchStartedAt,
+      });
       // Belt-and-suspenders: the wrapper catches per-item; this catch only
       // fires if the wrapper itself throws. Release everything so the founder
       // can retry without waiting for the sweep.

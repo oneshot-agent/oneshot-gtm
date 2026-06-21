@@ -1,3 +1,4 @@
+import { loadConfig } from "./config.ts";
 import type { OneShotConfig } from "./types.ts";
 
 /**
@@ -141,6 +142,50 @@ export async function reportCommand(
     // swallowed — telemetry must never surface to the user (see header)
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/** One telemetry event, minus the host-resolved fields the helper fills in. */
+export interface TelemetryEventInput {
+  command: string;
+  flags: string[];
+  outcome: TelemetryOutcome;
+  durationMs: number;
+  /** Caller-supplied so each emitter reports its own package version. */
+  version: string;
+}
+
+/**
+ * The single send path shared by every emitter (CLI dispatch, server
+ * executions). Resolves the endpoint + opt-out gate, reads the anonymous
+ * install id / provider from config, stamps host fields (os, bun), and fires.
+ * Best-effort: never throws, never blocks the caller. Centralizing this keeps
+ * the CLI and server channels from drifting as the payload evolves.
+ */
+export async function reportTelemetryEvent(
+  input: TelemetryEventInput,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
+  try {
+    const url = telemetryUrl(env);
+    // No endpoint configured ⇒ skip everything, including the config read.
+    if (!url) return;
+    const cfg = loadConfig();
+    if (!shouldSendTelemetry(cfg, env)) return;
+    const payload = buildTelemetryPayload({
+      command: input.command,
+      flags: input.flags,
+      outcome: input.outcome,
+      durationMs: input.durationMs,
+      version: input.version,
+      clientId: cfg.clientId,
+      llmProvider: cfg.llmProvider,
+      platform: process.platform,
+      bunVersion: typeof Bun !== "undefined" ? Bun.version : "",
+    });
+    await reportCommand(payload, url);
+  } catch {
+    // never surface telemetry failures to the caller
   }
 }
 

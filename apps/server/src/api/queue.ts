@@ -4,9 +4,11 @@ import {
   isSendDeferred,
   type QueueRow,
   type QueueStatus,
+  type TelemetryOutcome,
 } from "@oneshot-gtm/core";
 import { drainQueue } from "@oneshot-gtm/find";
 import { enrollInCadence, sendDraftedEmail } from "@oneshot-gtm/plays";
+import { reportServerExecution } from "../telemetry.ts";
 import {
   blockingFlags,
   type DrainRequest,
@@ -134,19 +136,32 @@ export async function drainQueueRoute(req: Request): Promise<Response> {
     return jsonResponse({ error: "invalid JSON body" }, 400, req);
   }
   if (!body.playName) return jsonResponse({ error: "playName required" }, 400, req);
-  const result = await drainQueue({
-    playName: body.playName,
-    limit: body.limit ?? 10,
-    dryRun: !!body.dryRun,
-    ...(body.senderCohort ? { senderCohort: body.senderCohort } : {}),
-    ...(body.freeForCohortOffer ? { freeForCohortOffer: body.freeForCohortOffer } : {}),
-  });
-  const view: DrainResult = {
-    drained: result.drained,
-    sent: result.sent,
-    errors: result.errors,
-  };
-  return jsonResponse(view, 200, req);
+  const t0 = performance.now();
+  let outcome: TelemetryOutcome = "ok";
+  try {
+    const result = await drainQueue({
+      playName: body.playName,
+      limit: body.limit ?? 10,
+      dryRun: !!body.dryRun,
+      ...(body.senderCohort ? { senderCohort: body.senderCohort } : {}),
+      ...(body.freeForCohortOffer ? { freeForCohortOffer: body.freeForCohortOffer } : {}),
+    });
+    const view: DrainResult = {
+      drained: result.drained,
+      sent: result.sent,
+      errors: result.errors,
+    };
+    return jsonResponse(view, 200, req);
+  } catch (err) {
+    outcome = "error";
+    throw err;
+  } finally {
+    void reportServerExecution("server.queue.drain", {
+      outcome,
+      durationMs: performance.now() - t0,
+      flags: body.dryRun ? ["dry-run"] : [],
+    });
+  }
 }
 
 /**
@@ -216,11 +231,7 @@ export async function regenerateDraftRoute(
   // body + wipe the receiptIds list.
   const fresh = ledger.getQueueRow(id);
   if (!fresh || fresh.status === "sent" || fresh.send_started_at != null) {
-    return jsonResponse(
-      { error: "send completed (or started) during regenerate" },
-      409,
-      req,
-    );
+    return jsonResponse({ error: "send completed (or started) during regenerate" }, 409, req);
   }
 
   ledger.setQueueDraft({
@@ -331,6 +342,18 @@ export async function sendDraftRoute(
   const email = str("email") ?? str("founderEmail");
   if (!email) return jsonResponse({ error: "row has no recipient email" }, 400, req);
 
+  // Telemetry: emit exactly one event for this send attempt, regardless of
+  // which terminal path we take. Declared here (after pre-send validation) so
+  // bad-request / not-found returns above don't count as executions.
+  const t0 = performance.now();
+  const done = (outcome: TelemetryOutcome, res: Response): Response => {
+    void reportServerExecution("server.queue.send", {
+      outcome,
+      durationMs: performance.now() - t0,
+    });
+    return res;
+  };
+
   // sendDraftedEmail pushes dedup outcomes ("already-enrolled" / "already-
   // contacted") onto this array, so we can tell a deliberate skip apart from a
   // genuine send failure below.
@@ -364,9 +387,12 @@ export async function sendDraftRoute(
     // Daily caps exhausted — not a failure. Row stays approved with its
     // reviewed draft; 429 tells the UI "try again tomorrow".
     if (isSendDeferred(err)) {
-      return jsonResponse({ error: (err as Error).message, deferred: true }, 429, req);
+      return done("ok", jsonResponse({ error: (err as Error).message, deferred: true }, 429, req));
     }
-    return jsonResponse({ error: (err as Error).message ?? "send failed" }, 400, req);
+    return done(
+      "error",
+      jsonResponse({ error: (err as Error).message ?? "send failed" }, 400, req),
+    );
   }
   if (!result.sent) {
     try {
@@ -385,9 +411,12 @@ export async function sendDraftRoute(
           ? "already contacted via another play"
           : "already sent this play";
       ledger.setQueueStatus({ id, status: "rejected", notes: `auto: ${reason} — not re-sent` });
-      return jsonResponse({ error: `${reason} — not re-sent`, skipped: true, reason: dedup }, 409, req);
+      return done(
+        "ok",
+        jsonResponse({ error: `${reason} — not re-sent`, skipped: true, reason: dedup }, 409, req),
+      );
     }
-    return jsonResponse({ error: "send did not complete" }, 500, req);
+    return done("error", jsonResponse({ error: "send did not complete" }, 500, req));
   }
 
   const prospect = ledger.findProspectByEmail(email);
@@ -398,5 +427,5 @@ export async function sendDraftRoute(
     draft: { subject, body, flags: [], sent: true, receiptIds: result.receiptIds, dryRun: false },
   });
 
-  return jsonResponse({ sent: true, receiptIds: result.receiptIds }, 200, req);
+  return done("ok", jsonResponse({ sent: true, receiptIds: result.receiptIds }, 200, req));
 }
