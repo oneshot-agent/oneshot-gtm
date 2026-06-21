@@ -50,15 +50,13 @@ export interface TelemetryPayload {
 }
 
 /**
- * Default first-party ingest endpoint. Intentionally EMPTY in the public
- * source so no internal infrastructure identifier (GCP project, Cloud Run
- * host) ships in the OSS client, and so a fork/local build sends nowhere by
- * default. A maintainer sets this to a stable custom domain they control
- * (e.g. "https://telemetry.example.com/v1/cli") for a release; operators can
- * override per-run with ONESHOT_GTM_TELEMETRY_URL. Empty ⇒ telemetry is a
- * no-op (nothing is constructed or sent).
+ * Default first-party ingest endpoint. A stable custom domain we own (mapped
+ * onto a Cloud Run service) rather than the raw `*.run.app` host — so the
+ * backend can move without re-shipping the client, and no GCP project number
+ * leaks into the OSS source. Operators can override per-run with
+ * ONESHOT_GTM_TELEMETRY_URL; set it to "" to make telemetry a hard no-op.
  */
-export const DEFAULT_TELEMETRY_URL = "";
+export const DEFAULT_TELEMETRY_URL = "https://telemetry.oneshotagent.com/v1/cli";
 
 const TELEMETRY_TIMEOUT_MS = 1500;
 
