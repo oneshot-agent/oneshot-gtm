@@ -105,8 +105,10 @@ describe("telemetryUrl", () => {
     );
   });
 
-  it("ignores a blank override", () => {
-    expect(telemetryUrl({ ONESHOT_GTM_TELEMETRY_URL: "   " })).toBe(DEFAULT_TELEMETRY_URL);
+  it("treats an explicitly-empty override as a no-op (empty string), not the default", () => {
+    // honors the documented `ONESHOT_GTM_TELEMETRY_URL=""` kill path
+    expect(telemetryUrl({ ONESHOT_GTM_TELEMETRY_URL: "" })).toBe("");
+    expect(telemetryUrl({ ONESHOT_GTM_TELEMETRY_URL: "   " })).toBe("");
   });
 });
 

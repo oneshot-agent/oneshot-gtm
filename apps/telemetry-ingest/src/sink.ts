@@ -19,25 +19,31 @@ export class MemorySink implements Sink {
 
 /**
  * Streams one row per event into BigQuery via tabledata.insertAll. The
- * `@google-cloud/bigquery` client is imported lazily so the service (and the
- * local sink) boot even when the dep or GCP credentials are absent — the
- * import only fires when this sink is actually selected.
+ * `@google-cloud/bigquery` client is imported lazily ON FIRST INSERT — not in
+ * the constructor. An eager async IIFE in the constructor would be a floating
+ * promise: if the dynamic import or `new BigQuery()` rejected (missing dep, bad
+ * ADC) it would surface as an unhandledRejection and could crash the container
+ * at boot, before any request. Initializing inside `insert` means the init
+ * promise is always awaited where its rejection is handled (by the handler's
+ * catch → 204).
  */
 export class BigQuerySink implements Sink {
-  private table: Promise<{ insert(rows: unknown[]): Promise<unknown> }>;
+  private table?: Promise<{ insert(rows: unknown[]): Promise<unknown> }>;
 
-  constructor(opts: { projectId?: string; dataset: string; table: string }) {
-    this.table = (async () => {
+  constructor(private readonly opts: { projectId?: string; dataset: string; table: string }) {}
+
+  private getTable(): Promise<{ insert(rows: unknown[]): Promise<unknown> }> {
+    return (this.table ??= (async () => {
       const { BigQuery } = await import("@google-cloud/bigquery");
       // On Cloud Run, credentials + projectId come from the runtime service
       // account via ADC — no key file. projectId is optional override.
-      const bq = new BigQuery(opts.projectId ? { projectId: opts.projectId } : {});
-      return bq.dataset(opts.dataset).table(opts.table);
-    })();
+      const bq = new BigQuery(this.opts.projectId ? { projectId: this.opts.projectId } : {});
+      return bq.dataset(this.opts.dataset).table(this.opts.table);
+    })());
   }
 
   async insert(row: TelemetryRow): Promise<void> {
-    const table = await this.table;
+    const table = await this.getTable();
     await table.insert([row]);
   }
 }

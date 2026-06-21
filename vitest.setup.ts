@@ -18,6 +18,15 @@ import { join } from "node:path";
 const dir = mkdtempSync(join(tmpdir(), "oneshot-gtm-test-"));
 process.env["ONESHOT_GTM_HOME"] = dir;
 
+// Hard-disable distribution telemetry for the whole suite. Otherwise any test
+// that drives a server route / scheduler tick / CLI dispatch reaches
+// reportTelemetryEvent, which (telemetry defaults on) fires a real POST to the
+// production endpoint — synthetic events leaking into prod BigQuery, plus per-
+// test latency. The dedicated telemetry tests manage this var themselves
+// (explicit env args, or delete/set process.env per case), so their "enabled"
+// assertions are unaffected.
+process.env["ONESHOT_GTM_TELEMETRY"] = "0";
+
 process.on("exit", () => {
   try {
     rmSync(dir, { recursive: true, force: true });

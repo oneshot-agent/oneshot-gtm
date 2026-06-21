@@ -1,7 +1,22 @@
-import { logEvent } from "@oneshot-gtm/core";
-import { nextSleepMs, runDueTriggers, runPendingRetries } from "@oneshot-gtm/find";
+import { logEvent, type TelemetryOutcome } from "@oneshot-gtm/core";
+import {
+  nextSleepMs,
+  runDueTriggers,
+  runPendingRetries,
+  type TriggerRunOutcome,
+} from "@oneshot-gtm/find";
 import { pollInboxReplies } from "@oneshot-gtm/plays";
 import { reportServerExecution } from "./telemetry.ts";
+
+/**
+ * Map a fired trigger's outcome to a telemetry outcome. A thrown error is an
+ * error; so is a finder that returned but `halted` early (e.g. cost cap, all
+ * cohorts empty) — that's a degraded run, not a clean success, and lumping it
+ * into "ok" would understate the real failure rate. Exported for unit tests.
+ */
+export function triggerOutcome(o: TriggerRunOutcome): TelemetryOutcome {
+  return o.error || o.result?.halted ? "error" : "ok";
+}
 
 /**
  * Background scheduler that polls registered triggers on their interval and
@@ -48,7 +63,7 @@ export function startScheduler(): SchedulerHandle {
       for (const o of outcomes) {
         if (!o.fired) continue;
         void reportServerExecution(`server.trigger.${o.name}`, {
-          outcome: o.error ? "error" : "ok",
+          outcome: triggerOutcome(o),
           durationMs: o.duration_ms ?? 0,
           flags: ["scheduled"],
         });
