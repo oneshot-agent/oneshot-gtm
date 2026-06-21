@@ -6,7 +6,7 @@ import {
 } from "@oneshot-gtm/plays";
 import { readFileSync } from "node:fs";
 import prompts from "prompts";
-import { box, c, fail, header, note, ok, warn } from "../output.ts";
+import { bail, box, c, fail, header, note, ok, warn } from "../output.ts";
 
 const VERDICT_COLOR: Record<"green" | "yellow" | "red", (s: string) => string> = {
   green: (s) => c.green(s),
@@ -118,8 +118,7 @@ export async function commandHandoffTemplatize(opts: {
     outcome?: "replied" | "no_reply";
   }>;
   if (!Array.isArray(emails) || emails.length === 0) {
-    fail("input file must be a JSON array of {subject, body, outcome?} objects");
-    process.exit(1);
+    bail("input file must be a JSON array of {subject, body, outcome?} objects");
   }
   note(
     `Extracting from ${emails.length} sent emails (${emails.filter((e) => e.outcome === "replied").length} replied)\n`,

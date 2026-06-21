@@ -8,7 +8,9 @@
 oneshot-gtm config telemetry off
 ```
 
-Or set `ONESHOT_GTM_TELEMETRY=0` in your environment. That's a hard kill at the call site — no payload is even constructed.
+Or set `ONESHOT_GTM_TELEMETRY=0` in your environment (`false`, `off`, and `no` work too). That's a hard kill at the call site — no payload is even constructed, and it overrides the persisted flag for that shell session.
+
+To point the CLI at a different ingest endpoint (e.g. a local receiver while developing), set `ONESHOT_GTM_TELEMETRY_URL`.
 
 ## What is collected (when telemetry is on)
 
@@ -21,7 +23,7 @@ Or set `ONESHOT_GTM_TELEMETRY=0` in your environment. That's a hard kill at the 
 | `version`              | `0.1.0`                         | Catch regressions on a release.                         |
 | `os`                   | `darwin` / `linux` / `win32`    | Reproducibility for bug reports.                        |
 | `bun_version`          | `1.3.10`                        | Same.                                                   |
-| `anonymous_machine_id` | `9f3...` (sha256, salted)       | Distinguish unique installs without identifying anyone. |
+| `anonymous_machine_id` | `9f3a…` (random UUID)           | Distinguish unique installs without identifying anyone. This is the per-install `clientId` (see below) — a random UUID minted on first run, **not** a hash of any machine identifier, so it carries nothing traceable to your hardware or account. |
 | `llm_provider`         | `openrouter`                    | Learn which providers founders pick.                    |
 
 ## What is NEVER collected
@@ -36,9 +38,9 @@ Or set `ONESHOT_GTM_TELEMETRY=0` in your environment. That's a hard kill at the 
 
 ## Where it goes
 
-Sent to a single endpoint owned by OneShot. Aggregated and used to prioritize the public roadmap. Never sold, never shared with third parties.
+Sent to a single first-party endpoint owned by OneShot: a Cloud Run service on our GCP project (`apps/telemetry-ingest`) that validates the payload against the whitelist above and writes one row to BigQuery. No third-party analytics SDK is bundled in the CLI — it's a plain `fetch` POST, so there's no vendor phoning home from your machine. Aggregated and used to prioritize the public roadmap. Never sold, never shared with third parties.
 
-This file is the authoritative spec. If telemetry is ever extended, this file is updated in the same PR. CI rejects PRs that change telemetry without updating this file.
+This file is the authoritative spec. If telemetry is ever extended, this file is updated in the same PR — both the client (`packages/core/src/telemetry.ts`) and the receiver (`apps/telemetry-ingest`) carry the same field whitelist deliberately, and all three must move together. (This is a maintainer convention; it is not yet enforced by CI.)
 
 ## Local development log (separate from telemetry)
 
@@ -56,4 +58,4 @@ Delete the file any time: `rm ~/.oneshot-gtm/events.jsonl`. Disable the dev mirr
 
 ## Anonymous `clientId`
 
-A UUID is generated on first run and persisted to `~/.oneshot-gtm/config.json`. It is never exposed to the web layer (filtered out of `/api/setup` responses) and never transmitted today. Reserved for opt-in distribution telemetry once that lands — having it now means pre-launch installs aren't attribution-orphaned later. Disabling telemetry leaves the UUID on disk but blocks any transmission.
+A UUID is generated on first run and persisted to `~/.oneshot-gtm/config.json`. It is never exposed to the web layer (filtered out of `/api/setup` responses). It is the `anonymous_machine_id` sent with each distribution telemetry event (above) — the only thing that distinguishes one install's events from another's, with nothing traceable back to a person or machine. Distribution telemetry is **opt-out** (on by default, disclosed on first run); disabling it leaves the UUID on disk but blocks any transmission.

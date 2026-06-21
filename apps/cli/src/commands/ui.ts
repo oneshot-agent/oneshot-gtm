@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { c, fail, header, note, ok } from "../output.ts";
+import { CommandExit, c, fail, header, note, ok } from "../output.ts";
 
 interface UiOpts {
   port: number;
@@ -28,7 +28,8 @@ export async function commandUi(opts: UiOpts): Promise<void> {
     note(
       `Run: ${c.cyan("bun run --cwd apps/web build")} (one-time), or pass --dev to use the vite dev server.`,
     );
-    process.exit(1);
+    // message already printed above; abort through runOrFail so telemetry fires
+    throw new CommandExit();
   }
 
   const env: NodeJS.ProcessEnv = {

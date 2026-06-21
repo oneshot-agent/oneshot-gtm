@@ -1,6 +1,19 @@
 #!/usr/bin/env bun
 import { Command } from "commander";
-import { fail } from "./output.ts";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  buildTelemetryPayload,
+  loadConfig,
+  reportCommand,
+  shouldSendTelemetry,
+  takeMarkedOutcome,
+  telemetryUrl,
+  type TelemetryOutcome,
+} from "@oneshot-gtm/core";
+import { CommandExit, fail } from "./output.ts";
+import { extractInvocation, type Invocation } from "./dispatch.ts";
 import { runInit } from "./commands/init.ts";
 import { configFounder, configKeys, configLlm, configTelemetry } from "./commands/config.ts";
 import { commandDoctor } from "./commands/doctor.ts";
@@ -41,6 +54,21 @@ import {
   commandMotionPostFunding,
 } from "./commands/motion.ts";
 
+// Read the real version from package.json so the `--version` output and the
+// telemetry `version` field can't drift from the published release (the old
+// hardcoded "0.1.0" had gone stale against 0.6.0).
+const CLI_VERSION: string = (() => {
+  try {
+    const here = dirname(fileURLToPath(import.meta.url)); // apps/cli/src
+    const pkg = JSON.parse(readFileSync(join(here, "..", "package.json"), "utf8")) as {
+      version?: string;
+    };
+    return typeof pkg.version === "string" ? pkg.version : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+})();
+
 const program = new Command();
 program
   .name("oneshot-gtm")
@@ -48,7 +76,7 @@ program
     "Open-source GTM agent for technical founders. Pay-per-result. Signed receipts.\n" +
       "The CLI is a thin headless layer; ad-hoc target discovery + review + send happens in the dashboard (oneshot-gtm ui).",
   )
-  .version("0.1.0");
+  .version(CLI_VERSION);
 
 // Bootstrap + launcher
 
@@ -438,13 +466,56 @@ program.parseAsync(process.argv).catch((err) => {
 
 function runOrFail<A extends unknown[]>(fn: (...args: A) => void | Promise<void>) {
   return async (...args: A) => {
+    const inv = extractInvocation(args);
+    const start = performance.now();
     try {
       await fn(...args);
     } catch (err) {
+      // Errors are valuable signal — record before exiting. A thrown error
+      // always wins over any outcome a command marked for itself.
+      await sendTelemetry(inv, "error", start);
+      // CommandExit already printed its message via bail(); a raw error hasn't.
+      if (err instanceof CommandExit) process.exit(err.code);
       fail((err as Error).message);
       process.exit(1);
     }
+    // Clean return: honor an explicit marker (e.g. "lint-blocked"), else "ok".
+    await sendTelemetry(inv, takeMarkedOutcome() ?? "ok", start);
   };
+}
+
+/**
+ * Build and transmit the anonymous summary event for one invocation. Gated on
+ * the opt-out flag + env kill switch, bounded by reportCommand's own timeout,
+ * and fully best-effort — a telemetry failure must never affect the command.
+ */
+async function sendTelemetry(
+  inv: Invocation,
+  outcome: TelemetryOutcome,
+  startMs: number,
+): Promise<void> {
+  try {
+    // No endpoint configured (default OSS build) ⇒ skip everything, including
+    // the config read. The maintainer's release sets the endpoint.
+    const url = telemetryUrl();
+    if (!url) return;
+    const cfg = loadConfig();
+    if (!shouldSendTelemetry(cfg, process.env)) return;
+    const payload = buildTelemetryPayload({
+      command: inv.command,
+      flags: inv.flags,
+      outcome,
+      durationMs: performance.now() - startMs,
+      version: CLI_VERSION,
+      clientId: cfg.clientId,
+      llmProvider: cfg.llmProvider,
+      platform: process.platform,
+      bunVersion: typeof Bun !== "undefined" ? Bun.version : "",
+    });
+    await reportCommand(payload, url);
+  } catch {
+    // never surface telemetry failures to the user
+  }
 }
 
 function attachHelpFallbacks(cmd: Command): void {

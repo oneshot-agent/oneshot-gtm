@@ -8,7 +8,7 @@ import {
 import { loadConfig } from "@oneshot-gtm/core";
 import { writeFileSync } from "node:fs";
 import prompts from "prompts";
-import { box, c, fail, header, note, ok, warn } from "../output.ts";
+import { bail, box, c, header, note, ok, warn } from "../output.ts";
 
 const EXIT_WORDS = new Set(["exit", "quit", "q", ":q", "bye", "done"]);
 
@@ -127,8 +127,7 @@ export async function commandIntelPersonalize(opts: {
   header("intel personalize");
   const cfg = loadConfig();
   if (!cfg.founderName || !cfg.productOneLiner) {
-    fail("founder profile incomplete. run: oneshot-gtm config founder");
-    process.exit(1);
+    bail("founder profile incomplete. run: oneshot-gtm config founder");
   }
   const out = await generateFirstLine({
     founderName: cfg.founderName,

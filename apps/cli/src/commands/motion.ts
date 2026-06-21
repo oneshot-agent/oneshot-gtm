@@ -15,6 +15,7 @@ import {
   type PodcastGuestTarget,
   type PostFundingTarget,
 } from "@oneshot-gtm/plays";
+import { markTelemetryOutcome } from "@oneshot-gtm/core";
 import { readFileSync } from "node:fs";
 import { box, c, fail, header, note, ok, warn } from "../output.ts";
 
@@ -63,7 +64,12 @@ function printDrafts(drafts: DraftedView[], dryRun: boolean): void {
     }
     if (d.sent) ok(c.green("Sent."));
     else if (dryRun) note("(dry-run, not sent)");
-    else if (d.flags.length > 0) fail("Not sent — fix lint flags or rerun.");
+    else if (d.flags.length > 0) {
+      // The send was withheld by the anti-slop linter — not an error, but
+      // distinct from a clean "ok". Surface it as its own telemetry outcome.
+      markTelemetryOutcome("lint-blocked");
+      fail("Not sent — fix lint flags or rerun.");
+    }
   }
 }
 

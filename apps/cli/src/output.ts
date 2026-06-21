@@ -30,6 +30,31 @@ export function fail(s: string): void {
   process.stdout.write(`  ${c.red("✗")} ${s}\n`);
 }
 
+/**
+ * Sentinel thrown by `bail()`: the command already printed its own message and
+ * wants to abort with a non-zero code. The dispatch wrapper (runOrFail)
+ * recognizes it, records telemetry, and exits WITHOUT re-printing.
+ */
+export class CommandExit extends Error {
+  readonly code: number;
+  constructor(code = 1) {
+    super("command-exit");
+    this.name = "CommandExit";
+    this.code = code;
+  }
+}
+
+/**
+ * Print a failure message and abort the command. Replaces the
+ * `fail(msg); process.exit(1)` pattern so every exit funnels through
+ * runOrFail — that's the single place that records telemetry, so a guard
+ * clause must not call process.exit() directly (it would skip the event).
+ */
+export function bail(message: string, code = 1): never {
+  fail(message);
+  throw new CommandExit(code);
+}
+
 export function note(s: string): void {
   process.stdout.write(`${c.dim(s)}\n`);
 }

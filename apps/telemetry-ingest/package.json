@@ -1,0 +1,16 @@
+{
+  "name": "oneshot-gtm-telemetry-ingest",
+  "version": "0.6.0",
+  "private": true,
+  "description": "First-party ingest endpoint for oneshot-gtm anonymous CLI telemetry. Deploys to Cloud Run; writes to BigQuery.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./src/index.ts",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "TELEMETRY_SINK=local bun run --watch src/index.ts"
+  },
+  "dependencies": {
+    "@google-cloud/bigquery": "^7.9.0"
+  }
+}
