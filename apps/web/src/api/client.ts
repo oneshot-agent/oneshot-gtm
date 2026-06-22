@@ -17,6 +17,7 @@ import type {
   OutcomeByPlay,
   OutcomeRequest,
   PlayDescriptor,
+  DomainActionResult,
   DomainPoolView,
   QueueCounts,
   QueueRowView,
@@ -129,6 +130,8 @@ export const api = {
     ),
   recordOutcome: (req: OutcomeRequest) => postJson<{ id: number }>("/measure/outcome", req),
   doctor: () => getJson<{ checks: DoctorCheck[] }>("/doctor"),
+  resumeDomain: (domain: string) => postJson<DomainActionResult>("/domains/resume", { domain }),
+  pauseDomain: (domain: string) => postJson<DomainActionResult>("/domains/pause", { domain }),
   setupStatus: () =>
     getJson<{
       identities: SenderIdentityView[];

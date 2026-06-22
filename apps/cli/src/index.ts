@@ -32,6 +32,9 @@ import {
 import { commandCadenceAdvance } from "./commands/cadence.ts";
 import { commandGmailAuth } from "./commands/gmail.ts";
 import {
+  commandDomainsList,
+  commandDomainsPause,
+  commandDomainsResume,
   commandIdentitiesAdd,
   commandIdentitiesList,
   commandIdentitiesRemove,
@@ -129,6 +132,25 @@ identities
   .command("remove <id>")
   .description("Remove an identity from the pool (e.g. oneshot:sales@acme.com)")
   .action(runOrFail(commandIdentitiesRemove));
+
+// Domains: manage the wallet's provisioned OneShot sending-domain pool. A domain
+// gets paused (by reputation, or account/platform-level) → no sends from it
+// until resumed. `doctor` flags a paused domain; these resume/pause it.
+const domains = program
+  .command("domains")
+  .description("Manage the wallet's provisioned OneShot sending-domain pool");
+domains
+  .command("list")
+  .description("Show provisioned domains with pool status, warmth, and daily usage")
+  .action(runOrFail(commandDomainsList));
+domains
+  .command("resume <domain>")
+  .description("Resume a paused sending domain (e.g. oneshotagents.com)")
+  .action(runOrFail(commandDomainsResume));
+domains
+  .command("pause <domain>")
+  .description("Pause a sending domain (stop sending from it)")
+  .action(runOrFail(commandDomainsPause));
 
 // Find: scheduled / cron-able only. Ad-hoc finder runs are in the dashboard.
 const find = program
