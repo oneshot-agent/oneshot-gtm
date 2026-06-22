@@ -4,9 +4,11 @@ import {
   identityCapacities,
   listSendingDomains,
   loadConfig,
+  pauseSendingDomain,
   registerOneShotIdentity,
   removeIdentity,
   resolveIdentities,
+  resumeSendingDomain,
   WARMUP_DEFAULTS,
   type DomainPoolEntry,
 } from "@oneshot-gtm/core";
@@ -140,6 +142,45 @@ export async function commandIdentitiesAdd(): Promise<void> {
     : `warm-up ${WARMUP_DEFAULTS.warmup!.startPerDay}/day +${WARMUP_DEFAULTS.warmup!.incrementPerWeek}/wk, max ${WARMUP_DEFAULTS.maxPerDay}`;
   ok(`Identity ${c.cyan(identityId)} added to the rotation pool (${capMsg}).`);
   note("New prospects rotate across the pool; existing threads keep their original sender.");
+}
+
+/** Show just the wallet's provisioned domain pool with status + warmth + usage. */
+export async function commandDomainsList(): Promise<void> {
+  header("Provisioned domains");
+  const domains = await safeListDomains();
+  if (domains.length === 0) {
+    note("None found (or the pool couldn't be reached).");
+    return;
+  }
+  for (const d of domains) {
+    const tone = d.pool_status === "active" ? c.green : d.pool_status === "warming" ? c.cyan : c.red;
+    note(
+      `${d.domain}  ${tone(d.pool_status)}` +
+        (d.warmup_score != null ? `  warmth ${d.warmup_score}` : "") +
+        `  sent ${d.daily_sent_count}/${d.daily_send_limit}/day`,
+    );
+  }
+  if (domains.some((d) => d.pool_status === "paused" || d.pool_status === "removed")) {
+    note("Resume a paused domain: oneshot-gtm domains resume <domain>");
+  }
+}
+
+/** Resume a paused sending domain in the wallet's pool. */
+export async function commandDomainsResume(domain: string): Promise<void> {
+  const result = await resumeSendingDomain(domain);
+  ok(`${c.cyan(result.domain)} → ${result.pool_status}`);
+  if (result.pool_status !== "active") {
+    warn(
+      "Still not active — the pause may be account- or platform-level (not per-domain). " +
+        "Check `oneshot-gtm doctor` and OneShot's status.",
+    );
+  }
+}
+
+/** Pause a sending domain in the wallet's pool (stop sending from it). */
+export async function commandDomainsPause(domain: string): Promise<void> {
+  const result = await pauseSendingDomain(domain);
+  ok(`${c.cyan(result.domain)} → ${result.pool_status}`);
 }
 
 /** Drop an identity from the pool by id. */

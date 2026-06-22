@@ -106,6 +106,20 @@ function SetupPage() {
     },
   });
 
+  // Resume / pause a provisioned sending domain in the OneShot pool. Refetches
+  // the setup status (and doctor) so the status badge + warning update. Errors
+  // surface verbatim — incl. the OneShot HTTP status during a platform outage.
+  const domainAction = useMutation({
+    mutationFn: (vars: { domain: string; action: "resume" | "pause" }) =>
+      vars.action === "resume" ? api.resumeDomain(vars.domain) : api.pauseDomain(vars.domain),
+    onSuccess: (res) => {
+      void qc.invalidateQueries({ queryKey: ["setup"] });
+      void qc.invalidateQueries({ queryKey: ["doctor"] });
+      toast.success(`${res.domain} → ${res.poolStatus}`);
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
   // Elapsed counter so the ~30–60s derive feels alive instead of frozen.
   // Server doesn't stream progress; we cycle a phase label by elapsed time.
   const [deriveElapsed, setDeriveElapsed] = useState(0);
@@ -638,6 +652,53 @@ function SetupPage() {
                   . Cap and removal changes apply on Save. Removing an identity blocks sends to
                   prospects pinned to it until it's restored.
                 </span>
+
+                {/* Provisioned domains: the wallet's OneShot sending-domain pool
+                    with live status. A paused domain sends nothing until resumed
+                    (doctor flags it); resume/pause act on it in place. */}
+                {provisionedDomains.length > 0 && (
+                  <div className="mt-3 flex flex-col gap-2 border-t border-ink-rule pt-3">
+                    <span className="ln-eyebrow">Provisioned domains</span>
+                    {provisionedDomains.map((d) => {
+                      const paused = d.poolStatus === "paused" || d.poolStatus === "removed";
+                      const tone =
+                        d.poolStatus === "active"
+                          ? "receipt"
+                          : d.poolStatus === "warming"
+                            ? "spend"
+                            : "blocked";
+                      const busy =
+                        domainAction.isPending && domainAction.variables?.domain === d.domain;
+                      return (
+                        <div
+                          key={d.domain}
+                          className="flex items-center gap-3 border border-ink-rule rounded-[var(--radius-sm)] px-3 py-2"
+                        >
+                          <Badge tone={tone}>{d.poolStatus}</Badge>
+                          <span className="truncate text-[13px] text-ink-cream">{d.domain}</span>
+                          <span className="ln-mono text-[11px] text-ink-muted">
+                            sent {d.dailySentCount}/{d.dailySendLimit}/day
+                            {d.warmupScore != null ? ` · warmth ${d.warmupScore}` : ""}
+                          </span>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            disabled={busy}
+                            className="ml-auto h-7 px-2 text-[11px]"
+                            onClick={() =>
+                              domainAction.mutate({
+                                domain: d.domain,
+                                action: paused ? "resume" : "pause",
+                              })
+                            }
+                          >
+                            {busy ? "…" : paused ? "Resume" : "Pause"}
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
 
                 {/* Add OneShot sender: a wallet-owned domain + a mailbox local-part.
                     Multiple domains, and multiple mailboxes within one domain, all

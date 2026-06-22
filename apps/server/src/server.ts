@@ -21,6 +21,7 @@ import { gmailAuthCallbackRoute, startGmailAuthRoute } from "./api/gmail-auth.ts
 import { deriveIcpRoute } from "./api/derive-icp.ts";
 import { strategistRoute } from "./api/strategist.ts";
 import { doctor } from "./api/doctor.ts";
+import { pauseDomainRoute, resumeDomainRoute } from "./api/domains.ts";
 import { runPlay } from "./api/run.ts";
 import { getRunRoute } from "./api/runs.ts";
 import {
@@ -87,6 +88,8 @@ const routes: RouteEntry[] = [
   route("POST", "/api/measure/outcome", recordOutcome),
   route("GET", "/api/setup", getSetupStatus),
   route("POST", "/api/setup", setup),
+  route("POST", "/api/domains/resume", resumeDomainRoute),
+  route("POST", "/api/domains/pause", pauseDomainRoute),
   route("GET", "/api/gmail/auth/start", startGmailAuthRoute),
   route("GET", "/api/gmail/auth/callback", gmailAuthCallbackRoute),
   route("POST", "/api/setup/derive-icp", deriveIcpRoute),

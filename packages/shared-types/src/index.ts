@@ -277,6 +277,12 @@ export interface DomainPoolView {
   dailySentCount: number;
 }
 
+/** Result of POST /api/domains/{resume,pause} — the domain's new pool status. */
+export interface DomainActionResult {
+  domain: string;
+  poolStatus: "active" | "paused";
+}
+
 /** One sender identity as shown on /setup: pool entry + today's usage. */
 export interface SenderIdentityView {
   id: string;

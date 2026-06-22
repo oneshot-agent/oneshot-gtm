@@ -3,6 +3,7 @@ import {
   type BrowserResult,
   type DeepResearchPersonResult,
   type DomainPoolEntry,
+  type DomainPoolStatusResult,
   type EmailResult,
   type EnrichProfileResult,
   type FindEmailResult,
@@ -26,7 +27,7 @@ import { isTransientToolError, resolveSenderIdentity } from "./send-routing.ts";
 import type { EmailIdentity } from "./types.ts";
 
 /** Re-exported so callers don't reach into the SDK for the domain-pool shape. */
-export type { DomainPoolEntry } from "@oneshot-agent/sdk";
+export type { DomainPoolEntry, DomainPoolStatusResult } from "@oneshot-agent/sdk";
 
 export interface SendEmailInput {
   to: string;
@@ -166,6 +167,27 @@ export async function listSendingDomains(): Promise<DomainPoolEntry[]> {
     }
     throw err;
   }
+}
+
+/**
+ * Resume a paused sending domain in the wallet's pool (SDK `resumeDomain`).
+ * Unlike `listSendingDomains`, errors PROPAGATE — this is an explicit operator
+ * action, so a transient/auth failure must be surfaced (and retried), never
+ * swallowed into a false "done". Returns the domain's new pool status.
+ */
+export async function resumeSendingDomain(domain: string): Promise<DomainPoolStatusResult> {
+  const agent = await getAgent();
+  const result = await agent.resumeDomain(domain.trim().toLowerCase());
+  logEvent("domains.resume", { domain: domain.trim().toLowerCase(), status: result.pool_status });
+  return result;
+}
+
+/** Pause a sending domain in the wallet's pool (SDK `pauseDomain`). Errors propagate (see resumeSendingDomain). */
+export async function pauseSendingDomain(domain: string): Promise<DomainPoolStatusResult> {
+  const agent = await getAgent();
+  const result = await agent.pauseDomain(domain.trim().toLowerCase());
+  logEvent("domains.pause", { domain: domain.trim().toLowerCase(), status: result.pool_status });
+  return result;
 }
 
 /**
