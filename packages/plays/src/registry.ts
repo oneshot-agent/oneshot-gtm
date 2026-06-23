@@ -6,6 +6,7 @@ import { type JobChangeTarget, runJobChange } from "./job-change.ts";
 import { type LumaEventsTarget, runLumaEvents } from "./luma-events.ts";
 import { type PodcastGuestTarget, runPodcastGuest } from "./podcast-guest.ts";
 import { type PostFundingTarget, runPostFunding } from "./post-funding.ts";
+import { type ProfileIntroTarget, runProfileIntro } from "./profile-intro.ts";
 import { type RepoInterestTarget, runRepoInterest } from "./repo-interest.ts";
 import { type ShowHnTarget, runShowHn } from "./show-hn.ts";
 import { type StackConsolidationTarget, runStackConsolidation } from "./stack-consolidation.ts";
@@ -142,6 +143,14 @@ export const PLAYS: Record<string, PlayDispatch> = {
       runLumaEvents({
         dryRun: o.dryRun,
         targets: o.targets as LumaEventsTarget[],
+        ...progressOpt(o),
+      }),
+  },
+  "profile-intro": {
+    run: (o) =>
+      runProfileIntro({
+        dryRun: o.dryRun,
+        targets: o.targets as ProfileIntroTarget[],
         ...progressOpt(o),
       }),
   },

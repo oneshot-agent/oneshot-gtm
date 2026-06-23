@@ -39,6 +39,7 @@ import {
   setTriggerConfigRoute,
   setTriggerEnabledRoute,
 } from "./api/triggers.ts";
+import { addProspectRoute } from "./api/prospects.ts";
 
 interface ServerOptions {
   port: number;
@@ -97,6 +98,7 @@ const routes: RouteEntry[] = [
   route("GET", "/api/doctor", doctor),
   route("POST", "/api/run/:playName", runPlay),
   route("GET", "/api/runs/:id", getRunRoute),
+  route("POST", "/api/prospects/add", addProspectRoute),
   route("GET", "/api/queue", listQueueRoute),
   route("POST", "/api/queue/approve-all", approveAllRoute),
   route("POST", "/api/queue/drain", drainQueueRoute),

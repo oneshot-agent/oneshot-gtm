@@ -1,4 +1,5 @@
 import type {
+  AddProspectResult,
   CadencesResult,
   CadenceView,
   DoctorCheck,
@@ -158,6 +159,10 @@ export const api = {
     }>("/setup"),
   setup: (req: SetupRequest) => postJson<{ ok: boolean }>("/setup", req),
   deriveIcp: (domain: string) => postJson<DeriveIcpResult>("/setup/derive-icp", { domain }),
+  // Manual add-prospect from a LinkedIn/X URL. Returns 202 immediately; the
+  // researched + drafted row appears on /queue when the background job finishes.
+  addProspect: (url: string, email?: string) =>
+    postJson<AddProspectResult>("/prospects/add", { url, ...(email ? { email } : {}) }),
   queue: (opts?: { play?: string; status?: QueueStatusView; limit?: number }) => {
     const q = new URLSearchParams();
     if (opts?.play) q.set("play", opts.play);
