@@ -17,6 +17,7 @@ const state: {
   extract: Record<string, unknown>;
   enqueueResult: number | null;
   existingRow: FakeRow | null;
+  throwOnDraft: boolean;
   calls: { deepResearchPerson: number; llm: number; setStatus: number };
 } = {
   row: {
@@ -33,6 +34,7 @@ const state: {
   extract: {},
   enqueueResult: 7,
   existingRow: null,
+  throwOnDraft: false,
   calls: { deepResearchPerson: 0, llm: 0, setStatus: 0 },
 };
 
@@ -97,7 +99,9 @@ vi.mock("@oneshot-gtm/intel", async () => {
       const user = input.messages.find((m) => m.role === "user")?.content ?? "";
       // The draft call's input block leads with FOUNDER:; the extract call is
       // ICP/PRODUCT/DOSSIER only.
-      const content = user.includes("FOUNDER:")
+      const isDraft = user.includes("FOUNDER:");
+      if (isDraft && state.throwOnDraft) throw new Error("LLM down");
+      const content = isDraft
         ? JSON.stringify({ subject: "first ninety", body: "Hey Jane, real intro. Founder" })
         : JSON.stringify(state.extract);
       return { content, provider: "test", model: "test" };
@@ -128,6 +132,7 @@ beforeEach(() => {
   state.extract = {};
   state.enqueueResult = 7;
   state.existingRow = null;
+  state.throwOnDraft = false;
 });
 
 afterEach(() => {
@@ -212,6 +217,31 @@ describe("runProspectResearch", () => {
     expect(state.calls.llm).toBe(0); // no extract, no draft
     expect(state.row.last_draft_json).toBeNull();
     expect(state.row.notes).toContain("couldn't research this profile");
+  });
+
+  it("does NOT persist a draft (and keeps a failure note) when the LLM draft call fails", async () => {
+    resetRow({ url: "https://x.com/jane", platform: "twitter" });
+    state.enrichment = { best_work_email: "jane@acme.com" };
+    state.extract = { name: "Jane", company: "Acme", angle: "x", email: null };
+    state.throwOnDraft = true; // draft LLM call throws → errorDraft envelope
+
+    await runProspectResearch(7);
+
+    // The error envelope must NOT be persisted as a ready-to-send draft.
+    expect(state.row.last_draft_json).toBeNull();
+    expect(state.row.notes).toContain("draft failed");
+  });
+
+  it("does not clobber a row the founder rejected mid-research", async () => {
+    resetRow({ url: "https://x.com/jane", platform: "twitter" });
+    state.row.status = "rejected"; // founder rejected the placeholder during research
+    state.enrichment = { best_work_email: "jane@acme.com" };
+    state.extract = { name: "Jane", company: "Acme", angle: "x", email: "jane@acme.com" };
+
+    await runProspectResearch(7);
+
+    // Draft is computed but NOT persisted onto the rejected row.
+    expect(state.row.last_draft_json).toBeNull();
   });
 
   it("researches, drafts, and persists the dossier + draft; clears the note when an email is found", async () => {

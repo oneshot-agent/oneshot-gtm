@@ -4,6 +4,9 @@ import { type ProfileIntroTarget, runProfileIntro } from "./profile-intro.ts";
 
 const PLAY_NAME = "profile-intro";
 
+/** Transient note on a placeholder row while its background research runs. */
+const RESEARCHING_NOTE = "researching profile…";
+
 export type Platform = "linkedin" | "twitter" | "github";
 
 /** Validated, normalized profile URL + which platform it points at. */
@@ -73,7 +76,7 @@ export function createProspectResearchJob(input: {
     payload,
     dedupeKey: parsed.dedupeKey,
     source: "manual",
-    notes: "researching profile…",
+    notes: RESEARCHING_NOTE,
   });
   if (id != null) return { queueId: id };
 
@@ -90,7 +93,7 @@ export function createProspectResearchJob(input: {
   ) {
     ledger.setQueueStatus({ id: existing.id, status: "pending" });
     ledger.updateQueuePayload({ id: existing.id, payload });
-    ledger.setQueueNotes({ id: existing.id, notes: "researching profile…" });
+    ledger.setQueueNotes({ id: existing.id, notes: RESEARCHING_NOTE });
     return { queueId: existing.id };
   }
   return { duplicate: true };
@@ -203,14 +206,34 @@ export async function runProspectResearch(queueId: number): Promise<void> {
     // 4. Draft the intro (dry-run: prepare→draft→lint, never sends).
     const { drafted } = await runProfileIntro({ dryRun: true, targets: [target] });
     const draft = drafted[0];
-    if (!draft) {
-      ledger.setQueueNotes({ id: queueId, notes: "research failed: no draft produced" });
+    // runEmailPlay never throws per-target: an LLM/provider failure comes back
+    // as an errorDraft ({subject:"(error)", body:"", flags:["error: …"]}), and a
+    // malformed LLM response yields an empty subject/body. Treat either as a
+    // failed draft — leave the note set (so a re-add retries) instead of
+    // persisting a broken "(error)"/blank draft that would look ready to send.
+    const errorFlag = draft?.flags.find((f) => f.startsWith("error:"));
+    if (!draft || errorFlag || draft.subject.trim() === "" || draft.body.trim() === "") {
+      ledger.setQueueNotes({
+        id: queueId,
+        notes: (errorFlag
+          ? `draft failed: ${errorFlag}`
+          : "draft came back empty — re-add to retry"
+        ).slice(0, 200),
+      });
       return;
     }
 
-    // 5. Persist — re-read first so a concurrent send/regenerate isn't clobbered.
+    // 5. Persist — re-read first so a concurrent reject/send isn't clobbered.
+    // Only an untouched placeholder (still pending/approved, not sending) gets
+    // the draft; a row the founder rejected mid-research stays rejected.
     const fresh = ledger.getQueueRow(queueId);
-    if (!fresh || fresh.status === "sent" || fresh.send_started_at != null) return;
+    if (
+      !fresh ||
+      (fresh.status !== "pending" && fresh.status !== "approved") ||
+      fresh.send_started_at != null
+    ) {
+      return;
+    }
     ledger.updateQueuePayload({ id: queueId, payload: target });
     ledger.setQueueDraft({
       id: queueId,
