@@ -187,7 +187,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
             name,
             severity: "warn",
             message: `${localpart}${domain} is ${entry.status} in the pool · ${usage}`,
-            hint: "Resume it (agent.resumeDomain) before relying on it.",
+            hint: `Resume it on /setup (Sender → Provisioned domains) or run: oneshot-gtm domains resume ${domain}`,
           });
         } else {
           const warmth =
