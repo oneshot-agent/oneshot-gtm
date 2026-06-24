@@ -48,12 +48,13 @@ bun run cli -- ui --port 4000    # custom port
 bun run cli -- ui --no-browser   # don't auto-open
 ```
 
-Eight pages, all reading the same `~/.oneshot-gtm/ledger.sqlite`:
+Nine pages, all reading the same `~/.oneshot-gtm/ledger.sqlite`:
 
 - **Home** — spend (7d / 30d), reply rate trend, in-flight cadences, recent receipts
+- **Add Prospect** — paste a LinkedIn, X/Twitter, or GitHub profile URL (and optionally an email): the OneShot SDK's `deepResearchPerson` builds a multi-source dossier from that one URL (org/role history, recent posts, articles, work + personal emails), the LLM picks an angle **against your ICP** and drafts a tailored intro, and the prospect lands in `/queue` for review under the `profile-intro` play (intro + 2 follow-ups + breakup). Research runs in the background (~2–5 min); the row fills in its draft when ready. No email found → queued + flagged, send held until you add one
 - **Queue** — triggers table (enable, edit JSON config, fire) + target queue (status + play filters, bulk approve). Per-play **Drain** opens a modal that hands off to `/run/<play>` with approved rows pre-loaded — every draft + lint flag streams live, and the latest draft persists on the queue row so you can re-read it later by expanding the row (subject + body + flags + receipt links). Per-row spinner + locked button while a trigger is running.
 - **Replies** (`/inbox`) — every reply matched to its prospect + play + cadence status by sender address, merged across all sender identities, with a match-status filter (all / matched / no match) to cut newsletter + bounce noise. Expand a reply to answer it in place: write the draft yourself or **generate with the LLM** (founder voice, primed with the inbound message + your prior touches), edit, and send. Replies go out from the identity that received them and thread on both transports — Gmail via In-Reply-To / References, OneShot via the platform's `reply_to_email_id` (SDK 0.22). Sends carry an idempotency key, so a retry after a timeout can't double-send
-- **Cadences** — table view with inline **Stop** + **Log outcome** buttons; outcome modal supports `meeting_booked / sql_qualified / deal_won / deal_lost / ghosted`. Logging an outcome — or a reply landing — **tags the cadence's value back to OneShot** (RoCS), so `/measure` and `/receipts` reflect what each cadence earned. Per-row chevron exposes the next-step draft preview before send; bulk select for batch preview/send; sent-step history collapsible inline; pulsing "sending" badge while a fire-and-forget send is in flight.
+- **Cadences** — table view with inline **Stop** + **Log outcome** buttons; outcome modal supports `meeting_booked / sql_qualified / deal_won / deal_lost / ghosted`. Logging an outcome — or a reply landing — **tags the cadence's value back to OneShot** (RoCS), so `/measure` and `/receipts` reflect what each cadence earned. Per-row chevron exposes the next-step draft preview before send; bulk select — including **quick-select the next 10 / 20 / 30** most-overdue active rows — for batch preview/send; sent-step history collapsible inline; pulsing "sending" badge while a fire-and-forget send is in flight.
 - **Receipts** — paginated table with a **memo** column (the "why" of each call) and a **value chip** plus an all / valued / unvalued filter; click a row → modal with the signed receipt payload alongside its memo + structured `decisionContext`
 - **Plays** — cards with channel badges + **Run** button (for `show-hn` / `job-change` / `post-funding` / `accelerator-batch` / `hiring-signal` / `podcast-guest` / `stack-consolidation` / `repo-interest`) + **Copy CLI** button
 - **Measure** — CAC + RoCS tables filterable by time range, plus a **RoCS by cadence** section: per-cadence spend vs tagged value vs RoCS multiple, grouped by goal
@@ -260,7 +261,7 @@ Bun-native, all the modern picks:
 
 - **Runtime**: [Bun](https://bun.sh) 1.3+
 - **Monorepo**: [Turborepo](https://turbo.build) + Bun catalog for shared dep versions
-- **Test**: [Vitest 4](https://vitest.dev) (701 cases across 59 files; ledger, lint, finder pipelines, play registry, strategist endpoint, web bucketing helpers)
+- **Test**: [Vitest 4](https://vitest.dev) (1244 cases across 100 files; ledger, lint, finder pipelines, play registry, add-prospect research/draft, strategist endpoint, web bucketing helpers)
 - **Lint / format**: [oxlint](https://oxc.rs) + [oxfmt](https://oxc.rs) (Rust-based, ~50× faster than ESLint/Prettier)
 - **TypeScript**: 6.x with `verbatimModuleSyntax`, `noUncheckedIndexedAccess`, `noImplicitOverride`
 - **Web**: [Vite 8](https://vite.dev) + [React 19](https://react.dev) + [TanStack Router](https://tanstack.com/router) + [TanStack Query](https://tanstack.com/query) + [Base UI](https://base-ui.com) primitives + [Tailwind 4](https://tailwindcss.com) + [class-variance-authority](https://cva.style) + [lucide-react](https://lucide.dev)
@@ -280,11 +281,11 @@ oneshot-gtm/
 │   ├── cli/         ~30-command CLI (commander)
 │   ├── server/      Bun.serve + SSE — REST + /queue + /run + strategist + trigger fire-and-forget;
 │   │                tsdown bundle, publishable as `oneshot-gtm-server`
-│   └── web/         Vite + React 19 + TanStack + Base UI dashboard (8 pages + StrategistDock)
+│   └── web/         Vite + React 19 + TanStack + Base UI dashboard (9 pages + StrategistDock)
 ├── packages/
 │   ├── core/        OneShot SDK wrapper, SQLite ledger, config + secrets, JSONL event log
 │   ├── intel/       LLM client (OpenRouter/OpenAI/Anthropic), advise, personalize, triage, weekly-review
-│   ├── plays/       13 outreach plays + handoff/icp/pmf modules + multichannel cadence engine
+│   ├── plays/       14 outreach plays + handoff/icp/pmf modules + multichannel cadence engine
 │   ├── find/        10 finders + shared pipeline (manifest scan, parallel infra, dedupe, ICP filter,
 │   │                drain dispatcher, trigger registry)
 │   ├── prompts/     Markdown prompt files (humanizer canon + per-play + per-extract prompts)
@@ -312,7 +313,7 @@ bun run typecheck        # tsc --noEmit across cli + server + packages
 bun run lint             # oxlint
 bun run fmt              # oxfmt --write
 bun run fmt:check        # CI-style format check
-bun run test             # vitest run (701 cases)
+bun run test             # vitest run (1244 cases)
 bun run cli -- doctor    # smoke check
 ```
 

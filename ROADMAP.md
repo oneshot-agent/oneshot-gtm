@@ -72,6 +72,11 @@ Public. Issues mirror the items below. PRs welcome.
 - [ ] Dashboard demo gif (30s) — needs OneShot team
 - [x] **`oneshot-gtm-server@0.1.0` shipped on npmjs.com** via tag-driven workflow (`.github/workflows/release.yml`). `bun run release:server` cuts a release; provenance attestation attached. CLI (`oneshot-gtm`) still needs its own `tsdown` setup before it can ship — deferred to a follow-up.
 
+## Phase R4 — Manual prospect entry + cadence batch (shipped)
+
+- [x] **Add Prospect page** (`/add-prospect`) + `POST /api/prospects/add` — paste a LinkedIn / X / GitHub profile URL (optionally an email): the OneShot SDK's `deepResearchPerson` builds a dossier from that one URL (org/role history, recent posts, articles, work + personal emails), the LLM picks an angle **against the ICP** and drafts a tailored intro, and the prospect lands in `/queue` under a new generic `profile-intro` play (intro + day-4 & day-9 follow-ups + day-18 breakup). Research is fire-and-forget (~2–5 min); no email found → queued + flagged; failed/empty research is retryable on re-add.
+- [x] **Cadence quick-select** — "select next 10 / 20 / 30" most-overdue active rows on `/cadences`, feeding the existing batch preview/send.
+
 ## Phase 2 — Multichannel + warm-signal escalation (shipped)
 
 - [x] **Cadence engine v2** — SMS + voice channels are now first-class step types; per-play sequences can mix email, SMS, voice
