@@ -27,7 +27,7 @@ Last manual update: **2026-06-21** · Bun **1.3.13** · OneShot SDK **0.22.0**
 | `pmf survey`         | ⚠️ untested | Build + email + inbox | Requires OneShot Build endpoint to be live; landing page deploys but not yet exercised end-to-end |
 | `pmf survey-collect` | ⚠️ untested | inbox + LLM           | Depends on actual replies in your OneShot inbox                                                   |
 
-## `motion` (13 plays)
+## `motion` (14 plays)
 
 | Play                  | State       | OneShot calls                        | Cadence steps                                                                                                                                                                                                                |
 | --------------------- | ----------- | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -44,6 +44,7 @@ Last manual update: **2026-06-21** · Bun **1.3.13** · OneShot SDK **0.22.0**
 | `hiring-signal`       | ⚠️ untested | enrich + websearch + webread + email | Web search against Lever/Greenhouse/Ashby; day-3 follow-up + day-8 breakup                                                                                                                                                   |
 | `podcast-guest`       | ✅ green    | enrich + websearch + email           | Single touch, no follow-up                                                                                                                                                                                                   |
 | `breakup-revive`      | ✅ green    | email only                           | Pulls from `listColdProspects`                                                                                                                                                                                               |
+| `profile-intro`       | ✅ green    | deepResearchPerson + email           | Manual **Add Prospect** (dashboard): paste a LinkedIn/X/GitHub URL → `deepResearchPerson` dossier + ICP-angle draft → `/queue`; intro + day-4 & day-9 follow-ups + day-18 breakup. Dashboard-entry, not a CLI `motion` play  |
 
 ## `find` (upstream discovery → target_queue)
 
@@ -100,9 +101,10 @@ Last manual update: **2026-06-21** · Bun **1.3.13** · OneShot SDK **0.22.0**
 | Route                      | State                                                                                                                                                            |
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `/` (Home)                 | ✅ green — KPIs + signal feed + Scheduler strip (per-trigger last-run + next-due)                                                                                |
+| `/add-prospect`            | ✅ green — paste a LinkedIn/X/GitHub URL → background `deepResearchPerson` dossier + ICP-angle draft → lands in `/queue` under `profile-intro`; 202 + async research |
 | `/queue`                   | ✅ green — target queue + triggers table (click-to-edit polling interval) + strategist dock + filters + per-row draft archive (subject/body/flags/receipt links) |
 | `/inbox` (Replies)         | ✅ green — replies matched to prospect + play + cadence status, with a match-status filter (all / matched / no match); expand a row to reply in-place (editable draft + optional LLM generation; sends from the receiving identity, Gmail threaded)                  |
-| `/cadences`                | ✅ green (per-row preview + send + bulk + history + in-flight badge; logging an outcome tags the cadence's value back to OneShot)                                |
+| `/cadences`                | ✅ green (per-row preview + send + bulk select incl. quick-select next 10/20/30 + history + in-flight badge; logging an outcome tags the cadence's value back to OneShot)                                |
 | `/receipts`                | ✅ green — memo column + value chip + all/valued/unvalued filter; modal shows signed receipt + memo + decisionContext                                            |
 | `/plays`                   | ✅ green (with run + copy-CLI buttons)                                                                                                                           |
 | `/measure`                 | ✅ green — CAC + RoCS by play, plus a RoCS-by-cadence section (spend vs value vs multiple, via `rocsByGoal`)                                                      |
@@ -130,6 +132,7 @@ Last manual update: **2026-06-21** · Bun **1.3.13** · OneShot SDK **0.22.0**
 | `POST /api/cadences/:id/send-next`            | ✅ green — fire-and-forget; 202 + in-flight tracker; 409 if no persisted preview                                                                                                                                                                              |
 | `POST /api/cadences/preview-batch`            | ✅ green — synchronous; parallelMap(3); per-row failure isolation                                                                                                                                                                                             |
 | `POST /api/cadences/send-batch`               | ✅ green — fire-and-forget; 202 + per-row in-flight clears via callback                                                                                                                                                                                       |
+| `POST /api/prospects/add`                     | ✅ green — manual add from a LinkedIn/X/GitHub URL; enqueues a `profile-intro` placeholder + 202, runs `deepResearchPerson` → extract → draft in the background; failed/empty research is retryable on re-add                                                  |
 | `GET /api/receipts[?play=&sinceDays=&limit=]` | ✅ green                                                                                                                                                                                                                                                      |
 | `GET /api/receipts/:id`                       | ✅ green                                                                                                                                                                                                                                                      |
 | `GET /api/plays`                              | ✅ green                                                                                                                                                                                                                                                      |
