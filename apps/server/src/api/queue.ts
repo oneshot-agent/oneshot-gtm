@@ -369,7 +369,10 @@ export async function sendDraftRoute(
         name: str("name") ?? str("founderName"),
         email,
         company: str("company"),
-        linkedin_url: str("linkedinUrl"),
+        // Falls back to twitter/github URL so a profile-intro prospect added
+        // from an X or GitHub URL keeps its profile link (mirrors the play's own
+        // prospectMeta); the column is the de-facto social-profile URL.
+        linkedin_url: str("linkedinUrl") ?? str("twitterUrl") ?? str("githubUrl"),
         phone: str("phone"),
         source: row.play_name,
       },

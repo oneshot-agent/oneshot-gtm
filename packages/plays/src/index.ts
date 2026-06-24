@@ -7,6 +7,8 @@ export * from "./show-hn.ts";
 export * from "./icp.ts";
 export * from "./job-change.ts";
 export * from "./post-funding.ts";
+export * from "./profile-intro.ts";
+export * from "./add-prospect.ts";
 export * from "./accelerator-batch.ts";
 export * from "./pmf-classify.ts";
 export * from "./pmf-survey.ts";

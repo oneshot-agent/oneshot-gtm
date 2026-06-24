@@ -341,6 +341,30 @@ export interface QueueRowView {
 }
 
 /**
+ * Manual "Add Prospect": paste a LinkedIn or X/Twitter profile URL (optionally
+ * an email to use). The server researches the profile, has the LLM pick an
+ * ICP-grounded angle + draft the intro, and lands it as a reviewable row in the
+ * Queue under the `profile-intro` play.
+ */
+export interface AddProspectRequest {
+  /** A LinkedIn, X/Twitter, or GitHub profile URL. */
+  url: string;
+  /** Optional email to use when research can't find one. */
+  email?: string;
+}
+
+/**
+ * The add returns immediately (research runs ~2-5 min in the background). The
+ * drafted prospect appears on `/queue` when ready. `queued:false` with
+ * `duplicate:true` means this profile is already in the queue.
+ */
+export interface AddProspectResult {
+  queued: boolean;
+  duplicate?: boolean;
+  queueId?: number;
+}
+
+/**
  * Per-row draft envelope persisted after each /api/run dispatch. `dryRun`
  * distinguishes preview-only drafts from real-send attempts; `sent` is
  * true only when the SDK actually emitted the email (false for dryRun

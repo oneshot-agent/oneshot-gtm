@@ -266,6 +266,23 @@ function CadencesPage() {
     });
   };
 
+  // Quick-select presets. Active rows are already returned most-overdue-first
+  // (server: ORDER BY next_due_at ASC NULLS LAST), but re-sort a copy so the
+  // ordering is correct even in the "All" view where rows are status-grouped.
+  // Nulls (no schedule) sort last. Replaces the current selection.
+  const activeByDue = useMemo(
+    () =>
+      selectableActive.toSorted((a, b) => {
+        if (a.nextDueAt === b.nextDueAt) return 0;
+        if (a.nextDueAt === null) return 1;
+        if (b.nextDueAt === null) return -1;
+        return a.nextDueAt < b.nextDueAt ? -1 : 1;
+      }),
+    [selectableActive],
+  );
+  const selectNextN = (n: number): void =>
+    setSelected(new Set(activeByDue.slice(0, n).map(rowKey)));
+
   return (
     <div className="-mx-6 -my-6 flex flex-col">
       {/* Masthead */}
@@ -350,7 +367,19 @@ function CadencesPage() {
             <span className="text-ink-faint">…</span>
           )}
         </div>
-        <div className="font-mono text-[11px] text-ink-faint">refresh · 15s</div>
+        <div className="flex items-center gap-2">
+          {selectableActive.length > 0 && (
+            <div className="flex items-center gap-1.5">
+              <span className="font-mono text-[11px] text-ink-faint">select next</span>
+              {[10, 20, 30].map((n) => (
+                <Button key={n} variant="secondary" size="sm" onClick={() => selectNextN(n)}>
+                  {n}
+                </Button>
+              ))}
+            </div>
+          )}
+          <div className="font-mono text-[11px] text-ink-faint">refresh · 15s</div>
+        </div>
       </section>
 
       {/* Bulk-action bar — visible when at least one active row is selected. */}

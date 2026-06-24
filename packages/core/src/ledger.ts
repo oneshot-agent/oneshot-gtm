@@ -2372,6 +2372,32 @@ export class Ledger {
       .run(json, draftedAtIso, input.id);
   }
 
+  /**
+   * Overwrite a queue row's `payload_json` (the per-target JSON the play
+   * drafts from). Used by the manual add-prospect flow: the row is enqueued
+   * immediately as a placeholder, then — once the async dossier research
+   * completes — its payload is rewritten to the full ProfileIntroTarget
+   * (identity + dossier + angle) so `/queue` regenerate re-drafts from the
+   * researched dossier instead of paying for research again.
+   */
+  updateQueuePayload(input: { id: number; payload: unknown }): void {
+    this.db
+      .prepare(`UPDATE target_queue SET payload_json = ? WHERE id = ?`)
+      .run(JSON.stringify(input.payload), input.id);
+  }
+
+  /**
+   * Set a queue row's `notes` without touching its status. Used by the manual
+   * add-prospect flow to update the transient "researching profile…" note to
+   * a "no email found" flag (or a research-failed message) once the async job
+   * settles. Pass an empty string to clear it.
+   */
+  setQueueNotes(input: { id: number; notes: string }): void {
+    this.db
+      .prepare(`UPDATE target_queue SET notes = ? WHERE id = ?`)
+      .run(input.notes === "" ? null : input.notes, input.id);
+  }
+
   close(): void {
     this.db.close();
   }

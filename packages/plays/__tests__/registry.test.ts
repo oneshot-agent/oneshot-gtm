@@ -16,6 +16,7 @@ const EXPECTED = [
   "repo-interest",
   "luma-events",
   "breakup-revive",
+  "profile-intro",
 ];
 
 describe("play registry", () => {

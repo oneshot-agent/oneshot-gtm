@@ -67,6 +67,10 @@ const PLAY_CATALOG: PlayMeta[] = [
     name: "breakup-revive",
     cli: "oneshot-gtm motion breakup-revive --min-days 60 --max-days 90",
   },
+  {
+    name: "profile-intro",
+    cli: "added from the dashboard: Add Prospect → paste a LinkedIn or X/Twitter URL",
+  },
 ];
 
 /** Relative per-step dayOffsets → cumulative days from the day-0 initial send. */

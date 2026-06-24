@@ -36,6 +36,10 @@ const RUNNABLE_PLAYS = new Set([
   "luma-events",
 ]);
 
+// Non-runnable plays that are driven from the dashboard (not the CLI). Tagged
+// "dashboard" instead of "CLI only" on the Plays page.
+const DASHBOARD_PLAYS = new Set(["profile-intro"]);
+
 /**
  * Per-play metadata the API doesn't expose yet — human description + day-
  * offset timeline. Values mirror the sequences defined in
@@ -298,7 +302,9 @@ function PlaysPage() {
                       )}
                     </Button>
                     {!runnable && (
-                      <span className="font-mono text-[10px] text-ink-faint">CLI only</span>
+                      <span className="font-mono text-[10px] text-ink-faint">
+                        {DASHBOARD_PLAYS.has(p.name) ? "dashboard" : "CLI only"}
+                      </span>
                     )}
                   </div>
                 </div>
