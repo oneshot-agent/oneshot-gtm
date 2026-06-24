@@ -146,22 +146,29 @@ describe("profile-intro play registration", () => {
 });
 
 describe("parseProfileUrl", () => {
-  it("classifies LinkedIn, X, Twitter, and GitHub", () => {
+  it("classifies LinkedIn, X, Twitter, and GitHub (incl. dotted subdomains)", () => {
     expect(parseProfileUrl("https://www.linkedin.com/in/jane/").platform).toBe("linkedin");
     expect(parseProfileUrl("https://x.com/jane").platform).toBe("twitter");
     expect(parseProfileUrl("https://twitter.com/jane").platform).toBe("twitter");
+    expect(parseProfileUrl("https://mobile.twitter.com/jane").platform).toBe("twitter");
     expect(parseProfileUrl("https://github.com/jane").platform).toBe("github");
   });
 
-  it("normalizes to a host/path dedupe key (drops www, query, trailing slash)", () => {
+  it("normalizes to a lowercased host/path dedupe key (drops www, query, trailing slash)", () => {
     expect(parseProfileUrl("https://www.linkedin.com/in/jane/?x=1").dedupeKey).toBe(
       "linkedin.com/in/jane",
     );
+    // Case-insensitive handle → same dedupe key (no double-enqueue).
+    expect(parseProfileUrl("https://www.linkedin.com/in/JohnDoe").dedupeKey).toBe(
+      parseProfileUrl("https://linkedin.com/in/johndoe").dedupeKey,
+    );
   });
 
-  it("rejects junk and unsupported hosts", () => {
+  it("rejects junk, unsupported hosts, and look-alike domains", () => {
     expect(() => parseProfileUrl("not a url")).toThrow();
     expect(() => parseProfileUrl("https://example.com/jane")).toThrow(/unsupported/);
+    // `endsWith` would have mis-classified this as LinkedIn.
+    expect(() => parseProfileUrl("https://evillinkedin.com/in/jane")).toThrow(/unsupported/);
   });
 });
 
@@ -286,6 +293,19 @@ describe("runProspectResearch", () => {
     // Draft still produced, but the row is flagged so it can't be sent yet.
     expect(state.row.last_draft_json).not.toBeNull();
     expect(state.row.notes).toBe("no email found — add an email before sending");
+  });
+
+  it("stores a GitHub URL under githubUrl, not linkedinUrl", async () => {
+    resetRow({ url: "https://github.com/jane", platform: "github" });
+    state.enrichment = { displayname: "Jane", best_work_email: "jane@acme.com" };
+    state.extract = { name: "Jane", company: "Acme", angle: "x", email: null };
+
+    await runProspectResearch(7);
+
+    const payload = JSON.parse(state.row.payload_json);
+    expect(payload.githubUrl).toBe("https://github.com/jane");
+    expect(payload.linkedinUrl).toBeUndefined();
+    expect(payload.twitterUrl).toBeUndefined();
   });
 
   it("prefers an explicit email override over researched emails", async () => {

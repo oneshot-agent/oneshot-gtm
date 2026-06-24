@@ -15,6 +15,7 @@ export interface ProfileIntroTarget {
   company?: string | null;
   linkedinUrl?: string | null;
   twitterUrl?: string | null;
+  githubUrl?: string | null;
   phone?: string | null;
   /** Pre-researched dossier text. When set, `prepare` returns it directly. */
   dossier?: string;
@@ -77,7 +78,9 @@ const profileIntroDef: EmailPlayDef<ProfileIntroTarget> = {
     name: t.name,
     email: t.email ?? null,
     company: t.company ?? null,
-    linkedin_url: t.linkedinUrl ?? t.twitterUrl ?? null,
+    // The prospects table has one social-URL column; store whichever profile
+    // link we have (LinkedIn / X / GitHub).
+    linkedin_url: t.linkedinUrl ?? t.twitterUrl ?? t.githubUrl ?? null,
     phone: t.phone ?? null,
     source: "manual",
   }),

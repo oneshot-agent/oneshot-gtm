@@ -34,14 +34,20 @@ export function parseProfileUrl(raw: string): ParsedProfileUrl {
   if (u.protocol !== "http:" && u.protocol !== "https:") {
     throw new Error("URL must be http(s)");
   }
+  // Match the registrable domain exactly or as a dotted subdomain — NOT a bare
+  // `endsWith("linkedin.com")`, which also matches `evillinkedin.com` (CodeQL:
+  // incomplete URL substring sanitization).
   const host = u.hostname.toLowerCase().replace(/^www\./, "");
+  const hostMatches = (domain: string): boolean => host === domain || host.endsWith(`.${domain}`);
   let platform: Platform;
-  if (host.endsWith("linkedin.com")) platform = "linkedin";
-  else if (host === "x.com" || host.endsWith("twitter.com")) platform = "twitter";
-  else if (host.endsWith("github.com")) platform = "github";
+  if (hostMatches("linkedin.com")) platform = "linkedin";
+  else if (hostMatches("x.com") || hostMatches("twitter.com")) platform = "twitter";
+  else if (hostMatches("github.com")) platform = "github";
   else throw new Error("unsupported URL — use a LinkedIn, X/Twitter, or GitHub profile");
 
-  const path = u.pathname.replace(/\/+$/, "");
+  // Lowercase the path too: profile handles are case-insensitive, so
+  // /in/JohnDoe and /in/johndoe are the same person and must dedupe to one key.
+  const path = u.pathname.toLowerCase().replace(/\/+$/, "");
   return { platform, url: trimmed, dedupeKey: `${host}${path}` };
 }
 
@@ -192,15 +198,21 @@ export async function runProspectResearch(queueId: number): Promise<void> {
       altEmails[0] ??
       null;
 
+    // Store the URL under the field matching its platform — a GitHub URL must
+    // NOT land in `linkedinUrl` (downstream enrichment treats that as LinkedIn).
+    const urlField: Pick<ProfileIntroTarget, "linkedinUrl" | "twitterUrl" | "githubUrl"> =
+      payload.platform === "twitter"
+        ? { twitterUrl: payload.url }
+        : payload.platform === "github"
+          ? { githubUrl: payload.url }
+          : { linkedinUrl: payload.url };
     const target: ProfileIntroTarget = {
       name: str(extracted.name) ?? str(enrichment["displayname"]) ?? "(unknown)",
       email,
       company: str(extracted.company),
       angle: str(extracted.angle),
       dossier,
-      ...(payload.platform === "twitter"
-        ? { twitterUrl: payload.url }
-        : { linkedinUrl: payload.url }),
+      ...urlField,
     };
 
     // 4. Draft the intro (dry-run: prepare→draft→lint, never sends).
