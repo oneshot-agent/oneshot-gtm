@@ -123,12 +123,15 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
     // empty window, and when empty, say how stale the newest star is so the
     // founder knows to widen `sinceDays` rather than wonder what broke.
     if (firstError) {
+      // Both the stargazers list AND the events-feed fallback failed — that's
+      // a rate limit or outage, not the (handled) July-2026 access restriction.
       result.halted = `github fetch failed (${firstError}) — set GITHUB_TOKEN for higher rate limits`;
     } else if (newestSeen) {
       const ageDays = Math.floor((Date.now() - new Date(newestSeen).getTime()) / 86_400_000);
       result.halted = `no stars in last ${sinceDays}d — newest was ${ageDays}d ago; widen sinceDays`;
     } else {
-      result.halted = "no stargazers found (check repo names / GITHUB_TOKEN)";
+      result.halted =
+        "no stargazers found (check repo names — third-party repos only surface stars still in the public events feed, ~90d/300 events)";
     }
     logEvent("finder.done", { name: PLAY_NAME, candidates: 0, halted: result.halted });
     return result;
