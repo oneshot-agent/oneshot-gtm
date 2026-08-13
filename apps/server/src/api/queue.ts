@@ -7,7 +7,7 @@ import {
   type TelemetryOutcome,
 } from "@oneshot-gtm/core";
 import { drainQueue } from "@oneshot-gtm/find";
-import { enrollInCadence, sendDraftedEmail } from "@oneshot-gtm/plays";
+import { enrollInCadence, logTargetError, sendDraftedEmail } from "@oneshot-gtm/plays";
 import { reportServerExecution } from "../telemetry.ts";
 import {
   blockingFlags,
@@ -411,6 +411,11 @@ export async function sendDraftRoute(
     if (isSendDeferred(err)) {
       return done("ok", jsonResponse({ error: (err as Error).message, deferred: true }, 429, req));
     }
+    // The 400 body carries only `err.message`, which for an SDK ToolError is
+    // the generic "Tool request failed" — the founder sees "couldn't send ·
+    // 400 Bad Request: {"error":"Tool request failed"}" and has nothing to act
+    // on. Log the status + response body so the real reason is recoverable.
+    logTargetError({ playName: row.play_name, to: email, err });
     return done(
       "error",
       jsonResponse({ error: (err as Error).message ?? "send failed" }, 400, req),

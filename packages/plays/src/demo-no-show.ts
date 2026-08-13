@@ -1,6 +1,12 @@
 import { getLedger, isSendDeferred, loadConfig, sendSms } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
-import { draftEmailFromPrompt, errorDraft, lintEmail, sendDraftedEmail } from "./_lib.ts";
+import {
+  draftEmailFromPrompt,
+  errorDraft,
+  lintEmail,
+  logTargetError,
+  sendDraftedEmail,
+} from "./_lib.ts";
 import { buildFollowUpEmail, enrollInCadence, registerSequence } from "./_cadence.ts";
 
 const PLAY_NAME = "demo-no-show";
@@ -111,6 +117,7 @@ export async function runDemoNoShow(opts: DemoNoShowRunOptions): Promise<DemoNoS
       // Daily-cap deferral is not a per-target failure — abort so remaining
       // targets stay queued instead of getting error drafts.
       if (isSendDeferred(err)) throw err;
+      logTargetError({ playName: PLAY_NAME, to: t.email, err });
       const stub = errorDraft((err as Error)?.message);
       outcomes.push({
         target: t,
