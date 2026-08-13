@@ -148,4 +148,3 @@ export function _resetClientIdCacheForTests(): void {
   configDirEnsured = false;
   runId = null;
 }
-

@@ -307,7 +307,11 @@ describe("Ledger cadence state", () => {
 
   it("records a send error and clears it on advance / status change", () => {
     const pid = ledger.upsertProspect({ name: "E", email: "e@x.com", source: "t" });
-    ledger.enrollCadence({ prospectId: pid, playName: "repo-interest", nextDueAt: new Date().toISOString() });
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "repo-interest",
+      nextDueAt: new Date().toISOString(),
+    });
     // Fresh enroll: no error.
     expect(ledger.getCadence(pid, "repo-interest")?.last_send_error).toBeNull();
 
@@ -339,7 +343,11 @@ describe("Ledger cadence state", () => {
     // a re-activated cadence shouldn't show a failure from a prior cycle.
     ledger.recordCadenceSendError({ prospectId: pid, playName: "repo-interest", error: "stale" });
     expect(ledger.getCadence(pid, "repo-interest")?.last_send_error).toBe("stale");
-    ledger.enrollCadence({ prospectId: pid, playName: "repo-interest", nextDueAt: new Date().toISOString() });
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "repo-interest",
+      nextDueAt: new Date().toISOString(),
+    });
     expect(ledger.getCadence(pid, "repo-interest")?.last_send_error).toBeNull();
   });
 

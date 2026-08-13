@@ -11,10 +11,7 @@ import { jsonResponse } from "../server.ts";
  * swallowed — a paused domain that won't resume because OneShot is returning
  * 500s is exactly what the founder needs to see, not a silent no-op.
  */
-async function domainActionRoute(
-  req: Request,
-  action: "resume" | "pause",
-): Promise<Response> {
+async function domainActionRoute(req: Request, action: "resume" | "pause"): Promise<Response> {
   let body: { domain?: unknown };
   try {
     body = (await req.json()) as { domain?: unknown };

@@ -169,7 +169,11 @@ describe("getGmailAccessToken", () => {
   it("maps invalid_grant to an actionable re-auth message", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 })),
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(JSON.stringify({ error: "invalid_grant" }), { status: 400 }),
+        ),
     );
     await expect(getGmailAccessToken()).rejects.toThrow(/gmail auth/);
   });

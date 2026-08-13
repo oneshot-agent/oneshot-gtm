@@ -20,9 +20,9 @@ describe("isDuplicate (cross-play)", () => {
     ledgerStub.isQueueDuplicate.mockReturnValue(false);
     ledgerStub.findProspectByEmail.mockReturnValue(null);
     ledgerStub.isEmailPendingInQueue.mockReturnValue(true);
-    expect(isDuplicate({ playName: "repo-interest", dedupeKey: "k", prospectEmail: "a@x.com" })).toBe(
-      true,
-    );
+    expect(
+      isDuplicate({ playName: "repo-interest", dedupeKey: "k", prospectEmail: "a@x.com" }),
+    ).toBe(true);
   });
 
   it("bypasses the email checks when prospectEmail is undefined (breakup-revive)", () => {

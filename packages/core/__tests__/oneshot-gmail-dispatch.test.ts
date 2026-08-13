@@ -184,10 +184,9 @@ describe("listInbox — multi-identity merge", () => {
         const u = String(url);
         if (u.includes("oauth2.googleapis.com")) {
           const refresh = new URLSearchParams(String(init?.body)).get("refresh_token");
-          return new Response(
-            JSON.stringify({ access_token: `at-${refresh}`, expires_in: 3600 }),
-            { status: 200 },
-          );
+          return new Response(JSON.stringify({ access_token: `at-${refresh}`, expires_in: 3600 }), {
+            status: 200,
+          });
         }
         const auth = String((init?.headers as Record<string, string>)?.["Authorization"] ?? "");
         if (u.includes("/messages?")) {

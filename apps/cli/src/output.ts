@@ -63,4 +63,3 @@ export function box(title: string, body: string): void {
   const line = c.dim("─".repeat(Math.max(title.length + 2, 40)));
   process.stdout.write(`\n${line}\n${c.bold(title)}\n${line}\n${body}\n${line}\n\n`);
 }
-

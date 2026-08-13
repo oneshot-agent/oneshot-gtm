@@ -155,8 +155,14 @@ describe("fetchEventDetails", () => {
       description_mirror: {
         type: "doc",
         content: [
-          { type: "paragraph", content: [{ type: "text", text: "​Build autonomous agents in a day." }] },
-          { type: "paragraph", content: [{ type: "text", text: "For builders shipping real tool-use." }] },
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "​Build autonomous agents in a day." }],
+          },
+          {
+            type: "paragraph",
+            content: [{ type: "text", text: "For builders shipping real tool-use." }],
+          },
         ],
       },
       geo_address_info: { city: "San Francisco" },

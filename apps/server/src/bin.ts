@@ -114,9 +114,7 @@ if (cache.__oneshotGtmServer) {
       { message_120: ((err as Error).message ?? "").slice(0, 120) },
       "error",
     );
-    process.stderr.write(
-      `  warn: stale-send sweep failed: ${(err as Error).message}\n`,
-    );
+    process.stderr.write(`  warn: stale-send sweep failed: ${(err as Error).message}\n`);
   }
 
   // Mirror of the cadence sweep for `target_queue.send_started_at`. A queue
@@ -151,9 +149,7 @@ if (cache.__oneshotGtmServer) {
       { message_120: ((err as Error).message ?? "").slice(0, 120) },
       "error",
     );
-    process.stderr.write(
-      `  warn: stale queue-send sweep failed: ${(err as Error).message}\n`,
-    );
+    process.stderr.write(`  warn: stale queue-send sweep failed: ${(err as Error).message}\n`);
   }
 
   // Cold-boot sweep for /run dispatches: any run still marked 'running' from

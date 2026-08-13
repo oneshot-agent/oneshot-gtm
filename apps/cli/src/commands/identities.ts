@@ -153,7 +153,8 @@ export async function commandDomainsList(): Promise<void> {
     return;
   }
   for (const d of domains) {
-    const tone = d.pool_status === "active" ? c.green : d.pool_status === "warming" ? c.cyan : c.red;
+    const tone =
+      d.pool_status === "active" ? c.green : d.pool_status === "warming" ? c.cyan : c.red;
     note(
       `${d.domain}  ${tone(d.pool_status)}` +
         (d.warmup_score != null ? `  warmth ${d.warmup_score}` : "") +

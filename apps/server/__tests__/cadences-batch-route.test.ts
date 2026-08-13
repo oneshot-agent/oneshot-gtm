@@ -25,7 +25,13 @@ vi.mock("@oneshot-gtm/core", async () => {
     getLedger: () => ({
       claimCadenceSendingMarker: claimMarkerMock,
       clearCadenceSendingMarker: clearMarkerMock,
-      getCadenceDraft: () => ({ subject: "s", body: "b", flags: [], payload: {}, draftedAt: "now" }),
+      getCadenceDraft: () => ({
+        subject: "s",
+        body: "b",
+        flags: [],
+        payload: {},
+        draftedAt: "now",
+      }),
     }),
   };
 });

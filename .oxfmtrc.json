@@ -1,5 +1,12 @@
 {
   "$schema": "./node_modules/oxfmt/configuration_schema.json",
-  "ignorePatterns": ["dist", "node_modules", "bun.lock", "*.tsbuildinfo", "**/routeTree.gen.ts"],
+  "ignorePatterns": [
+    "dist",
+    "node_modules",
+    "bun.lock",
+    "*.tsbuildinfo",
+    "**/routeTree.gen.ts",
+    "packages/prompts/**/*.md"
+  ],
   "sortPackageJson": {}
 }

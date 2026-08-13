@@ -6,9 +6,11 @@ describe("readPackageVersion", () => {
   it("reads the caller package's version (../package.json from the file's dir)", () => {
     // This test lives at packages/core/__tests__/, so ../package.json is
     // packages/core/package.json — the same version the helper should return.
-    const expected = (JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
-      version: string;
-    }).version;
+    const expected = (
+      JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as {
+        version: string;
+      }
+    ).version;
     expect(readPackageVersion(import.meta.url)).toBe(expected);
   });
 

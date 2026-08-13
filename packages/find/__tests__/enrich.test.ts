@@ -28,7 +28,7 @@ vi.mock("@oneshot-gtm/core", () => ({
   ENRICH_CACHE_TTL_MS: 30 * 24 * 3600 * 1000,
   ENRICH_FAILURE_TTL_MS: 3 * 24 * 3600 * 1000,
   ENRICH_DEADLINE_MS: 120_000,
-  withDeadline: <T,>(p: Promise<T>) => p,
+  withDeadline: <T>(p: Promise<T>) => p,
   enrichProfile: async (input: { email?: string }) => {
     calls.enrichProfile++;
     calls.lastEmail = input.email ?? "";

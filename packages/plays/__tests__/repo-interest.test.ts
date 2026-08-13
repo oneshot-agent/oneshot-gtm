@@ -149,9 +149,7 @@ describe("runRepoInterest", () => {
   it("includes the per-repo repoEdge line when set, omits it when absent", async () => {
     await runRepoInterest({
       dryRun: true,
-      targets: [
-        { ...base, repo: "owner/name", yourEdge: "x", repoEdge: "writes its own skills" },
-      ],
+      targets: [{ ...base, repo: "owner/name", yourEdge: "x", repoEdge: "writes its own skills" }],
     });
     expect(calls.llmInputBlocks[0]).toContain("WHY THIS REPO IS NOTABLE");
     expect(calls.llmInputBlocks[0]).toContain("writes its own skills");
