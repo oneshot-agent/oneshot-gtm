@@ -203,6 +203,14 @@ describe("latestSentEmailCopy", () => {
     expect(ledger.latestSentEmailCopy()?.subject).toBe("third");
   });
 
+  it("finds usable copy behind a long run of bodyless rows", () => {
+    // Unusable rows are discarded in SQL, so a fixed candidate bound can't be
+    // exhausted by them — copy this far back is still found.
+    seedSent("post-funding", { subject: "buried", body: "the real copy" });
+    for (let i = 0; i < 60; i++) seedSent("post-funding", { label: `no body ${i}` });
+    expect(ledger.latestSentEmailCopy()?.subject).toBe("buried");
+  });
+
   it("ignores non-email channels and unsent steps", () => {
     const prospectId = ledger.upsertProspect({ name: "P", email: "p@x.example", source: "t" });
     ledger.recordSequenceEvent({

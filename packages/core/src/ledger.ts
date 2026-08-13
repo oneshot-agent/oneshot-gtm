@@ -1292,9 +1292,18 @@ export class Ledger {
         // (same convention as eventsByPlay). Matching only 'sent' would skip the
         // copy of every prospect who answered — precisely the best-performing
         // copy, and the canary would silently replay something older or nothing.
+        // Usability is filtered in SQL, not by scanning a fixed slice in JS.
+        // A slice can be exhausted by a run of pre-v8 / bodyless rows and then
+        // report "no copy" while perfectly good copy sits just past the cut —
+        // but dropping the bound entirely would load every send ever made to
+        // find one body. Letting SQLite discard the unusable rows means the
+        // small bound below only ever trims genuinely valid candidates.
         `SELECT play_name, metadata_json FROM sequence_events
          WHERE status IN ('sent', 'delivered', 'replied')
            AND channel = 'email' AND metadata_json IS NOT NULL
+           AND json_valid(metadata_json)
+           AND json_extract(metadata_json, '$.subject') IS NOT NULL
+           AND trim(coalesce(json_extract(metadata_json, '$.body'), '')) != ''
            ${opts.playName ? "AND play_name = ?" : ""}
          -- id DESC breaks ties: created_at is second-precision, and a cadence
          -- batch writes several rows within one second, leaving their relative
@@ -1305,8 +1314,8 @@ export class Ledger {
       play_name: string;
       metadata_json: string;
     }>;
-    // Scan a few: pre-v8 rows and non-email payloads have no subject/body, and
-    // taking only the newest row would return null whenever one of those is on top.
+    // Backstop for shapes SQL can't reject — a numeric subject, say, which
+    // json_extract happily returns but which isn't usable copy.
     for (const row of rows) {
       let meta: { subject?: unknown; body?: unknown };
       try {
