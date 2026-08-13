@@ -10,6 +10,7 @@ import {
   errorDraft,
   firstNameFrom,
   lintEmail,
+  logTargetError,
   safeEnrich,
   sendDraftedEmail,
   socialProofBlock,
@@ -189,6 +190,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         // Daily-cap deferral is not a per-target failure — propagate so the
         // caller (drain / SSE run) leaves remaining targets queued.
         if (isSendDeferred(err)) throw err;
+        logTargetError({ playName: def.playName, to: def.toEmail(target), err });
         return {
           target,
           ...errorDraft((err as Error)?.message),

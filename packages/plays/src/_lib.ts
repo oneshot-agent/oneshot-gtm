@@ -239,6 +239,47 @@ export function errorDraft(message: string | null | undefined): ErrorDraft {
 }
 
 /**
+ * Record WHY a single target failed, next to every `errorDraft` call site.
+ *
+ * What reaches the queue row (and the founder's screen) is errorDraft's 80-char
+ * slice of `err.message` — for an SDK ToolError that's the generic "Tool
+ * request failed", true and useless. The status code and response body carry
+ * the actual reason (`403 domain_not_owned`, the last time one was captured).
+ * Without this, a drain could fail every send and leave nothing in
+ * events.jsonl to diagnose from.
+ *
+ * Mirrors the whole-run handler in apps/server/src/api/run.ts, which already
+ * logs these fields; per-target failures were the gap.
+ */
+export function logTargetError(input: {
+  playName: string;
+  to?: string | null;
+  err: unknown;
+}): void {
+  const e = input.err as Error & {
+    cause?: unknown;
+    statusCode?: number;
+    responseBody?: string;
+  };
+  const causeMsg = e?.cause instanceof Error ? e.cause.message : e?.cause ? String(e.cause) : null;
+  logEvent(
+    "play.target_error",
+    {
+      play: input.playName,
+      ...(input.to ? { to: input.to } : {}),
+      message_200: (e?.message ?? "").slice(0, 200),
+      // OneShot SDK ToolError carries the failing call's HTTP status + server
+      // response body — the real reason, vs the generic message.
+      status_code: typeof e?.statusCode === "number" ? e.statusCode : null,
+      response_body_400: typeof e?.responseBody === "string" ? e.responseBody.slice(0, 400) : null,
+      cause_200: causeMsg ? causeMsg.slice(0, 200) : null,
+      stack_300: (e?.stack ?? "").slice(0, 300),
+    },
+    "error",
+  );
+}
+
+/**
  * Deterministic, semantics-preserving cleanups that the LLM occasionally
  * slips through despite the humanizer rules being in its system prompt.
  * Applied silently inside `draftEmailFromPrompt` so these four flags never

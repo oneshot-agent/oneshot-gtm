@@ -1,5 +1,11 @@
 import { getLedger, isSendDeferred, loadConfig } from "@oneshot-gtm/core";
-import { draftEmailFromPrompt, errorDraft, lintEmail, sendDraftedEmail } from "./_lib.ts";
+import {
+  draftEmailFromPrompt,
+  errorDraft,
+  lintEmail,
+  logTargetError,
+  sendDraftedEmail,
+} from "./_lib.ts";
 
 const PLAY_NAME = "breakup-revive";
 
@@ -103,6 +109,7 @@ export async function runBreakupRevive(
       // Daily-cap deferral is not a per-target failure — abort the run so the
       // caller leaves remaining targets queued instead of stamping error drafts.
       if (isSendDeferred(err)) throw err;
+      logTargetError({ playName: PLAY_NAME, to: t.email, err });
       const stub = errorDraft((err as Error)?.message);
       drafted.push({
         prospectEmail: t.email,
