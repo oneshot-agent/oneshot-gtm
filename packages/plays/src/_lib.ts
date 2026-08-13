@@ -253,6 +253,13 @@ export function errorDraft(message: string | null | undefined): ErrorDraft {
  */
 export function logTargetError(input: {
   playName: string;
+  /**
+   * Recipient address. Only its DOMAIN is logged — events.jsonl is a
+   * PII-free sink (see the `email_domain` precedent in core/send-routing.ts),
+   * and the domain is the diagnostic half anyway: it tells you whether one
+   * receiving domain is rejecting. Redaction lives here, not at the call
+   * sites, so no caller can leak the address by accident.
+   */
   to?: string | null;
   err: unknown;
 }): void {
@@ -266,7 +273,7 @@ export function logTargetError(input: {
     "play.target_error",
     {
       play: input.playName,
-      ...(input.to ? { to: input.to } : {}),
+      ...(input.to?.includes("@") ? { to_domain: input.to.split("@")[1] } : {}),
       message_200: (e?.message ?? "").slice(0, 200),
       // OneShot SDK ToolError carries the failing call's HTTP status + server
       // response body — the real reason, vs the generic message.

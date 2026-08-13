@@ -46,10 +46,12 @@ describe("logTargetError", () => {
     expect(entry?.level).toBe("error");
     expect(entry?.ctx).toMatchObject({
       play: "luma-events",
-      to: "a@b.dev",
+      // Domain only — events.jsonl is a PII-free sink.
+      to_domain: "b.dev",
       message_200: "Tool request failed",
       status_code: 403,
     });
+    expect(JSON.stringify(entry?.ctx)).not.toContain("a@b.dev");
     // The reason the founder actually needs — absent from the queue row.
     expect(String(entry?.ctx["response_body_400"])).toContain("domain_not_owned");
 
@@ -75,7 +77,7 @@ describe("logTargetError", () => {
     logTargetError({ playName: "show-hn", err });
     expect(logged[0]?.ctx["cause_200"]).toBe("the real reason");
     // No recipient supplied → the key is omitted rather than logged as null.
-    expect(logged[0]?.ctx).not.toHaveProperty("to");
+    expect(logged[0]?.ctx).not.toHaveProperty("to_domain");
   });
 
   it("truncates a huge response body instead of dumping it into the log", () => {
@@ -84,5 +86,27 @@ describe("logTargetError", () => {
     e.responseBody = "x".repeat(5000);
     logTargetError({ playName: "luma-events", err: e });
     expect(String(logged[0]?.ctx["response_body_400"])).toHaveLength(400);
+  });
+});
+
+describe("logTargetError redaction", () => {
+  // Asserts on the address itself, not on "@" — stack_300 legitimately carries
+  // node_modules paths like `@vitest+runner@4.1.5`.
+  it("keeps the domain and drops the local part, whatever the caller passes", () => {
+    for (const [to, domain] of [
+      ["pat@acme.io", "acme.io"],
+      ["ODD@Example.CO", "Example.CO"],
+    ] as const) {
+      logged.length = 0;
+      logTargetError({ playName: "show-hn", to, err: new Error("x") });
+      expect(logged[0]?.ctx["to_domain"], to).toBe(domain);
+      expect(String(logged[0]?.ctx["to_domain"]), to).not.toContain(to.split("@")[0]);
+    }
+  });
+
+  it("omits the key entirely for a value that isn't an address", () => {
+    logged.length = 0;
+    logTargetError({ playName: "show-hn", to: "not-an-email", err: new Error("x") });
+    expect(logged[0]?.ctx).not.toHaveProperty("to_domain");
   });
 });
