@@ -35,6 +35,8 @@ function statusTone(status: string | null): "receipt" | "spend" | "blocked" | "s
       return "blocked";
     case "completed":
       return "receipt";
+    case "bounced":
+      return "blocked";
     default:
       return "neutral";
   }

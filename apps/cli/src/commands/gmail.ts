@@ -6,11 +6,15 @@ import {
   GMAIL_IDENTITY_DEFAULTS,
   gmailConsentUrl,
   registerGmailIdentity,
+  resolveCanaryPair,
+  runPlacementCanary,
+  SAME_DOMAIN_WARNING,
   saveSecrets,
   secretsPath,
+  SINGLE_SEED_CAVEAT,
 } from "@oneshot-gtm/core";
 import prompts from "prompts";
-import { c, header, note, ok, warn } from "../output.ts";
+import { bail, box, c, fail, header, note, ok, warn } from "../output.ts";
 
 const AUTH_TIMEOUT_MS = 5 * 60 * 1000;
 
@@ -148,4 +152,81 @@ export async function commandGmailAuth(): Promise<void> {
   } finally {
     server.stop(true);
   }
+}
+
+/**
+ * Inbox-placement canary. Sends one real email between two authorized
+ * mailboxes and reports where the receiving account filed it, plus the
+ * SPF/DKIM/DMARC verdicts the receiving server recorded on the delivered copy.
+ *
+ * Interactive confirmation by design: this SENDS, so it can't be something a
+ * founder triggers by accident while poking at diagnostics.
+ */
+export async function commandGmailPlacement(opts: {
+  from?: string;
+  to?: string;
+  play?: string;
+  yes?: boolean;
+}): Promise<void> {
+  header("Inbox placement test");
+
+  let pair: ReturnType<typeof resolveCanaryPair>;
+  try {
+    pair = resolveCanaryPair({
+      ...(opts.from ? { fromIdentityId: opts.from } : {}),
+      ...(opts.to ? { toIdentityId: opts.to } : {}),
+    });
+  } catch (err) {
+    bail((err as Error).message);
+  }
+
+  note(`Sends one real email: ${c.cyan(pair.from.id)} → ${c.cyan(pair.to.id)}`);
+  note(SINGLE_SEED_CAVEAT);
+
+  if (!opts.yes) {
+    const { go } = await prompts(
+      { type: "confirm", name: "go", message: "Send the canary now?", initial: true },
+      { onCancel: () => process.exit(0) },
+    );
+    if (!go) return;
+  }
+
+  note("Sending, then polling the receiving mailbox (up to 2 min)…");
+  const result = await runPlacementCanary({
+    ...(opts.from ? { fromIdentityId: opts.from } : {}),
+    ...(opts.to ? { toIdentityId: opts.to } : {}),
+    ...(opts.play ? { playName: opts.play } : {}),
+  });
+
+  const line = result.placement === "inbox" ? ok : result.placement === "spam" ? fail : warn;
+  const latency = result.latencyMs != null ? ` in ${Math.round(result.latencyMs / 1000)}s` : "";
+  line(`Landed in ${c.bold(result.placement.toUpperCase())}${latency}`);
+
+  const body = [
+    `from        ${result.fromAddress}`,
+    `to          ${result.toAddress}`,
+    `subject     ${result.subject}`,
+    // Naming the source matters: a verdict on generic filler says little about
+    // the copy that actually ships, and the founder should know which they got.
+    `copy        ${result.sourcePlay ? `replayed real send from '${result.sourcePlay}'` : "GENERIC SAMPLE (no prior send to replay)"}`,
+    `labels      ${result.labelIds.join(", ") || "—"}`,
+    `spf         ${result.auth.spf}`,
+    `dkim        ${result.auth.dkim}`,
+    `dmarc       ${result.auth.dmarc}`,
+  ].join("\n");
+  box("Result", body);
+
+  if (result.sameDomain) warn(SAME_DOMAIN_WARNING);
+  if (result.placement === "not_delivered") {
+    warn(
+      "Never arrived within the deadline — inconclusive, not proof it was dropped. Re-run to confirm.",
+    );
+  }
+  if (result.placement === "promotions" || result.placement === "tab") {
+    note("Delivered, but tab-binned — for cold outreach that's close to invisible.");
+  }
+  if (!result.sameDomain && result.auth.spf === "unknown" && result.auth.dkim === "unknown") {
+    note("No Authentication-Results header — the receiving server recorded no verdict.");
+  }
+  note("Recorded — `doctor` reports this result until you run another.");
 }

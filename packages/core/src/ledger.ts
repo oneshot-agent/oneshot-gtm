@@ -3,6 +3,11 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { configDir } from "./config.ts";
 import type {
+  AuthVerdict,
+  BounceKind,
+  BounceRecord,
+  CanaryResultRecord,
+  GmailPlacement,
   InterviewRecord,
   ProspectRecord,
   QueueRow,
@@ -391,6 +396,55 @@ export class Ledger {
       CREATE INDEX IF NOT EXISTS idx_receipts_goal
         ON receipts(goal_id) WHERE goal_id IS NOT NULL;
     `);
+    // v18 (2026-08): delivery failures parsed from DSNs. Until now nothing ever
+    // wrote sequence_events.status='bounced' — the tool kept emailing addresses
+    // the receiving server had already refused, paying for each send and burning
+    // sending reputation, while the evidence sat unread in the mailbox.
+    // PK is (message_id, recipient): the DSN's own provider id makes a re-sweep
+    // idempotent (the sweep runs on every scheduler tick and re-sees the same
+    // 30-day window), and the recipient column keeps a multi-recipient report
+    // from collapsing into one row.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS bounces (
+        message_id  TEXT NOT NULL,
+        recipient   TEXT NOT NULL,
+        identity_id TEXT,
+        kind        TEXT NOT NULL,
+        status_code TEXT,
+        diagnostic  TEXT,
+        prospect_id INTEGER,
+        bounced_at  TEXT NOT NULL,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (message_id, recipient)
+      );
+      -- doctor's per-identity rate over a trailing window.
+      CREATE INDEX IF NOT EXISTS idx_bounces_identity ON bounces(identity_id, bounced_at);
+      -- suppressionFor, on the send pre-flight path — must be an index seek.
+      CREATE INDEX IF NOT EXISTS idx_bounces_recipient ON bounces(recipient, kind);
+    `);
+    // v19 (2026-08): inbox-placement canary results. Bounces tell you a message
+    // was refused; nothing told you it was ACCEPTED and then filtered into spam
+    // or a tab, which for cold outreach is the same as never arriving. Each row
+    // is one manual A→B test. Append-only history so a reputation trend is
+    // visible rather than just the latest verdict.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS canary_results (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        from_identity TEXT NOT NULL,
+        to_identity   TEXT NOT NULL,
+        placement     TEXT NOT NULL,
+        labels_json   TEXT,
+        spf           TEXT NOT NULL,
+        dkim          TEXT NOT NULL,
+        dmarc         TEXT NOT NULL,
+        subject       TEXT,
+        source_play   TEXT,
+        same_domain   INTEGER NOT NULL DEFAULT 0,
+        latency_ms    INTEGER,
+        created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_canary_created ON canary_results(created_at DESC);
+    `);
   }
 
   /**
@@ -580,12 +634,14 @@ export class Ledger {
   setCadenceStatus(input: {
     prospectId: number;
     playName: string;
-    status: "active" | "replied" | "breakup" | "completed";
+    status: "active" | "replied" | "breakup" | "completed" | "bounced";
   }): void {
     // Non-active terminal states clear the persisted draft AND any send
-    // marker — a replied / breakup / completed cadence shouldn't have a
-    // sendable preview hanging around or a stuck "sending" flag. A reply /
-    // breakup / completion also clears any stale send-failure marker.
+    // marker — a replied / breakup / completed / bounced cadence shouldn't have
+    // a sendable preview hanging around or a stuck "sending" flag. A reply /
+    // breakup / completion / bounce also clears any stale send-failure marker
+    // (for a bounce that marker is actively misleading: it reads as
+    // "retrying", but a dead address will never accept a retry).
     this.db
       .prepare(
         `UPDATE cadence_state
@@ -1089,6 +1145,171 @@ export class Ledger {
       )
       .get(identityId) as { first: string | null };
     return row.first;
+  }
+
+  /**
+   * Record one delivery failure. INSERT OR IGNORE against the (message_id,
+   * recipient) PK: the sweep re-reads a 30-day window on every tick, so the
+   * same DSN is re-seen dozens of times and must only ever count once.
+   * Returns true when this was a NEW bounce — callers use that to decide
+   * whether to act on the cadence (stopping it repeatedly is harmless, but
+   * re-tagging receipts and logging on every tick is not).
+   */
+  recordBounce(input: {
+    messageId: string;
+    recipient: string;
+    identityId: string | null;
+    kind: BounceKind;
+    statusCode: string | null;
+    diagnostic: string | null;
+    prospectId: number | null;
+    bouncedAt: string;
+  }): boolean {
+    const result = this.db
+      .prepare(
+        `INSERT OR IGNORE INTO bounces
+           (message_id, recipient, identity_id, kind, status_code, diagnostic, prospect_id, bounced_at)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.messageId,
+        canonEmail(input.recipient),
+        input.identityId,
+        input.kind,
+        input.statusCode,
+        input.diagnostic?.slice(0, 300) ?? null,
+        input.prospectId,
+        input.bouncedAt,
+      );
+    return result.changes > 0;
+  }
+
+  /**
+   * The hard bounce that suppresses this address, or null if it's still
+   * sendable. HARD ONLY — a `block` is the receiving server refusing a message
+   * on policy, not a statement that the mailbox is dead, so suppressing on it
+   * would permanently burn valid prospects over one spam-filter verdict.
+   * Soft bounces are transient by definition.
+   */
+  suppressionFor(email: string): BounceRecord | null {
+    return (
+      (this.db
+        .query(
+          `SELECT * FROM bounces WHERE recipient = ? AND kind = 'hard'
+           ORDER BY bounced_at DESC LIMIT 1`,
+        )
+        .get(canonEmail(email)) as BounceRecord) ?? null
+    );
+  }
+
+  /** Bounce counts per sending identity since `sinceIso` — the doctor check's numerator. */
+  bounceStatsByIdentity(opts: {
+    sinceIso: string;
+  }): Map<string, { hard: number; block: number; soft: number }> {
+    const rows = this.db
+      .query(
+        `SELECT identity_id, kind, COUNT(*) AS n FROM bounces
+         WHERE bounced_at >= ? AND identity_id IS NOT NULL
+         GROUP BY identity_id, kind`,
+      )
+      .all(opts.sinceIso) as Array<{ identity_id: string; kind: BounceKind; n: number }>;
+    const out = new Map<string, { hard: number; block: number; soft: number }>();
+    for (const r of rows) {
+      let entry = out.get(r.identity_id);
+      if (!entry) {
+        entry = { hard: 0, block: 0, soft: 0 };
+        out.set(r.identity_id, entry);
+      }
+      entry[r.kind] = r.n;
+    }
+    return out;
+  }
+
+  /** Most recent bounces for display (doctor detail lines, debugging). */
+  listRecentBounces(opts: { limit?: number } = {}): BounceRecord[] {
+    return this.db
+      .query(`SELECT * FROM bounces ORDER BY bounced_at DESC LIMIT ?`)
+      .all(opts.limit ?? 20) as BounceRecord[];
+  }
+
+  recordCanaryResult(input: {
+    fromIdentity: string;
+    toIdentity: string;
+    placement: GmailPlacement;
+    labelIds: string[];
+    auth: { spf: AuthVerdict; dkim: AuthVerdict; dmarc: AuthVerdict };
+    subject: string | null;
+    sourcePlay: string | null;
+    sameDomain: boolean;
+    latencyMs: number | null;
+  }): number {
+    const result = this.db
+      .prepare(
+        `INSERT INTO canary_results
+           (from_identity, to_identity, placement, labels_json, spf, dkim, dmarc,
+            subject, source_play, same_domain, latency_ms)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        input.fromIdentity,
+        input.toIdentity,
+        input.placement,
+        JSON.stringify(input.labelIds),
+        input.auth.spf,
+        input.auth.dkim,
+        input.auth.dmarc,
+        input.subject,
+        input.sourcePlay,
+        input.sameDomain ? 1 : 0,
+        input.latencyMs,
+      );
+    return Number(result.lastInsertRowid);
+  }
+
+  /** Newest placement test, or null if one has never been run. */
+  latestCanaryResult(): CanaryResultRecord | null {
+    return (
+      (this.db
+        .query(`SELECT * FROM canary_results ORDER BY created_at DESC, id DESC LIMIT 1`)
+        .get() as CanaryResultRecord) ?? null
+    );
+  }
+
+  /**
+   * Subject + body of the most recent email this tool actually SENT, for the
+   * placement canary to replay. Spam filters judge content, so testing with
+   * invented copy would measure nothing that transfers to real outreach.
+   * Reads the persisted draft off the sequence_events row (metadata_json
+   * carries {subject, body} for sent email steps).
+   */
+  latestSentEmailCopy(
+    opts: { playName?: string } = {},
+  ): { subject: string; body: string; playName: string } | null {
+    const rows = this.db
+      .query(
+        `SELECT play_name, metadata_json FROM sequence_events
+         WHERE status = 'sent' AND channel = 'email' AND metadata_json IS NOT NULL
+           ${opts.playName ? "AND play_name = ?" : ""}
+         ORDER BY created_at DESC LIMIT 25`,
+      )
+      .all(...(opts.playName ? [opts.playName] : [])) as Array<{
+      play_name: string;
+      metadata_json: string;
+    }>;
+    // Scan a few: pre-v8 rows and non-email payloads have no subject/body, and
+    // taking only the newest row would return null whenever one of those is on top.
+    for (const row of rows) {
+      let meta: { subject?: unknown; body?: unknown };
+      try {
+        meta = JSON.parse(row.metadata_json) as { subject?: unknown; body?: unknown };
+      } catch {
+        continue;
+      }
+      if (typeof meta.subject === "string" && typeof meta.body === "string" && meta.body.trim()) {
+        return { subject: meta.subject, body: meta.body, playName: row.play_name };
+      }
+    }
+    return null;
   }
 
   getReceipt(id: number): ReceiptRecord | null {

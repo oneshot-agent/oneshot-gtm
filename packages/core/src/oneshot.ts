@@ -20,10 +20,20 @@ import { createHash } from "node:crypto";
 import { getLedger } from "./ledger.ts";
 import { loadConfig, oneshotEnvReady } from "./config.ts";
 import { logEvent } from "./events.ts";
-import { getGmailProfile, listGmailReplies, sendGmailMessage } from "./gmail.ts";
+import {
+  type GmailBounce,
+  getGmailProfile,
+  listGmailBounces,
+  listGmailReplies,
+  sendGmailMessage,
+} from "./gmail.ts";
 import { gmailAccountFor, resolveIdentities } from "./identities.ts";
 import { parallelMap, withDeadline } from "./parallel.ts";
-import { isTransientToolError, resolveSenderIdentity } from "./send-routing.ts";
+import {
+  isTransientToolError,
+  resolveSenderIdentity,
+  SuppressedRecipientError,
+} from "./send-routing.ts";
 import type { EmailIdentity } from "./types.ts";
 
 /** Re-exported so callers don't reach into the SDK for the domain-pool shape. */
@@ -287,6 +297,17 @@ async function sendEmailViaGmail(input: SendEmailInput, ctx: CallContext, identi
 }
 
 export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
+  // Suppression backstop, ahead of everything else: a previously hard-bounced
+  // address can only fail again, and the send is billed before dispatch. Every
+  // caller funnels through here (plays, cadence, queue), so this is the one
+  // place that guarantees it. `replyEmail` is deliberately NOT gated — a manual
+  // inbox reply goes to someone who just emailed us, so they demonstrably exist.
+  const suppression = getLedger().suppressionFor(input.to);
+  if (suppression) {
+    throw new SuppressedRecipientError(
+      `${input.to} hard-bounced${suppression.status_code ? ` (${suppression.status_code})` : ""} on ${suppression.bounced_at.slice(0, 10)} — not sending`,
+    );
+  }
   // Sender rotation: resolve the sticky per-prospect identity BEFORE any
   // network call. Throws SendDeferredError when every identity is at its
   // daily cap — callers leave the work queued for tomorrow.
@@ -730,6 +751,56 @@ export async function listInbox(opts?: {
     has_more: ok.some((r) => r.has_more),
     agent_id: ok.map((r) => r.agent_id).join("+"),
   };
+}
+
+export interface IdentityBounce extends GmailBounce {
+  /** Identity whose mailbox received the DSN — which is the identity that sent the message. */
+  identityId: string;
+}
+
+/**
+ * Delivery failures across the whole sender pool. Gmail identities only: a DSN
+ * comes back to the envelope sender, and for OneShot sends that return path
+ * belongs to the platform, not to us — nothing surfaces in its inbox API.
+ *
+ * Attribution is free and exact: the mailbox that RECEIVED the bounce is the
+ * mailbox that sent the message, so no join back through sender_assignments is
+ * needed to know whose reputation this counts against.
+ *
+ * Per-source try/catch like listInbox — one revoked Gmail token must not blind
+ * bounce detection for every other identity. Unlike listInbox this NEVER throws
+ * on total failure: it runs on a background sweep where the only sane response
+ * to "no sources answered" is to report nothing and retry next tick.
+ */
+export async function listBounces(opts?: {
+  since?: string;
+  limit?: number;
+}): Promise<IdentityBounce[]> {
+  const identities = resolveIdentities(loadConfig()).filter((i) => i.provider === "gmail");
+  const results = await parallelMap(identities, 3, async (identity) => {
+    const account = gmailAccountFor(identity);
+    if (!account) {
+      logEvent("bounce.source_skipped", { source: identity.id, reason: "no_token" }, "warn");
+      return [];
+    }
+    try {
+      const bounces = await withDeadline(
+        listGmailBounces(opts, account),
+        INBOX_SOURCE_TIMEOUT_MS,
+        `bounce source '${identity.id}'`,
+      );
+      // Freshly parsed objects with no other holder — assign in place.
+      return bounces.map((b) => Object.assign(b, { identityId: identity.id }));
+    } catch (err) {
+      logEvent(
+        "bounce.source_failed",
+        { source: identity.id, message_120: ((err as Error).message ?? "").slice(0, 120) },
+        "warn",
+      );
+      return [];
+    }
+  });
+  return results.flat();
 }
 
 export interface BuildSiteInput {

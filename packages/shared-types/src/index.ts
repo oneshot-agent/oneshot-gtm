@@ -3,7 +3,14 @@
  * These are the API contracts for /api/* endpoints. Keep stable.
  */
 
-export type CadenceStatus = "active" | "replied" | "breakup" | "completed" | "paused";
+export type CadenceStatus =
+  | "active"
+  | "replied"
+  | "breakup"
+  | "completed"
+  | "paused"
+  /** Stopped by a hard bounce — the address is dead and is suppressed from further sends. */
+  | "bounced";
 
 export interface CadenceNextStepDraft {
   subject: string;
@@ -76,6 +83,7 @@ export interface CadenceCounts {
   breakup: number;
   completed: number;
   paused: number;
+  bounced: number;
   overdue: number;
 }
 

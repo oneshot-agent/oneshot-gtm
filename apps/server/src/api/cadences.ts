@@ -187,6 +187,7 @@ function tallyCounts(
     breakup: 0,
     completed: 0,
     paused: 0,
+    bounced: 0,
     overdue: 0,
   };
   for (const r of rows) {
@@ -195,7 +196,8 @@ function tallyCounts(
       r.status === "replied" ||
       r.status === "breakup" ||
       r.status === "completed" ||
-      r.status === "paused"
+      r.status === "paused" ||
+      r.status === "bounced"
     ) {
       counts[r.status]++;
       if (r.status === "active" && r.next_due_at && new Date(r.next_due_at).getTime() <= now) {
