@@ -248,3 +248,117 @@ describe("parseBounce — success reports", () => {
     expect(parseBounce(msg)[0]).toMatchObject({ kind: "hard" });
   });
 });
+
+describe("parseBounce — prose fallback, review hardening", () => {
+  it("records a failed recipient at a no-reply address", () => {
+    // A blanket daemon-pattern filter would discard this and the hard bounce
+    // would never be recorded or suppressed.
+    const msg = dsn({
+      humanText: "550 5.1.1 <no-reply@customer.example>: User unknown",
+    });
+    expect(parseBounce(msg)[0]).toMatchObject({
+      recipient: "no-reply@customer.example",
+      kind: "hard",
+    });
+  });
+
+  it("never returns the DSN's own sender as the failed recipient", () => {
+    const msg = dsn({
+      from: "Mail Delivery Subsystem <mailer-daemon@googlemail.com>",
+      humanText: "mailer-daemon@googlemail.com: 550 5.1.1 delivery failed",
+    });
+    expect(parseBounce(msg)).toEqual([]);
+  });
+
+  it("excludes the actual sender address even when it isn't daemon-shaped", () => {
+    const msg = dsn({
+      from: "Bounce Handler <bounces@relay.example>",
+      subject: "Undelivered Mail Returned to Sender",
+      humanText: "bounces@relay.example reports: 550 5.1.1 failure",
+    });
+    expect(parseBounce(msg)).toEqual([]);
+  });
+
+  it("does not lock in a quoted sender when a later coded line has no address", () => {
+    // Breaking on any coded line would return founder@ourdomain.example and a
+    // hard bounce would suppress the founder's own address.
+    const msg = dsn({
+      humanText: [
+        "Delivery failed for one recipient.",
+        "",
+        "From: founder@ourdomain.example",
+        "To: target@dead.example",
+        "",
+        "The remote server returned:",
+        "550 5.1.1 User unknown",
+      ].join("\n"),
+    });
+    expect(parseBounce(msg)[0]?.recipient).toBe("target@dead.example");
+  });
+
+  it("classifies on the full prose, not the truncated diagnostic", () => {
+    // A bare SMTP code past the 300-char truncation point would otherwise be
+    // invisible to classifyBounce, defaulting to soft and never suppressing.
+    const padding = "This message could not be delivered. ".repeat(12);
+    const msg = dsn({
+      humanText: `Delivery failed for target@dead.example\n${padding}\nRemote said: 550 No such user`,
+    });
+    const out = parseBounce(msg)[0];
+    expect(out?.kind).toBe("hard");
+    // …while the STORED diagnostic stays truncated.
+    expect(out?.diagnostic?.length).toBe(300);
+  });
+
+  it("still parses when the body is enormous", () => {
+    // Scanning is capped; the verdict must come from the leading prose.
+    const msg = dsn({
+      humanText: `550 5.1.1 <target@dead.example>: User unknown\n${"!".repeat(50_000)}`,
+    });
+    expect(parseBounce(msg)[0]).toMatchObject({ recipient: "target@dead.example", kind: "hard" });
+  });
+
+  it("returns quickly on a hostile body with no address", () => {
+    // Bounded quantifiers + scan cap: a long run of local-part characters with
+    // no '@' must not blow up backtracking.
+    const msg = dsn({ humanText: `550 failure\n${"!".repeat(60_000)}` });
+    const started = Date.now();
+    expect(parseBounce(msg)).toEqual([]);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+});
+
+describe("parseBounce — recipient scoring", () => {
+  it("never picks an address off a From:/Return-Path: header", () => {
+    const msg = dsn({
+      humanText:
+        [
+          "Your message could not be delivered.",
+          "From: founder@ourdomain.example",
+          "Return-Path: bounce@ourdomain.example",
+          "To: target@dead.example",
+        ].join("\n") + "\n550 failure",
+    });
+    expect(parseBounce(msg)[0]?.recipient).toBe("target@dead.example");
+  });
+
+  it("prefers the SMTP response line over an earlier To: header", () => {
+    const msg = dsn({
+      humanText: [
+        "To: listed-first@corp.example",
+        "550 5.1.1 <actually-failed@corp.example>: User unknown",
+      ].join("\n"),
+    });
+    expect(parseBounce(msg)[0]?.recipient).toBe("actually-failed@corp.example");
+  });
+
+  it("prefers a recipient-cue line over an incidental mention", () => {
+    const msg = dsn({
+      humanText: [
+        "Contact support@ourdomain.example if this persists.",
+        "Your message wasn't delivered to target@dead.example.",
+        "The response was: 550 no such user",
+      ].join("\n"),
+    });
+    expect(parseBounce(msg)[0]?.recipient).toBe("target@dead.example");
+  });
+});

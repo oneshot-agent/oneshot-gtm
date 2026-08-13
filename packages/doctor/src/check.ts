@@ -39,6 +39,18 @@ const MIN_SENDS_TO_JUDGE = 20;
 /** Industry rule of thumb: sustained hard bounces above ~2% start costing reputation, ~5% is where providers act. */
 const HARD_WARN_RATE = 0.02;
 const HARD_FAIL_RATE = 0.05;
+/**
+ * Extra days of SENDS included in the denominator beyond the bounce window.
+ *
+ * The two sides are timestamped by different events: a bounce is dated when the
+ * DSN arrived, a send when it went out. Using an identical window would count a
+ * DSN that landed just inside it while excluding the send that caused it —
+ * inflating the rate, on a check that can report `fail`. A DSN almost always
+ * arrives within minutes and effectively always within two days, so widening
+ * only the denominator makes the ratio honest. It biases the rate very slightly
+ * LOW, which is the right direction for an error that would otherwise cry wolf.
+ */
+const SEND_WINDOW_GRACE_DAYS = 2;
 
 /**
  * Per-identity delivery health from harvested DSNs. Two numbers, deliberately
@@ -87,7 +99,10 @@ function deliverabilityChecks(): CheckResult[] {
     for (const identity of identities) {
       const s = stats.get(identity.id);
       if (!s) continue;
-      const sent = ledger.countEmailSendsSince(identity.id, daysAgoSqliteUtc(BOUNCE_WINDOW_DAYS));
+      const sent = ledger.countEmailSendsSince(
+        identity.id,
+        daysAgoSqliteUtc(BOUNCE_WINDOW_DAYS + SEND_WINDOW_GRACE_DAYS),
+      );
       const label = identity.address ?? identity.sendingDomain ?? identity.id;
       const blockNote =
         s.block > 0

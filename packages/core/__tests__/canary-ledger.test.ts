@@ -154,6 +154,37 @@ describe("latestSentEmailCopy", () => {
     expect(ledger.latestSentEmailCopy()?.subject).toBe("real");
   });
 
+  it("includes copy whose step later flipped to replied", () => {
+    // markLatestStepReplied UPDATEs a 'sent' row in place. Matching only
+    // status='sent' would skip every prospect who answered — i.e. the
+    // best-performing copy there is — and silently replay something older.
+    const prospectId = ledger.upsertProspect({ name: "P", email: "r@x.example", source: "t" });
+    ledger.recordSequenceEvent({
+      prospectId,
+      playName: "post-funding",
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+      metadata: { subject: "the winner", body: "copy that got a reply" },
+    });
+    ledger.markLatestStepReplied({ prospectId, playName: "post-funding" });
+
+    expect(ledger.latestSentEmailCopy()?.subject).toBe("the winner");
+  });
+
+  it("includes copy whose step is marked delivered", () => {
+    const prospectId = ledger.upsertProspect({ name: "P", email: "d@x.example", source: "t" });
+    ledger.recordSequenceEvent({
+      prospectId,
+      playName: "post-funding",
+      stepIndex: 0,
+      channel: "email",
+      status: "delivered",
+      metadata: { subject: "delivered one", body: "body" },
+    });
+    expect(ledger.latestSentEmailCopy()?.subject).toBe("delivered one");
+  });
+
   it("ignores non-email channels and unsent steps", () => {
     const prospectId = ledger.upsertProspect({ name: "P", email: "p@x.example", source: "t" });
     ledger.recordSequenceEvent({

@@ -10,6 +10,7 @@ import {
 } from "./gmail.ts";
 import { gmailAccountFor, resolveIdentities } from "./identities.ts";
 import { getLedger } from "./ledger.ts";
+import { toHtmlBody } from "./oneshot.ts";
 import type { EmailIdentity, GmailPlacement } from "./types.ts";
 
 /**
@@ -163,7 +164,11 @@ export async function runPlacementCanary(opts: CanaryOptions = {}): Promise<Cana
       fromEmail: fromAddress,
       fromName: loadConfig().founderName,
       subject: copy.subject,
-      htmlBody: copy.body.replace(/\n/g, "<br>"),
+      // The real send path's exact encoder. Escaping matters beyond
+      // correctness here: copy containing & < > would otherwise reach the
+      // filter as different content from what ships, and the whole point is
+      // to measure a verdict on the real thing.
+      htmlBody: toHtmlBody(copy.body),
     },
     fromAccount,
   );

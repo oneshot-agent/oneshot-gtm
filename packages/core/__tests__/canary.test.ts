@@ -255,6 +255,24 @@ describe("runPlacementCanary", () => {
     expect(sentMessages[0]?.htmlBody).toContain("saw the round");
   });
 
+  it("escapes HTML in replayed copy with the real send path's encoder", async () => {
+    // Unescaped & < > would reach the filter as different content from what
+    // ships — the canary would then be measuring the wrong message.
+    realCopy = {
+      subject: "Q&A",
+      body: "Tips & tricks for <founders>\nsecond line",
+      playName: "post-funding",
+    };
+    pollResults = [placed(["INBOX"])];
+    await runPlacementCanary({ sleep: noSleep });
+
+    const html = sentMessages[0]?.htmlBody ?? "";
+    expect(html).toContain("&amp;");
+    expect(html).toContain("&lt;founders&gt;");
+    expect(html).not.toContain("<founders>");
+    expect(html).toContain("<br>");
+  });
+
   it("flags a generic sample when there is no real send to replay", async () => {
     realCopy = null;
     pollResults = [placed(["INBOX"])];

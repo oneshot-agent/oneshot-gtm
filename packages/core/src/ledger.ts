@@ -1287,8 +1287,14 @@ export class Ledger {
   ): { subject: string; body: string; playName: string } | null {
     const rows = this.db
       .query(
+        // All three statuses mean "this email was sent": a step is written as
+        // 'sent' and later UPDATEd in place to 'replied' by markLatestStepReplied
+        // (same convention as eventsByPlay). Matching only 'sent' would skip the
+        // copy of every prospect who answered — precisely the best-performing
+        // copy, and the canary would silently replay something older or nothing.
         `SELECT play_name, metadata_json FROM sequence_events
-         WHERE status = 'sent' AND channel = 'email' AND metadata_json IS NOT NULL
+         WHERE status IN ('sent', 'delivered', 'replied')
+           AND channel = 'email' AND metadata_json IS NOT NULL
            ${opts.playName ? "AND play_name = ?" : ""}
          ORDER BY created_at DESC LIMIT 25`,
       )

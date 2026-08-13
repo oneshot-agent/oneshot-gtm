@@ -352,9 +352,27 @@ const SMTP_CODE_RE = /\b([45]\d\d)\b/;
  */
 const POLICY_DIAGNOSTIC_RE =
   /\b(spam|blocked|blocklist|blacklist|policy|reputation|unsolicited|bulk|rejected due to|spamhaus|barracuda|greylist)/i;
-/** DSN envelope senders — never the failed recipient, so excluded when scraping prose. */
-const DAEMON_ADDRESS_RE = /(mailer-daemon|postmaster|no-?reply|do-?not-?reply)@/i;
-const EMAIL_RE = /[\w.!#$%&'*+/=?^`{|}~-]+@[\w-]+(?:\.[\w-]+)+/g;
+/**
+ * Canonical DSN envelope senders. Used only as a fallback to the message's
+ * actual From address — kept narrow deliberately: a broad pattern (no-reply@,
+ * donotreply@…) would also discard a genuine failed recipient at one of those
+ * addresses, and then the hard bounce would never be recorded or suppressed.
+ */
+const DAEMON_ADDRESS_RE = /^(mailer-daemon|postmaster)@/i;
+/**
+ * Quantifiers are bounded to RFC 5321's limits (local-part 64, labels 63)
+ * rather than left open. An unbounded `[...]+@` over a body that never contains
+ * `@` backtracks from every start position — and DSN bodies are attacker-
+ * influenced, since anyone can send mail with a mailer-daemon From. See also
+ * PROSE_SCAN_LIMIT.
+ */
+const EMAIL_RE = /[\w.!#$%&'*+/=?^`{|}~-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63}){1,8}/g;
+/**
+ * Prose scanned by the fallback parser, in characters. A real DSN states the
+ * failure in its first few lines; the rest is the quoted original message.
+ * Capping bounds the regex work on hostile input.
+ */
+const PROSE_SCAN_LIMIT = 8_000;
 
 /**
  * Severity for a delivery failure. `statusCode` is the enhanced RFC 3463 code
@@ -482,37 +500,77 @@ export function parseBounce(msg: GmailMessageMeta): ParsedBounce[] {
   const from = msg.payload?.headers?.find((h) => h.name.toLowerCase() === "from")?.value ?? "";
   const subject =
     msg.payload?.headers?.find((h) => h.name.toLowerCase() === "subject")?.value ?? "";
+  const senderAddress = from.match(EMAIL_RE)?.[0]?.toLowerCase() ?? null;
   const looksLikeDsn =
-    DAEMON_ADDRESS_RE.test(from) ||
+    (senderAddress != null && DAEMON_ADDRESS_RE.test(senderAddress)) ||
     /(delivery (status notification|failure|has failed)|undelivered mail|returned to sender|address not found)/i.test(
       subject,
     );
   if (!looksLikeDsn) return [];
 
-  // Scrape the prose for an address plus a status code. Prefer an address on a
-  // line that also carries a code (that's the SMTP response line naming the
-  // failed recipient) over a bare first match, which could be the quoted
-  // original sender.
-  const body = extractPlainText(msg.payload);
+  /**
+   * The DSN's own sender is never the address that failed. Matched by exact
+   * address first, falling back to the canonical daemon pattern — a broader
+   * pattern would discard a real failed recipient at, say,
+   * `no-reply@customer.example` and the bounce would go unrecorded.
+   */
+  const isSender = (addr: string): boolean =>
+    addr === senderAddress || DAEMON_ADDRESS_RE.test(addr);
+
+  const body = extractPlainText(msg.payload).slice(0, PROSE_SCAN_LIMIT);
   if (!body) return [];
   const statusCode = body.match(ENHANCED_STATUS_RE)?.[1] ?? null;
   if (!statusCode && !SMTP_CODE_RE.test(body)) return [];
+
+  /*
+   * A DSN's prose contains several addresses and only one of them failed.
+   * Picking the first non-sender match is wrong: a quoted `From:` header
+   * usually appears above the SMTP response, so a hard bounce would suppress
+   * the FOUNDER'S address rather than the target's. Score candidates by how
+   * strongly their line implies "this is the address that failed" and take the
+   * best, rather than the earliest.
+   */
+  // Header lines naming the originator — never the failed recipient.
+  const ORIGINATOR_LINE = /^\s*(from|sender|reply-to|return-path|x-original-from)\s*:/i;
+  // Phrasing that introduces the failed recipient across common MTAs.
+  const RECIPIENT_CUE =
+    /^\s*(to|final-recipient|original-recipient)\s*:|(recipient|delivered to|deliver to|failed for|wasn't delivered to|was not delivered to)/i;
+  const CODED_LINE = 3;
   let recipient: string | null = null;
-  for (const line of body.split(/\r?\n/)) {
-    const hasCode = ENHANCED_STATUS_RE.test(line) || SMTP_CODE_RE.test(line);
+  let bestScore = 0;
+  outer: for (const line of body.split(/\r?\n/)) {
+    if (ORIGINATOR_LINE.test(line)) continue;
+    const score =
+      ENHANCED_STATUS_RE.test(line) || SMTP_CODE_RE.test(line)
+        ? CODED_LINE
+        : RECIPIENT_CUE.test(line)
+          ? 2
+          : 1;
+    if (score <= bestScore) continue;
     for (const addr of line.match(EMAIL_RE) ?? []) {
-      if (DAEMON_ADDRESS_RE.test(addr)) continue;
-      recipient ??= addr.toLowerCase();
-      if (hasCode) {
-        recipient = addr.toLowerCase();
-        break;
-      }
+      const lower = addr.toLowerCase();
+      if (isSender(lower)) continue;
+      recipient = lower;
+      bestScore = score;
+      // Nothing outranks the SMTP response line — stop looking.
+      if (score === CODED_LINE) break outer;
+      break;
     }
-    if (recipient && hasCode) break;
   }
   if (!recipient) return [];
-  const diagnostic = body.replace(/\s+/g, " ").trim().slice(0, 300);
-  return [{ recipient, kind: classifyBounce(statusCode, diagnostic), statusCode, diagnostic }];
+  const normalized = body.replace(/\s+/g, " ").trim();
+  // Classify against the FULL prose but store only a truncated diagnostic: a
+  // bare SMTP code past the truncation point would otherwise be invisible to
+  // classifyBounce, which then defaults to `soft` and never suppresses a
+  // genuinely dead address.
+  return [
+    {
+      recipient,
+      kind: classifyBounce(statusCode, normalized),
+      statusCode,
+      diagnostic: normalized.slice(0, 300),
+    },
+  ];
 }
 
 export interface GmailBounce extends ParsedBounce {
@@ -527,6 +585,11 @@ export interface GmailBounce extends ParsedBounce {
  * actually a delivery report, so over-matching costs a wasted fetch, not a
  * false bounce. No `in:inbox` — a DSN the founder archived still counts — and
  * no `-from:me`, which would drop self-relayed reports.
+ *
+ * Paginated: a heavy sender can exceed one page of DSNs inside the window, and
+ * stopping at the first page would leave those recipients unsuppressed while
+ * reporting a falsely low bounce rate — a silent undercount, the worst failure
+ * mode for a check whose whole job is to notice trouble.
  */
 export async function listGmailBounces(
   opts?: { since?: string; limit?: number },
@@ -535,18 +598,28 @@ export async function listGmailBounces(
   const sinceClause = opts?.since
     ? `after:${Math.floor(new Date(opts.since).getTime() / 1000)}`
     : "newer_than:30d";
-  const params = new URLSearchParams({
-    q:
-      `(from:mailer-daemon OR from:postmaster OR subject:"Delivery Status Notification" ` +
-      `OR subject:"Undelivered Mail Returned to Sender" OR subject:"Delivery Failure") ${sinceClause}`,
-    maxResults: String(opts?.limit ?? 100),
-  });
-  const list = await gmailJson<{ messages?: Array<{ id: string }> }>(
-    `/messages?${params}`,
-    undefined,
-    account,
-  );
-  const ids = (list.messages ?? []).map((m) => m.id);
+  const query =
+    `(from:mailer-daemon OR from:postmaster OR subject:"Delivery Status Notification" ` +
+    `OR subject:"Undelivered Mail Returned to Sender" OR subject:"Delivery Failure") ${sinceClause}`;
+  // Ceiling on total DSNs pulled per sweep. Bounds both the page walk and the
+  // per-message fetches that follow, so a mailbox full of delivery reports
+  // can't turn one sweep into thousands of API calls.
+  const limit = opts?.limit ?? 500;
+  const ids: string[] = [];
+  let pageToken: string | undefined;
+  do {
+    const params = new URLSearchParams({
+      q: query,
+      maxResults: String(Math.min(100, limit - ids.length)),
+      ...(pageToken ? { pageToken } : {}),
+    });
+    const list = await gmailJson<{
+      messages?: Array<{ id: string }>;
+      nextPageToken?: string;
+    }>(`/messages?${params}`, undefined, account);
+    for (const m of list.messages ?? []) ids.push(m.id);
+    pageToken = list.nextPageToken;
+  } while (pageToken && ids.length < limit);
   const perMessage = await parallelMap(ids, 4, async (id): Promise<GmailBounce[]> => {
     const msg = await gmailJson<GmailMessageMeta>(
       `/messages/${id}?format=full`,
