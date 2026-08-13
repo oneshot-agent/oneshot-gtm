@@ -261,5 +261,9 @@ async function resolveAndEnqueueShowHn(
 registerPendingRetry(PLAY_NAME, async (raw) => {
   const { hit, filterReason } = raw as { hit: ShowHnHit; filterReason: string };
   const outcome = await resolveAndEnqueueShowHn(hit, filterReason, () => {});
-  return outcome === "enqueued" ? "enqueued" : outcome === "platform-error" ? "platform-error" : "dropped";
+  return outcome === "enqueued"
+    ? "enqueued"
+    : outcome === "platform-error"
+      ? "platform-error"
+      : "dropped";
 });

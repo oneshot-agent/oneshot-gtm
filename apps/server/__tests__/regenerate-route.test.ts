@@ -24,8 +24,9 @@ let row: RowSnapshot = {
 
 // Per-test override: how should dispatchPlay behave? Default is success;
 // tests that simulate a concurrent send flip the row mid-await.
-let dispatchPlayImpl: () => Promise<Array<{ subject: string; body: string; flags: string[] }>> =
-  async () => [{ subject: "subj", body: "body", flags: [] }];
+let dispatchPlayImpl: () => Promise<
+  Array<{ subject: string; body: string; flags: string[] }>
+> = async () => [{ subject: "subj", body: "body", flags: [] }];
 
 const setQueueDraftCalls: Array<{ id: number; sent: boolean }> = [];
 

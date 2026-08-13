@@ -5,9 +5,8 @@ vi.mock("@oneshot-gtm/core", async () => {
   return { ...actual, logEvent: () => {} };
 });
 
-const { recordResolutionOutcome, isCircuitOpen, _resetBreaker, COOLDOWN_MS } = await import(
-  "../src/_breaker.ts"
-);
+const { recordResolutionOutcome, isCircuitOpen, _resetBreaker, COOLDOWN_MS } =
+  await import("../src/_breaker.ts");
 
 const realNow = Date.now;
 let clock = 1_000_000;

@@ -19,7 +19,12 @@ function reply(matched: InboxReplyView["matched"]): InboxReplyView {
   };
 }
 
-const matched = reply({ name: "Pat", company: "Acme", playName: "show-hn", cadenceStatus: "active" });
+const matched = reply({
+  name: "Pat",
+  company: "Acme",
+  playName: "show-hn",
+  cadenceStatus: "active",
+});
 const noMatch = reply(null);
 
 describe("matchesReplyFilter", () => {

@@ -742,5 +742,9 @@ async function resolveAndEnqueueLumaAttendee(
 registerPendingRetry(PLAY_NAME, async (raw) => {
   const { work, yourEdge } = raw as { work: AttendeeWithEvent; yourEdge: string };
   const outcome = await resolveAndEnqueueLumaAttendee(work, yourEdge, () => {});
-  return outcome === "enqueued" ? "enqueued" : outcome === "platform-error" ? "platform-error" : "dropped";
+  return outcome === "enqueued"
+    ? "enqueued"
+    : outcome === "platform-error"
+      ? "platform-error"
+      : "dropped";
 });

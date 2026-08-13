@@ -1,4 +1,10 @@
-import { deepResearch, getLedger, isSendDeferred, loadConfig, parallelMap } from "@oneshot-gtm/core";
+import {
+  deepResearch,
+  getLedger,
+  isSendDeferred,
+  loadConfig,
+  parallelMap,
+} from "@oneshot-gtm/core";
 import {
   draftEmailFromPrompt,
   errorDraft,
@@ -127,75 +133,73 @@ export async function runEmailPlay<T, X = Record<string, never>>(
     opts.targets,
     concurrency,
     async (target) => {
-    try {
-      const prep = await def.prepare(target, opts.dryRun);
+      try {
+        const prep = await def.prepare(target, opts.dryRun);
 
-      // Append SOCIAL PROOF block when any of the three optional fields is
-      // set. Prompts treat it as conditional input — present only when set,
-      // and the prompt picks ONE beat per email (never stacks).
-      const proof = socialProofBlock();
-      let inputBlock = proof
-        ? `${def.buildInputBlock(target, prep, cfg)}\n\n${proof}`
-        : def.buildInputBlock(target, prep, cfg);
-      // Surface a real first name when extractable so the prompt can
-      // occasionally open with "Hey {firstName},". Absent → prompt rule
-      // says never invent a greeting; LLM dives into the Hook.
-      const firstName = firstNameFrom(def.prospectMeta(target).name ?? null);
-      if (firstName) {
-        inputBlock = `${inputBlock}\n\nPROSPECT_FIRST_NAME: ${firstName}`;
+        // Append SOCIAL PROOF block when any of the three optional fields is
+        // set. Prompts treat it as conditional input — present only when set,
+        // and the prompt picks ONE beat per email (never stacks).
+        const proof = socialProofBlock();
+        let inputBlock = proof
+          ? `${def.buildInputBlock(target, prep, cfg)}\n\n${proof}`
+          : def.buildInputBlock(target, prep, cfg);
+        // Surface a real first name when extractable so the prompt can
+        // occasionally open with "Hey {firstName},". Absent → prompt rule
+        // says never invent a greeting; LLM dives into the Hook.
+        const firstName = firstNameFrom(def.prospectMeta(target).name ?? null);
+        if (firstName) {
+          inputBlock = `${inputBlock}\n\nPROSPECT_FIRST_NAME: ${firstName}`;
+        }
+        const draft = await draftEmailFromPrompt({
+          promptName: def.promptName,
+          inputBlock,
+        });
+
+        const flags = [
+          ...lintEmail(draft.subject, draft.body, def.maxBodyWords),
+          ...(def.extraFlags?.(target) ?? []),
+        ];
+
+        const send = await sendDraftedEmail({
+          playName: def.playName,
+          to: def.toEmail(target),
+          draft,
+          flags,
+          prospectMeta: def.prospectMeta(target),
+          ...(def.metadata ? { metadata: def.metadata(target) } : {}),
+          dryRun: opts.dryRun,
+        });
+
+        if (send.sent && def.enrollCadence) {
+          const prospect = getLedger().findProspectByEmail(def.toEmail(target));
+          if (prospect) enrollInCadence({ prospectId: prospect.id, playName: def.playName });
+        }
+
+        return {
+          target,
+          subject: draft.subject,
+          body: draft.body,
+          receiptIds: [...prep.receiptIds, ...send.receiptIds],
+          sent: send.sent,
+          flags,
+          ...(prep.enrichmentFailed ? { enrichmentFailed: true } : {}),
+          ...(prep.extra ?? ({} as X)),
+        } as PlayDraft<T, X>;
+      } catch (err) {
+        // Daily-cap deferral is not a per-target failure — propagate so the
+        // caller (drain / SSE run) leaves remaining targets queued.
+        if (isSendDeferred(err)) throw err;
+        return {
+          target,
+          ...errorDraft((err as Error)?.message),
+          ...(def.errorExtra ?? ({} as X)),
+        } as PlayDraft<T, X>;
       }
-      const draft = await draftEmailFromPrompt({
-        promptName: def.promptName,
-        inputBlock,
-      });
-
-      const flags = [
-        ...lintEmail(draft.subject, draft.body, def.maxBodyWords),
-        ...(def.extraFlags?.(target) ?? []),
-      ];
-
-      const send = await sendDraftedEmail({
-        playName: def.playName,
-        to: def.toEmail(target),
-        draft,
-        flags,
-        prospectMeta: def.prospectMeta(target),
-        ...(def.metadata ? { metadata: def.metadata(target) } : {}),
-        dryRun: opts.dryRun,
-      });
-
-      if (send.sent && def.enrollCadence) {
-        const prospect = getLedger().findProspectByEmail(def.toEmail(target));
-        if (prospect) enrollInCadence({ prospectId: prospect.id, playName: def.playName });
-      }
-
-      return {
-        target,
-        subject: draft.subject,
-        body: draft.body,
-        receiptIds: [...prep.receiptIds, ...send.receiptIds],
-        sent: send.sent,
-        flags,
-        ...(prep.enrichmentFailed ? { enrichmentFailed: true } : {}),
-        ...(prep.extra ?? ({} as X)),
-      } as PlayDraft<T, X>;
-    } catch (err) {
-      // Daily-cap deferral is not a per-target failure — propagate so the
-      // caller (drain / SSE run) leaves remaining targets queued.
-      if (isSendDeferred(err)) throw err;
-      return {
-        target,
-        ...errorDraft((err as Error)?.message),
-        ...(def.errorExtra ?? ({} as X)),
-      } as PlayDraft<T, X>;
-    }
     },
     // parallelMap's per-completion hook — forward through if the caller wired
     // a progress sink. Stays in completion order (not index order); the SSE
     // consumer keys by the `index` arg.
-    opts.onProgress
-      ? (_target, result, index) => opts.onProgress?.(index, result)
-      : undefined,
+    opts.onProgress ? (_target, result, index) => opts.onProgress?.(index, result) : undefined,
   );
 
   return { drafted };

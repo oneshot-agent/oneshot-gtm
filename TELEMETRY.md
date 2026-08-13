@@ -14,17 +14,17 @@ To point the CLI at a different ingest endpoint (e.g. a local receiver while dev
 
 ## What is collected (when telemetry is on)
 
-| Field                  | Example                         | Why                                                     |
-| ---------------------- | ------------------------------- | ------------------------------------------------------- |
-| `command`              | `motion.show-hn`                | Learn which plays are used.                             |
-| `flags`                | `["dry-run"]`                   | Flag names only, never values.                          |
-| `outcome`              | `ok` / `error` / `lint-blocked` | Aggregate failure rate.                                 |
-| `duration_ms`          | `2840`                          | Find slow plays.                                        |
-| `version`              | `0.1.0`                         | Catch regressions on a release.                         |
-| `os`                   | `darwin` / `linux` / `win32`    | Reproducibility for bug reports.                        |
-| `bun_version`          | `1.3.10`                        | Same.                                                   |
+| Field                  | Example                         | Why                                                                                                                                                                                                                                                |
+| ---------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `command`              | `motion.show-hn`                | Learn which plays are used.                                                                                                                                                                                                                        |
+| `flags`                | `["dry-run"]`                   | Flag names only, never values.                                                                                                                                                                                                                     |
+| `outcome`              | `ok` / `error` / `lint-blocked` | Aggregate failure rate.                                                                                                                                                                                                                            |
+| `duration_ms`          | `2840`                          | Find slow plays.                                                                                                                                                                                                                                   |
+| `version`              | `0.1.0`                         | Catch regressions on a release.                                                                                                                                                                                                                    |
+| `os`                   | `darwin` / `linux` / `win32`    | Reproducibility for bug reports.                                                                                                                                                                                                                   |
+| `bun_version`          | `1.3.10`                        | Same.                                                                                                                                                                                                                                              |
 | `anonymous_machine_id` | `9f3a…` (random UUID)           | Distinguish unique installs without identifying anyone. This is the per-install `clientId` (see below) — a random UUID minted on first run, **not** a hash of any machine identifier, so it carries nothing traceable to your hardware or account. |
-| `llm_provider`         | `openrouter`                    | Learn which providers founders pick.                    |
+| `llm_provider`         | `openrouter`                    | Learn which providers founders pick.                                                                                                                                                                                                               |
 
 ## What is NEVER collected
 

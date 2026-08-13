@@ -193,4 +193,3 @@ export interface TriggerRow {
    */
   running_started_at: string | null;
 }
-

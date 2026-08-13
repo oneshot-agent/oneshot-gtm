@@ -83,6 +83,8 @@ export async function gmailAuthCallbackRoute(req: Request): Promise<Response> {
     registerGmailIdentity({ address: emailAddress, refreshToken });
     return backToSetup(`ok:${emailAddress}`);
   } catch (err) {
-    return backToSetup(`error:${((err as Error).message ?? "token exchange failed").slice(0, 140)}`);
+    return backToSetup(
+      `error:${((err as Error).message ?? "token exchange failed").slice(0, 140)}`,
+    );
   }
 }

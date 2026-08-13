@@ -15,7 +15,9 @@ describe("stripQuotedChain", () => {
   });
 
   it("cuts at the first quoted line when there is no attribution header", () => {
-    const body = ["short answer: not yet.", "> your earlier email", "> more quoted text"].join("\n");
+    const body = ["short answer: not yet.", "> your earlier email", "> more quoted text"].join(
+      "\n",
+    );
     expect(stripQuotedChain(body)).toBe("short answer: not yet.");
   });
 

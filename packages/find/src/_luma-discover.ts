@@ -265,7 +265,11 @@ function flattenProseMirror(node: unknown): string {
     for (const v of Object.values(o)) visit(v);
   };
   visit(node);
-  return parts.join(" ").replace(/\u200b/g, "").replace(/\s+/g, " ").trim();
+  return parts
+    .join(" ")
+    .replace(/\u200b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /** Person shape shared by `hosts` and `featured_guests` in the /url payload. */

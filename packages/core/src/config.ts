@@ -227,7 +227,10 @@ export function loadGmailTokens(): Record<string, GmailTokenEntry> {
   for (const [id, entry] of Object.entries(parsed)) {
     const e = entry as Partial<GmailTokenEntry> | null;
     if (e && typeof e === "object" && typeof e.refreshToken === "string" && e.refreshToken) {
-      out[id] = { refreshToken: e.refreshToken, address: typeof e.address === "string" ? e.address : "" };
+      out[id] = {
+        refreshToken: e.refreshToken,
+        address: typeof e.address === "string" ? e.address : "",
+      };
     }
   }
   return out;

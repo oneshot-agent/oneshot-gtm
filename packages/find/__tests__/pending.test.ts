@@ -24,7 +24,10 @@ let nextOutcome: "enqueued" | "dropped" | "platform-error" = "enqueued";
 let handlerCalls = 0;
 
 beforeEach(() => {
-  dbPath = join(tmpdir(), `oneshot-pending-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`);
+  dbPath = join(
+    tmpdir(),
+    `oneshot-pending-${Date.now()}-${Math.random().toString(36).slice(2)}.sqlite`,
+  );
   ledger = new Ledger(dbPath);
   _clearPendingHandlers();
   _resetBreaker();

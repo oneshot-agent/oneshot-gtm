@@ -36,9 +36,7 @@ export function CurrentRunsStrip({ runs }: { runs: RunSummary[] }): React.ReactE
             const labelTotal = r.targetCount > 0 ? `/${r.targetCount}` : "";
             return (
               <tr key={r.id} className="border-b border-ink-rule/40 last:border-b-0">
-                <td className="px-6 py-2.5 font-mono text-[12px] text-ink-cream-2">
-                  {r.playName}
-                </td>
+                <td className="px-6 py-2.5 font-mono text-[12px] text-ink-cream-2">{r.playName}</td>
                 <td className="px-3 py-2.5">
                   <Badge tone="receipt">running</Badge>
                 </td>
@@ -54,10 +52,7 @@ export function CurrentRunsStrip({ runs }: { runs: RunSummary[] }): React.ReactE
                   </span>{" "}
                   sent
                   {r.errorCount > 0 && (
-                    <span className="text-[color:var(--ink-blocked-2)]">
-                      {" "}
-                      · {r.errorCount} err
-                    </span>
+                    <span className="text-[color:var(--ink-blocked-2)]"> · {r.errorCount} err</span>
                   )}
                 </td>
                 <td className="px-3 py-2.5 font-mono text-[11px] text-ink-faint">

@@ -1,11 +1,8 @@
 name: ci
 
-# Lint / typecheck / test gate. Runs on every PR into main and on pushes to
-# main. Mirrors the local dev commands (Bun + the root package.json scripts) so
-# a green CI means the same thing as a green local run.
-#
-# Note: `fmt:check` is intentionally NOT gated yet — the repo carries
-# pre-existing oxfmt debt in unrelated files. Add it here once that's cleaned.
+# Lint / typecheck / format / test gate. Runs on every PR into main and on
+# pushes to main. Mirrors the local dev commands (Bun + the root package.json
+# scripts) so a green CI means the same thing as a green local run.
 
 on:
   pull_request:
@@ -39,6 +36,12 @@ jobs:
 
       - name: Lint
         run: bun run lint
+
+      # Prompt markdown under packages/prompts is excluded in .oxfmtrc.json —
+      # those files are LLM payload, not documents, and oxfmt's markdown rules
+      # would rewrite the literal text the model receives.
+      - name: Format
+        run: bun run fmt:check
 
       # `--bun` forces the Bun runtime for vitest + its worker pool. Without it,
       # CI runs vitest under Node, where `bun:sqlite` (imported by ledger.ts)

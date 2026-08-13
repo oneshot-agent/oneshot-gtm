@@ -57,13 +57,13 @@ describe("resumeDomainRoute", () => {
     );
     const res = await resumeDomainRoute(jsonReq({ domain: "acme.com" }));
     expect(res.status).toBe(502);
-    expect(await res.json()).toMatchObject({ error: /Failed to resume domain \(OneShot HTTP 500\)/ });
+    expect(await res.json()).toMatchObject({
+      error: /Failed to resume domain \(OneShot HTTP 500\)/,
+    });
   });
 
   it("passes a client 4xx (bad/unowned domain) through as 4xx, not 502", async () => {
-    resumeMock.mockRejectedValue(
-      Object.assign(new Error("domain not owned"), { statusCode: 404 }),
-    );
+    resumeMock.mockRejectedValue(Object.assign(new Error("domain not owned"), { statusCode: 404 }));
     const res = await resumeDomainRoute(jsonReq({ domain: "notmine.com" }));
     expect(res.status).toBe(404);
   });
