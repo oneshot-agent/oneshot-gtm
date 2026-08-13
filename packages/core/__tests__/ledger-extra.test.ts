@@ -218,6 +218,65 @@ describe("isEmailPendingInQueue (cross-play pending dedup)", () => {
   });
 });
 
+describe("approvedCountsByPlay", () => {
+  it("counts approved rows per play and omits plays with none", () => {
+    const enqueue = (playName: string, key: string, status?: "approved" | "sent"): void => {
+      const id = ledger.enqueueTarget({ playName, payload: {}, dedupeKey: key, source: "x" });
+      if (status) ledger.setQueueStatus({ id: id!, status });
+    };
+    enqueue("luma-events", "l1", "approved");
+    enqueue("luma-events", "l2", "approved");
+    enqueue("repo-interest", "r1", "approved");
+    // Non-approved rows of an otherwise-approved play don't inflate the count…
+    enqueue("repo-interest", "r2");
+    enqueue("repo-interest", "r3", "sent");
+    // …and a play with no approved row at all is absent, not zero.
+    enqueue("show-hn", "s1");
+
+    expect(ledger.approvedCountsByPlay()).toEqual({ "luma-events": 2, "repo-interest": 1 });
+  });
+
+  it("returns an empty map on an empty queue", () => {
+    expect(ledger.approvedCountsByPlay()).toEqual({});
+  });
+});
+
+describe("listQueue({ ids })", () => {
+  it("returns only the requested rows, still honouring the other filters", () => {
+    const a = ledger.enqueueTarget({
+      playName: "luma-events",
+      payload: {},
+      dedupeKey: "a",
+      source: "x",
+    })!;
+    const b = ledger.enqueueTarget({
+      playName: "luma-events",
+      payload: {},
+      dedupeKey: "b",
+      source: "x",
+    })!;
+    const c = ledger.enqueueTarget({
+      playName: "luma-events",
+      payload: {},
+      dedupeKey: "c",
+      source: "x",
+    })!;
+    for (const id of [a, b, c]) ledger.setQueueStatus({ id, status: "approved" });
+    // A selected row that moved on since the founder ticked it must drop out.
+    ledger.setQueueStatus({ id: c, status: "sent" });
+
+    const got = ledger.listQueue({ ids: [a, b, c], status: "approved" });
+    expect(got.map((r) => r.id).toSorted()).toEqual([a, b].toSorted());
+  });
+
+  it("returns nothing for an empty pick (never the whole table)", () => {
+    ledger.enqueueTarget({ playName: "show-hn", payload: {}, dedupeKey: "z", source: "x" });
+    expect(ledger.listQueue({ ids: [] })).toEqual([]);
+    // Sanity: the same call without `ids` does list rows.
+    expect(ledger.listQueue({}).length).toBe(1);
+  });
+});
+
 describe("expirePendingOlderThan", () => {
   it("flips only pending rows older than the cutoff", () => {
     // Fresh pending row — should NOT be expired.

@@ -1755,7 +1755,9 @@ export class Ledger {
     );
   }
 
-  listQueue(opts: { playName?: string; status?: QueueStatus; limit?: number } = {}): QueueRow[] {
+  listQueue(
+    opts: { playName?: string; status?: QueueStatus; limit?: number; ids?: number[] } = {},
+  ): QueueRow[] {
     const where: string[] = [];
     const args: unknown[] = [];
     if (opts.playName) {
@@ -1765,6 +1767,15 @@ export class Ledger {
     if (opts.status) {
       where.push("status = ?");
       args.push(opts.status);
+    }
+    // Explicit row picks (the /queue "drain selected" path). An empty array
+    // would compile to `IN ()` — a syntax error in SQLite — and semantically
+    // means "nothing selected", so return early rather than silently listing
+    // every row.
+    if (opts.ids) {
+      if (opts.ids.length === 0) return [];
+      where.push(`id IN (${opts.ids.map(() => "?").join(",")})`);
+      args.push(...opts.ids);
     }
     const sql = `
       SELECT * FROM target_queue
@@ -1962,6 +1973,23 @@ export class Ledger {
       expired: 0,
     };
     for (const r of rows) out[r.status] = r.n;
+    return out;
+  }
+
+  /**
+   * Approved-row count per play, across the whole queue. Deliberately ignores
+   * any status/play filter the caller is showing: /queue's drain button needs
+   * to know a play has drainable rows even when the visible page is filtered
+   * to `pending`. Plays with zero approved rows are absent from the map.
+   */
+  approvedCountsByPlay(): Record<string, number> {
+    const rows = this.db
+      .query(
+        "SELECT play_name, COUNT(*) AS n FROM target_queue WHERE status = 'approved' GROUP BY play_name",
+      )
+      .all() as Array<{ play_name: string; n: number }>;
+    const out: Record<string, number> = {};
+    for (const r of rows) out[r.play_name] = r.n;
     return out;
   }
 

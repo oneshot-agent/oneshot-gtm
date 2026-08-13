@@ -20,8 +20,7 @@ import type {
   PlayDescriptor,
   DomainActionResult,
   DomainPoolView,
-  QueueCounts,
-  QueueRowView,
+  QueueListResponse,
   QueueStatusView,
   DeriveIcpResult,
   ReceiptDetail,
@@ -163,13 +162,20 @@ export const api = {
   // researched + drafted row appears on /queue when the background job finishes.
   addProspect: (url: string, email?: string) =>
     postJson<AddProspectResult>("/prospects/add", { url, ...(email ? { email } : {}) }),
-  queue: (opts?: { play?: string; status?: QueueStatusView; limit?: number }) => {
+  queue: (opts?: {
+    play?: string;
+    status?: QueueStatusView;
+    limit?: number;
+    /** Explicit row pick — the "drain selected" path. */
+    ids?: number[];
+  }) => {
     const q = new URLSearchParams();
     if (opts?.play) q.set("play", opts.play);
     if (opts?.status) q.set("status", opts.status);
     if (opts?.limit != null) q.set("limit", String(opts.limit));
+    if (opts?.ids?.length) q.set("ids", opts.ids.join(","));
     const qs = q.toString();
-    return getJson<{ rows: QueueRowView[]; counts: QueueCounts }>(`/queue${qs ? `?${qs}` : ""}`);
+    return getJson<QueueListResponse>(`/queue${qs ? `?${qs}` : ""}`);
   },
   approveQueue: (id: number) => postJson<{ ok: boolean }>(`/queue/${id}/approve`, {}),
   rejectQueue: (id: number, reason?: string) =>

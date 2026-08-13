@@ -1,26 +1,13 @@
 import { getLedger, logEvent, type TelemetryOutcome } from "@oneshot-gtm/core";
 import { verifyAndFilterTargets } from "@oneshot-gtm/plays";
-import type { RunPlayEvent, RunPlayRequest } from "@oneshot-gtm/shared-types";
+import { isRunnablePlay, type RunPlayEvent, type RunPlayRequest } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 import { reportServerExecution } from "../telemetry.ts";
 import { dispatchPlay, type DraftedView } from "./_play-dispatch.ts";
 
-const SUPPORTED = new Set([
-  "show-hn",
-  "job-change",
-  "post-funding",
-  "accelerator-batch",
-  "hiring-signal",
-  "podcast-guest",
-  "competitor-switch",
-  "stack-consolidation",
-  "repo-interest",
-  "luma-events",
-]);
-
 export async function runPlay(req: Request, params: Record<string, string>): Promise<Response> {
   const playName = params["playName"] ?? "";
-  if (!SUPPORTED.has(playName)) {
+  if (!isRunnablePlay(playName)) {
     return jsonResponse(
       { error: `play '${playName}' is not exposed in the UI; use the CLI` },
       400,

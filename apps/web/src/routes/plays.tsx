@@ -3,7 +3,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { Check, Clock, Copy, Mail, MessageSquare, Phone, Play } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
-import type { PlayDescriptor } from "@oneshot-gtm/shared-types";
+import { isRunnablePlay, type PlayDescriptor } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { Button } from "../components/primitives/Button.tsx";
 import { Input } from "../components/primitives/Field.tsx";
@@ -21,20 +21,6 @@ const CHANNEL_ICON = {
   voice: Phone,
   linkedin: MessageSquare,
 } as const;
-
-// Mirror of apps/server/src/api/run.ts SUPPORTED — plays whose targets the
-// SSE /api/run endpoint knows how to dispatch.
-const RUNNABLE_PLAYS = new Set([
-  "show-hn",
-  "job-change",
-  "post-funding",
-  "accelerator-batch",
-  "hiring-signal",
-  "podcast-guest",
-  "stack-consolidation",
-  "repo-interest",
-  "luma-events",
-]);
 
 // Non-runnable plays that are driven from the dashboard (not the CLI). Tagged
 // "dashboard" instead of "CLI only" on the Plays page.
@@ -193,7 +179,7 @@ function PlaysPage() {
           <div>
             {plays.data?.plays.map((p, i) => {
               const meta = PLAY_META[p.name];
-              const runnable = RUNNABLE_PLAYS.has(p.name);
+              const runnable = isRunnablePlay(p.name);
               const count = receiptCounts.get(p.name) ?? 0;
               return (
                 <div

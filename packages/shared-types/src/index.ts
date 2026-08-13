@@ -404,6 +404,35 @@ export function blockingFlags(flags: string[]): string[] {
   return flags.filter((f) => !SOFT_REVIEW_FLAGS.includes(f));
 }
 
+/**
+ * Plays the SSE `/api/run/:playName` endpoint can dispatch — i.e. the ones
+ * drivable from the dashboard rather than the CLI. Canonical: the server's run
+ * gate, /queue's drain button and the Plays page all read THIS, because three
+ * hand-copied mirrors of the list had already drifted apart (the queue's copy
+ * was missing luma-events, the Plays page's was missing competitor-switch).
+ *
+ * Adding a play here also requires a form schema in the web app's
+ * `lib/playSchemas.ts`; a test pins the two together.
+ */
+export const RUNNABLE_PLAYS: readonly string[] = [
+  "show-hn",
+  "job-change",
+  "post-funding",
+  "accelerator-batch",
+  "hiring-signal",
+  "podcast-guest",
+  "competitor-switch",
+  "stack-consolidation",
+  "repo-interest",
+  "luma-events",
+];
+
+const RUNNABLE_PLAY_SET = new Set(RUNNABLE_PLAYS);
+
+export function isRunnablePlay(playName: string): boolean {
+  return RUNNABLE_PLAY_SET.has(playName);
+}
+
 /** A single inbox email (reply to outreach), with prospect/play context when matched. */
 export interface InboxReplyView {
   id: string;
@@ -508,6 +537,18 @@ export interface QueueCounts {
   rejected: number;
   sent: number;
   expired: number;
+}
+
+export interface QueueListResponse {
+  rows: QueueRowView[];
+  counts: QueueCounts;
+  /**
+   * Approved rows per play across the WHOLE queue, unaffected by the `status` /
+   * `play` filters that scoped `rows`. /queue's drain button reads this so it
+   * can offer a play whose rows aren't on the visible page. Plays with nothing
+   * approved are omitted.
+   */
+  approvedByPlay: Record<string, number>;
 }
 
 export interface DrainRequest {

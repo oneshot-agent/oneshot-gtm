@@ -18,6 +18,7 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   blockingFlags,
+  isRunnablePlay,
   type QueueRowView,
   type QueueStatusView,
   type TriggerView,
@@ -33,6 +34,7 @@ import { useMask } from "../lib/privacy.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { Toggle } from "../components/primitives/Toggle.tsx";
 import { cn, eventIsPast, humanizeEventDate, timeAgo } from "../lib/cn.ts";
+import { drainButtonState, drainSelectionState } from "../lib/drainButton.ts";
 import { humanInterval } from "../lib/humanInterval.ts";
 import { INTERVAL_PRESETS_MS, withIntervalOverride } from "../lib/triggerInterval.ts";
 import {
@@ -63,21 +65,6 @@ const STATUSES: Array<QueueStatusView | "all"> = [
   "expired",
 ];
 
-// Finder-fed plays whose queue rows can be drained. github-topics routes
-// candidates to stack-consolidation (vendor sprawl) or competitor-switch
-// (when a detected vendor is on its directCompetitors list), so both appear.
-const DRAINABLE_PLAYS = [
-  "show-hn",
-  "job-change",
-  "post-funding",
-  "accelerator-batch",
-  "hiring-signal",
-  "podcast-guest",
-  "competitor-switch",
-  "stack-consolidation",
-  "repo-interest",
-];
-
 function statusTone(
   status: QueueStatusView,
 ): "receipt" | "spend" | "blocked" | "signal" | "neutral" {
@@ -103,6 +90,11 @@ interface RejectModalState {
 interface DrainModalState {
   playName: string;
   approvedCount: number;
+  /**
+   * Set when draining an explicit selection — /run hydrates exactly these rows
+   * and the modal's limit field steps aside (the pick IS the limit).
+   */
+  ids?: number[];
 }
 
 interface EditingState {
@@ -213,9 +205,10 @@ function QueuePage() {
     if (!drainModal) return;
     const search: Record<string, string> = {
       fromQueue: "1",
-      limit: String(drainLimit),
+      limit: String(drainModal.ids ? drainModal.ids.length : drainLimit),
       dryRun: drainDryRun ? "1" : "0",
     };
+    if (drainModal.ids) search["ids"] = drainModal.ids.join(",");
     if (drainSenderCohort.trim()) search["senderCohort"] = drainSenderCohort.trim();
     if (drainOffer.trim()) search["freeForCohortOffer"] = drainOffer.trim();
     void navigate({
@@ -233,6 +226,9 @@ function QueuePage() {
     expired: 0,
   };
   const rows = queueQuery.data?.rows ?? [];
+  // Whole-queue approved counts per play — NOT scoped to the current filters,
+  // so the drain button works from the default `pending` view too.
+  const approvedByPlay = queueQuery.data?.approvedByPlay ?? {};
   const mask = useMask();
 
   // Per-row "generating draft" spinners, reconstructed from localStorage so they
@@ -243,7 +239,17 @@ function QueuePage() {
     new Map(rows.map((r) => [r.id, r.lastDraftedAt])),
   );
 
-  const playList = Array.from(new Set(rows.map((r) => r.playName))).toSorted();
+  // Plays on the visible page, plus any play holding approved rows anywhere —
+  // the chip both filters the table and scopes the drain button, so a play with
+  // drainable rows must stay selectable even when the page shows none of them.
+  const playList = Array.from(
+    new Set([...rows.map((r) => r.playName), ...Object.keys(approvedByPlay)]),
+  ).toSorted();
+  const drain = drainButtonState({ playFilter, approvedByPlay, isRunnable: isRunnablePlay });
+  const drainSelected = drainSelectionState({
+    selected: rows.filter((r) => selected.has(r.id)),
+    isRunnable: isRunnablePlay,
+  });
 
   // Selection derived state — stable across renders even if rows refetch.
   const someSelected = selected.size > 0;
@@ -333,9 +339,9 @@ function QueuePage() {
           ))}
         </div>
 
-        {/* Bulk actions — approve-all + per-play drain. Colocated with the
-            table they act on; respects the current play filter so clicking
-            "approve all pending" while a play is selected scopes down. */}
+        {/* Bulk actions — approve-all + drain. Colocated with the table they
+            act on; both respect the current play filter, so the chips above
+            are the only play selector on the page. */}
         <div className="flex flex-wrap items-center gap-2 border-b border-ink-rule/60 bg-ink-surface/30 px-6 py-3">
           <Button
             variant="secondary"
@@ -346,27 +352,17 @@ function QueuePage() {
             <Check size={12} /> approve all pending
             {playFilter !== "all" ? ` (${playFilter})` : ""}
           </Button>
-          {DRAINABLE_PLAYS.map((p) => (
-            <Button
-              key={p}
-              variant="ghost"
-              size="sm"
-              disabled={
-                counts.approved === 0 ||
-                (playFilter !== "all" && playFilter !== p) ||
-                !rows.some((r) => r.playName === p && r.status === "approved")
-              }
-              onClick={() =>
-                setDrainModal({
-                  playName: p,
-                  approvedCount: rows.filter((r) => r.playName === p && r.status === "approved")
-                    .length,
-                })
-              }
-            >
-              <Send size={12} /> drain {p}
-            </Button>
-          ))}
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={!drain.enabled}
+            onClick={() => {
+              if (!drain.playName) return;
+              setDrainModal({ playName: drain.playName, approvedCount: drain.approvedCount });
+            }}
+          >
+            <Send size={12} /> {drain.label}
+          </Button>
         </div>
 
         {/* 7-day signal strip — enqueues per day from the rows in memory. */}
@@ -472,6 +468,21 @@ function QueuePage() {
             >
               <X size={12} /> reject {selected.size}
             </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={!drainSelected.enabled}
+              onClick={() => {
+                if (!drainSelected.playName) return;
+                setDrainModal({
+                  playName: drainSelected.playName,
+                  approvedCount: drainSelected.ids.length,
+                  ids: drainSelected.ids,
+                });
+              }}
+            >
+              <Send size={12} /> {drainSelected.label}
+            </Button>
           </div>
         </div>
       )}
@@ -511,7 +522,11 @@ function QueuePage() {
       <Modal
         open={drainModal != null}
         onClose={() => setDrainModal(null)}
-        title={`Drain ${drainModal?.playName ?? ""} (${drainModal?.approvedCount ?? 0} approved)`}
+        title={
+          drainModal?.ids
+            ? `Drain ${drainModal.playName} (${drainModal.ids.length} selected)`
+            : `Drain ${drainModal?.playName ?? ""} (${drainModal?.approvedCount ?? 0} approved)`
+        }
         footer={
           <>
             <Button variant="ghost" onClick={() => setDrainModal(null)}>
@@ -519,20 +534,34 @@ function QueuePage() {
             </Button>
             <Button onClick={submitDrainViaRun}>
               <Send size={12} />
-              {drainDryRun ? "Preview drafts (no send)" : `Send up to ${drainLimit}`}
+              {drainDryRun
+                ? "Preview drafts (no send)"
+                : `Send ${drainModal?.ids ? `the ${drainModal.ids.length} selected` : `up to ${drainLimit}`}`}
             </Button>
           </>
         }
       >
         <div className="flex flex-col gap-3">
-          <Field label="Limit">
-            <Input
-              type="number"
-              min={1}
-              value={drainLimit}
-              onChange={(e) => setDrainLimit(Math.max(1, Number.parseInt(e.target.value, 10) || 1))}
-            />
-          </Field>
+          {/* A selection IS the limit — showing a second, contradictory number
+              here would just invite "limit 10 of my 3 selected rows". */}
+          {drainModal?.ids ? (
+            <p className="text-[13px] text-ink-cream-2">
+              Draining the {drainModal.ids.length} approved{" "}
+              {drainModal.ids.length === 1 ? "row" : "rows"} you selected — nothing else in the
+              queue is touched.
+            </p>
+          ) : (
+            <Field label="Limit">
+              <Input
+                type="number"
+                min={1}
+                value={drainLimit}
+                onChange={(e) =>
+                  setDrainLimit(Math.max(1, Number.parseInt(e.target.value, 10) || 1))
+                }
+              />
+            </Field>
+          )}
           {drainModal?.playName === "accelerator-batch" && (
             <>
               <Field
