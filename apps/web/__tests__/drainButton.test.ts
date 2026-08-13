@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { drainButtonState, drainSelectionState } from "../src/lib/drainButton";
+import { drainButtonState, drainSelectionState, mergeRowMeta } from "../src/lib/drainButton";
 
 const RUNNABLE = new Set(["luma-events", "repo-interest", "show-hn"]);
+const rows = (...r: Array<[number, string, string]>) =>
+  r.map(([id, playName, status]) => ({ id, playName, status }));
 const state = (playFilter: string, approvedByPlay: Record<string, number> = {}) =>
   drainButtonState({ playFilter, approvedByPlay, isRunnable: (p) => RUNNABLE.has(p) });
 
@@ -98,5 +100,38 @@ describe("drainSelectionState", () => {
       enabled: false,
       label: "drain selected · not runnable here",
     });
+  });
+});
+
+describe("mergeRowMeta", () => {
+  it("remembers rows that later filters hide", () => {
+    // Founder selects across plays, then filters to one of them: the hidden
+    // row must still count, or "drain selected" would act on the visible subset.
+    let meta = mergeRowMeta(
+      new Map(),
+      rows([1, "luma-events", "approved"], [2, "repo-interest", "approved"]),
+    );
+    meta = mergeRowMeta(meta, rows([1, "luma-events", "approved"])); // filtered to luma-events
+    const out = drainSelectionState({
+      selected: [1, 2].map((id) => {
+        const m = meta.get(id) as { playName: string; status: string };
+        return { id, playName: m.playName, status: m.status };
+      }),
+      isRunnable: (p) => RUNNABLE.has(p),
+    });
+    expect(out.enabled).toBe(false);
+    expect(out.label).toBe("drain selected · spans 2 plays");
+  });
+
+  it("picks up a status that moved on", () => {
+    let meta = mergeRowMeta(new Map(), rows([1, "luma-events", "approved"]));
+    meta = mergeRowMeta(meta, rows([1, "luma-events", "sent"]));
+    expect(meta.get(1)).toEqual({ playName: "luma-events", status: "sent" });
+  });
+
+  it("returns the same map when nothing changed (safe to call from an effect)", () => {
+    const meta = mergeRowMeta(new Map(), rows([1, "luma-events", "approved"]));
+    expect(mergeRowMeta(meta, rows([1, "luma-events", "approved"]))).toBe(meta);
+    expect(mergeRowMeta(meta, [])).toBe(meta);
   });
 });

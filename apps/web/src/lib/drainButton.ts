@@ -99,3 +99,30 @@ export function drainSelectionState(input: {
   }
   return { playName, ids, enabled: true, label: `drain ${ids.length} selected` };
 }
+
+/**
+ * Fold the currently-visible rows into the session's id → {play, status} map.
+ *
+ * /queue's selection is a Set of row ids that survives filter changes, but
+ * `rows` only ever holds the current filtered page. Without this memory, a
+ * selection spanning two plays looks single-play the moment you filter to one
+ * of them — and "drain selected" would quietly act on the visible subset.
+ *
+ * Returns the previous map unchanged when nothing moved, so it's safe to call
+ * from an effect keyed on `rows`.
+ */
+export type RowMeta = ReadonlyMap<number, { playName: string; status: string }>;
+
+export function mergeRowMeta(
+  prev: RowMeta,
+  rows: ReadonlyArray<{ id: number; playName: string; status: string }>,
+): RowMeta {
+  let next: Map<number, { playName: string; status: string }> | null = null;
+  for (const r of rows) {
+    const cur = prev.get(r.id);
+    if (cur && cur.playName === r.playName && cur.status === r.status) continue;
+    next ??= new Map(prev);
+    next.set(r.id, { playName: r.playName, status: r.status });
+  }
+  return next ?? prev;
+}

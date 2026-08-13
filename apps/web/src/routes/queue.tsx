@@ -34,7 +34,12 @@ import { useMask } from "../lib/privacy.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { Toggle } from "../components/primitives/Toggle.tsx";
 import { cn, eventIsPast, humanizeEventDate, timeAgo } from "../lib/cn.ts";
-import { drainButtonState, drainSelectionState } from "../lib/drainButton.ts";
+import {
+  drainButtonState,
+  drainSelectionState,
+  mergeRowMeta,
+  type RowMeta,
+} from "../lib/drainButton.ts";
 import { humanInterval } from "../lib/humanInterval.ts";
 import { INTERVAL_PRESETS_MS, withIntervalOverride } from "../lib/triggerInterval.ts";
 import {
@@ -55,6 +60,9 @@ import {
 export const Route = createFileRoute("/queue")({
   component: QueuePage,
 });
+
+/** Stable empty page — see `fetchedRows` below. */
+const EMPTY_ROWS: QueueRowView[] = [];
 
 const STATUSES: Array<QueueStatusView | "all"> = [
   "all",
@@ -225,10 +233,22 @@ function QueuePage() {
     sent: 0,
     expired: 0,
   };
-  const rows = queueQuery.data?.rows ?? [];
+  // Keep the fetched array's identity around: `?? []` allocates a fresh array
+  // every render, which would re-fire the rowMeta effect on each one.
+  const fetchedRows = queueQuery.data?.rows;
+  const rows = fetchedRows ?? EMPTY_ROWS;
   // Whole-queue approved counts per play — NOT scoped to the current filters,
   // so the drain button works from the default `pending` view too.
   const approvedByPlay = queueQuery.data?.approvedByPlay ?? {};
+  // Play/status of every row seen this session. Rows can only be selected while
+  // visible, so every selected id has an entry — and it stays correct after the
+  // filters hide the row. Refreshed whenever a row reappears in a fetch, so a
+  // status that moved on (someone else sent it) is picked up.
+  const [rowMeta, setRowMeta] = useState<RowMeta>(new Map());
+  useEffect(() => {
+    if (!fetchedRows) return;
+    setRowMeta((prev) => mergeRowMeta(prev, fetchedRows));
+  }, [fetchedRows]);
   const mask = useMask();
 
   // Per-row "generating draft" spinners, reconstructed from localStorage so they
@@ -246,8 +266,14 @@ function QueuePage() {
     new Set([...rows.map((r) => r.playName), ...Object.keys(approvedByPlay)]),
   ).toSorted();
   const drain = drainButtonState({ playFilter, approvedByPlay, isRunnable: isRunnablePlay });
+  // Selection outlives the filters, so read each selected row from the session
+  // map rather than the visible page — otherwise filtering to one play makes a
+  // cross-play selection look single-play and drains only what's on screen.
   const drainSelected = drainSelectionState({
-    selected: rows.filter((r) => selected.has(r.id)),
+    selected: [...selected].map((id) => {
+      const meta = rowMeta.get(id);
+      return { id, playName: meta?.playName ?? "", status: meta?.status ?? "" };
+    }),
     isRunnable: isRunnablePlay,
   });
 
