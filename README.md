@@ -79,7 +79,7 @@ Motion plays don't require hand-curated JSON anymore. Ten **finders** auto-disco
 - **`luma-events`** — upcoming events from Luma's own city pages (genuinely upcoming, not search-indexed leftovers), gated per event by a topic + ICP check before any spend; pitches the hosts + featured guests Luma exposes publicly per event — with their LinkedIn/website, so contact resolution actually lands. Each queue row is tagged `Host` or `Guest` and drafted accordingly
 - **`breakup-revive`** — scans the local ledger for prospects cold for 60-90 days
 
-Each finder runs as a **trigger** with its own interval + spend cap — click the interval in the `/queue` triggers table to change cadence (presets 1h–7d, or revert to the default). Captured per-prospect signals (LinkedIn URL via webSearch + phone via passive enrichment when surfaced) show next to the email + company in `/queue`. Approved rows ship via `bun run cli -- find drain <play>` or the per-play **Drain** button on the Queue page.
+Each finder runs as a **trigger** with its own interval + spend cap — click the interval in the `/queue` triggers table to change cadence (presets 1h–7d, or revert to the default). Captured per-prospect signals (LinkedIn URL via webSearch + phone via passive enrichment when surfaced) show next to the email + company in `/queue`. Approved rows ship via `bun run cli -- find drain <play>` or the **Drain** button on the Queue page — pick a play with the PLAY chips to drain its whole approved batch, or tick individual rows and drain just those.
 
 The dashboard server runs an in-process scheduler that fires enabled triggers on their interval automatically — open `bun run cli -- ui`, enable a trigger, and it polls without you needing a separate `find watch` daemon. The CLI watch command stays useful for cron + headless deployments where you don't want the dashboard.
 
@@ -261,7 +261,7 @@ Bun-native, all the modern picks:
 
 - **Runtime**: [Bun](https://bun.sh) 1.3+
 - **Monorepo**: [Turborepo](https://turbo.build) + Bun catalog for shared dep versions
-- **Test**: [Vitest 4](https://vitest.dev) (1244 cases across 100 files; ledger, lint, finder pipelines, play registry, add-prospect research/draft, strategist endpoint, web bucketing helpers)
+- **Test**: [Vitest 4](https://vitest.dev) (1278 cases across 104 files; ledger, lint, finder pipelines, play registry, add-prospect research/draft, strategist endpoint, web bucketing helpers)
 - **Lint / format**: [oxlint](https://oxc.rs) + [oxfmt](https://oxc.rs) (Rust-based, ~50× faster than ESLint/Prettier)
 - **TypeScript**: 6.x with `verbatimModuleSyntax`, `noUncheckedIndexedAccess`, `noImplicitOverride`
 - **Web**: [Vite 8](https://vite.dev) + [React 19](https://react.dev) + [TanStack Router](https://tanstack.com/router) + [TanStack Query](https://tanstack.com/query) + [Base UI](https://base-ui.com) primitives + [Tailwind 4](https://tailwindcss.com) + [class-variance-authority](https://cva.style) + [lucide-react](https://lucide.dev)
@@ -313,7 +313,7 @@ bun run typecheck        # tsc --noEmit across cli + server + packages
 bun run lint             # oxlint
 bun run fmt              # oxfmt --write
 bun run fmt:check        # CI-style format check
-bun run test             # vitest run (1244 cases)
+bun run test             # vitest run (1278 cases)
 bun run cli -- doctor    # smoke check
 ```
 
