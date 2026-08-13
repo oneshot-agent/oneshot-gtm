@@ -22,6 +22,33 @@ function parseStarRow(raw: unknown): Stargazer | null {
   return { login, userUrl: userUrl ?? `https://github.com/${login}`, starredAt };
 }
 
+/**
+ * Parse one `/repos/{repo}/events` row into a Stargazer when it's a
+ * `WatchEvent` (= a star; `created_at` is the star time). Non-star events and
+ * malformed rows return null.
+ */
+function parseWatchEvent(raw: unknown): Stargazer | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  if (r["type"] !== "WatchEvent") return null;
+  const createdAt = typeof r["created_at"] === "string" ? (r["created_at"] as string) : null;
+  const actor = r["actor"];
+  if (!createdAt || !actor || typeof actor !== "object") return null;
+  const login =
+    typeof (actor as Record<string, unknown>)["login"] === "string"
+      ? ((actor as Record<string, unknown>)["login"] as string)
+      : null;
+  if (!login) return null;
+  return { login, userUrl: `https://github.com/${login}`, starredAt: createdAt };
+}
+
+/** Read a GitHub event row's `created_at` (any event type), else null. */
+function eventCreatedAt(raw: unknown): string | null {
+  if (!raw || typeof raw !== "object") return null;
+  const v = (raw as Record<string, unknown>)["created_at"];
+  return typeof v === "string" ? v : null;
+}
+
 /** Read the `page=N>; rel="last"` page number from a GitHub `Link` header. */
 function parseLastPage(link: string | null): number {
   if (!link) return 1;
@@ -43,6 +70,75 @@ export interface StargazersResult {
 }
 
 /**
+ * Fallback path: recent stargazers via the public repo *events* feed.
+ *
+ * Since July 2026 GitHub restricts `/stargazers` to repo admins/collaborators
+ * (401 unauth, 403/404 authed) — but `WatchEvent`s still flow through
+ * `/repos/{repo}/events`, which stays public. The feed is newest-first and
+ * keeps at most ~90 days / 300 events per repo, so we walk forward up to
+ * 3 pages of 100 and stop once a page's oldest event predates the window
+ * (every later page is older still). Busy repos can wash stars out of the
+ * 300-event cap between poll ticks — a scheduler that ticks at least daily
+ * keeps the gap negligible for the repo sizes we watch.
+ */
+async function recentStargazersViaEvents(
+  repo: string,
+  opts: { sinceIso: string },
+): Promise<StargazersResult> {
+  const headers = githubHeaders();
+  const base = `https://api.github.com/repos/${repo}/events?per_page=100`;
+
+  const out: Stargazer[] = [];
+  let newestSeen: string | null = null;
+  const dedupe = (): Stargazer[] => {
+    const seen = new Set<string>();
+    return out.filter((s) => {
+      const key = s.login.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+
+  try {
+    for (let page = 1; page <= 3; page++) {
+      const res = await fetch(`${base}&page=${page}`, { headers });
+      if (!res.ok) {
+        logEvent(
+          "github.stargazers",
+          { repo, ok: false, mode: "events", status: res.status, page },
+          "warn",
+        );
+        return { stargazers: dedupe(), newestSeen, error: `events status ${res.status}` };
+      }
+      const rows = ((await res.json()) as unknown[]) ?? [];
+      let oldestOnPage: string | null = null;
+      for (const raw of rows) {
+        const at = eventCreatedAt(raw);
+        if (at && (!oldestOnPage || at < oldestOnPage)) oldestOnPage = at;
+        const s = parseWatchEvent(raw);
+        if (!s) continue;
+        if (!newestSeen || s.starredAt > newestSeen) newestSeen = s.starredAt;
+        if (s.starredAt >= opts.sinceIso) out.push(s);
+      }
+      if (rows.length < 100) break; // feed exhausted
+      if (oldestOnPage && oldestOnPage < opts.sinceIso) break; // rest is older
+    }
+    const stargazers = dedupe();
+    logEvent("github.stargazers", { repo, ok: true, mode: "events", fresh: stargazers.length });
+    return { stargazers, newestSeen };
+  } catch (err) {
+    const message = ((err as Error).message ?? "").slice(0, 120);
+    logEvent(
+      "github.stargazers",
+      { repo, ok: false, mode: "events", message_120: message },
+      "warn",
+    );
+    return { stargazers: dedupe(), newestSeen, error: message };
+  }
+}
+
+/**
  * Recent stargazers of a public repo. GitHub returns stargazers oldest-first,
  * so the newest stars live on the LAST page — we read the `Link: rel="last"`
  * page number, then page backward (newest → older), collecting stars with
@@ -52,6 +148,11 @@ export interface StargazersResult {
  * / parse failure so the caller logs + continues. A non-2xx on a BACKWARD page
  * surfaces as `error` (it usually means a rate-limit mid-walk) rather than
  * silently masquerading as "no recent stars".
+ *
+ * Since July 2026 the list endpoint only answers for repos the token owner
+ * admins/collaborates on; a 401/403/404 on the first page falls back to the
+ * public events feed (recentStargazersViaEvents). Own repos keep the richer
+ * full-history walk.
  *
  * Requires `GITHUB_TOKEN` for any real volume (5,000 req/hr core); without it
  * GitHub rate-limits hard at 60/hr — which a backward walk through a big repo
@@ -84,6 +185,11 @@ export async function recentStargazers(
     const firstRes = await fetch(`${base}&page=1`, { headers });
     if (!firstRes.ok) {
       logEvent("github.stargazers", { repo, ok: false, status: firstRes.status }, "warn");
+      // 401/403/404 here is the July-2026 access restriction (not-own-repo),
+      // not a transient failure — the events feed still publishes stars.
+      if ([401, 403, 404].includes(firstRes.status)) {
+        return recentStargazersViaEvents(repo, { sinceIso: opts.sinceIso });
+      }
       return { stargazers: [], newestSeen: null, error: `status ${firstRes.status}` };
     }
     const lastPage = parseLastPage(firstRes.headers.get("link"));
@@ -100,11 +206,7 @@ export async function recentStargazers(
         if (!res.ok) {
           // Surface it — a 403/429 mid-walk is almost always the rate limit,
           // NOT "no recent stars". Return what we have so far + the error.
-          logEvent(
-            "github.stargazers",
-            { repo, ok: false, status: res.status, page },
-            "warn",
-          );
+          logEvent("github.stargazers", { repo, ok: false, status: res.status, page }, "warn");
           return {
             stargazers: dedupe(),
             newestSeen,
