@@ -14,7 +14,9 @@ import {
   type DrainRequest,
   type DrainResult,
   type LastDraft,
+  parseQueueIds,
   type QueueCounts,
+  type QueueListResponse,
   type QueueRowView,
   type RunPlayRequest,
 } from "@oneshot-gtm/shared-types";
@@ -72,14 +74,31 @@ export function listQueueRoute(req: Request): Response {
   const url = new URL(req.url);
   const playName = url.searchParams.get("play") ?? undefined;
   const status = (url.searchParams.get("status") ?? undefined) as QueueStatus | undefined;
+  // `?ids=1,2,3` — an explicit row pick (the /queue "drain selected" path).
+  // A present-but-unusable value yields `[]`, NOT `undefined`: falling back to
+  // the unscoped batch would hand the caller rows it never picked.
+  const ids = parseQueueIds(url.searchParams.get("ids"));
   const limit = Math.min(500, Number.parseInt(url.searchParams.get("limit") ?? "200", 10) || 200);
   const ledger = getLedger();
-  const filterArgs: { playName?: string; status?: QueueStatus; limit?: number } = { limit };
+  const filterArgs: {
+    playName?: string;
+    status?: QueueStatus;
+    limit?: number;
+    ids?: number[];
+  } = { limit: ids ? Math.max(limit, ids.length) : limit };
   if (playName) filterArgs.playName = playName;
   if (status) filterArgs.status = status;
+  if (ids) filterArgs.ids = ids;
   const rows = ledger.listQueue(filterArgs);
   const counts: QueueCounts = ledger.queueCounts();
-  return jsonResponse({ rows: rows.map(toView), counts }, 200, req);
+  // Unfiltered on purpose — the drain button needs per-play approved counts
+  // even while the page is showing, say, only pending rows.
+  const body: QueueListResponse = {
+    rows: rows.map(toView),
+    counts,
+    approvedByPlay: ledger.approvedCountsByPlay(),
+  };
+  return jsonResponse(body, 200, req);
 }
 
 export async function approveQueueRoute(
