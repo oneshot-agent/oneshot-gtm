@@ -72,6 +72,19 @@ Public. Issues mirror the items below. PRs welcome.
 - [ ] Dashboard demo gif (30s) — needs OneShot team
 - [x] **`oneshot-gtm-server@0.1.0` shipped on npmjs.com** via tag-driven workflow (`.github/workflows/release.yml`). `bun run release:server` cuts a release; provenance attestation attached. CLI (`oneshot-gtm`) still needs its own `tsdown` setup before it can ship — deferred to a follow-up.
 
+## Phase R4 — Manual prospect entry + cadence batch (shipped)
+
+- [x] **Add Prospect page** (`/add-prospect`) + `POST /api/prospects/add` — paste a LinkedIn / X / GitHub profile URL (optionally an email): the OneShot SDK's `deepResearchPerson` builds a dossier from that one URL (org/role history, recent posts, articles, work + personal emails), the LLM picks an angle **against the ICP** and drafts a tailored intro, and the prospect lands in `/queue` under a new generic `profile-intro` play (intro + day-4 & day-9 follow-ups + day-18 breakup). Research is fire-and-forget (~2–5 min); no email found → queued + flagged; failed/empty research is retryable on re-add.
+- [x] **Cadence quick-select** — "select next 10 / 20 / 30" most-overdue active rows on `/cadences`, feeding the existing batch preview/send.
+
+## Phase R5 — Queue drain consolidation + format gate (shipped)
+
+- [x] **One drain button on `/queue`** — replaces nine hand-listed per-play buttons that duplicated the PLAY chips above them (and had silently omitted `luma-events`, stranding two-thirds of the approved queue). The button follows the PLAY filter, reads whole-queue approved counts from the ledger (`approvedCountsByPlay`, surfaced as `approvedByPlay`) so it works from the default `pending` view, and names why it's disabled instead of just dimming.
+- [x] **Drain selected** — tick rows and drain exactly those, via `?ids=` on `GET /api/queue` and `/run`. Approved-only and single-play; a mixed pick refuses rather than draining a subset, and the selection keeps its play/status across filter changes.
+- [x] **`RUNNABLE_PLAYS` in `shared-types`** — the dashboard-runnable play list existed in three hand-copied mirrors that had drifted; the server's run gate, the drain button and `/plays` now read one constant.
+- [x] **github-stars: events-feed fallback** — GitHub restricted `/stargazers` to repo admins in July 2026 (401/404 for third-party repos); the finder falls back to the public `/events` feed's `WatchEvent`s (~90d / 300-event window).
+- [x] **`fmt:check` gated in CI** — pre-existing oxfmt debt cleared across 35 files. `packages/prompts/**/*.md` is excluded in `.oxfmtrc.json`: those files are LLM payload, not documents, and markdown escaping would rewrite the literal prompt text the model receives.
+
 ## Phase 2 — Multichannel + warm-signal escalation (shipped)
 
 - [x] **Cadence engine v2** — SMS + voice channels are now first-class step types; per-play sequences can mix email, SMS, voice
