@@ -427,6 +427,28 @@ export const RUNNABLE_PLAYS: readonly string[] = [
   "luma-events",
 ];
 
+/**
+ * Parse a `?ids=1,2,3` queue-row pick (the "drain selected" path).
+ *
+ * Returns `undefined` only when the parameter is ABSENT. A present-but-unusable
+ * value (`?ids=`, `?ids=abc`) returns `[]` — an explicit empty pick — because
+ * collapsing it to "absent" would silently downgrade a scoped drain into an
+ * unscoped one and hydrate rows the founder never selected, which they could
+ * then send. Tokens must be whole decimal integers: `123abc` is rejected
+ * outright rather than parsed as `123`, which would load an unintended row.
+ * Capped at 500 to match the list endpoint's own limit.
+ */
+export function parseQueueIds(raw: string | null | undefined): number[] | undefined {
+  if (raw == null) return undefined;
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => /^\d+$/.test(s))
+    .map((s) => Number.parseInt(s, 10))
+    .filter((n) => Number.isSafeInteger(n) && n > 0)
+    .slice(0, 500);
+}
+
 const RUNNABLE_PLAY_SET = new Set(RUNNABLE_PLAYS);
 
 export function isRunnablePlay(playName: string): boolean {

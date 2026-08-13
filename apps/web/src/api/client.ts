@@ -173,7 +173,10 @@ export const api = {
     if (opts?.play) q.set("play", opts.play);
     if (opts?.status) q.set("status", opts.status);
     if (opts?.limit != null) q.set("limit", String(opts.limit));
-    if (opts?.ids?.length) q.set("ids", opts.ids.join(","));
+    // Note the `!= null`, not a length check: an empty array is an explicit
+    // "nothing picked" and must reach the server as `ids=`, or the server would
+    // read it as absent and return the unscoped batch instead of no rows.
+    if (opts?.ids != null) q.set("ids", opts.ids.join(","));
     const qs = q.toString();
     return getJson<QueueListResponse>(`/queue${qs ? `?${qs}` : ""}`);
   },

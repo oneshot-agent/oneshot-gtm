@@ -53,6 +53,23 @@ describe("listQueueRoute", () => {
     expect(listQueueCalls[0]).toMatchObject({ ids: [7, 9], limit: 2 });
   });
 
+  it("keeps a present-but-empty ?ids= as an explicit empty pick", async () => {
+    // Regression: `?ids=` used to read as absent, so the route dropped the
+    // filter and returned the ordinary batch — a mangled drain-selected URL
+    // would hydrate rows the founder never picked.
+    for (const url of ["http://x/api/queue?ids=", "http://x/api/queue?ids=abc"]) {
+      listQueueCalls.length = 0;
+      await body(url);
+      expect(listQueueCalls[0], url).toHaveProperty("ids", []);
+    }
+  });
+
+  it("still lists normally when ?ids= is absent entirely", async () => {
+    listQueueCalls.length = 0;
+    await body("http://x/api/queue?status=approved");
+    expect(listQueueCalls[0]).not.toHaveProperty("ids");
+  });
+
   it("keeps those counts whole-queue even when rows are filtered", async () => {
     listQueueCalls.length = 0;
     const out = await body("http://x/api/queue?status=pending&play=show-hn");

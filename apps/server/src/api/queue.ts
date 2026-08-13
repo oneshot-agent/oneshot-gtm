@@ -14,6 +14,7 @@ import {
   type DrainRequest,
   type DrainResult,
   type LastDraft,
+  parseQueueIds,
   type QueueCounts,
   type QueueListResponse,
   type QueueRowView,
@@ -74,17 +75,9 @@ export function listQueueRoute(req: Request): Response {
   const playName = url.searchParams.get("play") ?? undefined;
   const status = (url.searchParams.get("status") ?? undefined) as QueueStatus | undefined;
   // `?ids=1,2,3` — an explicit row pick (the /queue "drain selected" path).
-  // Non-numeric entries are dropped rather than 400ing: the caller is a URL,
-  // and a partial pick is still a valid, visible outcome. Capped at the same
-  // 500 as `limit` so a hand-crafted URL can't build unbounded SQL.
-  const idsParam = url.searchParams.get("ids");
-  const ids = idsParam
-    ? idsParam
-        .split(",")
-        .map((s) => Number.parseInt(s.trim(), 10))
-        .filter((n) => Number.isSafeInteger(n) && n > 0)
-        .slice(0, 500)
-    : undefined;
+  // A present-but-unusable value yields `[]`, NOT `undefined`: falling back to
+  // the unscoped batch would hand the caller rows it never picked.
+  const ids = parseQueueIds(url.searchParams.get("ids"));
   const limit = Math.min(500, Number.parseInt(url.searchParams.get("limit") ?? "200", 10) || 200);
   const ledger = getLedger();
   const filterArgs: {

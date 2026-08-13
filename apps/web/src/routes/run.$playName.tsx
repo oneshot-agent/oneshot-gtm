@@ -2,7 +2,12 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, CheckCircle2, Loader2, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { RunPlayEvent, RunPlayRequest, RunRecord } from "@oneshot-gtm/shared-types";
+import {
+  parseQueueIds,
+  type RunPlayEvent,
+  type RunPlayRequest,
+  type RunRecord,
+} from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
@@ -45,13 +50,11 @@ export const Route = createFileRoute("/run/$playName")({
     else if (typeof search["limit"] === "string" && /^\d+$/.test(search["limit"])) {
       out.limit = Number.parseInt(search["limit"], 10);
     }
-    if (typeof search["ids"] === "string" && search["ids"].trim().length > 0) {
-      const ids = search["ids"]
-        .split(",")
-        .map((s) => Number.parseInt(s.trim(), 10))
-        .filter((n) => Number.isSafeInteger(n) && n > 0);
-      if (ids.length > 0) out.ids = ids;
-    }
+    // Keep an explicit-but-empty pick (`?ids=`, `?ids=abc`) as `[]` rather than
+    // dropping the field — hydration must load nothing, not silently widen to
+    // the play's whole approved batch.
+    const ids = parseQueueIds(typeof search["ids"] === "string" ? search["ids"] : null);
+    if (ids) out.ids = ids;
     if (search["dryRun"] === "0" || search["dryRun"] === "1") out.dryRun = search["dryRun"];
     if (typeof search["senderCohort"] === "string") out.senderCohort = search["senderCohort"];
     if (typeof search["freeForCohortOffer"] === "string") {
@@ -159,7 +162,7 @@ function RunPage() {
           play: playName,
           status: "approved",
           ...(search.ids ? { ids: search.ids } : {}),
-          limit: search.ids ? search.ids.length : (search.limit ?? 50),
+          limit: search.ids ? Math.max(1, search.ids.length) : (search.limit ?? 50),
         });
         if (cancelledRef?.cancelled) return;
         const pairs = res.rows
