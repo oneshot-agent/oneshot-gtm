@@ -110,3 +110,52 @@ describe("logTargetError redaction", () => {
     expect(logged[0]?.ctx).not.toHaveProperty("to_domain");
   });
 });
+
+describe("logTargetError never throws", () => {
+  // It runs inside the per-target catch. A TypeError raised while logging
+  // would escape that catch and abort the whole drain — the exact failure the
+  // catch exists to prevent. A thrown value is `unknown`, so nothing about its
+  // shape can be assumed.
+  const nasty: Array<[string, unknown]> = [
+    ["non-string message", { message: 500, stack: 42 }],
+    ["thrown string", "just a string"],
+    ["thrown number", 500],
+    ["null", null],
+    ["undefined", undefined],
+    [
+      "object with throwing getter",
+      {
+        get message() {
+          throw new Error("boom");
+        },
+      },
+    ],
+    ["non-Error cause", new Error("outer", { cause: { code: 7 } })],
+  ];
+
+  for (const [label, err] of nasty) {
+    it(`survives ${label}`, () => {
+      logged.length = 0;
+      expect(() => logTargetError({ playName: "show-hn", err })).not.toThrow();
+      // A hostile getter costs us the log entry, never the run.
+      if (label !== "object with throwing getter") {
+        expect(logged).toHaveLength(1);
+        expect(typeof logged[0]?.ctx["message_200"]).toBe("string");
+        expect(typeof logged[0]?.ctx["stack_300"]).toBe("string");
+      }
+    });
+  }
+
+  it("coerces a non-string message instead of crashing", () => {
+    logged.length = 0;
+    logTargetError({ playName: "show-hn", err: { message: 500, stack: 42 } });
+    expect(logged[0]?.ctx["message_200"]).toBe("500");
+    expect(logged[0]?.ctx["stack_300"]).toBe("42");
+  });
+
+  it("tolerates a non-string recipient", () => {
+    logged.length = 0;
+    logTargetError({ playName: "show-hn", to: 42 as unknown as string, err: new Error("x") });
+    expect(logged[0]?.ctx).not.toHaveProperty("to_domain");
+  });
+});

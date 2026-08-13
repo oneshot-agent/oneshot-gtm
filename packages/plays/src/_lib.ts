@@ -268,19 +268,45 @@ export function logTargetError(input: {
     statusCode?: number;
     responseBody?: string;
   };
-  const causeMsg = e?.cause instanceof Error ? e.cause.message : e?.cause ? String(e.cause) : null;
+  // Nothing here may throw. This runs INSIDE the per-target catch whose whole
+  // job is to stop one bad target from killing the batch — a TypeError raised
+  // while logging would escape that catch and abort the entire drain. A thrown
+  // value is `unknown`: `{ message: 500 }` is legal, so is a rejected string,
+  // and `.slice()` on either blows up. Coerce, don't assume.
+  try {
+    logTargetErrorUnsafe(e, input);
+  } catch {
+    // Belt and braces: a hostile shape (a throwing `message` getter, a
+    // String()-hostile object) must not turn a logged failure into a dead
+    // batch. Losing the diagnosis is bad; losing the run is worse.
+  }
+}
+
+/** Coerce an unknown thrown field to a string — never assume `.slice()` exists. */
+function text(v: unknown): string {
+  return typeof v === "string" ? v : v == null ? "" : String(v);
+}
+
+function logTargetErrorUnsafe(
+  e: Error & { cause?: unknown; statusCode?: number; responseBody?: string },
+  input: { playName: string; to?: string | null },
+): void {
+  const causeMsg =
+    e?.cause instanceof Error ? text(e.cause.message) : e?.cause ? text(e.cause) : null;
   logEvent(
     "play.target_error",
     {
       play: input.playName,
-      ...(input.to?.includes("@") ? { to_domain: input.to.split("@")[1] } : {}),
-      message_200: (e?.message ?? "").slice(0, 200),
+      ...(typeof input.to === "string" && input.to.includes("@")
+        ? { to_domain: input.to.split("@")[1] }
+        : {}),
+      message_200: text(e?.message).slice(0, 200),
       // OneShot SDK ToolError carries the failing call's HTTP status + server
       // response body — the real reason, vs the generic message.
       status_code: typeof e?.statusCode === "number" ? e.statusCode : null,
       response_body_400: typeof e?.responseBody === "string" ? e.responseBody.slice(0, 400) : null,
       cause_200: causeMsg ? causeMsg.slice(0, 200) : null,
-      stack_300: (e?.stack ?? "").slice(0, 300),
+      stack_300: text(e?.stack).slice(0, 300),
     },
     "error",
   );
