@@ -185,6 +185,24 @@ describe("latestSentEmailCopy", () => {
     expect(ledger.latestSentEmailCopy()?.subject).toBe("delivered one");
   });
 
+  it("picks the newest row when several share a timestamp", () => {
+    // created_at is second-precision and a cadence batch writes several rows
+    // within one second, so without an id tie-break the "most recent" copy is
+    // whichever row SQLite happens to return first.
+    const prospectId = ledger.upsertProspect({ name: "P", email: "t@x.example", source: "t" });
+    for (const n of ["first", "second", "third"]) {
+      ledger.recordSequenceEvent({
+        prospectId,
+        playName: "post-funding",
+        stepIndex: 0,
+        channel: "email",
+        status: "sent",
+        metadata: { subject: n, body: `${n} body` },
+      });
+    }
+    expect(ledger.latestSentEmailCopy()?.subject).toBe("third");
+  });
+
   it("ignores non-email channels and unsent steps", () => {
     const prospectId = ledger.upsertProspect({ name: "P", email: "p@x.example", source: "t" });
     ledger.recordSequenceEvent({

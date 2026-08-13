@@ -97,13 +97,28 @@ function deliverabilityChecks(): CheckResult[] {
       return results;
     }
     for (const identity of identities) {
+      if (identity.provider === "oneshot") continue; // reported once above, as uncovered
       const s = stats.get(identity.id);
-      if (!s) continue;
       const sent = ledger.countEmailSendsSince(
         identity.id,
         daysAgoSqliteUtc(BOUNCE_WINDOW_DAYS + SEND_WINDOW_GRACE_DAYS),
       );
       const label = identity.address ?? identity.sendingDomain ?? identity.id;
+      // A monitored identity with no bounces gets its own line rather than
+      // being skipped. Silently omitting it is indistinguishable from "not
+      // evaluated" — and once ANOTHER identity is reporting numbers, the
+      // absence of a line reads as an oversight rather than as good news.
+      if (!s) {
+        results.push({
+          name: "deliverability",
+          severity: "ok",
+          message:
+            sent === 0
+              ? `${label} no sends in the last ${BOUNCE_WINDOW_DAYS}d`
+              : `${label} 0 bounced of ${sent} sent (${BOUNCE_WINDOW_DAYS}d)`,
+        });
+        continue;
+      }
       const blockNote =
         s.block > 0
           ? ` — ${s.block} spam-block${s.block === 1 ? "" : "s"}, check content/volume`

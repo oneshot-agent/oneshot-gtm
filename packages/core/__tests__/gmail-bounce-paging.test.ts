@@ -40,14 +40,18 @@ function stubGmail(pages: string[][]): void {
     "fetch",
     vi.fn(async (url: string | URL) => {
       const u = String(url);
-      if (u.includes("oauth2.googleapis.com")) {
+      const parsed = new URL(u);
+      // Matched on the parsed hostname, not a substring: `includes()` would
+      // also match a URL that merely mentions the host elsewhere in its path
+      // or query, which is exactly the routing bug this stub would then hide.
+      if (parsed.hostname === "oauth2.googleapis.com") {
         return new Response(JSON.stringify({ access_token: "at", expires_in: 3600 }), {
           status: 200,
         });
       }
-      if (u.includes("/messages?")) {
+      if (parsed.pathname.endsWith("/messages")) {
         listCalls.push(u);
-        const token = new URL(u).searchParams.get("pageToken");
+        const token = parsed.searchParams.get("pageToken");
         const index = token ? Number(token) : 0;
         const ids = pages[index] ?? [];
         const hasNext = index + 1 < pages.length;
@@ -59,7 +63,7 @@ function stubGmail(pages: string[][]): void {
           { status: 200 },
         );
       }
-      const id = u.split("/messages/")[1]?.split("?")[0] ?? "x";
+      const id = parsed.pathname.split("/messages/")[1] ?? "x";
       return new Response(JSON.stringify(dsnMessage(id)), { status: 200 });
     }),
   );

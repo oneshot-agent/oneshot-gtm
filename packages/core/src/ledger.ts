@@ -1296,7 +1296,10 @@ export class Ledger {
          WHERE status IN ('sent', 'delivered', 'replied')
            AND channel = 'email' AND metadata_json IS NOT NULL
            ${opts.playName ? "AND play_name = ?" : ""}
-         ORDER BY created_at DESC LIMIT 25`,
+         -- id DESC breaks ties: created_at is second-precision, and a cadence
+         -- batch writes several rows within one second, leaving their relative
+         -- order otherwise unspecified.
+         ORDER BY created_at DESC, id DESC LIMIT 25`,
       )
       .all(...(opts.playName ? [opts.playName] : [])) as Array<{
       play_name: string;
