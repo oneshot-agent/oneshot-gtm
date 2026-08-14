@@ -5,7 +5,7 @@ import {
   runPendingRetries,
   type TriggerRunOutcome,
 } from "@oneshot-gtm/find";
-import { pollInboxReplies } from "@oneshot-gtm/plays";
+import { pollInboxBounces, pollInboxReplies } from "@oneshot-gtm/plays";
 import { reportServerExecution } from "./telemetry.ts";
 
 /**
@@ -34,11 +34,13 @@ export function triggerOutcome(o: TriggerRunOutcome): TelemetryOutcome {
  *   the orphaned `running_started_at` markers on the next start.
  *
  * The tick also polls the inbox for prospect replies and stops their cadences
- * (`pollInboxReplies`). That detection otherwise only ran when the founder
- * manually advanced a cadence, so a reply could sit unrecognized for days while
- * the sequence kept emailing. It's read-only apart from the status flip — no
- * step is sent — so it never spends. Tick cadence is clamped to REPLY_POLL_MAX
- * so replies surface within minutes even when no trigger is due for an hour.
+ * (`pollInboxReplies`), and for delivery failures (`pollInboxBounces`). Both
+ * otherwise only ran when the founder manually advanced a cadence, so a reply
+ * could sit unrecognized — or a dead address keep receiving paid sends — for
+ * days while the sequence kept emailing. Both are read-only apart from the
+ * status flip — no step is sent — so neither spends. Tick cadence is clamped to
+ * REPLY_POLL_MAX so both surface within minutes even when no trigger is due for
+ * an hour.
  */
 export interface SchedulerHandle {
   stop(): void;
@@ -47,10 +49,20 @@ export interface SchedulerHandle {
 const FIRST_TICK_DELAY_MS = 5_000;
 const ERROR_BACKOFF_MS = 60_000;
 const REPLY_POLL_MAX_MS = 5 * 60_000;
+/**
+ * Bounces are swept far less often than replies. A reply is time-sensitive —
+ * every minute it goes unnoticed is a minute the cadence might send again. A
+ * bounce has already happened and the sweep re-reads a 30-day window, so
+ * running it at reply cadence would re-fetch and re-parse the same DSNs a
+ * couple of hundred times a day for no new information.
+ */
+const BOUNCE_POLL_INTERVAL_MS = 30 * 60_000;
 
 export function startScheduler(): SchedulerHandle {
   let cancelled = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  // 0 = never polled, so the first tick always sweeps.
+  let lastBouncePollAt = 0;
 
   const tick = async (): Promise<void> => {
     if (cancelled) return;
@@ -80,6 +92,25 @@ export function startScheduler(): SchedulerHandle {
           "warn",
         );
       }
+      // Bounce detection, isolated for the same reasons as the reply poll.
+      // Also non-spending: it records delivery failures and stops the cadences
+      // of hard-bounced addresses, so the founder stops paying to email
+      // mailboxes the receiving server has already refused.
+      let bouncesRecorded = 0;
+      if (Date.now() - lastBouncePollAt >= BOUNCE_POLL_INTERVAL_MS) {
+        // Stamped before the await, not after: a slow or failing sweep must not
+        // let ticks queue up behind it and then all fire at once.
+        lastBouncePollAt = Date.now();
+        try {
+          bouncesRecorded = (await pollInboxBounces()).recorded;
+        } catch (err) {
+          logEvent(
+            "scheduler.bounce_poll.failed",
+            { message_120: ((err as Error).message ?? "").slice(0, 120) },
+            "warn",
+          );
+        }
+      }
       // Drain outage-deferred candidates (time-windowed finders) now the
       // backend may be healthy again. Isolated like the reply poll — its
       // failure must not skip trigger scheduling.
@@ -92,7 +123,12 @@ export function startScheduler(): SchedulerHandle {
           "warn",
         );
       }
-      logEvent("scheduler.tick.done", { fired, repliesDetected, source: "server" });
+      logEvent("scheduler.tick.done", {
+        fired,
+        repliesDetected,
+        bouncesRecorded,
+        source: "server",
+      });
       if (cancelled) return;
       const sleepMs = Math.min(nextSleepMs(outcomes), REPLY_POLL_MAX_MS);
       timer = setTimeout(() => void tick(), sleepMs);

@@ -30,7 +30,7 @@ import {
   commandHandoffTemplatize,
 } from "./commands/handoff.ts";
 import { commandCadenceAdvance } from "./commands/cadence.ts";
-import { commandGmailAuth } from "./commands/gmail.ts";
+import { commandGmailAuth, commandGmailPlacement } from "./commands/gmail.ts";
 import {
   commandDomainsList,
   commandDomainsPause,
@@ -114,6 +114,16 @@ gmail
     "Authorize Gmail via OAuth and store the refresh token (chmod 600 ~/.oneshot-gtm/.env)",
   )
   .action(runOrFail(commandGmailAuth));
+gmail
+  .command("placement")
+  .description(
+    "Send one real email between two authorized mailboxes and report inbox vs spam vs tab",
+  )
+  .option("--from <identityId>", "sending identity (default: first Gmail identity)")
+  .option("--to <identityId>", "receiving identity (default: first other Gmail identity)")
+  .option("--play <name>", "replay this play's most recent real email as the canary body")
+  .option("-y, --yes", "skip the send confirmation")
+  .action(runOrFail(commandGmailPlacement));
 
 // Identities: manage the OneShot sender rotation pool (multiple wallet-owned
 // domains + multiple mailboxes per domain). Gmail accounts join via `gmail auth`.

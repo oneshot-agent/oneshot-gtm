@@ -23,6 +23,23 @@ export function isSendDeferred(err: unknown): boolean {
 }
 
 /**
+ * Thrown by sendEmail (pre-flight, before any network or LLM spend) when the
+ * recipient has previously HARD bounced. Unlike SendDeferredError this is
+ * permanent — callers must not leave the work queued for a retry, because no
+ * retry can ever succeed. Name-based for the same cross-module reason.
+ */
+export class SuppressedRecipientError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SuppressedRecipientError";
+  }
+}
+
+export function isSuppressedRecipient(err: unknown): boolean {
+  return err instanceof Error && err.name === "SuppressedRecipientError";
+}
+
+/**
  * True when an error is a TRANSIENT platform/transport failure (the OneShot
  * backend or the network briefly broke) rather than a genuine negative result
  * (email not found, undeliverable, no enrichment data). Callers must NOT treat
@@ -72,6 +89,11 @@ export function todayStartSqliteUtc(now = new Date()): string {
   const localMidnight = new Date(now);
   localMidnight.setHours(0, 0, 0, 0);
   return toSqliteUtc(localMidnight);
+}
+
+/** `days` ago in the SQLite UTC format receipts.created_at stores — trailing-window queries (doctor's bounce rate). */
+export function daysAgoSqliteUtc(days: number, now = new Date()): string {
+  return toSqliteUtc(new Date(now.getTime() - days * 24 * 3600 * 1000));
 }
 
 const MS_PER_WEEK = 7 * 24 * 3600 * 1000;

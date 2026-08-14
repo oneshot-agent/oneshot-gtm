@@ -67,6 +67,78 @@ export interface SequenceEventRecord {
   created_at: string;
 }
 
+/**
+ * Severity of a delivery failure, derived from the DSN's RFC 3463 status code.
+ *  - `hard`  — permanent, address-level (5.1.1 no such user). Suppresses the
+ *              address: re-sending can only ever fail again and costs money.
+ *  - `block` — permanent, POLICY-level (5.7.x, spam/reputation rejection). The
+ *              reputation signal. Kept distinct from `hard` because it's about
+ *              the message or the sending domain, not the recipient — the same
+ *              address may well accept mail tomorrow, so it never suppresses.
+ *  - `soft`  — transient (4.x.x mailbox full, greylisted). Recorded for context
+ *              only; no cadence or suppression effect.
+ */
+export type BounceKind = "hard" | "block" | "soft";
+
+export interface BounceRecord {
+  /** Provider message id of the DSN itself — PK, so re-sweeping is idempotent. */
+  message_id: string;
+  /** Identity whose mailbox received the DSN (= the identity that sent). Null pre-rotation. */
+  identity_id: string | null;
+  /** Canonical Final-Recipient — the address that failed, not the DSN sender. */
+  recipient: string;
+  kind: BounceKind;
+  /** RFC 3463 status, e.g. "5.1.1". Null when only prose was parseable. */
+  status_code: string | null;
+  /** Truncated Diagnostic-Code / remote SMTP response. */
+  diagnostic: string | null;
+  /** Matched prospect, or null when the address isn't one of ours. */
+  prospect_id: number | null;
+  /** When the DSN arrived (provider timestamp). */
+  bounced_at: string;
+  created_at: string;
+}
+
+/**
+ * Where a message actually landed in the receiving mailbox. This is the
+ * question DSN harvesting cannot answer: a message can be accepted (no bounce)
+ * and still be filtered into spam or buried in a tab, which for cold outreach
+ * is indistinguishable from never arriving.
+ */
+export type GmailPlacement =
+  | "inbox"
+  /** Delivered but tab-binned (Promotions/Social/Updates/Forums) — effectively invisible for cold outreach. */
+  | "promotions"
+  | "tab"
+  | "spam"
+  /** Accepted but not in the inbox or any tab — filtered straight to a label/archive. */
+  | "archived"
+  /** Never showed up within the deadline. Inconclusive: silently dropped, or just slow. */
+  | "not_delivered";
+
+/** SPF/DKIM/DMARC verdict as reported by the RECEIVING server, not by a DNS lookup. */
+export type AuthVerdict = "pass" | "fail" | "softfail" | "neutral" | "none" | "unknown";
+
+export interface CanaryResultRecord {
+  id: number;
+  from_identity: string;
+  to_identity: string;
+  placement: GmailPlacement;
+  /** Raw Gmail labelIds, JSON — kept so a placement call can be re-litigated later. */
+  labels_json: string | null;
+  spf: AuthVerdict;
+  dkim: AuthVerdict;
+  dmarc: AuthVerdict;
+  subject: string | null;
+  /** Which play's real copy was replayed, or null when a generic sample was used. */
+  source_play: string | null;
+  /** True when both identities share a domain — internal routing skips most filtering. */
+  same_domain: number;
+  /** Send → observed, in ms. Null when never observed. */
+  latency_ms: number | null;
+  created_at: string;
+}
+
 export interface InterviewRecord {
   id: number;
   person: string;

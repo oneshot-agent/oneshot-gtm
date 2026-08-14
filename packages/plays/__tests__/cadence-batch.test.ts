@@ -50,6 +50,8 @@ vi.mock("@oneshot-gtm/core", async () => {
     },
     listInbox: async () => ({ emails: [], has_more: false }),
     getLedger: () => ({
+      // No prior hard bounce: these tests exercise the normal send path.
+      suppressionFor: () => null,
       listAllCadences: () => cadenceRows,
       listActiveCadences: () => cadenceRows.filter((c) => c.status === "active"),
       listCadencesForProspect: (prospectId: number) =>

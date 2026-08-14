@@ -42,7 +42,7 @@ function earlyByCopy(iso: string | null | undefined): string {
   return `${days}d early`;
 }
 
-function statusTone(status: string): "receipt" | "signal" | "spend" | "neutral" {
+function statusTone(status: string): "receipt" | "signal" | "spend" | "blocked" | "neutral" {
   switch (status) {
     case "active":
       return "receipt";
@@ -52,6 +52,8 @@ function statusTone(status: string): "receipt" | "signal" | "spend" | "neutral" 
       return "spend";
     case "completed":
       return "neutral";
+    case "bounced":
+      return "blocked";
     default:
       return "neutral";
   }
@@ -333,8 +335,16 @@ function CadencesPage() {
         </section>
       )}
 
-      {/* Aggregate strip — 4 columns divided by vertical hairlines. */}
-      <section className="grid grid-cols-2 divide-x divide-ink-rule border-b border-ink-rule md:grid-cols-4">
+      {/* Aggregate strip — 4 columns divided by vertical hairlines, 5 once any
+          cadence has bounced. The bounced tile only appears when there's
+          something to report: a permanent 0 would read as reassurance on
+          installs that have never had bounce detection run at all. */}
+      <section
+        className={cn(
+          "grid grid-cols-2 divide-x divide-ink-rule border-b border-ink-rule",
+          counts.bounced > 0 ? "md:grid-cols-5" : "md:grid-cols-4",
+        )}
+      >
         <CadenceSummary
           label="Active"
           value={counts.active}
@@ -354,6 +364,14 @@ function CadencesPage() {
           tone="spend"
         />
         <CadenceSummary label="Completed" value={counts.completed} caption="full cadence done" />
+        {counts.bounced > 0 && (
+          <CadenceSummary
+            label="Bounced"
+            value={counts.bounced}
+            caption="address dead · suppressed"
+            tone="blocked"
+          />
+        )}
       </section>
 
       {/* Meta strip */}
@@ -568,7 +586,9 @@ function CadencesPage() {
                                 ? "signal"
                                 : c.status === "breakup"
                                   ? "spend"
-                                  : "receipt"
+                                  : c.status === "bounced"
+                                    ? "blocked"
+                                    : "receipt"
                             }
                           />
                           <span className="font-mono text-[11px] text-ink-faint">
@@ -693,7 +713,7 @@ function CadencesPage() {
                               );
                             })()}
                           {/* Chevron also for NON-active rows that still have history
-                            (breakup / replied / completed / paused). The active-status
+                            (breakup / replied / completed / paused / bounced). The active-status
                             block already renders its own chevron above when there's a
                             draft OR history; this one covers the non-active case. */}
                           {c.status !== "active" &&
@@ -1065,7 +1085,7 @@ function CadenceSummary({
   label: string;
   value: number;
   caption?: string;
-  tone?: "neutral" | "receipt" | "signal" | "spend";
+  tone?: "neutral" | "receipt" | "signal" | "spend" | "blocked";
 }) {
   const captionColor =
     tone === "spend"
@@ -1074,7 +1094,9 @@ function CadenceSummary({
         ? "var(--ink-receipt-2)"
         : tone === "signal"
           ? "var(--ink-signal-2)"
-          : "var(--ink-faint)";
+          : tone === "blocked"
+            ? "var(--ink-blocked-2)"
+            : "var(--ink-faint)";
   return (
     <div className="px-5 py-4">
       <div className="ln-eyebrow">{label}</div>
@@ -1099,5 +1121,6 @@ const EMPTY_COUNTS: CadenceCounts = {
   breakup: 0,
   completed: 0,
   paused: 0,
+  bounced: 0,
   overdue: 0,
 };

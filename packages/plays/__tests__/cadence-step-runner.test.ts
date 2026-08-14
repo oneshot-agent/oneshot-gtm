@@ -45,6 +45,8 @@ let deferOnSend = false;
 // Simulates a sequence_events row already existing at the step about to be sent
 // (nextIndex) — the crash-mid-send state the re-send guard must catch.
 let alreadySentNextStep = false;
+// Simulates a prior hard bounce for this cadence's prospect.
+let suppression: { status_code: string | null; bounced_at: string } | null = null;
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -89,6 +91,8 @@ vi.mock("@oneshot-gtm/core", async () => {
     },
     listInbox: async () => ({ emails: [], has_more: false }),
     getLedger: () => ({
+      // Null by default: most tests exercise the normal send path.
+      suppressionFor: () => suppression,
       listAllCadences: () => cadenceRows,
       listActiveCadences: () => cadenceRows.filter((c) => c.status === "active"),
       listCadencesForProspect: (prospectId: number) =>
@@ -231,6 +235,7 @@ beforeEach(() => {
   throwOnSend = false;
   deferOnSend = false;
   alreadySentNextStep = false;
+  suppression = null;
   seedActiveCadence();
 });
 
@@ -472,5 +477,51 @@ describe("runCadenceStepForProspect", () => {
     });
     expect(result.action).toBe("skipped");
     expect(result.note).toMatch(/no registered sequence/i);
+  });
+
+  describe("hard-bounce suppression", () => {
+    it("skips a suppressed prospect without drafting or sending", async () => {
+      // sendEmail would refuse this anyway, but only after an LLM draft has
+      // been paid for — the whole point of checking here is to not spend.
+      suppression = { status_code: "5.1.1", bounced_at: "2026-08-01T10:00:00.000Z" };
+      const result = await runCadenceStepForProspect({
+        prospectId: 1,
+        playName: "stack-consolidation",
+        dryRun: false,
+      });
+
+      expect(result.action).toBe("skipped");
+      expect(result.note).toMatch(/suppressed/i);
+      expect(calls.llm).toBe(0);
+      expect(calls.sendEmail).toBe(0);
+    });
+
+    it("marks the cadence bounced rather than leaving it due forever", async () => {
+      suppression = { status_code: "5.1.1", bounced_at: "2026-08-01T10:00:00.000Z" };
+      await runCadenceStepForProspect({
+        prospectId: 1,
+        playName: "stack-consolidation",
+        dryRun: false,
+      });
+
+      expect(statusCalls).toEqual([
+        { prospectId: 1, playName: "stack-consolidation", status: "bounced" },
+      ]);
+      // NOT recorded as a send failure: that renders as "retrying", and a dead
+      // address will never accept a retry.
+      expect(sendErrorCalls).toEqual([]);
+      expect(advanceCalls).toEqual([]);
+    });
+
+    it("leaves an unsuppressed prospect on the normal path", async () => {
+      suppression = null;
+      const result = await runCadenceStepForProspect({
+        prospectId: 1,
+        playName: "stack-consolidation",
+        dryRun: false,
+      });
+      expect(result.action).not.toBe("skipped");
+      expect(calls.sendEmail).toBe(1);
+    });
   });
 });

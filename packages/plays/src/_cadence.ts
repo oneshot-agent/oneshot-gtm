@@ -2,6 +2,7 @@ import {
   getLedger,
   hasAnySendCapacity,
   isSendDeferred,
+  listBounces,
   listInbox,
   loadConfig,
   logEvent,
@@ -13,6 +14,7 @@ import {
   tagOutcomeValue,
   trackSend,
   voiceCall,
+  type BounceKind,
   type ProspectRecord,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
@@ -239,6 +241,120 @@ export async function pollInboxReplies(): Promise<ReplyPollResult> {
   return out;
 }
 
+export interface BouncePollResult {
+  /** Delivery failures parsed from the mailbox this poll (including already-known ones). */
+  polled: number;
+  /** Failures seen for the FIRST time — the ones that were acted on. */
+  recorded: number;
+  /** Cadences stopped by a hard bounce this poll. */
+  cadencesStopped: number;
+  details: Array<{
+    recipient: string;
+    kind: BounceKind;
+    statusCode: string | null;
+    playName: string | null;
+  }>;
+}
+
+/**
+ * Poll the mailbox for DSNs and act on them. Sibling to pollInboxReplies:
+ * read-only except for the bounce row and the resulting cadence stop, so it's
+ * safe on a background timer as well as inside advanceCadence.
+ *
+ * Without a background caller the tool learns an address is dead only by
+ * failing to get a reply — meanwhile the sequence keeps emailing it, paying
+ * per send, and each refusal costs sending reputation.
+ */
+export async function pollInboxBounces(): Promise<BouncePollResult> {
+  const ledger = getLedger();
+  const out: BouncePollResult = { polled: 0, recorded: 0, cadencesStopped: 0, details: [] };
+  const bounces = await listBounces();
+  out.polled = bounces.length;
+
+  for (const b of bounces) {
+    const prospect = ledger.findProspectByEmail(b.recipient);
+    const isNew = ledger.recordBounce({
+      messageId: b.messageId,
+      recipient: b.recipient,
+      identityId: b.identityId,
+      kind: b.kind,
+      statusCode: b.statusCode,
+      diagnostic: b.diagnostic,
+      prospectId: prospect?.id ?? null,
+      bouncedAt: b.bouncedAt,
+    });
+    // The sweep re-reads a 30-day window every tick, so most of what comes back
+    // was handled days ago. Acting only on first sight keeps the cadence writes
+    // and event log from repeating forever.
+    if (!isNew) continue;
+    out.recorded++;
+
+    // Soft = transient (mailbox full, greylisted). Stored for context, but it
+    // says nothing durable about the address or our reputation.
+    if (b.kind === "soft") continue;
+
+    if (!prospect) {
+      // A bounce for an address we don't track — still counts toward the
+      // identity's rate, which is the number that matters for reputation.
+      out.details.push({
+        recipient: b.recipient,
+        kind: b.kind,
+        statusCode: b.statusCode,
+        playName: null,
+      });
+      continue;
+    }
+
+    for (const cad of ledger.listCadencesForProspect(prospect.id)) {
+      // current_step is the most recently SENT step (intro = 0; each follow-up
+      // is recorded at current_step + 1 as it fires) — that's the touch that
+      // came back undelivered.
+      ledger.recordSequenceEvent({
+        prospectId: prospect.id,
+        playName: cad.play_name,
+        stepIndex: cad.current_step,
+        channel: "email",
+        status: "bounced",
+        metadata: {
+          kind: b.kind,
+          statusCode: b.statusCode,
+          diagnostic: b.diagnostic,
+          identityId: b.identityId,
+        },
+      });
+      // Only a HARD bounce stops the sequence. A 5.7.x block is a verdict on
+      // this message or our sending domain, not on the mailbox — the address
+      // may well accept mail tomorrow, so killing the cadence would throw away
+      // a live prospect over one spam-filter decision. Blocks surface through
+      // the doctor check instead. Only `active` rows flip: a `replied` cadence
+      // has already proved the human is there.
+      if (b.kind === "hard" && cad.status === "active") {
+        ledger.setCadenceStatus({
+          prospectId: prospect.id,
+          playName: cad.play_name,
+          status: "bounced",
+        });
+        out.cadencesStopped++;
+      }
+      out.details.push({
+        recipient: b.recipient,
+        kind: b.kind,
+        statusCode: b.statusCode,
+        playName: cad.play_name,
+      });
+    }
+  }
+
+  if (out.recorded > 0) {
+    logEvent("bounce.poll.done", {
+      polled: out.polled,
+      recorded: out.recorded,
+      cadences_stopped: out.cadencesStopped,
+    });
+  }
+  return out;
+}
+
 export async function advanceCadence(
   opts: { dryRun: boolean } = { dryRun: false },
 ): Promise<AdvanceResult> {
@@ -273,6 +389,30 @@ export async function advanceCadence(
         playName: "(poll)",
         action: "skipped",
         note: `inbox poll failed: ${(err as Error).message}`,
+        receiptIds: [],
+      });
+    }
+
+    // 1b. Poll for delivery failures. Runs BEFORE the due-step loop below so a
+    // bounce detected this pass stops today's follow-up rather than next
+    // pass's — otherwise we'd send one more email to a known-dead address.
+    try {
+      const bouncePoll = await pollInboxBounces();
+      for (const d of bouncePoll.details) {
+        result.details.push({
+          prospectEmail: d.recipient,
+          playName: d.playName ?? "(bounce)",
+          action: "skipped",
+          note: `bounced${d.statusCode ? ` ${d.statusCode}` : ""} (${d.kind})`,
+          receiptIds: [],
+        });
+      }
+    } catch (err) {
+      result.details.push({
+        prospectEmail: null,
+        playName: "(bounce-poll)",
+        action: "skipped",
+        note: `bounce poll failed: ${(err as Error).message}`,
         receiptIds: [],
       });
     }
@@ -382,6 +522,27 @@ export async function runCadenceStepForProspect(
       receiptIds: [],
       note: `cadence is ${cadence.status}`,
     };
+  }
+  // Suppression check ahead of drafting. sendEmail would refuse this anyway,
+  // but only after an LLM draft has been paid for, and the resulting throw
+  // would land in recordCadenceSendError as "send failed · retrying" — which
+  // misrepresents a permanent failure as a transient one. Both the batch pass
+  // and the /cadences UI route through here, so this covers both.
+  if (cadence.prospect_email) {
+    const suppression = ledger.suppressionFor(cadence.prospect_email);
+    if (suppression) {
+      ledger.setCadenceStatus({
+        prospectId: opts.prospectId,
+        playName: opts.playName,
+        status: "bounced",
+      });
+      return {
+        action: "skipped",
+        payload: null,
+        receiptIds: [],
+        note: `suppressed: hard-bounced${suppression.status_code ? ` ${suppression.status_code}` : ""}`,
+      };
+    }
   }
   const seq = effectiveSequence(opts.playName);
   if (!seq) {

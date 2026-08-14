@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   capGroupKey,
   configDir,
+  daysAgoSqliteUtc,
   getBalance,
   getGmailProfile,
   getLedger,
@@ -25,6 +26,194 @@ interface CheckResult {
   severity: CheckSeverity;
   message: string;
   hint?: string;
+}
+
+/** Trailing window for the bounce rate — long enough to accumulate signal at founder-scale volume. */
+const BOUNCE_WINDOW_DAYS = 30;
+/**
+ * Sends required before a rate is reported at all. At low volume the rate is
+ * mostly noise: one bad address out of three sends is 33%, which would scream
+ * about a perfectly healthy mailbox.
+ */
+const MIN_SENDS_TO_JUDGE = 20;
+/** Industry rule of thumb: sustained hard bounces above ~2% start costing reputation, ~5% is where providers act. */
+const HARD_WARN_RATE = 0.02;
+const HARD_FAIL_RATE = 0.05;
+/**
+ * Extra days of SENDS included in the denominator beyond the bounce window.
+ *
+ * The two sides are timestamped by different events: a bounce is dated when the
+ * DSN arrived, a send when it went out. Using an identical window would count a
+ * DSN that landed just inside it while excluding the send that caused it —
+ * inflating the rate, on a check that can report `fail`. A DSN almost always
+ * arrives within minutes and effectively always within two days, so widening
+ * only the denominator makes the ratio honest. It biases the rate very slightly
+ * LOW, which is the right direction for an error that would otherwise cry wolf.
+ */
+const SEND_WINDOW_GRACE_DAYS = 2;
+
+/**
+ * Per-identity delivery health from harvested DSNs. Two numbers, deliberately
+ * not averaged together:
+ *  - hard-bounce RATE — list quality. Noisy at low volume, hence the sample gate.
+ *  - policy-block COUNT — reputation. Reported from the first occurrence, because
+ *    a single "blocked as spam" is a real signal about the sending domain and
+ *    would vanish if divided into a percentage.
+ */
+function deliverabilityChecks(): CheckResult[] {
+  const results: CheckResult[] = [];
+  try {
+    const ledger = getLedger();
+    const identities = resolveIdentities(loadConfig());
+    const since = new Date(Date.now() - BOUNCE_WINDOW_DAYS * 24 * 3600 * 1000);
+    const stats = ledger.bounceStatsByIdentity({ sinceIso: since.toISOString() });
+
+    // Bounce detection reads DSNs out of a mailbox we can authenticate to, so
+    // it only covers Gmail identities. A OneShot send's return path belongs to
+    // the platform and surfaces nothing in its inbox API — those identities are
+    // structurally invisible here. Saying so matters: silence about an
+    // unmonitored sender reads as "no bounces" when it means "we can't tell".
+    const blind = identities.filter((i) => i.provider === "oneshot");
+    if (blind.length > 0) {
+      results.push({
+        name: "deliverability",
+        severity: "warn",
+        message: `${blind.length} OneShot identit${blind.length === 1 ? "y" : "ies"} not covered — bounce detection reads DSNs from Gmail mailboxes only`,
+      });
+    }
+
+    // Nothing has ever bounced anywhere — say so once instead of emitting a
+    // reassuring "0.0%" per identity that only means the sweep hasn't run.
+    if (stats.size === 0) {
+      const gmailCount = identities.length - blind.length;
+      results.push({
+        name: "deliverability",
+        severity: "ok",
+        message:
+          gmailCount === 0
+            ? `no Gmail identity to monitor — no bounce data available`
+            : `no delivery failures recorded in the last ${BOUNCE_WINDOW_DAYS}d`,
+      });
+      return results;
+    }
+    for (const identity of identities) {
+      if (identity.provider === "oneshot") continue; // reported once above, as uncovered
+      const s = stats.get(identity.id);
+      const sent = ledger.countEmailSendsSince(
+        identity.id,
+        daysAgoSqliteUtc(BOUNCE_WINDOW_DAYS + SEND_WINDOW_GRACE_DAYS),
+      );
+      const label = identity.address ?? identity.sendingDomain ?? identity.id;
+      // A monitored identity with no bounces gets its own line rather than
+      // being skipped. Silently omitting it is indistinguishable from "not
+      // evaluated" — and once ANOTHER identity is reporting numbers, the
+      // absence of a line reads as an oversight rather than as good news.
+      if (!s) {
+        results.push({
+          name: "deliverability",
+          severity: "ok",
+          message:
+            sent === 0
+              ? `${label} no sends in the last ${BOUNCE_WINDOW_DAYS}d`
+              : `${label} 0 bounced of ${sent} sent (${BOUNCE_WINDOW_DAYS}d)`,
+        });
+        continue;
+      }
+      const blockNote =
+        s.block > 0
+          ? ` — ${s.block} spam-block${s.block === 1 ? "" : "s"}, check content/volume`
+          : "";
+
+      if (sent < MIN_SENDS_TO_JUDGE) {
+        results.push({
+          name: "deliverability",
+          severity: s.block > 0 ? "warn" : "ok",
+          message: `${label} ${s.hard} hard / ${s.block} blocked of ${sent} sent (${BOUNCE_WINDOW_DAYS}d) — too few sends to rate${blockNote}`,
+        });
+        continue;
+      }
+
+      const rate = s.hard / sent;
+      const pct = `${(rate * 100).toFixed(1)}%`;
+      const severity: CheckSeverity =
+        rate > HARD_FAIL_RATE ? "fail" : rate > HARD_WARN_RATE || s.block > 0 ? "warn" : "ok";
+      results.push({
+        name: "deliverability",
+        severity,
+        message: `${label} ${pct} bounced (${s.hard}/${sent}, ${BOUNCE_WINDOW_DAYS}d)${blockNote}`,
+        ...(severity === "ok"
+          ? {}
+          : {
+              hint:
+                rate > HARD_WARN_RATE
+                  ? "verify emails before sending — hard bounces are dead addresses"
+                  : "spam-blocks are a reputation signal, not a bad address",
+            }),
+      });
+    }
+  } catch (err) {
+    results.push({
+      name: "deliverability",
+      severity: "warn",
+      message: `could not evaluate: ${(err as Error).message}`,
+    });
+  }
+  return results;
+}
+
+/** A placement result older than this is reported as stale — reputation moves. */
+const CANARY_STALE_DAYS = 14;
+
+/**
+ * REPORTS the last inbox-placement canary; never runs one. doctor is expected
+ * to be safe to run at any time, and a canary sends real mail — firing one per
+ * doctor invocation would both spend sending reputation and, by repeatedly
+ * mailing the same seed address, train its filter until the test always passed.
+ */
+function placementCheck(): CheckResult {
+  try {
+    const last = getLedger().latestCanaryResult();
+    if (!last) {
+      return {
+        name: "inbox placement",
+        severity: "ok",
+        message: "never tested",
+        hint: "run: bun run cli -- gmail placement (needs a second authorized Gmail account)",
+      };
+    }
+    const ageDays = Math.floor(
+      (Date.now() - new Date(`${last.created_at.replace(" ", "T")}Z`).getTime()) / 86_400_000,
+    );
+    const age = Number.isFinite(ageDays) ? `${ageDays}d ago` : "unknown age";
+    const auth = `spf=${last.spf} dkim=${last.dkim} dmarc=${last.dmarc}`;
+    const caveat = last.same_domain ? " · same-domain, not a real-world verdict" : "";
+    // A tab-binned message is delivered but unread in practice, so it is not an
+    // "ok" outcome for cold outreach even though nothing rejected it.
+    const severity: CheckSeverity =
+      last.placement === "spam"
+        ? "fail"
+        : last.placement === "promotions" ||
+            last.placement === "tab" ||
+            last.placement === "not_delivered" ||
+            last.same_domain === 1 ||
+            ageDays > CANARY_STALE_DAYS
+          ? "warn"
+          : "ok";
+    return {
+      name: "inbox placement",
+      severity,
+      message: `${last.placement} (${age}) · ${auth}${caveat}`,
+      ...(ageDays > CANARY_STALE_DAYS
+        ? { hint: `last tested ${age} — re-run: bun run cli -- gmail placement` }
+        : {}),
+    };
+  } catch (err) {
+    return {
+      name: "inbox placement",
+      severity: "warn",
+      message: `could not evaluate: ${(err as Error).message}`,
+    };
+  }
 }
 
 export async function runDoctor(): Promise<CheckResult[]> {
@@ -209,6 +398,13 @@ export async function runDoctor(): Promise<CheckResult[]> {
       message: `could not evaluate: ${(err as Error).message}`,
     });
   }
+
+  // Pushed separately, NOT from inside deliverabilityChecks: that function
+  // returns early when nothing has ever bounced, which would have silently
+  // dropped the placement line on exactly the fresh installs that most need
+  // the "never tested" prompt.
+  results.push(...deliverabilityChecks());
+  results.push(placementCheck());
 
   if (oneshotEnvReady()) {
     try {
