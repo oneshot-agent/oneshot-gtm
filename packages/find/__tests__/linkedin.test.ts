@@ -259,96 +259,6 @@ describe("findLinkedInUrl — built-in name verification", () => {
   });
 });
 
-describe("findLinkedInUrl — accept predicate", () => {
-  beforeEach(reset);
-
-  it("skips a rejected result and takes the next matching one", async () => {
-    // The caller already paid for all five results, so a rejected candidate
-    // should cost a look at the next one, not the whole lookup.
-    nextResults = [
-      { url: "https://www.linkedin.com/in/wrong-person", title: "Bob Jones", description: "" },
-      { url: "https://www.linkedin.com/in/xyz42", title: "Alice Smith", description: "" },
-    ];
-    const url = await findLinkedInUrl({
-      fullName: "Alice Smith",
-      accumCost: () => {},
-      errKindPrefix: "test",
-      accept: ({ title }) => title.includes("Alice"),
-    });
-    expect(url).toBe("https://www.linkedin.com/in/xyz42");
-    expect(calls.webSearch).toBe(1);
-  });
-
-  it("returns null when the predicate rejects every result", async () => {
-    nextResults = [
-      { url: "https://www.linkedin.com/in/a", title: "Bob Jones", description: "" },
-      { url: "https://www.linkedin.com/in/b", title: "Carol Lee", description: "" },
-    ];
-    const url = await findLinkedInUrl({
-      fullName: "Alice Smith",
-      accumCost: () => {},
-      errKindPrefix: "test",
-      accept: ({ title }) => title.includes("Alice"),
-    });
-    expect(url).toBeNull();
-  });
-
-  it("passes the result title and description through to the predicate", async () => {
-    nextResults = [
-      { url: "https://www.linkedin.com/in/a", title: "Alice Smith - Acme", description: "VP Eng" },
-    ];
-    const seen: Array<{ url: string; title: string; description: string }> = [];
-    await findLinkedInUrl({
-      fullName: "Alice Smith",
-      accumCost: () => {},
-      errKindPrefix: "test",
-      accept: (r) => {
-        seen.push(r);
-        return true;
-      },
-    });
-    expect(seen).toEqual([
-      {
-        url: "https://www.linkedin.com/in/a",
-        title: "Alice Smith - Acme",
-        description: "VP Eng",
-      },
-    ]);
-  });
-
-  it("still applies the built-in name check when no predicate is given", async () => {
-    // `accept` is an *extra* check, not the only one — omitting it must not
-    // hand back a profile belonging to someone else.
-    nextResults = [
-      { url: "https://www.linkedin.com/in/whoever", title: "Someone Else", description: "" },
-    ];
-    const url = await findLinkedInUrl({
-      fullName: "Alice Smith",
-      accumCost: () => {},
-      errKindPrefix: "test",
-    });
-    expect(url).toBeNull();
-  });
-
-  it("runs the predicate only on results that already passed the name check", async () => {
-    nextResults = [
-      { url: "https://www.linkedin.com/in/other", title: "Bob Jones", description: "" },
-      { url: "https://www.linkedin.com/in/asmith", title: "Alice Smith - Acme", description: "" },
-    ];
-    const seen: string[] = [];
-    await findLinkedInUrl({
-      fullName: "Alice Smith",
-      accumCost: () => {},
-      errKindPrefix: "test",
-      accept: ({ title }) => {
-        seen.push(title);
-        return true;
-      },
-    });
-    expect(seen).toEqual(["Alice Smith - Acme"]);
-  });
-});
-
 describe("findLinkedInUrl — persistent cache", () => {
   beforeEach(reset);
 
@@ -498,6 +408,15 @@ describe("nameMatchesTitle", () => {
   it("tolerates a middle name the profile omits", () => {
     expect(nameMatchesTitle("Bradley Kirton - Data Engineer", "Bradley Stuart Kirton")).toBe(true);
     expect(nameMatchesTitle("Navin Hill - CTO", "James Navin Hill")).toBe(true);
+  });
+
+  it("compares whole tokens, never substrings", () => {
+    // Regression: "son" is a substring of "johnson" and "ann" of "joanne", so a
+    // substring check accepted a complete stranger and cached their URL.
+    expect(nameMatchesTitle("Joanne Johnson - Acme | LinkedIn", "Ann Son")).toBe(false);
+    expect(nameMatchesTitle("Christopher Anderson", "Chris Ander")).toBe(false);
+    // ...while a real match on the same shape still passes.
+    expect(nameMatchesTitle("Ann Son - Acme | LinkedIn", "Ann Son")).toBe(true);
   });
 
   it("rejects a different person", () => {

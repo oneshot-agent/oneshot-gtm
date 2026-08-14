@@ -1476,7 +1476,10 @@ export class Ledger {
     for (const col of cols) {
       const value = patch[col];
       if (typeof value !== "string" || value.trim() === "") continue;
-      set.push(`${col} = COALESCE(${col}, ?)`);
+      // NULLIF, not a bare COALESCE: the WHERE guard below counts '' as empty
+      // (listProspectsMissingLinkedIn selects those rows), so COALESCE alone
+      // would match the row, report a change, and leave the '' in place.
+      set.push(`${col} = COALESCE(NULLIF(${col}, ''), ?)`);
       // Guard in the WHERE so the statement only matches when at least one
       // target column is actually empty. Without this `changes` would report 1
       // for a pure no-op (it counts matched rows, not modified columns) and

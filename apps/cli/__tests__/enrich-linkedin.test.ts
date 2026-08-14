@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { cleanCompanyToken, looksLikeRealName } from "../src/commands/enrich-linkedin.ts";
+import {
+  cleanCompanyToken,
+  looksLikeRealName,
+  resolveCap,
+} from "../src/commands/enrich-linkedin.ts";
 
 describe("looksLikeRealName", () => {
   it("accepts ordinary two-token names", () => {
@@ -77,5 +81,32 @@ describe("cleanCompanyToken", () => {
     expect(cleanCompanyToken("   ")).toBeNull();
     expect(cleanCompanyToken("(unknown)")).toBeNull();
     expect(cleanCompanyToken("X")).toBeNull();
+  });
+});
+
+describe("resolveCap", () => {
+  it("passes through an ordinary limit", () => {
+    expect(resolveCap(5)).toBe(5);
+    expect(resolveCap(0)).toBe(0);
+  });
+
+  it("never widens the run on a negative limit", () => {
+    // slice(0, -1) returns every candidate but the last — asking for less than
+    // nothing would have billed for the whole ledger.
+    expect(resolveCap(-1)).toBe(0);
+    expect(resolveCap(-500)).toBe(0);
+  });
+
+  it("collapses a non-numeric flag value to zero", () => {
+    expect(resolveCap(Number.NaN)).toBe(0);
+    expect(resolveCap(Number.POSITIVE_INFINITY)).toBe(0);
+  });
+
+  it("floors a fractional limit", () => {
+    expect(resolveCap(2.9)).toBe(2);
+  });
+
+  it("returns undefined for no limit at all", () => {
+    expect(resolveCap(undefined)).toBeUndefined();
   });
 });

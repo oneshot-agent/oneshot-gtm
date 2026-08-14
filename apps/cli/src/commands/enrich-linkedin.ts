@@ -79,6 +79,20 @@ export function cleanCompanyToken(company: string | null | undefined): string | 
   return s.length >= 2 ? s : null;
 }
 
+/**
+ * How many candidates this run may search, or undefined for "no cap".
+ *
+ * Every candidate costs a paid webSearch, so a bad `--limit` must never widen
+ * the run: `slice(0, -1)` on a negative value returns everything but the last
+ * row, billing the whole ledger when asked for less than nothing. A
+ * non-numeric flag arrives as NaN and collapses to 0 for the same reason.
+ */
+export function resolveCap(limit: number | undefined): number | undefined {
+  if (limit === undefined) return undefined;
+  if (!Number.isFinite(limit)) return 0;
+  return Math.max(0, Math.floor(limit));
+}
+
 export async function commandEnrichLinkedIn(opts: EnrichLinkedInOpts): Promise<void> {
   header(`enrich-linkedin ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
   const ledger = getLedger();
@@ -98,14 +112,15 @@ export async function commandEnrichLinkedIn(opts: EnrichLinkedInOpts): Promise<v
   const people = rows.filter((r) => !looksLikeOrgName(r.name));
   const skipped = opts.skipHandles ? people.filter((r) => !looksLikeRealName(r.name)) : [];
   const searchable = opts.skipHandles ? people.filter((r) => looksLikeRealName(r.name)) : people;
-  const candidates = opts.limit ? searchable.slice(0, opts.limit) : searchable;
+  const cap = resolveCap(opts.limit);
+  const candidates = cap === undefined ? searchable : searchable.slice(0, cap);
 
   process.stdout.write(
     `${c.dim("Missing LinkedIn:")} ${rows.length}` +
       `  ${c.dim("to search:")} ${candidates.length}` +
       (orgs.length > 0 ? `  ${c.dim("skipped (org):")} ${orgs.length}` : "") +
       (opts.skipHandles ? `  ${c.dim("skipped (handle-like):")} ${skipped.length}` : "") +
-      (opts.limit && searchable.length > candidates.length
+      (cap !== undefined && searchable.length > candidates.length
         ? `  ${c.dim("held back by --limit:")} ${searchable.length - candidates.length}`
         : "") +
       `\n${c.dim("Est. cost:")} ~$${(candidates.length * 0.01).toFixed(2)}\n\n`,

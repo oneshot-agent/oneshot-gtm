@@ -64,14 +64,19 @@ function fold(s: string): string {
  * A guard that can neither confirm nor refute must not invent a rejection.
  */
 export function nameMatchesTitle(title: string, name: string): boolean {
-  const haystack = fold(title);
+  // Whole-token comparison, never substring: "Ann Son" would otherwise match
+  // "Joanne Johnson" ("ann" inside "joanne", "son" inside "johnson") and write
+  // a stranger's profile.
+  const titleTokens = fold(title)
+    .split(" ")
+    .filter((t) => t.length >= 3);
   const tokens = fold(name)
     .split(" ")
     .filter((t) => t.length >= 3);
-  if (tokens.length < 2 || haystack.length === 0) return true;
+  if (tokens.length < 2 || titleTokens.length === 0) return true;
   const surname = tokens[tokens.length - 1] ?? "";
-  if (!haystack.includes(surname)) return false;
-  return tokens.slice(0, -1).some((t) => haystack.includes(t));
+  if (!titleTokens.includes(surname)) return false;
+  return tokens.slice(0, -1).some((t) => titleTokens.includes(t));
 }
 
 /** Words that mark a "name" as an organisation rather than a person. */
@@ -155,12 +160,18 @@ export async function findLinkedInUrl(args: {
   /** Used in the error.swallowed event kind, e.g. "github-topics" or "show-hn". */
   errKindPrefix: string;
   /**
-   * Extra check on a candidate result, on top of the built-in name/title match.
-   * Return false and the search moves on to the next result rather than giving
-   * up — the caller has already paid for all five.
+   * Called once per result discarded by the name/title check. Reporting only —
+   * deliberately NOT a validation hook.
+   *
+   * There was a caller-supplied `accept` predicate here. It had a trap: both
+   * caches key on (fullName, disambiguators) and return before any result
+   * metadata exists, so a cache hit skipped the predicate and could hand back a
+   * URL that same predicate had rejected minutes earlier. The built-in check
+   * doesn't have that problem — it runs before a value is ever cached, so
+   * anything in the cache was verified against the same name. Rather than
+   * special-case the caches around an optional hook that no caller used, the
+   * verification lives in one place and is not overridable.
    */
-  accept?: (result: { url: string; title: string; description: string }) => boolean;
-  /** Called once per result discarded by the name/title check. For reporting. */
   onTitleMismatch?: (result: { url: string; title: string }) => void;
 }): Promise<string | null> {
   const fullName = args.fullName.trim();
@@ -209,7 +220,6 @@ export async function findLinkedInUrl(args: {
       const url = typeof r.url === "string" ? r.url : "";
       if (LINKEDIN_PROFILE_RX.test(url)) {
         const title = typeof r.title === "string" ? r.title : "";
-        const description = typeof r.description === "string" ? r.description : "";
         // Verify before accepting. A `site:linkedin.com/in` search for a common
         // name happily returns a different person, and a wrong URL here isn't a
         // blank field — it's outreach to a stranger.
@@ -218,7 +228,6 @@ export async function findLinkedInUrl(args: {
           logEvent("linkedin.search.title_mismatch", { full_name: fullName, url, title });
           continue;
         }
-        if (args.accept && !args.accept({ url, title, description })) continue;
         cache.set(cacheKey, url);
         writePersistedLookup(cacheKey, url);
         logEvent("linkedin.search.found", { full_name: fullName, url });

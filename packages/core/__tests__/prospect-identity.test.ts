@@ -71,6 +71,18 @@ describe("updateProspectIdentity", () => {
     expect(ledger.getProspectById(id)?.linkedin_url).toBeNull();
   });
 
+  it("fills a column holding an empty string, not just NULL", () => {
+    // listProspectsMissingLinkedIn counts '' as missing, so the write path has
+    // to agree. A bare COALESCE matches the row, reports a change, and leaves
+    // the '' in place — a silent no-op the caller counts as a success.
+    const id = ledger.upsertProspect({ name: "Ada", email: "ada@acme.dev", linkedin_url: "" });
+    expect(ledger.getProspectById(id)?.linkedin_url).toBe("");
+    expect(
+      ledger.updateProspectIdentity(id, { linkedin_url: "https://www.linkedin.com/in/ada" }),
+    ).toBe(true);
+    expect(ledger.getProspectById(id)?.linkedin_url).toBe("https://www.linkedin.com/in/ada");
+  });
+
   it("fills several columns in one call", () => {
     const id = ledger.upsertProspect({ name: "Ada", email: "ada@acme.dev" });
     expect(

@@ -203,7 +203,14 @@ find
 
 find
   .command("enrich-linkedin")
-  .option("--limit <n>", "max prospects to consider (default 500)", (v) => Number.parseInt(v, 10))
+  // Defaulted, not open-ended: each candidate costs a paid webSearch, so an
+  // unflagged run on a large ledger must not quietly bill for thousands.
+  .option(
+    "--limit <n>",
+    "max prospects to search (default 500)",
+    (v) => Number.parseInt(v, 10),
+    500,
+  )
   .option("--play <name>", "only prospects sourced from this play")
   .option("--concurrency <n>", "parallel lookups (default 4)", (v) => Number.parseInt(v, 10))
   .option("--skip-handles", "skip names that don't look like a real person", false)
