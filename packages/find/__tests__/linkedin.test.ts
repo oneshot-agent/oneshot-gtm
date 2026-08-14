@@ -419,6 +419,19 @@ describe("nameMatchesTitle", () => {
     expect(nameMatchesTitle("Ann Son - Acme | LinkedIn", "Ann Son")).toBe(true);
   });
 
+  it("accepts a title that initialises the first name", () => {
+    // Rejecting this wouldn't just lose the profile — the miss gets cached for
+    // LINKEDIN_MISS_TTL_MS, so the person stays unreachable for two weeks.
+    expect(nameMatchesTitle("J. Smith - Acme | LinkedIn", "John Smith")).toBe(true);
+    expect(nameMatchesTitle("A Cabero - Dev", "Andres Cabero")).toBe(true);
+  });
+
+  it("does not let an initial match an unrelated first name", () => {
+    // Same surname, but "ann" doesn't start with "j" — the initial narrows,
+    // it doesn't wave everything through.
+    expect(nameMatchesTitle("J. Smith - Acme", "Ann Smith")).toBe(false);
+  });
+
   it("rejects a different person", () => {
     // This one really was wrong: searching "Francis Teo" returned Menchie Chua
     // Uy's profile, and writing it would put a connection request in front of

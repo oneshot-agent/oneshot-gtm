@@ -67,16 +67,24 @@ export function nameMatchesTitle(title: string, name: string): boolean {
   // Whole-token comparison, never substring: "Ann Son" would otherwise match
   // "Joanne Johnson" ("ann" inside "joanne", "son" inside "johnson") and write
   // a stranger's profile.
+  //
+  // Short title tokens are kept, unlike the name side, so an initialised title
+  // ("J. Smith") can still confirm "John Smith". Dropping them would reject a
+  // correct profile AND cache that as a miss for LINKEDIN_MISS_TTL_MS.
   const titleTokens = fold(title)
     .split(" ")
-    .filter((t) => t.length >= 3);
+    .filter((t) => t.length > 0);
   const tokens = fold(name)
     .split(" ")
     .filter((t) => t.length >= 3);
   if (tokens.length < 2 || titleTokens.length === 0) return true;
+  // The surname is always compared in full — it's the load-bearing half, and
+  // it's ≥3 chars, so no single-letter title token can satisfy it.
   const surname = tokens[tokens.length - 1] ?? "";
   if (!titleTokens.includes(surname)) return false;
-  return tokens.slice(0, -1).some((t) => titleTokens.includes(t));
+  return tokens
+    .slice(0, -1)
+    .some((t) => titleTokens.some((tt) => tt === t || (tt.length === 1 && t.startsWith(tt))));
 }
 
 /** Words that mark a "name" as an organisation rather than a person. */
