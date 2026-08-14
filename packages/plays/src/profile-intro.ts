@@ -83,6 +83,9 @@ const profileIntroDef: EmailPlayDef<ProfileIntroTarget> = {
     linkedin_url: t.linkedinUrl ?? t.twitterUrl ?? t.githubUrl ?? null,
     phone: t.phone ?? null,
     source: "manual",
+    // Which link it actually was. Without this the column above is ambiguous,
+    // so nothing downstream can tell a LinkedIn URL from a GitHub one.
+    source_profile_url: t.githubUrl ?? t.twitterUrl ?? t.linkedinUrl ?? null,
   }),
 };
 

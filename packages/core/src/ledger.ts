@@ -30,6 +30,17 @@ export const ENRICH_FAILURE_TTL_MS = 3 * 24 * 3600 * 1000;
  */
 export const ENRICH_DEADLINE_MS = 120_000;
 
+/** How long a FOUND LinkedIn URL is reused. Profile URLs effectively never change. */
+export const LINKEDIN_CACHE_TTL_MS = 30 * 24 * 3600 * 1000;
+/**
+ * How long a genuine MISS ("we searched, this person has no findable profile")
+ * suppresses re-searching. Longer than the enrich failure TTL because a miss is
+ * a real answer rather than an outage — but not permanent, since people do
+ * create profiles. Every re-search costs ~$0.01, so this directly caps the
+ * spend of repeatedly running finders over the same candidate pool.
+ */
+export const LINKEDIN_MISS_TTL_MS = 14 * 24 * 3600 * 1000;
+
 /**
  * Canonical form for matching prospect emails — trim + lowercase. Inbound reply
  * addresses (cadence inbox poll) are normalized the same way, so a prospect
@@ -222,6 +233,19 @@ export class Ledger {
         fetched_at TEXT NOT NULL
       );
 
+      -- v17 (2026-08): persistent LinkedIn-lookup cache. findLinkedInUrl used a
+      -- per-process Map, so every scheduler restart re-paid ~$0.01/webSearch for
+      -- the same misses. Keyed by the normalized (fullName, disambiguators)
+      -- query. A NULL url with status 'miss' = searched and genuinely not found;
+      -- transient failures are NEVER cached (see the isTransientToolError guard
+      -- at the call site) or an outage would suppress lookups for weeks.
+      CREATE TABLE IF NOT EXISTS linkedin_lookup_cache (
+        query_key  TEXT PRIMARY KEY,
+        url        TEXT,
+        status     TEXT NOT NULL,
+        fetched_at TEXT NOT NULL
+      );
+
       CREATE TABLE IF NOT EXISTS runs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         play_name TEXT NOT NULL,
@@ -248,6 +272,12 @@ export class Ledger {
 
     // Lightweight migrations for installs that pre-date a column.
     this.addColumnIfMissing("prospects", "phone", "TEXT");
+    // v17 (2026-08): the profile URL the finder originally sourced this person
+    // from (GitHub / X / Luma). `linkedin_url` is polymorphic — profile-intro
+    // stores whichever social link it has there — so it can't double as a
+    // re-enrichment key. Keeping the source URL separately means a later
+    // LinkedIn lookup has a strong identifier instead of just a name.
+    this.addColumnIfMissing("prospects", "source_profile_url", "TEXT");
     // v5 (2026-04): persist trigger run-state so a server restart doesn't
     // strand fire-and-forget runs as silent stale rows. See
     // sweepStaleRunningTriggers + fireTriggerNow.
@@ -982,6 +1012,42 @@ export class Ledger {
     );
   }
 
+  /**
+   * Read a cached LinkedIn lookup. `status` is 'hit' (url set) or 'miss' (url
+   * null — searched and genuinely nothing found). Callers apply the TTLs:
+   * LINKEDIN_CACHE_TTL_MS for hits, LINKEDIN_MISS_TTL_MS for misses.
+   */
+  getCachedLinkedIn(
+    queryKey: string,
+  ): { url: string | null; status: string; fetched_at: string } | null {
+    return (
+      (this.db
+        .query("SELECT url, status, fetched_at FROM linkedin_lookup_cache WHERE query_key = ?")
+        .get(queryKey) as { url: string | null; status: string; fetched_at: string }) ?? null
+    );
+  }
+
+  /**
+   * Record a LinkedIn lookup outcome. Pass `null` for a genuine miss.
+   *
+   * Never call this for a transient failure (webSearch threw, rate limit, 5xx)
+   * — that would poison the cache for LINKEDIN_MISS_TTL_MS and suppress the
+   * lookup long after the platform recovered. The caller gates on
+   * `!isTransientToolError(err)`, mirroring `_enrich.ts`.
+   */
+  setCachedLinkedIn(queryKey: string, url: string | null): void {
+    this.db
+      .prepare(
+        `INSERT INTO linkedin_lookup_cache(query_key, url, status, fetched_at)
+         VALUES(?, ?, ?, ?)
+         ON CONFLICT(query_key) DO UPDATE SET
+           url = excluded.url,
+           status = excluded.status,
+           fetched_at = excluded.fetched_at`,
+      )
+      .run(queryKey, url, url ? "hit" : "miss", new Date().toISOString());
+  }
+
   setCachedEnrichment(email: string, resultJson: string): void {
     // status reset to NULL: a fresh success must clear any prior "failed"
     // marker — luma/_repo-pipeline write success rows through this method
@@ -1363,8 +1429,9 @@ export class Ledger {
       if (existing) return existing.id;
     }
     const stmt = this.db.prepare(`
-      INSERT INTO prospects(name, email, phone, company, linkedin_url, dossier_json, source)
-      VALUES(?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO prospects(name, email, phone, company, linkedin_url, dossier_json, source,
+                            source_profile_url)
+      VALUES(?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
       input.name ?? null,
@@ -1374,8 +1441,99 @@ export class Ledger {
       input.linkedin_url ?? null,
       input.dossier_json ?? null,
       input.source ?? null,
+      input.source_profile_url ?? null,
     );
     return Number(result.lastInsertRowid);
+  }
+
+  /**
+   * Fill in identity fields that are currently NULL on an existing prospect.
+   *
+   * `upsertProspect` is insert-or-return-existing: once a row exists it never
+   * writes again, so a prospect created without a LinkedIn URL could never
+   * acquire one. This is the only path that backfills those columns.
+   *
+   * COALESCE semantics on purpose — a backfill must never clobber a URL a
+   * finder already resolved from an authoritative source (a real Luma handle
+   * beats a fuzzy web-search hit). Passing `undefined`/`null` leaves the column
+   * untouched.
+   *
+   * Returns true when at least one column actually changed.
+   */
+  updateProspectIdentity(
+    id: number,
+    patch: {
+      linkedin_url?: string | null;
+      phone?: string | null;
+      company?: string | null;
+      source_profile_url?: string | null;
+    },
+  ): boolean {
+    const cols = ["linkedin_url", "phone", "company", "source_profile_url"] as const;
+    const set: string[] = [];
+    const blank: string[] = [];
+    const args: Array<string | number> = [];
+    for (const col of cols) {
+      const value = patch[col];
+      if (typeof value !== "string" || value.trim() === "") continue;
+      set.push(`${col} = COALESCE(${col}, ?)`);
+      // Guard in the WHERE so the statement only matches when at least one
+      // target column is actually empty. Without this `changes` would report 1
+      // for a pure no-op (it counts matched rows, not modified columns) and
+      // every caller would over-report how much it backfilled.
+      blank.push(`(${col} IS NULL OR ${col} = '')`);
+      args.push(value.trim());
+    }
+    if (set.length === 0) return false;
+    args.push(id);
+    const result = this.db
+      .prepare(`UPDATE prospects SET ${set.join(", ")} WHERE id = ? AND (${blank.join(" OR ")})`)
+      .run(...(args as never[]));
+    return Number(result.changes) > 0;
+  }
+
+  /**
+   * Prospects that could take a LinkedIn URL but don't have one.
+   *
+   * Only rows whose `linkedin_url` is genuinely empty are returned. A row
+   * already holding a GitHub/X URL (profile-intro writes those into the same
+   * column) is deliberately skipped: `updateProspectIdentity` won't overwrite
+   * it, so including them would just report phantom candidates.
+   *
+   * A name is required — the lookup searches by name, so a nameless row has
+   * nothing to go on.
+   */
+  listProspectsMissingLinkedIn(opts: { limit?: number; play?: string } = {}): Array<{
+    id: number;
+    name: string | null;
+    company: string | null;
+    email: string | null;
+    source: string | null;
+    source_profile_url: string | null;
+  }> {
+    const where = ["(linkedin_url IS NULL OR linkedin_url = '')", "name IS NOT NULL", "name != ''"];
+    const args: Array<string | number> = [];
+    if (opts.play) {
+      where.push("source = ?");
+      args.push(opts.play);
+    }
+    args.push(opts.limit ?? 500);
+    return this.db
+      .query(
+        `SELECT id, name, company, email, source, source_profile_url
+           FROM prospects
+          WHERE ${where.join(" AND ")}
+          ORDER BY id DESC
+          LIMIT ?`,
+      )
+      .all(...(args as never[])) as Array<{
+      id: number;
+      name: string | null;
+      company: string | null;
+      email: string | null;
+      source: string | null;
+      source_profile_url: string | null;
+    }>;
   }
 
   recordOutcome(input: {

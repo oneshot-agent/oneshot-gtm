@@ -394,6 +394,9 @@ export async function sendDraftRoute(
         linkedin_url: str("linkedinUrl") ?? str("twitterUrl") ?? str("githubUrl"),
         phone: str("phone"),
         source: row.play_name,
+        // Mirrors each play's own prospectMeta. Read generically so any finder
+        // that sets it on the payload gets it persisted without a change here.
+        source_profile_url: str("sourceProfileUrl") ?? str("githubUrl") ?? str("twitterUrl"),
       },
       dryRun: false,
     });

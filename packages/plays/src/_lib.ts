@@ -446,6 +446,10 @@ export interface SendDraftedOpts {
     linkedin_url?: string | null;
     phone?: string | null;
     source?: string | null;
+    /** Profile URL the finder sourced this person from (GitHub / X / Luma).
+     *  Unlike `linkedin_url` this is never repurposed, so it survives as a
+     *  re-enrichment key when the LinkedIn lookup misses on the first pass. */
+    source_profile_url?: string | null;
   };
   metadata?: Record<string, unknown>;
   dryRun: boolean;

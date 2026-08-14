@@ -1,4 +1,12 @@
-import { logEvent, webSearch } from "@oneshot-gtm/core";
+import {
+  getLedger,
+  isTransientToolError,
+  LINKEDIN_CACHE_TTL_MS,
+  LINKEDIN_MISS_TTL_MS,
+  logEvent,
+  webSearch,
+} from "@oneshot-gtm/core";
+import { isCircuitOpen, recordResolutionOutcome } from "./_breaker.ts";
 
 /**
  * Shared LinkedIn / phone capture helpers used across all finders. Centralises:
@@ -24,6 +32,89 @@ const cache = new Map<string, string | null>();
 /** Test-only: reset the cache between cases. */
 export function _resetLinkedInCache(): void {
   cache.clear();
+}
+
+/** Lowercase, de-accent, reduce punctuation to spaces — so "Ben-Israel" and
+ *  "ben israel" compare equal. */
+function fold(s: string): string {
+  return s
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+/**
+ * Does this search result actually belong to the person we searched for?
+ *
+ * Checked against the result **title** — LinkedIn's own rendering of the
+ * display name ("Elad Ben-Israel - Wing | LinkedIn"). Deliberately NOT the URL:
+ * the slug is vanity text the member picks, so `/in/hackingonstuff` and
+ * `/in/gtewari` are ordinary profiles and matching against it rejects ~1 in 4
+ * correct hits.
+ *
+ * Rule: the surname must appear, plus at least one other name token. That
+ * survives a middle name the profile omits ("Bradley Stuart Kirton" →
+ * "Bradley Kirton") and an initial in place of a first name, while still
+ * rejecting a same-first-name stranger.
+ *
+ * Returns true whenever the check can't reach a verdict — fewer than two
+ * comparable tokens (a bare handle, a mononym, initials) or no title at all.
+ * A guard that can neither confirm nor refute must not invent a rejection.
+ */
+export function nameMatchesTitle(title: string, name: string): boolean {
+  const haystack = fold(title);
+  const tokens = fold(name)
+    .split(" ")
+    .filter((t) => t.length >= 3);
+  if (tokens.length < 2 || haystack.length === 0) return true;
+  const surname = tokens[tokens.length - 1] ?? "";
+  if (!haystack.includes(surname)) return false;
+  return tokens.slice(0, -1).some((t) => haystack.includes(t));
+}
+
+/** Words that mark a "name" as an organisation rather than a person. */
+const ORG_WORDS = new Set([
+  "inc",
+  "llc",
+  "ltd",
+  "limited",
+  "gmbh",
+  "corp",
+  "corporation",
+  "labs",
+  "lab",
+  "software",
+  "technologies",
+  "technology",
+  "solutions",
+  "systems",
+  "automation",
+  "studio",
+  "studios",
+  "agency",
+  "consulting",
+  "group",
+  "ventures",
+  "capital",
+  "bot",
+  // Deliberately NOT "ai" or "co" — both collide with real given names.
+]);
+
+/**
+ * True when a "name" is really an organisation ("ByteDance Inc.", "Baur
+ * Software", "Atomic Bot").
+ *
+ * GitHub and Luma accounts are often orgs. Searching one as a person doesn't
+ * miss — it finds *an* employee, and that lands outreach on someone with no
+ * idea why. Cheaper and safer to not search at all.
+ */
+export function looksLikeOrgName(name: string | null | undefined): boolean {
+  if (!name) return false;
+  return fold(name)
+    .split(" ")
+    .some((t) => ORG_WORDS.has(t));
 }
 
 /**
@@ -63,9 +154,24 @@ export async function findLinkedInUrl(args: {
   accumCost: (c: number | undefined) => void;
   /** Used in the error.swallowed event kind, e.g. "github-topics" or "show-hn". */
   errKindPrefix: string;
+  /**
+   * Extra check on a candidate result, on top of the built-in name/title match.
+   * Return false and the search moves on to the next result rather than giving
+   * up — the caller has already paid for all five.
+   */
+  accept?: (result: { url: string; title: string; description: string }) => boolean;
+  /** Called once per result discarded by the name/title check. For reporting. */
+  onTitleMismatch?: (result: { url: string; title: string }) => void;
 }): Promise<string | null> {
   const fullName = args.fullName.trim();
   if (fullName.length === 0) return null;
+
+  // An org account can only resolve to some employee's profile, which is a
+  // wrong answer that costs money to get.
+  if (looksLikeOrgName(fullName)) {
+    logEvent("linkedin.search.skipped_org", { full_name: fullName });
+    return null;
+  }
 
   const disambiguators = (args.disambiguators ?? [])
     .map((s) => s.trim())
@@ -76,23 +182,62 @@ export async function findLinkedInUrl(args: {
   ]);
   if (cache.has(cacheKey)) return cache.get(cacheKey) ?? null;
 
+  // Persistent cache. The in-process Map above only survives one run, so
+  // without this every scheduler restart re-pays ~$0.01 for the same misses —
+  // and this lookup now fires for every candidate, not just company-less ones.
+  const persisted = readPersistedLookup(cacheKey);
+  if (persisted !== undefined) {
+    cache.set(cacheKey, persisted);
+    return persisted;
+  }
+
+  // A webSearch outage would otherwise burn one call per candidate. The breaker
+  // is shared with email resolution, so a platform-wide failure trips it once
+  // and every subsequent candidate short-circuits for free.
+  if (isCircuitOpen()) {
+    logEvent("linkedin.search.skipped_breaker", { full_name: fullName });
+    return null;
+  }
+
   const tokens = [fullName, ...disambiguators];
   const query = `${tokens.map((t) => `"${t}"`).join(" ")} site:linkedin.com/in`;
   try {
     const search = await webSearch({ query, maxResults: 5 }, { playName: PLAY_NAME });
     args.accumCost(search.result.cost ?? 0);
+    recordResolutionOutcome(false); // backend answered
     for (const r of search.result.results ?? []) {
       const url = typeof r.url === "string" ? r.url : "";
       if (LINKEDIN_PROFILE_RX.test(url)) {
+        const title = typeof r.title === "string" ? r.title : "";
+        const description = typeof r.description === "string" ? r.description : "";
+        // Verify before accepting. A `site:linkedin.com/in` search for a common
+        // name happily returns a different person, and a wrong URL here isn't a
+        // blank field — it's outreach to a stranger.
+        if (!nameMatchesTitle(title, fullName)) {
+          args.onTitleMismatch?.({ url, title });
+          logEvent("linkedin.search.title_mismatch", { full_name: fullName, url, title });
+          continue;
+        }
+        if (args.accept && !args.accept({ url, title, description })) continue;
         cache.set(cacheKey, url);
+        writePersistedLookup(cacheKey, url);
         logEvent("linkedin.search.found", { full_name: fullName, url });
         return url;
       }
     }
     cache.set(cacheKey, null);
+    writePersistedLookup(cacheKey, null);
     logEvent("linkedin.search.miss", { full_name: fullName, disambiguators });
     return null;
   } catch (err) {
+    const transient = isTransientToolError(err);
+    recordResolutionOutcome(transient);
+    // Only persist a GENUINE miss. Caching a timeout/5xx would suppress this
+    // person's lookup for LINKEDIN_MISS_TTL_MS after the platform recovers —
+    // the same poisoning rule as _enrich.ts:130.
+    if (!transient) writePersistedLookup(cacheKey, null);
+    // The in-process entry is still set either way: within a single run there's
+    // no point retrying a call that just failed.
     cache.set(cacheKey, null);
     logEvent(
       "error.swallowed",
@@ -103,6 +248,33 @@ export async function findLinkedInUrl(args: {
       "warn",
     );
     return null;
+  }
+}
+
+/**
+ * Returns the cached URL, `null` for a cached miss, or `undefined` when there's
+ * no usable entry (absent or expired) and the caller should search.
+ */
+function readPersistedLookup(cacheKey: string): string | null | undefined {
+  try {
+    const row = getLedger().getCachedLinkedIn(cacheKey);
+    if (!row) return undefined;
+    const age = Date.now() - new Date(row.fetched_at).getTime();
+    if (!Number.isFinite(age) || age < 0) return undefined;
+    const ttl = row.status === "hit" ? LINKEDIN_CACHE_TTL_MS : LINKEDIN_MISS_TTL_MS;
+    if (age >= ttl) return undefined;
+    return row.url ?? null;
+  } catch {
+    // Cache is an optimisation — a ledger hiccup must not stop the lookup.
+    return undefined;
+  }
+}
+
+function writePersistedLookup(cacheKey: string, url: string | null): void {
+  try {
+    getLedger().setCachedLinkedIn(cacheKey, url);
+  } catch {
+    /* best-effort */
   }
 }
 

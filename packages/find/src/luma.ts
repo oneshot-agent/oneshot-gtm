@@ -706,6 +706,7 @@ async function resolveAndEnqueueLumaAttendee(
       yourEdge,
       ...(linkedinUrl ? { linkedinUrl } : {}),
       ...(phone ? { phone } : {}),
+      ...(work.attendee.profileUrl ? { sourceProfileUrl: work.attendee.profileUrl } : {}),
     };
     // Synchronous cap re-check right before enqueue — no await between here and
     // the caller's enqueued++, so the queue cap is exact even under concurrency.

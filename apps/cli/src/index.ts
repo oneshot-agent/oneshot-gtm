@@ -40,6 +40,7 @@ import {
   commandIdentitiesRemove,
 } from "./commands/identities.ts";
 import { commandUi } from "./commands/ui.ts";
+import { commandEnrichLinkedIn } from "./commands/enrich-linkedin.ts";
 import { commandFindDrain, commandFindWatch } from "./commands/find.ts";
 import {
   commandMotionBreakupRevive,
@@ -195,6 +196,34 @@ find
           ...(opts.limit ? { limit: opts.limit } : {}),
           ...(opts.senderCohort ? { senderCohort: opts.senderCohort } : {}),
           ...(opts.offer ? { offer: opts.offer } : {}),
+        });
+      },
+    ),
+  );
+
+find
+  .command("enrich-linkedin")
+  .option("--limit <n>", "max prospects to consider (default 500)", (v) => Number.parseInt(v, 10))
+  .option("--play <name>", "only prospects sourced from this play")
+  .option("--concurrency <n>", "parallel lookups (default 4)", (v) => Number.parseInt(v, 10))
+  .option("--skip-handles", "skip names that don't look like a real person", false)
+  .option("--dry-run", "list candidates and estimated cost; search nothing", false)
+  .description("Backfill missing LinkedIn URLs onto existing prospects (~$0.01 each)")
+  .action(
+    runOrFail(
+      async (opts: {
+        limit?: number;
+        play?: string;
+        concurrency?: number;
+        skipHandles: boolean;
+        dryRun: boolean;
+      }) => {
+        await commandEnrichLinkedIn({
+          dryRun: opts.dryRun,
+          skipHandles: opts.skipHandles,
+          ...(opts.limit ? { limit: opts.limit } : {}),
+          ...(opts.play ? { play: opts.play } : {}),
+          ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
         });
       },
     ),

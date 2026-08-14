@@ -569,7 +569,7 @@ describe("repo pipeline — Path B' (linkedin discovery via webSearch + enrichPr
     expect(out.droppedEnrichment).toBe(1);
   });
 
-  it("SKIPS Path B' entirely when extract.companyName is already known", async () => {
+  it("still looks up LinkedIn when the company is known, but skips the paid enrichProfile", async () => {
     nextSearchHits = [makeRepo("https://github.com/ada/agent")];
     defaultGhUser = {
       login: "ada",
@@ -579,10 +579,16 @@ describe("repo pipeline — Path B' (linkedin discovery via webSearch + enrichPr
       company: "Acme Agents",
     };
     // findEmail will fail in this scenario (default companyDomain is null in extract too).
-    // We just want to verify the pipeline does NOT spend a webSearch when company is set.
     nextDeepResearch = null;
+    nextWebSearchUrls = ["https://www.linkedin.com/in/ada-lovelace"];
     await runGitHubTopicsFinder(baseOpts);
-    expect(calls2.webSearch).toBe(0);
+    // LinkedIn capture is a first-class output, so the webSearch runs for every
+    // candidate. It used to be gated on `!companyForGate`, which meant the best
+    // candidates — the ones that already had a company — never got a LinkedIn
+    // URL at all (11 of 80 in production).
+    expect(calls2.webSearch).toBe(1);
+    // The $0.005 enrichProfile stays gated: its only job is recovering a company
+    // for Path C's identifier gate, and we already have one.
     expect(calls2.enrichProfile).toBe(0);
     expect(calls.deepResearch).toBe(1); // Path C fires directly with extract.companyName
   });
@@ -637,10 +643,11 @@ describe("repo pipeline — Path B' (linkedin discovery via webSearch + enrichPr
 
   it("ALWAYS calls enrichProfile post-verify even when Path A resolved the contact", async () => {
     // Path A: extract has a domain (via ghUser.blogDomain) → findEmail succeeds.
-    // Path B' is skipped (no need for LinkedIn lookup). New behavior: the
-    // post-verify enrichVerifiedContact still fires to capture phone +
-    // linkedin from PersonResult — closes the gap where Path A candidates
-    // were never enriched in the past.
+    // The LinkedIn webSearch still runs (it is no longer tied to the email
+    // path), but Path B's paid enrichProfile is skipped because the company is
+    // already known. The post-verify enrichVerifiedContact still fires to
+    // capture phone + linkedin from PersonResult — closing the gap where Path A
+    // candidates were never enriched in the past.
     nextSearchHits = [makeRepo("https://github.com/ada/agent")];
     defaultGhUser = {
       login: "ada",
@@ -655,9 +662,9 @@ describe("repo pipeline — Path B' (linkedin discovery via webSearch + enrichPr
       linkedin_url: "https://www.linkedin.com/in/ada-lovelace",
     };
     await runGitHubTopicsFinder(baseOpts);
-    // Path A succeeded: no Path B' webSearch + no Path B' enrichProfile.
-    // Post-verify enrichProfile = the only enrichProfile call.
-    expect(calls2.webSearch).toBe(0);
+    // LinkedIn lookup runs for every candidate; Path B's enrichProfile does not
+    // (company known), so post-verify enrichProfile is the only one.
+    expect(calls2.webSearch).toBe(1);
     expect(calls2.enrichProfile).toBe(1);
     expect(calls.enqueued[0]?.["payload"]).toMatchObject({
       email: "ada@acme.dev",

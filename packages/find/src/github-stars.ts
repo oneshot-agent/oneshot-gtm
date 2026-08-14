@@ -5,6 +5,7 @@ import { isDuplicate } from "./_dedupe.ts";
 import { enrichVerifiedContact } from "./_enrich.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { fetchGitHubUser, fetchTopRepos } from "./_github-user.ts";
+import { findLinkedInUrl } from "./_linkedin.ts";
 import { recentStargazers, type Stargazer } from "./_stargazers.ts";
 import type { FinderResult, RunOpts } from "./_types.ts";
 
@@ -228,9 +229,30 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
 
     const company = user.company?.trim() || "(unknown)";
     const repoUrl = `https://github.com/${c.repo}`;
+    const profileUrl = `https://github.com/${c.login}`;
+
+    // Tier 3 of the standard LinkedIn chain (see post-funding.ts for the
+    // canonical shape). GitHub's user API carries no LinkedIn field, so without
+    // this a stargazer the SDK can't enrich by email has no LinkedIn path at
+    // all — which is why this finder produced 17 of 334.
+    // The login is a strong disambiguator: many devs use the same handle on
+    // both platforms.
+    let linkedinUrl: string | null = enr.linkedinUrl;
+    if (!linkedinUrl) {
+      linkedinUrl = await findLinkedInUrl({
+        fullName,
+        disambiguators: [c.login, user.company?.trim() ?? ""].filter((s) => s.length > 0),
+        accumCost: (cost) => {
+          result.costUsd += cost ?? 0;
+        },
+        errKindPrefix: PLAY_NAME,
+      });
+    }
+
     const contactExtras = {
-      ...(enr.linkedinUrl ? { linkedinUrl: enr.linkedinUrl } : {}),
+      ...(linkedinUrl ? { linkedinUrl } : {}),
       ...(enr.phone ? { phone: enr.phone } : {}),
+      sourceProfileUrl: profileUrl,
     };
 
     // repo-interest is a peer-builder pitch — what the candidate ships gives
