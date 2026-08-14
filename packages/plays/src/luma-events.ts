@@ -85,6 +85,8 @@ export interface LumaEventsTarget {
   yourEdge: string;
   linkedinUrl?: string;
   phone?: string;
+  /** The attendee's Luma profile URL. Persisted as a re-enrichment key. */
+  sourceProfileUrl?: string;
 }
 
 export interface LumaEventsRunOptions {
@@ -165,6 +167,7 @@ const lumaEventsDef: EmailPlayDef<LumaEventsTarget> = {
     linkedin_url: t.linkedinUrl ?? null,
     phone: t.phone ?? null,
     source: "luma-events",
+    source_profile_url: t.sourceProfileUrl ?? null,
   }),
   metadata: (t) => ({ eventTitle: t.eventTitle, eventUrl: t.eventUrl, eventDate: t.eventDate }),
 };

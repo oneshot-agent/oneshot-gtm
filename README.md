@@ -178,7 +178,8 @@ oneshot-gtm
 │
 ├── find                                     scheduled discovery — ad-hoc runs live in the dashboard
 │   ├── watch [--once] [--quiet]             daemon: poll registered triggers + enqueue candidates
-│   └── drain <play> [--limit N] [--dry-run] ship approved /queue rows through the matching motion play
+│   ├── drain <play> [--limit N] [--dry-run] ship approved /queue rows through the matching motion play
+│   └── enrich-linkedin [--skip-handles]     backfill missing LinkedIn URLs on existing prospects
 │
 ├── motion                                   CLI-only plays (rest live in /run)
 │   ├── post-funding --target <file>         prospect's company just raised (send day 3+)

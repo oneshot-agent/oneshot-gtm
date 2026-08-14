@@ -279,6 +279,11 @@ export async function processRepoCandidate(
   const contactExtras = {
     ...(contact.linkedinUrl ? { linkedinUrl: contact.linkedinUrl } : {}),
     ...(contact.phone ? { phone: contact.phone } : {}),
+    // Durable re-enrichment key. When today's LinkedIn lookup misses, a later
+    // backfill can work from the GitHub profile rather than a bare name.
+    ...(extract.githubHandle
+      ? { sourceProfileUrl: `https://github.com/${extract.githubHandle}` }
+      : {}),
   };
 
   const target: CompetitorSwitchTarget | StackConsolidationTarget = matchedCompetitor
@@ -363,6 +368,30 @@ export async function resolveContact(args: {
   const extractDomain = extract.companyDomain ?? extract.personalDomain ?? null;
   let discoveredLinkedinUrl: string | null = null;
 
+  // LinkedIn capture runs for EVERY candidate, ahead of the email paths.
+  //
+  // This used to live inside the `!companyForGate` block below, whose job is
+  // recovering a *company* for the deep-research gate — LinkedIn was only a
+  // side effect. The consequence: candidates that already had a company (the
+  // best ones) skipped the lookup entirely, and since `discoveredLinkedinUrl`
+  // is read by all of this function's return paths, every one of them handed
+  // back null. That's why this pipeline produced 11 LinkedIn URLs out of 80.
+  //
+  // Cost: ~$0.01 webSearch per candidate. Cached per-run inside findLinkedInUrl.
+  if (extract.authorFullName || extract.githubHandle) {
+    const nameTokens = [extract.authorFullName, extract.githubHandle].filter((t): t is string =>
+      Boolean(t),
+    );
+    discoveredLinkedinUrl = await findLinkedInUrl({
+      fullName: nameTokens[0] ?? "",
+      disambiguators: [...nameTokens.slice(1), extract.companyName ?? ""].filter(
+        (s) => s.length > 0,
+      ),
+      accumCost,
+      errKindPrefix,
+    });
+  }
+
   // Path A: extract has a domain. Try findEmail with it.
   if (extractDomain) {
     const direct = await tryFindEmail(extractDomain, extract, accumCost, errKindPrefix, playName);
@@ -387,92 +416,84 @@ export async function resolveContact(args: {
     };
   }
 
-  // Path B': webSearch for the author's LinkedIn URL → enrichProfile to recover
+  // Path B': enrichProfile off the LinkedIn URL found above, to recover
   // company / company_domain / sometimes email. Bridges the common case where
   // GitHub gives us a name but no company/blog — without this, deep-research
   // (Path C) fails its required-identifier gate and the candidate drops.
   //
-  // Cost when triggered: $0.01 webSearch + $0.005 enrichProfile = ~$0.015.
-  // Skipped entirely when extract.companyName already known OR neither the
-  // author name nor github handle is available.
+  // The webSearch itself now happens unconditionally further up (LinkedIn is a
+  // first-class output, not a side effect of company recovery). What stays
+  // gated is the paid enrichProfile: only worth $0.005 when we still lack a
+  // company to satisfy the deep-research gate.
+  //
+  // Cost when triggered: ~$0.005 enrichProfile (the webSearch is already spent).
   let companyForGate: string | null = extract.companyName ?? null;
   let domainForGate: string | null = extractDomain;
-  if (!companyForGate && (extract.authorFullName || extract.githubHandle)) {
-    const tokens = [extract.authorFullName, extract.githubHandle].filter((t): t is string =>
-      Boolean(t),
-    );
-    const linkedinUrl = await findLinkedInUrl({
-      fullName: tokens[0] ?? "",
-      disambiguators: tokens.slice(1),
-      accumCost,
-      errKindPrefix,
-    });
-    if (linkedinUrl) {
-      discoveredLinkedinUrl = linkedinUrl;
-      try {
-        const enriched = await enrichProfile({ linkedinUrl }, { playName });
-        accumCost(enriched.result.cost ?? 0);
-        const profile = enriched.result.profile;
-        // PersonResult exposes phone (string) AND fullphone (array) — extractFirstPhone
-        // reads either. Capture once and reuse on every return path so we don't drop
-        // a phone the SDK already paid to retrieve.
-        const enrichedPhone = extractFirstPhone(profile);
-        // Cache the linkedin-keyed enrich by the SURFACED email so the later
-        // post-verify enrichVerifiedContact (by email) becomes a cache hit and
-        // skips its second SDK call. Only cache when profile.email is directly
-        // surfaced — for paths that derive the email via findEmail (different
-        // API), we can't guarantee the profile is for the same person, so
-        // skip the cache to avoid poisoning.
-        if (profile?.email) {
-          try {
-            getLedger().setCachedEnrichment(
-              profile.email.trim().toLowerCase(),
-              JSON.stringify(enriched.result),
-            );
-          } catch {
-            // cache write is best-effort.
-          }
+  if (!companyForGate && discoveredLinkedinUrl) {
+    const linkedinUrl = discoveredLinkedinUrl;
+    try {
+      const enriched = await enrichProfile({ linkedinUrl }, { playName });
+      accumCost(enriched.result.cost ?? 0);
+      const profile = enriched.result.profile;
+      // PersonResult exposes phone (string) AND fullphone (array) — extractFirstPhone
+      // reads either. Capture once and reuse on every return path so we don't drop
+      // a phone the SDK already paid to retrieve.
+      const enrichedPhone = extractFirstPhone(profile);
+      // Cache the linkedin-keyed enrich by the SURFACED email so the later
+      // post-verify enrichVerifiedContact (by email) becomes a cache hit and
+      // skips its second SDK call. Only cache when profile.email is directly
+      // surfaced — for paths that derive the email via findEmail (different
+      // API), we can't guarantee the profile is for the same person, so
+      // skip the cache to avoid poisoning.
+      if (profile?.email) {
+        try {
+          getLedger().setCachedEnrichment(
+            profile.email.trim().toLowerCase(),
+            JSON.stringify(enriched.result),
+          );
+        } catch {
+          // cache write is best-effort.
         }
-        // 1) enrichProfile gave us a direct email — use it.
-        if (profile?.email) {
+      }
+      // 1) enrichProfile gave us a direct email — use it.
+      if (profile?.email) {
+        return {
+          email: profile.email,
+          fullName: profile.full_name ?? extract.authorFullName,
+          domain: profile.company_domain ?? extractDomain,
+          linkedinUrl: discoveredLinkedinUrl,
+          phone: enrichedPhone,
+        };
+      }
+      // 2) Got a company_domain — try findEmail with it.
+      if (profile?.company_domain) {
+        const viaEnriched = await tryFindEmail(
+          profile.company_domain,
+          { ...extract, authorFullName: profile.full_name ?? extract.authorFullName },
+          accumCost,
+          errKindPrefix,
+          playName,
+        );
+        if (viaEnriched)
           return {
-            email: profile.email,
-            fullName: profile.full_name ?? extract.authorFullName,
-            domain: profile.company_domain ?? extractDomain,
+            ...viaEnriched,
+            domain: profile.company_domain,
             linkedinUrl: discoveredLinkedinUrl,
             phone: enrichedPhone,
           };
-        }
-        // 2) Got a company_domain — try findEmail with it.
-        if (profile?.company_domain) {
-          const viaEnriched = await tryFindEmail(
-            profile.company_domain,
-            { ...extract, authorFullName: profile.full_name ?? extract.authorFullName },
-            accumCost,
-            errKindPrefix,
-            playName,
-          );
-          if (viaEnriched)
-            return {
-              ...viaEnriched,
-              domain: profile.company_domain,
-              linkedinUrl: discoveredLinkedinUrl,
-              phone: enrichedPhone,
-            };
-          domainForGate = profile.company_domain;
-        }
-        // 3) At minimum we may have learned a company name — feeds Path C's gate.
-        if (profile?.company) companyForGate = profile.company;
-      } catch (err) {
-        logEvent(
-          "error.swallowed",
-          {
-            kind: `${errKindPrefix}.enrich_profile`,
-            message_120: ((err as Error).message ?? "").slice(0, 120),
-          },
-          "warn",
-        );
+        domainForGate = profile.company_domain;
       }
+      // 3) At minimum we may have learned a company name — feeds Path C's gate.
+      if (profile?.company) companyForGate = profile.company;
+    } catch (err) {
+      logEvent(
+        "error.swallowed",
+        {
+          kind: `${errKindPrefix}.enrich_profile`,
+          message_120: ((err as Error).message ?? "").slice(0, 120),
+        },
+        "warn",
+      );
     }
   }
 

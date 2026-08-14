@@ -56,10 +56,13 @@ vi.mock("../src/_filter.ts", () => ({
     reason: icpMatch === null ? "icp classifier unavailable" : icpMatch ? "fits" : "nope",
   }),
 }));
+// Tier 2. `linkedinUrl: null` is the common case for a stargazer the SDK can't
+// resolve — which is exactly what tier 3 exists to rescue.
+let enrichLinkedinUrl: string | null = null;
 vi.mock("../src/_enrich.ts", () => ({
   enrichVerifiedContact: async () => ({
     phone: null,
-    linkedinUrl: null,
+    linkedinUrl: enrichLinkedinUrl,
     costUsd: 0.005,
     receiptId: 1,
   }),
@@ -76,8 +79,16 @@ vi.mock("@oneshot-gtm/core", async () => {
       receiptId: 1,
     }),
     verifyEmail: async () => ({ result: { deliverable: true, cost: 0.005 }, receiptId: 1 }),
+    // Tier 3 (findLinkedInUrl). Stubbed so the finder's lookup never reaches the
+    // real search backend from a unit test; per-test overrides drive the shape.
+    webSearch: async (input: { query: string }) => {
+      webSearchQueries.push(input.query);
+      return { result: { results: nextWebSearchResults, cost: 0.01 }, receiptId: 0 };
+    },
     getLedger: () => ({
       isQueueDuplicate: () => false,
+      getCachedLinkedIn: () => null,
+      setCachedLinkedIn: () => {},
       enqueueTarget: (row: EnqueuedRow) => {
         enqueued.push(row);
         return enqueued.length;
@@ -86,11 +97,21 @@ vi.mock("@oneshot-gtm/core", async () => {
   };
 });
 
+const webSearchQueries: string[] = [];
+let nextWebSearchResults: Array<{ url: string }> = [];
+
 const { runGitHubStarsFinder } = await import("../src/github-stars.ts");
+const { _resetLinkedInCache } = await import("../src/_linkedin.ts");
 
 beforeEach(() => {
   enqueued.length = 0;
   icpMatch = true;
+  enrichLinkedinUrl = null;
+  webSearchQueries.length = 0;
+  nextWebSearchResults = [];
+  // The lookup cache is a module-level Map, so without this every case after
+  // the first would read the previous case's answer.
+  _resetLinkedInCache();
   newestSeenByRepo = {};
   fetchTopReposCalls.length = 0;
   nextFetchTopReposResult = [
@@ -197,6 +218,56 @@ describe("runGitHubStarsFinder — per-repo rel routing", () => {
       repos: [{ repo: "apollographql/router", rel: "competitor", label: "Apollo" }],
     });
     expect(enqueued).toHaveLength(0);
+  });
+
+  it("falls back to a LinkedIn webSearch when enrichment returns no profile", async () => {
+    // The gap this finder had: capture stopped at tier 2, so a stargazer the
+    // SDK couldn't resolve had no LinkedIn URL at all — 17 of 334 emailed
+    // repo-interest prospects had one.
+    nextWebSearchResults = [{ url: "https://www.linkedin.com/in/bob-builder" }];
+    await runGitHubStarsFinder({
+      dryRun: false,
+      yourEdge: "x",
+      repos: [{ repo: "modelcontextprotocol/servers", rel: "adjacent", label: "MCP" }],
+    });
+    expect(enqueued[0]?.payload["linkedinUrl"]).toBe("https://www.linkedin.com/in/bob-builder");
+    // Both the GitHub handle and the company narrow the query — a bare name
+    // search is far too weak to trust.
+    expect(webSearchQueries[0]).toContain('"bob"');
+    expect(webSearchQueries[0]).toContain('"Acme"');
+    expect(webSearchQueries[0]).toContain("site:linkedin.com/in");
+  });
+
+  it("keeps the enrichment URL and skips the search when tier 2 already resolved one", async () => {
+    enrichLinkedinUrl = "https://www.linkedin.com/in/authoritative";
+    nextWebSearchResults = [{ url: "https://www.linkedin.com/in/fuzzy-guess" }];
+    await runGitHubStarsFinder({
+      dryRun: false,
+      yourEdge: "x",
+      repos: [{ repo: "modelcontextprotocol/servers", rel: "adjacent", label: "MCP" }],
+    });
+    expect(enqueued[0]?.payload["linkedinUrl"]).toBe("https://www.linkedin.com/in/authoritative");
+    expect(webSearchQueries).toHaveLength(0);
+  });
+
+  it("enqueues without a LinkedIn URL when the search misses too", async () => {
+    nextWebSearchResults = [{ url: "https://twitter.com/bob" }];
+    await runGitHubStarsFinder({
+      dryRun: false,
+      yourEdge: "x",
+      repos: [{ repo: "modelcontextprotocol/servers", rel: "adjacent", label: "MCP" }],
+    });
+    expect(enqueued).toHaveLength(1);
+    expect("linkedinUrl" in (enqueued[0]?.payload ?? {})).toBe(false);
+  });
+
+  it("records the GitHub profile as the source URL so a later re-enrichment has a key", async () => {
+    await runGitHubStarsFinder({
+      dryRun: false,
+      yourEdge: "x",
+      repos: [{ repo: "modelcontextprotocol/servers", rel: "adjacent", label: "MCP" }],
+    });
+    expect(enqueued[0]?.payload["sourceProfileUrl"]).toBe("https://github.com/bob");
   });
 
   it("respects the enqueue limit", async () => {

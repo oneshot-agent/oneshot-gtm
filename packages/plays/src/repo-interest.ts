@@ -24,6 +24,9 @@ export interface RepoInterestTarget {
   evidenceUrl?: string;
   linkedinUrl?: string;
   phone?: string;
+  /** The GitHub profile URL this candidate came from. Persisted to the prospect
+   *  row so a later LinkedIn lookup has a real identifier to work from. */
+  sourceProfileUrl?: string;
   /** Candidate's GitHub login — kept on the payload so a future regenerate can
    *  re-fetch their repos if we ever want it. Not consumed by the prompt today. */
   candidateLogin?: string;
@@ -110,6 +113,8 @@ const repoInterestDef: EmailPlayDef<RepoInterestTarget> = {
     linkedin_url: t.linkedinUrl ?? null,
     phone: t.phone ?? null,
     source: "repo-interest",
+    source_profile_url:
+      t.sourceProfileUrl ?? (t.candidateLogin ? `https://github.com/${t.candidateLogin}` : null),
   }),
   metadata: (t) => ({ repo: t.repo }),
 };

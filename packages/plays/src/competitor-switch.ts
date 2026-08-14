@@ -18,6 +18,9 @@ export interface CompetitorSwitchTarget {
   yourEdge: string;
   linkedinUrl?: string;
   phone?: string;
+  /** Profile URL this candidate was sourced from (GitHub). Persisted to the
+   *  prospect row as a re-enrichment key. */
+  sourceProfileUrl?: string;
 }
 
 export interface CompetitorSwitchRunOptions {
@@ -136,6 +139,7 @@ export function runCompetitorSwitch(
       linkedin_url: t.linkedinUrl ?? null,
       phone: t.phone ?? null,
       source: "competitor-switch",
+      source_profile_url: t.sourceProfileUrl ?? null,
     }),
     metadata: (t) => ({ competitor: t.competitor, evidenceUrl: t.evidenceUrl ?? null }),
   };

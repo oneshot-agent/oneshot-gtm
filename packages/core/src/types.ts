@@ -50,9 +50,15 @@ export interface ProspectRecord {
   email: string | null;
   phone: string | null;
   company: string | null;
+  /** Polymorphic social-profile column: profile-intro stores a LinkedIn, X or
+   *  GitHub URL here, so consumers must validate before treating it as LinkedIn. */
   linkedin_url: string | null;
   dossier_json: string | null;
   source: string | null;
+  /** The profile URL the finder originally sourced this person from. Unlike
+   *  `linkedin_url` this is never repurposed, so it stays a usable key for
+   *  re-enrichment. */
+  source_profile_url: string | null;
   created_at: string;
 }
 

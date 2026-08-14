@@ -16,6 +16,9 @@ export interface StackConsolidationTarget {
   evidenceUrl?: string;
   linkedinUrl?: string;
   phone?: string;
+  /** Profile URL this candidate was sourced from (GitHub). Persisted to the
+   *  prospect row as a re-enrichment key. */
+  sourceProfileUrl?: string;
 }
 
 export interface StackConsolidationRunOptions {
@@ -71,6 +74,7 @@ const stackConsolidationDef: EmailPlayDef<StackConsolidationTarget> = {
     linkedin_url: t.linkedinUrl ?? null,
     phone: t.phone ?? null,
     source: "stack-consolidation",
+    source_profile_url: t.sourceProfileUrl ?? null,
   }),
   metadata: (t) => ({ vendorStack: t.vendorStack, evidenceUrl: t.evidenceUrl ?? null }),
 };
