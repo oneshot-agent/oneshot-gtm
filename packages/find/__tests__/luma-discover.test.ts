@@ -26,6 +26,16 @@ describe("cityToSlug", () => {
   it("returns null for unmapped cities", () => {
     expect(cityToSlug("Reykjavik")).toBeNull();
   });
+  // Vienna sat in the live trigger config for weeks with no slug, so every
+  // tick silently took the weaker webSearch path instead of the city page.
+  it("maps the DACH/CEE hubs, including local-language names", () => {
+    expect(cityToSlug("Vienna")).toBe("vienna");
+    expect(cityToSlug("Wien")).toBe("vienna");
+    expect(cityToSlug("Prague")).toBe("prague");
+    expect(cityToSlug("Praha")).toBe("prague");
+    expect(cityToSlug("Berlin")).toBe("berlin");
+    expect(cityToSlug("Amsterdam")).toBe("amsterdam");
+  });
 });
 
 describe("eventNameMatchesTopics", () => {

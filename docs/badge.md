@@ -32,4 +32,4 @@ Renders as:
 | For-the-badge                         | `style=for-the-badge`                               |
 | With logo (custom svg via shields.io) | append `&logo=data:image/svg%2Bxml;base64,<base64>` |
 
-The repo also embeds the same badge in its own README.
+This repo's own README carries the sibling `built with oneshot-sdk` badge instead, since it is a consumer of the SDK rather than of itself.

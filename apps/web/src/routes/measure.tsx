@@ -8,6 +8,7 @@ import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { Sparkline } from "../components/primitives/Sparkline.tsx";
 import { cn, formatUsd } from "../lib/cn.ts";
+import { Pii } from "../components/primitives/Pii.tsx";
 
 export const Route = createFileRoute("/measure")({
   component: MeasurePage,
@@ -329,7 +330,7 @@ function MeasurePage() {
                       <span>{g.playName ?? "—"}</span>
                       {g.prospect && (
                         <span className="ml-1.5 font-mono text-[11px] text-ink-muted">
-                          → {g.prospect}
+                          → <Pii kind="auto">{g.prospect}</Pii>
                         </span>
                       )}
                     </td>

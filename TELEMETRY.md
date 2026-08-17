@@ -14,17 +14,17 @@ To point the CLI at a different ingest endpoint (e.g. a local receiver while dev
 
 ## What is collected (when telemetry is on)
 
-| Field                  | Example                         | Why                                                                                                                                                                                                                                                |
-| ---------------------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `command`              | `motion.show-hn`                | Learn which plays are used.                                                                                                                                                                                                                        |
-| `flags`                | `["dry-run"]`                   | Flag names only, never values.                                                                                                                                                                                                                     |
-| `outcome`              | `ok` / `error` / `lint-blocked` | Aggregate failure rate.                                                                                                                                                                                                                            |
-| `duration_ms`          | `2840`                          | Find slow plays.                                                                                                                                                                                                                                   |
-| `version`              | `0.1.0`                         | Catch regressions on a release.                                                                                                                                                                                                                    |
-| `os`                   | `darwin` / `linux` / `win32`    | Reproducibility for bug reports.                                                                                                                                                                                                                   |
-| `bun_version`          | `1.3.10`                        | Same.                                                                                                                                                                                                                                              |
-| `anonymous_machine_id` | `9f3a…` (random UUID)           | Distinguish unique installs without identifying anyone. This is the per-install `clientId` (see below) — a random UUID minted on first run, **not** a hash of any machine identifier, so it carries nothing traceable to your hardware or account. |
-| `llm_provider`         | `openrouter`                    | Learn which providers founders pick.                                                                                                                                                                                                               |
+| Field                  | Example                         | Why                                                                          |
+| ---------------------- | ------------------------------- | ---------------------------------------------------------------------------- |
+| `command`              | `motion.show-hn`                | Learn which plays are used.                                                  |
+| `flags`                | `["dry-run"]`                   | Flag names only, never values.                                               |
+| `outcome`              | `ok` / `error` / `lint-blocked` | Aggregate failure rate.                                                      |
+| `duration_ms`          | `2840`                          | Find slow plays.                                                             |
+| `version`              | `0.7.0`                         | Catch regressions on a release.                                              |
+| `os`                   | `darwin` / `linux` / `win32`    | Reproducibility for bug reports.                                             |
+| `bun_version`          | `1.3.13`                        | Same.                                                                        |
+| `anonymous_machine_id` | `9f3a…` (random UUID)           | Distinguish unique installs. This is the per-install `clientId` — see below. |
+| `llm_provider`         | `openrouter`                    | Learn which providers founders pick.                                         |
 
 ## What is NEVER collected
 
@@ -44,17 +44,11 @@ This file is the authoritative spec. If telemetry is ever extended, this file is
 
 ## Local development log (separate from telemetry)
 
-Independent of the opt-out flag above, every install writes a structured local event log to `~/.oneshot-gtm/events.jsonl`. This is **never transmitted off-device**. Its purpose is letting you (the developer) see what's happening inside finder runs, ICP filter decisions, LLM calls, and swallowed errors while iterating.
+Independent of the opt-out flag above, every install writes a structured event log to `~/.oneshot-gtm/events.jsonl`, which is **never transmitted off-device**. Recipes for tailing it are in the README under [Watching what's happening](./README.md#watching-whats-happening).
 
-Tail it with `jq`:
+The same privacy boundary applies to event `ctx` payloads — primitives, counters, durations, category labels, hostnames only. No user-typed values, no prospect data, no LLM completions verbatim. That keeps the local log shape forward-compatible with any future opt-in distribution telemetry: the producer stays put, only the sink changes (file vs HTTP).
 
-```bash
-tail -f ~/.oneshot-gtm/events.jsonl | jq -c '{k:.kind, l:.level, ctx:.ctx}'
-```
-
-The same privacy boundary applies to event `ctx` payloads — primitives, counters, durations, category labels, hostnames only. No user-typed values, no prospect data, no LLM completions verbatim. This rule means the local log shape is forward-compatible with future opt-in distribution telemetry: the producer sticks; only the sink (file vs HTTP) changes.
-
-Delete the file any time: `rm ~/.oneshot-gtm/events.jsonl`. Disable the dev mirror to stderr by leaving `DEBUG` unset; the file gets written either way.
+Delete it any time with `rm ~/.oneshot-gtm/events.jsonl`. The file is written whether or not `DEBUG` is set; `DEBUG` only adds the stderr mirror.
 
 ## Anonymous `clientId`
 

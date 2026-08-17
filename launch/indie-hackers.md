@@ -6,12 +6,12 @@
 
 After 8 months building [your product] on top of OneShot (pay-per-use APIs for email, voice, research, enrichment with on-chain signed receipts), we kept hearing the same thing from indie founders: "the API is great but I don't want to wire up Clay + Smartlead + Apollo + Outreach + an LLM just to send 30 cold emails this week."
 
-So we open-sourced the wrapper. `oneshot-gtm` is a TypeScript CLI that ships ~10 named GTM plays — Show HN founder-to-founder outreach, post-funding triggers, customer-discovery interviews, PMF surveys, concierge onboarding voice calls — and runs them on top of OneShot's pay-per-result infra.
+So we open-sourced the wrapper. `oneshot-gtm` is a TypeScript CLI that ships 14 named GTM plays — Show HN founder-to-founder outreach, post-funding triggers, customer-discovery interviews, PMF surveys, concierge onboarding voice calls — and runs them on top of OneShot's pay-per-result infra.
 
 For IH specifically:
 
 - **No subscription.** Pay $0.05-$2 per outbound touch (depending on what enrichment / research you stack on). Stop sending = stop paying.
-- **Receipts you can screenshot.** Every action emits a signed receipt with the cost. `measure cac` per play. Tweet-worthy unit economics.
+- **Receipts you can screenshot.** Every action emits a signed receipt with the cost, rolled up per play on the Measure page. Tweet-worthy unit economics.
 - **Bring your own LLM.** OpenRouter recommended (one key, all models). OpenAI and Anthropic supported.
 - **MIT.** Read every prompt. Fork every play. We expect you to.
 
@@ -28,7 +28,7 @@ Things I'd love IH feedback on:
 3. Which play would actually move the needle for your current week? I'll prioritize that for Phase 1.
 
 Repo: github.com/oneshot-agent/oneshot-gtm
-Try it: `bunx oneshot-gtm init` (Bun + an LLM key + an OneShot wallet — 5 min total)
+Try it: `bunx oneshot-gtm-server` (Bun + an LLM key + a OneShot wallet — 5 min total)
 
 — [your name]
 

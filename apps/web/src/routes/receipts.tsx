@@ -8,6 +8,8 @@ import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
 import { Modal } from "../components/primitives/Modal.tsx";
 import { Skeleton, SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { cn, formatUsd, timeAgo } from "../lib/cn.ts";
+import { maskDeep } from "../lib/mask.ts";
+import { usePrivacy } from "../lib/privacy.tsx";
 
 export const Route = createFileRoute("/receipts")({
   component: ReceiptsPage,
@@ -72,6 +74,7 @@ const SYNC_CALL_TYPES = new Set(["web.search"]);
 function ReceiptsPage() {
   const [activeId, setActiveId] = useState<number | null>(null);
   const [valueFilter, setValueFilter] = useState<ValueFilter>("all");
+  const { masked } = usePrivacy();
   const receipts = useQuery({
     queryKey: ["receipts", "list"],
     queryFn: () => api.receipts({ limit: 200 }),
@@ -187,7 +190,9 @@ function ReceiptsPage() {
             {detail.data?.receipt.memo && (
               <div>
                 <div className="ln-eyebrow mb-1">memo · why</div>
-                <div className="text-[13px] text-ink-cream-2">{detail.data.receipt.memo}</div>
+                <div className="text-[13px] text-ink-cream-2">
+                  {maskDeep(detail.data.receipt.memo, masked)}
+                </div>
               </div>
             )}
             {detail.data?.receipt.valueTag && (
@@ -200,14 +205,18 @@ function ReceiptsPage() {
               <div>
                 <div className="ln-eyebrow mb-1">decisionContext · reasoning</div>
                 <pre className="max-h-[24vh] overflow-auto rounded-[var(--radius-md)] border border-ink-rule bg-ink-bg-deep p-3 font-mono text-[12px] leading-[1.55] text-ink-cream-2">
-                  {JSON.stringify(detail.data.receipt.decisionContext, null, 2)}
+                  {JSON.stringify(maskDeep(detail.data.receipt.decisionContext, masked), null, 2)}
                 </pre>
               </div>
             )}
             <div>
               <div className="ln-eyebrow mb-1">signed receipt</div>
               <pre className="max-h-[44vh] overflow-auto rounded-[var(--radius-md)] border border-ink-rule bg-ink-bg-deep p-3 font-mono text-[12px] leading-[1.55] text-ink-cream-2">
-                {JSON.stringify(detail.data?.receipt.signedReceipt ?? {}, null, 2)}
+                {JSON.stringify(
+                  maskDeep(detail.data?.receipt.signedReceipt ?? {}, masked),
+                  null,
+                  2,
+                )}
               </pre>
             </div>
           </div>
@@ -218,6 +227,7 @@ function ReceiptsPage() {
 }
 
 function DaySection({ group, onClickRow }: { group: DayGroup; onClickRow: (id: number) => void }) {
+  const { masked } = usePrivacy();
   return (
     <div>
       {/* Day header — sticky so you always know which day you're scrolling through. */}
@@ -252,9 +262,9 @@ function DaySection({ group, onClickRow }: { group: DayGroup; onClickRow: (id: n
               <td className="py-2 font-mono text-[12px] text-ink-muted">{r.callType}</td>
               <td
                 className="w-[240px] max-w-[240px] truncate py-2 text-[12px] text-ink-muted"
-                title={r.memo ?? undefined}
+                title={r.memo ? maskDeep(r.memo, masked) : undefined}
               >
-                {r.memo ?? <span className="text-ink-faint">—</span>}
+                {r.memo ? maskDeep(r.memo, masked) : <span className="text-ink-faint">—</span>}
               </td>
               <td className="w-[120px] py-2 text-right">
                 {r.valueTag ? (

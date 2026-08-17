@@ -53,6 +53,12 @@ const CITY_SLUGS: Record<string, string> = {
   paris: "paris",
   berlin: "berlin",
   amsterdam: "amsterdam",
+  vienna: "vienna",
+  // Luma's own page is the English slug; `wien` resolves but lists nothing.
+  wien: "vienna",
+  prague: "prague",
+  praha: "prague",
+  prag: "prague",
   singapore: "singapore",
   tokyo: "tokyo",
   bangalore: "bangalore",

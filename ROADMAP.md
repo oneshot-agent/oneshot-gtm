@@ -1,182 +1,63 @@
 # Roadmap
 
-Public. Issues mirror the items below. PRs welcome.
+What isn't built yet. Shipped work lives in `git log` and the release tags (v0.1.0 → v0.7.0).
 
-## Phase 0 — Tweetable demo (shipped)
+Public — issues mirror the items below, PRs welcome.
 
-- [x] Repo scaffolding (Bun monorepo, MIT)
-- [x] `init`, `config llm`, `config founder`, `config telemetry`
-- [x] `doctor` (wallet, LLM key, ledger, founder profile)
-- [x] `intel advise` — interactive coach grounded in last 7 days of receipts
-- [x] `discover icp interview-prep` — Mom Test guide generator
-- [x] `discover icp synthesize` — JTBD / pain / switch / ICP language extraction
-- [x] `motion show-hn` — founder-to-founder one-touch with anti-slop linting
-- [x] `measure receipt` — fetch + display a signed receipt
-- [ ] vhs terminal recording embedded in README
-- [ ] Launch posts (HN, Bookface, IH, X, Reddit) — drafts in `launch/`
+---
 
-## Phase 1 — First real GTM loop (shipped)
+## Real-time intake
 
-- [x] `motion job-change` — UserGems-style trigger play (now multi-touch via cadence engine)
-- [x] `motion post-funding` — funding-trigger sequence (day 3+ timing, multi-touch via cadence)
-- [x] `motion accelerator-batch --sender-cohort <yc-w26|od|spc|antler|...>` — parameterized cohort outreach
-- [x] `intel triage-replies` — LLM categorizes inbound, drafts founder-approved replies
-- [x] `intel weekly-review` — Monday narrative brief
-- [x] `intel personalize` exposed as a standalone command
-- [x] `measure cac` — per-play CAC, $/send, $/reply from signed receipts
-- [x] Anti-AI-slop linter expanded with the Wikipedia "Signs of AI writing" canon
-- [x] `discover pmf classify` — Sequoia Arc + Balfour Four-Fits classifier
-- [x] `discover pmf survey` — Superhuman 5-question survey via OneShot Build (landing) + Email + inbound poll + Sean Ellis analyzer
-- [x] `discover pmf survey-collect` — analyzer that turns inbound replies into a paste-able PMF report
-- [x] `handoff readiness` — six-signal PMF→scale scorecard with green/yellow/red verdict
-- [x] `handoff templatize` — soft-gated template extraction from top-converting hand-written sends
-- [x] `handoff first-ae` — Lemkin / Blond / Kazanjy five-gate hire-readiness check
-- [x] **Cadence engine v1** — inbound-driven multi-touch sequencer (`cadence advance / list / stop`); polls OneShot inbox, marks replies, fires due follow-ups, ends with a breakup touch
+Today every finder polls. These turn it push.
 
-## Phase R0 — Tooling baseline + monorepo restructure (shipped)
+- [ ] **Webhook intake** — `POST /api/triggers/cal-no-show` + `POST /api/triggers/signup` → ICP-filter → enqueue into `demo-no-show` / `concierge`.
+- [ ] **Webhook signing + replay protection** for those endpoints.
+- [ ] **Warm-signal escalation** in cadence (open-tracking → auto phone call). Blocked: needs OneShot to surface open events.
 
-- [x] Turborepo + `turbo.json`
-- [x] Vitest 4 with first 24 tests (ledger schema + lint regex coverage)
-- [x] oxlint + oxfmt (Rust-based; ~50× faster than ESLint/Prettier)
-- [x] `tsconfig.base.json` shared across all apps + packages
-- [x] Bun catalog for shared dep versions
-- [x] Move `packages/cli` → `apps/cli`; root workspaces switched to `["apps/*", "packages/*"]`
-- [x] All previous CLI behavior preserved
+## Learning loop
 
-## Phase R1 — Read-only web dashboard (shipped)
+The ICP filter currently judges each candidate cold.
 
-- [x] `packages/shared-types` — wire types for the API contract
-- [x] `apps/server` — Bun.serve with read-only `/api/*` (home, cadences, receipts, plays, measure, doctor, setup)
-- [x] `apps/web` — Vite + React 19 + Tailwind 4 + TanStack Router + TanStack Query + Base UI + cva
-- [x] Pages: Home / Cadences / Receipts (with signed-receipt modal) / Plays (with copy-CLI button) / Measure (CAC + RoCS tables) / Setup (read-only profile + secrets sources)
-- [x] `oneshot-gtm ui` boots the server, opens the browser, supports `--dev` for hot-reload (vite + server in parallel)
+- [ ] **v1** — feed the last ~20 `(candidate, decision, reason)` tuples from `target_queue` into each `icpFilter` call as in-context examples. No schema change.
+- [ ] **v2** — periodic job proposes a tighter ICP one-liner from accumulated decisions; founder approves the rewrite in `/queue`.
+- [ ] **Per-source weighting** — track approval rate per finder, deprioritize noisy sources automatically.
 
-## Phase R2 — UI mutations (shipped)
+## Operations
 
-- [x] `/setup` editable wizard: founder profile + LLM provider/model + secrets (hidden inputs) + wallet mode → POSTs to `/api/setup`, writes to chmod-600 `~/.oneshot-gtm/.env`. Doctor + key sources update live after save.
-- [x] `apps/server/src/api/run.ts` — `POST /api/run/$playName` SSE endpoint for `show-hn`, `job-change`, `accelerator-batch`. Streams `draft` → `send` → `done` events.
-- [x] `/run/$playName` web form: editable target rows (add/remove), dry-run toggle, send button. Consumes the SSE stream, renders drafts inline with lint flags + clickable receipt links.
-- [x] `/cadences` rows now have inline "stop" + "log outcome" actions; outcome modal supports `meeting_booked / sql_qualified / deal_won / deal_lost / ghosted` + amount + notes.
-- [x] `/plays` cards now have a "run" button next to "copy CLI" for the three R2-supported plays.
-- [x] New UI primitives: `Field`, `Input`, `Textarea`, `Select`, `Checkbox`, `Modal`.
+- [ ] **`find watch` as an OS service** — launchd plist + systemd unit + Windows Service docs. `--once` already works under cron.
+- [ ] **Bulk CSV import** — `find import --csv <file> --play <name>` with column mapping, for cohorts you already paid Clay/Apollo to source.
+- [ ] **BYO sending domain** — send from a domain you already own over OneShot's transport, instead of one OneShot provisions. Connecting a Gmail/Workspace account is today's workaround.
 
-## Phase R3 — Polish + distribute (shipped)
+## Measurement
 
-- [x] **README rewrite** with "Two ways to use it" framing (CLI for power, dashboard for visibility), badges row, full command map, comparison table, architecture diagram, stack section, distribution paths.
-- [x] **`apps/server` tsdown bundle** — `bun run --cwd apps/server build` produces `dist/bin.mjs` (~57 kB, gzip 14.7 kB) + `dist/web/` (web build is auto-copied). Bundles workspace packages, externalizes `bun:sqlite` + SDK + open. Runtime check fails loudly with install hint if invoked under plain node.
-- [x] **`oneshot-gtm-server` package shape** — `bin: { "oneshot-gtm-server": "./dist/bin.mjs" }`, `prepublishOnly` builds web + server. Ready for `npm publish` (final push is OneShot team's hand on the trigger).
-- [x] **STATUS.md** — manual snapshot of what's known to work end-to-end against the live OneShot API.
-- [x] **Built-with-oneshot-gtm badge** — embedded in README + dedicated `docs/badge.md` with markdown / HTML / variants.
-- [x] **Launch posts updated** — Show HN + Twitter/X drafts now mention the dashboard and the two-surface story.
-- [ ] vhs terminal recording (60s) — needs OneShot team
-- [ ] Dashboard demo gif (30s) — needs OneShot team
-- [x] **`oneshot-gtm-server@0.1.0` shipped on npmjs.com** via tag-driven workflow (`.github/workflows/release.yml`). `bun run release:server` cuts a release; provenance attestation attached. CLI (`oneshot-gtm`) still needs its own `tsdown` setup before it can ship — deferred to a follow-up.
+- [ ] **`measure benchmark`** — opt-in cohort comparisons. Unblocked: the telemetry endpoint is live.
+- [ ] **Public benchmarks page** reading aggregates from the telemetry table. The pipeline exists; this is the surface.
 
-## Phase R4 — Manual prospect entry + cadence batch (shipped)
+## Integrations
 
-- [x] **Add Prospect page** (`/add-prospect`) + `POST /api/prospects/add` — paste a LinkedIn / X / GitHub profile URL (optionally an email): the OneShot SDK's `deepResearchPerson` builds a dossier from that one URL (org/role history, recent posts, articles, work + personal emails), the LLM picks an angle **against the ICP** and drafts a tailored intro, and the prospect lands in `/queue` under a new generic `profile-intro` play (intro + day-4 & day-9 follow-ups + day-18 breakup). Research is fire-and-forget (~2–5 min); no email found → queued + flagged; failed/empty research is retryable on re-add.
-- [x] **Cadence quick-select** — "select next 10 / 20 / 30" most-overdue active rows on `/cadences`, feeding the existing batch preview/send.
+- [ ] CRM adapters: Attio, Folk, Pipedrive.
+- [ ] Slack / Linear notification webhooks.
 
-## Phase R5 — Queue drain consolidation + format gate (shipped)
+## Launch assets
 
-- [x] **One drain button on `/queue`** — replaces nine hand-listed per-play buttons that duplicated the PLAY chips above them (and had silently omitted `luma-events`, stranding two-thirds of the approved queue). The button follows the PLAY filter, reads whole-queue approved counts from the ledger (`approvedCountsByPlay`, surfaced as `approvedByPlay`) so it works from the default `pending` view, and names why it's disabled instead of just dimming.
-- [x] **Drain selected** — tick rows and drain exactly those, via `?ids=` on `GET /api/queue` and `/run`. Approved-only and single-play; a mixed pick refuses rather than draining a subset, and the selection keeps its play/status across filter changes.
-- [x] **`RUNNABLE_PLAYS` in `shared-types`** — the dashboard-runnable play list existed in three hand-copied mirrors that had drifted; the server's run gate, the drain button and `/plays` now read one constant.
-- [x] **github-stars: events-feed fallback** — GitHub restricted `/stargazers` to repo admins in July 2026 (401/404 for third-party repos); the finder falls back to the public `/events` feed's `WatchEvent`s (~90d / 300-event window).
-- [x] **`fmt:check` gated in CI** — pre-existing oxfmt debt cleared across 35 files. `packages/prompts/**/*.md` is excluded in `.oxfmtrc.json`: those files are LLM payload, not documents, and markdown escaping would rewrite the literal prompt text the model receives.
+Not code — these need capture, not commits.
 
-## Phase 2 — Multichannel + warm-signal escalation (shipped)
+- [ ] vhs terminal recording (60s), to embed in the README.
+- [ ] Dashboard demo gif (30s).
+- [ ] Launch posts — drafts are in `launch/`, unpublished.
+- [ ] Fireship sponsor video.
+- [ ] "Built with oneshot-gtm" badge program. The artifact shipped; this is the adoption push.
 
-- [x] **Cadence engine v2** — SMS + voice channels are now first-class step types; per-play sequences can mix email, SMS, voice
-- [x] `motion concierge` — autonomous voice onboarding (pre-call email + voice w/ structured data + post-call summary email)
-- [x] `motion demo-no-show` — same-day SMS + email recovery; cadence engine handles day-3 follow-up
-- [x] `motion competitor-switch` — migration-honesty pitch with optional G2/BuiltWith scrape via OneShot browser automation
-- [x] `motion hiring-signal` — job-posts trigger using OneShot web search + web read for specific job-post phrasing
-- [x] `motion podcast-guest` — single touch referencing a specific quote
-- [x] `motion breakup-revive` — pattern-interrupt for ledger cold leads (60-90 days)
-- [x] `measure rocs` — Return on Cognitive Spend: per-play $/meeting, $/SQL, $/won
-- [x] `measure outcome` — log deal outcomes (meeting_booked / sql_qualified / deal_won / deal_lost / ghosted)
-- [ ] `measure benchmark` — opt-in cohort comparisons (unblocked 2026-06-21: the hosted telemetry endpoint is now live — see Phase 3)
-- [ ] Warm-signal escalation in cadence (open-tracking → auto phone call) — needs OneShot to surface open events
-
-## Phase F1 — Find layer (shipped)
-
-The motion plays needed hand-curated JSON target lists; founders kept asking "where do these targets come from?" F1 closes that loop with an upstream discovery layer.
-
-- [x] **`target_queue` + `triggers` ledger tables** (schema v4) with cross-table dedupe against `prospects.email`
-- [x] `find show-hn` — HN Algolia poller, ICP-filter → enrich (findEmail + verifyEmail) → enqueue
-- [x] `find post-funding --source-urls <file>` — read TC/Crunchbase/blog URLs, LLM-extract structured facts, enrich, enqueue
-- [x] `find accelerator-batch --cohort yc-w26` — pull YC launch index, LLM-extract company list, per-company webRead → enrich → enqueue
-- [x] `find queue / approve / reject / drain / watch` — review lifecycle in CLI
-- [x] `find watch` — long-running poller with `--once` for cron + foreground daemon mode; per-trigger interval + spend cap
-- [x] **Web `/queue` page** — filterable inbox (status + play), bulk approve, drain modal per play with dry-run toggle
-- [x] `config icp set/show` + free-text ICP one-liner used by the binary classifier prompt
-- [x] `findEmail` + `verifyEmail` wrappers in `packages/core/src/oneshot.ts`
-- [x] Server `/api/queue/*` routes; SDK clients via `apps/web/src/api/client.ts`
-
-## Phase F2 — Sourcing breadth + trigger UI (shipped)
-
-- [x] `find post-funding --auto` — webSearch by ICP-derived industry × round; bypasses the URL file. Registered as the `post-funding-auto` trigger (12h interval).
-- [x] `find job-change` — webSearch for "joined as <persona>" announcements with `--personas` + `--companies` filters
-- [x] `find hiring-signal` — Greenhouse / Lever / Workable / Ashby ATS search with smart corporate-domain lookup (webSearch fallback when LLM doesn't extract one)
-- [x] `find podcast-guest` — recent-guest discovery across Latent Space / Lenny's / 20VC / Acquired / Invest Like the Best
-- [x] `find accelerator-batch` — `--index-url` override + cohort aliases for OD, SPC, Antler, Techstars
-- [x] **Trigger-config UI** in `/queue`: enable/disable toggle, last-poll + last-run summary, JSON config editor with `intervalMs` override (min 60s)
-- [x] Opt-in triggers — `job-change`, `hiring-signal`, `podcast-guest` register disabled-by-default; founder enables from the UI without touching code
-- [x] `drainQueue` dispatcher handles all six finders (was missing hiring-signal + podcast-guest)
-- [x] Partial-send id-mapping fix — drain no longer marks the wrong rows as sent when some drafts fail mid-batch
-- [x] Three new structured-output prompts: `job-change-extract`, `hiring-signal-extract`, `podcast-guest-extract`
-
-## Phase F3 — Real-time signals + ICP learning loop
-
-- [ ] **Webhook intake** — `POST /api/triggers/cal-no-show` + `POST /api/triggers/signup` → ICP-filter → enqueue into `demo-no-show` / `concierge`. Turns oneshot-gtm from polling into real-time.
-- [ ] **ICP-filter learning loop v1** — every `icpFilter` call pulls the last ~20 (candidate, decision, reason) tuples from `target_queue` as in-context examples. Tighter filtering, zero schema change.
-- [x] `find github-topics` (retiring `agent-builders`) — GitHub signal source via the public Search API + manifest-scan (`package.json`, `pyproject.toml`, `requirements.txt`, `.env.example`) for deterministic vendor-stack detection. Config-driven: founder supplies `topics` + `vendors` + `yourEdge` via `/queue`. Feeds `competitor-switch` via the shared `_repo-pipeline.ts`. Idempotent boot migration ports a prior `agent-builders` config to the new trigger; the old trigger + its queue rows are retired.
-- [x] `find breakup-revive` — scan the local ledger for cold prospects (60–90d window) and enqueue them (opt-in trigger, 7d interval, zero OneShot spend)
-- [x] **Trigger strategist** — `POST /api/strategist/stream` SSE chat endpoint backed by the founder's ICP + per-trigger briefs. Proposes config in plain English, emits `<!--ACTION:...-->` markers the UI renders as confirmation chips, and applies through the existing `enable` / `apply-config` REST routes. Mounted as a global floating dock (`StrategistDock`) on every page.
-- [x] **Trigger fire-and-forget** — `POST /api/triggers/:name/run` returns 202 + `pending: true` immediately; finder runs on the event loop. `TriggerView.running` + `runningSince` give the UI a server-authoritative spinner. 409 on duplicate click prevents double-spend.
-- [x] **Readiness gate** — `TriggerSpec.readiness` rejects enabling/firing a trigger whose stored config lacks required inputs (e.g. `github-topics` without `topics`/`vendors`/`yourEdge`, or `accelerator-batch` without a `cohort`). Shown inline in the `/queue` row + as a 409 reason on the run endpoint.
-- [x] **Stale-run sweep on cold boot** — `ledger.sweepStaleRunningTriggers()` clears trigger rows left in `running` state by a previous process that died without updating `last_polled_at` (bun --watch re-exec, OOM, OS reboot). Writes a `killed_by_restart` summary so `/queue` shows the actual state instead of a stale one. `MAX_RUN_AGE_MS` bumped 15min → 4h to match real finder runtimes (50 candidates × ~70s serial). `markTriggerRunning` also reclaims stale rows so a stuck flag can't permanently 409 the founder.
-- [x] **`accelerator-batch` finder rewrite** — yc-oss/api directory (free, daily-updated) for any YC batch; websearch fallback adapter for non-YC cohorts (Techstars, Antler, 500 Global, AI Grant). Trigger renamed `yc-w26` → `accelerator-batch` via idempotent boot migration.
-- [x] **Drain → /run handoff** — `/queue` drain modal navigates to `/run/<play>?fromQueue=1` with the modal's collected fields (limit, dryRun, senderCohort, offer) round-tripping via search params. Single code path now surfaces every draft + lint flag for both dryRun and real-send branches.
-- [x] **Drafts persist per `target_queue` row** — schema v6 (`last_draft_json` + `last_drafted_at` columns added via `addColumnIfMissing`). The `/api/run` SSE endpoint writes each generated draft back to its originating row when called with `dedupeKeys[]`. `/queue` expanded rows render the draft block (subject + body + flags + receipt links); collapsed rows get a `draft` badge.
-- [x] **`/home` Scheduler section** — per-trigger row showing state pill, last-run summary, last-polled, next-due (oxblood when overdue). Disabled triggers collapse behind a chevron. Read-only, polls `api.triggers()` every 30s; answers "is the scheduler alive?" at a glance.
-- [x] **`findEmail` prescreen** — dud-domain blocklist (free-tier subdomains, social/content hosts, personal email, link aggregators, investor aggregators) + handle-not-name guard (single-token usernames like HN authors) before every SDK call. Cuts ~50% of historically-unfound lookups, ~$1–2/run. Skipped rows log `finder.skipped_findemail` events for blocklist tuning.
-- [x] **`stack-consolidation` play** — consolidation-honesty pitch for repos wiring several API vendors; drains the `github-topics` queue alongside `competitor-switch`; day-3 follow-up + day-8 breakup; on `/run/stack-consolidation`
-- [x] **`/inbox` ("Replies") page** — `GET /api/inbox`; each reply matched to its prospect + play + cadence status by sender address (later made answerable in-place — see "Inbox reply composer" in F4)
-- [x] **Per-play cadence editor** — `POST /api/plays/:name/cadence` edits step day-offsets from the `/plays` page; `competitor-switch` + `hiring-signal` gained day-3 follow-up + day-8 breakup
-- [x] **Per-row queue actions** — `POST /api/queue/:id/regenerate` re-drafts and `:id/send-draft` ships a single persisted draft
-- [ ] **`find watch` as an OS service** — launchd plist + systemd unit + Windows Service docs; `--once` mode already works for cron
-
-## Phase F4 — Operationalize + scale
-
-- [ ] **Bulk Clay / Apollo CSV import** — `find import --csv <file> --play <name>` with column mapping; drop-in for cohorts you already paid to source
-- [ ] **ICP-filter learning loop v2** — periodic LLM job that proposes a tighter ICP one-liner from accumulated decisions; founder approves the rewrite in `/queue`
-- [ ] **Per-source weighting** in the watch loop — track approval rate per finder; deprioritize noisy sources automatically
-- [x] **Per-trigger interval UI** — the interval cell in the /queue triggers table is click-to-edit: preset select (1h–7d) + a revert-to-default option, writing the same `intervalMs` config override the JSON editor uses; scheduler picks the new cadence up on its next tick
-- [x] **Gmail / Google Workspace send path** — plain-fetch OAuth2 + Gmail REST (zero new deps); `gmail auth` CLI loopback consent flow; replies are read from Gmail so cadence stop-on-reply and /inbox keep working
-- [x] **Sender rotation** — identity pool (OneShot domains + N Gmail accounts) with sticky per-prospect routing (`sender_assignments`, ledger v11), auto warm-up daily caps (10/day → +10/wk → max 50), defer-don't-exceed across cadence/drain/queue sends, merged multi-inbox reply polling, per-identity doctor checks + /setup identities table
-- [x] **Inbox reply composer** — answer a reply from `/inbox` instead of switching to your mail client. `POST /api/inbox/draft-reply` generates an editable founder-voice draft (primed with the inbound message + prior touches, quoted-chain stripped); `POST /api/inbox/reply` sends via `replyEmail()` from the identity that received the email — Gmail threads it (In-Reply-To / References / threadId). Receipts logged as `email.reply`, deliberately outside warm-up cap counting.
-- [x] **SDK 0.19 — OneShot threading + idempotent sends** — OneShot-source replies now thread natively via `reply_to_email_id` (platform resolves In-Reply-To/References/thread_id), matching the Gmail path. Every OneShot send (replies + the cadence/queue `sendEmail` path) carries a content-derived `Idempotency-Key`, closing the duplicate-send hazard from the 2026-06 platform-hang incident (timed-out-but-sent jobs).
-- [x] **Multiple OneShot domains + mailboxes, per-domain capping** — the pool now holds several OneShot sending domains and several mailboxes within a domain (`registerOneShotIdentity`, `oneshot-gtm identities list/add/remove`, `/setup` add-form), discovered + surfaced via SDK 0.19 `listDomains` (pinned sends auto-provision an unknown domain on first send — no `domain_not_owned` pre-check). Warm-up caps are now enforced **per sending domain** (OneShot reputation is per-domain): mailboxes on one domain share one ramp + daily budget instead of each stacking. Doctor + `/setup` + `identities list` report each domain's warm-up state and the shared usage.
-- [x] **Receipt value attribution + goal-level RoCS (SDK 0.22)** — every billable call's receipt now carries a **memo** (why) + structured **`decisionContext`**, persisted locally and surfaced on `/receipts` (memo column, value chip, all/valued/unvalued filter). A stable **`decisionContext.goalId`** per (prospect, play) groups a cadence's spend; when a reply or a logged deal outcome lands, the cadence's value is written back to OneShot via `tagReceiptValue({goalId})` (tiered: engagement / meeting / revenue) and mirrored locally. `/measure` gains a **RoCS-by-cadence** section (spend vs value vs multiple) via SDK `rocsByGoal`. Bumps the OneShot SDK **0.19 → 0.22**.
-- [x] **Inbox reply match-status filter** — `/inbox` filters replies by all / matched / no-match to cut newsletter + bounce noise from genuine prospect replies.
-- [ ] **Webhook signing + replay protection** for the F3 endpoints
-
-## Phase 3 — Distribution flywheel
-
-- [x] **Anonymous distribution telemetry (phase 1)** — opt-out, one summary event per CLI invocation (`command`/flags/outcome/duration/version/os), dep-free `fetch` to a first-party endpoint (`telemetry.oneshotagent.com`). Spec + privacy boundary in `TELEMETRY.md`; opt out with `config telemetry off` or `ONESHOT_GTM_TELEMETRY=0`.
-- [ ] Public benchmarks page reading aggregates from the telemetry table (the data pipeline now exists; this is the surface)
-- [ ] CRM adapters: Attio, Folk, Pipedrive
-- [ ] Slack / Linear notification webhooks
-- [ ] Fireship sponsor video
-- [ ] "Built with oneshot-gtm" badge program (the artifact shipped in R3; this is the adoption push)
-- [ ] BYO sending domain (advanced — OneShot handles the default)
-- [ ] Multi-user / hosted dashboard ("OneShot Cloud" territory)
+---
 
 ## Things we intentionally do NOT do
 
-- Run an SDR. The CLI helps you do founder-led sales. It will refuse to advise a `first-ae` hire pre-PMF.
-- Manage SPF/DKIM/DMARC. OneShot auto-provisions sending domains.
-- Hold your customer data. Local SQLite ledger only.
-- Lock you into our LLM. BYO key, swap providers freely.
+- **Run an SDR.** This helps you do founder-led sales. It refuses to advise a `first-ae` hire pre-PMF.
+- **Manage SPF/DKIM/DMARC.** OneShot auto-provisions and warms sending domains.
+- **Hold your customer data.** Local SQLite ledger only.
+- **Lock you into our LLM.** BYO key, swap providers freely.
+- **Auth, multi-user, hosted DB.** Local-first stays local. That's OneShot Cloud's problem.
+- **A universal cross-wrapper dashboard.** Separate future product that would aggregate receipts across `oneshot-gtm`, `oneshot-support`, etc.
+- **Extract `@oneshot/wrapper-kit`.** Deferred until a second wrapper exists.
+- **Tauri / Electron desktop wrap.** `bunx oneshot-gtm-server` opens your browser; that's enough.
+- **Adopt Effect.** Skipped for shipping speed. Plain `async`/`await` keeps the code forkable.
