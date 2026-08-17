@@ -150,10 +150,17 @@ function PlaysPage() {
           >
             The motion catalogue.
           </h1>
+          {/*
+            Counts come from the data. This copy used to hardcode "Ten motion
+            plays" while the badge beside it rendered the real length, so the
+            page contradicted itself the moment a play was added. The old "six
+            queue-drain plays" was wrong too — DASHBOARD_PLAYS holds one — so
+            that claim is gone rather than replaced with another fixed number.
+          */}
           <p className="ln-note mt-2 max-w-[64ch] text-[13px] text-ink-cream-2">
-            Ten motion plays. Each one is a known signal you can act on — trigger, cadence,
-            anti-slop lint, signed receipt. Run from the CLI or, for the six queue-drain plays, from
-            the dashboard.
+            {plays.data ? `${plays.data.plays.length} motion plays` : "Motion plays"}. Each one is a
+            known signal you can act on — trigger, cadence, anti-slop lint, signed receipt. Run them
+            from the CLI, or drain the queue from the dashboard.
           </p>
         </div>
         <div className="font-mono text-[11px] text-ink-faint">
