@@ -110,6 +110,8 @@ Nine pages plus a run form:
 
 A floating strategist dock sits on every page: it reads your ICP and product one-liner and proposes trigger configs as confirmation chips (`POST /api/strategist/stream`, SSE).
 
+Next to it is a **privacy toggle**. Flip it on and names, emails, companies and phone numbers render partially masked everywhere — enough to screenshot a receipt or a cadence without exposing a real contact. Costs, receipt IDs and every other figure stay untouched, since the numbers are the reason to show a receipt in the first place. Off by default, remembered per browser. It's readable obfuscation for screenshots, not secure redaction.
+
 ---
 
 ## Where targets come from
@@ -196,7 +198,7 @@ Add a OneShot domain and mailbox from `/setup` or `identities add` — pick a pr
 apps/
   cli/        38-command CLI (commander)
   server/     Bun.serve + SSE; tsdown bundle published as `oneshot-gtm-server`
-  web/        Vite + React 19 + TanStack + Base UI — 9 pages + run form + StrategistDock
+  web/        Vite + React 19 + TanStack + Base UI — 9 pages, run form, strategist dock, privacy mode
 packages/
   core/       SDK wrapper, SQLite ledger, config + secrets, Gmail transport, JSONL events
   intel/      LLM client, advise, personalize, triage, weekly-review
@@ -225,7 +227,7 @@ bun install
 bun run typecheck                  # tsc --noEmit across cli + server + packages
 bun run lint                       # oxlint
 bun run fmt                        # oxfmt --write   (fmt:check in CI)
-bun run test                       # vitest — 1480 cases across 115 files
+bun run test                       # vitest — 1487 cases across 115 files
 bun run cli -- doctor              # smoke check
 ```
 
