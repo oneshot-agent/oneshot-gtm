@@ -4,6 +4,7 @@ import {
   maskAuto,
   maskByKind,
   maskCompany,
+  maskDeep,
   maskEmail,
   maskFrom,
   maskName,
@@ -146,5 +147,69 @@ describe("maskByKind", () => {
       "John S. <joh•••@example.com>",
     );
     expect(maskByKind("auto", "a@b.com")).toBe("a•••@b.com");
+  });
+});
+
+describe("maskDeep", () => {
+  // The load-bearing guarantee: privacy mode exists so receipts can be shown in
+  // public. If it ever alters a figure, the receipt stops being evidence.
+  it("never alters a number, boolean, or null", () => {
+    const payload = {
+      cost: 0.001,
+      result_count: 0,
+      valid: false,
+      catch_all: true,
+      summary: null,
+      nested: { spend: 4.82, value: 497.7, rocs: 103 },
+    };
+    expect(maskDeep(payload, true)).toEqual(payload);
+  });
+
+  it("masks an email under an identity key but leaves the rest of the receipt intact", () => {
+    const signed = {
+      email: "mertcan.goekgoez@gokgoz.net",
+      receipt_id: "rcpt_01M07JF83W6XNNMB5NBXGRWEQX",
+      request_id: "4ecceeee-b7a9-43b7-b48a-3920272b454f",
+      completed_at: "2026-08-17T09:57:32.756638",
+      cost: 0.001,
+      memo: "github-stars email.verify",
+    };
+    expect(maskDeep(signed, true)).toEqual({
+      ...signed,
+      email: "mer•••@gokgoz.net",
+    });
+  });
+
+  it("masks names inside a nested enrichment dossier", () => {
+    const out = maskDeep(
+      { result: { full_name: "Raden Alfaridzi", first_name: "Raden", cost: 0.05 } },
+      true,
+    );
+    expect(out.result.full_name).toBe("Raden A.");
+    expect(out.result.first_name).toBe("Raden");
+    expect(out.result.cost).toBe(0.05);
+  });
+
+  it("masks an address embedded in free text under a non-identity key", () => {
+    expect(maskDeep({ query: 'site:x.com "jane@acme.io"' }, true)).toEqual({
+      query: 'site:x.com "jan•••@acme.io"',
+    });
+  });
+
+  it("masks the slug of a profile URL", () => {
+    expect(maskDeep({ linkedin_url: "https://linkedin.com/in/jane-doe-1a2b" }, true)).toEqual({
+      linkedin_url: "https://linkedin.com/in/•••",
+    });
+  });
+
+  it("inherits the key's kind across an array of addresses", () => {
+    expect(maskDeep({ emails: ["a@b.com", "carol@d.org"] }, true)).toEqual({
+      emails: ["a•••@b.com", "car•••@d.org"],
+    });
+  });
+
+  it("is a pass-through when privacy mode is off", () => {
+    const payload = { email: "real@person.com", cost: 1.5 };
+    expect(maskDeep(payload, false)).toEqual(payload);
   });
 });

@@ -92,6 +92,79 @@ export function maskByKind(kind: PiiKind, value: string): string {
 }
 
 /**
+ * Identity-bearing keys inside a receipt payload, mapped to how each is masked.
+ * Anything not listed here is left alone — which is the point: costs, receipt
+ * ids, request ids, timestamps, and every other figure must survive privacy
+ * mode untouched, because the numbers are the whole reason to show a receipt.
+ */
+const IDENTITY_KEYS: Record<string, PiiKind> = {
+  email: "email",
+  emails: "email",
+  altemails: "email",
+  best_work_email: "email",
+  best_personal_email: "email",
+  from: "from",
+  name: "name",
+  full_name: "name",
+  first_name: "name",
+  last_name: "name",
+  phone: "phone",
+  phones: "phone",
+  fullphone: "phone",
+  company: "company",
+  organization: "company",
+};
+
+/** Bare address anywhere inside a free-text string (a query, a memo, a summary). */
+const EMBEDDED_EMAIL = /[^\s"'<>@]+@[^\s"'<>@]+\.[^\s"'<>@]+/g;
+
+/** "https://linkedin.com/in/jane-doe-1a2b" → "https://linkedin.com/in/•••" */
+function maskProfileUrl(url: string): string {
+  return url.replace(/\/(in|profile|users?)\/[^/?#]+/i, (_m, seg: string) => `/${seg}/${DOTS}`);
+}
+
+/**
+ * Recursively mask a decoded JSON payload for screenshots — used by the
+ * receipts modal, where the signed payload is rendered verbatim and so cannot
+ * be wrapped in `<Pii>` field by field.
+ *
+ * Guarantees, in order of importance:
+ *  1. Numbers and booleans are returned by identity. No figure is ever altered.
+ *  2. Strings under a known identity key are masked by that key's kind.
+ *  3. Any other string has embedded email addresses masked in place.
+ *
+ * Same lossy-but-readable contract as the rest of this file: the goal is "don't
+ * leak a real person in a screenshot", not cryptographic anonymity.
+ */
+export function maskDeep<T>(value: T, masked: boolean, kind?: PiiKind): T {
+  if (!masked) return value;
+  if (value == null || typeof value === "number" || typeof value === "boolean") return value;
+
+  if (typeof value === "string") {
+    if (kind) return maskByKind(kind, value) as unknown as T;
+    if (/^https?:\/\//i.test(value)) return maskProfileUrl(value) as unknown as T;
+    return value.replace(EMBEDDED_EMAIL, (m) => maskEmail(m)) as unknown as T;
+  }
+
+  // Elements of an identity-keyed array inherit that key's kind ("emails": [...]).
+  if (Array.isArray(value)) {
+    return value.map((v) => maskDeep(v, masked, kind)) as unknown as T;
+  }
+
+  if (typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      const keyKind = IDENTITY_KEYS[k.toLowerCase()];
+      out[k] = maskDeep(v, masked, keyKind);
+      if (/^linkedin_?url$/i.test(k) && typeof v === "string") out[k] = maskProfileUrl(v);
+    }
+    return out as unknown as T;
+  }
+
+  return value;
+}
+
+/**
  * The single gate behind privacy mode — shared by `<Pii>` and `useMask` so the
  * on/off + empty-value logic lives in exactly one (testable) place. Returns the
  * raw value when privacy is off or the value is empty; masks otherwise.

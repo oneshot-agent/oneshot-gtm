@@ -10,19 +10,19 @@ We built oneshot-gtm, an open-source TypeScript monorepo (Bun + Turbo + TanStack
 
 Two surfaces, one local SQLite ledger:
 
-- **CLI** for power users + scripting (33 commands across 7 groups)
-- **Local web dashboard** (`bunx oneshot-gtm ui` → opens `http://127.0.0.1:3030`) for visibility + non-technical co-founders. Read-only Home/Cadences/Receipts/Plays/Measure pages, plus three mutation flows (Setup wizard, Run-a-play with SSE-streamed drafts, Log-outcome modal).
+- **CLI** for power users + scripting (38 commands across 13 groups)
+- **Local web dashboard** (`bunx oneshot-gtm-server` → opens `http://127.0.0.1:3030`) for visibility + non-technical co-founders. Read-only Home/Cadences/Receipts/Plays/Measure pages, plus three mutation flows (Setup wizard, Run-a-play with SSE-streamed drafts, Log-outcome modal).
 
 The thing we wanted to fix: most GTM tools (Apollo, Clay, Outreach, Lemlist) assume you've already found PMF and just optimize sends. Pre-PMF founders end up scaling broken motions because the tool says "send more." So we encoded the canonical pre-PMF playbook (Mom Test, Sean Ellis 40%, Predictable Revenue, "do things that don't scale") as actual commands. `motion templatize` won't run until you've logged 100 hand-written sends with reply outcomes. `handoff first-ae` returns "not yet" if Sean Ellis is below 40%.
 
-The receipts are the unique part: every paid action prints a signed, on-chain-verifiable cost. `measure cac` rolls them up per play. You can show an investor your real CAC instead of a guess.
+The receipts are the unique part: every paid action prints a signed, on-chain-verifiable cost, and the dashboard's Measure page rolls them up per play and per cadence. You can show an investor your real CAC instead of a guess.
 
 Repo: github.com/oneshot-agent/oneshot-gtm
 Docs: docs.oneshotagent.com
 MIT license. Bring your own LLM key (OpenRouter, OpenAI, or Anthropic) and a OneShot wallet.
 
 ```
-bunx oneshot-gtm init
+bunx oneshot-gtm-server
 ```
 
 What's open: every prompt, every play, every cost. What's not: the email/SMS/voice infra (OneShot handles auto-provisioned warm sending domains, x402 payment flow, and receipt cryptography).

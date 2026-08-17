@@ -25,9 +25,14 @@ Repo: github.com/oneshot-agent/oneshot-gtm
 Quick start:
 
 ```bash
-bunx oneshot-gtm init
-bunx oneshot-gtm intel advise   # interactive coach, no OneShot calls
-bunx oneshot-gtm motion show-hn --target ./examples/show-hn.json --dry-run
+bunx oneshot-gtm-server         # dashboard only, no clone
+
+# or the full CLI:
+git clone https://github.com/oneshot-agent/oneshot-gtm
+cd oneshot-gtm && bun install
+bun run cli -- init
+bun run cli -- intel advise     # interactive coach, no OneShot calls
+bun run cli -- motion post-funding --target ./examples/post-funding.json --dry-run
 ```
 
 Genuinely would love criticism, especially:

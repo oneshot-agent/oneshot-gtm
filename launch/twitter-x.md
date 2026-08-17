@@ -4,12 +4,11 @@
 
 we shipped an open-source GTM agent for technical founders.
 
-`bunx oneshot-gtm init`
-`bunx oneshot-gtm ui`
+`bunx oneshot-gtm-server`
 
 terminal CLI for power users. local web dashboard for everyone else. same SQLite ledger.
 
-10+ named plays (Show HN outbound, post-funding, accelerator-batch, demo no-show, voice onboarding) on top of pay-per-use APIs with signed receipts.
+14 named plays (Show HN outbound, post-funding, accelerator-batch, demo no-show, voice onboarding) on top of pay-per-use APIs with signed receipts.
 
 MIT. no SaaS.
 
@@ -31,7 +30,7 @@ the receipts are the part nobody else has.
 
 every paid action prints a cryptographically signed, on-chain-verifiable cost.
 
-`measure cac` rolls them up per play.
+the Measure page rolls them up per play and per cadence.
 
 you can show an investor your real CAC. not a blended guess.
 

@@ -20,7 +20,7 @@ Repo: github.com/oneshot-agent/oneshot-gtm (MIT)
 
 What we'd love from you:
 
-1. **Try the show-hn play in dry-run** if you've ever wanted to reach a Show HN founder cleanly. `bunx oneshot-gtm motion show-hn --target [yourfile.json] --dry-run`.
+1. **Try the show-hn play in dry-run** if you've ever wanted to reach a Show HN founder cleanly. `bunx oneshot-gtm-server`, then open `/run/show-hn`, paste a target row and tick dry-run.
 2. **Hard feedback on the soft gates**. We're betting that "the CLI refuses to recommend hiring an AE pre-PMF" is right. Is that paternalistic to you?
 3. **A fellow batch DM** if you're thinking about GTM tooling and want to compare notes.
 
