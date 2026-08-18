@@ -19,6 +19,7 @@ import {
 import { createHash } from "node:crypto";
 import { getLedger } from "./ledger.ts";
 import { loadConfig, oneshotEnvReady } from "./config.ts";
+import { demoFixture, demoMode } from "./demo.ts";
 import { logEvent } from "./events.ts";
 import {
   type GmailBounce,
@@ -162,6 +163,11 @@ async function getAgent(): Promise<OneShot> {
  * a real config error the founder needs to see.
  */
 export async function listSendingDomains(): Promise<DomainPoolEntry[]> {
+  // Demo mode: read-only fixture, before any agent construction (see demo.ts).
+  if (demoMode()) {
+    const fixture = demoFixture<DomainPoolEntry[]>("domains.json");
+    if (fixture) return fixture;
+  }
   try {
     const agent = await getAgent();
     const result = await agent.listDomains();
@@ -613,6 +619,10 @@ export async function verifyEmail(input: VerifyEmailInput, ctx: CallContext) {
 export async function getBalance(
   tokenAddress?: string,
 ): Promise<{ balance: string; raw: unknown }> {
+  if (demoMode()) {
+    const fixture = demoFixture<{ balance: string; raw: unknown }>("balance.json");
+    if (fixture) return fixture;
+  }
   const agent = await getAgent();
   const raw = await agent.getBalance(tokenAddress);
   return { balance: raw, raw };
@@ -671,6 +681,10 @@ export async function listInbox(opts?: {
   since?: string;
   limit?: number;
 }): Promise<AnnotatedInboxListResult> {
+  if (demoMode()) {
+    const fixture = demoFixture<AnnotatedInboxListResult>("inbox.json");
+    if (fixture) return fixture;
+  }
   const identities = resolveIdentities(loadConfig());
   const sources: Array<{
     label: string;
@@ -1058,6 +1072,10 @@ export interface CadenceRocsGoal {
  * Measure page; genuine auth errors propagate so misconfig is visible.
  */
 export async function cadenceRocs(opts: { periodDays?: number } = {}): Promise<CadenceRocsGoal[]> {
+  if (demoMode()) {
+    const fixture = demoFixture<CadenceRocsGoal[]>("rocs-by-goal.json");
+    if (fixture) return fixture;
+  }
   try {
     const agent = await getAgent();
     const res = await agent.rocsByGoal(opts.periodDays != null ? { period: opts.periodDays } : {});

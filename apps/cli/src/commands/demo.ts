@@ -1,0 +1,109 @@
+import { existsSync } from "node:fs";
+import { resolve } from "node:path";
+import { SECRET_KEYS } from "@oneshot-gtm/core";
+import { bail, c, header, note, ok, warn } from "../output.ts";
+import { DEFAULT_DEMO_HOME, DemoSeedError, resetDemoHome, seedDemoHome } from "../demo/seed.ts";
+import { commandUi } from "./ui.ts";
+
+/**
+ * Strip every real credential from an env before it reaches the demo server.
+ *
+ * The CLI process imports core, and core's `applySecretsToEnv()` fills blank
+ * `process.env` vars from the REAL home's `.env` at import time — before this
+ * command ever runs. `commandUi` spawns the server with `...process.env`, and
+ * the child's own secrets-loader only fills vars that are still blank, so
+ * without this scrub the inherited real wallet/LLM/Gmail keys would SHADOW the
+ * demo home's placeholders. That is the exact failure the demo exists to
+ * prevent: a stray Run or Send click spending real money from a "demo".
+ * Deleting them here lets the child re-load from the demo `.env`, whose
+ * placeholder values cannot authenticate.
+ *
+ * GITHUB_TOKEN / LUMA_SESSION_COOKIE aren't in SECRET_KEYS (they're read
+ * straight from env, never stored), but a demo "Run now" shouldn't act with the
+ * founder's real tokens either.
+ */
+export function scrubInheritedSecrets(env: NodeJS.ProcessEnv): void {
+  for (const key of [...SECRET_KEYS, "GITHUB_TOKEN", "LUMA_SESSION_COOKIE"]) {
+    delete env[key];
+  }
+}
+
+interface SeedOpts {
+  home: string;
+  now?: string;
+  force: boolean;
+}
+
+export async function commandDemoSeed(opts: SeedOpts): Promise<void> {
+  header("oneshot-gtm demo seed");
+
+  let anchor: Date | undefined;
+  if (opts.now) {
+    const parsed = new Date(opts.now);
+    if (Number.isNaN(parsed.getTime())) {
+      bail(`--now must be a parseable date (got "${opts.now}")`);
+    }
+    anchor = parsed;
+  }
+
+  let result;
+  try {
+    result = seedDemoHome({ home: opts.home, force: opts.force, ...(anchor ? { anchor } : {}) });
+  } catch (err) {
+    if (err instanceof DemoSeedError) bail(err.message);
+    throw err;
+  }
+
+  const total = Object.values(result.counts).reduce((a, b) => a + b, 0);
+  ok(`seeded ${total} rows into ${c.cyan(result.home)}`);
+  for (const [table, n] of Object.entries(result.counts)) {
+    note(`  ${table.padEnd(20)} ${n}`);
+  }
+  note("");
+  note(`Anchored at ${result.anchor.toISOString()} — re-seed with the same ${c.cyan("--now")} to`);
+  note("reproduce this ledger exactly, so a re-shoot matches an earlier take.");
+  note("");
+  ok(`Launch it:  ${c.cyan("bun run cli -- demo ui")}`);
+  warn("Placeholder credentials — clicking Run or Send in the demo fails at auth by design.");
+}
+
+interface DemoUiOpts {
+  home: string;
+  port: number;
+  noBrowser: boolean;
+  dev: boolean;
+}
+
+export async function commandDemoUi(opts: DemoUiOpts): Promise<void> {
+  const home = resolve(opts.home);
+  if (!existsSync(home)) {
+    bail(`no demo home at ${home}. Run ${c.cyan("bun run cli -- demo seed")} first.`);
+  }
+
+  // `commandUi` spawns the server with `...process.env`, so mutating it here
+  // redirects the whole child process at the demo install. The scrub comes
+  // first — see its doc comment: without it, real credentials inherited at
+  // core-import time shadow the demo home's placeholders in the child.
+  scrubInheritedSecrets(process.env);
+  process.env["ONESHOT_GTM_HOME"] = home;
+  process.env["ONESHOT_GTM_DEMO"] = "1";
+  // A demo run is not a real install and must not report itself as one.
+  process.env["ONESHOT_GTM_TELEMETRY"] = "0";
+
+  note(`demo home: ${c.cyan(home)}  ·  scheduler idle, network reads served from fixtures`);
+  await commandUi({ port: opts.port, noBrowser: opts.noBrowser, dev: opts.dev });
+}
+
+export async function commandDemoReset(opts: { home: string }): Promise<void> {
+  header("oneshot-gtm demo reset");
+  const home = resolve(opts.home);
+  try {
+    resetDemoHome(home);
+  } catch (err) {
+    if (err instanceof DemoSeedError) bail(err.message);
+    throw err;
+  }
+  ok(`removed ${c.cyan(home)}`);
+}
+
+export { DEFAULT_DEMO_HOME };

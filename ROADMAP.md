@@ -40,7 +40,7 @@ The ICP filter currently judges each candidate cold.
 
 ## Launch assets
 
-Not code — these need capture, not commits.
+Not code — these need capture, not commits. `demo seed` + `demo ui` now stand up a populated, fictional install to record against, so neither is blocked on having something to point a camera at.
 
 - [ ] vhs terminal recording (60s), to embed in the README.
 - [ ] Dashboard demo gif (30s).

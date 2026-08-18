@@ -149,13 +149,43 @@ function loadSecretsFile(): Record<string, string> {
   return out;
 }
 
+/**
+ * Env-only credentials that are never stored in `.env` via saveSecrets but are
+ * read directly from the environment by finders. Demo mode must neutralize
+ * these too — a demo "Run now" acting with the founder's real GitHub token is
+ * the same category of leak as a real wallet key.
+ */
+const ENV_ONLY_SECRET_KEYS = ["GITHUB_TOKEN", "LUMA_SESSION_COOKIE"] as const;
+
 function applySecretsToEnv(): void {
   const stored = loadSecretsFile();
+
+  // Demo mode (`ONESHOT_GTM_DEMO=1`, checked inline — importing demo.ts here
+  // would be circular): this home's .env is the SOLE source of secrets, not a
+  // fallback for blanks. Two real-credential leak paths make fill-the-blanks
+  // insufficient: the CLI parent inherits the real install's secrets into
+  // process.env before spawning the demo server, and Bun auto-loads a repo-root
+  // .env into every `bun run` child — both would shadow the demo placeholders
+  // and hand a "demo" a live wallet. Overwrite-or-delete closes both.
+  if (process.env["ONESHOT_GTM_DEMO"] === "1") {
+    for (const k of [...SECRET_KEYS, ...ENV_ONLY_SECRET_KEYS]) {
+      const v = stored[k];
+      if (v) process.env[k] = v;
+      else delete process.env[k];
+    }
+    return;
+  }
+
   for (const [k, v] of Object.entries(stored)) {
     if (process.env[k] === undefined || process.env[k] === "") {
       process.env[k] = v;
     }
   }
+}
+
+/** Test-only re-run hook — applySecretsToEnv normally fires once at import. */
+export function _applySecretsToEnvForTests(): void {
+  applySecretsToEnv();
 }
 
 export function saveSecrets(updates: Partial<Record<SecretKey, string>>): void {

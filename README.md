@@ -71,7 +71,7 @@ bun run cli -- find drain podcast-guest --dry-run  # preview approved /queue row
 bun run cli -- cadence advance                     # daily tick: poll inbox, fire follow-ups
 ```
 
-38 commands — ten groups, plus `init`, `doctor` and `ui` at the top level. `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
+41 commands — eleven groups, plus `init`, `doctor` and `ui` at the top level. `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
 
 | Group                    | Commands                                                                                                                                                        |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -86,6 +86,7 @@ bun run cli -- cadence advance                     # daily tick: poll inbox, fir
 | `discover`               | `icp interview-prep` · `icp synthesize` · `pmf classify` · `pmf survey` · `pmf survey-collect`                                                                  |
 | `intel`                  | `advise` · `personalize` · `triage-replies` · `weekly-review`                                                                                                   |
 | `handoff`                | `readiness` · `templatize` · `first-ae`                                                                                                                         |
+| `demo`                   | `seed` · `ui` · `reset` — a fictional install for screenshots and video                                                                                         |
 
 Spend, CAC, RoCS and outcome logging deliberately have no CLI group — they live on the dashboard's Measure and Cadences pages so there's one source of truth. The `/api/measure/*` routes are there if you'd rather script them.
 
@@ -111,6 +112,25 @@ Nine pages plus a run form:
 A floating strategist dock sits on every page: it reads your ICP and product one-liner and proposes trigger configs as confirmation chips (`POST /api/strategist/stream`, SSE).
 
 Next to it is a **privacy toggle**. Flip it on and names, emails, companies and phone numbers render partially masked everywhere — enough to screenshot a receipt or a cadence without exposing a real contact. Costs, receipt IDs and every other figure stay untouched, since the numbers are the reason to show a receipt in the first place. Off by default, remembered per browser. It's readable obfuscation for screenshots, not secure redaction.
+
+### Demo mode
+
+A fresh install is nine empty states, which makes it hard to show anyone what this looks like in use. `demo` builds a fictional, fully-populated install in its own home and opens the dashboard against it.
+
+```bash
+bun run cli -- demo seed      # → ~/.oneshot-gtm-demo
+bun run cli -- demo ui        # dashboard, pointed at the demo install
+bun run cli -- demo reset     # delete it
+```
+
+The cast is invented (it extends the one in `examples/`) and the numbers are internally consistent: ~24 prospects across eight plays and 30 days, 147 signed receipts totalling $2.94, cadences in all five states, replies matched to their prospects, two closed deals. Everything is anchored to a timestamp, so `--now` reproduces a ledger exactly and a re-shoot matches the first take.
+
+What demo mode changes, and nothing else:
+
+- Four **read-only** calls that fetch at request time rather than reading the ledger — the reply list, the platform RoCS rollup, the domain pool, the wallet balance — are served from JSON fixtures in the demo home. Without that, Replies is blank no matter what's in SQLite.
+- The in-process **scheduler idles**, so enabled triggers don't fire against the demo install and overwrite its state mid-screenshot.
+
+Nothing that sends, drafts or spends is faked. Under the flag, the demo home's `.env` is the **sole** source of secrets — real credentials inherited from your shell, your install, or a repo-root `.env` are overwritten or deleted — so a stray click on Run or Send fails at auth rather than doing something real. `demo seed` refuses to touch `~/.oneshot-gtm`, and `demo reset` only removes a directory it marked as its own.
 
 ---
 
@@ -196,7 +216,7 @@ Add a OneShot domain and mailbox from `/setup` or `identities add` — pick a pr
 
 ```
 apps/
-  cli/        38-command CLI (commander)
+  cli/        41-command CLI (commander); src/demo/ seeds the demo install
   server/     Bun.serve + SSE; tsdown bundle published as `oneshot-gtm-server`
   web/        Vite + React 19 + TanStack + Base UI — 9 pages, run form, strategist dock, privacy mode
 packages/
@@ -227,7 +247,7 @@ bun install
 bun run typecheck                  # tsc --noEmit across cli + server + packages
 bun run lint                       # oxlint
 bun run fmt                        # oxfmt --write   (fmt:check in CI)
-bun run test                       # vitest — 1487 cases across 115 files
+bun run test                       # vitest — 1518 cases across 117 files
 bun run cli -- doctor              # smoke check
 ```
 
