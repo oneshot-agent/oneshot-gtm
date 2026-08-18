@@ -40,6 +40,12 @@ import {
   commandIdentitiesRemove,
 } from "./commands/identities.ts";
 import { commandUi } from "./commands/ui.ts";
+import {
+  commandDemoReset,
+  commandDemoSeed,
+  commandDemoUi,
+  DEFAULT_DEMO_HOME,
+} from "./commands/demo.ts";
 import { commandEnrichLinkedIn } from "./commands/enrich-linkedin.ts";
 import { commandFindDrain, commandFindWatch } from "./commands/find.ts";
 import {
@@ -84,6 +90,58 @@ program
   .action(
     runOrFail(async (opts: { port: number; browser: boolean; dev: boolean }) => {
       await commandUi({ port: opts.port, noBrowser: !opts.browser, dev: opts.dev });
+    }),
+  );
+
+// Demo: a fictional, deterministic install in its own home, for screenshots and
+// video. Never reads or writes the real ledger.
+const demo = program
+  .command("demo")
+  .description("Seed and run a self-contained demo install (for screenshots and video)");
+demo
+  .command("seed")
+  .option("--home <dir>", "where to build the demo install", DEFAULT_DEMO_HOME)
+  .option("--now <iso>", "anchor every timestamp to this instant (default: now)")
+  .option("--force", "overwrite a non-empty directory", false)
+  .description("Build a populated demo ledger, config and fixtures")
+  .action(
+    runOrFail(async (opts: { home: string; now?: string; force: boolean }) => {
+      await commandDemoSeed({
+        home: opts.home,
+        force: opts.force,
+        ...(opts.now ? { now: opts.now } : {}),
+      });
+    }),
+  );
+demo
+  .command("ui")
+  .option("--home <dir>", "the demo install to open", DEFAULT_DEMO_HOME)
+  .option(
+    "--port <n>",
+    "port for the API server (default 3030)",
+    (v) => Number.parseInt(v, 10),
+    3030,
+  )
+  .option("--no-browser", "do not auto-open the browser")
+  .option("--dev", "use vite dev server (5173) + API server", false)
+  .description("Open the dashboard against the demo install")
+  .action(
+    runOrFail(async (opts: { home: string; port: number; browser: boolean; dev: boolean }) => {
+      await commandDemoUi({
+        home: opts.home,
+        port: opts.port,
+        noBrowser: !opts.browser,
+        dev: opts.dev,
+      });
+    }),
+  );
+demo
+  .command("reset")
+  .option("--home <dir>", "the demo install to remove", DEFAULT_DEMO_HOME)
+  .description("Delete a seeded demo install")
+  .action(
+    runOrFail(async (opts: { home: string }) => {
+      await commandDemoReset({ home: opts.home });
     }),
   );
 

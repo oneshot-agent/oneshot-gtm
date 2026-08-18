@@ -1,4 +1,4 @@
-import { logEvent, type TelemetryOutcome } from "@oneshot-gtm/core";
+import { demoMode, logEvent, type TelemetryOutcome } from "@oneshot-gtm/core";
 import {
   nextSleepMs,
   runDueTriggers,
@@ -59,6 +59,16 @@ const REPLY_POLL_MAX_MS = 5 * 60_000;
 const BOUNCE_POLL_INTERVAL_MS = 30 * 60_000;
 
 export function startScheduler(): SchedulerHandle {
+  // A seeded demo home is a still life: the scheduler would fire its enabled
+  // triggers against placeholder credentials and overwrite the very
+  // last_run_summary / last_polled_at values that make the dashboard look alive,
+  // mid-take. Idle instead — demo mode is for capture, and nothing in it is
+  // waiting on new signal.
+  if (demoMode()) {
+    logEvent("demo.scheduler_idle");
+    return { stop: () => {} };
+  }
+
   let cancelled = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
   // 0 = never polled, so the first tick always sweeps.

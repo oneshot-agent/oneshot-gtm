@@ -27,7 +27,12 @@ vi.mock("@oneshot-gtm/core", () => ({
   logEvent: (kind: string) => {
     calls.eventKinds.push(kind);
   },
+  // These cases exercise the real scheduler loop. Demo mode short-circuits it
+  // to a no-op handle — covered separately below.
+  demoMode: () => demoModeValue,
 }));
+
+let demoModeValue = false;
 
 const { startScheduler } = await import("../src/scheduler.ts");
 
@@ -39,6 +44,7 @@ beforeEach(() => {
   nextOutcomes = [];
   nextSleepValue = 60_000;
   throwOnNextRun = null;
+  demoModeValue = false;
 });
 
 afterEach(() => {
@@ -181,5 +187,18 @@ describe("startScheduler", () => {
     expect(calls.runDueTriggers).toBe(2); // both fired
     a.stop();
     b.stop();
+  });
+
+  // A seeded demo home is a still life. If the scheduler ran, it would fire the
+  // enabled triggers against placeholder credentials and overwrite the
+  // last_run_summary / last_polled_at values that make the dashboard look alive
+  // — mid-screenshot.
+  it("never ticks in demo mode, no matter how far time advances", async () => {
+    demoModeValue = true;
+    const handle = startScheduler();
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(calls.runDueTriggers).toBe(0);
+    expect(calls.eventKinds).toContain("demo.scheduler_idle");
+    expect(() => handle.stop()).not.toThrow();
   });
 });
