@@ -242,10 +242,10 @@ describe("seedDemoHome", () => {
     }
   });
 
-  it("links run send events to the recipients' actual email.send receipts", () => {
+  it("links run send events to email.send receipts from the run's own play", () => {
     seedDemoHome({ home, anchor: ANCHOR });
     const db = open(home);
-    const [run] = rows(db, "SELECT events_json, prospect_emails_json FROM runs");
+    const [run] = rows(db, "SELECT play_name, events_json, prospect_emails_json FROM runs");
     const events = JSON.parse(String(run?.["events_json"])) as Array<{
       kind: string;
       receiptIds?: number[];
@@ -254,8 +254,14 @@ describe("seedDemoHome", () => {
     expect(sendIds.length).toBeGreaterThan(0);
     const emails = JSON.parse(String(run?.["prospect_emails_json"])) as string[];
     for (const id of sendIds) {
-      const [receipt] = rows(db, `SELECT call_type, signed_receipt FROM receipts WHERE id = ${id}`);
+      const [receipt] = rows(
+        db,
+        `SELECT play_name, call_type, signed_receipt FROM receipts WHERE id = ${id}`,
+      );
       expect(receipt?.["call_type"]).toBe("email.send");
+      // The receipt must belong to THIS run's play — a recipient-only lookup
+      // once linked a show-hn run to a post-funding send from another day.
+      expect(receipt?.["play_name"]).toBe(run?.["play_name"]);
       const to = (JSON.parse(String(receipt?.["signed_receipt"])) as { to?: string }).to;
       expect(emails).toContain(to);
     }
