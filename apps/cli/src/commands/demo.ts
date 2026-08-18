@@ -1,8 +1,15 @@
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { join } from "node:path";
 import { SECRET_KEYS } from "@oneshot-gtm/core";
 import { bail, c, header, note, ok, warn } from "../output.ts";
-import { DEFAULT_DEMO_HOME, DemoSeedError, resetDemoHome, seedDemoHome } from "../demo/seed.ts";
+import {
+  canonicalize,
+  DEFAULT_DEMO_HOME,
+  DEMO_MARKER,
+  DemoSeedError,
+  resetDemoHome,
+  seedDemoHome,
+} from "../demo/seed.ts";
 import { commandUi } from "./ui.ts";
 
 /**
@@ -75,9 +82,19 @@ interface DemoUiOpts {
 }
 
 export async function commandDemoUi(opts: DemoUiOpts): Promise<void> {
-  const home = resolve(opts.home);
+  // Canonicalized (symlinks followed), and required to carry the seed marker.
+  // Without the marker check, `demo ui --home ~/.oneshot-gtm` — or a symlink
+  // pointing there — would launch the REAL install under the demo flag: real
+  // credentials behind a UI the operator believes is fake.
+  const home = canonicalize(opts.home);
   if (!existsSync(home)) {
     bail(`no demo home at ${home}. Run ${c.cyan("bun run cli -- demo seed")} first.`);
+  }
+  if (!existsSync(join(home, DEMO_MARKER))) {
+    bail(
+      `${home} has no ${DEMO_MARKER} marker — not a seeded demo install. ` +
+        `demo ui refuses to run a real install under the demo flag.`,
+    );
   }
 
   // `commandUi` spawns the server with `...process.env`, so mutating it here
@@ -96,7 +113,7 @@ export async function commandDemoUi(opts: DemoUiOpts): Promise<void> {
 
 export async function commandDemoReset(opts: { home: string }): Promise<void> {
   header("oneshot-gtm demo reset");
-  const home = resolve(opts.home);
+  const home = canonicalize(opts.home);
   try {
     resetDemoHome(home);
   } catch (err) {
