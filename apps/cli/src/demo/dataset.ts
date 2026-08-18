@@ -1434,22 +1434,29 @@ function buildRuns(anchor: Date, receipts: DemoReceipt[]): DemoDataset["runs"] {
   // Receipt ids are assigned globally while iterating PEOPLE, so a run's send
   // events must look up the actual email.send receipt per recipient — a
   // hardcoded [1]/[2] would link this run's sends to whoever's prep calls
-  // happened to be recorded first.
-  const sendReceiptIdFor = (email: string): number => {
+  // happened to be recorded first. Matching is by (play, recipient), not
+  // recipient alone: a prospect who was ALSO emailed by another play would
+  // otherwise satisfy the lookup with the wrong play's receipt and timestamp,
+  // and a run must only ever claim sends that belong to it.
+  const sendReceiptIdFor = (playName: string, email: string): number => {
     const r = receipts.find(
-      (x) => x.callType === "email.send" && (x.signedReceipt as { to?: string }).to === email,
+      (x) =>
+        x.callType === "email.send" &&
+        x.playName === playName &&
+        (x.signedReceipt as { to?: string }).to === email,
     );
-    if (!r) throw new Error(`demo dataset: no email.send receipt for ${email}`);
+    if (!r) throw new Error(`demo dataset: no ${playName} email.send receipt for ${email}`);
     return r.id;
   };
 
-  const targets = [
-    { name: "Elin Dahl", email: "elin@northport.works", company: "Northport" },
-    { name: "Ravi Menon", email: "ravi@stanchion.dev", company: "Stanchion" },
-  ];
+  // Single target on purpose: Elin is the only show-hn send from the day this
+  // run ran. Padding the run with a prospect from another play (as an earlier
+  // draft did with Ravi) makes the run claim a send with the wrong play and
+  // timestamp — the play-aware lookup above now throws on that.
+  const targets = [{ name: "Elin Dahl", email: "elin@northport.works", company: "Northport" }];
   const events = [
     { kind: "runStarted", runId: 1, startedAt: isoAt(anchor, 1, 9, 0) },
-    { kind: "verify", total: 2, verified: 2, dropped: [] },
+    { kind: "verify", total: 1, verified: 1, dropped: [] },
     { kind: "stage", stage: "drafting" },
     {
       kind: "draft",
@@ -1458,16 +1465,8 @@ function buildRuns(anchor: Date, receipts: DemoReceipt[]): DemoDataset["runs"] {
       body: "Hey Elin,\n\nThe top comment on your Show HN asks how you debug a stuck run, and your answer was basically 'carefully'. That is the gap Tracepoint fills.\n\nWorth fifteen minutes?\n\nMira",
       flags: [],
     },
-    { kind: "send", index: 0, receiptIds: [sendReceiptIdFor("elin@northport.works")] },
-    {
-      kind: "draft",
-      index: 1,
-      subject: "Stanchion + background job traces",
-      body: "Hey Ravi,\n\nGoing from three to eleven engineers is exactly when the async parts of the system stop fitting in one person's head.\n\nTracepoint drops into a worker with one import.\n\nMira",
-      flags: [],
-    },
-    { kind: "send", index: 1, receiptIds: [sendReceiptIdFor("ravi@stanchion.dev")] },
-    { kind: "done", total: 2, sent: 2 },
+    { kind: "send", index: 0, receiptIds: [sendReceiptIdFor("show-hn", "elin@northport.works")] },
+    { kind: "done", total: 1, sent: 1 },
   ];
 
   return [
@@ -1477,9 +1476,9 @@ function buildRuns(anchor: Date, receipts: DemoReceipt[]): DemoDataset["runs"] {
       status: "done",
       startedAt: isoAt(anchor, 1, 9, 0),
       completedAt: isoAt(anchor, 1, 9, 4),
-      targetCount: 2,
-      draftedCount: 2,
-      sentCount: 2,
+      targetCount: 1,
+      draftedCount: 1,
+      sentCount: 1,
       errorCount: 0,
       targetsJson: JSON.stringify(targets),
       eventsJson: JSON.stringify(events),
