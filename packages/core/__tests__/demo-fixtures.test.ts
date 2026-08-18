@@ -14,6 +14,11 @@ function writeFixture(name: string, value: unknown): void {
   writeFileSync(join(dir(), name), JSON.stringify(value));
 }
 
+/** One RoCS goal row with the given spend — for the period-keyed fixture tests. */
+function g(spend: number): Array<Record<string, unknown>> {
+  return [{ goalId: "goal_x", spend, value: 4800, pendingValue: 0, rocs: 1, receiptCount: 8 }];
+}
+
 beforeEach(() => {
   rmSync(dir(), { recursive: true, force: true });
   delete process.env["ONESHOT_GTM_DEMO"];
@@ -73,13 +78,24 @@ describe("the four network reads under demo mode", () => {
     await expect(listInbox({ limit: 200 })).resolves.toEqual(fixture);
   });
 
-  it("cadenceRocs serves rocs-by-goal.json", async () => {
+  it("cadenceRocs picks the period key from rocs-by-goal.json", async () => {
+    writeFixture("rocs-by-goal.json", { "7": g(0.1), "30": g(0.5), all: g(0.9) });
+    process.env["ONESHOT_GTM_DEMO"] = "1";
+    await expect(cadenceRocs({ periodDays: 7 })).resolves.toEqual(g(0.1));
+    await expect(cadenceRocs({ periodDays: 30 })).resolves.toEqual(g(0.5));
+    await expect(cadenceRocs()).resolves.toEqual(g(0.9));
+    // Unknown period falls back to all-time rather than an empty table.
+    await expect(cadenceRocs({ periodDays: 90 })).resolves.toEqual(g(0.9));
+  });
+
+  it("cadenceRocs still serves a legacy plain-array fixture for every period", async () => {
     const fixture = [
       { goalId: "goal_x", spend: 0.2, value: 4800, pendingValue: 0, rocs: 24000, receiptCount: 8 },
     ];
     writeFixture("rocs-by-goal.json", fixture);
     process.env["ONESHOT_GTM_DEMO"] = "1";
     await expect(cadenceRocs()).resolves.toEqual(fixture);
+    await expect(cadenceRocs({ periodDays: 7 })).resolves.toEqual(fixture);
   });
 
   it("listSendingDomains serves domains.json", async () => {

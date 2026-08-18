@@ -1073,8 +1073,14 @@ export interface CadenceRocsGoal {
  */
 export async function cadenceRocs(opts: { periodDays?: number } = {}): Promise<CadenceRocsGoal[]> {
   if (demoMode()) {
-    const fixture = demoFixture<CadenceRocsGoal[]>("rocs-by-goal.json");
-    if (fixture) return fixture;
+    // Keyed by period ("7"/"30"/"all") so the Measure range chips actually
+    // change the numbers in a demo. A plain array (a fixture from an older
+    // `demo seed`) is served as-is for every period.
+    const fixture = demoFixture<CadenceRocsGoal[] | Record<string, CadenceRocsGoal[]>>(
+      "rocs-by-goal.json",
+    );
+    if (Array.isArray(fixture)) return fixture;
+    if (fixture) return fixture[String(opts.periodDays ?? "all")] ?? fixture["all"] ?? [];
   }
   try {
     const agent = await getAgent();

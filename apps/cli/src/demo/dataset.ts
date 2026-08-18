@@ -921,7 +921,7 @@ export function buildDemoDataset(anchor: Date): DemoDataset {
     outcomes,
     queue: buildQueue(anchor),
     triggers: buildTriggers(anchor),
-    runs: buildRuns(anchor),
+    runs: buildRuns(anchor, receipts),
     bounces: buildBounces(anchor, prospects),
     canaries: buildCanaries(anchor),
     senderAssignments,
@@ -930,7 +930,7 @@ export function buildDemoDataset(anchor: Date): DemoDataset {
     interviews: buildInterviews(anchor),
     fixtures: {
       "inbox.json": buildInboxFixture(anchor),
-      "rocs-by-goal.json": buildRocsFixture(receipts),
+      "rocs-by-goal.json": buildRocsFixture(receipts, anchor),
       "domains.json": buildDomainsFixture(anchor),
       "balance.json": { balance: "41.86 USDC", raw: "41.86 USDC" },
     },
@@ -1430,7 +1430,19 @@ function buildTriggers(anchor: Date): DemoDataset["triggers"] {
 // Runs
 // ---------------------------------------------------------------------------
 
-function buildRuns(anchor: Date): DemoDataset["runs"] {
+function buildRuns(anchor: Date, receipts: DemoReceipt[]): DemoDataset["runs"] {
+  // Receipt ids are assigned globally while iterating PEOPLE, so a run's send
+  // events must look up the actual email.send receipt per recipient — a
+  // hardcoded [1]/[2] would link this run's sends to whoever's prep calls
+  // happened to be recorded first.
+  const sendReceiptIdFor = (email: string): number => {
+    const r = receipts.find(
+      (x) => x.callType === "email.send" && (x.signedReceipt as { to?: string }).to === email,
+    );
+    if (!r) throw new Error(`demo dataset: no email.send receipt for ${email}`);
+    return r.id;
+  };
+
   const targets = [
     { name: "Elin Dahl", email: "elin@northport.works", company: "Northport" },
     { name: "Ravi Menon", email: "ravi@stanchion.dev", company: "Stanchion" },
@@ -1446,7 +1458,7 @@ function buildRuns(anchor: Date): DemoDataset["runs"] {
       body: "Hey Elin,\n\nThe top comment on your Show HN asks how you debug a stuck run, and your answer was basically 'carefully'. That is the gap Tracepoint fills.\n\nWorth fifteen minutes?\n\nMira",
       flags: [],
     },
-    { kind: "send", index: 0, receiptIds: [1] },
+    { kind: "send", index: 0, receiptIds: [sendReceiptIdFor("elin@northport.works")] },
     {
       kind: "draft",
       index: 1,
@@ -1454,7 +1466,7 @@ function buildRuns(anchor: Date): DemoDataset["runs"] {
       body: "Hey Ravi,\n\nGoing from three to eleven engineers is exactly when the async parts of the system stop fitting in one person's head.\n\nTracepoint drops into a worker with one import.\n\nMira",
       flags: [],
     },
-    { kind: "send", index: 1, receiptIds: [2] },
+    { kind: "send", index: 1, receiptIds: [sendReceiptIdFor("ravi@stanchion.dev")] },
     { kind: "done", total: 2, sent: 2 },
   ];
 
@@ -1541,15 +1553,36 @@ function repliers(): DemoPerson[] {
   );
 }
 
+/**
+ * Thread/email ids are positional in the repliers() ordering, so any row that
+ * references one (inbox_drafts, inbox_sent) must derive it from the SAME
+ * ordering by email — a hardcoded "thread_demo_0001" silently attaches to
+ * whichever reply happens to sort first, putting one prospect's history inside
+ * another prospect's thread.
+ */
+function replierIndex(email: string): number {
+  const i = repliers().findIndex((p) => p.email === email);
+  if (i < 0) throw new Error(`demo dataset: ${email} has no reply — cannot build a thread id`);
+  return i;
+}
+
+function threadIdFor(email: string): string {
+  return `thread_demo_${String(replierIndex(email) + 1).padStart(4, "0")}`;
+}
+
+function inboundEmailIdFor(email: string): string {
+  return `email_demo_${String(replierIndex(email) + 1).padStart(4, "0")}`;
+}
+
 function buildInboxFixture(anchor: Date): unknown {
   const emails = repliers().map((p, i) => {
     const r = p.reply as NonNullable<DemoPerson["reply"]>;
     return {
-      id: `email_demo_${String(i + 1).padStart(4, "0")}`,
+      id: inboundEmailIdFor(p.email),
       from: `${p.name} <${p.email}>`,
       subject: r.subject,
       received_at: isoAt(anchor, r.daysAgo, r.hour, jitter(i)),
-      thread_id: `thread_demo_${String(i + 1).padStart(4, "0")}`,
+      thread_id: threadIdFor(p.email),
       body: r.body,
       source_identity_id: p.identity,
       message_id: `<reply-${i + 1}@${p.email.split("@")[1] ?? "example.dev"}>`,
@@ -1578,8 +1611,8 @@ function buildInboxDrafts(anchor: Date): DemoDataset["inboxDrafts"] {
   // blank box.
   return [
     {
-      threadKey: "thread_demo_0002",
-      inboundEmailId: "email_demo_0002",
+      threadKey: threadIdFor("dmitri@cascade.systems"),
+      inboundEmailId: inboundEmailIdFor("dmitri@cascade.systems"),
       toEmail: "dmitri@cascade.systems",
       subject: "Re: reliability as the year's focus",
       identityId: IDENTITY_PRIMARY,
@@ -1592,7 +1625,7 @@ function buildInboxDrafts(anchor: Date): DemoDataset["inboxDrafts"] {
 function buildInboxSent(anchor: Date): DemoDataset["inboxSent"] {
   return [
     {
-      threadKey: "thread_demo_0001",
+      threadKey: threadIdFor("aisha@tidewater.build"),
       toEmail: "aisha@tidewater.build",
       subject: "Re: 'find out on Monday what broke on Saturday'",
       body: "Hey Aisha,\n\nPricing is per job, not per host — attached. For a Saturday batch run of your size it lands around $600/mo, and you can point it at that one pipeline before touching anything else.\n\nMira",
@@ -1635,7 +1668,21 @@ function buildInterviews(anchor: Date): DemoDataset["interviews"] {
 // Platform RoCS rollup
 // ---------------------------------------------------------------------------
 
-function buildRocsFixture(receipts: DemoReceipt[]): unknown {
+/**
+ * Keyed by period ("7" / "30" / "all") because the Measure page's range chips
+ * pass `periodDays` through to `cadenceRocs` — a single all-time rollup would
+ * show identical numbers on every chip, which reads as a broken filter on
+ * camera. The demo seam in `cadenceRocs` picks the matching key.
+ */
+function buildRocsFixture(receipts: DemoReceipt[], anchor: Date): unknown {
+  return {
+    "7": rocsForWindow(receipts.filter((r) => r.createdAt >= sqlAt(anchor, 7, 0, 0))),
+    "30": rocsForWindow(receipts.filter((r) => r.createdAt >= sqlAt(anchor, 30, 0, 0))),
+    all: rocsForWindow(receipts),
+  };
+}
+
+function rocsForWindow(receipts: DemoReceipt[]): unknown {
   // Derived from the receipts we just wrote, so the platform rollup and the
   // local ledger agree — the goalIds match, and so does the spend.
   const byGoal = new Map<

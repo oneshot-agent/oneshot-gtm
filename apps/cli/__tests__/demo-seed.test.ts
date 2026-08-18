@@ -4,15 +4,23 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { scrubInheritedSecrets } from "../src/commands/demo.ts";
-import { DEMO_MARKER, DemoSeedError, resetDemoHome, seedDemoHome } from "../src/demo/seed.ts";
+import {
+  canonicalize,
+  DEMO_MARKER,
+  DemoSeedError,
+  resetDemoHome,
+  seedDemoHome,
+} from "../src/demo/seed.ts";
 
 const ANCHOR = new Date("2026-08-17T09:00:00.000Z");
 
@@ -32,6 +40,10 @@ function open(dir: string): Database {
 
 function rows(db: Database, sql: string): Array<Record<string, unknown>> {
   return db.query(sql).all() as Array<Record<string, unknown>>;
+}
+
+function totalSpend(entries: Array<{ spend: number }>): number {
+  return entries.reduce((a, r) => a + r.spend, 0);
 }
 
 describe("seedDemoHome", () => {
@@ -171,6 +183,83 @@ describe("seedDemoHome", () => {
     const real = join(homedir(), ".oneshot-gtm");
     expect(() => seedDemoHome({ home: real, anchor: ANCHOR })).toThrow(DemoSeedError);
     expect(() => seedDemoHome({ home: real, anchor: ANCHOR })).toThrow(/real install/i);
+  });
+
+  it("refuses a SYMLINK to a protected install — lexical path comparison is not enough", () => {
+    // ONESHOT_GTM_HOME (the vitest temp home) stands in for a protected
+    // install that definitely exists. A symlink to it must be caught by the
+    // canonicalized comparison, not slip past a string match.
+    const protectedHome = process.env["ONESHOT_GTM_HOME"] as string;
+    mkdirSync(home, { recursive: true });
+    const link = join(home, "sneaky-link");
+    symlinkSync(protectedHome, link);
+    expect(() => seedDemoHome({ home: link, anchor: ANCHOR })).toThrow(DemoSeedError);
+    expect(() => seedDemoHome({ home: link, anchor: ANCHOR })).toThrow(/ONESHOT_GTM_HOME/);
+  });
+
+  it("canonicalize follows symlinked parents of a not-yet-existing path", () => {
+    mkdirSync(home, { recursive: true });
+    const link = join(home, "parent-link");
+    symlinkSync(home, link);
+    expect(canonicalize(join(link, "new-dir"))).toBe(join(realpathSync(home), "new-dir"));
+  });
+
+  it("keys the RoCS fixture by period so the Measure range chips vary", () => {
+    seedDemoHome({ home, anchor: ANCHOR });
+    const rocs = JSON.parse(readFileSync(join(home, "demo", "rocs-by-goal.json"), "utf8")) as {
+      "7": Array<{ spend: number }>;
+      "30": Array<{ spend: number }>;
+      all: Array<{ spend: number }>;
+    };
+    expect(rocs["all"].length).toBeGreaterThan(0);
+    // The seeded history spans 30 days, so each narrower window must aggregate
+    // strictly less spend — equal totals would mean the filter isn't filtering.
+    expect(totalSpend(rocs["7"])).toBeLessThan(totalSpend(rocs["30"]));
+    expect(totalSpend(rocs["30"])).toBeLessThanOrEqual(totalSpend(rocs["all"]));
+  });
+
+  it("attaches inbox drafts and sent history to the correct prospect's thread", () => {
+    seedDemoHome({ home, anchor: ANCHOR });
+    const inbox = JSON.parse(readFileSync(join(home, "demo", "inbox.json"), "utf8")) as {
+      emails: Array<{ id: string; from: string; thread_id: string }>;
+    };
+    const threadOwner = new Map(inbox.emails.map((e) => [e.thread_id, e.from]));
+
+    const db = open(home);
+    const drafts = rows(db, "SELECT thread_key, to_email FROM inbox_drafts");
+    const sent = rows(db, "SELECT thread_key, to_email FROM inbox_sent");
+    db.close();
+
+    // Every draft/sent row must live inside the thread of the prospect it
+    // addresses — a mismatch shows one person's reply inside another's thread.
+    for (const r of [...drafts, ...sent]) {
+      const owner = threadOwner.get(String(r["thread_key"]));
+      expect(
+        owner,
+        `thread ${String(r["thread_key"])} should exist in the inbox fixture`,
+      ).toBeTruthy();
+      expect(owner).toContain(String(r["to_email"]));
+    }
+  });
+
+  it("links run send events to the recipients' actual email.send receipts", () => {
+    seedDemoHome({ home, anchor: ANCHOR });
+    const db = open(home);
+    const [run] = rows(db, "SELECT events_json, prospect_emails_json FROM runs");
+    const events = JSON.parse(String(run?.["events_json"])) as Array<{
+      kind: string;
+      receiptIds?: number[];
+    }>;
+    const sendIds = events.filter((e) => e.kind === "send").flatMap((e) => e.receiptIds ?? []);
+    expect(sendIds.length).toBeGreaterThan(0);
+    const emails = JSON.parse(String(run?.["prospect_emails_json"])) as string[];
+    for (const id of sendIds) {
+      const [receipt] = rows(db, `SELECT call_type, signed_receipt FROM receipts WHERE id = ${id}`);
+      expect(receipt?.["call_type"]).toBe("email.send");
+      const to = (JSON.parse(String(receipt?.["signed_receipt"])) as { to?: string }).to;
+      expect(emails).toContain(to);
+    }
+    db.close();
   });
 
   it("refuses a non-empty directory it did not create, unless forced", () => {

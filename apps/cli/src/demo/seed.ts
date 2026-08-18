@@ -1,7 +1,15 @@
 import { Database } from "bun:sqlite";
-import { chmodSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { Ledger } from "@oneshot-gtm/core";
 import { buildDemoDataset, type DemoDataset } from "./dataset.ts";
 
@@ -13,6 +21,27 @@ export const DEFAULT_DEMO_HOME = join(homedir(), ".oneshot-gtm-demo");
 /** The real install. Seeding into it would overwrite a working config and ledger. */
 function realHome(): string {
   return join(homedir(), ".oneshot-gtm");
+}
+
+/**
+ * Resolve a path with symlinks followed, not just lexically. `resolve()` alone
+ * would let `--home some-symlink-to-the-real-install` slip past the guards
+ * below and write through the link into `~/.oneshot-gtm`. A path that doesn't
+ * exist yet can't be realpath'd directly, so canonicalize the nearest existing
+ * ancestor and re-append the rest — that also catches a symlinked PARENT
+ * directory pointing into the real install's parent.
+ */
+export function canonicalize(p: string): string {
+  let base = resolve(p);
+  const tail: string[] = [];
+  while (!existsSync(base)) {
+    const parent = dirname(base);
+    if (parent === base) break;
+    tail.unshift(basename(base));
+    base = parent;
+  }
+  const real = existsSync(base) ? realpathSync(base) : base;
+  return tail.length > 0 ? join(real, ...tail) : real;
 }
 
 export class DemoSeedError extends Error {}
@@ -57,15 +86,17 @@ export interface SeedResult {
  * never touches that. Everything here is written through explicit paths.
  */
 export function seedDemoHome(opts: { home?: string; anchor?: Date; force?: boolean }): SeedResult {
-  const home = resolve(opts.home ?? DEFAULT_DEMO_HOME);
+  // Canonical (symlink-followed) on BOTH sides of every comparison, and used
+  // for all writes below, so the guard and the writes refer to the same target.
+  const home = canonicalize(opts.home ?? DEFAULT_DEMO_HOME);
   const anchor = opts.anchor ?? new Date();
 
-  if (home === resolve(realHome())) {
+  if (home === canonicalize(realHome())) {
     throw new DemoSeedError(
       `refusing to seed into your real install (${home}). Pass --home with a different directory.`,
     );
   }
-  if (process.env["ONESHOT_GTM_HOME"] && home === resolve(process.env["ONESHOT_GTM_HOME"])) {
+  if (process.env["ONESHOT_GTM_HOME"] && home === canonicalize(process.env["ONESHOT_GTM_HOME"])) {
     throw new DemoSeedError(
       `refusing to seed into the active ONESHOT_GTM_HOME (${home}). Pass --home with a different directory.`,
     );
@@ -390,7 +421,7 @@ function writeLedger(dbPath: string, data: DemoDataset): Record<string, number> 
 
 /** Remove a seeded demo home. Refuses anything without the marker file. */
 export function resetDemoHome(home: string): void {
-  const dir = resolve(home);
+  const dir = canonicalize(home);
   if (!existsSync(dir)) return;
   if (!existsSync(join(dir, DEMO_MARKER))) {
     throw new DemoSeedError(
