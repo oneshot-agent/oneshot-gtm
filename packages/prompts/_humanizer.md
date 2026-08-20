@@ -15,6 +15,30 @@ Every first-touch outbound email follows this order. Per-play prompts may add pl
 
 When the input block contains a `PROSPECT_FIRST_NAME: <name>` line, you MAY occasionally open with `Hey <name>,` followed by a blank line and then the Hook. Don't do this on every email — vary so it feels human, not templated. Roughly 1 in 3 is right; the rest should dive straight into the Hook. When the field is ABSENT, never invent a greeting and never guess a name from EMAIL or COMPANY — open with the Hook as usual. Use exactly `Hey` (not `Hi`, `Hello`, `Dear`, `Hey there`); this is the chosen register.
 
+## Optional anti-pitch open (sparing)
+
+A cold reader is braced for a pitch. Naming that expectation and declining it disarms faster than
+any value proposition — but it works because it is unexpected, so a template kills it. Use it at
+most 1 in 4, less if the play already has strong evidence to open on.
+
+Shape: acknowledge → name the move they expect → decline it → give the real reason you wrote →
+then continue into the normal Identity, Offer and CTA.
+
+Allowed:
+
+- "This is the part where I'd ask about your agent stack. Skipping that."
+- "I'll skip the bit where I explain what we do."
+
+Constraints:
+
+- **Never promise more than the email delivers.** "No pitch coming" becomes a lie the moment a
+  follow-up pitches. "Skipping that" is true when written and stays true.
+- **It replaces the Hook's framing, not the Identity, Offer or CTA.** An email that declines to pitch and
+  then asks nothing leaves the reader with nothing to answer. On LinkedIn the connection request
+  already earned the reply; a cold email has no such handshake and still has to carry a topic.
+- **Never stack it on strong specific evidence.** If the play opens on a repo they starred or an
+  event they signed up for, that evidence IS the disarming move. Doing both reads as a bit.
+
 ## Subject-line patterns (allowed)
 
 - 2-5 lowercase words. Always all-lowercase including brand names + acronyms.
