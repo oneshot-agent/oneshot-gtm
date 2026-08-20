@@ -412,6 +412,35 @@ function findPart(
 }
 
 /**
+ * The RFC 3464 field block of a `message/delivery-status` part.
+ *
+ * Two shapes occur in the wild. Exchange and most MTAs put the fields directly
+ * on the part. Gmail's own NDRs make the part a container with an empty body
+ * and nest the fields in a `text/plain` child. Reading only the direct body
+ * therefore skipped every Gmail-generated DSN — the most common shape when the
+ * sending identity is itself Gmail — so the structured branch never ran, the
+ * prose fallback declined too, and a hard bounce recorded nothing and
+ * suppressed nobody.
+ *
+ * Only the part's own body and its direct children are considered. Descending
+ * further would reach the `message/rfc822` copy of the original outbound mail,
+ * whose headers name the recipient we sent to and would parse as a failure
+ * report for an address that never bounced.
+ */
+function decodeB64Url(data: string): string {
+  return Buffer.from(data, "base64url").toString("utf8");
+}
+
+function dsnReportText(part: GmailPayloadPart | undefined): string | null {
+  if (!part) return null;
+  if (part.body?.data) return decodeB64Url(part.body.data);
+  const child =
+    (part.parts ?? []).find((c) => c.mimeType === "text/plain" && c.body?.data) ??
+    (part.parts ?? []).find((c) => c.body?.data);
+  return child?.body?.data ? decodeB64Url(child.body.data) : null;
+}
+
+/**
  * Unfold RFC 5322 continuation lines (a line beginning with whitespace belongs
  * to the previous one). Diagnostic-Code routinely wraps across several lines,
  * and reading only the first would truncate the SMTP response mid-sentence.
@@ -457,9 +486,8 @@ export interface ParsedBounce {
  * senders that don't emit a conforming report.
  */
 export function parseBounce(msg: GmailMessageMeta): ParsedBounce[] {
-  const report = findPart(msg.payload, "message/delivery-status");
-  if (report?.body?.data) {
-    const text = Buffer.from(report.body.data, "base64url").toString("utf8");
+  const text = dsnReportText(findPart(msg.payload, "message/delivery-status"));
+  if (text) {
     const out: ParsedBounce[] = [];
     // Per-message fields come first, then one block per recipient, blank-line
     // separated. Only blocks naming a recipient describe a delivery failure.
