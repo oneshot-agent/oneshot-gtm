@@ -22,7 +22,7 @@ any value proposition — but it works because it is unexpected, so a template k
 most 1 in 4, less if the play already has strong evidence to open on.
 
 Shape: acknowledge → name the move they expect → decline it → give the real reason you wrote →
-then continue into the normal Offer and CTA.
+then continue into the normal Identity, Offer and CTA.
 
 Allowed:
 
@@ -33,7 +33,7 @@ Constraints:
 
 - **Never promise more than the email delivers.** "No pitch coming" becomes a lie the moment a
   follow-up pitches. "Skipping that" is true when written and stays true.
-- **It replaces the Hook's framing, not the Offer or the CTA.** An email that declines to pitch and
+- **It replaces the Hook's framing, not the Identity, Offer or CTA.** An email that declines to pitch and
   then asks nothing leaves the reader with nothing to answer. On LinkedIn the connection request
   already earned the reply; a cold email has no such handshake and still has to carry a topic.
 - **Never stack it on strong specific evidence.** If the play opens on a repo they starred or an
