@@ -362,3 +362,83 @@ describe("parseBounce — recipient scoring", () => {
     expect(parseBounce(msg)[0]?.recipient).toBe("target@dead.example");
   });
 });
+
+/**
+ * Gmail's own NDR shape, taken from a real 5.1.3 bounce: the
+ * `message/delivery-status` part is a container with an empty body and the
+ * RFC 3464 fields sit in a nested `text/plain` child. Every other fixture in
+ * this file uses the Exchange shape (fields on the part itself), which is why
+ * this went unnoticed until a hard bounce failed to suppress its address.
+ */
+describe("parseBounce — Gmail nests the report in a child part", () => {
+  const nested = (report: string): GmailMessageMeta => ({
+    id: "msg-nested",
+    threadId: "thread-nested",
+    internalDate: "1755000000000",
+    payload: {
+      mimeType: "multipart/report",
+      headers: [
+        { name: "From", value: "Mail Delivery Subsystem <mailer-daemon@googlemail.com>" },
+        { name: "Subject", value: "Delivery Status Notification (Failure)" },
+      ],
+      parts: [
+        {
+          mimeType: "multipart/related",
+          parts: [{ mimeType: "text/plain", body: { data: b64("Address not found") } }],
+        },
+        // container: no body of its own
+        {
+          mimeType: "message/delivery-status",
+          parts: [{ mimeType: "text/plain", body: { data: b64(report) } }],
+        },
+        { mimeType: "message/global-headers", body: { data: b64("To: s.zhu@pnptc.com") } },
+      ],
+    },
+  });
+
+  it("reads a hard bounce out of the nested text/plain child", () => {
+    const out = parseBounce(
+      nested(
+        "Final-Recipient: rfc822; s.zhu@pnptc.com\n" +
+          "Action: failed\n" +
+          "Status: 5.1.3\n" +
+          "Diagnostic-Code: smtp; The email account that you tried to reach does not exist.\n" +
+          "Last-Attempt-Date: Wed, 19 Aug 2026 13:04:20 -0700 (PDT)\n",
+      ),
+    );
+    expect(out).toHaveLength(1);
+    expect(out[0]?.recipient).toBe("s.zhu@pnptc.com");
+    expect(out[0]?.kind).toBe("hard");
+    expect(out[0]?.statusCode).toBe("5.1.3");
+  });
+
+  it("still classifies a nested soft bounce as soft", () => {
+    const out = parseBounce(
+      nested("Final-Recipient: rfc822; aurelien@getcargoapp.com\nAction: failed\nStatus: 4.4.1\n"),
+    );
+    expect(out[0]?.kind).toBe("soft");
+  });
+
+  it("does not descend past the direct children into the returned original", () => {
+    // A message/rfc822 copy of our own outbound mail carries To:/Final-Recipient-
+    // looking headers. Parsing it would invent a bounce for a live address.
+    const msg = nested(
+      "Final-Recipient: rfc822; real@bounced.com\nAction: failed\nStatus: 5.1.1\n",
+    );
+    msg.payload?.parts?.push({
+      mimeType: "message/rfc822",
+      parts: [
+        {
+          mimeType: "text/plain",
+          body: {
+            data: b64(
+              "Final-Recipient: rfc822; live@prospect.com\nAction: failed\nStatus: 5.1.1\n",
+            ),
+          },
+        },
+      ],
+    });
+    const out = parseBounce(msg);
+    expect(out.map((b) => b.recipient)).toEqual(["real@bounced.com"]);
+  });
+});
