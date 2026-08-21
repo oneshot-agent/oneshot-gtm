@@ -22,6 +22,7 @@ import {
   inboxThreadKey,
 } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
+import { gatherReplyContext } from "./_reply-research.ts";
 
 /** "Jane Doe <jane@x.com>" → "jane@x.com"; bare addresses pass through. */
 function normalizeFrom(raw: string): string {
@@ -216,9 +217,46 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
     };
   }
 
+  // Research before drafting: free tiers always (stored dossier, this thread's
+  // sent replies), paid tier only for senders we know nothing about. Wrapped —
+  // research failing must degrade the draft, never block it.
+  let context: Awaited<ReturnType<typeof gatherReplyContext>> = {
+    dossier: null,
+    threadSent: [],
+    costUsd: 0,
+    researched: false,
+  };
   try {
-    const draft = await draftInboxReply({ fromEmail, subject, body: inboundBody, matched });
-    const out: InboxDraftReplyResult = { body: draft.body };
+    context = await gatherReplyContext({
+      fromEmail,
+      prospectId: matched?.prospectId ?? null,
+      threadKey:
+        typeof body.id === "string" && body.id.length > 0
+          ? inboxThreadKey({ threadId: body.threadId ?? null, id: body.id })
+          : null,
+    });
+  } catch (err) {
+    logEvent(
+      "inbox.reply.research_failed",
+      { message_120: ((err as Error).message ?? "").slice(0, 120) },
+      "warn",
+    );
+  }
+
+  try {
+    const draft = await draftInboxReply({
+      fromEmail,
+      subject,
+      body: inboundBody,
+      matched,
+      dossier: context.dossier,
+      threadSent: context.threadSent,
+    });
+    const out: InboxDraftReplyResult = {
+      body: draft.body,
+      costUsd: context.costUsd,
+      researched: context.researched,
+    };
     return jsonResponse(out, 200, req);
   } catch (err) {
     const message = (err as Error)?.message ?? "draft failed";

@@ -103,12 +103,12 @@ Nine pages plus a run form:
 - **Home** — spend, reply-rate trend, in-flight cadences, and a scheduler strip showing each trigger's state, last run and next due
 - **Queue** — triggers table (enable, edit config, fire) plus the target queue with bulk approve and per-play **Drain**
 - **Add Prospect** — paste a LinkedIn / X / GitHub URL; `deepResearchPerson` builds a dossier, the LLM picks an angle against your ICP and drafts an intro, and the row lands in the queue
-- **Replies** — every reply matched to its prospect, play and cadence status across all sender identities; answer in place, by hand or LLM-drafted
+- **Replies** — every reply matched to its prospect, play and cadence status across all sender identities; answer in place, by hand or LLM-drafted. Drafting is research-grounded: known prospects reuse their stored dossier, unknown senders get enriched + their site read (~$0.06, cached 30 days, receipted under `inbox-reply`), and replies may cite links from your product brief — never invented ones
 - **Cadences** — stop, log outcome, preview the next step, batch send
 - **Receipts** — paginated, with the memo and value chip per call; click through to the signed payload
 - **Plays** — cards with channel badges, a Run button, and Copy CLI
 - **Measure** — CAC and RoCS by time range, plus per-cadence spend vs tagged value grouped by goal
-- **Setup** — founder profile, LLM provider, wallet keys, sender identities, telemetry toggle
+- **Setup** — founder profile, ICP, product brief (facts + the only links replies may cite, derivable from your site/repo/docs), LLM provider, wallet keys, sender identities, telemetry toggle
 - **Run a play** (`/run/$playName`) — editable target rows, dry-run toggle, drafts streamed back over SSE with lint flags and receipt links
 
 A floating strategist dock sits on every page: it reads your ICP and product one-liner and proposes trigger configs as confirmation chips (`POST /api/strategist/stream`, SSE).

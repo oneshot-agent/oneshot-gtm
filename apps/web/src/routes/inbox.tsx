@@ -306,8 +306,15 @@ function ReplyComposer({ reply }: { reply: InboxReplyView }) {
         fromEmail: reply.fromEmail,
         subject: reply.subject,
         body: reply.body,
+        id: reply.id,
+        threadId: reply.threadId,
       }),
-    onSuccess: (res) => setDraft(res.body),
+    onSuccess: (res) => {
+      setDraft(res.body);
+      if (res.researched && res.costUsd > 0) {
+        toast.success(`draft ready · researched sender ($${res.costUsd.toFixed(2)})`);
+      }
+    },
     onError: (err) => toast.error(`couldn't draft · ${err.message}`),
   });
 
@@ -419,7 +426,13 @@ function ReplyComposer({ reply }: { reply: InboxReplyView }) {
           ) : (
             <Sparkles size={12} />
           )}
-          {generate.isPending ? "drafting" : draft ? "regenerate" : "generate with llm"}
+          {generate.isPending
+            ? reply.matched
+              ? "drafting"
+              : "researching + drafting"
+            : draft
+              ? "regenerate"
+              : "generate with llm"}
         </Button>
         <Button
           variant="primary"

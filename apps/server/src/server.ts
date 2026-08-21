@@ -18,6 +18,7 @@ import { listPlays, setCadenceRoute } from "./api/plays.ts";
 import { measureCac, measureRocs, measureRocsByGoal, recordOutcome } from "./api/measure.ts";
 import { setup, getSetupStatus } from "./api/setup.ts";
 import { gmailAuthCallbackRoute, startGmailAuthRoute } from "./api/gmail-auth.ts";
+import { deriveBriefRoute } from "./api/derive-brief.ts";
 import { deriveIcpRoute } from "./api/derive-icp.ts";
 import { strategistRoute } from "./api/strategist.ts";
 import { doctor } from "./api/doctor.ts";
@@ -94,6 +95,7 @@ const routes: RouteEntry[] = [
   route("GET", "/api/gmail/auth/start", startGmailAuthRoute),
   route("GET", "/api/gmail/auth/callback", gmailAuthCallbackRoute),
   route("POST", "/api/setup/derive-icp", deriveIcpRoute),
+  route("POST", "/api/setup/derive-brief", deriveBriefRoute),
   route("POST", "/api/strategist/stream", strategistRoute),
   route("GET", "/api/doctor", doctor),
   route("POST", "/api/run/:playName", runPlay),

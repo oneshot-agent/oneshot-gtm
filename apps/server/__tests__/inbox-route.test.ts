@@ -32,8 +32,14 @@ vi.mock("@oneshot-gtm/core", async () => {
   };
 });
 
-// draftInboxReply isn't exercised here but the module imports it.
-vi.mock("@oneshot-gtm/plays", () => ({ draftInboxReply: vi.fn() }));
+const draftInboxReplyMock = vi.fn();
+vi.mock("@oneshot-gtm/plays", () => ({ draftInboxReply: draftInboxReplyMock }));
+
+// Research is unit-tested in reply-research.test.ts; here it's a seam.
+const gatherReplyContextMock = vi.fn();
+vi.mock("../src/api/_reply-research.ts", () => ({
+  gatherReplyContext: gatherReplyContextMock,
+}));
 
 const { draftReplyRoute, listInboxRoute, saveDraftRoute, sendReplyRoute } =
   await import("../src/api/inbox.ts");
@@ -192,5 +198,59 @@ describe("inbox route — window honesty & empty-body drafting", () => {
     expect(res.status).toBe(400);
     const out = (await res.json()) as { error: string };
     expect(out.error).toMatch(/no body/i);
+  });
+});
+
+describe("inbox route — research-grounded drafting", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getInboxThreadsMock.mockReturnValue(new Map());
+    gatherReplyContextMock.mockResolvedValue({
+      dossier: "researched dossier",
+      threadSent: [{ body: "sent earlier", sentAt: "2026-08-20" }],
+      costUsd: 0.06,
+      researched: true,
+    });
+    draftInboxReplyMock.mockResolvedValue({ body: "the draft" });
+  });
+
+  it("passes research context into draftInboxReply and reports the spend", async () => {
+    const res = await draftReplyRoute(
+      post("/api/inbox/draft-reply", {
+        fromEmail: "aladdin@aliyev.site",
+        subject: "Re: x",
+        body: "tell me about payments",
+        id: "e1",
+        threadId: "t1",
+      }),
+    );
+    expect(res.status).toBe(200);
+    const out = (await res.json()) as { body: string; costUsd: number; researched: boolean };
+    expect(out).toEqual({ body: "the draft", costUsd: 0.06, researched: true });
+    expect(gatherReplyContextMock).toHaveBeenCalledWith({
+      fromEmail: "aladdin@aliyev.site",
+      prospectId: null,
+      threadKey: "t1",
+    });
+    expect(draftInboxReplyMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dossier: "researched dossier",
+        threadSent: [{ body: "sent earlier", sentAt: "2026-08-20" }],
+      }),
+    );
+  });
+
+  it("still drafts when research itself throws", async () => {
+    gatherReplyContextMock.mockRejectedValue(new Error("research exploded"));
+    const res = await draftReplyRoute(
+      post("/api/inbox/draft-reply", { fromEmail: "a@b.dev", subject: "s", body: "hi" }),
+    );
+    expect(res.status).toBe(200);
+    const out = (await res.json()) as { body: string; costUsd: number };
+    expect(out.body).toBe("the draft");
+    expect(out.costUsd).toBe(0);
+    expect(draftInboxReplyMock).toHaveBeenCalledWith(
+      expect.objectContaining({ dossier: null, threadSent: [] }),
+    );
   });
 });
