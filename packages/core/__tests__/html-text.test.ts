@@ -93,6 +93,27 @@ describe("htmlToText", () => {
     expect(htmlToText("before<!-- never closed")).toBe("before");
   });
 
+  // Review findings on the merged #33 — the second round.
+  it("does not treat <script-widget> custom elements as script blocks", () => {
+    expect(htmlToText("<script-widget>visible text</script-widget>")).toBe("visible text");
+    expect(htmlToText("<style-guide>also visible</style-guide>")).toBe("also visible");
+  });
+
+  it("strips every block with no iteration cap — the 150th script cannot leak", () => {
+    const many = Array.from({ length: 150 }, (_, i) => `<script>secret${i}</script>`).join("x");
+    const out = htmlToText(many);
+    expect(out).not.toContain("secret");
+    expect(out).toBe("x".repeat(149));
+  });
+
+  it("stays fast on input stuffed with unterminated openers (ReDoS guard)", () => {
+    const t0 = performance.now();
+    expect(htmlToText(`${"<script ".repeat(30_000)}`)).toBe("");
+    expect(htmlToText(`${"<a ".repeat(50_000)}`)).toBe("");
+    expect(htmlToText(`${"<br ".repeat(50_000)}`)).toBe("");
+    expect(performance.now() - t0).toBeLessThan(1_000);
+  });
+
   // Review findings on #33 — each of these destroyed or leaked real content.
   it("preserves comparison operators in prose", () => {
     expect(htmlToText("<p>Revenue < $1m and growth > 20%</p>")).toBe(

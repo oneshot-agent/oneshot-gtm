@@ -316,6 +316,18 @@ describe("listGmailReplies", () => {
     expect(body).toBe("nested");
   });
 
+  it("does not let a whitespace-only text/plain part mask the HTML alternative", async () => {
+    const body = await bodyFor({
+      mimeType: "multipart/alternative",
+      headers: [{ name: "From", value: "a@b.dev" }],
+      parts: [
+        { mimeType: "text/plain", body: { data: b64(" \n \n") } },
+        { mimeType: "text/html", body: { data: b64("<p>the real content</p>") } },
+      ],
+    });
+    expect(body).toBe("the real content");
+  });
+
   it("still prefers text/plain when both parts exist", async () => {
     const body = await bodyFor({
       mimeType: "multipart/alternative",

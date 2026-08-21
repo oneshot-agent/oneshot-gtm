@@ -8,6 +8,17 @@
  * reply drafting, triage) needs a text form. This is a preview-quality
  * conversion, not an HTML parser: good enough to read and to prompt an LLM
  * with, not a DOM.
+ *
+ * Everything here is a single-pass left-to-right builder over indexOf, by
+ * design and by hard-won lesson: three review rounds showed that EVERY
+ * regex-with-a-middle over attacker-supplied HTML ends up polynomial
+ * (`open[\s\S]*?close`, `</tag[^>]*>`, `<tag\b[^>]*>` — each fell to a
+ * different `"prefix".repeat(n)` input), and iteration-capped replace loops
+ * leak whatever lies past the cap. Builders are linear by construction and
+ * handle any number of blocks in one pass; a small bounded fixpoint on top
+ * handles reassembly (removing a span can butt `<scr` against `ipt>`), and a
+ * truncation guard makes "an opener never survives" a hard invariant rather
+ * than a hope.
  */
 
 /** Named entities that actually occur in mail bodies; everything else numeric. */
@@ -36,67 +47,76 @@ function safeCodePoint(cp: number): string {
   }
 }
 
-/**
- * Replace-until-fixpoint. A single `.replace` pass over overlapping constructs
- * can REASSEMBLE the pattern it just removed (`<scr<script>ipt>` → one pass
- * leaves `<script>`), which is both a CodeQL incomplete-sanitization finding
- * and a real extraction bug. Bounded so a pathological input can't loop
- * forever; leftovers past the bound are caught by the final tag strip.
- */
-function removeAll(s: string, re: RegExp): string {
-  for (let i = 0; i < 10; i++) {
-    const next = s.replace(re, "");
-    if (next === s) return next;
-    s = next;
-  }
-  return s;
+/** Spec tag-name boundary: `</script` closes only before whitespace, `/` or `>`. */
+function isTagBoundary(ch: string | undefined): boolean {
+  return ch === undefined || ch === ">" || ch === "/" || /\s/.test(ch);
 }
 
 /**
- * Remove every `<tag …>…</tag …>` block, contents included. The close tag is
- * located with two `indexOf` calls — the token, then the next `>` — because
- * ANY close-side regex here goes polynomial on input stuffed with `</tag`
- * prefixes (CodeQL js/polynomial-redos; `</script[^>]*>` retries `[^>]*` from
- * every prefix), and email HTML is attacker-supplied. The span between the
- * token and the first `>` is `[^>]*` by construction, so the semantics match
- * the spec-lenient close tag (`</script\t\n bar>` closes). Re-scanning from
- * the top after each removal is the fixpoint property: excising a block must
- * not leave a reassembled opener standing. An unclosed opener (or a close
- * token with no `>` after it) drops to end-of-input — raw script/style text
+ * Find the next REAL `<tag` / `</tag` token at or after `from`: the name must
+ * end at a tag boundary, so `<script-widget>` is a custom element, not a
+ * `<script>` (a `\b` regex boundary matches at the hyphen and got this wrong).
+ */
+function findToken(lower: string, token: string, from: number): number {
+  let i = lower.indexOf(token, from);
+  while (i !== -1) {
+    if (isTagBoundary(lower[i + token.length])) return i;
+    i = lower.indexOf(token, i + token.length);
+  }
+  return -1;
+}
+
+/**
+ * One left-to-right pass removing every `<tag …>…</tag …>` block, contents
+ * included. Any number of blocks in one pass — no iteration cap to leak the
+ * N+1th block. Unterminated opener or missing close tag drops to end-of-input:
+ * per spec that content is still inside the element, and raw script/style text
  * must never leak into the "body".
  */
-function stripBlocks(s: string, tag: string): string {
-  const open = new RegExp(`<${tag}\\b[^>]*>`, "i");
-  const closeToken = `</${tag}`;
-  for (let i = 0; i < 100; i++) {
-    const o = open.exec(s);
-    if (!o) return s;
-    const afterOpen = o.index + o[0].length;
-    // Per spec, `</script` only closes when followed by whitespace, `/` or
-    // `>` — `</scripture>` does NOT end a script element, and treating it as
-    // a close would stop stripping early and leak the rest of the script
-    // source into the "body". Scan forward past false-prefix candidates.
-    const lower = s.toLowerCase();
-    let closeAt = lower.indexOf(closeToken, afterOpen);
-    while (closeAt !== -1) {
-      const next = s[closeAt + closeToken.length] ?? ">";
-      if (next === ">" || next === "/" || /\s/.test(next)) break;
-      closeAt = lower.indexOf(closeToken, closeAt + closeToken.length);
+function stripBlocksOnce(s: string, tag: string): string {
+  const lower = s.toLowerCase();
+  const openTok = `<${tag}`;
+  const closeTok = `</${tag}`;
+  let out = "";
+  let i = 0;
+  while (i < s.length) {
+    const o = findToken(lower, openTok, i);
+    if (o === -1) {
+      out += s.slice(i);
+      break;
     }
-    const gt = closeAt === -1 ? -1 : s.indexOf(">", closeAt + closeToken.length);
-    const end = gt === -1 ? s.length : gt + 1;
-    s = s.slice(0, o.index) + s.slice(end);
+    out += s.slice(i, o);
+    const openEnd = s.indexOf(">", o + openTok.length);
+    if (openEnd === -1) break; // unterminated opener: rest is inside the tag
+    const c = findToken(lower, closeTok, openEnd + 1);
+    if (c === -1) break; // unclosed element: content runs to end-of-input
+    const gt = s.indexOf(">", c + closeTok.length);
+    if (gt === -1) break;
+    i = gt + 1;
   }
-  return s;
+  return out;
 }
 
 /**
- * Remove HTML comments with indexOf scanning — `<!--[\s\S]*?-->` is polynomial
- * on input stuffed with `<!--` openers and no closer (CodeQL
- * js/polynomial-redos), the same trap as the block regexes. An unclosed
- * comment runs to end-of-input, per spec. After a cut the scan backs up 3
- * chars: removing a comment can butt `<!` against `--` and assemble a fresh
- * opener, which must not survive.
+ * stripBlocksOnce to a bounded fixpoint — excising a span can reassemble an
+ * opener from the flanking pieces (`<scr<script>…</script>ipt>…`). Depth past
+ * the bound doesn't leak: any surviving opener truncates the output there,
+ * making "no <tag content in the result" an invariant, not a best effort.
+ */
+function stripBlocks(s: string, tag: string): string {
+  for (let pass = 0; pass < 10; pass++) {
+    const next = stripBlocksOnce(s, tag);
+    if (next === s) break;
+    s = next;
+  }
+  const survivor = findToken(s.toLowerCase(), `<${tag}`, 0);
+  return survivor === -1 ? s : s.slice(0, survivor);
+}
+
+/**
+ * Remove HTML comments in one pass. An unclosed comment runs to end-of-input,
+ * per spec. After a cut the scan backs up 3 chars: removing a comment can butt
+ * `<!` against `--` and assemble a fresh opener, which must not survive.
  */
 function stripComments(s: string): string {
   let from = 0;
@@ -110,6 +130,69 @@ function stripComments(s: string): string {
   }
 }
 
+/** Tags whose end (or, for <br>, presence) is a paragraph/line break. */
+const BREAK_CLOSERS = new Set([
+  "p",
+  "div",
+  "tr",
+  "li",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "blockquote",
+  "pre",
+  "table",
+]);
+
+/**
+ * `\n` for structural tags, `""` for the rest. The check runs on one already-
+ * isolated span, so it adds nothing to the pass's complexity — unlike the
+ * `<br\b[^>]*>`-style replace regexes it displaced, which were quadratic on
+ * `"<br ".repeat(n)` with no closing `>` (the same shape as every other
+ * middle-scanning pattern this file has shed). Gmail's attribute-bearing
+ * breaks (`<br class="gmail_default">`) still break the line.
+ */
+function tagReplacement(tagBody: string): string {
+  const t = tagBody.toLowerCase();
+  if (/^br(?![a-z0-9-])/.test(t)) return "\n";
+  const close = /^\/([a-z][a-z0-9]*)\s*$/.exec(t);
+  return close?.[1] && BREAK_CLOSERS.has(close[1]) ? "\n" : "";
+}
+
+/**
+ * One pass dropping every TAG-SHAPED span: `<` followed by a letter, `!` or
+ * `/`, through the next `>` — structural tags leave a newline behind. A bare
+ * `<` in prose ("Revenue < $1m and growth > 20%") is comparison text and
+ * passes through. An unterminated tag drops the rest — it's all inside the
+ * tag per spec.
+ */
+function stripTagsOnce(s: string): string {
+  let out = "";
+  let i = 0;
+  while (i < s.length) {
+    const lt = s.indexOf("<", i);
+    if (lt === -1) {
+      out += s.slice(i);
+      break;
+    }
+    const next = s[lt + 1] ?? "";
+    if (!/[a-z!/]/i.test(next)) {
+      out += s.slice(i, lt + 1);
+      i = lt + 1;
+      continue;
+    }
+    const gt = s.indexOf(">", lt + 2);
+    out += s.slice(i, lt);
+    if (gt === -1) break;
+    out += tagReplacement(s.slice(lt + 1, gt));
+    i = gt + 1;
+  }
+  return out;
+}
+
 export function htmlToText(html: string): string {
   if (!html) return "";
   let s = html;
@@ -120,18 +203,15 @@ export function htmlToText(html: string): string {
   s = stripBlocks(s, "head");
   s = stripComments(s);
 
-  // Structural breaks → newlines BEFORE stripping tags, so paragraphs survive.
-  // <br\b[^>]*> — Gmail emits attribute-bearing breaks (<br class="gmail_default">)
-  // and a stricter pattern silently joined the words around them.
-  s = s.replace(/<br\b[^>]*>/gi, "\n");
-  s = s.replace(/<\/(p|div|tr|li|h[1-6]|blockquote|pre|table)\s*>/gi, "\n");
-
-  // Everything else TAG-SHAPED is formatting we don't need — to fixpoint, so
-  // nested brackets can't reassemble a tag from the pieces of a removed one.
-  // Tag-shaped means `</`, `<!` or `<letter…`: a bare `<` in prose
-  // ("Revenue < $1m and growth > 20%") is comparison text, and the old
-  // `<[^>]+>` ate everything between it and the next `>`.
-  s = removeAll(s, /<\/?[a-z!][^>]*>/gi);
+  // Tag-shaped spans go, structural ones leave a newline — to a bounded
+  // fixpoint (nested brackets can reassemble a tag from the pieces of a
+  // removed one; leftovers past the bound are inert prose — script/style
+  // content is already gone).
+  for (let pass = 0; pass < 10; pass++) {
+    const next = stripTagsOnce(s);
+    if (next === s) break;
+    s = next;
+  }
 
   s = decodeEntities(s);
 
