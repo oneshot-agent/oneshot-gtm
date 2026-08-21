@@ -80,6 +80,19 @@ describe("htmlToText", () => {
     expect(out).not.toContain("script");
   });
 
+  it("stays fast on input stuffed with comment openers (ReDoS guard)", () => {
+    const hostile = `${"<!--".repeat(40_000)}tail`;
+    const t0 = performance.now();
+    const out = htmlToText(hostile);
+    expect(performance.now() - t0).toBeLessThan(1_000);
+    // The first opener never closes, so everything after it is comment.
+    expect(out).toBe("");
+  });
+
+  it("drops an unclosed comment to end-of-input, per spec", () => {
+    expect(htmlToText("before<!-- never closed")).toBe("before");
+  });
+
   // Review findings on #33 — each of these destroyed or leaked real content.
   it("preserves comparison operators in prose", () => {
     expect(htmlToText("<p>Revenue < $1m and growth > 20%</p>")).toBe(

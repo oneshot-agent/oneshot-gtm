@@ -90,6 +90,26 @@ function stripBlocks(s: string, tag: string): string {
   return s;
 }
 
+/**
+ * Remove HTML comments with indexOf scanning — `<!--[\s\S]*?-->` is polynomial
+ * on input stuffed with `<!--` openers and no closer (CodeQL
+ * js/polynomial-redos), the same trap as the block regexes. An unclosed
+ * comment runs to end-of-input, per spec. After a cut the scan backs up 3
+ * chars: removing a comment can butt `<!` against `--` and assemble a fresh
+ * opener, which must not survive.
+ */
+function stripComments(s: string): string {
+  let from = 0;
+  while (true) {
+    const open = s.indexOf("<!--", from);
+    if (open === -1) return s;
+    const close = s.indexOf("-->", open + 4);
+    const end = close === -1 ? s.length : close + 3;
+    s = s.slice(0, open) + s.slice(end);
+    from = Math.max(0, open - 3);
+  }
+}
+
 export function htmlToText(html: string): string {
   if (!html) return "";
   let s = html;
@@ -98,7 +118,7 @@ export function htmlToText(html: string): string {
   s = stripBlocks(s, "script");
   s = stripBlocks(s, "style");
   s = stripBlocks(s, "head");
-  s = removeAll(s, /<!--[\s\S]*?-->/g);
+  s = stripComments(s);
 
   // Structural breaks → newlines BEFORE stripping tags, so paragraphs survive.
   // <br\b[^>]*> — Gmail emits attribute-bearing breaks (<br class="gmail_default">)
