@@ -52,17 +52,42 @@ function removeAll(s: string, re: RegExp): string {
   return s;
 }
 
+/**
+ * Remove every `<tag …>…</tag …>` block, contents included. The close tag is
+ * located with two `indexOf` calls — the token, then the next `>` — because
+ * ANY close-side regex here goes polynomial on input stuffed with `</tag`
+ * prefixes (CodeQL js/polynomial-redos; `</script[^>]*>` retries `[^>]*` from
+ * every prefix), and email HTML is attacker-supplied. The span between the
+ * token and the first `>` is `[^>]*` by construction, so the semantics match
+ * the spec-lenient close tag (`</script\t\n bar>` closes). Re-scanning from
+ * the top after each removal is the fixpoint property: excising a block must
+ * not leave a reassembled opener standing. An unclosed opener (or a close
+ * token with no `>` after it) drops to end-of-input — raw script/style text
+ * must never leak into the "body".
+ */
+function stripBlocks(s: string, tag: string): string {
+  const open = new RegExp(`<${tag}\\b[^>]*>`, "i");
+  const closeToken = `</${tag}`;
+  for (let i = 0; i < 100; i++) {
+    const o = open.exec(s);
+    if (!o) return s;
+    const afterOpen = o.index + o[0].length;
+    const closeAt = s.toLowerCase().indexOf(closeToken, afterOpen);
+    const gt = closeAt === -1 ? -1 : s.indexOf(">", closeAt + closeToken.length);
+    const end = gt === -1 ? s.length : gt + 1;
+    s = s.slice(0, o.index) + s.slice(end);
+  }
+  return s;
+}
+
 export function htmlToText(html: string): string {
   if (!html) return "";
   let s = html;
 
-  // Invisible content first, so its text never leaks into the output. End tags
-  // are matched as `</script[^>]*>` — per the HTML spec a close tag may carry
-  // whitespace (including newlines) and junk before `>`, and a stricter
-  // pattern would leave the element's raw contents in the "text".
-  s = removeAll(s, /<script\b[^>]*>[\s\S]*?<\/script[^>]*>/gi);
-  s = removeAll(s, /<style\b[^>]*>[\s\S]*?<\/style[^>]*>/gi);
-  s = removeAll(s, /<head\b[^>]*>[\s\S]*?<\/head[^>]*>/gi);
+  // Invisible content first, so its text never leaks into the output.
+  s = stripBlocks(s, "script");
+  s = stripBlocks(s, "style");
+  s = stripBlocks(s, "head");
   s = removeAll(s, /<!--[\s\S]*?-->/g);
 
   // Structural breaks → newlines BEFORE stripping tags, so paragraphs survive.

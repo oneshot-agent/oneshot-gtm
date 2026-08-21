@@ -67,4 +67,16 @@ describe("htmlToText", () => {
   it("never leaves an assembled comment opener behind", () => {
     expect(htmlToText("<!<!--- x --->--> visible")).not.toContain("<!--");
   });
+
+  it("drops an unclosed script block to end-of-input instead of leaking it", () => {
+    expect(htmlToText("before<script>var secret = 1;")).toBe("before");
+  });
+
+  it("stays fast on input stuffed with close-tag prefixes (ReDoS guard)", () => {
+    const hostile = `<script>${"</script".repeat(20_000)}`;
+    const t0 = performance.now();
+    const out = htmlToText(hostile);
+    expect(performance.now() - t0).toBeLessThan(1_000);
+    expect(out).not.toContain("script");
+  });
 });
