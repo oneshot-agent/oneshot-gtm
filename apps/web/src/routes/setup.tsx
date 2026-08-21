@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Mail, Save, Wand2 } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode, useRef } from "react";
 import { toast } from "sonner";
 import { api } from "../api/client.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
@@ -70,6 +70,11 @@ function SetupPage() {
   const [productPortfolio, setProductPortfolio] = useState("");
   const [partners, setPartners] = useState("");
   const [productBrief, setProductBrief] = useState("");
+  // Unsaved edits/derives must survive ["setup"] refetches (pause/resume and
+  // save all invalidate it) — the hydrate effect only overwrites a clean field.
+  // A ref, not state: the hydrate effect must read the CURRENT flag without
+  // re-running when it flips.
+  const briefDirty = useRef(false);
   const [briefSources, setBriefSources] = useState("");
   const [briefDeriveInfo, setBriefDeriveInfo] = useState<string | null>(null);
   const [mobileSignature, setMobileSignature] = useState(false);
@@ -88,7 +93,7 @@ function SetupPage() {
     setFounderCredentials(c.founderCredentials ?? "");
     setProductPortfolio(c.productPortfolio ?? "");
     setPartners(c.partners ?? "");
-    setProductBrief(c.productBrief ?? "");
+    if (!briefDirty.current) setProductBrief(c.productBrief ?? "");
     setBriefSources((prev) => prev || (c.productDomain ? `https://${c.productDomain}` : ""));
     setMobileSignature(c.mobileSignature ?? false);
     setLlmProvider(c.llmProvider);
@@ -150,6 +155,7 @@ function SetupPage() {
     mutationFn: (urls: string[]) => api.deriveBrief(urls),
     onSuccess: (res) => {
       setProductBrief(res.proposedBrief);
+      briefDirty.current = true;
       const skipped = res.skipped.length > 0 ? ` · ${res.skipped.length} source(s) unreadable` : "";
       setBriefDeriveInfo(
         `derived from ${res.sourceUrls.length} source(s) · $${res.costUsd.toFixed(2)}${skipped} — edit before saving`,
@@ -209,6 +215,7 @@ function SetupPage() {
       setAddDomain("");
       setAddMailbox("");
       setAddCap("");
+      briefDirty.current = false;
       setSavedAt(Date.now());
       void qc.invalidateQueries({ queryKey: ["setup"] });
       void qc.invalidateQueries({ queryKey: ["doctor"] });
@@ -524,7 +531,10 @@ function SetupPage() {
             >
               <Textarea
                 value={productBrief}
-                onChange={(e) => setProductBrief(e.target.value)}
+                onChange={(e) => {
+                  setProductBrief(e.target.value);
+                  briefDirty.current = true;
+                }}
                 placeholder="How it works: … settled per call in USDC on Base …\nPricing: …\nLinks:\nhttps://docs.yourproduct.com/payments"
                 rows={8}
               />
@@ -996,7 +1006,13 @@ function SetupPage() {
               <span className="text-ink-faint">changes apply on save</span>
             )}
           </div>
-          <Button type="submit" disabled={save.isPending}>
+          <Button
+            type="submit"
+            disabled={save.isPending || deriveBrief.isPending}
+            title={
+              deriveBrief.isPending ? "wait for the brief derive to finish, then save" : undefined
+            }
+          >
             <Save size={14} />
             {save.isPending ? "Saving…" : "Save changes"}
           </Button>

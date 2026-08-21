@@ -30,7 +30,7 @@ vi.mock("@oneshot-gtm/plays", async () => {
   return { ...actual, safeEnrich: safeEnrichMock };
 });
 
-const { gatherReplyContext } = await import("../src/api/_reply-research.ts");
+const { gatherReplyContext, siteDomainFor } = await import("../src/api/_reply-research.ts");
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -156,5 +156,53 @@ describe("gatherReplyContext", () => {
       threadKey: "t1",
     });
     expect(ctx.threadSent).toEqual([{ body: "already replied once", sentAt: "2026-08-20" }]);
+  });
+});
+
+describe("review-finding regressions (#35)", () => {
+  it("reads the registrable site for mail-subdomain senders", async () => {
+    await gatherReplyContext({
+      fromEmail: "person@mail.acme.com",
+      prospectId: null,
+      threadKey: null,
+    });
+    expect(webReadMock).toHaveBeenCalledWith(
+      { url: "https://acme.com" },
+      expect.objectContaining({ playName: "inbox-reply" }),
+    );
+  });
+
+  it("siteDomainFor strips only well-known mail labels", () => {
+    expect(siteDomainFor("mail.acme.com")).toBe("acme.com");
+    expect(siteDomainFor("smtp.acme.co")).toBe("acme.co");
+    expect(siteDomainFor("aliyev.site")).toBe("aliyev.site");
+    // Not a mail label — a real subdomain company site passes through.
+    expect(siteDomainFor("labs.acme.com")).toBe("labs.acme.com");
+  });
+
+  it("a cache-write failure does not discard a successful site read", async () => {
+    ledger.setCachedEnrichment.mockImplementation(() => {
+      throw new Error("SQLITE_BUSY");
+    });
+    const ctx = await gatherReplyContext({
+      fromEmail: "aladdin@aliyev.site",
+      prospectId: null,
+      threadKey: null,
+    });
+    // The fetched site text must still reach the dossier.
+    expect(ctx.dossier).toContain("x402 payments");
+  });
+
+  it("a cache-READ failure falls through to a live read instead of throwing", async () => {
+    ledger.getCachedEnrichment.mockImplementation(() => {
+      throw new Error("corrupt db");
+    });
+    const ctx = await gatherReplyContext({
+      fromEmail: "aladdin@aliyev.site",
+      prospectId: null,
+      threadKey: null,
+    });
+    expect(webReadMock).toHaveBeenCalled();
+    expect(ctx.dossier).toContain("x402 payments");
   });
 });

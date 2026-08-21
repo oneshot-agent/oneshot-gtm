@@ -94,7 +94,7 @@ export async function gatherReplyContext(input: {
         );
       }
 
-      const site = await readSenderSite(domain!);
+      const site = await readSenderSite(siteDomainFor(domain!));
       if (site) {
         parts.push(`WEBSITE (${domain}):\n${site.text}`);
         if (site.paid) {
@@ -113,12 +113,39 @@ export async function gatherReplyContext(input: {
   };
 }
 
+/** Cache writes are strictly best-effort — a SQLite hiccup must never turn a successful read into a failure. */
+function bestEffort(fn: () => void): void {
+  try {
+    fn();
+  } catch {
+    // deliberately swallowed
+  }
+}
+
 /**
- * Read the sender's apex site (the aliyev.site call), cached in
- * enrichment_cache under `webread:<domain>` — the PK is a plain string, and
- * reusing the table gets us the 30d TTL + negative-cache semantics safeEnrich
- * already established. Returns null on any failure; transient errors are not
+ * Mail is routinely hosted on a subdomain (person@mail.example.com) whose
+ * hostname serves MX, not a website — reading it misses the company site and
+ * can bill a failed fetch. Strip the well-known mail-ish first label; a full
+ * public-suffix list is deliberately out of scope (zero-dep repo), so
+ * multi-label TLDs pass through unchanged.
+ */
+const MAIL_SUBDOMAINS = new Set(["mail", "email", "smtp", "mx", "mta", "mailer", "send", "post"]);
+export function siteDomainFor(domain: string): string {
+  const labels = domain.split(".");
+  return labels.length > 2 && MAIL_SUBDOMAINS.has(labels[0]!) ? labels.slice(1).join(".") : domain;
+}
+
+/**
+ * Read the sender's site (the aliyev.site call), cached in enrichment_cache
+ * under `webread:<domain>` — the PK is a plain string, and reusing the table
+ * gets us the 30d TTL + negative-cache semantics safeEnrich already
+ * established. Returns null on any failure; transient errors are not
  * negative-cached (an outage must not suppress research for a month).
+ *
+ * The cache write rides the LIVE promise, not the deadline race — same pattern
+ * (and same reason) as safeEnrich: a read that settles after the deadline was
+ * still PAID for, and discarding it means the next draft pays again. The late
+ * result can't reach this draft's costUsd, but it must reach the cache.
  */
 async function readSenderSite(
   domain: string,
@@ -126,7 +153,12 @@ async function readSenderSite(
   const ledger = getLedger();
   const cacheKey = `webread:${domain}`;
 
-  const cached = ledger.getCachedEnrichment(cacheKey);
+  let cached: ReturnType<typeof ledger.getCachedEnrichment> = null;
+  try {
+    cached = ledger.getCachedEnrichment(cacheKey);
+  } catch {
+    // cache-READ failure = cache miss, not a research failure
+  }
   if (cached) {
     const fresh = Date.now() - new Date(cached.fetched_at).getTime() < ENRICH_CACHE_TTL_MS;
     if (fresh) {
@@ -140,26 +172,31 @@ async function readSenderSite(
     }
   }
 
+  const live = webRead(
+    { url: `https://${domain}` },
+    {
+      playName: PLAY_NAME,
+      memo: `read sender's site (${domain}) before drafting a reply`,
+    },
+  ).then((read) => {
+    const text = (read.result.markdown ?? "").trim().slice(0, WEBREAD_SLICE);
+    if (text) bestEffort(() => ledger.setCachedEnrichment(cacheKey, JSON.stringify({ text })));
+    return read;
+  });
+  // A deadline-abandoned promise must not surface as an unhandled rejection.
+  live.catch(() => {});
+
   try {
-    const read = await withDeadline(
-      webRead(
-        { url: `https://${domain}` },
-        {
-          playName: PLAY_NAME,
-          memo: `read sender's site (${domain}) before drafting a reply`,
-        },
-      ),
-      WEBREAD_DEADLINE_MS,
-      `webRead ${domain}`,
-    );
+    const read = await withDeadline(live, WEBREAD_DEADLINE_MS, `webRead ${domain}`);
     const text = (read.result.markdown ?? "").trim().slice(0, WEBREAD_SLICE);
     if (!text) return null;
     const c = (read.result as unknown as { cost?: number }).cost;
-    ledger.setCachedEnrichment(cacheKey, JSON.stringify({ text }));
     return { text, paid: true, costUsd: typeof c === "number" ? c : 0 };
   } catch (err) {
     if (!isTransientToolError(err)) {
-      ledger.setCachedEnrichmentFailure(cacheKey, (err as Error).message ?? "webRead failed");
+      bestEffort(() =>
+        ledger.setCachedEnrichmentFailure(cacheKey, (err as Error).message ?? "webRead failed"),
+      );
     }
     logEvent(
       "inbox.reply.research.webread_failed",
