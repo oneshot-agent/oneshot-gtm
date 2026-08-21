@@ -35,7 +35,8 @@ vi.mock("@oneshot-gtm/core", async () => {
 // draftInboxReply isn't exercised here but the module imports it.
 vi.mock("@oneshot-gtm/plays", () => ({ draftInboxReply: vi.fn() }));
 
-const { listInboxRoute, saveDraftRoute, sendReplyRoute } = await import("../src/api/inbox.ts");
+const { draftReplyRoute, listInboxRoute, saveDraftRoute, sendReplyRoute } =
+  await import("../src/api/inbox.ts");
 
 function post(path: string, body: unknown): Request {
   return new Request(`http://localhost${path}`, {
@@ -156,5 +157,40 @@ describe("inbox route — persisted drafts & sent replies", () => {
       }),
     );
     expect(res.status).toBe(400);
+  });
+});
+
+describe("inbox route — window honesty & empty-body drafting", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getInboxThreadsMock.mockReturnValue(new Map());
+  });
+
+  it("passes listInbox's has_more through instead of hardcoding false", async () => {
+    listInboxMock.mockResolvedValue({ emails: [], has_more: true });
+    const res = await listInboxRoute(new Request("http://localhost/api/inbox"));
+    const out = (await res.json()) as { hasMore: boolean };
+    // The UI renders this as a "+" on its counts — a clamped window must never
+    // be presented as the whole mailbox.
+    expect(out.hasMore).toBe(true);
+  });
+
+  it("reports hasMore false when the window really is everything", async () => {
+    listInboxMock.mockResolvedValue({ emails: [], has_more: false });
+    const res = await listInboxRoute(new Request("http://localhost/api/inbox"));
+    expect(((await res.json()) as { hasMore: boolean }).hasMore).toBe(false);
+  });
+
+  it("draft-reply 400s legibly on a bodyless email", async () => {
+    const res = await draftReplyRoute(
+      post("/api/inbox/draft-reply", {
+        fromEmail: "founder@acme.com",
+        subject: "Re: hi",
+        body: "",
+      }),
+    );
+    expect(res.status).toBe(400);
+    const out = (await res.json()) as { error: string };
+    expect(out.error).toMatch(/no body/i);
   });
 });

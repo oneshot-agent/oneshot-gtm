@@ -56,6 +56,10 @@ function InboxPage() {
 
   const replies = inbox.data?.replies ?? [];
   const error = inbox.data?.error;
+  // The server fetches a clamped window (newest 200 across all identities).
+  // When listInbox says there was more, every total gets a "+" so the page
+  // never presents the window as the whole mailbox.
+  const windowSuffix = inbox.data?.hasMore ? "+" : "";
   // Filter is purely client-side over the already-fetched list (the endpoint
   // takes no params). Counts are off the full list so the buttons show the split.
   const matchedCount = replies.filter((r) => r.matched != null).length;
@@ -88,8 +92,8 @@ function InboxPage() {
             {!inbox.data
               ? "…"
               : matchFilter === "all"
-                ? `${replies.length} repl${replies.length === 1 ? "y" : "ies"}`
-                : `${visible.length} of ${replies.length}`}
+                ? `${replies.length}${windowSuffix} repl${replies.length === 1 && !windowSuffix ? "y" : "ies"}`
+                : `${visible.length} of ${replies.length}${windowSuffix}`}
           </span>
           <Button
             variant="ghost"
@@ -129,7 +133,12 @@ function InboxPage() {
             {f.label}
             {/* opacity (not a fixed faint color) so the count stays legible on
                 the selected button's cream fill as well as the ghost ones. */}
-            {inbox.data && <span className="ml-1 font-mono opacity-60">{countFor(f.key)}</span>}
+            {inbox.data && (
+              <span className="ml-1 font-mono opacity-60">
+                {countFor(f.key)}
+                {f.key === "all" ? windowSuffix : ""}
+              </span>
+            )}
           </Button>
         ))}
       </div>
@@ -399,7 +408,8 @@ function ReplyComposer({ reply }: { reply: InboxReplyView }) {
         <Button
           variant="ghost"
           size="sm"
-          disabled={generate.isPending || send.isPending}
+          disabled={!reply.body || generate.isPending || send.isPending}
+          title={reply.body ? undefined : "this email has no body to draft a reply from"}
           onClick={() => generate.mutate()}
         >
           {generate.isPending ? (
