@@ -135,8 +135,10 @@ function InboxPage() {
                 the selected button's cream fill as well as the ghost ones. */}
             {inbox.data && (
               <span className="ml-1 font-mono opacity-60">
+                {/* Every count is computed over the truncated window, so every
+                    count is a lower bound when hasMore — not just "all". */}
                 {countFor(f.key)}
-                {f.key === "all" ? windowSuffix : ""}
+                {windowSuffix}
               </span>
             )}
           </Button>

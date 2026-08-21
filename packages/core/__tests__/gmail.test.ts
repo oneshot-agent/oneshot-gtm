@@ -328,6 +328,18 @@ describe("listGmailReplies", () => {
     expect(body).toBe("plain wins");
   });
 
+  it("falls back to the snippet when the HTML converts to empty text (image-only mail)", async () => {
+    const body = await bodyFor(
+      {
+        mimeType: "text/html",
+        headers: [{ name: "From", value: "a@b.dev" }],
+        body: { data: b64('<div><img src="cid:logo"></div>') },
+      },
+      "the snippet says this",
+    );
+    expect(body).toBe("the snippet says this");
+  });
+
   it("falls back to Gmail's snippet when no part carries decodable data", async () => {
     const body = await bodyFor(
       {

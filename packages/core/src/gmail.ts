@@ -302,7 +302,12 @@ function extractBody(msg: GmailMessageMeta): string {
   const plain = extractPlainText(msg.payload);
   if (plain) return plain;
   const html = extractByMime(msg.payload, "text/html");
-  if (html) return htmlToText(html);
+  if (html) {
+    // The conversion itself can come up empty (image-only mail is all tags) —
+    // that must still fall through to the snippet, not return "".
+    const text = htmlToText(html);
+    if (text) return text;
+  }
   return msg.snippet ?? "";
 }
 

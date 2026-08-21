@@ -79,4 +79,25 @@ describe("htmlToText", () => {
     expect(performance.now() - t0).toBeLessThan(1_000);
     expect(out).not.toContain("script");
   });
+
+  // Review findings on #33 — each of these destroyed or leaked real content.
+  it("preserves comparison operators in prose", () => {
+    expect(htmlToText("<p>Revenue < $1m and growth > 20%</p>")).toBe(
+      "Revenue < $1m and growth > 20%",
+    );
+  });
+
+  it("treats attribute-bearing <br> as a line break (Gmail emits these)", () => {
+    expect(htmlToText('Hello<br class="gmail_default">World')).toBe("Hello\nWorld");
+  });
+
+  it("does not let </scripture> close a script element", () => {
+    // Spec: script content runs until a real close tag; a false-prefix close
+    // would stop stripping early and leak script source into the body.
+    expect(htmlToText("<script>var x;</scripture>more code</script>after")).toBe("after");
+  });
+
+  it("still strips to end-of-input when only false-prefix closers exist", () => {
+    expect(htmlToText("before<script>var x;</scripture>leaked")).toBe("before");
+  });
 });

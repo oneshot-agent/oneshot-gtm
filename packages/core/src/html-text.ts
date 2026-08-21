@@ -72,7 +72,17 @@ function stripBlocks(s: string, tag: string): string {
     const o = open.exec(s);
     if (!o) return s;
     const afterOpen = o.index + o[0].length;
-    const closeAt = s.toLowerCase().indexOf(closeToken, afterOpen);
+    // Per spec, `</script` only closes when followed by whitespace, `/` or
+    // `>` — `</scripture>` does NOT end a script element, and treating it as
+    // a close would stop stripping early and leak the rest of the script
+    // source into the "body". Scan forward past false-prefix candidates.
+    const lower = s.toLowerCase();
+    let closeAt = lower.indexOf(closeToken, afterOpen);
+    while (closeAt !== -1) {
+      const next = s[closeAt + closeToken.length] ?? ">";
+      if (next === ">" || next === "/" || /\s/.test(next)) break;
+      closeAt = lower.indexOf(closeToken, closeAt + closeToken.length);
+    }
     const gt = closeAt === -1 ? -1 : s.indexOf(">", closeAt + closeToken.length);
     const end = gt === -1 ? s.length : gt + 1;
     s = s.slice(0, o.index) + s.slice(end);
@@ -91,12 +101,17 @@ export function htmlToText(html: string): string {
   s = removeAll(s, /<!--[\s\S]*?-->/g);
 
   // Structural breaks → newlines BEFORE stripping tags, so paragraphs survive.
-  s = s.replace(/<br\s*\/?>/gi, "\n");
+  // <br\b[^>]*> — Gmail emits attribute-bearing breaks (<br class="gmail_default">)
+  // and a stricter pattern silently joined the words around them.
+  s = s.replace(/<br\b[^>]*>/gi, "\n");
   s = s.replace(/<\/(p|div|tr|li|h[1-6]|blockquote|pre|table)\s*>/gi, "\n");
 
-  // Everything else is formatting we don't need — to fixpoint, so nested
-  // brackets can't reassemble a tag from the pieces of a removed one.
-  s = removeAll(s, /<[^>]+>/g);
+  // Everything else TAG-SHAPED is formatting we don't need — to fixpoint, so
+  // nested brackets can't reassemble a tag from the pieces of a removed one.
+  // Tag-shaped means `</`, `<!` or `<letter…`: a bare `<` in prose
+  // ("Revenue < $1m and growth > 20%") is comparison text, and the old
+  // `<[^>]+>` ate everything between it and the next `>`.
+  s = removeAll(s, /<\/?[a-z!][^>]*>/gi);
 
   s = decodeEntities(s);
 
