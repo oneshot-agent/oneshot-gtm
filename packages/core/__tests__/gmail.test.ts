@@ -193,7 +193,7 @@ describe("listGmailReplies", () => {
     const internalDate = Date.UTC(2026, 5, 10, 12, 0, 0);
     const fetchMock = vi.fn(async (url: string | URL) => {
       const u = String(url);
-      if (u.includes("oauth2.googleapis.com")) return tokenResponse();
+      if (u.startsWith("https://oauth2.googleapis.com/")) return tokenResponse();
       if (u.includes("/messages?")) {
         return new Response(JSON.stringify({ messages: [{ id: "m1" }] }), { status: 200 });
       }
@@ -245,7 +245,7 @@ describe("listGmailReplies", () => {
 
   it("returns an empty result when the inbox has no matches", async () => {
     const fetchMock = vi.fn(async (url: string | URL) => {
-      if (String(url).includes("oauth2.googleapis.com")) return tokenResponse();
+      if (String(url).startsWith("https://oauth2.googleapis.com/")) return tokenResponse();
       return new Response(JSON.stringify({}), { status: 200 });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -264,7 +264,7 @@ describe("listGmailReplies", () => {
   async function bodyFor(payload: unknown, snippet?: string): Promise<string> {
     const fetchMock = vi.fn(async (url: string | URL) => {
       const u = String(url);
-      if (u.includes("oauth2.googleapis.com")) return tokenResponse();
+      if (u.startsWith("https://oauth2.googleapis.com/")) return tokenResponse();
       if (u.includes("/messages?")) {
         return new Response(JSON.stringify({ messages: [{ id: "m1" }] }), { status: 200 });
       }
@@ -343,7 +343,7 @@ describe("listGmailReplies", () => {
   it("reports has_more when Gmail returns a nextPageToken", async () => {
     const fetchMock = vi.fn(async (url: string | URL) => {
       const u = String(url);
-      if (u.includes("oauth2.googleapis.com")) return tokenResponse();
+      if (u.startsWith("https://oauth2.googleapis.com/")) return tokenResponse();
       if (u.includes("/messages?")) {
         return new Response(JSON.stringify({ messages: [{ id: "m1" }], nextPageToken: "tok" }), {
           status: 200,

@@ -36,22 +36,42 @@ function safeCodePoint(cp: number): string {
   }
 }
 
+/**
+ * Replace-until-fixpoint. A single `.replace` pass over overlapping constructs
+ * can REASSEMBLE the pattern it just removed (`<scr<script>ipt>` → one pass
+ * leaves `<script>`), which is both a CodeQL incomplete-sanitization finding
+ * and a real extraction bug. Bounded so a pathological input can't loop
+ * forever; leftovers past the bound are caught by the final tag strip.
+ */
+function removeAll(s: string, re: RegExp): string {
+  for (let i = 0; i < 10; i++) {
+    const next = s.replace(re, "");
+    if (next === s) return next;
+    s = next;
+  }
+  return s;
+}
+
 export function htmlToText(html: string): string {
   if (!html) return "";
   let s = html;
 
-  // Invisible content first, so its text never leaks into the output.
-  s = s.replace(/<script\b[\s\S]*?<\/script\s*>/gi, "");
-  s = s.replace(/<style\b[\s\S]*?<\/style\s*>/gi, "");
-  s = s.replace(/<head\b[\s\S]*?<\/head\s*>/gi, "");
-  s = s.replace(/<!--[\s\S]*?-->/g, "");
+  // Invisible content first, so its text never leaks into the output. End tags
+  // are matched as `</script[^>]*>` — per the HTML spec a close tag may carry
+  // whitespace (including newlines) and junk before `>`, and a stricter
+  // pattern would leave the element's raw contents in the "text".
+  s = removeAll(s, /<script\b[^>]*>[\s\S]*?<\/script[^>]*>/gi);
+  s = removeAll(s, /<style\b[^>]*>[\s\S]*?<\/style[^>]*>/gi);
+  s = removeAll(s, /<head\b[^>]*>[\s\S]*?<\/head[^>]*>/gi);
+  s = removeAll(s, /<!--[\s\S]*?-->/g);
 
   // Structural breaks → newlines BEFORE stripping tags, so paragraphs survive.
   s = s.replace(/<br\s*\/?>/gi, "\n");
   s = s.replace(/<\/(p|div|tr|li|h[1-6]|blockquote|pre|table)\s*>/gi, "\n");
 
-  // Everything else is formatting we don't need.
-  s = s.replace(/<[^>]+>/g, "");
+  // Everything else is formatting we don't need — to fixpoint, so nested
+  // brackets can't reassemble a tag from the pieces of a removed one.
+  s = removeAll(s, /<[^>]+>/g);
 
   s = decodeEntities(s);
 

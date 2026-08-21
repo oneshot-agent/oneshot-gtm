@@ -46,4 +46,25 @@ describe("htmlToText", () => {
   it("leaves malformed numeric entities out rather than throwing", () => {
     expect(htmlToText("&#x110000; ok")).toBe("ok");
   });
+
+  // Hardening (CodeQL js/incomplete-multi-character-sanitization /
+  // js/bad-tag-filter): a single replace pass can reassemble the construct it
+  // just removed, and spec-legal end tags carry junk before the `>`.
+  it("removes script content even with a nested-tag reassembly trick", () => {
+    expect(htmlToText("<scr<script>x</script>ipt>alert(1)</scr</script>ipt>ok")).not.toContain(
+      "alert",
+    );
+  });
+
+  it("removes script blocks whose end tag carries whitespace and junk", () => {
+    expect(htmlToText("<script>var x = 1;</script\t\n bar>after")).toBe("after");
+  });
+
+  it("removes style blocks with attributes on the open tag", () => {
+    expect(htmlToText('<style type="text/css">.a{}</style >text')).toBe("text");
+  });
+
+  it("never leaves an assembled comment opener behind", () => {
+    expect(htmlToText("<!<!--- x --->--> visible")).not.toContain("<!--");
+  });
 });
