@@ -300,7 +300,9 @@ function extractPlainText(part: GmailPayloadPart | undefined): string {
  */
 function extractBody(msg: GmailMessageMeta): string {
   const plain = extractPlainText(msg.payload);
-  if (plain) return plain;
+  // trim() — a whitespace-only text/plain part must not mask a meaningful
+  // text/html alternative in the same multipart.
+  if (plain.trim()) return plain;
   const html = extractByMime(msg.payload, "text/html");
   if (html) {
     // The conversion itself can come up empty (image-only mail is all tags) —
