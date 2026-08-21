@@ -140,6 +140,10 @@ describe("missingGmailSecrets", () => {
   });
 });
 
+function b64(s: string): string {
+  return Buffer.from(s, "utf8").toString("base64url");
+}
+
 function tokenResponse(token = "at-1", expiresIn = 3600): Response {
   return new Response(JSON.stringify({ access_token: token, expires_in: expiresIn }), {
     status: 200,
@@ -189,7 +193,7 @@ describe("listGmailReplies", () => {
     const internalDate = Date.UTC(2026, 5, 10, 12, 0, 0);
     const fetchMock = vi.fn(async (url: string | URL) => {
       const u = String(url);
-      if (u.includes("oauth2.googleapis.com")) return tokenResponse();
+      if (u.startsWith("https://oauth2.googleapis.com/")) return tokenResponse();
       if (u.includes("/messages?")) {
         return new Response(JSON.stringify({ messages: [{ id: "m1" }] }), { status: 200 });
       }
@@ -241,12 +245,138 @@ describe("listGmailReplies", () => {
 
   it("returns an empty result when the inbox has no matches", async () => {
     const fetchMock = vi.fn(async (url: string | URL) => {
-      if (String(url).includes("oauth2.googleapis.com")) return tokenResponse();
+      if (String(url).startsWith("https://oauth2.googleapis.com/")) return tokenResponse();
       return new Response(JSON.stringify({}), { status: 200 });
     });
     vi.stubGlobal("fetch", fetchMock);
     const out = await listGmailReplies();
     expect(out.emails).toEqual([]);
     expect(out.count).toBe(0);
+  });
+
+  /**
+   * Serve one message with the given payload/snippet and return its extracted
+   * body. The body-extraction tiers below are the regression suite for the
+   * "(no body)" bug: our outbound is HTML-only, reply clients mirror the
+   * format, so HTML-only replies are the NORMAL case — and the old extractor
+   * only ever read text/plain.
+   */
+  async function bodyFor(payload: unknown, snippet?: string): Promise<string> {
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      if (u.startsWith("https://oauth2.googleapis.com/")) return tokenResponse();
+      if (u.includes("/messages?")) {
+        return new Response(JSON.stringify({ messages: [{ id: "m1" }] }), { status: 200 });
+      }
+      return new Response(
+        JSON.stringify({
+          id: "m1",
+          threadId: "t1",
+          internalDate: String(Date.UTC(2026, 5, 10)),
+          ...(snippet ? { snippet } : {}),
+          payload,
+        }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await listGmailReplies({ limit: 10 });
+    return out.emails[0]?.body ?? "";
+  }
+
+  it("extracts a single-part text/html body, de-tagged", async () => {
+    const body = await bodyFor({
+      mimeType: "text/html",
+      headers: [{ name: "From", value: "a@b.dev" }],
+      body: { data: b64("<div>Thursday works.<br>— Jane</div>") },
+    });
+    expect(body).toBe("Thursday works.\n— Jane");
+  });
+
+  it("extracts HTML from multipart/alternative that carries ONLY html", async () => {
+    const body = await bodyFor({
+      mimeType: "multipart/alternative",
+      headers: [{ name: "From", value: "a@b.dev" }],
+      parts: [{ mimeType: "text/html", body: { data: b64("<p>only html here</p>") } }],
+    });
+    expect(body).toBe("only html here");
+  });
+
+  it("finds HTML nested inside multipart/related", async () => {
+    const body = await bodyFor({
+      mimeType: "multipart/mixed",
+      headers: [{ name: "From", value: "a@b.dev" }],
+      parts: [
+        {
+          mimeType: "multipart/related",
+          parts: [{ mimeType: "text/html", body: { data: b64("<p>nested</p>") } }],
+        },
+      ],
+    });
+    expect(body).toBe("nested");
+  });
+
+  it("still prefers text/plain when both parts exist", async () => {
+    const body = await bodyFor({
+      mimeType: "multipart/alternative",
+      headers: [{ name: "From", value: "a@b.dev" }],
+      parts: [
+        { mimeType: "text/plain", body: { data: b64("plain wins") } },
+        { mimeType: "text/html", body: { data: b64("<p>html loses</p>") } },
+      ],
+    });
+    expect(body).toBe("plain wins");
+  });
+
+  it("falls back to the snippet when the HTML converts to empty text (image-only mail)", async () => {
+    const body = await bodyFor(
+      {
+        mimeType: "text/html",
+        headers: [{ name: "From", value: "a@b.dev" }],
+        body: { data: b64('<div><img src="cid:logo"></div>') },
+      },
+      "the snippet says this",
+    );
+    expect(body).toBe("the snippet says this");
+  });
+
+  it("falls back to Gmail's snippet when no part carries decodable data", async () => {
+    const body = await bodyFor(
+      {
+        mimeType: "multipart/mixed",
+        headers: [{ name: "From", value: "a@b.dev" }],
+        parts: [{ mimeType: "text/html", body: {} }],
+      },
+      "snippet preview text",
+    );
+    expect(body).toBe("snippet preview text");
+  });
+
+  it("reports has_more when Gmail returns a nextPageToken", async () => {
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      if (u.startsWith("https://oauth2.googleapis.com/")) return tokenResponse();
+      if (u.includes("/messages?")) {
+        return new Response(JSON.stringify({ messages: [{ id: "m1" }], nextPageToken: "tok" }), {
+          status: 200,
+        });
+      }
+      return new Response(
+        JSON.stringify({
+          id: "m1",
+          threadId: "t1",
+          internalDate: String(Date.UTC(2026, 5, 10)),
+          payload: {
+            mimeType: "text/plain",
+            headers: [{ name: "From", value: "a@b.dev" }],
+            body: { data: Buffer.from("hi", "utf8").toString("base64url") },
+          },
+        }),
+        { status: 200 },
+      );
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await listGmailReplies({ limit: 10 });
+    expect(out.has_more).toBe(true);
   });
 });

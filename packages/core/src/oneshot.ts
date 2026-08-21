@@ -20,6 +20,7 @@ import { createHash } from "node:crypto";
 import { getLedger } from "./ledger.ts";
 import { loadConfig, oneshotEnvReady } from "./config.ts";
 import { demoFixture, demoMode } from "./demo.ts";
+import { htmlToText } from "./html-text.ts";
 import { logEvent } from "./events.ts";
 import {
   type GmailBounce,
@@ -664,8 +665,27 @@ export interface AnnotatedInboxListResult extends InboxListResult {
   emails: AnnotatedInboxEmail[];
 }
 
+/**
+ * Ensure an inbound email has a readable `body`, falling back to a de-tagged
+ * `body_html`. The OneShot inbox returns both fields, and an HTML-only mail
+ * (the normal shape for replies to our HTML-only sends) has an empty `body` —
+ * nothing in the pipeline read `body_html`, so /inbox rendered "(no body)" and
+ * triage prompted the LLM with nothing. Applied in the annotate funnel so
+ * EVERY consumer of listInbox benefits, not just the dashboard route.
+ * Exported for tests.
+ */
+export function fillInboxBody(e: InboxEmail): InboxEmail {
+  if (e.body?.trim()) return e;
+  const html = e.body_html ?? "";
+  if (!html) return e;
+  return { ...e, body: htmlToText(html) };
+}
+
 function annotateInboxResult(r: InboxListResult, identityId: string): AnnotatedInboxListResult {
-  return { ...r, emails: r.emails.map((e) => ({ ...e, source_identity_id: identityId })) };
+  return {
+    ...r,
+    emails: r.emails.map((e) => ({ ...fillInboxBody(e), source_identity_id: identityId })),
+  };
 }
 
 /**
@@ -722,10 +742,15 @@ export async function listInbox(opts?: {
 
   if (sources.length === 1) {
     const only = sources[0]!;
-    return annotateInboxResult(
+    const result = annotateInboxResult(
       await withDeadline(only.fetch(), INBOX_SOURCE_TIMEOUT_MS, `inbox source '${only.label}'`),
       only.identityId,
     );
+    // Same post-processing as the multi-source branch below — without it the
+    // two branches disagree about count semantics (the single-source result
+    // came back unsliced, so `count` meant "fetched" there and "window" here),
+    // which is exactly the kind of drift that made the /inbox numbers lie.
+    return mergeInboxWindow([result], opts?.limit);
   }
 
   const results = await parallelMap(sources, 3, async (source) => {
@@ -751,19 +776,34 @@ export async function listInbox(opts?: {
   if (ok.length === 0) {
     throw new Error("all inbox sources failed — check doctor for identity auth status");
   }
+  return mergeInboxWindow(ok, opts?.limit);
+}
+
+/**
+ * Dedupe, sort newest-first and clamp source results to the requested window,
+ * with `has_more` true whenever the window is not the whole story — either a
+ * source said so itself, or the clamp dropped rows. Shared by BOTH listInbox
+ * branches so `count`/`has_more` mean the same thing regardless of how many
+ * identities are configured.
+ */
+function mergeInboxWindow(
+  results: AnnotatedInboxListResult[],
+  limit?: number,
+): AnnotatedInboxListResult {
+  const max = limit ?? 50;
   const seen = new Set<string>();
-  const emails = ok
+  const all = results
     .flatMap((r) => r.emails)
     .filter((e) => (seen.has(e.id) ? false : (seen.add(e.id), true)))
     .toSorted((a, b) =>
       a.received_at < b.received_at ? 1 : a.received_at > b.received_at ? -1 : 0,
-    )
-    .slice(0, opts?.limit ?? 50);
+    );
+  const emails = all.slice(0, max);
   return {
     emails,
     count: emails.length,
-    has_more: ok.some((r) => r.has_more),
-    agent_id: ok.map((r) => r.agent_id).join("+"),
+    has_more: results.some((r) => r.has_more) || all.length > max,
+    agent_id: results.map((r) => r.agent_id).join("+"),
   };
 }
 

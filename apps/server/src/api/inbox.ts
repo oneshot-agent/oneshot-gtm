@@ -52,6 +52,7 @@ export async function listInboxRoute(req: Request): Promise<Response> {
   const ledger = getLedger();
 
   let emails: Awaited<ReturnType<typeof listInbox>>["emails"];
+  let hasMore = false;
   try {
     // Fetch a wide window (not just the newest handful): mailboxes fill with
     // newsletters/bounces/DMARC noise, and matching only runs over what's
@@ -60,6 +61,10 @@ export async function listInboxRoute(req: Request): Promise<Response> {
     // those; this gives it enough history to find them.
     const result = await listInbox({ limit: 200 });
     emails = result.emails;
+    // Truthful truncation signal: listInbox says whether this window is the
+    // whole story. The UI turns it into a "+" on its counts — the page must
+    // never present a clamped window as the entire mailbox.
+    hasMore = result.has_more;
   } catch (err) {
     logEvent(
       "inbox.list_failed",
@@ -162,7 +167,7 @@ export async function listInboxRoute(req: Request): Promise<Response> {
     .filter((r) => !selfAddresses.has(r.fromEmail))
     .toSorted((a, b) => (a.receivedAt < b.receivedAt ? 1 : a.receivedAt > b.receivedAt ? -1 : 0));
 
-  const out: InboxResult = { replies: visible, hasMore: false };
+  const out: InboxResult = { replies: visible, hasMore };
   return jsonResponse(out, 200, req);
 }
 
@@ -182,8 +187,14 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
   const fromEmail = (body.fromEmail ?? "").trim().toLowerCase();
   const subject = (body.subject ?? "").trim();
   const inboundBody = (body.body ?? "").trim();
-  if (!fromEmail || !inboundBody) {
-    return jsonResponse({ error: "fromEmail and body are required" }, 400, req);
+  if (!fromEmail) {
+    return jsonResponse({ error: "fromEmail is required" }, 400, req);
+  }
+  // Distinct message: the UI disables the generate button on bodyless replies,
+  // but a scripted caller deserves to know WHY this 400s rather than getting a
+  // generic complaint about fields it did send.
+  if (!inboundBody) {
+    return jsonResponse({ error: "this email has no body to draft a reply from" }, 400, req);
   }
 
   const ledger = getLedger();

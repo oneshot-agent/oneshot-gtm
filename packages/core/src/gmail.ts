@@ -1,4 +1,5 @@
 import type { InboxEmail, InboxListResult } from "@oneshot-agent/sdk";
+import { htmlToText } from "./html-text.ts";
 import { parallelMap } from "./parallel.ts";
 import type { AuthVerdict, BounceKind, GmailPlacement } from "./types.ts";
 
@@ -253,6 +254,8 @@ export interface GmailMessageMeta {
   threadId: string;
   internalDate: string;
   payload?: GmailPayloadPart;
+  /** Google-rendered plain-text preview — the last-resort body when no part decodes. */
+  snippet?: string;
 }
 
 export interface GmailPayloadPart {
@@ -267,16 +270,45 @@ function header(msg: GmailMessageMeta, name: string): string {
   return h?.value ?? "";
 }
 
-function extractPlainText(part: GmailPayloadPart | undefined): string {
+/** DFS for the first part of `mimeType` that carries inline data, decoded. */
+function extractByMime(part: GmailPayloadPart | undefined, mimeType: string): string {
   if (!part) return "";
-  if (part.mimeType === "text/plain" && part.body?.data) {
+  if (part.mimeType === mimeType && part.body?.data) {
     return Buffer.from(part.body.data, "base64url").toString("utf8");
   }
   for (const child of part.parts ?? []) {
-    const text = extractPlainText(child);
+    const text = extractByMime(child, mimeType);
     if (text) return text;
   }
   return "";
+}
+
+function extractPlainText(part: GmailPayloadPart | undefined): string {
+  return extractByMime(part, "text/plain");
+}
+
+/**
+ * Best-effort readable body for a fetched message, in three tiers:
+ * text/plain part → text/html part (de-tagged) → Gmail's snippet.
+ *
+ * The HTML tier is not an edge case. Our own outbound is HTML-only
+ * (`buildRawMessage` emits `text/html` with no multipart/alternative), and
+ * reply clients mirror the format of the mail they answer — so HTML-only
+ * replies to our sends are the expected shape. Without this tier the /inbox
+ * page showed "(no body)" for exactly the replies the tool exists to catch.
+ * The snippet tier covers bodies stored behind `attachmentId` (not fetched).
+ */
+function extractBody(msg: GmailMessageMeta): string {
+  const plain = extractPlainText(msg.payload);
+  if (plain) return plain;
+  const html = extractByMime(msg.payload, "text/html");
+  if (html) {
+    // The conversion itself can come up empty (image-only mail is all tags) —
+    // that must still fall through to the snippet, not return "".
+    const text = htmlToText(html);
+    if (text) return text;
+  }
+  return msg.snippet ?? "";
 }
 
 /**
@@ -299,7 +331,7 @@ export async function listGmailReplies(
     q: `in:inbox -from:me ${sinceClause}`,
     maxResults: String(opts?.limit ?? 50),
   });
-  const list = await gmailJson<{ messages?: Array<{ id: string }> }>(
+  const list = await gmailJson<{ messages?: Array<{ id: string }>; nextPageToken?: string }>(
     `/messages?${params}`,
     undefined,
     account,
@@ -322,12 +354,15 @@ export async function listGmailReplies(
         subject: header(msg, "Subject"),
         received_at: new Date(Number(msg.internalDate)).toISOString(),
         thread_id: msg.threadId,
-        body: extractPlainText(msg.payload),
+        body: extractBody(msg),
         ...(messageId ? { message_id: messageId } : {}),
       };
     },
   );
-  return { emails, count: emails.length, has_more: false, agent_id: "gmail" };
+  // has_more from Gmail's own paging: a nextPageToken means the query matched
+  // more than this window, so downstream counts must not present the window as
+  // the whole mailbox.
+  return { emails, count: emails.length, has_more: !!list.nextPageToken, agent_id: "gmail" };
 }
 
 /* ── Bounce (DSN) harvesting ─────────────────────────────────────────────────
