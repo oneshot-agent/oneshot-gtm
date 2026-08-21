@@ -967,6 +967,16 @@ function buildConfig(): Record<string, unknown> {
     founderCredentials: "Ran platform reliability at a 400-engineer infra company before this.",
     productPortfolio: "Tracepoint — used by 60+ teams to trace background jobs end to end.",
     partners: "Built on OpenTelemetry; ships adapters for Sidekiq, Celery, BullMQ and Temporal.",
+    productBrief: [
+      "How it works",
+      "One import per worker; spans stream over OTLP, no sidecar, no sampling.",
+      "Retries inherit the parent span, so attempt N links back to attempts 1..N-1.",
+      "Pricing",
+      "Per job traced, not per host. Annual invoicing available.",
+      "Links",
+      "https://tracepoint.dev/docs/architecture",
+      "https://tracepoint.dev/docs/pricing",
+    ].join("\n"),
     mobileSignature: false,
     clientId: "demo-00000000-0000-4000-8000-000000000000",
   };

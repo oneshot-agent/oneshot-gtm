@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { Mail, Save, Wand2 } from "lucide-react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode, useRef } from "react";
 import { toast } from "sonner";
 import { api } from "../api/client.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
@@ -69,6 +69,14 @@ function SetupPage() {
   const [founderCredentials, setFounderCredentials] = useState("");
   const [productPortfolio, setProductPortfolio] = useState("");
   const [partners, setPartners] = useState("");
+  const [productBrief, setProductBrief] = useState("");
+  // Unsaved edits/derives must survive ["setup"] refetches (pause/resume and
+  // save all invalidate it) — the hydrate effect only overwrites a clean field.
+  // A ref, not state: the hydrate effect must read the CURRENT flag without
+  // re-running when it flips.
+  const briefDirty = useRef(false);
+  const [briefSources, setBriefSources] = useState("");
+  const [briefDeriveInfo, setBriefDeriveInfo] = useState<string | null>(null);
   const [mobileSignature, setMobileSignature] = useState(false);
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -85,6 +93,8 @@ function SetupPage() {
     setFounderCredentials(c.founderCredentials ?? "");
     setProductPortfolio(c.productPortfolio ?? "");
     setPartners(c.partners ?? "");
+    if (!briefDirty.current) setProductBrief(c.productBrief ?? "");
+    setBriefSources((prev) => prev || (c.productDomain ? `https://${c.productDomain}` : ""));
     setMobileSignature(c.mobileSignature ?? false);
     setLlmProvider(c.llmProvider);
     setLlmModel(c.llmModel || LLM_DEFAULTS[c.llmProvider] || "");
@@ -141,6 +151,19 @@ function SetupPage() {
         ? `Still reading — slow pages take a moment · ${deriveElapsed}s`
         : `Asking the LLM to extract an ICP · ${deriveElapsed}s`;
 
+  const deriveBrief = useMutation({
+    mutationFn: (urls: string[]) => api.deriveBrief(urls),
+    onSuccess: (res) => {
+      setProductBrief(res.proposedBrief);
+      briefDirty.current = true;
+      const skipped = res.skipped.length > 0 ? ` · ${res.skipped.length} source(s) unreadable` : "";
+      setBriefDeriveInfo(
+        `derived from ${res.sourceUrls.length} source(s) · $${res.costUsd.toFixed(2)}${skipped} — edit before saving`,
+      );
+    },
+    onError: (err) => toast.error((err as Error).message),
+  });
+
   const save = useMutation({
     mutationFn: async () => {
       const filteredSecrets: Record<string, string> = {};
@@ -174,6 +197,7 @@ function SetupPage() {
         founderCredentials,
         productPortfolio,
         partners,
+        productBrief,
         mobileSignature,
         llmProvider,
         llmModel,
@@ -191,6 +215,7 @@ function SetupPage() {
       setAddDomain("");
       setAddMailbox("");
       setAddCap("");
+      briefDirty.current = false;
       setSavedAt(Date.now());
       void qc.invalidateQueries({ queryKey: ["setup"] });
       void qc.invalidateQueries({ queryKey: ["doctor"] });
@@ -453,6 +478,67 @@ function SetupPage() {
               onChange={(e) => setMobileSignature(e.target.checked)}
               label={'Append "Sent from my iPhone" to every email signature'}
             />
+          </div>
+        </LedgerSection>
+
+        <LedgerSection
+          eyebrow="03.5 · Product brief"
+          lede="What your replies are allowed to know and cite. Facts, architecture, pricing model, canonical links. A link that isn't in this brief is never sent."
+        >
+          <div className="flex flex-col gap-4">
+            <Field
+              label="Derive from sources"
+              hint="One URL per line — your site, the GitHub repo, docs pages (max 5). Each is one webRead (~$0.01); you edit the proposal before saving."
+            >
+              <div className="flex gap-2">
+                <Textarea
+                  value={briefSources}
+                  onChange={(e) => setBriefSources(e.target.value)}
+                  placeholder={
+                    "yourproduct.com\ngithub.com/you/your-repo\ndocs.yourproduct.com/pricing"
+                  }
+                  rows={3}
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="shrink-0 self-start whitespace-nowrap"
+                  disabled={deriveBrief.isPending || briefSources.trim().length === 0}
+                  onClick={() =>
+                    deriveBrief.mutate(
+                      briefSources
+                        .split("\n")
+                        .map((u) => u.trim())
+                        .filter((u) => u.length > 0)
+                        .slice(0, 5),
+                    )
+                  }
+                >
+                  <Wand2
+                    size={12}
+                    className={deriveBrief.isPending ? "animate-pulse" : undefined}
+                  />
+                  {deriveBrief.isPending ? "Reading sources…" : "Derive brief"}
+                </Button>
+              </div>
+            </Field>
+            {briefDeriveInfo && (
+              <div className="font-mono text-[11px] text-ink-faint">{briefDeriveInfo}</div>
+            )}
+            <Field
+              label="Product brief"
+              hint="Used by /inbox reply drafting to answer substantive questions with substance. Keep links verbatim."
+            >
+              <Textarea
+                value={productBrief}
+                onChange={(e) => {
+                  setProductBrief(e.target.value);
+                  briefDirty.current = true;
+                }}
+                placeholder="How it works: … settled per call in USDC on Base …\nPricing: …\nLinks:\nhttps://docs.yourproduct.com/payments"
+                rows={8}
+              />
+            </Field>
           </div>
         </LedgerSection>
 
@@ -920,7 +1006,13 @@ function SetupPage() {
               <span className="text-ink-faint">changes apply on save</span>
             )}
           </div>
-          <Button type="submit" disabled={save.isPending}>
+          <Button
+            type="submit"
+            disabled={save.isPending || deriveBrief.isPending}
+            title={
+              deriveBrief.isPending ? "wait for the brief derive to finish, then save" : undefined
+            }
+          >
             <Save size={14} />
             {save.isPending ? "Saving…" : "Save changes"}
           </Button>

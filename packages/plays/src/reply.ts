@@ -40,6 +40,14 @@ export interface DraftInboxReplyInput {
     company: string | null;
     playName: string | null;
   } | null;
+  /**
+   * Research about the sender — the prospect's stored dossier, or enrichment +
+   * a read of their site gathered by the route. What lets the reply engage a
+   * technical message with substance instead of curiosity questions.
+   */
+  dossier?: string | null;
+  /** Replies the founder already sent in this thread (oldest first) — round 2+ must not repeat round 1. */
+  threadSent?: Array<{ body: string; sentAt: string }>;
 }
 
 /**
@@ -71,16 +79,34 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<{ bo
         ].join("\n")
       : null;
 
+  // Round 2+ context: what you already answered in this thread, so a fresh
+  // draft never repeats it (and can pick up where it left off).
+  const threadBlock =
+    input.threadSent && input.threadSent.length > 0
+      ? [
+          "THREAD — REPLIES YOU ALREADY SENT (do not repeat these; continue the conversation):",
+          ...input.threadSent.flatMap((t) => [`--- sent ${t.sentAt} ---`, t.body]),
+        ].join("\n")
+      : null;
+
   const proofBlock = socialProofBlock();
   const firstName = firstNameFrom(input.matched?.name ?? null);
   const user = [
     `FOUNDER: ${cfg.founderName ?? "(unknown)"}`,
     `PRODUCT: ${cfg.productOneLiner ?? "(unknown)"}`,
+    ...(cfg.icpOneLiner ? [`ICP: ${cfg.icpOneLiner}`] : []),
     `PROSPECT: ${input.matched?.name ?? "(unknown)"}`,
     `EMAIL: ${input.fromEmail}`,
     `COMPANY: ${input.matched?.company ?? "(unknown)"}`,
     ...(input.matched?.playName ? [`PLAY: ${input.matched.playName}`] : []),
+    ...(cfg.productBrief?.trim()
+      ? ["", `PRODUCT BRIEF (facts and the ONLY links you may cite):\n${cfg.productBrief.trim()}`]
+      : []),
+    ...(input.dossier?.trim()
+      ? ["", `SENDER DOSSIER (research about who wrote this):\n${input.dossier.trim()}`]
+      : []),
     ...(priorBlock ? ["", priorBlock] : []),
+    ...(threadBlock ? ["", threadBlock] : []),
     "",
     "INBOUND EMAIL (the message you are answering):",
     `Subject: ${input.subject}`,

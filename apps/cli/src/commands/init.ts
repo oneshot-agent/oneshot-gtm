@@ -123,6 +123,9 @@ export async function runInit(): Promise<void> {
     founderCredentials: (answers["founderCredentials"] ?? cfg.founderCredentials) || null,
     productPortfolio: (answers["productPortfolio"] ?? cfg.productPortfolio) || null,
     partners: (answers["partners"] ?? cfg.partners) || null,
+    // Not part of the wizard (it's a dashboard-native, multiline document) —
+    // but re-running init must never wipe an existing brief.
+    productBrief: cfg.productBrief,
     mobileSignature: cfg.mobileSignature,
     // Preserve the anonymous install id (loadConfig already bootstrapped it
     // by the time we got here). Omitting it would silently drop it from disk

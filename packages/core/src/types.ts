@@ -210,6 +210,15 @@ export interface OneShotConfig {
   /** Notable partners / customers — the brand-recognition social-proof beat. */
   partners: string | null;
   /**
+   * Product knowledge the reply drafter may cite: concrete facts, architecture,
+   * pricing model, and canonical links (docs pages, repo). Free text, founder-
+   * edited on /setup (with a derive-from-sources helper). The reply prompt is
+   * only allowed to include links that appear verbatim here — this field is
+   * what makes a substantive, link-bearing reply possible without inventing
+   * artifacts.
+   */
+  productBrief: string | null;
+  /**
    * When true, the signature directive appends a literal "Sent from my iPhone"
    * line below the domain. Proof-of-human artifact: reads as if the founder
    * forgot to disable the default. Default false.

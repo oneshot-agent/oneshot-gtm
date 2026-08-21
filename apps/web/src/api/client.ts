@@ -22,6 +22,7 @@ import type {
   DomainPoolView,
   QueueListResponse,
   QueueStatusView,
+  DeriveBriefResult,
   DeriveIcpResult,
   ReceiptDetail,
   ReceiptView,
@@ -147,6 +148,7 @@ export const api = {
         founderCredentials: string | null;
         productPortfolio: string | null;
         partners: string | null;
+        productBrief: string | null;
         mobileSignature: boolean;
         llmProvider: "openrouter" | "openai" | "anthropic";
         llmModel: string;
@@ -158,6 +160,7 @@ export const api = {
     }>("/setup"),
   setup: (req: SetupRequest) => postJson<{ ok: boolean }>("/setup", req),
   deriveIcp: (domain: string) => postJson<DeriveIcpResult>("/setup/derive-icp", { domain }),
+  deriveBrief: (urls: string[]) => postJson<DeriveBriefResult>("/setup/derive-brief", { urls }),
   // Manual add-prospect from a LinkedIn/X URL. Returns 202 immediately; the
   // researched + drafted row appears on /queue when the background job finishes.
   addProspect: (url: string, email?: string) =>

@@ -248,6 +248,8 @@ export interface SetupRequest {
   productPortfolio?: string;
   /** Notable partners / customers (free text, brand names). Brand-recognition proof. */
   partners?: string;
+  /** Product facts + canonical links replies may cite. Links absent from this brief are never sent. */
+  productBrief?: string;
   /** When true, signature appends a literal "Sent from my iPhone" line. */
   mobileSignature?: boolean;
   llmProvider?: LlmProvider;
@@ -521,10 +523,17 @@ export interface InboxDraftReplyRequest {
   fromEmail: string;
   subject: string;
   body: string;
+  /** Inbound email id + thread id, so the server can include this thread's prior sent replies. */
+  id?: string;
+  threadId?: string | null;
 }
 
 export interface InboxDraftReplyResult {
   body: string;
+  /** Paid research spend this draft incurred (0 on cache hits / known prospects). */
+  costUsd: number;
+  /** True when the server ran paid research on the sender before drafting. */
+  researched: boolean;
 }
 
 /** POST /api/inbox/draft — persist the in-progress draft for a thread (auto-save). */
@@ -624,6 +633,15 @@ export interface TriggerView {
 export interface DeriveIcpResult {
   proposedIcp: string;
   sourceUrl: string;
+  costUsd: number;
+}
+
+export interface DeriveBriefResult {
+  proposedBrief: string;
+  /** Sources actually read (post-normalization); failed URLs are listed in `skipped`. */
+  sourceUrls: string[];
+  /** Sources that could not be read, with the reason — surfaced, not silent. */
+  skipped: Array<{ url: string; reason: string }>;
   costUsd: number;
 }
 

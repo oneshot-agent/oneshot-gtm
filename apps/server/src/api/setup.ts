@@ -180,6 +180,7 @@ export async function setup(req: Request): Promise<Response> {
     founderCredentials: mergeString(body.founderCredentials, current.founderCredentials),
     productPortfolio: mergeString(body.productPortfolio, current.productPortfolio),
     partners: mergeString(body.partners, current.partners),
+    productBrief: mergeString(body.productBrief, current.productBrief),
     mobileSignature: body.mobileSignature ?? current.mobileSignature,
     clientId: current.clientId,
   });
