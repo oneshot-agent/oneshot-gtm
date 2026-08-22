@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { BASE_PORT, currentWorkspaceName, listWorkspaces } from "@oneshot-gtm/core";
+import { BASE_PORT, configDir, currentWorkspaceName, portForHome } from "@oneshot-gtm/core";
 import { CommandExit, c, fail, header, note, ok } from "../output.ts";
 
 interface UiOpts {
@@ -12,22 +12,20 @@ interface UiOpts {
   dev: boolean;
 }
 
-/** The port this workspace registered at `workspace create`, so two dashboards don't collide. */
-function workspacePort(): number {
-  try {
-    const name = currentWorkspaceName();
-    const entry = listWorkspaces().find(([n]) => n === name)?.[1];
-    return entry?.port ?? BASE_PORT;
-  } catch {
-    // A corrupt registry is doctor's problem, not a reason to refuse to boot.
-    return BASE_PORT;
-  }
-}
-
 function locateRepoRoot(): string {
   // apps/cli/src/commands/ui.ts → repo root is 4 levels up
   const here = dirname(fileURLToPath(import.meta.url));
   return resolve(here, "..", "..", "..", "..");
+}
+
+/** The registered port for the HOME this process is bound to (see portForHome); 3030 otherwise. */
+function workspacePort(): number {
+  try {
+    return portForHome(configDir());
+  } catch {
+    // A corrupt registry is doctor's problem, not a reason to refuse to boot.
+    return BASE_PORT;
+  }
 }
 
 export async function commandUi(opts: UiOpts): Promise<void> {
