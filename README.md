@@ -54,7 +54,7 @@ bun run --cwd apps/web build                    # one-time: build the SPA
 bun run cli -- ui                               # http://127.0.0.1:3030
 ```
 
-To call it from anywhere: `cd apps/cli && bun link && bun link oneshot-gtm && cd -`.
+To call it from anywhere: `cd apps/cli && bun link && bun link oneshot-gtm && cd -`. If you linked before workspaces landed, re-run that — the bin target moved to the bootstrap shim (`src/main.ts`).
 
 Prefer the dashboard without cloning? `bunx oneshot-gtm-server` downloads and boots it. Bun is still required — the bundle uses `bun:sqlite` and `Bun.serve`, and fails loudly with an install hint under plain `node`. The CLI itself is not published to npm.
 
