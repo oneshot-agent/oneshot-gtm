@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import {
   llmApiKey,
   loadConfig,
@@ -5,6 +6,7 @@ import {
   saveConfig,
   saveSecrets,
   secretsPath,
+  configDir,
 } from "@oneshot-gtm/core";
 import prompts from "prompts";
 import { box, c, header, note, ok, warn } from "../output.ts";
@@ -132,7 +134,7 @@ export async function runInit(): Promise<void> {
     // and the next loadConfig() would mint a fresh one.
     clientId: cfg.clientId,
   });
-  ok(`Saved profile to ${c.dim("~/.oneshot-gtm/config.json")}`);
+  ok(`Saved profile to ${c.dim(join(configDir(), "config.json"))}`);
 
   // Phase 2: collect secrets interactively (saved chmod 600 to ~/.oneshot-gtm/.env)
   process.stdout.write(

@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { Ledger } from "@oneshot-gtm/core";
+import { Ledger, workspaceNameForHome } from "@oneshot-gtm/core";
 import { buildDemoDataset, type DemoDataset } from "./dataset.ts";
 
 /** Written into every demo home. `demo reset` refuses to delete a dir without it. */
@@ -94,6 +94,13 @@ export function seedDemoHome(opts: { home?: string; anchor?: Date; force?: boole
   if (home === canonicalize(realHome())) {
     throw new DemoSeedError(
       `refusing to seed into your real install (${home}). Pass --home with a different directory.`,
+    );
+  }
+  // Named workspaces are real installs too.
+  const owner = workspaceNameForHome(home);
+  if (owner) {
+    throw new DemoSeedError(
+      `refusing to seed into workspace '${owner}' (${home}). Pass --home with a different directory.`,
     );
   }
   if (process.env["ONESHOT_GTM_HOME"] && home === canonicalize(process.env["ONESHOT_GTM_HOME"])) {
