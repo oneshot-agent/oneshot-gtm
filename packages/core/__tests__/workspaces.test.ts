@@ -235,3 +235,37 @@ describe("third-round review findings (#38)", () => {
     expect(Date.now() - t0).toBeGreaterThanOrEqual(250);
   });
 });
+
+describe("fourth-round review findings (#38)", () => {
+  it("release only unlinks OUR lock — a replacement taken by another process survives", () => {
+    const lock = join(dir, "registry.json.lock");
+    const { writeFileSync, existsSync, readFileSync } =
+      require("node:fs") as typeof import("node:fs");
+    withRegistryLock(() => {
+      // Simulate a stale-break by someone else mid-operation.
+      writeFileSync(lock, "intruder");
+    });
+    expect(existsSync(lock)).toBe(true);
+    expect(readFileSync(lock, "utf8")).toBe("intruder");
+  });
+
+  it("refuses to recreate a workspace over a removed one's leftover files", () => {
+    const e = createWorkspace("gtm");
+    const { writeFileSync } = require("node:fs") as typeof import("node:fs");
+    writeFileSync(join(e.home, "ledger.sqlite"), "stale");
+    removeWorkspace("gtm");
+    expect(() => createWorkspace("gtm")).toThrow(/already has files/);
+  });
+
+  it("a registry whose `workspaces` is an array is treated as empty, and creates persist", () => {
+    const { writeFileSync, mkdirSync } = require("node:fs") as typeof import("node:fs");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "registry.json"),
+      JSON.stringify({ default: "default", workspaces: [] }),
+    );
+    expect(loadRegistry().workspaces).toEqual({});
+    createWorkspace("gtm");
+    expect(Object.keys(loadRegistry().workspaces)).toEqual(["gtm"]);
+  });
+});

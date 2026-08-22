@@ -15,10 +15,9 @@
  * `ONESHOT_GTM_WORKSPACES` relocates the container (tests, demos).
  */
 import {
-  closeSync,
   existsSync,
   mkdirSync,
-  openSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -82,7 +81,12 @@ export function loadRegistry(): WorkspaceRegistry {
     const raw = JSON.parse(readFileSync(p, "utf8")) as Partial<WorkspaceRegistry>;
     return {
       default: typeof raw.default === "string" ? raw.default : DEFAULT_WORKSPACE,
-      workspaces: raw.workspaces && typeof raw.workspaces === "object" ? raw.workspaces : {},
+      // A plain object only: an array would accept named properties and then
+      // drop them on stringify — the workspace would vanish after saving.
+      workspaces:
+        raw.workspaces && typeof raw.workspaces === "object" && !Array.isArray(raw.workspaces)
+          ? raw.workspaces
+          : {},
     };
   } catch {
     throw new WorkspaceError(`workspace registry at ${p} is not valid JSON — fix or delete it`);
@@ -98,48 +102,68 @@ export function saveRegistry(reg: WorkspaceRegistry): void {
   renameSync(tmp, p);
 }
 
-/** A lock older than this belongs to a process that died mid-edit. */
-const LOCK_STALE_MS = 10_000;
+/**
+ * A lock older than this belongs to a process that died mid-edit. Registry
+ * edits are milliseconds (read JSON, write JSON, mkdir), so 30s is many orders
+ * of magnitude past any live operation.
+ */
+const LOCK_STALE_MS = 30_000;
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
 
 /**
  * Serialize read-modify-write of the registry across processes with an
  * exclusive lock file (O_EXCL create). Without it two `workspace create`s at
  * once read the same registry, pick the same free port and the later save
  * overwrites the earlier one — a lost workspace AND a port collision.
+ *
+ * The lock carries an owner token: release only unlinks OUR lock, so a
+ * process that legitimately broke a stale lock can't have its replacement
+ * yanked by the original owner's `finally`. Every retry checks the deadline
+ * first, so a persistent filesystem error (EACCES on stat/unlink) surfaces as
+ * a WorkspaceError instead of a full-CPU spin.
  */
 export function withRegistryLock<T>(fn: () => T, opts: { waitMs?: number } = {}): T {
   const lock = `${registryPath()}.lock`;
   if (!existsSync(dirname(lock))) mkdirSync(dirname(lock), { recursive: true });
+  const token = `${process.pid}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
   const deadline = Date.now() + (opts.waitMs ?? 5_000);
   for (;;) {
     try {
-      closeSync(openSync(lock, "wx"));
+      writeFileSync(lock, token, { flag: "wx" });
       break;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
-      try {
-        if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) {
-          unlinkSync(lock);
-          continue;
-        }
-      } catch {
-        continue; // lock vanished between exists and stat — retry
-      }
-      if (Date.now() > deadline) {
-        throw new WorkspaceError(
-          `workspace registry is locked (${lock}) — another command is editing it`,
-        );
-      }
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
     }
+    if (Date.now() > deadline) {
+      throw new WorkspaceError(
+        `workspace registry is locked (${lock}) — another command is editing it`,
+      );
+    }
+    let stale = false;
+    try {
+      stale = Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS;
+    } catch {
+      // vanished between create and stat, or unreadable — just retry
+    }
+    if (stale) {
+      try {
+        unlinkSync(lock);
+      } catch {
+        // someone else broke it first, or we can't — the deadline bounds us
+      }
+    }
+    sleepSync(50);
   }
   try {
     return fn();
   } finally {
     try {
-      unlinkSync(lock);
+      if (readFileSync(lock, "utf8") === token) unlinkSync(lock);
     } catch {
-      // already gone
+      // already gone, or not ours
     }
   }
 }
@@ -185,6 +209,13 @@ export function createWorkspace(name: string): WorkspaceEntry {
       throw new WorkspaceError(`workspace '${name}' already exists`);
     }
     const home = join(workspacesDir(), name);
+    // `workspace remove` leaves files behind on purpose; a new workspace must
+    // never silently inherit that stale config, ledger and credentials.
+    if (existsSync(home) && readdirSync(home).length > 0) {
+      throw new WorkspaceError(
+        `${home} already has files (a removed workspace?) — delete them first, or pick another name`,
+      );
+    }
     const used = new Set(listWorkspaces(reg).map(([, e]) => e.port));
     let port = BASE_PORT + 1;
     while (used.has(port)) port += 1;

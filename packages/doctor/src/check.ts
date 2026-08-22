@@ -280,6 +280,7 @@ function workspaceChecks(cfg: ReturnType<typeof loadConfig>): CheckResult[] {
     if (other === name) continue;
     const theirCfg = readJson<{
       sendingDomain?: string | null;
+      emailProvider?: string | null;
       emailIdentities?: Array<{
         provider: string;
         sendingDomain?: string | null;
@@ -295,7 +296,9 @@ function workspaceChecks(cfg: ReturnType<typeof loadConfig>): CheckResult[] {
         .map((i) => (i.provider === "oneshot" ? (i.sendingDomain ?? theirCfg.sendingDomain) : null))
         .concat(
           // Mirror resolveIdentities: no pool OR an empty pool sends via sendingDomain.
-          theirCfg.emailIdentities == null || theirCfg.emailIdentities.length === 0
+          // …except a legacy Gmail install, whose sendingDomain is inert.
+          (theirCfg.emailIdentities == null || theirCfg.emailIdentities.length === 0) &&
+            theirCfg.emailProvider !== "gmail"
             ? [theirCfg.sendingDomain ?? null]
             : [],
         )

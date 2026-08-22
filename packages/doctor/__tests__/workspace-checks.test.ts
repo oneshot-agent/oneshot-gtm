@@ -178,3 +178,26 @@ describe("third-round review findings (#38)", () => {
     expect(checks.find((c) => c.name === "gmail me@gmail.com")?.severity).toBe("warn");
   });
 });
+
+describe("fourth-round review findings (#38)", () => {
+  it("a legacy Gmail workspace's unused sendingDomain is not a collision", async () => {
+    cfgOverride = {
+      emailIdentities: [
+        {
+          id: "oneshot:me@acme.email",
+          provider: "oneshot",
+          sendingDomain: "acme.email",
+          maxPerDay: 50,
+          warmup: null,
+        },
+      ],
+    };
+    otherWorkspace("sdk", {
+      emailProvider: "gmail",
+      sendingDomain: "acme.email",
+      emailIdentities: null,
+    });
+    const checks = await runDoctor();
+    expect(checks.some((c) => c.name === "sending domain acme.email")).toBe(false);
+  });
+});
