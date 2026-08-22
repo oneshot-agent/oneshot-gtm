@@ -4,6 +4,7 @@ export * from "./ledger.ts";
 export * from "./config.ts";
 export * from "./demo.ts";
 export * from "./shared-db.ts";
+export * from "./workspaces.ts";
 export * from "./html-text.ts";
 export * from "./events.ts";
 export * from "./telemetry.ts";
