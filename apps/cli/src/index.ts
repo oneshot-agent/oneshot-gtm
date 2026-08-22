@@ -46,6 +46,14 @@ import {
   commandDemoUi,
   DEFAULT_DEMO_HOME,
 } from "./commands/demo.ts";
+import {
+  commandWorkspaceCreate,
+  commandWorkspaceCurrent,
+  commandWorkspaceList,
+  commandWorkspacePath,
+  commandWorkspaceRemove,
+  commandWorkspaceUse,
+} from "./commands/workspace.ts";
 import { commandEnrichLinkedIn } from "./commands/enrich-linkedin.ts";
 import { commandFindDrain, commandFindWatch } from "./commands/find.ts";
 import {
@@ -70,7 +78,12 @@ program
     "Open-source GTM agent for technical founders. Pay-per-result. Signed receipts.\n" +
       "The CLI is a thin headless layer; ad-hoc target discovery + review + send happens in the dashboard (oneshot-gtm ui).",
   )
-  .version(CLI_VERSION);
+  .version(CLI_VERSION)
+  // Documentation only: main.ts consumes this flag BEFORE commander runs (the
+  // home must be chosen before core is imported), so it never reaches here.
+  // Declared so `--help` shows it and a stray occurrence isn't an "unknown
+  // option" error.
+  .option("-w, --workspace <name>", "run against a named workspace (see: workspace list)");
 
 // Bootstrap + launcher
 
@@ -80,16 +93,19 @@ program
   .command("ui")
   .option(
     "--port <n>",
-    "port for the API server (default 3030)",
+    "port for the API server (default: the workspace's registered port; 3030 for `default`)",
     (v) => Number.parseInt(v, 10),
-    3030,
   )
   .option("--no-browser", "do not auto-open the browser")
   .option("--dev", "use vite dev server (5173) + API server", false)
   .description("Open the local dashboard at http://127.0.0.1:<port>")
   .action(
-    runOrFail(async (opts: { port: number; browser: boolean; dev: boolean }) => {
-      await commandUi({ port: opts.port, noBrowser: !opts.browser, dev: opts.dev });
+    runOrFail(async (opts: { port?: number; browser: boolean; dev: boolean }) => {
+      await commandUi({
+        ...(opts.port != null ? { port: opts.port } : {}),
+        noBrowser: !opts.browser,
+        dev: opts.dev,
+      });
     }),
   );
 
@@ -145,6 +161,37 @@ demo
     }),
   );
 
+// Workspaces: named, fully isolated installs (one product each). Selection
+// (--workspace / ONESHOT_GTM_WORKSPACE / registry default) happens in main.ts
+// BEFORE core is imported — by the time these actions run the home is fixed.
+const workspace = program
+  .command("workspace")
+  .description("Named isolated installs — one per product you're selling");
+workspace
+  .command("list")
+  .description("Show every workspace, the current and the default")
+  .action(runOrFail(commandWorkspaceList));
+workspace
+  .command("create <name>")
+  .description("Create an empty workspace (then: --workspace <name> init)")
+  .action(runOrFail(commandWorkspaceCreate));
+workspace
+  .command("use <name>")
+  .description("Make a workspace the default for runs without --workspace")
+  .action(runOrFail(commandWorkspaceUse));
+workspace
+  .command("current")
+  .description("Print the active workspace name and home")
+  .action(runOrFail(commandWorkspaceCurrent));
+workspace
+  .command("path <name>")
+  .description("Print a workspace's home dir (for ONESHOT_GTM_HOME=$(…) scripting)")
+  .action(runOrFail(commandWorkspacePath));
+workspace
+  .command("remove <name>")
+  .description("Forget a workspace (files are left in place)")
+  .action(runOrFail(commandWorkspaceRemove));
+
 // Config (founder profile + LLM + secrets only; ICP lives in the dashboard)
 const config = program.command("config").description("Configure providers and profile");
 config.command("llm").description("Pick LLM provider and model").action(runOrFail(configLlm));
@@ -155,7 +202,7 @@ config
 config
   .command("keys")
   .description(
-    "Set or update API keys (LLM + OneShot wallet) — saved chmod 600 to ~/.oneshot-gtm/.env",
+    "Set or update API keys (LLM + OneShot wallet) — saved chmod 600 to the workspace's .env",
   )
   .action(runOrFail(configKeys));
 config
@@ -169,9 +216,7 @@ const gmail = program
   .description("Gmail / Google Workspace send path (alternate email provider)");
 gmail
   .command("auth")
-  .description(
-    "Authorize Gmail via OAuth and store the refresh token (chmod 600 ~/.oneshot-gtm/.env)",
-  )
+  .description("Authorize Gmail via OAuth and store the refresh token (chmod 600, workspace .env)")
   .action(runOrFail(commandGmailAuth));
 gmail
   .command("placement")

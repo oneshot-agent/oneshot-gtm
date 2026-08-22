@@ -1,8 +1,8 @@
 # Status
 
-**Assume green unless it's listed below.** The 41 CLI commands, 14 plays, 10 finders, nine dashboard pages plus the run form, and the server's REST + SSE routes are all covered by the test suite — and, with the seven exceptions on this page, verified end to end against the live OneShot API.
+**Assume green unless it's listed below.** The 47 CLI commands, 14 plays, 10 finders, nine dashboard pages plus the run form, and the server's REST + SSE routes are all covered by the test suite — and, with the seven exceptions on this page, verified end to end against the live OneShot API.
 
-Last verified **2026-08-17** · Bun 1.3.13 · OneShot SDK 0.22.0 · 1518 tests / 117 files · typecheck + oxlint clean (301 files).
+Last verified **2026-08-17** · Bun 1.3.13 · OneShot SDK 0.22.0 · 1621 tests / 126 files · typecheck + oxlint clean (318 files).
 
 Updated by hand after each dogfood run. CI auto-update is on the roadmap.
 
