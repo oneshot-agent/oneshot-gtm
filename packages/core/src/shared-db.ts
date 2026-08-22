@@ -104,12 +104,33 @@ export class SharedDb {
         imported_at TEXT NOT NULL
       );
     `);
-    // Shared files created before reservations existed.
-    const cols = this.db.query("PRAGMA table_info(contact_touches)").all() as Array<{
-      name: string;
-    }>;
-    if (!cols.some((c) => c.name === "status")) {
-      this.db.exec("ALTER TABLE contact_touches ADD COLUMN status TEXT NOT NULL DEFAULT 'sent'");
+    // Shared files created before reservations existed. Every workspace's
+    // server runs this on boot, possibly at the same instant: take the write
+    // lock so the second process re-checks AFTER the first's ALTER lands, and
+    // still tolerate the duplicate-column error if two connections slip past
+    // (SQLite's ALTER is not itself idempotent).
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const cols = this.db.query("PRAGMA table_info(contact_touches)").all() as Array<{
+        name: string;
+      }>;
+      if (!cols.some((c) => c.name === "status")) {
+        try {
+          this.db.exec(
+            "ALTER TABLE contact_touches ADD COLUMN status TEXT NOT NULL DEFAULT 'sent'",
+          );
+        } catch (err) {
+          if (!/duplicate column/i.test((err as Error).message ?? "")) throw err;
+        }
+      }
+      this.db.exec("COMMIT");
+    } catch (err) {
+      try {
+        this.db.exec("ROLLBACK");
+      } catch {
+        // already rolled back
+      }
+      throw err;
     }
   }
 

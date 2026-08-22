@@ -222,3 +222,25 @@ describe("second-round review findings (#36)", () => {
     ).toEqual([]);
   });
 });
+
+describe("schema upgrade of a pre-reservation shared file", () => {
+  it("adds the status column once and opens cleanly from two handles", () => {
+    const path = join(dir, "old.sqlite");
+    const { Database } = require("bun:sqlite") as typeof import("bun:sqlite");
+    const raw = new Database(path);
+    raw.exec(`CREATE TABLE contact_touches (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL, workspace TEXT NOT NULL,
+      play_name TEXT NOT NULL, sent_at TEXT NOT NULL)`);
+    raw.exec(
+      "INSERT INTO contact_touches(email, workspace, play_name, sent_at) VALUES('a@b.dev','sdk','p','2026-08-20T00:00:00.000Z')",
+    );
+    raw.close();
+    const one = new SharedDb(path);
+    const two = new SharedDb(path);
+    // Legacy rows read as confirmed sends.
+    expect(one.touchesFor("a@b.dev")[0]).toMatchObject({ status: "sent" });
+    expect(two.recentTouchElsewhere("a@b.dev", "gtm")?.workspace).toBe("sdk");
+    one.close();
+    two.close();
+  });
+});
