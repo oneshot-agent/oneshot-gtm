@@ -78,7 +78,12 @@ program
     "Open-source GTM agent for technical founders. Pay-per-result. Signed receipts.\n" +
       "The CLI is a thin headless layer; ad-hoc target discovery + review + send happens in the dashboard (oneshot-gtm ui).",
   )
-  .version(CLI_VERSION);
+  .version(CLI_VERSION)
+  // Documentation only: main.ts consumes this flag BEFORE commander runs (the
+  // home must be chosen before core is imported), so it never reaches here.
+  // Declared so `--help` shows it and a stray occurrence isn't an "unknown
+  // option" error.
+  .option("-w, --workspace <name>", "run against a named workspace (see: workspace list)");
 
 // Bootstrap + launcher
 
