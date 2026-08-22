@@ -4,6 +4,8 @@ import {
   isSendDeferred,
   loadConfig,
   parallelMap,
+  CONTACTED_ELSEWHERE_FLAG,
+  recentTouchElsewhere,
 } from "@oneshot-gtm/core";
 import {
   draftEmailFromPrompt,
@@ -160,6 +162,10 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           ...lintEmail(draft.subject, draft.body, def.maxBodyWords),
           ...(def.extraFlags?.(target) ?? []),
         ];
+        // Cross-workspace hold, applied centrally so EVERY play gets it: a
+        // soft flag (overridable on manual send) that keeps drain from auto-
+        // sending to someone another workspace emailed this week.
+        if (recentTouchElsewhere(def.toEmail(target))) flags.push(CONTACTED_ELSEWHERE_FLAG);
 
         const send = await sendDraftedEmail({
           playName: def.playName,

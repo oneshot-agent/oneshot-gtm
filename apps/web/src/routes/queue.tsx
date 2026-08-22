@@ -964,7 +964,9 @@ function DraftSection({
         onClick={() => send.mutate()}
         title={
           softHold
-            ? "Held for review (event has passed) — send the reviewed draft above, as-is"
+            ? draft?.flags.includes("contacted-elsewhere")
+              ? "Held — another workspace emailed this person in the last 7 days. Send the reviewed draft as-is to override."
+              : "Held for review (event has passed) — send the reviewed draft above, as-is"
             : cleanDraft
               ? "Send this prospect now — sends the reviewed draft above, as-is"
               : draft == null
@@ -1001,7 +1003,9 @@ function DraftSection({
   const stateLabel = draft.sent
     ? "sent"
     : draft.flags.length > 0
-      ? "held · lint"
+      ? blockingFlags(draft.flags).length > 0
+        ? "held · lint"
+        : "held · review"
       : draft.dryRun
         ? "preview"
         : "drafted";

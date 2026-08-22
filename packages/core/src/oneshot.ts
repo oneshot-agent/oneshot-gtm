@@ -20,6 +20,7 @@ import { createHash } from "node:crypto";
 import { getLedger } from "./ledger.ts";
 import { loadConfig, oneshotEnvReady } from "./config.ts";
 import { demoFixture, demoMode } from "./demo.ts";
+import { claimContactTouch, describeTouch, recordContactTouch } from "./shared-db.ts";
 import { htmlToText } from "./html-text.ts";
 import { logEvent } from "./events.ts";
 import {
@@ -33,6 +34,7 @@ import { gmailAccountFor, resolveIdentities } from "./identities.ts";
 import { parallelMap, withDeadline } from "./parallel.ts";
 import {
   isTransientToolError,
+  RecentlyContactedError,
   resolveSenderIdentity,
   SuppressedRecipientError,
 } from "./send-routing.ts";
@@ -47,6 +49,12 @@ export interface SendEmailInput {
   body: string;
   /** OneShot provider only — ignored when config.emailProvider is "gmail" (Gmail always sends from the authenticated account). */
   fromDomain?: string;
+  /**
+   * Send even if ANOTHER workspace emailed this recipient inside the hold
+   * window. Only the manual queue send sets this — the founder has seen the
+   * `contacted-elsewhere` flag and is choosing to send anyway.
+   */
+  allowContactedElsewhere?: boolean;
 }
 
 export interface ResearchInput {
@@ -303,7 +311,7 @@ async function sendEmailViaGmail(input: SendEmailInput, ctx: CallContext, identi
   return { result, receiptId };
 }
 
-export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
+async function dispatchEmail(input: SendEmailInput, ctx: CallContext) {
   // Suppression backstop, ahead of everything else: a previously hard-bounced
   // address can only fail again, and the send is billed before dispatch. Every
   // caller funnels through here (plays, cadence, queue), so this is the one
@@ -363,6 +371,37 @@ export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
     senderIdentity: identity.id,
   });
   return { result, receiptId };
+}
+
+/**
+ * Every outbound email funnels through here (plays, cadence, queue, concierge,
+ * pmf-survey). Order matters:
+ *   1. hard-bounce suppression (in dispatchEmail) — permanent, never overridable;
+ *   2. the cross-workspace claim — ATOMIC check-and-reserve in the shared DB,
+ *      before any routing or network, so two workspaces can't both pass;
+ *   3. dispatch; then the reservation is confirmed (success) or released
+ *      (any failure), so a failed send never counts as a touch and a crash
+ *      mid-send expires on its own.
+ * `replyEmail` is deliberately not gated — a reply goes to someone who just
+ * wrote to us — it only records its touch.
+ */
+export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
+  const claim = claimContactTouch({
+    email: input.to,
+    playName: ctx.playName,
+    override: input.allowContactedElsewhere === true,
+  });
+  if (claim.held) {
+    throw new RecentlyContactedError(`${input.to} was ${describeTouch(claim.held)} — held`);
+  }
+  try {
+    const out = await dispatchEmail(input, ctx);
+    claim.finish(true);
+    return out;
+  } catch (err) {
+    claim.finish(false);
+    throw err;
+  }
 }
 
 export interface ReplyEmailInput {
@@ -453,6 +492,7 @@ export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
       oneshotRequestId: sent.id,
       senderIdentity: identity.id,
     });
+    recordContactTouch(input.to, ctx.playName);
     return { result, receiptId };
   }
 
@@ -489,6 +529,7 @@ export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
     oneshotRequestId: result.request_id,
     senderIdentity: identity.id,
   });
+  recordContactTouch(input.to, ctx.playName);
   return { result, receiptId };
 }
 

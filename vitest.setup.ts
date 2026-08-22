@@ -17,6 +17,10 @@ import { join } from "node:path";
 
 const dir = mkdtempSync(join(tmpdir(), "oneshot-gtm-test-"));
 process.env["ONESHOT_GTM_HOME"] = dir;
+// The cross-workspace shared DB lives OUTSIDE the home by design, so it needs
+// its own redirect or every test would write caches/touches into the real
+// ~/.oneshot-gtm-shared.
+process.env["ONESHOT_GTM_SHARED"] = join(dir, "shared");
 
 // Hard-disable distribution telemetry for the whole suite. Otherwise any test
 // that drives a server route / scheduler tick / CLI dispatch reaches

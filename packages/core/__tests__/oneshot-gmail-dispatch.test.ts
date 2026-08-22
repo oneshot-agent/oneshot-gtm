@@ -279,3 +279,25 @@ describe("listInbox — multi-identity merge", () => {
     }
   });
 });
+
+describe("sendEmail — records a cross-workspace contact touch", () => {
+  it("a successful send writes (recipient, workspace, play) to the shared DB", async () => {
+    const { getSharedDb } = await import("../src/shared-db.ts");
+    process.env["ONESHOT_GTM_WORKSPACE"] = "gtm-touch-test";
+    try {
+      stubGmailFetch();
+      await sendEmail(
+        { to: "touched@acme.com", subject: "hi", body: "b" },
+        { playName: "show-hn" },
+      );
+      const touches = getSharedDb().touchesFor("touched@acme.com");
+      expect(touches[0]).toMatchObject({
+        workspace: "gtm-touch-test",
+        play_name: "show-hn",
+        status: "sent",
+      });
+    } finally {
+      delete process.env["ONESHOT_GTM_WORKSPACE"];
+    }
+  });
+});

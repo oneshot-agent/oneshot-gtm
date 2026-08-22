@@ -104,6 +104,9 @@ export async function commandDemoUi(opts: DemoUiOpts): Promise<void> {
   scrubInheritedSecrets(process.env);
   process.env["ONESHOT_GTM_HOME"] = home;
   process.env["ONESHOT_GTM_DEMO"] = "1";
+  // The shared cross-workspace DB must not leak real caches/touches into a
+  // demo, nor record the demo's clicks as real contact history.
+  process.env["ONESHOT_GTM_SHARED"] = join(home, "shared");
   // A demo run is not a real install and must not report itself as one.
   process.env["ONESHOT_GTM_TELEMETRY"] = "0";
 
