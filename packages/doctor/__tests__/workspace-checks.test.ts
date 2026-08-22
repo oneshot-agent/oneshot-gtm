@@ -125,3 +125,33 @@ describe("doctor workspace checks", () => {
     ).toBe(false);
   });
 });
+
+describe("second-round review findings (#37)", () => {
+  it("an other workspace with an EMPTY identity pool still collides via its sendingDomain", async () => {
+    cfgOverride = {
+      emailIdentities: [
+        {
+          id: "oneshot:me@acme.email",
+          provider: "oneshot",
+          sendingDomain: "acme.email",
+          maxPerDay: 50,
+          warmup: null,
+        },
+      ],
+    };
+    otherWorkspace("sdk", { sendingDomain: "acme.email", emailIdentities: [] });
+    const checks = await runDoctor();
+    expect(checks.find((c) => c.name === "sending domain acme.email")?.severity).toBe("warn");
+  });
+
+  it("reports a port collision even when the current workspace is the later entry", async () => {
+    // gtm (current) got :3031 in beforeEach; give sdk the same port by editing the registry.
+    const { loadRegistry, saveRegistry } = await import("@oneshot-gtm/core");
+    otherWorkspace("sdk", { emailIdentities: [] });
+    const reg = loadRegistry();
+    reg.workspaces["sdk"]!.port = reg.workspaces["gtm"]!.port;
+    saveRegistry(reg);
+    const checks = await runDoctor();
+    expect(checks.some((c) => c.name.startsWith("workspace port"))).toBe(true);
+  });
+});

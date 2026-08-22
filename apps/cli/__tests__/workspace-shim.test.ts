@@ -67,9 +67,11 @@ describe("workspace bootstrap shim", () => {
   it("an explicit ONESHOT_GTM_HOME wins, and conflicts with --workspace", () => {
     createWorkspace("gtm");
     const home = join(wsDir, "explicit");
-    expect(run(["workspace", "current"], { ONESHOT_GTM_HOME: home }).stdout.trim()).toBe(
-      `explicit\t${home}`,
-    );
+    // Unregistered homes are identified by canonical path (review finding on
+    // #37): two installs named the same must not collapse into one workspace.
+    const out = run(["workspace", "current"], { ONESHOT_GTM_HOME: home }).stdout.trim();
+    expect(out.startsWith("home:")).toBe(true);
+    expect(out.endsWith(`\t${home}`)).toBe(true);
     const r = run(["--workspace", "gtm", "workspace", "current"], { ONESHOT_GTM_HOME: home });
     expect(r.code).toBe(2);
     expect(r.stderr).toContain("conflicts");

@@ -39,8 +39,10 @@ export interface WorkspaceRegistry {
 export class WorkspaceError extends Error {}
 
 export function workspacesDir(): string {
-  return (
-    process.env["ONESHOT_GTM_WORKSPACES"]?.trim() || join(homedir(), ".oneshot-gtm-workspaces")
+  // Absolute, so a relative override doesn't persist homes that resolve
+  // differently from another working directory.
+  return resolve(
+    process.env["ONESHOT_GTM_WORKSPACES"]?.trim() || join(homedir(), ".oneshot-gtm-workspaces"),
   );
 }
 
@@ -176,6 +178,20 @@ export function workspaceNameForHome(
 }
 
 /**
+ * Dashboard port for the install at `home`: the registered port when that
+ * exact home is a workspace, else BASE_PORT. Keyed by home rather than by the
+ * derived name, so an unregistered ONESHOT_GTM_HOME can never borrow a
+ * registered workspace's port and collide with its running dashboard.
+ */
+export function portForHome(home: string, reg: WorkspaceRegistry = loadRegistry()): number {
+  const target = canonicalPath(home);
+  for (const [, entry] of listWorkspaces(reg)) {
+    if (canonicalPath(entry.home) === target) return entry.port;
+  }
+  return BASE_PORT;
+}
+
+/**
  * What the bootstrap shim does: decide the home for this process from
  * `--workspace` (already stripped from argv by the caller), the env, or the
  * registry default. An explicit ONESHOT_GTM_HOME wins outright — it is the
@@ -195,12 +211,17 @@ export function resolveWorkspaceSelection(input: {
         `--workspace '${input.flag}' conflicts with ONESHOT_GTM_HOME=${explicitHome} — set one, not both`,
       );
     }
+    // An unregistered home must not collide with a registered one — or with
+    // another unregistered home of the same basename — in the shared DB's
+    // touch attribution, or the cross-workspace hold would treat two installs
+    // as one. Identity is the canonical path.
     return {
-      name: workspaceNameForHome(explicitHome, input.registry) ?? basename(explicitHome),
+      name:
+        workspaceNameForHome(explicitHome, input.registry) ?? `home:${canonicalPath(explicitHome)}`,
       home: explicitHome,
     };
   }
-  const name = input.flag ?? input.envWorkspace?.trim() ?? input.registry.default;
+  const name = input.flag ?? (input.envWorkspace?.trim() || input.registry.default);
   return { name, home: resolveWorkspaceHome(name, input.registry) };
 }
 

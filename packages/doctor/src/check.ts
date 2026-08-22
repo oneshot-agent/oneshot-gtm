@@ -263,7 +263,7 @@ function workspaceChecks(cfg: ReturnType<typeof loadConfig>): CheckResult[] {
   );
   const portsSeen = new Map<number, string>();
   for (const [other, entry] of all) {
-    if (entry.port && portsSeen.has(entry.port) && other !== name) {
+    if (entry.port && portsSeen.has(entry.port)) {
       out.push({
         name: `workspace port ${entry.port}`,
         severity: "warn",
@@ -288,7 +288,12 @@ function workspaceChecks(cfg: ReturnType<typeof loadConfig>): CheckResult[] {
     const theirDomains = new Set(
       (theirCfg.emailIdentities ?? [])
         .map((i) => (i.provider === "oneshot" ? (i.sendingDomain ?? theirCfg.sendingDomain) : null))
-        .concat(theirCfg.emailIdentities == null ? [theirCfg.sendingDomain ?? null] : [])
+        .concat(
+          // Mirror resolveIdentities: no pool OR an empty pool sends via sendingDomain.
+          theirCfg.emailIdentities == null || theirCfg.emailIdentities.length === 0
+            ? [theirCfg.sendingDomain ?? null]
+            : [],
+        )
         .filter((d): d is string => !!d)
         .map((d) => d.toLowerCase()),
     );

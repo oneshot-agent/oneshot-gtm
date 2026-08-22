@@ -1,14 +1,16 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  BASE_PORT,
   createWorkspace,
   DEFAULT_WORKSPACE,
   extractWorkspaceFlag,
   legacyHome,
   listWorkspaces,
   loadRegistry,
+  portForHome,
   removeWorkspace,
   resolveWorkspaceHome,
   resolveWorkspaceSelection,
@@ -151,5 +153,52 @@ describe("extractWorkspaceFlag", () => {
   it("rejects a missing name", () => {
     expect(() => extractWorkspaceFlag(["--workspace"])).toThrow(/needs a name/);
     expect(() => extractWorkspaceFlag(["--workspace", "--port"])).toThrow(/needs a name/);
+  });
+});
+
+describe("second-round review findings (#37)", () => {
+  it("an empty ONESHOT_GTM_WORKSPACE falls back to the registry default", () => {
+    expect(
+      resolveWorkspaceSelection({
+        flag: null,
+        envWorkspace: "  ",
+        envHome: undefined,
+        registry: loadRegistry(),
+      }).name,
+    ).toBe(DEFAULT_WORKSPACE);
+  });
+
+  it("unregistered homes are identified by canonical path, not basename", () => {
+    const reg = loadRegistry();
+    const a = resolveWorkspaceSelection({
+      flag: null,
+      envWorkspace: undefined,
+      envHome: join(dir, "a", "gtm"),
+      registry: reg,
+    });
+    const b = resolveWorkspaceSelection({
+      flag: null,
+      envWorkspace: undefined,
+      envHome: join(dir, "b", "gtm"),
+      registry: reg,
+    });
+    expect(a.name).not.toBe(b.name);
+    expect(a.name.startsWith("home:")).toBe(true);
+  });
+
+  it("a relative ONESHOT_GTM_WORKSPACES is stored absolute", () => {
+    process.env["ONESHOT_GTM_WORKSPACES"] = "./rel-ws-" + process.pid;
+    try {
+      const e = createWorkspace("gtm");
+      expect(e.home.startsWith("/")).toBe(true);
+    } finally {
+      rmSync(resolve("./rel-ws-" + process.pid), { recursive: true, force: true });
+    }
+  });
+
+  it("portForHome keys on the home, so a same-basename unregistered home gets the fallback", () => {
+    const e = createWorkspace("gtm");
+    expect(portForHome(e.home)).toBe(e.port);
+    expect(portForHome(join(dir, "elsewhere", "gtm"))).toBe(BASE_PORT);
   });
 });
