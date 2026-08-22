@@ -73,7 +73,7 @@ bun run cli -- find drain podcast-guest --dry-run  # preview approved /queue row
 bun run cli -- cadence advance                     # daily tick: poll inbox, fire follow-ups
 ```
 
-41 commands — eleven groups, plus `init`, `doctor` and `ui` at the top level. `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
+47 commands — twelve groups, plus `init`, `doctor` and `ui` at the top level. `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
 
 | Group                    | Commands                                                                                                                                                        |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -89,6 +89,7 @@ bun run cli -- cadence advance                     # daily tick: poll inbox, fir
 | `intel`                  | `advise` · `personalize` · `triage-replies` · `weekly-review`                                                                                                   |
 | `handoff`                | `readiness` · `templatize` · `first-ae`                                                                                                                         |
 | `demo`                   | `seed` · `ui` · `reset` — a fictional install for screenshots and video                                                                                         |
+| `workspace`              | `list` · `create <name>` · `use <name>` · `current` · `path <name>` · `remove <name>` — one isolated install per product; `--workspace <name>` on any command   |
 
 Spend, CAC, RoCS and outcome logging deliberately have no CLI group — they live on the dashboard's Measure and Cadences pages so there's one source of truth. The `/api/measure/*` routes are there if you'd rather script them.
 
@@ -133,6 +134,25 @@ What demo mode changes, and nothing else:
 - The in-process **scheduler idles**, so enabled triggers don't fire against the demo install and overwrite its state mid-screenshot.
 
 Nothing that sends, drafts or spends is faked. Under the flag, the demo home's `.env` is the **sole** source of secrets — real credentials inherited from your shell, your install, or a repo-root `.env` are overwritten or deleted — so a stray click on Run or Send fails at auth rather than doing something real. `demo seed` refuses to touch `~/.oneshot-gtm`, and `demo reset` only removes a directory it marked as its own.
+
+---
+
+## Workspaces
+
+One install is one product: one founder voice, one ICP, one product brief, one ledger, one sender pool. Selling two things — or running the OneShot motion _and_ the oneshot-gtm adoption motion — means two workspaces:
+
+```bash
+bun run cli -- workspace create gtm          # ~/.oneshot-gtm-workspaces/gtm, dashboard :3031
+bun run cli -- --workspace gtm init          # its own profile, keys, identities
+bun run cli -- --workspace gtm ui            # runs side by side with the default on :3030
+bun run cli -- workspace use gtm             # make it the default for runs without the flag
+```
+
+`--workspace` (or `ONESHOT_GTM_WORKSPACE`) is resolved by a bootstrap shim before anything else loads, so every command and the spawned dashboard see the right home. An explicit `ONESHOT_GTM_HOME` still wins — it's the escape hatch, and `workspace path <name>` prints a home for scripting (`ops/expandi-sync` reads it that way).
+
+What stays **shared** across workspaces lives in `~/.oneshot-gtm-shared/shared.sqlite`: the paid lookup caches (enrichment, LinkedIn — the same person is never bought twice) and contact touches. A workspace never first-touches someone another workspace emailed in the last 7 days: the draft holds with a `contacted-elsewhere` flag you can override on a manual send, while drain and cadence steps wait the window out.
+
+`doctor` warns when two workspaces share a sending domain (warm-up caps are per-workspace, so the domain's real budget silently doubles) or a Gmail account (both inbox pollers would see both products' replies), and the dashboard masthead names the workspace you're in.
 
 ---
 
@@ -219,7 +239,7 @@ Add a OneShot domain and mailbox from `/setup` or `identities add` — pick a pr
 
 ```
 apps/
-  cli/        41-command CLI (commander); src/demo/ seeds the demo install
+  cli/        47-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
   server/     Bun.serve + SSE; tsdown bundle published as `oneshot-gtm-server`
   web/        Vite + React 19 + TanStack + Base UI — 9 pages, run form, strategist dock, privacy mode
 packages/
@@ -250,7 +270,7 @@ bun install
 bun run typecheck                  # tsc --noEmit across cli + server + packages
 bun run lint                       # oxlint
 bun run fmt                        # oxfmt --write   (fmt:check in CI)
-bun run test                       # vitest — 1518 cases across 117 files
+bun run test                       # vitest — 1621 cases across 126 files
 bun run cli -- doctor              # smoke check
 ```
 
