@@ -2,12 +2,21 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { BASE_PORT, currentWorkspaceName, listWorkspaces } from "@oneshot-gtm/core";
 import { CommandExit, c, fail, header, note, ok } from "../output.ts";
 
 interface UiOpts {
-  port: number;
+  /** Explicit --port; otherwise the workspace's registered port (3030 for `default`). */
+  port?: number;
   noBrowser: boolean;
   dev: boolean;
+}
+
+/** The port this workspace registered at `workspace create`, so two dashboards don't collide. */
+function workspacePort(): number {
+  const name = currentWorkspaceName();
+  const entry = listWorkspaces().find(([n]) => n === name)?.[1];
+  return entry?.port ?? BASE_PORT;
 }
 
 function locateRepoRoot(): string {
@@ -17,7 +26,11 @@ function locateRepoRoot(): string {
 }
 
 export async function commandUi(opts: UiOpts): Promise<void> {
-  header(`oneshot-gtm ui ${opts.dev ? c.dim("(dev — vite + server)") : ""}`);
+  const port = opts.port ?? workspacePort();
+  const ws = currentWorkspaceName();
+  header(
+    `oneshot-gtm ui ${ws !== "default" ? c.cyan(`[${ws}] `) : ""}${opts.dev ? c.dim("(dev — vite + server)") : ""}`,
+  );
 
   const root = locateRepoRoot();
   const serverBin = join(root, "apps", "server", "src", "bin.ts");
@@ -34,12 +47,12 @@ export async function commandUi(opts: UiOpts): Promise<void> {
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    PORT: String(opts.port),
+    PORT: String(port),
     ...(opts.noBrowser ? { ONESHOT_GTM_NO_BROWSER: "1" } : {}),
   };
 
   if (opts.dev) {
-    note(`Starting Vite dev (5173) + API server (${opts.port})...`);
+    note(`Starting Vite dev (5173) + API server (${port})...`);
     env["VITE_DEV_SERVER_URL"] = "http://127.0.0.1:5173";
 
     const vite = spawn("bun", ["run", "--cwd", join(root, "apps", "web"), "dev"], {
@@ -63,7 +76,7 @@ export async function commandUi(opts: UiOpts): Promise<void> {
     };
     process.on("SIGINT", shutdown);
     process.on("SIGTERM", shutdown);
-    ok(`Web: http://127.0.0.1:5173    API: http://127.0.0.1:${opts.port}/api`);
+    ok(`Web: http://127.0.0.1:5173    API: http://127.0.0.1:${port}/api`);
     return new Promise<void>(() => {
       // never resolve; handlers above will exit on signal
     });

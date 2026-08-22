@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   capGroupKey,
@@ -17,6 +17,8 @@ import {
   oneshotEnvReady,
   resolveIdentities,
   secretSource,
+  currentWorkspaceName,
+  listWorkspaces,
 } from "@oneshot-gtm/core";
 
 type CheckSeverity = "ok" | "warn" | "fail";
@@ -216,9 +218,126 @@ function placementCheck(): CheckResult {
   }
 }
 
+/**
+ * Workspace identity + cross-workspace guardrails. Other workspaces' homes are
+ * read by PATH (config.json / gmail-tokens.json) — core's config is bound to
+ * THIS home at import time and can't be re-pointed. Sharing a sending domain
+ * across workspaces silently doubles its daily budget (caps are per-ledger);
+ * sharing a Gmail account cross-wires reply detection (both pollers see both
+ * products' replies).
+ */
+function workspaceChecks(cfg: ReturnType<typeof loadConfig>): CheckResult[] {
+  const out: CheckResult[] = [];
+  const name = currentWorkspaceName();
+  let all: ReturnType<typeof listWorkspaces> = [];
+  try {
+    all = listWorkspaces();
+  } catch (err) {
+    out.push({
+      name: "workspace",
+      severity: "warn",
+      message: `${name} · ${configDir()}`,
+      hint: `workspace registry unreadable: ${(err as Error).message}`,
+    });
+    return out;
+  }
+  const mine = all.find(([n]) => n === name)?.[1];
+  out.push({
+    name: "workspace",
+    severity: "ok",
+    message: `${name} · ${configDir()}${mine ? ` · port ${mine.port}` : ""}`,
+  });
+
+  const myIdentities = resolveIdentities(cfg);
+  const myDomains = new Set(
+    myIdentities
+      .map((i) => (i.provider === "oneshot" ? (i.sendingDomain ?? cfg.sendingDomain) : null))
+      .filter((d): d is string => !!d)
+      .map((d) => d.toLowerCase()),
+  );
+  const myGmail = new Set(
+    myIdentities
+      .map((i) => (i.provider === "gmail" ? i.address : null))
+      .filter((a): a is string => !!a)
+      .map((a) => a.toLowerCase()),
+  );
+  const portsSeen = new Map<number, string>();
+  for (const [other, entry] of all) {
+    if (entry.port && portsSeen.has(entry.port) && other !== name) {
+      out.push({
+        name: `workspace port ${entry.port}`,
+        severity: "warn",
+        message: `'${other}' and '${portsSeen.get(entry.port)}' both default to :${entry.port}`,
+        hint: "run one with --port, or recreate the workspace",
+      });
+    }
+    if (entry.port) portsSeen.set(entry.port, other);
+    if (other === name) continue;
+    const theirCfg = readJson<{
+      sendingDomain?: string | null;
+      emailIdentities?: Array<{
+        provider: string;
+        sendingDomain?: string | null;
+        address?: string | null;
+      }> | null;
+    }>(join(entry.home, "config.json"));
+    const theirTokens = readJson<Record<string, { address?: string }>>(
+      join(entry.home, "gmail-tokens.json"),
+    );
+    if (!theirCfg) continue;
+    const theirDomains = new Set(
+      (theirCfg.emailIdentities ?? [])
+        .map((i) => (i.provider === "oneshot" ? (i.sendingDomain ?? theirCfg.sendingDomain) : null))
+        .concat(theirCfg.emailIdentities == null ? [theirCfg.sendingDomain ?? null] : [])
+        .filter((d): d is string => !!d)
+        .map((d) => d.toLowerCase()),
+    );
+    const theirGmail = new Set(
+      [
+        ...(theirCfg.emailIdentities ?? []).map((i) => (i.provider === "gmail" ? i.address : null)),
+        ...Object.values(theirTokens ?? {}).map((t) => t.address ?? null),
+      ]
+        .filter((a): a is string => !!a)
+        .map((a) => a.toLowerCase()),
+    );
+    for (const d of myDomains) {
+      if (theirDomains.has(d)) {
+        out.push({
+          name: `sending domain ${d}`,
+          severity: "warn",
+          message: `also used by workspace '${other}' — caps are per-workspace, so the domain's real daily budget is doubled`,
+          hint: "give each workspace its own sending domain (oneshot-gtm identities add)",
+        });
+      }
+    }
+    for (const a of myGmail) {
+      if (theirGmail.has(a)) {
+        out.push({
+          name: `gmail ${a}`,
+          severity: "warn",
+          message: `also authorized in workspace '${other}' — both inbox pollers will see both products' replies`,
+          hint: "use a separate Gmail account per workspace",
+        });
+      }
+    }
+  }
+  return out;
+}
+
+function readJson<T>(path: string): T | null {
+  try {
+    if (!existsSync(path)) return null;
+    return JSON.parse(readFileSync(path, "utf8")) as T;
+  } catch {
+    return null;
+  }
+}
+
 export async function runDoctor(): Promise<CheckResult[]> {
   const cfg = loadConfig();
   const results: CheckResult[] = [];
+
+  results.push(...workspaceChecks(cfg));
 
   results.push({
     name: "config dir",

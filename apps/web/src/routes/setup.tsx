@@ -224,6 +224,8 @@ function SetupPage() {
   });
 
   const sources = status.data?.sources ?? {};
+  // Workspace-aware: the server already reports the real secrets path.
+  const homeDir = status.data?.secretsPath?.replace(/\/\.env$/, "") ?? "~/.oneshot-gtm";
   const provisionedDomains = status.data?.provisionedDomains ?? [];
   // Default mailbox shown as a placeholder — founder's first name, normalized.
   const founderLocalpart =
@@ -287,7 +289,7 @@ function SetupPage() {
           </h1>
         </div>
         <span className="text-[11px] text-ink-faint ln-mono">
-          saved to <span className="text-ink-muted">~/.oneshot-gtm/config.json</span> ·{" "}
+          saved to <span className="text-ink-muted">{homeDir}/config.json</span> ·{" "}
           <span className="text-ink-muted">.env</span> · chmod 600
         </span>
       </section>
@@ -574,7 +576,7 @@ function SetupPage() {
                 sources[llmSecretKey] === "env"
                   ? "Currently from shell env. Leaving blank keeps the env value."
                   : sources[llmSecretKey] === "file"
-                    ? "Currently from ~/.oneshot-gtm/.env. Leave blank to keep."
+                    ? "Currently from this workspace's .env. Leave blank to keep."
                     : "Not set. Paste it here to save (chmod 600)."
               }
               className="md:col-span-2"
@@ -592,7 +594,7 @@ function SetupPage() {
 
         <LedgerSection
           eyebrow="05 · Wallet"
-          lede="Keys live only in ~/.oneshot-gtm/.env chmod 600. Nothing leaves your machine."
+          lede={`Keys live only in ${homeDir}/.env chmod 600. Nothing leaves your machine.`}
         >
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <Field label="Wallet mode" className="md:col-span-2">
@@ -1062,6 +1064,6 @@ function LedgerSection({
 
 function hintFor(source: "env" | "file" | null | undefined): string {
   if (source === "env") return "Currently from shell env. Leave blank to keep.";
-  if (source === "file") return "Currently from ~/.oneshot-gtm/.env. Leave blank to keep.";
+  if (source === "file") return "Currently from this workspace's .env. Leave blank to keep.";
   return "Not set yet.";
 }

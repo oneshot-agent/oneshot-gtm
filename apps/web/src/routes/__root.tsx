@@ -82,6 +82,11 @@ function RootLayout() {
     refetchInterval: 60_000,
   });
 
+  // Doctor's first check names the workspace: "<name> · <home>".
+  const workspaceName =
+    (doctor.data?.checks ?? []).find((c) => c.name === "workspace")?.message.split(" · ")[0] ??
+    null;
+
   const alerts: Record<NonNullable<NavItem["alert"]>, boolean> = {
     "queue-pending": (queueQuery.data?.counts.pending ?? 0) > 0,
     "doctor-fail": (doctor.data?.checks ?? []).some((c) => c.severity === "fail"),
@@ -192,7 +197,14 @@ function RootLayout() {
 
         <header className="flex items-center justify-between border-b border-ink-rule bg-ink-bg/70 px-6 py-2.5 backdrop-blur-[2px]">
           <div className="text-[11.5px] text-ink-faint ln-mono">
-            single user · local-first · bound to <span className="text-ink-muted">127.0.0.1</span>
+            {workspaceName && workspaceName !== "default" ? (
+              <>
+                workspace <span className="text-ink-cream">{workspaceName}</span> ·{" "}
+              </>
+            ) : (
+              "single user · "
+            )}
+            local-first · bound to <span className="text-ink-muted">127.0.0.1</span>
           </div>
           <div className="flex items-center gap-3">
             <PrivacyToggle />

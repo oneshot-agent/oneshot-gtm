@@ -4,7 +4,7 @@
   "description": "Open-source GTM agent for technical founders. Pay-per-result, signed receipts.",
   "license": "MIT",
   "bin": {
-    "oneshot-gtm": "./src/index.ts"
+    "oneshot-gtm": "./src/main.ts"
   },
   "files": [
     "src"
