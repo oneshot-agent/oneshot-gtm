@@ -14,9 +14,14 @@ interface UiOpts {
 
 /** The port this workspace registered at `workspace create`, so two dashboards don't collide. */
 function workspacePort(): number {
-  const name = currentWorkspaceName();
-  const entry = listWorkspaces().find(([n]) => n === name)?.[1];
-  return entry?.port ?? BASE_PORT;
+  try {
+    const name = currentWorkspaceName();
+    const entry = listWorkspaces().find(([n]) => n === name)?.[1];
+    return entry?.port ?? BASE_PORT;
+  } catch {
+    // A corrupt registry is doctor's problem, not a reason to refuse to boot.
+    return BASE_PORT;
+  }
 }
 
 function locateRepoRoot(): string {
