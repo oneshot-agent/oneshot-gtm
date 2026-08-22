@@ -19,6 +19,7 @@ import {
   secretSource,
   currentWorkspaceName,
   listWorkspaces,
+  loadGmailTokens,
 } from "@oneshot-gtm/core";
 
 type CheckSeverity = "ok" | "warn" | "fail";
@@ -255,9 +256,13 @@ function workspaceChecks(cfg: ReturnType<typeof loadConfig>): CheckResult[] {
       .filter((d): d is string => !!d)
       .map((d) => d.toLowerCase()),
   );
+  // Identity `address` is informational and absent in legacy Gmail mode; the
+  // token store is what actually polls, so it's the authoritative list.
   const myGmail = new Set(
-    myIdentities
-      .map((i) => (i.provider === "gmail" ? i.address : null))
+    [
+      ...myIdentities.map((i) => (i.provider === "gmail" ? i.address : null)),
+      ...Object.values(loadGmailTokens()).map((t) => t.address),
+    ]
       .filter((a): a is string => !!a)
       .map((a) => a.toLowerCase()),
   );

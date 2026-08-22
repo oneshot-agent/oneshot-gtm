@@ -15,6 +15,7 @@ import {
   resolveWorkspaceHome,
   resolveWorkspaceSelection,
   setDefaultWorkspace,
+  withRegistryLock,
   WorkspaceError,
   workspaceNameForHome,
 } from "../src/workspaces.ts";
@@ -200,5 +201,37 @@ describe("second-round review findings (#37)", () => {
     const e = createWorkspace("gtm");
     expect(portForHome(e.home)).toBe(e.port);
     expect(portForHome(join(dir, "elsewhere", "gtm"))).toBe(BASE_PORT);
+  });
+});
+
+describe("third-round review findings (#38)", () => {
+  it("names that collide with Object.prototype keys are ordinary workspaces", () => {
+    const e = createWorkspace("constructor");
+    expect(resolveWorkspaceHome("constructor")).toBe(e.home);
+    expect(() => createWorkspace("constructor")).toThrow(/already exists/);
+    removeWorkspace("constructor");
+    expect(() => resolveWorkspaceHome("constructor")).toThrow(/no workspace named/);
+  });
+
+  it("registry edits take an exclusive lock and break a stale one", () => {
+    const lock = join(dir, "registry.json.lock");
+    // A lock from a process that died: old mtime → broken through.
+    const { writeFileSync, utimesSync } = require("node:fs") as typeof import("node:fs");
+    writeFileSync(lock, "");
+    const old = new Date(Date.now() - 60_000);
+    utimesSync(lock, old, old);
+    expect(() => createWorkspace("gtm")).not.toThrow();
+    // …and the lock is released afterwards.
+    expect(require("node:fs").existsSync(lock)).toBe(false);
+  });
+
+  it("a live lock held by someone else makes the edit wait, then fail legibly", () => {
+    const lock = join(dir, "registry.json.lock");
+    const { writeFileSync } = require("node:fs") as typeof import("node:fs");
+    writeFileSync(lock, "");
+    const t0 = Date.now();
+    expect(() => withRegistryLock(() => "never", { waitMs: 300 })).toThrow(/locked/);
+    // Waited out the deadline rather than clobbering the other editor.
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(250);
   });
 });

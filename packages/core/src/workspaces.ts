@@ -14,7 +14,18 @@
  *
  * `ONESHOT_GTM_WORKSPACES` relocates the container (tests, demos).
  */
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
@@ -81,7 +92,56 @@ export function loadRegistry(): WorkspaceRegistry {
 export function saveRegistry(reg: WorkspaceRegistry): void {
   const p = registryPath();
   if (!existsSync(dirname(p))) mkdirSync(dirname(p), { recursive: true });
-  writeFileSync(p, `${JSON.stringify(reg, null, 2)}\n`);
+  // Write-then-rename so a reader never sees a half-written file.
+  const tmp = `${p}.${process.pid}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(reg, null, 2)}\n`);
+  renameSync(tmp, p);
+}
+
+/** A lock older than this belongs to a process that died mid-edit. */
+const LOCK_STALE_MS = 10_000;
+
+/**
+ * Serialize read-modify-write of the registry across processes with an
+ * exclusive lock file (O_EXCL create). Without it two `workspace create`s at
+ * once read the same registry, pick the same free port and the later save
+ * overwrites the earlier one — a lost workspace AND a port collision.
+ */
+export function withRegistryLock<T>(fn: () => T, opts: { waitMs?: number } = {}): T {
+  const lock = `${registryPath()}.lock`;
+  if (!existsSync(dirname(lock))) mkdirSync(dirname(lock), { recursive: true });
+  const deadline = Date.now() + (opts.waitMs ?? 5_000);
+  for (;;) {
+    try {
+      closeSync(openSync(lock, "wx"));
+      break;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      try {
+        if (Date.now() - statSync(lock).mtimeMs > LOCK_STALE_MS) {
+          unlinkSync(lock);
+          continue;
+        }
+      } catch {
+        continue; // lock vanished between exists and stat — retry
+      }
+      if (Date.now() > deadline) {
+        throw new WorkspaceError(
+          `workspace registry is locked (${lock}) — another command is editing it`,
+        );
+      }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+    }
+  }
+  try {
+    return fn();
+  } finally {
+    try {
+      unlinkSync(lock);
+    } catch {
+      // already gone
+    }
+  }
 }
 
 /** Every workspace incl. the implicit default, as (name, entry) — for listing and guardrails. */
@@ -103,7 +163,7 @@ export function resolveWorkspaceHome(
   reg: WorkspaceRegistry = loadRegistry(),
 ): string {
   if (name === DEFAULT_WORKSPACE) return legacyHome();
-  const entry = reg.workspaces[name];
+  const entry = Object.hasOwn(reg.workspaces, name) ? reg.workspaces[name] : undefined;
   if (!entry) {
     const known = listWorkspaces(reg)
       .map(([n]) => n)
@@ -118,37 +178,46 @@ export function createWorkspace(name: string): WorkspaceEntry {
   if (name === DEFAULT_WORKSPACE) {
     throw new WorkspaceError(`'${DEFAULT_WORKSPACE}' is the built-in workspace at ${legacyHome()}`);
   }
-  const reg = loadRegistry();
-  if (reg.workspaces[name]) throw new WorkspaceError(`workspace '${name}' already exists`);
-  const home = join(workspacesDir(), name);
-  const used = new Set(listWorkspaces(reg).map(([, e]) => e.port));
-  let port = BASE_PORT + 1;
-  while (used.has(port)) port += 1;
-  const entry: WorkspaceEntry = { home, port, createdAt: new Date().toISOString() };
-  mkdirSync(home, { recursive: true });
-  reg.workspaces[name] = entry;
-  saveRegistry(reg);
-  return entry;
+  return withRegistryLock(() => {
+    const reg = loadRegistry();
+    // hasOwn: "constructor" et al. are valid names, not inherited entries.
+    if (Object.hasOwn(reg.workspaces, name)) {
+      throw new WorkspaceError(`workspace '${name}' already exists`);
+    }
+    const home = join(workspacesDir(), name);
+    const used = new Set(listWorkspaces(reg).map(([, e]) => e.port));
+    let port = BASE_PORT + 1;
+    while (used.has(port)) port += 1;
+    const entry: WorkspaceEntry = { home, port, createdAt: new Date().toISOString() };
+    mkdirSync(home, { recursive: true });
+    reg.workspaces[name] = entry;
+    saveRegistry(reg);
+    return entry;
+  });
 }
 
 export function setDefaultWorkspace(name: string): void {
-  const reg = loadRegistry();
-  resolveWorkspaceHome(name, reg); // throws if unknown
-  reg.default = name;
-  saveRegistry(reg);
+  withRegistryLock(() => {
+    const reg = loadRegistry();
+    resolveWorkspaceHome(name, reg); // throws if unknown
+    reg.default = name;
+    saveRegistry(reg);
+  });
 }
 
 /** Forget a workspace. Files are NOT deleted — the path is printed for the founder to remove. */
 export function removeWorkspace(name: string): WorkspaceEntry {
   if (name === DEFAULT_WORKSPACE)
     throw new WorkspaceError("the default workspace can't be removed");
-  const reg = loadRegistry();
-  const entry = reg.workspaces[name];
-  if (!entry) throw new WorkspaceError(`no workspace named '${name}'`);
-  delete reg.workspaces[name];
-  if (reg.default === name) reg.default = DEFAULT_WORKSPACE;
-  saveRegistry(reg);
-  return entry;
+  return withRegistryLock(() => {
+    const reg = loadRegistry();
+    const entry = Object.hasOwn(reg.workspaces, name) ? reg.workspaces[name] : undefined;
+    if (!entry) throw new WorkspaceError(`no workspace named '${name}'`);
+    delete reg.workspaces[name];
+    if (reg.default === name) reg.default = DEFAULT_WORKSPACE;
+    saveRegistry(reg);
+    return entry;
+  });
 }
 
 /** Symlink-following path identity, so two spellings of one dir compare equal. */

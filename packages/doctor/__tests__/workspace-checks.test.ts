@@ -155,3 +155,26 @@ describe("second-round review findings (#37)", () => {
     expect(checks.some((c) => c.name.startsWith("workspace port"))).toBe(true);
   });
 });
+
+describe("third-round review findings (#38)", () => {
+  it("detects a shared Gmail account via THIS workspace's token store when the identity has no address", async () => {
+    const { saveGmailToken } = await import("@oneshot-gtm/core");
+    saveGmailToken("gmail:legacy", { refreshToken: "rt", address: "Me@Gmail.com" });
+    cfgOverride = {
+      emailIdentities: [{ id: "gmail:legacy", provider: "gmail", maxPerDay: 50, warmup: null }],
+    };
+    otherWorkspace("sdk", {
+      emailIdentities: [
+        {
+          id: "gmail:me@gmail.com",
+          provider: "gmail",
+          address: "me@gmail.com",
+          maxPerDay: 50,
+          warmup: null,
+        },
+      ],
+    });
+    const checks = await runDoctor();
+    expect(checks.find((c) => c.name === "gmail me@gmail.com")?.severity).toBe("warn");
+  });
+});
