@@ -1,6 +1,7 @@
 import {
   getLedger,
   isDraining,
+  isRecentlyContacted,
   isSendDeferred,
   type QueueRow,
   type QueueStatus,
@@ -399,6 +400,9 @@ export async function sendDraftRoute(
         source_profile_url: str("sourceProfileUrl") ?? str("githubUrl") ?? str("twitterUrl"),
       },
       dryRun: false,
+      // This route IS the review-then-send override: the founder has seen any
+      // `contacted-elsewhere` hold on the draft and clicked send regardless.
+      allowContactedElsewhere: true,
     });
   } catch (err) {
     // Release the marker so the founder can retry without waiting for the
@@ -413,6 +417,11 @@ export async function sendDraftRoute(
     // reviewed draft; 429 tells the UI "try again tomorrow".
     if (isSendDeferred(err)) {
       return done("ok", jsonResponse({ error: (err as Error).message, deferred: true }, 429, req));
+    }
+    // Shouldn't reach here (this route passes the override), but a race with a
+    // touch recorded mid-send is a hold, not a failure: keep the row approved.
+    if (isRecentlyContacted(err)) {
+      return done("ok", jsonResponse({ error: (err as Error).message, held: true }, 409, req));
     }
     // The 400 body carries only `err.message`, which for an SDK ToolError is
     // the generic "Tool request failed" — the founder sees "couldn't send ·

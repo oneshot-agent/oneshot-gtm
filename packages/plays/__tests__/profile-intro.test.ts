@@ -323,3 +323,23 @@ describe("runProspectResearch", () => {
     expect(payload.email).toBe("override@acme.com");
   });
 });
+
+describe("cross-workspace hold on the drafted intro", () => {
+  it("flags the draft contacted-elsewhere when another workspace emailed the address this week", async () => {
+    const { getSharedDb } = await import("@oneshot-gtm/core");
+    process.env["ONESHOT_GTM_WORKSPACE"] = "gtm";
+    try {
+      resetRow({ url: "https://x.com/jane", platform: "twitter" });
+      state.enrichment = { displayname: "Jane Doe", best_work_email: "jane@acme.com" };
+      state.extract = { name: "Jane Doe", company: "Acme", angle: "x", email: "jane@acme.com" };
+      getSharedDb().recordTouch({ email: "jane@acme.com", workspace: "sdk", playName: "show-hn" });
+
+      await runProspectResearch(7);
+
+      const draft = JSON.parse(state.row.last_draft_json!);
+      expect(draft.flags).toContain("contacted-elsewhere");
+    } finally {
+      delete process.env["ONESHOT_GTM_WORKSPACE"];
+    }
+  });
+});

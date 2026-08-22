@@ -40,6 +40,23 @@ export function isSuppressedRecipient(err: unknown): boolean {
 }
 
 /**
+ * Thrown by sendEmail (pre-flight) when ANOTHER workspace emailed this
+ * recipient within the hold window. Unlike a hard-bounce this is a judgement
+ * call, so it is overridable: the manual queue send passes
+ * `allowContactedElsewhere`, auto paths (drain, cadence) do not.
+ */
+export class RecentlyContactedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RecentlyContactedError";
+  }
+}
+
+export function isRecentlyContacted(err: unknown): boolean {
+  return err instanceof Error && err.name === "RecentlyContactedError";
+}
+
+/**
  * True when an error is a TRANSIENT platform/transport failure (the OneShot
  * backend or the network briefly broke) rather than a genuine negative result
  * (email not found, undeliverable, no enrichment data). Callers must NOT treat

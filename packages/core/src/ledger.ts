@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { configDir } from "./config.ts";
+import { getSharedDb } from "./shared-db.ts";
 import type {
   AuthVerdict,
   BounceKind,
@@ -90,8 +91,10 @@ export interface CadenceWithProspect {
 
 export class Ledger {
   private db: Database;
+  private readonly path: string;
 
   constructor(path: string = DEFAULT_DB_PATH) {
+    this.path = path;
     if (!existsSync(dirname(path))) mkdirSync(dirname(path), { recursive: true });
     this.db = new Database(path);
     this.db.exec("PRAGMA journal_mode = WAL");
@@ -997,89 +1000,41 @@ export class Ledger {
   }
 
   /**
-   * Cached enrichProfile result for an email (profiles are stable; reused
-   * with a TTL). `status` is NULL/"ok" for success rows, "failed" for
-   * negative entries (the SDK job failed — readers skip re-attempting within
-   * ENRICH_FAILURE_TTL_MS instead of paying the ~70s call again).
+   * Paid-lookup caches live in the cross-workspace SHARED DB (shared-db.ts):
+   * the same person researched for one product must not be bought again for
+   * another. These methods keep their original contracts and delegate, so the
+   * five call sites and their tests are untouched. On first use per ledger the
+   * legacy rows in THIS ledger's cache tables are copied across once; the
+   * local tables stay in place (unwritten) for rollback.
    */
+  private shared(): ReturnType<typeof getSharedDb> {
+    const shared = getSharedDb();
+    shared.ensureImported(this.db, this.path);
+    return shared;
+  }
+
   getCachedEnrichment(
     email: string,
   ): { result_json: string; fetched_at: string; status: string | null } | null {
-    return (
-      (this.db
-        .query("SELECT result_json, fetched_at, status FROM enrichment_cache WHERE email = ?")
-        .get(email) as { result_json: string; fetched_at: string; status: string | null }) ?? null
-    );
+    return this.shared().getCachedEnrichment(email);
   }
 
-  /**
-   * Read a cached LinkedIn lookup. `status` is 'hit' (url set) or 'miss' (url
-   * null — searched and genuinely nothing found). Callers apply the TTLs:
-   * LINKEDIN_CACHE_TTL_MS for hits, LINKEDIN_MISS_TTL_MS for misses.
-   */
   getCachedLinkedIn(
     queryKey: string,
   ): { url: string | null; status: string; fetched_at: string } | null {
-    return (
-      (this.db
-        .query("SELECT url, status, fetched_at FROM linkedin_lookup_cache WHERE query_key = ?")
-        .get(queryKey) as { url: string | null; status: string; fetched_at: string }) ?? null
-    );
+    return this.shared().getCachedLinkedIn(queryKey);
   }
 
-  /**
-   * Record a LinkedIn lookup outcome. Pass `null` for a genuine miss.
-   *
-   * Never call this for a transient failure (webSearch threw, rate limit, 5xx)
-   * — that would poison the cache for LINKEDIN_MISS_TTL_MS and suppress the
-   * lookup long after the platform recovered. The caller gates on
-   * `!isTransientToolError(err)`, mirroring `_enrich.ts`.
-   */
   setCachedLinkedIn(queryKey: string, url: string | null): void {
-    this.db
-      .prepare(
-        `INSERT INTO linkedin_lookup_cache(query_key, url, status, fetched_at)
-         VALUES(?, ?, ?, ?)
-         ON CONFLICT(query_key) DO UPDATE SET
-           url = excluded.url,
-           status = excluded.status,
-           fetched_at = excluded.fetched_at`,
-      )
-      .run(queryKey, url, url ? "hit" : "miss", new Date().toISOString());
+    this.shared().setCachedLinkedIn(queryKey, url);
   }
 
   setCachedEnrichment(email: string, resultJson: string): void {
-    // status reset to NULL: a fresh success must clear any prior "failed"
-    // marker — luma/_repo-pipeline write success rows through this method
-    // without knowing about negative entries.
-    this.db
-      .prepare(
-        `INSERT INTO enrichment_cache(email, result_json, fetched_at, status)
-         VALUES(?, ?, ?, NULL)
-         ON CONFLICT(email) DO UPDATE SET
-           result_json = excluded.result_json,
-           fetched_at = excluded.fetched_at,
-           status = NULL`,
-      )
-      .run(email, resultJson, new Date().toISOString());
+    this.shared().setCachedEnrichment(email, resultJson);
   }
 
-  /** Negative cache entry: the enrichment SDK job failed for this email. */
   setCachedEnrichmentFailure(email: string, message: string): void {
-    this.db
-      .prepare(
-        `INSERT INTO enrichment_cache(email, result_json, fetched_at, status)
-         VALUES(?, ?, ?, 'failed')
-         ON CONFLICT(email) DO UPDATE SET
-           result_json = excluded.result_json,
-           fetched_at = excluded.fetched_at,
-           status = 'failed'`,
-      )
-      .run(
-        email,
-        JSON.stringify({ failed: true, message: message.slice(0, 300) }),
-        new Date().toISOString(),
-      );
+    this.shared().setCachedEnrichmentFailure(email, message);
   }
 
   recordReceipt(input: {

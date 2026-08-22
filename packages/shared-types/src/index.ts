@@ -400,9 +400,12 @@ export interface LastDraft {
  * the founder either sends as-is or rejects.
  *
  * Currently: `stale-event` — a luma-events event >14 days past, where the
- * guest-list signal is old enough to want confirmation before sending.
+ * guest-list signal is old enough to want confirmation before sending; and
+ * `contacted-elsewhere` — another WORKSPACE (another product of yours) emailed
+ * this person inside the 7-day hold window, so two motions don't stack in one
+ * inbox. Sending as-is is the founder saying "I know, do it anyway."
  */
-export const SOFT_REVIEW_FLAGS: readonly string[] = ["stale-event"];
+export const SOFT_REVIEW_FLAGS: readonly string[] = ["stale-event", "contacted-elsewhere"];
 
 /**
  * The subset of a draft's flags that genuinely block sending (everything except

@@ -525,3 +525,25 @@ describe("runCadenceStepForProspect", () => {
     });
   });
 });
+
+describe("cross-workspace hold (draft-time advisory)", () => {
+  it("skips the step with a 'held' note when another workspace emailed the prospect this week", async () => {
+    const { getSharedDb } = await import("@oneshot-gtm/core");
+    process.env["ONESHOT_GTM_WORKSPACE"] = "gtm";
+    try {
+      getSharedDb().recordTouch({ email: "p@x.dev", workspace: "sdk", playName: "post-funding" });
+      const out = await runCadenceStepForProspect({
+        prospectId: 1,
+        playName: "stack-consolidation",
+        mode: "preview",
+      } as never);
+      expect(out.action).toBe("skipped");
+      expect(out.note).toMatch(/held: emailed by workspace 'sdk'/);
+      // Decided BEFORE paying for a draft, and without touching the cadence status.
+      expect(calls.llm).toBe(0);
+      expect(statusCalls).toEqual([]);
+    } finally {
+      delete process.env["ONESHOT_GTM_WORKSPACE"];
+    }
+  });
+});
