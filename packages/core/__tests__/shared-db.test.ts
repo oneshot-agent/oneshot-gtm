@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Ledger } from "../src/ledger.ts";
 import {
+  claimContactTouch,
   CONTACT_TOUCH_WINDOW_MS,
   getSharedDb,
   recentTouchElsewhere,
@@ -182,5 +183,42 @@ describe("atomic reservations (review findings on #36)", () => {
     one.close();
     two.close();
     ledger.close();
+  });
+});
+
+describe("second-round review findings (#36)", () => {
+  it("a failed legacy copy leaves NO marker, so the next attempt imports", () => {
+    const path = join(dir, "shared.sqlite");
+    const shared = new SharedDb(path);
+    // A "ledger" without the cache tables: the copy's SELECT throws mid-transaction.
+    const { Database } = require("bun:sqlite") as typeof import("bun:sqlite");
+    const broken = new Database(join(dir, "broken.sqlite"));
+    expect(() => shared.ensureImported(broken, "/ledger/x.sqlite")).toThrow();
+    broken.close();
+    // Now a real ledger with a legacy row under the SAME path key must still import.
+    const ledger = new Ledger(join(dir, "real.sqlite"));
+    (ledger as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => void } } }).db
+      .prepare(
+        "INSERT INTO enrichment_cache(email, result_json, fetched_at, status) VALUES(?, ?, ?, NULL)",
+      )
+      .run("late@old.dev", '{"late":true}', "2026-08-01T00:00:00.000Z");
+    const realDb = (ledger as unknown as { db: import("bun:sqlite").Database }).db;
+    shared.ensureImported(realDb, "/ledger/x.sqlite");
+    expect(shared.getCachedEnrichment("late@old.dev")?.result_json).toBe('{"late":true}');
+    ledger.close();
+    shared.close();
+  });
+
+  it("claimContactTouch reports the held row observed inside the claim, never re-queried", () => {
+    process.env["ONESHOT_GTM_WORKSPACE"] = "gtm";
+    getSharedDb().recordTouch({ email: "c@y.dev", workspace: "sdk", playName: "p" });
+    const claim = claimContactTouch({ email: "c@y.dev", playName: "q", override: false });
+    expect(claim.held).toMatchObject({ workspace: "sdk", play_name: "p" });
+    // …and it reserved nothing of its own.
+    expect(
+      getSharedDb()
+        .touchesFor("c@y.dev")
+        .filter((t) => t.workspace === "gtm"),
+    ).toEqual([]);
   });
 });

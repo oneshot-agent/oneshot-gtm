@@ -314,19 +314,45 @@ export class SharedDb {
    */
   ensureImported(ledgerDb: Database, ledgerPath: string): void {
     if (this.importedFrom.has(ledgerPath)) return;
-    // Re-check under the write lock: two servers opening the same workspace
-    // ledger at once must not both import and then collide on the marker.
+    // Everything — marker check, row copy, marker insert — under ONE write
+    // lock. Committing the marker first would let a copy failure permanently
+    // abandon the rows, and let a concurrent process see "imported" while the
+    // copy was still running.
     this.db.exec("BEGIN IMMEDIATE");
-    let claimed = false;
+    let copied = { enrich: 0, linkedin: 0 };
     try {
       const done = this.db
         .query("SELECT 1 FROM legacy_imports WHERE ledger_path = ?")
         .get(ledgerPath);
       if (!done) {
+        const enrich = ledgerDb
+          .query("SELECT email, result_json, fetched_at, status FROM enrichment_cache")
+          .all() as Array<{
+          email: string;
+          result_json: string;
+          fetched_at: string;
+          status: string | null;
+        }>;
+        const linkedin = ledgerDb
+          .query("SELECT query_key, url, status, fetched_at FROM linkedin_lookup_cache")
+          .all() as Array<{
+          query_key: string;
+          url: string | null;
+          status: string;
+          fetched_at: string;
+        }>;
+        const ins1 = this.db.prepare(
+          `INSERT OR IGNORE INTO enrichment_cache(email, result_json, fetched_at, status) VALUES(?, ?, ?, ?)`,
+        );
+        for (const r of enrich) ins1.run(r.email, r.result_json, r.fetched_at, r.status);
+        const ins2 = this.db.prepare(
+          `INSERT OR IGNORE INTO linkedin_lookup_cache(query_key, url, status, fetched_at) VALUES(?, ?, ?, ?)`,
+        );
+        for (const r of linkedin) ins2.run(r.query_key, r.url, r.status, r.fetched_at);
         this.db
           .prepare(`INSERT OR IGNORE INTO legacy_imports(ledger_path, imported_at) VALUES(?, ?)`)
           .run(ledgerPath, new Date().toISOString());
-        claimed = true;
+        copied = { enrich: enrich.length, linkedin: linkedin.length };
       }
       this.db.exec("COMMIT");
     } catch (err) {
@@ -337,42 +363,11 @@ export class SharedDb {
       }
       throw err;
     }
-    if (!claimed) {
-      this.importedFrom.add(ledgerPath);
-      return;
-    }
-    const enrich = ledgerDb
-      .query("SELECT email, result_json, fetched_at, status FROM enrichment_cache")
-      .all() as Array<{
-      email: string;
-      result_json: string;
-      fetched_at: string;
-      status: string | null;
-    }>;
-    const linkedin = ledgerDb
-      .query("SELECT query_key, url, status, fetched_at FROM linkedin_lookup_cache")
-      .all() as Array<{
-      query_key: string;
-      url: string | null;
-      status: string;
-      fetched_at: string;
-    }>;
-    const tx = this.db.transaction(() => {
-      const ins1 = this.db.prepare(
-        `INSERT OR IGNORE INTO enrichment_cache(email, result_json, fetched_at, status) VALUES(?, ?, ?, ?)`,
-      );
-      for (const r of enrich) ins1.run(r.email, r.result_json, r.fetched_at, r.status);
-      const ins2 = this.db.prepare(
-        `INSERT OR IGNORE INTO linkedin_lookup_cache(query_key, url, status, fetched_at) VALUES(?, ?, ?, ?)`,
-      );
-      for (const r of linkedin) ins2.run(r.query_key, r.url, r.status, r.fetched_at);
-    });
-    tx();
     this.importedFrom.add(ledgerPath);
-    if (enrich.length + linkedin.length > 0) {
+    if (copied.enrich + copied.linkedin > 0) {
       logEvent("shared_db.legacy_import", {
-        enrichment_rows: enrich.length,
-        linkedin_rows: linkedin.length,
+        enrichment_rows: copied.enrich,
+        linkedin_rows: copied.linkedin,
       });
     }
   }
@@ -434,15 +429,16 @@ export function claimContactTouch(input: { email: string; playName: string; over
   try {
     const db = getSharedDb();
     const workspace = currentWorkspaceName();
-    const id = input.override
-      ? db.reserveTouch({ email: input.email, workspace, playName: input.playName })
-      : (() => {
-          const claim = db.claimTouch({ email: input.email, workspace, playName: input.playName });
-          return "held" in claim ? null : claim.reservationId;
-        })();
-    if (id == null) {
-      const held = db.recentTouchElsewhere(input.email, workspace);
-      return { held, finish: () => {} };
+    let id: number;
+    if (input.override) {
+      id = db.reserveTouch({ email: input.email, workspace, playName: input.playName });
+    } else {
+      const claim = db.claimTouch({ email: input.email, workspace, playName: input.playName });
+      // The row observed INSIDE the claim transaction is the verdict. Re-
+      // querying here could see it released a millisecond later and let the
+      // send go out unreserved.
+      if ("held" in claim) return { held: claim.held, finish: () => {} };
+      id = claim.reservationId;
     }
     return {
       held: null,
