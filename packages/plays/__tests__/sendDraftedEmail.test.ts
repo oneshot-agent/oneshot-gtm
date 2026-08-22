@@ -187,3 +187,16 @@ describe("sendDraftedEmail pre-send cadence check", () => {
     });
   });
 });
+
+describe("sendDraftedEmail cross-workspace override pass-through", () => {
+  it("forwards allowContactedElsewhere to sendEmail only when set", async () => {
+    await sendDraftedEmail(baseOpts({ allowContactedElsewhere: true }));
+    expect(sendEmailMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ allowContactedElsewhere: true }),
+      expect.anything(),
+    );
+    await sendDraftedEmail(baseOpts({ to: "other@acme.dev" }));
+    const [lastInput] = sendEmailMock.mock.calls.at(-1) as [Record<string, unknown>];
+    expect(lastInput).not.toHaveProperty("allowContactedElsewhere");
+  });
+});

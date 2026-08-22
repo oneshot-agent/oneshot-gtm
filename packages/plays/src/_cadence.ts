@@ -16,6 +16,8 @@ import {
   voiceCall,
   type BounceKind,
   type ProspectRecord,
+  describeTouch,
+  recentTouchElsewhere,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import {
@@ -541,6 +543,20 @@ export async function runCadenceStepForProspect(
         payload: null,
         receiptIds: [],
         note: `suppressed: hard-bounced${suppression.status_code ? ` ${suppression.status_code}` : ""}`,
+      };
+    }
+  }
+  // Cross-workspace hold, same reasoning as the suppression check above:
+  // decide before paying for a draft. Not a status change — the step stays
+  // due and fires once the other workspace's touch ages out of the window.
+  if (cadence.prospect_email) {
+    const elsewhere = recentTouchElsewhere(cadence.prospect_email);
+    if (elsewhere) {
+      return {
+        action: "skipped",
+        payload: null,
+        receiptIds: [],
+        note: `held: ${describeTouch(elsewhere)} — retries after the 7-day window`,
       };
     }
   }

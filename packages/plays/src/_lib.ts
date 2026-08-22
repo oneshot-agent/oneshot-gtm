@@ -460,6 +460,8 @@ export interface SendDraftedOpts {
    * whole job, mirroring how its finder bypasses isDuplicate.
    */
   allowRecontact?: boolean;
+  /** Manual override of the cross-workspace `contacted-elsewhere` hold (queue send-draft only). */
+  allowContactedElsewhere?: boolean;
 }
 
 export interface SendDraftedResult {
@@ -500,7 +502,12 @@ export async function sendDraftedEmail(opts: SendDraftedOpts): Promise<SendDraft
     // never leaves a sent-but-unrecorded email the dedup can't see.
     const receiptId = await trackSend(async () => {
       const send = await sendEmail(
-        { to: opts.to, subject: opts.draft.subject, body: opts.draft.body },
+        {
+          to: opts.to,
+          ...(opts.allowContactedElsewhere ? { allowContactedElsewhere: true } : {}),
+          subject: opts.draft.subject,
+          body: opts.draft.body,
+        },
         {
           playName: opts.playName,
           memo: `${opts.playName} step 0 → ${opts.to}`,

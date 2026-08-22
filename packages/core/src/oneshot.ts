@@ -20,6 +20,7 @@ import { createHash } from "node:crypto";
 import { getLedger } from "./ledger.ts";
 import { loadConfig, oneshotEnvReady } from "./config.ts";
 import { demoFixture, demoMode } from "./demo.ts";
+import { describeTouch, recentTouchElsewhere, recordContactTouch } from "./shared-db.ts";
 import { htmlToText } from "./html-text.ts";
 import { logEvent } from "./events.ts";
 import {
@@ -33,6 +34,7 @@ import { gmailAccountFor, resolveIdentities } from "./identities.ts";
 import { parallelMap, withDeadline } from "./parallel.ts";
 import {
   isTransientToolError,
+  RecentlyContactedError,
   resolveSenderIdentity,
   SuppressedRecipientError,
 } from "./send-routing.ts";
@@ -47,6 +49,12 @@ export interface SendEmailInput {
   body: string;
   /** OneShot provider only — ignored when config.emailProvider is "gmail" (Gmail always sends from the authenticated account). */
   fromDomain?: string;
+  /**
+   * Send even if ANOTHER workspace emailed this recipient inside the hold
+   * window. Only the manual queue send sets this — the founder has seen the
+   * `contacted-elsewhere` flag and is choosing to send anyway.
+   */
+  allowContactedElsewhere?: boolean;
 }
 
 export interface ResearchInput {
@@ -300,6 +308,7 @@ async function sendEmailViaGmail(input: SendEmailInput, ctx: CallContext, identi
     oneshotRequestId: sent.id,
     senderIdentity: identity.id,
   });
+  recordContactTouch(input.to, ctx.playName);
   return { result, receiptId };
 }
 
@@ -314,6 +323,15 @@ export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
     throw new SuppressedRecipientError(
       `${input.to} hard-bounced${suppression.status_code ? ` (${suppression.status_code})` : ""} on ${suppression.bounced_at.slice(0, 10)} — not sending`,
     );
+  }
+  // Cross-workspace hygiene: another product of ours emailed this person in
+  // the last week. Overridable (manual send) — unlike a bounce this is a
+  // judgement call, but auto paths must not stack two motions in one inbox.
+  if (!input.allowContactedElsewhere) {
+    const elsewhere = recentTouchElsewhere(input.to);
+    if (elsewhere) {
+      throw new RecentlyContactedError(`${input.to} was ${describeTouch(elsewhere)} — held`);
+    }
   }
   // Sender rotation: resolve the sticky per-prospect identity BEFORE any
   // network call. Throws SendDeferredError when every identity is at its
@@ -362,6 +380,7 @@ export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
     oneshotRequestId: result.request_id,
     senderIdentity: identity.id,
   });
+  recordContactTouch(input.to, ctx.playName);
   return { result, receiptId };
 }
 
@@ -453,6 +472,7 @@ export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
       oneshotRequestId: sent.id,
       senderIdentity: identity.id,
     });
+    recordContactTouch(input.to, ctx.playName);
     return { result, receiptId };
   }
 
@@ -489,6 +509,7 @@ export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
     oneshotRequestId: result.request_id,
     senderIdentity: identity.id,
   });
+  recordContactTouch(input.to, ctx.playName);
   return { result, receiptId };
 }
 
