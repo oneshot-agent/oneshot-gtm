@@ -552,6 +552,11 @@ export async function runCadenceStepForProspect(
   if (cadence.prospect_email) {
     const elsewhere = recentTouchElsewhere(cadence.prospect_email);
     if (elsewhere) {
+      logEvent("cadence.step.held_elsewhere", {
+        play: opts.playName,
+        other_workspace: elsewhere.workspace,
+        other_play: elsewhere.play_name,
+      });
       return {
         action: "skipped",
         payload: null,

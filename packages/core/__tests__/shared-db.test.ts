@@ -127,3 +127,60 @@ describe("Ledger cache delegation + legacy import", () => {
     ledger.close();
   });
 });
+
+describe("atomic reservations (review findings on #36)", () => {
+  it("claimTouch: first claim reserves, a concurrent claim from elsewhere is held", () => {
+    const db = new SharedDb(join(dir, "s.sqlite"));
+    const a = db.claimTouch({ email: "x@y.dev", workspace: "sdk", playName: "p1" });
+    expect("reservationId" in a).toBe(true);
+    // Reserved but not yet confirmed: the OTHER workspace must already see it.
+    const b = db.claimTouch({ email: "x@y.dev", workspace: "gtm", playName: "p2" });
+    expect("held" in b && b.held.workspace).toBe("sdk");
+    expect("held" in b && b.held.status).toBe("reserved");
+    db.close();
+  });
+
+  it("release makes the address claimable again; confirm turns it into a sent touch", () => {
+    const db = new SharedDb(join(dir, "s.sqlite"));
+    const a = db.claimTouch({ email: "x@y.dev", workspace: "sdk", playName: "p1" });
+    db.releaseTouch((a as { reservationId: number }).reservationId);
+    expect(db.recentTouchElsewhere("x@y.dev", "gtm")).toBeNull();
+    const c = db.claimTouch({ email: "x@y.dev", workspace: "sdk", playName: "p1" });
+    db.confirmTouch((c as { reservationId: number }).reservationId);
+    expect(db.recentTouchElsewhere("x@y.dev", "gtm")?.status).toBe("sent");
+    // release is a no-op on a confirmed row
+    db.releaseTouch((c as { reservationId: number }).reservationId);
+    expect(db.recentTouchElsewhere("x@y.dev", "gtm")?.status).toBe("sent");
+    db.close();
+  });
+
+  it("an orphaned reservation expires after RESERVATION_TTL_MS", () => {
+    const db = new SharedDb(join(dir, "s.sqlite"));
+    const stale = new Date(Date.now() - 11 * 60_000).toISOString();
+    (db as unknown as { db: { prepare: (s: string) => { run: (...a: unknown[]) => void } } }).db
+      .prepare(
+        "INSERT INTO contact_touches(email, workspace, play_name, sent_at, status) VALUES(?, ?, ?, ?, 'reserved')",
+      )
+      .run("x@y.dev", "sdk", "p1", stale);
+    expect(db.recentTouchElsewhere("x@y.dev", "gtm")).toBeNull();
+    expect(
+      "reservationId" in db.claimTouch({ email: "x@y.dev", workspace: "gtm", playName: "p2" }),
+    ).toBe(true);
+    db.close();
+  });
+
+  it("ensureImported survives two handles racing on the same ledger", () => {
+    const path = join(dir, "shared.sqlite");
+    const ledger = new Ledger(join(dir, "ledger.sqlite"));
+    const ledgerDb = (ledger as unknown as { db: import("bun:sqlite").Database }).db;
+    const one = new SharedDb(path);
+    const two = new SharedDb(path);
+    expect(() => {
+      one.ensureImported(ledgerDb, "/same/ledger.sqlite");
+      two.ensureImported(ledgerDb, "/same/ledger.sqlite");
+    }).not.toThrow();
+    one.close();
+    two.close();
+    ledger.close();
+  });
+});

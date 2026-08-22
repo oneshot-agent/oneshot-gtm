@@ -291,7 +291,11 @@ describe("sendEmail — records a cross-workspace contact touch", () => {
         { playName: "show-hn" },
       );
       const touches = getSharedDb().touchesFor("touched@acme.com");
-      expect(touches[0]).toMatchObject({ workspace: "gtm-touch-test", play_name: "show-hn" });
+      expect(touches[0]).toMatchObject({
+        workspace: "gtm-touch-test",
+        play_name: "show-hn",
+        status: "sent",
+      });
     } finally {
       delete process.env["ONESHOT_GTM_WORKSPACE"];
     }

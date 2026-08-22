@@ -20,7 +20,7 @@ import { createHash } from "node:crypto";
 import { getLedger } from "./ledger.ts";
 import { loadConfig, oneshotEnvReady } from "./config.ts";
 import { demoFixture, demoMode } from "./demo.ts";
-import { describeTouch, recentTouchElsewhere, recordContactTouch } from "./shared-db.ts";
+import { claimContactTouch, describeTouch, recordContactTouch } from "./shared-db.ts";
 import { htmlToText } from "./html-text.ts";
 import { logEvent } from "./events.ts";
 import {
@@ -308,11 +308,10 @@ async function sendEmailViaGmail(input: SendEmailInput, ctx: CallContext, identi
     oneshotRequestId: sent.id,
     senderIdentity: identity.id,
   });
-  recordContactTouch(input.to, ctx.playName);
   return { result, receiptId };
 }
 
-export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
+async function dispatchEmail(input: SendEmailInput, ctx: CallContext) {
   // Suppression backstop, ahead of everything else: a previously hard-bounced
   // address can only fail again, and the send is billed before dispatch. Every
   // caller funnels through here (plays, cadence, queue), so this is the one
@@ -323,15 +322,6 @@ export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
     throw new SuppressedRecipientError(
       `${input.to} hard-bounced${suppression.status_code ? ` (${suppression.status_code})` : ""} on ${suppression.bounced_at.slice(0, 10)} — not sending`,
     );
-  }
-  // Cross-workspace hygiene: another product of ours emailed this person in
-  // the last week. Overridable (manual send) — unlike a bounce this is a
-  // judgement call, but auto paths must not stack two motions in one inbox.
-  if (!input.allowContactedElsewhere) {
-    const elsewhere = recentTouchElsewhere(input.to);
-    if (elsewhere) {
-      throw new RecentlyContactedError(`${input.to} was ${describeTouch(elsewhere)} — held`);
-    }
   }
   // Sender rotation: resolve the sticky per-prospect identity BEFORE any
   // network call. Throws SendDeferredError when every identity is at its
@@ -380,8 +370,38 @@ export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
     oneshotRequestId: result.request_id,
     senderIdentity: identity.id,
   });
-  recordContactTouch(input.to, ctx.playName);
   return { result, receiptId };
+}
+
+/**
+ * Every outbound email funnels through here (plays, cadence, queue, concierge,
+ * pmf-survey). Order matters:
+ *   1. hard-bounce suppression (in dispatchEmail) — permanent, never overridable;
+ *   2. the cross-workspace claim — ATOMIC check-and-reserve in the shared DB,
+ *      before any routing or network, so two workspaces can't both pass;
+ *   3. dispatch; then the reservation is confirmed (success) or released
+ *      (any failure), so a failed send never counts as a touch and a crash
+ *      mid-send expires on its own.
+ * `replyEmail` is deliberately not gated — a reply goes to someone who just
+ * wrote to us — it only records its touch.
+ */
+export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
+  const claim = claimContactTouch({
+    email: input.to,
+    playName: ctx.playName,
+    override: input.allowContactedElsewhere === true,
+  });
+  if (claim.held) {
+    throw new RecentlyContactedError(`${input.to} was ${describeTouch(claim.held)} — held`);
+  }
+  try {
+    const out = await dispatchEmail(input, ctx);
+    claim.finish(true);
+    return out;
+  } catch (err) {
+    claim.finish(false);
+    throw err;
+  }
 }
 
 export interface ReplyEmailInput {

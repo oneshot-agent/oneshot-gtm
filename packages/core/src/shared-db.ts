@@ -25,6 +25,13 @@ import { logEvent } from "./events.ts";
 
 /** How long a touch by another workspace holds a new first-touch for review. */
 export const CONTACT_TOUCH_WINDOW_MS = 7 * 24 * 3600 * 1000;
+/**
+ * A pre-send reservation that was never confirmed or released (process died
+ * mid-send) stops counting as a touch after this long — long enough to cover a
+ * slow SDK send (~90s worst case seen), short enough not to hold a real first
+ * touch hostage to a crash.
+ */
+export const RESERVATION_TTL_MS = 10 * 60 * 1000;
 
 /** The flag a draft carries when the recipient was emailed by another workspace recently. */
 export const CONTACTED_ELSEWHERE_FLAG = "contacted-elsewhere";
@@ -46,7 +53,12 @@ export interface ContactTouch {
   workspace: string;
   play_name: string;
   sent_at: string;
+  /** 'sent' once dispatch succeeded; 'reserved' between the pre-send claim and confirm/release. */
+  status: "sent" | "reserved";
 }
+
+/** Outcome of an atomic claim: either someone else holds this address, or we now do. */
+export type TouchClaim = { held: ContactTouch } | { reservationId: number };
 
 export class SharedDb {
   private db: Database;
@@ -82,7 +94,8 @@ export class SharedDb {
         email     TEXT NOT NULL,
         workspace TEXT NOT NULL,
         play_name TEXT NOT NULL,
-        sent_at   TEXT NOT NULL
+        sent_at   TEXT NOT NULL,
+        status    TEXT NOT NULL DEFAULT 'sent'
       );
       CREATE INDEX IF NOT EXISTS idx_touches_email_sent ON contact_touches(email, sent_at);
       -- Which per-workspace ledgers have had their legacy cache rows copied in.
@@ -91,6 +104,13 @@ export class SharedDb {
         imported_at TEXT NOT NULL
       );
     `);
+    // Shared files created before reservations existed.
+    const cols = this.db.query("PRAGMA table_info(contact_touches)").all() as Array<{
+      name: string;
+    }>;
+    if (!cols.some((c) => c.name === "status")) {
+      this.db.exec("ALTER TABLE contact_touches ADD COLUMN status TEXT NOT NULL DEFAULT 'sent'");
+    }
   }
 
   // ── caches (identical contracts to the former Ledger methods) ──────────────
@@ -160,6 +180,14 @@ export class SharedDb {
 
   // ── contact touches ────────────────────────────────────────────────────────
 
+  /** Rows that count as "this address was touched": confirmed sends, plus unexpired reservations. */
+  private static readonly LIVE_TOUCH_SQL = `(status = 'sent' OR (status = 'reserved' AND sent_at >= ?))`;
+
+  private liveTouchArgs(): [string] {
+    return [new Date(Date.now() - RESERVATION_TTL_MS).toISOString()];
+  }
+
+  /** Record a completed touch directly (no reservation step — used by replies, which aren't held). */
   recordTouch(input: {
     email: string;
     workspace: string;
@@ -168,7 +196,7 @@ export class SharedDb {
   }): void {
     this.db
       .prepare(
-        `INSERT INTO contact_touches(email, workspace, play_name, sent_at) VALUES(?, ?, ?, ?)`,
+        `INSERT INTO contact_touches(email, workspace, play_name, sent_at, status) VALUES(?, ?, ?, ?, 'sent')`,
       )
       .run(
         input.email.trim().toLowerCase(),
@@ -178,7 +206,7 @@ export class SharedDb {
       );
   }
 
-  /** Most recent touch of `email` by a workspace OTHER than `workspace` within the window, or null. */
+  /** Most recent live touch of `email` by a workspace OTHER than `workspace` within the window, or null. */
   recentTouchElsewhere(
     email: string,
     workspace: string,
@@ -188,22 +216,92 @@ export class SharedDb {
     return (
       (this.db
         .query(
-          `SELECT workspace, play_name, sent_at FROM contact_touches
-           WHERE email = ? AND workspace != ? AND sent_at >= ?
+          `SELECT workspace, play_name, sent_at, status FROM contact_touches
+           WHERE email = ? AND workspace != ? AND sent_at >= ? AND ${SharedDb.LIVE_TOUCH_SQL}
            ORDER BY sent_at DESC LIMIT 1`,
         )
-        .get(email.trim().toLowerCase(), workspace, since) as ContactTouch) ?? null
+        .get(
+          email.trim().toLowerCase(),
+          workspace,
+          since,
+          ...this.liveTouchArgs(),
+        ) as ContactTouch) ?? null
     );
   }
 
-  /** All touches of an email across workspaces, newest first (doctor / UI detail). */
+  /**
+   * Atomic check-and-reserve, the fix for the check→dispatch→record race:
+   * under BEGIN IMMEDIATE (the write lock serializes every workspace's server)
+   * either another workspace already holds this address — return it — or a
+   * 'reserved' row is inserted for us BEFORE any network call, so a concurrent
+   * claim from elsewhere sees it. Confirm on success, release on failure;
+   * a reservation orphaned by a crash expires after RESERVATION_TTL_MS.
+   */
+  claimTouch(input: {
+    email: string;
+    workspace: string;
+    playName: string;
+    windowMs?: number;
+  }): TouchClaim {
+    const email = input.email.trim().toLowerCase();
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const held = this.recentTouchElsewhere(email, input.workspace, input.windowMs);
+      if (held) {
+        this.db.exec("ROLLBACK");
+        return { held };
+      }
+      const id = this.reserveTouchUnlocked(email, input.workspace, input.playName);
+      this.db.exec("COMMIT");
+      return { reservationId: id };
+    } catch (err) {
+      try {
+        this.db.exec("ROLLBACK");
+      } catch {
+        // already rolled back
+      }
+      throw err;
+    }
+  }
+
+  /** Reserve without checking — the manual override still has to be visible to other workspaces. */
+  reserveTouch(input: { email: string; workspace: string; playName: string }): number {
+    return this.reserveTouchUnlocked(
+      input.email.trim().toLowerCase(),
+      input.workspace,
+      input.playName,
+    );
+  }
+
+  private reserveTouchUnlocked(email: string, workspace: string, playName: string): number {
+    const res = this.db
+      .prepare(
+        `INSERT INTO contact_touches(email, workspace, play_name, sent_at, status) VALUES(?, ?, ?, ?, 'reserved')`,
+      )
+      .run(email, workspace, playName, new Date().toISOString());
+    return Number(res.lastInsertRowid);
+  }
+
+  /** Dispatch succeeded: the reservation becomes a real touch, stamped at send time. */
+  confirmTouch(id: number): void {
+    this.db
+      .prepare(`UPDATE contact_touches SET status = 'sent', sent_at = ? WHERE id = ?`)
+      .run(new Date().toISOString(), id);
+  }
+
+  /** Dispatch failed before the provider accepted anything: nobody was touched. */
+  releaseTouch(id: number): void {
+    this.db.prepare(`DELETE FROM contact_touches WHERE id = ? AND status = 'reserved'`).run(id);
+  }
+
+  /** All live touches of an email across workspaces, newest first (doctor / UI detail). */
   touchesFor(email: string, limit = 20): ContactTouch[] {
     return this.db
       .query(
-        `SELECT workspace, play_name, sent_at FROM contact_touches
-         WHERE email = ? ORDER BY sent_at DESC LIMIT ?`,
+        `SELECT workspace, play_name, sent_at, status FROM contact_touches
+         WHERE email = ? AND ${SharedDb.LIVE_TOUCH_SQL} ORDER BY sent_at DESC LIMIT ?`,
       )
-      .all(email.trim().toLowerCase(), limit) as ContactTouch[];
+      .all(email.trim().toLowerCase(), ...this.liveTouchArgs(), limit) as ContactTouch[];
   }
 
   // ── legacy import ──────────────────────────────────────────────────────────
@@ -216,10 +314,30 @@ export class SharedDb {
    */
   ensureImported(ledgerDb: Database, ledgerPath: string): void {
     if (this.importedFrom.has(ledgerPath)) return;
-    const done = this.db
-      .query("SELECT 1 FROM legacy_imports WHERE ledger_path = ?")
-      .get(ledgerPath);
-    if (done) {
+    // Re-check under the write lock: two servers opening the same workspace
+    // ledger at once must not both import and then collide on the marker.
+    this.db.exec("BEGIN IMMEDIATE");
+    let claimed = false;
+    try {
+      const done = this.db
+        .query("SELECT 1 FROM legacy_imports WHERE ledger_path = ?")
+        .get(ledgerPath);
+      if (!done) {
+        this.db
+          .prepare(`INSERT OR IGNORE INTO legacy_imports(ledger_path, imported_at) VALUES(?, ?)`)
+          .run(ledgerPath, new Date().toISOString());
+        claimed = true;
+      }
+      this.db.exec("COMMIT");
+    } catch (err) {
+      try {
+        this.db.exec("ROLLBACK");
+      } catch {
+        // already rolled back
+      }
+      throw err;
+    }
+    if (!claimed) {
       this.importedFrom.add(ledgerPath);
       return;
     }
@@ -248,9 +366,6 @@ export class SharedDb {
         `INSERT OR IGNORE INTO linkedin_lookup_cache(query_key, url, status, fetched_at) VALUES(?, ?, ?, ?)`,
       );
       for (const r of linkedin) ins2.run(r.query_key, r.url, r.status, r.fetched_at);
-      this.db
-        .prepare(`INSERT INTO legacy_imports(ledger_path, imported_at) VALUES(?, ?)`)
-        .run(ledgerPath, new Date().toISOString());
     });
     tx();
     this.importedFrom.add(ledgerPath);
@@ -273,15 +388,22 @@ let singleton: { path: string; db: SharedDb } | null = null;
 export function getSharedDb(): SharedDb {
   const path = sharedDbPath();
   if (!singleton || singleton.path !== path) {
+    // Don't leak the old handle (tests re-point ONESHOT_GTM_SHARED per file).
+    try {
+      singleton?.db.close();
+    } catch {
+      // already closed
+    }
     singleton = { path, db: new SharedDb(path) };
   }
   return singleton.db;
 }
 
 /**
- * Was this address emailed by ANOTHER workspace inside the hold window? Fail-
- * open: a shared-DB hiccup must not block a send — this is reputation hygiene,
- * not a hard-bounce suppression.
+ * Advisory read (draft time): was this address emailed by ANOTHER workspace
+ * inside the hold window? The authoritative gate is `claimContactTouch` at
+ * send time. Fail-open: a shared-DB hiccup must not block a send — this is
+ * reputation hygiene, not a hard-bounce suppression.
  */
 export function recentTouchElsewhere(email: string): ContactTouch | null {
   try {
@@ -293,6 +415,57 @@ export function recentTouchElsewhere(email: string): ContactTouch | null {
       "warn",
     );
     return null;
+  }
+}
+
+/**
+ * Send-time gate: atomically either learn that another workspace holds this
+ * address, or reserve it for this send. Returns a `finish` callback the
+ * caller invokes with the outcome — confirm on success, release on failure.
+ * `override` reserves without checking (the manual send must still be visible
+ * to other workspaces). Fail-open and a no-op in demo mode.
+ */
+export function claimContactTouch(input: { email: string; playName: string; override: boolean }): {
+  held: ContactTouch | null;
+  finish: (ok: boolean) => void;
+} {
+  const noop = { held: null, finish: () => {} };
+  if (demoMode()) return noop;
+  try {
+    const db = getSharedDb();
+    const workspace = currentWorkspaceName();
+    const id = input.override
+      ? db.reserveTouch({ email: input.email, workspace, playName: input.playName })
+      : (() => {
+          const claim = db.claimTouch({ email: input.email, workspace, playName: input.playName });
+          return "held" in claim ? null : claim.reservationId;
+        })();
+    if (id == null) {
+      const held = db.recentTouchElsewhere(input.email, workspace);
+      return { held, finish: () => {} };
+    }
+    return {
+      held: null,
+      finish: (ok) => {
+        try {
+          if (ok) db.confirmTouch(id);
+          else db.releaseTouch(id);
+        } catch (err) {
+          logEvent(
+            "shared_db.write_failed",
+            { message_120: ((err as Error).message ?? "").slice(0, 120) },
+            "warn",
+          );
+        }
+      },
+    };
+  } catch (err) {
+    logEvent(
+      "shared_db.write_failed",
+      { message_120: ((err as Error).message ?? "").slice(0, 120) },
+      "warn",
+    );
+    return noop;
   }
 }
 

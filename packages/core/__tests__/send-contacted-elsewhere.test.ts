@@ -86,3 +86,20 @@ describe("sendEmail cross-workspace hold", () => {
     expect((err as Error).message).toMatch(/wallet credentials/i);
   });
 });
+
+describe("reservation lifecycle around dispatch", () => {
+  it("a failed dispatch releases the reservation — nobody was touched", async () => {
+    // No wallet in the test env → dispatch throws after the claim.
+    await sendEmail({ to: "fail@startup.example", subject: "s", body: "b" }, CTX).catch(() => {});
+    expect(getSharedDb().touchesFor("fail@startup.example")).toEqual([]);
+  });
+
+  it("a held send leaves no reservation of its own behind", async () => {
+    getSharedDb().recordTouch({ email: "h@startup.example", workspace: "sdk", playName: "p" });
+    await sendEmail({ to: "h@startup.example", subject: "s", body: "b" }, CTX).catch(() => {});
+    const mine = getSharedDb()
+      .touchesFor("h@startup.example")
+      .filter((t) => t.workspace === "gtm");
+    expect(mine).toEqual([]);
+  });
+});
