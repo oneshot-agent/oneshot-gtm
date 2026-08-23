@@ -34,6 +34,7 @@ MIT, so you can read every prompt, fork every play, and trust what's running.
 Most GTM tools assume you have product-market fit and optimize sends. Most pre-PMF founders don't, and end up scaling a broken motion because the tool said "send more" — which the [Startup Genome Report](https://startupgenome.com) cites as the top documented cause of startup death. So the discipline is built in:
 
 - Plays default to founder-to-founder voice, low volume (≤50/day), one touch unless you invoke the cadence engine.
+- Every first touch is Hook → Identity → Offer → CTA. The Offer says the useful thing in the email, for free; the CTA asks for one line the reader can answer from their own experience, or asks for nothing. It never asks a stranger for a meeting — "open to compare notes?" is banned, because it needs the reader to already believe a conversation with you is worth their time. Optionally, one true concession you write in config (`founderAdmission`) is worked into roughly a third of first touches as a damaging admission; leave it blank and the beat is skipped, never invented.
 - Every draft passes a lint pass built on the Wikipedia "Signs of AI writing" canon — banned phrases, em dashes, AI vocabulary, three-item lists, sycophantic openers.
 - Scale-move commands (`handoff templatize`, `first-ae`, `readiness`) print soft-gate checklists and default to "not yet, fix this first" until the signals earn the move. `--force` overrides.
 - Every paid action emits a signed receipt carrying a **memo** (why the call happened), structured `decisionContext`, and a `goalId` grouping a cadence's spend. When a reply or deal outcome lands, that value is tagged back — so CAC and RoCS on the Measure page are attestable and outcome-attributed, not estimated.
@@ -53,6 +54,8 @@ bun run cli -- doctor                           # sanity check
 bun run --cwd apps/web build                    # one-time: build the SPA
 bun run cli -- ui                               # http://127.0.0.1:3030
 ```
+
+`init` also asks for the founder profile the prompts draw on: background that builds trust, products you've shipped, notable partners or customers, and one true concession. All optional — when a field is blank, the beat that uses it is skipped rather than improvised. Edit any of them later from `/setup` or `config founder`.
 
 To call it from anywhere: `cd apps/cli && bun link && bun link oneshot-gtm && cd -`. If you linked before workspaces landed, re-run that — the bin target moved to the bootstrap shim (`src/main.ts`).
 
@@ -187,7 +190,7 @@ Fourteen of them. Ten have a **Run** page in the dashboard and drain from the qu
 
 Two more drain from the queue without a Run form — `profile-intro` (what Add Prospect enqueues) and `breakup-revive`. The last two, `concierge` and `demo-no-show`, are CLI-only because they open with a voice call and an SMS respectively.
 
-Most carry a cadence — a value follow-up, then a breakup, spread over roughly three to nine days and editable per play from `/plays`. Any reply stops the sequence.
+Most carry a cadence — a value follow-up, then a breakup, spread over roughly three to nine days and editable per play from `/plays`. Any reply stops the sequence — and is recorded whether the sequence is still running, already finished, or never existed (one-touch plays like `luma-events`), credited to the play whose subject it threads on.
 
 ---
 
@@ -199,7 +202,7 @@ Outbound ships through a **sender identity pool** — any mix of OneShot wallet-
 - **Warm-up caps, per domain.** A new identity ramps 10/day, +10/week, to a 50 ceiling — editable per identity on `/setup`. OneShot reputation is per-domain, so every mailbox on a domain shares one ramp and budget. Gmail accounts ramp per account.
 - **Defer, never exceed.** When every identity is at cap, cadence steps stay due and queue rows stay approved until midnight. Nothing sends over cap.
 - **Two products, one founder, one inbox.** A workspace (see Workspaces) never first-touches someone another workspace emailed in the last 7 days: the draft is held with a `contacted-elsewhere` flag that you can override on a manual send, and auto paths (drain, cadence steps) wait the window out. Touches and the paid lookup caches live in one shared SQLite (`~/.oneshot-gtm-shared/`), so the same person is never researched twice across products.
-- **Replies follow the pool.** The inbox poll merges the OneShot inbox with every authorized Gmail account, so stop-on-reply works whichever identity sent. Answering from `/inbox` replies from the receiving identity and threads on both transports — Gmail via `In-Reply-To`/`References`, OneShot via `reply_to_email_id`. Sends carry an idempotency key, so a retry after a timeout can't double-send.
+- **Replies follow the pool.** The inbox poll merges the OneShot inbox with every authorized Gmail account, so stop-on-reply works whichever identity sent. It walks everything since its last clean poll — a persisted watermark with an hour of overlap, paged newest-first, parking anything beyond one poll's page budget as a backlog the next ticks drain — so a reply is delayed by an outage, never lost to it. A reply you've already read and archived still counts. Answering from `/inbox` records the reply too, replies from the receiving identity, and threads on both transports — Gmail via `In-Reply-To`/`References`, OneShot via `reply_to_email_id`. Sends carry an idempotency key, so a retry after a timeout can't double-send.
 
 Add a OneShot domain and mailbox from `/setup` or `identities add` — pick a provisioned domain or type a new one to auto-provision on first send. Add a Gmail account with `gmail auth` (one-time OAuth; needs a Google Cloud _Desktop_ client with the Gmail API on). With no pool configured, behavior is the classic single OneShot identity.
 
