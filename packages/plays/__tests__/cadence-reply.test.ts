@@ -6,10 +6,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // emailing someone who already replied.
 
 const calls = { sendEmail: 0 };
-let inboxEmails: Array<{ from: string; subject: string }> = [];
+let inboxEmails: Array<{ id?: string; from: string; subject: string; received_at?: string }> = [];
 let lookupArgs: string[] = [];
-// (prospectId, playName) pairs passed to markLatestStepReplied this run.
+let listInboxArgs: Array<Record<string, unknown>> = [];
+let failedSources: string[] = [];
+// (prospectId, playName) pairs whose sequence_events row flipped to `replied` this run.
 let repliedSteps: Array<{ prospectId: number; playName: string }> = [];
+// The play behind the prospect's latest sent step — the no-cadence-row fallback.
+let latestSentPlay: string | null = null;
+// Persisted poll_state rows (watermark + backlog), as the real ledger holds them.
+let pollState: Record<string, string> = {};
+const watermarkOf = () => pollState["inbox_replies"] ?? null;
 
 type Row = {
   prospect_id: number;
@@ -34,7 +41,24 @@ vi.mock("@oneshot-gtm/core", async () => {
       calls.sendEmail++;
       return { receiptId: 1 };
     },
-    listInbox: async () => ({ emails: inboxEmails, has_more: false }),
+    // A faithful fake of listInbox's contract: filter `inboxEmails` by
+    // since/until on received_at, newest first, clamp to `limit`, has_more
+    // when the clamp dropped rows. Emails without received_at pass every
+    // filter (the older tests never set one).
+    listInbox: async (opts: { since?: string; until?: string; limit?: number }) => {
+      listInboxArgs.push(opts);
+      const pool = inboxEmails
+        .map((e, i) => ({ id: e.id ?? `m${i}`, ...e }))
+        .filter((e) => !opts.since || !e.received_at || e.received_at >= opts.since)
+        .filter((e) => !opts.until || !e.received_at || e.received_at < opts.until)
+        .toSorted((a, b) => ((a.received_at ?? "") < (b.received_at ?? "") ? 1 : -1));
+      const limit = opts.limit ?? 50;
+      return {
+        emails: pool.slice(0, limit),
+        has_more: pool.length > limit,
+        ...(failedSources.length ? { failed_sources: failedSources } : {}),
+      };
+    },
     getLedger: () => ({
       listAllCadences: () => rows,
       listActiveCadences: ({ dueByIso }: { dueByIso: string }) =>
@@ -63,14 +87,36 @@ vi.mock("@oneshot-gtm/core", async () => {
         const r = rows.find((x) => x.prospect_id === prospectId && x.play_name === playName);
         if (r) r.status = status;
       },
-      // Mirrors the real ledger.recordCadenceReply: flip active→replied + record
-      // the analytics event; already-replied only backfills; terminal untouched.
-      recordCadenceReply: ({ prospectId, playName }: { prospectId: number; playName: string }) => {
-        const r = rows.find((x) => x.prospect_id === prospectId && x.play_name === playName);
-        const newlyReplied = r?.status === "active";
-        if (newlyReplied && r) r.status = "replied";
-        if (newlyReplied || r?.status === "replied") repliedSteps.push({ prospectId, playName });
-        return { newlyReplied };
+      // Mirrors the real ledger.recordProspectReply: every live cadence for the
+      // prospect stops (control plane); the analytics event is credited to ONE
+      // play — `latestSentPlay` stands in for the subject/latest resolution —
+      // and recorded once (idempotent per prospect+play).
+      recordProspectReply: (prospectId: number) => {
+        const out = new Map<string, { newlyReplied: boolean; eventRecorded: boolean }>();
+        for (const r of rows.filter((x) => x.prospect_id === prospectId)) {
+          const live = r.status === "active" || r.status === "paused";
+          if (live) r.status = "replied";
+          out.set(r.play_name, { newlyReplied: live, eventRecorded: false });
+        }
+        if (latestSentPlay) {
+          const already = repliedSteps.some(
+            (x) => x.prospectId === prospectId && x.playName === latestSentPlay,
+          );
+          if (!already) repliedSteps.push({ prospectId, playName: latestSentPlay });
+          out.set(latestSentPlay, {
+            newlyReplied: out.get(latestSentPlay)?.newlyReplied ?? false,
+            eventRecorded: !already,
+          });
+        }
+        return [...out].map(([playName, r]) => ({
+          playName,
+          newlyReplied: r.newlyReplied,
+          eventRecorded: r.eventRecorded,
+        }));
+      },
+      getPollWatermark: (key: string) => pollState[key] ?? null,
+      setPollWatermark: (key: string, value: string) => {
+        pollState[key] = value;
       },
     }),
   };
@@ -85,6 +131,11 @@ beforeEach(() => {
   lookupArgs = [];
   inboxEmails = [];
   repliedSteps = [];
+  // The fixture cadence is also the latest play that emailed the prospect.
+  latestSentPlay = "stack-consolidation";
+  pollState = {};
+  listInboxArgs = [];
+  failedSources = [];
   rows = [
     {
       prospect_id: 1,
@@ -157,25 +208,154 @@ describe("pollInboxReplies — standalone background detection (no sends)", () =
     expect(calls.sendEmail).toBe(0);
   });
 
-  it("backfills the reply event for an already-replied cadence without recounting", async () => {
-    // Simulates a cadence flipped to replied before the reply-event code existed:
-    // the next poll must still record the event, but not re-increment the count.
+  it("backfills the reply event for an already-replied cadence; no cadence is stopped", async () => {
+    // A cadence flipped to replied before the reply-event code existed: the
+    // next poll still records the event (it's new to the metrics), but there
+    // was no active cadence to stop.
     rows[0]!.status = "replied";
     inboxEmails = [{ from: "sophia@agenticarchitect.ai", subject: "re" }];
 
     const result = await pollInboxReplies();
 
-    expect(result.repliesDetected).toBe(0);
+    expect(result.repliesDetected).toBe(1);
+    expect(result.cadencesStopped).toBe(0);
     expect(repliedSteps).toEqual([{ prospectId: 1, playName: "stack-consolidation" }]);
   });
 
-  it("leaves a non-replied/active cadence (breakup) untouched", async () => {
+  it("records the reply for a terminal (breakup) cadence without resurrecting it", async () => {
     rows[0]!.status = "breakup";
     inboxEmails = [{ from: "sophia@agenticarchitect.ai", subject: "re" }];
 
     const result = await pollInboxReplies();
 
-    expect(result.repliesDetected).toBe(0);
-    expect(repliedSteps).toEqual([]);
+    expect(result.repliesDetected).toBe(1);
+    expect(result.cadencesStopped).toBe(0);
+    expect(rows[0]?.status).toBe("breakup");
+    expect(repliedSteps).toEqual([{ prospectId: 1, playName: "stack-consolidation" }]);
+  });
+
+  it("records a reply to a one-touch play that never enrolled a cadence", async () => {
+    rows = []; // luma-events leaves no cadence_state row
+    latestSentPlay = "luma-events";
+    inboxEmails = [{ from: "sophia@agenticarchitect.ai", subject: "re: the meetup" }];
+
+    const result = await pollInboxReplies();
+
+    expect(result.repliesDetected).toBe(1);
+    expect(result.details[0]).toMatchObject({
+      prospectEmail: STORED_EMAIL,
+      playName: "luma-events",
+    });
+    expect(repliedSteps).toEqual([{ prospectId: 1, playName: "luma-events" }]);
+  });
+
+  it("is idempotent across polls — the same inbound email is not recounted", async () => {
+    inboxEmails = [{ from: "sophia@agenticarchitect.ai", subject: "re" }];
+
+    expect((await pollInboxReplies()).repliesDetected).toBe(1);
+    expect((await pollInboxReplies()).repliesDetected).toBe(0);
+    expect(repliedSteps).toHaveLength(1);
+  });
+});
+
+describe("pollInboxReplies — watermark", () => {
+  it("polls from the persisted watermark (with overlap) and advances it on a clean poll", async () => {
+    pollState["inbox_replies"] = "2026-08-20T12:00:00.000Z";
+    inboxEmails = [
+      { from: "nobody@elsewhere.com", subject: "noise", received_at: "2026-08-20T12:30:00.000Z" },
+      { from: "nobody@elsewhere.com", subject: "noise", received_at: "2026-08-20T13:00:00.000Z" },
+    ];
+
+    await pollInboxReplies();
+
+    // `since` = watermark minus the one-hour overlap, so a second-granular or
+    // out-of-order delivery at the boundary is re-examined, not skipped.
+    expect(listInboxArgs.at(-1)).toMatchObject({ since: "2026-08-20T11:00:00.000Z", limit: 200 });
+    // Advanced to the newest received_at seen, not to "now".
+    expect(watermarkOf()).toBe("2026-08-20T13:00:00.000Z");
+  });
+
+  it("does not advance the watermark when a source failed (the gap must be re-covered)", async () => {
+    pollState["inbox_replies"] = "2026-08-20T12:00:00.000Z";
+    inboxEmails = [
+      { from: "nobody@elsewhere.com", subject: "noise", received_at: "2026-08-20T13:00:00.000Z" },
+    ];
+    failedSources = ["gmail:jn@example.com"];
+
+    await pollInboxReplies();
+
+    expect(watermarkOf()).toBe("2026-08-20T12:00:00.000Z");
+  });
+
+  it("first poll has no since (the 30-day backfill) and then pins the watermark", async () => {
+    inboxEmails = [
+      { from: "nobody@elsewhere.com", subject: "noise", received_at: "2026-08-01T00:00:00.000Z" },
+    ];
+
+    await pollInboxReplies();
+
+    expect(listInboxArgs.at(-1)).not.toHaveProperty("since");
+    expect(watermarkOf()).toBe("2026-08-01T00:00:00.000Z");
+  });
+
+  it("pages backwards through a catch-up larger than one window and finds the reply on page 3", async () => {
+    const at = (h: number) => `2026-08-20T${String(h).padStart(2, "0")}:00:00.000Z`;
+    inboxEmails = [
+      { from: "a@elsewhere.com", subject: "noise", received_at: at(15) },
+      { from: "b@elsewhere.com", subject: "noise", received_at: at(14) },
+      { from: "c@elsewhere.com", subject: "noise", received_at: at(13) },
+      { from: "d@elsewhere.com", subject: "noise", received_at: at(12) },
+      { from: "sophia@agenticarchitect.ai", subject: "re: stack", received_at: at(11) },
+    ];
+
+    const result = await pollInboxReplies({ pageSize: 2 });
+
+    // Page 2 is bounded one second past page 1's oldest (inclusive boundary).
+    expect(listInboxArgs[1]).toMatchObject({ until: "2026-08-20T14:00:01.000Z" });
+    expect(result.polled).toBe(5);
+    expect(result.repliesDetected).toBe(1);
+    expect(watermarkOf()).toBe(at(15));
+    expect(pollState["inbox_replies_backlog"]).toBeUndefined();
+  });
+
+  it("does not skip a reply that shares the boundary second with a page's oldest message", async () => {
+    const t = "2026-08-20T12:00:00.000Z";
+    inboxEmails = [
+      {
+        id: "x",
+        from: "a@elsewhere.com",
+        subject: "noise",
+        received_at: "2026-08-20T13:00:00.000Z",
+      },
+      { id: "y", from: "b@elsewhere.com", subject: "noise", received_at: t },
+      { id: "z", from: "sophia@agenticarchitect.ai", subject: "re: stack", received_at: t },
+    ];
+
+    const result = await pollInboxReplies({ pageSize: 2 });
+
+    expect(result.repliesDetected).toBe(1);
+    expect(result.polled).toBe(3); // boundary mail re-fetched, de-duplicated by id
+  });
+
+  it("parks the unreached remainder as backlog and drains it on the next poll", async () => {
+    const at = (h: number) => `2026-08-20T${String(h).padStart(2, "0")}:00:00.000Z`;
+    inboxEmails = [
+      { from: "a@elsewhere.com", subject: "noise", received_at: at(16) },
+      { from: "b@elsewhere.com", subject: "noise", received_at: at(15) },
+      { from: "c@elsewhere.com", subject: "noise", received_at: at(14) },
+      { from: "sophia@agenticarchitect.ai", subject: "re: stack", received_at: at(13) },
+    ];
+
+    // Budget of one page of two: sees 16:00 and 15:00, parks (floor, 15:00].
+    const first = await pollInboxReplies({ pageSize: 2, maxPages: 1 });
+    expect(first.repliesDetected).toBe(0);
+    expect(watermarkOf()).toBe(at(16)); // the live window is done; it advances
+    expect(JSON.parse(pollState["inbox_replies_backlog"]!)).toMatchObject({ until: at(15) });
+
+    // Next poll: the live window is empty past the watermark; the spare page
+    // budget drains the backlog and finds the reply.
+    const second = await pollInboxReplies({ pageSize: 2, maxPages: 2 });
+    expect(second.repliesDetected).toBe(1);
+    expect(pollState["inbox_replies_backlog"]).toBe("");
   });
 });

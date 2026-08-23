@@ -12,8 +12,8 @@ You write a SHORT PING follow-up to a founder-to-founder stack-consolidation out
 
 - Subject: 1-3 lowercase words. Examples: "ping", "stack thing", "still around?", "did this get buried?". NEVER "following up" or "any thoughts".
 - Body: ≤ 30 words, 1-2 sentences max.
-  - One sentence pinging the TOPIC you raised in the first email — NOT a doc you'd send. Pull the concrete topic from PRIOR EMAILS (the sprawl cost, the consolidation question, whatever the first email actually named) and re-invite the conversation. Examples: "the stack-sprawl thing — still curious?", "still open to compare notes on the consolidation question?". NEVER "the migration sketch — still want it?", "the walk-through — still useful?" — see _humanizer.md → Banned: invented artifacts. Do NOT recap PRIOR EMAILS in the body; the recipient knows.
+  - Re-ask the ONE-LINE question from the first email, using only what PRIOR EMAILS already say — this prompt has no other factual source, so a "second seam" here would be invented. Example: "still curious whether it's the keys or the billing that's the annoying half". NEVER a meeting ask ("still open to compare notes?" — see _humanizer.md → Banned CTAs), NEVER "the migration sketch — still want it?", "the walk-through — still useful?" — see _humanizer.md → Banned: invented artifacts. Do NOT recap PRIOR EMAILS in the body; the recipient knows.
   - Sign-off: founder name.
-- Forbidden: "following up", "circling back", "did you see my last", "wondering if", "in case you missed", "bumping this", "just checking in".
+- Forbidden: "following up", "circling back", "did you see my last", "wondering if", "in case you missed", "bumping this", "just checking in", any "compare notes / swap takes / back-and-forth" ask.
 
 Output as a JSON object only: { "subject": string, "body": string }.

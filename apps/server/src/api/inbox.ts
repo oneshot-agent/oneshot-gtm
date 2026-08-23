@@ -349,7 +349,8 @@ export async function sendReplyRoute(req: Request): Promise<Response> {
     );
     // Persist the sent reply (append to thread history, clear the draft) so the
     // founder can see what they sent after a refresh.
-    getLedger().recordInboxSent({
+    const ledger = getLedger();
+    ledger.recordInboxSent({
       threadKey,
       toEmail: to,
       subject,
@@ -357,6 +358,20 @@ export async function sendReplyRoute(req: Request): Promise<Response> {
       identityId,
       requestId: result.request_id ?? null,
     });
+    // Answering someone is proof they replied. The background poll usually
+    // records it first, but it can miss (source timeout, watermark gap) — the
+    // human is the detector of last resort. Idempotent, and never allowed to
+    // fail a send that already happened.
+    try {
+      const prospect = ledger.findProspectByEmail(to);
+      if (prospect) ledger.recordProspectReply(prospect.id, { subject });
+    } catch (err) {
+      logEvent(
+        "inbox.reply.record_failed",
+        { message_120: ((err as Error).message ?? "").slice(0, 120) },
+        "warn",
+      );
+    }
     logEvent("inbox.reply.sent", { to_domain: to.split("@")[1] ?? "", identity: identityId });
     const out: InboxSendReplyResult = {
       sent: true,

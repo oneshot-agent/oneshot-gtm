@@ -44,6 +44,7 @@ const DEFAULTS: OneShotConfig = {
   founderCredentials: null,
   productPortfolio: null,
   partners: null,
+  founderAdmission: null,
   productBrief: null,
   mobileSignature: false,
   clientId: null,

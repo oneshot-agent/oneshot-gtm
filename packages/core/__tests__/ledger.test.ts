@@ -1063,20 +1063,173 @@ describe("Ledger recordCadenceReply — atomic control + analytics write", () =>
     ).toEqual(["replied"]); // but the event is backfilled
   });
 
-  it("leaves a terminal (breakup) cadence untouched", () => {
+  it("records the reply for a terminal (breakup) cadence without resurrecting it", () => {
+    // The common case in practice: most sequences have finished by the time a
+    // reply lands. The cadence must stay stopped (control plane), but the reply
+    // is still a fact about the outbound (analytics plane) — dropping it is how
+    // 424 of 457 cadences became invisible to the reply rate.
     const id = enrollWithSentStep();
     ledger.setCadenceStatus({ prospectId: id, playName: "repo-interest", status: "breakup" });
 
-    const { newlyReplied } = ledger.recordCadenceReply({
+    const { newlyReplied, eventRecorded } = ledger.recordCadenceReply({
       prospectId: id,
       playName: "repo-interest",
     });
 
-    expect(newlyReplied).toBe(false);
+    expect(newlyReplied).toBe(false); // not an active→replied transition
+    expect(eventRecorded).toBe(true); // but the reply is on the record
     expect(ledger.getCadence(id, "repo-interest")?.status).toBe("breakup");
     expect(
       ledger.listSequenceEventsForProspectPlay(id, "repo-interest").map((e) => e.status),
-    ).toEqual(["sent"]);
+    ).toEqual(["replied"]);
+    // And a second poll is a no-op on both planes.
+    expect(ledger.recordCadenceReply({ prospectId: id, playName: "repo-interest" })).toEqual({
+      newlyReplied: false,
+      eventRecorded: false,
+    });
+  });
+
+  it("does the same for a completed cadence (the Stop button's terminal state)", () => {
+    const id = enrollWithSentStep();
+    ledger.setCadenceStatus({ prospectId: id, playName: "repo-interest", status: "completed" });
+
+    const r = ledger.recordCadenceReply({ prospectId: id, playName: "repo-interest" });
+
+    expect(r).toEqual({ newlyReplied: false, eventRecorded: true });
+    expect(ledger.getCadence(id, "repo-interest")?.status).toBe("completed");
+  });
+});
+
+describe("Ledger recordProspectReply — which plays a reply belongs to", () => {
+  function twoPlays(): number {
+    const id = ledger.upsertProspect({ name: "Pat", email: "pat@co.com", source: "repo-interest" });
+    for (const [play, status, subject] of [
+      ["repo-interest", "completed", "nanoclaw isolation"],
+      ["stack-consolidation", "active", "your api stack"],
+    ] as const) {
+      ledger.enrollCadence({ prospectId: id, playName: play, nextDueAt: "2026-01-01T00:00:00Z" });
+      ledger.recordSequenceEvent({
+        prospectId: id,
+        playName: play,
+        stepIndex: 0,
+        channel: "email",
+        status: "sent",
+        metadata: { subject },
+      });
+      ledger.setCadenceStatus({ prospectId: id, playName: play, status });
+    }
+    return id;
+  }
+
+  it("stops every live cadence but credits the reply to ONE play — the latest sent", () => {
+    const id = twoPlays();
+
+    const results = ledger.recordProspectReply(id);
+
+    expect(results).toEqual(
+      expect.arrayContaining([
+        { playName: "repo-interest", newlyReplied: false, eventRecorded: false },
+        { playName: "stack-consolidation", newlyReplied: true, eventRecorded: true },
+      ]),
+    );
+    expect(ledger.getCadence(id, "stack-consolidation")?.status).toBe("replied");
+    expect(ledger.getCadence(id, "repo-interest")?.status).toBe("completed");
+    // One reply, one replied row — not one per play.
+    const replied = ledger.eventsByPlay().filter((e) => e.replied > 0);
+    expect(replied.map((e) => e.play_name)).toEqual(["stack-consolidation"]);
+  });
+
+  it("credits the play whose subject the reply threads on, even if it is not the latest", () => {
+    const id = twoPlays();
+
+    const results = ledger.recordProspectReply(id, { subject: "RE: Nanoclaw   isolation" });
+
+    expect(results).toEqual(
+      expect.arrayContaining([
+        { playName: "repo-interest", newlyReplied: false, eventRecorded: true },
+        { playName: "stack-consolidation", newlyReplied: true, eventRecorded: false },
+      ]),
+    );
+  });
+
+  it("falls back to the latest sent play when the subject matches nothing", () => {
+    const id = twoPlays();
+    const results = ledger.recordProspectReply(id, { subject: "Re: something else entirely" });
+    expect(results.find((r) => r.eventRecorded)?.playName).toBe("stack-consolidation");
+  });
+
+  it("strips stacked and localised reply prefixes before matching", () => {
+    const id = twoPlays();
+    const results = ledger.recordProspectReply(id, { subject: "AW: Re: Fwd: nanoclaw isolation" });
+    expect(results.find((r) => r.eventRecorded)?.playName).toBe("repo-interest");
+  });
+
+  it("also stops a paused cadence — a pause that resumes must not email someone who answered", () => {
+    const id = ledger.upsertProspect({ name: "Pau", email: "pau@co.com", source: "repo-interest" });
+    ledger.enrollCadence({
+      prospectId: id,
+      playName: "repo-interest",
+      nextDueAt: "2026-01-01T00:00:00Z",
+    });
+    ledger.recordSequenceEvent({
+      prospectId: id,
+      playName: "repo-interest",
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+    });
+    ledger.setCadenceStatus({
+      prospectId: id,
+      playName: "repo-interest",
+      status: "paused" as never,
+    });
+
+    expect(ledger.recordProspectReply(id)).toEqual([
+      { playName: "repo-interest", newlyReplied: true, eventRecorded: true },
+    ]);
+    expect(ledger.getCadence(id, "repo-interest")?.status).toBe("replied");
+  });
+
+  it("falls back to the latest sent play when the prospect has no cadence row (one-touch plays)", () => {
+    // luma-events never enrolls a cadence; before the fallback its replies had
+    // nowhere to land and were dropped on the floor.
+    const id = ledger.upsertProspect({ name: "Lu", email: "lu@co.com", source: "luma-events" });
+    // Two plays, inserted in order — same-second timestamps are tie-broken by id,
+    // so the later insert is the latest send.
+    for (const play of ["show-hn", "luma-events"]) {
+      ledger.recordSequenceEvent({
+        prospectId: id,
+        playName: play,
+        stepIndex: 0,
+        channel: "email",
+        status: "sent",
+      });
+    }
+
+    expect(ledger.latestSentPlayForProspect(id)).toBe("luma-events");
+    expect(ledger.recordProspectReply(id)).toEqual([
+      { playName: "luma-events", newlyReplied: false, eventRecorded: true },
+    ]);
+    expect(ledger.eventsByPlay().find((e) => e.play_name === "luma-events")).toMatchObject({
+      sent: 1,
+      replied: 1,
+    });
+  });
+
+  it("records nothing for a prospect that was never emailed", () => {
+    const id = ledger.upsertProspect({ name: "Nu", email: "nu@co.com", source: "add-prospect" });
+    expect(ledger.latestSentPlayForProspect(id)).toBeNull();
+    expect(ledger.recordProspectReply(id)).toEqual([]);
+  });
+});
+
+describe("Ledger poll watermark", () => {
+  it("round-trips and overwrites a key; unknown keys are null", () => {
+    expect(ledger.getPollWatermark("inbox_replies")).toBeNull();
+    ledger.setPollWatermark("inbox_replies", "2026-08-01T00:00:00.000Z");
+    expect(ledger.getPollWatermark("inbox_replies")).toBe("2026-08-01T00:00:00.000Z");
+    ledger.setPollWatermark("inbox_replies", "2026-08-02T00:00:00.000Z");
+    expect(ledger.getPollWatermark("inbox_replies")).toBe("2026-08-02T00:00:00.000Z");
   });
 });
 

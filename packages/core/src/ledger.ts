@@ -89,6 +89,21 @@ export interface CadenceWithProspect {
   prospect_company: string | null;
 }
 
+/**
+ * Subject as a thread key: reply/forward prefixes stripped (en/de/fr/es/sv/
+ * pt/nl variants, repeated), case-folded, whitespace collapsed. Empty → null.
+ */
+function normalizeSubject(subject: string | null | undefined): string | null {
+  if (!subject) return null;
+  let s = subject.trim();
+  // Each `\s*` is reachable by exactly one path, so a run of spaces can't be
+  // split between two of them (CodeQL: polynomial backtracking).
+  const prefix = /^(?:re|fw|fwd|aw|wg|sv|vs|rv|enc|tr|antw)(?:\s*\[\d+\])?\s*:\s*/i;
+  while (prefix.test(s)) s = s.replace(prefix, "");
+  s = s.replace(/\s+/g, " ").trim().toLowerCase();
+  return s.length > 0 ? s : null;
+}
+
 export class Ledger {
   private db: Database;
   private readonly path: string;
@@ -477,6 +492,20 @@ export class Ledger {
         created_at    TEXT NOT NULL DEFAULT (datetime('now'))
       );
       CREATE INDEX IF NOT EXISTS idx_canary_created ON canary_results(created_at DESC);
+    `);
+    // v20 (2026-08): reply-poll watermark. The inbox poll used to fetch a bare
+    // newest-50 window across every mailbox with no memory of what it had
+    // already examined, so any reply that slipped out of that window between
+    // ticks (one noisy mailbox was enough) was never seen again. A persisted
+    // high-water mark turns the poll into "everything since last success" —
+    // survives restarts, and a failed tick simply leaves the mark where it was
+    // so the next good poll re-covers the gap.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS poll_state (
+        key        TEXT PRIMARY KEY,
+        value      TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
     `);
   }
 
@@ -1731,7 +1760,8 @@ export class Ledger {
         `UPDATE sequence_events SET status = 'replied'
          WHERE id = (
            SELECT id FROM sequence_events
-           WHERE prospect_id = ? AND play_name = ? AND status IN ('sent','delivered')
+           WHERE prospect_id = ? AND play_name = ? AND channel = 'email'
+             AND status IN ('sent','delivered')
            ORDER BY created_at DESC, id DESC LIMIT 1
          )
          AND NOT EXISTS (
@@ -1752,16 +1782,28 @@ export class Ledger {
    * The two surfaces read different tables on purpose (a lifetime status snapshot
    * vs a 7-day count), but a reply now updates them together in one transaction.
    *
-   * Reads the current status inside the transaction and acts on it, so callers
-   * just hand it a (prospect, play): an `active` cadence flips + records; an
-   * already-`replied` one only backfills the event (idempotent); a terminal
-   * `breakup`/`completed` cadence is left untouched. Returns `newlyReplied` —
-   * true only on the active→replied transition, so callers count a reply once.
+   * The two planes are gated SEPARATELY, because they answer different questions.
+   * Control plane is conservative: only a live cadence (`active`, or `paused` —
+   * a pause that resumes must not email someone who already answered) flips to
+   * `replied`, so a terminal `breakup`/`completed` sequence is never resurrected
+   * and a stopped cadence stays stopped. Analytics plane is unconditional: a reply is a fact
+   * about the outbound whatever the sequence did afterwards, so the event is
+   * recorded for ANY status. Gating them together is what made 424 of 457
+   * cadences invisible to reply metrics — a reply arriving after a sequence
+   * finished (the common case, since most cadences complete) was silently dropped.
+   *
+   * Returns both signals: `newlyReplied` marks the active→replied control
+   * transition, `eventRecorded` marks the one call that flipped a sequence_event
+   * row. Count replies on `eventRecorded` — `markLatestStepReplied` is idempotent
+   * per (prospect, play), so it is true exactly once no matter how often we poll.
    */
-  recordCadenceReply(input: { prospectId: number; playName: string }): { newlyReplied: boolean } {
+  recordCadenceReply(input: { prospectId: number; playName: string }): {
+    newlyReplied: boolean;
+    eventRecorded: boolean;
+  } {
     return this.db.transaction(() => {
       const cad = this.getCadence(input.prospectId, input.playName);
-      const newlyReplied = cad?.status === "active";
+      const newlyReplied = cad?.status === "active" || cad?.status === "paused";
       if (newlyReplied) {
         this.setCadenceStatus({
           prospectId: input.prospectId,
@@ -1769,14 +1811,104 @@ export class Ledger {
           status: "replied",
         });
       }
-      if (newlyReplied || cad?.status === "replied") {
-        this.markLatestStepReplied({
-          prospectId: input.prospectId,
-          playName: input.playName,
+      const eventRecorded = this.markLatestStepReplied({
+        prospectId: input.prospectId,
+        playName: input.playName,
+      });
+      return { newlyReplied, eventRecorded };
+    })();
+  }
+
+  /**
+   * Record a reply from a prospect. The inbox poll matches on from-address,
+   * which says nothing about plays, so this is the one place that decides what
+   * a reply means — and the two planes want different answers:
+   *  - control: EVERY live cadence for the prospect stops. Whatever they replied
+   *    to, nobody should keep getting follow-ups after answering.
+   *  - analytics: the reply is credited to ONE play — the one whose sent subject
+   *    the reply threads on (`Re: …`), else the most recent play that emailed
+   *    them. Crediting every play would count one reply several times in the
+   *    per-play rate; crediting none (the old behaviour for one-touch plays like
+   *    luma-events, which never enroll a cadence) dropped it on the floor.
+   * Returns one entry per play touched, so callers can count and tag.
+   */
+  recordProspectReply(
+    prospectId: number,
+    opts?: { subject?: string | null },
+  ): Array<{ playName: string; newlyReplied: boolean; eventRecorded: boolean }> {
+    return this.db.transaction(() => {
+      const credited = this.latestSentPlayForProspect(prospectId, opts?.subject);
+      const out = new Map<string, { newlyReplied: boolean; eventRecorded: boolean }>();
+      for (const cad of this.listCadencesForProspect(prospectId)) {
+        const live = cad.status === "active" || cad.status === "paused";
+        if (live) {
+          this.setCadenceStatus({ prospectId, playName: cad.play_name, status: "replied" });
+        }
+        out.set(cad.play_name, { newlyReplied: live, eventRecorded: false });
+      }
+      if (credited) {
+        const eventRecorded = this.markLatestStepReplied({ prospectId, playName: credited });
+        out.set(credited, {
+          newlyReplied: out.get(credited)?.newlyReplied ?? false,
+          eventRecorded,
         });
       }
-      return { newlyReplied };
+      return [...out].map(([playName, r]) => ({
+        playName,
+        newlyReplied: r.newlyReplied,
+        eventRecorded: r.eventRecorded,
+      }));
     })();
+  }
+
+  /**
+   * Which play an EMAIL reply belongs to. With a subject, the sent email whose
+   * subject it threads on wins (reply prefixes in a few languages stripped, case
+   * and whitespace ignored); otherwise, or when nothing matches, the prospect's
+   * most recent sent email. Other channels (sms/voice/linkedin) are never
+   * credited with an email reply. Null if never emailed.
+   */
+  latestSentPlayForProspect(prospectId: number, replySubject?: string | null): string | null {
+    const wanted = normalizeSubject(replySubject);
+    if (wanted) {
+      const rows = this.db
+        .query(
+          `SELECT play_name, json_extract(metadata_json, '$.subject') AS subject
+           FROM sequence_events
+           WHERE prospect_id = ? AND channel = 'email'
+             AND status IN ('sent','delivered','replied')
+             AND json_extract(metadata_json, '$.subject') IS NOT NULL
+           ORDER BY created_at DESC, id DESC`,
+        )
+        .all(prospectId) as Array<{ play_name: string; subject: string }>;
+      const hit = rows.find((r) => normalizeSubject(r.subject) === wanted);
+      if (hit) return hit.play_name;
+    }
+    const row = this.db
+      .query(
+        `SELECT play_name FROM sequence_events
+         WHERE prospect_id = ? AND channel = 'email'
+           AND status IN ('sent','delivered','replied')
+         ORDER BY created_at DESC, id DESC LIMIT 1`,
+      )
+      .get(prospectId) as { play_name: string } | null;
+    return row?.play_name ?? null;
+  }
+
+  getPollWatermark(key: string): string | null {
+    const row = this.db.query(`SELECT value FROM poll_state WHERE key = ?`).get(key) as {
+      value: string;
+    } | null;
+    return row?.value ?? null;
+  }
+
+  setPollWatermark(key: string, value: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO poll_state(key, value, updated_at) VALUES (?, ?, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+      )
+      .run(key, value);
   }
 
   listSequenceEventsForProspectPlay(prospectId: number, playName: string): SequenceEventRecord[] {

@@ -408,6 +408,33 @@ export function socialProofBlock(): string | null {
   ].join("\n");
 }
 
+/**
+ * ADMISSION line for the prompt's optional damaging-admission beat — a true
+ * concession, surfaced only when the founder set one AND this prospect drew
+ * the slot. The prompt is told to use ONLY what this line carries and to skip
+ * the beat when it is absent, so the model can never invent a weakness (the
+ * same lie as inventing a strength).
+ *
+ * The "roughly a third of emails" cap lives HERE, not in the prompt: a model
+ * cannot hold a frequency across independent calls (given "at most 1 in 3" it
+ * used the admission on 3 of 4 drafts, the same way the optional "Hey {name}"
+ * opener runs at 4 of 4). Gating whether the material is supplied is the only
+ * honest way to get the rate — and it is keyed on the prospect, so a
+ * regenerate makes the same decision instead of flapping.
+ */
+export function admissionBlock(prospectEmail: string): string | null {
+  const admission = loadConfig().founderAdmission?.trim();
+  if (!admission || !admissionSlot(prospectEmail)) return null;
+  return `ADMISSION (a true concession about the sender; use it in THIS email, inside the Identity beat, rephrased but never extended): ${admission}`;
+}
+
+/** Stable per-prospect draw: true for roughly one in three addresses. */
+export function admissionSlot(prospectEmail: string): boolean {
+  let h = 0;
+  for (const ch of prospectEmail.trim().toLowerCase()) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return h % 3 === 0;
+}
+
 export async function draftEmailFromPrompt(opts: {
   promptName: string;
   inputBlock: string;
@@ -565,13 +592,90 @@ const HONORIFIC_TOKENS = new Set([
   "sr",
   "jr.",
   "jr",
+  // "Md. Naimur Rahman" — Mohammed, abbreviated; common in South Asian names.
+  "md.",
+  "md",
+  "eng.",
+  "eng",
+  "ir.",
+  "sir",
 ]);
+
+// An opening token that is a role or mailbox, not a person. "Hey CEO," went
+// out once; that is the bar for this list.
+const ROLE_TOKENS = new Set([
+  "ceo",
+  "cto",
+  "cfo",
+  "coo",
+  "cmo",
+  "cpo",
+  "vp",
+  "founder",
+  "cofounder",
+  "co-founder",
+  "owner",
+  "admin",
+  "administrator",
+  "info",
+  "hello",
+  "hi",
+  "hey",
+  "team",
+  "support",
+  "sales",
+  "contact",
+  "marketing",
+  "staff",
+  "hr",
+  "user",
+  "guest",
+  "test",
+  "noreply",
+  "no-reply",
+  "null",
+  "none",
+  "unknown",
+  "na",
+  "n/a",
+]);
+
+// A token anywhere in the name that says "this is a company, not a person".
+// Deliberately excludes words that are also first names ("Dev", "Prince").
+const ORG_TOKENS = new Set([
+  "inc",
+  "inc.",
+  "llc",
+  "ltd",
+  "ltd.",
+  "gmbh",
+  "corp",
+  "corp.",
+  "co.",
+  "labs",
+  "lab",
+  "team",
+  "group",
+  "studio",
+  "studios",
+  "technologies",
+  "software",
+  "solutions",
+  "systems",
+  "ventures",
+  "capital",
+  "agency",
+  "company",
+]);
+const ORG_SUFFIX_RE = /(labs?|team|studios?|\.(dev|ai|io|com|app|xyz|net|org|co))$/i;
 
 /**
  * Best-effort first-name extraction from a prospect's `name` field. Returns
  * `null` when we shouldn't use a greeting at all: missing data, the placeholder
- * "(unknown)", a username-looking handle, or a non-capitalized opening token
- * (which usually signals a handle fragment rather than a real first name).
+ * "(unknown)", a username-looking handle, a company name, a role or mailbox
+ * word, an initial, or a non-capitalized opening token (which usually signals
+ * a handle fragment rather than a real first name). A wrong greeting is worse
+ * than none — "Hey CEO," and "Hey Bytedance," both shipped before this gate.
  *
  * Used to optionally surface `PROSPECT_FIRST_NAME` to the LLM input block so
  * prompts can occasionally open with `Hey {firstName},`. The LLM owns the
@@ -583,17 +687,45 @@ export function firstNameFrom(name: string | null | undefined): string | null {
   const trimmed = name.trim();
   if (trimmed.length === 0 || trimmed === "(unknown)") return null;
   const tokens = trimmed.split(/\s+/);
+
+  // Company, not a person: any org word anywhere ("Bytedance Inc.", "Megabyte
+  // Labs") or a glued org/domain suffix ("MyriaLabs", "Arcade.dev").
+  if (tokens.some((t) => ORG_TOKENS.has(t.replace(/,$/, "").toLowerCase()))) return null;
+  if (tokens.some((t) => ORG_SUFFIX_RE.test(t.replace(/,$/, "")))) return null;
+
   let i = 0;
   while (i < tokens.length && HONORIFIC_TOKENS.has(tokens[i]!.toLowerCase())) {
     i++;
   }
-  const first = tokens[i];
+  let first = tokens[i]?.replace(/,$/, "");
   if (!first) return null;
+
+  // "LAST, First" — the comma marks the family name; greet with what follows.
+  if (tokens[i]!.endsWith(",") && tokens[i + 1]) first = tokens[i + 1]!.replace(/,$/, "");
+
+  if (ROLE_TOKENS.has(first.toLowerCase())) return null;
+  // Handles carry digits; names don't ("Kiyotaka29", "n3on").
+  if (/\d/.test(first)) return null;
+  // An initial is not a greeting ("J. Eduardo", "K.O", "Mrs. J Doe").
+  if (/^[A-Za-z]\.?$/.test(first) || /^[A-Z]\.[A-Z]\.?$/.test(first)) return null;
+  // Dotted pair "Wei.Jiang" — greet with the half before the dot.
+  const dotted = first.match(/^([A-Z][a-z]+)\.[A-Z][a-z]+$/);
+  if (dotted) first = dotted[1]!;
+
+  // ALL CAPS: a whole name shouted ("JAGADISH SUNIL PEDNEKAR") is a name with
+  // the shift key stuck — title-case it. A lone shouted token ("KEVINWONG",
+  // "KERNEL", "CEO") is a handle or a word, not a greeting. Two letters ("KC")
+  // read as a nickname and pass through as written.
+  if (/^[A-Z]{3,}$/.test(first)) {
+    const allShouted = tokens.slice(i).every((t) => /^[A-Z]+\.?,?$/.test(t));
+    if (tokens.length - i < 2 || !allShouted) return null;
+    first = first[0]! + first.slice(1).toLowerCase();
+  }
+
   // Handle-looking inputs ("schen", "samaralihussain") almost always come from
   // a finder pre-screen failure; greeting "Hey schen," is worse than no greeting.
   if (!/^[A-Z]/.test(first)) return null;
-  // Strip a trailing comma if it slipped through (e.g. "Sarah, PhD").
-  return first.replace(/,$/, "");
+  return first;
 }
 
 interface VerifyAndFilterResult<T> {

@@ -196,51 +196,236 @@ export interface AdvanceResult {
 export interface ReplyPollResult {
   /** Inbox emails examined. */
   polled: number;
-  /** Active cadences flipped to `replied` this poll. */
+  /**
+   * Replies learned for the FIRST time this poll — one per (prospect, play)
+   * whose sequence_events row flipped to `replied`. This is the number the
+   * reply-rate metrics move by, whatever state the cadence was in.
+   */
   repliesDetected: number;
+  /** Subset of the above that also stopped a still-active cadence. */
+  cadencesStopped: number;
   details: Array<{ prospectEmail: string; playName: string; subject: string }>;
 }
 
+/** poll_state key for the reply poll's high-water mark (newest received_at seen on a clean poll). */
+const REPLY_WATERMARK_KEY = "inbox_replies";
 /**
- * Poll the inbox and mark any active cadence `replied` when an inbound email's
- * from-address matches its prospect. Read-only except for the status flip — it
- * never drafts or sends, so it's safe to run on a background timer (the server
- * scheduler) as well as inside `advanceCadence`. Without a background caller,
- * replies are only noticed when the founder manually advances/sends a cadence,
- * so a reply can sit unrecognized for days and the sequence keeps emailing.
+ * poll_state key for an unfinished catch-up: JSON `{ since, until }` naming the
+ * slice of the window a poll ran out of page budget before reaching. Consumed
+ * by later polls, a few pages at a time, until it is exhausted — so a backlog
+ * larger than one poll's budget is delayed, never skipped.
  */
-export async function pollInboxReplies(): Promise<ReplyPollResult> {
-  const ledger = getLedger();
-  const out: ReplyPollResult = { polled: 0, repliesDetected: 0, details: [] };
-  const inbox = await listInbox({ limit: 50 });
-  out.polled = inbox.emails.length;
-  for (const e of inbox.emails) {
-    const from = normalizeEmail(e.from);
-    const prospect = ledger.findProspectByEmail(from);
-    if (!prospect) continue;
-    // Index seek per matched sender, not a full-table scan per inbox email.
-    // recordCadenceReply atomically flips control state + records the analytics
-    // event; it decides per-status (active flips & counts, already-replied just
-    // backfills the event idempotently, terminal states are left alone).
-    for (const cad of ledger.listCadencesForProspect(prospect.id)) {
-      const { newlyReplied } = ledger.recordCadenceReply({
-        prospectId: prospect.id,
-        playName: cad.play_name,
-      });
-      if (newlyReplied) {
+const REPLY_BACKLOG_KEY = "inbox_replies_backlog";
+/**
+ * Re-examine this much before the watermark on every poll. Gmail's `after:` is
+ * second-granular and mailboxes don't deliver in strict order, so a little
+ * overlap is the difference between "never misses" and "usually doesn't".
+ * Recording is idempotent, so overlap costs fetches, not correctness.
+ */
+const REPLY_WATERMARK_OVERLAP_MS = 60 * 60_000;
+/** What the sources fall back to when no `since` is given (Gmail: `newer_than:30d`). */
+const REPLY_DEFAULT_WINDOW_MS = 30 * 24 * 60 * 60_000;
+/** Page size per fetch — the same window the /inbox route uses. */
+const REPLY_POLL_LIMIT = 200;
+/**
+ * Pages walked per poll before the rest is parked as backlog. In steady state
+ * (5-minute ticks) one page is never full; this only bites on the first poll
+ * after install or after a long outage, where it bounds a single poll to
+ * ~2,000 messages and leaves the remainder for the next ticks.
+ */
+const REPLY_POLL_MAX_PAGES = 10;
+/**
+ * The poll runs in the background and is not latency-sensitive the way the
+ * /inbox route is, so it can afford a longer per-source deadline than the 15s
+ * default — a page of 200 full-message Gmail fetches takes ~8s on a good day
+ * and was the single biggest source of `inbox.source_failed`.
+ */
+const REPLY_POLL_DEADLINE_MS = 60_000;
+
+interface WalkResult {
+  newest: string | null;
+  oldest: string | null;
+  /** The whole (since, until) slice was examined — nothing older remains. */
+  exhausted: boolean;
+  /** No source failed on any page. A partial walk must not move any cursor. */
+  clean: boolean;
+  pagesUsed: number;
+}
+
+/**
+ * Examine one (since, until) slice of the inbox newest-first, page by page,
+ * recording replies as they are matched. Each page's oldest message bounds the
+ * next page; the bound is pushed one second LATER than that message so the
+ * boundary second is fetched again rather than skipped (`before:`/`until` are
+ * exclusive at second granularity and two mails can share a second), with
+ * `seen` de-duplicating by id across pages so nothing is counted twice.
+ */
+async function walkInboxWindow(
+  ledger: ReturnType<typeof getLedger>,
+  out: ReplyPollResult,
+  seen: Set<string>,
+  opts: { since?: string; until?: string; pages: number; pageSize: number },
+): Promise<WalkResult> {
+  const res: WalkResult = {
+    newest: null,
+    oldest: null,
+    exhausted: false,
+    clean: true,
+    pagesUsed: 0,
+  };
+  let until = opts.until;
+  while (res.pagesUsed < opts.pages) {
+    const inbox = await listInbox({
+      limit: opts.pageSize,
+      deadlineMs: REPLY_POLL_DEADLINE_MS,
+      ...(opts.since ? { since: opts.since } : {}),
+      ...(until ? { until } : {}),
+    });
+    res.pagesUsed++;
+    if ((inbox.failed_sources ?? []).length > 0) res.clean = false;
+
+    let fresh = 0;
+    let pageOldest: string | null = null;
+    for (const e of inbox.emails) {
+      if (seen.has(e.id)) continue;
+      seen.add(e.id);
+      fresh++;
+      out.polled++;
+      if (e.received_at) {
+        if (res.newest == null || e.received_at > res.newest) res.newest = e.received_at;
+        if (pageOldest == null || e.received_at < pageOldest) pageOldest = e.received_at;
+      }
+      const from = normalizeEmail(e.from);
+      const prospect = ledger.findProspectByEmail(from);
+      if (!prospect) continue;
+      for (const r of ledger.recordProspectReply(prospect.id, { subject: e.subject })) {
+        if (r.newlyReplied) out.cadencesStopped++;
+        if (!r.eventRecorded) continue;
         out.repliesDetected++;
-        out.details.push({ prospectEmail: from, playName: cad.play_name, subject: e.subject });
-        // A reply is the first value signal — tag the cadence's send receipts so
+        out.details.push({ prospectEmail: from, playName: r.playName, subject: e.subject });
+        // A reply is the first value signal — tag the play's send receipts so
         // RoCS reflects engagement. Best-effort (tagOutcomeValue swallows errors).
         await tagOutcomeValue({
           prospectId: prospect.id,
-          playName: cad.play_name,
+          playName: r.playName,
           valueTag: { type: "engagement", label: "reply" },
         });
       }
     }
+    if (pageOldest && (res.oldest == null || pageOldest < res.oldest)) res.oldest = pageOldest;
+
+    // Done when the sources say so, or when a page brought nothing new (a
+    // page of already-seen boundary mail would otherwise loop forever).
+    if (!inbox.has_more || fresh === 0 || !pageOldest) {
+      res.exhausted = true;
+      break;
+    }
+    until = new Date(new Date(pageOldest).getTime() + 1000).toISOString();
+  }
+  return res;
+}
+
+/**
+ * Poll the inbox and record a reply wherever an inbound email's from-address
+ * matches a prospect we emailed. Read-only except for the reply writes — it
+ * never drafts or sends, so it's safe to run on a background timer (the server
+ * scheduler) as well as inside `advanceCadence`. Without a background caller,
+ * replies are only noticed when the founder manually advances/sends a cadence,
+ * so a reply can sit unrecognized for days and the sequence keeps emailing.
+ *
+ * Three things make this see the whole field rather than a sliver of it:
+ *  - the window is "since the last clean poll" (persisted watermark + overlap),
+ *    not a bare newest-N across every mailbox that a noisy inbox could fill;
+ *  - a window bigger than one poll's page budget is parked as a backlog slice
+ *    and drained by the following polls, so it is delayed, never dropped; and
+ *  - the reply is recorded against the play that emailed the prospect,
+ *    regardless of cadence state, via `recordProspectReply` — so a reply that
+ *    arrives after a sequence completed (the common case) still counts.
+ *
+ * `opts` exist for tests and deliberate backfills; production callers pass none.
+ */
+export async function pollInboxReplies(opts?: {
+  pageSize?: number;
+  maxPages?: number;
+}): Promise<ReplyPollResult> {
+  const ledger = getLedger();
+  const out: ReplyPollResult = { polled: 0, repliesDetected: 0, cadencesStopped: 0, details: [] };
+  const pageSize = opts?.pageSize ?? REPLY_POLL_LIMIT;
+  const maxPages = opts?.maxPages ?? REPLY_POLL_MAX_PAGES;
+  const seen = new Set<string>();
+
+  const mark = ledger.getPollWatermark(REPLY_WATERMARK_KEY);
+  const since = mark
+    ? new Date(new Date(mark).getTime() - REPLY_WATERMARK_OVERLAP_MS).toISOString()
+    : undefined;
+
+  // 1. The live window: everything since the last clean poll.
+  const fwd = await walkInboxWindow(ledger, out, seen, {
+    ...(since ? { since } : {}),
+    pages: maxPages,
+    pageSize,
+  });
+
+  // Advance the watermark only on a CLEAN walk. A partial result (one mailbox
+  // timed out) leaves the mark where it was, so the next good poll re-covers
+  // the gap instead of skipping past whatever the failed source would have had.
+  if (fwd.newest && fwd.clean && (!mark || fwd.newest > mark)) {
+    ledger.setPollWatermark(REPLY_WATERMARK_KEY, fwd.newest);
+  }
+
+  // 2. Backlog: whatever a walk couldn't reach within its page budget is
+  //    parked as a (since, until) slice and drained by later polls.
+  let backlog = readBacklog(ledger);
+  if (!fwd.exhausted && fwd.clean && fwd.oldest) {
+    const floor = since ?? new Date(Date.now() - REPLY_DEFAULT_WINDOW_MS).toISOString();
+    // Widen rather than replace: re-examining an overlap is free, skipping is not.
+    backlog = backlog
+      ? {
+          since: backlog.since < floor ? backlog.since : floor,
+          until: backlog.until > fwd.oldest ? backlog.until : fwd.oldest,
+        }
+      : { since: floor, until: fwd.oldest };
+    ledger.setPollWatermark(REPLY_BACKLOG_KEY, JSON.stringify(backlog));
+    logEvent(
+      "inbox.reply_poll.backlog_parked",
+      { since: backlog.since, until: backlog.until },
+      "warn",
+    );
+  }
+  const budget = maxPages - fwd.pagesUsed;
+  if (backlog && budget > 0) {
+    const back = await walkInboxWindow(ledger, out, seen, { ...backlog, pages: budget, pageSize });
+    if (back.clean) {
+      if (back.exhausted) {
+        ledger.setPollWatermark(REPLY_BACKLOG_KEY, "");
+        logEvent("inbox.reply_poll.backlog_drained", {
+          since: backlog.since,
+          until: backlog.until,
+        });
+      } else if (back.oldest) {
+        ledger.setPollWatermark(
+          REPLY_BACKLOG_KEY,
+          JSON.stringify({ ...backlog, until: back.oldest }),
+        );
+      }
+    }
   }
   return out;
+}
+
+function readBacklog(
+  ledger: ReturnType<typeof getLedger>,
+): { since: string; until: string } | null {
+  const raw = ledger.getPollWatermark(REPLY_BACKLOG_KEY);
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw) as { since?: unknown; until?: unknown };
+    return typeof v.since === "string" && typeof v.until === "string"
+      ? { since: v.since, until: v.until }
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 export interface BouncePollResult {

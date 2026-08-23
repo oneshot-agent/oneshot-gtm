@@ -79,6 +79,13 @@ export async function runInit(): Promise<void> {
         initial: cfg.partners ?? "",
       },
       {
+        type: "text",
+        name: "founderAdmission",
+        message:
+          "One true concession — what you'd rather not say but is true, e.g. 'two people, no enterprise logos yet' (optional)",
+        initial: cfg.founderAdmission ?? "",
+      },
+      {
         type: "select",
         name: "llmProvider",
         message: "LLM provider for personalization, advise, synthesis",
@@ -125,6 +132,7 @@ export async function runInit(): Promise<void> {
     founderCredentials: (answers["founderCredentials"] ?? cfg.founderCredentials) || null,
     productPortfolio: (answers["productPortfolio"] ?? cfg.productPortfolio) || null,
     partners: (answers["partners"] ?? cfg.partners) || null,
+    founderAdmission: (answers["founderAdmission"] ?? cfg.founderAdmission) || null,
     // Not part of the wizard (it's a dashboard-native, multiline document) —
     // but re-running init must never wipe an existing brief.
     productBrief: cfg.productBrief,

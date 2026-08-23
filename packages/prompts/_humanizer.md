@@ -4,12 +4,12 @@ These rules are based on Wikipedia's "Signs of AI writing" canon. Violate them a
 
 ## The 4-step shape (binding for outbound first touches)
 
-Every first-touch outbound email follows this order. Per-play prompts may add play-specific phrasing for each step, but the order is fixed.
+Every first-touch outbound email follows this order. Per-play prompts may add play-specific phrasing for each step, but the order is fixed, and where a per-play example contradicts what this section says about the Offer or the CTA, this section wins.
 
 1. **Hook (1-2 sentences)** — open with the SPECIFIC evidence you saw (their repo, post, hire, launch — whatever the play surfaces). Drop the reader straight into a peer-to-peer moment. Forbidden openers: "I noticed", "I came across", "Reaching out because", "Hope this finds you well", "Loved your launch", "Quick question" (in the body; allowed as a subject line).
 2. **Identity (1-2 sentences)** — one sentence on who you are. If a `SOCIAL PROOF` block is in the inputs, weave ONE concrete fact from the beat that fits this play — `CREDENTIALS` for founder-trust angles, `PORTFOLIO` for peer-founder angles, `PARTNERS` for brand-recognition. NEVER stack two beats. If no SOCIAL PROOF is present, drop the proof line and lean on founder name + product one-liner only.
-3. **Offer** — a substantive peer-level observation or question about the specific problem you've worked on (drawn from YOUR EDGE), framed as something to compare notes on — NOT a deliverable to mail. Name the TOPIC (the engineering decision, the operational pain, the migration consideration); don't promise a doc. Soft. Do NOT use a rigid "I will do X in Y or Z" template — that reads as a service pitch. The Offer is a shared topic, NEVER a deal: no cold discounts, credits, free trials, or "free for you" sweeteners — they read as sales and buy hollow "interested in free stuff" replies, not real signal. An incentive, if one ever fits, is a friction-remover offered only after the reader engages, never in a first or second touch. CRITICAL: never invent a named artifact you'd send (see "Banned: invented artifacts" below).
-4. **CTA (exactly one short sentence)** — a single yes/no question inviting the conversation, not a doc transfer. NEVER offer two options ("3:30 today or 12:00 tomorrow?"). NEVER ask for a call without naming what you'd cover. The yes/no should name the TOPIC, not name a deliverable. Examples: "curious how you handle that — open to compare notes?", "worth a 10-min back-and-forth on this?", "want to swap takes on the {specific topic}?"
+3. **Offer (1-2 sentences)** — the thing you'd tell a peer over coffee, told here, in full, for free. Drawn from YOUR EDGE and nothing else: one concrete observation about the specific problem (the engineering decision that bit, the operational pain, the boundary that leaks) that the reader can use whether or not they ever write back. If YOUR EDGE carries no specific failure or incident, state the one thing it does say and stop — never invent an outage, a number, or a war story to make the Offer feel earned. Say it; don't trail it. "The part that bit us was X, because Y" is an Offer. "I've been thinking about X" is a teaser — it asks the reader to pay for the thought with a reply, and a stranger won't. Two tests: delete the CTA and the email should still have been worth opening; and if a sentence could sit on your landing page, it is a pitch, not an Offer. "We built X so you don't have to Y" is a pitch. "Once the agent is sandboxed, the thing that still breaks is Z, and it breaks because W" is an Offer — about THEIR problem, as something you learned. Mechanically: the product is named ONCE per email, in the Identity beat, and the Offer contains no "we built", "we ended up building", "we put X behind", and no product name — if you find yourself writing what the product does, stop; you already said who you are. Do NOT use a rigid "I will do X in Y or Z" template — that reads as a service pitch. The Offer is never a deal: no cold discounts, credits, free trials, or "free for you" sweeteners — they read as sales and buy hollow "interested in free stuff" replies, not real signal. An incentive, if one ever fits, is a friction-remover offered only after the reader engages, never in a first or second touch. CRITICAL: the Offer is inline text, never a promise of a doc — never invent a named artifact you'd send (see "Banned: invented artifacts" below).
+4. **CTA (one short sentence, or none)** — ask for the smallest thing a stranger can give: one line, answered from what they already know. "Did that bite you too?", "Which side of that line did you land on?", "Is it the keys or the billing that's the annoying half for you?" A question answerable in one sentence from their own experience — not one that asks for their time on faith. "Open to compare notes?", "want to swap takes?", "worth a quick back-and-forth?" are all a meeting ask: they require the reader to believe a conversation with you is worth their time, and nothing in a first touch has earned that belief yet. Leave the meeting for the reply that comes back. It is also fine to ask for NOTHING — end on the Offer; it already stood on its own. NEVER offer two options ("3:30 today or 12:00 tomorrow?"). NEVER ask for a call in a first touch.
 
 ## Optional first-name opener
 
@@ -38,6 +38,35 @@ Constraints:
   already earned the reply; a cold email has no such handshake and still has to carry a topic.
 - **Never stack it on strong specific evidence.** If the play opens on a repo they starred or an
   event they signed up for, that evidence IS the disarming move. Doing both reads as a bit.
+
+## Optional damaging admission (sparing)
+
+The hardest thing in a cold email is being believed. A true concession, stated plainly, makes
+everything after it more credible — the reader's instinct is "they'd hardly admit that unless the
+rest was straight". It only works when the concession is REAL, so the material comes from the
+input block and nowhere else: the tool supplies an `ADMISSION:` line on roughly a third of emails;
+when it is present, use it, and when it is absent, skip this beat entirely. Never invent a
+weakness; that is the same lie as inventing a strength.
+
+Shape: the concession → "but" → the thing it makes room for. The "but" is the amplifier. The
+admission is not an apology and never stands alone.
+
+Allowed (given `ADMISSION: two people, no enterprise logos yet`):
+
+- "Two of us, no logos to show you, but the person answering this email is the one who wrote the retry logic."
+- "Two of us, no enterprise logos yet, but I can tell you exactly where the audit trail breaks, because it broke on us first."
+
+Constraints:
+
+- **Only what the ADMISSION line gives you.** Rephrase it; don't extend it. One fact, two at most,
+  never three — a three-item confession reads as a bit (and the obvious "X, Y, and Z" form trips
+  the rule-of-three lint).
+- **It lives in the Identity beat, and REPLACES the social-proof clause there rather than adding
+  to it.** Identity stays one sentence: concession, "but", one proof. It does not open the email
+  and it does not close it.
+- **Never stack it with the anti-pitch open.** Two disarming moves in one 90-word email is
+  technique, and the reader feels handled.
+- **Never announce it.** No "I just wanted to be upfront" or "full transparency" — say the fact.
 
 ## Subject-line patterns (allowed)
 
@@ -116,8 +145,9 @@ NEVER use these calls-to-action:
 - "Worth a 15-min..." / "Worth a 15 min..."
 - "Mind if I..."
 - Two specific time slots ("3:30 today or 12:00 tomorrow?") — single yes/no question only.
+- "open to compare notes?" / "want to swap takes?" / "worth a quick back-and-forth?" — a meeting ask dressed as a small one. In a first touch it asks a stranger for their time before anything has been given.
 
-If you want a call, name what you'd cover or what you'd offer. The CTA should describe the actual exchange, not a vague intent. One sentence, one question — the reader replies "yes" to take the next step.
+The CTA asks for one line, answered from the reader's own experience, or asks for nothing. One sentence, one question at most — a reader who can answer in a sentence will; one who has to decide whether you're worth a meeting won't.
 
 ## Banned: invented artifacts
 
@@ -130,13 +160,13 @@ Forbidden CTA shapes:
 - "happy to share the {topic} doc / writeup / notes if useful"
 - Any "I put together a {named artifact} showing X — want it?" — the LLM is inventing the artifact to make the CTA feel tangible. It isn't real.
 
-Replace with conversation-shaped CTAs naming the TOPIC, not a doc:
+Replace with the useful thing said inline, and a CTA that asks for one line, not a doc and not a meeting:
 
-- "curious how you handle {topic} — open to compare notes?"
-- "worth a 10-min back-and-forth on {specific decision}?"
-- "want to swap takes on {topic}?"
+- "did {specific thing} bite you on {their project} too?"
+- "which side of {that line} did you land on?"
+- or no CTA at all — the Offer already said the useful thing.
 
-The Offer is a substantive shared question; the CTA invites a conversation about it. Conversations are real and the founder can always have one. Named docs aren't real unless the founder confirms they exist — and the prompt has no way to verify that, so it must never assume.
+The Offer is the substance, in the email; the CTA, if any, asks for one sentence back. Inline text is real and the founder can always stand behind it. Named docs aren't real unless the founder confirms they exist — and the prompt has no way to verify that, so it must never assume.
 
 ## Banned filler
 

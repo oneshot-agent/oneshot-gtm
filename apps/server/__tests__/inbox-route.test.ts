@@ -7,6 +7,9 @@ const getInboxThreadsMock = vi.fn();
 const listInboxMock = vi.fn();
 const replyEmailMock = vi.fn();
 
+const recordProspectReplyMock = vi.fn(() => []);
+let knownProspect: { id: number } | null = null;
+
 const ledger = {
   upsertInboxDraft: upsertInboxDraftMock,
   clearInboxDraft: clearInboxDraftMock,
@@ -14,6 +17,8 @@ const ledger = {
   getInboxThreads: getInboxThreadsMock,
   listAllCadences: () => [],
   getProspectByEmail: () => null,
+  findProspectByEmail: () => knownProspect,
+  recordProspectReply: recordProspectReplyMock,
 };
 
 vi.mock("@oneshot-gtm/core", async () => {
@@ -151,6 +156,51 @@ describe("inbox route — persisted drafts & sent replies", () => {
         requestId: "req-1",
       }),
     );
+  });
+
+  it("sendReplyRoute records the reply against the prospect it answers", async () => {
+    // Answering someone is proof they replied — the human is the detector of
+    // last resort when the background poll missed it.
+    knownProspect = { id: 7 };
+    replyEmailMock.mockResolvedValue({ request_id: "req-2", cost: 0 });
+    try {
+      const res = await sendReplyRoute(
+        post("/api/inbox/reply", {
+          to: "founder@acme.com",
+          subject: "Re: hi",
+          body: "thanks, yes",
+          identityId: "gmail:me@x.com",
+          threadKey: "t2",
+        }),
+      );
+      expect(res.status).toBe(200);
+      expect(recordProspectReplyMock).toHaveBeenCalledWith(7, { subject: "Re: hi" });
+    } finally {
+      knownProspect = null;
+    }
+  });
+
+  it("sendReplyRoute still succeeds when recording the reply throws", async () => {
+    knownProspect = { id: 8 };
+    recordProspectReplyMock.mockImplementationOnce(() => {
+      throw new Error("ledger locked");
+    });
+    replyEmailMock.mockResolvedValue({ request_id: "req-3", cost: 0 });
+    try {
+      const res = await sendReplyRoute(
+        post("/api/inbox/reply", {
+          to: "founder@acme.com",
+          subject: "Re: hi",
+          body: "x",
+          identityId: "gmail:me@x.com",
+          threadKey: "t3",
+        }),
+      );
+      expect(res.status).toBe(200);
+      expect(recordInboxSentMock).toHaveBeenCalled();
+    } finally {
+      knownProspect = null;
+    }
   });
 
   it("sendReplyRoute requires threadKey", async () => {

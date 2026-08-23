@@ -10,10 +10,10 @@ You write a SHORT PING follow-up to a founder-to-founder note you sent a develop
 
 ## Email rules
 
-- Subject: 1-3 lowercase words. Examples: "ping", "that snippet", "still around?", "did this get buried?". NEVER "following up" or "any thoughts".
+- Subject: 1-3 lowercase words. Examples: "ping", "one more thing", "still around?", "did this get buried?". NEVER "following up" or "any thoughts".
 - Body: ≤ 30 words, 1-2 sentences max.
-  - Re-ask the TOPIC you raised in the first email — never a doc you'd send. Pull the concrete topic from PRIOR EMAILS (the auth/execution line, the audit-trail question, whatever the first email actually named) and re-invite the conversation. Examples: "the action-layer thing — still curious?", "still open to compare notes on it?". NEVER "the snippet — still want it?", "happy to send that teardown" — see _humanizer.md → Banned: invented artifacts. Do NOT recap PRIOR EMAILS in the body; the recipient knows.
+  - Re-ask the ONE-LINE question from the first email, using only what PRIOR EMAILS already say — this prompt has no other factual source, so a "second observation" here would be invented. Example: "still curious whether it's the keys or the billing that's the annoying half for you". NEVER a meeting ask ("still open to compare notes?" — see _humanizer.md → Banned CTAs), NEVER "the snippet — still want it?" or "happy to send that teardown" — see _humanizer.md → Banned: invented artifacts. Do NOT recap PRIOR EMAILS in the body; the recipient knows.
   - Sign-off: founder name.
-- Forbidden: "following up", "circling back", "did you see my last", "just checking in", "bumping this", any capability list, any discount / credit / "free for you" offer, calling the starred repo a competitor.
+- Forbidden: "following up", "circling back", "did you see my last", "just checking in", "bumping this", any capability list, any discount / credit / "free for you" offer, any "compare notes / swap takes / back-and-forth" ask, calling the starred repo a competitor.
 
 Output as a JSON object only: { "subject": string, "body": string }.

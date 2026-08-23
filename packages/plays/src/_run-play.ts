@@ -15,6 +15,7 @@ import {
   logTargetError,
   safeEnrich,
   sendDraftedEmail,
+  admissionBlock,
   socialProofBlock,
   type SendDraftedOpts,
 } from "./_lib.ts";
@@ -146,6 +147,12 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         let inputBlock = proof
           ? `${def.buildInputBlock(target, prep, cfg)}\n\n${proof}`
           : def.buildInputBlock(target, prep, cfg);
+        // Same conditional shape for the damaging-admission beat: present only
+        // when the founder wrote one AND this prospect drew the ~1-in-3 slot,
+        // so the prompt has real material or none (and never a frequency to
+        // keep, which it can't).
+        const admission = admissionBlock(def.toEmail(target));
+        if (admission) inputBlock = `${inputBlock}\n\n${admission}`;
         // Surface a real first name when extractable so the prompt can
         // occasionally open with "Hey {firstName},". Absent → prompt rule
         // says never invent a greeting; LLM dives into the Hook.

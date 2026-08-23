@@ -91,6 +91,10 @@ vi.mock("@oneshot-gtm/core", async () => {
     },
     listInbox: async () => ({ emails: [], has_more: false }),
     getLedger: () => ({
+      // Reply-poll plumbing: no watermark, nothing to record (inbox is stubbed empty).
+      getPollWatermark: () => null,
+      setPollWatermark: () => {},
+      recordProspectReply: () => [],
       // Null by default: most tests exercise the normal send path.
       suppressionFor: () => suppression,
       listAllCadences: () => cadenceRows,
