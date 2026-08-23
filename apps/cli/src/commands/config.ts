@@ -92,6 +92,13 @@ export async function configFounder(): Promise<void> {
         message: "Notable partners / customers — brand names that open doors (optional)",
         initial: cfg.partners ?? "",
       },
+      {
+        type: "text",
+        name: "founderAdmission",
+        message:
+          "One true concession — what you'd rather not say but is true, e.g. 'two people, no enterprise logos yet' (optional)",
+        initial: cfg.founderAdmission ?? "",
+      },
     ],
     { onCancel: () => process.exit(0) },
   );
@@ -106,6 +113,7 @@ export async function configFounder(): Promise<void> {
     founderCredentials: (answers["founderCredentials"] ?? cfg.founderCredentials) || null,
     productPortfolio: (answers["productPortfolio"] ?? cfg.productPortfolio) || null,
     partners: (answers["partners"] ?? cfg.partners) || null,
+    founderAdmission: (answers["founderAdmission"] ?? cfg.founderAdmission) || null,
   });
   ok("Saved.");
 }

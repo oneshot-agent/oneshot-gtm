@@ -69,6 +69,7 @@ function SetupPage() {
   const [founderCredentials, setFounderCredentials] = useState("");
   const [productPortfolio, setProductPortfolio] = useState("");
   const [partners, setPartners] = useState("");
+  const [founderAdmission, setFounderAdmission] = useState("");
   const [productBrief, setProductBrief] = useState("");
   // Unsaved edits/derives must survive ["setup"] refetches (pause/resume and
   // save all invalidate it) — the hydrate effect only overwrites a clean field.
@@ -93,6 +94,7 @@ function SetupPage() {
     setFounderCredentials(c.founderCredentials ?? "");
     setProductPortfolio(c.productPortfolio ?? "");
     setPartners(c.partners ?? "");
+    setFounderAdmission(c.founderAdmission ?? "");
     if (!briefDirty.current) setProductBrief(c.productBrief ?? "");
     setBriefSources((prev) => prev || (c.productDomain ? `https://${c.productDomain}` : ""));
     setMobileSignature(c.mobileSignature ?? false);
@@ -197,6 +199,7 @@ function SetupPage() {
         founderCredentials,
         productPortfolio,
         partners,
+        founderAdmission,
         productBrief,
         mobileSignature,
         llmProvider,
@@ -472,6 +475,17 @@ function SetupPage() {
                 value={partners}
                 onChange={(e) => setPartners(e.target.value)}
                 placeholder="Comma-separated brand-name integrations or customers."
+                rows={2}
+              />
+            </Field>
+            <Field
+              label="One true concession"
+              hint="The thing you'd rather not say but is true. Used in roughly 1 in 3 first touches as a damaging admission (two of us, no logos yet, but…), which makes the rest of the email more believable. Leave blank and the beat is skipped, never invented."
+            >
+              <Textarea
+                value={founderAdmission}
+                onChange={(e) => setFounderAdmission(e.target.value)}
+                placeholder="e.g. two people, no enterprise logos yet"
                 rows={2}
               />
             </Field>

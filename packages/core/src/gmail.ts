@@ -318,10 +318,19 @@ function extractBody(msg: GmailMessageMeta): string {
  * advanceCadence (stop-on-reply) and the /inbox route work unchanged.
  * `-from:me` excludes the founder's own sends at the query level — the
  * Gmail-mode equivalent of the OneShot path's self-domain filter.
+ *
+ * Deliberately NOT `in:inbox`: a reply the founder has already read and
+ * archived from their phone is still a reply, and with the ledger's reply
+ * signal lagging the mailbox by up to a poll interval, "handled, then
+ * archived" was the normal fate of a real reply. Spam and trash stay out —
+ * the API already excludes them unless `includeSpamTrash` is set; the explicit
+ * terms are there so nobody "widens" this to `in:anywhere`.
  */
 export async function listGmailReplies(
   opts?: {
     since?: string;
+    /** Exclusive upper bound — lets a backfill page through months of mail in slices. */
+    until?: string;
     limit?: number;
   },
   account?: GmailAccount,
@@ -329,8 +338,11 @@ export async function listGmailReplies(
   const sinceClause = opts?.since
     ? `after:${Math.floor(new Date(opts.since).getTime() / 1000)}`
     : "newer_than:30d";
+  const untilClause = opts?.until
+    ? ` before:${Math.floor(new Date(opts.until).getTime() / 1000)}`
+    : "";
   const params = new URLSearchParams({
-    q: `in:inbox -from:me ${sinceClause}`,
+    q: `-from:me -in:spam -in:trash ${sinceClause}${untilClause}`,
     maxResults: String(opts?.limit ?? 50),
   });
   const list = await gmailJson<{ messages?: Array<{ id: string }>; nextPageToken?: string }>(

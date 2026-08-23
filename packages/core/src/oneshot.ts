@@ -681,13 +681,20 @@ const INBOX_SOURCE_TIMEOUT_MS = 15_000;
 
 async function listOneShotInbox(opts?: {
   since?: string;
+  until?: string;
   limit?: number;
 }): Promise<InboxListResult> {
   const agent = await getAgent();
   const out: { since?: string; limit?: number; include_body?: boolean } = { include_body: true };
   if (opts?.since) out.since = opts.since;
   if (opts?.limit) out.limit = opts.limit;
-  return agent.inboxList(out);
+  const res = await agent.inboxList(out);
+  // The SDK has no upper bound; apply it here so a sliced backfill sees the
+  // same window from every source.
+  if (!opts?.until) return res;
+  const until = opts.until;
+  const emails = res.emails.filter((e) => e.received_at < until);
+  return { ...res, emails, count: emails.length };
 }
 
 /**
@@ -704,6 +711,12 @@ export type AnnotatedInboxEmail = InboxEmail & {
 
 export interface AnnotatedInboxListResult extends InboxListResult {
   emails: AnnotatedInboxEmail[];
+  /**
+   * Sources that errored this fetch (multi-source only; a lone source throws).
+   * The reply poll needs this: a partial result must not move its watermark,
+   * or the failed mailbox's replies fall into a gap the next poll skips.
+   */
+  failed_sources?: string[];
 }
 
 /**
@@ -740,8 +753,17 @@ function annotateInboxResult(r: InboxListResult, identityId: string): AnnotatedI
  */
 export async function listInbox(opts?: {
   since?: string;
+  /** Exclusive upper bound on received_at — for paging a backfill in slices. */
+  until?: string;
   limit?: number;
+  /**
+   * Per-source fetch deadline. Defaults to the 15s that keeps the /inbox route
+   * and the 5-minute poll responsive; a deliberate backfill over months of
+   * mail (hundreds of full-message fetches per mailbox) needs far longer.
+   */
+  deadlineMs?: number;
 }): Promise<AnnotatedInboxListResult> {
+  const deadlineMs = opts?.deadlineMs ?? INBOX_SOURCE_TIMEOUT_MS;
   if (demoMode()) {
     const fixture = demoFixture<AnnotatedInboxListResult>("inbox.json");
     if (fixture) return fixture;
@@ -784,7 +806,7 @@ export async function listInbox(opts?: {
   if (sources.length === 1) {
     const only = sources[0]!;
     const result = annotateInboxResult(
-      await withDeadline(only.fetch(), INBOX_SOURCE_TIMEOUT_MS, `inbox source '${only.label}'`),
+      await withDeadline(only.fetch(), deadlineMs, `inbox source '${only.label}'`),
       only.identityId,
     );
     // Same post-processing as the multi-source branch below — without it the
@@ -797,11 +819,7 @@ export async function listInbox(opts?: {
   const results = await parallelMap(sources, 3, async (source) => {
     try {
       return annotateInboxResult(
-        await withDeadline(
-          source.fetch(),
-          INBOX_SOURCE_TIMEOUT_MS,
-          `inbox source '${source.label}'`,
-        ),
+        await withDeadline(source.fetch(), deadlineMs, `inbox source '${source.label}'`),
         source.identityId,
       );
     } catch (err) {
@@ -817,7 +835,8 @@ export async function listInbox(opts?: {
   if (ok.length === 0) {
     throw new Error("all inbox sources failed — check doctor for identity auth status");
   }
-  return mergeInboxWindow(ok, opts?.limit);
+  const failed = sources.filter((_, i) => results[i] == null).map((s) => s.label);
+  return { ...mergeInboxWindow(ok, opts?.limit), ...(failed.length ? { failed_sources: failed } : {}) };
 }
 
 /**

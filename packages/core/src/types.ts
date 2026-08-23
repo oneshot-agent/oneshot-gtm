@@ -210,6 +210,13 @@ export interface OneShotConfig {
   /** Notable partners / customers — the brand-recognition social-proof beat. */
   partners: string | null;
   /**
+   * One true concession about the founder/product ("two people, no enterprise
+   * logos yet") — the prompt's optional damaging-admission beat. It is the ONLY
+   * material the model may draw an admission from; null means the beat is
+   * skipped, never improvised.
+   */
+  founderAdmission: string | null;
+  /**
    * Product knowledge the reply drafter may cite: concrete facts, architecture,
    * pricing model, and canonical links (docs pages, repo). Free text, founder-
    * edited on /setup (with a derive-from-sources helper). The reply prompt is

@@ -148,6 +148,7 @@ export const api = {
         founderCredentials: string | null;
         productPortfolio: string | null;
         partners: string | null;
+        founderAdmission: string | null;
         productBrief: string | null;
         mobileSignature: boolean;
         llmProvider: "openrouter" | "openai" | "anthropic";

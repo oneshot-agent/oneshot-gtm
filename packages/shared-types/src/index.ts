@@ -248,6 +248,8 @@ export interface SetupRequest {
   productPortfolio?: string;
   /** Notable partners / customers (free text, brand names). Brand-recognition proof. */
   partners?: string;
+  /** One true concession ("two people, no enterprise logos yet") for the optional damaging-admission beat. */
+  founderAdmission?: string;
   /** Product facts + canonical links replies may cite. Links absent from this brief are never sent. */
   productBrief?: string;
   /** When true, signature appends a literal "Sent from my iPhone" line. */
