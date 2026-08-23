@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Outlet, createRootRouteWithContext, Link } from "@tanstack/react-router";
+import { Outlet, createRootRouteWithContext, Link, useRouterState } from "@tanstack/react-router";
 import type { QueryClient } from "@tanstack/react-query";
 import {
   Activity,
@@ -12,7 +12,7 @@ import {
   Settings,
   UserPlus,
 } from "lucide-react";
-import { useState, type ComponentType } from "react";
+import { useEffect, useRef, useState, type ComponentType } from "react";
 import { Toaster } from "sonner";
 import { api } from "../api/client.ts";
 import { CommandPalette } from "../components/shell/CommandPalette.tsx";
@@ -81,6 +81,18 @@ function RootLayout() {
     queryFn: api.doctor,
     refetchInterval: 60_000,
   });
+
+  // <main> is the scroll container and it persists across routes, so without
+  // this a navigation inherits the previous page's scroll offset: scroll down
+  // the Home feed, click Queue, and Queue opens 1000px in — the top of the
+  // list (and the triggers card) are above the fold, which reads as "only
+  // some of the prospects show until I refresh". Every route change starts
+  // at the top, the way a full page load does.
+  const mainRef = useRef<HTMLElement | null>(null);
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  useEffect(() => {
+    mainRef.current?.scrollTo({ top: 0 });
+  }, [pathname]);
 
   // Doctor's first check names the workspace: "<name> · <home>".
   const workspaceName =
@@ -212,7 +224,7 @@ function RootLayout() {
           </div>
         </header>
 
-        <main className="overflow-y-auto px-6 py-6">
+        <main ref={mainRef} className="overflow-y-auto px-6 py-6">
           <Outlet />
         </main>
 
