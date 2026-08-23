@@ -1166,7 +1166,11 @@ describe("Ledger recordProspectReply — which plays a reply belongs to", () => 
 
   it("also stops a paused cadence — a pause that resumes must not email someone who answered", () => {
     const id = ledger.upsertProspect({ name: "Pau", email: "pau@co.com", source: "repo-interest" });
-    ledger.enrollCadence({ prospectId: id, playName: "repo-interest", nextDueAt: "2026-01-01T00:00:00Z" });
+    ledger.enrollCadence({
+      prospectId: id,
+      playName: "repo-interest",
+      nextDueAt: "2026-01-01T00:00:00Z",
+    });
     ledger.recordSequenceEvent({
       prospectId: id,
       playName: "repo-interest",
@@ -1174,7 +1178,11 @@ describe("Ledger recordProspectReply — which plays a reply belongs to", () => 
       channel: "email",
       status: "sent",
     });
-    ledger.setCadenceStatus({ prospectId: id, playName: "repo-interest", status: "paused" as never });
+    ledger.setCadenceStatus({
+      prospectId: id,
+      playName: "repo-interest",
+      status: "paused" as never,
+    });
 
     expect(ledger.recordProspectReply(id)).toEqual([
       { playName: "repo-interest", newlyReplied: true, eventRecorded: true },

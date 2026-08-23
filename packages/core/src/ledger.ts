@@ -96,7 +96,9 @@ export interface CadenceWithProspect {
 function normalizeSubject(subject: string | null | undefined): string | null {
   if (!subject) return null;
   let s = subject.trim();
-  const prefix = /^(re|fw|fwd|aw|wg|sv|vs|rv|enc|tr|antw)\s*(\[\d+\])?\s*:\s*/i;
+  // Each `\s*` is reachable by exactly one path, so a run of spaces can't be
+  // split between two of them (CodeQL: polynomial backtracking).
+  const prefix = /^(?:re|fw|fwd|aw|wg|sv|vs|rv|enc|tr|antw)(?:\s*\[\d+\])?\s*:\s*/i;
   while (prefix.test(s)) s = s.replace(prefix, "");
   s = s.replace(/\s+/g, " ").trim().toLowerCase();
   return s.length > 0 ? s : null;
@@ -1758,7 +1760,8 @@ export class Ledger {
         `UPDATE sequence_events SET status = 'replied'
          WHERE id = (
            SELECT id FROM sequence_events
-           WHERE prospect_id = ? AND play_name = ? AND status IN ('sent','delivered')
+           WHERE prospect_id = ? AND play_name = ? AND channel = 'email'
+             AND status IN ('sent','delivered')
            ORDER BY created_at DESC, id DESC LIMIT 1
          )
          AND NOT EXISTS (
@@ -1845,7 +1848,10 @@ export class Ledger {
       }
       if (credited) {
         const eventRecorded = this.markLatestStepReplied({ prospectId, playName: credited });
-        out.set(credited, { newlyReplied: out.get(credited)?.newlyReplied ?? false, eventRecorded });
+        out.set(credited, {
+          newlyReplied: out.get(credited)?.newlyReplied ?? false,
+          eventRecorded,
+        });
       }
       return [...out].map(([playName, r]) => ({
         playName,
@@ -1856,10 +1862,11 @@ export class Ledger {
   }
 
   /**
-   * Which play a reply belongs to. With a subject, the sent step whose subject
-   * it threads on wins (reply prefixes in a few languages stripped, case and
-   * whitespace ignored); otherwise, or when nothing matches, the prospect's
-   * most recent sent step. Null if never emailed.
+   * Which play an EMAIL reply belongs to. With a subject, the sent email whose
+   * subject it threads on wins (reply prefixes in a few languages stripped, case
+   * and whitespace ignored); otherwise, or when nothing matches, the prospect's
+   * most recent sent email. Other channels (sms/voice/linkedin) are never
+   * credited with an email reply. Null if never emailed.
    */
   latestSentPlayForProspect(prospectId: number, replySubject?: string | null): string | null {
     const wanted = normalizeSubject(replySubject);
@@ -1868,7 +1875,8 @@ export class Ledger {
         .query(
           `SELECT play_name, json_extract(metadata_json, '$.subject') AS subject
            FROM sequence_events
-           WHERE prospect_id = ? AND status IN ('sent','delivered','replied')
+           WHERE prospect_id = ? AND channel = 'email'
+             AND status IN ('sent','delivered','replied')
              AND json_extract(metadata_json, '$.subject') IS NOT NULL
            ORDER BY created_at DESC, id DESC`,
         )
@@ -1879,7 +1887,8 @@ export class Ledger {
     const row = this.db
       .query(
         `SELECT play_name FROM sequence_events
-         WHERE prospect_id = ? AND status IN ('sent','delivered','replied')
+         WHERE prospect_id = ? AND channel = 'email'
+           AND status IN ('sent','delivered','replied')
          ORDER BY created_at DESC, id DESC LIMIT 1`,
       )
       .get(prospectId) as { play_name: string } | null;

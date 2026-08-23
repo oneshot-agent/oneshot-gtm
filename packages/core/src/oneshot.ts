@@ -689,8 +689,12 @@ async function listOneShotInbox(opts?: {
   if (opts?.since) out.since = opts.since;
   if (opts?.limit) out.limit = opts.limit;
   const res = await agent.inboxList(out);
-  // The SDK has no upper bound; apply it here so a sliced backfill sees the
-  // same window from every source.
+  // The SDK has no upper bound, so `until` is applied client-side to the
+  // newest `limit` rows the platform returns. That makes this source
+  // un-pageable: a slice older than those rows comes back empty. Gmail pages
+  // properly; the OneShot mailbox (one agent address, replies only) is small
+  // enough that its newest page is its history. Revisit if the SDK grows a
+  // `before`/cursor parameter.
   if (!opts?.until) return res;
   const until = opts.until;
   const emails = res.emails.filter((e) => e.received_at < until);
@@ -836,7 +840,10 @@ export async function listInbox(opts?: {
     throw new Error("all inbox sources failed — check doctor for identity auth status");
   }
   const failed = sources.filter((_, i) => results[i] == null).map((s) => s.label);
-  return { ...mergeInboxWindow(ok, opts?.limit), ...(failed.length ? { failed_sources: failed } : {}) };
+  return {
+    ...mergeInboxWindow(ok, opts?.limit),
+    ...(failed.length ? { failed_sources: failed } : {}),
+  };
 }
 
 /**

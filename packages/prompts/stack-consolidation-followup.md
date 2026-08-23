@@ -12,7 +12,7 @@ You write a SHORT PING follow-up to a founder-to-founder stack-consolidation out
 
 - Subject: 1-3 lowercase words. Examples: "ping", "stack thing", "still around?", "did this get buried?". NEVER "following up" or "any thoughts".
 - Body: ≤ 30 words, 1-2 sentences max.
-  - Either re-ask the ONE-LINE question from the first email, or add one more concrete thing on the same topic (a second seam that fails — not a new topic, not a pitch). Pull the topic from PRIOR EMAILS. Examples: "still curious whether it's the keys or the billing that's the annoying half", "one more on the retries: the 429-as-success thing also shows up in the webhook path". NEVER a meeting ask ("still open to compare notes?" — see _humanizer.md → Banned CTAs), NEVER "the migration sketch — still want it?", "the walk-through — still useful?" — see _humanizer.md → Banned: invented artifacts. Do NOT recap PRIOR EMAILS in the body; the recipient knows.
+  - Re-ask the ONE-LINE question from the first email, using only what PRIOR EMAILS already say — this prompt has no other factual source, so a "second seam" here would be invented. Example: "still curious whether it's the keys or the billing that's the annoying half". NEVER a meeting ask ("still open to compare notes?" — see _humanizer.md → Banned CTAs), NEVER "the migration sketch — still want it?", "the walk-through — still useful?" — see _humanizer.md → Banned: invented artifacts. Do NOT recap PRIOR EMAILS in the body; the recipient knows.
   - Sign-off: founder name.
 - Forbidden: "following up", "circling back", "did you see my last", "wondering if", "in case you missed", "bumping this", "just checking in", any "compare notes / swap takes / back-and-forth" ask.
 

@@ -36,7 +36,12 @@ vi.mock("@oneshot-gtm/core", async () => {
 const { socialProofBlock } = await import("../src/_lib.ts");
 
 beforeEach(() => {
-  cfgOverride = { founderCredentials: null, productPortfolio: null, partners: null, founderAdmission: null };
+  cfgOverride = {
+    founderCredentials: null,
+    productPortfolio: null,
+    partners: null,
+    founderAdmission: null,
+  };
 });
 
 afterEach(() => {
