@@ -793,112 +793,6 @@ function SetupPage() {
                   prospects pinned to it until it's restored.
                 </span>
 
-                {/* Smartlead accounts: bring-your-own cold-email infra. Paste
-                    the workspace API key, load the connected mailboxes, stage
-                    picks into the rotation pool (applied on Save). Send-only —
-                    replies to Smartlead-sent mail live in Smartlead's own UI. */}
-                <div className="mt-3 flex flex-col gap-2">
-                  <span className="ln-eyebrow">Smartlead accounts</span>
-                  <Field
-                    label="SMARTLEAD_API_KEY"
-                    hint={hintFor(sources["SMARTLEAD_API_KEY"])}
-                    className="max-w-md"
-                  >
-                    <Input
-                      type="password"
-                      placeholder={sources["SMARTLEAD_API_KEY"] ? "(unchanged)" : ""}
-                      value={secrets["SMARTLEAD_API_KEY"] ?? ""}
-                      onChange={(e) => setSecret("SMARTLEAD_API_KEY", e.target.value)}
-                      autoComplete="new-password"
-                    />
-                  </Field>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      disabled={!smartleadKeyReady || loadSmartlead.isPending}
-                      onClick={() => loadSmartlead.mutate()}
-                    >
-                      {loadSmartlead.isPending ? "Loading…" : "Load Smartlead accounts"}
-                    </Button>
-                    <span className="text-[12px] text-ink-faint">
-                      {smartleadKeyReady
-                        ? "Lists the mailboxes connected to your Smartlead workspace — Smartlead does the warmup, this pool does the sending."
-                        : "Paste your Smartlead API key first (Smartlead → Settings → API)."}
-                    </span>
-                  </div>
-                  {smartleadAccounts && smartleadAccounts.length === 0 && (
-                    <span className="text-[12px] text-ink-faint">
-                      No email accounts connected in Smartlead yet.
-                    </span>
-                  )}
-                  {smartleadAccounts?.map((a) => {
-                    const staged = pendingSmartleadAdds.some((p) => p.address === a.fromEmail);
-                    const blocked = !a.isSmtpSuccess;
-                    return (
-                      <div
-                        key={a.id}
-                        className="flex items-center gap-3 border border-ink-rule rounded-[var(--radius-sm)] px-3 py-2"
-                      >
-                        <div className="flex min-w-0 flex-col">
-                          <span className="truncate text-[13px] text-ink-cream">{a.fromEmail}</span>
-                          <span className="ln-mono text-[11px] text-ink-muted">
-                            {a.messagePerDay != null ? `${a.messagePerDay}/day` : "no cap"}
-                            {a.warmupStatus
-                              ? ` · warmup ${a.warmupStatus.toLowerCase()}${a.warmupReputation ? ` (${a.warmupReputation})` : ""}`
-                              : ""}
-                            {blocked ? " · SMTP broken — reconnect in Smartlead" : ""}
-                          </span>
-                        </div>
-                        <div className="ml-auto">
-                          {a.alreadyRegistered ? (
-                            <span className="ln-mono text-[11px] text-ink-faint">in pool</span>
-                          ) : staged ? (
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              className="h-7 px-2 text-[11px]"
-                              onClick={() =>
-                                setPendingSmartleadAdds((p) =>
-                                  p.filter((x) => x.address !== a.fromEmail),
-                                )
-                              }
-                            >
-                              Undo
-                            </Button>
-                          ) : (
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              className="h-7 px-2 text-[11px]"
-                              disabled={blocked}
-                              onClick={() =>
-                                setPendingSmartleadAdds((p) => [
-                                  ...p,
-                                  {
-                                    address: a.fromEmail,
-                                    label: a.fromName ?? "",
-                                    providerMessagePerDay: a.messagePerDay,
-                                  },
-                                ])
-                              }
-                            >
-                              Add
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {pendingSmartleadAdds.length > 0 && (
-                    <span className="text-[12px] text-ink-faint">
-                      {pendingSmartleadAdds.length} Smartlead mailbox
-                      {pendingSmartleadAdds.length === 1 ? "" : "es"} staged — applied on Save with
-                      the cold-start warm-up ramp (capped at Smartlead's own per-mailbox limit).
-                    </span>
-                  )}
-                </div>
-
                 {/* Provisioned domains: the wallet's OneShot sending-domain pool
                     with live status. A paused domain sends nothing until resumed
                     (doctor flags it); resume/pause act on it in place. */}
@@ -1066,6 +960,123 @@ function SetupPage() {
                 </div>
               </div>
             )}
+            {/* Smartlead lives OUTSIDE the identities guard: with an empty
+                pool there are no identity rows, but connecting Smartlead is
+                exactly how you rebuild one. */}
+            <div className="md:col-span-2 flex flex-col gap-2">
+              {/* Smartlead accounts: bring-your-own cold-email infra. Paste
+                  the workspace API key, load the connected mailboxes, stage
+                  picks into the rotation pool (applied on Save). Send-only —
+                  replies to Smartlead-sent mail live in Smartlead's own UI. */}
+              <div className="mt-3 flex flex-col gap-2">
+                <span className="ln-eyebrow">Smartlead accounts</span>
+                <Field
+                  label="SMARTLEAD_API_KEY"
+                  hint={hintFor(sources["SMARTLEAD_API_KEY"])}
+                  className="max-w-md"
+                >
+                  <Input
+                    type="password"
+                    placeholder={sources["SMARTLEAD_API_KEY"] ? "(unchanged)" : ""}
+                    value={secrets["SMARTLEAD_API_KEY"] ?? ""}
+                    onChange={(e) => {
+                      setSecret("SMARTLEAD_API_KEY", e.target.value);
+                      // A different key = a different Smartlead workspace: the
+                      // loaded list and any staged picks belong to the OLD key
+                      // and would register mailboxes the new key can't send as.
+                      setSmartleadAccounts(null);
+                      setPendingSmartleadAdds([]);
+                    }}
+                    autoComplete="new-password"
+                  />
+                </Field>
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={!smartleadKeyReady || loadSmartlead.isPending}
+                    onClick={() => loadSmartlead.mutate()}
+                  >
+                    {loadSmartlead.isPending ? "Loading…" : "Load Smartlead accounts"}
+                  </Button>
+                  <span className="text-[12px] text-ink-faint">
+                    {smartleadKeyReady
+                      ? "Lists the mailboxes connected to your Smartlead workspace — Smartlead does the warmup, this pool does the sending."
+                      : "Paste your Smartlead API key first (Smartlead → Settings → API)."}
+                  </span>
+                </div>
+                {smartleadAccounts && smartleadAccounts.length === 0 && (
+                  <span className="text-[12px] text-ink-faint">
+                    No email accounts connected in Smartlead yet.
+                  </span>
+                )}
+                {smartleadAccounts?.map((a) => {
+                  const staged = pendingSmartleadAdds.some((p) => p.address === a.fromEmail);
+                  const blocked = !a.isSmtpSuccess;
+                  return (
+                    <div
+                      key={a.id}
+                      className="flex items-center gap-3 border border-ink-rule rounded-[var(--radius-sm)] px-3 py-2"
+                    >
+                      <div className="flex min-w-0 flex-col">
+                        <span className="truncate text-[13px] text-ink-cream">{a.fromEmail}</span>
+                        <span className="ln-mono text-[11px] text-ink-muted">
+                          {a.messagePerDay != null ? `${a.messagePerDay}/day` : "no cap"}
+                          {a.warmupStatus
+                            ? ` · warmup ${a.warmupStatus.toLowerCase()}${a.warmupReputation ? ` (${a.warmupReputation})` : ""}`
+                            : ""}
+                          {blocked ? " · SMTP broken — reconnect in Smartlead" : ""}
+                        </span>
+                      </div>
+                      <div className="ml-auto">
+                        {a.alreadyRegistered ? (
+                          <span className="ln-mono text-[11px] text-ink-faint">in pool</span>
+                        ) : staged ? (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            className="h-7 px-2 text-[11px]"
+                            onClick={() =>
+                              setPendingSmartleadAdds((p) =>
+                                p.filter((x) => x.address !== a.fromEmail),
+                              )
+                            }
+                          >
+                            Undo
+                          </Button>
+                        ) : (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            className="h-7 px-2 text-[11px]"
+                            disabled={blocked}
+                            onClick={() =>
+                              setPendingSmartleadAdds((p) => [
+                                ...p,
+                                {
+                                  address: a.fromEmail,
+                                  label: a.fromName ?? "",
+                                  providerMessagePerDay: a.messagePerDay,
+                                },
+                              ])
+                            }
+                          >
+                            Add
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+                {pendingSmartleadAdds.length > 0 && (
+                  <span className="text-[12px] text-ink-faint">
+                    {pendingSmartleadAdds.length} Smartlead mailbox
+                    {pendingSmartleadAdds.length === 1 ? "" : "es"} staged — applied on Save with
+                    the cold-start warm-up ramp (capped at Smartlead's own per-mailbox limit).
+                  </span>
+                )}
+              </div>
+            </div>
             {!isLegacyPool && !gmailCredsReady && (
               <>
                 <Field label="GMAIL_CLIENT_ID" hint={hintFor(sources["GMAIL_CLIENT_ID"])}>

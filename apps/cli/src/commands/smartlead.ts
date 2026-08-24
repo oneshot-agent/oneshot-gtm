@@ -21,21 +21,25 @@ import { c, header, note, ok, warn } from "../output.ts";
 export async function commandSmartleadConnect(): Promise<void> {
   header("Connect Smartlead");
 
+  async function promptForKey(message: string): Promise<string> {
+    const answer = await prompts(
+      {
+        type: "password",
+        name: "key",
+        message,
+        validate: (v: string) => (v.trim().length > 0 ? true : "required"),
+      },
+      { onCancel: () => process.exit(0) },
+    );
+    return ((answer["key"] as string) ?? "").trim();
+  }
+
   let key = smartleadApiKey();
   let keyIsNew = false;
   if (key) {
     note("Using the stored SMARTLEAD_API_KEY.");
   } else {
-    const answer = await prompts(
-      {
-        type: "password",
-        name: "key",
-        message: "Smartlead API key (Smartlead → Settings → API)",
-        validate: (v: string) => (v.trim().length > 0 ? true : "required"),
-      },
-      { onCancel: () => process.exit(0) },
-    );
-    key = ((answer["key"] as string) ?? "").trim();
+    key = await promptForKey("Smartlead API key (Smartlead → Settings → API)");
     if (!key) {
       warn("No key provided.");
       return;
@@ -43,13 +47,30 @@ export async function commandSmartleadConnect(): Promise<void> {
     keyIsNew = true;
   }
 
-  let accounts: SmartleadAccount[];
+  let accounts: SmartleadAccount[] | null = null;
   try {
     accounts = await listSmartleadAccounts(key);
   } catch (err) {
     warn(`Smartlead rejected the request: ${(err as Error).message}`);
-    if (keyIsNew) note("The key was NOT saved.");
-    return;
+    if (keyIsNew) {
+      note("The key was NOT saved.");
+      return;
+    }
+    // The STORED key failed (revoked, expired, wrong workspace). Without this
+    // re-prompt the command is a dead end: every rerun reads the same bad key.
+    key = await promptForKey("Stored key rejected — paste a replacement key (esc to cancel)");
+    if (!key) {
+      warn("No key provided.");
+      return;
+    }
+    keyIsNew = true;
+    try {
+      accounts = await listSmartleadAccounts(key);
+    } catch (err2) {
+      warn(`Smartlead rejected the replacement too: ${(err2 as Error).message}`);
+      note("The key was NOT saved.");
+      return;
+    }
   }
   if (keyIsNew) {
     saveSecrets({ SMARTLEAD_API_KEY: key });
