@@ -94,13 +94,14 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 6 * ONE_HOUR,
     defaultConfig: { sinceDays: 1, limit: 25, maxCostUsd: 5 },
     configBrief:
-      "Polls Hacker News Algolia for recent Show HN posts, ICP-filters them, enriches founder contact, and enqueues them for review. Config: `sinceDays` (lookback window, default 1), `limit` (max kept, default 25), `maxCostUsd` (per-run spend cap). Defaults work for most ICPs — bump sinceDays to 7+ if your ICP is niche enough that daily volume is thin.",
+      "Polls Hacker News Algolia for recent Show HN posts, ICP-filters them, enriches founder contact, and enqueues them for review. Config: `sinceDays` (lookback window, default 1), `limit` (max kept, default 25), `maxCostUsd` (per-run spend cap), `minPoints` (upvote floor, default 5 — posts below it drop as low-signal). Defaults work for most ICPs — bump sinceDays to 7+ if your ICP is niche enough that daily volume is thin. STRATEGIST NOTE: minPoints is a MOTION choice, not noise control — selling a paid product, keep ≥5 (traction = budget); driving adoption of a founder tool, drop to 1-2 (the quiet launch IS the pain signal).",
     run: (cfg) =>
       runShowHnFinder({
         dryRun: false,
         sinceDays: (cfg["sinceDays"] as number) ?? 1,
         limit: (cfg["limit"] as number) ?? 25,
         maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
+        ...(typeof cfg["minPoints"] === "number" ? { minPoints: cfg["minPoints"] as number } : {}),
       }),
   },
   {
