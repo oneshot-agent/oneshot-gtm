@@ -84,6 +84,7 @@ bun run cli -- cadence advance                     # daily tick: poll inbox, fir
 | `config`                 | `llm` · `founder` · `keys` · `telemetry on\|off`                                                                                                                |
 | `gmail`                  | `auth` (OAuth a sending account) · `placement` (inbox-placement canary)                                                                                         |
 | `identities`             | `list` · `add` · `remove <id>` — the sender pool                                                                                                                |
+| `smartlead`              | `connect` — API key + pick Smartlead mailboxes into the pool (send-only)                                                                                        |
 | `domains`                | `list` · `pause <domain>` · `resume <domain>` — provisioned OneShot domains                                                                                     |
 | `find`                   | `watch` · `drain <play>` · `enrich-linkedin`                                                                                                                    |
 | `motion`                 | `post-funding` `concierge` `demo-no-show` `competitor-switch` `hiring-signal` `podcast-guest` — each takes `--target <file>`; `breakup-revive` reads the ledger |
@@ -196,7 +197,7 @@ Most carry a cadence — a value follow-up, then a breakup, spread over roughly 
 
 ## Sending
 
-Outbound ships through a **sender identity pool** — any mix of OneShot wallet-owned sending domains (several domains, several mailboxes per domain) and your own Gmail / Workspace accounts.
+Outbound ships through a **sender identity pool** — any mix of OneShot wallet-owned sending domains (several domains, several mailboxes per domain), your own Gmail / Workspace accounts, and Smartlead-hosted mailboxes (bring-your-own cold-email infra at scale).
 
 - **Sticky threads.** Every email to a prospect comes from the identity that sent their first touch, across plays and cadence steps. In-flight conversations never switch From address.
 - **Warm-up caps, per domain.** A new identity ramps 10/day, +10/week, to a 50 ceiling — editable per identity on `/setup`. OneShot reputation is per-domain, so every mailbox on a domain shares one ramp and budget. Gmail accounts ramp per account.
@@ -204,7 +205,7 @@ Outbound ships through a **sender identity pool** — any mix of OneShot wallet-
 - **Two products, one founder, one inbox.** A workspace (see Workspaces) never first-touches someone another workspace emailed in the last 7 days: the draft is held with a `contacted-elsewhere` flag that you can override on a manual send, and auto paths (drain, cadence steps) wait the window out. Touches and the paid lookup caches live in one shared SQLite (`~/.oneshot-gtm-shared/`), so the same person is never researched twice across products.
 - **Replies follow the pool.** The inbox poll merges the OneShot inbox with every authorized Gmail account, so stop-on-reply works whichever identity sent. It walks everything since its last clean poll — a persisted watermark with an hour of overlap, paged newest-first, parking anything beyond one poll's page budget as a backlog the next ticks drain — so a reply is delayed by an outage, never lost to it. A reply you've already read and archived still counts. Answering from `/inbox` records the reply too, replies from the receiving identity, and threads on both transports — Gmail via `In-Reply-To`/`References`, OneShot via `reply_to_email_id`. Sends carry an idempotency key, so a retry after a timeout can't double-send.
 
-Add a OneShot domain and mailbox from `/setup` or `identities add` — pick a provisioned domain or type a new one to auto-provision on first send. Add a Gmail account with `gmail auth` (one-time OAuth; needs a Google Cloud _Desktop_ client with the Gmail API on). With no pool configured, behavior is the classic single OneShot identity.
+Add a OneShot domain and mailbox from `/setup` or `identities add` — pick a provisioned domain or type a new one to auto-provision on first send. Add a Gmail account with `gmail auth` (one-time OAuth; needs a Google Cloud _Desktop_ client with the Gmail API on). Add Smartlead mailboxes with `smartlead connect` (paste the workspace API key, pick from your connected accounts) or from `/setup` — Smartlead does the warmup and hosts the inboxes; the default ramp ceiling clamps to each mailbox's own Smartlead limit. **Send-only for now**: replies to Smartlead-sent mail appear in Smartlead's inbox, not `/inbox`, and its bounces aren't harvested — like OneShot identities, `doctor` reports them as not bounce-covered. With no pool configured, behavior is the classic single OneShot identity.
 
 ### Deliverability
 

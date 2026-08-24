@@ -30,13 +30,17 @@ export interface ReceiptRecord {
 export interface EmailIdentity {
   /** Stable key, e.g. "legacy-oneshot", "gmail:jn@freebutter.ai". Referenced by sender_assignments rows — never rename a live id. */
   id: string;
-  provider: "oneshot" | "gmail";
+  provider: "oneshot" | "gmail" | "smartlead";
   label?: string | null;
   /** OneShot only: wallet-owned From domain. */
   sendingDomain?: string | null;
   /** OneShot only: From localpart override (default: founder first name). */
   mailbox?: string | null;
-  /** Gmail only: the account address (informational; the OAuth token decides the real From). */
+  /**
+   * Gmail/Smartlead: the account address. For Gmail it is informational (the
+   * OAuth token decides the real From); for Smartlead it is the literal
+   * `fromEmail` the send API pins, so it must match a connected account.
+   */
   address?: string | null;
   /** Hard daily ceiling. Null = uncapped (only sensible for OneShot identities). */
   maxPerDay: number | null;

@@ -98,6 +98,56 @@ export function registerGmailIdentity(input: { address: string; refreshToken: st
 }
 
 /**
+ * Add a Smartlead-connected mailbox to the rotation pool. No credential is
+ * stored per identity — sends resolve the workspace-wide SMARTLEAD_API_KEY and
+ * pin the From by address. Default caps are the standard warm-up ramp, with
+ * the DEFAULT ceiling clamped down to Smartlead's own `message_per_day` when
+ * the caller passes it (an explicitly chosen `maxPerDay` — including null for
+ * uncapped — is respected as-is, same trust model as OneShot caps).
+ * Re-adding a known address is a no-op: tuned caps are left alone.
+ */
+export function registerSmartleadIdentity(input: {
+  address: string;
+  label?: string | null;
+  maxPerDay?: number | null;
+  /** Smartlead's per-mailbox message_per_day, from the accounts listing. */
+  providerMessagePerDay?: number | null;
+}): { identityId: string; created: boolean } {
+  const address = input.address.trim().toLowerCase();
+  if (!address) throw new Error("smartlead identity needs an address");
+  const identityId = `smartlead:${address}`;
+  const cfg = loadConfig();
+  const pool: EmailIdentity[] = cfg.emailIdentities
+    ? [...cfg.emailIdentities]
+    : resolveIdentities(cfg);
+  if (pool.some((i) => i.id === identityId)) return { identityId, created: false };
+  let caps: Pick<EmailIdentity, "maxPerDay" | "warmup">;
+  if ("maxPerDay" in input) {
+    const maxPerDay = input.maxPerDay ?? null;
+    // Explicit ceiling keeps the ramp toward it; explicit null = truly
+    // uncapped, so the ramp is cleared too (warmupCap would re-impose 50).
+    caps =
+      maxPerDay == null ? { maxPerDay: null, warmup: null } : { ...WARMUP_DEFAULTS, maxPerDay };
+  } else {
+    const provider = input.providerMessagePerDay;
+    const ceiling =
+      typeof provider === "number" && Number.isFinite(provider) && provider > 0
+        ? Math.min(WARMUP_DEFAULTS.maxPerDay ?? provider, provider)
+        : WARMUP_DEFAULTS.maxPerDay;
+    caps = { ...WARMUP_DEFAULTS, maxPerDay: ceiling };
+  }
+  pool.push({
+    id: identityId,
+    provider: "smartlead",
+    label: input.label?.trim() || address,
+    address,
+    ...caps,
+  });
+  saveConfig({ ...cfg, emailIdentities: pool });
+  return { identityId, created: true };
+}
+
+/**
  * Founder-name-derived default local-part (first token, normalized) — the
  * mailbox used when an OneShot identity is added without an explicit one. Falls
  * back to "agent". Mirrors `fromLocalpart` in oneshot.ts but lives here to keep

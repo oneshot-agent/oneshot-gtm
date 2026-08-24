@@ -1,6 +1,6 @@
 # Status
 
-**Assume green unless it's listed below.** The 47 CLI commands, 14 plays, 10 finders, nine dashboard pages plus the run form, and the server's REST + SSE routes are all covered by the test suite — and, with the seven exceptions on this page, verified end to end against the live OneShot API.
+**Assume green unless it's listed below.** The 48 CLI commands, 14 plays, 10 finders, nine dashboard pages plus the run form, and the server's REST + SSE routes are all covered by the test suite — and, with the seven exceptions on this page, verified end to end against the live OneShot API.
 
 Last verified **2026-08-23** · Bun 1.3.13 · OneShot SDK 0.22.0 · 1698 tests / 127 files · typecheck + oxlint clean (318 files).
 
@@ -46,7 +46,8 @@ Five of those also stay **not ready** until you give them required config, and r
 
 ## Known limitations
 
-- **Bounce handling is Gmail-only.** DSNs are parsed from connected Gmail/Workspace mailboxes. Sends through OneShot domains have no equivalent feed yet, so their bounce rate reads as zero rather than unknown.
+- **Bounce handling is Gmail-only.** DSNs are parsed from connected Gmail/Workspace mailboxes. Sends through OneShot domains and Smartlead mailboxes have no equivalent feed yet; `doctor` names them as not covered rather than reporting a false zero.
+- **Smartlead is send-only.** `smartlead connect` (or `/setup`) registers Smartlead-hosted mailboxes as sending identities — rotation, warm-up caps (clamped to Smartlead's own per-mailbox limit at registration; later Smartlead-side changes aren't re-synced), sticky threads, suppression, and the cross-workspace hold all apply — but replies land in Smartlead's inbox, not `/inbox`, and there is no bounce feed or send idempotency (a timeout-then-retry can double-send, same as Gmail). Follow-ups: an inbox source + threaded replies, bounce/warmup ingestion, per-domain cap groups. The one live-unverified piece is the send round trip itself (`/send-email/initiate` against a real key).
 - **`oneshot-gtm-server` requires Bun.** `bun:sqlite`, `Bun.serve`, and `Bun.stdin` are Bun-native; a runtime check in `dist/bin.mjs` fails loudly under plain `node`. A self-contained `bun build --compile` binary is a future option.
 - **The CLI is not on npm.** Only `oneshot-gtm-server` is published (0.7.0). The CLI needs a repo clone plus `bun link`.
 - **No public benchmarks page.** The telemetry endpoint is live and verified; the surface that renders aggregates from it is still roadmap.

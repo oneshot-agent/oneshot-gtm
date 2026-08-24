@@ -227,18 +227,29 @@ export interface SetupRequest {
   /** Per-identity daily-cap edits ({ id, maxPerDay }). Null maxPerDay = uncapped. */
   identityUpdates?: Array<{ id: string; maxPerDay: number | null }>;
   /**
-   * New OneShot sending identities to add to the pool (a wallet-owned domain +
-   * a mailbox local-part). `sendingDomain` must be one returned by the
-   * provisioned-domain pool. Omit `maxPerDay` to take the cold-start warm-up
-   * ramp; pass `null` to add uncapped.
+   * New sending identities to add to the pool. OneShot: a wallet-owned domain
+   * (must be one returned by the provisioned-domain pool) + a mailbox
+   * local-part. Smartlead: a connected account's address (from the accounts
+   * listing), with `providerMessagePerDay` carrying Smartlead's own cap so the
+   * default ceiling clamps to it. Omit `maxPerDay` to take the cold-start
+   * warm-up ramp; pass `null` to add uncapped.
    */
-  addIdentities?: Array<{
-    provider: "oneshot";
-    sendingDomain: string;
-    mailbox?: string;
-    label?: string;
-    maxPerDay?: number | null;
-  }>;
+  addIdentities?: Array<
+    | {
+        provider: "oneshot";
+        sendingDomain: string;
+        mailbox?: string;
+        label?: string;
+        maxPerDay?: number | null;
+      }
+    | {
+        provider: "smartlead";
+        address: string;
+        label?: string;
+        maxPerDay?: number | null;
+        providerMessagePerDay?: number | null;
+      }
+  >;
   /** Identities to drop from the rotation pool. Existing prospect pins to a removed id will refuse to send until restored. */
   removeIdentityIds?: string[];
   icpOneLiner?: string;
@@ -269,7 +280,8 @@ export interface SetupRequest {
       | "AGENT_PRIVATE_KEY"
       | "GMAIL_CLIENT_ID"
       | "GMAIL_CLIENT_SECRET"
-      | "GMAIL_REFRESH_TOKEN",
+      | "GMAIL_REFRESH_TOKEN"
+      | "SMARTLEAD_API_KEY",
       string
     >
   >;
@@ -295,10 +307,33 @@ export interface DomainActionResult {
   poolStatus: "active" | "paused";
 }
 
+/**
+ * One Smartlead-connected mailbox as seen by the browser/CLI — sanitized
+ * (Smartlead's raw rows carry mailbox passwords; those never leave core).
+ */
+export interface SmartleadAccountView {
+  id: number;
+  fromEmail: string;
+  fromName: string | null;
+  /** Smartlead's own per-mailbox daily send limit. */
+  messagePerDay: number | null;
+  dailySentCount: number;
+  /** False = SMTP connection broken on Smartlead's side; sends will fail. */
+  isSmtpSuccess: boolean;
+  /** GMAIL | OUTLOOK | SMTP */
+  type: string;
+  /** ACTIVE | INACTIVE | PAUSED */
+  warmupStatus: string | null;
+  /** e.g. "95%" */
+  warmupReputation: string | null;
+  /** Already in this workspace's rotation pool. */
+  alreadyRegistered: boolean;
+}
+
 /** One sender identity as shown on /setup: pool entry + today's usage. */
 export interface SenderIdentityView {
   id: string;
-  provider: "oneshot" | "gmail";
+  provider: "oneshot" | "gmail" | "smartlead";
   label: string | null;
   address: string | null;
   sendingDomain: string | null;
@@ -483,7 +518,7 @@ export interface InboxReplyView {
   /** Sender identity whose mailbox received this email — the reply goes out from it. Null on legacy/unattributed rows. */
   sourceIdentityId: string | null;
   /** Provider of the receiving identity. Gmail replies thread properly; oneshot replies are best-effort fresh sends (paid, subject-threading only). */
-  sourceProvider: "gmail" | "oneshot" | null;
+  sourceProvider: "gmail" | "oneshot" | "smartlead" | null;
   /** Gmail thread id (gmail sources only) — passed back on send to thread the reply. */
   threadId: string | null;
   /** RFC 2822 Message-ID of the inbound email (gmail sources only) — In-Reply-To on the reply. */

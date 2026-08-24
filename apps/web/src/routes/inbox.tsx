@@ -260,6 +260,7 @@ function reSubject(subject: string): string {
 /** "gmail:jn@x.com" → "jn@x.com"; legacy/synthesized ids get a friendly label. */
 function identityAddress(id: string): string {
   if (id.startsWith("gmail:")) return id.slice("gmail:".length);
+  if (id.startsWith("smartlead:")) return id.slice("smartlead:".length);
   if (id === "legacy-gmail") return "your Gmail";
   if (id === "legacy-oneshot") return "OneShot";
   return id;
