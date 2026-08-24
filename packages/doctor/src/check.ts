@@ -11,8 +11,11 @@ import {
   gmailAccountFor,
   identityCapacities,
   listSendingDomains,
+  listSmartleadAccounts,
   llmApiKey,
   loadConfig,
+  smartleadApiKey,
+  type SmartleadAccount,
   missingGmailSecrets,
   oneshotEnvReady,
   resolveIdentities,
@@ -73,15 +76,17 @@ function deliverabilityChecks(): CheckResult[] {
 
     // Bounce detection reads DSNs out of a mailbox we can authenticate to, so
     // it only covers Gmail identities. A OneShot send's return path belongs to
-    // the platform and surfaces nothing in its inbox API — those identities are
-    // structurally invisible here. Saying so matters: silence about an
-    // unmonitored sender reads as "no bounces" when it means "we can't tell".
-    const blind = identities.filter((i) => i.provider === "oneshot");
+    // the platform, and Smartlead hosts its mailboxes — neither surfaces DSNs
+    // to us, so those identities are structurally invisible here. Saying so
+    // matters: silence about an unmonitored sender reads as "no bounces" when
+    // it means "we can't tell".
+    const blind = identities.filter((i) => i.provider !== "gmail");
     if (blind.length > 0) {
+      const providers = [...new Set(blind.map((i) => i.provider))].join(", ");
       results.push({
         name: "deliverability",
         severity: "warn",
-        message: `${blind.length} OneShot identit${blind.length === 1 ? "y" : "ies"} not covered — bounce detection reads DSNs from Gmail mailboxes only`,
+        message: `${blind.length} identit${blind.length === 1 ? "y" : "ies"} not covered (${providers}) — bounce detection reads DSNs from Gmail mailboxes only`,
       });
     }
 
@@ -100,7 +105,7 @@ function deliverabilityChecks(): CheckResult[] {
       return results;
     }
     for (const identity of identities) {
-      if (identity.provider === "oneshot") continue; // reported once above, as uncovered
+      if (identity.provider !== "gmail") continue; // reported once above, as uncovered
       const s = stats.get(identity.id);
       const sent = ledger.countEmailSendsSince(
         identity.id,
@@ -266,6 +271,12 @@ function workspaceChecks(cfg: ReturnType<typeof loadConfig>): CheckResult[] {
       .filter((a): a is string => !!a)
       .map((a) => a.toLowerCase()),
   );
+  const mySmartlead = new Set(
+    myIdentities
+      .map((i) => (i.provider === "smartlead" ? i.address : null))
+      .filter((a): a is string => !!a)
+      .map((a) => a.toLowerCase()),
+  );
   const portsSeen = new Map<number, string>();
   for (const [other, entry] of all) {
     if (entry.port && portsSeen.has(entry.port)) {
@@ -330,6 +341,22 @@ function workspaceChecks(cfg: ReturnType<typeof loadConfig>): CheckResult[] {
           severity: "warn",
           message: `also authorized in workspace '${other}' — both inbox pollers will see both products' replies`,
           hint: "use a separate Gmail account per workspace",
+        });
+      }
+    }
+    const theirSmartlead = new Set(
+      (theirCfg.emailIdentities ?? [])
+        .map((i) => (i.provider === "smartlead" ? i.address : null))
+        .filter((a): a is string => !!a)
+        .map((a) => a.toLowerCase()),
+    );
+    for (const a of mySmartlead) {
+      if (theirSmartlead.has(a)) {
+        out.push({
+          name: `smartlead ${a}`,
+          severity: "warn",
+          message: `also registered in workspace '${other}' — caps are per-workspace, so the mailbox's real daily budget is doubled`,
+          hint: "register each Smartlead mailbox in only one workspace",
         });
       }
     }
@@ -450,6 +477,22 @@ export async function runDoctor(): Promise<CheckResult[]> {
       }
     }
 
+    // Smartlead account list, fetched once and only when it can matter (a key
+    // exists AND at least one smartlead identity to report on). Null = the API
+    // was unreachable → per-identity lines say "unverified" rather than fail.
+    let smartleadByAddress: Map<string, SmartleadAccount> | null = null;
+    if (smartleadApiKey() && identities.some((i) => i.provider === "smartlead")) {
+      try {
+        smartleadByAddress = new Map((await listSmartleadAccounts()).map((a) => [a.fromEmail, a]));
+      } catch (err) {
+        results.push({
+          name: "smartlead",
+          severity: "warn",
+          message: `could not verify Smartlead accounts: ${(err as Error).message}`,
+        });
+      }
+    }
+
     for (const identity of identities) {
       const c = caps.get(identity.id);
       const capStr = c && Number.isFinite(c.capToday) ? String(c.capToday) : "∞";
@@ -482,6 +525,50 @@ export async function runDoctor(): Promise<CheckResult[]> {
             severity: "fail",
             message: `auth check failed: ${(err as Error).message}`,
             hint: GMAIL_AUTH_HINT,
+          });
+        }
+      } else if (identity.provider === "smartlead") {
+        const address = identity.address?.trim().toLowerCase() ?? "";
+        const account = address ? smartleadByAddress?.get(address) : undefined;
+        if (!smartleadApiKey()) {
+          results.push({
+            name,
+            severity: "fail",
+            message: "SMARTLEAD_API_KEY not set — sends from this identity will fail",
+            hint: "Store it with: bun run cli -- smartlead connect",
+          });
+        } else if (smartleadByAddress && !account) {
+          results.push({
+            name,
+            severity: "fail",
+            message: `${address || identity.id} is no longer connected in Smartlead`,
+            hint: "Reconnect the mailbox in Smartlead, or remove the identity from the pool.",
+          });
+        } else if (account && !account.isSmtpSuccess) {
+          results.push({
+            name,
+            severity: "fail",
+            message: `${address} SMTP connection broken in Smartlead — reconnect it there · ${usage}`,
+          });
+        } else if (account && account.warmupStatus && account.warmupStatus !== "ACTIVE") {
+          results.push({
+            name,
+            severity: "warn",
+            message: `sending as ${address} · warmup ${account.warmupStatus.toLowerCase()} in Smartlead · ${usage}`,
+          });
+        } else if (account) {
+          const rep = account.warmupReputation ? ` (${account.warmupReputation})` : "";
+          const warm = account.warmupStatus ? ` · warmup active${rep}` : "";
+          results.push({
+            name,
+            severity: "ok",
+            message: `sending as ${address}${warm} · ${usage}`,
+          });
+        } else {
+          results.push({
+            name,
+            severity: "warn",
+            message: `sending as ${address || identity.id} · unverified (Smartlead API unreachable) · ${usage}`,
           });
         }
       } else {

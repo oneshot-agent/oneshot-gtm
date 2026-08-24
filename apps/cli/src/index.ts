@@ -31,6 +31,7 @@ import {
 } from "./commands/handoff.ts";
 import { commandCadenceAdvance } from "./commands/cadence.ts";
 import { commandGmailAuth, commandGmailPlacement } from "./commands/gmail.ts";
+import { commandSmartleadConnect } from "./commands/smartlead.ts";
 import {
   commandDomainsList,
   commandDomainsPause,
@@ -228,6 +229,16 @@ gmail
   .option("--play <name>", "replay this play's most recent real email as the canary body")
   .option("-y, --yes", "skip the send confirmation")
   .action(runOrFail(commandGmailPlacement));
+
+// Smartlead: bring-your-own cold-email infra (send-only). Smartlead hosts +
+// warms the mailboxes; we send through their API. Replies stay in their UI.
+const smartlead = program
+  .command("smartlead")
+  .description("Smartlead send path (send-only; replies stay in Smartlead's UI)");
+smartlead
+  .command("connect")
+  .description("Store the Smartlead API key and add its mailboxes to the rotation pool")
+  .action(runOrFail(commandSmartleadConnect));
 
 // Identities: manage the OneShot sender rotation pool (multiple wallet-owned
 // domains + multiple mailboxes per domain). Gmail accounts join via `gmail auth`.

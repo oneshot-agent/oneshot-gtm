@@ -201,3 +201,47 @@ describe("fourth-round review findings (#38)", () => {
     expect(checks.some((c) => c.name === "sending domain acme.email")).toBe(false);
   });
 });
+
+describe("smartlead identities in doctor", () => {
+  const SL = {
+    id: "smartlead:jane@acme.com",
+    provider: "smartlead",
+    address: "jane@acme.com",
+    maxPerDay: 50,
+    warmup: null,
+  };
+
+  it("warns when another workspace registered the same Smartlead mailbox", async () => {
+    cfgOverride = { emailIdentities: [SL] };
+    otherWorkspace("sdk", { emailIdentities: [{ ...SL }] });
+    const checks = await runDoctor();
+    const hit = checks.find((c) => c.name === "smartlead jane@acme.com");
+    expect(hit?.severity).toBe("warn");
+    expect(hit?.message).toContain("'sdk'");
+  });
+
+  it("no warning when only this workspace has the mailbox", async () => {
+    cfgOverride = { emailIdentities: [SL] };
+    otherWorkspace("sdk", { emailIdentities: [] });
+    const checks = await runDoctor();
+    expect(checks.some((c) => c.name === "smartlead jane@acme.com")).toBe(false);
+  });
+
+  it("counts smartlead in the bounce-blind bucket and fails the sender line without a key", async () => {
+    const prev = process.env["SMARTLEAD_API_KEY"];
+    delete process.env["SMARTLEAD_API_KEY"];
+    try {
+      cfgOverride = { emailIdentities: [SL] };
+      const checks = await runDoctor();
+      const blind = checks.find(
+        (c) => c.name === "deliverability" && c.message.includes("not covered"),
+      );
+      expect(blind?.message).toContain("smartlead");
+      const sender = checks.find((c) => c.name === "sender smartlead:jane@acme.com");
+      expect(sender?.severity).toBe("fail");
+      expect(sender?.message).toContain("SMARTLEAD_API_KEY not set");
+    } finally {
+      if (prev !== undefined) process.env["SMARTLEAD_API_KEY"] = prev;
+    }
+  });
+});

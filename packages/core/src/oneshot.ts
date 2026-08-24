@@ -31,6 +31,7 @@ import {
   sendGmailMessage,
 } from "./gmail.ts";
 import { gmailAccountFor, resolveIdentities } from "./identities.ts";
+import { sendViaSmartlead, smartleadApiKey } from "./smartlead.ts";
 import { parallelMap, withDeadline } from "./parallel.ts";
 import {
   isTransientToolError,
@@ -311,6 +312,60 @@ async function sendEmailViaGmail(input: SendEmailInput, ctx: CallContext, identi
   return { result, receiptId };
 }
 
+/**
+ * Smartlead-path send. Same return contract as the Gmail path: cost 0 (the
+ * Smartlead subscription is out-of-band), Smartlead's message id as request
+ * id (which also dedupes receipt re-records). Smartlead documents no
+ * idempotency mechanism, so — like Gmail — a timeout-then-retry can
+ * double-send; the OneShot path is the only transport with a true
+ * idempotency key.
+ */
+async function sendEmailViaSmartlead(
+  input: SendEmailInput,
+  ctx: CallContext,
+  identity: EmailIdentity,
+) {
+  const cfg = loadConfig();
+  const fromEmail = identity.address?.trim().toLowerCase();
+  if (!fromEmail) {
+    throw new Error(
+      `no address on Smartlead sender identity '${identity.id}' — re-add it (bun run cli -- smartlead connect)`,
+    );
+  }
+  if (!smartleadApiKey()) {
+    throw new Error("SMARTLEAD_API_KEY not set — store it with: bun run cli -- smartlead connect");
+  }
+  const sent = await sendViaSmartlead({
+    to: input.to,
+    subject: input.subject,
+    htmlBody: toHtmlBody(input.body),
+    fromEmail,
+    fromName: cfg.founderName,
+  });
+  const result: EmailResult = {
+    status: "sent",
+    request_id: sent.messageId,
+    cost: 0,
+    email: { id: sent.messageId, provider_message_id: sent.messageId, status: "sent" },
+  };
+  const receiptId = recordCallReceipt({
+    ctx,
+    callType: "email.send",
+    signedReceipt: {
+      provider: "smartlead",
+      message_id: sent.messageId,
+      from: fromEmail,
+      to: input.to,
+      subject: input.subject,
+      memo: ctx.memo ?? `${ctx.playName} email.send`,
+    },
+    costUsd: 0,
+    oneshotRequestId: sent.messageId,
+    senderIdentity: identity.id,
+  });
+  return { result, receiptId };
+}
+
 async function dispatchEmail(input: SendEmailInput, ctx: CallContext) {
   // Suppression backstop, ahead of everything else: a previously hard-bounced
   // address can only fail again, and the send is billed before dispatch. Every
@@ -329,6 +384,14 @@ async function dispatchEmail(input: SendEmailInput, ctx: CallContext) {
   const identity = resolveSenderIdentity(input.to);
   if (identity.provider === "gmail") {
     return sendEmailViaGmail(input, ctx, identity);
+  }
+  if (identity.provider === "smartlead") {
+    return sendEmailViaSmartlead(input, ctx, identity);
+  }
+  // Explicit guard: a provider this branch doesn't know must NEVER fall
+  // through to the paid OneShot SDK path below.
+  if (identity.provider !== "oneshot") {
+    throw new Error(`unknown email provider '${identity.provider}' for identity '${identity.id}'`);
   }
   const agent = await getAgent();
   const cfg = loadConfig();
@@ -494,6 +557,18 @@ export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
     });
     recordContactTouch(input.to, ctx.playName);
     return { result, receiptId };
+  }
+
+  // Send-only v1: Smartlead identities produce no inbox rows, so no UI path
+  // reaches here — this guard exists so a future inbox source can't silently
+  // route a "reply" through the paid OneShot wallet from the wrong domain.
+  if (identity.provider === "smartlead") {
+    throw new Error(
+      `replies from Smartlead identity '${identity.id}' aren't supported yet — reply in Smartlead's own inbox`,
+    );
+  }
+  if (identity.provider !== "oneshot") {
+    throw new Error(`unknown email provider '${identity.provider}' for identity '${identity.id}'`);
   }
 
   const agent = await getAgent();

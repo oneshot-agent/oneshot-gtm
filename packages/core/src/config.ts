@@ -24,6 +24,7 @@ export const SECRET_KEYS = [
   "GMAIL_CLIENT_ID",
   "GMAIL_CLIENT_SECRET",
   "GMAIL_REFRESH_TOKEN",
+  "SMARTLEAD_API_KEY",
 ] as const;
 export type SecretKey = (typeof SECRET_KEYS)[number];
 

@@ -145,6 +145,9 @@ export function warmupCap(
  * budget. Gmail accounts are independent — Google warms per-account — so each
  * Gmail identity is its own group keyed by id (this also keeps two Gmail
  * accounts on one Workspace domain from sharing a cap, matching prior behavior).
+ * Smartlead mailboxes are likewise per-account (Smartlead's own
+ * message_per_day is per-mailbox), so each is its own group keyed by id;
+ * grouping them by From-domain is a possible follow-up.
  */
 export function capGroupKey(identity: EmailIdentity): string {
   if (identity.provider === "oneshot") {

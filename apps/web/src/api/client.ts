@@ -31,6 +31,7 @@ import type {
   RunTriggerResult,
   SenderIdentityView,
   SetupRequest,
+  SmartleadAccountView,
   SpendByPlay,
   TriggerView,
 } from "@oneshot-gtm/shared-types";
@@ -133,6 +134,12 @@ export const api = {
   doctor: () => getJson<{ checks: DoctorCheck[] }>("/doctor"),
   resumeDomain: (domain: string) => postJson<DomainActionResult>("/domains/resume", { domain }),
   pauseDomain: (domain: string) => postJson<DomainActionResult>("/domains/pause", { domain }),
+  // POST so a just-pasted (not yet saved) key rides the body, never a URL.
+  smartleadAccounts: (apiKey?: string) =>
+    postJson<{ accounts: SmartleadAccountView[] }>(
+      "/smartlead/accounts",
+      apiKey?.trim() ? { apiKey: apiKey.trim() } : {},
+    ),
   setupStatus: () =>
     getJson<{
       identities: SenderIdentityView[];

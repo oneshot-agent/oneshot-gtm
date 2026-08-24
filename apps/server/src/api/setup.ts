@@ -4,6 +4,7 @@ import {
   listSendingDomains,
   loadConfig,
   registerOneShotIdentity,
+  registerSmartleadIdentity,
   resolveIdentities,
   saveConfig,
   saveSecrets,
@@ -104,6 +105,7 @@ export async function getSetupStatus(req: Request): Promise<Response> {
         GMAIL_CLIENT_ID: secretSource("GMAIL_CLIENT_ID"),
         GMAIL_CLIENT_SECRET: secretSource("GMAIL_CLIENT_SECRET"),
         GMAIL_REFRESH_TOKEN: secretSource("GMAIL_REFRESH_TOKEN"),
+        SMARTLEAD_API_KEY: secretSource("SMARTLEAD_API_KEY"),
       },
     },
     200,
@@ -190,6 +192,16 @@ export async function setup(req: Request): Promise<Response> {
   // freshly-persisted config (so it sees the cap/removal edits above and any
   // legacy-pool materialization) before appending. Validated already.
   for (const add of adds) {
+    if (add.provider === "smartlead") {
+      if (!add.address?.trim()) continue;
+      registerSmartleadIdentity({
+        address: add.address,
+        label: add.label,
+        ...("maxPerDay" in add ? { maxPerDay: add.maxPerDay ?? null } : {}),
+        providerMessagePerDay: add.providerMessagePerDay ?? null,
+      });
+      continue;
+    }
     if (!add.sendingDomain?.trim()) continue;
     registerOneShotIdentity({
       sendingDomain: add.sendingDomain,
