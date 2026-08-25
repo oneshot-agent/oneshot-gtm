@@ -1,26 +1,12 @@
 import { cadenceGoalId } from "@oneshot-gtm/core";
 
 /**
- * The demo install, as pure data. No I/O — `seed.ts` writes it.
- *
- * Two rules hold this file together:
- *
- * 1. **Deterministic.** Every timestamp is an offset from the anchor the caller
- *    passes, and there is no `Math.random` anywhere. Seeding twice with the same
- *    anchor produces the same ledger, so a re-shoot matches the first take and
- *    the tests can assert on exact rows.
- *
- * 2. **Two timestamp formats, matched to what production writes.** Columns whose
- *    value comes from the `datetime('now')` DEFAULT (`created_at`, `found_at`,
- *    `enrolled_at`, `recorded_at`, …) get SQLite's `YYYY-MM-DD HH:MM:SS`; columns
- *    the app writes with `toISOString()` (`next_due_at`, `reviewed_at`,
- *    `triggers.last_polled_at`, `runs.started_at`, `bounced_at`, …) get ISO.
- *    Mixing them silently breaks the string comparisons those columns are read
- *    with — `next_due_at <= ?` and friends.
- *
- * The cast extends the one already in `examples/*.json` (Jane Founder / Acme,
- * Sam Builder / Beacon, Rae Kim / Stellar, Jordan Lee / Acme Data, Priya Shah /
- * Northstar AI) so the sample target files and the demo tell one story.
+ * The demo install, as pure data — `seed.ts` writes it. Deterministic: every
+ * timestamp is an offset from the caller's anchor, no randomness, so the same
+ * anchor yields the same ledger. Per-column timestamp format must match what
+ * production writes (`datetime('now')` columns: SQLite `YYYY-MM-DD HH:MM:SS`;
+ * `toISOString()` columns: ISO) — mixing silently breaks string comparisons
+ * like `next_due_at <= ?`.
  */
 
 const DAY_MS = 86_400_000;
@@ -47,9 +33,7 @@ function jitter(i: number): number {
   return (i * 37) % 60;
 }
 
-// ---------------------------------------------------------------------------
 // Founder
-// ---------------------------------------------------------------------------
 
 // A fictional dev-tools founder, deliberately selling something OTHER than
 // OneShot so a viewer never confuses the demo product with the tool being demoed.
@@ -100,9 +84,7 @@ const IDENTITIES = [
   },
 ];
 
-// ---------------------------------------------------------------------------
 // Cast
-// ---------------------------------------------------------------------------
 
 type CadenceStatus = "active" | "replied" | "breakup" | "completed" | "bounced";
 
@@ -556,9 +538,7 @@ const PEOPLE: DemoPerson[] = [
   },
 ];
 
-// ---------------------------------------------------------------------------
 // Cost model
-// ---------------------------------------------------------------------------
 
 // Plausible per-call USD, in the same order of magnitude as real OneShot calls.
 // The whole 30-day install lands around $6 of spend, which is the point of the
@@ -575,9 +555,7 @@ const COST: Record<string, number> = {
 /** Follow-up spacing, in days after the intro. */
 const STEP_OFFSETS = [0, 3, 7];
 
-// ---------------------------------------------------------------------------
 // Row shapes
-// ---------------------------------------------------------------------------
 
 export interface DemoReceipt {
   id: number;
@@ -738,9 +716,7 @@ export interface DemoDataset {
   };
 }
 
-// ---------------------------------------------------------------------------
 // Builder
-// ---------------------------------------------------------------------------
 
 export function buildDemoDataset(anchor: Date): DemoDataset {
   const prospects: DemoProspectRow[] = [];
@@ -937,9 +913,7 @@ export function buildDemoDataset(anchor: Date): DemoDataset {
   };
 }
 
-// ---------------------------------------------------------------------------
 // Config + secrets
-// ---------------------------------------------------------------------------
 
 // Deliberately non-functional. They exist so `doctor`'s pure-env checks
 // (llmApiKey, oneshotEnvReady) read green without a network call, and so an
@@ -982,9 +956,7 @@ function buildConfig(): Record<string, unknown> {
   };
 }
 
-// ---------------------------------------------------------------------------
 // Copy
-// ---------------------------------------------------------------------------
 
 function subjectFor(p: DemoPerson, step: number): string {
   if (step === 0) return `${p.company} + background job traces`;
@@ -1027,9 +999,7 @@ function bodyFor(p: DemoPerson, step: number): string {
   ].join("\n");
 }
 
-// ---------------------------------------------------------------------------
 // Signed receipts
-// ---------------------------------------------------------------------------
 
 function signedReceiptFor(callType: string, p: DemoPerson, id: number): unknown {
   const base = {
@@ -1070,9 +1040,7 @@ function outcomeValueTag(outcome: NonNullable<DemoPerson["outcome"]>): unknown {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Queue
-// ---------------------------------------------------------------------------
 
 function buildQueue(anchor: Date): DemoDataset["queue"] {
   // Rows the finders surfaced but that haven't shipped yet — the founder's
@@ -1299,9 +1267,7 @@ function buildQueue(anchor: Date): DemoDataset["queue"] {
   return rows;
 }
 
-// ---------------------------------------------------------------------------
 // Triggers
-// ---------------------------------------------------------------------------
 
 function buildTriggers(anchor: Date): DemoDataset["triggers"] {
   // Config values mirror each finder's defaultConfig shape in
@@ -1436,9 +1402,7 @@ function buildTriggers(anchor: Date): DemoDataset["triggers"] {
   ];
 }
 
-// ---------------------------------------------------------------------------
 // Runs
-// ---------------------------------------------------------------------------
 
 function buildRuns(anchor: Date, receipts: DemoReceipt[]): DemoDataset["runs"] {
   // Receipt ids are assigned globally while iterating PEOPLE, so a run's send
@@ -1497,9 +1461,7 @@ function buildRuns(anchor: Date, receipts: DemoReceipt[]): DemoDataset["runs"] {
   ];
 }
 
-// ---------------------------------------------------------------------------
 // Deliverability
-// ---------------------------------------------------------------------------
 
 function buildBounces(anchor: Date, prospects: DemoProspectRow[]): DemoDataset["bounces"] {
   const byEmail = (email: string): number => prospects.find((p) => p.email === email)?.id ?? 0;
@@ -1551,9 +1513,7 @@ function buildCanaries(anchor: Date): DemoDataset["canaries"] {
   ];
 }
 
-// ---------------------------------------------------------------------------
 // Inbox
-// ---------------------------------------------------------------------------
 
 /** Everyone in the cast who replied, in the order the fixture should list them. */
 function repliers(): DemoPerson[] {
@@ -1645,9 +1605,7 @@ function buildInboxSent(anchor: Date): DemoDataset["inboxSent"] {
   ];
 }
 
-// ---------------------------------------------------------------------------
 // Interviews
-// ---------------------------------------------------------------------------
 
 function buildInterviews(anchor: Date): DemoDataset["interviews"] {
   return [
@@ -1673,9 +1631,7 @@ function buildInterviews(anchor: Date): DemoDataset["interviews"] {
   ];
 }
 
-// ---------------------------------------------------------------------------
 // Platform RoCS rollup
-// ---------------------------------------------------------------------------
 
 /**
  * Keyed by period ("7" / "30" / "all") because the Measure page's range chips
@@ -1731,9 +1687,7 @@ function rocsForWindow(receipts: DemoReceipt[]): unknown {
     }));
 }
 
-// ---------------------------------------------------------------------------
 // Domain pool
-// ---------------------------------------------------------------------------
 
 function buildDomainsFixture(anchor: Date): unknown {
   return [

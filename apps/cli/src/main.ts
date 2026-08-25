@@ -1,17 +1,11 @@
 #!/usr/bin/env bun
 /**
- * Bootstrap shim — the real bin target.
- *
- * core's config.ts captures ONESHOT_GTM_HOME at module load and auto-loads
- * that home's .env on import, and ESM hoists imports, so by the time commander
- * could parse a `--workspace` flag the install is already chosen. This file
- * therefore imports only node builtins and the builtin-only workspaces module,
- * decides the home, sets the env, and only THEN imports the CLI proper.
- *
- * Resolution: `--workspace <name>` > ONESHOT_GTM_WORKSPACE > registry default.
- * An explicit ONESHOT_GTM_HOME wins over all of them (and combining it with
- * --workspace is an error). Every child this process spawns (the dashboard
- * server) inherits the decision through process.env.
+ * Bootstrap shim — the real bin target. core's config.ts captures
+ * ONESHOT_GTM_HOME at module load and ESM hoists imports, so the home must be
+ * decided and set in env BEFORE importing the CLI proper; this file imports
+ * only builtins until then. Resolution: `--workspace` > ONESHOT_GTM_WORKSPACE
+ * > registry default; explicit ONESHOT_GTM_HOME wins over all (combining it
+ * with --workspace is an error). Children inherit via process.env.
  */
 import {
   extractWorkspaceFlag,
