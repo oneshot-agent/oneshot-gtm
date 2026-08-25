@@ -18,6 +18,7 @@ import { api } from "../api/client.ts";
 import { CommandPalette } from "../components/shell/CommandPalette.tsx";
 import { PrivacyToggle } from "../components/shell/PrivacyToggle.tsx";
 import { StatusBar } from "../components/shell/StatusBar.tsx";
+import { WorkspaceSwitcher } from "../components/shell/WorkspaceSwitcher.tsx";
 import { StrategistDock } from "../components/shell/StrategistDock.tsx";
 import { useKeyboard } from "../components/shell/useKeyboard.ts";
 import { cn } from "../lib/cn.ts";
@@ -94,10 +95,14 @@ function RootLayout() {
     mainRef.current?.scrollTo({ top: 0 });
   }, [pathname]);
 
-  // Doctor's first check names the workspace: "<name> · <home>".
-  const workspaceName =
-    (doctor.data?.checks ?? []).find((c) => c.name === "workspace")?.message.split(" · ")[0] ??
-    null;
+  // Structured identity from /api/workspace (replaces the old string-split of
+  // the doctor check's message, which also hid the name for "default").
+  const workspaceQuery = useQuery({
+    queryKey: ["workspace"],
+    queryFn: api.workspace,
+    refetchInterval: 60_000,
+  });
+  const workspace = workspaceQuery.data?.current ?? null;
 
   const alerts: Record<NonNullable<NavItem["alert"]>, boolean> = {
     "queue-pending": (queueQuery.data?.counts.pending ?? 0) > 0,
@@ -124,6 +129,7 @@ function RootLayout() {
             <div className="mt-0.5 text-[10.5px] uppercase tracking-[0.14em] text-ink-faint">
               Founder's ledger
             </div>
+            <WorkspaceSwitcher />
           </div>
 
           <nav className="flex flex-col gap-0.5" aria-label="primary">
@@ -209,13 +215,8 @@ function RootLayout() {
 
         <header className="flex items-center justify-between border-b border-ink-rule bg-ink-bg/70 px-6 py-2.5 backdrop-blur-[2px]">
           <div className="text-[11.5px] text-ink-faint ln-mono">
-            {workspaceName && workspaceName !== "default" ? (
-              <>
-                workspace <span className="text-ink-cream">{workspaceName}</span> ·{" "}
-              </>
-            ) : (
-              "single user · "
-            )}
+            workspace <span className="text-ink-cream">{workspace?.name ?? "…"}</span>
+            {workspace ? <span className="text-ink-muted"> :{workspace.port}</span> : null} ·
             local-first · bound to <span className="text-ink-muted">127.0.0.1</span>
           </div>
           <div className="flex items-center gap-3">

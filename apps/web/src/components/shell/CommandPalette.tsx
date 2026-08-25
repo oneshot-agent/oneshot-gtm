@@ -3,6 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { Command } from "cmdk";
 import {
   Activity,
+  ArrowUpRight,
   BarChart3,
   Check,
   Copy,
@@ -48,6 +49,12 @@ export function CommandPalette({
     queryFn: api.plays,
     enabled: open,
     staleTime: 60_000,
+  });
+  const workspaces = useQuery({
+    queryKey: ["workspace"],
+    queryFn: api.workspace,
+    enabled: open,
+    staleTime: 30_000,
   });
 
   const runTrigger = useMutation({
@@ -133,6 +140,40 @@ export function CommandPalette({
             <Check size={14} /> Approve all pending
           </Command.Item>
         </Command.Group>
+
+        {(workspaces.data?.workspaces.filter((w) => !w.isCurrent) ?? []).length > 0 && (
+          <Command.Group heading="Workspaces">
+            {workspaces.data!.workspaces
+              .filter((w) => !w.isCurrent)
+              .map((w) => (
+                <Command.Item
+                  key={w.name}
+                  value={`workspace switch open ${w.name}`}
+                  onSelect={act(() => {
+                    if (w.running) {
+                      window.open(`http://127.0.0.1:${w.port}/`, "_blank");
+                    } else {
+                      // Fire the launch; the sidebar switcher's poll opens the
+                      // tab when the health probe flips.
+                      void api
+                        .workspaceLaunch(w.name)
+                        .then((res) => {
+                          if (res.status === "already-running") {
+                            window.open(`http://127.0.0.1:${res.port}/`, "_blank");
+                          } else {
+                            toast.success(`starting ${w.name} on :${res.port}…`);
+                          }
+                        })
+                        .catch((err: Error) => toast.error(`launch failed: ${err.message}`));
+                    }
+                  })}
+                >
+                  <ArrowUpRight size={14} /> Open workspace {w.name}
+                  <kbd className="ml-auto">:{w.port}</kbd>
+                </Command.Item>
+              ))}
+          </Command.Group>
+        )}
 
         <Command.Group heading="View">
           <Command.Item

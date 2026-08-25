@@ -18,6 +18,7 @@ import type {
   OutcomeByPlay,
   OutcomeRequest,
   PlayDescriptor,
+  WorkspaceInfo,
   DomainActionResult,
   DomainPoolView,
   QueueListResponse,
@@ -132,6 +133,11 @@ export const api = {
     ),
   recordOutcome: (req: OutcomeRequest) => postJson<{ id: number }>("/measure/outcome", req),
   doctor: () => getJson<{ checks: DoctorCheck[] }>("/doctor"),
+  workspace: () => getJson<WorkspaceInfo>("/workspace"),
+  workspaceLaunch: (name: string) =>
+    postJson<{ status: "starting" | "already-running"; port: number }>("/workspace/launch", {
+      name,
+    }),
   resumeDomain: (domain: string) => postJson<DomainActionResult>("/domains/resume", { domain }),
   pauseDomain: (domain: string) => postJson<DomainActionResult>("/domains/pause", { domain }),
   // POST so a just-pasted (not yet saved) key rides the body, never a URL.
