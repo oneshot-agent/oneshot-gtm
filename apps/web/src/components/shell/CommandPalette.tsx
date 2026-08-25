@@ -19,6 +19,7 @@ import {
 import { useEffect } from "react";
 import { toast } from "sonner";
 import { api } from "../../api/client.ts";
+import { openWorkspace } from "../../lib/openWorkspace.ts";
 import { usePrivacy } from "../../lib/privacy.tsx";
 
 type NavTarget = "/" | "/queue" | "/cadences" | "/receipts" | "/measure" | "/plays" | "/setup";
@@ -150,22 +151,10 @@ export function CommandPalette({
                   key={w.name}
                   value={`workspace switch open ${w.name}`}
                   onSelect={act(() => {
-                    if (w.running) {
-                      window.open(`http://127.0.0.1:${w.port}/`, "_blank");
-                    } else {
-                      // Fire the launch; the sidebar switcher's poll opens the
-                      // tab when the health probe flips.
-                      void api
-                        .workspaceLaunch(w.name)
-                        .then((res) => {
-                          if (res.status === "already-running") {
-                            window.open(`http://127.0.0.1:${res.port}/`, "_blank");
-                          } else {
-                            toast.success(`starting ${w.name} on :${res.port}…`);
-                          }
-                        })
-                        .catch((err: Error) => toast.error(`launch failed: ${err.message}`));
-                    }
+                    // Shared gesture-safe open/auto-start flow — the same one
+                    // the sidebar switcher uses, so both entry points behave
+                    // identically (this one used to launch and never open).
+                    void openWorkspace(w);
                   })}
                 >
                   <ArrowUpRight size={14} /> Open workspace {w.name}

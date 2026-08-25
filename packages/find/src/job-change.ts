@@ -187,6 +187,10 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
         roleText: extract.newRole,
         evidence: `moved to ${extract.newCompany ?? "a new role"}`,
       },
+      // Stage-C target when email enrichment surfaces no LinkedIn: the page
+      // extract often carries one, and without it an off-ICP person slides
+      // through as `unclear` instead of being judged on a bought title.
+      linkedinUrlHint: isLinkedInProfileUrl(extract.linkedinUrl) ? extract.linkedinUrl : null,
       fillGaps: opts.qualifyFillGaps ?? true,
     });
     result.costUsd += contact.costUsd;

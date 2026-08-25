@@ -212,6 +212,10 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
         roleText: extract.hiringManagerRole,
         evidence: `hiring: ${extract.jobTitle ?? "role"}`,
       },
+      // Stage-C target when email enrichment surfaces no LinkedIn: the page
+      // extract often carries one, and without it an off-ICP person slides
+      // through as `unclear` instead of being judged on a bought title.
+      linkedinUrlHint: isLinkedInProfileUrl(extract.linkedinUrl) ? extract.linkedinUrl : null,
       fillGaps: opts.qualifyFillGaps ?? true,
     });
     result.costUsd += contact.costUsd;

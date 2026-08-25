@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import {
   WorkspaceError,
   currentWorkspaceName,
@@ -153,7 +154,9 @@ export async function workspaceLaunch(req: Request): Promise<Response> {
   // and must serve its static build instead of 302ing to the parent's.
   delete env["VITE_DEV_SERVER_URL"];
 
-  const binPath = new URL("../bin.ts", import.meta.url).pathname;
+  // fileURLToPath, not .pathname: a repo path with a space or non-ASCII char
+  // would arrive percent-encoded and the child would die on a missing file.
+  const binPath = fileURLToPath(new URL("../bin.ts", import.meta.url));
   spawnFn({ binPath, env });
 
   return jsonResponse({ status: "starting", port: entry.port }, 200, req);

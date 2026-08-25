@@ -273,6 +273,7 @@ export async function processRepoCandidate(
     contact.phone = contact.phone ?? enr.phone;
     contact.linkedinUrl = contact.linkedinUrl ?? enr.linkedinUrl;
     contact.title = contact.title ?? enr.title;
+    contact.summary = contact.summary ?? enr.summary;
   }
 
   // Person-level ICP gate. GitHub exposes no role (`extract.authorRole` is
@@ -286,6 +287,7 @@ export async function processRepoCandidate(
       evidence: `public repo using ${extract.stackDetected.join(", ") || "an agent stack"}`,
     },
     enrichedTitle: contact.title,
+    enrichedSummary: contact.summary,
     linkedinUrl: contact.linkedinUrl,
     fillGaps: ctx.qualifyFillGaps ?? true,
     alreadyEnrichedByLinkedin: contact.enrichedByLinkedin,
@@ -296,7 +298,9 @@ export async function processRepoCandidate(
   if (gate.action === "reject") {
     result.droppedRole = (result.droppedRole ?? 0) + 1;
     persistRoleRejection({
-      playName: PLAY_NAME,
+      // The resolved play, not the module constant — a competitor-routed repo
+      // must audit under competitor-switch, or the override row lies.
+      playName,
       dedupeKey: hit.url,
       payload: { repoUrl: hit.url, title: hit.title },
       source: ctx.sourceTag,
@@ -395,6 +399,8 @@ interface ResolvedContact {
   phone: string | null;
   /** Job title, when any enrichment path surfaced one. Feeds the ICP gate. */
   title: string | null;
+  /** Free-text bio/headline from post-verify enrichment. Secondary gate evidence. */
+  summary: string | null;
   /**
    * True when Path B' already ran enrichProfile against `linkedinUrl`. Lets the
    * ICP gate skip a fill-the-gap lookup that would repeat that exact call.
@@ -467,6 +473,7 @@ export async function resolveContact(args: {
     if (direct)
       return {
         title: null,
+        summary: null,
         enrichedByLinkedin: didEnrichByLinkedin,
         ...direct,
         domain: extractDomain,
@@ -480,6 +487,7 @@ export async function resolveContact(args: {
   if (ghUser?.email) {
     return {
       title: null,
+      summary: null,
       enrichedByLinkedin: didEnrichByLinkedin,
       email: ghUser.email,
       fullName: null,
@@ -533,6 +541,7 @@ export async function resolveContact(args: {
       if (profile?.email) {
         return {
           title: profileTitle(profile),
+          summary: null,
           enrichedByLinkedin: didEnrichByLinkedin,
           email: profile.email,
           fullName: profile.full_name ?? extract.authorFullName,
@@ -553,6 +562,7 @@ export async function resolveContact(args: {
         if (viaEnriched)
           return {
             title: profileTitle(profile),
+            summary: null,
             enrichedByLinkedin: didEnrichByLinkedin,
             ...viaEnriched,
             domain: profile.company_domain,
@@ -615,6 +625,7 @@ export async function resolveContact(args: {
     const drPhone = extractFirstPhone(enr);
     return {
       title: null,
+      summary: null,
       enrichedByLinkedin: didEnrichByLinkedin,
       email: drEmail,
       fullName: drFullName,

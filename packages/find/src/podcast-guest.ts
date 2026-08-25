@@ -175,6 +175,10 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
         roleText: extract.guestRole,
         evidence: `guest on ${extract.podcastName ?? "a podcast"}`,
       },
+      // Stage-C target when email enrichment surfaces no LinkedIn: the page
+      // extract often carries one, and without it an off-ICP person slides
+      // through as `unclear` instead of being judged on a bought title.
+      linkedinUrlHint: isLinkedInProfileUrl(extract.linkedinUrl) ? extract.linkedinUrl : null,
       fillGaps: opts.qualifyFillGaps ?? true,
     });
     result.costUsd += contact.costUsd;

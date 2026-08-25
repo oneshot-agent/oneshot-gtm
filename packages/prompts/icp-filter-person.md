@@ -30,7 +30,7 @@ Judge capability-to-build-and-adopt, not job-title seniority.
 Examples against an ICP of "technical founders and engineering leads shipping AI agents":
 `Founder of assistant-ui (YC W25)`, `engineering @ neuralink`, `CTO`, `co-founder / chief technology officer`, `Senior Software Engineer - Developer Relations`, `ai engineer`.
 
-**Founder-class titles are a `pass` on their own** — `Founder`, `Co-Founder`, `Owner`, `CEO`, `Fundador`, `Building X`. Do not downgrade them to `unclear` for lacking detail. When the ICP names founders, the title has already answered the question: a founder evaluates and adopts without a committee, which is the property the ICP is selecting for. Only demote a founder title if something else in the input contradicts it (e.g. `Founder of a recruiting agency` against a developer-tools ICP).
+**Founder-class titles are a `pass` on their own when the ICP targets founders** — `Founder`, `Co-Founder`, `Owner`, `CEO`, `Fundador`, `Building X`. Do not downgrade them to `unclear` for lacking detail: a founder evaluates and adopts without a committee, which is the property such an ICP is selecting for. Only demote a founder title if something else in the input contradicts it (e.g. `Founder of a recruiting agency` against a developer-tools ICP). When the ICP targets a specific non-founder role instead (e.g. "staff security engineers"), a bare founder title is `unclear`, not an automatic pass — require evidence they do the targeted work.
 
 **`reject`** — the role is clearly a different job function, and the person would have to hand the product to someone else to use it.
 Examples: `GTM @AhaCreator`, `Account Executive`, `Early stage VC investor`, `Angel Investor`, `Head of Growth`, `VP of Marketing and Product`, `Senior Product Designer`, `Marketing Manager`, `Talent Acquisition`, `Club Snowboard Team Event Coordinator` **when nothing else suggests a technical role**.
@@ -52,8 +52,10 @@ Examples: `GTM @AhaCreator`, `Account Executive`, `Early stage VC investor`, `An
 - Students and interns are judged like everyone else: on what they build. A CS/AI student or an
   engineering intern shipping agents (hackathons, side projects, research code) can adopt a
   self-serve API in an afternoon — `pass`. A student or intern in a non-building field
-  (marketing intern, MBA candidate with no technical signal) is `reject`. When the evidence
-  shows they attended a hackathon or starred an agent repo, lean `pass`.
+  (marketing intern, MBA candidate with no technical signal) is `reject`. Evidence may TIP a
+  borderline case: a student whose field suggests building but whose title is thin, plus a
+  hackathon or agent-repo signal, leans `pass`. Evidence never rescues a clearly non-building
+  role — that rule ("judge the ROLE, not the evidence") still wins.
 - Do not infer a technical role from a technical-sounding company name.
 - **A hybrid title mixing a business function with a building signal is never `reject`.**
   `Go-to-Market (GTM) Strategy & AI Transformation`, `Automation Strategist & Builder`,
@@ -67,8 +69,10 @@ Examples: `GTM @AhaCreator`, `Account Executive`, `Early stage VC investor`, `An
   strategy/advisory consultant with no sign of hands-on building → `unclear`.
 - The `roleText` may contain several labelled sources (a self-written headline, an employer
   record, an event bio) that disagree. A stale or business-flavoured employer record does not
-  cancel a concrete technical headline — judge on the strongest technical evidence present.
-  Conflicting sources are at most `unclear`, never `reject`.
+  cancel a concrete technical headline — judge on the strongest technical evidence present,
+  and when that evidence clearly establishes the role, return `pass` (do not force `unclear`
+  and burn a paid lookup). A conflict only lands `unclear` when no single source settles it.
+  Conflicting sources never produce `reject`.
 - When torn between `pass` and `reject`, return `unclear`. When torn between `unclear` and `reject`, return `unclear`. Only return `reject` when the job function is unambiguous.
 
 ## Banned in `reason`

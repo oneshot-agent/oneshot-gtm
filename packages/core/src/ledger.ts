@@ -594,7 +594,14 @@ export class Ledger {
     }
     const cols = this.db.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
     if (cols.some((c) => c.name === column)) return;
-    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+    try {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+    } catch (err) {
+      // Two connections can both see the column as missing (check-then-alter
+      // is unlocked); the loser's ALTER must not abort Ledger construction.
+      // Same tolerance as SharedDb.migrate.
+      if (!/duplicate column/i.test((err as Error).message ?? "")) throw err;
+    }
   }
 
   enrollCadence(input: { prospectId: number; playName: string; nextDueAt: string }): void {

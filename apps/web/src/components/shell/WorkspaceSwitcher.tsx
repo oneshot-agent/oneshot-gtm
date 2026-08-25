@@ -1,8 +1,8 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Circle, Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
 import { api } from "../../api/client.ts";
+import { openWorkspace } from "../../lib/openWorkspace.ts";
 import { cn } from "../../lib/cn.ts";
 
 /**
@@ -36,16 +36,14 @@ function WorkspaceDot({ name, isDefault }: { name: string; isDefault: boolean })
   );
 }
 
-/** Poll cadence: fast while a launch is in flight, lazy otherwise. */
+/** Roster refresh: fast while a launch is in flight, lazy otherwise. */
 const IDLE_MS = 60_000;
 const LAUNCHING_MS = 1_000;
-const LAUNCH_TIMEOUT_MS = 15_000;
 
 export function WorkspaceSwitcher() {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [launching, setLaunching] = useState<string | null>(null);
-  const launchStartedAt = useRef(0);
   const rootRef = useRef<HTMLDivElement>(null);
 
   const ws = useQuery({
@@ -75,57 +73,14 @@ export function WorkspaceSwitcher() {
   const roster = ws.data?.workspaces ?? [];
 
   const onRowClick = async (row: (typeof roster)[number]) => {
-    if (row.isCurrent) {
-      setOpen(false);
-      return;
-    }
-    const url = `http://127.0.0.1:${row.port}/`;
-    if (row.running) {
-      window.open(url, "_blank");
-      setOpen(false);
-      return;
-    }
-
-    // Open the tab NOW, inside the click's user gesture — a window.open fired
-    // after the multi-second launch poll below would be popup-blocked. The
-    // blank tab gets pointed at the workspace once its health probe flips.
-    const win = window.open("", "_blank");
-    launchStartedAt.current = Date.now();
-    setLaunching(row.name);
-    try {
-      const res = await api.workspaceLaunch(row.name);
-      if (res.status === "already-running") {
+    if (row.isCurrent || row.running) setOpen(false);
+    await openWorkspace(row, {
+      onLaunchStart: () => setLaunching(row.name),
+      onSettled: () => {
         setLaunching(null);
-        if (win) win.location.href = url;
-        else window.open(url, "_blank");
-        return;
-      }
-      // Explicit poll (plain requests, not react-query cache) until the
-      // server-side probe reports the target running.
-      while (Date.now() - launchStartedAt.current < LAUNCH_TIMEOUT_MS) {
-        await new Promise((r) => setTimeout(r, LAUNCHING_MS));
-        const info = await api.workspace();
-        if (info.workspaces.find((w) => w.name === row.name)?.running) {
-          setLaunching(null);
-          if (win) win.location.href = url;
-          toast.success(`workspace ${row.name} · up on :${row.port}`);
-          void queryClient.invalidateQueries({ queryKey: ["workspace"] });
-          return;
-        }
-      }
-      win?.close();
-      const cmd = `bun run cli -- --workspace ${row.name} ui`;
-      setLaunching(null);
-      toast.error(`workspace ${row.name} did not come up — start it manually`, {
-        description: cmd,
-        action: { label: "copy", onClick: () => void navigator.clipboard.writeText(cmd) },
-        duration: 12_000,
-      });
-    } catch (err) {
-      win?.close();
-      setLaunching(null);
-      toast.error(`launch failed: ${(err as Error).message}`);
-    }
+        void queryClient.invalidateQueries({ queryKey: ["workspace"] });
+      },
+    });
   };
 
   return (

@@ -825,9 +825,38 @@ async function resolveAndEnqueueLumaAttendee(
 }
 
 // Outage retry: re-run the resolve→enqueue spine for a persisted attendee.
+// The gate context is rebuilt from config rather than persisted with the row:
+// a retry fired days later should be judged against the CURRENT ICP, and an
+// attendee that queued before a gate recalibration must not dodge it.
 registerPendingRetry(PLAY_NAME, async (raw) => {
   const { work, yourEdge } = raw as { work: AttendeeWithEvent; yourEdge: string };
-  const outcome = await resolveAndEnqueueLumaAttendee(work, yourEdge, () => {});
+  const ledger = getLedger();
+  const dedupeKey = `${work.event.url}#${work.attendee.name.toLowerCase()}`;
+  const outcome = await resolveAndEnqueueLumaAttendee(
+    work,
+    yourEdge,
+    () => {},
+    undefined,
+    undefined,
+    {
+      icp: resolveIcp(),
+      fillGaps: true,
+      onRoleReject: (reason) => {
+        try {
+          ledger.enqueueTarget({
+            playName: PLAY_NAME,
+            dedupeKey,
+            payload: { name: work.attendee.name, eventUrl: work.event.url },
+            source: SOURCE,
+            initialStatus: "rejected",
+            notes: `auto: role — ${reason}`.slice(0, 300),
+          });
+        } catch {
+          // audit row is best-effort
+        }
+      },
+    },
+  );
   return outcome === "enqueued"
     ? "enqueued"
     : outcome === "platform-error"
