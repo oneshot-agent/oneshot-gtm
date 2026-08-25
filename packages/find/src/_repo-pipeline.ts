@@ -10,6 +10,7 @@ import type { CompetitorSwitchTarget, StackConsolidationTarget } from "@oneshot-
 import { isDuplicate } from "./_dedupe.ts";
 import { shouldSkipFindEmail } from "./_findemail-prescreen.ts";
 import { icpFilter } from "./_filter.ts";
+import { persistRoleRejection, qualifyPostEnrich } from "./_qualify.ts";
 import {
   fetchGitHubUser,
   ownerFromRepoUrl,
@@ -79,6 +80,8 @@ export interface RepoPipelineCtx {
   /** Notes-line prefix, e.g. "github-topic". */
   notesPrefix: string;
   dryRun: boolean;
+  /** Allow the paid fill-the-gap lookup in the person gate. Defaults to on. */
+  qualifyFillGaps?: boolean;
 }
 
 /**
@@ -261,7 +264,7 @@ export async function processRepoCandidate(
   // Always-on post-verify enrichment so phone + linkedin land on every
   // queue row. Path B' may have already populated both — skip the call
   // when so. ~$0.005 per call when fired (per OneShot pricing).
-  if (!contact.phone || !contact.linkedinUrl) {
+  if (!contact.phone || !contact.linkedinUrl || !contact.title) {
     const enr = await enrichVerifiedContact(contact.email, {
       playName,
       errKindPrefix,
@@ -269,6 +272,48 @@ export async function processRepoCandidate(
     accumCost(enr.costUsd);
     contact.phone = contact.phone ?? enr.phone;
     contact.linkedinUrl = contact.linkedinUrl ?? enr.linkedinUrl;
+    contact.title = contact.title ?? enr.title;
+    contact.summary = contact.summary ?? enr.summary;
+  }
+
+  // Person-level ICP gate. GitHub exposes no role (`extract.authorRole` is
+  // always null here), so the decision rests on the enriched title — which is
+  // free, since the call above already ran.
+  const gate = await qualifyPostEnrich({
+    icp: ctx.icp,
+    person: {
+      name: extract.authorFullName ?? contact.fullName,
+      company: extract.companyName,
+      evidence: `public repo using ${extract.stackDetected.join(", ") || "an agent stack"}`,
+    },
+    enrichedTitle: contact.title,
+    enrichedSummary: contact.summary,
+    linkedinUrl: contact.linkedinUrl,
+    fillGaps: ctx.qualifyFillGaps ?? true,
+    alreadyEnrichedByLinkedin: contact.enrichedByLinkedin,
+    playName,
+    errKindPrefix,
+  });
+  accumCost(gate.costUsd);
+  if (gate.action === "reject") {
+    result.droppedRole = (result.droppedRole ?? 0) + 1;
+    persistRoleRejection({
+      // The resolved play, not the module constant — a competitor-routed repo
+      // must audit under competitor-switch, or the override row lies.
+      playName,
+      dedupeKey: hit.url,
+      payload: { repoUrl: hit.url, title: hit.title },
+      source: ctx.sourceTag,
+      reason: gate.reason,
+      dryRun: ctx.dryRun,
+    });
+    return;
+  }
+  if (gate.action === "defer") {
+    // Classifier/platform outage — not a verdict. Same handling as any other
+    // platform error so the candidate is retried rather than blacklisted.
+    result.droppedEnrichment++;
+    return;
   }
 
   const stackLine = extract.stackDetected.join(", ");
@@ -276,9 +321,11 @@ export async function processRepoCandidate(
   const companyFallback = contact.domain ?? contact.email.split("@")[1] ?? "";
   const name = extract.authorFullName ?? contact.fullName ?? extract.githubHandle ?? "there";
   const company = extract.companyName ?? extract.githubHandle ?? companyFallback;
+  const gateTitle = gate.roleText ?? contact.title;
   const contactExtras = {
     ...(contact.linkedinUrl ? { linkedinUrl: contact.linkedinUrl } : {}),
     ...(contact.phone ? { phone: contact.phone } : {}),
+    ...(gateTitle ? { title: gateTitle } : {}),
     // Durable re-enrichment key. When today's LinkedIn lookup misses, a later
     // backfill can work from the GitHub profile rather than a bare name.
     ...(extract.githubHandle
@@ -324,6 +371,22 @@ export async function processRepoCandidate(
   else result.droppedDuplicate++;
 }
 
+/** Job title off a PersonResult, with the same is_primary fallback as _enrich. */
+function profileTitle(profile: unknown): string | null {
+  const p = profile as {
+    title?: string | null;
+    experience?: Array<{ title?: { name?: string | null } | null; is_primary?: boolean }> | null;
+  } | null;
+  const direct = typeof p?.title === "string" ? p.title.trim() : "";
+  if (direct.length > 0) return direct;
+  if (Array.isArray(p?.experience)) {
+    const primary = p.experience.find((e) => e?.is_primary) ?? p.experience[0];
+    const name = primary?.title?.name;
+    if (typeof name === "string" && name.trim().length > 0) return name.trim();
+  }
+  return null;
+}
+
 interface ResolvedContact {
   email: string;
   /** From findEmail; null when GitHub gave us the email directly. */
@@ -334,6 +397,15 @@ interface ResolvedContact {
   linkedinUrl: string | null;
   /** Surfaced via Path C deepResearch enrichment. */
   phone: string | null;
+  /** Job title, when any enrichment path surfaced one. Feeds the ICP gate. */
+  title: string | null;
+  /** Free-text bio/headline from post-verify enrichment. Secondary gate evidence. */
+  summary: string | null;
+  /**
+   * True when Path B' already ran enrichProfile against `linkedinUrl`. Lets the
+   * ICP gate skip a fill-the-gap lookup that would repeat that exact call.
+   */
+  enrichedByLinkedin: boolean;
 }
 
 /**
@@ -367,6 +439,9 @@ export async function resolveContact(args: {
   const playName = args.playName ?? PLAY_NAME;
   const extractDomain = extract.companyDomain ?? extract.personalDomain ?? null;
   let discoveredLinkedinUrl: string | null = null;
+  // True once Path B' has paid for an enrichProfile keyed by that URL, so the
+  // ICP gate never buys the same lookup a second time.
+  let didEnrichByLinkedin = false;
 
   // LinkedIn capture runs for EVERY candidate, ahead of the email paths.
   //
@@ -397,6 +472,9 @@ export async function resolveContact(args: {
     const direct = await tryFindEmail(extractDomain, extract, accumCost, errKindPrefix, playName);
     if (direct)
       return {
+        title: null,
+        summary: null,
+        enrichedByLinkedin: didEnrichByLinkedin,
         ...direct,
         domain: extractDomain,
         linkedinUrl: discoveredLinkedinUrl,
@@ -408,6 +486,9 @@ export async function resolveContact(args: {
   // Path B: GitHub user provides an email directly.
   if (ghUser?.email) {
     return {
+      title: null,
+      summary: null,
+      enrichedByLinkedin: didEnrichByLinkedin,
       email: ghUser.email,
       fullName: null,
       domain: ghUser.blogDomain ?? extractDomain,
@@ -433,6 +514,7 @@ export async function resolveContact(args: {
     const linkedinUrl = discoveredLinkedinUrl;
     try {
       const enriched = await enrichProfile({ linkedinUrl }, { playName });
+      didEnrichByLinkedin = true;
       accumCost(enriched.result.cost ?? 0);
       const profile = enriched.result.profile;
       // PersonResult exposes phone (string) AND fullphone (array) — extractFirstPhone
@@ -458,6 +540,9 @@ export async function resolveContact(args: {
       // 1) enrichProfile gave us a direct email — use it.
       if (profile?.email) {
         return {
+          title: profileTitle(profile),
+          summary: null,
+          enrichedByLinkedin: didEnrichByLinkedin,
           email: profile.email,
           fullName: profile.full_name ?? extract.authorFullName,
           domain: profile.company_domain ?? extractDomain,
@@ -476,6 +561,9 @@ export async function resolveContact(args: {
         );
         if (viaEnriched)
           return {
+            title: profileTitle(profile),
+            summary: null,
+            enrichedByLinkedin: didEnrichByLinkedin,
             ...viaEnriched,
             domain: profile.company_domain,
             linkedinUrl: discoveredLinkedinUrl,
@@ -536,6 +624,9 @@ export async function resolveContact(args: {
       null;
     const drPhone = extractFirstPhone(enr);
     return {
+      title: null,
+      summary: null,
+      enrichedByLinkedin: didEnrichByLinkedin,
       email: drEmail,
       fullName: drFullName,
       domain: domainForGate ?? ghUser?.blogDomain ?? drEmail.split("@")[1] ?? null,

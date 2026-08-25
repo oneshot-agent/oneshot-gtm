@@ -9,9 +9,9 @@ import {
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { LumaEventsTarget } from "@oneshot-gtm/plays";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
-import { resolveAndVerifyContact } from "./_contact.ts";
-import { enrichVerifiedContact } from "./_enrich.ts";
+import { resolveVerifyEnrichQualify } from "./_contact.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
+import { qualifyPreSpend } from "./_qualify.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
 import { persistPending, registerPendingRetry } from "./_pending.ts";
 import { fetchAuthedGuestList, mergeAttendees } from "./_luma-auth.ts";
@@ -151,6 +151,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
   droppedIcp: number;
   droppedDuplicate: number;
   droppedEnrichment: number;
+  droppedRole: number;
   enqueued: number;
   costUsd: number;
   halted?: string;
@@ -181,6 +182,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
     droppedIcp: 0,
     droppedDuplicate: 0,
     droppedEnrichment: 0,
+    droppedRole: 0,
     enqueued: 0,
     costUsd: 0,
     halted: undefined as string | undefined,
@@ -528,9 +530,45 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
       return;
     }
 
-    // No per-attendee ICP filter: the event cleared the event-level topic+ICP
-    // gate in Phase 2, so its public attendees are in-scope. Shared
-    // resolve→enqueue spine (also used by the outage retry handler).
+    // Person-level ICP gate, stage A — free, and before any spend.
+    //
+    // The event-level gate in Phase 2 proves the EVENT is on-topic; it says
+    // nothing about the attendee. An audit found 23% of enqueued Luma
+    // attendees were off-ICP — investors, marketers, designers, an events
+    // coordinator — because "attended an AI hackathon" is not a job.
+    //
+    // `attendeeBio` was already on the payload and used only for email copy.
+    // Judging it here rejects the clear misses (e.g. "GTM @AhaCreator")
+    // before findEmail + verify + enrich are paid for. Ambiguous bios and the
+    // ~31% with no bio fall through to stage B/C inside the spine.
+    const preSpend = await qualifyPreSpend({
+      icp,
+      person: {
+        name: work.attendee.name,
+        roleText: work.attendee.bio ?? work.attendee.role ?? null,
+        evidence: `attended ${work.event.title}`,
+      },
+    });
+    if (preSpend.action === "reject") {
+      result.droppedRole++;
+      // Persist an auditable rejected row so the founder can see and override
+      // the call — same pattern as the company-level ICP rejections.
+      try {
+        ledger.enqueueTarget({
+          playName: PLAY_NAME,
+          dedupeKey,
+          payload: { name: work.attendee.name, eventUrl: work.event.url },
+          source: SOURCE,
+          initialStatus: "rejected",
+          notes: `auto: role — ${preSpend.reason}`.slice(0, 300),
+        });
+      } catch {
+        // Audit row is best-effort; the drop itself already happened.
+      }
+      return;
+    }
+
+    // Shared resolve→enqueue spine (also used by the outage retry handler).
     const outcome = await resolveAndEnqueueLumaAttendee(
       work,
       yourEdge,
@@ -541,11 +579,32 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
       () => {
         result.enqueued++;
       },
+      {
+        icp,
+        fillGaps: opts.qualifyFillGaps ?? true,
+        onRoleReject: (reason) => {
+          // Auditable rejected row, same pattern as the company-level ICP
+          // rejections, so the founder can see and override the call.
+          try {
+            ledger.enqueueTarget({
+              playName: PLAY_NAME,
+              dedupeKey,
+              payload: { name: work.attendee.name, eventUrl: work.event.url },
+              source: SOURCE,
+              initialStatus: "rejected",
+              notes: `auto: role — ${reason}`.slice(0, 300),
+            });
+          } catch {
+            // Audit row is best-effort; the drop itself already happened.
+          }
+        },
+      },
     );
     if (outcome === "enqueued") {
       // counter already bumped synchronously via onEnqueued
     } else if (outcome === "capped") phase3Halted.value = true;
     else if (outcome === "duplicate") result.droppedDuplicate++;
+    else if (outcome === "role-rejected") result.droppedRole++;
     else if (outcome === "platform-error") {
       // Backend outage: the event ages out of "upcoming", so a re-scan can't
       // recover this attendee — persist for retry once the platform recovers.
@@ -594,7 +653,15 @@ async function resolveAndEnqueueLumaAttendee(
    *  re-check, enqueue, and this increment run with no await between them, so
    *  the queue cap is exact. Omitted on retry. */
   onEnqueued?: () => void,
-): Promise<"enqueued" | "duplicate" | "dropped" | "platform-error" | "capped"> {
+  /** Person-level ICP gate context. Omitted on retry -> gate runs pass-through. */
+  gate?: {
+    icp: string | null;
+    /** Allow the paid stage-C lookup when the free title is still ambiguous. */
+    fillGaps: boolean;
+    /** Called with the classifier's reason when the person is rejected. */
+    onRoleReject?: (reason: string) => void;
+  },
+): Promise<"enqueued" | "duplicate" | "dropped" | "platform-error" | "capped" | "role-rejected"> {
   const ledger = getLedger();
   const dedupeKey = `${work.event.url}#${work.attendee.name.toLowerCase()}`;
   try {
@@ -606,6 +673,7 @@ async function resolveAndEnqueueLumaAttendee(
       : null;
     let resolvedCompany: string | null = null;
     let surfacedEmail: string | null = null;
+    let profileTitle: string | null = null;
 
     if (resolvedLinkedinUrl) {
       try {
@@ -620,6 +688,8 @@ async function resolveAndEnqueueLumaAttendee(
         const profile = enr.result.profile;
         companyDomain = profile?.company_domain ?? null;
         resolvedCompany = profile?.company ?? null;
+        // Free title: this call is already paid for above.
+        profileTitle = typeof profile?.title === "string" ? profile.title.trim() : null;
         surfacedEmail = profile?.best_work_email ?? profile?.email ?? null;
         if (surfacedEmail) {
           try {
@@ -646,7 +716,11 @@ async function resolveAndEnqueueLumaAttendee(
       companyDomain = urlDomain(work.attendee.websiteUrl);
     }
 
-    const contact = await resolveAndVerifyContact({
+    // Contact resolution + enrichment + person-level ICP gate, in the spine
+    // shared by every enqueueing finder (see `_contact.ts`). Keeping the gate
+    // there rather than here is deliberate: it decides who gets emailed, so a
+    // finder that quietly skipped it would reintroduce the off-ICP problem.
+    const contact = await resolveVerifyEnrichQualify({
       playName: PLAY_NAME,
       fullName: work.attendee.name,
       knownEmail: surfacedEmail,
@@ -658,6 +732,18 @@ async function resolveAndEnqueueLumaAttendee(
         companyDomain,
         eventUrl: work.event.url,
       },
+      errKindPrefix: "luma-events",
+      icp: gate ? gate.icp : null,
+      person: {
+        name: work.attendee.name,
+        company: resolvedCompany,
+        roleText: work.attendee.bio ?? work.attendee.role ?? null,
+        evidence: `attended ${work.event.title}`,
+      },
+      // Free title from the LinkedIn-keyed enrichProfile above.
+      titleHint: profileTitle,
+      linkedinUrlHint: resolvedLinkedinUrl,
+      fillGaps: gate?.fillGaps ?? false,
     });
     costSink(contact.costUsd);
     if (!contact.ok) {
@@ -668,19 +754,17 @@ async function resolveAndEnqueueLumaAttendee(
           "info",
         );
       }
+      if (contact.reason === "role") {
+        gate?.onRoleReject?.(contact.detail ?? "off-ICP role");
+        return "role-rejected";
+      }
       if (contact.reason === "platform-error") return "platform-error";
       if (contact.reason === "duplicate") return "duplicate";
       return "dropped";
     }
     const email = contact.email;
-
-    const enr = await enrichVerifiedContact(email, {
-      playName: PLAY_NAME,
-      errKindPrefix: "luma-events",
-    });
-    costSink(enr.costUsd);
-    const phone = enr.phone;
-    let linkedinUrl: string | null = resolvedLinkedinUrl ?? enr.linkedinUrl;
+    const phone = contact.phone;
+    let linkedinUrl: string | null = resolvedLinkedinUrl ?? contact.linkedinUrl;
     if (!linkedinUrl) {
       linkedinUrl = await findLinkedInUrl({
         fullName: work.attendee.name,
@@ -706,6 +790,7 @@ async function resolveAndEnqueueLumaAttendee(
       yourEdge,
       ...(linkedinUrl ? { linkedinUrl } : {}),
       ...(phone ? { phone } : {}),
+      ...(contact.title ? { title: contact.title } : {}),
       ...(work.attendee.profileUrl ? { sourceProfileUrl: work.attendee.profileUrl } : {}),
     };
     // Synchronous cap re-check right before enqueue — no await between here and
@@ -740,9 +825,38 @@ async function resolveAndEnqueueLumaAttendee(
 }
 
 // Outage retry: re-run the resolve→enqueue spine for a persisted attendee.
+// The gate context is rebuilt from config rather than persisted with the row:
+// a retry fired days later should be judged against the CURRENT ICP, and an
+// attendee that queued before a gate recalibration must not dodge it.
 registerPendingRetry(PLAY_NAME, async (raw) => {
   const { work, yourEdge } = raw as { work: AttendeeWithEvent; yourEdge: string };
-  const outcome = await resolveAndEnqueueLumaAttendee(work, yourEdge, () => {});
+  const ledger = getLedger();
+  const dedupeKey = `${work.event.url}#${work.attendee.name.toLowerCase()}`;
+  const outcome = await resolveAndEnqueueLumaAttendee(
+    work,
+    yourEdge,
+    () => {},
+    undefined,
+    undefined,
+    {
+      icp: resolveIcp(),
+      fillGaps: true,
+      onRoleReject: (reason) => {
+        try {
+          ledger.enqueueTarget({
+            playName: PLAY_NAME,
+            dedupeKey,
+            payload: { name: work.attendee.name, eventUrl: work.event.url },
+            source: SOURCE,
+            initialStatus: "rejected",
+            notes: `auto: role — ${reason}`.slice(0, 300),
+          });
+        } catch {
+          // audit row is best-effort
+        }
+      },
+    },
+  );
   return outcome === "enqueued"
     ? "enqueued"
     : outcome === "platform-error"

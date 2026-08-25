@@ -179,7 +179,15 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           to: def.toEmail(target),
           draft,
           flags,
-          prospectMeta: def.prospectMeta(target),
+          prospectMeta: {
+            ...def.prospectMeta(target),
+            // Read generically (mirrors the /queue route's prospectMeta): any
+            // finder that stamps `title` on its target payload gets it
+            // persisted without each play def naming the field.
+            ...(typeof (target as { title?: unknown }).title === "string"
+              ? { title: (target as { title: string }).title }
+              : {}),
+          },
           ...(def.metadata ? { metadata: def.metadata(target) } : {}),
           dryRun: opts.dryRun,
         });

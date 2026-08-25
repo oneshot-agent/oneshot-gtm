@@ -20,6 +20,7 @@ interface EnqueuedRow {
 
 const enqueued: EnqueuedRow[] = [];
 let icpMatch = true;
+let personVerdict: "pass" | "reject" | "unclear" | "transient" = "pass";
 let webSearchResults: Array<{ url: string; title: string; description: string }> = [];
 let webReadMarkdownByUrl: Record<string, string> = {};
 let webReadThrowsForUrl: Set<string> = new Set();
@@ -78,11 +79,23 @@ vi.mock("../src/_luma-discover.ts", () => ({
 vi.mock("../src/_filter.ts", () => ({
   resolveIcp: () => "icp",
   icpFilter: async () => ({ match: icpMatch, reason: icpMatch ? "fits" : "nope" }),
+  // Person-level gate. These tests cover discovery/contact plumbing, not
+  // qualification, so the classifier passes everyone; `_qualify.ts` staging
+  // itself stays REAL here and is covered by qualify-staging.test.ts.
+  hasRoleText: (p: { roleText?: string | null }) => (p.roleText ?? "").trim().length > 0,
+  qualifyPerson: async () => ({ verdict: personVerdict, reason: "stub" }),
 }));
 vi.mock("../src/_enrich.ts", () => ({
   enrichVerifiedContact: async () => {
     sdkCalls.enrichVerifiedContact++;
-    return { phone: "+15555550100", linkedinUrl: null, costUsd: 0.005, receiptId: 1 };
+    return {
+      phone: "+15555550100",
+      linkedinUrl: null,
+      title: null,
+      summary: null,
+      costUsd: 0.005,
+      receiptId: 1,
+    };
   },
 }));
 vi.mock("../src/_dedupe.ts", async () => {
@@ -186,6 +199,7 @@ beforeEach(() => {
   delete process.env["LUMA_SESSION_COOKIE"];
   enqueued.length = 0;
   icpMatch = true;
+  personVerdict = "pass";
   webSearchResults = [];
   webReadMarkdownByUrl = {};
   webReadThrowsForUrl = new Set();
@@ -714,5 +728,81 @@ describe("runLumaFinder — auth mode (LUMA_SESSION_COOKIE)", () => {
     const out = await runLumaFinder(baseConfig);
     // Public: Alice + Bob. Auth'd: Alice + Carol. Merged unique: Alice + Bob + Carol = 3.
     expect(out.enqueued).toBe(3);
+  });
+});
+
+describe("runLumaFinder — person-level ICP gate", () => {
+  /** Two attendees, both carrying a bio — stage A can judge without spending. */
+  const withBios = [
+    {
+      name: "Alice",
+      profileUrl: null,
+      websiteUrl: "https://alice.dev",
+      linkedinUrl: null,
+      twitterUrl: null,
+      bio: "GTM @AhaCreator",
+      role: "Guest",
+    },
+    {
+      name: "Dave",
+      profileUrl: null,
+      websiteUrl: "https://dave.dev",
+      linkedinUrl: null,
+      twitterUrl: null,
+      bio: "Head of Growth",
+      role: "Guest",
+    },
+  ];
+  /** Two attendees with no bio at all — ~31% of real Luma candidates. */
+  const withoutBios = withBios.map((a) => ({ ...a, bio: null, role: null }));
+
+  it("rejects on the attendee bio at stage A, before paying for anything", async () => {
+    // The point of stage A: the bio is already on the payload, so a clear miss
+    // costs $0 to drop — no findEmail, no verify, no enrich.
+    personVerdict = "reject";
+    event("https://luma.com/abc", { publicAttendees: withBios });
+    const out = await runLumaFinder(baseConfig);
+
+    expect(out.droppedRole).toBe(2);
+    expect(out.enqueued).toBe(0);
+    expect(sdkCalls.findEmail).toBe(0);
+    expect(sdkCalls.verifyEmail).toBe(0);
+    expect(sdkCalls.enrichVerifiedContact).toBe(0);
+  });
+
+  it("persists an auditable rejected row so the founder can override the call", async () => {
+    personVerdict = "reject";
+    event("https://luma.com/abc", { publicAttendees: withBios });
+    await runLumaFinder(baseConfig);
+
+    expect(enqueued).toHaveLength(2);
+    for (const row of enqueued) {
+      expect(row.initialStatus).toBe("rejected");
+      expect(row.notes).toMatch(/^auto: role — /);
+    }
+  });
+
+  it("does NOT reject at stage A when the attendee has no bio — it escalates", async () => {
+    // Missing data must take the same path as ambiguous data. Treating a blank
+    // bio as a rejection would silently drop a third of every Luma event.
+    personVerdict = "reject";
+    event("https://luma.com/abc", { publicAttendees: withoutBios });
+    const out = await runLumaFinder(baseConfig);
+
+    // Stage A could not judge, so contact resolution ran and the rejection
+    // happened later, at the post-enrich stage.
+    expect(sdkCalls.findEmail).toBe(2);
+    expect(sdkCalls.enrichVerifiedContact).toBe(2);
+    expect(out.droppedRole).toBe(2);
+    expect(out.enqueued).toBe(0);
+  });
+
+  it("enqueues normally when the person passes", async () => {
+    personVerdict = "pass";
+    event("https://luma.com/abc", { publicAttendees: withBios });
+    const out = await runLumaFinder(baseConfig);
+
+    expect(out.droppedRole).toBe(0);
+    expect(out.enqueued).toBe(2);
   });
 });

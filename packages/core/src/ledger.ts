@@ -296,6 +296,18 @@ export class Ledger {
     // re-enrichment key. Keeping the source URL separately means a later
     // LinkedIn lookup has a strong identifier instead of just a name.
     this.addColumnIfMissing("prospects", "source_profile_url", "TEXT");
+    // v18 (2026-08): job title at contact time, captured by the person-level
+    // ICP gate (packages/find/src/_qualify.ts). Persisted so (a) re-runs judge
+    // for free, and (b) the off-ICP audit can score history without re-buying
+    // enrichment. NULL on rows contacted before the gate existed.
+    this.addColumnIfMissing("prospects", "title", "TEXT");
+    // v18 (2026-08): person-level ICP verdict ('pass' | 'reject', NULL =
+    // unjudged) + the classifier's one-line reason. Written by the finder gate
+    // for new prospects and by the history audit for existing ones. The
+    // cadence step runner refuses to send follow-ups to 'reject' rows — the
+    // gate must be code-level, not prompt-level.
+    this.addColumnIfMissing("prospects", "icp_verdict", "TEXT");
+    this.addColumnIfMissing("prospects", "icp_verdict_reason", "TEXT");
     // v5 (2026-04): persist trigger run-state so a server restart doesn't
     // strand fire-and-forget runs as silent stale rows. See
     // sweepStaleRunningTriggers + fireTriggerNow.
@@ -582,7 +594,14 @@ export class Ledger {
     }
     const cols = this.db.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
     if (cols.some((c) => c.name === column)) return;
-    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+    try {
+      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+    } catch (err) {
+      // Two connections can both see the column as missing (check-then-alter
+      // is unlocked); the loser's ALTER must not abort Ledger construction.
+      // Same tolerance as SharedDb.migrate.
+      if (!/duplicate column/i.test((err as Error).message ?? "")) throw err;
+    }
   }
 
   enrollCadence(input: { prospectId: number; playName: string; nextDueAt: string }): void {
@@ -696,7 +715,7 @@ export class Ledger {
   setCadenceStatus(input: {
     prospectId: number;
     playName: string;
-    status: "active" | "replied" | "breakup" | "completed" | "bounced";
+    status: "active" | "replied" | "breakup" | "completed" | "bounced" | "off-icp";
   }): void {
     // Non-active terminal states clear the persisted draft AND any send
     // marker — a replied / breakup / completed / bounced cadence shouldn't have
@@ -1414,8 +1433,8 @@ export class Ledger {
     }
     const stmt = this.db.prepare(`
       INSERT INTO prospects(name, email, phone, company, linkedin_url, dossier_json, source,
-                            source_profile_url)
-      VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+                            source_profile_url, title)
+      VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
       input.name ?? null,
@@ -1426,6 +1445,7 @@ export class Ledger {
       input.dossier_json ?? null,
       input.source ?? null,
       input.source_profile_url ?? null,
+      input.title ?? null,
     );
     return Number(result.lastInsertRowid);
   }
@@ -1451,9 +1471,10 @@ export class Ledger {
       phone?: string | null;
       company?: string | null;
       source_profile_url?: string | null;
+      title?: string | null;
     },
   ): boolean {
-    const cols = ["linkedin_url", "phone", "company", "source_profile_url"] as const;
+    const cols = ["linkedin_url", "phone", "company", "source_profile_url", "title"] as const;
     const set: string[] = [];
     const blank: string[] = [];
     const args: Array<string | number> = [];
@@ -1477,6 +1498,17 @@ export class Ledger {
       .prepare(`UPDATE prospects SET ${set.join(", ")} WHERE id = ? AND (${blank.join(" OR ")})`)
       .run(...(args as never[]));
     return Number(result.changes) > 0;
+  }
+
+  /**
+   * Record the person-level ICP verdict for a prospect. Overwrites — a
+   * re-audit with better data (a real title instead of a stale event bio)
+   * must be able to flip an earlier call in either direction.
+   */
+  setProspectIcpVerdict(id: number, verdict: "pass" | "reject", reason?: string | null): void {
+    this.db
+      .prepare("UPDATE prospects SET icp_verdict = ?, icp_verdict_reason = ? WHERE id = ?")
+      .run(verdict, reason ?? null, id);
   }
 
   /**

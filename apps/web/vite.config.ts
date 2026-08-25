@@ -17,7 +17,10 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:3030",
+        // The CLI sets ONESHOT_GTM_API_PORT to the workspace's server port —
+        // a hardcoded 3030 would silently proxy a named workspace's dev UI to
+        // the DEFAULT workspace's API (wrong ledger, lying workspace badge).
+        target: `http://127.0.0.1:${process.env["ONESHOT_GTM_API_PORT"] ?? "3030"}`,
         changeOrigin: true,
       },
     },

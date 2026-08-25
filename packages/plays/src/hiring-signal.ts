@@ -1,5 +1,6 @@
 import { webRead, webSearch } from "@oneshot-gtm/core";
 import { type EmailPlayDef, runEmailPlay } from "./_run-play.ts";
+import { hiringSignalMetadata } from "./_metadata.ts";
 import { buildFollowUpEmail, registerSequence } from "./_cadence.ts";
 
 const PLAY_NAME = "hiring-signal";
@@ -17,6 +18,8 @@ export interface HiringSignalTarget {
   yourClaim: string;
   linkedinUrl?: string;
   phone?: string;
+  /** Job title from the person-level ICP gate — persisted to prospects.title. */
+  title?: string;
 }
 
 export interface HiringSignalRunOptions {
@@ -104,7 +107,7 @@ export function runHiringSignal(
       phone: t.phone ?? null,
       source: "hiring-signal",
     }),
-    metadata: (t) => ({ jobTitle: t.jobTitle, jobPostUrl: t.jobPostUrl ?? null }),
+    metadata: hiringSignalMetadata,
   };
 
   return runEmailPlay(def, opts);

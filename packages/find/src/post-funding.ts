@@ -1,11 +1,11 @@
 import { getLedger, logEvent, webRead, webSearch } from "@oneshot-gtm/core";
-import { resolveAndVerifyContact } from "./_contact.ts";
+import { resolveVerifyEnrichQualify } from "./_contact.ts";
+import { persistRoleRejection, qualifyPreSpend } from "./_qualify.ts";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { PostFundingTarget } from "@oneshot-gtm/plays";
 import { readFileSync } from "node:fs";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { isDuplicate } from "./_dedupe.ts";
-import { enrichVerifiedContact } from "./_enrich.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
 import type { FinderResult, PostFundingExtract, RunOpts } from "./_types.ts";
 
@@ -154,26 +154,69 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
     }
 
     // Resolve + verify the founder's email (prescreen → findEmail → dedupe → verify).
-    const contact = await resolveAndVerifyContact({
+    // Stage A: judge the extracted role BEFORE paying for findEmail +
+    // verify + enrich — a clearly off-ICP founderRole must not consume
+    // the run's cost budget and crowd out valid candidates behind it.
+    const preSpend = await qualifyPreSpend({
+      icp,
+      person: {
+        name: extract.founderName,
+        company: extract.company,
+        roleText: extract.founderRole,
+        evidence: `raised ${extract.round ?? "a round"}`,
+      },
+    });
+    if (preSpend.action === "reject") {
+      result.droppedRole = (result.droppedRole ?? 0) + 1;
+      persistRoleRejection({
+        playName: PLAY_NAME,
+        dedupeKey: url,
+        payload: { name: extract.founderName },
+        source: SOURCE,
+        reason: preSpend.reason,
+        dryRun: opts.dryRun,
+      });
+      continue;
+    }
+
+    const contact = await resolveVerifyEnrichQualify({
       playName: PLAY_NAME,
       fullName: extract.founderName,
       companyDomain: extract.companyDomain,
       isDuplicate: (email) =>
         isDuplicate({ playName: PLAY_NAME, dedupeKey: url, prospectEmail: email }),
+      icp,
+      person: {
+        name: extract.founderName,
+        company: extract.company,
+        roleText: extract.founderRole,
+        evidence: `raised ${extract.round ?? "a round"}`,
+      },
+      // Stage-C target when email enrichment surfaces no LinkedIn: the page
+      // extract often carries one, and without it an off-ICP person slides
+      // through as `unclear` instead of being judged on a bought title.
+      linkedinUrlHint: isLinkedInProfileUrl(extract.linkedinUrl) ? extract.linkedinUrl : null,
+      fillGaps: opts.qualifyFillGaps ?? true,
     });
     result.costUsd += contact.costUsd;
     if (!contact.ok) {
       if (contact.reason === "duplicate") result.droppedDuplicate++;
-      else result.droppedEnrichment++;
+      else if (contact.reason === "role") {
+        result.droppedRole = (result.droppedRole ?? 0) + 1;
+        persistRoleRejection({
+          playName: PLAY_NAME,
+          dedupeKey: url,
+          payload: { name: extract.founderName },
+          source: SOURCE,
+          reason: contact.detail ?? "off-ICP role",
+          dryRun: opts.dryRun,
+        });
+      } else result.droppedEnrichment++;
       continue;
     }
     const email = contact.email;
 
-    const enr = await enrichVerifiedContact(email, {
-      playName: PLAY_NAME,
-      errKindPrefix: "post-funding",
-    });
-    result.costUsd += enr.costUsd;
+    const enr = { phone: contact.phone, linkedinUrl: contact.linkedinUrl };
     // Priority mirrors LinkedIn chain: page-specific extract beats generic
     // enrichment lookup when both are set.
     const phone = (extract.phone || null) ?? enr.phone;
@@ -202,6 +245,7 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
       ...(extract.leadInvestor ? { leadInvestor: extract.leadInvestor } : {}),
       ...(linkedinUrl ? { linkedinUrl } : {}),
       ...(phone ? { phone } : {}),
+      ...(contact.title ? { title: contact.title } : {}),
     };
     const id = ledger.enqueueTarget({
       playName: PLAY_NAME,

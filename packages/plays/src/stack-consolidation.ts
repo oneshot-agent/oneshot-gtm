@@ -1,5 +1,6 @@
 import { emailDomain } from "./_lib.ts";
 import { type EmailPlayDef, runEmailPlay, standardEnrich } from "./_run-play.ts";
+import { stackConsolidationMetadata } from "./_metadata.ts";
 import { buildFollowUpEmail, registerSequence } from "./_cadence.ts";
 
 const PLAY_NAME = "stack-consolidation";
@@ -19,6 +20,8 @@ export interface StackConsolidationTarget {
   /** Profile URL this candidate was sourced from (GitHub). Persisted to the
    *  prospect row as a re-enrichment key. */
   sourceProfileUrl?: string;
+  /** Job title from the person-level ICP gate — persisted to prospects.title. */
+  title?: string;
 }
 
 export interface StackConsolidationRunOptions {
@@ -76,7 +79,7 @@ const stackConsolidationDef: EmailPlayDef<StackConsolidationTarget> = {
     source: "stack-consolidation",
     source_profile_url: t.sourceProfileUrl ?? null,
   }),
-  metadata: (t) => ({ vendorStack: t.vendorStack, evidenceUrl: t.evidenceUrl ?? null }),
+  metadata: stackConsolidationMetadata,
 };
 
 export function runStackConsolidation(

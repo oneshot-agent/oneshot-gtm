@@ -23,6 +23,7 @@ import { deriveBriefRoute } from "./api/derive-brief.ts";
 import { deriveIcpRoute } from "./api/derive-icp.ts";
 import { strategistRoute } from "./api/strategist.ts";
 import { doctor } from "./api/doctor.ts";
+import { workspaceInfo, workspaceLaunch } from "./api/workspace.ts";
 import { pauseDomainRoute, resumeDomainRoute } from "./api/domains.ts";
 import { runPlay } from "./api/run.ts";
 import { getRunRoute } from "./api/runs.ts";
@@ -100,6 +101,8 @@ const routes: RouteEntry[] = [
   route("POST", "/api/setup/derive-brief", deriveBriefRoute),
   route("POST", "/api/strategist/stream", strategistRoute),
   route("GET", "/api/doctor", doctor),
+  route("GET", "/api/workspace", workspaceInfo),
+  route("POST", "/api/workspace/launch", workspaceLaunch),
   route("POST", "/api/run/:playName", runPlay),
   route("GET", "/api/runs/:id", getRunRoute),
   route("POST", "/api/prospects/add", addProspectRoute),

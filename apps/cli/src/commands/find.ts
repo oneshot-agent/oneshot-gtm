@@ -65,7 +65,7 @@ export async function commandFindWatch(opts: { once: boolean; quiet: boolean }):
 
 function printSummaryLine(name: string, r: FinderResult): void {
   ok(
-    `${name}: candidates=${r.candidates} kept=${r.enqueued} icp-dropped=${r.droppedIcp} dup=${r.droppedDuplicate} enrich-failed=${r.droppedEnrichment} cost=$${r.costUsd.toFixed(2)}${r.halted ? ` (halted: ${r.halted})` : ""}`,
+    `${name}: candidates=${r.candidates} kept=${r.enqueued} icp-dropped=${r.droppedIcp} role-dropped=${r.droppedRole ?? 0} dup=${r.droppedDuplicate} enrich-failed=${r.droppedEnrichment} cost=$${r.costUsd.toFixed(2)}${r.halted ? ` (halted: ${r.halted})` : ""}`,
   );
 }
 

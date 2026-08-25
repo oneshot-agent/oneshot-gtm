@@ -1,5 +1,6 @@
 import { emailDomain } from "./_lib.ts";
 import { type EmailPlayDef, runEmailPlay, standardEnrich } from "./_run-play.ts";
+import { lumaEventsMetadata } from "./_metadata.ts";
 
 const PLAY_NAME = "luma-events";
 
@@ -87,6 +88,8 @@ export interface LumaEventsTarget {
   phone?: string;
   /** The attendee's Luma profile URL. Persisted as a re-enrichment key. */
   sourceProfileUrl?: string;
+  /** Job title from the person-level ICP gate — persisted to prospects.title. */
+  title?: string;
 }
 
 export interface LumaEventsRunOptions {
@@ -169,7 +172,7 @@ const lumaEventsDef: EmailPlayDef<LumaEventsTarget> = {
     source: "luma-events",
     source_profile_url: t.sourceProfileUrl ?? null,
   }),
-  metadata: (t) => ({ eventTitle: t.eventTitle, eventUrl: t.eventUrl, eventDate: t.eventDate }),
+  metadata: lumaEventsMetadata,
 };
 
 export function runLumaEvents(opts: LumaEventsRunOptions): Promise<{ drafted: LumaEventsDraft[] }> {

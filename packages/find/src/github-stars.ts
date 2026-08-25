@@ -1,8 +1,8 @@
 import { getLedger, logEvent, parallelMap } from "@oneshot-gtm/core";
 import type { CompetitorSwitchTarget, RepoInterestTarget } from "@oneshot-gtm/plays";
-import { resolveAndVerifyContact } from "./_contact.ts";
+import { resolveVerifyEnrichQualify } from "./_contact.ts";
+import { persistRoleRejection } from "./_qualify.ts";
 import { isDuplicate } from "./_dedupe.ts";
-import { enrichVerifiedContact } from "./_enrich.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { fetchGitHubUser, fetchTopRepos } from "./_github-user.ts";
 import { findLinkedInUrl } from "./_linkedin.ts";
@@ -206,26 +206,40 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
 
     // Resolve + verify an email: public profile email first, else findEmail via
     // the blog domain (gated by the prescreen). No domain + no public email → drop.
-    const contact = await resolveAndVerifyContact({
+    const contact = await resolveVerifyEnrichQualify({
       playName: PLAY_NAME,
       fullName,
       knownEmail: user.email,
       companyDomain: user.blogDomain,
       isDuplicate: (email) => isDuplicate({ playName, dedupeKey, prospectEmail: email }),
+      icp,
+      // GitHub's user API carries no title, so stage A has nothing to judge —
+      // the gate decides on the enriched title (stage B), which is free.
+      person: {
+        name: fullName,
+        company: user.company?.trim() ?? null,
+        evidence: `starred ${c.repo}`,
+      },
+      fillGaps: opts.qualifyFillGaps ?? true,
     });
     result.costUsd += contact.costUsd;
     if (!contact.ok) {
       if (contact.reason === "duplicate") result.droppedDuplicate++;
-      else result.droppedEnrichment++;
+      else if (contact.reason === "role") {
+        result.droppedRole = (result.droppedRole ?? 0) + 1;
+        persistRoleRejection({
+          playName,
+          dedupeKey,
+          payload: { name: fullName, company: user.company ?? "", repo: c.repo },
+          source: sourceFor(c.repo),
+          reason: contact.detail ?? "off-ICP role",
+          dryRun: opts.dryRun,
+        });
+      } else result.droppedEnrichment++;
       return;
     }
     const email = contact.email;
-
-    const enr = await enrichVerifiedContact(email, {
-      playName: PLAY_NAME,
-      errKindPrefix: PLAY_NAME,
-    });
-    result.costUsd += enr.costUsd;
+    const enr = { phone: contact.phone, linkedinUrl: contact.linkedinUrl };
 
     const company = user.company?.trim() || "(unknown)";
     const repoUrl = `https://github.com/${c.repo}`;
@@ -252,6 +266,7 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
     const contactExtras = {
       ...(linkedinUrl ? { linkedinUrl } : {}),
       ...(enr.phone ? { phone: enr.phone } : {}),
+      ...(contact.title ? { title: contact.title } : {}),
       sourceProfileUrl: profileUrl,
     };
 

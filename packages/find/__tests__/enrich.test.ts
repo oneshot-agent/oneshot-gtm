@@ -235,7 +235,14 @@ describe("enrichVerifiedContact — negative caching", () => {
     throwOnNextCall = true;
     nextThrowMessage = "no profile data for this person";
     const r = await enrichVerifiedContact("boom@x.dev", { playName: "show-hn" });
-    expect(r).toEqual({ phone: null, linkedinUrl: null, costUsd: 0, receiptId: null });
+    expect(r).toEqual({
+      phone: null,
+      linkedinUrl: null,
+      title: null,
+      summary: null,
+      costUsd: 0,
+      receiptId: null,
+    });
     expect(cache.failureCalls).toEqual([
       { key: "boom@x.dev", message: "no profile data for this person" },
     ]);
@@ -246,7 +253,14 @@ describe("enrichVerifiedContact — negative caching", () => {
     throwOnNextCall = true;
     nextThrowMessage = "Job failed: Tool execution failed. (ref: abc)";
     const r = await enrichVerifiedContact("outage@x.dev", { playName: "show-hn" });
-    expect(r).toEqual({ phone: null, linkedinUrl: null, costUsd: 0, receiptId: null });
+    expect(r).toEqual({
+      phone: null,
+      linkedinUrl: null,
+      title: null,
+      summary: null,
+      costUsd: 0,
+      receiptId: null,
+    });
     expect(cache.failureCalls).toHaveLength(0); // NOT poisoned
     // Next call (platform recovered) re-attempts — nothing suppressing it.
     nextProfile = { phone: "+1 555-2222" };
@@ -262,7 +276,14 @@ describe("enrichVerifiedContact — negative caching", () => {
     };
     const r = await enrichVerifiedContact("boom@x.dev", { playName: "show-hn" });
     expect(calls.enrichProfile).toBe(0);
-    expect(r).toEqual({ phone: null, linkedinUrl: null, costUsd: 0, receiptId: null });
+    expect(r).toEqual({
+      phone: null,
+      linkedinUrl: null,
+      title: null,
+      summary: null,
+      costUsd: 0,
+      receiptId: null,
+    });
   });
 
   it("an expired failed entry retries the SDK", async () => {

@@ -663,9 +663,12 @@ describe("repo pipeline — Path B' (linkedin discovery via webSearch + enrichPr
     };
     await runGitHubTopicsFinder(baseOpts);
     // LinkedIn lookup runs for every candidate; Path B's enrichProfile does not
-    // (company known), so post-verify enrichProfile is the only one.
+    // (company known), so post-verify enrichProfile is one call. The second is
+    // the ICP gate's fill-the-gap lookup: the mocked profile carries no title,
+    // so the gate cannot judge the person and buys one against the LinkedIn URL
+    // it just discovered (a URL nothing has enriched yet, so not a repeat).
     expect(calls2.webSearch).toBe(1);
-    expect(calls2.enrichProfile).toBe(1);
+    expect(calls2.enrichProfile).toBe(2);
     expect(calls.enqueued[0]?.["payload"]).toMatchObject({
       email: "ada@acme.dev",
       phone: "+15553334444",

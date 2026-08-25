@@ -13,9 +13,59 @@ import { extractFirstPhone, isLinkedInProfileUrl } from "./_linkedin.ts";
 export interface EnrichedContact {
   phone: string | null;
   linkedinUrl: string | null;
+  /**
+   * The person's job title, off the same `PersonResult` that already carries
+   * phone + linkedin. Feeds the person-level ICP gate in `_filter.ts`.
+   */
+  title: string | null;
+  /** Free-text bio/headline from the same profile. Secondary role evidence. */
+  summary: string | null;
   costUsd: number;
   receiptId: number | null;
 }
+
+interface RoleFields {
+  title: string | null;
+  summary: string | null;
+}
+
+/**
+ * Read the person's role off a `PersonResult`.
+ *
+ * `title` is the primary field; when the SDK omits it, fall back to the
+ * current (`is_primary`) experience entry, which carries the same string in a
+ * different shape. Both fields ride on every enrichProfile response we already
+ * pay for — reading them costs nothing extra.
+ */
+function readRole(profile: unknown): RoleFields {
+  const p = profile as {
+    title?: string | null;
+    summary?: string | null;
+    experience?: Array<{ title?: { name?: string | null } | null; is_primary?: boolean }> | null;
+  } | null;
+  if (!p) return { title: null, summary: null };
+
+  const direct = typeof p.title === "string" ? p.title.trim() : "";
+  let title = direct.length > 0 ? direct : null;
+  if (!title && Array.isArray(p.experience)) {
+    const primary = p.experience.find((e) => e?.is_primary) ?? p.experience[0];
+    const name = primary?.title?.name;
+    if (typeof name === "string" && name.trim().length > 0) title = name.trim();
+  }
+
+  const summary = typeof p.summary === "string" ? p.summary.trim() : "";
+  return { title, summary: summary.length > 0 ? summary : null };
+}
+
+/** Enrichment produced nothing usable — every field absent, no spend. */
+const EMPTY_ENRICHMENT: EnrichedContact = {
+  phone: null,
+  linkedinUrl: null,
+  title: null,
+  summary: null,
+  costUsd: 0,
+  receiptId: null,
+};
 
 /**
  * Always-on post-verify enrichment. Called by every enqueueing finder
@@ -55,7 +105,7 @@ export async function enrichVerifiedContact(
       cached?.status === "failed" &&
       Date.now() - new Date(cached.fetched_at).getTime() < ENRICH_FAILURE_TTL_MS
     ) {
-      return { phone: null, linkedinUrl: null, costUsd: 0, receiptId: null };
+      return { ...EMPTY_ENRICHMENT };
     }
     if (
       cached &&
@@ -69,9 +119,15 @@ export async function enrichVerifiedContact(
         const profile = cachedResult.profile ?? null;
         const linkedinRaw =
           (profile as { linkedin_url?: string | null } | null)?.linkedin_url ?? null;
+        const role = readRole(profile);
         return {
           phone: extractFirstPhone(profile),
           linkedinUrl: isLinkedInProfileUrl(linkedinRaw) ? linkedinRaw : null,
+          // The cache stores the whole EnrichProfileResult, so the title is
+          // already sitting here for every previously-enriched email — the
+          // gate gets it for free on a re-run.
+          title: role.title,
+          summary: role.summary,
           // Cache hit: no new SDK call, so no new spend and no new receipt
           // attributed to this call. The original receipt is still on file
           // from whatever finder first paid for the enrichment.
@@ -115,9 +171,12 @@ export async function enrichVerifiedContact(
     const enriched = await withDeadline(live, ENRICH_DEADLINE_MS, "enrichProfile");
     const profile = enriched.result.profile;
     const linkedinRaw = profile?.linkedin_url ?? null;
+    const role = readRole(profile);
     return {
       phone: extractFirstPhone(profile),
       linkedinUrl: isLinkedInProfileUrl(linkedinRaw) ? linkedinRaw : null,
+      title: role.title,
+      summary: role.summary,
       costUsd: enriched.result.cost ?? 0,
       receiptId: enriched.receiptId,
     };
@@ -141,6 +200,6 @@ export async function enrichVerifiedContact(
         // cache write is best-effort
       }
     }
-    return { phone: null, linkedinUrl: null, costUsd: 0, receiptId: null };
+    return { ...EMPTY_ENRICHMENT };
   }
 }

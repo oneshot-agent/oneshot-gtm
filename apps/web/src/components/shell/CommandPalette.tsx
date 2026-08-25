@@ -3,6 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { Command } from "cmdk";
 import {
   Activity,
+  ArrowUpRight,
   BarChart3,
   Check,
   Copy,
@@ -18,6 +19,7 @@ import {
 import { useEffect } from "react";
 import { toast } from "sonner";
 import { api } from "../../api/client.ts";
+import { openWorkspace } from "../../lib/openWorkspace.ts";
 import { usePrivacy } from "../../lib/privacy.tsx";
 
 type NavTarget = "/" | "/queue" | "/cadences" | "/receipts" | "/measure" | "/plays" | "/setup";
@@ -48,6 +50,12 @@ export function CommandPalette({
     queryFn: api.plays,
     enabled: open,
     staleTime: 60_000,
+  });
+  const workspaces = useQuery({
+    queryKey: ["workspace"],
+    queryFn: api.workspace,
+    enabled: open,
+    staleTime: 30_000,
   });
 
   const runTrigger = useMutation({
@@ -133,6 +141,28 @@ export function CommandPalette({
             <Check size={14} /> Approve all pending
           </Command.Item>
         </Command.Group>
+
+        {(workspaces.data?.workspaces.filter((w) => !w.isCurrent) ?? []).length > 0 && (
+          <Command.Group heading="Workspaces">
+            {workspaces
+              .data!.workspaces.filter((w) => !w.isCurrent)
+              .map((w) => (
+                <Command.Item
+                  key={w.name}
+                  value={`workspace switch open ${w.name}`}
+                  onSelect={act(() => {
+                    // Shared gesture-safe open/auto-start flow — the same one
+                    // the sidebar switcher uses, so both entry points behave
+                    // identically (this one used to launch and never open).
+                    void openWorkspace(w);
+                  })}
+                >
+                  <ArrowUpRight size={14} /> Open workspace {w.name}
+                  <kbd className="ml-auto">:{w.port}</kbd>
+                </Command.Item>
+              ))}
+          </Command.Group>
+        )}
 
         <Command.Group heading="View">
           <Command.Item

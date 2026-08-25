@@ -1,9 +1,9 @@
 import { getLedger, logEvent, webRead } from "@oneshot-gtm/core";
-import { resolveAndVerifyContact } from "./_contact.ts";
+import { resolveVerifyEnrichQualify } from "./_contact.ts";
+import { persistRoleRejection } from "./_qualify.ts";
 import type { ShowHnTarget } from "@oneshot-gtm/plays";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
-import { enrichVerifiedContact } from "./_enrich.ts";
 import { findLinkedInUrl } from "./_linkedin.ts";
 import { parallelMap } from "./_parallel.ts";
 import { persistPending, registerPendingRetry } from "./_pending.ts";
@@ -138,11 +138,30 @@ export async function runShowHnFinder(opts: ShowHnFinderOpts): Promise<FinderRes
     }
 
     // Shared resolve→enqueue spine (also used by the pending-retry handler).
-    const outcome = await resolveAndEnqueueShowHn(hit, filter.reason, (c) => {
-      result.costUsd += c;
-    });
+    const outcome = await resolveAndEnqueueShowHn(
+      hit,
+      filter.reason,
+      (c) => {
+        result.costUsd += c;
+      },
+      {
+        icp,
+        fillGaps: opts.qualifyFillGaps ?? true,
+        onRoleReject: (reason) => {
+          persistRoleRejection({
+            playName: PLAY_NAME,
+            dedupeKey: hit.objectID,
+            payload: { name: hit.author, postTitle: hit.title },
+            source: SOURCE,
+            reason,
+            dryRun: opts.dryRun,
+          });
+        },
+      },
+    );
     if (outcome === "enqueued") result.enqueued++;
     else if (outcome === "duplicate") result.droppedDuplicate++;
+    else if (outcome === "role-rejected") result.droppedRole = (result.droppedRole ?? 0) + 1;
     else if (outcome === "platform-error") {
       // Backend outage: don't lose the candidate (the HN post ages out of the
       // Algolia window, so a re-scan can't recover it). Persist for retry.
@@ -180,26 +199,48 @@ async function resolveAndEnqueueShowHn(
   hit: ShowHnHit,
   filterReason: string,
   costSink: (c: number) => void,
-): Promise<"enqueued" | "duplicate" | "dropped" | "platform-error"> {
+  /** Person-level ICP gate context. Omitted on retry -> gate is pass-through. */
+  gate?: {
+    icp: string | null;
+    fillGaps: boolean;
+    onRoleReject?: (reason: string) => void;
+  },
+): Promise<"enqueued" | "duplicate" | "dropped" | "platform-error" | "role-rejected"> {
   const ledger = getLedger();
   const domain = urlDomain(hit.url);
   if (!domain) return "dropped";
 
   const fullName = hit.author && hit.author.length > 0 ? hit.author : null;
-  const contact = await resolveAndVerifyContact({
+  const contact = await resolveVerifyEnrichQualify({
     playName: PLAY_NAME,
     fullName,
     companyDomain: domain,
     isDuplicate: (email) =>
       isDuplicate({ playName: PLAY_NAME, dedupeKey: hit.objectID, prospectEmail: email }),
+    errKindPrefix: "show-hn",
+    icp: gate ? gate.icp : null,
+    // Hacker News exposes no role for the poster, so the gate decides on the
+    // enriched title (stage B, free).
+    person: {
+      name: fullName,
+      company: domain,
+      evidence: `posted Show HN: ${hit.title}`,
+    },
+    fillGaps: gate?.fillGaps ?? false,
   });
   costSink(contact.costUsd);
   if (!contact.ok) {
+    if (contact.reason === "role") {
+      gate?.onRoleReject?.(contact.detail ?? "off-ICP role");
+      return "role-rejected";
+    }
     if (contact.reason === "platform-error") return "platform-error";
     if (contact.reason === "duplicate") return "duplicate";
     return "dropped";
   }
   const email = contact.email;
+  const founderName = contact.fullName ?? hit.author;
+  const enr = { phone: contact.phone, linkedinUrl: contact.linkedinUrl };
 
   // Optional: read the landing page for a richer hookSummary.
   let hookSummary = (hit.story_text ?? "").trim().slice(0, 280);
@@ -223,9 +264,6 @@ async function resolveAndEnqueueShowHn(
     hookSummary = `Show HN post: ${hit.title}. ${hit.points} points.`;
   }
 
-  const founderName = contact.fullName ?? hit.author;
-  const enr = await enrichVerifiedContact(email, { playName: PLAY_NAME, errKindPrefix: "show-hn" });
-  costSink(enr.costUsd);
   const phone = enr.phone;
   let linkedinUrl: string | null = enr.linkedinUrl;
   if (!linkedinUrl) {
@@ -245,6 +283,7 @@ async function resolveAndEnqueueShowHn(
     hookSummary,
     ...(linkedinUrl ? { linkedinUrl } : {}),
     ...(phone ? { phone } : {}),
+    ...(contact.title ? { title: contact.title } : {}),
   };
   const id = ledger.enqueueTarget({
     playName: PLAY_NAME,

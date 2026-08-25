@@ -1,10 +1,10 @@
 import { getLedger, logEvent, webRead, webSearch } from "@oneshot-gtm/core";
-import { resolveAndVerifyContact } from "./_contact.ts";
+import { resolveVerifyEnrichQualify } from "./_contact.ts";
+import { persistRoleRejection, qualifyPreSpend } from "./_qualify.ts";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { PodcastGuestTarget } from "@oneshot-gtm/plays";
 import { isDuplicate } from "./_dedupe.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
-import { enrichVerifiedContact } from "./_enrich.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
 import type { FinderResult, PodcastGuestExtract, RunOpts } from "./_types.ts";
 
@@ -162,26 +162,69 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
       result.droppedEnrichment++;
       continue;
     }
-    const contact = await resolveAndVerifyContact({
+    // Stage A: judge the extracted role BEFORE paying for findEmail +
+    // verify + enrich — a clearly off-ICP guestRole must not consume
+    // the run's cost budget and crowd out valid candidates behind it.
+    const preSpend = await qualifyPreSpend({
+      icp,
+      person: {
+        name: extract.guestName,
+        company: extract.guestCompany,
+        roleText: extract.guestRole,
+        evidence: `guest on ${extract.podcastName ?? "a podcast"}`,
+      },
+    });
+    if (preSpend.action === "reject") {
+      result.droppedRole = (result.droppedRole ?? 0) + 1;
+      persistRoleRejection({
+        playName: PLAY_NAME,
+        dedupeKey: hit.url,
+        payload: { name: extract.guestName },
+        source: SOURCE,
+        reason: preSpend.reason,
+        dryRun: opts.dryRun,
+      });
+      continue;
+    }
+
+    const contact = await resolveVerifyEnrichQualify({
       playName: PLAY_NAME,
       fullName: extract.guestName,
       companyDomain: extract.guestCompanyDomain,
       isDuplicate: (email) =>
         isDuplicate({ playName: PLAY_NAME, dedupeKey: hit.url, prospectEmail: email }),
+      icp,
+      person: {
+        name: extract.guestName,
+        company: extract.guestCompany,
+        roleText: extract.guestRole,
+        evidence: `guest on ${extract.podcastName ?? "a podcast"}`,
+      },
+      // Stage-C target when email enrichment surfaces no LinkedIn: the page
+      // extract often carries one, and without it an off-ICP person slides
+      // through as `unclear` instead of being judged on a bought title.
+      linkedinUrlHint: isLinkedInProfileUrl(extract.linkedinUrl) ? extract.linkedinUrl : null,
+      fillGaps: opts.qualifyFillGaps ?? true,
     });
     result.costUsd += contact.costUsd;
     if (!contact.ok) {
       if (contact.reason === "duplicate") result.droppedDuplicate++;
-      else result.droppedEnrichment++;
+      else if (contact.reason === "role") {
+        result.droppedRole = (result.droppedRole ?? 0) + 1;
+        persistRoleRejection({
+          playName: PLAY_NAME,
+          dedupeKey: hit.url,
+          payload: { name: extract.guestName },
+          source: SOURCE,
+          reason: contact.detail ?? "off-ICP role",
+          dryRun: opts.dryRun,
+        });
+      } else result.droppedEnrichment++;
       continue;
     }
     const email = contact.email;
 
-    const enr = await enrichVerifiedContact(email, {
-      playName: PLAY_NAME,
-      errKindPrefix: "podcast-guest",
-    });
-    result.costUsd += enr.costUsd;
+    const enr = { phone: contact.phone, linkedinUrl: contact.linkedinUrl };
     // Priority mirrors LinkedIn chain: page-specific extract beats generic
     // enrichment lookup when both are set.
     const phone = (extract.phone || null) ?? enr.phone;
@@ -209,6 +252,7 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
       hookQuote: (extract.summary ?? hit.description ?? "").slice(0, 240),
       ...(linkedinUrl ? { linkedinUrl } : {}),
       ...(phone ? { phone } : {}),
+      ...(contact.title ? { title: contact.title } : {}),
     };
     const id = ledger.enqueueTarget({
       playName: PLAY_NAME,

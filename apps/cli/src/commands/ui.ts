@@ -57,6 +57,9 @@ export async function commandUi(opts: UiOpts): Promise<void> {
   if (opts.dev) {
     note(`Starting Vite dev (5173) + API server (${port})...`);
     env["VITE_DEV_SERVER_URL"] = "http://127.0.0.1:5173";
+    // Read by apps/web/vite.config.ts to point the /api proxy at THIS
+    // workspace's server instead of a hardcoded :3030.
+    env["ONESHOT_GTM_API_PORT"] = String(port);
 
     const vite = spawn("bun", ["run", "--cwd", join(root, "apps", "web"), "dev"], {
       stdio: "inherit",

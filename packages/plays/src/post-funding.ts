@@ -1,4 +1,5 @@
 import { type EmailPlayDef, runEmailPlay, standardEnrich } from "./_run-play.ts";
+import { postFundingMetadata } from "./_metadata.ts";
 import { buildFollowUpEmail, registerSequence } from "./_cadence.ts";
 
 export interface PostFundingTarget {
@@ -11,6 +12,8 @@ export interface PostFundingTarget {
   sourceUrl: string;
   linkedinUrl?: string;
   phone?: string;
+  /** Job title from the person-level ICP gate — persisted to prospects.title. */
+  title?: string;
 }
 
 export interface PostFundingRunOptions {
@@ -77,11 +80,7 @@ const postFundingDef: EmailPlayDef<PostFundingTarget> = {
     phone: t.phone ?? null,
     source: "post-funding",
   }),
-  metadata: (t) => ({
-    round: t.round,
-    amountUsd: t.amountUsd,
-    leadInvestor: t.leadInvestor,
-  }),
+  metadata: postFundingMetadata,
 };
 
 export function runPostFunding(
