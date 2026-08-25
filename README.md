@@ -156,7 +156,9 @@ bun run cli -- workspace use gtm             # make it the default for runs with
 
 What stays **shared** across workspaces lives in `~/.oneshot-gtm-shared/shared.sqlite`: the paid lookup caches (enrichment, LinkedIn — the same person is never bought twice) and contact touches. A workspace never first-touches someone another workspace emailed in the last 7 days: the draft holds with a `contacted-elsewhere` flag you can override on a manual send, while drain and cadence steps wait the window out.
 
-`doctor` warns when two workspaces share a sending domain (warm-up caps are per-workspace, so the domain's real budget silently doubles) or a Gmail account (both inbox pollers would see both products' replies), and the dashboard masthead names the workspace you're in.
+`doctor` warns when two workspaces share a sending domain (warm-up caps are per-workspace, so the domain's real budget silently doubles) or a Gmail account (both inbox pollers would see both products' replies).
+
+The dashboard always knows where it is: a masthead chip names the workspace and its port (each name gets a stable colour, so `gtm` always looks like `gtm`). Clicking the chip — or `⌘K → Workspaces` — lists every registered workspace with a live status dot: running ones open in a new tab, stopped ones **start and then open** (the server is spawned detached with no supervisor; the status dots are the truth about what's up, and a launch that doesn't come up within 15s falls back to a copyable `--workspace <name> ui` command).
 
 ---
 
@@ -180,6 +182,8 @@ Ten **finders** discover prospects, ICP-filter them, and enqueue into `/queue` f
 Only `show-hn` and `post-funding-auto` are on by default; enable the rest from `/queue`. A trigger missing required config reads as **not ready** — the toggle and Run button disable with the reason, and the API returns `409`, so scripted callers can't bypass the gate either.
 
 Before any paid `findEmail`, a prescreen skips dud domains (`*.vercel.app`, social hosts, link aggregators, personal email providers) and inputs whose "name" is obviously a username. LinkedIn URLs are captured on every finder path and verified to belong to the person before they're stored.
+
+Two ICP gates run per candidate, not one. The **topic gate** judges the source — the repo, event, or announcement — and keeps whole categories of noise out before any spend. The **person gate** judges the human's role, staged by cost: free role text the finder already holds (an event bio, an extracted title), then the job title off the enrichment every verified email already pays for, then — only when still ambiguous and a LinkedIn URL exists — one extra ~$0.005 lookup. It judges capability to build and self-adopt, not job-title seniority: students shipping hackathon projects and consultants building agent systems for clients pass; a Marketing Manager at a brilliant AI company doesn't. Only a _positive_ reject drops a candidate — ambiguity escalates or proceeds, never silently discards. Rejections land in `/queue` as auditable `auto: role — <reason>` rows you can override, count as `role-drop` on trigger cards, and a prospect judged off-ICP after contact stops receiving cadence follow-ups (terminal status `off-icp`).
 
 The dashboard server runs an in-process scheduler, so enabling a trigger is enough — no separate daemon. `find watch` stays useful for cron and headless boxes. Approved rows ship via the **Drain** button or `find drain <play>`.
 
@@ -295,7 +299,8 @@ Every install writes a structured event log to `~/.oneshot-gtm/events.jsonl` —
 ```bash
 tail -f ~/.oneshot-gtm/events.jsonl | jq -c '{t:.ts, k:.kind, ctx:.ctx}'          # condensed
 tail -f ~/.oneshot-gtm/events.jsonl | jq -c 'select(.kind|startswith("llm."))'    # LLM calls
-tail -f ~/.oneshot-gtm/events.jsonl | jq -c 'select(.kind=="icp.decision")'       # why rejects happened
+tail -f ~/.oneshot-gtm/events.jsonl | jq -c 'select(.kind=="icp.decision")'       # topic-gate rejects
+tail -f ~/.oneshot-gtm/events.jsonl | jq -c 'select(.kind=="icp.person_decision")' # person-gate verdicts
 tail -f ~/.oneshot-gtm/events.jsonl | jq -c 'select(.level=="error" or .level=="warn")'
 tail -2000 ~/.oneshot-gtm/events.jsonl | jq -c 'select(.run_id=="PASTE-HERE")'    # one run
 DEBUG=oneshot:* oneshot-gtm find watch --once                                     # mirror to stderr
