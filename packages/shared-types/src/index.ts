@@ -700,6 +700,8 @@ export interface RunTriggerResult {
     droppedIcp: number;
     droppedDuplicate: number;
     droppedEnrichment: number;
+    /** Person-level ICP gate drops. Only finders that adopted the gate set it. */
+    droppedRole?: number;
     enqueued: number;
     costUsd: number;
     halted?: string;
@@ -791,4 +793,18 @@ export interface RunRecord {
   events: RunPlayEvent[];
   /** Emails that were actually sent — used by /cadences?sinceRun to filter. */
   prospectEmails: string[];
+}
+
+/** Workspace identity + roster served by GET /api/workspace. */
+export interface WorkspaceInfo {
+  current: { name: string; home: string; port: number };
+  workspaces: Array<{
+    name: string;
+    home: string;
+    port: number;
+    isCurrent: boolean;
+    isDefault: boolean;
+    /** Live-probed server-side (~300ms /api/health ping). */
+    running: boolean;
+  }>;
 }

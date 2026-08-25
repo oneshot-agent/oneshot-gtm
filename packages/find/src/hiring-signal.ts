@@ -1,10 +1,10 @@
 import { getLedger, logEvent, webRead, webSearch } from "@oneshot-gtm/core";
-import { resolveAndVerifyContact } from "./_contact.ts";
+import { resolveVerifyEnrichQualify } from "./_contact.ts";
+import { persistRoleRejection } from "./_qualify.ts";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { HiringSignalTarget } from "@oneshot-gtm/plays";
 import { isDuplicate } from "./_dedupe.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
-import { enrichVerifiedContact } from "./_enrich.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
 import type { FinderResult, HiringSignalExtract, RunOpts } from "./_types.ts";
 
@@ -199,27 +199,41 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
       extract.hiringManagerName && extract.hiringManagerName.length > 0
         ? extract.hiringManagerName
         : null;
-    const contact = await resolveAndVerifyContact({
+    const contact = await resolveVerifyEnrichQualify({
       playName: PLAY_NAME,
       fullName: managerName,
       companyDomain: domain,
       isDuplicate: (email) =>
         isDuplicate({ playName: PLAY_NAME, dedupeKey: hit.url, prospectEmail: email }),
+      icp,
+      person: {
+        name: extract.hiringManagerName,
+        company: extract.company,
+        roleText: extract.hiringManagerRole,
+        evidence: `hiring: ${extract.jobTitle ?? "role"}`,
+      },
+      fillGaps: opts.qualifyFillGaps ?? true,
     });
     result.costUsd += contact.costUsd;
     if (!contact.ok) {
       if (contact.reason === "duplicate") result.droppedDuplicate++;
-      else result.droppedEnrichment++;
+      else if (contact.reason === "role") {
+        result.droppedRole = (result.droppedRole ?? 0) + 1;
+        persistRoleRejection({
+          playName: PLAY_NAME,
+          dedupeKey: hit.url,
+          payload: { name: extract.hiringManagerName },
+          source: SOURCE,
+          reason: contact.detail ?? "off-ICP role",
+          dryRun: opts.dryRun,
+        });
+      } else result.droppedEnrichment++;
       continue;
     }
     const email = contact.email;
 
     const recipientName = extract.hiringManagerName ?? contact.fullName;
-    const enr = await enrichVerifiedContact(email, {
-      playName: PLAY_NAME,
-      errKindPrefix: "hiring-signal",
-    });
-    result.costUsd += enr.costUsd;
+    const enr = { phone: contact.phone, linkedinUrl: contact.linkedinUrl };
     // Priority mirrors LinkedIn chain: page-specific extract beats generic
     // enrichment lookup when both are set.
     const phone = (extract.phone || null) ?? enr.phone;
@@ -247,6 +261,7 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
       yourClaim,
       ...(linkedinUrl ? { linkedinUrl } : {}),
       ...(phone ? { phone } : {}),
+      ...(contact.title ? { title: contact.title } : {}),
     };
     const id = ledger.enqueueTarget({
       playName: PLAY_NAME,

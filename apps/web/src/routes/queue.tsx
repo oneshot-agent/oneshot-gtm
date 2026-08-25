@@ -1163,6 +1163,7 @@ function TriggersCard() {
         `${r.candidates} candidates`,
         `${r.enqueued} kept`,
         r.droppedIcp ? `${r.droppedIcp} icp-drop` : null,
+        r.droppedRole ? `${r.droppedRole} role-drop` : null,
         r.droppedDuplicate ? `${r.droppedDuplicate} dup` : null,
         r.droppedEnrichment ? `${r.droppedEnrichment} enrich-fail` : null,
         `$${r.costUsd.toFixed(2)}`,

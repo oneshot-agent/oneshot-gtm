@@ -1,5 +1,6 @@
 import { getLedger, logEvent, webRead } from "@oneshot-gtm/core";
-import { resolveAndVerifyContact } from "./_contact.ts";
+import { resolveVerifyEnrichQualify } from "./_contact.ts";
+import { persistRoleRejection } from "./_qualify.ts";
 import { complete, loadPrompt } from "@oneshot-gtm/intel";
 import type { AcceleratorBatchTarget } from "@oneshot-gtm/plays";
 import {
@@ -8,7 +9,6 @@ import {
 } from "./_accelerator-search-adapter.ts";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
-import { enrichVerifiedContact } from "./_enrich.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
 import { parallelMap } from "./_parallel.ts";
 import { deriveCohortLabel, fetchYcOssBatch } from "./_yc-oss-adapter.ts";
@@ -380,28 +380,41 @@ export async function runAcceleratorBatchFinder(
       result.droppedEnrichment++;
       return;
     }
-    const contact = await resolveAndVerifyContact({
+    const contact = await resolveVerifyEnrichQualify({
       playName: PLAY_NAME,
       fullName: founderName,
       companyDomain: domain,
       isDuplicate: (email) => isDuplicate({ playName: PLAY_NAME, dedupeKey, prospectEmail: email }),
+      errKindPrefix: "accelerator-batch",
+      icp,
+      person: {
+        name: founderName,
+        company: record.name,
+        evidence: record.oneLiner ?? `${record.cohortLabel} cohort company`,
+      },
+      fillGaps: opts.qualifyFillGaps ?? true,
     });
     result.costUsd += contact.costUsd;
     if (!contact.ok) {
       if (contact.reason === "duplicate") result.droppedDuplicate++;
-      else result.droppedEnrichment++;
+      else if (contact.reason === "role") {
+        result.droppedRole = (result.droppedRole ?? 0) + 1;
+        persistRoleRejection({
+          playName: PLAY_NAME,
+          dedupeKey,
+          payload: rejectionPayload(record, record.cohort),
+          source,
+          reason: contact.detail ?? "off-ICP role",
+          dryRun: opts.dryRun,
+        });
+      } else result.droppedEnrichment++;
       return;
     }
     const email = contact.email;
     // Prefer the SDK's resolved name when available — it's the actual owner of
     // the email — and fall back to the founder name we resolved upstream.
     const fullName = contact.fullName?.trim() || founderName;
-
-    const enr = await enrichVerifiedContact(email, {
-      playName: PLAY_NAME,
-      errKindPrefix: "accelerator-batch",
-    });
-    result.costUsd += enr.costUsd;
+    const enr = { phone: contact.phone, linkedinUrl: contact.linkedinUrl };
     const phone = resolvedPhone ?? enr.phone;
     let linkedinUrl = resolvedLinkedin ?? enr.linkedinUrl;
     if (!linkedinUrl) {
@@ -428,6 +441,7 @@ export async function runAcceleratorBatchFinder(
       ...(record.oneLiner ? { productOneLiner: record.oneLiner } : {}),
       ...(linkedinUrl ? { linkedinUrl } : {}),
       ...(phone ? { phone } : {}),
+      ...(contact.title ? { title: contact.title } : {}),
       // Stamp the sender's own cohort (+ offer) onto the row so the play can
       // draft inline without a run-level senderCohort — mirrors yourEdge.
       ...(opts.senderCohort ? { senderCohort: opts.senderCohort } : {}),

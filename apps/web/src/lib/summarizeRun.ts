@@ -24,6 +24,8 @@ export function summarizeRun(summary: unknown): string {
   if (typeof s["candidates"] === "number") parts.push(`cand=${s["candidates"]}`);
   if (typeof s["enqueued"] === "number") parts.push(`kept=${s["enqueued"]}`);
   if (typeof s["droppedIcp"] === "number") parts.push(`icp=${s["droppedIcp"]}`);
+  if (typeof s["droppedRole"] === "number" && s["droppedRole"] > 0)
+    parts.push(`role=${s["droppedRole"]}`);
   if (typeof s["droppedLowSignal"] === "number" && (s["droppedLowSignal"] as number) > 0) {
     parts.push(`low=${s["droppedLowSignal"]}`);
   }

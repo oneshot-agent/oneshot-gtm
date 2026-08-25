@@ -47,6 +47,7 @@ let deferOnSend = false;
 let alreadySentNextStep = false;
 // Simulates a prior hard bounce for this cadence's prospect.
 let suppression: { status_code: string | null; bounced_at: string } | null = null;
+let icpVerdict: { verdict: string; reason: string | null } | null = null;
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -115,6 +116,8 @@ vi.mock("@oneshot-gtm/core", async () => {
               dossier_json: null,
               source: "test",
               phone: null,
+              icp_verdict: icpVerdict?.verdict ?? null,
+              icp_verdict_reason: icpVerdict?.reason ?? null,
               created_at: "now",
             }
           : null;
@@ -240,6 +243,7 @@ beforeEach(() => {
   deferOnSend = false;
   alreadySentNextStep = false;
   suppression = null;
+  icpVerdict = null;
   seedActiveCadence();
 });
 
@@ -319,6 +323,49 @@ describe("sendCadenceStep", () => {
         stepIndex: 1,
       }),
     });
+  });
+});
+
+describe("runCadenceStepForProspect — off-ICP gate", () => {
+  it("refuses to draft or send for a rejected prospect and stops the cadence", async () => {
+    // Code-level gate: the intro was the mistake, follow-ups compound it.
+    // Must fire BEFORE the LLM draft (no spend on a prospect we won't email)
+    // and set a distinct terminal status so reporting stays honest.
+    icpVerdict = { verdict: "reject", reason: "Account Executive is a sales role" };
+    const result = await runCadenceStepForProspect({
+      prospectId: 1,
+      playName: "stack-consolidation",
+      dryRun: false,
+    });
+    expect(result.action).toBe("skipped");
+    expect(result.note).toMatch(/off-ICP: Account Executive/);
+    expect(calls.llm).toBe(0);
+    expect(calls.sendEmail).toBe(0);
+    expect(statusCalls).toEqual([
+      { prospectId: 1, playName: "stack-consolidation", status: "off-icp" },
+    ]);
+  });
+
+  it("a pass verdict sends normally", async () => {
+    icpVerdict = { verdict: "pass", reason: "CTO" };
+    const result = await runCadenceStepForProspect({
+      prospectId: 1,
+      playName: "stack-consolidation",
+      dryRun: false,
+    });
+    expect(result.action).toBe("step-sent");
+    expect(calls.sendEmail).toBe(1);
+  });
+
+  it("an unjudged prospect (NULL verdict) sends normally — the gate is opt-in by audit", async () => {
+    icpVerdict = null;
+    const result = await runCadenceStepForProspect({
+      prospectId: 1,
+      playName: "stack-consolidation",
+      dryRun: false,
+    });
+    expect(result.action).toBe("step-sent");
+    expect(calls.sendEmail).toBe(1);
   });
 });
 

@@ -63,6 +63,13 @@ export interface ProspectRecord {
    *  `linkedin_url` this is never repurposed, so it stays a usable key for
    *  re-enrichment. */
   source_profile_url: string | null;
+  /** Job title at contact time, from the person-level ICP gate. NULL on rows
+   *  contacted before the gate existed (pre 2026-08). */
+  title: string | null;
+  /** Person-level ICP verdict: 'pass' | 'reject'. NULL = never judged. */
+  icp_verdict: string | null;
+  /** Classifier's one-line reason for the verdict. */
+  icp_verdict_reason: string | null;
   created_at: string;
 }
 

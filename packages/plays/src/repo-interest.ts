@@ -1,5 +1,6 @@
 import { emailDomain } from "./_lib.ts";
 import { type EmailPlayDef, runEmailPlay, standardEnrich } from "./_run-play.ts";
+import { repoInterestMetadata } from "./_metadata.ts";
 import { buildFollowUpEmail, registerSequence } from "./_cadence.ts";
 
 const PLAY_NAME = "repo-interest";
@@ -27,6 +28,8 @@ export interface RepoInterestTarget {
   /** The GitHub profile URL this candidate came from. Persisted to the prospect
    *  row so a later LinkedIn lookup has a real identifier to work from. */
   sourceProfileUrl?: string;
+  /** Job title from the person-level ICP gate — persisted to prospects.title. */
+  title?: string;
   /** Candidate's GitHub login — kept on the payload so a future regenerate can
    *  re-fetch their repos if we ever want it. Not consumed by the prompt today. */
   candidateLogin?: string;
@@ -116,7 +119,7 @@ const repoInterestDef: EmailPlayDef<RepoInterestTarget> = {
     source_profile_url:
       t.sourceProfileUrl ?? (t.candidateLogin ? `https://github.com/${t.candidateLogin}` : null),
   }),
-  metadata: (t) => ({ repo: t.repo }),
+  metadata: repoInterestMetadata,
 };
 
 export function runRepoInterest(

@@ -165,3 +165,30 @@ describe("listProspectsMissingLinkedIn", () => {
     expect(ledger.listProspectsMissingLinkedIn({ limit: 2 })).toHaveLength(2);
   });
 });
+
+describe("prospects.title — insert + backfill (person-level ICP gate)", () => {
+  it("persists title on insert and returns it on read", () => {
+    const id = ledger.upsertProspect({
+      name: "Ada Lovelace",
+      email: "ada2@acme.dev",
+      title: "Staff Engineer",
+    });
+    expect(ledger.getProspectById(id)?.title).toBe("Staff Engineer");
+  });
+
+  it("defaults to NULL when omitted (pre-gate rows keep their meaning)", () => {
+    const id = ledger.upsertProspect({ name: "Sam", email: "sam2@acme.dev" });
+    expect(ledger.getProspectById(id)?.title).toBeNull();
+  });
+
+  it("backfills via updateProspectIdentity without clobbering an existing title", () => {
+    // The Phase-5 audit path: score history, write titles onto old rows.
+    const id = ledger.upsertProspect({ name: "Nick", email: "nick@x.dev" });
+    expect(ledger.updateProspectIdentity(id, { title: "Manager" })).toBe(true);
+    expect(ledger.getProspectById(id)?.title).toBe("Manager");
+    // COALESCE semantics: a later fuzzy lookup must not overwrite a title the
+    // gate already judged on.
+    expect(ledger.updateProspectIdentity(id, { title: "Intern" })).toBe(false);
+    expect(ledger.getProspectById(id)?.title).toBe("Manager");
+  });
+});

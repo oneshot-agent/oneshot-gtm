@@ -1,6 +1,7 @@
 import { browserTask } from "@oneshot-gtm/core";
 import { emailDomain, safeEnrich } from "./_lib.ts";
 import { type EmailPlayDef, runEmailPlay } from "./_run-play.ts";
+import { competitorSwitchMetadata } from "./_metadata.ts";
 import { buildFollowUpEmail, registerSequence } from "./_cadence.ts";
 
 const PLAY_NAME = "competitor-switch";
@@ -21,6 +22,8 @@ export interface CompetitorSwitchTarget {
   /** Profile URL this candidate was sourced from (GitHub). Persisted to the
    *  prospect row as a re-enrichment key. */
   sourceProfileUrl?: string;
+  /** Job title from the person-level ICP gate — persisted to prospects.title. */
+  title?: string;
 }
 
 export interface CompetitorSwitchRunOptions {
@@ -141,7 +144,7 @@ export function runCompetitorSwitch(
       source: "competitor-switch",
       source_profile_url: t.sourceProfileUrl ?? null,
     }),
-    metadata: (t) => ({ competitor: t.competitor, evidenceUrl: t.evidenceUrl ?? null }),
+    metadata: competitorSwitchMetadata,
   };
 
   return runEmailPlay(def, opts);

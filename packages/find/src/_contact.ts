@@ -3,6 +3,9 @@ import type { CallContext, FindEmailInput } from "@oneshot-gtm/core";
 import { isCircuitOpen, recordResolutionOutcome } from "./_breaker.ts";
 import { shouldSkipFindEmail } from "./_findemail-prescreen.ts";
 import { safeFindEmail, safeVerifyEmail } from "./_sdk-safe.ts";
+import { enrichVerifiedContact } from "./_enrich.ts";
+import type { PersonCandidate } from "./_filter.ts";
+import { qualifyPostEnrich } from "./_qualify.ts";
 
 /**
  * Outcome of the shared contact-resolution spine. On `ok`, the caller has a
@@ -107,4 +110,131 @@ export async function resolveAndVerifyContact(args: {
   if (!verified.result.deliverable) return { ok: false, reason: "undeliverable", costUsd };
 
   return { ok: true, email, fullName, costUsd };
+}
+
+/**
+ * Outcome of the full per-candidate spine: contact resolution + enrichment +
+ * person-level ICP qualification.
+ *
+ * `costUsd` is the TOTAL accrued (find + verify + enrich + any fill-the-gap
+ * lookup) and is returned on every path, so a caller that drops a candidate
+ * still books the spend.
+ */
+export type QualifiedContact =
+  | {
+      ok: true;
+      email: string;
+      /** Name as resolved by findEmail — some finders prefer it over their extract. */
+      fullName: string | null;
+      phone: string | null;
+      /** LinkedIn surfaced by enrichment. Finders may prefer their own source. */
+      linkedinUrl: string | null;
+      /** Job title the gate judged on — persist it so the next run is free. */
+      title: string | null;
+      costUsd: number;
+    }
+  | {
+      ok: false;
+      reason:
+        | Exclude<Extract<ContactResolution, { ok: false }>["reason"], never>
+        /** Person-level ICP miss. Caller should count `droppedRole` + persist a rejected row. */
+        | "role";
+      /** Classifier's reason, present when `reason === "role"`. */
+      detail?: string;
+      costUsd: number;
+    };
+
+/**
+ * The whole per-candidate spine in one call: prescreen → findEmail → dedupe →
+ * verify → enrich → person-level ICP gate.
+ *
+ * Why this exists: `resolveAndVerifyContact` + `enrichVerifiedContact` +
+ * cost-accumulation were re-implemented identically in eight finders
+ * (github-stars, post-funding, job-change, hiring-signal, podcast-guest,
+ * accelerator-batch, show-hn, luma). Adding the role gate to each of them
+ * separately would have made that nine copies of a rule that must not drift —
+ * the gate decides who gets emailed, so a finder that quietly skips it
+ * reintroduces the exact problem this was built to fix.
+ *
+ * Deliberately NOT absorbed: `findLinkedInUrl` and the per-finder phone /
+ * LinkedIn priority chains. Those genuinely differ (post-funding prefers the
+ * page extract, github-stars disambiguates on the GitHub login), so they stay
+ * with the caller.
+ *
+ * Stage A (judging role text the finder already holds, before any spend) also
+ * stays with the caller — the field differs per finder (`attendeeBio`,
+ * `founderRole`, `guestRole`, `hiringManagerRole`, `newRole`).
+ */
+export async function resolveVerifyEnrichQualify(args: {
+  playName: string;
+  fullName: string | null;
+  knownEmail?: string | null;
+  companyDomain?: string | null;
+  isDuplicate?: (email: string) => boolean;
+  decisionContext?: CallContext["decisionContext"];
+  errKindPrefix?: string;
+  /** Person-level gate context. */
+  icp: string | null;
+  person: PersonCandidate;
+  /**
+   * Finder-specific LinkedIn URL (e.g. from a page extract), used as the
+   * stage-C lookup target when enrichment didn't surface one.
+   */
+  linkedinUrlHint?: string | null;
+  /** Allow the paid fill-the-gap lookup. Defaults to on. */
+  fillGaps?: boolean;
+  /**
+   * A job title the finder ALREADY obtained for free (e.g. luma resolves the
+   * profile by LinkedIn URL before contact resolution). Preferred over the
+   * post-verify enrichment title, since it came from the richer lookup.
+   */
+  titleHint?: string | null;
+}): Promise<QualifiedContact> {
+  const contact = await resolveAndVerifyContact({
+    playName: args.playName,
+    fullName: args.fullName,
+    knownEmail: args.knownEmail,
+    companyDomain: args.companyDomain,
+    isDuplicate: args.isDuplicate,
+    decisionContext: args.decisionContext,
+  });
+  let costUsd = contact.costUsd;
+  if (!contact.ok) return { ok: false, reason: contact.reason, costUsd };
+
+  const enr = await enrichVerifiedContact(contact.email, {
+    playName: args.playName,
+    errKindPrefix: args.errKindPrefix ?? args.playName,
+  });
+  costUsd += enr.costUsd;
+
+  const gate = await qualifyPostEnrich({
+    icp: args.icp,
+    person: args.person,
+    enrichedTitle: args.titleHint ?? enr.title,
+    enrichedSummary: enr.summary,
+    linkedinUrl: enr.linkedinUrl ?? args.linkedinUrlHint ?? null,
+    fillGaps: args.fillGaps ?? true,
+    playName: args.playName,
+    errKindPrefix: args.errKindPrefix ?? args.playName,
+  });
+  costUsd += gate.costUsd;
+
+  if (gate.action === "reject") {
+    return { ok: false, reason: "role", detail: gate.reason, costUsd };
+  }
+  // A classifier/platform outage is not a verdict — surface it as the same
+  // platform-error the callers already know how to defer and retry.
+  if (gate.action === "defer") {
+    return { ok: false, reason: "platform-error", costUsd };
+  }
+
+  return {
+    ok: true,
+    email: contact.email,
+    fullName: contact.fullName,
+    phone: enr.phone,
+    linkedinUrl: enr.linkedinUrl,
+    title: gate.roleText ?? enr.title,
+    costUsd,
+  };
 }

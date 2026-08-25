@@ -14,6 +14,7 @@ interface EnqueuedRow {
 }
 const enqueued: EnqueuedRow[] = [];
 let icpMatch: boolean | null = true;
+let personVerdict: "pass" | "reject" | "unclear" | "transient" = "pass";
 let stargazersByRepo: Record<
   string,
   Array<{ login: string; userUrl: string; starredAt: string }>
@@ -55,6 +56,11 @@ vi.mock("../src/_filter.ts", () => ({
     match: icpMatch,
     reason: icpMatch === null ? "icp classifier unavailable" : icpMatch ? "fits" : "nope",
   }),
+  // Person-level gate. These tests cover stargazer routing and contact
+  // resolution, not qualification, so everyone passes by default; the staging
+  // itself is covered by qualify-staging.test.ts.
+  hasRoleText: (p: { roleText?: string | null }) => (p.roleText ?? "").trim().length > 0,
+  qualifyPerson: async () => ({ verdict: personVerdict, reason: "stub" }),
 }));
 // Tier 2. `linkedinUrl: null` is the common case for a stargazer the SDK can't
 // resolve — which is exactly what tier 3 exists to rescue.
@@ -63,6 +69,8 @@ vi.mock("../src/_enrich.ts", () => ({
   enrichVerifiedContact: async () => ({
     phone: null,
     linkedinUrl: enrichLinkedinUrl,
+    title: null,
+    summary: null,
     costUsd: 0.005,
     receiptId: 1,
   }),
@@ -106,6 +114,7 @@ const { _resetLinkedInCache } = await import("../src/_linkedin.ts");
 beforeEach(() => {
   enqueued.length = 0;
   icpMatch = true;
+  personVerdict = "pass";
   enrichLinkedinUrl = null;
   webSearchQueries.length = 0;
   nextWebSearchResults = [];

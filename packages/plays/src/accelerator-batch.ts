@@ -1,4 +1,5 @@
 import { type EmailPlayDef, runEmailPlay, standardEnrich } from "./_run-play.ts";
+import { acceleratorBatchMetadata } from "./_metadata.ts";
 import { buildFollowUpEmail, registerSequence } from "./_cadence.ts";
 
 export interface AcceleratorBatchTarget {
@@ -10,6 +11,8 @@ export interface AcceleratorBatchTarget {
   productOneLiner?: string;
   linkedinUrl?: string;
   phone?: string;
+  /** Job title from the person-level ICP gate — persisted to prospects.title. */
+  title?: string;
   /** The SENDER's own cohort (peer angle). Stamped onto finder rows from the
    *  trigger config so the row is self-contained; falls back to the run-level
    *  option for manually-entered /run targets. */
@@ -98,9 +101,10 @@ export function runAcceleratorBatch(
       phone: t.phone ?? null,
       source: `accelerator-${t.cohort}`,
     }),
+    // Shared fn + the run-option fallback the queue path cannot have.
     metadata: (t) => ({
+      ...acceleratorBatchMetadata(t),
       senderCohort: senderCohortFor(t),
-      prospectCohort: t.cohort,
     }),
   };
 

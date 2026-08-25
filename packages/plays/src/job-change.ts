@@ -1,4 +1,5 @@
 import { type EmailPlayDef, runEmailPlay, standardEnrich } from "./_run-play.ts";
+import { jobChangeMetadata } from "./_metadata.ts";
 import { buildFollowUpEmail, registerSequence } from "./_cadence.ts";
 
 export interface JobChangeTarget {
@@ -10,6 +11,8 @@ export interface JobChangeTarget {
   previousCompany?: string;
   linkedinUrl?: string;
   phone?: string;
+  /** Job title from the person-level ICP gate — persisted to prospects.title. */
+  title?: string;
 }
 
 export interface JobChangeRunOptions {
@@ -75,7 +78,7 @@ const jobChangeDef: EmailPlayDef<JobChangeTarget> = {
     phone: t.phone ?? null,
     source: "job-change",
   }),
-  metadata: (t) => ({ newRole: t.newRole, newCompany: t.newCompany }),
+  metadata: jobChangeMetadata,
 };
 
 export function runJobChange(opts: JobChangeRunOptions): Promise<{ drafted: JobChangeDraft[] }> {

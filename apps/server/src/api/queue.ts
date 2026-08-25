@@ -8,7 +8,7 @@ import {
   type TelemetryOutcome,
 } from "@oneshot-gtm/core";
 import { drainQueue } from "@oneshot-gtm/find";
-import { enrollInCadence, logTargetError, sendDraftedEmail } from "@oneshot-gtm/plays";
+import { enrollInCadence, logTargetError, playMetadata, sendDraftedEmail } from "@oneshot-gtm/plays";
 import { reportServerExecution } from "../telemetry.ts";
 import {
   blockingFlags,
@@ -398,7 +398,15 @@ export async function sendDraftRoute(
         // Mirrors each play's own prospectMeta. Read generically so any finder
         // that sets it on the payload gets it persisted without a change here.
         source_profile_url: str("sourceProfileUrl") ?? str("githubUrl") ?? str("twitterUrl"),
+        // Stamped on the payload by the person-level ICP gate in the finders.
+        title: str("title"),
       },
+      // The play's evidence metadata (`repo`, `eventTitle`, `vendorStack`, …),
+      // from the same per-play functions the play defs use. This route used to
+      // omit it entirely, which left step-0 rows without their evidence key —
+      // and silently broke everything that reads it (expandi-sync's signal
+      // routing mis-assigned 19 prospects to the wrong A/B arm).
+      metadata: playMetadata(row.play_name, payload),
       dryRun: false,
       // This route IS the review-then-send override: the founder has seen any
       // `contacted-elsewhere` hold on the draft and clicked send regardless.

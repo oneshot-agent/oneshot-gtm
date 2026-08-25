@@ -10,6 +10,13 @@ export interface FinderResult {
   droppedEnrichment: number;
   /** How many were dropped because a per-finder low-signal threshold wasn't met (e.g. show-hn minPoints). Optional — not every finder has such a gate. */
   droppedLowSignal?: number;
+  /**
+   * How many were dropped by the PERSON-level ICP gate — i.e. the human's job
+   * title is a different function (sales, marketing, investor, design, intern).
+   * Distinct from `droppedIcp`, which judges the company / repo / event.
+   * Optional — only finders that have adopted the gate set it.
+   */
+  droppedRole?: number;
   /** How many were enqueued. */
   enqueued: number;
   /** Approximate USD spent on OneShot calls during this run. */
@@ -171,4 +178,11 @@ export interface RunOpts {
   limit?: number;
   /** Free-text ICP override (otherwise read from config). */
   icpOverride?: string;
+  /**
+   * Person-level ICP gate: when the free role text is still ambiguous, buy one
+   * extra enrichProfile (~$0.005) to get a real job title before deciding.
+   * Defaults to on — the alternative is guessing, which is what let 15% of the
+   * emailed population be off-ICP. Turn off to cap spend on a wide sweep.
+   */
+  qualifyFillGaps?: boolean;
 }

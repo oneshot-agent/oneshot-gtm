@@ -54,6 +54,8 @@ function statusTone(status: string): "receipt" | "signal" | "spend" | "blocked" 
       return "neutral";
     case "bounced":
       return "blocked";
+    case "off-icp":
+      return "blocked";
     default:
       return "neutral";
   }

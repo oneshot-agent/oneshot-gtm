@@ -1,5 +1,6 @@
 import { webSearch } from "@oneshot-gtm/core";
 import { type EmailPlayDef, runEmailPlay } from "./_run-play.ts";
+import { podcastGuestMetadata } from "./_metadata.ts";
 import { registerSequence } from "./_cadence.ts";
 
 const PLAY_NAME = "podcast-guest";
@@ -18,6 +19,8 @@ export interface PodcastGuestTarget {
   bridge?: string;
   linkedinUrl?: string;
   phone?: string;
+  /** Job title from the person-level ICP gate — persisted to prospects.title. */
+  title?: string;
 }
 
 export interface PodcastGuestRunOptions {
@@ -90,7 +93,7 @@ export function runPodcastGuest(
       phone: t.phone ?? null,
       source: "podcast-guest",
     }),
-    metadata: (t) => ({ podcast: t.podcast, episodeTitle: t.episodeTitle }),
+    metadata: podcastGuestMetadata,
   };
 
   return runEmailPlay(def, opts);

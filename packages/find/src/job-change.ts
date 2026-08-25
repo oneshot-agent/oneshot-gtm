@@ -1,10 +1,10 @@
 import { getLedger, logEvent, webSearch } from "@oneshot-gtm/core";
-import { resolveAndVerifyContact } from "./_contact.ts";
+import { resolveVerifyEnrichQualify } from "./_contact.ts";
+import { persistRoleRejection } from "./_qualify.ts";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { JobChangeTarget } from "@oneshot-gtm/plays";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
-import { enrichVerifiedContact } from "./_enrich.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
 import type { FinderResult, JobChangeExtract, RunOpts } from "./_types.ts";
 
@@ -174,26 +174,40 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
       result.droppedEnrichment++;
       continue;
     }
-    const contact = await resolveAndVerifyContact({
+    const contact = await resolveVerifyEnrichQualify({
       playName: PLAY_NAME,
       fullName: extract.fullName,
       companyDomain: domain,
       isDuplicate: (email) =>
         isDuplicate({ playName: PLAY_NAME, dedupeKey: hit.url, prospectEmail: email }),
+      icp,
+      person: {
+        name: extract.fullName,
+        company: extract.newCompany,
+        roleText: extract.newRole,
+        evidence: `moved to ${extract.newCompany ?? "a new role"}`,
+      },
+      fillGaps: opts.qualifyFillGaps ?? true,
     });
     result.costUsd += contact.costUsd;
     if (!contact.ok) {
       if (contact.reason === "duplicate") result.droppedDuplicate++;
-      else result.droppedEnrichment++;
+      else if (contact.reason === "role") {
+        result.droppedRole = (result.droppedRole ?? 0) + 1;
+        persistRoleRejection({
+          playName: PLAY_NAME,
+          dedupeKey: hit.url,
+          payload: { name: extract.fullName },
+          source: SOURCE,
+          reason: contact.detail ?? "off-ICP role",
+          dryRun: opts.dryRun,
+        });
+      } else result.droppedEnrichment++;
       continue;
     }
     const email = contact.email;
 
-    const enr = await enrichVerifiedContact(email, {
-      playName: PLAY_NAME,
-      errKindPrefix: "job-change",
-    });
-    result.costUsd += enr.costUsd;
+    const enr = { phone: contact.phone, linkedinUrl: contact.linkedinUrl };
     // Priority mirrors LinkedIn chain: page-specific extract beats generic
     // enrichment lookup when both are set.
     const phone = (extract.phone || null) ?? enr.phone;
@@ -221,6 +235,7 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
       ...(extract.previousCompany ? { previousCompany: extract.previousCompany } : {}),
       ...(linkedinUrl ? { linkedinUrl } : {}),
       ...(phone ? { phone } : {}),
+      ...(contact.title ? { title: contact.title } : {}),
     };
     const id = ledger.enqueueTarget({
       playName: PLAY_NAME,

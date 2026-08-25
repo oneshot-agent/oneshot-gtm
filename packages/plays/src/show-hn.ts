@@ -1,4 +1,5 @@
 import { type EmailPlayDef, runEmailPlay, standardEnrich } from "./_run-play.ts";
+import { showHnMetadata } from "./_metadata.ts";
 export { receiptUrls } from "./_lib.ts";
 
 export interface ShowHnTarget {
@@ -9,6 +10,8 @@ export interface ShowHnTarget {
   hookSummary: string;
   linkedinUrl?: string;
   phone?: string;
+  /** Job title from the person-level ICP gate — persisted to prospects.title. */
+  title?: string;
 }
 
 export interface ShowHnRunOptions {
@@ -71,7 +74,7 @@ const showHnDef: EmailPlayDef<ShowHnTarget> = {
     phone: t.phone ?? null,
     source: "show-hn",
   }),
-  metadata: (t) => ({ postUrl: t.postUrl, postTitle: t.postTitle }),
+  metadata: showHnMetadata,
 };
 
 export function runShowHn(opts: ShowHnRunOptions): Promise<ShowHnRunResult> {

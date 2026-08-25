@@ -477,6 +477,11 @@ export interface SendDraftedOpts {
      *  Unlike `linkedin_url` this is never repurposed, so it survives as a
      *  re-enrichment key when the LinkedIn lookup misses on the first pass. */
     source_profile_url?: string | null;
+    /** Job title at contact time, from the person-level ICP gate. Persisting
+     *  it makes re-runs and the off-ICP audit free. (This field existing here
+     *  is what makes it persistable at all — `dossier_json` stayed dead schema
+     *  for months precisely because it was never added to this type.) */
+    title?: string | null;
   };
   metadata?: Record<string, unknown>;
   dryRun: boolean;

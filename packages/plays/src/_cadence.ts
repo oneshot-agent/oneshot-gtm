@@ -731,6 +731,28 @@ export async function runCadenceStepForProspect(
       };
     }
   }
+  // Person-level ICP gate. A prospect judged off-ICP (by the finder gate or
+  // the history audit) must not receive further follow-ups — the intro was the
+  // mistake; the cadence would compound it. Code-level on purpose: the same
+  // lesson as the frequency caps, a prompt can be talked out of a rule but a
+  // status change cannot. Terminal + distinct ("off-icp", not "completed") so
+  // reporting stays honest about WHY the sequence stopped.
+  {
+    const prospect = ledger.getProspectById(opts.prospectId);
+    if (prospect?.icp_verdict === "reject") {
+      ledger.setCadenceStatus({
+        prospectId: opts.prospectId,
+        playName: opts.playName,
+        status: "off-icp",
+      });
+      return {
+        action: "skipped",
+        payload: null,
+        receiptIds: [],
+        note: `off-ICP: ${prospect.icp_verdict_reason ?? "role does not fit"}`,
+      };
+    }
+  }
   // Cross-workspace hold, same reasoning as the suppression check above:
   // decide before paying for a draft. Not a status change — the step stays
   // due and fires once the other workspace's touch ages out of the window.

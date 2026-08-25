@@ -99,3 +99,116 @@ function parseIcpJson(raw: string): IcpFilterResult {
     reason: typeof parsed.reason === "string" ? parsed.reason : "no reason given",
   };
 }
+
+/**
+ * Verdict for a person-level ICP judgement.
+ *
+ * Four states, not the boolean `icpFilter` uses, because the distinction that
+ * matters here is the one a boolean cannot express: "this role text is real
+ * but does not settle the question". That case must trigger a paid profile
+ * lookup, not a guess — guessing is what let a snowboard-team coordinator and
+ * an Account Executive through.
+ *
+ *   - `pass`      → role fits the ICP; proceed
+ *   - `reject`    → clearly a different job function; persist a rejected row
+ *   - `unclear`   → genuine answer meaning "insufficient signal"; ESCALATE to
+ *                   enrichment and re-judge on a real title
+ *   - `transient` → classifier failure. Drop WITHOUT persisting, exactly as
+ *                   `icpFilter` returns `null`: a persisted rejection would
+ *                   burn the dedupeKey forever (isQueueDuplicate ignores
+ *                   status), so an LLM outage would permanently blacklist
+ *                   every candidate it touched.
+ */
+export type PersonVerdict = "pass" | "reject" | "unclear" | "transient";
+
+export interface PersonQualification {
+  verdict: PersonVerdict;
+  reason: string;
+}
+
+export interface PersonCandidate {
+  name?: string | null;
+  company?: string | null;
+  /** Job title, self-written headline, or event bio. May be absent. */
+  roleText?: string | null;
+  /** Why this person surfaced (starred repo, attended event). Context only. */
+  evidence?: string | null;
+}
+
+/** No role text at all is the same escalation path as an ambiguous one. */
+export function hasRoleText(person: PersonCandidate): boolean {
+  return (person.roleText ?? "").trim().length > 0;
+}
+
+/**
+ * Judge one person's role against the ICP.
+ *
+ * Deliberately NOT built on `icpFilter`: that classifier is tuned for
+ * companies, repos and events, its prompt says "brief titles with no context
+ * default to false", and its boolean cannot carry `unclear`. Feeding a bare
+ * headline into it produces confident rejections of people who are fine.
+ *
+ * Callers must escalate on BOTH `unclear` and missing role text — see
+ * `_contact.ts` / the finder call sites for the staged A→B→C ordering.
+ */
+export async function qualifyPerson(input: {
+  icp: string | null;
+  person: PersonCandidate;
+}): Promise<PersonQualification> {
+  // No ICP configured: same pass-through contract as `icpFilter`. The founder
+  // hasn't told us who they want, so we don't get to reject on their behalf.
+  if (!input.icp) {
+    return { verdict: "pass", reason: "no ICP set; pass-through" };
+  }
+  // Nothing to judge. Not a rejection — the caller escalates to enrichment.
+  if (!hasRoleText(input.person)) {
+    return { verdict: "unclear", reason: "no role text available" };
+  }
+
+  const system = loadPrompt("icp-filter-person");
+  const user = JSON.stringify({ icp: input.icp, person: input.person });
+
+  let decision: PersonQualification;
+  try {
+    const res = await complete({
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user },
+      ],
+      temperature: 0.1,
+      maxTokens: 200,
+    });
+    decision = parsePersonJson(res.content);
+  } catch (err) {
+    logEvent(
+      "error.swallowed",
+      {
+        kind: "icp-filter-person",
+        message_120: ((err as Error).message ?? "").slice(0, 120),
+      },
+      "warn",
+    );
+    return { verdict: "transient", reason: "person classifier unavailable" };
+  }
+
+  // roleText is a public job title / self-written headline, not private
+  // prospect data — same logging rationale as `icp.decision` above.
+  logEvent("icp.person_decision", {
+    verdict: decision.verdict,
+    reason_120: decision.reason.slice(0, 120),
+    role_120: (input.person.roleText ?? "").slice(0, 120),
+  });
+  return decision;
+}
+
+function parsePersonJson(raw: string): PersonQualification {
+  const parsed = tryParseJsonObject<{ verdict?: unknown; reason?: unknown }>(raw, {});
+  const reason = typeof parsed.reason === "string" ? parsed.reason : "no reason given";
+  // A malformed / truncated / refused response is a platform failure, not a
+  // verdict. Returning `transient` (never `reject`) keeps the dedupeKey alive.
+  // Note `transient` is code-only — the prompt is never asked to emit it.
+  if (parsed.verdict === "pass" || parsed.verdict === "reject" || parsed.verdict === "unclear") {
+    return { verdict: parsed.verdict, reason };
+  }
+  return { verdict: "transient", reason: "person classifier malformed response" };
+}
