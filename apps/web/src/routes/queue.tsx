@@ -640,6 +640,7 @@ function QueueRow({
   const email = emailFor(row.payload);
   const name = nameFor(row.payload);
   const company = companyFor(row.payload);
+  const title = titleFor(row.payload);
   const linkedinUrl = linkedinUrlFor(row.payload);
   const phone = phoneFor(row.payload);
   const eventTitle = eventTitleFor(row.payload);
@@ -689,6 +690,7 @@ function QueueRow({
           <div className="text-ink-cream">{name ? <Pii kind="name">{name}</Pii> : "(unknown)"}</div>
           <div className="font-mono text-[11px] text-ink-faint">
             {email ? <Pii kind="email">{email}</Pii> : "—"}
+            {title ? <span className="text-ink-cream-2">{` · ${title}`}</span> : null}
             {company ? (
               <>
                 {" · "}
@@ -1658,6 +1660,15 @@ function companyFor(payload: unknown): string | null {
   const p = payload as Record<string, unknown>;
   if (typeof p["company"] === "string") return p["company"] as string;
   return null;
+}
+
+// Stamped on the payload by the person-level ICP gate; absent on rows queued
+// before the gate existed.
+function titleFor(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object") return null;
+  const p = payload as Record<string, unknown>;
+  const v = p["title"];
+  return typeof v === "string" && v.trim().length > 0 ? v.trim() : null;
 }
 
 function linkedinUrlFor(payload: unknown): string | null {
