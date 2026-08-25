@@ -1,15 +1,15 @@
 {
   "name": "@oneshot-gtm/shared-types",
   "version": "0.7.0",
-  "type": "module",
-  "main": "./src/index.ts",
-  "exports": {
-    ".": "./src/index.ts"
-  },
   "homepage": "https://oneshot-gtm.com",
   "repository": {
     "type": "git",
     "url": "https://github.com/oneshot-agent/oneshot-gtm",
     "directory": "packages/shared-types"
+  },
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
   }
 }

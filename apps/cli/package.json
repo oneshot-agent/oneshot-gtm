@@ -2,7 +2,13 @@
   "name": "oneshot-gtm",
   "version": "0.7.0",
   "description": "Open-source GTM agent for technical founders. Pay-per-result, signed receipts.",
+  "homepage": "https://oneshot-gtm.com",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oneshot-agent/oneshot-gtm",
+    "directory": "apps/cli"
+  },
   "bin": {
     "oneshot-gtm": "./src/main.ts"
   },
@@ -26,11 +32,5 @@
   },
   "devDependencies": {
     "@types/prompts": "^2.4.0"
-  },
-  "homepage": "https://oneshot-gtm.com",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/oneshot-agent/oneshot-gtm",
-    "directory": "apps/cli"
   }
 }

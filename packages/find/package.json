@@ -1,6 +1,12 @@
 {
   "name": "@oneshot-gtm/find",
   "version": "0.7.0",
+  "homepage": "https://oneshot-gtm.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oneshot-agent/oneshot-gtm",
+    "directory": "packages/find"
+  },
   "type": "module",
   "main": "./src/index.ts",
   "exports": {
@@ -10,11 +16,5 @@
     "@oneshot-gtm/core": "workspace:*",
     "@oneshot-gtm/intel": "workspace:*",
     "@oneshot-gtm/plays": "workspace:*"
-  },
-  "homepage": "https://oneshot-gtm.com",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/oneshot-agent/oneshot-gtm",
-    "directory": "packages/find"
   }
 }

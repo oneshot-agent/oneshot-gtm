@@ -1,6 +1,12 @@
 {
   "name": "@oneshot-gtm/core",
   "version": "0.7.0",
+  "homepage": "https://oneshot-gtm.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oneshot-agent/oneshot-gtm",
+    "directory": "packages/core"
+  },
   "type": "module",
   "main": "./src/index.ts",
   "exports": {
@@ -9,11 +15,5 @@
   },
   "dependencies": {
     "@oneshot-agent/sdk": "0.22.0"
-  },
-  "homepage": "https://oneshot-gtm.com",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/oneshot-agent/oneshot-gtm",
-    "directory": "packages/core"
   }
 }
