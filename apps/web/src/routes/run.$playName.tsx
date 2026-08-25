@@ -94,11 +94,9 @@ function RunPage() {
   // Cross-route navigation (e.g. to /cadences for the deep-link from done mode).
   const globalNavigate = useNavigate();
 
-  // Run state machine: edit | progress | done | interrupted. Driven by
-  // `search.runId`. When set, we fetch GET /api/runs/:id and re-render the
-  // per-target view from server-persisted events — so the page is fully
-  // resumable across nav-away-and-back AND across server restarts (the
-  // cold-boot sweep flips stranded runs to 'interrupted').
+  // Run state machine (edit | progress | done | interrupted), driven by `search.runId`.
+  // Rendering from server-persisted events keeps the page resumable across nav-away
+  // and server restarts (the cold-boot sweep flips stranded runs to 'interrupted').
   const runQuery = useQuery({
     queryKey: ["run", search.runId],
     queryFn: () => (search.runId ? api.run(search.runId) : Promise.resolve(null)),
@@ -140,16 +138,9 @@ function RunPage() {
   // founder isn't confused by the schema's default empty row.
   const [hydrationEmpty, setHydrationEmpty] = useState(false);
 
-  // Mount-only hydrate-from-queue.
-  //
-  // StrictMode (dev) double-invokes this effect; we use a closure-scoped
-  // `cancelled` flag so the first invocation's fetch resolves into a no-op
-  // and the second invocation's fetch is the one that updates state. A
-  // `useRef`-based "ran-once" guard would persist across the remount and
-  // make the SECOND invocation skip — leaving state un-hydrated even though
-  // we ran a fetch (silent dev-only failure).
-  //
-  // Net cost: 1 extra GET in dev StrictMode; 1 GET total in production.
+  // Mount-only hydrate-from-queue. StrictMode double-invokes this effect: the
+  // closure-scoped `cancelled` flag must stay (a useRef ran-once guard would
+  // persist across the remount and leave state un-hydrated).
   const hydrateFromQueue = useCallback(
     async (cancelledRef?: { cancelled: boolean }): Promise<void> => {
       if (!schema) return;
@@ -385,11 +376,9 @@ function RunPage() {
             const ev = JSON.parse(line.slice(5).trim()) as RunPlayEvent;
             streamedEvents.push(ev);
             setEvents((prev) => [...prev, ev]);
-            // First frame is always { kind: "runStarted", runId }. Navigate
-            // to the same page with `?runId=N` so the page is now in
-            // progress mode AND survives nav-away (the URL is the durable
-            // handle). The SSE stream keeps feeding `setEvents` for instant
-            // updates; `runQuery` takes over once the user returns later.
+            // First frame is always { kind: "runStarted", runId }. Navigating to
+            // `?runId=N` makes the URL the durable handle; SSE keeps feeding
+            // `setEvents`, `runQuery` takes over after nav-away.
             if (ev.kind === "runStarted") {
               void navigate({ search: (prev) => ({ ...prev, runId: ev.runId }) });
             }
@@ -419,7 +408,6 @@ function RunPage() {
 
   return (
     <div className="-mx-6 -my-6 flex flex-col">
-      {/* Masthead */}
       <section className="border-b border-ink-rule px-6 pb-5 pt-6">
         <Link
           to="/plays"
@@ -574,7 +562,6 @@ function RunPage() {
         </div>
       </RunLedgerSection>
 
-      {/* Action bar — sticky. The visible controls + label depend on `mode`. */}
       <section className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-t border-ink-rule bg-ink-bg/90 px-6 py-3 backdrop-blur-[2px]">
         {mode === "edit" && (
           <button
@@ -719,7 +706,6 @@ function RunPage() {
                         : "border-ink-rule",
                   )}
                 >
-                  {/* Receipt seal — appears only on successfully sent drafts. */}
                   {d.receiptIds && d.receiptIds.length > 0 && (
                     <span
                       aria-hidden="true"

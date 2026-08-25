@@ -289,7 +289,6 @@ function CadencesPage() {
 
   return (
     <div className="-mx-6 -my-6 flex flex-col">
-      {/* Masthead */}
       <section className="flex items-end justify-between gap-4 border-b border-ink-rule px-6 pb-5 pt-6">
         <div>
           <div className="ln-eyebrow">The Ledger · Cadences</div>
@@ -337,10 +336,8 @@ function CadencesPage() {
         </section>
       )}
 
-      {/* Aggregate strip — 4 columns divided by vertical hairlines, 5 once any
-          cadence has bounced. The bounced tile only appears when there's
-          something to report: a permanent 0 would read as reassurance on
-          installs that have never had bounce detection run at all. */}
+      {/* The bounced tile appears only once any cadence has bounced — a permanent 0
+          would read as reassurance on installs that never ran bounce detection. */}
       <section
         className={cn(
           "grid grid-cols-2 divide-x divide-ink-rule border-b border-ink-rule",
@@ -376,7 +373,6 @@ function CadencesPage() {
         )}
       </section>
 
-      {/* Meta strip */}
       <section className="flex items-baseline justify-between border-b border-ink-rule px-6 py-2.5">
         <div className="ln-eyebrow">
           {cadences.data ? (
@@ -402,7 +398,6 @@ function CadencesPage() {
         </div>
       </section>
 
-      {/* Bulk-action bar — visible when at least one active row is selected. */}
       {selectedRows.length > 0 && (
         <section className="flex items-center justify-between gap-3 border-b border-ink-rule bg-ink-surface/40 px-6 py-2.5">
           <div className="font-mono text-[12px] text-ink-cream-2">
@@ -448,7 +443,6 @@ function CadencesPage() {
         </section>
       )}
 
-      {/* Cadence ledger */}
       <section>
         {cadences.isLoading ? (
           <div>
@@ -714,10 +708,8 @@ function CadencesPage() {
                                 </>
                               );
                             })()}
-                          {/* Chevron also for NON-active rows that still have history
-                            (breakup / replied / completed / paused / bounced). The active-status
-                            block already renders its own chevron above when there's a
-                            draft OR history; this one covers the non-active case. */}
+                          {/* Chevron for non-active rows with history — the active-status
+                            block renders its own above. */}
                           {c.status !== "active" &&
                             c.priorSteps.length > 0 &&
                             (() => {

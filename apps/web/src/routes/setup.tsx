@@ -304,7 +304,6 @@ function SetupPage() {
 
   return (
     <div className="-mx-6 -my-6 flex flex-col">
-      {/* Masthead */}
       <section className="flex items-end justify-between gap-4 border-b border-ink-rule px-6 pb-5 pt-6">
         <div>
           <div className="ln-eyebrow">The Ledger · Setup</div>
@@ -793,9 +792,7 @@ function SetupPage() {
                   prospects pinned to it until it's restored.
                 </span>
 
-                {/* Provisioned domains: the wallet's OneShot sending-domain pool
-                    with live status. A paused domain sends nothing until resumed
-                    (doctor flags it); resume/pause act on it in place. */}
+                {/* Provisioned OneShot domains — a paused domain sends nothing until resumed. */}
                 {provisionedDomains.length > 0 && (
                   <div className="mt-3 flex flex-col gap-2 border-t border-ink-rule pt-3">
                     <span className="ln-eyebrow">Provisioned domains</span>
@@ -840,9 +837,7 @@ function SetupPage() {
                   </div>
                 )}
 
-                {/* Add OneShot sender: a wallet-owned domain + a mailbox local-part.
-                    Multiple domains, and multiple mailboxes within one domain, all
-                    join the rotation pool. Applied on Save. */}
+                {/* Add OneShot sender — domain + mailbox join the rotation pool on Save. */}
                 <div className="mt-3 flex flex-col gap-2 border-t border-ink-rule pt-3">
                   <span className="ln-eyebrow">Add OneShot sender</span>
                   {pendingAdds.length > 0 && (
@@ -873,8 +868,7 @@ function SetupPage() {
                   )}
                   <div className="flex flex-wrap items-end gap-2">
                     <Field label="Domain" className="min-w-[200px]">
-                      {/* Free text + suggestions: pick a warmed domain or type a
-                          new one (it auto-provisions on first send). */}
+                      {/* Pick a warmed domain or type a new one (auto-provisions on first send). */}
                       <Input
                         list="oneshot-domains"
                         placeholder="acme.com"
@@ -927,8 +921,7 @@ function SetupPage() {
                       Add
                     </Button>
                   </div>
-                  {/* Cold-domain warning: a typed domain that isn't in the warmed
-                      pool will go out cold (pinned sends bypass server warm-up). */}
+                  {/* A domain outside the warmed pool goes out cold — pinned sends bypass warm-up. */}
                   {addDomain.trim() &&
                     provisionedDomains.length > 0 &&
                     !provisionedDomains.some(
@@ -940,8 +933,7 @@ function SetupPage() {
                         client ramp below is your only throttle.
                       </span>
                     )}
-                  {/* Shared-reputation note when stacking a 2nd mailbox on a domain
-                      already in the pool — reputation + send limits are per-domain. */}
+                  {/* Reputation + send limits are per-domain, not per-mailbox. */}
                   {addDomain.trim() &&
                     (status.data?.identities ?? []).some(
                       (i) => i.sendingDomain?.toLowerCase() === addDomain.trim().toLowerCase(),
@@ -960,14 +952,10 @@ function SetupPage() {
                 </div>
               </div>
             )}
-            {/* Smartlead lives OUTSIDE the identities guard: with an empty
-                pool there are no identity rows, but connecting Smartlead is
-                exactly how you rebuild one. */}
+            {/* Smartlead lives OUTSIDE the identities guard — connecting it is how an
+                empty pool gets rebuilt. */}
             <div className="md:col-span-2 flex flex-col gap-2">
-              {/* Smartlead accounts: bring-your-own cold-email infra. Paste
-                  the workspace API key, load the connected mailboxes, stage
-                  picks into the rotation pool (applied on Save). Send-only —
-                  replies to Smartlead-sent mail live in Smartlead's own UI. */}
+              {/* Smartlead accounts — send-only; replies live in Smartlead's own UI. */}
               <div className="mt-3 flex flex-col gap-2">
                 <span className="ln-eyebrow">Smartlead accounts</span>
                 <Field

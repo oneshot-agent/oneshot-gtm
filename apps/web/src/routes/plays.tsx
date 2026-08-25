@@ -134,7 +134,6 @@ function PlaysPage() {
 
   return (
     <div className="-mx-6 -my-6 flex flex-col">
-      {/* Masthead */}
       <section className="flex items-end justify-between gap-4 border-b border-ink-rule px-6 pb-5 pt-6">
         <div>
           <div className="ln-eyebrow">The Ledger · Plays</div>
@@ -150,13 +149,7 @@ function PlaysPage() {
           >
             The motion catalogue.
           </h1>
-          {/*
-            Counts come from the data. This copy used to hardcode "Ten motion
-            plays" while the badge beside it rendered the real length, so the
-            page contradicted itself the moment a play was added. The old "six
-            queue-drain plays" was wrong too — DASHBOARD_PLAYS holds one — so
-            that claim is gone rather than replaced with another fixed number.
-          */}
+          {/* Counts come from the data — never hardcode play counts in this copy. */}
           <p className="ln-note mt-2 max-w-[64ch] text-[13px] text-ink-cream-2">
             {plays.data ? `${plays.data.plays.length} motion plays` : "Motion plays"}. Each one is a
             known signal you can act on — trigger, cadence, anti-slop lint, signed receipt. Run them
@@ -174,7 +167,6 @@ function PlaysPage() {
         </div>
       </section>
 
-      {/* Plays ledger — one rich row per play */}
       <section>
         {plays.isLoading ? (
           <div>
@@ -200,7 +192,6 @@ function PlaysPage() {
                     i % 2 === 1 && "bg-ink-surface/20",
                   )}
                 >
-                  {/* Left: name + channel chips + receipt badge */}
                   <div className="flex flex-col gap-2.5">
                     <div className="flex items-baseline gap-2">
                       <code
@@ -245,7 +236,6 @@ function PlaysPage() {
                     </div>
                   </div>
 
-                  {/* Middle: description + cadence timeline + CLI */}
                   <div className="flex flex-col gap-3 min-w-0">
                     {meta?.description && (
                       <p className="ln-note text-[13px] text-ink-cream-2">{meta.description}</p>
@@ -262,7 +252,6 @@ function PlaysPage() {
                     </code>
                   </div>
 
-                  {/* Right: actions */}
                   <div className="flex flex-col items-end gap-1.5">
                     {runnable && (
                       <Link

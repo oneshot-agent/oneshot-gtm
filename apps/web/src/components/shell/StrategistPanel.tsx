@@ -41,7 +41,6 @@ export default function StrategistPanel({ open, onClose }: { open: boolean; onCl
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      {/* Backdrop — clickable to close, dims the page when open */}
       {open && (
         <div
           className="fixed inset-0 z-40 bg-ink-bg/60 backdrop-blur-sm"
@@ -102,7 +101,6 @@ function ChatBody() {
         />
       </ThreadPrimitive.Viewport>
 
-      {/* Suggestion chips */}
       <div className="flex flex-wrap gap-2 border-t border-ink-rule/60 px-5 py-2">
         {SUGGESTIONS.map((s) => (
           <ThreadPrimitive.Suggestion
@@ -116,7 +114,6 @@ function ChatBody() {
         ))}
       </div>
 
-      {/* Composer */}
       <div className="border-t border-ink-rule px-5 py-3">
         <ComposerPrimitive.Root className="flex items-center gap-2">
           <ComposerPrimitive.Input

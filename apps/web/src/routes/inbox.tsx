@@ -70,7 +70,6 @@ function InboxPage() {
 
   return (
     <div className="-mx-6 -my-6 flex flex-col">
-      {/* Masthead */}
       <section className="flex items-end justify-between gap-4 border-b border-ink-rule px-6 pb-5 pt-6">
         <div>
           <div className="ln-eyebrow">The Ledger · Replies</div>
@@ -118,9 +117,7 @@ function InboxPage() {
         </div>
       </section>
 
-      {/* Match-status filter — most inbox mail is unmatched noise (newsletters,
-          bounces, system mail); filtering to `matched` surfaces real prospect
-          replies. Mirrors the queue page's filter-bar style. */}
+      {/* Match-status filter — most inbox mail is unmatched noise; `matched` = real prospect replies. */}
       <div className="flex flex-wrap items-center gap-2 border-b border-ink-rule/60 px-6 py-3">
         <span className="ln-eyebrow">show</span>
         {MATCH_FILTERS.map((f) => (
@@ -131,12 +128,10 @@ function InboxPage() {
             onClick={() => setMatchFilter(f.key)}
           >
             {f.label}
-            {/* opacity (not a fixed faint color) so the count stays legible on
-                the selected button's cream fill as well as the ghost ones. */}
+            {/* opacity, not a fixed faint color, so the count stays legible on any button fill. */}
             {inbox.data && (
               <span className="ml-1 font-mono opacity-60">
-                {/* Every count is computed over the truncated window, so every
-                    count is a lower bound when hasMore — not just "all". */}
+                {/* Counts are computed over the truncated window — lower bounds when hasMore. */}
                 {countFor(f.key)}
                 {windowSuffix}
               </span>

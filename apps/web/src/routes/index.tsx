@@ -40,7 +40,6 @@ function HomePage() {
 
   return (
     <div className="-mx-6 -my-6 flex flex-col">
-      {/* Masthead — newspaper-style, no card */}
       <section className="border-b border-ink-rule px-6 pb-5 pt-6">
         <div className="flex items-end justify-between gap-6">
           <div>
@@ -73,7 +72,6 @@ function HomePage() {
       {/* Onboarding nudge — disappears when ICP set + finder run + drain done. */}
       <NextStep />
 
-      {/* KPI strip — 4 columns divided by vertical hairlines. No cards. */}
       <section className="grid grid-cols-2 divide-x divide-ink-rule border-b border-ink-rule lg:grid-cols-4">
         <LedgerNumber
           label="Replied · 7d"
@@ -110,10 +108,8 @@ function HomePage() {
         limit={10}
       />
 
-      {/* Scheduler — per-trigger last-run + next-due strip */}
       <SchedulerStrip />
 
-      {/* Receipts ledger — full-bleed table, no card, newspaper-style */}
       <section className="flex flex-col border-b border-ink-rule">
         <div className="flex items-baseline justify-between px-6 pb-2 pt-5">
           <div className="ln-eyebrow">Recent receipts</div>
@@ -178,7 +174,6 @@ function HomePage() {
         )}
       </section>
 
-      {/* Editorial footnote — the "why" of spend, no card */}
       <section className="grid grid-cols-1 gap-8 px-6 py-8 lg:grid-cols-[1fr_280px]">
         <div className="max-w-[58ch]">
           <div className="ln-eyebrow">Editor's note</div>

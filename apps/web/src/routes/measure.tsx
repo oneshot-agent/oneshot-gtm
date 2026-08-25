@@ -61,7 +61,6 @@ function MeasurePage() {
 
   return (
     <div className="-mx-6 -my-6 flex flex-col">
-      {/* Masthead */}
       <section className="flex items-end justify-between gap-4 border-b border-ink-rule px-6 pb-5 pt-6">
         <div>
           <div className="ln-eyebrow">The Ledger · Measure</div>
@@ -92,7 +91,6 @@ function MeasurePage() {
         </div>
       </section>
 
-      {/* Aggregate strip */}
       <section className="grid grid-cols-2 divide-x divide-ink-rule border-b border-ink-rule md:grid-cols-4">
         <Summary
           label="Total spend"
@@ -121,7 +119,6 @@ function MeasurePage() {
         />
       </section>
 
-      {/* CAC table */}
       <section className="border-b border-ink-rule">
         <div className="flex items-baseline justify-between px-6 pb-2 pt-5">
           <div className="ln-eyebrow">CAC by play · signed receipts</div>
@@ -206,7 +203,6 @@ function MeasurePage() {
         )}
       </section>
 
-      {/* RoCS table */}
       <section className="border-b border-ink-rule">
         <div className="flex items-baseline justify-between px-6 pb-2 pt-5">
           <div className="ln-eyebrow">RoCS · return on cognitive spend</div>

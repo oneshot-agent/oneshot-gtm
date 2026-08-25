@@ -1,9 +1,6 @@
 /**
- * Pure parser for strategist ACTION markers. Lives outside the React
- * component so it can be unit-tested without rendering anything — and so
- * the regex's correctness is locked down (a previous version excluded `-`
- * from the trigger-name capture, silently breaking every multi-word
- * trigger).
+ * Pure parser for strategist ACTION markers, outside the React component so it
+ * can be unit-tested without rendering.
  */
 
 type StrategistActionKind = "enable" | "disable" | "apply-config";
@@ -28,10 +25,8 @@ export interface ParsedStrategistAction {
 const ACTION_RE = /<!--ACTION:(enable|disable|apply-config):([^:>]+?)(?::([\s\S]*?))?-->/;
 
 /**
- * Looser match for partial markers mid-stream. Used to strip "<!--ACTION:..."
- * fragments from displayed text before the closing `-->` arrives, so the
- * founder doesn't see marker scaffolding flicker into view as the SSE
- * stream paints chunk by chunk.
+ * Looser match for partial markers mid-stream — strips "<!--ACTION:..." fragments
+ * from displayed text before the closing `-->` arrives.
  */
 const PARTIAL_ACTION_RE = /<!--ACTION:[\s\S]*$/;
 

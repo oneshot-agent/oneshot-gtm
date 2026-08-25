@@ -8,10 +8,6 @@
  *   2. `halted · <reason>` — finder returned `halted: "..."`
  *   3. counter breakdown: `cand=N · kept=M · icp=K · low=L · $X.YY`
  *   4. `—` when summary exists but has no usable fields
- *
- * Used by:
- *   - `/queue` Triggers table (run column)
- *   - `/home` SchedulerStrip (last run column)
  */
 export function summarizeRun(summary: unknown): string {
   if (!summary || typeof summary !== "object") return "—";
@@ -45,10 +41,8 @@ export function summarizeRun(summary: unknown): string {
 }
 
 /**
- * Format the per-cohort sweep breakdown for SchedulerStrip. Cohorts with
- * non-zero records come first (sorted by record count desc), zero-result
- * cohorts collapse into a trailing summary like `+3 empty (spc-2026-1, …)`
- * so the one-line layout doesn't blow out when the sweep is wide.
+ * Per-cohort sweep breakdown: non-zero cohorts first (desc), zero-result
+ * cohorts collapse into a trailing `+3 empty (…)` summary.
  */
 function formatPerCohort(perCohort: unknown[]): string {
   type Row = { cohort: string; records: number; error: string | null };
