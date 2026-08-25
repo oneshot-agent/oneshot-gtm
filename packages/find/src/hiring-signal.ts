@@ -1,6 +1,6 @@
 import { getLedger, logEvent, webRead, webSearch } from "@oneshot-gtm/core";
 import { resolveVerifyEnrichQualify } from "./_contact.ts";
-import { persistRoleRejection } from "./_qualify.ts";
+import { persistRoleRejection, qualifyPreSpend } from "./_qualify.ts";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { HiringSignalTarget } from "@oneshot-gtm/plays";
 import { isDuplicate } from "./_dedupe.ts";
@@ -199,6 +199,31 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
       extract.hiringManagerName && extract.hiringManagerName.length > 0
         ? extract.hiringManagerName
         : null;
+    // Stage A: judge the extracted role BEFORE paying for findEmail +
+    // verify + enrich — a clearly off-ICP hiringManagerRole must not consume
+    // the run's cost budget and crowd out valid candidates behind it.
+    const preSpend = await qualifyPreSpend({
+      icp,
+      person: {
+        name: extract.hiringManagerName,
+        company: extract.company,
+        roleText: extract.hiringManagerRole,
+        evidence: `hiring: ${extract.jobTitle ?? "role"}`,
+      },
+    });
+    if (preSpend.action === "reject") {
+      result.droppedRole = (result.droppedRole ?? 0) + 1;
+      persistRoleRejection({
+        playName: PLAY_NAME,
+        dedupeKey: hit.url,
+        payload: { name: extract.hiringManagerName },
+        source: SOURCE,
+        reason: preSpend.reason,
+        dryRun: opts.dryRun,
+      });
+      continue;
+    }
+
     const contact = await resolveVerifyEnrichQualify({
       playName: PLAY_NAME,
       fullName: managerName,

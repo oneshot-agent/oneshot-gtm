@@ -1,6 +1,6 @@
 import { getLedger, logEvent, webSearch } from "@oneshot-gtm/core";
 import { resolveVerifyEnrichQualify } from "./_contact.ts";
-import { persistRoleRejection } from "./_qualify.ts";
+import { persistRoleRejection, qualifyPreSpend } from "./_qualify.ts";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { JobChangeTarget } from "@oneshot-gtm/plays";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
@@ -174,6 +174,31 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
       result.droppedEnrichment++;
       continue;
     }
+    // Stage A: judge the extracted role BEFORE paying for findEmail +
+    // verify + enrich — a clearly off-ICP newRole must not consume
+    // the run's cost budget and crowd out valid candidates behind it.
+    const preSpend = await qualifyPreSpend({
+      icp,
+      person: {
+        name: extract.fullName,
+        company: extract.newCompany,
+        roleText: extract.newRole,
+        evidence: `moved to ${extract.newCompany ?? "a new role"}`,
+      },
+    });
+    if (preSpend.action === "reject") {
+      result.droppedRole = (result.droppedRole ?? 0) + 1;
+      persistRoleRejection({
+        playName: PLAY_NAME,
+        dedupeKey: hit.url,
+        payload: { name: extract.fullName },
+        source: SOURCE,
+        reason: preSpend.reason,
+        dryRun: opts.dryRun,
+      });
+      continue;
+    }
+
     const contact = await resolveVerifyEnrichQualify({
       playName: PLAY_NAME,
       fullName: extract.fullName,

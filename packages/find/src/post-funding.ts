@@ -1,6 +1,6 @@
 import { getLedger, logEvent, webRead, webSearch } from "@oneshot-gtm/core";
 import { resolveVerifyEnrichQualify } from "./_contact.ts";
-import { persistRoleRejection } from "./_qualify.ts";
+import { persistRoleRejection, qualifyPreSpend } from "./_qualify.ts";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { PostFundingTarget } from "@oneshot-gtm/plays";
 import { readFileSync } from "node:fs";
@@ -154,6 +154,31 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
     }
 
     // Resolve + verify the founder's email (prescreen → findEmail → dedupe → verify).
+    // Stage A: judge the extracted role BEFORE paying for findEmail +
+    // verify + enrich — a clearly off-ICP founderRole must not consume
+    // the run's cost budget and crowd out valid candidates behind it.
+    const preSpend = await qualifyPreSpend({
+      icp,
+      person: {
+        name: extract.founderName,
+        company: extract.company,
+        roleText: extract.founderRole,
+        evidence: `raised ${extract.round ?? "a round"}`,
+      },
+    });
+    if (preSpend.action === "reject") {
+      result.droppedRole = (result.droppedRole ?? 0) + 1;
+      persistRoleRejection({
+        playName: PLAY_NAME,
+        dedupeKey: url,
+        payload: { name: extract.founderName },
+        source: SOURCE,
+        reason: preSpend.reason,
+        dryRun: opts.dryRun,
+      });
+      continue;
+    }
+
     const contact = await resolveVerifyEnrichQualify({
       playName: PLAY_NAME,
       fullName: extract.founderName,

@@ -37,9 +37,15 @@ Examples: `GTM @AhaCreator`, `Account Executive`, `Early stage VC investor`, `An
 
 **`unclear`** — this is the important one. The role text does not settle the question. Return `unclear` when:
 - The title is generic and could sit in any function: `Manager`, `Consultant`, `Director`, `Analyst`, `Fellow`, `Partner`, `Specialist`, `Builder`. (Note these name a LEVEL or a department-agnostic function. Founder-class titles are not in this group — see `pass` above.)
-- The text is a hobby, joke, slogan, or personal brand rather than a job: `Tinkering`, `making sunlight`, `nyc based founder building in infrastructure for ideas`.
+- The text is a hobby, joke, slogan, or personal brand rather than a job: `Tinkering`, `making sunlight`.
 - The text is empty, a bare event role (`Host`, `Guest`, `Attendee`), or just a URL.
-- **The role looks off-topic BUT the company is a technical or software company.** A hobby title on someone at an engineering company means the headline is stale or personal, not that they are unqualified. This case is `unclear`, never `reject`.
+- **A hobby or personal-brand title at a technical or software company.** A joke, slogan, or
+  extracurricular headline on someone at an engineering company usually means the headline is
+  stale or personal, not that they are unqualified — `unclear`, never `reject`. Student-club and
+  society titles count as hobby text here (`Club Snowboard Team Event Coordinator` at a software
+  company is a stale campus headline → `unclear`). This rescue applies ONLY to hobby/joke/
+  extracurricular/vague text: an explicit EMPLOYER business-function title (`Marketing Manager`,
+  `Account Executive`, recruiter) is `reject` regardless of how technical the company is.
 - The role is senior-but-nonspecific at a small company (`COO`, `Chief Business Officer`, `Managing Director`), where the person may well be the technical decision-maker.
 
 `unclear` is not a failure and not a soft reject. It triggers a paid profile lookup that will settle it, so returning `unclear` is cheap and correct. Guessing is expensive.
