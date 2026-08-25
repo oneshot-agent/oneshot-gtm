@@ -31,11 +31,9 @@ function normalizeFrom(raw: string): string {
 }
 
 /**
- * Cadence-status priority for "which play represents this prospect's reply":
- * a `replied` cadence wins, then `active`, then anything else. Shared by the
- * list route (badge) and the draft route (prior-email context) so the play
- * shown and the play whose history feeds the LLM never diverge for a prospect
- * enrolled in several plays. Ties keep the first row seen.
+ * Cadence-status priority: `replied` wins, then `active`. Shared by the list
+ * and draft routes so the play shown and the play whose history feeds the LLM
+ * never diverge. Ties keep the first row seen.
  */
 function cadenceRank(status: string): number {
   if (status === "replied") return 2;
@@ -55,16 +53,12 @@ export async function listInboxRoute(req: Request): Promise<Response> {
   let emails: Awaited<ReturnType<typeof listInbox>>["emails"];
   let hasMore = false;
   try {
-    // Fetch a wide window (not just the newest handful): mailboxes fill with
-    // newsletters/bounces/DMARC noise, and matching only runs over what's
-    // fetched — too small a window buries a genuine prospect reply (and its
-    // match) below the noise. The UI defaults to the `matched` filter to surface
-    // those; this gives it enough history to find them.
+    // Wide window: matching only runs over what's fetched, and mailbox noise
+    // would bury a genuine prospect reply in a small one.
     const result = await listInbox({ limit: 200 });
     emails = result.emails;
-    // Truthful truncation signal: listInbox says whether this window is the
-    // whole story. The UI turns it into a "+" on its counts — the page must
-    // never present a clamped window as the entire mailbox.
+    // Truthful truncation signal — the page must never present a clamped
+    // window as the entire mailbox.
     hasMore = result.has_more;
   } catch (err) {
     logEvent(
@@ -76,9 +70,8 @@ export async function listInboxRoute(req: Request): Promise<Response> {
     return jsonResponse(out, 200, req);
   }
 
-  // Cadence-backed prospects (multi-touch plays) carry play + status + name/co
-  // in one JOIN. Index by normalized email; prefer a `replied`/`active` cadence
-  // when a prospect has several.
+  // Index cadence-backed prospects by normalized email; prefer a
+  // `replied`/`active` cadence when a prospect has several.
   const byEmail = new Map<
     string,
     { name: string | null; company: string | null; playName: string; status: string }
@@ -98,8 +91,8 @@ export async function listInboxRoute(req: Request): Promise<Response> {
     }
   }
 
-  // Identity provider per id — the UI needs to know whether a reply will be a
-  // threaded Gmail send or a best-effort (paid, unthreaded) OneShot send.
+  // Provider per identity — the UI shows whether a reply threads (gmail) or
+  // is a best-effort OneShot send.
   const cfg = loadConfig();
   const providerById = new Map(resolveIdentities(cfg).map((i) => [i.id, i.provider]));
 
@@ -143,15 +136,12 @@ export async function listInboxRoute(req: Request): Promise<Response> {
     };
   });
 
-  // Drop mail from the founder's own sending domain — the mailbox accumulates
-  // the agent's own sends + platform/system test mail (agent@/info@<domain>),
-  // which are never genuine prospect replies. Then newest-first.
+  // Drop mail from the founder's own sending domain (agent's own sends +
+  // system test mail are never prospect replies). Then newest-first.
   const selfDomain = (cfg.sendingDomain ?? "").trim().toLowerCase();
-  // Gmail self-sends: the Gmail query already excludes `from:me`, but
-  // belt-and-braces against forwarded copies of the founder's own address.
-  // Pool identities carry their address in config — no network call needed.
-  // Only the legacy synthesized identity (no address field) needs a live
-  // profile lookup, and that failing shouldn't break the replies page.
+  // Gmail self-sends: belt-and-braces on top of the query's `-from:me`. Only
+  // the legacy synthesized identity (no address in config) needs a live
+  // profile lookup, and that failing must not break the replies page.
   const gmailIdentities = resolveIdentities(cfg).filter((i) => i.provider === "gmail");
   const selfAddresses = new Set(
     gmailIdentities.map((i) => (i.address ?? "").trim().toLowerCase()).filter((a) => a.length > 0),
@@ -174,9 +164,8 @@ export async function listInboxRoute(req: Request): Promise<Response> {
 
 /**
  * Generate an LLM reply draft for an inbound email. The client sends the
- * email content it already has (re-fetching the live inbox here would add a
- * multi-second round-trip per draft). Prospect/play context is re-resolved
- * from the ledger by sender address — same matching as the list route.
+ * email content it already has (re-fetching the inbox costs seconds);
+ * prospect/play context is re-resolved from the ledger by sender address.
  */
 export async function draftReplyRoute(req: Request): Promise<Response> {
   let body: Partial<InboxDraftReplyRequest>;
@@ -191,9 +180,7 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
   if (!fromEmail) {
     return jsonResponse({ error: "fromEmail is required" }, 400, req);
   }
-  // Distinct message: the UI disables the generate button on bodyless replies,
-  // but a scripted caller deserves to know WHY this 400s rather than getting a
-  // generic complaint about fields it did send.
+  // Distinct message so a scripted caller knows WHY this 400s.
   if (!inboundBody) {
     return jsonResponse({ error: "this email has no body to draft a reply from" }, 400, req);
   }
@@ -202,8 +189,7 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
   const prospect = ledger.getProspectByEmail(fromEmail);
   let matched: Parameters<typeof draftInboxReply>[0]["matched"] = null;
   if (prospect) {
-    // Same ranking as the list route's badge (cadenceRank) so the play whose
-    // prior emails feed the draft matches the one the founder sees.
+    // Same ranking as the list route's badge (cadenceRank).
     const cadences = ledger.listCadencesForProspect(prospect.id);
     const best = cadences.reduce<(typeof cadences)[number] | undefined>(
       (acc, c) => (!acc || cadenceRank(c.status) > cadenceRank(acc.status) ? c : acc),
@@ -217,9 +203,8 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
     };
   }
 
-  // Research before drafting: free tiers always (stored dossier, this thread's
-  // sent replies), paid tier only for senders we know nothing about. Wrapped —
-  // research failing must degrade the draft, never block it.
+  // Research before drafting: free tiers always, paid tier only for unknown
+  // senders. Research failing must degrade the draft, never block it.
   let context: Awaited<ReturnType<typeof gatherReplyContext>> = {
     dossier: null,
     threadSent: [],
@@ -266,9 +251,8 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
 }
 
 /**
- * Persist the in-progress reply draft for a thread (debounced auto-save from
- * the composer). Distinct from `/api/inbox/draft-reply`, which only generates
- * an LLM draft and stores nothing. Upsert-by-thread-key so typing overwrites.
+ * Persist the in-progress reply draft for a thread (debounced auto-save).
+ * Upsert-by-thread-key so typing overwrites.
  */
 export async function saveDraftRoute(req: Request): Promise<Response> {
   let body: Partial<InboxSaveDraftRequest>;
@@ -285,8 +269,7 @@ export async function saveDraftRoute(req: Request): Promise<Response> {
   }
 
   const ledger = getLedger();
-  // An emptied composer clears the persisted draft rather than storing a blank
-  // one, so deleting all text and refreshing doesn't resurrect the old draft.
+  // An emptied composer clears the draft so a refresh can't resurrect it.
   if ((body.body ?? "").trim() === "") {
     ledger.clearInboxDraft(threadKey);
   } else {
@@ -306,8 +289,7 @@ export async function saveDraftRoute(req: Request): Promise<Response> {
 /**
  * Send a (possibly founder-edited) reply from the identity whose mailbox
  * received the inbound email. Gmail sources thread properly; oneshot sources
- * are a best-effort fresh send (no threading API — verified against the
- * platform's OpenAPI spec).
+ * are a best-effort fresh send (the platform has no threading API).
  */
 export async function sendReplyRoute(req: Request): Promise<Response> {
   if (isDraining()) {
@@ -347,8 +329,7 @@ export async function sendReplyRoute(req: Request): Promise<Response> {
         { playName: "inbox-reply", memo: `manual inbox reply to ${to}` },
       ),
     );
-    // Persist the sent reply (append to thread history, clear the draft) so the
-    // founder can see what they sent after a refresh.
+    // Persist the sent reply (append to thread history, clear the draft).
     const ledger = getLedger();
     ledger.recordInboxSent({
       threadKey,
@@ -358,10 +339,9 @@ export async function sendReplyRoute(req: Request): Promise<Response> {
       identityId,
       requestId: result.request_id ?? null,
     });
-    // Answering someone is proof they replied. The background poll usually
-    // records it first, but it can miss (source timeout, watermark gap) — the
-    // human is the detector of last resort. Idempotent, and never allowed to
-    // fail a send that already happened.
+    // Answering someone is proof they replied — the human is the detector of
+    // last resort when the background poll misses. Idempotent, and never
+    // allowed to fail a send that already happened.
     try {
       const prospect = ledger.findProspectByEmail(to);
       if (prospect) ledger.recordProspectReply(prospect.id, { subject });

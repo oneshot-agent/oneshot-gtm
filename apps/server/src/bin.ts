@@ -41,26 +41,12 @@ if (cache.__oneshotGtmServer) {
   });
   process.stdout.write(`\n  oneshot-gtm dashboard: http://127.0.0.1:${port}  (reloaded)\n\n`);
 } else {
-  // Cold boot only — sweep any trigger rows that were marked running by a
-  // previous process that never got to call updateTriggerLastPoll
-  // (bun --watch re-exec, OS reboot, OOM kill, hung SDK call when the
-  // process was killed). Writes a `killed_by_restart` last_run_summary so
-  // the UI shows the truth instead of frozen-from-an-hour-ago state.
-  //
-  // `maxAgeMs: 0` is intentional and important. At cold boot, any non-null
-  // `running_started_at` is by definition a zombie — the previous process is
-  // gone and an async finder run can't outlive its process. The MAX_RUN_AGE_MS
-  // freshness gate (4h) is for live UI reads where a long-running finder
-  // shouldn't disappear from the spinner mid-run. Applying it to the boot
-  // sweep would let a row that crashed 30 minutes ago survive across reboots
-  // and block re-runs with `409 already running` — exactly the bug we hit.
-  //
-  // Hot reload (the if-branch above) skips the sweep because it preserves
-  // the event loop, so any genuinely in-flight run continues.
-  //
-  // Wrapped — a SQL hiccup here must not take down the server. Boot
-  // continuing on stale ledger state is strictly better than refusing to
-  // start because of a cleanup detail.
+  // Cold boot only (hot reload preserves the event loop, so in-flight runs
+  // continue) — sweep trigger rows left marked running by a dead process.
+  // `maxAgeMs: 0` is intentional and important: at cold boot any non-null
+  // `running_started_at` is a zombie; applying the 4h UI freshness gate here
+  // would block re-runs with `409 already running`. Wrapped — a SQL hiccup
+  // must not take down the server.
   try {
     const swept = getLedger().sweepStaleRunningTriggers({
       now: new Date(),
@@ -79,13 +65,9 @@ if (cache.__oneshotGtmServer) {
     process.stderr.write(`  warn: stale-run sweep failed: ${(err as Error).message}\n`);
   }
 
-  // Same idea for fire-and-forget cadence sends. Any cadence_state row whose
-  // `sending_started_at` predates this process was either (a) the previous
-  // process succeeded — in which case the sequence_events row landed and the
-  // sweep just clears the now-meaningless marker, or (b) the previous process
-  // died mid-SDK-call — in which case the marker is stranded, the draft is
-  // still there, and the founder can re-click Send. The sweeper logs both
-  // cases so the founder can see "send was lost" in events.jsonl.
+  // Same sweep for cadence sends: a pre-boot `sending_started_at` marker is
+  // cleared whether the send landed (sequence_events row exists) or was lost
+  // mid-SDK-call (draft survives for a re-click); both cases are logged.
   try {
     const swept = getLedger().sweepStaleCadenceSends({
       now: new Date(),
@@ -117,11 +99,8 @@ if (cache.__oneshotGtmServer) {
     process.stderr.write(`  warn: stale-send sweep failed: ${(err as Error).message}\n`);
   }
 
-  // Mirror of the cadence sweep for `target_queue.send_started_at`. A queue
-  // row with a marker from a previous process either (a) had its SDK call
-  // complete before the kill — `status === 'sent'`, we just clear the marker —
-  // or (b) was stranded mid-call — clear the marker, the draft is still on the
-  // row for retry. Either way: cold boot wipes every existing marker.
+  // Mirror of the cadence sweep for `target_queue.send_started_at` — cold
+  // boot wipes every existing marker; drafts survive for retry.
   try {
     const swept = getLedger().sweepStaleQueueSends({
       now: new Date(),
@@ -152,12 +131,8 @@ if (cache.__oneshotGtmServer) {
     process.stderr.write(`  warn: stale queue-send sweep failed: ${(err as Error).message}\n`);
   }
 
-  // Cold-boot sweep for /run dispatches: any run still marked 'running' from
-  // a previous process is a zombie — the SSE stream is gone, the dispatch was
-  // killed. Flipping to 'interrupted' lets the /run page show a truthful
-  // banner instead of an eternal "running" view. Counters on the row are
-  // already accurate from the per-event appends, so the founder still sees
-  // what landed before the crash.
+  // Cold-boot sweep for /run dispatches: flip zombie 'running' rows to
+  // 'interrupted'; per-event counters on the row stay accurate.
   try {
     const swept = getLedger().sweepStaleRuns({ now: new Date(), maxAgeMs: 0 });
     for (const s of swept) {
@@ -182,14 +157,9 @@ if (cache.__oneshotGtmServer) {
   const { url, server } = await startServer({ port });
   cache.__oneshotGtmServer = server;
 
-  // Background trigger scheduler — polls due triggers, fires them, sleeps
-  // for `nextSleepMs` between ticks. Replaces the need to run a separate
-  // `bun run cli -- find watch` daemon. Survives `bun --hot` re-execs by
-  // staying anchored to globalThis.
-  //
-  // Wrapped: scheduler init failure must not take down the server (founder
-  // can still drive triggers manually via /queue Run). The cold-boot sweep
-  // pattern above does the same thing for ledger-init resilience.
+  // Background trigger scheduler; survives `bun --hot` re-execs via the
+  // globalThis anchor. Wrapped: scheduler init failure must not take down
+  // the server (triggers can still be run manually via /queue Run).
   let scheduler: SchedulerHandle | null = null;
   try {
     scheduler = startScheduler();
@@ -213,11 +183,9 @@ if (cache.__oneshotGtmServer) {
     }
   }
 
-  // Graceful drain: on a signal, stop taking new sends and wait for any
-  // in-flight send to finish writing its sequence_events row before exiting —
-  // closing the window where a sent-but-unrecorded email could be re-sent on
-  // retry. A SIGKILL skips this; the cold-boot sweep above is the backstop.
-  // Default 30s; a long voice call past that is force-exited and reconciled.
+  // Graceful drain: on a signal, wait for in-flight sends to finish writing
+  // their sequence_events rows — closes the sent-but-unrecorded re-send
+  // window. SIGKILL skips this; the cold-boot sweep is the backstop.
   const drainTimeoutMs = Number.parseInt(
     process.env["ONESHOT_GTM_DRAIN_TIMEOUT_MS"] ?? "30000",
     10,

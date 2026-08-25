@@ -20,25 +20,16 @@ import { jsonResponse } from "../server.ts";
 import { reportServerExecution } from "../telemetry.ts";
 
 /**
- * In-flight cadence sends are tracked on the cadence_state row's
- * `sending_started_at` column (claimed atomically by
- * `ledger.claimCadenceSendingMarker` before the background SDK send fires,
- * cleared on success via `advanceCadence` and on failure in the catch).
- *
- * History: this used to be an in-memory Set. Under `bun --watch` a file save
- * killed the background promise mid-SDK-call, leaving the founder with no
- * "sending" UI signal AND no email delivered. The DB-backed marker survives
- * restarts; the cold-boot sweeper recovers stranded rows.
- *
- * Stale-cutoff window: a fresh Send click can reclaim a marker older than
- * this. Set to MAX_SEND_AGE_MS to match the cold-boot sweeper threshold —
- * the only way the marker is older is if a previous send was killed.
+ * In-flight cadence sends are tracked on the row's `sending_started_at`
+ * column (claimed atomically before the background SDK send, cleared on
+ * success by `advanceCadence`, on failure in the catch) — DB-backed so it
+ * survives restarts; the cold-boot sweeper recovers stranded rows. A fresh
+ * Send click can reclaim a marker older than this cutoff.
  */
 const MAX_SEND_AGE_MS = 5 * 60 * 1000;
 
 /**
- * Per-play info that doesn't change between rows of the same play. Computed
- * once per unique play_name and reused for every row to avoid re-walking the
+ * Per-play info computed once per unique play_name — avoids re-walking the
  * sequence registry + re-reading config from disk per row.
  */
 interface PlayInfo {
@@ -81,8 +72,7 @@ function toView(
       const parsed = JSON.parse(row.next_step_draft_json) as CadenceNextStepDraft & {
         payload?: unknown;
       };
-      // Strip `payload` from the wire view — internal envelope only the
-      // send route reads. UI only needs subject/body/flags/draftedAt.
+      // Strip `payload` from the wire view — only the send route reads it.
       nextStepDraft = {
         subject: parsed.subject,
         body: parsed.body,
@@ -128,12 +118,9 @@ function toView(
 function viewsForRows(
   rows: ReadonlyArray<ReturnType<ReturnType<typeof getLedger>["listAllCadences"]>[number]>,
 ): CadenceView[] {
-  // Single SQL fetch for ALL (prospect_id, play_name) pairs — replaces the
-  // N+1 of one listSequenceEventsForProspectPlay per row.
+  // Single SQL fetch for ALL (prospect_id, play_name) pairs — avoids N+1.
   const pairs = rows.map((r) => ({ prospectId: r.prospect_id, playName: r.play_name }));
   const priorByKey = getPriorStepsBulk(pairs);
-  // Compute play-level info (nextStepInfo + playFollowupCount) once per
-  // unique play_name — each calls effectiveSequence → loadConfig (readFileSync).
   const playInfo = buildPlayInfoMap(rows);
   return rows.map((r) => toView(r, priorByKey, playInfo));
 }
@@ -141,27 +128,22 @@ function viewsForRows(
 export function listCadences(req: Request): Response {
   const url = new URL(req.url);
   const all = url.searchParams.get("all") === "1";
-  // Optional `?sinceRun=N` filter — the /run-page → /cadences deep-link from
-  // run-complete mode. Resolves `runs.prospect_emails_json` for run N and
-  // filters cadences to that prospect set (matched by canonicalized email).
-  // Falls back to all-cadences when the run id is malformed or unknown.
+  // Optional `?sinceRun=N` — the /run → /cadences deep-link; filters to run
+  // N's prospect set. Malformed run ids fall back to all-cadences.
   const sinceRunRaw = url.searchParams.get("sinceRun");
   const sinceRunId =
     sinceRunRaw && Number.isFinite(Number.parseInt(sinceRunRaw, 10))
       ? Number.parseInt(sinceRunRaw, 10)
       : null;
   const ledger = getLedger();
-  // Full status-complete set for the summary tiles. The active/all toggle only
-  // narrows the TABLE; the tiles must reflect every status (else REPLIED reads 0
-  // whenever the default "active" filter is on). Both derive from this one set.
+  // The active/all toggle only narrows the TABLE; the summary tiles must
+  // reflect every status (else REPLIED reads 0 under the default filter).
   const allRows = ledger.listAllCadences();
   let countRows = allRows;
   let rows = all ? allRows : allRows.filter((r) => r.status === "active");
   if (sinceRunId != null) {
     const run = ledger.getRun(sinceRunId);
-    // Unknown runId → return zero rows. The UI shows "0 cadences filtered to
-    // run #N" with a [clear filter] CTA, which is clearer than silently
-    // ignoring the filter and showing everything.
+    // Unknown runId → zero rows (clearer than silently ignoring the filter).
     const wantedEmails = new Set(
       (run?.prospectEmails ?? []).map((e) => e.trim().toLowerCase()).filter((e) => e.length > 0),
     );
@@ -285,11 +267,8 @@ export async function sendCadenceStepRoute(
   }
   const parsed = parseProspectAndPlay(req, params);
   if (parsed instanceof Response) return parsed;
-  // Verify the preview exists synchronously so we can 409 the founder
-  // immediately if they clicked Send without a persisted draft — but the
-  // actual send is fire-and-forget. SDK email send takes ~2 min; blocking
-  // the modal that long is bad UX, especially since the founder already
-  // approved by confirming. Mirrors POST /api/cadences/send-batch.
+  // 409 synchronously when no persisted draft exists, but the actual send is
+  // fire-and-forget — an SDK send takes ~2 min and must not block the modal.
   const ledger = getLedger();
   try {
     const draft = ledger.getCadenceDraft(parsed);
@@ -299,9 +278,8 @@ export async function sendCadenceStepRoute(
   } catch (err) {
     return jsonResponse({ error: (err as Error).message ?? "send failed" }, 500, req);
   }
-  // Atomic claim — survives server restart. `staleCutoffIso` lets a fresh
-  // click reclaim a marker stranded by a previous restart (the cold-boot
-  // sweep also clears these, but a fast retry shouldn't have to wait).
+  // Atomic claim — survives restart; `staleCutoffIso` lets a fresh click
+  // reclaim a stranded marker without waiting for the cold-boot sweep.
   const nowIso = new Date().toISOString();
   const staleCutoffIso = new Date(Date.now() - MAX_SEND_AGE_MS).toISOString();
   const claimed = ledger.claimCadenceSendingMarker({
@@ -321,8 +299,7 @@ export async function sendCadenceStepRoute(
   void (async () => {
     try {
       await sendCadenceStep(parsed);
-      // Success path: advanceCadence inside sendCadenceStep already cleared
-      // sending_started_at as part of its UPDATE. Nothing to do here.
+      // advanceCadence already cleared sending_started_at in its UPDATE.
       void reportServerExecution("server.cadence.send", {
         outcome: "ok",
         durationMs: performance.now() - sendStartedAt,
@@ -341,12 +318,11 @@ export async function sendCadenceStepRoute(
         },
         "error",
       );
-      // Failure path: advanceCadence never ran, so the marker is stuck.
-      // Release it so the founder can re-Send without waiting for the sweep.
+      // advanceCadence never ran — release the stuck marker for a re-Send.
       try {
         ledger.clearCadenceSendingMarker(parsed);
       } catch {
-        // Ledger write failing is the sweeper's problem; not worth re-throwing.
+        // sweeper safety net
       }
     }
   })();
@@ -392,9 +368,8 @@ export async function sendCadenceBatchRoute(req: Request): Promise<Response> {
   const itemsOrErr = await parseBatchItems(req);
   if (itemsOrErr instanceof Response) return itemsOrErr;
   const items = itemsOrErr;
-  // Claim each row's marker atomically. Rows that fail to claim (already
-  // sending) are dropped from the batch — `accepted` reflects the actual
-  // attempt count.
+  // Claim each row's marker atomically; unclaimable rows (already sending)
+  // are dropped, so `accepted` reflects the actual attempt count.
   const ledger = getLedger();
   const nowIso = new Date().toISOString();
   const staleCutoffIso = new Date(Date.now() - MAX_SEND_AGE_MS).toISOString();
@@ -418,10 +393,8 @@ export async function sendCadenceBatchRoute(req: Request): Promise<Response> {
   const batchStartedAt = performance.now();
   void (async () => {
     try {
-      // Per-item callback: clear the marker on each settled row. The serial
-      // sendCadenceStepBatch already calls advanceCadence on success (which
-      // clears the marker as part of the same UPDATE), so this catches the
-      // failure path only — defensive clear is idempotent.
+      // Per-item marker clear — success already clears via advanceCadence,
+      // so this catches the failure path only; the clear is idempotent.
       await sendCadenceStepBatch(claimed, (item) => {
         try {
           ledger.clearCadenceSendingMarker(item);
@@ -438,9 +411,8 @@ export async function sendCadenceBatchRoute(req: Request): Promise<Response> {
         outcome: "error",
         durationMs: performance.now() - batchStartedAt,
       });
-      // Belt-and-suspenders: the wrapper catches per-item; this catch only
-      // fires if the wrapper itself throws. Release everything so the founder
-      // can retry without waiting for the sweep.
+      // Only fires if the wrapper itself throws — release every marker so a
+      // retry needn't wait for the sweep.
       for (const item of claimed) {
         try {
           ledger.clearCadenceSendingMarker(item);
