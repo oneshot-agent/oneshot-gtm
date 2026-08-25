@@ -8,7 +8,12 @@ import {
   type TelemetryOutcome,
 } from "@oneshot-gtm/core";
 import { drainQueue } from "@oneshot-gtm/find";
-import { enrollInCadence, logTargetError, playMetadata, sendDraftedEmail } from "@oneshot-gtm/plays";
+import {
+  enrollInCadence,
+  logTargetError,
+  playMetadata,
+  sendDraftedEmail,
+} from "@oneshot-gtm/plays";
 import { reportServerExecution } from "../telemetry.ts";
 import {
   blockingFlags,

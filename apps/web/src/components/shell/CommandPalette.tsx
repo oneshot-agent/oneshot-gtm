@@ -143,8 +143,8 @@ export function CommandPalette({
 
         {(workspaces.data?.workspaces.filter((w) => !w.isCurrent) ?? []).length > 0 && (
           <Command.Group heading="Workspaces">
-            {workspaces.data!.workspaces
-              .filter((w) => !w.isCurrent)
+            {workspaces
+              .data!.workspaces.filter((w) => !w.isCurrent)
               .map((w) => (
                 <Command.Item
                   key={w.name}

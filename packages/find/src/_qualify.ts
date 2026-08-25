@@ -7,12 +7,7 @@ import {
   withDeadline,
 } from "@oneshot-gtm/core";
 import { isCircuitOpen, recordResolutionOutcome } from "./_breaker.ts";
-import {
-  type PersonCandidate,
-  type PersonVerdict,
-  hasRoleText,
-  qualifyPerson,
-} from "./_filter.ts";
+import { type PersonCandidate, type PersonVerdict, hasRoleText, qualifyPerson } from "./_filter.ts";
 
 /**
  * Staged person-level ICP qualification.
@@ -193,7 +188,13 @@ export async function qualifyPostEnrich(input: {
   }
 
   if (!boughtTitle) {
-    return outcome("unclear", "fill-the-gap enrichment returned no title", freeRole, costUsd, receiptId);
+    return outcome(
+      "unclear",
+      "fill-the-gap enrichment returned no title",
+      freeRole,
+      costUsd,
+      receiptId,
+    );
   }
 
   const stageC = await qualifyPerson({ icp, person: { ...input.person, roleText: boughtTitle } });
@@ -211,7 +212,13 @@ export async function qualifyPostEnrich(input: {
       reason_120: stageC.reason.slice(0, 120),
       role_120: (boughtTitle ?? "").slice(0, 120),
     });
-    return outcome("unclear", `unclear-after-enrich: ${stageC.reason}`, boughtTitle, costUsd, receiptId);
+    return outcome(
+      "unclear",
+      `unclear-after-enrich: ${stageC.reason}`,
+      boughtTitle,
+      costUsd,
+      receiptId,
+    );
   }
   return outcome(stageC.verdict, stageC.reason, boughtTitle, costUsd, receiptId);
 }

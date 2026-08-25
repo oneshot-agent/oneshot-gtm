@@ -661,9 +661,7 @@ async function resolveAndEnqueueLumaAttendee(
     /** Called with the classifier's reason when the person is rejected. */
     onRoleReject?: (reason: string) => void;
   },
-): Promise<
-  "enqueued" | "duplicate" | "dropped" | "platform-error" | "capped" | "role-rejected"
-> {
+): Promise<"enqueued" | "duplicate" | "dropped" | "platform-error" | "capped" | "role-rejected"> {
   const ledger = getLedger();
   const dedupeKey = `${work.event.url}#${work.attendee.name.toLowerCase()}`;
   try {

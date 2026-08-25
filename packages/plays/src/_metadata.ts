@@ -109,7 +109,10 @@ const REGISTRY: Record<string, (t: object) => Record<string, unknown>> = {
  * treats a JSON null and a missing key identically, and downstream readers
  * (expandi-sync's buildSignal) check key presence.
  */
-export function playMetadata(playName: string, payload: Record<string, unknown>): Record<string, unknown> {
+export function playMetadata(
+  playName: string,
+  payload: Record<string, unknown>,
+): Record<string, unknown> {
   const fn = REGISTRY[playName];
   if (!fn) return {};
   const out = fn(payload);
