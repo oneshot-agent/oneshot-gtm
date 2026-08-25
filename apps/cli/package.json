@@ -26,5 +26,11 @@
   },
   "devDependencies": {
     "@types/prompts": "^2.4.0"
+  },
+  "homepage": "https://oneshot-gtm.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oneshot-agent/oneshot-gtm",
+    "directory": "apps/cli"
   }
 }
