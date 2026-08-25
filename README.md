@@ -2,6 +2,8 @@
 
 > Open-source GTM agent for technical founders. Pay-per-result, signed receipts, founder-led discipline encoded. Terminal CLI + local web dashboard over one SQLite ledger.
 
+**[oneshot-gtm.com](https://oneshot-gtm.com)** · [what a signed receipt is](https://oneshot-gtm.com/receipt) · [docs](https://docs.oneshotagent.com)
+
 ```bash
 bunx oneshot-gtm-server     # dashboard only — published, no clone
 ```
