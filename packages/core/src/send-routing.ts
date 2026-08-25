@@ -23,10 +23,9 @@ export function isSendDeferred(err: unknown): boolean {
 }
 
 /**
- * Thrown by sendEmail (pre-flight, before any network or LLM spend) when the
- * recipient has previously HARD bounced. Unlike SendDeferredError this is
- * permanent — callers must not leave the work queued for a retry, because no
- * retry can ever succeed. Name-based for the same cross-module reason.
+ * Thrown by sendEmail (pre-flight) when the recipient has previously HARD
+ * bounced. Permanent — callers must not re-queue, no retry can succeed.
+ * Name-based for the same cross-module reason.
  */
 export class SuppressedRecipientError extends Error {
   constructor(message: string) {
@@ -57,16 +56,11 @@ export function isRecentlyContacted(err: unknown): boolean {
 }
 
 /**
- * True when an error is a TRANSIENT platform/transport failure (the OneShot
- * backend or the network briefly broke) rather than a genuine negative result
- * (email not found, undeliverable, no enrichment data). Callers must NOT treat
- * a transient failure as a durable verdict about the candidate: don't drop it,
- * don't negative-cache it, defer/retry instead. Matches the failure shapes seen
- * in the 2026-06 worker outage. Message-based so it works across the SDK's
- * thrown errors, the `withDeadline` rejection, and serialized boundaries.
- *
- * Genuine negatives ("not found", "undeliverable", "no profile data") return
- * false — those ARE durable verdicts and should drop/negative-cache as before.
+ * True when an error is a TRANSIENT platform/transport failure rather than a
+ * genuine negative ("not found", "undeliverable" → false). Callers must NOT
+ * treat transient as a durable verdict: don't drop, don't negative-cache —
+ * defer/retry. Message-based so it works across the SDK's thrown errors, the
+ * `withDeadline` rejection, and serialized boundaries.
  */
 export function isTransientToolError(err: unknown): boolean {
   const msg = (err instanceof Error ? err.message : String(err ?? "")).toLowerCase();
@@ -139,15 +133,10 @@ export function warmupCap(
 }
 
 /**
- * The unit that shares one daily ceiling + warm-up ramp. OneShot reputation and
- * the daily send limit are PER-DOMAIN (every mailbox on a domain pools the same
- * reputation), so all oneshot identities with the same sendingDomain share a
- * budget. Gmail accounts are independent — Google warms per-account — so each
- * Gmail identity is its own group keyed by id (this also keeps two Gmail
- * accounts on one Workspace domain from sharing a cap, matching prior behavior).
- * Smartlead mailboxes are likewise per-account (Smartlead's own
- * message_per_day is per-mailbox), so each is its own group keyed by id;
- * grouping them by From-domain is a possible follow-up.
+ * The unit that shares one daily ceiling + warm-up ramp. OneShot reputation is
+ * PER-DOMAIN, so oneshot identities with the same sendingDomain share a budget.
+ * Gmail and Smartlead warm per-account, so each of those is its own group
+ * keyed by id.
  */
 export function capGroupKey(identity: EmailIdentity): string {
   if (identity.provider === "oneshot") {
@@ -171,15 +160,10 @@ interface PoolCapacity {
 }
 
 /**
- * Aggregate today's capacity for every cap-group in the pool:
- *  - ceiling = MAX member warm-up cap (the domain ramps as one; any uncapped
- *    member ⟹ uncapped group / overflow absorber),
- *  - warm-up anchor = EARLIEST member first-send,
- *  - used = SUM of member sends today.
- * A group with an uncapped member short-circuits to Infinity with NO ledger
- * read on the routing path, so legacy single-identity installs still pay
- * nothing to learn "∞". Display callers pass `countUncapped` to get the real
- * per-identity counts even for uncapped groups.
+ * Today's capacity per cap-group: ceiling = MAX member warm-up cap, anchor =
+ * EARLIEST member first-send, used = SUM of member sends. An uncapped member
+ * short-circuits the group to Infinity with NO ledger read on the routing
+ * path; display callers pass `countUncapped` for real counts anyway.
  */
 function computeCapacities(
   identities: EmailIdentity[],
@@ -288,18 +272,12 @@ export function identityCapacities(now = new Date()): Map<string, IdentityCapaci
 
 /**
  * Which identity sends to this address. Resolution order:
- *  1. Existing sender_assignments pin → that identity (config error if the
- *     id was removed from the pool — never silently re-route a live thread).
- *  2. No pin but the address was emailed pre-rotation → lazy-pin to the
- *     legacy identity (keeps in-flight cadences on their original From).
- *  3. Fresh prospect → CAPPED groups first: most remaining capacity today (the
- *     budget is per cap-group, so all mailboxes on one OneShot domain share it),
- *     tie → fewer sends by that mailbox (spreads traffic across mailboxes in a
- *     domain), then pool order. Uncapped groups are the overflow absorber, used
- *     only when every capped one is full — otherwise an uncapped OneShot domain
- *     would always win on remaining capacity (∞) and the warming Gmail accounts
- *     would never receive traffic. Pinned immediately so retries and follow-ups
- *     are deterministic.
+ *  1. Existing pin → that identity (error if removed from the pool — never
+ *     silently re-route a live thread).
+ *  2. Emailed pre-rotation → lazy-pin to the legacy identity.
+ *  3. Fresh prospect → capped groups by most remaining, tie → fewer own sends;
+ *     uncapped groups are the overflow absorber ONLY (else ∞ always wins and
+ *     warming accounts never get traffic). Pinned immediately for determinism.
  *  4. Nothing has capacity → SendDeferredError (callers leave work queued).
  */
 export function resolveSenderIdentity(to: string, now = new Date()): EmailIdentity {

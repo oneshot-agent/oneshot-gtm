@@ -79,15 +79,10 @@ export function loadConfig(): OneShotConfig {
 let cachedConfig: OneShotConfig | null = null;
 
 /**
- * Process-memoized `loadConfig` for hot, read-only callers like the telemetry
- * send path (`reportTelemetryEvent`), which otherwise does a `readFileSync` on
- * every emit — once per fired trigger in the server's scheduler loop. The cache
- * is busted by `saveConfig`, so an in-process write (e.g. the dashboard's
- * `config telemetry off`) is reflected on the next read. A config edit from a
- * *separate* process (CLI `config telemetry off`) propagates to a long-running
- * server on its next own write or on restart; the `ONESHOT_GTM_TELEMETRY=0` env
- * kill switch (checked live, uncached, in `shouldSendTelemetry`) is the
- * immediate override for that case.
+ * Process-memoized `loadConfig` for hot read-only callers (telemetry emit).
+ * Busted by `saveConfig`; a write from a SEPARATE process only propagates on
+ * this process's next write or restart — the ONESHOT_GTM_TELEMETRY=0 env kill
+ * switch (checked live in `shouldSendTelemetry`) is the immediate override.
  */
 export function loadConfigCached(): OneShotConfig {
   return (cachedConfig ??= loadConfig());
@@ -99,10 +94,8 @@ export function _resetConfigCacheForTests(): void {
 }
 
 /**
- * Pure helper for the clientId bootstrap path — extracted so it can be
- * unit-tested without touching the user's real config file. Mints a fresh
- * UUID when `cfg.clientId` is null/empty, otherwise returns the input
- * unchanged. `minted: true` signals the caller to persist.
+ * Mint a clientId when null/empty; `minted: true` signals the caller to
+ * persist. Pure so it's testable without the real config file.
  */
 export function bootstrapClientId(cfg: OneShotConfig): {
   cfg: OneShotConfig;
@@ -153,23 +146,18 @@ function loadSecretsFile(): Record<string, string> {
 }
 
 /**
- * Env-only credentials that are never stored in `.env` via saveSecrets but are
- * read directly from the environment by finders. Demo mode must neutralize
- * these too — a demo "Run now" acting with the founder's real GitHub token is
- * the same category of leak as a real wallet key.
+ * Env-only credentials read directly from the environment by finders. Demo
+ * mode must neutralize these too — same leak category as a real wallet key.
  */
 const ENV_ONLY_SECRET_KEYS = ["GITHUB_TOKEN", "LUMA_SESSION_COOKIE"] as const;
 
 function applySecretsToEnv(): void {
   const stored = loadSecretsFile();
 
-  // Demo mode (`ONESHOT_GTM_DEMO=1`, checked inline — importing demo.ts here
-  // would be circular): this home's .env is the SOLE source of secrets, not a
-  // fallback for blanks. Two real-credential leak paths make fill-the-blanks
-  // insufficient: the CLI parent inherits the real install's secrets into
-  // process.env before spawning the demo server, and Bun auto-loads a repo-root
-  // .env into every `bun run` child — both would shadow the demo placeholders
-  // and hand a "demo" a live wallet. Overwrite-or-delete closes both.
+  // Demo mode (checked inline — importing demo.ts would be circular): this
+  // home's .env is the SOLE secret source, never a fallback for blanks. The
+  // CLI parent's inherited env and Bun's auto-loaded repo-root .env would both
+  // shadow demo placeholders with live keys — overwrite-or-delete closes both.
   if (process.env["ONESHOT_GTM_DEMO"] === "1") {
     for (const k of [...SECRET_KEYS, ...ENV_ONLY_SECRET_KEYS]) {
       const v = stored[k];

@@ -290,74 +290,44 @@ export class Ledger {
 
     // Lightweight migrations for installs that pre-date a column.
     this.addColumnIfMissing("prospects", "phone", "TEXT");
-    // v17 (2026-08): the profile URL the finder originally sourced this person
-    // from (GitHub / X / Luma). `linkedin_url` is polymorphic — profile-intro
-    // stores whichever social link it has there — so it can't double as a
-    // re-enrichment key. Keeping the source URL separately means a later
-    // LinkedIn lookup has a strong identifier instead of just a name.
+    // v17: source profile URL (GitHub / X / Luma) as a re-enrichment key —
+    // `linkedin_url` is polymorphic and can't serve that role.
     this.addColumnIfMissing("prospects", "source_profile_url", "TEXT");
-    // v18 (2026-08): job title at contact time, captured by the person-level
-    // ICP gate (packages/find/src/_qualify.ts). Persisted so (a) re-runs judge
-    // for free, and (b) the off-ICP audit can score history without re-buying
-    // enrichment. NULL on rows contacted before the gate existed.
+    // v18: job title at contact time (person-level ICP gate, _qualify.ts).
+    // NULL on rows contacted before the gate existed.
     this.addColumnIfMissing("prospects", "title", "TEXT");
-    // v18 (2026-08): person-level ICP verdict ('pass' | 'reject', NULL =
-    // unjudged) + the classifier's one-line reason. Written by the finder gate
-    // for new prospects and by the history audit for existing ones. The
-    // cadence step runner refuses to send follow-ups to 'reject' rows — the
-    // gate must be code-level, not prompt-level.
+    // v18: person-level ICP verdict ('pass' | 'reject', NULL = unjudged) +
+    // reason. The cadence step runner refuses follow-ups to 'reject' rows —
+    // the gate must be code-level, not prompt-level.
     this.addColumnIfMissing("prospects", "icp_verdict", "TEXT");
     this.addColumnIfMissing("prospects", "icp_verdict_reason", "TEXT");
-    // v5 (2026-04): persist trigger run-state so a server restart doesn't
-    // strand fire-and-forget runs as silent stale rows. See
-    // sweepStaleRunningTriggers + fireTriggerNow.
+    // v5: trigger run-state, so a restart doesn't strand fire-and-forget runs.
+    // See sweepStaleRunningTriggers + fireTriggerNow.
     this.addColumnIfMissing("triggers", "running_started_at", "TEXT");
-    // v6 (2026-05): persist drafts per target_queue row so the founder can
-    // review subject/body/flags after the SSE stream finishes (the /run
-    // page itself is ephemeral). See `setQueueDraft` + the persist hook in
-    // `apps/server/src/api/run.ts`.
+    // v6: persisted per-row drafts (the /run SSE stream is ephemeral).
     this.addColumnIfMissing("target_queue", "last_draft_json", "TEXT");
     this.addColumnIfMissing("target_queue", "last_drafted_at", "TEXT");
-    // v7 (2026-05): lease column for atomic drain claiming. Two concurrent
-    // /api/queue/drain calls used to see the same `approved` rows and both
-    // start sending; dequeueApproved now atomically flips this column inside
-    // a transaction so each drain sees a disjoint slice. Lease defaults to
-    // 15 min — long enough for a slow per-target SDK send, short enough that
-    // a crashed drain self-heals without a sweeper.
+    // v7: lease column — dequeueApproved flips it in a transaction so
+    // concurrent drains claim disjoint slices; 15-min lease self-heals a
+    // crashed drain.
     this.addColumnIfMissing("target_queue", "drain_claimed_at", "TEXT");
-    // v8 (2026-05): persist per-cadence next-step draft so /cadences can
-    // preview the 2nd/3rd email before firing (mirrors /queue's
-    // last_draft_json). JSON envelope = {subject, body, flags, payload,
-    // draftedAt}; cleared on cadence advance.
+    // v8: per-cadence next-step draft preview; cleared on cadence advance.
     this.addColumnIfMissing("cadence_state", "next_step_draft_json", "TEXT");
     this.addColumnIfMissing("cadence_state", "next_step_drafted_at", "TEXT");
-    // v9 (2026-06): persist "send in flight" marker so a fire-and-forget
-    // cadence-send survives a server restart. The in-memory `inFlightSends`
-    // Set was lost on every bun --watch reload, leaving the founder with no
-    // loading state AND no email delivered. Claimed via the atomic
-    // claimCadenceSendingMarker CAS update; cleared on success (inside
-    // advanceCadence) and on failure (catch). sweepStaleCadenceSends on cold
-    // boot treats every existing marker as stranded.
+    // v9: send-in-flight marker so a fire-and-forget cadence send survives a
+    // restart. CAS-claimed (claimCadenceSendingMarker); cleared on success and
+    // failure; sweepStaleCadenceSends treats cold-boot markers as stranded.
     this.addColumnIfMissing("cadence_state", "sending_started_at", "TEXT");
-    // v10 (2026-06): Mirror of v9 for the queue Send-draft path. Same bug
-    // shape — fire-and-forget background SDK send died on every server
-    // restart, leaving the founder with no UI feedback and no record. Wired
-    // via claimQueueSendingMarker + sweepStaleQueueSends; auto-cleared by
-    // setQueueStatus when the row flips to a terminal state.
+    // v10: mirror of v9 for the queue Send-draft path (claimQueueSendingMarker
+    // + sweepStaleQueueSends; cleared by setQueueStatus on terminal states).
     this.addColumnIfMissing("target_queue", "send_started_at", "TEXT");
-    // v11 (2026-06): sender rotation. `receipts.sender_identity` records which
-    // EmailIdentity (config emailIdentities[].id) sent each email.send — the
-    // per-identity daily counter + warm-up first-send date both derive from
-    // it. `sender_assignments` pins each prospect (canonical email) to the
-    // identity that sent their first touch so follow-ups never switch From
-    // address mid-thread. Keyed by email, NOT prospect_id: some sends happen
-    // before any prospect row exists (concierge prep email).
+    // v11: sender rotation. sender_identity feeds the per-identity daily
+    // counter + warm-up date; sender_assignments pins each prospect to their
+    // first-touch identity so follow-ups never switch From address mid-thread.
+    // Keyed by email, NOT prospect_id — some sends predate the prospect row.
     this.addColumnIfMissing("receipts", "sender_identity", "TEXT");
-    // v12 (2026-06): negative enrichment caching. NULL/"ok" = success row,
-    // "failed" = the enrich SDK job failed for this email — readers skip the
-    // retry within ENRICH_FAILURE_TTL_MS so drafts stop re-paying ~70s
-    // timeouts for known-bad emails (229 such failures on 2026-06-06..08
-    // left 154 queue rows re-enriching on every draft).
+    // v12: negative enrichment caching. NULL/"ok" = success, "failed" = skip
+    // retries within ENRICH_FAILURE_TTL_MS instead of re-paying ~70s timeouts.
     this.addColumnIfMissing("enrichment_cache", "status", "TEXT");
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS sender_assignments (
@@ -368,14 +338,9 @@ export class Ledger {
       CREATE INDEX IF NOT EXISTS idx_receipts_calltype_sender
         ON receipts(call_type, sender_identity, created_at);
     `);
-    // v13 (2026-06): persist inbox reply activity. The /inbox composer used to
-    // hold the draft + "replied" state only in React useState, so a refresh
-    // discarded the draft and reverted the row to a blank composer; the sent
-    // body was never stored anywhere (receipts hold metadata only). Keyed by
-    // thread_key = Gmail thread_id (else the email id) so follow-ups in a
-    // thread share one draft + sent history. `inbox_drafts` is the single
-    // mutable draft per thread (cleared on send); `inbox_sent` is the
-    // append-only history of replies actually sent (we allow replying again).
+    // v13: inbox reply persistence. thread_key = Gmail thread_id (else email
+    // id). inbox_drafts = single mutable draft per thread (cleared on send);
+    // inbox_sent = append-only history of replies actually sent.
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS inbox_drafts (
         thread_key       TEXT PRIMARY KEY,
@@ -399,21 +364,15 @@ export class Ledger {
       CREATE INDEX IF NOT EXISTS idx_inbox_sent_thread
         ON inbox_sent(thread_key, sent_at);
     `);
-    // v14 (2026-06): persist the last cadence send FAILURE so the /cadences row
-    // can show "send failed · retrying" instead of looking identical to a row
-    // that's merely waiting on the founder. A failed send doesn't advance the
-    // cadence, so without this the founder can't tell "blocked upstream" from
-    // "waiting on me". Set by recordCadenceSendError on a dispatch throw;
-    // cleared by advanceCadence / setCadenceStatus on any forward progress.
+    // v14: last cadence send FAILURE, so /cadences can distinguish "blocked
+    // upstream" from "waiting on the founder". Set by recordCadenceSendError;
+    // cleared on any forward progress.
     this.addColumnIfMissing("cadence_state", "last_send_error", "TEXT");
     this.addColumnIfMissing("cadence_state", "last_send_error_at", "TEXT");
-    // v15 (2026-06): persist candidates whose paid contact-resolution failed on
-    // a TRANSIENT platform error (the OneShot outage), so a finder doesn't lose
-    // them — re-scannable finders self-heal, but time-windowed ones (luma,
-    // show-hn) can't re-discover an expired source. `raw_json` holds whatever
-    // the finder's registered handler needs to re-resolve + enqueue. The
-    // scheduler retry pass drains this once the platform recovers; the
-    // (play_name, dedupe_key) PK also serves as the de-dup key against re-scan.
+    // v15: candidates whose contact-resolution failed on a TRANSIENT platform
+    // error. Time-windowed finders (luma, show-hn) can't re-discover an expired
+    // source, so the scheduler retry pass drains this; the (play_name,
+    // dedupe_key) PK doubles as the de-dup key against re-scan.
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS pending_resolution (
         play_name       TEXT NOT NULL,
@@ -428,15 +387,11 @@ export class Ledger {
       CREATE INDEX IF NOT EXISTS idx_pending_resolution_seen
         ON pending_resolution(first_seen_at);
     `);
-    // v16 (2026-06): receipt annotation. memo + decision_context mirror the
-    // audit fields already sent to OneShot at call time (buildAuditOpts), stored
-    // locally so the /receipts UI can show "why" without re-fetching the signed
-    // receipt. value_tag (+ value_tagged_at) hold the RoCS outcome value set by
-    // tagOutcomeValue once a reply/deal lands (also PATCHed to OneShot via
-    // tagReceiptValue). sequence_events.receipt_id links a sent step back to its
-    // send receipt so an outcome knows which receipts to tag — SDK 0.21's
-    // tagReceiptValue({requestId}) then resolves each via the stored request_id,
-    // so no platform receipt-id backfill is needed.
+    // v16: receipt annotation. memo + decision_context mirror the audit fields
+    // sent to OneShot at call time; value_tag(_at) hold the outcome value set
+    // by tagOutcomeValue. sequence_events.receipt_id links a sent step to its
+    // send receipt so outcomes know which receipts to tag (resolved upstream
+    // via request_id — no platform receipt-id backfill needed).
     this.addColumnIfMissing("receipts", "memo", "TEXT");
     this.addColumnIfMissing("receipts", "decision_context", "TEXT");
     this.addColumnIfMissing("receipts", "value_tag", "TEXT");
@@ -447,23 +402,16 @@ export class Ledger {
       CREATE INDEX IF NOT EXISTS idx_receipts_value_tag
         ON receipts(value_tag, created_at) WHERE value_tag IS NOT NULL;
     `);
-    // v17 (2026-06): goal-level value attribution (SDK 0.22). goal_id mirrors the
-    // cadence correlation key sent as decisionContext.goalId, so an outcome tags
-    // every receipt in the cadence at once (setReceiptValueTagByGoal) instead of
-    // walking sequence_events.receipt_id per receipt.
+    // v17: goal-level value attribution — goal_id mirrors decisionContext.goalId
+    // so an outcome tags every receipt in the cadence at once.
     this.addColumnIfMissing("receipts", "goal_id", "TEXT");
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS idx_receipts_goal
         ON receipts(goal_id) WHERE goal_id IS NOT NULL;
     `);
-    // v18 (2026-08): delivery failures parsed from DSNs. Until now nothing ever
-    // wrote sequence_events.status='bounced' — the tool kept emailing addresses
-    // the receiving server had already refused, paying for each send and burning
-    // sending reputation, while the evidence sat unread in the mailbox.
-    // PK is (message_id, recipient): the DSN's own provider id makes a re-sweep
-    // idempotent (the sweep runs on every scheduler tick and re-sees the same
-    // 30-day window), and the recipient column keeps a multi-recipient report
-    // from collapsing into one row.
+    // v18: delivery failures parsed from DSNs. PK (message_id, recipient):
+    // the provider's message id makes the every-tick re-sweep idempotent, and
+    // recipient keeps multi-recipient reports from collapsing into one row.
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS bounces (
         message_id  TEXT NOT NULL,
@@ -482,11 +430,8 @@ export class Ledger {
       -- suppressionFor, on the send pre-flight path — must be an index seek.
       CREATE INDEX IF NOT EXISTS idx_bounces_recipient ON bounces(recipient, kind);
     `);
-    // v19 (2026-08): inbox-placement canary results. Bounces tell you a message
-    // was refused; nothing told you it was ACCEPTED and then filtered into spam
-    // or a tab, which for cold outreach is the same as never arriving. Each row
-    // is one manual A→B test. Append-only history so a reputation trend is
-    // visible rather than just the latest verdict.
+    // v19: inbox-placement canary results — one row per manual A→B test.
+    // Append-only so the reputation trend stays visible.
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS canary_results (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -505,13 +450,9 @@ export class Ledger {
       );
       CREATE INDEX IF NOT EXISTS idx_canary_created ON canary_results(created_at DESC);
     `);
-    // v20 (2026-08): reply-poll watermark. The inbox poll used to fetch a bare
-    // newest-50 window across every mailbox with no memory of what it had
-    // already examined, so any reply that slipped out of that window between
-    // ticks (one noisy mailbox was enough) was never seen again. A persisted
-    // high-water mark turns the poll into "everything since last success" —
-    // survives restarts, and a failed tick simply leaves the mark where it was
-    // so the next good poll re-covers the gap.
+    // v20: reply-poll watermark — persisted high-water mark makes the inbox
+    // poll "everything since last success"; a failed tick leaves the mark in
+    // place so the next good poll re-covers the gap.
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS poll_state (
         key        TEXT PRIMARY KEY,
@@ -522,17 +463,10 @@ export class Ledger {
   }
 
   /**
-   * CAS-claim a timestamp marker on a single row. Returns true when the row's
-   * marker was NULL (or older than `staleCutoffIso` when provided) and we set
-   * it to `startedAtIso`; false when another caller already holds the claim.
-   *
-   * Shared by every in-flight marker in the ledger: triggers.running_started_at,
-   * cadence_state.sending_started_at, target_queue.send_started_at. Each domain
-   * just supplies its own table + primary-key WHERE fragment.
-   *
-   * Identifier validation (table + column) mirrors `addColumnIfMissing` —
-   * SQLite has no parameter binding for table/column names, so we whitelist
-   * to bare ASCII to slam the door on any injection vector.
+   * CAS-claim a timestamp marker on a single row: true when the marker was
+   * NULL (or older than `staleCutoffIso`) and was set; false when another
+   * caller holds the claim. Shared by every in-flight marker in the ledger.
+   * Table/column names are whitelisted to bare ASCII (SQLite can't bind them).
    */
   private claimMarker(opts: {
     table: string;
@@ -910,16 +844,9 @@ export class Ledger {
   }
 
   /**
-   * Atomic claim of the sending marker. Returns `true` when the row had a
-   * NULL `sending_started_at` and the marker was set; `false` if another
-   * caller already holds the claim. Mirrors triggers' `markTriggerRunning`
-   * CAS pattern so two concurrent Send clicks can't double-fire.
-   *
-   * `staleCutoffIso` (optional): allows a fresh click to reclaim a marker
-   * whose `sending_started_at` is older than the cutoff — for the case where
-   * a previous send was stranded by a server restart and the cold-boot
-   * sweeper hasn't cleared it yet. Without this, the row would 409 every
-   * retry until the next boot sweep.
+   * Atomic CAS claim of the sending marker — two concurrent Send clicks can't
+   * double-fire. `staleCutoffIso` lets a fresh click reclaim a marker stranded
+   * by a restart before the cold-boot sweep (else the row 409s until reboot).
    */
   claimCadenceSendingMarker(input: {
     prospectId: number;
@@ -948,17 +875,11 @@ export class Ledger {
   }
 
   /**
-   * Sweep cadence rows whose `sending_started_at` is older than the cutoff
-   * (or any non-null value when `staleAgeMs` is 0 — cold-boot semantics).
-   * For each match, classify by whether a `sequence_events` row for the
-   * (prospect, play, current_step) already exists:
-   *   - event present → the send actually went out; clear the marker only.
-   *   - event absent  → the send was stranded (server died mid-call); clear
-   *     the marker but leave the draft so the founder can re-click Send.
-   * Returns the swept rows so the caller can log them.
-   *
-   * Pure-ish (takes `now` + `maxAgeMs` as args) — tests can drive both
-   * "fresh markers spared" and "stale markers swept" without faking the clock.
+   * Sweep stale `sending_started_at` markers (any non-null value when
+   * `staleAgeMs` is 0 — cold-boot semantics). A matching sequence_event means
+   * the send went out: clear the marker only; no event means it was stranded:
+   * clear the marker but keep the draft. Returns swept rows; takes `now` +
+   * `maxAgeMs` as args so tests don't fake the clock.
    */
   sweepStaleCadenceSends(input: { now: Date; maxAgeMs: number }): Array<{
     prospectId: number;
@@ -1048,12 +969,10 @@ export class Ledger {
   }
 
   /**
-   * Paid-lookup caches live in the cross-workspace SHARED DB (shared-db.ts):
-   * the same person researched for one product must not be bought again for
-   * another. These methods keep their original contracts and delegate, so the
-   * five call sites and their tests are untouched. On first use per ledger the
-   * legacy rows in THIS ledger's cache tables are copied across once; the
-   * local tables stay in place (unwritten) for rollback.
+   * Paid-lookup caches live in the cross-workspace SHARED DB (shared-db.ts) —
+   * the same person must never be bought twice across products. These methods
+   * keep their contracts and delegate; this ledger's legacy cache rows are
+   * copied across once on first use.
    */
   private shared(): ReturnType<typeof getSharedDb> {
     const shared = getSharedDb();
@@ -1217,12 +1136,9 @@ export class Ledger {
   }
 
   /**
-   * Record one delivery failure. INSERT OR IGNORE against the (message_id,
-   * recipient) PK: the sweep re-reads a 30-day window on every tick, so the
-   * same DSN is re-seen dozens of times and must only ever count once.
-   * Returns true when this was a NEW bounce — callers use that to decide
-   * whether to act on the cadence (stopping it repeatedly is harmless, but
-   * re-tagging receipts and logging on every tick is not).
+   * Record one delivery failure. INSERT OR IGNORE on (message_id, recipient):
+   * the sweep re-sees the same DSN every tick and it must count once. Returns
+   * true only for a NEW bounce — callers gate receipt-tagging/logging on that.
    */
   recordBounce(input: {
     messageId: string;
@@ -1356,17 +1272,10 @@ export class Ledger {
   ): { subject: string; body: string; playName: string } | null {
     const rows = this.db
       .query(
-        // All three statuses mean "this email was sent": a step is written as
-        // 'sent' and later UPDATEd in place to 'replied' by markLatestStepReplied
-        // (same convention as eventsByPlay). Matching only 'sent' would skip the
-        // copy of every prospect who answered — precisely the best-performing
-        // copy, and the canary would silently replay something older or nothing.
-        // Usability is filtered in SQL, not by scanning a fixed slice in JS.
-        // A slice can be exhausted by a run of pre-v8 / bodyless rows and then
-        // report "no copy" while perfectly good copy sits just past the cut —
-        // but dropping the bound entirely would load every send ever made to
-        // find one body. Letting SQLite discard the unusable rows means the
-        // small bound below only ever trims genuinely valid candidates.
+        // 'sent' rows are UPDATEd in place to 'replied', so all three statuses
+        // mean "sent" — matching only 'sent' would skip every prospect who
+        // answered. Usability is filtered in SQL (not a JS slice) so the small
+        // bound below only ever trims genuinely valid candidates.
         `SELECT play_name, metadata_json FROM sequence_events
          WHERE status IN ('sent', 'delivered', 'replied')
            AND channel = 'email' AND metadata_json IS NOT NULL
@@ -1451,18 +1360,10 @@ export class Ledger {
   }
 
   /**
-   * Fill in identity fields that are currently NULL on an existing prospect.
-   *
-   * `upsertProspect` is insert-or-return-existing: once a row exists it never
-   * writes again, so a prospect created without a LinkedIn URL could never
-   * acquire one. This is the only path that backfills those columns.
-   *
-   * COALESCE semantics on purpose — a backfill must never clobber a URL a
-   * finder already resolved from an authoritative source (a real Luma handle
-   * beats a fuzzy web-search hit). Passing `undefined`/`null` leaves the column
-   * untouched.
-   *
-   * Returns true when at least one column actually changed.
+   * Backfill identity columns that are NULL on an existing prospect — the only
+   * such path (`upsertProspect` never writes twice). COALESCE on purpose: a
+   * backfill must never clobber a URL a finder already resolved, and
+   * `undefined`/`null` leaves the column untouched. True when a column changed.
    */
   updateProspectIdentity(
     id: number,
@@ -1512,15 +1413,9 @@ export class Ledger {
   }
 
   /**
-   * Prospects that could take a LinkedIn URL but don't have one.
-   *
-   * Only rows whose `linkedin_url` is genuinely empty are returned. A row
-   * already holding a GitHub/X URL (profile-intro writes those into the same
-   * column) is deliberately skipped: `updateProspectIdentity` won't overwrite
-   * it, so including them would just report phantom candidates.
-   *
-   * A name is required — the lookup searches by name, so a nameless row has
-   * nothing to go on.
+   * Prospects that could take a LinkedIn URL but don't have one. Rows already
+   * holding a GitHub/X URL in `linkedin_url` are skipped (updateProspectIdentity
+   * won't overwrite them); a name is required — the lookup searches by name.
    */
   listProspectsMissingLinkedIn(opts: { limit?: number; play?: string } = {}): Array<{
     id: number;
@@ -1754,12 +1649,10 @@ export class Ledger {
   }
 
   /**
-   * True when a (prospect, play, step) already has a terminal-sent sequence_event
-   * — i.e. that step's email/SMS/voice already went out. Used by the cadence
-   * engine as a pre-dispatch guard so a crash between `recordSequenceEvent` and
-   * `advanceCadence` (which leaves `current_step` lagging the sent step) can't
-   * cause a re-send on the next due tick. Same status predicate as the stale-send
-   * sweep below.
+   * True when a (prospect, play, step) already has a terminal-sent
+   * sequence_event. Pre-dispatch guard: a crash between recordSequenceEvent
+   * and advanceCadence leaves current_step lagging the sent step — this stops
+   * the re-send on the next due tick.
    */
   hasSentSequenceEvent(prospectId: number, playName: string, stepIndex: number): boolean {
     return (
@@ -1775,16 +1668,10 @@ export class Ledger {
   }
 
   /**
-   * Mark a prospect's latest sent step `replied` (the reply-rate signal behind
-   * the home dashboard + measure/CAC, which all read `status='replied'` from
-   * sequence_events — nothing else writes it). A reply is modelled as a state
-   * transition of an existing sent step, NOT a new event, so `sent` counts that
-   * read `status IN ('sent','delivered','replied')` stay correct.
-   *
-   * Idempotent and safe to call on every poll: the `NOT EXISTS` guard means once
-   * any step for this (prospect, play) is `replied`, further calls are no-ops —
-   * so it never walks backwards marking earlier steps too. Returns true on the
-   * one call that flips a row.
+   * Mark the latest sent step `replied` — a state transition of the existing
+   * step, NOT a new event, so `sent` counts stay correct. Idempotent per
+   * (prospect, play) via the NOT EXISTS guard; returns true on the one call
+   * that flips a row.
    */
   markLatestStepReplied(input: { prospectId: number; playName: string }): boolean {
     const result = this.db
@@ -1806,28 +1693,15 @@ export class Ledger {
   }
 
   /**
-   * Single source of truth for "a prospect replied to a cadence". Atomically
-   * writes BOTH planes so they can't drift:
-   *  - control plane: `cadence_state.status='replied'` (stops further sends), and
-   *  - analytics plane: the latest sent step → `replied` in sequence_events
-   *    (the event log behind every reply metric — home, CAC, weekly review).
-   * The two surfaces read different tables on purpose (a lifetime status snapshot
-   * vs a 7-day count), but a reply now updates them together in one transaction.
-   *
-   * The two planes are gated SEPARATELY, because they answer different questions.
-   * Control plane is conservative: only a live cadence (`active`, or `paused` —
-   * a pause that resumes must not email someone who already answered) flips to
-   * `replied`, so a terminal `breakup`/`completed` sequence is never resurrected
-   * and a stopped cadence stays stopped. Analytics plane is unconditional: a reply is a fact
-   * about the outbound whatever the sequence did afterwards, so the event is
-   * recorded for ANY status. Gating them together is what made 424 of 457
-   * cadences invisible to reply metrics — a reply arriving after a sequence
-   * finished (the common case, since most cadences complete) was silently dropped.
-   *
-   * Returns both signals: `newlyReplied` marks the active→replied control
-   * transition, `eventRecorded` marks the one call that flipped a sequence_event
-   * row. Count replies on `eventRecorded` — `markLatestStepReplied` is idempotent
-   * per (prospect, play), so it is true exactly once no matter how often we poll.
+   * Single source of truth for "a prospect replied to a cadence" — writes both
+   * planes in one transaction so they can't drift. Control plane
+   * (`cadence_state.status='replied'`) is conservative: only a live cadence
+   * (`active`/`paused`) flips, so a terminal sequence is never resurrected.
+   * Analytics plane (sequence_events) is unconditional: the event is recorded
+   * for ANY status — gating the two together silently drops replies that
+   * arrive after a sequence finishes. Count replies on `eventRecorded` (true
+   * exactly once per (prospect, play)); `newlyReplied` marks the control
+   * transition.
    */
   recordCadenceReply(input: { prospectId: number; playName: string }): {
     newlyReplied: boolean;
@@ -1852,17 +1726,11 @@ export class Ledger {
   }
 
   /**
-   * Record a reply from a prospect. The inbox poll matches on from-address,
-   * which says nothing about plays, so this is the one place that decides what
-   * a reply means — and the two planes want different answers:
-   *  - control: EVERY live cadence for the prospect stops. Whatever they replied
-   *    to, nobody should keep getting follow-ups after answering.
-   *  - analytics: the reply is credited to ONE play — the one whose sent subject
-   *    the reply threads on (`Re: …`), else the most recent play that emailed
-   *    them. Crediting every play would count one reply several times in the
-   *    per-play rate; crediting none (the old behaviour for one-touch plays like
-   *    luma-events, which never enroll a cadence) dropped it on the floor.
-   * Returns one entry per play touched, so callers can count and tag.
+   * Record a reply. Control: EVERY live cadence for the prospect stops —
+   * nobody keeps getting follow-ups after answering. Analytics: the reply is
+   * credited to exactly ONE play — the one whose sent subject it threads on
+   * (`Re: …`), else the most recent play that emailed them. Returns one entry
+   * per play touched.
    */
   recordProspectReply(
     prospectId: number,
@@ -1955,14 +1823,9 @@ export class Ledger {
   }
 
   /**
-   * Bulk variant of listSequenceEventsForProspectPlay: one SQL round-trip for
-   * many (prospect_id, play_name) pairs. Returns a Map keyed by
-   * `${prospect_id}|${play_name}` so callers can index in O(1). The
-   * per-key arrays preserve the same (step_index ASC, id ASC) ordering the
-   * single-row method returns. Empty input → empty map (no query).
-   *
-   * Index-served by idx_sequence_events_prospect_play; the OR-chain is
-   * expanded into per-pair index seeks by the query planner.
+   * Bulk variant of listSequenceEventsForProspectPlay: one round-trip, Map
+   * keyed `${prospect_id}|${play_name}`, same (step_index ASC, id ASC)
+   * ordering. Index-served by idx_sequence_events_prospect_play.
    */
   listSequenceEventsForCadences(
     pairs: ReadonlyArray<{ prospectId: number; playName: string }>,
@@ -2218,12 +2081,9 @@ export class Ledger {
   }
 
   /**
-   * Cross-play dedup (finder side): is this email already sitting in a
-   * non-terminal queue row under ANY play? Catches the window where the same
-   * person is queued under two plays before either has sent (so no prospect row
-   * exists yet for findProspectByEmail to catch). Terminal rows
-   * (sent/rejected/expired) are excluded so they never block future work.
-   * Matches both `email` (most plays) and `founderEmail` (show-hn-style).
+   * Cross-play dedup (finder side): is this email in a non-terminal queue row
+   * under ANY play? Catches the window before either play has sent (no
+   * prospect row exists yet). Matches both `email` and `founderEmail`.
    */
   isEmailPendingInQueue(email: string): boolean {
     // Case-insensitive to match findProspectByEmail/upsertProspect, which store
@@ -2431,12 +2291,9 @@ export class Ledger {
   }
 
   /**
-   * Atomic claim-and-return. SELECTs approved rows whose lease has expired
-   * (or was never set) and UPDATEs their `drain_claimed_at` inside a single
-   * transaction so two concurrent drains can't return overlapping row sets.
-   * Default lease: 15 min — a crashed drain's claims self-heal after that
-   * without any sweeper. Held/error rows naturally back off for the lease
-   * duration (no LLM-burn loops on stuck-flagged content).
+   * Atomic claim-and-return: SELECT + `drain_claimed_at` UPDATE in one
+   * transaction so concurrent drains can't overlap. 15-min lease self-heals a
+   * crashed drain; held/error rows back off for the lease duration.
    */
   dequeueApproved(opts: { playName: string; limit?: number; leaseSeconds?: number }): QueueRow[] {
     const leaseSeconds = opts.leaseSeconds ?? 900;
@@ -2513,14 +2370,9 @@ export class Ledger {
   }
 
   // ── runs (per-/run-page dispatch records) ──────────────────────────────────
-  //
-  // Each click of the /run page's Execute CTA creates one `runs` row. The SSE
-  // endpoint persists every draft / send / error event to the row's
-  // `events_json` and updates counters atomically. The UI reads this row to
-  // rebuild progress on nav-back, and inspects `status` to decide whether to
-  // poll (running) or stop (done / interrupted). Cold-boot sweep flips any
-  // stranded `running` rows to `interrupted` so the founder sees the truth
-  // instead of an eternal spinner.
+  // One row per /run Execute click; the SSE endpoint persists events/counters,
+  // the UI rebuilds progress from the row, and the cold-boot sweep flips
+  // stranded `running` rows to `interrupted`.
 
   createRun(input: { playName: string; dryRun: boolean; targets: unknown[] }): {
     runId: number;
@@ -2785,24 +2637,11 @@ export class Ledger {
   }
 
   /**
-   * Atomic claim: marks a trigger as in-flight ONLY if it's not already
-   * running. Returns true when the claim succeeded (caller may proceed to
-   * fire), false when another caller already holds the slot.
-   *
-   * The conditional UPDATE closes the TOCTOU race that would otherwise let
-   * two concurrent `fireTriggerNow` calls both pass an `isTriggerRunning()`
-   * check, both write, both fire — burning real $ on duplicate API spend.
-   * SQLite serializes writes per process, so the second UPDATE's `changes`
-   * count is 0.
-   *
-   * `staleCutoffIso` (optional): when provided, the claim ALSO succeeds if
-   * the existing `running_started_at` is older than the cutoff — a stale
-   * marker (process killed, never cleared, freshness gate already says "not
-   * running"). Without this, a 4h-stale row would 409 every retry until
-   * the next cold-boot sweep, leaving the founder stuck.
-   *
-   * Cleared by `updateTriggerLastPoll` on completion or by
-   * `sweepStaleRunningTriggers` on the next cold boot.
+   * Atomic claim: marks a trigger in-flight only if not already running — the
+   * conditional UPDATE closes the TOCTOU race where two fireTriggerNow calls
+   * both fire and double-spend. `staleCutoffIso` also lets the claim succeed
+   * over a stale marker so a dead row doesn't 409 until the next cold boot.
+   * Cleared by updateTriggerLastPoll or sweepStaleRunningTriggers.
    */
   markTriggerRunning(name: string, startedAtIso: string, staleCutoffIso?: string): boolean {
     return this.claimMarker({
@@ -2816,14 +2655,9 @@ export class Ledger {
   }
 
   /**
-   * Sweep trigger rows whose `running_started_at` is older than `maxAgeMs`.
-   * For each match, write a `last_run_summary = { error: "killed_by_restart",
-   * at }` and clear the in-flight flag. Returns the swept rows so the caller
-   * can log them.
-   *
-   * Pure-ish (takes `now` + `maxAgeMs` as args) so tests can drive both
-   * "fresh entries are spared" and "stale entries are swept" without
-   * faking the system clock.
+   * Sweep stale `running_started_at` rows: write `{error:"killed_by_restart"}`
+   * and clear the in-flight flag; returns swept rows. Takes `now` + `maxAgeMs`
+   * as args so tests don't fake the clock.
    */
   sweepStaleRunningTriggers(input: {
     now: Date;
@@ -2890,15 +2724,9 @@ export class Ledger {
   }
 
   /**
-   * Persist the most-recent draft generated for this queue row. Called by
-   * the SSE /run endpoint after the play returns drafted output, so the
-   * founder can review subject/body/flags on /queue at any later time
-   * (the /run page itself is ephemeral).
-   *
-   * Most-recent-wins — re-runs overwrite without history. `last_drafted_at`
-   * is stored as ISO so it sorts/compares cleanly with the rest of the
-   * timestamp columns; the JSON envelope also embeds `draftedAt` for
-   * callers that already have the row payload.
+   * Persist the most-recent draft for this queue row (the /run page is
+   * ephemeral; /queue reviews from here). Most-recent-wins — re-runs
+   * overwrite without history.
    */
   setQueueDraft(input: {
     id: number;
@@ -2920,12 +2748,9 @@ export class Ledger {
   }
 
   /**
-   * Overwrite a queue row's `payload_json` (the per-target JSON the play
-   * drafts from). Used by the manual add-prospect flow: the row is enqueued
-   * immediately as a placeholder, then — once the async dossier research
-   * completes — its payload is rewritten to the full ProfileIntroTarget
-   * (identity + dossier + angle) so `/queue` regenerate re-drafts from the
-   * researched dossier instead of paying for research again.
+   * Overwrite a queue row's `payload_json`. Manual add-prospect flow: the row
+   * is enqueued as a placeholder, then rewritten with the researched dossier
+   * so regenerate re-drafts without paying for research again.
    */
   updateQueuePayload(input: { id: number; payload: unknown }): void {
     this.db

@@ -36,12 +36,9 @@ function normalizeMailbox(raw: string | null | undefined): string {
 }
 
 /**
- * The active sender pool. `emailIdentities` set → returned verbatim.
- * Null → legacy single-identity mode: synthesize one identity from the
- * pre-rotation fields (emailProvider + sendingDomain / env refresh token) so
- * existing installs behave exactly as before rotation existed. Legacy
- * identities are uncapped — capping them would silently stall sends on
- * installs that never opted into rotation.
+ * The active sender pool. `emailIdentities` set → returned verbatim. Null =
+ * legacy single-identity mode: synthesize one identity from the pre-rotation
+ * fields. Legacy identities stay uncapped — capping would silently stall sends.
  */
 export function resolveIdentities(cfg: OneShotConfig): EmailIdentity[] {
   if (cfg.emailIdentities && cfg.emailIdentities.length > 0) return cfg.emailIdentities;
@@ -69,11 +66,9 @@ export function resolveIdentities(cfg: OneShotConfig): EmailIdentity[] {
 }
 
 /**
- * Persist a freshly authorized Gmail account: refresh token into the
- * chmod-600 store, identity into the rotation pool with warm-up defaults.
- * Legacy installs get their synthesized identity persisted first so existing
- * prospects keep their original From address. Re-auth of a known account
- * only refreshes the token — tuned caps are left alone.
+ * Persist a freshly authorized Gmail account (token → chmod-600 store,
+ * identity → pool). The legacy pool is materialized first so existing prospect
+ * pins survive; re-auth only refreshes the token, tuned caps are left alone.
  */
 export function registerGmailIdentity(input: { address: string; refreshToken: string }): {
   identityId: string;
@@ -98,13 +93,10 @@ export function registerGmailIdentity(input: { address: string; refreshToken: st
 }
 
 /**
- * Add a Smartlead-connected mailbox to the rotation pool. No credential is
- * stored per identity — sends resolve the workspace-wide SMARTLEAD_API_KEY and
- * pin the From by address. Default caps are the standard warm-up ramp, with
- * the DEFAULT ceiling clamped down to Smartlead's own `message_per_day` when
- * the caller passes it (an explicitly chosen `maxPerDay` — including null for
- * uncapped — is respected as-is, same trust model as OneShot caps).
- * Re-adding a known address is a no-op: tuned caps are left alone.
+ * Add a Smartlead-connected mailbox to the pool. No per-identity credential —
+ * sends use the workspace-wide SMARTLEAD_API_KEY and pin From by address.
+ * Default ramp is clamped to Smartlead's own `message_per_day` when given; an
+ * explicit `maxPerDay` (incl. null = uncapped) is respected as-is. Re-add = no-op.
  */
 export function registerSmartleadIdentity(input: {
   address: string;
@@ -148,10 +140,8 @@ export function registerSmartleadIdentity(input: {
 }
 
 /**
- * Founder-name-derived default local-part (first token, normalized) — the
- * mailbox used when an OneShot identity is added without an explicit one. Falls
- * back to "agent". Mirrors `fromLocalpart` in oneshot.ts but lives here to keep
- * identities.ts free of an import cycle with the send layer.
+ * Founder-name-derived default local-part, fallback "agent". Mirrors
+ * `fromLocalpart` in oneshot.ts; duplicated here to avoid an import cycle.
  */
 function defaultMailbox(founderName: string | null): string {
   const first = normalizeMailbox((founderName ?? "").trim().split(/\s+/)[0] ?? "");
@@ -159,24 +149,12 @@ function defaultMailbox(founderName: string | null): string {
 }
 
 /**
- * Add a OneShot sending identity (a wallet-owned domain + a mailbox local-part)
- * to the rotation pool. The OneShot analogue of `registerGmailIdentity`: there
- * was previously no way to put a second OneShot domain — or a second mailbox on
- * one domain — into the pool, only the single legacy `sendingDomain` config.
- *
- * Mirrors the Gmail path's invariants: the pool is materialized from legacy
- * config on first add (so existing prospect pins to the legacy sender survive),
- * and a duplicate id is a no-op. `sendingDomain` is NOT validated here against
- * the provisioned pool — callers (setup API / CLI) do that against
- * `listSendingDomains()` so this stays a pure persistence helper.
- *
- * Cap defaults, least-surprising:
- *  - neither field given → full cold-start ramp (10/day, +10/week, max 50).
- *  - `maxPerDay: <n>` → that hard ceiling, still ramping up to it (the ramp is
- *    kept unless the caller overrides `warmup`).
- *  - `maxPerDay: null` → truly uncapped — warmup is cleared too, since a ramp
- *    without a ceiling would itself re-impose one (warmupCap clamps to 50).
- *  - `warmup` always wins when explicitly provided.
+ * Add a OneShot sending identity (wallet-owned domain + mailbox local-part) to
+ * the pool. Same invariants as the Gmail path: legacy pool materialized on
+ * first add, duplicate id = no-op. `sendingDomain` is NOT validated here —
+ * callers check against `listSendingDomains()`. Caps: neither field → default
+ * ramp; `maxPerDay: n` → ceiling with ramp; `maxPerDay: null` → uncapped AND
+ * warmup cleared (a ramp would re-impose 50); explicit `warmup` always wins.
  */
 export function registerOneShotIdentity(input: {
   sendingDomain: string;
@@ -223,11 +201,9 @@ export function registerOneShotIdentity(input: {
 }
 
 /**
- * Drop an identity from the rotation pool. Materializes the pool from legacy
- * config first so a removal on a not-yet-persisted pool still takes effect.
- * Best-effort token cleanup for Gmail identities. Returns whether anything was
- * removed. NOTE: prospects already pinned to this id will refuse to send until
- * the id is restored — `resolveSenderIdentity` surfaces that loudly by design.
+ * Drop an identity from the pool (legacy pool materialized first). NOTE:
+ * prospects pinned to this id refuse to send until it's restored —
+ * `resolveSenderIdentity` surfaces that loudly by design.
  */
 export function removeIdentity(identityId: string): { removed: boolean } {
   const cfg = loadConfig();
@@ -244,12 +220,9 @@ export function removeIdentity(identityId: string): { removed: boolean } {
 }
 
 /**
- * Refresh token for a gmail identity. Identities created by `gmail auth` live
- * in the gmail-tokens.json store keyed by identity id. ONLY the legacy
- * synthetic identity may fall back to the single GMAIL_REFRESH_TOKEN secret —
- * letting any identity fall back would silently send from whatever account
- * the env token belongs to when a store entry goes missing, switching a
- * thread's From address mid-conversation.
+ * Refresh token for a gmail identity (gmail-tokens.json, keyed by id). ONLY
+ * the legacy synthetic identity may fall back to GMAIL_REFRESH_TOKEN — a
+ * general fallback could switch a thread's From address mid-conversation.
  */
 export function gmailAccountFor(
   identity: EmailIdentity,

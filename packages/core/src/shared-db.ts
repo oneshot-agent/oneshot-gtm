@@ -6,30 +6,20 @@ import { demoMode } from "./demo.ts";
 import { logEvent } from "./events.ts";
 
 /**
- * The one SQLite file shared ACROSS workspaces.
- *
- * A workspace (one ONESHOT_GTM_HOME) owns its founder voice, ICP, ledger and
- * sender identities — two products must never mix those. But some data is
- * rightly global to the operator, not the product:
- *
- * - the paid lookup caches (enrichment, LinkedIn): the same person researched
- *   for product A must not be bought again for product B;
- * - contact touches: which workspace emailed whom, when — so two motions
- *   don't pile into the same founder's inbox in the same week.
- *
- * Lives at `$ONESHOT_GTM_SHARED/shared.sqlite` (default `~/.oneshot-gtm-shared`).
- * Tests and demo mode point the env at a throwaway dir, for the same reason
- * ONESHOT_GTM_HOME exists. Many processes (one server per workspace) open this
- * file concurrently, hence WAL and a generous busy_timeout.
+ * The one SQLite file shared ACROSS workspaces: paid lookup caches (never
+ * re-buy a person researched for another product) and contact touches (two
+ * motions must not pile into one founder's inbox the same week). Everything
+ * else stays per-workspace. Lives at `$ONESHOT_GTM_SHARED/shared.sqlite`
+ * (default `~/.oneshot-gtm-shared`). Opened concurrently by every workspace's
+ * server + CLI, hence WAL and a generous busy_timeout.
  */
 
 /** How long a touch by another workspace holds a new first-touch for review. */
 export const CONTACT_TOUCH_WINDOW_MS = 7 * 24 * 3600 * 1000;
 /**
- * A pre-send reservation that was never confirmed or released (process died
- * mid-send) stops counting as a touch after this long — long enough to cover a
- * slow SDK send (~90s worst case seen), short enough not to hold a real first
- * touch hostage to a crash.
+ * An orphaned pre-send reservation (process died mid-send) stops counting as
+ * a touch after this long — covers a slow SDK send without holding a real
+ * first touch hostage to a crash.
  */
 export const RESERVATION_TTL_MS = 10 * 60 * 1000;
 
@@ -251,12 +241,10 @@ export class SharedDb {
   }
 
   /**
-   * Atomic check-and-reserve, the fix for the check→dispatch→record race:
-   * under BEGIN IMMEDIATE (the write lock serializes every workspace's server)
-   * either another workspace already holds this address — return it — or a
-   * 'reserved' row is inserted for us BEFORE any network call, so a concurrent
-   * claim from elsewhere sees it. Confirm on success, release on failure;
-   * a reservation orphaned by a crash expires after RESERVATION_TTL_MS.
+   * Atomic check-and-reserve (closes the check→dispatch→record race): under
+   * BEGIN IMMEDIATE either another workspace holds this address — return it —
+   * or a 'reserved' row lands BEFORE any network call. Confirm on success,
+   * release on failure; orphans expire after RESERVATION_TTL_MS.
    */
   claimTouch(input: {
     email: string;
@@ -328,10 +316,9 @@ export class SharedDb {
   // ── legacy import ──────────────────────────────────────────────────────────
 
   /**
-   * One-time copy of a per-workspace ledger's cache tables into the shared
-   * file (INSERT OR IGNORE — shared rows win). Keyed by ledger path so each
-   * workspace imports once; cheap no-op afterwards. The ledger's own tables
-   * are left in place, unwritten, for rollback.
+   * One-time copy of a ledger's cache tables into the shared file (INSERT OR
+   * IGNORE — shared rows win). Keyed by ledger path; the ledger's own tables
+   * are left in place for rollback.
    */
   ensureImported(ledgerDb: Database, ledgerPath: string): void {
     if (this.importedFrom.has(ledgerPath)) return;
@@ -416,10 +403,9 @@ export function getSharedDb(): SharedDb {
 }
 
 /**
- * Advisory read (draft time): was this address emailed by ANOTHER workspace
- * inside the hold window? The authoritative gate is `claimContactTouch` at
- * send time. Fail-open: a shared-DB hiccup must not block a send — this is
- * reputation hygiene, not a hard-bounce suppression.
+ * Advisory read (draft time); the authoritative gate is `claimContactTouch`
+ * at send time. Fail-open: a shared-DB hiccup must not block a send — this is
+ * reputation hygiene, not hard-bounce suppression.
  */
 export function recentTouchElsewhere(email: string): ContactTouch | null {
   try {
@@ -435,11 +421,10 @@ export function recentTouchElsewhere(email: string): ContactTouch | null {
 }
 
 /**
- * Send-time gate: atomically either learn that another workspace holds this
- * address, or reserve it for this send. Returns a `finish` callback the
- * caller invokes with the outcome — confirm on success, release on failure.
- * `override` reserves without checking (the manual send must still be visible
- * to other workspaces). Fail-open and a no-op in demo mode.
+ * Send-time gate: atomically learn another workspace holds this address, or
+ * reserve it. Caller invokes `finish(ok)` — confirm on success, release on
+ * failure. `override` reserves without checking (the manual send must still
+ * be visible to other workspaces). Fail-open; no-op in demo mode.
  */
 export function claimContactTouch(input: { email: string; playName: string; override: boolean }): {
   held: ContactTouch | null;

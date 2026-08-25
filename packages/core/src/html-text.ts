@@ -1,24 +1,13 @@
 /**
- * Dependency-free HTML → readable plain text, for email bodies.
- *
- * Exists because most reply clients mirror the format of the mail they answer,
- * and our outbound is HTML-only (`buildRawMessage` sends `text/html` with no
- * `multipart/alternative`) — so HTML-only replies are the NORMAL case for this
- * tool, and anything that renders or feeds an inbound body (the /inbox page,
- * reply drafting, triage) needs a text form. This is a preview-quality
- * conversion, not an HTML parser: good enough to read and to prompt an LLM
- * with, not a DOM.
+ * Dependency-free HTML → readable plain text for email bodies. Preview-quality
+ * conversion, not a DOM.
  *
  * Everything here is a single-pass left-to-right builder over indexOf, by
- * design and by hard-won lesson: three review rounds showed that EVERY
- * regex-with-a-middle over attacker-supplied HTML ends up polynomial
- * (`open[\s\S]*?close`, `</tag[^>]*>`, `<tag\b[^>]*>` — each fell to a
- * different `"prefix".repeat(n)` input), and iteration-capped replace loops
- * leak whatever lies past the cap. Builders are linear by construction and
- * handle any number of blocks in one pass; a small bounded fixpoint on top
- * handles reassembly (removing a span can butt `<scr` against `ipt>`), and a
- * truncation guard makes "an opener never survives" a hard invariant rather
- * than a hope.
+ * design: every regex-with-a-middle over attacker-supplied HTML goes
+ * polynomial, and iteration-capped replace loops leak whatever lies past the
+ * cap. A bounded fixpoint handles reassembly (removing a span can butt `<scr`
+ * against `ipt>`), and a truncation guard makes "an opener never survives" a
+ * hard invariant.
  */
 
 /** Named entities that actually occur in mail bodies; everything else numeric. */
@@ -68,10 +57,8 @@ function findToken(lower: string, token: string, from: number): number {
 
 /**
  * One left-to-right pass removing every `<tag …>…</tag …>` block, contents
- * included. Any number of blocks in one pass — no iteration cap to leak the
- * N+1th block. Unterminated opener or missing close tag drops to end-of-input:
- * per spec that content is still inside the element, and raw script/style text
- * must never leak into the "body".
+ * included — no iteration cap to leak the N+1th block. Unterminated opener or
+ * missing close drops to end-of-input: raw script/style text must never leak.
  */
 function stripBlocksOnce(s: string, tag: string): string {
   const lower = s.toLowerCase();
@@ -99,9 +86,8 @@ function stripBlocksOnce(s: string, tag: string): string {
 
 /**
  * stripBlocksOnce to a bounded fixpoint — excising a span can reassemble an
- * opener from the flanking pieces (`<scr<script>…</script>ipt>…`). Depth past
- * the bound doesn't leak: any surviving opener truncates the output there,
- * making "no <tag content in the result" an invariant, not a best effort.
+ * opener from the flanking pieces. Any opener surviving the bound truncates
+ * the output there: "no <tag content in the result" is an invariant.
  */
 function stripBlocks(s: string, tag: string): string {
   for (let pass = 0; pass < 10; pass++) {
@@ -148,12 +134,9 @@ const BREAK_CLOSERS = new Set([
 ]);
 
 /**
- * `\n` for structural tags, `""` for the rest. The check runs on one already-
- * isolated span, so it adds nothing to the pass's complexity — unlike the
- * `<br\b[^>]*>`-style replace regexes it displaced, which were quadratic on
- * `"<br ".repeat(n)` with no closing `>` (the same shape as every other
- * middle-scanning pattern this file has shed). Gmail's attribute-bearing
- * breaks (`<br class="gmail_default">`) still break the line.
+ * `\n` for structural tags, `""` for the rest. Runs on one already-isolated
+ * span so it adds nothing to the pass's complexity (a `<br\b[^>]*>` replace
+ * regex here is quadratic). Gmail's attribute-bearing breaks still break.
  */
 function tagReplacement(tagBody: string): string {
   const t = tagBody.toLowerCase();
@@ -163,11 +146,9 @@ function tagReplacement(tagBody: string): string {
 }
 
 /**
- * One pass dropping every TAG-SHAPED span: `<` followed by a letter, `!` or
- * `/`, through the next `>` — structural tags leave a newline behind. A bare
- * `<` in prose ("Revenue < $1m and growth > 20%") is comparison text and
- * passes through. An unterminated tag drops the rest — it's all inside the
- * tag per spec.
+ * One pass dropping every TAG-SHAPED span (`<` + letter/`!`/`/`, through the
+ * next `>`); structural tags leave a newline. A bare `<` in prose passes
+ * through; an unterminated tag drops the rest (inside the tag, per spec).
  */
 function stripTagsOnce(s: string): string {
   let out = "";
