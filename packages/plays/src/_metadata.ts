@@ -1,25 +1,9 @@
 /**
- * Per-play step-0 metadata, addressable by play name.
- *
- * Why this exists: each play's `EmailPlayDef.metadata` stamps the evidence that
- * made someone a prospect (`repo`, `eventTitle`, `vendorStack`, …) onto the
- * step-0 `sequence_events` row. `runEmailPlay` applies it — but the /queue
- * "send this reviewed draft" route (`apps/server/src/api/queue.ts`) calls
- * `sendDraftedEmail` directly and used to pass no metadata at all. The result:
- * 178 of 351 repo-interest step-0 rows had no `repo` key, which silently
- * mis-routed 19 prospects into the wrong arm of the LinkedIn A/B experiment.
- *
- * These are the SAME functions the play defs reference (each play imports its
- * own), so the queue route and the play cannot drift apart — there is exactly
- * one definition of "what this play records".
- *
- * Contract: every function is a PURE map from the target/payload to the
- * metadata object. No run options, no config, no I/O. Functions take `object`
- * (not the play's target interface) so both a typed target and a raw queue
- * payload are accepted; fields are read defensively. `accelerator-batch` is
- * the one play whose def also mixes in a run option (`opts.senderCohort` as a
- * fallback) — its def layers that on top; queue sends have no run options, so
- * the payload field is used as-is.
+ * Per-play step-0 metadata, addressable by play name. The play defs and the
+ * /queue send route must share these exact functions so they can't drift.
+ * Contract: pure maps from target/payload to metadata — no run options, no
+ * config, no I/O; `object` params so typed targets and raw queue payloads both
+ * work, fields read defensively.
  */
 
 type Payload = Record<string, unknown>;

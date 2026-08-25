@@ -68,23 +68,16 @@ export function registerSequence(seq: Sequence): void {
   playSequences.set(seq.playName, seq);
 }
 
-/**
- * "Does this label name a breakup step?" — single source of truth for the
- * label-substring check. Used by isBreakupStepAt for the cadence-final
- * semantic check AND by /plays for per-step rendering where each row is
- * already a step.
- */
+/** Single source of truth for the breakup-label substring check (isBreakupStepAt + /plays). */
 export function isBreakupLabel(label: string | null | undefined): boolean {
   return Boolean(label && label.toLowerCase().includes("breakup"));
 }
 
 /**
- * Centralized breakup-step detection for cadence-progress semantics. A
- * step is "the breakup" iff (a) it sits at the END of the sequence and
- * (b) its label is a breakup label. Both clauses matter: the
- * breakup-email PROMPT is also used as accelerator-batch's only
- * follow-up — at index 0 — and that one isn't semantically a breakup
- * for cadence UX purposes (no value follow-up preceded it).
+ * A step is "the breakup" iff it sits at the END of the sequence AND has a
+ * breakup label. Both clauses matter: the breakup-email prompt is reused as
+ * accelerator-batch's only follow-up at index 0, which isn't semantically a
+ * breakup.
  */
 export function isBreakupStepAt(seq: Sequence, stepEntryIndex: number): boolean {
   if (stepEntryIndex !== seq.steps.length - 1) return false;
@@ -102,20 +95,16 @@ export interface NextStepInfo {
 
 /**
  * Number of follow-up steps registered for this play (excludes day-0).
- * Always returns the registered total regardless of current_step — the UI
- * uses `playFollowupCount + 1` for the StepProgress dot count which should
- * be stable for completed cadences too.
+ * Always the registered total regardless of current_step, so the UI's dot
+ * count stays stable for completed cadences.
  */
 export function playFollowupCount(playName: string): number {
   return effectiveSequence(playName)?.steps.length ?? 0;
 }
 
 /**
- * Given a play + the cadence's current_step, describe the NEXT step
- * scheduled to fire. Returns null when the cadence is at or past the
- * last step (no more steps to send). Source of truth for both the
- * server's CadenceView and the /cadences UI — avoids hardcoded
- * play→step-count Records in the web layer.
+ * Describe the NEXT step scheduled to fire, or null at/past the last step.
+ * Source of truth for both the server's CadenceView and the /cadences UI.
  */
 export function nextStepInfo(playName: string, currentStep: number): NextStepInfo | null {
   const seq = effectiveSequence(playName);
@@ -141,12 +130,10 @@ export function defaultSequence(playName: string): Sequence | undefined {
 }
 
 /**
- * The registered (code) sequence with the founder's per-play timing overrides
- * applied. The code sequence defines the structure (which prompts fire, where
- * the breakup sits); a matching-length `cadenceOverrides[playName]` in config
- * replaces each step's RELATIVE dayOffset. A length mismatch (e.g. after a
- * later structural change) is ignored — the code default wins, never throws.
- * Read fresh each call so a /plays edit takes effect without a restart.
+ * The registered sequence with the founder's per-play timing overrides. Code
+ * defines the structure; a matching-length `cadenceOverrides[playName]`
+ * replaces each RELATIVE dayOffset. A length mismatch is ignored — code wins,
+ * never throws. Read fresh each call so a /plays edit applies without restart.
  */
 export function effectiveSequence(playName: string): Sequence | undefined {
   const base = playSequences.get(playName);
@@ -197,9 +184,8 @@ export interface ReplyPollResult {
   /** Inbox emails examined. */
   polled: number;
   /**
-   * Replies learned for the FIRST time this poll — one per (prospect, play)
-   * whose sequence_events row flipped to `replied`. This is the number the
-   * reply-rate metrics move by, whatever state the cadence was in.
+   * Replies learned for the FIRST time this poll — the number the reply-rate
+   * metrics move by, whatever state the cadence was in.
    */
   repliesDetected: number;
   /** Subset of the above that also stopped a still-active cadence. */
@@ -210,17 +196,14 @@ export interface ReplyPollResult {
 /** poll_state key for the reply poll's high-water mark (newest received_at seen on a clean poll). */
 const REPLY_WATERMARK_KEY = "inbox_replies";
 /**
- * poll_state key for an unfinished catch-up: JSON `{ since, until }` naming the
- * slice of the window a poll ran out of page budget before reaching. Consumed
- * by later polls, a few pages at a time, until it is exhausted — so a backlog
- * larger than one poll's budget is delayed, never skipped.
+ * poll_state key for an unfinished catch-up slice (JSON `{ since, until }`),
+ * drained by later polls — a backlog is delayed, never skipped.
  */
 const REPLY_BACKLOG_KEY = "inbox_replies_backlog";
 /**
- * Re-examine this much before the watermark on every poll. Gmail's `after:` is
- * second-granular and mailboxes don't deliver in strict order, so a little
- * overlap is the difference between "never misses" and "usually doesn't".
- * Recording is idempotent, so overlap costs fetches, not correctness.
+ * Re-examine this much before the watermark every poll: Gmail's `after:` is
+ * second-granular and delivery isn't strictly ordered. Recording is
+ * idempotent, so overlap costs fetches, not correctness.
  */
 const REPLY_WATERMARK_OVERLAP_MS = 60 * 60_000;
 /** What the sources fall back to when no `since` is given (Gmail: `newer_than:30d`). */
@@ -228,17 +211,13 @@ const REPLY_DEFAULT_WINDOW_MS = 30 * 24 * 60 * 60_000;
 /** Page size per fetch — the same window the /inbox route uses. */
 const REPLY_POLL_LIMIT = 200;
 /**
- * Pages walked per poll before the rest is parked as backlog. In steady state
- * (5-minute ticks) one page is never full; this only bites on the first poll
- * after install or after a long outage, where it bounds a single poll to
- * ~2,000 messages and leaves the remainder for the next ticks.
+ * Pages walked per poll before the rest is parked as backlog — bounds a single
+ * poll after an install or outage; steady-state polls never fill one page.
  */
 const REPLY_POLL_MAX_PAGES = 10;
 /**
- * The poll runs in the background and is not latency-sensitive the way the
- * /inbox route is, so it can afford a longer per-source deadline than the 15s
- * default — a page of 200 full-message Gmail fetches takes ~8s on a good day
- * and was the single biggest source of `inbox.source_failed`.
+ * Background poll isn't latency-sensitive like the /inbox route, so it affords
+ * a longer per-source deadline than the 15s default.
  */
 const REPLY_POLL_DEADLINE_MS = 60_000;
 
@@ -253,12 +232,11 @@ interface WalkResult {
 }
 
 /**
- * Examine one (since, until) slice of the inbox newest-first, page by page,
- * recording replies as they are matched. Each page's oldest message bounds the
- * next page; the bound is pushed one second LATER than that message so the
- * boundary second is fetched again rather than skipped (`before:`/`until` are
- * exclusive at second granularity and two mails can share a second), with
- * `seen` de-duplicating by id across pages so nothing is counted twice.
+ * Examine one (since, until) inbox slice newest-first, page by page, recording
+ * replies. Each next-page bound is pushed one second LATER than the page's
+ * oldest message so the boundary second is refetched, not skipped
+ * (`before:`/`until` are exclusive at second granularity); `seen` de-dupes by
+ * id across pages.
  */
 async function walkInboxWindow(
   ledger: ReturnType<typeof getLedger>,
@@ -326,23 +304,13 @@ async function walkInboxWindow(
 }
 
 /**
- * Poll the inbox and record a reply wherever an inbound email's from-address
- * matches a prospect we emailed. Read-only except for the reply writes — it
- * never drafts or sends, so it's safe to run on a background timer (the server
- * scheduler) as well as inside `advanceCadence`. Without a background caller,
- * replies are only noticed when the founder manually advances/sends a cadence,
- * so a reply can sit unrecognized for days and the sequence keeps emailing.
- *
- * Three things make this see the whole field rather than a sliver of it:
- *  - the window is "since the last clean poll" (persisted watermark + overlap),
- *    not a bare newest-N across every mailbox that a noisy inbox could fill;
- *  - a window bigger than one poll's page budget is parked as a backlog slice
- *    and drained by the following polls, so it is delayed, never dropped; and
- *  - the reply is recorded against the play that emailed the prospect,
- *    regardless of cadence state, via `recordProspectReply` — so a reply that
- *    arrives after a sequence completed (the common case) still counts.
- *
- * `opts` exist for tests and deliberate backfills; production callers pass none.
+ * Poll the inbox and record a reply wherever an inbound from-address matches a
+ * prospect we emailed. Never drafts or sends, so it's safe on a background
+ * timer as well as inside `advanceCadence`. Coverage guarantees: the window is
+ * "since the last clean poll" (watermark + overlap), overflow is parked as
+ * backlog (delayed, never dropped), and replies are recorded regardless of
+ * cadence state so post-completion replies still count. `opts` exist for tests
+ * and backfills; production callers pass none.
  */
 export async function pollInboxReplies(opts?: {
   pageSize?: number;
@@ -447,10 +415,6 @@ export interface BouncePollResult {
  * Poll the mailbox for DSNs and act on them. Sibling to pollInboxReplies:
  * read-only except for the bounce row and the resulting cadence stop, so it's
  * safe on a background timer as well as inside advanceCadence.
- *
- * Without a background caller the tool learns an address is dead only by
- * failing to get a reply — meanwhile the sequence keeps emailing it, paying
- * per send, and each refusal costs sending reputation.
  */
 export async function pollInboxBounces(): Promise<BouncePollResult> {
   const ledger = getLedger();
@@ -509,12 +473,9 @@ export async function pollInboxBounces(): Promise<BouncePollResult> {
           identityId: b.identityId,
         },
       });
-      // Only a HARD bounce stops the sequence. A 5.7.x block is a verdict on
-      // this message or our sending domain, not on the mailbox — the address
-      // may well accept mail tomorrow, so killing the cadence would throw away
-      // a live prospect over one spam-filter decision. Blocks surface through
-      // the doctor check instead. Only `active` rows flip: a `replied` cadence
-      // has already proved the human is there.
+      // Only a HARD bounce stops the sequence — a 5.7.x block judges the
+      // message/domain, not the mailbox (blocks surface via the doctor check).
+      // Only `active` rows flip: a `replied` cadence proved the human is there.
       if (b.kind === "hard" && cad.status === "active") {
         ledger.setCadenceStatus({
           prospectId: prospect.id,
@@ -606,9 +567,8 @@ export async function advanceCadence(
   }
 
   // 2. For each active cadence with next_due_at <= now, execute the next step.
-  // Parallelized (concurrency 3): each step is an LLM draft + send (~5-90s), and
-  // `due` rows are distinct (prospect, play) pairs, so there's no shared-write
-  // contention. Results are collected in input order before counting.
+  // Concurrency 3 is safe: `due` rows are distinct (prospect, play) pairs, so
+  // no shared-write contention. Results are collected in input order.
   const nowIso = new Date().toISOString();
   const due = ledger.listActiveCadences({ dueByIso: nowIso });
 
@@ -686,12 +646,10 @@ export interface RunCadenceStepResult {
 }
 
 /**
- * Per-prospect cadence step runner. Single source of truth for both the
- * batch `advanceCadence` (CLI) and the per-row /cadences UI (preview + send).
- * Caller decides dryRun (no send) or persistedPayload (send a previously
- * built draft verbatim). On a successful send, advances `current_step`
- * to `nextIndex` and sets `next_due_at` to the next step's offset; clears
- * any persisted preview draft via ledger.advanceCadence.
+ * Per-prospect cadence step runner — single source of truth for the batch
+ * `advanceCadence` and the per-row /cadences UI. On a successful send,
+ * advances `current_step`, sets `next_due_at`, and clears any persisted
+ * preview draft via ledger.advanceCadence.
  */
 export async function runCadenceStepForProspect(
   opts: RunCadenceStepOptions,
@@ -710,11 +668,9 @@ export async function runCadenceStepForProspect(
       note: `cadence is ${cadence.status}`,
     };
   }
-  // Suppression check ahead of drafting. sendEmail would refuse this anyway,
-  // but only after an LLM draft has been paid for, and the resulting throw
-  // would land in recordCadenceSendError as "send failed · retrying" — which
-  // misrepresents a permanent failure as a transient one. Both the batch pass
-  // and the /cadences UI route through here, so this covers both.
+  // Suppression check ahead of drafting: sendEmail would refuse anyway, but
+  // only after paying for a draft, and its throw would misreport a permanent
+  // failure as "send failed · retrying".
   if (cadence.prospect_email) {
     const suppression = ledger.suppressionFor(cadence.prospect_email);
     if (suppression) {
@@ -731,12 +687,9 @@ export async function runCadenceStepForProspect(
       };
     }
   }
-  // Person-level ICP gate. A prospect judged off-ICP (by the finder gate or
-  // the history audit) must not receive further follow-ups — the intro was the
-  // mistake; the cadence would compound it. Code-level on purpose: the same
-  // lesson as the frequency caps, a prompt can be talked out of a rule but a
-  // status change cannot. Terminal + distinct ("off-icp", not "completed") so
-  // reporting stays honest about WHY the sequence stopped.
+  // Person-level ICP gate: an off-ICP prospect must not receive follow-ups.
+  // Code-level on purpose — a prompt can be talked out of a rule, a status
+  // change cannot. Terminal + distinct ("off-icp") so reporting stays honest.
   {
     const prospect = ledger.getProspectById(opts.prospectId);
     if (prospect?.icp_verdict === "reject") {
@@ -790,18 +743,12 @@ export async function runCadenceStepForProspect(
   if (!step) return { action: "skipped", payload: null, receiptIds: [] };
 
   // Re-send guard. `current_step` advances only AFTER a successful send, so a
-  // crash between dispatch and `advanceCadence` (e.g. a `bun --watch` reload
-  // killing the fire-and-forget send batch) leaves a prospect that already
-  // received step `nextIndex` still sitting at the old `current_step`. Without
-  // this guard the next due tick re-dispatches that step — and the SDK
-  // idempotency key is content-keyed, not step-keyed, so a redraft drift would
-  // send a real duplicate. If the step already has a terminal-sent event,
-  // reconcile by moving the cadence forward WITHOUT re-sending — running the
-  // SAME terminal transition a successful send would (so a reconciled breakup
-  // step lands in `breakup`, not `completed`), but skipping both the dispatch
-  // and the builder (no LLM redraft). Skipped on dryRun — previews never record
-  // sequence_events, and we don't want a preview to silently advance a real
-  // cadence.
+  // crash between dispatch and `advanceCadence` can leave a sent step behind —
+  // and the SDK idempotency key is content-keyed, not step-keyed, so a redraft
+  // would send a real duplicate. If the step already has a sent event,
+  // reconcile forward WITHOUT re-sending, running the SAME terminal transition
+  // a successful send would. Skipped on dryRun so a preview never advances a
+  // real cadence.
   if (!opts.dryRun && ledger.hasSentSequenceEvent(opts.prospectId, opts.playName, nextIndex)) {
     logEvent(
       "cadence.step.reconciled_already_sent",
@@ -887,11 +834,9 @@ export async function runCadenceStepForProspect(
 
   const receiptIds: number[] = [];
   if (!opts.dryRun) {
-    // Single send convergence point for every path (advance / per-row / batch).
-    // On a hard send failure (e.g. the platform's "Tool execution failed"),
-    // persist it so /cadences can show "send failed · retrying" instead of an
-    // indistinguishable "overdue"; the existing caller catches still log/clear
-    // the in-flight marker. Cleared on the next successful advance.
+    // Single send convergence point for every path. A hard send failure is
+    // persisted so /cadences can show "send failed · retrying" instead of an
+    // indistinguishable "overdue"; cleared on the next successful advance.
     let channelOutcome: Awaited<ReturnType<typeof dispatchStep>>;
     try {
       channelOutcome = await dispatchStep({
@@ -904,9 +849,8 @@ export async function runCadenceStepForProspect(
         ...(step.label !== undefined ? { label: step.label } : {}),
       });
     } catch (err) {
-      // A daily-cap deferral isn't a failure — the step just stays due for
-      // tomorrow. Only record genuine send errors (e.g. platform "Tool
-      // execution failed"); deferrals propagate untouched as before.
+      // A daily-cap deferral isn't a failure — the step stays due for
+      // tomorrow. Only genuine send errors are recorded.
       if (!isSendDeferred(err)) {
         ledger.recordCadenceSendError({
           prospectId: opts.prospectId,
@@ -1034,10 +978,9 @@ export async function previewCadenceStep(input: {
 }
 
 /**
- * Send a previously-previewed cadence step verbatim. Reads the persisted
- * draft (or 409s if none), dispatches it through runCadenceStepForProspect,
- * and advances the cadence. The advance clears the persisted draft so a
- * subsequent Preview rebuilds against the new current_step.
+ * Send a previously-previewed cadence step verbatim (throws if none
+ * persisted). The advance clears the draft so a later Preview rebuilds
+ * against the new current_step.
  */
 export async function sendCadenceStep(input: {
   prospectId: number;
@@ -1077,12 +1020,9 @@ export interface BatchSendResult {
 }
 
 /**
- * Parallel preview of a list of cadence rows (concurrency 3). Each
- * per-prospect failure is captured in the result array — the batch never
- * throws. `parallelMap` preserves input order so the returned array matches
- * `items` 1:1. Concurrency mirrors `runEmailPlay` + `advanceCadence`; the
- * founder is waiting at the UI, so 3× speedup on a 10-row preview drops
- * wall-clock from ~100s to ~35s.
+ * Parallel preview of cadence rows (concurrency 3). Per-prospect failures are
+ * captured in the result array — the batch never throws. `parallelMap`
+ * preserves input order so the result matches `items` 1:1.
  */
 export async function previewCadenceStepBatch(items: BatchItem[]): Promise<BatchPreviewResult[]> {
   return parallelMap(items, 3, async (item) => {
@@ -1101,16 +1041,11 @@ export async function previewCadenceStepBatch(items: BatchItem[]): Promise<Batch
 }
 
 /**
- * Serial send of a list of previewed cadence rows. Each per-prospect failure
- * is captured; the batch never throws. Used by `POST /api/cadences/send-batch`
- * as a background promise — caller returns 202 immediately and the UI sees
- * progress via subsequent `/api/cadences` refetches (the existing
- * `advanceCadence` clears `next_step_draft_json` as each row completes).
- *
- * Sends stay serial (unlike previewCadenceStepBatch) for two reasons: the
- * `onItemSettled` callback drives the in-flight UI badge per row (parallel
- * would batch-flash all rows at once), and parallel SMTP to the same
- * domain risks soft-bounces.
+ * Serial send of previewed cadence rows; per-prospect failures are captured,
+ * the batch never throws. Run as a background promise by
+ * `POST /api/cadences/send-batch` (202 + refetch-driven progress). Sends stay
+ * serial: `onItemSettled` drives the per-row in-flight badge, and parallel
+ * SMTP to the same domain risks soft-bounces.
  */
 export async function sendCadenceStepBatch(
   items: BatchItem[],
@@ -1312,10 +1247,8 @@ export function buildFollowUpEmail(opts: {
     });
     const parsed = tryParseJsonObject<{ subject?: string; body?: string }>(res.content, {});
     if (!parsed.subject || !parsed.body) return null;
-    // Apply the deterministic autofixer (em-dash → ", ", curly quotes → ASCII,
-    // emoji strip, etc.) — same humanization the initial-send plays get via
-    // draftEmailFromPrompt. Without this, cadence follow-ups ship em-dashes
-    // raw even though lintEmail flags them.
+    // Same deterministic humanization the initial-send plays get via
+    // draftEmailFromPrompt — without it, follow-ups ship em-dashes raw.
     const cleaned = humanizeDraft({
       subject: parsed.subject.trim(),
       body: parsed.body.trim(),
@@ -1337,10 +1270,8 @@ export interface PriorStepRow {
 }
 
 /**
- * Parse a prospect's prior sends for a given play into clean per-step rows.
- * Source of truth shared by the LLM PRIOR-EMAILS injection (which filters
- * legacy rows) and the /api/cadences view (which surfaces them with a
- * "body not captured" placeholder).
+ * Parse a prospect's prior sends for a play into per-step rows. Shared by the
+ * LLM PRIOR-EMAILS injection and the /api/cadences view.
  */
 export function getPriorStepsForProspect(prospectId: number, playName: string): PriorStepRow[] {
   if (!prospectId) return [];
@@ -1384,11 +1315,9 @@ function rowToPriorStep(r: {
 }
 
 /**
- * Bulk variant of getPriorStepsForProspect: one SQL round-trip for many
- * (prospect_id, play_name) pairs. Returns a Map keyed by
- * `${prospectId}|${playName}` so /api/cadences's toView can index in O(1)
- * instead of issuing one query per row. Pairs the founder hasn't sent for
- * are absent from the map (callers should default to []).
+ * Bulk variant of getPriorStepsForProspect: one SQL round-trip, Map keyed by
+ * `${prospectId}|${playName}`. Never-sent pairs are absent (callers default
+ * to []).
  */
 export function getPriorStepsBulk(
   pairs: ReadonlyArray<{ prospectId: number; playName: string }>,
