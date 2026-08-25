@@ -23,19 +23,10 @@ import { detectRepoStack } from "./_repo-stack.ts";
 import type { AgentBuilderExtract, FinderResult } from "./_types.ts";
 
 /**
- * Shared per-candidate pipeline for repo-style finders. Today it has one
- * caller (`github-topics`); kept as its own module because the per-candidate
- * body — snippet ICP → GitHub manifest scan + user fetch → minVendors gate →
- * resolveContact (3-tier: extract domain → GitHub user → deepResearchPerson) →
- * verifyEmail → enqueue — is large enough that inlining it back would obscure
- * the finder, and ctx-based parameterisation keeps the door open for future
- * repo finders without re-extracting later.
- *
- * Stack detection used to be a webRead + LLM extract on the README, which
- * (a) timed out ~44% of the time on JS-rendered GitHub pages and (b) read
- * marketing copy that didn't reflect actual code. We now pull the truth
- * directly from package.json / pyproject.toml / requirements.txt /
- * .env.example via the GitHub Contents API. Free, fast, deterministic.
+ * Shared per-candidate pipeline for repo-style finders: snippet ICP →
+ * manifest scan + GitHub user fetch → minVendors gate → contact resolution
+ * (3-tier) → verifyEmail → person gate → enqueue. Parameterised via ctx so
+ * future repo finders can reuse it.
  */
 const PLAY_NAME = "stack-consolidation";
 
@@ -67,10 +58,8 @@ export interface RepoPipelineCtx {
   /** Mutable accumulator. Workers mutate fields on this directly. */
   result: FinderResult;
   /**
-   * Boxed flag so workers share the same reference across the parallelMap
-   * pool. Soft halt: workers check at the top of each iteration but several
-   * may pass before any flips it — over-shoot up to (concurrency-1) is
-   * acceptable for the scales we operate at.
+   * Boxed flag shared across the parallelMap pool. Soft halt — over-shoot up
+   * to (concurrency-1) is acceptable.
    */
   halted: { value: boolean };
   limit: number;
@@ -125,9 +114,7 @@ export async function processRepoCandidate(
   };
   const errKindPrefix = ctx.sourceTag.replace(/^find:/, "");
 
-  // 1) ICP on the snippet — cheap pre-filter. Skips the manifest scan +
-  //    user-fetch + contact-resolution chain on candidates the classifier
-  //    rejects, which is most of them in practice.
+  // 1) ICP on the snippet — cheap pre-filter ahead of the paid chain.
   const snippetFilter = await icpFilter({
     icp: ctx.icp,
     candidate: {
@@ -137,9 +124,8 @@ export async function processRepoCandidate(
     },
   });
   if (snippetFilter.match === null) {
-    // Transient classifier failure (Anthropic 5xx, timeout, rate limit) —
-    // drop without persisting. A rejection would burn the dedupeKey for
-    // every future watch tick since isQueueDuplicate ignores status.
+    // Transient classifier failure — drop without persisting. A rejection
+    // would burn the dedupeKey forever (isQueueDuplicate ignores status).
     result.droppedEnrichment++;
     return;
   }
@@ -156,15 +142,8 @@ export async function processRepoCandidate(
     return;
   }
 
-  // 2) Stack detection — deterministic GitHub-API scan of manifest files
-  // (package.json, pyproject.toml, requirements.txt, .env.example) instead
-  // of webRead + LLM extract. Three reasons:
-  //   - webRead timed out on ~44% of GitHub repo pages (JS-rendered)
-  //   - READMEs are marketing copy that don't always match what code imports
-  //   - Manifest scanning is free (counts against GITHUB_TOKEN's 5k/hr) and
-  //     authoritative — if `openai` is in package.json the repo uses OpenAI
-  //
-  // Author / company come from the GitHub user profile (also free).
+  // 2) Stack detection — deterministic manifest scan via the GitHub Contents
+  // API (free, authoritative). Author/company come from the user profile.
   const owner = ownerFromRepoUrl(hit.url);
   const repoName = repoNameFromRepoUrl(hit.url);
   if (!owner || !repoName) {
@@ -191,27 +170,21 @@ export async function processRepoCandidate(
   const extract: AgentBuilderExtract = {
     repoUrl: hit.url,
     githubHandle: owner,
-    // Prefer the human-friendly name; many GitHub users leave it blank.
-    // findEmail downstream short-circuits gracefully when this is null.
+    // Often blank on GitHub; findEmail downstream short-circuits on null.
     authorFullName: ghUserInfo?.name ?? null,
     authorRole: null, // not derivable from GitHub user API
     companyName: ghUserInfo?.company ?? null,
-    // The GitHub blog field is a single bare hostname — we don't have enough
-    // signal to know if it's corporate or personal, so map it to companyDomain
-    // and leave personalDomain null. The resolveContact fallback chain reads
-    // both via `?? null`, so the choice doesn't change behavior.
+    // GitHub's blog field could be corporate or personal; mapped to
+    // companyDomain — resolveContact reads both, so the choice is behavior-neutral.
     companyDomain: ghUserInfo?.blogDomain ?? null,
     personalDomain: null,
     stackDetected: stack.detected,
     summary: null,
   };
 
-  // Route by direct-competitor match: a candidate whose detected stack
-  // includes one of the founder's head-on rivals gets the competitor-switch
-  // motion ("switch from X"); everything else is a stack-consolidation
-  // (vendor-sprawl) pitch. directCompetitors is empty by default → always
-  // stack-consolidation. The resolved play name is used for the rest of this
-  // candidate's pipeline (dedupe, receipt tags, enqueue).
+  // Route by direct-competitor match: head-on rival in the stack →
+  // competitor-switch, else stack-consolidation. The resolved play name is
+  // used for the rest of this candidate's pipeline (dedupe, receipts, enqueue).
   const directSet = new Set((ctx.directCompetitors ?? []).map((s) => s.toLowerCase()));
   const matchedCompetitor = extract.stackDetected.find((v) => directSet.has(v.toLowerCase()));
   const playName = matchedCompetitor ? "competitor-switch" : "stack-consolidation";
@@ -237,9 +210,8 @@ export async function processRepoCandidate(
     return;
   }
 
-  // verifyEmail can throw on transient SDK / network errors. Catch and drop
-  // the candidate rather than letting one bad call tear down the pool —
-  // identical reasoning to the findEmail wrap in resolveContact.tryFindEmail.
+  // verifyEmail can throw on transient errors — catch and drop the candidate
+  // rather than letting one bad call tear down the pool.
   let verified: Awaited<ReturnType<typeof verifyEmail>>;
   try {
     verified = await verifyEmail({ email: contact.email }, { playName });
@@ -261,9 +233,8 @@ export async function processRepoCandidate(
     return;
   }
 
-  // Always-on post-verify enrichment so phone + linkedin land on every
-  // queue row. Path B' may have already populated both — skip the call
-  // when so. ~$0.005 per call when fired (per OneShot pricing).
+  // Always-on post-verify enrichment so phone + linkedin land on every queue
+  // row; skipped when Path B' already populated them.
   if (!contact.phone || !contact.linkedinUrl || !contact.title) {
     const enr = await enrichVerifiedContact(contact.email, {
       playName,
@@ -276,9 +247,8 @@ export async function processRepoCandidate(
     contact.summary = contact.summary ?? enr.summary;
   }
 
-  // Person-level ICP gate. GitHub exposes no role (`extract.authorRole` is
-  // always null here), so the decision rests on the enriched title — which is
-  // free, since the call above already ran.
+  // Person-level ICP gate. GitHub exposes no role, so the decision rests on
+  // the (already-bought) enriched title.
   const gate = await qualifyPostEnrich({
     icp: ctx.icp,
     person: {
@@ -310,8 +280,7 @@ export async function processRepoCandidate(
     return;
   }
   if (gate.action === "defer") {
-    // Classifier/platform outage — not a verdict. Same handling as any other
-    // platform error so the candidate is retried rather than blacklisted.
+    // Classifier/platform outage — not a verdict; retried, never blacklisted.
     result.droppedEnrichment++;
     return;
   }
@@ -340,8 +309,7 @@ export async function processRepoCandidate(
         company,
         competitor: matchedCompetitor,
         evidenceUrl: hit.url,
-        // Honest, specific evidence — no fabricated "auth surfaces". Single
-        // vendor, so no rule-of-three risk. Setting evidenceText also makes
+        // Honest, specific evidence. Setting evidenceText also makes
         // competitor-switch skip its (expensive) browser scrape.
         evidenceText: `Their public repo uses ${matchedCompetitor} (found in ${stack.manifestsFound.join(", ")}).`,
         yourEdge: ctx.yourEdge,
@@ -402,25 +370,17 @@ interface ResolvedContact {
   /** Free-text bio/headline from post-verify enrichment. Secondary gate evidence. */
   summary: string | null;
   /**
-   * True when Path B' already ran enrichProfile against `linkedinUrl`. Lets the
-   * ICP gate skip a fill-the-gap lookup that would repeat that exact call.
+   * True when Path B' already ran enrichProfile against `linkedinUrl` — lets
+   * the ICP gate skip a duplicate fill-the-gap lookup.
    */
   enrichedByLinkedin: boolean;
 }
 
 /**
- * Resolve a deliverable contact for a repo candidate.
- *
- * Decision tree (cheapest path first; one paid call per tier):
- *   1. extract has a domain → findEmail($0.005). Done if found.
- *   2. GitHub user provides an email directly → use it (no findEmail spend).
- *   3. (opt-in) deepResearchPerson($0.05, 2-5 min async) with the repo URL +
- *      author name — recovers the bucket where nobody has a resolvable
- *      companyDomain anywhere.
- *
- * The pre-fetched `ghUser` is required from the pipeline (we already fetch
- * it for the extract construction); accepting it here avoids a duplicate
- * lookup. Pass null if the candidate isn't a GitHub repo.
+ * Resolve a deliverable contact for a repo candidate, cheapest path first:
+ * extract domain → findEmail; GitHub user email direct; then (opt-in)
+ * deepResearchPerson. `ghUser` is passed pre-fetched to avoid a duplicate
+ * lookup; null if the candidate isn't a GitHub repo.
  */
 export async function resolveContact(args: {
   extract: AgentBuilderExtract;
@@ -443,16 +403,9 @@ export async function resolveContact(args: {
   // ICP gate never buys the same lookup a second time.
   let didEnrichByLinkedin = false;
 
-  // LinkedIn capture runs for EVERY candidate, ahead of the email paths.
-  //
-  // This used to live inside the `!companyForGate` block below, whose job is
-  // recovering a *company* for the deep-research gate — LinkedIn was only a
-  // side effect. The consequence: candidates that already had a company (the
-  // best ones) skipped the lookup entirely, and since `discoveredLinkedinUrl`
-  // is read by all of this function's return paths, every one of them handed
-  // back null. That's why this pipeline produced 11 LinkedIn URLs out of 80.
-  //
-  // Cost: ~$0.01 webSearch per candidate. Cached per-run inside findLinkedInUrl.
+  // LinkedIn capture runs for EVERY candidate, ahead of the email paths — it
+  // is a first-class output read by all return paths, not a side effect of
+  // company recovery. Cached inside findLinkedInUrl.
   if (extract.authorFullName || extract.githubHandle) {
     const nameTokens = [extract.authorFullName, extract.githubHandle].filter((t): t is string =>
       Boolean(t),
@@ -497,17 +450,10 @@ export async function resolveContact(args: {
     };
   }
 
-  // Path B': enrichProfile off the LinkedIn URL found above, to recover
-  // company / company_domain / sometimes email. Bridges the common case where
-  // GitHub gives us a name but no company/blog — without this, deep-research
-  // (Path C) fails its required-identifier gate and the candidate drops.
-  //
-  // The webSearch itself now happens unconditionally further up (LinkedIn is a
-  // first-class output, not a side effect of company recovery). What stays
-  // gated is the paid enrichProfile: only worth $0.005 when we still lack a
-  // company to satisfy the deep-research gate.
-  //
-  // Cost when triggered: ~$0.005 enrichProfile (the webSearch is already spent).
+  // Path B': enrichProfile off the LinkedIn URL, to recover company /
+  // company_domain / sometimes email — without it, Path C fails its
+  // required-identifier gate. The paid enrichProfile only fires when a
+  // company is still missing.
   let companyForGate: string | null = extract.companyName ?? null;
   let domainForGate: string | null = extractDomain;
   if (!companyForGate && discoveredLinkedinUrl) {
@@ -517,16 +463,12 @@ export async function resolveContact(args: {
       didEnrichByLinkedin = true;
       accumCost(enriched.result.cost ?? 0);
       const profile = enriched.result.profile;
-      // PersonResult exposes phone (string) AND fullphone (array) — extractFirstPhone
-      // reads either. Capture once and reuse on every return path so we don't drop
-      // a phone the SDK already paid to retrieve.
+      // Captured once and reused on every return path.
       const enrichedPhone = extractFirstPhone(profile);
       // Cache the linkedin-keyed enrich by the SURFACED email so the later
-      // post-verify enrichVerifiedContact (by email) becomes a cache hit and
-      // skips its second SDK call. Only cache when profile.email is directly
-      // surfaced — for paths that derive the email via findEmail (different
-      // API), we can't guarantee the profile is for the same person, so
-      // skip the cache to avoid poisoning.
+      // by-email enrichVerifiedContact becomes a cache hit. Only when
+      // profile.email is directly surfaced — a findEmail-derived email may be
+      // a different person, and caching it would poison.
       if (profile?.email) {
         try {
           getLedger().setCachedEnrichment(
@@ -585,21 +527,15 @@ export async function resolveContact(args: {
     }
   }
 
-  // Path C: deep research as the last resort. The API needs strong identifiers
-  // to find a person — empirically, `socialMediaUrl: <github-repo-url>` alone
-  // is NOT enough (we burned $0.15 on three "Could not find data for this
-  // person" failures with just that). Require either:
-  //   (a) a known email, OR
-  //   (b) full name AND company  (company may have been populated by Path B')
-  // Anything weaker spends $0.05 on a near-guaranteed miss. The repoUrl is
-  // still passed as `socialMediaUrl` for bonus signal when present.
+  // Path C: deep research as the last resort. The API needs strong
+  // identifiers — a repo URL alone is empirically not enough, so require a
+  // known email OR full name AND company; the repoUrl still rides along as
+  // `socialMediaUrl` for bonus signal.
   if (!useDeepResearch) return null;
   const hasName = Boolean(extract.authorFullName && extract.authorFullName.length > 0);
   const hasCompany = Boolean(companyForGate && companyForGate.length > 0);
-  // We never have an email here by definition — Paths A/B both bail before
-  // setting one, and a contact found earlier short-circuits before this tier.
-  // Kept as a placeholder for future flexibility (e.g. a discovery layer that
-  // surfaces a tentative email).
+  // Never true here by definition (earlier paths short-circuit on a found
+  // contact); kept as a placeholder for a future tentative-email source.
   const hasEmail = false;
   if (!hasEmail && !(hasName && hasCompany)) return null;
   try {
@@ -647,12 +583,10 @@ export async function resolveContact(args: {
 }
 
 /**
- * Single findEmail attempt with consistent fault-handling. OneShot's
- * findEmail requires `full_name` (or first+last) — without one it throws
- * synchronously, and a throw here would tear down the parallelMap pool. We
- * short-circuit cleanly when there's no name, and catch the SDK throw on
- * transient network errors. Either failure mode returns null so the caller
- * falls through to the next contact-resolution tier.
+ * Single findEmail attempt with consistent fault-handling. findEmail throws
+ * synchronously without a `full_name`, and any throw here would tear down the
+ * parallelMap pool — both failure modes return null so the caller falls
+ * through to the next tier.
  */
 async function tryFindEmail(
   domain: string,
@@ -702,14 +636,9 @@ async function tryFindEmail(
 }
 
 /**
- * Compose the snippet-ICP `summary` from whichever signal we have. Topic-driven
- * candidates (github-topics) carry the repo's self-tagged GitHub topics. The
- * `vendors` branch is reserved for future finders that surface known vendor
- * names at discovery. If neither is present, return the bare description
- * rather than emitting an empty `topics: ` tail.
- *
- * Exported for direct unit testing — integration coverage of both branches
- * would require a discovery shape that doesn't exist yet.
+ * Compose the snippet-ICP `summary` from whichever signal is present
+ * (vendors, topics, or bare description — never an empty `topics:` tail).
+ * Exported for direct unit testing.
  */
 export function describeForIcp(hit: RepoCandidate): string {
   if (hit.vendors.length > 0) {

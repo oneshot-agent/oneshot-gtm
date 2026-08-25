@@ -2,26 +2,12 @@ import { logEvent } from "@oneshot-gtm/core";
 
 /**
  * Process-wide circuit breaker for OneShot paid contact-resolution calls
- * (findEmail/verifyEmail). During a backend outage EVERY candidate's resolution
- * throws; without this, a run burns ~70s + spend per candidate draining all of
- * them through doomed calls (and drops each as if it were a bad candidate).
- *
- * State machine (closed → open → half-open → closed/open):
- * - CLOSED: calls flow normally. `isCircuitOpen()` → false.
- * - OPEN: trips after N consecutive platform errors. `isCircuitOpen()` → true,
- *   so `resolveAndVerifyContact` short-circuits (no spend) for COOLDOWN_MS.
- * - HALF-OPEN: once the cooldown elapses, `isCircuitOpen()` → false again so the
- *   next resolution issues a real probe call. That call's outcome either CLOSES
- *   the breaker (success) or RE-ARMS the cooldown (failure) — so a sustained
- *   outage keeps short-circuiting between probes instead of hammering, and a
- *   recovered backend closes the breaker on the first probe. Without the
- *   cooldown the breaker would latch open forever (nothing calls
- *   recordResolutionOutcome while open), permanently breaking finders until a
- *   process restart.
- *
- * The counter is process-wide and only platform errors (`status:"error"` from
- * the safe wrappers) count toward tripping; any genuine outcome resets it, so a
- * run of legitimately-unresolvable candidates never opens it.
+ * (findEmail/verifyEmail), so a backend outage doesn't drain a whole run
+ * through doomed paid calls. Trips OPEN after THRESHOLD consecutive platform
+ * errors; after COOLDOWN_MS the next call probes (half-open) — success closes
+ * the breaker, failure re-arms the cooldown (without which it would latch open
+ * forever). Only platform errors count toward tripping; any genuine outcome
+ * resets the counter, so legitimately-unresolvable candidates never open it.
  */
 const THRESHOLD = 5;
 export const COOLDOWN_MS = 60_000;

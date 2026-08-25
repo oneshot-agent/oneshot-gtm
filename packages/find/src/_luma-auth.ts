@@ -2,28 +2,12 @@ import { logEvent } from "@oneshot-gtm/core";
 import type { LumaPublicAttendee } from "./_types.ts";
 
 /**
- * Optional auth path for the luma-events finder. When the founder has pasted
- * their `luma.auth-session-key` cookie into `LUMA_SESSION_COOKIE`, this helper
- * tries to fetch the FULL guest list from Luma's internal API.
- *
- * KNOWN LIMIT (verified live, 2026-06): the guest-list endpoint is HOST-ONLY —
- * a valid cookie on someone else's event returns 403 "You don't have access to
- * this event", even when the host shows "Who's Coming". So this path only adds
- * coverage for events the FOUNDER hosts. (It also expects the `evt-` api_id
- * where the caller passes the URL slug, which 404s first — moot for cold
- * discovery given the 403.) Cold-discovery contact data comes from the public
- * `api.lu.ma/url` event JSON instead — see `fetchEventDetails` in
- * `_luma-discover.ts`.
- *
- * The endpoint is undocumented and may change. We try two URL shapes (the
- * `/admin/` and the bare variant) and fall back gracefully to null on any
- * 4xx / shape drift / network blip. The caller (luma.ts) treats null as
- * "stay in public-only mode for this event" — no crash.
- *
- * TOS posture: this is the founder's own cookie hitting pages they could
- * read in a browser. The cookie value is never logged (only its presence is)
- * and never persisted by this codebase beyond the `~/.oneshot-gtm/.env` file
- * the founder owns.
+ * Optional auth path for luma-events: with `LUMA_SESSION_COOKIE` set, fetch
+ * the full guest list from Luma's internal (undocumented) API. HOST-ONLY —
+ * a valid cookie on someone else's event 403s, so this only adds coverage for
+ * events the founder hosts; cold-discovery contacts come from the public event
+ * JSON (`_luma-discover.ts`). Null on any failure mode = caller stays in
+ * public-only mode. The cookie value is never logged or persisted.
  */
 
 const ENDPOINTS = [
@@ -135,9 +119,7 @@ export async function fetchAuthedGuestList(
         },
         "warn",
       );
-      // Network blip — try the next endpoint, but don't keep retrying
-      // forever. The next iteration's fetch will either work or this catch
-      // will fire again and exit the loop after the URL list is exhausted.
+      // Network blip — try the next endpoint.
       lastStatus = null;
       continue;
     }
@@ -188,13 +170,9 @@ export async function fetchAuthedGuestList(
 }
 
 /**
- * Merge public (LLM-extracted) attendees with auth'd attendees. Dedupe key is
- * the lowercased trimmed name; matches the per-event dedupe key used downstream.
- *
- * Per-field union: when both sides have an entry for the same name, the auth
- * value wins on conflict, but public values fill in any nulls. This handles
- * the realistic case where the auth API doesn't surface a field (`linkedinUrl`
- * = null) that the LLM caught from a visible attendee card.
+ * Merge public (LLM-extracted) + auth'd attendees. Dedupe key: lowercased
+ * trimmed name (matches the downstream per-event key). Per-field union — auth
+ * values win on conflict, public values fill nulls.
  */
 export function mergeAttendees(
   publicList: LumaPublicAttendee[],

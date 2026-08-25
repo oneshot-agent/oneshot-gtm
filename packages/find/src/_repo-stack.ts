@@ -2,28 +2,11 @@ import { logEvent } from "@oneshot-gtm/core";
 import { githubHeaders } from "./_github-search.ts";
 
 /**
- * Deterministic stack detection from a GitHub repo's manifest files. Replaces
- * the older webRead + LLM-extract path that was unreliable in two ways: (1)
- * webRead timed out on ~44% of GitHub README pages (JS-rendered), and (2)
- * READMEs are marketing copy that doesn't always match what the code
- * actually imports. Manifests are authoritative — if `openai` is in
- * `package.json`, the project uses OpenAI.
- *
- * Files we scan in priority order: package.json (npm), pyproject.toml +
- * requirements.txt (Python), .env.example (env-var leakage). Each fetch is
- * independent + best-effort; missing files just contribute nothing.
- *
- * The `vocab` argument is the founder-controlled vendor list. Each vocab
- * string is substring-matched (case-insensitive) against the union of all
- * extracted manifest tokens — `twilio` matches `twilio`, `twilio-node`,
- * `@twilio/voice-sdk`, AND `TWILIO_ACCOUNT_SID`. There is no hardcoded
- * vendor catalog; oneshot-gtm is a generic founder tool and competitive
- * vocabularies vary entirely by founder. The strategist proposes vocab
- * populations from the founder's product/ICP context (see
- * `packages/prompts/strategist-trigger.md`).
- *
- * Cost: ~3-4 GitHub API calls per candidate. With `GITHUB_TOKEN` set the
- * 5,000/hr quota is plenty for any practical run.
+ * Deterministic stack detection from a GitHub repo's manifest files
+ * (manifests are authoritative; READMEs aren't). `vocab` is the founder's
+ * vendor list — substring-matched (case-insensitive) against manifest deps
+ * and env-var keys; there is no hardcoded vendor catalog. Each manifest
+ * fetch is independent and best-effort.
  */
 
 export interface StackDetection {
@@ -63,11 +46,8 @@ export async function detectRepoStack(args: {
     }
   }
 
-  // Single transparent matching loop. Each vocab entry is a substring needle
-  // searched across every extracted token. Casing doesn't matter (tokens
-  // were lowercased on insertion). Substring is intentional: founder typing
-  // `twilio` matches `twilio-node`, `@twilio/voice-sdk`, and `TWILIO_*` env
-  // keys — three real signals from one vocab entry.
+  // Substring match is intentional: `twilio` matches `twilio-node`,
+  // `@twilio/voice-sdk`, and `TWILIO_*` env keys (tokens lowercased on insertion).
   const detected = new Set<string>();
   for (const v of vocab) {
     const needle = v.toLowerCase();
@@ -95,9 +75,7 @@ export async function detectRepoStack(args: {
 
 /**
  * Fetch a file from a repo's default branch via the GitHub Contents API.
- * Returns null on any non-2xx (including 404 — file just doesn't exist),
- * network error, or unexpected content type. Same fault-tolerance pattern
- * as `fetchGitHubUser`.
+ * Returns null on any non-2xx, network error, or unexpected content type.
  */
 async function fetchRepoFile(owner: string, repo: string, path: string): Promise<string | null> {
   const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${path}`;
@@ -106,9 +84,7 @@ async function fetchRepoFile(owner: string, repo: string, path: string): Promise
     const res = await fetch(url, { headers });
     if (!res.ok) return null;
     const text = await res.text();
-    // Defensive cap. Manifests are usually < 50KB; anything larger is either
-    // a spurious vendored file or a bug. We're only doing substring matches
-    // so trimming is safe.
+    // Defensive cap — only substring matching happens downstream, so trimming is safe.
     return text.length > 200_000 ? text.slice(0, 200_000) : text;
   } catch {
     return null;
@@ -150,10 +126,8 @@ function parsePackageJson(content: string): string[] {
 }
 
 /**
- * Pull dep names out of a pyproject.toml. We don't ship a TOML parser — a
- * regex over `name = "..."` patterns inside `[project.dependencies]` and
- * Poetry-style `[tool.poetry.dependencies]` sections covers the bulk of
- * real-world files. Fail-soft: missing matches just yield no names.
+ * Regex-based pyproject.toml dep extraction (Poetry + PEP 621 shapes) — no
+ * TOML parser shipped. Fail-soft: missing matches just yield no names.
  */
 function parsePyProject(content: string): string[] {
   const out: string[] = [];
@@ -176,10 +150,7 @@ function parsePyProject(content: string): string[] {
   return out;
 }
 
-/**
- * Reserved top-level keys in pyproject.toml that aren't dependencies. The
- * Poetry regex is loose enough to match these; this set filters them out.
- */
+/** Non-dependency pyproject keys the loose Poetry regex would otherwise match. */
 const RESERVED_PYPROJECT_KEYS = new Set([
   "name",
   "version",
@@ -221,10 +192,8 @@ function parseRequirementsTxt(content: string): string[] {
 }
 
 /**
- * Pull env-var keys out of a `.env.example` (or `.env.sample`). Vendor SDKs
- * conventionally name their keys after themselves (`OPENAI_API_KEY`,
- * `TWILIO_ACCOUNT_SID`, etc), so the keys themselves are great signal even
- * when the values are placeholder.
+ * Env-var keys from `.env.example` — vendor SDKs name keys after themselves
+ * (`OPENAI_API_KEY`), so keys are signal even with placeholder values.
  */
 function parseEnvKeys(content: string): string[] {
   const out: string[] = [];

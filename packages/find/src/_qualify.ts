@@ -10,25 +10,11 @@ import { isCircuitOpen, recordResolutionOutcome } from "./_breaker.ts";
 import { type PersonCandidate, type PersonVerdict, hasRoleText, qualifyPerson } from "./_filter.ts";
 
 /**
- * Staged person-level ICP qualification.
- *
- * The problem this solves: 15% of everyone we emailed was off-ICP (a
- * snowboard-team coordinator, two investors, an Account Executive who was
- * pitching us) because nothing in the pipeline ever looked at a human's role.
- *
- * The gate runs in up to three stages, cheapest first, because role data
- * arrives at different points and at different prices:
- *
- *   A. pre-spend    $0      role text the finder already has (Luma attendeeBio,
- *                           extracted founderRole/guestRole/etc.)
- *   B. post-enrich  $0      `title` off the enrichProfile we ALREADY buy for
- *                           every verified email (see `_enrich.ts`)
- *   C. fill-the-gap ~$0.005 one extra enrichProfile keyed by LinkedIn URL
- *
- * `unclear` and "no role text" are the same thing to this module: both mean
- * we cannot decide, and both escalate. Guessing on ambiguity is what let the
- * bad prospects through, and guessing the other way would drop real founders
- * whose bio happens to be blank (31% of Luma candidates).
+ * Staged person-level ICP qualification — up to three stages, cheapest first:
+ * A pre-spend (free role text from the finder), B post-enrich (title off the
+ * enrichProfile already bought), C fill-the-gap (one extra enrichProfile keyed
+ * by LinkedIn URL). `unclear` and "no role text" both mean "cannot decide" and
+ * both escalate — guessing on ambiguity in either direction is wrong.
  */
 
 /** What the caller should do next. */
@@ -39,8 +25,7 @@ export type QualifyAction =
   | "reject"
   /**
    * Could not decide (classifier outage). Drop WITHOUT persisting — a
-   * persisted rejection burns the dedupeKey forever, so an LLM outage would
-   * permanently blacklist every candidate it touched.
+   * persisted rejection burns the dedupeKey forever.
    */
   | "defer";
 
@@ -67,28 +52,22 @@ function outcome(
 }
 
 /**
- * Stage A — before any spend.
- *
- * Only a `reject` is actionable here; that is the free win, and it fires
- * before findEmail + verify + enrich are paid for. An `unclear` deliberately
- * returns "proceed": stage B is free, so paying at A would burn ~$0.005 on
- * candidates whose email fails verification anyway.
+ * Stage A — before any spend. Only a `reject` is actionable here; `unclear`
+ * deliberately proceeds because stage B is free.
  */
 export async function qualifyPreSpend(input: {
   icp: string | null;
   person: PersonCandidate;
 }): Promise<QualifyOutcome> {
-  // Nothing to judge yet — that is normal for repo-interest and
-  // stack-consolidation, which carry no role at discovery. Defer to stage B.
+  // No role at discovery is normal for the repo finders — defer to stage B.
   if (!hasRoleText(input.person)) {
     return outcome("unclear", "no role text at discovery; deferred to enrichment", null);
   }
   const res = await qualifyPerson(input);
   const roleText = input.person.roleText ?? null;
 
-  // A transient classifier failure pre-spend is NOT a reason to drop the
-  // candidate: stage B gets another look for free. Downgrade to proceed so an
-  // LLM blip costs us nothing but a second opinion.
+  // A transient classifier failure pre-spend downgrades to proceed — stage B
+  // gets another look for free.
   if (res.verdict === "transient") {
     return outcome("unclear", "classifier unavailable pre-spend; deferred", roleText);
   }
@@ -114,9 +93,8 @@ export async function qualifyPostEnrich(input: {
   /** Per-finder switch for stage C spend. */
   fillGaps: boolean;
   /**
-   * Set when the caller ALREADY ran enrichProfile keyed by this same LinkedIn
-   * URL and it produced no title. Stage C would repeat that exact call, so it
-   * is skipped — buying the same miss twice is pure waste.
+   * Set when the caller already ran enrichProfile on this same LinkedIn URL
+   * with no title — stage C would repeat that exact call, so it is skipped.
    */
   alreadyEnrichedByLinkedin?: boolean;
   playName: string;
@@ -124,9 +102,8 @@ export async function qualifyPostEnrich(input: {
 }): Promise<QualifyOutcome> {
   const icp = input.icp;
 
-  // Best role text available for free: the enriched title beats a discovery
-  // headline (it is the current employer's record, not self-written), and the
-  // summary is a fallback when the title is absent.
+  // Enriched title beats a discovery headline (employer record, not
+  // self-written); summary is the fallback.
   const freeRole =
     firstNonEmpty(input.enrichedTitle, input.person.roleText, input.enrichedSummary) ?? null;
 
@@ -139,7 +116,7 @@ export async function qualifyPostEnrich(input: {
     return outcome("transient", stageB.reason, freeRole);
   }
 
-  // ---- Stage C: unclear or still no role text, so go buy a real title. ----
+  // Stage C: unclear or still no role text — buy a real title.
   if (!input.fillGaps) {
     return outcome("unclear", "unclear; fill-the-gap lookup disabled for this finder", freeRole);
   }
@@ -202,12 +179,8 @@ export async function qualifyPostEnrich(input: {
     return outcome("transient", stageC.reason, boughtTitle, costUsd, receiptId);
   }
   if (stageC.verdict === "unclear") {
-    // Softened 2026-08-25 (founder: "we might be too strict"): a bought title
-    // that STILL does not settle it is a genuine coin-flip, and the product is
-    // self-serve pay-per-use — the cost of a false send is one email, the cost
-    // of a false drop is a prospect gone forever. Proceed, log distinctly so
-    // the coin-flip volume stays visible, and let the reply (or silence)
-    // decide. Only a positive `reject` ever drops a candidate.
+    // A bought title that still doesn't settle it is a coin-flip: proceed and
+    // log distinctly. Only a positive `reject` ever drops a candidate.
     logEvent("icp.person_unclear_after_enrich", {
       reason_120: stageC.reason.slice(0, 120),
       role_120: (boughtTitle ?? "").slice(0, 120),
@@ -248,12 +221,9 @@ function readTitle(profile: unknown): string | null {
 }
 
 /**
- * Persist an auditable rejected row for a person-level ICP miss.
- *
- * Mirrors the company-level ICP rejection pattern (`auto: ICP — …`) so both
- * kinds of auto-drop show up the same way in /queue and the founder can
- * override either. Best-effort: the drop already happened, and losing the
- * audit row must never take the run down.
+ * Persist an auditable rejected row for a person-level ICP miss, mirroring the
+ * company-level pattern so both show up the same way in /queue. Best-effort:
+ * losing the audit row must never take the run down.
  */
 export function persistRoleRejection(args: {
   playName: string;
