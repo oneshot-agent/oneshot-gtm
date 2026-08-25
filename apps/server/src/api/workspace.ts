@@ -10,17 +10,10 @@ import type { WorkspaceInfo } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 
 /**
- * Workspace identity + roster for the dashboard shell.
- *
- * Each workspace is a hermetic install serving its own dashboard on its own
- * port, so "switching" in the UI means opening ANOTHER server's tab — which is
- * only possible if the browser can learn (a) which workspace this server is,
- * and (b) which others exist and whether they are up. Until this route, the
- * browser's entire workspace knowledge was a string-split of the doctor
- * check's message.
- *
- * `running` is probed HERE, server-side, so the web app stays same-origin
- * (client.ts BASE = "/api") and the switcher has a single polling surface.
+ * Workspace identity + roster for the dashboard shell. Each workspace is a
+ * hermetic install on its own port, so "switching" means opening another
+ * server's tab. `running` is probed HERE, server-side, so the web app stays
+ * same-origin and the switcher has a single polling surface.
  */
 
 /** The port this server is actually bound to (bin.ts reads the same env). */
@@ -105,12 +98,8 @@ export function _setLaunchSpawn(fn?: LaunchSpawn): void {
 
 /**
  * POST /api/workspace/launch {name} — start another workspace's dashboard
- * server in the background, so the switcher's click can open it.
- *
- * Deliberately unsupervised: no PID file, no lifecycle management. The spawned
- * server runs until killed manually or the machine restarts — an accepted
- * trade-off for one-click switching on a single-user local tool. The roster's
- * `running` probe is the source of truth for what is actually up.
+ * server in the background. Deliberately unsupervised (no PID file, no
+ * lifecycle management); the roster's `running` probe is the source of truth.
  */
 export async function workspaceLaunch(req: Request): Promise<Response> {
   let name = "";

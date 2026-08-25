@@ -14,20 +14,11 @@ import { commandUi } from "./ui.ts";
 
 /**
  * Strip every real credential from an env before it reaches the demo server.
- *
- * The CLI process imports core, and core's `applySecretsToEnv()` fills blank
- * `process.env` vars from the REAL home's `.env` at import time — before this
- * command ever runs. `commandUi` spawns the server with `...process.env`, and
- * the child's own secrets-loader only fills vars that are still blank, so
- * without this scrub the inherited real wallet/LLM/Gmail keys would SHADOW the
- * demo home's placeholders. That is the exact failure the demo exists to
- * prevent: a stray Run or Send click spending real money from a "demo".
- * Deleting them here lets the child re-load from the demo `.env`, whose
- * placeholder values cannot authenticate.
- *
- * GITHUB_TOKEN / LUMA_SESSION_COOKIE aren't in SECRET_KEYS (they're read
- * straight from env, never stored), but a demo "Run now" shouldn't act with the
- * founder's real tokens either.
+ * core's `applySecretsToEnv()` fills blank env vars from the REAL home's .env
+ * at import time, and the spawned child's loader only fills vars still blank —
+ * so without this scrub the inherited real keys would SHADOW the demo home's
+ * placeholders and a demo "Send" could spend real money. Also drops
+ * GITHUB_TOKEN / LUMA_SESSION_COOKIE, which live only in env.
  */
 export function scrubInheritedSecrets(env: NodeJS.ProcessEnv): void {
   for (const key of [...SECRET_KEYS, "GITHUB_TOKEN", "LUMA_SESSION_COOKIE"]) {

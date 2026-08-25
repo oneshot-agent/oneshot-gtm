@@ -24,12 +24,10 @@ function realHome(): string {
 }
 
 /**
- * Resolve a path with symlinks followed, not just lexically. `resolve()` alone
- * would let `--home some-symlink-to-the-real-install` slip past the guards
- * below and write through the link into `~/.oneshot-gtm`. A path that doesn't
- * exist yet can't be realpath'd directly, so canonicalize the nearest existing
- * ancestor and re-append the rest — that also catches a symlinked PARENT
- * directory pointing into the real install's parent.
+ * Resolve a path with symlinks followed, not just lexically — `resolve()`
+ * alone would let a symlinked `--home` (or a symlinked parent) slip past the
+ * guards below and write into the real install. Nonexistent paths canonicalize
+ * via the nearest existing ancestor plus the remainder.
  */
 export function canonicalize(p: string): string {
   let base = resolve(p);
@@ -78,12 +76,10 @@ export interface SeedResult {
 }
 
 /**
- * Build a complete, self-contained demo install at `home`.
- *
- * Deliberately does NOT use `saveConfig()` or `getLedger()`. `CONFIG_DIR` is
- * captured at module load (packages/core/src/config.ts), so in this process both
- * point at the founder's REAL home — the whole point of the demo is that it
- * never touches that. Everything here is written through explicit paths.
+ * Build a complete, self-contained demo install at `home`. Deliberately avoids
+ * `saveConfig()`/`getLedger()` — CONFIG_DIR is captured at module load and
+ * points at the founder's REAL home, which the demo must never touch; all
+ * writes go through explicit paths.
  */
 export function seedDemoHome(opts: { home?: string; anchor?: Date; force?: boolean }): SeedResult {
   // Canonical (symlink-followed) on BOTH sides of every comparison, and used
@@ -150,19 +146,10 @@ export function seedDemoHome(opts: { home?: string; anchor?: Date; force?: boole
 
 /**
  * Open the ledger once through `Ledger` so `migrate()` builds the real schema,
- * then write rows with raw SQL.
- *
- * Raw SQL is not a shortcut here. `created_at` and its siblings are filled by a
- * `datetime('now')` column DEFAULT and no public method accepts a value for
- * them, so backdated history — which is what makes the Home KPIs, the Measure
- * ranges and the Receipts day-groups render at all — can only be written
- * directly. Tests use the same escape hatch (packages/core/__tests__/send-routing.test.ts).
- *
- * A re-seed clears the tables rather than deleting the file. Deleting it would
- * strand the open handle of a dashboard already running against this home —
- * every page would go blank and doctor would read `ledger fail` until the server
- * restarted. Truncating in place means you can re-seed mid-session and just
- * refresh the browser.
+ * then write rows with raw SQL — required because `datetime('now')` column
+ * DEFAULTs can't be backdated through any public method. A re-seed truncates
+ * tables rather than deleting the file, so a dashboard's open handle survives
+ * and a mid-session re-seed only needs a browser refresh.
  */
 function writeLedger(dbPath: string, data: DemoDataset): Record<string, number> {
   const migrator = new Ledger(dbPath);

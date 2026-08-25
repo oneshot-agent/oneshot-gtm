@@ -198,7 +198,6 @@ export async function handoffFirstAe(input: FirstAeAnswers): Promise<FirstAeResu
 
 function parseHandoffJson<T extends { raw: string }>(content: string, fallback: T): T {
   const parsed = tryParseJsonObject<Record<string, unknown>>(content, {});
-  // Map snake_case JSON keys to camelCase result keys for both shapes.
   const obj: Record<string, unknown> = {
     verdict: parsed["verdict"],
     reasoning: parsed["reasoning"],

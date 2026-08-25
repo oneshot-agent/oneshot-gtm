@@ -96,7 +96,6 @@ function ReceiptsPage() {
 
   return (
     <div className="-mx-6 -my-6 flex flex-col">
-      {/* Masthead */}
       <section className="flex items-end justify-between gap-4 border-b border-ink-rule px-6 pb-5 pt-6">
         <div>
           <div className="ln-eyebrow">The Ledger · Receipts</div>
@@ -131,8 +130,7 @@ function ReceiptsPage() {
         </div>
       </section>
 
-      {/* Value filter — "valued" surfaces the calls a reply/meeting/deal tied
-          value to. Mirrors the inbox/queue filter-bar style. */}
+      {/* Value filter — "valued" = calls a reply/meeting/deal tied value to. */}
       <div className="flex flex-wrap items-center gap-2 border-b border-ink-rule/60 px-6 py-3">
         <span className="ln-eyebrow">show</span>
         {VALUE_FILTERS.map((f) => (
@@ -148,7 +146,6 @@ function ReceiptsPage() {
         ))}
       </div>
 
-      {/* Receipts timeline — grouped by day, newest day first */}
       <section>
         {receipts.isLoading ? (
           <div>
@@ -230,7 +227,6 @@ function DaySection({ group, onClickRow }: { group: DayGroup; onClickRow: (id: n
   const { masked } = usePrivacy();
   return (
     <div>
-      {/* Day header — sticky so you always know which day you're scrolling through. */}
       <div className="sticky top-0 z-10 flex items-baseline justify-between border-b border-ink-rule/80 bg-ink-bg/95 px-6 py-2.5 backdrop-blur-[2px]">
         <div className="ln-eyebrow text-ink-cream-2">{group.label}</div>
         <div className="font-mono text-[11px] text-ink-faint">

@@ -1,17 +1,9 @@
 /**
- * Process-wide in-flight SEND tracker, used to drain gracefully on shutdown.
- *
- * The risk this guards: a `kill`/Ctrl-C lands between "OneShot accepted the
- * send" and "we wrote the local `sequence_events` row". The dedup keys off that
- * row, so a send lost in that gap can be re-sent (a duplicate) on retry. The
- * server's shutdown handler waits for `activeSendCount()` to reach 0 before
- * exiting, so every in-flight send finishes recording first.
- *
- * In-memory by design: it complements the PERSISTED `send_started_at` /
- * `sending_started_at` markers (which survive a hard kill and are reconciled by
- * the cold-boot sweep). This counter only exists within a live process and only
- * matters for the graceful (signal) path. A hard SIGKILL skips it — the boot
- * sweep is the backstop there.
+ * Process-wide in-flight SEND tracker for graceful shutdown. A kill landing
+ * between "OneShot accepted the send" and "sequence_events row written" would
+ * dedup as unsent and re-send a duplicate — so shutdown waits for
+ * activeSendCount() to hit 0. In-memory by design: the persisted send markers
+ * + cold-boot sweep are the backstop for a hard SIGKILL.
  */
 
 let active = 0;
@@ -63,10 +55,9 @@ export function __resetInflight(): void {
 }
 
 /**
- * Poll until no sends are in-flight or `timeoutMs` elapses. Resolves
- * immediately when already idle. On timeout, returns `{ drained: false }` with
- * the count still outstanding so the caller can log it and exit anyway (the
- * boot sweep reconciles whatever was left).
+ * Poll until no sends are in-flight or `timeoutMs` elapses. On timeout returns
+ * `{ drained: false, remaining }` so the caller can log and exit anyway (the
+ * boot sweep reconciles what's left).
  */
 export async function waitForSendsToDrain(opts: {
   timeoutMs: number;

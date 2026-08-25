@@ -20,12 +20,9 @@ import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 const FAILED_ENRICH = { status: "failed", profile: null, cost: 0 };
 
 /**
- * enrichProfile that (a) never throws and (b) caches by email. The dossier is a
- * nice-to-have for drafting, the SDK call is slow (~70s) and billed, and the
- * same person can recur across plays / repeated previews / re-sends — so we
- * cache the result by email (TTL) and reuse it. A cache hit returns receiptId 0
- * (no new SDK call, no spend). On failure: log a warn and return an empty
- * result so callers' `enr.result` / `enr.receiptId` usage keeps working.
+ * enrichProfile that never throws and caches by email (the SDK call is slow
+ * and billed). A cache hit returns receiptId 0 (no spend); on failure, returns
+ * an empty result so callers' `enr.result` / `enr.receiptId` usage keeps working.
  */
 export async function safeEnrich(
   input: Parameters<typeof enrichProfile>[0],
@@ -38,9 +35,7 @@ export async function safeEnrich(
     const cached = ledger.getCachedEnrichment(email);
     if (cached) {
       const ageMs = Date.now() - new Date(cached.fetched_at).getTime();
-      // Negative entry: the SDK job failed recently — don't burn another ~70s
-      // attempt; draft from payload context. Expired failures fall through
-      // and retry below.
+      // Negative entry: recent SDK failure — don't retry until the TTL expires.
       if (cached.status === "failed") {
         if (ageMs < ENRICH_FAILURE_TTL_MS) {
           return { result: FAILED_ENRICH, receiptId: 0 } as unknown as Awaited<
@@ -97,9 +92,8 @@ export async function safeEnrich(
     const message = (err as Error)?.message ?? "";
     logEvent("enrich.failed", { play: ctx.playName, message_120: message.slice(0, 120) }, "warn");
     // Only negative-cache a GENUINE failure (no data for this email). A
-    // transient platform/transport error (e.g. "Tool execution failed" during
-    // the 2026-06 outage) must NOT be cached, or every email it touched stays
-    // un-enrichable for ENRICH_FAILURE_TTL_MS even after the platform recovers.
+    // transient platform/transport error must NOT be cached, or the email stays
+    // un-enrichable for ENRICH_FAILURE_TTL_MS after the platform recovers.
     if (email && !isTransientToolError(err)) {
       try {
         ledger.setCachedEnrichmentFailure(email, message);
@@ -148,10 +142,9 @@ export const SLOP_PHRASES: Array<[RegExp, string]> = [
 ];
 
 /**
- * Trailing signature lines that the signatureDirective forces the LLM to
- * append (founder name, then product domain, then optional "Sent from my
- * iPhone"). Returned in last-line-first order so callers can peel from the
- * end. Empty when neither name nor domain is configured (no sig to strip).
+ * Trailing signature lines the signatureDirective forces the LLM to append,
+ * in last-line-first order so callers can peel from the end. Empty when
+ * neither name nor domain is configured.
  */
 function configuredSigLines(): string[] {
   const cfg = loadConfig();
@@ -165,21 +158,16 @@ function configuredSigLines(): string[] {
 }
 
 /**
- * Word count for body-too-long lint. Strips the trailing signature lines so
- * the LLM isn't penalized for the 2-3 deterministic words the
- * signatureDirective forces it to append. Otherwise a prompt that says "≤110
- * words" only really gives the LLM ~107 for content, and borderline drafts
- * trip body-too-long even when they're inside the contract.
- *
- * `sigLines` (last-line-first order) is exposed for tests so they don't have
- * to mock loadConfig — production passes nothing and reads config.
+ * Word count for body-too-long lint, minus the trailing signature lines the
+ * signatureDirective forces — so those deterministic words don't eat the
+ * prompt's word budget. `sigLines` (last-line-first) is exposed for tests;
+ * production passes nothing and reads config.
  */
 export function bodyWordsForLint(body: string, sigLines?: string[]): number {
   const lines = sigLines ?? configuredSigLines();
   let trimmed = body.replace(/\s+$/, "");
-  // Peel each sig line off the tail, but only if it matches the current
-  // last line — guarantees we never chop content that happens to contain
-  // the founder's name mid-paragraph.
+  // Peel each sig line off the tail only if it matches the current last line —
+  // never chop content that merely contains the founder's name mid-paragraph.
   for (const line of lines) {
     const i = trimmed.lastIndexOf("\n");
     const last = (i < 0 ? trimmed : trimmed.slice(i + 1)).trim();
@@ -214,11 +202,9 @@ export interface DraftedEmail {
 }
 
 /**
- * Stub drafted-row for a target whose per-target processing threw (LLM API
- * error, SDK JobTimeoutError, ledger write failure, etc.). Plays wrap their
- * per-target body in try/catch and push this on failure so the rest of the
- * batch can keep going. Same shape `drain.ts` synthesizes when its outer
- * `dispatchOneTarget` catches — one source of truth for the error envelope.
+ * Stub drafted-row for a target whose per-target processing threw, so the rest
+ * of the batch keeps going. Same shape `drain.ts` synthesizes — one source of
+ * truth for the error envelope.
  */
 interface ErrorDraft {
   subject: string;
@@ -239,26 +225,17 @@ export function errorDraft(message: string | null | undefined): ErrorDraft {
 }
 
 /**
- * Record WHY a single target failed, next to every `errorDraft` call site.
- *
- * What reaches the queue row (and the founder's screen) is errorDraft's 80-char
- * slice of `err.message` — for an SDK ToolError that's the generic "Tool
- * request failed", true and useless. The status code and response body carry
- * the actual reason (`403 domain_not_owned`, the last time one was captured).
- * Without this, a drain could fail every send and leave nothing in
- * events.jsonl to diagnose from.
- *
- * Mirrors the whole-run handler in apps/server/src/api/run.ts, which already
- * logs these fields; per-target failures were the gap.
+ * Record WHY a single target failed, next to every `errorDraft` call site: the
+ * queue row only carries an 80-char message slice, while the SDK error's status
+ * code and response body hold the actual reason. Without this a failed drain
+ * leaves nothing in events.jsonl to diagnose from.
  */
 export function logTargetError(input: {
   playName: string;
   /**
-   * Recipient address. Only its DOMAIN is logged — events.jsonl is a
-   * PII-free sink (see the `email_domain` precedent in core/send-routing.ts),
-   * and the domain is the diagnostic half anyway: it tells you whether one
-   * receiving domain is rejecting. Redaction lives here, not at the call
-   * sites, so no caller can leak the address by accident.
+   * Recipient address. Only its DOMAIN is logged — events.jsonl is a PII-free
+   * sink. Redaction lives here, not at call sites, so no caller can leak the
+   * address by accident.
    */
   to?: string | null;
   err: unknown;
@@ -268,17 +245,13 @@ export function logTargetError(input: {
     statusCode?: number;
     responseBody?: string;
   };
-  // Nothing here may throw. This runs INSIDE the per-target catch whose whole
-  // job is to stop one bad target from killing the batch — a TypeError raised
-  // while logging would escape that catch and abort the entire drain. A thrown
-  // value is `unknown`: `{ message: 500 }` is legal, so is a rejected string,
-  // and `.slice()` on either blows up. Coerce, don't assume.
+  // Nothing here may throw: this runs INSIDE the per-target catch, so a
+  // TypeError while logging would abort the entire drain. Thrown values are
+  // `unknown` — coerce, don't assume.
   try {
     logTargetErrorUnsafe(e, input);
   } catch {
-    // Belt and braces: a hostile shape (a throwing `message` getter, a
-    // String()-hostile object) must not turn a logged failure into a dead
-    // batch. Losing the diagnosis is bad; losing the run is worse.
+    // A hostile shape must not turn a logged failure into a dead batch.
   }
 }
 
@@ -313,10 +286,9 @@ function logTargetErrorUnsafe(
 }
 
 /**
- * Deterministic, semantics-preserving cleanups that the LLM occasionally
- * slips through despite the humanizer rules being in its system prompt.
- * Applied silently inside `draftEmailFromPrompt` so these four flags never
- * surface in the UI.
+ * Deterministic, semantics-preserving cleanups the LLM occasionally slips
+ * through. Applied silently inside `draftEmailFromPrompt` so these flags
+ * never surface in the UI.
  */
 export function humanizeDraft(input: DraftedEmail): DraftedEmail {
   return {
@@ -342,21 +314,16 @@ function applyAutofixes(s: string): string {
       // (e.g. `☀️` → `️`).
       .replace(/\u{FE0F}|\u{200D}/gu, "")
       .replace(/!\s*!+/g, "!")
-      // Strip trailing horizontal whitespace before a newline. Catches the
-      // `paragraph,_\n` artifact left by an em-dash at end-of-line, plus
-      // any stray trailing space from emoji removal.
+      // Strip trailing horizontal whitespace left by em-dash/emoji removal.
       .replace(/[ \t]+\n/g, "\n")
       .trim()
   );
 }
 
 /**
- * Binding sign-off directive appended to every email system prompt. Forces
- * the founder's product domain onto its own line beneath their name, even on
- * prompts that say "no links / no tagline" (a bare domain is a signature, not
- * a hyperlink). Returns "" when no domain is configured, so founders who
- * haven't set one keep the prior name-only sign-off. Loaded fresh each call
- * so a /setup change takes effect without a process restart.
+ * Binding sign-off directive appended to every email system prompt. Returns ""
+ * when no domain is configured (name-only sign-off). Loaded fresh each call so
+ * a /setup change takes effect without a process restart.
  */
 export function signatureDirective(): string {
   const cfg = loadConfig();
@@ -386,11 +353,9 @@ export function signatureDirective(): string {
 }
 
 /**
- * Build a SOCIAL PROOF input block from the founder's three optional config
- * fields. Returns null when none are set — callers skip the line entirely
- * so the prompt's "if SOCIAL PROOF is in the inputs" conditional kicks in.
- * Each prompt should weave AT MOST ONE beat (credentials OR built-with OR
- * partners) into the email, not stack them.
+ * SOCIAL PROOF input block from the founder's three optional config fields.
+ * Null when none are set, so the prompt's conditional skips the beat. At most
+ * ONE beat per email, never stacked.
  */
 export function socialProofBlock(): string | null {
   const cfg = loadConfig();
@@ -409,18 +374,11 @@ export function socialProofBlock(): string | null {
 }
 
 /**
- * ADMISSION line for the prompt's optional damaging-admission beat — a true
- * concession, surfaced only when the founder set one AND this prospect drew
- * the slot. The prompt is told to use ONLY what this line carries and to skip
- * the beat when it is absent, so the model can never invent a weakness (the
- * same lie as inventing a strength).
- *
- * The "roughly a third of emails" cap lives HERE, not in the prompt: a model
- * cannot hold a frequency across independent calls (given "at most 1 in 3" it
- * used the admission on 3 of 4 drafts, the same way the optional "Hey {name}"
- * opener runs at 4 of 4). Gating whether the material is supplied is the only
- * honest way to get the rate — and it is keyed on the prospect, so a
- * regenerate makes the same decision instead of flapping.
+ * ADMISSION line for the prompt's damaging-admission beat — surfaced only when
+ * the founder set one AND this prospect drew the slot, so the model can never
+ * invent a weakness. The roughly-1-in-3 cap lives HERE, not in the prompt: a
+ * model cannot hold a frequency across independent calls. Keyed on the
+ * prospect so a regenerate makes the same decision instead of flapping.
  */
 export function admissionBlock(prospectEmail: string): string | null {
   const admission = loadConfig().founderAdmission?.trim();
@@ -474,22 +432,17 @@ export interface SendDraftedOpts {
     phone?: string | null;
     source?: string | null;
     /** Profile URL the finder sourced this person from (GitHub / X / Luma).
-     *  Unlike `linkedin_url` this is never repurposed, so it survives as a
-     *  re-enrichment key when the LinkedIn lookup misses on the first pass. */
+     *  Never repurposed, so it survives as a re-enrichment key when the
+     *  LinkedIn lookup misses. */
     source_profile_url?: string | null;
-    /** Job title at contact time, from the person-level ICP gate. Persisting
-     *  it makes re-runs and the off-ICP audit free. (This field existing here
-     *  is what makes it persistable at all — `dossier_json` stayed dead schema
-     *  for months precisely because it was never added to this type.) */
+    /** Job title at contact time, from the person-level ICP gate. */
     title?: string | null;
   };
   metadata?: Record<string, unknown>;
   dryRun: boolean;
   /**
-   * Allow a first-touch even if the prospect was already touched by ANOTHER
-   * play. Off by default (we never first-touch the same person twice). Only
-   * breakup-revive sets this — deliberately re-contacting cold prospects is its
-   * whole job, mirroring how its finder bypasses isDuplicate.
+   * Allow a first-touch even if another play already touched the prospect.
+   * Off by default; only breakup-revive sets this.
    */
   allowRecontact?: boolean;
   /** Manual override of the cross-workspace `contacted-elsewhere` hold (queue send-draft only). */
@@ -510,10 +463,9 @@ export async function sendDraftedEmail(opts: SendDraftedOpts): Promise<SendDraft
   const receiptIds: number[] = [];
   let sent = false;
   if (!opts.dryRun && opts.flags.length === 0) {
-    // Pre-send dedupe: refuse to send step-0 a second time to the same
-    // (prospect, play). Catches double-fire from drain-after-drain, /run
-    // resubmits, two-tab races, etc. Residual race window is microseconds
-    // between this read and recordSequenceEvent; documented as acceptable.
+    // Pre-send dedupe: never send step-0 twice to the same (prospect, play).
+    // Residual microsecond race between this read and recordSequenceEvent is
+    // accepted.
     const existing = ledger.findProspectByEmail(opts.to);
     if (existing) {
       const prior = ledger.listSequenceEventsForProspectPlay(existing.id, opts.playName);
@@ -522,8 +474,7 @@ export async function sendDraftedEmail(opts: SendDraftedOpts): Promise<SendDraft
         return { receiptIds: [], sent: false };
       }
       // Cross-play guard: never first-touch someone a DIFFERENT play already
-      // first-touched. The authoritative dedup for the "same person queued
-      // under two plays before either sent" race. breakup-revive opts out.
+      // first-touched. breakup-revive opts out.
       if (!opts.allowRecontact && ledger.prospectHasFirstTouch(existing.id)) {
         opts.flags.push("already-contacted");
         return { receiptIds: [], sent: false };
@@ -676,16 +627,10 @@ const ORG_SUFFIX_RE = /(labs?|team|studios?|\.(dev|ai|io|com|app|xyz|net|org|co)
 
 /**
  * Best-effort first-name extraction from a prospect's `name` field. Returns
- * `null` when we shouldn't use a greeting at all: missing data, the placeholder
- * "(unknown)", a username-looking handle, a company name, a role or mailbox
- * word, an initial, or a non-capitalized opening token (which usually signals
- * a handle fragment rather than a real first name). A wrong greeting is worse
- * than none — "Hey CEO," and "Hey Bytedance," both shipped before this gate.
- *
- * Used to optionally surface `PROSPECT_FIRST_NAME` to the LLM input block so
- * prompts can occasionally open with `Hey {firstName},`. The LLM owns the
- * decision to actually greet — this helper just gates whether the field is
- * present.
+ * `null` whenever a greeting shouldn't be used (handle, company, role word,
+ * initial, non-capitalized token) — a wrong greeting is worse than none. The
+ * LLM owns the decision to actually greet; this helper only gates whether
+ * `PROSPECT_FIRST_NAME` is present in the input block.
  */
 export function firstNameFrom(name: string | null | undefined): string | null {
   if (!name) return null;
@@ -741,18 +686,11 @@ interface VerifyAndFilterResult<T> {
 }
 
 /**
- * Verify a batch of target emails BEFORE drafting + sending. Used by
- * direct-input entry points (CLI motion commands + dashboard /run) where
- * the founder pastes targets directly without going through a finder.
- * Drops undeliverable rows so the caller skips ~$0.005-0.02 of LLM
- * drafting cost per bad email AND avoids the send attempt itself.
- *
- * Skips on dryRun (no real spend during preview) and on empty input.
- * De-dupes the underlying verifyEmail calls so a duplicated email in
- * the input doesn't double-bill.
- *
- * Finder-sourced rows that flow through /queue → drain do NOT call this
- * — they were already verified at finder enqueue time.
+ * Verify a batch of target emails BEFORE drafting + sending, for direct-input
+ * entry points (CLI motion commands + dashboard /run). Skips on dryRun and
+ * empty input; de-dupes verifyEmail calls so duplicates don't double-bill.
+ * Finder-sourced rows through /queue → drain do NOT call this — they were
+ * verified at enqueue time.
  */
 export async function verifyAndFilterTargets<T>(
   targets: T[],
@@ -770,10 +708,8 @@ export async function verifyAndFilterTargets<T>(
   }
 
   const uniqueEmails = [...new Set(emailFor.values())];
-  // Catch SDK throws (transient network / rate-limit / invalid-format errors)
-  // and treat the affected target as dropped rather than aborting the whole
-  // run. Mirrors the per-candidate handling finders already do — one bad
-  // verify call shouldn't kill a 25-target batch.
+  // Catch SDK throws and drop the affected target rather than aborting the
+  // whole run — one bad verify call shouldn't kill the batch.
   const verifications = await Promise.all(
     uniqueEmails.map(async (email) => {
       try {

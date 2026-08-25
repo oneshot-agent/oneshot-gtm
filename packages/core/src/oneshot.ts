@@ -162,15 +162,10 @@ async function getAgent(): Promise<OneShot> {
 }
 
 /**
- * The wallet's provisioned sending-domain pool (SDK 0.19+ `listDomains`), used
- * to validate a `sendingDomain` is wallet-owned BEFORE a live send 403s with
- * `domain_not_owned`, and to populate the domain picker in setup.
- *
- * Transient-tolerant by design: a brief OneShot/transport outage returns `[]`
- * ("couldn't enumerate") so it never blocks the founder from saving an identity
- * — callers must treat an empty list as "unknown", not "no domains owned".
- * Genuine auth failures (bad/absent wallet creds) DO propagate, since those are
- * a real config error the founder needs to see.
+ * The wallet's provisioned sending-domain pool — validates a `sendingDomain`
+ * is wallet-owned before a live send 403s. Transient outages return `[]`:
+ * callers must treat an empty list as "unknown", not "no domains owned".
+ * Genuine auth failures DO propagate (a real config error).
  */
 export async function listSendingDomains(): Promise<DomainPoolEntry[]> {
   // Demo mode: read-only fixture, before any agent construction (see demo.ts).
@@ -228,12 +223,10 @@ export function fromLocalpart(name: string | null): string {
 }
 
 /**
- * Stable Idempotency-Key for a OneShot email send (SDK 0.19+, honored by
- * email.send with a 24h replay window). Derived from the send's content so a
- * retry of the SAME logical email — a double-click, or a client retry after
- * the platform hung but actually sent — returns the original job instead of
- * charging + sending twice. A genuinely different body/subject hashes
- * differently, so it gets its own key (the server 422s same-key-different-body).
+ * Stable Idempotency-Key for a OneShot email send (24h replay window),
+ * derived from content: a retry of the SAME logical email returns the
+ * original job instead of charging + sending twice; a different body/subject
+ * hashes to its own key (the server 422s same-key-different-body).
  */
 function emailIdempotencyKey(parts: Array<string>): string {
   // NUL separator: it can't appear in an email address, identity id, subject,
@@ -313,12 +306,9 @@ async function sendEmailViaGmail(input: SendEmailInput, ctx: CallContext, identi
 }
 
 /**
- * Smartlead-path send. Same return contract as the Gmail path: cost 0 (the
- * Smartlead subscription is out-of-band), Smartlead's message id as request
- * id (which also dedupes receipt re-records). Smartlead documents no
- * idempotency mechanism, so — like Gmail — a timeout-then-retry can
- * double-send; the OneShot path is the only transport with a true
- * idempotency key.
+ * Smartlead-path send. Same contract as Gmail: cost 0, Smartlead's message id
+ * as request id. No idempotency mechanism — a timeout-then-retry can
+ * double-send; OneShot is the only transport with a true idempotency key.
  */
 async function sendEmailViaSmartlead(
   input: SendEmailInput,
@@ -437,16 +427,11 @@ async function dispatchEmail(input: SendEmailInput, ctx: CallContext) {
 }
 
 /**
- * Every outbound email funnels through here (plays, cadence, queue, concierge,
- * pmf-survey). Order matters:
- *   1. hard-bounce suppression (in dispatchEmail) — permanent, never overridable;
- *   2. the cross-workspace claim — ATOMIC check-and-reserve in the shared DB,
- *      before any routing or network, so two workspaces can't both pass;
- *   3. dispatch; then the reservation is confirmed (success) or released
- *      (any failure), so a failed send never counts as a touch and a crash
- *      mid-send expires on its own.
- * `replyEmail` is deliberately not gated — a reply goes to someone who just
- * wrote to us — it only records its touch.
+ * Every outbound email funnels through here. Order matters: 1. hard-bounce
+ * suppression (permanent, never overridable); 2. the ATOMIC cross-workspace
+ * claim, before any routing or network; 3. dispatch, then confirm (success)
+ * or release (failure) — a failed send never counts as a touch. `replyEmail`
+ * is deliberately not gated; it only records its touch.
  */
 export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
   const claim = claimContactTouch({
@@ -493,15 +478,12 @@ export function replySubject(subject: string): string {
 }
 
 /**
- * Reply to an inbound email from the identity whose mailbox received it.
- * Deliberately NOT routed through sender rotation (resolveSenderIdentity): a
- * reply must keep the thread's From address, and replies to engaged humans
- * shouldn't be deferred by warmup caps. Receipts use callType "email.reply",
- * which also keeps them out of per-identity cap counting (email.send only).
- * Both transports thread for real: Gmail via threadId + In-Reply-To/References
- * on the raw message; OneShot via `reply_to_email_id` (SDK 0.19+ — the
- * platform resolves the threading headers + thread_id server-side). The
- * OneShot send also carries an idempotency key so a retry can't double-send.
+ * Reply to an inbound email from the identity whose mailbox received it —
+ * deliberately NOT sender-rotated: a reply must keep the thread's From
+ * address and must not be deferred by warmup caps (callType "email.reply"
+ * stays out of per-identity cap counting). Both transports thread for real
+ * (Gmail: threadId + In-Reply-To/References; OneShot: reply_to_email_id),
+ * and the OneShot send carries an idempotency key.
  */
 export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
   const cfg = loadConfig();
@@ -800,11 +782,8 @@ export interface AnnotatedInboxListResult extends InboxListResult {
 
 /**
  * Ensure an inbound email has a readable `body`, falling back to a de-tagged
- * `body_html`. The OneShot inbox returns both fields, and an HTML-only mail
- * (the normal shape for replies to our HTML-only sends) has an empty `body` —
- * nothing in the pipeline read `body_html`, so /inbox rendered "(no body)" and
- * triage prompted the LLM with nothing. Applied in the annotate funnel so
- * EVERY consumer of listInbox benefits, not just the dashboard route.
+ * `body_html` (HTML-only mail is the normal shape for replies to our sends).
+ * Applied in the annotate funnel so EVERY listInbox consumer benefits.
  * Exported for tests.
  */
 export function fillInboxBody(e: InboxEmail): InboxEmail {
@@ -822,13 +801,10 @@ function annotateInboxResult(r: InboxListResult, identityId: string): AnnotatedI
 }
 
 /**
- * Replies across the WHOLE sender pool: the OneShot inbox (once, if any
- * oneshot identity exists) merged with every authorized Gmail account.
- * Stop-on-reply must see a reply no matter which identity sent the thread.
- * With multiple sources each is fetched under its own try/catch — one
- * revoked Gmail token must not blind reply detection for everything else.
- * A single source keeps legacy throw semantics (the /inbox route maps a
- * throw to its "couldn't reach the inbox" state).
+ * Replies across the WHOLE sender pool (OneShot inbox + every Gmail account):
+ * stop-on-reply must see a reply whichever identity sent the thread. Each
+ * source has its own try/catch — one revoked token must not blind the rest —
+ * but a single source keeps legacy throw semantics for the /inbox route.
  */
 export async function listInbox(opts?: {
   since?: string;
@@ -955,18 +931,12 @@ export interface IdentityBounce extends GmailBounce {
 }
 
 /**
- * Delivery failures across the whole sender pool. Gmail identities only: a DSN
- * comes back to the envelope sender, and for OneShot sends that return path
- * belongs to the platform, not to us — nothing surfaces in its inbox API.
- *
- * Attribution is free and exact: the mailbox that RECEIVED the bounce is the
- * mailbox that sent the message, so no join back through sender_assignments is
- * needed to know whose reputation this counts against.
- *
- * Per-source try/catch like listInbox — one revoked Gmail token must not blind
- * bounce detection for every other identity. Unlike listInbox this NEVER throws
- * on total failure: it runs on a background sweep where the only sane response
- * to "no sources answered" is to report nothing and retry next tick.
+ * Delivery failures across the sender pool. Gmail identities only — a DSN
+ * returns to the envelope sender, and OneShot's return path belongs to the
+ * platform. The receiving mailbox IS the sending mailbox, so attribution
+ * needs no join. Per-source try/catch, and unlike listInbox this NEVER
+ * throws on total failure — it runs on a background sweep; report nothing
+ * and retry next tick.
  */
 export async function listBounces(opts?: {
   since?: string;
@@ -1289,16 +1259,11 @@ export async function cadenceRocs(opts: { periodDays?: number } = {}): Promise<C
 }
 
 /**
- * Tag a cadence's value once its outcome (reply / meeting / deal) is known.
- * Resolves the cadence correlation key from (prospect, play), records the value
- * to OneShot in ONE call via `tagReceiptValue({goalId})` (SDK 0.22 fans it out
- * across the goal's receipts, recorded once so it can't double-count), and
- * mirrors the tag onto the local receipts for the /receipts UI. Best-effort —
- * any failure is logged and swallowed so it never breaks the triggering flow.
- *
- * A precedence/dedup guard skips an identical re-tag (avoids a duplicate platform
- * outcome) and never downgrades a higher-value tag (e.g. a reply detected AFTER a
- * deal is logged must not overwrite `revenue` with `engagement`).
+ * Tag a cadence's value once its outcome is known: one `tagReceiptValue({goalId})`
+ * call fans out across the goal's receipts, mirrored locally for /receipts.
+ * Best-effort — failures are logged and swallowed. The precedence/dedup guard
+ * skips identical re-tags and never downgrades a higher-value tag (a late
+ * reply must not overwrite `revenue` with `engagement`).
  */
 export async function tagOutcomeValue(input: {
   prospectId: number;

@@ -1,29 +1,14 @@
 /**
- * Pre-flight guard for `findEmail` SDK calls.
- *
- * The OneShot `findEmail` SDK receives only `company_domain` + `full_name` and
- * guesses email patterns from those. Two structural causes of dud lookups we
- * can catch BEFORE spending the ~$0.05 per call:
- *
- *   1. `company_domain` points at a host where no company hosts email —
- *      free-tier app subdomains (vercel.app, github.io, …), social platforms,
- *      personal email providers, code hosts, link aggregators.
- *   2. `full_name` is a single-token handle (`samaralihussain`) not a real
- *      person name (`Sam Jones`). Pattern-based email guessing can't
- *      disambiguate a username.
- *
- * Callers do `shouldSkipFindEmail(...)` ahead of the SDK call; when it
- * returns `{ok:false}`, increment `result.droppedEnrichment` and emit a
- * `finder.skipped_findemail` event for telemetry, then move to the next
- * candidate. No new wire-protocol surface.
+ * Pre-flight guard for paid `findEmail` SDK calls: skip when `company_domain`
+ * is a host where no company hosts email (free-tier subdomains, social
+ * platforms, personal providers, …) or `full_name` is a single-token handle
+ * pattern-guessing can't use. Callers treat `{ok:false}` as droppedEnrichment
+ * and emit `finder.skipped_findemail`.
  */
 
 /**
- * Hosts where `findEmail` virtually never finds a deliverable company
- * address. Match is exact on the bare host or any subdomain of one of
- * these entries — `foo.vercel.app` and `bar.foo.vercel.app` both qualify.
- *
- * Curated, static. Adaptive/learned variants are out of scope.
+ * Hosts where `findEmail` virtually never finds a deliverable company address.
+ * Matched on the bare host or any subdomain. Curated, static.
  */
 const DUD_DOMAINS: ReadonlySet<string> = new Set([
   // Free-tier app / preview subdomains.
@@ -50,8 +35,7 @@ const DUD_DOMAINS: ReadonlySet<string> = new Set([
   "webflow.io",
   "wixsite.com",
   "googleusercontent.com",
-  // Personal / free email providers — the founder isn't reachable via the
-  // generic free-tier handle even if findEmail returns something.
+  // Personal / free email providers.
   "gmail.com",
   "yahoo.com",
   "outlook.com",
@@ -83,16 +67,14 @@ const DUD_DOMAINS: ReadonlySet<string> = new Set([
   "discord.gg",
   "slack.com",
   "news.ycombinator.com",
-  // Investor / startup-data aggregators — every result here is a profile
-  // page about a company, not the company's own domain.
+  // Investor / startup-data aggregators (profile pages, not company domains).
   "crunchbase.com",
   "producthunt.com",
   "wellfound.com",
   "pitchbook.com",
   "cbinsights.com",
   "tracxn.com",
-  // Code hosts (when this is the ONLY domain signal — caller already
-  // failed to find a company website).
+  // Code hosts (only ever the domain signal when no company website was found).
   "github.com",
   "gitlab.com",
   "bitbucket.org",
@@ -104,21 +86,10 @@ const DUD_DOMAINS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * True when the given domain is in the dud blocklist, either as an exact
- * match or as a subdomain (so `foo.vercel.app` is dud). `null`/empty
- * counts as dud — caller has no usable signal.
- *
- * Defensive normalization before matching:
- *   - lowercase + trim whitespace
- *   - strip `http://` / `https://` scheme
- *   - strip everything from the first `/` onward (paths/queries)
- *   - strip leading `www.` and trailing `.`
- *
- * Callers should pass bare hostnames (via `urlDomain` from `_dedupe.ts`),
- * but the normalization keeps an accidental full URL or trailing-dot DNS
- * form from silently slipping past the suffix match.
- *
- * Does no DNS lookup — purely suffix-based.
+ * True when the domain is in the dud blocklist, exact or as a subdomain.
+ * `null`/empty counts as dud (no usable signal). Defensively normalizes
+ * scheme/path/www/trailing-dot so an accidental full URL can't slip past the
+ * suffix match. Purely suffix-based — no DNS lookup.
  */
 export function isDudDomain(domain: string | null | undefined): boolean {
   if (!domain) return true;
@@ -138,17 +109,9 @@ export function isDudDomain(domain: string | null | undefined): boolean {
 }
 
 /**
- * True when the input looks like a single-token username/handle rather
- * than a real person name. Heuristics, in order:
- *
- *   - Empty / null → handle (no signal).
- *   - Contains whitespace → looks like a name. `"Sam Jones"`.
- *   - Contains a period → looks like a name. `"Sam J. Jones"`.
- *   - Single token of `[a-z0-9_-]` (case-insensitive) → handle.
- *
- * False-positive accepted: a real single-name like `Madonna` reads as a
- * handle. That's a fine tradeoff vs the volume of HN-style usernames we
- * filter out (90%+ of Show HN authors).
+ * True when the input looks like a single-token username/handle rather than a
+ * real person name (whitespace or a period reads as a name). Accepted
+ * false-positive: a real mononym like `Madonna` reads as a handle.
  */
 export function looksLikeUserHandle(name: string | null | undefined): boolean {
   if (name == null) return true;
@@ -160,14 +123,9 @@ export function looksLikeUserHandle(name: string | null | undefined): boolean {
 }
 
 /**
- * Pre-flight guard. Returns `{ok:true}` to proceed with the SDK call, or
- * `{ok:false, reason}` to skip. The reason is human-readable and stable
- * across releases — safe to log via `finder.skipped_findemail` for later
- * blocklist tuning.
- *
- * Check order matters: a missing/dud domain dominates a handle check (no
- * point flagging "handle-not-name" when the domain alone would have
- * disqualified the row).
+ * Pre-flight guard. `{ok:false, reason}` skips the SDK call; reasons are
+ * stable across releases (logged for blocklist tuning). Check order matters:
+ * a missing/dud domain dominates the handle check.
  */
 export function shouldSkipFindEmail(input: {
   fullName?: string | null;

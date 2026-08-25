@@ -26,19 +26,15 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
     return jsonResponse({ error: "targets must be a non-empty array" }, 400, req);
   }
 
-  // Create a runs row up-front so the UI gets a runId to navigate to + can
-  // resume on nav-back via GET /api/runs/:id. Every SSE event we emit below
-  // is also appended to the row's events_json so the resume view rebuilds
-  // accurately. Marked 'done' at the end of the try (success) or the catch
-  // (failure); cold-boot sweep flips any stranded 'running' rows to
-  // 'interrupted'.
+  // Create a runs row up-front so the UI gets a runId and can resume on
+  // nav-back; every SSE event below is also appended to events_json.
+  // Cold-boot sweep flips any stranded 'running' rows to 'interrupted'.
   const { runId, startedAt } = getLedger().createRun({
     playName,
     dryRun: body.dryRun,
     targets: body.targets,
   });
-  // Track which emails actually sent successfully so the UI can deep-link
-  // to /cadences?sinceRun=N filtered to just-enrolled prospects.
+  // Emails that actually sent, for the /cadences?sinceRun=N deep-link.
   const sentEmails: string[] = [];
 
   const stream = new ReadableStream<Uint8Array>({
@@ -50,10 +46,8 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
       let runOutcome: TelemetryOutcome = "ok";
       let fromQueue = false;
       const send = (event: RunPlayEvent): void => {
-        // Persist FIRST — even if the client has disconnected, the resume
-        // view needs every event. SSE write second; swallow if the client
-        // is gone (closed tab, navigation, or timeout). The server-side
-        // work (incl. any real send) still happened — no false pipeline_error.
+        // Persist FIRST — the resume view needs every event even after a
+        // client disconnect. SSE write second; swallow if the client is gone.
         try {
           ledger.appendRunEvent({ runId, event });
         } catch {
@@ -70,12 +64,9 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
       send({ kind: "runStarted", runId, startedAt });
 
       try {
-        // Build email → dedupeKey map BEFORE the verify filter potentially
-        // drops rows. The verify pass changes target indices but not target
-        // emails, so we can recover the dedupe key per drafted target by
-        // looking up the email later. Manual /run entries (no fromQueue)
-        // omit `dedupeKeys`; the map stays empty and the persist hook is
-        // a no-op.
+        // Build email → dedupeKey map BEFORE the verify filter drops rows —
+        // verify changes target indices but not emails. Manual /run entries
+        // omit `dedupeKeys`; the map stays empty and persistence is a no-op.
         const emailToDedupeKey = new Map<string, string>();
         if (body.dedupeKeys && body.dedupeKeys.length === body.targets.length) {
           body.targets.forEach((t, i) => {
@@ -86,12 +77,9 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
           });
         }
 
-        // Verify all target emails BEFORE dispatching to the play, so
-        // undeliverable rows are dropped before we spend on LLM drafting.
-        // Skipped on dryRun (no real spend during preview), AND skipped for
-        // queue-sourced runs (dedupeKeys present) — those rows were already
-        // verified at finder-enqueue time, so re-verifying just adds latency.
-        // The verify event tells the UI which rows were dropped + why.
+        // Verify emails BEFORE dispatch so undeliverable rows are dropped
+        // before LLM spend. Skipped on dryRun and for queue-sourced runs
+        // (already verified at finder-enqueue time).
         const inputCount = body.targets.length;
         fromQueue =
           Array.isArray(body.dedupeKeys) && body.dedupeKeys.length === body.targets.length;
@@ -114,10 +102,8 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
             dropped: verify.dropped.map((d) => ({ email: d.email, reason: d.reason })),
           });
         }
-        // If verify dropped every target, skip dispatch entirely — no point
-        // calling the play with an empty array (the play would either
-        // return empty drafted[] or throw on a "founder profile incomplete"
-        // pre-check that's irrelevant when there's nothing to send).
+        // If verify dropped every target, skip dispatch entirely — the play
+        // could throw an irrelevant pre-check error on an empty array.
         if (verify.verified.length === 0 && inputCount > 0) {
           send({ kind: "done", total: 0, sent: 0 });
           return;
@@ -126,10 +112,8 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
 
         send({ kind: "stage", stage: body.dryRun ? "drafting" : "drafting + sending" });
         let sentCount = 0;
-        // Per-target callback installed by dispatchPlay → play.run → parallelMap.
-        // Fires the draft + (optional) send events live so the runs row's
-        // counters and the UI tick from 0/N → N/N as each target completes,
-        // instead of jumping at the end.
+        // Per-target callback: fires draft/send events live so counters tick
+        // per target instead of jumping at the end.
         const drafted = await dispatchPlay(playName, filteredBody, (index, d) => {
           send({ kind: "draft", index, subject: d.subject, body: d.body, flags: d.flags });
           if (d.receiptIds.length > 0) {
@@ -137,8 +121,7 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
           }
           if (d.sent) {
             sentCount++;
-            // Pull the email back out of the verified target so /cadences?sinceRun
-            // can later resolve "what was just sent" without re-parsing events.
+            // Recover the email for the /cadences?sinceRun resolution.
             const t = verify.verified[index] as
               | { email?: string; founderEmail?: string }
               | undefined;
@@ -148,10 +131,8 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
         });
         send({ kind: "done", total: drafted.length, sent: sentCount });
 
-        // Persist drafts to their originating queue rows so the founder can
-        // review subject/body/flags later via /queue. Best-effort — the
-        // SSE stream has already finished by here, so a SQLite hiccup
-        // shouldn't surface as a user-visible error.
+        // Persist drafts to their originating queue rows for /queue review.
+        // Best-effort — a SQLite hiccup here must not surface to the user.
         if (emailToDedupeKey.size > 0) {
           persistDraftsToQueue({
             playName,
@@ -163,10 +144,9 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
         }
       } catch (err) {
         runOutcome = "error";
-        // Log the full error server-side — the SSE error event only carries a
-        // short message (e.g. the SDK's generic "Tool request failed"), which
-        // is useless for diagnosis. The stack reveals which call failed
-        // (sendEmail / enrichProfile / verifyEmail in oneshot.ts).
+        // Log the full error server-side — the SSE event only carries a short
+        // message, and the SDK's generic "Tool request failed" is useless
+        // without status/body/stack.
         const e = err as Error & {
           cause?: unknown;
           statusCode?: number;
@@ -179,8 +159,7 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
           {
             play: playName,
             message_200: (e?.message ?? "").slice(0, 200),
-            // OneShot SDK ToolError carries the failing call's HTTP status +
-            // server response body — the actual reason, vs the generic message.
+            // SDK ToolError carries the failing call's HTTP status + body.
             status_code: typeof e?.statusCode === "number" ? e.statusCode : null,
             response_body_400:
               typeof e?.responseBody === "string" ? e.responseBody.slice(0, 400) : null,
@@ -189,9 +168,8 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
           },
           "error",
         );
-        // Surface the real reason to the UI. The SDK's bare "Tool request
-        // failed" is useless; the server response body carries the actual
-        // error (e.g. {"error":"domain_not_owned","message":"…"}).
+        // Surface the real reason to the UI from the response body
+        // (e.g. {"error":"domain_not_owned"}).
         let uiMessage = e?.message ?? "run failed";
         if (typeof e?.statusCode === "number") {
           let detail = "";
@@ -208,10 +186,8 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
         }
         send({ kind: "error", index: -1, message: uiMessage });
       } finally {
-        // Flip the runs row to 'done' regardless of success/failure — the
-        // per-event counters on the row are already accurate. Cold-boot sweep
-        // only sees rows still stuck at 'running', so a clean shutdown here
-        // means no false-positive `interrupted` next boot.
+        // Flip the runs row to 'done' regardless of success/failure so the
+        // cold-boot sweep never sees a false 'running'.
         try {
           getLedger().markRunComplete({ runId, status: "done", sentEmails });
         } catch {
@@ -234,10 +210,8 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
     },
   });
 
-  // Loopback-only CORS for SSE. The outer fetch handler already enforces
-  // a loopback Host check before this runs, so we just mirror the origin
-  // when it's loopback and otherwise omit the header (browser refuses
-  // cross-origin response reads).
+  // Loopback-only CORS for SSE: mirror loopback origins, omit the header
+  // otherwise (the outer fetch handler already enforces a loopback Host).
   const origin = req.headers.get("origin") ?? "";
   const isLoopback =
     origin === "" ||
@@ -261,11 +235,9 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
 }
 
 /**
- * After the SSE stream completes, write each generated draft to its
- * originating `target_queue` row. Best-effort: a SQL hiccup during
- * persistence is logged via `error.swallowed` and doesn't affect what the
- * UI already saw on the wire. Indices match because `verifiedTargets[i]`
- * corresponds to `drafted[i]` (both come from the same dispatch).
+ * Write each generated draft to its originating `target_queue` row.
+ * Best-effort (logged via `error.swallowed`). Indices match because
+ * `verifiedTargets[i]` corresponds to `drafted[i]`.
  */
 function persistDraftsToQueue(input: {
   playName: string;
@@ -298,10 +270,8 @@ function persistDraftsToQueue(input: {
           ...(draft.enrichmentFailed ? { enrichmentFailed: true } : {}),
         },
       });
-      // A real, successful send must leave the approved pool — otherwise the
-      // row stays `approved` and every subsequent drain (esp. limit 1) re-loads
-      // the same first approved target forever. Held drafts (lint flags →
-      // sent:false) and dry-run previews intentionally stay approved.
+      // A real send must leave the approved pool or every drain re-loads the
+      // same row forever. Held drafts and dry-runs intentionally stay approved.
       if (draft.sent && !input.dryRun) {
         ledger.setQueueStatus({ id: row.id, status: "sent" });
       }

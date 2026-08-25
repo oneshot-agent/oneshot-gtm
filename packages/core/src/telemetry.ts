@@ -2,28 +2,14 @@ import { loadConfigCached } from "./config.ts";
 import type { OneShotConfig } from "./types.ts";
 
 /**
- * Anonymous distribution telemetry — ONE summary event per CLI invocation.
+ * Anonymous distribution telemetry — ONE summary event per CLI invocation,
+ * separate from the local-only events.jsonl channel. TELEMETRY.md is the
+ * authoritative payload spec; the field set here must stay in lockstep.
  *
- * This is a separate channel from the verbose local `events.jsonl`
- * (see events.ts). That log is for the developer and never leaves the
- * machine; this is the opt-out, off-device signal documented in
- * TELEMETRY.md. The two share a privacy boundary (primitives, counters,
- * category labels — never user-typed values, prospect data, or content)
- * but emit different shapes to different sinks.
- *
- * TELEMETRY.md is the authoritative spec for the payload below. The field
- * set here must stay in lockstep with that file.
- *
- * ## Hard rules
- *
- * - `ONESHOT_GTM_TELEMETRY=0` / `false` is a kill switch checked BEFORE a
- *   payload is constructed (`shouldSendTelemetry`). No payload, no request.
- * - `cfg.telemetryEnabled === false` (the `config telemetry off` flag) does
- *   the same.
- * - Transmission never throws and never blocks process exit — a telemetry
- *   bug or an unreachable endpoint must be invisible to the user.
- * - No telemetry SDK: a plain `fetch` POST keeps the OSS client dependency
- *   free and transparent. The receiver is a first-party endpoint we operate.
+ * Hard rules: the env kill switch (ONESHOT_GTM_TELEMETRY=0) and
+ * `cfg.telemetryEnabled === false` are checked BEFORE any payload is built;
+ * transmission never throws and never blocks process exit; no telemetry SDK —
+ * a plain `fetch` POST to a first-party endpoint.
  */
 
 /** Outcome of a single CLI invocation. Mirrors the TELEMETRY.md `outcome` column. */
@@ -51,10 +37,8 @@ export interface TelemetryPayload {
 }
 
 /**
- * Default first-party ingest endpoint — a stable custom domain we own, so the
- * backend can move without re-shipping the client and no hosting details leak
- * into the OSS source. Operators can override per-run with
- * ONESHOT_GTM_TELEMETRY_URL; set it to "" to make telemetry a hard no-op.
+ * Default first-party ingest endpoint. Override per-run with
+ * ONESHOT_GTM_TELEMETRY_URL; set it to "" for a hard no-op.
  */
 export const DEFAULT_TELEMETRY_URL = "https://telemetry.oneshotagent.com/v1/cli";
 
@@ -66,11 +50,8 @@ export const DEFAULT_TELEMETRY_URL = "https://telemetry.oneshotagent.com/v1/cli"
 const TELEMETRY_TIMEOUT_MS = 1000;
 
 /**
- * Resolve the ingest URL. `ONESHOT_GTM_TELEMETRY_URL` overrides the default so
- * the receiver can be exercised locally / against staging. An *explicitly
- * empty* override (`ONESHOT_GTM_TELEMETRY_URL=""`) resolves to `""` — a hard
- * no-op (see reportCommand's `if (!url) return`) — honoring the documented kill
- * path. Only an absent var falls back to the default endpoint.
+ * Resolve the ingest URL. An *explicitly empty* ONESHOT_GTM_TELEMETRY_URL=""
+ * resolves to "" — a hard no-op; only an absent var falls back to the default.
  */
 export function telemetryUrl(env: NodeJS.ProcessEnv = process.env): string {
   const raw = env["ONESHOT_GTM_TELEMETRY_URL"];
@@ -79,10 +60,8 @@ export function telemetryUrl(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /**
- * Pure gate. Returns false — meaning "construct nothing, send nothing" — when
- * either the persisted flag is off or the env kill switch is set. Env wins so
- * a single shell-session export reliably silences telemetry regardless of
- * what's on disk.
+ * Pure gate: false = construct nothing, send nothing. The env kill switch
+ * wins over the persisted flag.
  */
 export function shouldSendTelemetry(
   cfg: Pick<OneShotConfig, "telemetryEnabled">,
@@ -106,10 +85,8 @@ export interface TelemetryInputs {
 }
 
 /**
- * Pure builder — no I/O, no clock, no globals. The caller supplies every
- * value so tests can pin them (mirrors `buildEventLine`). Strips nothing:
- * the field set IS the whitelist, so anything not listed simply can't be
- * carried.
+ * Pure builder — no I/O, no clock, no globals. The field set IS the
+ * whitelist, so anything not listed can't be carried.
  */
 export function buildTelemetryPayload(input: TelemetryInputs): TelemetryPayload {
   return {
@@ -165,10 +142,7 @@ export interface TelemetryEventInput {
 
 /**
  * The single send path shared by every emitter (CLI dispatch, server
- * executions). Resolves the endpoint + opt-out gate, reads the anonymous
- * install id / provider from config, stamps host fields (os, bun), and fires.
- * Best-effort: never throws, never blocks the caller. Centralizing this keeps
- * the CLI and server channels from drifting as the payload evolves.
+ * executions). Best-effort: never throws, never blocks the caller.
  */
 export async function reportTelemetryEvent(
   input: TelemetryEventInput,
@@ -197,15 +171,9 @@ export async function reportTelemetryEvent(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Per-invocation outcome marker.
-//
-// Most commands map cleanly: a thrown error => "error", a clean return =>
-// "ok". But the anti-slop path prints "Not sent — fix lint flags" and returns
-// normally (printDrafts in motion.ts), so "lint-blocked" can't be inferred
-// from control flow. A command signals it explicitly via markTelemetryOutcome;
-// the dispatch wrapper reads it back with takeMarkedOutcome.
-// ---------------------------------------------------------------------------
+// Per-invocation outcome marker. "lint-blocked" can't be inferred from
+// control flow (the anti-slop path returns normally), so a command signals it
+// via markTelemetryOutcome; the dispatch wrapper reads takeMarkedOutcome.
 
 let markedOutcome: TelemetryOutcome | null = null;
 

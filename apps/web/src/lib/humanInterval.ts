@@ -1,9 +1,5 @@
 /**
- * Format a millisecond duration in interval-sized units — minutes/hours/
- * days rather than seconds/minutes. Use for trigger intervals, "next due
- * in N", "overdue N" — anything where the number is naturally on the
- * order of hours or days.
- *
+ * Format a millisecond duration in interval-sized units (minutes/hours/days).
  * For sub-minute spinner countups use `humanDuration` in `triggerRunState.ts`.
  *
  *   45_000          → "45s"

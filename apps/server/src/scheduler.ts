@@ -19,28 +19,13 @@ export function triggerOutcome(o: TriggerRunOutcome): TelemetryOutcome {
 }
 
 /**
- * Background scheduler that polls registered triggers on their interval and
- * fires due ones. Runs inside the dashboard server process so the founder
- * doesn't have to keep `bun run cli -- find watch` open in a second terminal
- * for enabled triggers to actually execute.
- *
- * Safety:
- * - Per-trigger atomic claim (in `runDueTriggers`) prevents double-spend if
- *   a manual /api/triggers/:name/run click races with a scheduled tick.
- * - Tick-level try/catch keeps a corrupted ledger row or unexpected throw
- *   from permanently killing the loop; backs off 60s before retrying.
- * - In-flight finder runs that haven't returned when the process exits get
- *   killed mid-run; the cold-boot `sweepStaleRunningTriggers` cleans up
- *   the orphaned `running_started_at` markers on the next start.
- *
- * The tick also polls the inbox for prospect replies and stops their cadences
- * (`pollInboxReplies`), and for delivery failures (`pollInboxBounces`). Both
- * otherwise only ran when the founder manually advanced a cadence, so a reply
- * could sit unrecognized — or a dead address keep receiving paid sends — for
- * days while the sequence kept emailing. Both are read-only apart from the
- * status flip — no step is sent — so neither spends. Tick cadence is clamped to
- * REPLY_POLL_MAX so both surface within minutes even when no trigger is due for
- * an hour.
+ * Background scheduler: polls registered triggers on their interval and fires
+ * due ones inside the dashboard server process. Safety: per-trigger atomic
+ * claim (in `runDueTriggers`) prevents double-spend when a manual run races a
+ * tick; tick-level try/catch backs off 60s so one throw can't kill the loop;
+ * runs orphaned by process exit are reconciled by the cold-boot sweep. The
+ * tick also polls inbox replies and bounces (both non-spending); tick cadence
+ * is clamped to REPLY_POLL_MAX so they surface within minutes.
  */
 export interface SchedulerHandle {
   stop(): void;
@@ -50,20 +35,15 @@ const FIRST_TICK_DELAY_MS = 5_000;
 const ERROR_BACKOFF_MS = 60_000;
 const REPLY_POLL_MAX_MS = 5 * 60_000;
 /**
- * Bounces are swept far less often than replies. A reply is time-sensitive —
- * every minute it goes unnoticed is a minute the cadence might send again. A
- * bounce has already happened and the sweep re-reads a 30-day window, so
- * running it at reply cadence would re-fetch and re-parse the same DSNs a
- * couple of hundred times a day for no new information.
+ * Bounces are swept far less often than replies: the sweep re-reads a 30-day
+ * DSN window, so reply-cadence polling would re-parse the same data for
+ * nothing, while replies are time-sensitive (cadence might send again).
  */
 const BOUNCE_POLL_INTERVAL_MS = 30 * 60_000;
 
 export function startScheduler(): SchedulerHandle {
-  // A seeded demo home is a still life: the scheduler would fire its enabled
-  // triggers against placeholder credentials and overwrite the very
-  // last_run_summary / last_polled_at values that make the dashboard look alive,
-  // mid-take. Idle instead — demo mode is for capture, and nothing in it is
-  // waiting on new signal.
+  // Demo mode idles: firing triggers would hit placeholder credentials and
+  // overwrite the seeded last_run_summary / last_polled_at values.
   if (demoMode()) {
     logEvent("demo.scheduler_idle");
     return { stop: () => {} };
@@ -79,9 +59,7 @@ export function startScheduler(): SchedulerHandle {
     try {
       const outcomes = await runDueTriggers();
       const fired = outcomes.filter((o) => o.fired).length;
-      // One anonymous telemetry event per trigger that actually ran this tick.
-      // Best-effort and detached — must not delay the next tick or the reply
-      // poll below.
+      // Telemetry per fired trigger — detached, must not delay the tick.
       for (const o of outcomes) {
         if (!o.fired) continue;
         void reportServerExecution(`server.trigger.${o.name}`, {
@@ -102,10 +80,7 @@ export function startScheduler(): SchedulerHandle {
           "warn",
         );
       }
-      // Bounce detection, isolated for the same reasons as the reply poll.
-      // Also non-spending: it records delivery failures and stops the cadences
-      // of hard-bounced addresses, so the founder stops paying to email
-      // mailboxes the receiving server has already refused.
+      // Bounce detection, isolated like the reply poll; non-spending.
       let bouncesRecorded = 0;
       if (Date.now() - lastBouncePollAt >= BOUNCE_POLL_INTERVAL_MS) {
         // Stamped before the await, not after: a slow or failing sweep must not

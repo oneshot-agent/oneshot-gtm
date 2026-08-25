@@ -1,8 +1,6 @@
 /**
- * State of /queue's single drain button, derived from the PLAY filter chips
- * above it. One button instead of one-per-play: the play is already chosen by
- * the filter, and a disabled button should say *why* it's disabled rather than
- * just dimming out.
+ * State of /queue's single drain button, derived from the play filter chips —
+ * a disabled button says *why* it's disabled.
  *
  *   { playFilter: "all" }                        → "drain — pick a play above"
  *   { playFilter: "luma-events", approved: 145 } → "drain luma-events · 145"
@@ -55,12 +53,9 @@ export function drainButtonState(input: {
 }
 
 /**
- * State of the selection bar's "drain selected" button.
- *
- * Draining runs through /run, which is per-play and only accepts approved
- * rows — so a selection that spans two plays, or holds nothing approved, can't
- * be drained as one batch. Rather than silently draining a subset, the button
- * disables and names the reason.
+ * State of the selection bar's "drain selected" button. Draining runs through
+ * /run — per-play, approved rows only — so a mixed or unapproved selection
+ * disables the button and names the reason rather than draining a subset.
  *
  *   3 approved luma-events rows          → "drain 3 selected"
  *   2 luma-events + 1 repo-interest      → "drain selected · spans 2 plays"
@@ -102,12 +97,8 @@ export function drainSelectionState(input: {
 
 /**
  * Fold the currently-visible rows into the session's id → {play, status} map.
- *
- * /queue's selection is a Set of row ids that survives filter changes, but
- * `rows` only ever holds the current filtered page. Without this memory, a
- * selection spanning two plays looks single-play the moment you filter to one
- * of them — and "drain selected" would quietly act on the visible subset.
- *
+ * The selection Set survives filter changes but `rows` holds only the current
+ * page — without this memory a cross-play selection would look single-play.
  * Returns the previous map unchanged when nothing moved, so it's safe to call
  * from an effect keyed on `rows`.
  */

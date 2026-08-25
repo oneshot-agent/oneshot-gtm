@@ -86,7 +86,6 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
       continue;
     }
 
-    // Read the announcement.
     let extract: PostFundingExtract;
     try {
       const read = await webRead({ url }, { playName: PLAY_NAME });

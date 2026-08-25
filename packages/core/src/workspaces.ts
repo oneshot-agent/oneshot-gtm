@@ -1,17 +1,9 @@
 /**
  * Named workspaces — fully isolated installs (one ONESHOT_GTM_HOME each).
- *
- * This module imports ONLY node builtins, on purpose: the CLI's bootstrap
- * shim must resolve `--workspace <name>` to a home dir BEFORE core's config.ts
- * is evaluated (it captures ONESHOT_GTM_HOME at module load), so anything
- * this file imported from core would defeat the whole point. It is exposed as
- * the `@oneshot-gtm/core/workspaces` subpath for that reason.
- *
- * Layout:
- *   ~/.oneshot-gtm                        the `default` workspace (legacy home)
- *   ~/.oneshot-gtm-workspaces/registry.json
- *   ~/.oneshot-gtm-workspaces/<name>/     every named workspace
- *
+ * Imports ONLY node builtins, on purpose: the CLI shim must resolve
+ * `--workspace` to a home dir BEFORE core's config.ts is evaluated (it
+ * captures ONESHOT_GTM_HOME at module load). Layout: ~/.oneshot-gtm =
+ * `default` (legacy home); ~/.oneshot-gtm-workspaces/{registry.json,<name>/}.
  * `ONESHOT_GTM_WORKSPACES` relocates the container (tests, demos).
  */
 import {
@@ -114,16 +106,11 @@ function sleepSync(ms: number): void {
 }
 
 /**
- * Serialize read-modify-write of the registry across processes with an
- * exclusive lock file (O_EXCL create). Without it two `workspace create`s at
- * once read the same registry, pick the same free port and the later save
- * overwrites the earlier one — a lost workspace AND a port collision.
- *
- * The lock carries an owner token: release only unlinks OUR lock, so a
- * process that legitimately broke a stale lock can't have its replacement
- * yanked by the original owner's `finally`. Every retry checks the deadline
- * first, so a persistent filesystem error (EACCES on stat/unlink) surfaces as
- * a WorkspaceError instead of a full-CPU spin.
+ * Serialize registry read-modify-write across processes via an O_EXCL lock
+ * file (else concurrent creates lose a workspace and collide on ports). The
+ * lock carries an owner token — release only unlinks OUR lock, so breaking a
+ * stale lock can't be undone by the dead owner's `finally`; retries check the
+ * deadline first so filesystem errors surface instead of spinning.
  */
 export function withRegistryLock<T>(fn: () => T, opts: { waitMs?: number } = {}): T {
   const lock = `${registryPath()}.lock`;
@@ -278,10 +265,9 @@ export function workspaceNameForHome(
 }
 
 /**
- * Dashboard port for the install at `home`: the registered port when that
- * exact home is a workspace, else BASE_PORT. Keyed by home rather than by the
- * derived name, so an unregistered ONESHOT_GTM_HOME can never borrow a
- * registered workspace's port and collide with its running dashboard.
+ * Dashboard port for the install at `home` (registered port, else BASE_PORT).
+ * Keyed by home, not derived name — an unregistered ONESHOT_GTM_HOME must
+ * never borrow a registered workspace's port.
  */
 export function portForHome(home: string, reg: WorkspaceRegistry = loadRegistry()): number {
   const target = canonicalPath(home);
@@ -292,11 +278,9 @@ export function portForHome(home: string, reg: WorkspaceRegistry = loadRegistry(
 }
 
 /**
- * What the bootstrap shim does: decide the home for this process from
- * `--workspace` (already stripped from argv by the caller), the env, or the
- * registry default. An explicit ONESHOT_GTM_HOME wins outright — it is the
- * lower-level escape hatch — and combining it with --workspace is an error,
- * since they would disagree about where the install is.
+ * Decide this process's home from `--workspace`, the env, or the registry
+ * default. An explicit ONESHOT_GTM_HOME wins outright; combining it with
+ * --workspace is an error (they'd disagree about where the install is).
  */
 export function resolveWorkspaceSelection(input: {
   flag: string | null;

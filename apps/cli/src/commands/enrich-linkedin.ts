@@ -3,14 +3,9 @@ import { findLinkedInUrl, isCircuitOpen, looksLikeOrgName } from "@oneshot-gtm/f
 import { c, header, note, ok, warn } from "../output.ts";
 
 /**
- * Backfill LinkedIn URLs onto prospects that were emailed before the finders
- * captured them.
- *
- * Why this exists: `upsertProspect` is insert-or-return-existing, so a prospect
- * created without a LinkedIn URL could never acquire one — the finder fixes
- * only help people found from now on. This walks the existing rows and fills
- * the gap via the same `findLinkedInUrl` resolver the finders use, so results
- * are cached and billed identically.
+ * Backfill LinkedIn URLs onto existing prospects. `upsertProspect` is
+ * insert-or-return-existing, so a row created without a URL never acquires one;
+ * this fills the gap via the finders' own `findLinkedInUrl` (same cache/billing).
  */
 
 export interface EnrichLinkedInOpts {
@@ -23,12 +18,9 @@ export interface EnrichLinkedInOpts {
 }
 
 /**
- * True when a name looks like something a LinkedIn profile search could match.
- *
- * GitHub display names are frequently handles (`yijin840`), single tokens
- * (`Demin`) or non-Latin (`麦奇`). Searching those burns ~$0.01 for a
- * near-certain miss — roughly 90 of the 317 unresolved repo-interest rows.
- * Requires two Latin-script tokens.
+ * True when a name looks like something a LinkedIn profile search could match:
+ * two Latin-script tokens. GitHub display names are often handles, single
+ * tokens, or non-Latin — searching those is a paid near-certain miss.
  */
 export function looksLikeRealName(name: string | null | undefined): boolean {
   if (!name) return false;
@@ -46,13 +38,9 @@ export function looksLikeRealName(name: string | null | undefined): boolean {
 
 /**
  * Turn a stored `company` into a search token, or null if it isn't usable.
- *
- * Each disambiguator becomes a *quoted* token in the query, so it's an exact
- * phrase requirement. A GitHub `company` field is free text — "Co-Founder/CTO @
- * Floramis | Product @ Vilota", "Open to Work 😎", "Software Enginneer at
- * @iFood" — and requiring any of those verbatim guarantees zero results, i.e. a
- * paid call that could never have hit. Take the first company-looking segment
- * and drop anything still too free-form to be a company name.
+ * Disambiguators become *quoted* (exact-phrase) query tokens, and GitHub
+ * `company` is free text — requiring it verbatim guarantees a paid zero-result
+ * search. Take the first company-looking segment, drop anything free-form.
  */
 export function cleanCompanyToken(company: string | null | undefined): string | null {
   if (!company) return null;
@@ -80,12 +68,9 @@ export function cleanCompanyToken(company: string | null | undefined): string | 
 }
 
 /**
- * How many candidates this run may search, or undefined for "no cap".
- *
- * Every candidate costs a paid webSearch, so a bad `--limit` must never widen
- * the run: `slice(0, -1)` on a negative value returns everything but the last
- * row, billing the whole ledger when asked for less than nothing. A
- * non-numeric flag arrives as NaN and collapses to 0 for the same reason.
+ * How many candidates this run may search, or undefined for "no cap". A bad
+ * `--limit` must never widen the paid run: negative values would slice() to
+ * nearly the whole ledger, and NaN collapses to 0.
  */
 export function resolveCap(limit: number | undefined): number | undefined {
   if (limit === undefined) return undefined;

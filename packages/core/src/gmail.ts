@@ -4,11 +4,9 @@ import { parallelMap } from "./parallel.ts";
 import type { AuthVerdict, BounceKind, GmailPlacement } from "./types.ts";
 
 /**
- * Gmail / Google Workspace send + reply path. Plain-fetch OAuth2 + Gmail REST
- * — no googleapis dependency. Credentials come from three secrets minted by
- * `bun run cli -- gmail auth`: GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET,
- * GMAIL_REFRESH_TOKEN (stored in ~/.oneshot-gtm/.env, applied to process.env
- * by config.ts on import).
+ * Gmail / Google Workspace send + reply path — plain-fetch OAuth2 + Gmail
+ * REST, no googleapis dependency. Credentials are the three GMAIL_* secrets
+ * minted by `gmail auth` (in ~/.oneshot-gtm/.env, applied by config.ts).
  */
 
 const TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -80,9 +78,8 @@ export function missingGmailSecrets(): string[] {
 
 /**
  * One authorized Gmail account in the rotation pool. `id` keys the token /
- * profile caches; `refreshToken` comes from the gmail-tokens.json store (or
- * the legacy GMAIL_REFRESH_TOKEN secret). Omitted account = legacy
- * single-account mode reading the env secret directly.
+ * profile caches. Omitted account = legacy single-account mode reading the
+ * GMAIL_REFRESH_TOKEN env secret directly.
  */
 export interface GmailAccount {
   id: string;
@@ -288,15 +285,10 @@ function extractPlainText(part: GmailPayloadPart | undefined): string {
 }
 
 /**
- * Best-effort readable body for a fetched message, in three tiers:
- * text/plain part → text/html part (de-tagged) → Gmail's snippet.
- *
- * The HTML tier is not an edge case. Our own outbound is HTML-only
- * (`buildRawMessage` emits `text/html` with no multipart/alternative), and
- * reply clients mirror the format of the mail they answer — so HTML-only
- * replies to our sends are the expected shape. Without this tier the /inbox
- * page showed "(no body)" for exactly the replies the tool exists to catch.
- * The snippet tier covers bodies stored behind `attachmentId` (not fetched).
+ * Best-effort readable body, in three tiers: text/plain → text/html
+ * (de-tagged) → Gmail's snippet. HTML-only replies are the expected shape
+ * (our own outbound is HTML-only, and reply clients mirror format); the
+ * snippet tier covers bodies stored behind `attachmentId` (not fetched).
  */
 function extractBody(msg: GmailMessageMeta): string {
   const plain = extractPlainText(msg.payload);
@@ -314,17 +306,10 @@ function extractBody(msg: GmailMessageMeta): string {
 }
 
 /**
- * Inbox replies, mapped to the OneShot InboxListResult contract so
- * advanceCadence (stop-on-reply) and the /inbox route work unchanged.
- * `-from:me` excludes the founder's own sends at the query level — the
- * Gmail-mode equivalent of the OneShot path's self-domain filter.
- *
- * Deliberately NOT `in:inbox`: a reply the founder has already read and
- * archived from their phone is still a reply, and with the ledger's reply
- * signal lagging the mailbox by up to a poll interval, "handled, then
- * archived" was the normal fate of a real reply. Spam and trash stay out —
- * the API already excludes them unless `includeSpamTrash` is set; the explicit
- * terms are there so nobody "widens" this to `in:anywhere`.
+ * Inbox replies, mapped to the OneShot InboxListResult contract. `-from:me`
+ * excludes the founder's own sends. Deliberately NOT `in:inbox` — an archived
+ * reply is still a reply. Spam/trash are already excluded by the API; the
+ * explicit terms are there so nobody "widens" this to `in:anywhere`.
  */
 export async function listGmailReplies(
   opts?: {
@@ -380,13 +365,10 @@ export async function listGmailReplies(
 }
 
 /* ── Bounce (DSN) harvesting ─────────────────────────────────────────────────
- * Delivery Status Notifications are the only first-party deliverability signal
- * available without a second mailbox: the receiving server tells us, in the
- * sender's own inbox, that a message was refused and why. Parsed here rather
- * than in the reply path because (a) DSNs would otherwise compete with genuine
- * replies for the 50-message poll window, and (b) fetching them deliberately
- * lets us read the structured RFC 3464 report instead of regexing localized
- * human-readable prose.
+ * DSNs are the only first-party deliverability signal without a second
+ * mailbox. Fetched separately from the reply path so they don't compete for
+ * the poll window and so we read the structured RFC 3464 report instead of
+ * regexing localized prose.
  */
 
 /** Matches an RFC 3463 enhanced status code ("5.1.1"). */
@@ -394,40 +376,33 @@ const ENHANCED_STATUS_RE = /\b([45]\.\d{1,3}\.\d{1,3})\b/;
 /** Matches a bare 3-digit SMTP reply code, for servers that omit the enhanced one. */
 const SMTP_CODE_RE = /\b([45]\d\d)\b/;
 /**
- * Diagnostics that mean "we refused this message" rather than "this address
- * doesn't exist". Catches servers that reject on policy with a plain 550 and
- * no 5.7.x enhanced code, which would otherwise be miscounted as a dead
- * address (and wrongly suppress a perfectly valid prospect).
+ * Diagnostics meaning "we refused this message", not "address doesn't exist" —
+ * a plain-550 policy reject would otherwise be miscounted as a dead address
+ * and wrongly suppress a valid prospect.
  */
 const POLICY_DIAGNOSTIC_RE =
   /\b(spam|blocked|blocklist|blacklist|policy|reputation|unsolicited|bulk|rejected due to|spamhaus|barracuda|greylist)/i;
 /**
- * Canonical DSN envelope senders. Used only as a fallback to the message's
- * actual From address — kept narrow deliberately: a broad pattern (no-reply@,
- * donotreply@…) would also discard a genuine failed recipient at one of those
- * addresses, and then the hard bounce would never be recorded or suppressed.
+ * Canonical DSN envelope senders — fallback only, kept narrow deliberately: a
+ * broad pattern (no-reply@…) would also discard a genuine failed recipient at
+ * one of those addresses.
  */
 const DAEMON_ADDRESS_RE = /^(mailer-daemon|postmaster)@/i;
 /**
- * Quantifiers are bounded to RFC 5321's limits (local-part 64, labels 63)
- * rather than left open. An unbounded `[...]+@` over a body that never contains
- * `@` backtracks from every start position — and DSN bodies are attacker-
- * influenced, since anyone can send mail with a mailer-daemon From. See also
- * PROSE_SCAN_LIMIT.
+ * Quantifiers bounded to RFC 5321's limits — an unbounded `[...]+@` over a
+ * body with no `@` backtracks from every start position, and DSN bodies are
+ * attacker-influenced. See also PROSE_SCAN_LIMIT.
  */
 const EMAIL_RE = /[\w.!#$%&'*+/=?^`{|}~-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63}){1,8}/g;
 /**
- * Prose scanned by the fallback parser, in characters. A real DSN states the
- * failure in its first few lines; the rest is the quoted original message.
- * Capping bounds the regex work on hostile input.
+ * Prose cap (chars) for the fallback parser — a real DSN states the failure
+ * up front; the cap bounds regex work on hostile input.
  */
 const PROSE_SCAN_LIMIT = 8_000;
 
 /**
- * Severity for a delivery failure. `statusCode` is the enhanced RFC 3463 code
- * when the DSN provided one; `diagnostic` is the remote server's text. Policy
- * rejections are separated from address failures because only the latter
- * justifies suppressing the address — see BounceKind.
+ * Severity for a delivery failure. Policy rejections are separated from
+ * address failures because only the latter justifies suppressing the address.
  */
 export function classifyBounce(statusCode: string | null, diagnostic: string | null): BounceKind {
   const code = statusCode ?? diagnostic?.match(ENHANCED_STATUS_RE)?.[1] ?? null;
@@ -461,20 +436,12 @@ function findPart(
 }
 
 /**
- * The RFC 3464 field block of a `message/delivery-status` part.
- *
- * Two shapes occur in the wild. Exchange and most MTAs put the fields directly
- * on the part. Gmail's own NDRs make the part a container with an empty body
- * and nest the fields in a `text/plain` child. Reading only the direct body
- * therefore skipped every Gmail-generated DSN — the most common shape when the
- * sending identity is itself Gmail — so the structured branch never ran, the
- * prose fallback declined too, and a hard bounce recorded nothing and
- * suppressed nobody.
- *
- * Only the part's own body and its direct children are considered. Descending
- * further would reach the `message/rfc822` copy of the original outbound mail,
- * whose headers name the recipient we sent to and would parse as a failure
- * report for an address that never bounced.
+ * The RFC 3464 field block of a `message/delivery-status` part. Two shapes
+ * occur in the wild: fields directly on the part (Exchange, most MTAs) or
+ * nested in a `text/plain` child (Gmail's own NDRs). Only the part's own body
+ * and direct children are considered — descending further reaches the
+ * `message/rfc822` copy of the original mail, which would parse as a failure
+ * for an address that never bounced.
  */
 function decodeB64Url(data: string): string {
   return Buffer.from(data, "base64url").toString("utf8");
@@ -526,13 +493,10 @@ export interface ParsedBounce {
 }
 
 /**
- * Pull every failed recipient out of a DSN. Returns [] for ordinary mail, which
- * is what makes a deliberately broad Gmail query safe — the parser, not the
- * query, decides what counts as a bounce.
- *
- * Prefers the structured `message/delivery-status` report (locale-independent,
- * one block per recipient). Falls back to scraping the human-readable part for
- * senders that don't emit a conforming report.
+ * Pull every failed recipient out of a DSN. Returns [] for ordinary mail —
+ * the parser, not the query, decides what counts as a bounce. Prefers the
+ * structured `message/delivery-status` report; falls back to scraping the
+ * human-readable part.
  */
 export function parseBounce(msg: GmailMessageMeta): ParsedBounce[] {
   const text = dsnReportText(findPart(msg.payload, "message/delivery-status"));
@@ -569,11 +533,9 @@ export function parseBounce(msg: GmailMessageMeta): ParsedBounce[] {
     if (out.length > 0) return out;
   }
 
-  // Fallback: no conforming report. Gate it on the message actually being a
-  // delivery report first — prose-scraping is loose enough that an ordinary
-  // email mentioning "550 users" next to an address would otherwise parse as a
-  // hard bounce and suppress a live prospect. A structured report needs no such
-  // guard; its presence is proof on its own.
+  // Fallback: no conforming report. Gate on the message being a delivery
+  // report first — prose-scraping is loose enough that an ordinary email
+  // mentioning "550 users" would otherwise suppress a live prospect.
   const from = msg.payload?.headers?.find((h) => h.name.toLowerCase() === "from")?.value ?? "";
   const subject =
     msg.payload?.headers?.find((h) => h.name.toLowerCase() === "subject")?.value ?? "";
@@ -586,10 +548,9 @@ export function parseBounce(msg: GmailMessageMeta): ParsedBounce[] {
   if (!looksLikeDsn) return [];
 
   /**
-   * The DSN's own sender is never the address that failed. Matched by exact
-   * address first, falling back to the canonical daemon pattern — a broader
-   * pattern would discard a real failed recipient at, say,
-   * `no-reply@customer.example` and the bounce would go unrecorded.
+   * The DSN's own sender is never the address that failed. Exact address
+   * first, then the canonical daemon pattern — a broader pattern would
+   * discard a real failed recipient.
    */
   const isSender = (addr: string): boolean =>
     addr === senderAddress || DAEMON_ADDRESS_RE.test(addr);
@@ -600,12 +561,9 @@ export function parseBounce(msg: GmailMessageMeta): ParsedBounce[] {
   if (!statusCode && !SMTP_CODE_RE.test(body)) return [];
 
   /*
-   * A DSN's prose contains several addresses and only one of them failed.
-   * Picking the first non-sender match is wrong: a quoted `From:` header
-   * usually appears above the SMTP response, so a hard bounce would suppress
-   * the FOUNDER'S address rather than the target's. Score candidates by how
-   * strongly their line implies "this is the address that failed" and take the
-   * best, rather than the earliest.
+   * Several addresses appear in DSN prose and only one failed. First-match is
+   * wrong (a quoted `From:` header would suppress the FOUNDER'S address) —
+   * score candidates by how strongly their line implies failure, take best.
    */
   // Header lines naming the originator — never the failed recipient.
   const ORIGINATOR_LINE = /^\s*(from|sender|reply-to|return-path|x-original-from)\s*:/i;
@@ -657,16 +615,11 @@ export interface GmailBounce extends ParsedBounce {
 }
 
 /**
- * Delivery failures reported to this mailbox. The query is a coarse net (DSN
- * senders and subjects vary by MTA); `parseBounce` discards anything that isn't
- * actually a delivery report, so over-matching costs a wasted fetch, not a
- * false bounce. No `in:inbox` — a DSN the founder archived still counts — and
- * no `-from:me`, which would drop self-relayed reports.
- *
- * Paginated: a heavy sender can exceed one page of DSNs inside the window, and
- * stopping at the first page would leave those recipients unsuppressed while
- * reporting a falsely low bounce rate — a silent undercount, the worst failure
- * mode for a check whose whole job is to notice trouble.
+ * Delivery failures reported to this mailbox. The query is a coarse net —
+ * parseBounce discards non-reports, so over-matching costs a fetch, not a
+ * false bounce. No `in:inbox` (an archived DSN still counts) and no
+ * `-from:me` (would drop self-relayed reports). Paginated: stopping at the
+ * first page would silently undercount and leave recipients unsuppressed.
  */
 export async function listGmailBounces(
   opts?: { since?: string; limit?: number },
@@ -713,11 +666,9 @@ export async function listGmailBounces(
 }
 
 /* ── Inbox placement ─────────────────────────────────────────────────────────
- * What DSN harvesting structurally cannot tell you: a message can be accepted
- * without complaint and still be filtered into spam or buried in a tab. The
- * only way to know is to look in a real receiving mailbox — which requires a
- * SECOND authorized account, since a message you send to yourself is never
- * filtered.
+ * A message can be accepted and still be filtered into spam or a tab. Knowing
+ * requires a real receiving mailbox — a SECOND authorized account, since mail
+ * you send to yourself is never filtered.
  */
 
 /** All values for a header that may legitimately appear more than once. */
@@ -729,11 +680,10 @@ function headerValues(msg: GmailMessageMeta, name: string): string[] {
 }
 
 /**
- * Where Gmail filed the message, from its labelIds. Order matters: a message
- * in Promotions carries BOTH `INBOX` and `CATEGORY_PROMOTIONS`, so checking
- * `INBOX` first would report a tab-binned message as a clean inbox hit — the
- * exact failure this test exists to catch. SPAM is checked first because a
- * spammed message carries neither INBOX nor a category.
+ * Where Gmail filed the message, from its labelIds. Order matters: Promotions
+ * carries BOTH `INBOX` and `CATEGORY_PROMOTIONS`, so checking `INBOX` first
+ * would report a tab-binned message as a clean inbox hit; SPAM first because
+ * a spammed message carries neither.
  */
 export function classifyPlacement(labelIds: string[]): GmailPlacement {
   const labels = new Set(labelIds);
@@ -758,13 +708,8 @@ const VERDICTS: AuthVerdict[] = ["pass", "fail", "softfail", "neutral", "none"];
 
 /**
  * SPF/DKIM/DMARC as judged by the RECEIVING server, read off the delivered
- * message's `Authentication-Results` header. This is a verdict on the actual
- * message path — strictly better evidence than resolving DNS records ourselves,
- * and it needs no DNS tooling at all.
- *
- * Returns `unknown` per mechanism when the header is absent or silent on it,
- * which is normal for internal (same-Workspace) delivery that never crosses an
- * authenticating boundary.
+ * message's `Authentication-Results` header. Returns `unknown` per mechanism
+ * when the header is absent or silent — normal for same-Workspace delivery.
  */
 export function parseAuthResults(headers: string[]): AuthResults {
   const out: AuthResults = { spf: "unknown", dkim: "unknown", dmarc: "unknown" };
@@ -815,10 +760,8 @@ export interface PlacedMessage {
 
 /**
  * Find a message in this mailbox by Gmail search and report where it landed.
- *
- * `in:anywhere` is load-bearing: Gmail's default search EXCLUDES spam and
- * trash, so without it the one outcome this test exists to detect — the
- * message was filtered as spam — would read identically to "never arrived".
+ * `in:anywhere` is load-bearing: default search EXCLUDES spam/trash, so
+ * "filtered as spam" would read identically to "never arrived".
  */
 export async function findPlacedMessage(
   query: string,

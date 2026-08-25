@@ -59,17 +59,12 @@ export function checkReadiness(spec: TriggerSpec, config: Record<string, unknown
 const ONE_HOUR = 3600 * 1000;
 
 /**
- * Default cohort sweep for the `accelerator-batch` trigger. Covers seven
- * incubators × {latest, previous-latest} cohorts as of 2026-05-20. Only the
- * yc-* entries hit the structured yc-oss/api directory; the other 12 route
- * to the websearch + LLM-extract adapter and will have spotty per-cohort
- * recall (Neo is invite-only, SPC publishes thin web footprint, etc.).
- * Per-cohort failures are isolated — the run only halts when EVERY cohort
- * comes back empty.
- *
- * ROTATION: this list goes stale within ~3 months as YC announces W27,
- * Techstars rolls Fall 2026, etc. Founders should edit `cohorts[]` via the
- * trigger config UI on /queue when new batches announce.
+ * Default cohort sweep for `accelerator-batch`. Only yc-* entries hit the
+ * structured yc-oss/api directory; the rest use the websearch + LLM-extract
+ * adapter with spotty recall. Per-cohort failures are isolated — the run only
+ * halts when EVERY cohort comes back empty.
+ * ROTATION: goes stale within ~3 months; founders edit `cohorts[]` in the
+ * /queue trigger config as new batches announce.
  */
 const DEFAULT_COHORTS: CohortEntry[] = [
   { cohort: "yc-w26", cohortLabel: "YC W26" },
@@ -108,10 +103,7 @@ export const TRIGGERS: TriggerSpec[] = [
     name: "accelerator-batch",
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
-    // Default sweep: every known incubator × {latest, previous-latest} cohorts.
-    // Founders can trim or edit the list in /queue → trigger config; per-cohort
-    // failures don't halt the run, so spotty incubators (Neo, SPC) coexist
-    // with high-recall ones (YC, Techstars) in one trigger fire.
+    // Every known incubator × {latest, previous-latest}; editable in /queue.
     defaultConfig: {
       cohorts: DEFAULT_COHORTS,
       limit: 25,
@@ -285,12 +277,9 @@ export const TRIGGERS: TriggerSpec[] = [
       }),
   },
   {
-    // Luma upcoming-event hosts + featured guests. Discovery reads Luma's
-    // per-city pages (genuinely upcoming; webSearch fallback for unmapped
-    // cities); each event passes a keyword + LLM topic/ICP gate before any
-    // paid read; attendees come structured (with linkedin/website) from
-    // Luma's public event JSON. Contact via LinkedIn enrichProfile or
-    // website domain, then the standard findEmail chain.
+    // Luma upcoming-event hosts + featured guests: per-city page discovery
+    // (webSearch fallback), keyword + LLM topic/ICP gate before any paid read,
+    // attendees from Luma's public event JSON.
     name: "luma-events",
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
@@ -343,13 +332,9 @@ export const TRIGGERS: TriggerSpec[] = [
       }),
   },
   {
-    // GitHub-Topic-driven repo finder. Discovers via the (free) GitHub Search
-    // API filtered by `topic:<slug>` — topic-tagged repos are pre-curated by
-    // maintainers self-tagging, much higher signal-per-fetch than the
-    // retired combo-search approach. Feeds stack-consolidation (vendor-
-    // sprawl pitch) by default, or competitor-switch when a detected vendor
-    // is on `directCompetitors`. Config-driven — the founder supplies topics
-    // + vendors + edge via /queue; ships empty so nothing fires until configured.
+    // GitHub-Topic-driven repo finder (free Search API, `topic:<slug>`).
+    // Routes to stack-consolidation, or competitor-switch on a
+    // `directCompetitors` match. Ships empty so nothing fires until configured.
     name: "github-topics",
     defaultIntervalMs: 12 * ONE_HOUR,
     enabledByDefault: false,
@@ -504,9 +489,7 @@ export const TRIGGERS: TriggerSpec[] = [
 
 /**
  * Resolve the active interval for a trigger: stored config_json may override
- * the registry's defaultIntervalMs via `intervalMs`. This keeps the JSON-config
- * editor in /queue meaningful — bumping it from 24h → 6h actually changes the
- * watch loop's cadence.
+ * the registry's defaultIntervalMs via `intervalMs`.
  */
 export function effectiveIntervalMs(
   spec: TriggerSpec,
@@ -524,9 +507,7 @@ export interface TriggerRunOutcome {
   fired: boolean;
   result?: FinderResult;
   error?: string;
-  /** Wall-clock of the run, present only when `fired`. Surfaced so callers
-   * (e.g. the dashboard scheduler's telemetry) can attribute duration without
-   * re-deriving it. */
+  /** Wall-clock of the run, present only when `fired`. */
   duration_ms?: number;
   /** ms until this trigger is next due */
   nextDueInMs: number;
@@ -534,38 +515,20 @@ export interface TriggerRunOutcome {
 
 /**
  * Maximum age before an in-flight `running_started_at` is considered a
- * killed-by-restart zombie and swept by `sweepStaleRunningTriggers`.
- *
- * Real finder runtimes are dominated by the per-candidate pipeline (icpFilter
- * LLM + findEmail + verifyEmail, occasionally + webRead + deepResearchPerson).
- * github-topics with concurrency=3 typically completes 25 candidates in
- * 5-15 min; the deepResearchPerson tier (2-5 min async per call) sets the
- * realistic upper bound when many candidates fall into the hard-recovery bucket.
- *
- * 4h is set with generous headroom so a genuinely-running finder is never
- * mistakenly classified as zombie. If a run actually exceeds this, the
- * sweep marks it killed and `markTriggerRunning` lets a follow-up click
- * re-claim — bounded duplicate spend is preferable to the permanently-
- * stuck 409 state.
+ * killed-by-restart zombie and swept. 4h leaves generous headroom over real
+ * finder runtimes; a run that exceeds it gets marked killed and re-claimable —
+ * bounded duplicate spend beats a permanently-stuck 409.
  */
 export const MAX_RUN_AGE_MS = 4 * 60 * 60 * 1000;
 
 /**
- * Truth of "is this trigger running" lives in the ledger
- * (`triggers.running_started_at`). Survives server restart so the UI shows
- * accurate state across `bun --watch` re-execs and OS reboots.
- *
- * The freshness gate (`< MAX_RUN_AGE_MS`) hides stale rows that the boot
- * sweep hasn't cleaned up yet — defense in depth so we never report "still
- * running" for a row that's older than any real run could be.
+ * Truth of "is this trigger running" lives in the ledger and survives server
+ * restart. The freshness gate hides stale rows the boot sweep hasn't cleaned
+ * up yet — never report "still running" for a row older than any real run.
  */
 /**
- * Pure helper extracted so the freshness gate is unit-testable without
- * mocking the ledger. Returns the parsed start-epoch when the iso
- * timestamp is valid AND fresh (within MAX_RUN_AGE_MS of `now`); null
- * otherwise.
- *
- * `nowMs` is injected so tests can drive time without faking Date.
+ * Pure helper (unit-testable without the ledger): parsed start-epoch when the
+ * timestamp is valid AND within MAX_RUN_AGE_MS of `nowMs`; null otherwise.
  */
 export function freshRunningStartedAtMs(
   iso: string | null | undefined,
@@ -587,10 +550,8 @@ export function getTriggerRunningSince(name: string): number | null {
 }
 
 /**
- * Stored config with corruption fallback. A bare JSON.parse here used to let
- * one corrupt config_json row throw out of runDueTriggers' loop and stall
- * every trigger until the row was fixed by hand; now the trigger runs on its
- * defaults with a warning instead.
+ * Stored config with corruption fallback — one corrupt config_json row must
+ * not stall every trigger, so it runs on defaults with a warning instead.
  */
 export function storedTriggerConfig(
   stored: TriggerRow | null,
@@ -606,19 +567,10 @@ export function storedTriggerConfig(
 }
 
 /**
- * Fire-and-forget wrapper around `runTriggerNow`: returns immediately after
- * marking the trigger as running in the ledger; the actual finder work runs
- * on the event loop. Throws synchronously if the trigger is unknown,
- * already running, or unready.
- *
- * Errors from the finder are swallowed here — `runTriggerNow` already
- * persists them to the ledger (`last_run_summary`) and emits a
- * `trigger.run.error` event, so there's nothing useful for the caller to do.
- *
- * If the process is killed mid-run (bun --watch re-exec, OS reboot), the
- * row's `running_started_at` stays set. The next cold boot's
- * `sweepStaleRunningTriggers` call writes a `killed_by_restart` summary so
- * the UI shows the truth instead of frozen-from-an-hour-ago state.
+ * Fire-and-forget wrapper around `runTriggerNow`. Throws synchronously if the
+ * trigger is unknown, already running, or unready; finder errors are already
+ * persisted by runTriggerNow. A process killed mid-run leaves
+ * `running_started_at` set — the cold-boot sweep writes `killed_by_restart`.
  */
 export function fireTriggerNow(name: string): void {
   const spec = TRIGGERS.find((t) => t.name === name);
@@ -643,28 +595,17 @@ export function fireTriggerNow(name: string): void {
       enabled: spec.enabledByDefault !== false,
     });
   }
-  // Atomic claim — no TOCTOU race. Two concurrent fires both calling
-  // markTriggerRunning will see exactly one `true` and one `false`, so
-  // only one finder run actually launches.
-  //
-  // The `staleCutoffIso` lets a fresh click reclaim a row whose previous
-  // `running_started_at` is older than `MAX_RUN_AGE_MS` — i.e. the freshness
-  // gate already says "not running" but the DB flag never got cleared
-  // (process killed, no cold-boot sweep yet). Without this the user would
-  // see Run-button-enabled, click, and get 409'd every retry.
+  // Atomic claim — no TOCTOU race: exactly one of two concurrent fires wins.
+  // `staleCutoffIso` lets a fresh click reclaim a row whose stale
+  // `running_started_at` never got cleared, instead of 409ing every retry.
   const nowIso = new Date().toISOString();
   const staleCutoffIso = new Date(Date.now() - MAX_RUN_AGE_MS).toISOString();
   const claimed = ledger.markTriggerRunning(name, nowIso, staleCutoffIso);
   if (!claimed) {
     throw new Error(`trigger '${name}' is already running`);
   }
-  // Explicit catch — `void` discards the promise without wiring rejection
-  // handling. If `runTriggerNow` throws synchronously OR rejects before its
-  // own try/catch (e.g. JSON.parse on a corrupted config_json, an import
-  // resolution issue under bun --hot, anything that would otherwise be a
-  // silent unhandled rejection), we surface the failure AND clear the
-  // stranded `running_started_at` so the row doesn't stay "running" until
-  // the next boot sweep.
+  // Explicit catch (not `void`): a rejection before runTriggerNow's own
+  // try/catch must surface AND clear the stranded `running_started_at`.
   runTriggerNow(name).catch((err) => {
     const message = (err as Error).message ?? "runTriggerNow rejected";
     logEvent("trigger.run.fire_failed", { name, message_120: message.slice(0, 120) }, "error");
@@ -674,17 +615,15 @@ export function fireTriggerNow(name: string): void {
         summary: { error: `fire_failed: ${message}`, at: new Date().toISOString() },
       });
     } catch {
-      // updateTriggerLastPoll itself failing is hopeless; the boot sweep
-      // is the safety net.
+      // The boot sweep is the safety net.
     }
   });
 }
 
 /**
- * Run a single trigger by name immediately, ignoring its scheduled dueAt
- * and the enabled flag. Useful for the /queue UI's "Run now" affordance:
- * the founder explicitly asked, so we bypass the scheduler. Persists
- * last_polled_at + last_run_summary so the watch loop respects the run.
+ * Run a single trigger immediately, ignoring dueAt and the enabled flag
+ * (the founder explicitly asked). Persists last_polled_at + last_run_summary
+ * so the watch loop respects the run.
  */
 export async function runTriggerNow(name: string): Promise<TriggerRunOutcome> {
   startRun();
@@ -764,7 +703,6 @@ export async function runDueTriggers(): Promise<TriggerRunOutcome[]> {
   for (const spec of TRIGGERS) {
     const stored = ledger.getTrigger(spec.name);
     const defaultEnabled = spec.enabledByDefault !== false;
-    // Initialize on first sight.
     if (!stored) {
       ledger.upsertTrigger({
         name: spec.name,
@@ -782,9 +720,8 @@ export async function runDueTriggers(): Promise<TriggerRunOutcome[]> {
       continue;
     }
 
-    // Readiness gate: skip without touching last_polled_at so the watch loop
-    // retries on the *next* tick once config is fixed, not on the next
-    // interval boundary.
+    // Readiness gate: skip without touching last_polled_at so a config fix is
+    // picked up on the next tick, not the next interval boundary.
     const readiness = checkReadiness(spec, config);
     if (!readiness.ready) {
       outcomes.push({ name: spec.name, fired: false, nextDueInMs: intervalMs });
@@ -803,13 +740,9 @@ export async function runDueTriggers(): Promise<TriggerRunOutcome[]> {
       continue;
     }
 
-    // Atomic claim — same pattern as fireTriggerNow (line 436-441) so the
-    // scheduled-fire path can't race with a manual click on the same trigger
-    // and double-spend. `staleCutoffIso` lets a fresh tick reclaim a row
-    // whose previous `running_started_at` is older than MAX_RUN_AGE_MS (the
-    // freshness gate already says "not running" but the marker never got
-    // cleared — process killed before updateTriggerLastPoll ran, no boot
-    // sweep yet). Cleared by updateTriggerLastPoll on success/error.
+    // Atomic claim — same pattern as fireTriggerNow, so the scheduled path
+    // can't race a manual click and double-spend; `staleCutoffIso` reclaims a
+    // stale marker. Cleared by updateTriggerLastPoll on success/error.
     const claimNowIso = new Date().toISOString();
     const staleCutoffIso = new Date(Date.now() - MAX_RUN_AGE_MS).toISOString();
     const claimed = ledger.markTriggerRunning(spec.name, claimNowIso, staleCutoffIso);

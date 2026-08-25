@@ -283,7 +283,6 @@ function QueuePage() {
 
   return (
     <div className="-mx-6 -my-6 flex flex-col">
-      {/* Masthead */}
       <section className="flex items-end justify-between gap-4 border-b border-ink-rule px-6 pb-5 pt-6">
         <div>
           <div className="ln-eyebrow">The Ledger · Queue</div>
@@ -311,11 +310,7 @@ function QueuePage() {
 
       <TriggersCard />
 
-      {/* Target Queue — the candidates themselves. A heavier rule + explicit
-          section header separates this from the Triggers table above (which
-          was reading as a seamless continuation of the same list). Play
-          filter lives inline here: it narrows the rows in this table
-          specifically, so it belongs next to them, not in the global bar. */}
+      {/* Target Queue. The play filter is inline because it narrows this table only. */}
       <section className="border-t-2 border-ink-rule">
         <div className="flex flex-wrap items-center justify-between gap-3 px-6 pb-3 pt-5">
           <div className="flex items-baseline gap-3">
@@ -329,9 +324,7 @@ function QueuePage() {
           <div className="font-mono text-[11px] text-ink-faint">refresh · 20s</div>
         </div>
 
-        {/* Status + play filters, inline with the table they scope. Status
-            is first (it narrows far more rows than play) and the two are
-            visually separated by a thin rule for scannability. */}
+        {/* Status + play filters, scoped to this table. */}
         <div className="flex flex-wrap items-center gap-2 border-b border-ink-rule/60 px-6 pb-3">
           <span className="ln-eyebrow">status</span>
           {STATUSES.map((s) => (
@@ -365,9 +358,7 @@ function QueuePage() {
           ))}
         </div>
 
-        {/* Bulk actions — approve-all + drain. Colocated with the table they
-            act on; both respect the current play filter, so the chips above
-            are the only play selector on the page. */}
+        {/* Approve-all + drain both respect the current play filter. */}
         <div className="flex flex-wrap items-center gap-2 border-b border-ink-rule/60 bg-ink-surface/30 px-6 py-3">
           <Button
             variant="secondary"
@@ -459,7 +450,6 @@ function QueuePage() {
         )}
       </section>
 
-      {/* Sticky bulk-action bar — only when something is selected */}
       {someSelected && (
         <div className="sticky bottom-0 z-20 flex items-center justify-between gap-4 border-b border-t border-ink-rule bg-ink-bg/95 px-6 py-3 backdrop-blur-[2px]">
           <div className="flex items-center gap-3">
@@ -568,8 +558,7 @@ function QueuePage() {
         }
       >
         <div className="flex flex-col gap-3">
-          {/* A selection IS the limit — showing a second, contradictory number
-              here would just invite "limit 10 of my 3 selected rows". */}
+          {/* A selection IS the limit — never show a second, contradictory number. */}
           {drainModal?.ids ? (
             <p className="text-[13px] text-ink-cream-2">
               Draining the {drainModal.ids.length} approved{" "}

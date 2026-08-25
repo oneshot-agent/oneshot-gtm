@@ -28,19 +28,10 @@ export interface ReplyContext {
 }
 
 /**
- * Assemble everything the reply drafter can know about the sender, cheapest
- * first:
- *
- * 1. Free — the prospect's stored dossier (finders/Add-Prospect already paid
- *    for it) and the founder's own prior replies in this thread.
- * 2. Paid, only when no dossier exists — enrich the sender's email (~$0.05,
- *    30d cache) and read their apex domain (~$0.01, cached here under
- *    `webread:<domain>`), both gated by isDudDomain so a gmail.com sender
- *    costs nothing.
- *
- * Best-effort throughout: research failing for ANY reason degrades to the
- *  free tiers — it must never block the draft (this also keeps demo mode
- * harmless, where placeholder keys fail at auth).
+ * Assemble sender context cheapest-first: (1) free — stored dossier + prior
+ * replies in this thread; (2) paid, only when no dossier exists — enrich the
+ * email and read the apex domain, both gated by isDudDomain. Best-effort
+ * throughout: research failing for ANY reason must never block the draft.
  */
 export async function gatherReplyContext(input: {
   fromEmail: string;
@@ -123,10 +114,8 @@ function bestEffort(fn: () => void): void {
 }
 
 /**
- * Mail is routinely hosted on a subdomain (person@mail.example.com) whose
- * hostname serves MX, not a website — reading it misses the company site and
- * can bill a failed fetch. Strip the well-known mail-ish first label; a full
- * public-suffix list is deliberately out of scope (zero-dep repo), so
+ * Strip a well-known mail-ish first label (mail.example.com serves MX, not a
+ * website). A full public-suffix list is deliberately out of scope, so
  * multi-label TLDs pass through unchanged.
  */
 const MAIL_SUBDOMAINS = new Set(["mail", "email", "smtp", "mx", "mta", "mailer", "send", "post"]);
@@ -136,16 +125,12 @@ export function siteDomainFor(domain: string): string {
 }
 
 /**
- * Read the sender's site (the aliyev.site call), cached in enrichment_cache
- * under `webread:<domain>` — the PK is a plain string, and reusing the table
- * gets us the 30d TTL + negative-cache semantics safeEnrich already
- * established. Returns null on any failure; transient errors are not
- * negative-cached (an outage must not suppress research for a month).
- *
- * The cache write rides the LIVE promise, not the deadline race — same pattern
- * (and same reason) as safeEnrich: a read that settles after the deadline was
- * still PAID for, and discarding it means the next draft pays again. The late
- * result can't reach this draft's costUsd, but it must reach the cache.
+ * Read the sender's site, cached in enrichment_cache under `webread:<domain>`
+ * (30d TTL + negative-cache semantics). Returns null on any failure;
+ * transient errors are NOT negative-cached (an outage must not suppress
+ * research for a month). The cache write rides the LIVE promise, not the
+ * deadline race — a read settling after the deadline was still PAID for and
+ * must reach the cache.
  */
 async function readSenderSite(
   domain: string,

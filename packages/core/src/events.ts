@@ -4,28 +4,13 @@ import { join } from "node:path";
 import { configDir } from "./config.ts";
 
 /**
- * Local-only structured event log.
+ * Local-only structured event log — one JSON line per event appended to
+ * ~/.oneshot-gtm/events.jsonl (`tail -f … | jq` to watch).
  *
- * Every interesting moment (LLM call, ICP filter decision, finder lifecycle,
- * swallowed errors) appends one JSON line to ~/.oneshot-gtm/events.jsonl.
- * Tail it with `tail -f ~/.oneshot-gtm/events.jsonl | jq` while iterating.
- *
- * ## Privacy boundary
- *
- * `ctx` may contain primitives, counters, durations, category labels, error
- * class names, hostname/domain. It must NEVER contain user-typed values like
- * email addresses or ICP one-liner text, prospect data, or LLM completions
- * verbatim. This is the same boundary that will apply when an opt-in HTTP
- * sink is added later — keeping the rule tight today means schema reuse
- * tomorrow.
- *
- * Not enforced programmatically. Code-review discipline at the call sites.
- *
- * ## Failure mode
- *
- * Logging never throws. A logging bug must not break the caller. If the
- * filesystem is read-only or the config dir doesn't exist, the event is
- * dropped silently.
+ * Privacy boundary (call-site discipline, not enforced programmatically):
+ * `ctx` may carry primitives, counters, durations, labels, error class names,
+ * hostname/domain — NEVER user-typed values, prospect data, or verbatim LLM
+ * completions. Logging never throws; on any failure the event drops silently.
  */
 
 type EventLevel = "debug" | "info" | "warn" | "error";
@@ -86,12 +71,9 @@ export function logEvent(
 }
 
 /**
- * Pure builder for a single JSONL line. Extracted for testability — the
- * call site supplies `now`, `runId`, `clientId` so tests can pin them
- * without touching the module-level singletons or the filesystem.
- *
- * Includes the trailing newline so the caller can append in a single
- * fs syscall.
+ * Pure builder for one JSONL line (trailing newline included, so the caller
+ * appends in a single syscall). `now`/`runId`/`clientId` are parameters so
+ * tests can pin them.
  */
 export function buildEventLine(
   kind: string,
@@ -113,17 +95,12 @@ export function buildEventLine(
 }
 
 /**
- * Read the clientId straight from config.json instead of going through
- * loadConfig() — that would create a circular import (config doesn't depend
- * on events today; we keep it that way). Survives the case where the file
- * doesn't exist yet: returns null and the event ships without a client_id.
- * Cached for the process lifetime once non-null.
+ * Reads clientId straight from config.json — loadConfig() would create a
+ * circular import. Returns null when the file doesn't exist yet.
  */
 function resolveClientId(): string | null {
-  // First call resolves and caches, subsequent calls return the cached value
-  // even if it's null. The previous `clientIdResolved && cachedClientId` check
-  // re-read the config file on every event when bootstrap hadn't finished
-  // yet — turning the once-per-process cost into a per-event syscall.
+  // First call resolves and caches — even a null result — so a missing config
+  // never becomes a per-event file read.
   if (clientIdResolved) return cachedClientId;
   clientIdResolved = true;
   try {
