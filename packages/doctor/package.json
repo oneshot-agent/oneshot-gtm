@@ -8,5 +8,11 @@
   },
   "dependencies": {
     "@oneshot-gtm/core": "workspace:*"
+  },
+  "homepage": "https://oneshot-gtm.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oneshot-agent/oneshot-gtm",
+    "directory": "packages/doctor"
   }
 }

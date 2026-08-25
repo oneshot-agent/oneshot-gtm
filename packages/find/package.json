@@ -10,5 +10,11 @@
     "@oneshot-gtm/core": "workspace:*",
     "@oneshot-gtm/intel": "workspace:*",
     "@oneshot-gtm/plays": "workspace:*"
+  },
+  "homepage": "https://oneshot-gtm.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/oneshot-agent/oneshot-gtm",
+    "directory": "packages/find"
   }
 }
