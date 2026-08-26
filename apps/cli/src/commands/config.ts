@@ -46,7 +46,7 @@ export async function configFounder(): Promise<void> {
       {
         type: "text",
         name: "founderEmail",
-        message: "Reply-to email",
+        message: "Your email (lead capture on generated pages — not the reply address)",
         initial: cfg.founderEmail ?? "",
       },
       {

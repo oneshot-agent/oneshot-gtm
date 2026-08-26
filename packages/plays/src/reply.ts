@@ -97,10 +97,15 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<{ bo
     input.priorInbound && input.priorInbound.length > 0
       ? [
           "THEIR EARLIER MESSAGES (what the prospect already told you — don't re-ask any of it):",
-          ...input.priorInbound.flatMap((m) => [
-            `--- received ${m.receivedAt}${m.subject ? ` · ${m.subject}` : ""} ---`,
-            stripQuotedChain(m.body).slice(0, 1000),
-          ]),
+          // Newest 6, each capped at 1000 chars — a long exchange must not
+          // grow the prompt without bound (the recent messages carry the
+          // conversation; ancient ones add tokens, not context).
+          ...input.priorInbound
+            .slice(-6)
+            .flatMap((m) => [
+              `--- received ${m.receivedAt}${m.subject ? ` · ${m.subject}` : ""} ---`,
+              stripQuotedChain(m.body).slice(0, 1000),
+            ]),
         ].join("\n")
       : null;
 

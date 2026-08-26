@@ -346,7 +346,10 @@ function SetupPage() {
                 placeholder="Jane Doe"
               />
             </Field>
-            <Field label="Reply-to email">
+            <Field
+              label="Your email"
+              hint="Lead capture on pages this tool generates (e.g. the PMF survey). NOT a reply address \u2014 replies land in the inbox of whichever sending identity sent the mail."
+            >
               <Input
                 type="email"
                 value={founderEmail}

@@ -29,7 +29,7 @@ export async function runInit(): Promise<void> {
       {
         type: "text",
         name: "founderEmail",
-        message: "Your reply-to email",
+        message: "Your email (lead capture on generated pages — not the reply address)",
         initial: cfg.founderEmail ?? "",
         validate: (s) => (/.+@.+\..+/.test(s) ? true : "valid email required"),
       },
