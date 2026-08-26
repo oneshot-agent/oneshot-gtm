@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import type { SetupRequest, SmartleadAccountView } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
+import { DoctorPanel } from "../components/setup/DoctorPanel.tsx";
 import { Button } from "../components/primitives/Button.tsx";
 import { Checkbox, Field, Input, Select, Textarea } from "../components/primitives/Field.tsx";
 
@@ -1182,18 +1183,11 @@ function SetupPage() {
         eyebrow="— · Doctor"
         lede="Health of the local install. Run `oneshot-gtm doctor` for the CLI view."
       >
-        <div className="flex flex-col gap-1.5">
-          {doctor.data?.checks.map((c) => (
-            <div key={c.name} className="flex items-center gap-2 text-[13px]">
-              {c.severity === "ok" && <Badge tone="receipt">ok</Badge>}
-              {c.severity === "warn" && <Badge tone="spend">warn</Badge>}
-              {c.severity === "fail" && <Badge tone="blocked">fail</Badge>}
-              <span className="text-ink-muted">{c.name}</span>
-              <span className="text-ink-cream">{c.message}</span>
-              {c.hint && <span className="ln-note text-ink-muted">→ {c.hint}</span>}
-            </div>
-          ))}
-        </div>
+        <DoctorPanel
+          checks={doctor.data?.checks}
+          isLoading={doctor.isLoading}
+          error={doctor.isError ? "unreachable" : null}
+        />
       </LedgerSection>
     </div>
   );

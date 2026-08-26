@@ -46,6 +46,14 @@ describe("doctor workspace checks", () => {
     expect(checks[0]?.message.startsWith("gtm · ")).toBe(true);
   });
 
+  it("every check carries a valid group (the dashboard panel keys sections off it)", async () => {
+    const checks = await runDoctor();
+    const valid = new Set(["install", "senders", "deliverability", "spend"]);
+    for (const c of checks) {
+      expect(valid.has(c.group), `check '${c.name}' has group '${c.group}'`).toBe(true);
+    }
+  });
+
   it("warns when another workspace uses the same sending domain", async () => {
     cfgOverride = {
       emailIdentities: [
