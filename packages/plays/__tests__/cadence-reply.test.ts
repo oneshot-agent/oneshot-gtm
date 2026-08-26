@@ -14,6 +14,8 @@ let failedSources: string[] = [];
 let repliedSteps: Array<{ prospectId: number; playName: string }> = [];
 // The play behind the prospect's latest sent step — the no-cadence-row fallback.
 let latestSentPlay: string | null = null;
+// v21 inbox_replies rows captured by the poll (id-keyed, INSERT OR IGNORE semantics).
+let persistedReplies: Array<{ id: string }> = [];
 // Persisted poll_state rows (watermark + backlog), as the real ledger holds them.
 let pollState: Record<string, string> = {};
 const watermarkOf = () => pollState["inbox_replies"] ?? null;
@@ -75,6 +77,15 @@ vi.mock("@oneshot-gtm/core", async () => {
         lookupArgs.push(canon);
         return canon === STORED_EMAIL ? { id: 1 } : null;
       },
+      // v21 reply persistence: the poll stores every matched inbound before
+      // recording the reply transition. Attribution mirrors the real
+      // latestSentPlayForProspect via the test's `latestSentPlay` knob.
+      latestSentPlayForProspect: () => latestSentPlay,
+      recordInboxReply: (row: { id: string }) => {
+        const isNew = !persistedReplies.some((r) => r.id === row.id);
+        if (isNew) persistedReplies.push(row as (typeof persistedReplies)[number]);
+        return isNew;
+      },
       setCadenceStatus: ({
         prospectId,
         playName,
@@ -131,6 +142,7 @@ beforeEach(() => {
   lookupArgs = [];
   inboxEmails = [];
   repliedSteps = [];
+  persistedReplies = [];
   // The fixture cadence is also the latest play that emailed the prospect.
   latestSentPlay = "stack-consolidation";
   pollState = {};
@@ -206,6 +218,31 @@ describe("pollInboxReplies — standalone background detection (no sends)", () =
     // The reply metric (home/CAC) is fed via markLatestStepReplied.
     expect(repliedSteps).toEqual([{ prospectId: 1, playName: "stack-consolidation" }]);
     expect(calls.sendEmail).toBe(0);
+  });
+
+  it("persists every matched inbound (body included) into inbox_replies", async () => {
+    inboxEmails = [
+      { id: "m1", from: "Sophia <sophia@agenticarchitect.ai>", subject: "re: stack" },
+      { id: "m2", from: "Someone Else <nobody@elsewhere.com>", subject: "spam" },
+    ];
+
+    await pollInboxReplies();
+    // Matched mail is stored; unmatched noise is not.
+    expect(persistedReplies.map((r) => r.id)).toEqual(["m1"]);
+    expect(persistedReplies[0]).toMatchObject({
+      prospectId: 1,
+      fromEmail: STORED_EMAIL,
+      playName: "stack-consolidation",
+    });
+
+    // A later reply on the same (already-replied) thread is stored too — the
+    // per-(prospect, play) reply transition being idempotent must not stop
+    // the message capture.
+    inboxEmails = [
+      { id: "m3", from: "Sophia <sophia@agenticarchitect.ai>", subject: "re: re: stack" },
+    ];
+    await pollInboxReplies();
+    expect(persistedReplies.map((r) => r.id)).toEqual(["m1", "m3"]);
   });
 
   it("backfills the reply event for an already-replied cadence; no cadence is stopped", async () => {

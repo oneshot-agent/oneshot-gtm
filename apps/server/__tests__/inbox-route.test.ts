@@ -8,6 +8,11 @@ const listInboxMock = vi.fn();
 const replyEmailMock = vi.fn();
 
 const recordProspectReplyMock = vi.fn(() => []);
+const listProspectIdsWithRepliesMock = vi.fn((): number[] => []);
+const listInboxRepliesForProspectMock = vi.fn((): unknown[] => []);
+const listSequenceEventsForProspectMock = vi.fn((): unknown[] => []);
+const recordInboxReplyMock = vi.fn(() => true);
+const getProspectByIdMock = vi.fn((): unknown => null);
 let knownProspect: { id: number } | null = null;
 
 const ledger = {
@@ -17,6 +22,13 @@ const ledger = {
   getInboxThreads: getInboxThreadsMock,
   listAllCadences: () => [],
   listRepliedProspectEmails: () => [],
+  // v21 conversation machinery — empty by default; tests override with
+  // mockReturnValueOnce (one-shot, so nothing leaks across tests).
+  listProspectIdsWithReplies: listProspectIdsWithRepliesMock,
+  listInboxRepliesForProspect: listInboxRepliesForProspectMock,
+  listSequenceEventsForProspect: listSequenceEventsForProspectMock,
+  recordInboxReply: recordInboxReplyMock,
+  getProspectById: getProspectByIdMock,
   getProspectByEmail: () => null,
   findProspectByEmail: () => knownProspect,
   recordProspectReply: recordProspectReplyMock,
@@ -94,6 +106,71 @@ describe("inbox route — persisted drafts & sent replies", () => {
     expect(out.replies).toHaveLength(1);
     expect(out.replies[0]!.thread?.draftBody).toBe("saved draft");
     expect(out.replies[0]!.thread?.sent.map((s) => s.body)).toEqual(["sent1"]);
+  });
+
+  it("assembles conversations: outreach + inbound replies + manual sends, in time order", async () => {
+    listInboxMock.mockResolvedValue({ emails: [] });
+    getInboxThreadsMock.mockReturnValue(
+      new Map([
+        [
+          "t1",
+          { draftBody: "wip", sent: [{ body: "my answer", sentAt: "2026-08-25T23:00:00.000Z" }] },
+        ],
+      ]),
+    );
+    listProspectIdsWithRepliesMock.mockReturnValueOnce([7]);
+    getProspectByIdMock.mockReturnValueOnce({
+      id: 7,
+      name: "Coder",
+      email: "coder@x.example",
+      company: "OGs",
+      source: "stack-consolidation",
+    });
+    listInboxRepliesForProspectMock.mockReturnValueOnce([
+      {
+        id: "m1",
+        thread_key: "t1",
+        prospect_id: 7,
+        play_name: "stack-consolidation",
+        from_email: "coder@x.example",
+        subject: "Re: stack thing",
+        body: "It's sdk maintenance",
+        received_at: "2026-08-25T22:38:09.000Z",
+        source_identity_id: "gmail:me@x.com",
+        thread_id: "t1",
+        message_id: "<m1@mail>",
+      },
+    ]);
+    listSequenceEventsForProspectMock.mockReturnValueOnce([
+      {
+        prospect_id: 7,
+        play_name: "stack-consolidation",
+        step_index: 0,
+        channel: "email",
+        status: "replied",
+        metadata_json: JSON.stringify({ subject: "stack thing", body: "outreach body" }),
+        created_at: "2026-08-24 10:00:00",
+      },
+    ]);
+
+    const res = await listInboxRoute(new Request("http://localhost/api/inbox"));
+    const out = (await res.json()) as {
+      conversations: Array<{
+        prospectId: number;
+        draftBody: string | null;
+        items: Array<{ kind: string; at: string; body: string | null }>;
+      }>;
+    };
+    expect(out.conversations).toHaveLength(1);
+    const conv = out.conversations[0]!;
+    expect(conv.prospectId).toBe(7);
+    // Saved composer draft rides along for the newest inbound's thread.
+    expect(conv.draftBody).toBe("wip");
+    // Timeline order: outreach (SQLite timestamp, normalized) → their reply → our manual answer.
+    expect(conv.items.map((i) => i.kind)).toEqual(["outreach", "reply", "sent"]);
+    expect(conv.items[0]!.body).toBe("outreach body");
+    expect(conv.items[1]!.body).toBe("It's sdk maintenance");
+    expect(conv.items[2]!.body).toBe("my answer");
   });
 
   it("saveDraftRoute persists the draft via upsertInboxDraft", async () => {
@@ -282,6 +359,7 @@ describe("inbox route — research-grounded drafting", () => {
       fromEmail: "aladdin@aliyev.site",
       prospectId: null,
       threadKey: "t1",
+      excludeId: "e1",
     });
     expect(draftInboxReplyMock).toHaveBeenCalledWith(
       expect.objectContaining({

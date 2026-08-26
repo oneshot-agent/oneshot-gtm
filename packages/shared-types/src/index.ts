@@ -551,8 +551,55 @@ export function inboxThreadKey(v: { threadId: string | null; id: string }): stri
   return v.threadId ?? v.id;
 }
 
+/** One item on a conversation timeline, oldest first. */
+export type ConversationItem =
+  | {
+      /** An outreach step this tool sent (sequence_events, email channel). */
+      kind: "outreach";
+      at: string;
+      subject: string | null;
+      body: string | null;
+      stepIndex: number;
+      playName: string;
+    }
+  | {
+      /** An inbound reply from the prospect (ledger-persisted, or live mail not yet captured). */
+      kind: "reply";
+      at: string;
+      subject: string | null;
+      body: string;
+      id: string;
+      threadKey: string;
+      sourceIdentityId: string | null;
+      threadId: string | null;
+      messageId: string | null;
+    }
+  | {
+      /** A manual reply the founder sent from /inbox (inbox_sent). */
+      kind: "sent";
+      at: string;
+      subject: string | null;
+      body: string;
+    };
+
+/** The full exchange with one prospect — ledger-backed, complete forever. */
+export interface ConversationView {
+  prospectId: number;
+  name: string | null;
+  company: string | null;
+  email: string;
+  playName: string | null;
+  cadenceStatus: string | null;
+  lastActivityAt: string;
+  /** Saved (auto-saved) composer draft for the newest inbound's thread, if any. */
+  draftBody: string | null;
+  items: ConversationItem[];
+}
+
 export interface InboxResult {
   replies: InboxReplyView[];
+  /** Threaded matched view: one entry per prospect with a recorded reply. */
+  conversations?: ConversationView[];
   hasMore: boolean;
   /** Present when the inbox fetch failed; replies will be empty. */
   error?: string;
