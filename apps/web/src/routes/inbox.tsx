@@ -292,10 +292,10 @@ function ConversationRow({
             ))}
           </div>
           {composerReply ? (
-            {/* Keyed by inbound id: when a newer reply arrives mid-compose the
-                composer remounts for it (the unmount flush saves the old draft
-                under the OLD thread key) instead of silently sending old text
-                into the new thread. */}
+            // Keyed by inbound id: when a newer reply arrives mid-compose the
+            // composer remounts for it (the unmount flush saves the old draft
+            // under the OLD thread key) instead of silently sending old text
+            // into the new thread.
             <ReplyComposer key={composerReply.id} reply={composerReply} />
           ) : (
             <div className="mt-3 border-t border-ink-rule/60 pt-3 font-mono text-[11px] text-ink-faint">
