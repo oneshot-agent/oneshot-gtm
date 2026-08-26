@@ -898,6 +898,43 @@ export async function listInbox(opts?: {
 }
 
 /**
+ * Targeted fetch of mail FROM the given addresses across every Gmail identity,
+ * searched all-time — so a known replier's mail surfaces even when the broad
+ * newest-N window is full of noise or the reply predates its recency cutoff.
+ * Best-effort: per-source failures are logged and skipped, and the OneShot
+ * inbox is not queried (it can't filter by sender; its small replies-only
+ * mailbox is already covered by the main window). Returns [] in demo mode.
+ */
+export async function listRepliesFrom(
+  addresses: string[],
+  opts?: { limitPerSource?: number; deadlineMs?: number },
+): Promise<AnnotatedInboxEmail[]> {
+  if (addresses.length === 0 || demoMode()) return [];
+  const deadlineMs = opts?.deadlineMs ?? INBOX_SOURCE_TIMEOUT_MS;
+  const identities = resolveIdentities(loadConfig()).filter((i) => i.provider === "gmail");
+  const results = await parallelMap(identities, 3, async (identity) => {
+    try {
+      const account = gmailAccountFor(identity);
+      if (!account) return null;
+      const r = await withDeadline(
+        listGmailReplies({ fromAnyOf: addresses, limit: opts?.limitPerSource ?? 30 }, account),
+        deadlineMs,
+        `replies-from source '${identity.id}'`,
+      );
+      return annotateInboxResult(r, identity.id);
+    } catch (err) {
+      logEvent(
+        "inbox.replies_from_failed",
+        { source: identity.id, message_120: ((err as Error).message ?? "").slice(0, 120) },
+        "warn",
+      );
+      return null;
+    }
+  });
+  return results.filter((r): r is AnnotatedInboxListResult => r != null).flatMap((r) => r.emails);
+}
+
+/**
  * Dedupe, sort newest-first and clamp source results to the requested window,
  * with `has_more` true whenever the window is not the whole story — either a
  * source said so itself, or the clamp dropped rows. Shared by BOTH listInbox

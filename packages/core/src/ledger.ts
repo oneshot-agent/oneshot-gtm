@@ -961,6 +961,21 @@ export class Ledger {
     );
   }
 
+  /**
+   * Emails of every prospect with a recorded reply — the target list for the
+   * inbox's known-replier fetch, so a reply is never lost to the live window.
+   */
+  listRepliedProspectEmails(): string[] {
+    const rows = this.db
+      .query(
+        `SELECT DISTINCT p.email FROM sequence_events se
+         JOIN prospects p ON p.id = se.prospect_id
+         WHERE se.status = 'replied' AND p.email IS NOT NULL AND p.email != ''`,
+      )
+      .all() as Array<{ email: string }>;
+    return rows.map((r) => r.email);
+  }
+
   /** Full prospect record by id (PK seek). Avoids loading every prospect to find one. */
   getProspectById(id: number): ProspectRecord | null {
     return (

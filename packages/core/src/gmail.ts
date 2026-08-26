@@ -317,17 +317,26 @@ export async function listGmailReplies(
     /** Exclusive upper bound — lets a backfill page through months of mail in slices. */
     until?: string;
     limit?: number;
+    /**
+     * Targeted mode: only mail FROM one of these addresses, searched across
+     * all time (no `newer_than` default) — known-replier fetches must not be
+     * clipped by the recency window that keeps the broad poll cheap.
+     */
+    fromAnyOf?: string[];
   },
   account?: GmailAccount,
 ): Promise<InboxListResult> {
   const sinceClause = opts?.since
     ? `after:${Math.floor(new Date(opts.since).getTime() / 1000)}`
-    : "newer_than:30d";
+    : opts?.fromAnyOf?.length
+      ? ""
+      : "newer_than:30d";
   const untilClause = opts?.until
     ? ` before:${Math.floor(new Date(opts.until).getTime() / 1000)}`
     : "";
+  const fromClause = opts?.fromAnyOf?.length ? ` from:(${opts.fromAnyOf.join(" OR ")})` : "";
   const params = new URLSearchParams({
-    q: `-from:me -in:spam -in:trash ${sinceClause}${untilClause}`,
+    q: `-from:me -in:spam -in:trash ${sinceClause}${untilClause}${fromClause}`.trim(),
     maxResults: String(opts?.limit ?? 50),
   });
   const list = await gmailJson<{ messages?: Array<{ id: string }>; nextPageToken?: string }>(
