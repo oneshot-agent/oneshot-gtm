@@ -27,8 +27,12 @@ import {
 
 type CheckSeverity = "ok" | "warn" | "fail";
 
+/** Section a check renders under in the dashboard's grouped Doctor panel. */
+type CheckGroup = "install" | "senders" | "deliverability" | "spend";
+
 interface CheckResult {
   name: string;
+  group: CheckGroup;
   severity: CheckSeverity;
   message: string;
   hint?: string;
@@ -85,6 +89,7 @@ function deliverabilityChecks(): CheckResult[] {
       const providers = [...new Set(blind.map((i) => i.provider))].join(", ");
       results.push({
         name: "deliverability",
+        group: "deliverability",
         severity: "warn",
         message: `${blind.length} identit${blind.length === 1 ? "y" : "ies"} not covered (${providers}) — bounce detection reads DSNs from Gmail mailboxes only`,
       });
@@ -96,6 +101,7 @@ function deliverabilityChecks(): CheckResult[] {
       const gmailCount = identities.length - blind.length;
       results.push({
         name: "deliverability",
+        group: "deliverability",
         severity: "ok",
         message:
           gmailCount === 0
@@ -119,6 +125,7 @@ function deliverabilityChecks(): CheckResult[] {
       if (!s) {
         results.push({
           name: "deliverability",
+          group: "deliverability",
           severity: "ok",
           message:
             sent === 0
@@ -135,6 +142,7 @@ function deliverabilityChecks(): CheckResult[] {
       if (sent < MIN_SENDS_TO_JUDGE) {
         results.push({
           name: "deliverability",
+          group: "deliverability",
           severity: s.block > 0 ? "warn" : "ok",
           message: `${label} ${s.hard} hard / ${s.block} blocked of ${sent} sent (${BOUNCE_WINDOW_DAYS}d) — too few sends to rate${blockNote}`,
         });
@@ -147,6 +155,7 @@ function deliverabilityChecks(): CheckResult[] {
         rate > HARD_FAIL_RATE ? "fail" : rate > HARD_WARN_RATE || s.block > 0 ? "warn" : "ok";
       results.push({
         name: "deliverability",
+        group: "deliverability",
         severity,
         message: `${label} ${pct} bounced (${s.hard}/${sent}, ${BOUNCE_WINDOW_DAYS}d)${blockNote}`,
         ...(severity === "ok"
@@ -162,6 +171,7 @@ function deliverabilityChecks(): CheckResult[] {
   } catch (err) {
     results.push({
       name: "deliverability",
+      group: "deliverability",
       severity: "warn",
       message: `could not evaluate: ${(err as Error).message}`,
     });
@@ -184,6 +194,7 @@ function placementCheck(): CheckResult {
     if (!last) {
       return {
         name: "inbox placement",
+        group: "deliverability",
         severity: "ok",
         message: "never tested",
         hint: "run: bun run cli -- gmail placement (needs a second authorized Gmail account)",
@@ -209,6 +220,7 @@ function placementCheck(): CheckResult {
           : "ok";
     return {
       name: "inbox placement",
+      group: "deliverability",
       severity,
       message: `${last.placement} (${age}) · ${auth}${caveat}`,
       ...(ageDays > CANARY_STALE_DAYS
@@ -218,6 +230,7 @@ function placementCheck(): CheckResult {
   } catch (err) {
     return {
       name: "inbox placement",
+      group: "deliverability",
       severity: "warn",
       message: `could not evaluate: ${(err as Error).message}`,
     };
@@ -241,6 +254,7 @@ function workspaceChecks(cfg: ReturnType<typeof loadConfig>): CheckResult[] {
   } catch (err) {
     out.push({
       name: "workspace",
+      group: "install",
       severity: "warn",
       message: `${name} · ${configDir()}`,
       hint: `workspace registry unreadable: ${(err as Error).message}`,
@@ -250,6 +264,7 @@ function workspaceChecks(cfg: ReturnType<typeof loadConfig>): CheckResult[] {
   const mine = all.find(([n]) => n === name)?.[1];
   out.push({
     name: "workspace",
+    group: "install",
     severity: "ok",
     message: `${name} · ${configDir()}${mine ? ` · port ${mine.port}` : ""}`,
   });
@@ -282,6 +297,7 @@ function workspaceChecks(cfg: ReturnType<typeof loadConfig>): CheckResult[] {
     if (entry.port && portsSeen.has(entry.port)) {
       out.push({
         name: `workspace port ${entry.port}`,
+        group: "install",
         severity: "warn",
         message: `'${other}' and '${portsSeen.get(entry.port)}' both default to :${entry.port}`,
         hint: "run one with --port, or recreate the workspace",
@@ -328,6 +344,7 @@ function workspaceChecks(cfg: ReturnType<typeof loadConfig>): CheckResult[] {
       if (theirDomains.has(d)) {
         out.push({
           name: `sending domain ${d}`,
+          group: "senders",
           severity: "warn",
           message: `also used by workspace '${other}' — caps are per-workspace, so the domain's real daily budget is doubled`,
           hint: "give each workspace its own sending domain (oneshot-gtm identities add)",
@@ -338,6 +355,7 @@ function workspaceChecks(cfg: ReturnType<typeof loadConfig>): CheckResult[] {
       if (theirGmail.has(a)) {
         out.push({
           name: `gmail ${a}`,
+          group: "senders",
           severity: "warn",
           message: `also authorized in workspace '${other}' — both inbox pollers will see both products' replies`,
           hint: "use a separate Gmail account per workspace",
@@ -354,6 +372,7 @@ function workspaceChecks(cfg: ReturnType<typeof loadConfig>): CheckResult[] {
       if (theirSmartlead.has(a)) {
         out.push({
           name: `smartlead ${a}`,
+          group: "senders",
           severity: "warn",
           message: `also registered in workspace '${other}' — caps are per-workspace, so the mailbox's real daily budget is doubled`,
           hint: "register each Smartlead mailbox in only one workspace",
@@ -381,6 +400,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
 
   results.push({
     name: "config dir",
+    group: "install",
     severity: existsSync(configDir()) ? "ok" : "warn",
     message: existsSync(configDir()) ? configDir() : `missing: ${configDir()}`,
     ...(existsSync(configDir()) ? {} : { hint: "run: oneshot-gtm init" }),
@@ -388,6 +408,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
 
   results.push({
     name: "founder profile",
+    group: "install",
     severity: cfg.founderName && cfg.productOneLiner ? "ok" : "warn",
     message:
       cfg.founderName && cfg.productOneLiner
@@ -405,6 +426,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
   const llmSrc = secretSource(llmEnv as never);
   results.push({
     name: `llm key (${cfg.llmProvider})`,
+    group: "install",
     severity: llmApiKey(cfg.llmProvider) ? "ok" : "fail",
     message: llmApiKey(cfg.llmProvider) ? `set (${llmSrc ?? "?"})` : `${llmEnv} not set`,
     ...(llmApiKey(cfg.llmProvider) ? {} : { hint: `oneshot-gtm config keys` }),
@@ -415,6 +437,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
   const walletSrc = process.env.AGENT_PRIVATE_KEY ? pkSrc : cdpSrc;
   results.push({
     name: "wallet env",
+    group: "install",
     severity: oneshotEnvReady() ? "ok" : "fail",
     message: oneshotEnvReady()
       ? `${process.env.AGENT_PRIVATE_KEY ? "AGENT_PRIVATE_KEY" : "CDP wallet"} set (${walletSrc ?? "?"})`
@@ -427,12 +450,14 @@ export async function runDoctor(): Promise<CheckResult[]> {
     const sample = ledger.listReceipts({ limit: 1 });
     results.push({
       name: "ledger",
+      group: "install",
       severity: "ok",
       message: `ok, ${sample.length === 0 ? "empty" : "has receipts"} (${join(configDir(), "ledger.sqlite")})`,
     });
   } catch (err) {
     results.push({
       name: "ledger",
+      group: "install",
       severity: "fail",
       message: `error opening ledger: ${(err as Error).message}`,
     });
@@ -487,6 +512,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
       } catch (err) {
         results.push({
           name: "smartlead",
+          group: "senders",
           severity: "warn",
           message: `could not verify Smartlead accounts: ${(err as Error).message}`,
         });
@@ -509,6 +535,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
         if (missing.length > 0 || !account) {
           results.push({
             name,
+            group: "senders",
             severity: "fail",
             message:
               missing.length > 0 ? `missing: ${missing.join(", ")}` : "no refresh token stored",
@@ -518,10 +545,16 @@ export async function runDoctor(): Promise<CheckResult[]> {
         }
         try {
           const { emailAddress } = await getGmailProfile(account);
-          results.push({ name, severity: "ok", message: `sending as ${emailAddress} · ${usage}` });
+          results.push({
+            name,
+            group: "senders",
+            severity: "ok",
+            message: `sending as ${emailAddress} · ${usage}`,
+          });
         } catch (err) {
           results.push({
             name,
+            group: "senders",
             severity: "fail",
             message: `auth check failed: ${(err as Error).message}`,
             hint: GMAIL_AUTH_HINT,
@@ -533,6 +566,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
         if (!smartleadApiKey()) {
           results.push({
             name,
+            group: "senders",
             severity: "fail",
             message: "SMARTLEAD_API_KEY not set — sends from this identity will fail",
             hint: "Store it with: bun run cli -- smartlead connect",
@@ -540,6 +574,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
         } else if (smartleadByAddress && !account) {
           results.push({
             name,
+            group: "senders",
             severity: "fail",
             message: `${address || identity.id} is no longer connected in Smartlead`,
             hint: "Reconnect the mailbox in Smartlead, or remove the identity from the pool.",
@@ -547,12 +582,14 @@ export async function runDoctor(): Promise<CheckResult[]> {
         } else if (account && !account.isSmtpSuccess) {
           results.push({
             name,
+            group: "senders",
             severity: "fail",
             message: `${address} SMTP connection broken in Smartlead — reconnect it there · ${usage}`,
           });
         } else if (account && account.warmupStatus && account.warmupStatus !== "ACTIVE") {
           results.push({
             name,
+            group: "senders",
             severity: "warn",
             message: `sending as ${address} · warmup ${account.warmupStatus.toLowerCase()} in Smartlead · ${usage}`,
           });
@@ -561,12 +598,14 @@ export async function runDoctor(): Promise<CheckResult[]> {
           const warm = account.warmupStatus ? ` · warmup active${rep}` : "";
           results.push({
             name,
+            group: "senders",
             severity: "ok",
             message: `sending as ${address}${warm} · ${usage}`,
           });
         } else {
           results.push({
             name,
+            group: "senders",
             severity: "warn",
             message: `sending as ${address || identity.id} · unverified (Smartlead API unreachable) · ${usage}`,
           });
@@ -578,6 +617,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
         if (!domain) {
           results.push({
             name,
+            group: "senders",
             severity: "warn",
             message: `no sendingDomain — SDK default domain · ${usage}`,
           });
@@ -586,6 +626,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
           // send) but it'll go out cold with no server warmup — lean on the cap.
           results.push({
             name,
+            group: "senders",
             severity: "warn",
             message: `${localpart}${domain} not yet provisioned — auto-provisions on first send and bypasses server warm-up; client cap is the only throttle · ${usage}`,
             hint: "Confirm you control this domain, or pick a warmed one (oneshot-gtm identities list).",
@@ -593,6 +634,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
         } else if (entry && (entry.status === "paused" || entry.status === "removed")) {
           results.push({
             name,
+            group: "senders",
             severity: "warn",
             message: `${localpart}${domain} is ${entry.status} in the pool · ${usage}`,
             hint: `Resume it on /setup (Sender → Provisioned domains) or run: oneshot-gtm domains resume ${domain}`,
@@ -604,6 +646,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
               : "";
           results.push({
             name,
+            group: "senders",
             severity: "ok",
             message: `sending from ${localpart}${domain} · ${usage}${warmth}`,
           });
@@ -613,6 +656,7 @@ export async function runDoctor(): Promise<CheckResult[]> {
   } catch (err) {
     results.push({
       name: "sender identities",
+      group: "senders",
       severity: "warn",
       message: `could not evaluate: ${(err as Error).message}`,
     });
@@ -630,12 +674,14 @@ export async function runDoctor(): Promise<CheckResult[]> {
       const bal = await getBalance();
       results.push({
         name: "wallet balance",
+        group: "spend",
         severity: "ok",
         message: `${bal.balance}`,
       });
     } catch (err) {
       results.push({
         name: "wallet balance",
+        group: "spend",
         severity: "warn",
         message: `could not fetch: ${(err as Error).message}`,
       });

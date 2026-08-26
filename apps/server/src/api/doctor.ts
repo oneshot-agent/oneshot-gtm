@@ -5,7 +5,12 @@ import { jsonResponse } from "../server.ts";
 export async function doctor(req: Request): Promise<Response> {
   const results = await runDoctor();
   const checks: DoctorCheck[] = results.map((r) => {
-    const out: DoctorCheck = { name: r.name, severity: r.severity, message: r.message };
+    const out: DoctorCheck = {
+      name: r.name,
+      group: r.group,
+      severity: r.severity,
+      message: r.message,
+    };
     if (r.hint) out.hint = r.hint;
     return out;
   });

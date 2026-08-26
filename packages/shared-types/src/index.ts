@@ -209,8 +209,13 @@ export type LlmProvider = "openrouter" | "openai" | "anthropic";
 export type WalletMode = "cdp" | "private-key";
 export type KeySource = "env" | "file" | null;
 
+/** Section a doctor check renders under in the dashboard's grouped panel. */
+export type DoctorGroup = "install" | "senders" | "deliverability" | "spend";
+
 export interface DoctorCheck {
   name: string;
+  /** Optional so stale clients tolerate its absence; the engine always sets it. */
+  group?: DoctorGroup;
   severity: "ok" | "warn" | "fail";
   message: string;
   hint?: string;
