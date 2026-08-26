@@ -3,6 +3,7 @@ import {
   getLedger,
   isDraining,
   listInbox,
+  listRepliesFrom,
   loadConfig,
   logEvent,
   replyEmail,
@@ -60,6 +61,29 @@ export async function listInboxRoute(req: Request): Promise<Response> {
     // Truthful truncation signal — the page must never present a clamped
     // window as the entire mailbox.
     hasMore = result.has_more;
+    // Known repliers get a targeted all-time fetch on top of the window: the
+    // ledger knows who replied, and their mail must never be pushed out by
+    // noise or the broad query's 30d recency cutoff. Best-effort in its own
+    // try — a supplement failure must not take down the main list.
+    try {
+      const repliedEmails = ledger.listRepliedProspectEmails();
+      if (repliedEmails.length > 0) {
+        const targeted = await listRepliesFrom(repliedEmails);
+        const seen = new Set(emails.map((e) => e.id));
+        const extra = targeted.filter((e) => !seen.has(e.id));
+        if (extra.length > 0) {
+          emails = [...emails, ...extra].sort(
+            (a, b) => new Date(b.received_at).getTime() - new Date(a.received_at).getTime(),
+          );
+        }
+      }
+    } catch (err) {
+      logEvent(
+        "inbox.replies_from_failed",
+        { message_120: ((err as Error)?.message ?? "").slice(0, 120) },
+        "warn",
+      );
+    }
   } catch (err) {
     logEvent(
       "inbox.list_failed",

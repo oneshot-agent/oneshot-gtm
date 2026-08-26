@@ -898,6 +898,65 @@ export async function listInbox(opts?: {
 }
 
 /**
+ * Targeted fetch of mail FROM the given addresses across every Gmail identity,
+ * searched all-time — so a known replier's mail surfaces even when the broad
+ * newest-N window is full of noise or the reply predates its recency cutoff.
+ * Best-effort: per-source failures are logged and skipped, and the OneShot
+ * inbox is not queried (it can't filter by sender; its small replies-only
+ * mailbox is already covered by the main window). Returns [] in demo mode.
+ */
+export async function listRepliesFrom(
+  addresses: string[],
+  opts?: { limitPerSource?: number; deadlineMs?: number; maxPagesPerSource?: number },
+): Promise<AnnotatedInboxEmail[]> {
+  if (addresses.length === 0 || demoMode()) return [];
+  const deadlineMs = opts?.deadlineMs ?? INBOX_SOURCE_TIMEOUT_MS;
+  const limit = opts?.limitPerSource ?? 50;
+  const maxPages = opts?.maxPagesPerSource ?? 5;
+  const identities = resolveIdentities(loadConfig()).filter((i) => i.provider === "gmail");
+  const results = await parallelMap(identities, 3, async (identity) => {
+    try {
+      const account = gmailAccountFor(identity);
+      if (!account) return null;
+      // Page backwards by `until` so a busy known-replier set isn't clipped at
+      // one window (a from:() query is small; the page cap only bounds a
+      // pathological mailbox). `until` is nudged +1s past the oldest so a
+      // same-second sibling isn't skipped by Gmail's second-granularity
+      // `before:`; the seen-set makes the overlap a no-op.
+      const seen = new Set<string>();
+      const collected: AnnotatedInboxEmail[] = [];
+      let until: string | undefined;
+      for (let page = 0; page < maxPages; page++) {
+        const r = await withDeadline(
+          listGmailReplies({ fromAnyOf: addresses, limit, ...(until ? { until } : {}) }, account),
+          deadlineMs,
+          `replies-from source '${identity.id}'`,
+        );
+        const annotated = annotateInboxResult(r, identity.id);
+        const fresh = annotated.emails.filter((e) => !seen.has(e.id));
+        for (const e of fresh) seen.add(e.id);
+        collected.push(...fresh);
+        if (!r.has_more || fresh.length === 0) break;
+        const oldest = fresh.reduce(
+          (m, e) => (e.received_at < m ? e.received_at : m),
+          fresh[0]!.received_at,
+        );
+        until = new Date(new Date(oldest).getTime() + 1000).toISOString();
+      }
+      return collected;
+    } catch (err) {
+      logEvent(
+        "inbox.replies_from_failed",
+        { source: identity.id, message_120: ((err as Error).message ?? "").slice(0, 120) },
+        "warn",
+      );
+      return null;
+    }
+  });
+  return results.filter((r): r is AnnotatedInboxEmail[] => r != null).flat();
+}
+
+/**
  * Dedupe, sort newest-first and clamp source results to the requested window,
  * with `has_more` true whenever the window is not the whole story — either a
  * source said so itself, or the clamp dropped rows. Shared by BOTH listInbox

@@ -16,6 +16,7 @@ const ledger = {
   recordInboxSent: recordInboxSentMock,
   getInboxThreads: getInboxThreadsMock,
   listAllCadences: () => [],
+  listRepliedProspectEmails: () => [],
   getProspectByEmail: () => null,
   findProspectByEmail: () => knownProspect,
   recordProspectReply: recordProspectReplyMock,
