@@ -48,6 +48,24 @@ export interface EmailIdentity {
   warmup: { startPerDay: number; incrementPerWeek: number } | null;
 }
 
+/** One persisted inbound reply (inbox_replies, v21) — column-shaped row. */
+export interface InboxReplyRecord {
+  /** Provider email id (Gmail message id / OneShot id) — the idempotency key. */
+  id: string;
+  /** Same key as inbox_drafts / inbox_sent (thread_id, else email id). */
+  thread_key: string;
+  prospect_id: number;
+  play_name: string | null;
+  from_email: string;
+  subject: string | null;
+  body: string;
+  received_at: string;
+  source_identity_id: string | null;
+  thread_id: string | null;
+  message_id: string | null;
+  created_at: string;
+}
+
 export interface ProspectRecord {
   id: number;
   name: string | null;

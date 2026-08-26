@@ -21,6 +21,8 @@ export interface ReplyContext {
   dossier: string | null;
   /** Replies the founder already sent in this thread (oldest first). */
   threadSent: Array<{ body: string; sentAt: string }>;
+  /** The prospect's earlier inbound messages (persisted replies, oldest first) — the other half of the exchange. */
+  priorInbound: Array<{ body: string; subject: string | null; receivedAt: string }>;
   /** Paid spend this call actually incurred (cache hits are $0). */
   costUsd: number;
   /** True when a paid research call ran (vs. free/cached context only). */
@@ -37,12 +39,24 @@ export async function gatherReplyContext(input: {
   fromEmail: string;
   prospectId: number | null;
   threadKey: string | null;
+  /** Provider id of the email being answered — excluded from priorInbound (it IS the inbound). */
+  excludeId?: string | null;
 }): Promise<ReplyContext> {
   const ledger = getLedger();
 
   const threadSent = input.threadKey
     ? (ledger.getInboxThreads().get(input.threadKey)?.sent ?? [])
     : [];
+
+  // Tier 0 (free): the prospect's earlier inbound messages from the ledger —
+  // the drafter should see the whole exchange, not just the newest email.
+  const priorInbound =
+    input.prospectId != null
+      ? ledger
+          .listInboxRepliesForProspect(input.prospectId)
+          .filter((r) => r.id !== input.excludeId)
+          .map((r) => ({ body: r.body, subject: r.subject, receivedAt: r.received_at }))
+      : [];
 
   const parts: string[] = [];
   let costUsd = 0;
@@ -99,6 +113,7 @@ export async function gatherReplyContext(input: {
   return {
     dossier: parts.length > 0 ? parts.join("\n\n---\n\n") : null,
     threadSent,
+    priorInbound,
     costUsd,
     researched,
   };

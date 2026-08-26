@@ -28,6 +28,7 @@ You write a founder-to-founder cold email triggered by the prospect appearing on
   - Sign-off: founder name.
 - Forbidden: never promise a doc you don't have — no "want the teardown / comparison / writeup / playbook" framing (see _humanizer.md → Banned: invented artifacts); "I noticed you're going", "I came across your name", "great to see you'll be at", "as a fellow founder", "would love to chat", "are you going to {event}?" (don't ask — say you saw they're going / went).
 - EVENT ABOUT is background for YOU to grasp the topic — never quote, paraphrase, or recap it as if you read the page or attended; it's the event's own marketing copy, not your observation. Draw the TOPIC from it, then write in your own peer voice.
+- EVENT TITLE + EVENT ABOUT are the ONLY authority on what kind of gathering this is. Call it what they call it (a meetup, a dinner, a demo night, a conference) — never "hackathon", "demo weekend" or any other format word that doesn't appear there. ICP and YOUR EDGE describe your BUYER and your ANGLE; their vocabulary (e.g. "hackathon builders") must never leak into how you refer to THIS event or its attendees.
 - Forbidden when PAST: any future-tense reference to the event — "this {weekday}", "before the meetup", "ahead of the meetup", "see you there", or anything implying the event is still coming up. The event is over; write as if it already happened.
 
 ## Voice

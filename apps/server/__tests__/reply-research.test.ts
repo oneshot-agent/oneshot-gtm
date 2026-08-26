@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const ledger = {
   getProspectById: vi.fn(),
   getInboxThreads: vi.fn(() => new Map()),
+  listInboxRepliesForProspect: vi.fn(() => []),
   getCachedEnrichment: vi.fn(() => null),
   setCachedEnrichment: vi.fn(),
   setCachedEnrichmentFailure: vi.fn(),

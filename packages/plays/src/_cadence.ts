@@ -276,6 +276,23 @@ async function walkInboxWindow(
       const from = normalizeEmail(e.from);
       const prospect = ledger.findProspectByEmail(from);
       if (!prospect) continue;
+      // Persist the full inbound (body included) — the ledger, not the mailbox,
+      // is the reply store. Every matched email, not just the first reply per
+      // (prospect, play): later replies on a live thread must be kept too.
+      // Same thread key convention as inboxThreadKey (thread_id, else id).
+      ledger.recordInboxReply({
+        id: e.id,
+        threadKey: e.thread_id ?? e.id,
+        prospectId: prospect.id,
+        playName: ledger.latestSentPlayForProspect(prospect.id, e.subject),
+        fromEmail: from,
+        subject: e.subject,
+        body: e.body ?? "",
+        receivedAt: e.received_at,
+        sourceIdentityId: e.source_identity_id ?? null,
+        threadId: e.thread_id ?? null,
+        messageId: e.message_id ?? null,
+      });
       for (const r of ledger.recordProspectReply(prospect.id, { subject: e.subject })) {
         if (r.newlyReplied) out.cadencesStopped++;
         if (!r.eventRecorded) continue;

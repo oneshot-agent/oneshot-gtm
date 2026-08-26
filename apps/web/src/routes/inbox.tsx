@@ -3,7 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { ChevronDown, ChevronRight, Loader2, RefreshCw, Send, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import type { InboxReplyView } from "@oneshot-gtm/shared-types";
+import type { ConversationView, InboxReplyView } from "@oneshot-gtm/shared-types";
 import { inboxThreadKey } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
@@ -55,18 +55,20 @@ function InboxPage() {
   });
 
   const replies = inbox.data?.replies ?? [];
+  // Ledger-backed threaded view — complete regardless of the live window.
+  const conversations = inbox.data?.conversations ?? [];
   const error = inbox.data?.error;
   // The server fetches a clamped window (newest 200 across all identities).
-  // When listInbox says there was more, every total gets a "+" so the page
-  // never presents the window as the whole mailbox.
+  // When listInbox says there was more, all/no-match totals get a "+" so the
+  // page never presents the window as the whole mailbox. `matched` is exact —
+  // it comes from the ledger, not the window.
   const windowSuffix = inbox.data?.hasMore ? "+" : "";
-  // Filter is purely client-side over the already-fetched list (the endpoint
-  // takes no params). Counts are off the full list so the buttons show the split.
-  const matchedCount = replies.filter((r) => r.matched != null).length;
-  const noMatchCount = replies.length - matchedCount;
+  const noMatchCount = replies.filter((r) => r.matched == null).length;
   const countFor = (key: ReplyMatchFilter): number =>
-    key === "matched" ? matchedCount : key === "no-match" ? noMatchCount : replies.length;
+    key === "matched" ? conversations.length : key === "no-match" ? noMatchCount : replies.length;
+  const suffixFor = (key: ReplyMatchFilter): string => (key === "matched" ? "" : windowSuffix);
   const visible = replies.filter((r) => matchesReplyFilter(r, matchFilter));
+  const showConversations = matchFilter === "matched";
 
   return (
     <div className="-mx-6 -my-6 flex flex-col">
@@ -90,9 +92,11 @@ function InboxPage() {
           <span className="font-mono text-[11px] text-ink-faint">
             {!inbox.data
               ? "…"
-              : matchFilter === "all"
-                ? `${replies.length}${windowSuffix} repl${replies.length === 1 && !windowSuffix ? "y" : "ies"}`
-                : `${visible.length} of ${replies.length}${windowSuffix}`}
+              : showConversations
+                ? `${conversations.length} conversation${conversations.length === 1 ? "" : "s"}`
+                : matchFilter === "all"
+                  ? `${replies.length}${windowSuffix} repl${replies.length === 1 && !windowSuffix ? "y" : "ies"}`
+                  : `${visible.length} of ${replies.length}${windowSuffix}`}
           </span>
           <Button
             variant="ghost"
@@ -131,9 +135,10 @@ function InboxPage() {
             {/* opacity, not a fixed faint color, so the count stays legible on any button fill. */}
             {inbox.data && (
               <span className="ml-1 font-mono opacity-60">
-                {/* Counts are computed over the truncated window — lower bounds when hasMore. */}
+                {/* all/no-match counts come from the truncated window (lower bounds when
+                    hasMore); matched is ledger-truth, so it's exact. */}
                 {countFor(f.key)}
-                {windowSuffix}
+                {suffixFor(f.key)}
               </span>
             )}
           </Button>
@@ -148,19 +153,33 @@ function InboxPage() {
 
       {inbox.isLoading ? (
         Array.from({ length: 5 }, (_, i) => <SkeletonRow key={i} />)
+      ) : showConversations ? (
+        conversations.length === 0 ? (
+          <div className="p-5">
+            <EmptyNote note="No conversations yet. When a prospect writes back, the whole exchange shows here." />
+          </div>
+        ) : (
+          <div>
+            {conversations.map((c, i) => (
+              <ConversationRow
+                key={c.prospectId}
+                conversation={c}
+                zebra={i % 2 === 1}
+                expanded={expanded === `c:${c.prospectId}`}
+                onToggle={() =>
+                  setExpanded(expanded === `c:${c.prospectId}` ? null : `c:${c.prospectId}`)
+                }
+              />
+            ))}
+          </div>
+        )
       ) : replies.length === 0 ? (
         <div className="p-5">
           <EmptyNote note="No replies yet. When a prospect writes back, it shows here." />
         </div>
       ) : visible.length === 0 ? (
         <div className="p-5">
-          <EmptyNote
-            note={
-              matchFilter === "matched"
-                ? "No matched replies — none of the mail here maps to a known prospect yet."
-                : "No unmatched replies — every reply here matches a prospect."
-            }
-          />
+          <EmptyNote note="No unmatched replies — every reply here matches a prospect." />
         </div>
       ) : (
         <div>
@@ -174,6 +193,159 @@ function InboxPage() {
             />
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+/** Best-effort provider from an identity id — for ledger-backed rows the live window didn't attribute. */
+function providerFromIdentity(id: string | null): "gmail" | "oneshot" | "smartlead" | null {
+  if (!id) return null;
+  if (id.startsWith("gmail:") || id === "legacy-gmail") return "gmail";
+  if (id.startsWith("smartlead:")) return "smartlead";
+  return "oneshot";
+}
+
+function ConversationRow({
+  conversation,
+  zebra,
+  expanded,
+  onToggle,
+}: {
+  conversation: ConversationView;
+  zebra: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const c = conversation;
+  const who = c.name ?? c.email;
+  const replyCount = c.items.filter((i) => i.kind === "reply").length;
+  const newest = [...c.items].reverse().find((i) => i.kind === "reply");
+  // The composer answers the newest inbound; sent history renders in the
+  // timeline, so the composer's own history is deliberately empty.
+  const composerReply: InboxReplyView | null = newest
+    ? {
+        id: newest.id,
+        fromEmail: c.email,
+        fromRaw: c.email,
+        subject: newest.subject ?? "",
+        receivedAt: newest.at,
+        body: newest.body,
+        sourceIdentityId: newest.sourceIdentityId,
+        sourceProvider: providerFromIdentity(newest.sourceIdentityId),
+        threadId: newest.threadId,
+        messageId: newest.messageId,
+        matched: {
+          name: c.name,
+          company: c.company,
+          playName: c.playName,
+          cadenceStatus: c.cadenceStatus,
+        },
+        thread: { draftBody: c.draftBody, sent: [] },
+      }
+    : null;
+  return (
+    <>
+      <button
+        type="button"
+        onClick={onToggle}
+        className={cn(
+          "group flex w-full items-center gap-3 border-b border-ink-rule/60 px-6 py-3 text-left",
+          "transition-colors duration-[var(--dur-stamp)] hover:bg-ink-surface/60",
+          zebra && "bg-ink-surface/20",
+        )}
+      >
+        <span className="text-ink-faint">
+          {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-2">
+            <span className="truncate text-[13px] text-ink-cream">
+              <Pii kind="auto">{who}</Pii>
+            </span>
+            {c.company ? (
+              <span className="truncate font-mono text-[11px] text-ink-faint">
+                · <Pii kind="company">{c.company}</Pii>
+              </span>
+            ) : null}
+          </span>
+          <span className="block truncate text-[12px] text-ink-muted">
+            {newest?.subject || `${c.items.length} messages`}
+          </span>
+        </span>
+        <span className="shrink-0 font-mono text-[11px] text-ink-faint">
+          {replyCount} repl{replyCount === 1 ? "y" : "ies"}
+        </span>
+        <Badge tone={statusTone(c.cadenceStatus)}>
+          {c.playName ?? "prospect"}
+          {c.cadenceStatus ? ` · ${c.cadenceStatus}` : ""}
+        </Badge>
+        <span className="shrink-0 font-mono text-[12px] text-ink-muted">
+          {timeAgo(c.lastActivityAt)}
+        </span>
+      </button>
+      {expanded && (
+        <div className="border-b border-ink-rule/60 bg-ink-bg-deep/50 px-6 py-3">
+          <div className="flex flex-col gap-2">
+            {c.items.map((item, i) => (
+              <ConversationItemBlock key={i} item={item} />
+            ))}
+          </div>
+          {composerReply ? (
+            // Keyed by inbound id: when a newer reply arrives mid-compose the
+            // composer remounts for it (the unmount flush saves the old draft
+            // under the OLD thread key) instead of silently sending old text
+            // into the new thread.
+            <ReplyComposer key={composerReply.id} reply={composerReply} />
+          ) : (
+            <div className="mt-3 border-t border-ink-rule/60 pt-3 font-mono text-[11px] text-ink-faint">
+              nothing inbound to answer yet
+            </div>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+function ConversationItemBlock({ item }: { item: ConversationView["items"][number] }) {
+  if (item.kind === "reply") {
+    return (
+      <div className="rounded-sm border border-[color:var(--ink-signal)]/40 bg-ink-surface/40 px-3 py-2">
+        <div className="mb-1 font-mono text-[10px] uppercase tracking-wide text-ink-faint">
+          them · {timeAgo(item.at)}
+          {item.subject ? ` · ${item.subject}` : ""}
+        </div>
+        <pre className="max-h-[280px] overflow-auto whitespace-pre-wrap font-mono text-[12px] leading-[1.6] text-ink-cream">
+          {item.body || "(no body)"}
+        </pre>
+      </div>
+    );
+  }
+  if (item.kind === "sent") {
+    return (
+      <div className="rounded-sm border border-ink-rule/60 bg-ink-surface/30 px-3 py-2">
+        <div className="mb-1 font-mono text-[10px] uppercase tracking-wide text-ink-faint">
+          you replied · {timeAgo(item.at)}
+        </div>
+        <pre className="max-h-[240px] overflow-auto whitespace-pre-wrap font-mono text-[12px] leading-[1.6] text-ink-cream-2">
+          {item.body}
+        </pre>
+      </div>
+    );
+  }
+  return (
+    <div className="rounded-sm border border-ink-rule/40 px-3 py-2 opacity-80">
+      <div className="mb-1 font-mono text-[10px] uppercase tracking-wide text-ink-faint">
+        you · step {item.stepIndex} · {item.playName} · {timeAgo(item.at)}
+        {item.subject ? ` · ${item.subject}` : ""}
+      </div>
+      {item.body ? (
+        <pre className="max-h-[200px] overflow-auto whitespace-pre-wrap font-mono text-[12px] leading-[1.6] text-ink-muted">
+          {item.body}
+        </pre>
+      ) : (
+        <div className="font-mono text-[11px] text-ink-faint">(body not recorded)</div>
       )}
     </div>
   );

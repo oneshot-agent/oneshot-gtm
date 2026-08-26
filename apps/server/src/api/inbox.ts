@@ -12,6 +12,8 @@ import {
 } from "@oneshot-gtm/core";
 import { draftInboxReply } from "@oneshot-gtm/plays";
 import {
+  type ConversationItem,
+  type ConversationView,
   type InboxDraftReplyRequest,
   type InboxDraftReplyResult,
   type InboxReplyView,
@@ -90,30 +92,24 @@ export async function listInboxRoute(req: Request): Promise<Response> {
       { message_120: ((err as Error)?.message ?? "").slice(0, 120) },
       "warn",
     );
-    const out: InboxResult = { replies: [], hasMore: false, error: "couldn't reach the inbox" };
+    // The live window is gone, but the ledger isn't: conversations still
+    // render so a mailbox outage never empties the matched view.
+    let conversations: ConversationView[] = [];
+    try {
+      conversations = buildConversations(ledger, cadenceIndex(ledger), ledger.getInboxThreads());
+    } catch {
+      // degraded twice over — return the error state alone.
+    }
+    const out: InboxResult = {
+      replies: [],
+      conversations,
+      hasMore: false,
+      error: "couldn't reach the inbox",
+    };
     return jsonResponse(out, 200, req);
   }
 
-  // Index cadence-backed prospects by normalized email; prefer a
-  // `replied`/`active` cadence when a prospect has several.
-  const byEmail = new Map<
-    string,
-    { name: string | null; company: string | null; playName: string; status: string }
-  >();
-  for (const c of ledger.listAllCadences()) {
-    if (!c.prospect_email) continue;
-    const key = c.prospect_email.trim().toLowerCase();
-    const existing = byEmail.get(key);
-    const better = !existing || cadenceRank(c.status) > cadenceRank(existing.status);
-    if (better) {
-      byEmail.set(key, {
-        name: c.prospect_name,
-        company: c.prospect_company,
-        playName: c.play_name,
-        status: c.status,
-      });
-    }
-  }
+  const byEmail = cadenceIndex(ledger);
 
   // Provider per identity — the UI shows whether a reply threads (gmail) or
   // is a best-effort OneShot send.
@@ -182,8 +178,166 @@ export async function listInboxRoute(req: Request): Promise<Response> {
     .filter((r) => !selfAddresses.has(r.fromEmail))
     .toSorted((a, b) => (a.receivedAt < b.receivedAt ? 1 : a.receivedAt > b.receivedAt ? -1 : 0));
 
-  const out: InboxResult = { replies: visible, hasMore };
+  // Opportunistic capture: any matched live mail not yet persisted goes into
+  // inbox_replies now (INSERT OR IGNORE — re-sees are no-ops). This is also
+  // how pre-v21 history backfills itself: the targeted known-replier fetch
+  // above flows through here on first load. Best-effort.
+  try {
+    for (const r of visible) {
+      if (!r.matched) continue;
+      const p = ledger.findProspectByEmail(r.fromEmail);
+      if (!p) continue;
+      ledger.recordInboxReply({
+        id: r.id,
+        threadKey: inboxThreadKey({ threadId: r.threadId, id: r.id }),
+        prospectId: p.id,
+        playName: r.matched.playName,
+        fromEmail: r.fromEmail,
+        subject: r.subject,
+        body: r.body,
+        receivedAt: r.receivedAt,
+        sourceIdentityId: r.sourceIdentityId,
+        threadId: r.threadId,
+        messageId: r.messageId,
+      });
+    }
+  } catch (err) {
+    logEvent(
+      "inbox.reply_capture_failed",
+      { message_120: ((err as Error)?.message ?? "").slice(0, 120) },
+      "warn",
+    );
+  }
+
+  // Threaded matched view, built from the ledger (complete regardless of the
+  // live window): outreach steps + persisted inbound replies + manual replies
+  // sent from /inbox, merged per prospect and sorted oldest-first.
+  let conversations: ConversationView[] = [];
+  try {
+    conversations = buildConversations(ledger, byEmail, threads);
+  } catch (err) {
+    logEvent(
+      "inbox.conversations_failed",
+      { message_120: ((err as Error)?.message ?? "").slice(0, 120) },
+      "warn",
+    );
+  }
+
+  const out: InboxResult = { replies: visible, conversations, hasMore };
   return jsonResponse(out, 200, req);
+}
+
+/**
+ * Index cadence-backed prospects by normalized email; prefer a
+ * `replied`/`active` cadence when a prospect has several.
+ */
+function cadenceIndex(
+  ledger: ReturnType<typeof getLedger>,
+): Map<string, { name: string | null; company: string | null; playName: string; status: string }> {
+  const byEmail = new Map<
+    string,
+    { name: string | null; company: string | null; playName: string; status: string }
+  >();
+  for (const c of ledger.listAllCadences()) {
+    if (!c.prospect_email) continue;
+    const key = c.prospect_email.trim().toLowerCase();
+    const existing = byEmail.get(key);
+    const better = !existing || cadenceRank(c.status) > cadenceRank(existing.status);
+    if (better) {
+      byEmail.set(key, {
+        name: c.prospect_name,
+        company: c.prospect_company,
+        playName: c.play_name,
+        status: c.status,
+      });
+    }
+  }
+  return byEmail;
+}
+
+/** Assemble one ConversationView per prospect with at least one persisted reply. */
+function buildConversations(
+  ledger: ReturnType<typeof getLedger>,
+  byEmail: Map<
+    string,
+    { name: string | null; company: string | null; playName: string; status: string }
+  >,
+  threads: ReturnType<ReturnType<typeof getLedger>["getInboxThreads"]>,
+): ConversationView[] {
+  const out: ConversationView[] = [];
+  for (const prospectId of ledger.listProspectIdsWithReplies()) {
+    const prospect = ledger.getProspectById(prospectId);
+    if (!prospect?.email) continue;
+    const inbound = ledger.listInboxRepliesForProspect(prospectId);
+    if (inbound.length === 0) continue;
+
+    const items: ConversationItem[] = [];
+    for (const ev of ledger.listSequenceEventsForProspect(prospectId)) {
+      if (ev.channel !== "email") continue;
+      let subject: string | null = null;
+      let body: string | null = null;
+      try {
+        const meta = JSON.parse(ev.metadata_json ?? "{}") as Record<string, unknown>;
+        if (typeof meta["subject"] === "string") subject = meta["subject"];
+        if (typeof meta["body"] === "string") body = meta["body"];
+      } catch {
+        // pre-v8 / malformed metadata — render the step with no body.
+      }
+      items.push({
+        kind: "outreach",
+        at: sqliteToIso(ev.created_at),
+        subject,
+        body,
+        stepIndex: ev.step_index,
+        playName: ev.play_name,
+      });
+    }
+    const threadKeys = new Set<string>();
+    for (const r of inbound) {
+      threadKeys.add(r.thread_key);
+      items.push({
+        kind: "reply",
+        at: r.received_at,
+        subject: r.subject,
+        body: r.body,
+        id: r.id,
+        threadKey: r.thread_key,
+        sourceIdentityId: r.source_identity_id,
+        threadId: r.thread_id,
+        messageId: r.message_id,
+      });
+    }
+    for (const key of threadKeys) {
+      for (const s of threads.get(key)?.sent ?? []) {
+        items.push({ kind: "sent", at: s.sentAt, subject: null, body: s.body });
+      }
+    }
+    items.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
+
+    const cadence = byEmail.get(prospect.email.trim().toLowerCase());
+    out.push({
+      prospectId,
+      name: prospect.name,
+      company: prospect.company,
+      email: prospect.email,
+      playName: cadence?.playName ?? inbound.at(-1)?.play_name ?? prospect.source,
+      cadenceStatus: cadence?.status ?? null,
+      lastActivityAt: items.at(-1)?.at ?? inbound.at(-1)!.received_at,
+      draftBody: threads.get(inbound.at(-1)!.thread_key)?.draftBody ?? null,
+      items,
+    });
+  }
+  // Most recent activity first — the row order of the matched tab.
+  return out.toSorted((a, b) => (a.lastActivityAt < b.lastActivityAt ? 1 : -1));
+}
+
+/**
+ * sequence_events.created_at is SQLite datetime('now') format ("YYYY-MM-DD
+ * HH:MM:SS", UTC, no 'T'/'Z'); inbox timestamps are ISO. Normalize so the
+ * merged timeline's string sort is chronological.
+ */
+function sqliteToIso(ts: string): string {
+  return ts.includes("T") ? ts : `${ts.replace(" ", "T")}Z`;
 }
 
 /**
@@ -232,6 +386,7 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
   let context: Awaited<ReturnType<typeof gatherReplyContext>> = {
     dossier: null,
     threadSent: [],
+    priorInbound: [],
     costUsd: 0,
     researched: false,
   };
@@ -243,6 +398,7 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
         typeof body.id === "string" && body.id.length > 0
           ? inboxThreadKey({ threadId: body.threadId ?? null, id: body.id })
           : null,
+      excludeId: typeof body.id === "string" ? body.id : null,
     });
   } catch (err) {
     logEvent(
@@ -260,6 +416,7 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
       matched,
       dossier: context.dossier,
       threadSent: context.threadSent,
+      priorInbound: context.priorInbound,
     });
     const out: InboxDraftReplyResult = {
       body: draft.body,

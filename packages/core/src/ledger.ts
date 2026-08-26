@@ -9,6 +9,7 @@ import type {
   BounceRecord,
   CanaryResultRecord,
   GmailPlacement,
+  InboxReplyRecord,
   InterviewRecord,
   ProspectRecord,
   QueueRow,
@@ -459,6 +460,31 @@ export class Ledger {
         value      TEXT NOT NULL,
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
+    `);
+    // v21: inbound replies persisted at detection (body included) — the ledger,
+    // not the mailbox, is the store; a reply must never depend on a live fetch
+    // window. PK is the provider email id so the poll's overlap re-sweeps and
+    // the /inbox route's opportunistic captures are idempotent (mirrors
+    // bounces). Only prospect-matched mail is stored.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS inbox_replies (
+        id                 TEXT PRIMARY KEY,
+        thread_key         TEXT NOT NULL,
+        prospect_id        INTEGER NOT NULL,
+        play_name          TEXT,
+        from_email         TEXT NOT NULL,
+        subject            TEXT,
+        body               TEXT NOT NULL,
+        received_at        TEXT NOT NULL,
+        source_identity_id TEXT,
+        thread_id          TEXT,
+        message_id         TEXT,
+        created_at         TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_inbox_replies_prospect
+        ON inbox_replies(prospect_id, received_at);
+      CREATE INDEX IF NOT EXISTS idx_inbox_replies_thread
+        ON inbox_replies(thread_key, received_at);
     `);
   }
 
@@ -974,6 +1000,71 @@ export class Ledger {
       )
       .all() as Array<{ email: string }>;
     return rows.map((r) => r.email);
+  }
+
+  /**
+   * Persist one inbound reply (full body) keyed by provider email id.
+   * INSERT OR IGNORE — re-sweeps and double captures are no-ops. Returns true
+   * when this call stored a NEW reply.
+   */
+  recordInboxReply(row: {
+    id: string;
+    threadKey: string;
+    prospectId: number;
+    playName?: string | null;
+    fromEmail: string;
+    subject?: string | null;
+    body: string;
+    receivedAt: string;
+    sourceIdentityId?: string | null;
+    threadId?: string | null;
+    messageId?: string | null;
+  }): boolean {
+    const res = this.db
+      .query(
+        `INSERT OR IGNORE INTO inbox_replies
+           (id, thread_key, prospect_id, play_name, from_email, subject, body,
+            received_at, source_identity_id, thread_id, message_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        row.id,
+        row.threadKey,
+        row.prospectId,
+        row.playName ?? null,
+        canonEmail(row.fromEmail),
+        row.subject ?? null,
+        row.body,
+        row.receivedAt,
+        row.sourceIdentityId ?? null,
+        row.threadId ?? null,
+        row.messageId ?? null,
+      );
+    return res.changes > 0;
+  }
+
+  /** All persisted inbound replies for one prospect, oldest first. */
+  listInboxRepliesForProspect(prospectId: number): InboxReplyRecord[] {
+    return this.db
+      .query(`SELECT * FROM inbox_replies WHERE prospect_id = ? ORDER BY received_at ASC, id ASC`)
+      .all(prospectId) as InboxReplyRecord[];
+  }
+
+  /** Provider ids of every persisted reply — dedupe set for capture passes. */
+  listInboxReplyIds(): Set<string> {
+    const rows = this.db.query(`SELECT id FROM inbox_replies`).all() as Array<{ id: string }>;
+    return new Set(rows.map((r) => r.id));
+  }
+
+  /** Prospects that have at least one persisted reply, most recent activity first. */
+  listProspectIdsWithReplies(): number[] {
+    const rows = this.db
+      .query(
+        `SELECT prospect_id, MAX(received_at) AS last FROM inbox_replies
+         GROUP BY prospect_id ORDER BY last DESC`,
+      )
+      .all() as Array<{ prospect_id: number }>;
+    return rows.map((r) => r.prospect_id);
   }
 
   /** Full prospect record by id (PK seek). Avoids loading every prospect to find one. */
@@ -1835,6 +1926,18 @@ export class Ledger {
          ORDER BY step_index ASC, id ASC`,
       )
       .all(prospectId, playName) as SequenceEventRecord[];
+  }
+
+  /** Every sent step for a prospect across ALL plays — the outreach half of a conversation timeline. */
+  listSequenceEventsForProspect(prospectId: number): SequenceEventRecord[] {
+    return this.db
+      .query(
+        `SELECT * FROM sequence_events
+         WHERE prospect_id = ?
+           AND status IN ('sent','delivered','replied')
+         ORDER BY created_at ASC, id ASC`,
+      )
+      .all(prospectId) as SequenceEventRecord[];
   }
 
   /**
