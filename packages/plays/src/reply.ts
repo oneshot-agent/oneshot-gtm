@@ -48,6 +48,8 @@ export interface DraftInboxReplyInput {
   dossier?: string | null;
   /** Replies the founder already sent in this thread (oldest first) — round 2+ must not repeat round 1. */
   threadSent?: Array<{ body: string; sentAt: string }>;
+  /** The prospect's earlier inbound messages (oldest first) — the other half of the exchange. */
+  priorInbound?: Array<{ body: string; subject: string | null; receivedAt: string }>;
 }
 
 /**
@@ -89,6 +91,19 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<{ bo
         ].join("\n")
       : null;
 
+  // The other half of the exchange: what THEY said before this message, so the
+  // draft carries the conversation instead of treating each email as the first.
+  const priorInboundBlock =
+    input.priorInbound && input.priorInbound.length > 0
+      ? [
+          "THEIR EARLIER MESSAGES (what the prospect already told you — don't re-ask any of it):",
+          ...input.priorInbound.flatMap((m) => [
+            `--- received ${m.receivedAt}${m.subject ? ` · ${m.subject}` : ""} ---`,
+            stripQuotedChain(m.body).slice(0, 1000),
+          ]),
+        ].join("\n")
+      : null;
+
   const proofBlock = socialProofBlock();
   const firstName = firstNameFrom(input.matched?.name ?? null);
   const user = [
@@ -106,6 +121,7 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<{ bo
       ? ["", `SENDER DOSSIER (research about who wrote this):\n${input.dossier.trim()}`]
       : []),
     ...(priorBlock ? ["", priorBlock] : []),
+    ...(priorInboundBlock ? ["", priorInboundBlock] : []),
     ...(threadBlock ? ["", threadBlock] : []),
     "",
     "INBOUND EMAIL (the message you are answering):",
