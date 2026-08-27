@@ -768,6 +768,8 @@ async function listOneShotInbox(opts?: {
 export type AnnotatedInboxEmail = InboxEmail & {
   message_id?: string;
   source_identity_id?: string;
+  /** Header-level autoresponder verdict (Gmail sources only — RFC 3834 et al.). */
+  auto_submitted?: boolean;
 };
 
 export interface AnnotatedInboxListResult extends InboxListResult {

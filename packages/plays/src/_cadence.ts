@@ -1,4 +1,5 @@
 import {
+  classifyReply,
   getLedger,
   hasAnySendCapacity,
   isSendDeferred,
@@ -190,6 +191,8 @@ export interface ReplyPollResult {
   repliesDetected: number;
   /** Subset of the above that also stopped a still-active cadence. */
   cadencesStopped: number;
+  /** Matched inbound mail classified as non-human (OOO / dead mailbox / unsubscribe) — stored, never counted as a reply. */
+  autoRepliesSkipped: number;
   details: Array<{ prospectEmail: string; playName: string; subject: string }>;
 }
 
@@ -276,6 +279,15 @@ async function walkInboxWindow(
       const from = normalizeEmail(e.from);
       const prospect = ledger.findProspectByEmail(from);
       if (!prospect) continue;
+      // Autoresponders (OOO, "no longer here") and unsubscribe requests are
+      // NOT replies: they must not stop cadences as engagement, move the reply
+      // metric, or tag RoCS. Classified here — the one choke point every
+      // detection path funnels through.
+      const kind = classifyReply({
+        subject: e.subject,
+        body: e.body,
+        autoSubmitted: e.auto_submitted,
+      });
       // Persist the full inbound (body included) — the ledger, not the mailbox,
       // is the reply store. Every matched email, not just the first reply per
       // (prospect, play): later replies on a live thread must be kept too.
@@ -292,7 +304,32 @@ async function walkInboxWindow(
         sourceIdentityId: e.source_identity_id ?? null,
         threadId: e.thread_id ?? null,
         messageId: e.message_id ?? null,
+        kind,
       });
+      if (kind !== "human") {
+        out.autoRepliesSkipped++;
+        // A dead mailbox ("retired", "no longer at company") is a human-layer
+        // hard bounce; an unsubscribe is a do-not-contact. Either way active
+        // cadences stop — but with an honest status, no replied event, and no
+        // bounces-table row (that would poison identity reputation stats).
+        if (kind === "auto_permanent" || kind === "unsubscribe") {
+          const status = kind === "unsubscribe" ? "unsubscribed" : "bounced";
+          for (const cad of ledger.listCadencesForProspect(prospect.id)) {
+            if (cad.status !== "active" && cad.status !== "paused") continue;
+            ledger.recordSequenceEvent({
+              prospectId: prospect.id,
+              playName: cad.play_name,
+              stepIndex: cad.current_step,
+              channel: "email",
+              status,
+              metadata: { reason: kind === "unsubscribe" ? "unsubscribe" : "auto-reply-permanent" },
+            });
+            ledger.setCadenceStatus({ prospectId: prospect.id, playName: cad.play_name, status });
+            out.cadencesStopped++;
+          }
+        }
+        continue;
+      }
       for (const r of ledger.recordProspectReply(prospect.id, { subject: e.subject })) {
         if (r.newlyReplied) out.cadencesStopped++;
         if (!r.eventRecorded) continue;
@@ -334,7 +371,13 @@ export async function pollInboxReplies(opts?: {
   maxPages?: number;
 }): Promise<ReplyPollResult> {
   const ledger = getLedger();
-  const out: ReplyPollResult = { polled: 0, repliesDetected: 0, cadencesStopped: 0, details: [] };
+  const out: ReplyPollResult = {
+    polled: 0,
+    repliesDetected: 0,
+    cadencesStopped: 0,
+    autoRepliesSkipped: 0,
+    details: [],
+  };
   const pageSize = opts?.pageSize ?? REPLY_POLL_LIMIT;
   const maxPages = opts?.maxPages ?? REPLY_POLL_MAX_PAGES;
   const seen = new Set<string>();

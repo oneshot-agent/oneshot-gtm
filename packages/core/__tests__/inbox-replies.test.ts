@@ -92,3 +92,49 @@ describe("inbox_replies (v21)", () => {
     );
   });
 });
+
+describe("inbox_replies.kind (v23)", () => {
+  it("stores the classification and reads it back", () => {
+    record({ kind: "auto" });
+    expect(ledger.listInboxRepliesForProspect(1)[0]!.kind).toBe("auto");
+  });
+
+  it("defaults to NULL (pre-classifier rows read as human via coalesce)", () => {
+    record();
+    expect(ledger.listInboxRepliesForProspect(1)[0]!.kind).toBeNull();
+  });
+
+  it("migrates the column onto a pre-v23 ledger without losing rows", () => {
+    // Simulate a pre-v23 install: rebuild inbox_replies without `kind`, insert
+    // a legacy row, then re-run migrations by reopening the ledger.
+    const db = (ledger as unknown as { db: { exec(s: string): void } }).db;
+    db.exec("DROP TABLE inbox_replies");
+    db.exec(`
+      CREATE TABLE inbox_replies (
+        id                 TEXT PRIMARY KEY,
+        thread_key         TEXT NOT NULL,
+        prospect_id        INTEGER NOT NULL,
+        play_name          TEXT,
+        from_email         TEXT NOT NULL,
+        subject            TEXT,
+        body               TEXT NOT NULL,
+        received_at        TEXT NOT NULL,
+        source_identity_id TEXT,
+        thread_id          TEXT,
+        message_id         TEXT,
+        created_at         TEXT NOT NULL DEFAULT (datetime('now'))
+      )`);
+    db.exec(`
+      INSERT INTO inbox_replies (id, thread_key, prospect_id, from_email, body, received_at)
+      VALUES ('legacy-1', 't1', 7, 'old@prospect.example', 'hi', '2026-06-01T00:00:00.000Z')`);
+    ledger.close();
+
+    ledger = new Ledger(dbPath); // migrate() adds the column
+    const rows = ledger.listInboxRepliesForProspect(7);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.kind).toBeNull();
+    // And new writes can set it.
+    record({ id: "msg-new", kind: "unsubscribe" });
+    expect(ledger.listInboxRepliesForProspect(1)[0]!.kind).toBe("unsubscribe");
+  });
+});

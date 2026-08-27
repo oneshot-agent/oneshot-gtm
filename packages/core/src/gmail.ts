@@ -267,6 +267,18 @@ function header(msg: GmailMessageMeta, name: string): string {
   return h?.value ?? "";
 }
 
+/**
+ * Header-level autoresponder verdict (RFC 3834 and the de-facto vendor
+ * headers). The message is already fetched with format=full, so this costs
+ * nothing — and it catches OOO mail whose subject/body give no textual hint.
+ */
+function isAutoSubmitted(msg: GmailMessageMeta): boolean {
+  const auto = header(msg, "Auto-Submitted").trim().toLowerCase();
+  if (auto && auto !== "no") return true;
+  if (header(msg, "X-Autoreply") || header(msg, "X-Autorespond")) return true;
+  return header(msg, "Precedence").trim().toLowerCase() === "auto_reply";
+}
+
 /** DFS for the first part of `mimeType` that carries inline data, decoded. */
 function extractByMime(part: GmailPayloadPart | undefined, mimeType: string): string {
   if (!part) return "";
@@ -348,7 +360,7 @@ export async function listGmailReplies(
   const emails = await parallelMap(
     ids,
     4,
-    async (id): Promise<InboxEmail & { message_id?: string }> => {
+    async (id): Promise<InboxEmail & { message_id?: string; auto_submitted?: boolean }> => {
       const msg = await gmailJson<GmailMessageMeta>(
         `/messages/${id}?format=full`,
         undefined,
@@ -356,6 +368,7 @@ export async function listGmailReplies(
       );
       // RFC 2822 Message-ID — needed as In-Reply-To/References on a threaded reply.
       const messageId = header(msg, "Message-ID");
+      const autoSubmitted = isAutoSubmitted(msg);
       return {
         id: msg.id,
         from: header(msg, "From"),
@@ -364,6 +377,7 @@ export async function listGmailReplies(
         thread_id: msg.threadId,
         body: extractBody(msg),
         ...(messageId ? { message_id: messageId } : {}),
+        ...(autoSubmitted ? { auto_submitted: true } : {}),
       };
     },
   );

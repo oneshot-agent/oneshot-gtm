@@ -360,6 +360,7 @@ describe("inbox route — research-grounded drafting", () => {
       prospectId: null,
       threadKey: "t1",
       excludeId: "e1",
+      skipPaid: false, // a human reply — the paid tier stays available
     });
     expect(draftInboxReplyMock).toHaveBeenCalledWith(
       expect.objectContaining({

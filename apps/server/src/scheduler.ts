@@ -71,8 +71,11 @@ export function startScheduler(): SchedulerHandle {
       // Reply detection is isolated: an inbox outage must not skip trigger
       // scheduling (or vice-versa), and it never sends, so it can't double-spend.
       let repliesDetected = 0;
+      let autoRepliesSkipped = 0;
       try {
-        repliesDetected = (await pollInboxReplies()).repliesDetected;
+        const replyPoll = await pollInboxReplies();
+        repliesDetected = replyPoll.repliesDetected;
+        autoRepliesSkipped = replyPoll.autoRepliesSkipped;
       } catch (err) {
         logEvent(
           "scheduler.reply_poll.failed",
@@ -111,6 +114,7 @@ export function startScheduler(): SchedulerHandle {
       logEvent("scheduler.tick.done", {
         fired,
         repliesDetected,
+        autoRepliesSkipped,
         bouncesRecorded,
         source: "server",
       });

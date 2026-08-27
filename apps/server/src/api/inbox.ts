@@ -1,4 +1,5 @@
 import {
+  classifyReply,
   getGmailProfile,
   getLedger,
   isDraining,
@@ -9,6 +10,7 @@ import {
   replyEmail,
   resolveIdentities,
   trackSend,
+  type ReplyKind,
 } from "@oneshot-gtm/core";
 import { draftInboxReply } from "@oneshot-gtm/plays";
 import {
@@ -145,6 +147,7 @@ export async function listInboxRoute(req: Request): Promise<Response> {
       subject: e.subject,
       receivedAt: e.received_at,
       body: e.body ?? "",
+      kind: classifyReply({ subject: e.subject, body: e.body, autoSubmitted: e.auto_submitted }),
       sourceIdentityId: e.source_identity_id ?? null,
       sourceProvider: e.source_identity_id
         ? (providerById.get(e.source_identity_id) ?? null)
@@ -199,6 +202,7 @@ export async function listInboxRoute(req: Request): Promise<Response> {
         sourceIdentityId: r.sourceIdentityId,
         threadId: r.threadId,
         messageId: r.messageId,
+        kind: r.kind,
       });
     }
   } catch (err) {
@@ -305,6 +309,7 @@ function buildConversations(
         sourceIdentityId: r.source_identity_id,
         threadId: r.thread_id,
         messageId: r.message_id,
+        replyKind: (r.kind as ReplyKind | null) ?? "human",
       });
     }
     for (const key of threadKeys) {
@@ -399,6 +404,9 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
           ? inboxThreadKey({ threadId: body.threadId ?? null, id: body.id })
           : null,
       excludeId: typeof body.id === "string" ? body.id : null,
+      // Never pay to research an autoresponder or an unsubscribe — there is
+      // no human on the other end to ground a draft in.
+      skipPaid: classifyReply({ subject, body: inboundBody }) !== "human",
     });
   } catch (err) {
     logEvent(
