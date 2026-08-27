@@ -1,14 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowRight } from "lucide-react";
+import { createFileRoute } from "@tanstack/react-router";
 import { api } from "../api/client.ts";
 import { CurrentRunsStrip } from "../components/home/CurrentRunsStrip.tsx";
+import { HealthCard } from "../components/home/HealthCard.tsx";
 import { NextStep } from "../components/home/NextStep.tsx";
 import { SchedulerStrip } from "../components/home/SchedulerStrip.tsx";
 import { SignalFeed } from "../components/home/SignalFeed.tsx";
-import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
-import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
-import { cn, formatUsd, timeAgo } from "../lib/cn.ts";
+import { formatUsd } from "../lib/cn.ts";
 
 export const Route = createFileRoute("/")({
   component: HomePage,
@@ -87,7 +85,7 @@ function HomePage() {
         <LedgerNumber
           label="Spend · 7d"
           value={d ? formatUsd(d.spendUsd7d) : undefined}
-          caption={d ? `${d.callsLast7d} agent calls` : undefined}
+          caption={d ? `${d.callsLast7d} agent calls · ${formatUsd(d.spendUsd30d)} 30d` : undefined}
           tone="spend"
         />
         <LedgerNumber
@@ -96,6 +94,9 @@ function HomePage() {
           caption="in flight, awaiting reply"
         />
       </section>
+
+      {/* Install health — one line, expandable to the full grouped doctor panel */}
+      <HealthCard />
 
       {/* In-flight /run dispatches — Resume link back to /run/<play>?runId=N */}
       <CurrentRunsStrip runs={home.data?.currentRuns ?? []} />
@@ -109,90 +110,6 @@ function HomePage() {
       />
 
       <SchedulerStrip />
-
-      <section className="flex flex-col border-b border-ink-rule">
-        <div className="flex items-baseline justify-between px-6 pb-2 pt-5">
-          <div className="ln-eyebrow">Recent receipts</div>
-          <Link
-            to="/receipts"
-            className="flex items-center gap-1 font-mono text-[11px] text-ink-muted transition-colors hover:text-ink-cream"
-          >
-            all <ArrowRight size={10} />
-          </Link>
-        </div>
-        {recent.isLoading ? (
-          <div>
-            {Array.from({ length: 5 }, (_, i) => (
-              <SkeletonRow key={i} />
-            ))}
-          </div>
-        ) : recent.data?.receipts.length === 0 ? (
-          <div className="px-6 pb-6">
-            <EmptyNote
-              note="No receipts yet. Every call the agent makes leaves one — a short ledger is an honest ledger."
-              cli="oneshot-gtm motion show-hn"
-            />
-          </div>
-        ) : (
-          <table className="w-full text-[13px]">
-            <thead>
-              <tr className="text-[10px] uppercase tracking-[0.14em] text-ink-faint">
-                <th className="px-6 py-2 text-left font-medium">id</th>
-                <th className="py-2 text-left font-medium">play</th>
-                <th className="py-2 text-left font-medium">type</th>
-                <th className="py-2 text-right font-medium">cost</th>
-                <th className="px-6 py-2 text-right font-medium">when</th>
-              </tr>
-            </thead>
-            <tbody>
-              {recent.data?.receipts.map((r, i) => (
-                <tr
-                  key={r.id}
-                  className={cn(
-                    "border-t border-ink-rule/60 transition-colors duration-[var(--dur-stamp)]",
-                    "hover:bg-ink-surface/50",
-                    i % 2 === 1 && "bg-ink-surface/20",
-                  )}
-                >
-                  <td className="px-6 py-2 font-mono text-[11px] text-ink-faint">#{r.id}</td>
-                  <td className="py-2 text-ink-cream">{r.playName}</td>
-                  <td className="py-2 font-mono text-[12px] text-ink-muted">{r.callType}</td>
-                  <td className="py-2 text-right font-mono text-ink-cream">
-                    {r.costUsd != null ? (
-                      formatUsd(r.costUsd)
-                    ) : (
-                      <span className="text-ink-faint">—</span>
-                    )}
-                  </td>
-                  <td className="px-6 py-2 text-right font-mono text-[12px] text-ink-faint">
-                    {timeAgo(r.createdAt)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </section>
-
-      <section className="grid grid-cols-1 gap-8 px-6 py-8 lg:grid-cols-[1fr_280px]">
-        <div className="max-w-[58ch]">
-          <div className="ln-eyebrow">Editor's note</div>
-          <p className="ln-prose mt-2 max-w-[58ch] text-[14.5px] text-ink-cream-2">
-            Spend is the cost of proof. Every send came with a signed receipt; every receipt keeps
-            you honest with yourself. A short ledger is an honest ledger — one send always beats
-            zero.
-          </p>
-        </div>
-        <div className="border-l border-ink-rule pl-6">
-          <div className="ln-eyebrow">Spend · 30d</div>
-          <div className="mt-1 text-ink-cream ln-numeral" style={{ fontSize: 36, lineHeight: 1 }}>
-            {d ? formatUsd(d.spendUsd30d) : <span className="text-ink-faint">$—</span>}
-          </div>
-          <div className="mt-2 font-mono text-[11px] text-ink-muted">
-            {d ? `${d.callsLast7d} calls this week` : "…"}
-          </div>
-        </div>
-      </section>
     </div>
   );
 }

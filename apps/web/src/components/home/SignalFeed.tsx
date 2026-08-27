@@ -44,7 +44,17 @@ export function SignalFeed({
     <section className="flex flex-col border-b border-ink-rule">
       <div className="flex items-baseline justify-between px-6 pb-2 pt-5">
         <div className="ln-eyebrow">Signal feed</div>
-        <div className="font-mono text-[11px] text-ink-faint">newest first · refresh · 30s</div>
+        <div className="flex items-baseline gap-4">
+          <div className="hidden font-mono text-[11px] text-ink-faint sm:block">
+            newest first · refresh · 30s
+          </div>
+          <Link
+            to="/receipts"
+            className="flex items-center gap-1 font-mono text-[11px] text-ink-muted transition-colors hover:text-ink-cream"
+          >
+            all <ArrowRight size={10} />
+          </Link>
+        </div>
       </div>
       {loading ? (
         <div className="px-6 pb-5 font-mono text-[11.5px] text-ink-faint">…</div>

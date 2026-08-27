@@ -11,7 +11,6 @@ import {
 } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
-import { DoctorPanel } from "../components/setup/DoctorPanel.tsx";
 import { Button } from "../components/primitives/Button.tsx";
 import { Checkbox, Field, Input, Select, Textarea } from "../components/primitives/Field.tsx";
 
@@ -49,7 +48,6 @@ const X_OAUTH_KEYS = ["X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_S
 function SetupPage() {
   const qc = useQueryClient();
   const status = useQuery({ queryKey: ["setup"], queryFn: api.setupStatus });
-  const doctor = useQuery({ queryKey: ["doctor"], queryFn: api.doctor });
   const triggers = useQuery({ queryKey: ["triggers"], queryFn: api.triggers });
 
   const [founderName, setFounderName] = useState("");
@@ -1280,17 +1278,6 @@ function SetupPage() {
           </Button>
         </div>
       </form>
-
-      <LedgerSection
-        eyebrow="— · Doctor"
-        lede="Health of the local install. Run `oneshot-gtm doctor` for the CLI view."
-      >
-        <DoctorPanel
-          checks={doctor.data?.checks}
-          isLoading={doctor.isLoading}
-          error={doctor.isError ? "unreachable" : null}
-        />
-      </LedgerSection>
     </div>
   );
 }
