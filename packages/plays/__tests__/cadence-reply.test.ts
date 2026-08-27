@@ -6,7 +6,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // emailing someone who already replied.
 
 const calls = { sendEmail: 0 };
-let inboxEmails: Array<{ id?: string; from: string; subject: string; received_at?: string }> = [];
+let inboxEmails: Array<{
+  id?: string;
+  from: string;
+  subject: string;
+  received_at?: string;
+  body?: string;
+  auto_submitted?: boolean;
+}> = [];
 let lookupArgs: string[] = [];
 let listInboxArgs: Array<Record<string, unknown>> = [];
 let failedSources: string[] = [];
@@ -15,7 +22,9 @@ let repliedSteps: Array<{ prospectId: number; playName: string }> = [];
 // The play behind the prospect's latest sent step — the no-cadence-row fallback.
 let latestSentPlay: string | null = null;
 // v21 inbox_replies rows captured by the poll (id-keyed, INSERT OR IGNORE semantics).
-let persistedReplies: Array<{ id: string }> = [];
+let persistedReplies: Array<{ id: string; kind?: string | null }> = [];
+// Audit-trail sequence events recorded outside recordProspectReply (bounced/unsubscribed).
+let seqEvents: Array<{ prospectId: number; playName: string; status: string }> = [];
 // Persisted poll_state rows (watermark + backlog), as the real ledger holds them.
 let pollState: Record<string, string> = {};
 const watermarkOf = () => pollState["inbox_replies"] ?? null;
@@ -86,6 +95,13 @@ vi.mock("@oneshot-gtm/core", async () => {
         if (isNew) persistedReplies.push(row as (typeof persistedReplies)[number]);
         return isNew;
       },
+      recordSequenceEvent: (input: { prospectId: number; playName: string; status: string }) => {
+        seqEvents.push({
+          prospectId: input.prospectId,
+          playName: input.playName,
+          status: input.status,
+        });
+      },
       setCadenceStatus: ({
         prospectId,
         playName,
@@ -143,6 +159,7 @@ beforeEach(() => {
   inboxEmails = [];
   repliedSteps = [];
   persistedReplies = [];
+  seqEvents = [];
   // The fixture cadence is also the latest play that emailed the prospect.
   latestSentPlay = "stack-consolidation";
   pollState = {};
@@ -394,5 +411,105 @@ describe("pollInboxReplies — watermark", () => {
     const second = await pollInboxReplies({ pageSize: 2, maxPages: 2 });
     expect(second.repliesDetected).toBe(1);
     expect(pollState["inbox_replies_backlog"]).toBe("");
+  });
+});
+
+describe("pollInboxReplies — auto-reply classification (v23)", () => {
+  it("an OOO autoresponder is stored but is NOT a reply: cadence stays active", async () => {
+    inboxEmails = [
+      {
+        from: "Sophia Stein <sophia@agenticarchitect.ai>",
+        subject: "Automatic reply: your agent stack",
+      },
+    ];
+
+    const result = await pollInboxReplies();
+
+    expect(result.repliesDetected).toBe(0);
+    expect(result.autoRepliesSkipped).toBe(1);
+    expect(result.cadencesStopped).toBe(0);
+    expect(rows[0]?.status).toBe("active"); // follow-ups continue
+    expect(repliedSteps).toHaveLength(0); // no sequence_events flip → metric untouched
+    expect(persistedReplies).toHaveLength(1); // conversation history stays complete
+    expect(persistedReplies[0]?.kind).toBe("auto");
+  });
+
+  it("a dead-mailbox autoresponder stops the cadence as bounced, not replied", async () => {
+    inboxEmails = [
+      {
+        from: "sophia@agenticarchitect.ai",
+        subject: "out of office Re: your agent stack",
+        // The real 2026-08-27 payload shape: retired, address dead.
+        body: "Retired October 2025. No longer using this email.",
+        received_at: "2026-08-27T16:07:46.000Z",
+      },
+    ];
+
+    const result = await pollInboxReplies();
+
+    expect(result.repliesDetected).toBe(0);
+    expect(result.autoRepliesSkipped).toBe(1);
+    expect(result.cadencesStopped).toBe(1);
+    expect(rows[0]?.status).toBe("bounced");
+    expect(repliedSteps).toHaveLength(0);
+    expect(seqEvents).toEqual([
+      { prospectId: 1, playName: "stack-consolidation", status: "bounced" },
+    ]);
+    expect(persistedReplies[0]?.kind).toBe("auto_permanent");
+  });
+
+  it("an unsubscribe request stops the cadence as unsubscribed", async () => {
+    inboxEmails = [
+      {
+        from: "sophia@agenticarchitect.ai",
+        subject: "Re: your agent stack",
+        body: "Please remove me from your list.",
+      },
+    ];
+
+    const result = await pollInboxReplies();
+
+    expect(result.repliesDetected).toBe(0);
+    expect(result.autoRepliesSkipped).toBe(1);
+    expect(result.cadencesStopped).toBe(1);
+    expect(rows[0]?.status).toBe("unsubscribed");
+    expect(seqEvents).toEqual([
+      { prospectId: 1, playName: "stack-consolidation", status: "unsubscribed" },
+    ]);
+    expect(persistedReplies[0]?.kind).toBe("unsubscribe");
+  });
+
+  it("a terminal cadence is not resurrected or re-stopped by a dead-mailbox notice", async () => {
+    rows[0]!.status = "completed";
+    inboxEmails = [
+      {
+        from: "sophia@agenticarchitect.ai",
+        subject: "Automatic reply: gone",
+        body: "I have retired and am no longer using this email.",
+      },
+    ];
+
+    const result = await pollInboxReplies();
+
+    expect(result.cadencesStopped).toBe(0);
+    expect(rows[0]?.status).toBe("completed");
+    expect(seqEvents).toHaveLength(0);
+  });
+
+  it("a Gmail header verdict (auto_submitted) suppresses the reply even with a human-looking body", async () => {
+    inboxEmails = [
+      {
+        from: "sophia@agenticarchitect.ai",
+        subject: "Re: your agent stack",
+        body: "Thanks for your email, I will get back to you.",
+        auto_submitted: true,
+      },
+    ];
+
+    const result = await pollInboxReplies();
+
+    expect(result.repliesDetected).toBe(0);
+    expect(result.autoRepliesSkipped).toBe(1);
+    expect(rows[0]?.status).toBe("active");
   });
 });

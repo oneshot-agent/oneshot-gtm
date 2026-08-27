@@ -41,6 +41,8 @@ export async function gatherReplyContext(input: {
   threadKey: string | null;
   /** Provider id of the email being answered — excluded from priorInbound (it IS the inbound). */
   excludeId?: string | null;
+  /** Skip the paid tier entirely (enrich + site read) — set for non-human inbound (OOO/unsubscribe). */
+  skipPaid?: boolean;
 }): Promise<ReplyContext> {
   const ledger = getLedger();
 
@@ -70,7 +72,7 @@ export async function gatherReplyContext(input: {
   } else {
     // Tier 2: paid research, bounded and gated.
     const domain = emailDomain(input.fromEmail)?.toLowerCase() ?? null;
-    if (!isDudDomain(domain)) {
+    if (!input.skipPaid && !isDudDomain(domain)) {
       try {
         const enr = await safeEnrich(
           { email: input.fromEmail },

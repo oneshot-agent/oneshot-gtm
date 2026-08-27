@@ -226,6 +226,7 @@ function ConversationRow({
   const composerReply: InboxReplyView | null = newest
     ? {
         id: newest.id,
+        kind: newest.replyKind,
         fromEmail: c.email,
         fromRaw: c.email,
         subject: newest.subject ?? "",
@@ -308,6 +309,22 @@ function ConversationRow({
   );
 }
 
+/** Badge copy + tone for a non-human inbound. Null for human (no badge). */
+function replyKindBadge(
+  kind: string | null | undefined,
+): { label: string; tone: "neutral" | "blocked" } | null {
+  switch (kind) {
+    case "auto":
+      return { label: "auto-reply", tone: "neutral" };
+    case "auto_permanent":
+      return { label: "dead mailbox", tone: "blocked" };
+    case "unsubscribe":
+      return { label: "unsubscribe", tone: "blocked" };
+    default:
+      return null;
+  }
+}
+
 function ConversationItemBlock({ item }: { item: ConversationView["items"][number] }) {
   if (item.kind === "reply") {
     return (
@@ -315,6 +332,7 @@ function ConversationItemBlock({ item }: { item: ConversationView["items"][numbe
         <div className="mb-1 font-mono text-[10px] uppercase tracking-wide text-ink-faint">
           them · {timeAgo(item.at)}
           {item.subject ? ` · ${item.subject}` : ""}
+          {replyKindBadge(item.replyKind) ? ` · ${replyKindBadge(item.replyKind)!.label}` : ""}
         </div>
         <pre className="max-h-[280px] overflow-auto whitespace-pre-wrap font-mono text-[12px] leading-[1.6] text-ink-cream">
           {item.body || "(no body)"}
@@ -399,6 +417,10 @@ function ReplyRow({
         ) : (
           <Badge tone="neutral">no match</Badge>
         )}
+        {(() => {
+          const kb = replyKindBadge(reply.kind);
+          return kb ? <Badge tone={kb.tone}>{kb.label}</Badge> : null;
+        })()}
         <span className="shrink-0 font-mono text-[12px] text-ink-muted">
           {timeAgo(reply.receivedAt)}
         </span>

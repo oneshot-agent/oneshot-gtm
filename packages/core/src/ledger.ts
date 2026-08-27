@@ -3,6 +3,7 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { configDir } from "./config.ts";
 import { getSharedDb } from "./shared-db.ts";
+import type { ReplyKind } from "./reply-classify.ts";
 import type {
   AuthVerdict,
   BounceKind,
@@ -486,6 +487,15 @@ export class Ledger {
       CREATE INDEX IF NOT EXISTS idx_inbox_replies_thread
         ON inbox_replies(thread_key, received_at);
     `);
+    // v23: reply classification ('human' | 'auto' | 'auto_permanent' |
+    // 'unsubscribe', see reply-classify.ts). NULL = row predates the
+    // classifier and reads as 'human' everywhere (coalesce). Must run after
+    // the CREATE TABLE above — ALTER on a fresh install needs the table.
+    this.addColumnIfMissing("inbox_replies", "kind", "TEXT");
+    // contactSuppressionFor, on the send pre-flight path — must be an index seek.
+    this.db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_inbox_replies_from_kind ON inbox_replies(from_email, kind)`,
+    );
     // v22: tweets the x-reposters finder already paid to harvest. Both X data
     // providers bill per resource RETURNED, and the finder's freshness window
     // (48h) is wider than its daily cadence — without this ledger every fresh
@@ -685,7 +695,7 @@ export class Ledger {
   setCadenceStatus(input: {
     prospectId: number;
     playName: string;
-    status: "active" | "replied" | "breakup" | "completed" | "bounced" | "off-icp";
+    status: "active" | "replied" | "breakup" | "completed" | "bounced" | "off-icp" | "unsubscribed";
   }): void {
     // Non-active terminal states clear the persisted draft AND any send
     // marker — a replied / breakup / completed / bounced cadence shouldn't have
@@ -1029,13 +1039,14 @@ export class Ledger {
     sourceIdentityId?: string | null;
     threadId?: string | null;
     messageId?: string | null;
+    kind?: ReplyKind | null;
   }): boolean {
     const res = this.db
       .query(
         `INSERT OR IGNORE INTO inbox_replies
            (id, thread_key, prospect_id, play_name, from_email, subject, body,
-            received_at, source_identity_id, thread_id, message_id)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            received_at, source_identity_id, thread_id, message_id, kind)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         row.id,
@@ -1049,6 +1060,7 @@ export class Ledger {
         row.sourceIdentityId ?? null,
         row.threadId ?? null,
         row.messageId ?? null,
+        row.kind ?? null,
       );
     return res.changes > 0;
   }
@@ -1300,6 +1312,25 @@ export class Ledger {
            ORDER BY bounced_at DESC LIMIT 1`,
         )
         .get(canonEmail(email)) as BounceRecord) ?? null
+    );
+  }
+
+  /**
+   * A do-not-send verdict from the reply stream: the newest 'unsubscribe'
+   * (they asked to stop) or 'auto_permanent' (their responder says the
+   * mailbox is dead) captured from this address. Durable on purpose — it
+   * outlives any one cadence, so a later play can never re-enroll and email
+   * an unsubscribed or gone prospect. Sibling of suppressionFor (bounces).
+   */
+  contactSuppressionFor(email: string): { kind: string; received_at: string } | null {
+    return (
+      (this.db
+        .query(
+          `SELECT kind, received_at FROM inbox_replies
+           WHERE from_email = ? AND kind IN ('unsubscribe', 'auto_permanent')
+           ORDER BY received_at DESC LIMIT 1`,
+        )
+        .get(canonEmail(email)) as { kind: string; received_at: string }) ?? null
     );
   }
 

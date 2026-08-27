@@ -1,30 +1,14 @@
-import { loadConfig } from "@oneshot-gtm/core";
+import { loadConfig, stripQuotedChain } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { getPriorStepsForProspect, type PriorStepRow } from "./_cadence.ts";
 import { firstNameFrom, humanizeDraft, signatureDirective, socialProofBlock } from "./_lib.ts";
 
+// stripQuotedChain moved to core (reply-classify.ts) — the classifier needs it
+// too. Re-exported so existing imports of this module keep working.
+export { stripQuotedChain };
+
 /** Mirror triage.ts's truncation — inbound bodies can be huge (quoted chains). */
 const INBOUND_BODY_MAX = 2000;
-
-/**
- * Drop the quoted prior-thread chain mail clients top-post beneath the new
- * reply. Without this, a blind head-truncation can keep 2000 chars of OUR
- * own quoted email and cut off the prospect's actual new text below it. Cuts
- * at the first attribution line ("On <date>, <name> wrote:") or the first run
- * of `>`-quoted lines — whichever comes first. Falls back to the full body
- * when no quote marker is found (plain replies, or clients we don't match).
- */
-export function stripQuotedChain(body: string): string {
-  const lines = body.split("\n");
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!.trim();
-    // Gmail/Apple/Outlook attribution line that precedes the quoted block.
-    if (/^On\b.*\bwrote:$/.test(line)) return lines.slice(0, i).join("\n").trim();
-    // A quoted line with real content above it — the chain has started.
-    if (line.startsWith(">") && i > 0) return lines.slice(0, i).join("\n").trim();
-  }
-  return body.trim();
-}
 
 export interface DraftInboxReplyInput {
   /** Normalized sender address of the inbound email. */

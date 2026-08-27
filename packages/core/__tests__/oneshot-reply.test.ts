@@ -46,6 +46,7 @@ vi.mock("../src/ledger.ts", async () => {
     getLedger: () => ({
       // No prior hard bounce: these tests exercise the normal send path.
       suppressionFor: () => null,
+      contactSuppressionFor: () => null,
       recordReceipt,
       // Rotation dependencies for the sendEmail() path: fresh prospect, no pins.
       getSenderAssignment: () => null,

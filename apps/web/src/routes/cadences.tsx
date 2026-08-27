@@ -63,6 +63,8 @@ function statusTone(status: string): "receipt" | "signal" | "spend" | "blocked" 
       return "blocked";
     case "off-icp":
       return "blocked";
+    case "unsubscribed":
+      return "blocked";
     default:
       return "neutral";
   }
@@ -602,7 +604,7 @@ function CadencesPage() {
                                 ? "signal"
                                 : c.status === "breakup"
                                   ? "spend"
-                                  : c.status === "bounced"
+                                  : c.status === "bounced" || c.status === "unsubscribed"
                                     ? "blocked"
                                     : "receipt"
                             }

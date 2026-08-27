@@ -1,4 +1,5 @@
 import {
+  classifyReply,
   getGmailProfile,
   getLedger,
   isDraining,
@@ -9,6 +10,7 @@ import {
   replyEmail,
   resolveIdentities,
   trackSend,
+  type ReplyKind,
 } from "@oneshot-gtm/core";
 import { draftInboxReply } from "@oneshot-gtm/plays";
 import {
@@ -26,6 +28,24 @@ import {
 } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 import { gatherReplyContext } from "./_reply-research.ts";
+
+/**
+ * Classification of the inbound being answered: the persisted kind when the
+ * email was captured (header-aware), else re-classified from its text.
+ */
+function inboundReplyKind(
+  ledger: ReturnType<typeof getLedger>,
+  prospectId: number | null,
+  body: Partial<InboxDraftReplyRequest>,
+  subject: string,
+  inboundBody: string,
+): ReplyKind {
+  if (prospectId != null && typeof body.id === "string") {
+    const stored = ledger.listInboxRepliesForProspect(prospectId).find((r) => r.id === body.id);
+    if (stored?.kind) return stored.kind as ReplyKind;
+  }
+  return classifyReply({ subject, body: inboundBody });
+}
 
 /** "Jane Doe <jane@x.com>" → "jane@x.com"; bare addresses pass through. */
 function normalizeFrom(raw: string): string {
@@ -145,6 +165,7 @@ export async function listInboxRoute(req: Request): Promise<Response> {
       subject: e.subject,
       receivedAt: e.received_at,
       body: e.body ?? "",
+      kind: classifyReply({ subject: e.subject, body: e.body, autoSubmitted: e.auto_submitted }),
       sourceIdentityId: e.source_identity_id ?? null,
       sourceProvider: e.source_identity_id
         ? (providerById.get(e.source_identity_id) ?? null)
@@ -199,6 +220,7 @@ export async function listInboxRoute(req: Request): Promise<Response> {
         sourceIdentityId: r.sourceIdentityId,
         threadId: r.threadId,
         messageId: r.messageId,
+        kind: r.kind,
       });
     }
   } catch (err) {
@@ -305,6 +327,7 @@ function buildConversations(
         sourceIdentityId: r.source_identity_id,
         threadId: r.thread_id,
         messageId: r.message_id,
+        replyKind: (r.kind as ReplyKind | null) ?? "human",
       });
     }
     for (const key of threadKeys) {
@@ -399,6 +422,13 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
           ? inboxThreadKey({ threadId: body.threadId ?? null, id: body.id })
           : null,
       excludeId: typeof body.id === "string" ? body.id : null,
+      // Never pay to research an autoresponder or an unsubscribe — there is
+      // no human on the other end to ground a draft in. Prefer the persisted
+      // classification (it saw the Gmail headers at capture time); the text
+      // fallback covers mail that was never captured.
+      skipPaid:
+        inboundReplyKind(ledger, matched?.prospectId ?? null, body, subject, inboundBody) !==
+        "human",
     });
   } catch (err) {
     logEvent(

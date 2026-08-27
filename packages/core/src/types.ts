@@ -63,6 +63,8 @@ export interface InboxReplyRecord {
   source_identity_id: string | null;
   thread_id: string | null;
   message_id: string | null;
+  /** Reply classification (reply-classify.ts). NULL = pre-classifier row, read as 'human'. */
+  kind: string | null;
   created_at: string;
 }
 
@@ -97,7 +99,7 @@ export interface SequenceEventRecord {
   play_name: string;
   step_index: number;
   channel: "email" | "sms" | "voice" | "linkedin" | "x";
-  status: "queued" | "sent" | "delivered" | "replied" | "bounced" | "failed";
+  status: "queued" | "sent" | "delivered" | "replied" | "bounced" | "failed" | "unsubscribed";
   metadata_json: string | null;
   created_at: string;
 }

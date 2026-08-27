@@ -553,9 +553,18 @@ export function withXEngine(
   return out;
 }
 
+/**
+ * Classification of an inbound email (mirrors core's reply-classify.ts):
+ * `human` is a real reply; `auto` a temporary autoresponder (OOO);
+ * `auto_permanent` a dead-mailbox notice; `unsubscribe` a removal request.
+ */
+export type InboundReplyKind = "human" | "auto" | "auto_permanent" | "unsubscribe";
+
 /** A single inbox email (reply to outreach), with prospect/play context when matched. */
 export interface InboxReplyView {
   id: string;
+  /** What this inbound actually is — only `human` counts as a reply anywhere. */
+  kind: InboundReplyKind;
   /** Normalized sender address (lowercased, display-name stripped). */
   fromEmail: string;
   /** Raw From header as received (may include a display name). */
@@ -621,6 +630,8 @@ export type ConversationItem =
       sourceIdentityId: string | null;
       threadId: string | null;
       messageId: string | null;
+      /** Classification of this inbound (NULL rows from before the classifier read as human). */
+      replyKind: InboundReplyKind;
     }
   | {
       /** A manual reply the founder sent from /inbox (inbox_sent). */
