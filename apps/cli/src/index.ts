@@ -9,7 +9,13 @@ import {
 import { CommandExit, fail } from "./output.ts";
 import { extractInvocation, type Invocation } from "./dispatch.ts";
 import { runInit } from "./commands/init.ts";
-import { configFounder, configKeys, configLlm, configTelemetry } from "./commands/config.ts";
+import {
+  configFounder,
+  configKeys,
+  configLlm,
+  configTelemetry,
+  configXEngine,
+} from "./commands/config.ts";
 import { commandDoctor } from "./commands/doctor.ts";
 import {
   commandIntelAdvise,
@@ -203,13 +209,19 @@ config
 config
   .command("keys")
   .description(
-    "Set or update API keys (LLM + OneShot wallet) — saved chmod 600 to the workspace's .env",
+    "Set or update API keys (LLM + OneShot wallet + X/Twitter) — saved chmod 600 to the workspace's .env",
   )
   .action(runOrFail(configKeys));
 config
   .command("telemetry <state>")
   .description("Enable or disable opt-out telemetry (on|off)")
   .action(runOrFail((state: string) => configTelemetry(state === "on" ? "on" : "off")));
+config
+  .command("x-engine [engine]")
+  .description(
+    "Show or switch the x-reposters data provider (xapi = first-party X API, twitterapiio = ~55x cheaper third-party)",
+  )
+  .action(runOrFail((engine?: string) => configXEngine(engine)));
 
 // Gmail send path: OAuth consent flow for the alternate (non-OneShot) provider.
 const gmail = program

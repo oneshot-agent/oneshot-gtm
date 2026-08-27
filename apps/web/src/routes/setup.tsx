@@ -3,7 +3,12 @@ import { createFileRoute } from "@tanstack/react-router";
 import { Mail, Save, Wand2 } from "lucide-react";
 import { useEffect, useState, type ReactNode, useRef } from "react";
 import { toast } from "sonner";
-import type { SetupRequest, SmartleadAccountView } from "@oneshot-gtm/shared-types";
+import {
+  withXEngine,
+  type SetupRequest,
+  type SmartleadAccountView,
+  type XEngine,
+} from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
 import { DoctorPanel } from "../components/setup/DoctorPanel.tsx";
@@ -32,12 +37,20 @@ const SECRET_LABELS: Record<string, string> = {
   GMAIL_CLIENT_SECRET: "GMAIL_CLIENT_SECRET",
   GMAIL_REFRESH_TOKEN: "GMAIL_REFRESH_TOKEN",
   SMARTLEAD_API_KEY: "Smartlead API key",
+  X_API_KEY: "X_API_KEY",
+  X_API_SECRET: "X_API_SECRET",
+  X_ACCESS_TOKEN: "X_ACCESS_TOKEN",
+  X_ACCESS_SECRET: "X_ACCESS_SECRET",
+  TWITTERAPI_IO_KEY: "twitterapi.io API key",
 };
+
+const X_OAUTH_KEYS = ["X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_SECRET"] as const;
 
 function SetupPage() {
   const qc = useQueryClient();
   const status = useQuery({ queryKey: ["setup"], queryFn: api.setupStatus });
   const doctor = useQuery({ queryKey: ["doctor"], queryFn: api.doctor });
+  const triggers = useQuery({ queryKey: ["triggers"], queryFn: api.triggers });
 
   const [founderName, setFounderName] = useState("");
   const [founderEmail, setFounderEmail] = useState("");
@@ -89,6 +102,22 @@ function SetupPage() {
   const [mobileSignature, setMobileSignature] = useState(false);
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  // X channel: engine choice lives in the x-reposters trigger config, not in
+  // config.json. Seed local state once from the stored trigger; after that the
+  // select is the founder's — a background refetch must not clobber it.
+  const [xEngine, setXEngine] = useState<XEngine>("xapi");
+  const xEngineSeeded = useRef(false);
+  const xTrigger = triggers.data?.triggers.find((t) => t.name === "x-reposters");
+  const storedXEngine: XEngine =
+    (xTrigger?.config?.["engine"] as XEngine | undefined) ??
+    (xTrigger?.defaultConfig?.["engine"] as XEngine | undefined) ??
+    "xapi";
+  useEffect(() => {
+    if (!xTrigger || xEngineSeeded.current) return;
+    xEngineSeeded.current = true;
+    setXEngine(storedXEngine);
+  }, [xTrigger, storedXEngine]);
 
   useEffect(() => {
     if (!status.data?.cfg) return;
@@ -235,6 +264,15 @@ function SetupPage() {
         emailProvider,
         secrets: filteredSecrets as never,
       });
+      // Engine choice rides the x-reposters trigger config (not config.json).
+      // withXEngine drops the maxSpendPerRun/knobs overrides on an actual
+      // flip so the per-engine defaults re-apply.
+      if (xTrigger && xEngine !== storedXEngine) {
+        await api.setTriggerConfig(
+          "x-reposters",
+          withXEngine(xTrigger.config ?? xTrigger.defaultConfig, xEngine),
+        );
+      }
     },
     onSuccess: () => {
       setSecrets({});
@@ -247,9 +285,12 @@ function SetupPage() {
       setAddCap("");
       briefDirty.current = false;
       setSavedAt(Date.now());
+      // Re-seed the engine select from the refetched trigger row.
+      xEngineSeeded.current = false;
       void qc.invalidateQueries({ queryKey: ["setup"] });
       void qc.invalidateQueries({ queryKey: ["doctor"] });
       void qc.invalidateQueries({ queryKey: ["home"] });
+      void qc.invalidateQueries({ queryKey: ["triggers"] });
     },
   });
 
@@ -701,6 +742,64 @@ function SetupPage() {
                   autoComplete="new-password"
                 />
               </Field>
+            )}
+          </div>
+        </LedgerSection>
+
+        <LedgerSection
+          eyebrow="05.5 · X / Twitter"
+          lede="Credentials and data provider for the x-reposters finder. Keys land in the same .env (chmod 600); the engine choice lives on the trigger."
+        >
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            <Field
+              label="Data provider"
+              className="md:col-span-2"
+              hint="Both bill per record returned. Switching resets the trigger's spend ceiling and harvest knobs to the new engine's defaults; fine-tune in the /queue trigger editor."
+            >
+              <Select value={xEngine} onChange={(e) => setXEngine(e.target.value as XEngine)}>
+                <option value="twitterapiio">
+                  twitterapi.io — ~$0.25/run, third-party scraper
+                </option>
+                <option value="xapi">X API (first-party) — ~$5/run, licensed, OAuth1</option>
+              </Select>
+            </Field>
+            {xEngine === "xapi" ? (
+              X_OAUTH_KEYS.map((k) => (
+                <Field key={k} label={k} hint={hintFor(sources[k])}>
+                  <Input
+                    type="password"
+                    placeholder={sources[k] ? "(unchanged)" : ""}
+                    value={secrets[k] ?? ""}
+                    onChange={(e) => setSecret(k, e.target.value)}
+                    autoComplete="new-password"
+                  />
+                </Field>
+              ))
+            ) : (
+              <Field
+                label="TWITTERAPI_IO_KEY"
+                hint={hintFor(sources["TWITTERAPI_IO_KEY"])}
+                className="md:col-span-2"
+              >
+                <Input
+                  type="password"
+                  placeholder={sources["TWITTERAPI_IO_KEY"] ? "(unchanged)" : ""}
+                  value={secrets["TWITTERAPI_IO_KEY"] ?? ""}
+                  onChange={(e) => setSecret("TWITTERAPI_IO_KEY", e.target.value)}
+                  autoComplete="new-password"
+                />
+              </Field>
+            )}
+            {xTrigger && (
+              <p className="md:col-span-2 font-mono text-[11px] text-ink-muted">
+                x-reposters: {xTrigger.enabled ? "enabled" : "disabled"} ·{" "}
+                {xTrigger.ready ? (
+                  <span className="text-ink-cream-2">ready</span>
+                ) : (
+                  <span>not ready — {xTrigger.notReadyReason}</span>
+                )}
+                {xEngine !== storedXEngine && " · engine change applies on Save"}
+              </p>
             )}
           </div>
         </LedgerSection>

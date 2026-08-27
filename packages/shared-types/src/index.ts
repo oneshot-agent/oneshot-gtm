@@ -286,7 +286,12 @@ export interface SetupRequest {
       | "GMAIL_CLIENT_ID"
       | "GMAIL_CLIENT_SECRET"
       | "GMAIL_REFRESH_TOKEN"
-      | "SMARTLEAD_API_KEY",
+      | "SMARTLEAD_API_KEY"
+      | "X_API_KEY"
+      | "X_API_SECRET"
+      | "X_ACCESS_TOKEN"
+      | "X_ACCESS_SECRET"
+      | "TWITTERAPI_IO_KEY",
       string
     >
   >;
@@ -508,6 +513,30 @@ const RUNNABLE_PLAY_SET = new Set(RUNNABLE_PLAYS);
 
 export function isRunnablePlay(playName: string): boolean {
   return RUNNABLE_PLAY_SET.has(playName);
+}
+
+/** The x-reposters finder's data provider. First-party costs ~55x more per read. */
+export type XEngine = "xapi" | "twitterapiio";
+
+/**
+ * Return a copy of an x-reposters trigger config with the engine set. Shared
+ * by the /setup card and `config x-engine` — both sides must apply the same
+ * rule: when the engine actually CHANGES, drop the `maxSpendPerRun` and
+ * `knobs` overrides so the registry's per-engine defaults re-apply (carrying
+ * twitterapi.io's $1 ceiling onto the X API buys ~100 user reads and stalls
+ * the run). Explicit re-overrides stay possible via the /queue config editor.
+ */
+export function withXEngine(
+  config: Record<string, unknown> | null | undefined,
+  engine: XEngine,
+): Record<string, unknown> {
+  const out = { ...(config ?? {}) };
+  if (out["engine"] !== engine) {
+    delete out["maxSpendPerRun"];
+    delete out["knobs"];
+  }
+  out["engine"] = engine;
+  return out;
 }
 
 /** A single inbox email (reply to outreach), with prospect/play context when matched. */

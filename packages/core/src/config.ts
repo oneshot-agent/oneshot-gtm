@@ -188,7 +188,7 @@ export function _applySecretsToEnvForTests(): void {
   applySecretsToEnv();
 }
 
-export function saveSecrets(updates: Partial<Record<SecretKey, string>>): void {
+export function saveSecrets(updates: Partial<Record<SecretKey | EnvOnlySecretKey, string>>): void {
   ensureConfigDir();
   const existing = loadSecretsFile();
   for (const [k, v] of Object.entries(updates)) {
@@ -199,9 +199,11 @@ export function saveSecrets(updates: Partial<Record<SecretKey, string>>): void {
     "# oneshot-gtm secrets — do not commit",
     "# this file is read on every CLI invocation; values here override blank process.env",
     "",
-    // Env-only keys (GITHUB_TOKEN, LUMA_SESSION_COOKIE) are never WRITTEN through
-    // saveSecrets, but this rewrites the whole file — so they have to survive the
-    // filter or every `config keys` save silently deletes a working credential.
+    // Env-only keys (GITHUB_TOKEN, the X credentials, …) are writable here —
+    // /setup and `config keys` store them; only `init` never asks, and demo
+    // mode still neutralizes them. This rewrites the whole file, so every key
+    // in either list has to survive the filter or a save silently deletes a
+    // working credential.
     ...Object.entries(existing)
       .filter(
         ([k]) =>

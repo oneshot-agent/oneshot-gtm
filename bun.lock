@@ -18,15 +18,17 @@
     },
     "apps/cli": {
       "name": "oneshot-gtm",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "bin": {
-        "oneshot-gtm": "./src/index.ts",
+        "oneshot-gtm": "./src/main.ts",
       },
       "dependencies": {
         "@oneshot-gtm/core": "workspace:*",
         "@oneshot-gtm/doctor": "workspace:*",
+        "@oneshot-gtm/find": "workspace:*",
         "@oneshot-gtm/intel": "workspace:*",
         "@oneshot-gtm/plays": "workspace:*",
+        "@oneshot-gtm/shared-types": "workspace:*",
         "commander": "^14.0.3",
         "kleur": "^4.1.5",
         "prompts": "^2.4.2",
@@ -37,7 +39,7 @@
     },
     "apps/server": {
       "name": "oneshot-gtm-server",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "bin": {
         "oneshot-gtm-server": "./dist/bin.mjs",
       },
@@ -57,7 +59,7 @@
     },
     "apps/web": {
       "name": "@oneshot-gtm/web",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "dependencies": {
         "@assistant-ui/react": "^0.12.25",
         "@base-ui/react": "^1.2.0",
@@ -89,21 +91,21 @@
     },
     "packages/core": {
       "name": "@oneshot-gtm/core",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "dependencies": {
         "@oneshot-agent/sdk": "0.22.0",
       },
     },
     "packages/doctor": {
       "name": "@oneshot-gtm/doctor",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "dependencies": {
         "@oneshot-gtm/core": "workspace:*",
       },
     },
     "packages/find": {
       "name": "@oneshot-gtm/find",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "dependencies": {
         "@oneshot-gtm/core": "workspace:*",
         "@oneshot-gtm/intel": "workspace:*",
@@ -112,14 +114,14 @@
     },
     "packages/intel": {
       "name": "@oneshot-gtm/intel",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "dependencies": {
         "@oneshot-gtm/core": "workspace:*",
       },
     },
     "packages/plays": {
       "name": "@oneshot-gtm/plays",
-      "version": "0.6.0",
+      "version": "0.7.0",
       "dependencies": {
         "@oneshot-gtm/core": "workspace:*",
         "@oneshot-gtm/intel": "workspace:*",
@@ -127,11 +129,11 @@
     },
     "packages/prompts": {
       "name": "@oneshot-gtm/prompts",
-      "version": "0.6.0",
+      "version": "0.7.0",
     },
     "packages/shared-types": {
       "name": "@oneshot-gtm/shared-types",
-      "version": "0.6.0",
+      "version": "0.7.0",
     },
   },
   "catalog": {

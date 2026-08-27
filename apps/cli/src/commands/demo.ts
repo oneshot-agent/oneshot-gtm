@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { SECRET_KEYS } from "@oneshot-gtm/core";
+import { ENV_ONLY_SECRET_KEYS, SECRET_KEYS } from "@oneshot-gtm/core";
 import { bail, c, header, note, ok, warn } from "../output.ts";
 import {
   canonicalize,
@@ -17,11 +17,11 @@ import { commandUi } from "./ui.ts";
  * core's `applySecretsToEnv()` fills blank env vars from the REAL home's .env
  * at import time, and the spawned child's loader only fills vars still blank —
  * so without this scrub the inherited real keys would SHADOW the demo home's
- * placeholders and a demo "Send" could spend real money. Also drops
- * GITHUB_TOKEN / LUMA_SESSION_COOKIE, which live only in env.
+ * placeholders and a demo "Send" could spend real money. Also drops every
+ * env-only credential (GITHUB_TOKEN, the X keys, …), which live only in env.
  */
 export function scrubInheritedSecrets(env: NodeJS.ProcessEnv): void {
-  for (const key of [...SECRET_KEYS, "GITHUB_TOKEN", "LUMA_SESSION_COOKIE"]) {
+  for (const key of [...SECRET_KEYS, ...ENV_ONLY_SECRET_KEYS]) {
     delete env[key];
   }
 }

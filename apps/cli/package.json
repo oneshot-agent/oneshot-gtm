@@ -26,6 +26,7 @@
     "@oneshot-gtm/find": "workspace:*",
     "@oneshot-gtm/intel": "workspace:*",
     "@oneshot-gtm/plays": "workspace:*",
+    "@oneshot-gtm/shared-types": "workspace:*",
     "commander": "^14.0.3",
     "kleur": "^4.1.5",
     "prompts": "^2.4.2"

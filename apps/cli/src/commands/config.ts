@@ -1,4 +1,6 @@
-import { loadConfig, saveConfig, saveSecrets, secretsPath } from "@oneshot-gtm/core";
+import { getLedger, loadConfig, saveConfig, saveSecrets, secretsPath } from "@oneshot-gtm/core";
+import { TRIGGERS, checkReadiness } from "@oneshot-gtm/find";
+import { withXEngine, type XEngine } from "@oneshot-gtm/shared-types";
 import prompts from "prompts";
 import { c, header, note, ok } from "../output.ts";
 
@@ -124,6 +126,63 @@ export async function configTelemetry(state: "on" | "off"): Promise<void> {
   ok(`telemetry ${state === "on" ? c.green("enabled") : c.dim("disabled")}`);
 }
 
+const X_TRIGGER = "x-reposters";
+const set = (k: string) => (process.env[k] ? c.green("set") : c.red("missing"));
+
+/**
+ * Show or switch the x-reposters data provider. Mirrors the /setup card:
+ * switching drops the maxSpendPerRun/knobs overrides (via withXEngine) so the
+ * new engine's defaults re-apply, and never flips the trigger's enablement.
+ */
+export async function configXEngine(engineArg?: string): Promise<void> {
+  header("X data provider (x-reposters)");
+  const ledger = getLedger();
+  const spec = TRIGGERS.find((t) => t.name === X_TRIGGER);
+  if (!spec) throw new Error(`trigger '${X_TRIGGER}' is not registered`);
+  const stored = ledger.getTrigger(X_TRIGGER);
+  let config: Record<string, unknown> = { ...spec.defaultConfig };
+  if (stored?.config_json) {
+    try {
+      config = JSON.parse(stored.config_json) as Record<string, unknown>;
+    } catch {
+      note(c.dim("stored config is unparseable — treating as defaults"));
+    }
+  }
+  const current: XEngine = config["engine"] === "twitterapiio" ? "twitterapiio" : "xapi";
+
+  if (!engineArg) {
+    note(`engine: ${c.cyan(current)} · trigger ${stored?.enabled ? "enabled" : "disabled"}`);
+    note(
+      `  X API (first-party):  X_API_KEY ${set("X_API_KEY")} · X_API_SECRET ${set("X_API_SECRET")} · X_ACCESS_TOKEN ${set("X_ACCESS_TOKEN")} · X_ACCESS_SECRET ${set("X_ACCESS_SECRET")}`,
+    );
+    note(`  twitterapi.io:        TWITTERAPI_IO_KEY ${set("TWITTERAPI_IO_KEY")}`);
+    const ready = checkReadiness(spec, config);
+    note(ready.ready ? c.green("ready") : `not ready — ${ready.reason}`);
+    note(c.dim(`switch with: oneshot-gtm config x-engine <xapi|twitterapiio>`));
+    return;
+  }
+
+  if (engineArg !== "xapi" && engineArg !== "twitterapiio") {
+    throw new Error(`unknown engine '${engineArg}' — use xapi or twitterapiio`);
+  }
+  const next = engineArg as XEngine;
+  if (next === current) {
+    ok(`already on ${c.cyan(next)} — nothing to change`);
+    return;
+  }
+  const merged = withXEngine(config, next);
+  if (stored) {
+    ledger.setTriggerConfig(X_TRIGGER, JSON.stringify(merged));
+  } else {
+    // Never silently enable an opt-in paid finder from a config write.
+    ledger.upsertTrigger({ name: X_TRIGGER, configJson: JSON.stringify(merged), enabled: false });
+  }
+  ok(`engine: ${c.dim(current)} → ${c.cyan(next)}`);
+  note(c.dim("maxSpendPerRun/knobs overrides reset — the new engine's defaults apply"));
+  const ready = checkReadiness(spec, merged);
+  note(ready.ready ? c.green("ready") : `not ready — ${ready.reason}`);
+}
+
 export async function configKeys(): Promise<void> {
   header("Configure API keys");
   note(`Keys are saved to ${c.cyan(secretsPath())} (chmod 600). Empty input = leave unchanged.\n`);
@@ -172,6 +231,42 @@ export async function configKeys(): Promise<void> {
         name: "agentKey",
         message: "AGENT_PRIVATE_KEY",
       },
+      {
+        type: "select",
+        name: "xMode",
+        message: "Update X (Twitter) keys? (x-reposters finder)",
+        choices: [
+          { title: "X API (first-party) — 4 OAuth1 user-context keys", value: "xapi" },
+          { title: "twitterapi.io — 1 key (~55x cheaper, third-party)", value: "twitterapiio" },
+          { title: "Skip", value: "skip" },
+        ],
+        initial: 2,
+      },
+      {
+        type: (_, v) => (v["xMode"] === "xapi" ? "password" : null),
+        name: "xApiKey",
+        message: "X_API_KEY",
+      },
+      {
+        type: (_, v) => (v["xMode"] === "xapi" ? "password" : null),
+        name: "xApiSecret",
+        message: "X_API_SECRET",
+      },
+      {
+        type: (_, v) => (v["xMode"] === "xapi" ? "password" : null),
+        name: "xAccessToken",
+        message: "X_ACCESS_TOKEN",
+      },
+      {
+        type: (_, v) => (v["xMode"] === "xapi" ? "password" : null),
+        name: "xAccessSecret",
+        message: "X_ACCESS_SECRET",
+      },
+      {
+        type: (_, v) => (v["xMode"] === "twitterapiio" ? "password" : null),
+        name: "twitterApiIoKey",
+        message: "TWITTERAPI_IO_KEY",
+      },
     ],
     { onCancel: () => process.exit(0) },
   );
@@ -182,6 +277,12 @@ export async function configKeys(): Promise<void> {
   if (answers["cdpSecret"]) updates["CDP_API_KEY_SECRET"] = answers["cdpSecret"] as string;
   if (answers["cdpWallet"]) updates["CDP_WALLET_SECRET"] = answers["cdpWallet"] as string;
   if (answers["agentKey"]) updates["AGENT_PRIVATE_KEY"] = answers["agentKey"] as string;
+  if (answers["xApiKey"]) updates["X_API_KEY"] = answers["xApiKey"] as string;
+  if (answers["xApiSecret"]) updates["X_API_SECRET"] = answers["xApiSecret"] as string;
+  if (answers["xAccessToken"]) updates["X_ACCESS_TOKEN"] = answers["xAccessToken"] as string;
+  if (answers["xAccessSecret"]) updates["X_ACCESS_SECRET"] = answers["xAccessSecret"] as string;
+  if (answers["twitterApiIoKey"])
+    updates["TWITTERAPI_IO_KEY"] = answers["twitterApiIoKey"] as string;
 
   if (Object.keys(updates).length === 0) {
     note("No changes.");
