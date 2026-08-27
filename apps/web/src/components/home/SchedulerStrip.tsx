@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowRight, ChevronDown, ChevronRight } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type { TriggerView } from "@oneshot-gtm/shared-types";
 import { api } from "../../api/client.ts";
 import { cn, timeAgo } from "../../lib/cn.ts";
@@ -80,11 +80,34 @@ export function SchedulerStrip(): React.ReactElement {
 
   const enabledCount = rows.filter((r) => r.trigger.enabled).length;
   const overdueCount = rows.filter((r) => r.dueInMs != null && r.dueInMs < 0).length;
+  // Soonest upcoming tick, for the collapsed one-liner.
+  const nextDueMs = visible
+    .map((r) => r.dueInMs)
+    .filter((ms): ms is number => ms != null && ms >= 0)
+    .toSorted((a, b) => a - b)[0];
+
+  // Collapsed by default — the table duplicates /queue's trigger panel. Seed
+  // open ONCE when something is overdue; refetches never slam a manual toggle.
+  const [expanded, setExpanded] = useState(false);
+  const seeded = useRef(false);
+  if (!seeded.current && triggersQuery.data) {
+    seeded.current = true;
+    if (overdueCount > 0) setExpanded(true);
+  }
 
   return (
     <section className="flex flex-col border-b border-ink-rule">
-      <div className="flex items-baseline justify-between px-6 pb-2 pt-5">
-        <div className="flex items-baseline gap-3">
+      <div className="flex items-baseline justify-between pr-6">
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          aria-label={`${expanded ? "Collapse" : "Expand"} the scheduler table`}
+          className="flex flex-1 items-baseline gap-3 px-6 pb-2 pt-5 text-left transition-colors duration-[var(--dur-stamp)] hover:bg-ink-surface/40"
+        >
+          <span className="text-ink-faint">
+            {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          </span>
           <div className="ln-eyebrow">Scheduler</div>
           <div className="font-mono text-[11px] text-ink-faint">
             {enabledCount} enabled
@@ -93,8 +116,12 @@ export function SchedulerStrip(): React.ReactElement {
                 · {overdueCount} overdue
               </span>
             )}
+            {!expanded && nextDueMs != null && (
+              <span className="ml-2">· next due in {humanInterval(nextDueMs)}</span>
+            )}
+            {!expanded && <span className="ml-2 text-ink-faint">· see more</span>}
           </div>
-        </div>
+        </button>
         <Link
           to="/queue"
           className="flex items-center gap-1 font-mono text-[11px] text-ink-muted transition-colors hover:text-ink-cream"
@@ -103,7 +130,7 @@ export function SchedulerStrip(): React.ReactElement {
         </Link>
       </div>
 
-      {triggersQuery.isLoading ? (
+      {!expanded ? null : triggersQuery.isLoading ? (
         <div>
           {Array.from({ length: 3 }, (_, i) => (
             <SkeletonRow key={i} />

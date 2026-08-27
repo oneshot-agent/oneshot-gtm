@@ -5,6 +5,7 @@ import { Badge } from "../primitives/Badge.tsx";
 import { EmptyNote } from "../primitives/EmptyNote.tsx";
 import { SkeletonRow } from "../primitives/Skeleton.tsx";
 import { cn } from "../../lib/cn.ts";
+import { summarizeDoctor, worstOf, type DoctorTone as Tone } from "../../lib/doctorSummary.ts";
 
 const GROUP_ORDER: Array<{ key: DoctorGroup; label: string }> = [
   { key: "install", label: "install" },
@@ -13,17 +14,8 @@ const GROUP_ORDER: Array<{ key: DoctorGroup; label: string }> = [
   { key: "spend", label: "spend" },
 ];
 
-type Tone = "receipt" | "spend" | "blocked";
-
 function toneFor(severity: DoctorCheck["severity"]): Tone {
   return severity === "ok" ? "receipt" : severity === "warn" ? "spend" : "blocked";
-}
-
-/** Worst severity wins the group's accent: fail > warn > ok. */
-function worstOf(checks: DoctorCheck[]): DoctorCheck["severity"] {
-  if (checks.some((c) => c.severity === "fail")) return "fail";
-  if (checks.some((c) => c.severity === "warn")) return "warn";
-  return "ok";
 }
 
 /**
@@ -113,17 +105,7 @@ export function DoctorPanel({
     return <EmptyNote note="Couldn't run doctor — check the server log and refresh." />;
   }
 
-  const fails = checks.filter((c) => c.severity === "fail").length;
-  const warns = checks.filter((c) => c.severity === "warn").length;
-  const overall =
-    fails > 0
-      ? {
-          text: `${fails} failing · ${warns} warning${warns === 1 ? "" : "s"}`,
-          tone: "blocked" as Tone,
-        }
-      : warns > 0
-        ? { text: `${warns} warning${warns === 1 ? "" : "s"}`, tone: "spend" as Tone }
-        : { text: "all clear", tone: "receipt" as Tone };
+  const overall = summarizeDoctor(checks);
 
   return (
     <div className="rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep">
