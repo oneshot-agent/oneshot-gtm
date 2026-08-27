@@ -20,6 +20,12 @@ export * from "./_repo-pipeline.ts";
 export * from "./registry.ts";
 export * from "./drain.ts";
 export * from "./luma.ts";
+export * from "./x-reposters.ts";
+export * from "./_x-types.ts";
+export * from "./_x-engine.ts";
+export * from "./_x-cost.ts";
+export * from "./_x-score.ts";
+export * from "./_x-lanes.ts";
 export * from "./_pending.ts";
 // Exported for the `find enrich-linkedin` backfill, which reuses the finders'
 // resolver so results are cached and billed identically.

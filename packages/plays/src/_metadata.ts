@@ -71,6 +71,17 @@ export const acceleratorBatchMetadata = (t: object): Record<string, unknown> => 
   prospectCohort: str(t, "cohort"),
 });
 
+export const xRepostIntroMetadata = (t: object): Record<string, unknown> => ({
+  seedHandle: str(t, "seedHandle"),
+  tweetUrl: str(t, "tweetUrl"),
+});
+
+export const xAmplifyMetadata = (t: object): Record<string, unknown> => ({
+  seedHandle: str(t, "seedHandle"),
+  tweetUrl: str(t, "tweetUrl"),
+  launchDate: str(t, "launchDate"),
+});
+
 const REGISTRY: Record<string, (t: object) => Record<string, unknown>> = {
   "repo-interest": repoInterestMetadata,
   "luma-events": lumaEventsMetadata,
@@ -82,6 +93,9 @@ const REGISTRY: Record<string, (t: object) => Record<string, unknown>> = {
   "podcast-guest": podcastGuestMetadata,
   "competitor-switch": competitorSwitchMetadata,
   "accelerator-batch": acceleratorBatchMetadata,
+  "x-repost-intro": xRepostIntroMetadata,
+  "x-amplify": xAmplifyMetadata,
+  "x-amplify-dm": xAmplifyMetadata,
 };
 
 /**

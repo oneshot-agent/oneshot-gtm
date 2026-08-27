@@ -30,7 +30,7 @@ export interface CadenceSentStep {
   /** ISO timestamp of when the email actually sent. */
   sentAt: string;
 }
-export type StepChannel = "email" | "sms" | "voice" | "linkedin";
+export type StepChannel = "email" | "sms" | "voice" | "linkedin" | "x";
 
 export interface CadenceView {
   prospectId: number;

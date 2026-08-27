@@ -67,6 +67,8 @@ export async function weeklyReview(extraContext?: string): Promise<WeeklyReviewO
     ],
     temperature: 0.5,
     maxTokens: 700,
+    // Prose report — a truncated week is still worth printing.
+    allowTruncation: true,
   });
 
   return {

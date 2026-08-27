@@ -149,7 +149,16 @@ function loadSecretsFile(): Record<string, string> {
  * Env-only credentials read directly from the environment by finders. Demo
  * mode must neutralize these too — same leak category as a real wallet key.
  */
-const ENV_ONLY_SECRET_KEYS = ["GITHUB_TOKEN", "LUMA_SESSION_COOKIE"] as const;
+export const ENV_ONLY_SECRET_KEYS = [
+  "GITHUB_TOKEN",
+  "LUMA_SESSION_COOKIE",
+  "X_API_KEY",
+  "X_API_SECRET",
+  "X_ACCESS_TOKEN",
+  "X_ACCESS_SECRET",
+  "TWITTERAPI_IO_KEY",
+] as const;
+export type EnvOnlySecretKey = (typeof ENV_ONLY_SECRET_KEYS)[number];
 
 function applySecretsToEnv(): void {
   const stored = loadSecretsFile();
@@ -190,8 +199,15 @@ export function saveSecrets(updates: Partial<Record<SecretKey, string>>): void {
     "# oneshot-gtm secrets — do not commit",
     "# this file is read on every CLI invocation; values here override blank process.env",
     "",
+    // Env-only keys (GITHUB_TOKEN, LUMA_SESSION_COOKIE) are never WRITTEN through
+    // saveSecrets, but this rewrites the whole file — so they have to survive the
+    // filter or every `config keys` save silently deletes a working credential.
     ...Object.entries(existing)
-      .filter(([k]) => SECRET_KEYS.includes(k as SecretKey))
+      .filter(
+        ([k]) =>
+          SECRET_KEYS.includes(k as SecretKey) ||
+          ENV_ONLY_SECRET_KEYS.includes(k as EnvOnlySecretKey),
+      )
       .map(([k, v]) => `${k}=${v}`),
     "",
   ];
@@ -207,7 +223,7 @@ export function saveSecrets(updates: Partial<Record<SecretKey, string>>): void {
   }
 }
 
-export function secretSource(key: SecretKey): "env" | "file" | null {
+export function secretSource(key: SecretKey | EnvOnlySecretKey): "env" | "file" | null {
   // process.env was populated either by the shell (env) or by applySecretsToEnv (file).
   // We can distinguish by checking the file directly.
   const fromFile = loadSecretsFile();

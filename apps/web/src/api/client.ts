@@ -208,6 +208,10 @@ export const api = {
   // a clean, not-yet-sent persisted draft; marks the row sent on success.
   sendDraft: (id: number) =>
     postJson<{ sent: boolean; receiptIds: number[] }>(`/queue/${id}/send-draft`, {}),
+  // Record a hand-sent manual-play draft (x-amplify-dm): writes the channel:"x"
+  // sequence event + prospect and flips the row to sent. No transport.
+  markSent: (id: number) =>
+    postJson<{ ok: boolean; prospectId: number }>(`/queue/${id}/mark-sent`, {}),
   // Web UI no longer calls this — the drain modal navigates to /run/$playName
   // so drafts + lint flags are visible per row. Kept for the CLI's HTTP path
   // (`oneshot-gtm find drain`) and any external scripted callers.

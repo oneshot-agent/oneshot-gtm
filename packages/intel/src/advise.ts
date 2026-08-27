@@ -38,6 +38,8 @@ export async function adviseOnce(input: AdviseInput): Promise<AdviseOutput> {
     messages,
     temperature: 0.5,
     maxTokens: 1200,
+    // Prose answer — a truncated reply mid-session beats an exception.
+    allowTruncation: true,
   });
 
   const cited = extractCitedPrinciples(res.content);

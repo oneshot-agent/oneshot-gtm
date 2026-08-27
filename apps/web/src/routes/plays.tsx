@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Check, Clock, Copy, Mail, MessageSquare, Phone, Play } from "lucide-react";
+import { AtSign, Check, Clock, Copy, Mail, MessageSquare, Phone, Play } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { isRunnablePlay, type PlayDescriptor } from "@oneshot-gtm/shared-types";
@@ -20,6 +20,7 @@ const CHANNEL_ICON = {
   sms: MessageSquare,
   voice: Phone,
   linkedin: MessageSquare,
+  x: AtSign,
 } as const;
 
 // Non-runnable plays that are driven from the dashboard (not the CLI). Tagged

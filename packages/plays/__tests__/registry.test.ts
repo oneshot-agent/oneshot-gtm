@@ -17,6 +17,9 @@ const EXPECTED = [
   "luma-events",
   "breakup-revive",
   "profile-intro",
+  "x-repost-intro",
+  "x-amplify",
+  "x-amplify-dm",
 ];
 
 describe("play registry", () => {

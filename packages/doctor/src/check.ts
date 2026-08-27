@@ -383,6 +383,107 @@ function workspaceChecks(cfg: ReturnType<typeof loadConfig>): CheckResult[] {
   return out;
 }
 
+/**
+ * Both GitHub finders share ONE unauthenticated quota: 60 req/hr per IP, which
+ * a single `github-stars` pass (repos x up to 3 pages) can exhaust on its own.
+ * Unauthenticated, the finder does not run slower — it halts on a 403 that reads
+ * like a broken endpoint. Only worth reporting when a GitHub finder is actually
+ * enabled, so it stays silent for users who never turn them on.
+ */
+function githubTokenCheck(): CheckResult | null {
+  let enabled: string[];
+  try {
+    enabled = getLedger()
+      .listTriggers()
+      .filter((t) => t.enabled === 1 && t.name.startsWith("github-"))
+      .map((t) => t.name);
+  } catch {
+    return null; // ledger unreadable — its own check already reports that
+  }
+  if (enabled.length === 0) return null;
+
+  const src = secretSource("GITHUB_TOKEN");
+  if (process.env["GITHUB_TOKEN"]) {
+    return {
+      name: "github token",
+      group: "install",
+      severity: "ok",
+      message: `set (${src ?? "?"}) — 5,000 req/hr`,
+    };
+  }
+  return {
+    name: "github token",
+    group: "install",
+    severity: "warn",
+    message: `GITHUB_TOKEN not set — ${enabled.join(", ")} limited to 60 req/hr and will halt on 403`,
+    hint: "create a classic token with NO scopes at https://github.com/settings/tokens/new, then add GITHUB_TOKEN=... to .env",
+  };
+}
+
+/**
+ * Same only-when-enabled shape as the GitHub check, but engine-aware: the
+ * x-reposters trigger reads whichever credentials its configured engine needs.
+ * First-party (default) needs all four OAuth1 user-context vars — an app-only
+ * bearer token 401s on every v2 read the finder makes, so "some creds set" is
+ * not enough. The twitterapi.io engine needs only its API key.
+ */
+function xCredsCheck(): CheckResult | null {
+  let rows: Array<{ name: string; config_json?: string | null }>;
+  try {
+    rows = getLedger()
+      .listTriggers()
+      .filter((t) => t.enabled === 1 && t.name.startsWith("x-"));
+  } catch {
+    return null; // ledger unreadable — its own check already reports that
+  }
+  if (rows.length === 0) return null;
+
+  let engine = "xapi";
+  try {
+    const cfg = JSON.parse(rows[0]?.config_json ?? "{}") as Record<string, unknown>;
+    if (cfg["engine"] === "twitterapiio") engine = "twitterapiio";
+  } catch {
+    // unparseable config — assume the default engine
+  }
+
+  if (engine === "twitterapiio") {
+    if (process.env["TWITTERAPI_IO_KEY"]) {
+      return {
+        name: "x creds (twitterapi.io)",
+        group: "install",
+        severity: "ok",
+        message: `TWITTERAPI_IO_KEY set (${secretSource("TWITTERAPI_IO_KEY") ?? "?"})`,
+      };
+    }
+    return {
+      name: "x creds (twitterapi.io)",
+      group: "install",
+      severity: "warn",
+      message: "TWITTERAPI_IO_KEY not set — x-reposters cannot harvest",
+      hint: 'add TWITTERAPI_IO_KEY=... to .env (third-party scraper engine — ~55x cheaper than the X API; switch the trigger\'s `engine` to "xapi" for first-party)',
+    };
+  }
+
+  const missing = ["X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_SECRET"].filter(
+    (k) => !process.env[k],
+  );
+  if (missing.length === 0) {
+    return {
+      name: "x creds (first-party)",
+      group: "install",
+      severity: "ok",
+      message: "OAuth1 user-context creds set",
+    };
+  }
+  return {
+    name: "x creds (first-party)",
+    group: "install",
+    severity: "warn",
+    message: `${missing.join(", ")} not set — x-reposters cannot harvest`,
+    hint: 'add the four OAuth1 user-context values from your X developer app to .env (app-only bearer tokens 401 on v2 reads); or set the trigger\'s `engine` to "twitterapiio" with TWITTERAPI_IO_KEY',
+  };
+}
+
 function readJson<T>(path: string): T | null {
   try {
     if (!existsSync(path)) return null;
@@ -431,6 +532,12 @@ export async function runDoctor(): Promise<CheckResult[]> {
     message: llmApiKey(cfg.llmProvider) ? `set (${llmSrc ?? "?"})` : `${llmEnv} not set`,
     ...(llmApiKey(cfg.llmProvider) ? {} : { hint: `oneshot-gtm config keys` }),
   });
+
+  const gh = githubTokenCheck();
+  if (gh) results.push(gh);
+
+  const xc = xCredsCheck();
+  if (xc) results.push(xc);
 
   const cdpSrc = secretSource("CDP_API_KEY_ID");
   const pkSrc = secretSource("AGENT_PRIVATE_KEY");

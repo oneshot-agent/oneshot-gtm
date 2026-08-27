@@ -71,6 +71,18 @@ const PLAY_CATALOG: PlayMeta[] = [
     name: "profile-intro",
     cli: "added from the dashboard: Add Prospect → paste a LinkedIn or X/Twitter URL",
   },
+  {
+    name: "x-repost-intro",
+    cli: "oneshot-gtm find watch  # fed by the x-reposters finder (founder lane), drained from /queue",
+  },
+  {
+    name: "x-amplify",
+    cli: "oneshot-gtm find watch  # fed by the x-reposters finder (amplifier lane, email found), drained from /queue",
+  },
+  {
+    name: "x-amplify-dm",
+    cli: "manual X send — draft on /queue, send by hand from the X app, then Mark sent",
+  },
 ];
 
 /** Relative per-step dayOffsets → cumulative days from the day-0 initial send. */

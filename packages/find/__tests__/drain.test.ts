@@ -36,6 +36,7 @@ const ledgerStub = {
 };
 
 const runStackConsolidationMock = vi.fn();
+const runXAmplifyDmMock = vi.fn();
 
 vi.mock("@oneshot-gtm/core", () => ({
   getLedger: () => ledgerStub,
@@ -53,9 +54,11 @@ vi.mock("@oneshot-gtm/plays", () => {
     "podcast-guest": { run: vi.fn() },
     "competitor-switch": { run: vi.fn() },
     "breakup-revive": { run: vi.fn() },
+    "x-amplify-dm": { run: (opts: unknown) => runXAmplifyDmMock(opts) },
   };
   return {
     PLAYS,
+    MANUAL_PLAYS: { "x-amplify-dm": { channel: "x" } },
     isSupportedPlay: (name: string) => Object.prototype.hasOwnProperty.call(PLAYS, name),
   };
 });
@@ -69,6 +72,7 @@ beforeEach(() => {
   ledgerStub.setQueueProspectId.mockReset();
   ledgerStub.findProspectByEmail.mockReset().mockReturnValue(null);
   runStackConsolidationMock.mockReset();
+  runXAmplifyDmMock.mockReset();
 });
 
 afterEach(() => {
@@ -237,5 +241,41 @@ describe("drainQueue per-target dispatch + persistence", () => {
     expect(out.errors[0]?.id).toBe(-1);
     expect(out.errors[0]?.message).toMatch(/unsupported/);
     expect(ledgerStub.setQueueDraft).not.toHaveBeenCalled();
+  });
+
+  it("manual-play rows with a clean draft are left alone — no re-draft, no stomp", async () => {
+    // x-amplify-dm rows stay approved until the founder hand-sends, so the
+    // drain lease re-claims them every cycle. Once drafted, they must not be
+    // dispatched again: that would pay the LLM twice and overwrite a draft the
+    // founder may have already copied.
+    const drafted = { ...row(10), play_name: "x-amplify-dm" };
+    drafted.last_draft_json = JSON.stringify({ subject: "X DM → @a", body: "dm text", flags: [] });
+    ledgerStub.dequeueApproved.mockReturnValue([drafted]);
+    const out = await drainQueue({ playName: "x-amplify-dm", dryRun: false });
+    expect(runXAmplifyDmMock).not.toHaveBeenCalled();
+    expect(ledgerStub.setQueueDraft).not.toHaveBeenCalled();
+    expect(out.sent).toBe(0);
+  });
+
+  it("manual-play rows without a draft (or with an errored one) still get drafted, never sent", async () => {
+    runXAmplifyDmMock.mockResolvedValue({
+      drafted: [{ subject: "X DM → @a", body: "dm text", flags: [], sent: false, receiptIds: [] }],
+    });
+    const errored = { ...row(20), play_name: "x-amplify-dm" };
+    errored.last_draft_json = JSON.stringify({
+      subject: "(error)",
+      body: "",
+      flags: ["error: provider down"],
+    });
+    ledgerStub.dequeueApproved.mockReturnValue([
+      { ...row(10), play_name: "x-amplify-dm" },
+      errored,
+    ]);
+    const out = await drainQueue({ playName: "x-amplify-dm", dryRun: false });
+    expect(runXAmplifyDmMock).toHaveBeenCalledTimes(2);
+    expect(ledgerStub.setQueueDraft).toHaveBeenCalledTimes(2);
+    // sent:false drafts leave the rows approved for the hand-send flow.
+    expect(ledgerStub.setQueueStatus).not.toHaveBeenCalled();
+    expect(out.sent).toBe(0);
   });
 });

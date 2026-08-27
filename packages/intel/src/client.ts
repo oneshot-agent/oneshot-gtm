@@ -10,6 +10,13 @@ export interface LlmCompleteInput {
   messages: LlmMessage[];
   temperature?: number;
   maxTokens?: number;
+  /**
+   * Accept a response cut off at max_tokens instead of throwing. For callers
+   * that consume PROSE (weekly review, advise), where a truncated report is
+   * still usable. JSON-parsing callers must leave this unset — truncated JSON
+   * silently degrades to an empty object downstream.
+   */
+  allowTruncation?: boolean;
 }
 
 export interface LlmCompleteOutput {
@@ -28,6 +35,29 @@ class LlmError extends Error {
     super(message);
     this.name = "LlmError";
   }
+}
+
+/**
+ * Names the two ways a call hits the token ceiling, because they need opposite
+ * fixes: a model that reasons by default can burn the whole budget before it
+ * emits a character (raising maxTokens does not help much — pick a model that
+ * doesn't reason, or budget for both), while a plain overrun just needs more room.
+ */
+function truncationMessage(d: {
+  provider: string;
+  model: string;
+  maxTokens: number;
+  completionTokens?: number;
+  reasoningTokens?: number;
+}): string {
+  // Diagnostic first: callers surface this through an 80-char slice
+  // (errorDraft), so the cause has to survive the truncation of the truncation.
+  const where = `${d.provider} ${d.model}`;
+  if (d.reasoningTokens && d.reasoningTokens > 0) {
+    const of = d.completionTokens ? `/${d.completionTokens}` : "";
+    return `truncated at max_tokens=${d.maxTokens} (${d.reasoningTokens}${of} tokens were reasoning) — ${where}. Use a model that does not reason by default, or raise maxTokens above the reasoning budget.`;
+  }
+  return `truncated at max_tokens=${d.maxTokens} (raise maxTokens) — ${where}.`;
 }
 
 let humanizerPrologueCache: string | null = null;
@@ -162,12 +192,31 @@ async function openaiCompatibleComplete(args: OpenAIArgs): Promise<LlmCompleteOu
   }
 
   const data = (await res.json()) as {
-    choices: Array<{ message: { content: string } }>;
-    usage?: { prompt_tokens?: number; completion_tokens?: number };
+    choices: Array<{ message: { content: string }; finish_reason?: string }>;
+    usage?: {
+      prompt_tokens?: number;
+      completion_tokens?: number;
+      completion_tokens_details?: { reasoning_tokens?: number };
+    };
   };
 
   const choice = data.choices[0];
   if (!choice) throw new LlmError(`${args.provider} returned no choices`);
+
+  // A response cut off at max_tokens is unusable: every caller parses JSON out
+  // of it, and truncated JSON silently degrades to an empty object four layers
+  // up (empty subject/body on a draft). Fail loudly at the source instead.
+  if (choice.finish_reason === "length" && !args.input.allowTruncation) {
+    throw new LlmError(
+      truncationMessage({
+        provider: args.provider,
+        model: args.model,
+        maxTokens: args.input.maxTokens ?? 1024,
+        completionTokens: data.usage?.completion_tokens,
+        reasoningTokens: data.usage?.completion_tokens_details?.reasoning_tokens,
+      }),
+    );
+  }
 
   return {
     content: choice.message.content,
@@ -213,8 +262,20 @@ async function anthropicComplete(args: AnthropicArgs): Promise<LlmCompleteOutput
 
   const data = (await res.json()) as {
     content: Array<{ type: string; text?: string }>;
+    stop_reason?: string;
     usage?: { input_tokens?: number; output_tokens?: number };
   };
+
+  if (data.stop_reason === "max_tokens" && !args.input.allowTruncation) {
+    throw new LlmError(
+      truncationMessage({
+        provider: "anthropic",
+        model: args.model,
+        maxTokens: args.input.maxTokens ?? 1024,
+        completionTokens: data.usage?.output_tokens,
+      }),
+    );
+  }
 
   const text = data.content.map((b) => b.text ?? "").join("");
   return {
