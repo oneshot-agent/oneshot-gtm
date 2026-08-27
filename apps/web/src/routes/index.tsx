@@ -6,7 +6,7 @@ import { HealthCard } from "../components/home/HealthCard.tsx";
 import { NextStep } from "../components/home/NextStep.tsx";
 import { SchedulerStrip } from "../components/home/SchedulerStrip.tsx";
 import { SignalFeed } from "../components/home/SignalFeed.tsx";
-import { formatUsd } from "../lib/cn.ts";
+import { cn, formatSendsToday, formatUsd } from "../lib/cn.ts";
 
 export const Route = createFileRoute("/")({
   component: HomePage,
@@ -70,7 +70,12 @@ function HomePage() {
       {/* Onboarding nudge — disappears when ICP set + finder run + drain done. */}
       <NextStep />
 
-      <section className="grid grid-cols-2 divide-x divide-ink-rule border-b border-ink-rule lg:grid-cols-4">
+      <section
+        className={cn(
+          "grid grid-cols-2 divide-x divide-ink-rule border-b border-ink-rule",
+          d?.sendsToday ? "lg:grid-cols-5" : "lg:grid-cols-4",
+        )}
+      >
         <LedgerNumber
           label="Replied · 7d"
           value={d ? String(d.repliedLast7d) : undefined}
@@ -82,6 +87,18 @@ function HomePage() {
           value={d ? String(d.sentLast7d) : undefined}
           caption="drafts, linted, stamped"
         />
+        {d?.sendsToday && (
+          <LedgerNumber
+            label="Sends today"
+            value={formatSendsToday(d.sendsToday)}
+            caption="across all senders"
+            tone={
+              d.sendsToday.cap != null && d.sendsToday.sent >= d.sendsToday.cap
+                ? "spend"
+                : "neutral"
+            }
+          />
+        )}
         <LedgerNumber
           label="Spend · 7d"
           value={d ? formatUsd(d.spendUsd7d) : undefined}

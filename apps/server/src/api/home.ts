@@ -1,6 +1,7 @@
 import { getLedger } from "@oneshot-gtm/core";
 import type { HomeMetrics } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
+import { sendsToday } from "./_capacity.ts";
 
 export function homeMetrics(req: Request): Response {
   const ledger = getLedger();
@@ -25,6 +26,8 @@ export function homeMetrics(req: Request): Response {
     // Capped at 5 (the widget hides itself when empty).
     currentRuns: ledger.listRuns({ status: "running", limit: 5 }),
   };
+  const capacity = sendsToday();
+  if (capacity) metrics.sendsToday = capacity;
 
   return jsonResponse(metrics, 200, req);
 }

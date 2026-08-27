@@ -28,6 +28,7 @@ import {
   type RunPlayRequest,
 } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
+import { sendsToday } from "./_capacity.ts";
 import { dispatchPlay } from "./_play-dispatch.ts";
 
 function toView(row: QueueRow): QueueRowView {
@@ -104,6 +105,8 @@ export function listQueueRoute(req: Request): Response {
     counts,
     approvedByPlay: ledger.approvedCountsByPlay(),
   };
+  const capacity = sendsToday();
+  if (capacity) body.sendsToday = capacity;
   return jsonResponse(body, 200, req);
 }
 

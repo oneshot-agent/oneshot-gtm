@@ -34,7 +34,7 @@ import { Pii } from "../components/primitives/Pii.tsx";
 import { useMask } from "../lib/privacy.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { Toggle } from "../components/primitives/Toggle.tsx";
-import { cn, eventIsPast, humanizeEventDate, timeAgo } from "../lib/cn.ts";
+import { cn, eventIsPast, formatSendsToday, humanizeEventDate, timeAgo } from "../lib/cn.ts";
 import {
   drainButtonState,
   drainSelectionState,
@@ -304,6 +304,11 @@ function QueuePage() {
           {Object.entries(counts)
             .map(([k, v]) => `${k} ${v}`)
             .join(" · ")}
+          {queueQuery.data?.sendsToday && (
+            <span className="ml-2 border-l border-ink-rule pl-2 text-ink-cream-2">
+              sends today {formatSendsToday(queueQuery.data.sendsToday)}
+            </span>
+          )}
         </div>
       </section>
 
@@ -411,11 +416,9 @@ function QueuePage() {
                     />
                   </label>
                 </th>
-                <th className="px-6 py-2 text-left font-medium">id</th>
                 <th className="py-2 text-left font-medium">prospect</th>
                 <th className="py-2 text-left font-medium">play</th>
                 <th className="py-2 text-left font-medium">status</th>
-                <th className="py-2 text-left font-medium">source</th>
                 <th className="py-2 text-right font-medium">found</th>
                 <th className="px-6 py-2 text-right font-medium">actions</th>
               </tr>
@@ -686,7 +689,6 @@ function QueueRow({
             />
           </label>
         </td>
-        <td className="px-6 py-2 font-mono text-[11px] text-ink-faint">#{row.id}</td>
         <td className="py-2">
           <div className="text-ink-cream">{name ? <Pii kind="name">{name}</Pii> : "(unknown)"}</div>
           <div className="font-mono text-[11px] text-ink-faint">
@@ -716,7 +718,16 @@ function QueueRow({
             ) : null}
           </div>
         </td>
-        <td className="py-2 text-ink-cream-2">{row.playName}</td>
+        <td className="py-2 text-ink-cream-2">
+          {row.playName}
+          {/* The source column is gone (redundant with play), but its meaningful
+              suffix — which repo / cohort the finder matched — survives here. */}
+          {sourceDetail(row.source) && (
+            <div className="truncate font-mono text-[10.5px] text-ink-faint">
+              {sourceDetail(row.source)}
+            </div>
+          )}
+        </td>
         <td className="py-2">
           <div className="flex items-center gap-1.5">
             <Badge tone={statusTone(row.status)}>{row.status}</Badge>
@@ -755,20 +766,27 @@ function QueueRow({
             )}
           </div>
         </td>
-        <td className="py-2 font-mono text-[11px] text-ink-faint">{row.source}</td>
         <td className="py-2 text-right font-mono text-[12px] text-ink-muted">
           {timeAgo(row.foundAt)}
         </td>
         <td className="px-6 py-2 text-right" onClick={(e) => e.stopPropagation()}>
-          <div className="flex items-center justify-end gap-1">
+          <div className="flex items-center justify-end gap-1.5">
             {row.status === "pending" && (
-              <Button variant="ghost" size="sm" title="approve" disabled={busy} onClick={onApprove}>
+              <Button variant="primary" size="sm" disabled={busy} onClick={onApprove}>
                 <Check size={12} />
+                approve
               </Button>
             )}
             {(row.status === "pending" || row.status === "approved") && (
-              <Button variant="ghost" size="sm" title="reject" disabled={busy} onClick={onReject}>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={busy}
+                onClick={onReject}
+                className="text-[color:var(--ink-blocked-2)]"
+              >
                 <X size={12} />
+                reject
               </Button>
             )}
           </div>
@@ -776,7 +794,7 @@ function QueueRow({
       </tr>
       {expanded && (
         <tr className="border-b border-ink-rule/60 bg-ink-bg-deep/50">
-          <td colSpan={9} className="px-6 py-3">
+          <td colSpan={7} className="px-6 py-3">
             <div className="flex flex-col gap-3 text-[12px] text-ink-muted">
               {row.notes ? <div className="ln-note">{row.notes}</div> : null}
               {(eventTitle || eventDate || eventCity || eventUrl) && (
@@ -1261,6 +1279,84 @@ function TriggersCard() {
   const [editError, setEditError] = useState<string | null>(null);
 
   const triggers = triggersQuery.data?.triggers ?? [];
+  // Disabled finders are dormant — collapsed behind a count row by default.
+  const activeTriggers = triggers.filter((t) => t.enabled);
+  const inactiveTriggers = triggers.filter((t) => !t.enabled);
+  const [showInactive, setShowInactive] = useState(false);
+
+  const renderTriggerRow = (t: TriggerView, i: number) => {
+    const summary = summarizeRun(t.lastRunSummary);
+    // `inProcess` covers the sub-millisecond window before the 202 lands;
+    // `tracked` takes over via localStorage + server `runningSince`.
+    const inProcess = runTrigger.isPending && runTrigger.variables === t.name;
+    const tracked = runningByName.get(t.name);
+    const running = inProcess || tracked != null;
+    const elapsedMs = tracked?.elapsedMs ?? null;
+    const isEditing = editing?.name === t.name;
+    return (
+      <TriggerRowFragment
+        key={t.name}
+        trigger={t}
+        zebra={i % 2 === 1}
+        running={running}
+        elapsedMs={elapsedMs}
+        summary={summary}
+        isEditing={Boolean(isEditing)}
+        editing={isEditing ? editing : null}
+        editError={isEditing ? editError : null}
+        onToggleEnabled={(next) => setEnabled.mutate({ name: t.name, enabled: next })}
+        onRun={() => runTrigger.mutate(t.name)}
+        onSetInterval={(ms) =>
+          setConfig.mutate({
+            name: t.name,
+            config: withIntervalOverride(t.config, ms),
+            source: "inline",
+          })
+        }
+        onStartEdit={() => {
+          setEditing({
+            name: t.name,
+            text: JSON.stringify(t.config ?? {}, null, 2),
+            defaultConfig: t.defaultConfig,
+          });
+          setEditError(null);
+        }}
+        onCancelEdit={() => {
+          setEditing(null);
+          setEditError(null);
+        }}
+        onChangeEditText={(text) => setEditing((prev) => (prev ? { ...prev, text } : prev))}
+        onResetDefaults={() =>
+          setEditing((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  text: JSON.stringify(prev.defaultConfig ?? {}, null, 2),
+                }
+              : prev,
+          )
+        }
+        onSaveEdit={() => {
+          if (!editing) return;
+          let parsed: unknown;
+          try {
+            parsed = JSON.parse(editing.text);
+          } catch (err) {
+            setEditError(`invalid JSON: ${(err as Error).message}`);
+            return;
+          }
+          if (!parsed || typeof parsed !== "object") {
+            setEditError("config must be a JSON object");
+            return;
+          }
+          setEditError(null);
+          setConfig.mutate({ name: editing.name, config: parsed, source: "editor" });
+        }}
+        setEnabledPending={setEnabled.isPending}
+        setConfigPending={setConfig.isPending}
+      />
+    );
+  };
 
   // Invalidate queue/home the moment any trigger's `running` flips true → false.
   const runningKey = triggers
@@ -1323,81 +1419,27 @@ function TriggersCard() {
               </tr>
             </thead>
             <tbody>
-              {triggers.map((t, i) => {
-                const summary = summarizeRun(t.lastRunSummary);
-                // `inProcess` covers the sub-millisecond window before the 202 lands;
-                // `tracked` takes over via localStorage + server `runningSince`.
-                const inProcess = runTrigger.isPending && runTrigger.variables === t.name;
-                const tracked = runningByName.get(t.name);
-                const running = inProcess || tracked != null;
-                const elapsedMs = tracked?.elapsedMs ?? null;
-                const isEditing = editing?.name === t.name;
-                return (
-                  <TriggerRowFragment
-                    key={t.name}
-                    trigger={t}
-                    zebra={i % 2 === 1}
-                    running={running}
-                    elapsedMs={elapsedMs}
-                    summary={summary}
-                    isEditing={Boolean(isEditing)}
-                    editing={isEditing ? editing : null}
-                    editError={isEditing ? editError : null}
-                    onToggleEnabled={(next) => setEnabled.mutate({ name: t.name, enabled: next })}
-                    onRun={() => runTrigger.mutate(t.name)}
-                    onSetInterval={(ms) =>
-                      setConfig.mutate({
-                        name: t.name,
-                        config: withIntervalOverride(t.config, ms),
-                        source: "inline",
-                      })
-                    }
-                    onStartEdit={() => {
-                      setEditing({
-                        name: t.name,
-                        text: JSON.stringify(t.config ?? {}, null, 2),
-                        defaultConfig: t.defaultConfig,
-                      });
-                      setEditError(null);
-                    }}
-                    onCancelEdit={() => {
-                      setEditing(null);
-                      setEditError(null);
-                    }}
-                    onChangeEditText={(text) =>
-                      setEditing((prev) => (prev ? { ...prev, text } : prev))
-                    }
-                    onResetDefaults={() =>
-                      setEditing((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              text: JSON.stringify(prev.defaultConfig ?? {}, null, 2),
-                            }
-                          : prev,
-                      )
-                    }
-                    onSaveEdit={() => {
-                      if (!editing) return;
-                      let parsed: unknown;
-                      try {
-                        parsed = JSON.parse(editing.text);
-                      } catch (err) {
-                        setEditError(`invalid JSON: ${(err as Error).message}`);
-                        return;
-                      }
-                      if (!parsed || typeof parsed !== "object") {
-                        setEditError("config must be a JSON object");
-                        return;
-                      }
-                      setEditError(null);
-                      setConfig.mutate({ name: editing.name, config: parsed, source: "editor" });
-                    }}
-                    setEnabledPending={setEnabled.isPending}
-                    setConfigPending={setConfig.isPending}
-                  />
-                );
-              })}
+              {activeTriggers.map(renderTriggerRow)}
+              {/* Disabled finders are dormant, not broken — collapsed behind one
+                  quiet row (same-tbody colSpan trick as SchedulerStrip, so the
+                  shared column widths hold). */}
+              {inactiveTriggers.length > 0 && (
+                <tr className="border-b border-ink-rule/60">
+                  <td colSpan={6} className="px-6 py-2">
+                    <button
+                      type="button"
+                      aria-expanded={showInactive}
+                      onClick={() => setShowInactive((v) => !v)}
+                      className="flex items-center gap-1.5 font-mono text-[11px] text-ink-faint transition-colors hover:text-ink-cream-2"
+                    >
+                      {showInactive ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                      {inactiveTriggers.length} inactive finder
+                      {inactiveTriggers.length === 1 ? "" : "s"} · {showInactive ? "hide" : "show"}
+                    </button>
+                  </td>
+                </tr>
+              )}
+              {showInactive && inactiveTriggers.map(renderTriggerRow)}
             </tbody>
           </table>
         )}
@@ -1531,9 +1573,15 @@ function TriggerRowFragment(props: TriggerRowProps) {
         <td
           className={cn(
             "py-2 font-mono text-[11.5px]",
-            notReady || props.summary.startsWith("error:") || props.summary.startsWith("halted")
+            // Missing config on a DISABLED finder is dormancy, not an error —
+            // only an enabled-but-unready row (or a real run failure) goes red.
+            (notReady && t.enabled) ||
+              props.summary.startsWith("error:") ||
+              props.summary.startsWith("halted")
               ? "text-[color:var(--ink-blocked-2)]"
-              : "text-ink-muted",
+              : notReady
+                ? "text-ink-faint"
+                : "text-ink-muted",
           )}
         >
           {notReady ? `not ready · ${notReadyReason}` : props.summary}
@@ -1735,6 +1783,16 @@ function nameFor(payload: unknown): string | null {
     }
   }
   return null;
+}
+
+/**
+ * The finder-specific tail of `source` ("find:github-stars:vercel/eve" ->
+ * "vercel/eve") — which repo / cohort matched. Empty when source is just the
+ * finder name (fully redundant with the play column).
+ */
+function sourceDetail(source: string | null | undefined): string {
+  if (!source) return "";
+  return source.split(":").slice(2).join(":");
 }
 
 function companyFor(payload: unknown): string | null {

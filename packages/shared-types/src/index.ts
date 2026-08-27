@@ -90,6 +90,8 @@ export interface CadenceCounts {
 export interface CadencesResult {
   cadences: CadenceView[];
   counts: CadenceCounts;
+  /** Absent when the capacity computation failed — pages skip the figure. */
+  sendsToday?: SendsToday;
 }
 
 /** RoCS value tag attached to a receipt once its outcome is known. */
@@ -175,6 +177,16 @@ export interface RunSummary {
   errorCount: number;
 }
 
+/**
+ * Whole-pool daily send usage, aggregated per cap-group (a shared OneShot
+ * domain counts once). `cap: null` = at least one identity is uncapped —
+ * render as "X/∞".
+ */
+export interface SendsToday {
+  sent: number;
+  cap: number | null;
+}
+
 export interface HomeMetrics {
   spendUsd7d: number;
   spendUsd30d: number;
@@ -182,6 +194,8 @@ export interface HomeMetrics {
   sentLast7d: number;
   repliedLast7d: number;
   activeCadences: number;
+  /** Absent when the capacity computation failed — pages skip the figure. */
+  sendsToday?: SendsToday;
   /**
    * Runs currently `running` (in-flight). Capped at 5 for the home widget.
    * The `CurrentRunsStrip` on /home hides itself when this is empty.
@@ -709,6 +723,8 @@ export interface QueueListResponse {
    * approved are omitted.
    */
   approvedByPlay: Record<string, number>;
+  /** Absent when the capacity computation failed — pages skip the figure. */
+  sendsToday?: SendsToday;
 }
 
 export interface DrainRequest {

@@ -36,6 +36,7 @@ const {
   warmupCap,
   capGroupKey,
   identityCapacities,
+  poolSendCapacity,
 } = await import("../src/send-routing.ts");
 const { LEGACY_ONESHOT_ID } = await import("../src/identities.ts");
 
@@ -329,6 +330,25 @@ describe("per-domain capping (OneShot mailboxes share a domain budget)", () => {
     mockCfg = { emailIdentities: [gA, gB], emailProvider: "oneshot" };
     for (let i = 0; i < 10; i++) recordSend(gA.id); // gA full (cap 10), gB untouched
     expect(resolveSenderIdentity("fresh@x.com").id).toBe(gB.id);
+  });
+
+  it("poolSendCapacity counts a shared domain's budget once, plus solo groups", () => {
+    mockCfg = { emailIdentities: [onA, onB, gmailA], emailProvider: "oneshot" };
+    recordSend(onA.id);
+    recordSend(onB.id);
+    recordSend(gmailA.id);
+    const pool = poolSendCapacity();
+    expect(pool.sentToday).toBe(3);
+    // acme.com group cap (ramp start 10, counted ONCE) + gmailA's own 10.
+    expect(pool.capToday).toBe(20);
+  });
+
+  it("poolSendCapacity reports a null cap when any group is uncapped", () => {
+    mockCfg = { emailIdentities: [gmailA, oneshotId], emailProvider: "oneshot" };
+    recordSend(gmailA.id);
+    const pool = poolSendCapacity();
+    expect(pool.sentToday).toBe(1);
+    expect(pool.capToday).toBeNull();
   });
 });
 
