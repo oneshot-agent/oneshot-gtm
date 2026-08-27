@@ -231,8 +231,12 @@ describe("schema upgrade of a pre-reservation shared file", () => {
     raw.exec(`CREATE TABLE contact_touches (
       id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL, workspace TEXT NOT NULL,
       play_name TEXT NOT NULL, sent_at TEXT NOT NULL)`);
+    // Relative timestamp: recentTouchElsewhere applies the 7-day contact
+    // window, so a hardcoded date rots — this test went red the day the
+    // fixture's date aged past the window (green 2026-08-26, red 08-27).
+    const recentIso = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
     raw.exec(
-      "INSERT INTO contact_touches(email, workspace, play_name, sent_at) VALUES('a@b.dev','sdk','p','2026-08-20T00:00:00.000Z')",
+      `INSERT INTO contact_touches(email, workspace, play_name, sent_at) VALUES('a@b.dev','sdk','p','${recentIso}')`,
     );
     raw.close();
     const one = new SharedDb(path);
