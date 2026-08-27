@@ -70,13 +70,16 @@ const AUTO_SUBJECT_RE = new RegExp(
 
 // Body phrases an autoresponder opens with. Checked against the head of the
 // quote-stripped body only — deep in a long human reply these read as prose
-// ("I was out of office last week"), near the top they read as a bot.
+// ("I was out of office last week"), near the top they read as a bot. The
+// past-tense lookbehinds keep a human's "sorry, I was out of the office last
+// week" from reading as a live responder: machines announce in present/future
+// tense, humans apologize in past tense.
 const AUTO_BODY_RE = new RegExp(
   [
-    "\\bout of (?:the )?office\\b",
-    "\\bon (?:annual|parental|maternity|paternity|sick) leave\\b",
-    "\\baway from (?:my|the) (?:email|office|desk)\\b",
-    "\\bon (?:vacation|holiday)\\b",
+    "(?<!\\bwas )(?<!\\bbeen )\\bout of (?:the )?office\\b",
+    "(?<!\\bwas )(?<!\\bbeen )\\bon (?:annual|parental|maternity|paternity|sick) leave\\b",
+    "(?<!\\bwas )(?<!\\bbeen )\\baway from (?:my|the) (?:email|office|desk)\\b",
+    "(?<!\\bwas )(?<!\\bbeen )\\bon (?:vacation|holiday)\\b",
     "\\blimited access to (?:my )?e-?mail\\b",
     "\\bauto-?generated (?:message|response|reply)\\b",
     "\\bi(?:'m| am) currently (?:away|out|travell?ing)\\b",
@@ -135,12 +138,18 @@ export function classifyReply(input: {
   const subject = input.subject ?? "";
   const stripped = stripQuotedChain(input.body ?? "");
   const head = stripped.slice(0, BODY_HEAD_CHARS);
+  const permanent = PERMANENT_RE.test(subject) || PERMANENT_RE.test(head);
 
-  const isAuto =
-    input.autoSubmitted === true || AUTO_SUBJECT_RE.test(subject) || AUTO_BODY_RE.test(head);
-  if (isAuto) {
-    return PERMANENT_RE.test(subject) || PERMANENT_RE.test(head) ? "auto_permanent" : "auto";
+  // The header verdict is authoritative machine mail: no human wrote it, so
+  // it can never be an unsubscribe — even if the responder's boilerplate
+  // happens to contain the word.
+  if (input.autoSubmitted === true) return permanent ? "auto_permanent" : "auto";
+  // For text-classified mail an explicit removal request wins over OOO
+  // phrasing: "heading out on vacation — please remove me from your list" is
+  // a human opting out, not a responder.
+  if (UNSUBSCRIBE_RE.test(subject) || UNSUBSCRIBE_RE.test(head)) return "unsubscribe";
+  if (AUTO_SUBJECT_RE.test(subject) || AUTO_BODY_RE.test(head)) {
+    return permanent ? "auto_permanent" : "auto";
   }
-  if (UNSUBSCRIBE_RE.test(head)) return "unsubscribe";
   return "human";
 }

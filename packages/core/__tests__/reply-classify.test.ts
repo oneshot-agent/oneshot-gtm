@@ -126,6 +126,40 @@ describe("classifyReply", () => {
     }
   });
 
+  test("a human apologizing for a PAST absence stays human", () => {
+    for (const body of [
+      "Sorry — I was out of the office last week, back now. Happy to talk.",
+      "Apologies, I've been on vacation. What did you have in mind?",
+      "I was away from my email for a few days. Still interested?",
+    ]) {
+      expect(classifyReply({ subject: "Re: your ses setup", body })).toBe("human");
+    }
+  });
+
+  test("a subject-only unsubscribe with an empty body is unsubscribe", () => {
+    expect(classifyReply({ subject: "Unsubscribe", body: "" })).toBe("unsubscribe");
+    expect(classifyReply({ subject: "Please remove me", body: "" })).toBe("unsubscribe");
+  });
+
+  test("an opt-out inside a vacation-style human note wins over the OOO phrasing", () => {
+    expect(
+      classifyReply({
+        subject: "Re: intro",
+        body: "Heading out on vacation — please remove me from your list.",
+      }),
+    ).toBe("unsubscribe");
+  });
+
+  test("header-verdict machine mail is never an unsubscribe, even with the word in it", () => {
+    expect(
+      classifyReply({
+        subject: "Re: intro",
+        body: "I am out of the office. To unsubscribe from these notifications click here.",
+        autoSubmitted: true,
+      }),
+    ).toBe("auto");
+  });
+
   test("a bare soft no stays human", () => {
     expect(
       classifyReply({
