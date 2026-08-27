@@ -14,7 +14,14 @@ import { Field, Input, Select, Textarea } from "../components/primitives/Field.t
 import { Modal } from "../components/primitives/Modal.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { StepProgress } from "../components/primitives/StepProgress.tsx";
-import { cn, timeAgo } from "../lib/cn.ts";
+import { cn, formatSendsToday, timeAgo } from "../lib/cn.ts";
+
+/** Tailwind can't build class names dynamically — enumerate the tile-count variants. */
+const TILE_GRID_COLS: Record<number, string> = {
+  4: "md:grid-cols-4",
+  5: "md:grid-cols-5",
+  6: "md:grid-cols-6",
+};
 
 export const Route = createFileRoute("/cadences")({
   // ?sinceRun=N deep-link from /run/<play>?runId=N done-mode — filters the
@@ -341,7 +348,7 @@ function CadencesPage() {
       <section
         className={cn(
           "grid grid-cols-2 divide-x divide-ink-rule border-b border-ink-rule",
-          counts.bounced > 0 ? "md:grid-cols-5" : "md:grid-cols-4",
+          TILE_GRID_COLS[4 + (counts.bounced > 0 ? 1 : 0) + (cadences.data?.sendsToday ? 1 : 0)],
         )}
       >
         <CadenceSummary
@@ -363,6 +370,19 @@ function CadencesPage() {
           tone="spend"
         />
         <CadenceSummary label="Completed" value={counts.completed} caption="full cadence done" />
+        {cadences.data?.sendsToday && (
+          <CadenceSummary
+            label="Sends today"
+            value={formatSendsToday(cadences.data.sendsToday)}
+            caption="across all senders"
+            tone={
+              cadences.data.sendsToday.cap != null &&
+              cadences.data.sendsToday.sent >= cadences.data.sendsToday.cap
+                ? "spend"
+                : "neutral"
+            }
+          />
+        )}
         {counts.bounced > 0 && (
           <CadenceSummary
             label="Bounced"
@@ -1077,7 +1097,7 @@ function CadenceSummary({
   tone = "neutral",
 }: {
   label: string;
-  value: number;
+  value: number | string;
   caption?: string;
   tone?: "neutral" | "receipt" | "signal" | "spend" | "blocked";
 }) {

@@ -15,8 +15,10 @@ import type {
   CadenceNextStepDraft,
   CadenceStatus,
   CadenceView,
+  CadencesResult,
 } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
+import { sendsToday } from "./_capacity.ts";
 import { reportServerExecution } from "../telemetry.ts";
 
 /**
@@ -155,7 +157,10 @@ export function listCadences(req: Request): Response {
     // Scope the tiles to the run too, so they describe the same filtered view.
     countRows = countRows.filter(inRun);
   }
-  return jsonResponse({ cadences: viewsForRows(rows), counts: tallyCounts(countRows) }, 200, req);
+  const body: CadencesResult = { cadences: viewsForRows(rows), counts: tallyCounts(countRows) };
+  const capacity = sendsToday();
+  if (capacity) body.sendsToday = capacity;
+  return jsonResponse(body, 200, req);
 }
 
 /** Status breakdown for the summary tiles — `overdue` = active & past due. */

@@ -5,6 +5,11 @@ export function cn(...inputs: ClassValue[]): string {
   return twMerge(clsx(inputs));
 }
 
+/** "12/40", or "12/∞" when any sender is uncapped (cap null). */
+export function formatSendsToday(s: { sent: number; cap: number | null }): string {
+  return `${s.sent}/${s.cap ?? "∞"}`;
+}
+
 export function formatUsd(n: number): string {
   const digits = n === 0 ? 2 : n < 0.01 ? 4 : 2;
   return new Intl.NumberFormat("en-US", {

@@ -271,6 +271,25 @@ export function identityCapacities(now = new Date()): Map<string, IdentityCapaci
 }
 
 /**
+ * Whole-pool sends-today figure for the dashboard. Aggregated per cap-GROUP
+ * (a shared OneShot domain's budget counts once, not per mailbox).
+ * `capToday: null` when any group is uncapped — there is no honest finite
+ * total; render as "X/∞".
+ */
+export function poolSendCapacity(now = new Date()): { sentToday: number; capToday: number | null } {
+  const pool = computeCapacities(resolveIdentities(loadConfig()), now, { countUncapped: true });
+  let sent = 0;
+  let cap = 0;
+  let uncapped = false;
+  for (const g of pool.byGroup.values()) {
+    sent += g.sent;
+    if (Number.isFinite(g.cap)) cap += g.cap;
+    else uncapped = true;
+  }
+  return { sentToday: sent, capToday: uncapped ? null : cap };
+}
+
+/**
  * Which identity sends to this address. Resolution order:
  *  1. Existing pin → that identity (error if removed from the pool — never
  *     silently re-route a live thread).
