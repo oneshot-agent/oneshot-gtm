@@ -746,6 +746,20 @@ export async function runCadenceStepForProspect(
         note: `suppressed: hard-bounced${suppression.status_code ? ` ${suppression.status_code}` : ""}`,
       };
     }
+    // Reply-stream do-not-send (unsubscribe / dead-mailbox autoresponder):
+    // same shape as the bounce check — stop before paying for a draft, and
+    // record an honest terminal status instead of a send failure.
+    const contactStop = ledger.contactSuppressionFor(cadence.prospect_email);
+    if (contactStop) {
+      const status = contactStop.kind === "unsubscribe" ? "unsubscribed" : "bounced";
+      ledger.setCadenceStatus({ prospectId: opts.prospectId, playName: opts.playName, status });
+      return {
+        action: "skipped",
+        payload: null,
+        receiptIds: [],
+        note: `suppressed: ${contactStop.kind === "unsubscribe" ? "asked not to be contacted" : "mailbox reported dead"}`,
+      };
+    }
   }
   // Person-level ICP gate: an off-ICP prospect must not receive follow-ups.
   // Code-level on purpose — a prompt can be talked out of a rule, a status

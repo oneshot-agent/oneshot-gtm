@@ -368,6 +368,17 @@ async function dispatchEmail(input: SendEmailInput, ctx: CallContext) {
       `${input.to} hard-bounced${suppression.status_code ? ` (${suppression.status_code})` : ""} on ${suppression.bounced_at.slice(0, 10)} — not sending`,
     );
   }
+  // Same backstop for reply-stream verdicts: an unsubscribe or a dead-mailbox
+  // autoresponder is as final as a hard bounce, and stopping one cadence isn't
+  // enough — a later play could re-enroll the prospect and land here again.
+  const contactStop = getLedger().contactSuppressionFor(input.to);
+  if (contactStop) {
+    const why =
+      contactStop.kind === "unsubscribe" ? "asked not to be contacted" : "mailbox reported dead";
+    throw new SuppressedRecipientError(
+      `${input.to} ${why} (${contactStop.kind} reply on ${contactStop.received_at.slice(0, 10)}) — not sending`,
+    );
+  }
   // Sender rotation: resolve the sticky per-prospect identity BEFORE any
   // network call. Throws SendDeferredError when every identity is at its
   // daily cap — callers leave the work queued for tomorrow.

@@ -492,6 +492,10 @@ export class Ledger {
     // classifier and reads as 'human' everywhere (coalesce). Must run after
     // the CREATE TABLE above — ALTER on a fresh install needs the table.
     this.addColumnIfMissing("inbox_replies", "kind", "TEXT");
+    // contactSuppressionFor, on the send pre-flight path — must be an index seek.
+    this.db.exec(
+      `CREATE INDEX IF NOT EXISTS idx_inbox_replies_from_kind ON inbox_replies(from_email, kind)`,
+    );
     // v22: tweets the x-reposters finder already paid to harvest. Both X data
     // providers bill per resource RETURNED, and the finder's freshness window
     // (48h) is wider than its daily cadence — without this ledger every fresh
@@ -1308,6 +1312,25 @@ export class Ledger {
            ORDER BY bounced_at DESC LIMIT 1`,
         )
         .get(canonEmail(email)) as BounceRecord) ?? null
+    );
+  }
+
+  /**
+   * A do-not-send verdict from the reply stream: the newest 'unsubscribe'
+   * (they asked to stop) or 'auto_permanent' (their responder says the
+   * mailbox is dead) captured from this address. Durable on purpose — it
+   * outlives any one cadence, so a later play can never re-enroll and email
+   * an unsubscribed or gone prospect. Sibling of suppressionFor (bounces).
+   */
+  contactSuppressionFor(email: string): { kind: string; received_at: string } | null {
+    return (
+      (this.db
+        .query(
+          `SELECT kind, received_at FROM inbox_replies
+           WHERE from_email = ? AND kind IN ('unsubscribe', 'auto_permanent')
+           ORDER BY received_at DESC LIMIT 1`,
+        )
+        .get(canonEmail(email)) as { kind: string; received_at: string }) ?? null
     );
   }
 

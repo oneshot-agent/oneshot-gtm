@@ -604,7 +604,7 @@ function CadencesPage() {
                                 ? "signal"
                                 : c.status === "breakup"
                                   ? "spend"
-                                  : c.status === "bounced"
+                                  : c.status === "bounced" || c.status === "unsubscribed"
                                     ? "blocked"
                                     : "receipt"
                             }

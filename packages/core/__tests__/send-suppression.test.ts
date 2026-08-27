@@ -10,6 +10,8 @@ const assignSender = vi.fn((_email: string, id: string) => id);
 const recordReceipt = vi.fn().mockReturnValue(1);
 /** Set per test: what suppressionFor returns for the recipient. */
 let suppression: { status_code: string | null; bounced_at: string } | null = null;
+/** Set per test: what contactSuppressionFor returns (unsubscribe / dead mailbox). */
+let contactSuppression: { kind: string; received_at: string } | null = null;
 
 vi.mock("../src/config.ts", async () => {
   const actual = await vi.importActual<typeof import("../src/config.ts")>("../src/config.ts");
@@ -31,6 +33,7 @@ vi.mock("../src/ledger.ts", async () => {
     ...actual,
     getLedger: () => ({
       suppressionFor: () => suppression,
+      contactSuppressionFor: () => contactSuppression,
       getSenderAssignment,
       assignSender,
       recordReceipt,
@@ -49,6 +52,7 @@ const INPUT = { to: "jane@dead.example", subject: "s", body: "b" };
 
 beforeEach(() => {
   suppression = null;
+  contactSuppression = null;
   getSenderAssignment.mockClear();
   assignSender.mockClear();
   recordReceipt.mockClear();
@@ -87,6 +91,23 @@ describe("sendEmail suppression backstop", () => {
   it("still tolerates a missing status code", async () => {
     suppression = { status_code: null, bounced_at: "2026-08-01T10:00:00.000Z" };
     await expect(sendEmail(INPUT, CTX)).rejects.toThrow(/not sending/);
+  });
+
+  it("refuses a recipient who unsubscribed — durable across plays and cadences", async () => {
+    contactSuppression = { kind: "unsubscribe", received_at: "2026-08-27T16:00:00.000Z" };
+    const err = (await sendEmail(INPUT, CTX).catch((e: unknown) => e)) as Error;
+    expect(isSuppressedRecipient(err)).toBe(true);
+    expect(err.message).toContain("asked not to be contacted");
+    expect(err.message).toContain("2026-08-27");
+    expect(getSenderAssignment).not.toHaveBeenCalled();
+    expect(recordReceipt).not.toHaveBeenCalled();
+  });
+
+  it("refuses a recipient whose autoresponder reported the mailbox dead", async () => {
+    contactSuppression = { kind: "auto_permanent", received_at: "2026-08-27T16:00:00.000Z" };
+    const err = (await sendEmail(INPUT, CTX).catch((e: unknown) => e)) as Error;
+    expect(isSuppressedRecipient(err)).toBe(true);
+    expect(err.message).toContain("mailbox reported dead");
   });
 
   it("lets an address with no bounce history through to routing", async () => {

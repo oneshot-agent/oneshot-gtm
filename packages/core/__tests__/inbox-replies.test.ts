@@ -138,3 +138,25 @@ describe("inbox_replies.kind (v23)", () => {
     expect(ledger.listInboxRepliesForProspect(1)[0]!.kind).toBe("unsubscribe");
   });
 });
+
+describe("contactSuppressionFor", () => {
+  it("returns the newest unsubscribe / dead-mailbox verdict for an address", () => {
+    record({ kind: "auto" }); // temporary OOO never suppresses
+    expect(ledger.contactSuppressionFor("jane@prospect.example")).toBeNull();
+
+    record({ id: "msg-2", kind: "unsubscribe", receivedAt: "2026-08-26T10:00:00.000Z" });
+    const hit = ledger.contactSuppressionFor("Jane@Prospect.example"); // canonicalized lookup
+    expect(hit).toMatchObject({ kind: "unsubscribe", received_at: "2026-08-26T10:00:00.000Z" });
+  });
+
+  it("treats a dead-mailbox autoresponder as a do-not-send", () => {
+    record({ kind: "auto_permanent" });
+    expect(ledger.contactSuppressionFor("jane@prospect.example")?.kind).toBe("auto_permanent");
+  });
+
+  it("human replies never suppress", () => {
+    record({ kind: "human" });
+    record({ id: "msg-2" }); // NULL kind (legacy) — also human
+    expect(ledger.contactSuppressionFor("jane@prospect.example")).toBeNull();
+  });
+});

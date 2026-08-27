@@ -47,6 +47,7 @@ let deferOnSend = false;
 let alreadySentNextStep = false;
 // Simulates a prior hard bounce for this cadence's prospect.
 let suppression: { status_code: string | null; bounced_at: string } | null = null;
+let contactSuppression: { kind: string; received_at: string } | null = null;
 let icpVerdict: { verdict: string; reason: string | null } | null = null;
 
 vi.mock("@oneshot-gtm/core", async () => {
@@ -98,6 +99,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       recordProspectReply: () => [],
       // Null by default: most tests exercise the normal send path.
       suppressionFor: () => suppression,
+      contactSuppressionFor: () => contactSuppression,
       listAllCadences: () => cadenceRows,
       listActiveCadences: () => cadenceRows.filter((c) => c.status === "active"),
       listCadencesForProspect: (prospectId: number) =>
@@ -243,6 +245,7 @@ beforeEach(() => {
   deferOnSend = false;
   alreadySentNextStep = false;
   suppression = null;
+  contactSuppression = null;
   icpVerdict = null;
   seedActiveCadence();
 });
@@ -323,6 +326,39 @@ describe("sendCadenceStep", () => {
         stepIndex: 1,
       }),
     });
+  });
+});
+
+describe("runCadenceStepForProspect — reply-stream do-not-send gate", () => {
+  it("an unsubscribe skips before drafting and stops the cadence as unsubscribed", async () => {
+    contactSuppression = { kind: "unsubscribe", received_at: "2026-08-27T16:00:00.000Z" };
+    const result = await runCadenceStepForProspect({
+      prospectId: 1,
+      playName: "stack-consolidation",
+      dryRun: false,
+    });
+    expect(result.action).toBe("skipped");
+    expect(result.note).toMatch(/asked not to be contacted/);
+    expect(calls.llm).toBe(0);
+    expect(calls.sendEmail).toBe(0);
+    expect(statusCalls).toEqual([
+      { prospectId: 1, playName: "stack-consolidation", status: "unsubscribed" },
+    ]);
+  });
+
+  it("a dead-mailbox verdict stops the cadence as bounced", async () => {
+    contactSuppression = { kind: "auto_permanent", received_at: "2026-08-27T16:00:00.000Z" };
+    const result = await runCadenceStepForProspect({
+      prospectId: 1,
+      playName: "stack-consolidation",
+      dryRun: false,
+    });
+    expect(result.action).toBe("skipped");
+    expect(result.note).toMatch(/mailbox reported dead/);
+    expect(calls.sendEmail).toBe(0);
+    expect(statusCalls).toEqual([
+      { prospectId: 1, playName: "stack-consolidation", status: "bounced" },
+    ]);
   });
 });
 

@@ -28,6 +28,7 @@ vi.mock("../src/ledger.ts", async () => {
     ...actual,
     getLedger: () => ({
       suppressionFor: () => null,
+      contactSuppressionFor: () => null,
       getSenderAssignment: () => null,
       assignSender,
       recordReceipt: () => 1,
