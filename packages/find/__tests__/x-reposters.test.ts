@@ -34,6 +34,8 @@ let stageBVerdict: "pass" | "reject" | "unclear" | "transient" = "pass";
 let dupHandles = new Set<string>();
 /** handle → email deepResearchPerson finds; absent → no email in the dossier. */
 let emailsByHandle: Record<string, string> = {};
+/** handles whose deepResearchPerson call throws ("Could not find data…"). */
+let researchFailsFor = new Set<string>();
 
 function user(over: Partial<XUser> = {}): XUser {
   return {
@@ -165,6 +167,9 @@ vi.mock("@oneshot-gtm/core", async () => {
     deepResearchPerson: async (input: { socialMediaUrl?: string }) => {
       const handle = (input.socialMediaUrl ?? "").split("/").pop() ?? "";
       researchCalls.push(handle);
+      if (researchFailsFor.has(handle.toLowerCase())) {
+        throw new Error("Job failed: Could not find data for this person.");
+      }
       const email = emailsByHandle[handle.toLowerCase()];
       return {
         result: {
@@ -210,6 +215,7 @@ beforeEach(() => {
   stageBVerdict = "pass";
   dupHandles = new Set();
   emailsByHandle = {};
+  researchFailsFor = new Set();
 });
 afterEach(() => vi.clearAllMocks());
 
@@ -253,6 +259,26 @@ describe("runXRepostersFinder — lane → play routing", () => {
     expect(row.payload["engine"]).toBe("xapi");
     expect(row.payload["xUserId"]).toBe("u-noemail");
     expect(row.payload["launchDate"]).toBe("2026-09-23");
+  });
+
+  it("a research failure on an amplifier falls through to the manual DM draft", async () => {
+    // Observed on the first live run: deepResearchPerson "Could not find data
+    // for this person" killed the only pick. The DM path needs no email and no
+    // dossier — the repost is the hook — so the amplifier must survive.
+    harvestCandidates = [amplifierCandidate("ghost")];
+    researchFailsFor = new Set(["ghost"]);
+    const out = await runXRepostersFinder({ dryRun: false, seeds: SEEDS });
+    expect(out.enqueued).toBe(1);
+    expect(enqueued[0]!.playName).toBe("x-amplify-dm");
+    expect(out.droppedEnrichment).toBe(0);
+  });
+
+  it("a research failure on a founder still drops — that lane is email-only", async () => {
+    harvestCandidates = [founderCandidate("ghostf")];
+    researchFailsFor = new Set(["ghostf"]);
+    const out = await runXRepostersFinder({ dryRun: false, seeds: SEEDS });
+    expect(out.droppedEnrichment).toBe(1);
+    expect(enqueued).toHaveLength(0);
   });
 
   it("founder wins when someone qualifies for both lanes", async () => {

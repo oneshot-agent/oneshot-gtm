@@ -330,9 +330,12 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
 
     // Research the person from their X profile. X gives no company domain
     // (and x.com is a dud domain for the findEmail prescreen), so
-    // deepResearchPerson is the contact path for BOTH lanes.
+    // deepResearchPerson is the contact path for BOTH lanes. A research
+    // failure is fatal only for founders (that lane is email-only); an
+    // amplifier falls through to the manual DM draft, which needs neither an
+    // email nor a dossier — the repost itself is the hook.
     const twitterUrl = `https://x.com/${c.user.username}`;
-    let research: Awaited<ReturnType<typeof deepResearchPerson>>;
+    let research: Awaited<ReturnType<typeof deepResearchPerson>> | null = null;
     try {
       research = await deepResearchPerson(
         { socialMediaUrl: twitterUrl, name: c.user.name },
@@ -343,16 +346,18 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
         kind: `${PLAY_NAME}.research`,
         message: ((err as Error).message ?? "").slice(0, 120),
       });
-      result.droppedEnrichment++;
-      return;
+      if (pick.lane === "founder") {
+        result.droppedEnrichment++;
+        return;
+      }
     }
-    sdkCost += research.result?.cost ?? 0;
-    const enrichment = (research.result?.result?.enrichment ?? {}) as Record<string, unknown>;
-    const articles = research.result?.result?.articles;
+    sdkCost += research?.result?.cost ?? 0;
+    const enrichment = (research?.result?.result?.enrichment ?? {}) as Record<string, unknown>;
+    const articles = research?.result?.result?.articles;
     const hasSignal =
       Object.keys(enrichment).length > 0 || (Array.isArray(articles) && articles.length > 0);
     const dossier = hasSignal
-      ? JSON.stringify(research.result?.result ?? research.result, null, 2).slice(0, 6000)
+      ? JSON.stringify(research?.result?.result ?? research?.result, null, 2).slice(0, 6000)
       : "";
 
     // SDK-found emails, cheapest-to-extract order.
