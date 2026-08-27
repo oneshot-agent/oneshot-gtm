@@ -1,8 +1,8 @@
 # Status
 
-**Assume green unless it's listed below.** The 48 CLI commands, 14 plays, 10 finders, nine dashboard pages plus the run form, and the server's REST + SSE routes are all covered by the test suite — and, with the exceptions on this page, verified end to end against the live OneShot API.
+**Assume green unless it's listed below.** The 49 CLI commands, 17 plays, 11 finders, nine dashboard pages plus the run form, and the server's REST + SSE routes are all covered by the test suite — and, with the exceptions on this page, verified end to end against the live OneShot API.
 
-Last verified **2026-08-25** · Bun 1.3.13 · OneShot SDK 0.22.0 · 1777 tests / 137 files · typecheck + oxlint clean.
+Last verified **2026-08-27** · Bun 1.3.13 · OneShot SDK 0.22.0 · 1924 tests / 154 files · typecheck + oxlint clean.
 
 The person-level ICP gate (#45) was calibrated against 84 real LinkedIn titles (all 13 known off-ICP prospects caught, zero false rejects among 44 builders) and the history audit ran live `enrichProfile` for 111 titles. The workspace switcher's auto-start was live-verified in both directions (default ↔ gtm).
 
@@ -30,11 +30,11 @@ Every failure mode in the two deliverability paths is loud rather than silent �
 
 ## Off by default
 
-Only **`show-hn`** and **`post-funding-auto`** fire out of the box. The other eight finders are opt-in, enabled per trigger from `/queue`:
+Only **`show-hn`** and **`post-funding-auto`** fire out of the box. The other nine finders are opt-in, enabled per trigger from `/queue`:
 
-`accelerator-batch` · `job-change` · `hiring-signal` · `podcast-guest` · `luma-events` · `github-topics` · `github-stars` · `breakup-revive`
+`accelerator-batch` · `job-change` · `hiring-signal` · `podcast-guest` · `luma-events` · `github-topics` · `github-stars` · `breakup-revive` · `x-reposters`
 
-Five of those also stay **not ready** until you give them required config, and refuse to fire until you do (the API returns `409`):
+Six of those also stay **not ready** until you give them required config, and refuse to fire until you do (the API returns `409`):
 
 | Finder              | Needs                                 |
 | ------------------- | ------------------------------------- |
@@ -43,6 +43,7 @@ Five of those also stay **not ready** until you give them required config, and r
 | `github-topics`     | `topics[]` + `vendors[]` + `yourEdge` |
 | `github-stars`      | `repos[]` + `yourEdge`                |
 | `luma-events`       | `topics[]` + `cities[]` + `yourEdge`  |
+| `x-reposters`       | `seeds[]` + engine credentials        |
 
 Both GitHub finders need `GITHUB_TOKEN`. Unauthenticated, GitHub allows 60 requests/hour per IP **shared across the two** — one `github-stars` pass (each repo, up to 3 pages) can spend that alone, and the finder then halts on a `403` that reads like a dead endpoint rather than degrading to lower volume. A classic token with **no scopes** is enough for the public data both read, and lifts the ceiling to 5,000/hour. `doctor` warns when either finder is enabled without one. `luma-events` accepts an optional `LUMA_SESSION_COOKIE` to read authed guest lists. `x-reposters` needs the X credentials for whichever engine its config names (`xapi`: 4 OAuth1 keys, `twitterapiio`: 1 key) — settable from `/setup`'s X card or `config keys`, switchable with `config x-engine`.
 
