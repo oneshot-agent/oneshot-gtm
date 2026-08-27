@@ -348,7 +348,7 @@ function SetupPage() {
             </Field>
             <Field
               label="Your email"
-              hint="Lead capture on pages this tool generates (e.g. the PMF survey). NOT a reply address \u2014 replies land in the inbox of whichever sending identity sent the mail."
+              hint="Lead capture on pages this tool generates (e.g. the PMF survey). NOT a reply address — replies land in the inbox of whichever sending identity sent the mail."
             >
               <Input
                 type="email"

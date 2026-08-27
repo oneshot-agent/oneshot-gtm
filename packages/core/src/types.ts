@@ -96,7 +96,7 @@ export interface SequenceEventRecord {
   prospect_id: number;
   play_name: string;
   step_index: number;
-  channel: "email" | "sms" | "voice" | "linkedin";
+  channel: "email" | "sms" | "voice" | "linkedin" | "x";
   status: "queued" | "sent" | "delivered" | "replied" | "bounced" | "failed";
   metadata_json: string | null;
   created_at: string;

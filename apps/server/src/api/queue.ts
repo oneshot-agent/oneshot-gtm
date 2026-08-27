@@ -9,6 +9,7 @@ import {
 } from "@oneshot-gtm/core";
 import { drainQueue } from "@oneshot-gtm/find";
 import {
+  MANUAL_PLAYS,
   enrollInCadence,
   logTargetError,
   playMetadata,
@@ -275,6 +276,87 @@ export async function regenerateDraftRoute(
     ...(draft.enrichmentFailed ? { enrichmentFailed: true } : {}),
   };
   return jsonResponse(out, 200, req);
+}
+
+/**
+ * Record that a MANUAL play's draft was sent by hand (e.g. x-amplify-dm: the
+ * founder copied the DM text and sent it from the X app). No transport, no
+ * receipt — writes the prospect + a step-0 sequence event on the play's manual
+ * channel and flips the row to `sent`. Only plays in MANUAL_PLAYS qualify;
+ * everything else must go through the real send route.
+ */
+export async function markSentRoute(
+  req: Request,
+  params: Record<string, string>,
+): Promise<Response> {
+  const id = Number.parseInt(params["id"] ?? "", 10);
+  if (!Number.isFinite(id)) return jsonResponse({ error: "bad id" }, 400, req);
+  const ledger = getLedger();
+  const row = ledger.getQueueRow(id);
+  if (!row) return jsonResponse({ error: `row #${id} not found` }, 404, req);
+  const manual = MANUAL_PLAYS[row.play_name];
+  if (!manual) {
+    return jsonResponse(
+      { error: `${row.play_name} is not a manual-send play — use send-draft` },
+      400,
+      req,
+    );
+  }
+  if (row.status === "sent") return jsonResponse({ error: "row already marked sent" }, 400, req);
+  // Same review gate as the send path: only an approved row may be recorded
+  // as sent — marking a rejected (or never-reviewed) row would silently
+  // un-reject it and log outreach to a person the founder killed.
+  if (row.status !== "approved") {
+    return jsonResponse(
+      { error: `row is ${row.status} — approve it before marking sent` },
+      400,
+      req,
+    );
+  }
+  if (!row.last_draft_json) {
+    return jsonResponse({ error: "no draft on this row — drain or regenerate first" }, 400, req);
+  }
+  let draft: Partial<LastDraft>;
+  try {
+    draft = JSON.parse(row.last_draft_json) as Partial<LastDraft>;
+  } catch {
+    return jsonResponse({ error: "stored draft is not valid JSON" }, 400, req);
+  }
+  const body = typeof draft.body === "string" ? draft.body : "";
+  if (!body) return jsonResponse({ error: "stored draft is empty" }, 400, req);
+
+  let payload: Record<string, unknown> = {};
+  try {
+    const p = JSON.parse(row.payload_json);
+    if (p && typeof p === "object") payload = p as Record<string, unknown>;
+  } catch {
+    // tolerated — prospect fields below just come up null
+  }
+  const pstr = (k: string): string | null => (typeof payload[k] === "string" ? payload[k] : null);
+  const twitterUrl = pstr("twitterUrl");
+
+  const prospectId = ledger.upsertProspect({
+    name: pstr("name"),
+    email: null,
+    linkedin_url: twitterUrl,
+    source: row.play_name,
+    source_profile_url: twitterUrl,
+  });
+  ledger.recordSequenceEvent({
+    prospectId,
+    playName: row.play_name,
+    stepIndex: 0,
+    channel: manual.channel,
+    status: "sent",
+    metadata: { body, ...playMetadata(row.play_name, payload) },
+  });
+  try {
+    ledger.setQueueProspectId(row.id, prospectId);
+  } catch {
+    // best-effort backfill — the marked send is already recorded
+  }
+  ledger.setQueueStatus({ id: row.id, status: "sent" });
+  return jsonResponse({ ok: true, prospectId }, 200, req);
 }
 
 /**

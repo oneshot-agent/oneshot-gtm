@@ -10,6 +10,9 @@ import { type ProfileIntroTarget, runProfileIntro } from "./profile-intro.ts";
 import { type RepoInterestTarget, runRepoInterest } from "./repo-interest.ts";
 import { type ShowHnTarget, runShowHn } from "./show-hn.ts";
 import { type StackConsolidationTarget, runStackConsolidation } from "./stack-consolidation.ts";
+import { type XAmplifyTarget, runXAmplify } from "./x-amplify.ts";
+import { type XAmplifyDmTarget, runXAmplifyDm } from "./x-amplify-dm.ts";
+import { type XRepostIntroTarget, runXRepostIntro } from "./x-repost-intro.ts";
 
 /**
  * The fields every play runner's drafted row exposes. Callers (the SSE /run
@@ -159,6 +162,30 @@ export const PLAYS: Record<string, PlayDispatch> = {
     // counters will jump at the end. Acceptable until breakup-revive grows
     // a parallelMap-style worker pool.
     run: (o) => runBreakupRevive({ dryRun: o.dryRun, targets: o.targets as BreakupReviveTarget[] }),
+  },
+  "x-repost-intro": {
+    run: (o) =>
+      runXRepostIntro({
+        dryRun: o.dryRun,
+        targets: o.targets as XRepostIntroTarget[],
+        ...progressOpt(o),
+      }),
+  },
+  "x-amplify": {
+    run: (o) =>
+      runXAmplify({
+        dryRun: o.dryRun,
+        targets: o.targets as XAmplifyTarget[],
+        ...progressOpt(o),
+      }),
+  },
+  "x-amplify-dm": {
+    run: (o) =>
+      runXAmplifyDm({
+        dryRun: o.dryRun,
+        targets: o.targets as XAmplifyDmTarget[],
+        ...progressOpt(o),
+      }),
   },
 };
 

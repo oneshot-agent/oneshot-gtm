@@ -44,7 +44,7 @@ Five of those also stay **not ready** until you give them required config, and r
 | `github-stars`      | `repos[]` + `yourEdge`                |
 | `luma-events`       | `topics[]` + `cities[]` + `yourEdge`  |
 
-`github-stars` also wants `GITHUB_TOKEN` for useful volume, and `luma-events` accepts an optional `LUMA_SESSION_COOKIE` to read authed guest lists.
+Both GitHub finders need `GITHUB_TOKEN`. Unauthenticated, GitHub allows 60 requests/hour per IP **shared across the two** — one `github-stars` pass (each repo, up to 3 pages) can spend that alone, and the finder then halts on a `403` that reads like a dead endpoint rather than degrading to lower volume. A classic token with **no scopes** is enough for the public data both read, and lifts the ceiling to 5,000/hour. `doctor` warns when either finder is enabled without one. `luma-events` accepts an optional `LUMA_SESSION_COOKIE` to read authed guest lists.
 
 ## Known limitations
 

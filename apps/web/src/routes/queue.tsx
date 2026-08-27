@@ -5,6 +5,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  Copy,
   ExternalLink,
   Loader2,
   Pencil,
@@ -818,6 +819,8 @@ function QueueRow({
               )}
               <DraftSection
                 id={row.id}
+                playName={row.playName}
+                payload={row.payload}
                 status={row.status}
                 draft={row.lastDraft}
                 draftedAt={row.lastDraftedAt}
@@ -851,6 +854,8 @@ function QueueRow({
  */
 function DraftSection({
   id,
+  playName,
+  payload,
   status,
   draft,
   draftedAt,
@@ -858,6 +863,8 @@ function DraftSection({
   isSending,
 }: {
   id: number;
+  playName: string;
+  payload: unknown;
   status: QueueStatusView;
   draft: QueueRowView["lastDraft"];
   draftedAt: string | null;
@@ -938,6 +945,79 @@ function DraftSection({
     </Button>
   ) : null;
 
+  // Manual-send play (x-amplify-dm): there is no transport — the founder
+  // copies the DM/reply text, sends it by hand from the X app, then records it
+  // here. "Mark sent" writes the channel:"x" step-0 event server-side.
+  const isManualPlay = playName === "x-amplify-dm";
+  const markSent = useMutation({
+    mutationFn: () => api.markSent(id),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["queue"] });
+      toast.success("recorded · hand-send logged on channel x");
+    },
+    onError: (err) => {
+      void qc.invalidateQueries({ queryKey: ["queue"] });
+      toast.error(`couldn't record · ${err.message}`);
+    },
+  });
+  const p = (payload ?? {}) as Record<string, unknown>;
+  const pstr = (k: string): string | null => (typeof p[k] === "string" ? (p[k] as string) : null);
+  const dmOpen = p["dmOpen"] === true;
+  const xUserId = pstr("xUserId");
+  const openOnXUrl = dmOpen
+    ? xUserId
+      ? `https://x.com/messages/compose?recipient_id=${xUserId}`
+      : (pstr("twitterUrl") ?? "")
+    : (pstr("tweetUrl") ?? pstr("twitterUrl") ?? "");
+  // Same review gate as the send button: a rejected (or still-pending) row
+  // must not offer Mark sent — the server refuses non-approved rows too.
+  const manualButtons =
+    isManualPlay && draft != null && status === "approved" && !draft.sent ? (
+      <>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            void navigator.clipboard.writeText(draft.body);
+            toast.success("copied — paste it into X");
+          }}
+          title="Copy the draft text to paste into X"
+        >
+          <Copy size={11} /> copy text
+        </Button>
+        {openOnXUrl && (
+          <a
+            href={openOnXUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 font-mono text-[10px] text-ink-cream-2 underline decoration-ink-rule underline-offset-2 hover:text-ink-cream"
+            title={
+              dmOpen
+                ? `DM @${pstr("handle") ?? ""} — their DMs are open`
+                : "Their DMs are closed — reply under the repost instead"
+            }
+          >
+            <ExternalLink size={11} />{" "}
+            {dmOpen ? `DM @${pstr("handle") ?? ""}` : "reply on their repost"}
+          </a>
+        )}
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={markSent.isPending}
+          onClick={() => markSent.mutate()}
+          title="Record that you sent this by hand from the X app"
+        >
+          {markSent.isPending ? (
+            <Loader2 size={11} className="animate-spin" />
+          ) : (
+            <Check size={11} />
+          )}
+          {markSent.isPending ? "recording…" : "mark sent"}
+        </Button>
+      </>
+    ) : null;
+
   // Send THIS prospect now, using the reviewed draft VERBATIM (no LLM re-roll).
   // Enabled for an approved, not-yet-sent draft with no BLOCKING flags. Lint /
   // dedup flags block (regenerate until clean, then send); soft review flags
@@ -947,7 +1027,7 @@ function DraftSection({
   // Soft-flagged but otherwise sendable: held for review, founder is overriding.
   const softHold = cleanDraft && draft != null && draft.flags.length > 0;
   const sendButton =
-    status === "approved" && !(draft?.sent ?? false) ? (
+    !isManualPlay && status === "approved" && !(draft?.sent ?? false) ? (
       <Button
         variant="secondary"
         size="sm"
@@ -977,6 +1057,7 @@ function DraftSection({
           no draft yet
         </span>
         <span className="flex items-center gap-2">
+          {manualButtons}
           {sendButton}
           {draftButton}
         </span>
@@ -1033,6 +1114,7 @@ function DraftSection({
               receipt #{rid}
             </Link>
           ))}
+          {manualButtons}
           {sendButton}
           {draftButton}
         </span>

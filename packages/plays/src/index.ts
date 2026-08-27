@@ -23,3 +23,6 @@ export * from "./hiring-signal.ts";
 export * from "./podcast-guest.ts";
 export * from "./breakup-revive.ts";
 export * from "./luma-events.ts";
+export * from "./x-repost-intro.ts";
+export * from "./x-amplify.ts";
+export * from "./x-amplify-dm.ts";

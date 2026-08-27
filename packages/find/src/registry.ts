@@ -16,6 +16,9 @@ import { runLumaFinder } from "./luma.ts";
 import { runPodcastGuestFinder } from "./podcast-guest.ts";
 import { runPostFundingFinder } from "./post-funding.ts";
 import { runShowHnFinder } from "./show-hn.ts";
+import { runXRepostersFinder } from "./x-reposters.ts";
+import type { XSeed } from "./_x-types.ts";
+import type { HarvestKnobs } from "./_x-engine.ts";
 import type { FinderResult } from "./_types.ts";
 
 export interface TriggerSpec {
@@ -465,6 +468,94 @@ export const TRIGGERS: TriggerSpec[] = [
         concurrency: (cfg["concurrency"] as number) ?? 3,
         limit: (cfg["limit"] as number) ?? 25,
         maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
+      });
+    },
+  },
+  {
+    name: "x-reposters",
+    defaultIntervalMs: 24 * ONE_HOUR,
+    enabledByDefault: false,
+    defaultConfig: {
+      seeds: [] as Array<{ handle: string; edge?: string }>,
+      engine: "xapi",
+      laneSplit: 0.5,
+      limit: 12,
+      launchDate: null,
+      ownHandles: [] as string[],
+      maxCostUsd: 5,
+    },
+    configBrief:
+      'Watches seed X accounts and harvests everyone who reposted/quoted their recent tweets, in two lanes: FOUNDER (bio + a real product link say they build things → x-repost-intro email behind the person-ICP gate, normal cadence) and AMPLIFIER (dev/AI audience with reach → x-amplify email asking for a launch-day look+repost, or x-amplify-dm — a hand-sent DM/reply draft — when no email is found). Config: `seeds` (array of `{handle, edge?}` — `edge` is an OPTIONAL founder-authored line on why THAT seed\'s audience matters, shaping the founder-lane framing like github-stars\' repoEdge; pick seeds whose reposters BUILD things — influencer seeds produce influencer reposters and starve the founder lane), `engine` ("xapi" default = first-party X API at ~$0.01/user read, needs X_API_KEY/X_API_SECRET/X_ACCESS_TOKEN/X_ACCESS_SECRET OAuth1 user-context creds in .env; "twitterapiio" = third-party scraper ~55x cheaper, needs TWITTERAPI_IO_KEY — a deliberate cost-vs-first-party trade), `maxSpendPerRun` (X READ spend ceiling — defaults $5 on xapi / $1 on twitterapiio; the run stops at the ceiling and keeps what it harvested), `maxCostUsd` (SDK/LLM spend cap, separate), `laneSplit` (founder share of `limit`, default 0.5 — lanes rank within themselves, never against each other), `limit` (per-run enqueue cap, default 12), `launchDate` (ISO date — the ONLY timing fact amplifier drafts may state, always absolute; sends spread over weeks so relative phrasing goes stale), `ownHandles` (your own X accounts, never contacted), `replay: true` (one run re-scoring the last paid harvest at ZERO X spend — use for filter tuning; both providers bill per resource returned). HARD RULES the plays enforce: never pitch the product to amplifiers; never ask founders for a repost. Note: unlike GitHub finders, the HARVEST is the paid step — a dry run still spends X reads unless `replay` is set.',
+    readiness: (cfg) => {
+      const seeds = Array.isArray(cfg["seeds"]) ? cfg["seeds"] : [];
+      const valid = seeds.filter(
+        (s) =>
+          s &&
+          typeof s === "object" &&
+          typeof (s as Record<string, unknown>)["handle"] === "string" &&
+          ((s as Record<string, unknown>)["handle"] as string).trim().length > 0,
+      );
+      if (valid.length === 0) {
+        return {
+          ready: false,
+          reason: "set `seeds` (each `{handle}` — accounts whose reposters you want)",
+        };
+      }
+      if (cfg["engine"] === "twitterapiio") {
+        if (!process.env["TWITTERAPI_IO_KEY"]) {
+          return {
+            ready: false,
+            reason: "set TWITTERAPI_IO_KEY in .env for the twitterapi.io engine",
+          };
+        }
+        return { ready: true };
+      }
+      const missing = ["X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_SECRET"].filter(
+        (k) => !process.env[k],
+      );
+      if (missing.length > 0) {
+        return {
+          ready: false,
+          reason: `set ${missing.join(", ")} in .env (OAuth1 user-context — app-only bearer tokens 401 on v2 reads)`,
+        };
+      }
+      return { ready: true };
+    },
+    run: (cfg) => {
+      const seeds: XSeed[] = (Array.isArray(cfg["seeds"]) ? cfg["seeds"] : [])
+        .map((s): XSeed | null => {
+          if (!s || typeof s !== "object") return null;
+          const e = s as Record<string, unknown>;
+          const handle =
+            typeof e["handle"] === "string" ? e["handle"].trim().replace(/^@/, "") : "";
+          if (handle.length === 0) return null;
+          const edge = typeof e["edge"] === "string" ? e["edge"].trim() : "";
+          return { handle, ...(edge ? { edge } : {}) };
+        })
+        .filter((s): s is XSeed => s !== null);
+      return runXRepostersFinder({
+        dryRun: false,
+        seeds,
+        engine: cfg["engine"] === "twitterapiio" ? "twitterapiio" : "xapi",
+        ...(typeof cfg["maxSpendPerRun"] === "number"
+          ? { maxSpendPerRun: cfg["maxSpendPerRun"] as number }
+          : {}),
+        // typeof guards, not casts: a stringly config value ("half") would
+        // flow through as NaN, zero both lanes, and blame the seeds.
+        laneSplit: typeof cfg["laneSplit"] === "number" ? cfg["laneSplit"] : 0.5,
+        limit: typeof cfg["limit"] === "number" ? cfg["limit"] : 12,
+        ...(typeof cfg["launchDate"] === "string" && cfg["launchDate"].trim()
+          ? { launchDate: (cfg["launchDate"] as string).trim() }
+          : {}),
+        ownHandles: Array.isArray(cfg["ownHandles"])
+          ? (cfg["ownHandles"] as unknown[]).filter((h): h is string => typeof h === "string")
+          : [],
+        ...(cfg["knobs"] && typeof cfg["knobs"] === "object"
+          ? { knobs: cfg["knobs"] as Partial<HarvestKnobs> }
+          : {}),
+        ...(cfg["replay"] === true ? { replay: true } : {}),
+        ...(typeof cfg["replayDay"] === "string" ? { replayDay: cfg["replayDay"] as string } : {}),
+        maxCostUsd: typeof cfg["maxCostUsd"] === "number" ? cfg["maxCostUsd"] : 5,
       });
     },
   },

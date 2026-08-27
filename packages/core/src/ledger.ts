@@ -486,6 +486,16 @@ export class Ledger {
       CREATE INDEX IF NOT EXISTS idx_inbox_replies_thread
         ON inbox_replies(thread_key, received_at);
     `);
+    // v22: tweets the x-reposters finder already paid to harvest. Both X data
+    // providers bill per resource RETURNED, and the finder's freshness window
+    // (48h) is wider than its daily cadence — without this ledger every fresh
+    // tweet would be re-bought on two consecutive runs.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS x_harvested_tweets (
+        tweet_id     TEXT PRIMARY KEY,
+        harvested_at TEXT NOT NULL
+      );
+    `);
   }
 
   /**
@@ -2196,6 +2206,31 @@ export class Ledger {
       .prepare("DELETE FROM pending_resolution WHERE first_seen_at < ?")
       .run(cutoff);
     return Number(res.changes ?? 0);
+  }
+
+  /** Tweet ids the x-reposters finder paid for since `cutoffIso` — skipped on the next harvest. */
+  recentXHarvestedTweetIds(cutoffIso: string): Set<string> {
+    const rows = this.db
+      .query("SELECT tweet_id FROM x_harvested_tweets WHERE harvested_at >= ?")
+      .all(cutoffIso) as Array<{ tweet_id: string }>;
+    return new Set(rows.map((r) => r.tweet_id));
+  }
+
+  /**
+   * Record tweets just paid for and prune rows past the skip window in one
+   * transaction, so the table can't silt. Re-recording an id refreshes its
+   * timestamp (a re-buy inside the freshness window restarts its clock).
+   */
+  recordXHarvestedTweets(ids: string[], nowIso: string, pruneCutoffIso: string): void {
+    const insert = this.db.prepare(
+      `INSERT INTO x_harvested_tweets(tweet_id, harvested_at) VALUES(?, ?)
+       ON CONFLICT(tweet_id) DO UPDATE SET harvested_at = excluded.harvested_at`,
+    );
+    const tx = this.db.transaction(() => {
+      this.db.prepare("DELETE FROM x_harvested_tweets WHERE harvested_at < ?").run(pruneCutoffIso);
+      for (const id of ids) insert.run(id, nowIso);
+    });
+    tx();
   }
 
   /**

@@ -56,6 +56,7 @@ describe("TRIGGERS registry", () => {
       "podcast-guest",
       "post-funding-auto",
       "show-hn",
+      "x-reposters",
     ]);
   });
 
@@ -302,6 +303,7 @@ describe("checkReadiness", () => {
       "hiring-signal",
       "accelerator-batch",
       "luma-events",
+      "x-reposters",
     ]);
     for (const spec of TRIGGERS) {
       if (intentionallyUnreadyByDefault.has(spec.name)) continue;

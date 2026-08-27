@@ -59,6 +59,8 @@ bun run cli -- ui                               # http://127.0.0.1:3030
 
 `init` also asks for the founder profile the prompts draw on: background that builds trust, products you've shipped, notable partners or customers, and one true concession. All optional — when a field is blank, the beat that uses it is skipped rather than improvised. Edit any of them later from `/setup` or `config founder`.
 
+Two credentials are env-only — `init` never asks, and they go straight into `.env` in the config dir. `GITHUB_TOKEN` is the one most people need: without it the two GitHub finders share GitHub's unauthenticated ceiling of 60 requests/hour per IP and halt on a `403`, so a classic token with **no scopes** is worth creating before you enable them. `LUMA_SESSION_COOKIE` is optional, and only buys authed Luma guest lists. `doctor` warns about a missing `GITHUB_TOKEN` once a GitHub finder is on.
+
 To call it from anywhere: `cd apps/cli && bun link && bun link oneshot-gtm && cd -`. If you linked before workspaces landed, re-run that — the bin target moved to the bootstrap shim (`src/main.ts`).
 
 Prefer the dashboard without cloning? `bunx oneshot-gtm-server` downloads and boots it. Bun is still required — the bundle uses `bun:sqlite` and `Bun.serve`, and fails loudly with an install hint under plain `node`. The CLI itself is not published to npm.
@@ -168,18 +170,18 @@ The dashboard always knows where it is: a masthead chip names the workspace and 
 
 Ten **finders** discover prospects, ICP-filter them, and enqueue into `/queue` for one-click approve or reject. Each runs as a trigger with its own interval and spend cap.
 
-| Finder              | Signal                                                                                                                                                           |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `show-hn`           | same-day Show HN posts, via the HN Algolia API                                                                                                                   |
-| `post-funding-auto` | funding announcements by ICP-derived industry × round                                                                                                            |
-| `accelerator-batch` | new cohorts — yc-oss directory, websearch fallback for Techstars / Antler / 500 / AI Grant                                                                       |
-| `job-change`        | `joined as <persona>` announcements, filtered by persona and company                                                                                             |
-| `hiring-signal`     | open roles on Greenhouse / Lever / Workable / Ashby implying a need                                                                                              |
-| `podcast-guest`     | recent guests across Latent Space, Lenny's, 20VC, Acquired, Invest Like the Best                                                                                 |
-| `github-topics`     | repos by topic, then a manifest scan (`package.json`, `pyproject.toml`, `requirements.txt`) that detects the vendor stack deterministically                      |
-| `github-stars`      | recent stargazers of repos you watch; tag each repo `competitor` or `adjacent` to route the play                                                                 |
-| `luma-events`       | upcoming events from Luma's own city pages, gated per event by a topic + ICP check before any spend; pitches the hosts and featured guests Luma exposes publicly |
-| `breakup-revive`    | your own ledger — prospects cold for 60–90 days. No LLM or OneShot spend                                                                                         |
+| Finder              | Signal                                                                                                                                                             |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `show-hn`           | same-day Show HN posts, via the HN Algolia API                                                                                                                     |
+| `post-funding-auto` | funding announcements by ICP-derived industry × round                                                                                                              |
+| `accelerator-batch` | new cohorts — yc-oss directory, websearch fallback for Techstars / Antler / 500 / AI Grant                                                                         |
+| `job-change`        | `joined as <persona>` announcements, filtered by persona and company                                                                                               |
+| `hiring-signal`     | open roles on Greenhouse / Lever / Workable / Ashby implying a need                                                                                                |
+| `podcast-guest`     | recent guests across Latent Space, Lenny's, 20VC, Acquired, Invest Like the Best                                                                                   |
+| `github-topics`     | repos by topic, then a manifest scan (`package.json`, `pyproject.toml`, `requirements.txt`) that detects the vendor stack deterministically — needs `GITHUB_TOKEN` |
+| `github-stars`      | recent stargazers of repos you watch; tag each repo `competitor` or `adjacent` to route the play — needs `GITHUB_TOKEN`                                            |
+| `luma-events`       | upcoming events from Luma's own city pages, gated per event by a topic + ICP check before any spend; pitches the hosts and featured guests Luma exposes publicly   |
+| `breakup-revive`    | your own ledger — prospects cold for 60–90 days. No LLM or OneShot spend                                                                                           |
 
 Only `show-hn` and `post-funding-auto` are on by default; enable the rest from `/queue`. A trigger missing required config reads as **not ready** — the toggle and Run button disable with the reason, and the API returns `409`, so scripted callers can't bypass the gate either.
 

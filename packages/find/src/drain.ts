@@ -1,5 +1,5 @@
 import { getLedger, isSendDeferred, type ProspectRecord, type QueueRow } from "@oneshot-gtm/core";
-import { type DraftedRow, isSupportedPlay, PLAYS } from "@oneshot-gtm/plays";
+import { type DraftedRow, isSupportedPlay, MANUAL_PLAYS, PLAYS } from "@oneshot-gtm/plays";
 
 export interface DrainOpts {
   playName: string;
@@ -28,7 +28,26 @@ export interface DrainOutcome {
  */
 export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
   const ledger = getLedger();
-  const rows = ledger.dequeueApproved({ playName: opts.playName, limit: opts.limit ?? 50 });
+  const limit = opts.limit ?? 50;
+  const isManual = Boolean(MANUAL_PLAYS[opts.playName]);
+  // Manual plays (x-amplify-dm) never flip to sent on drain — their rows stay
+  // approved until the founder hand-sends and hits Mark sent. Once such a row
+  // has a clean draft, later drains must leave it alone: re-dispatching would
+  // pay the LLM again and stomp a draft the founder may have already copied.
+  // But those rows still occupy the oldest-first claim slice, so keep claiming
+  // further batches past them — otherwise an un-hand-sent backlog the size of
+  // one batch starves every newer row of drafting.
+  const rows: QueueRow[] = [];
+  for (;;) {
+    const need = limit - rows.length;
+    if (need <= 0) break;
+    const batch = ledger.dequeueApproved({ playName: opts.playName, limit: need });
+    for (const row of batch) {
+      if (isManual && hasCleanDraft(row)) continue;
+      rows.push(row);
+    }
+    if (batch.length < need) break;
+  }
   const outcome: DrainOutcome = { drained: rows.length, sent: 0, deferred: 0, errors: [] };
 
   if (rows.length === 0) return outcome;
@@ -144,6 +163,21 @@ export function idsForSentDrafts(
     if (draft.sent || dryRun) ids.push(row.id);
   }
   return ids;
+}
+
+/** A persisted draft with a body and no error flag — reviewed or reviewable as-is. */
+function hasCleanDraft(row: QueueRow): boolean {
+  if (!row.last_draft_json) return false;
+  try {
+    const d = JSON.parse(row.last_draft_json) as { body?: unknown; flags?: unknown };
+    const body = typeof d.body === "string" ? d.body : "";
+    const flags = Array.isArray(d.flags) ? (d.flags as unknown[]) : [];
+    return (
+      body.trim() !== "" && !flags.some((f) => typeof f === "string" && f.startsWith("error:"))
+    );
+  } catch {
+    return false;
+  }
 }
 
 function backfillProspectId(row: QueueRow | null): number | null {
