@@ -147,10 +147,13 @@ export async function setTriggerConfigRoute(
   if (!stored) {
     const spec = TRIGGERS.find((t) => t.name === name);
     if (!spec) return jsonResponse({ error: `unknown trigger '${name}'` }, 404, req);
+    // A config write must never flip enablement: seeding an opt-in trigger's
+    // row here (e.g. the /setup X card saving an engine choice before the
+    // trigger was ever enabled) keeps the spec's default enablement.
     ledger.upsertTrigger({
       name,
       configJson: JSON.stringify(body.config),
-      enabled: true,
+      enabled: spec.enabledByDefault !== false,
     });
   } else {
     ledger.setTriggerConfig(name, JSON.stringify(body.config));
