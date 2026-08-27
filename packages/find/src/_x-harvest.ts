@@ -73,7 +73,7 @@ export async function harvestReposters(
     } catch (e) {
       if (isStop(e)) {
         stoppedEarly = (e as Error).message;
-        log(`  ${stoppedEarly} — keeping what we have`);
+        log(`  ${stoppedEarly}`);
         break;
       }
       throw e;
@@ -102,7 +102,7 @@ export async function harvestReposters(
       } catch (e) {
         if (isStop(e)) {
           stoppedEarly = (e as Error).message;
-          log(`  ${stoppedEarly} — keeping what we have`);
+          log(`  ${stoppedEarly}`);
           break outer;
         }
         throw e;
