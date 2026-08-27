@@ -94,7 +94,9 @@ function CadencesPage() {
   });
   const cadenceNavigate = Route.useNavigate();
   const clearSinceRun = (): void => {
-    void cadenceNavigate({ search: {} });
+    // validateSearch's return type makes `sinceRun` a required (if undefined)
+    // key, so `{}` doesn't typecheck — spell the cleared filter out.
+    void cadenceNavigate({ search: { sinceRun: undefined } });
   };
 
   const stop = useMutation({

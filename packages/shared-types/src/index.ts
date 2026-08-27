@@ -10,7 +10,9 @@ export type CadenceStatus =
   | "completed"
   | "paused"
   /** Stopped by a hard bounce — the address is dead and is suppressed from further sends. */
-  | "bounced";
+  | "bounced"
+  /** Stopped by an explicit do-not-contact reply — the prospect is suppressed from further sends. */
+  | "unsubscribed";
 
 export interface CadenceNextStepDraft {
   subject: string;
