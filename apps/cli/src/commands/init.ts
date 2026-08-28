@@ -137,6 +137,7 @@ export async function runInit(): Promise<void> {
     // but re-running init must never wipe an existing brief.
     productBrief: cfg.productBrief,
     mobileSignature: cfg.mobileSignature,
+    slackWebhookUrl: cfg.slackWebhookUrl,
     // Preserve the anonymous install id (loadConfig already bootstrapped it
     // by the time we got here). Omitting it would silently drop it from disk
     // and the next loadConfig() would mint a fresh one.
