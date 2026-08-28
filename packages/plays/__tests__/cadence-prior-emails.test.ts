@@ -28,6 +28,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       productBrief: null,
       mobileSignature: false,
       timezone: null,
+      slackWebhookUrl: null,
       clientId: null,
     }),
     getLedger: () => ({

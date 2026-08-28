@@ -21,3 +21,4 @@ export * from "./run-cancel.ts";
 export * from "./types.ts";
 export * from "./reply-classify.ts";
 export * from "./timezone.ts";
+export * from "./slack-notify.ts";

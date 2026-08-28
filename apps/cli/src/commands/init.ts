@@ -140,6 +140,7 @@ export async function runInit(): Promise<void> {
     // Not part of the wizard either — the runtime zone is the default and a
     // founder who hand-set one must keep it across a re-run.
     timezone: cfg.timezone,
+    slackWebhookUrl: cfg.slackWebhookUrl,
     // Preserve the anonymous install id (loadConfig already bootstrapped it
     // by the time we got here). Omitting it would silently drop it from disk
     // and the next loadConfig() would mint a fresh one.

@@ -1,4 +1,4 @@
-import { demoMode, logEvent, type TelemetryOutcome } from "@oneshot-gtm/core";
+import { demoMode, logEvent, type TelemetryOutcome, postDailySendSummaryIfDue } from "@oneshot-gtm/core";
 import {
   nextSleepMs,
   runDueTriggers,
@@ -107,6 +107,18 @@ export function startScheduler(): SchedulerHandle {
       } catch (err) {
         logEvent(
           "scheduler.pending_retry.failed",
+          { message_120: ((err as Error).message ?? "").slice(0, 120) },
+          "warn",
+        );
+      }
+      // Daily send summary to Slack: fires once per completed UTC day when
+      // slackWebhookUrl is set. Isolated like the reply poll — failure must
+      // not skip trigger scheduling.
+      try {
+        await postDailySendSummaryIfDue();
+      } catch (err) {
+        logEvent(
+          "scheduler.daily_summary.failed",
           { message_120: ((err as Error).message ?? "").slice(0, 120) },
           "warn",
         );

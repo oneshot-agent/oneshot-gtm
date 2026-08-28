@@ -11,6 +11,7 @@ import {
   resolveIdentities,
   trackSend,
   type ReplyKind,
+  notifySlackReplyReceived,
 } from "@oneshot-gtm/core";
 import { draftInboxReply } from "@oneshot-gtm/plays";
 import {
@@ -208,7 +209,7 @@ export async function listInboxRoute(req: Request): Promise<Response> {
       if (!r.matched) continue;
       const p = ledger.findProspectByEmail(r.fromEmail);
       if (!p) continue;
-      ledger.recordInboxReply({
+      const isNew = ledger.recordInboxReply({
         id: r.id,
         threadKey: inboxThreadKey({ threadId: r.threadId, id: r.id }),
         prospectId: p.id,
@@ -222,6 +223,15 @@ export async function listInboxRoute(req: Request): Promise<Response> {
         messageId: r.messageId,
         kind: r.kind,
       });
+      // Slack notification: fire-and-forget on first sight only.
+      if (isNew) {
+        void notifySlackReplyReceived({
+          from_email: r.fromEmail,
+          subject: r.subject,
+          play_name: r.matched.playName,
+          kind: r.kind,
+        });
+      }
     }
   } catch (err) {
     logEvent(
