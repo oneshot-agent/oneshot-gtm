@@ -6,7 +6,7 @@ import {
   takeMarkedOutcome,
   type TelemetryOutcome,
 } from "@oneshot-gtm/core";
-import { CommandExit, fail } from "./output.ts";
+import { bail, CommandExit, fail } from "./output.ts";
 import { extractInvocation, type Invocation } from "./dispatch.ts";
 import { runInit } from "./commands/init.ts";
 import {
@@ -63,6 +63,7 @@ import {
 } from "./commands/workspace.ts";
 import { commandEnrichLinkedIn } from "./commands/enrich-linkedin.ts";
 import { commandFindDrain, commandFindWatch } from "./commands/find.ts";
+import { commandInstallService } from "./commands/install-service.ts";
 import {
   commandMotionBreakupRevive,
   commandMotionCompetitorSwitch,
@@ -297,10 +298,24 @@ find
   .command("watch")
   .option("--once", "run all due triggers once and exit (cron-friendly)", false)
   .option("--quiet", "log summary only, not per-trigger details", false)
+  .option(
+    "--install-service",
+    "print a launchd plist (macOS) / systemd user unit (Linux) that runs this daemon; doesn't start watching",
+    false,
+  )
+  .option(
+    "--write",
+    "with --install-service: write the file to the platform-conventional path instead of stdout",
+    false,
+  )
   .description("Daemon: continuously poll registered triggers and enqueue new candidates")
   .action(
-    runOrFail((opts: { once: boolean; quiet: boolean }) =>
-      commandFindWatch({ once: opts.once, quiet: opts.quiet }),
+    runOrFail(
+      (opts: { once: boolean; quiet: boolean; installService: boolean; write: boolean }) => {
+        if (opts.installService) return commandInstallService({ write: opts.write });
+        if (opts.write) bail("--write only makes sense with --install-service");
+        return commandFindWatch({ once: opts.once, quiet: opts.quiet });
+      },
     ),
   );
 find
