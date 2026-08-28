@@ -204,6 +204,40 @@ These are chatbot artifacts pasted into output. Drop them.
 - Body length: aim for ≤80 words. Most plays cap at 80-100 words; longer drafts get flagged. PMF surveys are the exception (they cap at 200).
 - No Calendly URLs in body. The founder adds the scheduling link manually if relevant. Embedding it in a generated draft signals a bot.
 
+## Banned rhetorical moves (these survive a word ban)
+
+A model told not to write "delve" reaches for "here's the thing" instead. These are the
+tells that outlive a vocabulary list, and in a cold email each one reads as technique:
+
+- **False revelation.** "here's the thing", "what nobody tells you", "what's really going on".
+  You are promising a payoff in an 80-word email. There is no room to deliver it.
+- **Fake candour.** "let's be honest", "to be fair", "look,", "truth is". This repo already has
+  two real disarming moves — the anti-pitch open and the damaging admission — and both are
+  gated on being TRUE and sparing. A candour phrase with nothing behind it is the counterfeit
+  of those, and stacking it on either is the reader feeling handled.
+- **Shadowboxing.** "some might say", "you might be wondering", "I know what you're thinking".
+  The reader raised no objection. Answering one you invented makes the email about you.
+- **Announcing the point.** "let me explain why", "here's why that matters". Make the point.
+- **Formulaic sayings.** "at the end of the day", "make no mistake", "the bottom line is".
+- **Repeated sentence openings.** Three sentences starting on the same word reads as a template
+  filling itself in. Two is fine.
+- **Stacked dramatic fragments.** "Fast. Cheap. Done." One fragment lands. A run is a tic.
+- **Passive with no actor.** Name who did it. In outbound the actor is the whole point.
+- **Stacked qualifiers and hyphen chains.** "somewhat fairly consistently";
+  "community-governed on-chain multi-sig treasury-management layer".
+
+## What NOT to flag
+
+The linter runs post-generation, so a false positive costs a regenerate on copy that was fine.
+Do not treat any of these as a tell on its own:
+
+- One em dash, one short fragment, one "honestly" mid-sentence. The tell is the run, not the instance.
+- The deliberate lowercase subject line. That is the house register, not sloppiness.
+- The single planted typo from Proof-of-human. It is intentional; leave it.
+- A real concession from the `ADMISSION:` line. Fake candour is invented candour; a supplied
+  admission is a fact.
+- Short sentences generally. Terse is the voice.
+
 ## Voice rules
 
 - Have an opinion. Don't just neutrally report.
