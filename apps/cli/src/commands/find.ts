@@ -1,5 +1,5 @@
 import { drainQueue, nextSleepMs, runDueTriggers, type FinderResult } from "@oneshot-gtm/find";
-import { c, fail, header, note, ok } from "../output.ts";
+import { bail, c, fail, header, note, ok } from "../output.ts";
 
 export async function commandFindDrain(opts: {
   play: string;
@@ -38,28 +38,46 @@ export async function commandFindWatch(opts: { once: boolean; quiet: boolean }):
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
-  for (;;) {
-    const outcomes = await runDueTriggers();
-    for (const o of outcomes) {
-      if (!o.fired) {
-        if (!opts.quiet) note(`${o.name}: skipped (next due in ${humanMs(o.nextDueInMs)})`);
-        continue;
+  // Errors in the most recent tick. Only --once reads it; the daemon reports
+  // each error and keeps polling (one flaky finder must not stop the others).
+  let errored = 0;
+  try {
+    for (;;) {
+      const outcomes = await runDueTriggers();
+      errored = 0;
+      for (const o of outcomes) {
+        if (!o.fired) {
+          if (!opts.quiet) note(`${o.name}: skipped (next due in ${humanMs(o.nextDueInMs)})`);
+          continue;
+        }
+        if (o.error) {
+          errored++;
+          fail(`${o.name}: error — ${o.error}`);
+        } else if (o.result) {
+          printSummaryLine(o.name, o.result);
+        }
       }
-      if (o.error) {
-        fail(`${o.name}: error — ${o.error}`);
-      } else if (o.result) {
-        printSummaryLine(o.name, o.result);
-      }
-    }
 
-    if (opts.once || cancelled) break;
-    const sleepMs = nextSleepMs(outcomes);
-    if (!opts.quiet) note(`watch: sleeping ${humanMs(sleepMs)}`);
-    await sleepCancellable(sleepMs, (cancel) => {
-      wake = cancel;
-    });
-    wake = null;
-    if (cancelled) break;
+      if (opts.once || cancelled) break;
+      const sleepMs = nextSleepMs(outcomes);
+      if (!opts.quiet) note(`watch: sleeping ${humanMs(sleepMs)}`);
+      await sleepCancellable(sleepMs, (cancel) => {
+        wake = cancel;
+      });
+      wake = null;
+      if (cancelled) break;
+    }
+  } finally {
+    process.removeListener("SIGINT", shutdown);
+    process.removeListener("SIGTERM", shutdown);
+  }
+
+  // --once is the cron/launchd entry point, where the exit code is the only
+  // health signal there is: a finder that errored every run for a week must not
+  // look identical to a clean one. Daemon runs still exit 0 — they're killed by
+  // a signal, not by a bad tick.
+  if (opts.once && errored > 0) {
+    bail(`${errored} due trigger(s) errored`);
   }
 }
 
