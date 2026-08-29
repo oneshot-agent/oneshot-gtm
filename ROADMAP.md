@@ -41,7 +41,7 @@ The verify gate has holes an agent can close without touching product behaviour.
 
 ## Reliability
 
-- [ ] **Retry and time-bound LLM calls** · M — `complete()` in `packages/intel/src/client.ts` issues one `fetch` with no `AbortSignal` and no retry. A 429 or a 503 from OpenRouter partway through a 50-target drain throws and takes the batch with it.
+- [x] **Retry and time-bound LLM calls** · M — `complete()` in `packages/intel/src/client.ts` issues one `fetch` with no `AbortSignal` and no retry. A 429 or a 503 from OpenRouter partway through a 50-target drain throws and takes the batch with it.
       _Done when:_ 429/5xx/network errors retry with bounded exponential backoff and jitter, honouring `Retry-After` when present; a per-request timeout aborts and counts as retryable; retries and the final give-up are logged as `llm.retry` / `llm.error`; 4xx other than 429 never retries; all covered by fake-timer tests with no real network.
 - [x] **Rotate `events.jsonl`** · S — `logEvent` in `packages/core/src/events.ts` rolls the live file to `events.1.jsonl` … `events.3.jsonl` once it reaches `ONESHOT_GTM_MAX_EVENT_LOG_BYTES` (default 10 MB), dropping the oldest generation. Rotation runs inside the existing best-effort `try`, so a failure drops the event instead of throwing at the caller.
 - [ ] **Install-wide daily spend ceiling** · M — spend caps are per trigger run (`maxCostUsd`, `maxSpendPerRun` in `packages/find/src/registry.ts`). Eleven finders on their own intervals, plus drains and cadence steps, have no shared daily bound and no kill switch.
