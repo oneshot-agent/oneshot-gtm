@@ -311,7 +311,7 @@ tail -2000 ~/.oneshot-gtm/events.jsonl | jq -c 'select(.run_id=="PASTE-HERE")'  
 DEBUG=oneshot:* oneshot-gtm find watch --once                                     # mirror to stderr
 ```
 
-The live file is capped at 10 MB, then rotated to `events.1.jsonl` … `events.3.jsonl` (oldest dropped). `tail -f` follows the path, not the file, so it goes quiet after a rotation — use `tail -F` if you're watching a long-running install. Override the cap with `ONESHOT_GTM_MAX_EVENT_LOG_BYTES`, and grep the rotated generations with `cat ~/.oneshot-gtm/events*.jsonl | jq …`.
+The live file uses 10 MB as a pre-append rotation threshold, so it may exceed that size by one complete event (including a large `ctx`) before rotating to `events.1.jsonl` … `events.3.jsonl` (oldest dropped). `tail -f` follows the path, not the file, so it goes quiet after a rotation — use `tail -F` if you're watching a long-running install. Override the threshold with `ONESHOT_GTM_MAX_EVENT_LOG_BYTES`, and grep the rotated generations with `cat ~/.oneshot-gtm/events*.jsonl | jq …`.
 
 The `ctx` payload is bound by a strict privacy boundary — primitives, counters, durations and hostnames only.
 
