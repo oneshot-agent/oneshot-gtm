@@ -1,7 +1,8 @@
 import { runDoctor } from "@oneshot-gtm/doctor";
-import { bail, c, fail, header, ok, warn } from "../output.ts";
+import { bail, c, emitJson, fail, header, human, ok, setJsonMode, warn } from "../output.ts";
 
-export async function commandDoctor(): Promise<void> {
+export async function commandDoctor(opts: { json?: boolean } = {}): Promise<void> {
+  setJsonMode(opts.json ?? false);
   header("oneshot-gtm doctor");
   const results = await runDoctor();
   let failed = 0;
@@ -17,7 +18,26 @@ export async function commandDoctor(): Promise<void> {
       fail(line);
     }
   }
-  process.stdout.write("\n");
+  human("\n");
+
+  // Emit before the bail below: a failing doctor still owes the caller its
+  // document on stdout — the exit code is additive signal, not a substitute.
+  if (opts.json) {
+    emitJson({
+      command: "doctor",
+      ok: failed === 0,
+      failed,
+      warned,
+      checks: results.map((r) => ({
+        name: r.name,
+        group: r.group,
+        severity: r.severity,
+        message: r.message,
+        ...(r.hint ? { hint: r.hint } : {}),
+      })),
+    });
+  }
+
   if (failed > 0) {
     bail(`${failed} blocking issue(s). Fix before running paid plays.`);
   }
