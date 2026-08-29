@@ -1,4 +1,9 @@
-import { demoMode, logEvent, type TelemetryOutcome, postDailySendSummaryIfDue } from "@oneshot-gtm/core";
+import {
+  demoMode,
+  logEvent,
+  type TelemetryOutcome,
+  postDailySendSummaryIfDue,
+} from "@oneshot-gtm/core";
 import {
   nextSleepMs,
   runDueTriggers,
