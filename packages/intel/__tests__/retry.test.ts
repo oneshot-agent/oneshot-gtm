@@ -2,9 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { backoffDelayMs, isRetryableLlmError, parseRetryAfter } from "../src/client.ts";
 
 describe("isRetryableLlmError", () => {
-  it("retries generic Error (network/DNS failures)", () => {
-    expect(isRetryableLlmError(new Error("network error"))).toBe(true);
-    expect(isRetryableLlmError(new TypeError("fetch failed"))).toBe(true);
+  it("does NOT retry a bare Error — only the classified set is retryable", () => {
+    // A TypeError here is a property access on a malformed body, not a socket
+    // failure; postJson raises a classified error for the ones worth repeating.
+    expect(isRetryableLlmError(new Error("network error"))).toBe(false);
+    expect(isRetryableLlmError(new TypeError("Cannot read properties of undefined"))).toBe(false);
+  });
+
+  it("does NOT retry non-Error throws", () => {
+    expect(isRetryableLlmError("boom")).toBe(false);
+    expect(isRetryableLlmError(undefined)).toBe(false);
   });
 });
 
@@ -30,9 +37,12 @@ describe("parseRetryAfter", () => {
     expect(parseRetryAfter(null, NOW)).toBeUndefined();
   });
 
-  it("clamps past dates to zero", () => {
+  it("clamps past dates to zero, and the backoff floor keeps them paced", () => {
     const pastDate = "Fri, 29 Aug 2026 09:59:00 GMT";
-    expect(parseRetryAfter(pastDate, NOW)).toBe(0);
+    const parsed = parseRetryAfter(pastDate, NOW);
+    expect(parsed).toBe(0);
+    // Parsing yields 0, but the honoured delay is never 0 — see the floor test.
+    expect(backoffDelayMs(1, parsed, () => 0.5)).toBe(375);
   });
 });
 
@@ -40,6 +50,19 @@ describe("backoffDelayMs", () => {
   it("honors Retry-After when provided", () => {
     expect(backoffDelayMs(1, 5000)).toBe(5000);
     expect(backoffDelayMs(3, 10_000)).toBe(10_000);
+  });
+
+  it("floors Retry-After at the exponential backoff", () => {
+    const fixed = () => 0.5;
+
+    // Retry-After: 0 and a past HTTP-date both parse to 0. Honouring them
+    // literally would fire every attempt within milliseconds, unpaced.
+    expect(backoffDelayMs(1, 0, fixed)).toBe(375);
+    expect(backoffDelayMs(3, 0, fixed)).toBe(1500);
+
+    // A hint shorter than our own backoff is raised to it; a longer one wins.
+    expect(backoffDelayMs(3, 100, fixed)).toBe(1500);
+    expect(backoffDelayMs(3, 9000, fixed)).toBe(9000);
   });
 
   it("caps Retry-After at MAX_RETRY_AFTER_MS (60s)", () => {
@@ -89,8 +112,10 @@ describe("backoffDelayMs", () => {
 describe("complete() retry integration", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    // ONESHOT_GTM_HOME is not stubbed here: config.ts captures CONFIG_DIR at
+    // module load, so a stub set now would do nothing. vitest.setup.ts already
+    // points the whole suite at a temp data dir before any module loads.
     vi.stubEnv("OPENROUTER_API_KEY", "test-key");
-    vi.stubEnv("ONESHOT_GTM_HOME", "/tmp/test-home");
   });
 
   afterEach(() => {
@@ -294,5 +319,178 @@ describe("complete() retry integration", () => {
     const result = await promise;
     expect(result.content).toBe("success after timeout");
     expect(attemptCount).toBe(2);
+  });
+
+  it("does NOT retry a 200 whose message carries no text content", async () => {
+    const { complete } = await import("../src/client.ts");
+
+    // Finding 1: a refusal / tool-call-only message is an already-billed
+    // success. Reading .length off its null content used to throw INSIDE the
+    // retry try, so the paid-for response was discarded and the prompt re-sent.
+    let attemptCount = 0;
+    global.fetch = vi.fn().mockImplementation(() => {
+      attemptCount++;
+      return Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            choices: [{ message: { content: null }, finish_reason: "tool_calls" }],
+          }),
+      });
+    }) as any;
+
+    const promise = complete({
+      messages: [{ role: "user", content: "test" }],
+      maxAttempts: 3,
+    });
+    const rejection = promise.catch((err) => err);
+
+    await vi.runAllTimersAsync();
+
+    const error = await rejection;
+    expect(error).toBeInstanceOf(Error);
+    expect(error.message).toContain("no text content");
+    // The provider signal is named, so the failure is diagnosable.
+    expect(error.message).toContain("tool_calls");
+    expect(attemptCount).toBe(1);
+  });
+
+  it("does NOT retry a 200 error envelope with no choices", async () => {
+    const { complete } = await import("../src/client.ts");
+
+    // OpenRouter reports upstream faults with 200 + an error envelope. Touching
+    // data.choices[0] on it throws a bare TypeError, which used to be retryable.
+    let attemptCount = 0;
+    global.fetch = vi.fn().mockImplementation(() => {
+      attemptCount++;
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ error: { message: "upstream is unhappy", code: 502 } }),
+      });
+    }) as any;
+
+    const promise = complete({
+      messages: [{ role: "user", content: "test" }],
+      maxAttempts: 3,
+    });
+    const rejection = promise.catch((err) => err);
+
+    await vi.runAllTimersAsync();
+
+    const error = await rejection;
+    expect(error.message).toContain("upstream is unhappy");
+    expect(attemptCount).toBe(1);
+  });
+
+  it("does NOT retry a status-less truncation error", async () => {
+    const { complete } = await import("../src/client.ts");
+
+    // Finding 5: a truncated response reproduces exactly on a resend, so
+    // retrying it just triples the bill for the same unusable output.
+    let attemptCount = 0;
+    global.fetch = vi.fn().mockImplementation(() => {
+      attemptCount++;
+      return Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            choices: [{ message: { content: "half a js" }, finish_reason: "length" }],
+          }),
+      });
+    }) as any;
+
+    const promise = complete({
+      messages: [{ role: "user", content: "test" }],
+      maxTokens: 16,
+      maxAttempts: 3,
+    });
+    const rejection = promise.catch((err) => err);
+
+    await vi.runAllTimersAsync();
+
+    const error = await rejection;
+    expect(error.message).toContain("truncated at max_tokens=16");
+    expect(error.status).toBeUndefined();
+    expect(attemptCount).toBe(1);
+  });
+
+  it("waits at least the exponential backoff when Retry-After is 0", async () => {
+    const { complete } = await import("../src/client.ts");
+
+    // Finding 2: Retry-After: 0 (and past HTTP-dates, which parse to 0) must not
+    // collapse the pacing — the honoured delay is floored at our own backoff.
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+
+    let attemptCount = 0;
+    global.fetch = vi.fn().mockImplementation(() => {
+      attemptCount++;
+      if (attemptCount === 1) {
+        return Promise.resolve({
+          ok: false,
+          status: 429,
+          headers: new Headers({ "retry-after": "0" }),
+          text: () => Promise.resolve("rate limited"),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            choices: [{ message: { content: "paced" }, finish_reason: "stop" }],
+          }),
+      });
+    }) as any;
+
+    const promise = complete({
+      messages: [{ role: "user", content: "test" }],
+      maxAttempts: 3,
+    });
+
+    // Attempt 1's backoff is 500/2 + 0.5 * 250 = 375ms. One tick short of it,
+    // the retry must not have fired yet.
+    await vi.advanceTimersByTimeAsync(374);
+    expect(attemptCount).toBe(1);
+
+    await vi.runAllTimersAsync();
+
+    const result = await promise;
+    expect(result.content).toBe("paced");
+    expect(attemptCount).toBe(2);
+  });
+
+  it("keeps a 400 non-retryable when the timeout fires while reading its body", async () => {
+    const { complete } = await import("../src/client.ts");
+
+    // Finding 4: the status is already known, so it decides. Laundering this
+    // into a timeout would make a permanent bad request retry three times.
+    let attemptCount = 0;
+    global.fetch = vi.fn().mockImplementation((_url: string, options: any) => {
+      attemptCount++;
+      return Promise.resolve({
+        ok: false,
+        status: 400,
+        headers: new Headers(),
+        // The error body never arrives; the per-request abort fires mid-read.
+        text: () =>
+          new Promise((_resolve, reject) => {
+            options.signal?.addEventListener("abort", () => reject(new Error("aborted")));
+          }),
+      });
+    }) as any;
+
+    const promise = complete({
+      messages: [{ role: "user", content: "test" }],
+      timeoutMs: 1000,
+      maxAttempts: 3,
+    });
+    const rejection = promise.catch((err) => err);
+
+    await vi.advanceTimersByTimeAsync(1100);
+    await vi.runAllTimersAsync();
+
+    const error = await rejection;
+    expect(error).toMatchObject({ status: 400 });
+    expect(error.name).toBe("LlmError");
+    expect(attemptCount).toBe(1);
   });
 });

@@ -63,19 +63,34 @@ class LlmTimeoutError extends LlmError {
 }
 
 /**
- * Retry only what a second attempt can plausibly fix: rate limits, provider-side
- * faults, timeouts, and transport-level rejections (fetch throws a TypeError on
- * DNS/socket failures, which is not an LlmError). Everything we raise ourselves
- * with a status — 400 bad request, 401 bad key, 404 unknown model — is
- * deterministic, and so is a truncation or no-choices LlmError with no status.
+ * A transport-level rejection — DNS, TLS, socket reset. Raised only where we
+ * know no HTTP response was obtained, so a second attempt can plausibly land.
+ * Classifying at the call site rather than by error type matters: fetch signals
+ * these with a bare TypeError, and so does every accidental property access on
+ * a malformed response body.
+ */
+class LlmNetworkError extends LlmError {
+  constructor(message: string) {
+    super(message);
+    this.name = "LlmNetworkError";
+  }
+}
+
+/**
+ * Retry only the explicitly retryable set: rate limits, provider-side faults,
+ * timeouts, and transport failures. Everything else is terminal — a 400 bad
+ * request, a 401 bad key and a 404 unknown model are deterministic, a
+ * truncation / no-choices / no-content LlmError carries no status and will
+ * reproduce exactly, and a stray TypeError from parsing a malformed body is a
+ * bug in us, not weather. Retrying any of those triples the bill for nothing.
  */
 export function isRetryableLlmError(err: unknown): boolean {
-  if (err instanceof LlmTimeoutError) return true;
+  if (err instanceof LlmTimeoutError || err instanceof LlmNetworkError) return true;
   if (err instanceof LlmError) {
     if (err.status === undefined) return false;
     return err.status === 429 || err.status >= 500;
   }
-  return err instanceof Error;
+  return false;
 }
 
 /**
@@ -101,9 +116,14 @@ export function backoffDelayMs(
   retryAfterMs?: number,
   rand: () => number = Math.random,
 ): number {
-  if (retryAfterMs !== undefined) return Math.min(retryAfterMs, MAX_RETRY_AFTER_MS);
   const capped = Math.min(BASE_DELAY_MS * 2 ** (attempt - 1), MAX_DELAY_MS);
-  return Math.round(capped / 2 + rand() * (capped / 2));
+  const backoff = Math.round(capped / 2 + rand() * (capped / 2));
+  if (retryAfterMs === undefined) return backoff;
+  // Retry-After raises the wait, it never lowers it. `Retry-After: 0` and an
+  // HTTP-date already in the past (clock skew, second-rounding) are both common
+  // and both parse to 0 — honouring them literally would fire every attempt
+  // within milliseconds, unpaced and unjittered.
+  return Math.max(Math.min(retryAfterMs, MAX_RETRY_AFTER_MS), backoff);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -188,17 +208,18 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
     timeout_ms: timeoutMs,
   });
 
+  // Only the dispatch itself sits inside the retry try. Success-path logging
+  // used to live in here, and a throw from it (a null `content` field on an
+  // already-billed response) discarded the paid-for completion and re-sent the
+  // whole prompt — the retry loop must never be able to reject work we have.
+  let result: LlmCompleteOutput | undefined;
+  let attempts = 0;
+
   for (let attempt = 1; ; attempt++) {
     try {
-      const result = await dispatch(cfg.llmProvider, cfg.llmModel, key, expanded, timeoutMs);
-      logEvent("llm.done", {
-        provider: cfg.llmProvider,
-        model: cfg.llmModel,
-        duration_ms: Date.now() - startedAt,
-        response_chars: result.content.length,
-        attempts: attempt,
-      });
-      return result;
+      result = await dispatch(cfg.llmProvider, cfg.llmModel, key, expanded, timeoutMs);
+      attempts = attempt;
+      break;
     } catch (err) {
       const status = err instanceof LlmError ? (err.status ?? null) : null;
       const ctx = {
@@ -224,6 +245,15 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
       throw err;
     }
   }
+
+  logEvent("llm.done", {
+    provider: cfg.llmProvider,
+    model: cfg.llmModel,
+    duration_ms: Date.now() - startedAt,
+    response_chars: result.content.length,
+    attempts,
+  });
+  return result;
 }
 
 function dispatch(
@@ -276,27 +306,51 @@ async function postJson(args: {
 }): Promise<unknown> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), args.timeoutMs);
+  const timedOut = () =>
+    new LlmTimeoutError(`${args.provider} request timed out after ${args.timeoutMs}ms`);
   try {
-    const res = await fetch(args.url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...args.headers },
-      body: JSON.stringify(args.body),
-      signal: controller.signal,
-    });
+    let res: Response;
+    try {
+      res = await fetch(args.url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...args.headers },
+        body: JSON.stringify(args.body),
+        signal: controller.signal,
+      });
+    } catch (err) {
+      // No response at all: either our own abort or a transport failure. These
+      // are the only two shapes a retry can fix.
+      if (controller.signal.aborted) throw timedOut();
+      throw new LlmNetworkError(`${args.provider} request failed: ${(err as Error).message}`);
+    }
+
     if (!res.ok) {
-      const text = await res.text();
+      // The status is known, so the status decides — a 401 that happens to time
+      // out while we read its body is still a 401, and retrying it three times
+      // just burns the budget on the same rejected key.
+      let text = "";
+      try {
+        text = await res.text();
+      } catch {
+        text = "<error body unreadable>";
+      }
       throw new LlmError(
         `${args.provider} ${res.status}: ${text.slice(0, 400)}`,
         res.status,
         parseRetryAfter(res.headers.get("retry-after"), Date.now()),
       );
     }
-    return await res.json();
-  } catch (err) {
-    if (controller.signal.aborted) {
-      throw new LlmTimeoutError(`${args.provider} request timed out after ${args.timeoutMs}ms`);
+
+    try {
+      return await res.json();
+    } catch (err) {
+      // A 2xx whose body never arrives or is not JSON leaves us with nothing
+      // usable, so this one genuinely is worth another attempt.
+      if (controller.signal.aborted) throw timedOut();
+      throw new LlmNetworkError(
+        `${args.provider} response body could not be read: ${(err as Error).message}`,
+      );
     }
-    throw err;
   } finally {
     clearTimeout(timer);
   }
@@ -325,7 +379,8 @@ async function openaiCompatibleComplete(args: OpenAIArgs): Promise<LlmCompleteOu
     provider: args.provider,
     timeoutMs: args.timeoutMs,
   })) as {
-    choices: Array<{ message: { content: string }; finish_reason?: string }>;
+    choices?: Array<{ message?: { content?: string | null }; finish_reason?: string }>;
+    error?: { message?: string; code?: number };
     usage?: {
       prompt_tokens?: number;
       completion_tokens?: number;
@@ -333,7 +388,17 @@ async function openaiCompatibleComplete(args: OpenAIArgs): Promise<LlmCompleteOu
     };
   };
 
-  const choice = data.choices[0];
+  // OpenRouter answers upstream faults with 200 and an error envelope instead of
+  // choices. Naming it here keeps the failure a terminal LlmError — reaching for
+  // data.choices[0] on it would throw a bare TypeError, which reads as weather.
+  if (data.error) {
+    const code = data.error.code === undefined ? "" : ` (code ${data.error.code})`;
+    throw new LlmError(
+      `${args.provider} returned an error envelope${code}: ${data.error.message ?? "no message"}`,
+    );
+  }
+
+  const choice = data.choices?.[0];
   if (!choice) throw new LlmError(`${args.provider} returned no choices`);
 
   // A response cut off at max_tokens is unusable: every caller parses JSON out
@@ -351,8 +416,18 @@ async function openaiCompatibleComplete(args: OpenAIArgs): Promise<LlmCompleteOu
     );
   }
 
+  // A refusal, or a tool-call/reasoning-only message, carries no text. That is a
+  // real answer from the provider, not a transport hiccup: repeating the prompt
+  // buys the same reply at twice the price, so name the signal and stop.
+  const content = choice.message?.content;
+  if (typeof content !== "string") {
+    throw new LlmError(
+      `${args.provider} returned a message with no text content (finish_reason=${choice.finish_reason ?? "none"})`,
+    );
+  }
+
   return {
-    content: choice.message.content,
+    content,
     provider: args.provider,
     model: args.model,
     inputTokens: data.usage?.prompt_tokens,
@@ -386,7 +461,7 @@ async function anthropicComplete(args: AnthropicArgs): Promise<LlmCompleteOutput
     provider: "anthropic",
     timeoutMs: args.timeoutMs,
   })) as {
-    content: Array<{ type: string; text?: string }>;
+    content?: Array<{ type: string; text?: string }>;
     stop_reason?: string;
     usage?: { input_tokens?: number; output_tokens?: number };
   };
@@ -399,6 +474,14 @@ async function anthropicComplete(args: AnthropicArgs): Promise<LlmCompleteOutput
         maxTokens: args.input.maxTokens ?? 1024,
         completionTokens: data.usage?.output_tokens,
       }),
+    );
+  }
+
+  // Same as the OpenAI path: an absent content array is a provider signal
+  // (refusal, filtered output), not something a second attempt recovers.
+  if (!Array.isArray(data.content)) {
+    throw new LlmError(
+      `anthropic returned no content blocks (stop_reason=${data.stop_reason ?? "none"})`,
     );
   }
 
