@@ -192,6 +192,48 @@ Two ICP gates run per candidate, not one. The **topic gate** judges the source �
 
 The dashboard server runs an in-process scheduler, so enabling a trigger is enough — no separate daemon. `find watch` stays useful for cron and headless boxes. Approved rows ship via the **Drain** button or `find drain <play>`.
 
+### Background monitoring as a service
+
+`find watch --install-service` generates a service file that keeps the watch daemon running in the background — a launchd user agent on macOS, a systemd user unit on Linux. It prints to stdout (redirect-friendly); add `--write` to drop it at the platform-conventional path. Every path is embedded absolute at generation time — the bun binary, the CLI entry, and the active `ONESHOT_GTM_HOME` (so `--workspace acme find watch --install-service` pins the service to that workspace) — because service managers don't source your shell profile. Regenerate with `--write` after moving bun or the checkout.
+
+**macOS (launchd).** Logs go to `<home>/find-watch.log`; the agent restarts on crash and survives reboots.
+
+```bash
+oneshot-gtm find watch --install-service            # inspect the plist
+oneshot-gtm find watch --install-service --write    # → ~/Library/LaunchAgents/com.oneshot-gtm.find-watch.plist
+launchctl load ~/Library/LaunchAgents/com.oneshot-gtm.find-watch.plist
+
+# uninstall
+launchctl unload ~/Library/LaunchAgents/com.oneshot-gtm.find-watch.plist
+rm ~/Library/LaunchAgents/com.oneshot-gtm.find-watch.plist
+```
+
+**Linux (systemd user unit).** Logs go to the user journal: `journalctl --user -u oneshot-gtm-find-watch`.
+
+```bash
+oneshot-gtm find watch --install-service --write    # → ~/.config/systemd/user/oneshot-gtm-find-watch.service
+systemctl --user daemon-reload
+systemctl --user enable --now oneshot-gtm-find-watch
+
+# uninstall
+systemctl --user disable --now oneshot-gtm-find-watch
+rm ~/.config/systemd/user/oneshot-gtm-find-watch.service
+```
+
+On a headless box, also run `loginctl enable-linger $USER` once so the user unit starts at boot rather than at first login.
+
+**Windows (Task Scheduler).** There's no user-service template; schedule the cron-style `find watch --once` instead, which runs all due triggers and exits:
+
+```powershell
+schtasks /Create /TN "oneshot-gtm find watch" /SC MINUTE /MO 15 `
+  /TR "\"C:\Users\you\.bun\bin\bun.exe\" \"C:\path\to\oneshot-gtm\apps\cli\src\main.ts\" find watch --once --quiet"
+
+# uninstall
+schtasks /Delete /TN "oneshot-gtm find watch" /F
+```
+
+The classic cron route works the same way on any platform: `*/15 * * * * ONESHOT_GTM_HOME=$HOME/.oneshot-gtm /path/to/bun /path/to/apps/cli/src/main.ts find watch --once --quiet`.
+
 ### The plays
 
 Seventeen of them. Ten have a **Run** page in the dashboard and drain from the queue:
