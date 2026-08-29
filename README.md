@@ -99,7 +99,7 @@ bun run cli -- cadence advance                     # daily tick: poll inbox, fir
 | `demo`                   | `seed` · `ui` · `reset` — a fictional install for screenshots and video                                                                                                        |
 | `workspace`              | `list` · `create <name>` · `use <name>` · `current` · `path <name>` · `remove <name>` — one isolated install per product; `--workspace <name>` on any command                  |
 
-Spend, CAC, RoCS and outcome logging deliberately have no CLI group — they live on the dashboard's Measure and Cadences pages so there's one source of truth. The `/api/measure/*` routes are there if you'd rather script them.
+Spend, CAC, RoCS and outcome logging deliberately have no CLI group — they live on the dashboard's Measure and Cadences pages so there's one source of truth. The `/api/measure/*` routes are there if you'd rather script them, or add `--json` to a read-only command (`doctor`, `identities list`, `find drain`, `find watch --once`) for machine-readable output.
 
 ### Dashboard
 

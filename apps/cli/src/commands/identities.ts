@@ -13,15 +13,15 @@ import {
   type DomainPoolEntry,
 } from "@oneshot-gtm/core";
 import prompts from "prompts";
-import { c, emitJson, header, human, note, ok, setJsonMode, warn } from "../output.ts";
+import { c, emitJson, header, note, ok, setJsonMode, warn } from "../output.ts";
 
 /** Best-effort domain pool — never let a transient/auth failure abort a list/add. */
-async function safeListDomains(): Promise<DomainPoolEntry[]> {
+async function safeListDomains(): Promise<{ domains: DomainPoolEntry[]; error: boolean }> {
   try {
-    return await listSendingDomains();
+    return { domains: await listSendingDomains(), error: false };
   } catch (err) {
     warn(`Could not reach the domain pool: ${(err as Error).message}`);
-    return [];
+    return { domains: [], error: true };
   }
 }
 
@@ -57,7 +57,7 @@ export async function commandIdentitiesList(opts: { json?: boolean } = {}): Prom
   }
 
   header("Provisioned domains");
-  const domains = await safeListDomains();
+  const { domains, error: domainsError } = await safeListDomains();
   if (domains.length === 0) {
     note("None found (OneShot auto-provisions warm domains, or the pool couldn't be reached).");
   } else {
@@ -96,6 +96,7 @@ export async function commandIdentitiesList(opts: { json?: boolean } = {}): Prom
         dailySent: d.daily_sent_count,
         dailyLimit: d.daily_send_limit,
       })),
+      ...(domainsError ? { domainsError: true } : {}),
     });
   }
 }
@@ -104,7 +105,7 @@ export async function commandIdentitiesList(opts: { json?: boolean } = {}): Prom
 export async function commandIdentitiesAdd(): Promise<void> {
   header("Add OneShot sender");
   const cfg = loadConfig();
-  const domains = await safeListDomains();
+  const { domains } = await safeListDomains();
 
   // Show the warmed pool as a reference, but accept ANY domain by free text: a
   // brand-new domain auto-provisions on first send, so restricting to the
@@ -177,7 +178,7 @@ export async function commandIdentitiesAdd(): Promise<void> {
 /** Show just the wallet's provisioned domain pool with status + warmth + usage. */
 export async function commandDomainsList(): Promise<void> {
   header("Provisioned domains");
-  const domains = await safeListDomains();
+  const { domains } = await safeListDomains();
   if (domains.length === 0) {
     note("None found (or the pool couldn't be reached).");
     return;
