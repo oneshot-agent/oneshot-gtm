@@ -88,6 +88,11 @@ ehthumbs.db
 Thumbs.db
 Desktop.ini
 
+# ── Agent git worktrees ───────────────────────────────────────────────────────
+# Agents check out isolated copies of the repo under .worktrees/. They're
+# real checkouts, not build output — never commit them.
+.worktrees/
+
 # ── Runtime / temp ────────────────────────────────────────────────────────────
 .cache/
 tmp/
