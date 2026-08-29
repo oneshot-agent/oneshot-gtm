@@ -102,7 +102,11 @@ function ctx(prospectId = 42) {
       founderAdmission: null,
       productBrief: null,
       mobileSignature: false,
+<<<<<<< HEAD
       timezone: null,
+=======
+      slackWebhookUrl: null,
+>>>>>>> cea5492 (fix: resolve 9 typecheck errors and 1 flaky test)
       clientId: null,
     },
     metadata: {},
