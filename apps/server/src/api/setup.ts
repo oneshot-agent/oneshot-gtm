@@ -190,6 +190,7 @@ export async function setup(req: Request): Promise<Response> {
     founderAdmission: mergeString(body.founderAdmission, current.founderAdmission),
     productBrief: mergeString(body.productBrief, current.productBrief),
     mobileSignature: body.mobileSignature ?? current.mobileSignature,
+    slackWebhookUrl: current.slackWebhookUrl,
     clientId: current.clientId,
   });
 

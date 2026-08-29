@@ -101,6 +101,7 @@ function ctx(prospectId = 42) {
       founderAdmission: null,
       productBrief: null,
       mobileSignature: false,
+      slackWebhookUrl: null,
       clientId: null,
     },
     metadata: {},

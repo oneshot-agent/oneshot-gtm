@@ -67,10 +67,15 @@ export function slackWebhookUrl(
 /**
  * One bounded POST — no retries. Failures (reject, timeout, non-2xx) are
  * logged and swallowed; the returned promise always resolves.
+ * Exported for test mocking only.
  */
-async function postToWebhook(payload: SlackNotification, url: string): Promise<void> {
+export async function postToWebhook(
+  payload: SlackNotification,
+  url: string,
+  timeoutMs = SLACK_TIMEOUT_MS,
+): Promise<void> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), SLACK_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url, {
       method: "POST",
@@ -164,7 +169,6 @@ export async function postDailySendSummaryIfDue(now: Date = new Date()): Promise
     // matches sequence_events.created_at, which is datetime('now')-stamped.
     const rows = ledger.eventsByPlay({
       sinceIso: `${day} 00:00:00`,
-      untilIso: `${utcDay(now)} 00:00:00`,
     });
     const sent = rows.reduce((a, r) => a + r.sent, 0);
     const replied = rows.reduce((a, r) => a + r.replied, 0);
