@@ -5,10 +5,9 @@
 Last verified **2026-08-29** · Bun 1.3.13 · OneShot SDK 0.22.0 · **1982 tests / 157 files** · typecheck + oxlint + oxfmt clean, all measured on `main`.
 
 **What the gate covers.** `apps/web` is now inside `bun run typecheck` — the dashboard source is
-type-checked in CI, and a deliberate error under `apps/web/src` fails the root script. The
-remaining hole is `apps/*/__tests__`, which the root `tsconfig.json` still excludes, so app test
-files are compiled by vitest and by nothing else; that item is open under Gates and coverage in
-`ROADMAP.md`. Coverage is thin in two packages: `packages/doctor` has one test file against 799
+type-checked in CI, and a deliberate error under `apps/web/src` fails the root script. As of
+2026-08-29, `apps/*/__tests__` is also included, so all app test files are type-checked. Coverage
+is thin in two packages: `packages/doctor` has one test file against 799
 lines of `check.ts`, and `packages/intel` tests cover only `_parse.ts` and `prompts.ts`, not
 `client.ts`, `triage`, `synthesize`, `advise` or `weekly-review`.
 
