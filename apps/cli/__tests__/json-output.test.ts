@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { DomainPoolEntry, EmailIdentity, IdentityCapacityView } from "@oneshot-gtm/core";
 import type { FinderResult, TriggerRunOutcome } from "@oneshot-gtm/find";
 
 /**
@@ -47,9 +48,31 @@ vi.mock("@oneshot-gtm/find", () => ({
   nextSleepMs: () => 60_000,
 }));
 
+// Identities mocks
+let identitiesFixture: EmailIdentity[] = [];
+let capsFixture = new Map<string, IdentityCapacityView>();
+let domainsFixture: DomainPoolEntry[] = [];
+let configFixture: { emailIdentities?: EmailIdentity[] | null } = {};
+
+vi.mock("@oneshot-gtm/core", () => ({
+  loadConfig: () => configFixture,
+  resolveIdentities: () => identitiesFixture,
+  identityCapacities: () => capsFixture,
+  listSendingDomains: async () => domainsFixture,
+  capGroupKey: (i: EmailIdentity) =>
+    i.provider === "oneshot" ? `domain:${i.sendingDomain ?? ""}` : `id:${i.id}`,
+  fromLocalpart: (s: string) => s.toLowerCase(),
+  registerOneShotIdentity: () => ({ identityId: "", created: false }),
+  removeIdentity: () => ({ removed: false }),
+  pauseSendingDomain: async () => ({ domain: "", pool_status: "paused" }),
+  resumeSendingDomain: async () => ({ domain: "", pool_status: "active" }),
+  WARMUP_DEFAULTS: { maxPerDay: 40, warmup: { startPerDay: 5, incrementPerWeek: 5 } },
+}));
+
 // Import commands after mocks are set up
 const { commandDoctor } = await import("../src/commands/doctor.ts");
 const { commandFindWatch, commandFindDrain } = await import("../src/commands/find.ts");
+const { commandIdentitiesList } = await import("../src/commands/identities.ts");
 const { CommandExit } = await import("../src/output.ts");
 
 beforeEach(() => {
@@ -263,9 +286,7 @@ describe("find watch --once --json", () => {
       costUsd: 0.5,
       halted: "budget cap",
     };
-    findTriggerOutcomes = [
-      { name: "gh", fired: true, result: richResult, nextDueInMs: 7200_000 },
-    ];
+    findTriggerOutcomes = [{ name: "gh", fired: true, result: richResult, nextDueInMs: 7200_000 }];
     await commandFindWatch({ once: true, quiet: true, json: true });
 
     const stdout = stdoutChunks.join("");
@@ -322,5 +343,166 @@ describe("find drain --dry-run --json", () => {
     const parsed = JSON.parse(stdout);
     expect(parsed.errors).toHaveLength(1);
     expect(parsed.errors[0]).toMatchObject({ id: "row-123", message: "Enrichment failed" });
+  });
+});
+
+describe("identities list --json", () => {
+  // Two identities on the same sending domain: they share a cap group, so the
+  // human line reports the shared domain usage and the JSON carries
+  // domainSentToday alongside each identity's own count.
+  const ONESHOT_A: EmailIdentity = {
+    id: "oneshot:jn@tracepoint.email",
+    provider: "oneshot",
+    sendingDomain: "tracepoint.email",
+    mailbox: "jn",
+    maxPerDay: 50,
+    warmup: null,
+  };
+  const ONESHOT_B: EmailIdentity = {
+    id: "oneshot:nic@tracepoint.email",
+    provider: "oneshot",
+    sendingDomain: "tracepoint.email",
+    mailbox: "nic",
+    maxPerDay: 50,
+    warmup: null,
+  };
+  const GMAIL: EmailIdentity = {
+    id: "gmail:jn@freebutter.ai",
+    provider: "gmail",
+    address: "jn@freebutter.ai",
+    maxPerDay: null,
+    warmup: null,
+  };
+
+  const CAPS = new Map<string, IdentityCapacityView>([
+    [ONESHOT_A.id, { capToday: 50, domainSentToday: 9, identitySentToday: 6, remaining: 41 }],
+    [ONESHOT_B.id, { capToday: 50, domainSentToday: 9, identitySentToday: 3, remaining: 41 }],
+    // Uncapped: capToday must land as null in JSON, "∞" in the human line.
+    [
+      GMAIL.id,
+      {
+        capToday: Number.POSITIVE_INFINITY,
+        domainSentToday: 2,
+        identitySentToday: 2,
+        remaining: Number.POSITIVE_INFINITY,
+      },
+    ],
+  ]);
+
+  const ACTIVE_DOMAIN: DomainPoolEntry = {
+    domain: "tracepoint.email",
+    pool_status: "active",
+    provisioning_status: "provisioned",
+    warmup_score: 87,
+    warmup_started_at: "2026-07-06T12:00:00.000Z",
+    daily_send_limit: 50,
+    daily_sent_count: 9,
+    daily_sent_date: "2026-08-29",
+    last_used_at: "2026-08-29T09:12:00.000Z",
+  };
+  const WARMING_DOMAIN: DomainPoolEntry = {
+    domain: "trace-mail.dev",
+    pool_status: "warming",
+    provisioning_status: "provisioned",
+    warmup_score: null,
+    warmup_started_at: null,
+    daily_send_limit: 20,
+    daily_sent_count: 2,
+    daily_sent_date: "2026-08-29",
+    last_used_at: null,
+  };
+
+  beforeEach(() => {
+    identitiesFixture = [ONESHOT_A, GMAIL];
+    capsFixture = CAPS;
+    domainsFixture = [ACTIVE_DOMAIN];
+    configFixture = { emailIdentities: [ONESHOT_A, GMAIL] };
+  });
+
+  it("emits valid JSON with schemaVersion", async () => {
+    await commandIdentitiesList({ json: true });
+
+    const stdout = stdoutChunks.join("");
+    const parsed = JSON.parse(stdout);
+    expect(parsed).toHaveProperty("schemaVersion", 1);
+    expect(parsed.command).toBe("identities list");
+    expect(parsed.identities).toHaveLength(2);
+    expect(parsed.domains).toHaveLength(1);
+  });
+
+  it("stdout has no ANSI codes", async () => {
+    identitiesFixture = [ONESHOT_A, ONESHOT_B, GMAIL];
+    domainsFixture = [ACTIVE_DOMAIN, WARMING_DOMAIN];
+    await commandIdentitiesList({ json: true });
+
+    const stdout = stdoutChunks.join("");
+    expect(hasAnsiCodes(stdout)).toBe(false);
+  });
+
+  it("human output goes to stderr, not stdout", async () => {
+    await commandIdentitiesList({ json: true });
+
+    const stdout = stdoutChunks.join("");
+    const stderr = stderrChunks.join("");
+
+    // Stdout should be ONLY the JSON document
+    expect(stdout.trim().split("\n")).toHaveLength(1);
+    expect(() => JSON.parse(stdout)).not.toThrow();
+
+    // Human headers/rows should be on stderr
+    expect(stderr).toContain("Sender identities");
+    expect(stderr).toContain("Provisioned domains");
+    expect(stderr).toContain("jn@tracepoint.email");
+  });
+
+  it("includes all identity and domain fields in JSON payload", async () => {
+    identitiesFixture = [ONESHOT_A, ONESHOT_B, GMAIL];
+    domainsFixture = [ACTIVE_DOMAIN, WARMING_DOMAIN];
+    configFixture = { emailIdentities: null }; // legacy (auto-derived) pool
+    await commandIdentitiesList({ json: true });
+
+    const stdout = stdoutChunks.join("");
+    const parsed = JSON.parse(stdout);
+
+    expect(parsed.identities).toHaveLength(3);
+    expect(parsed.identities[0]).toMatchObject({
+      id: "oneshot:jn@tracepoint.email",
+      provider: "oneshot",
+      address: "jn@tracepoint.email",
+      sentToday: 6,
+      capToday: 50,
+      domainSentToday: 9,
+      legacy: true,
+    });
+    expect(parsed.identities[1]).toMatchObject({
+      address: "nic@tracepoint.email",
+      sentToday: 3,
+      domainSentToday: 9,
+    });
+    // Uncapped identity: Infinity isn't JSON, so capToday is null.
+    expect(parsed.identities[2]).toMatchObject({
+      id: "gmail:jn@freebutter.ai",
+      provider: "gmail",
+      address: "jn@freebutter.ai",
+      sentToday: 2,
+      capToday: null,
+      legacy: true,
+    });
+
+    expect(parsed.domains).toHaveLength(2);
+    expect(parsed.domains[0]).toMatchObject({
+      domain: "tracepoint.email",
+      poolStatus: "active",
+      warmupScore: 87,
+      dailySent: 9,
+      dailyLimit: 50,
+    });
+    expect(parsed.domains[1]).toMatchObject({
+      domain: "trace-mail.dev",
+      poolStatus: "warming",
+      warmupScore: null,
+      dailySent: 2,
+      dailyLimit: 20,
+    });
   });
 });
