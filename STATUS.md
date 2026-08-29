@@ -2,13 +2,22 @@
 
 **Assume green.** The 49 CLI commands, 17 plays, 11 finders, nine dashboard pages plus the run form, and the server's REST + SSE routes are all covered by the test suite — and verified end to end against the live OneShot API: every paid call type has made the live round trip, including the voice and SMS legs (`motion concierge` / `motion demo-no-show`), the PMF survey pair, reply triage, bounce harvesting, and `gmail placement`.
 
-Last verified **2026-08-28** · Bun 1.3.13 · OneShot SDK 0.22.0 · 1963 tests / 155 files · typecheck + oxlint clean.
+Last verified **2026-08-29** · Bun 1.3.13 · OneShot SDK 0.22.0 · 1963 tests / 155 files · typecheck + oxlint + oxfmt clean.
+
+**What the gate does and doesn't cover.** `bun run typecheck` uses the root `tsconfig.json`, which
+excludes `apps/web` and includes only `packages/*/__tests__` — so the dashboard source and every
+app test file sit outside it. Closing both holes is the first item under Gates and coverage in
+`ROADMAP.md`. Coverage is also thin in two packages: `packages/doctor` has one test file against
+799 lines of `check.ts`, and `packages/intel` has two against the whole package.
+
+**Dependency pins.** The root `package.json` carries `overrides` for `seroval`, `seroval-plugins`
+(CVE-2026-59940) and `ws`. Forks inherit these.
 
 The person-level ICP gate (#45) was calibrated against 84 real LinkedIn titles (all 13 known off-ICP prospects caught, zero false rejects among 44 builders) and the history audit ran live `enrichProfile` for 111 titles. The workspace switcher's auto-start was live-verified in both directions (default ↔ gtm).
 
 Reply detection was verified on 2026-08-23 against the real mailboxes: a sliced sweep of all four inboxes from the first send onward (4,833 inbound, every slice fully covered) found exactly the replies the live poll then recorded on restart. Since 2026-08-28 every inbound is also classified (#63) — out-of-office autoresponders, dead-mailbox notices and unsubscribes are recorded for the conversation history but never count as replies, and the latter two durably suppress the address at the send funnel.
 
-Updated by hand after each dogfood run. CI auto-update is on the roadmap.
+Updated by hand after each dogfood run.
 
 ---
 
@@ -38,6 +47,8 @@ Both GitHub finders need `GITHUB_TOKEN`. Unauthenticated, GitHub allows 60 reque
 - **`oneshot-gtm-server` requires Bun.** `bun:sqlite`, `Bun.serve`, and `Bun.stdin` are Bun-native; a runtime check in `dist/bin.mjs` fails loudly under plain `node`. A self-contained `bun build --compile` binary is a future option.
 - **The CLI is not on npm.** Only `oneshot-gtm-server` is published (0.7.0). The CLI needs a repo clone plus `bun link`.
 - **No public benchmarks page.** The telemetry endpoint is live and verified; the surface that renders aggregates from it is still roadmap.
+- **The CLI has no machine-readable output.** There is no `--json` flag anywhere in `apps/cli/src`, so scripted callers have to boot the server and read `/api/measure/*` to query their own ledger.
+- **`events.jsonl` never rotates.** `logEvent` appends without a size cap, while the README tells you to `tail -f` it. Both are roadmap items under Operations and Reliability.
 - **Launch assets partially captured.** The 55-second voiced launch video is embedded at the top of the README. The vhs terminal recording and dashboard gif the roadmap calls for are still open; `demo seed` builds the populated fictional install to record them against.
 - **Cross-workspace shared DB is additive.** Paid lookup caches and contact touches live in `~/.oneshot-gtm-shared/shared.sqlite` (`ONESHOT_GTM_SHARED` relocates it); each ledger's own cache tables are imported once on first use and then left unwritten, so rolling back is a code revert, not a data migration. The `contacted-elsewhere` hold is a soft flag — auto paths wait the 7-day window out, a manual queue send overrides.
 - **Demo mode fixtures four network reads.** `listInbox`, `cadenceRocs`, `listSendingDomains` and `getBalance` read JSON from the demo home when `ONESHOT_GTM_DEMO=1`, and the scheduler idles. All four are reads; nothing that sends, drafts or spends is stubbed, and the flag is only ever set by `demo ui`. Under the flag the demo home's `.env` is also the **sole** source of secrets — inherited env vars and Bun's auto-loaded repo-root `.env` are overwritten or deleted, so a demo can never act with real credentials.
