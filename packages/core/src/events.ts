@@ -1,4 +1,12 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { configDir } from "./config.ts";
@@ -11,6 +19,9 @@ import { configDir } from "./config.ts";
  * `ctx` may carry primitives, counters, durations, labels, error class names,
  * hostname/domain — NEVER user-typed values, prospect data, or verbatim LLM
  * completions. Logging never throws; on any failure the event drops silently.
+ *
+ * The live file is size-capped (see MAX_EVENT_LOG_BYTES_DEFAULT) and rotated to
+ * events.1.jsonl … events.N.jsonl, so a long-running install can't fill the disk.
  */
 
 type EventLevel = "debug" | "info" | "warn" | "error";
@@ -28,6 +39,11 @@ interface DevEvent {
 
 const EVENTS_PATH = join(configDir(), "events.jsonl");
 const DEBUG_ENABLED = (process.env["DEBUG"] ?? "").includes("oneshot");
+
+/** Rotate once the live file reaches this many bytes. */
+const MAX_EVENT_LOG_BYTES_DEFAULT = 10 * 1024 * 1024;
+/** How many rotated generations to keep; events.{1..N}.jsonl. */
+const MAX_EVENT_LOG_GENERATIONS = 3;
 
 let runId: string | null = null;
 let cachedClientId: string | null = null;
@@ -59,6 +75,12 @@ export function logEvent(
       if (!existsSync(configDir())) mkdirSync(configDir(), { recursive: true });
       configDirEnsured = true;
     }
+    // Rotate before the append so the live file never carries more than one
+    // line past the ceiling. A rotation failure throws into the catch below —
+    // the event drops, same as any other write failure.
+    const size = statSync(EVENTS_PATH, { throwIfNoEntry: false })?.size ?? 0;
+    if (size >= maxEventLogBytes()) rotateEventLog();
+
     appendFileSync(EVENTS_PATH, line);
 
     if (DEBUG_ENABLED) {
@@ -68,6 +90,32 @@ export function logEvent(
   } catch {
     // dropped silently — see file header
   }
+}
+
+/**
+ * Byte ceiling for the live log. `ONESHOT_GTM_MAX_EVENT_LOG_BYTES` overrides
+ * the default; anything non-numeric or <= 0 falls back. Read per call so tests
+ * (and a long-lived watch process) can change it without a restart.
+ */
+function maxEventLogBytes(): number {
+  const raw = Number(process.env["ONESHOT_GTM_MAX_EVENT_LOG_BYTES"]);
+  return Number.isFinite(raw) && raw > 0 ? raw : MAX_EVENT_LOG_BYTES_DEFAULT;
+}
+
+/**
+ * Shifts events.jsonl → events.1.jsonl → … → events.N.jsonl, dropping whatever
+ * was in the oldest slot. Throws on any fs failure; the caller's catch turns
+ * that into a dropped event.
+ */
+function rotateEventLog(): void {
+  const genPath = (gen: number): string => join(configDir(), `events.${gen}.jsonl`);
+
+  const oldest = genPath(MAX_EVENT_LOG_GENERATIONS);
+  if (existsSync(oldest)) rmSync(oldest);
+  for (let gen = MAX_EVENT_LOG_GENERATIONS - 1; gen >= 1; gen--) {
+    if (existsSync(genPath(gen))) renameSync(genPath(gen), genPath(gen + 1));
+  }
+  renameSync(EVENTS_PATH, genPath(1));
 }
 
 /**
