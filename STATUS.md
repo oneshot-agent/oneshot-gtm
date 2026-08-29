@@ -2,13 +2,15 @@
 
 **Assume green.** The 49 CLI commands, 17 plays, 11 finders, nine dashboard pages plus the run form, and the server's REST + SSE routes are all covered by the test suite — and verified end to end against the live OneShot API: every paid call type has made the live round trip, including the voice and SMS legs (`motion concierge` / `motion demo-no-show`), the PMF survey pair, reply triage, bounce harvesting, and `gmail placement`.
 
-Last verified **2026-08-29** · Bun 1.3.13 · OneShot SDK 0.22.0 · 1963 tests / 155 files · typecheck + oxlint + oxfmt clean.
+Last verified **2026-08-29** · Bun 1.3.13 · OneShot SDK 0.22.0 · **1982 tests / 157 files** · typecheck + oxlint + oxfmt clean, all measured on `main`.
 
-**What the gate does and doesn't cover.** `bun run typecheck` uses the root `tsconfig.json`, which
-excludes `apps/web` and includes only `packages/*/__tests__` — so the dashboard source and every
-app test file sit outside it. Closing both holes is the first item under Gates and coverage in
-`ROADMAP.md`. Coverage is also thin in two packages: `packages/doctor` has one test file against
-799 lines of `check.ts`, and `packages/intel` has two against the whole package.
+**What the gate covers.** `apps/web` is now inside `bun run typecheck` — the dashboard source is
+type-checked in CI, and a deliberate error under `apps/web/src` fails the root script. The
+remaining hole is `apps/*/__tests__`, which the root `tsconfig.json` still excludes, so app test
+files are compiled by vitest and by nothing else; that item is open under Gates and coverage in
+`ROADMAP.md`. Coverage is thin in two packages: `packages/doctor` has one test file against 799
+lines of `check.ts`, and `packages/intel` is now covered for the retry path but not for
+`triage`, `synthesize`, `advise` or `weekly-review`.
 
 **Dependency pins.** The root `package.json` carries `overrides` for `seroval`, `seroval-plugins`
 (CVE-2026-59940) and `ws`. Forks inherit these.
