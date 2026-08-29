@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { Ledger } from "@oneshot-gtm/core";
 
 // gatherReplyContext's spend discipline: free context always, paid research
 // only for unknown senders on real domains, cache hits cost $0, and failures
@@ -8,7 +9,7 @@ const ledger = {
   getProspectById: vi.fn(),
   getInboxThreads: vi.fn(() => new Map()),
   listInboxRepliesForProspect: vi.fn(() => []),
-  getCachedEnrichment: vi.fn(() => null),
+  getCachedEnrichment: vi.fn<Ledger["getCachedEnrichment"]>(() => null),
   setCachedEnrichment: vi.fn(),
   setCachedEnrichmentFailure: vi.fn(),
 };

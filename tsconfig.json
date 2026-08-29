@@ -17,7 +17,7 @@
     "apps/server/src/**/*.ts",
     "apps/web/src/**/*.ts",
     "apps/web/src/**/*.tsx",
-    "apps/web/__tests__/**/*.ts",
+    "apps/*/__tests__/**/*.ts",
     "packages/*/src/**/*.ts",
     "packages/*/__tests__/**/*.ts"
   ],
