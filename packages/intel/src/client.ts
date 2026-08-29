@@ -27,7 +27,6 @@ export interface LlmCompleteInput {
   maxAttempts?: number;
 }
 
-const DEFAULT_TIMEOUT_MS = 90_000;
 const DEFAULT_MAX_ATTEMPTS = 3;
 const BASE_DELAY_MS = 500;
 const MAX_DELAY_MS = 20_000;
@@ -195,7 +194,7 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
 
   const expanded: LlmCompleteInput = { ...input, messages: injectHumanizer(input.messages) };
 
-  const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const timeoutMs = input.timeoutMs;
   const maxAttempts = Math.max(1, input.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
 
   const startedAt = Date.now();
@@ -205,7 +204,7 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
     message_count: expanded.messages.length,
     max_tokens: expanded.maxTokens ?? null,
     max_attempts: maxAttempts,
-    timeout_ms: timeoutMs,
+    timeout_ms: timeoutMs ?? null,
   });
 
   // Only the dispatch itself sits inside the retry try. Success-path logging
@@ -261,7 +260,7 @@ function dispatch(
   model: string,
   key: string,
   input: LlmCompleteInput,
-  timeoutMs: number,
+  timeoutMs: number | undefined,
 ): Promise<LlmCompleteOutput> {
   switch (provider) {
     case "openrouter":
@@ -302,10 +301,10 @@ async function postJson(args: {
   headers: Record<string, string>;
   body: unknown;
   provider: string;
-  timeoutMs: number;
+  timeoutMs: number | undefined;
 }): Promise<unknown> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), args.timeoutMs);
+  const timer = args.timeoutMs ? setTimeout(() => controller.abort(), args.timeoutMs) : undefined;
   const timedOut = () =>
     new LlmTimeoutError(`${args.provider} request timed out after ${args.timeoutMs}ms`);
   try {
@@ -352,7 +351,7 @@ async function postJson(args: {
       );
     }
   } finally {
-    clearTimeout(timer);
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 
@@ -362,7 +361,7 @@ interface OpenAIArgs {
   baseUrl: string;
   provider: string;
   input: LlmCompleteInput;
-  timeoutMs: number;
+  timeoutMs: number | undefined;
   extraHeaders?: Record<string, string>;
 }
 
@@ -393,8 +392,12 @@ async function openaiCompatibleComplete(args: OpenAIArgs): Promise<LlmCompleteOu
   // data.choices[0] on it would throw a bare TypeError, which reads as weather.
   if (data.error) {
     const code = data.error.code === undefined ? "" : ` (code ${data.error.code})`;
+    // Pass numeric codes through as status so retry logic can classify them (429/5xx).
+    // Non-numeric or absent codes stay terminal.
+    const status = typeof data.error.code === "number" ? data.error.code : undefined;
     throw new LlmError(
       `${args.provider} returned an error envelope${code}: ${data.error.message ?? "no message"}`,
+      status,
     );
   }
 
@@ -439,7 +442,7 @@ interface AnthropicArgs {
   key: string;
   model: string;
   input: LlmCompleteInput;
-  timeoutMs: number;
+  timeoutMs: number | undefined;
 }
 
 async function anthropicComplete(args: AnthropicArgs): Promise<LlmCompleteOutput> {

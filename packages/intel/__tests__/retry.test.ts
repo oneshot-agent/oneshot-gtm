@@ -493,4 +493,118 @@ describe("complete() retry integration", () => {
     expect(error.name).toBe("LlmError");
     expect(attemptCount).toBe(1);
   });
+
+  it("does NOT abort or retry slow calls when no explicit timeoutMs is provided", async () => {
+    const { complete } = await import("../src/client.ts");
+
+    // Regression fix: before the fix, a 90s default timeout applied to every
+    // call site, so a slow legitimate generation was aborted, retried, and failed.
+    // Now, no timeoutMs = no client-side abort = preserves existing behavior.
+    let attemptCount = 0;
+    global.fetch = vi.fn().mockImplementation(() => {
+      attemptCount++;
+      // Simulate a slow response (e.g., strategist with maxTokens: 4096 on reasoning model)
+      // that completes after 100 seconds — longer than the old 90s default.
+      return new Promise((resolve) => {
+        setTimeout(() => {
+          resolve({
+            ok: true,
+            json: () =>
+              Promise.resolve({
+                choices: [{ message: { content: "slow but valid" }, finish_reason: "stop" }],
+              }),
+          });
+        }, 100_000);
+      });
+    }) as any;
+
+    const promise = complete({
+      messages: [{ role: "user", content: "test" }],
+      maxAttempts: 3,
+      // No timeoutMs — should wait indefinitely
+    });
+
+    // Advance past the old 90s default that would have aborted
+    await vi.advanceTimersByTimeAsync(95_000);
+    expect(attemptCount).toBe(1); // Still waiting on first attempt
+
+    // Complete the slow response
+    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.runAllTimersAsync();
+
+    const result = await promise;
+    expect(result.content).toBe("slow but valid");
+    expect(attemptCount).toBe(1); // Exactly one attempt, no retry
+  });
+
+  it("retries OpenRouter 200 + {error:{code:429}} and stops on non-numeric codes", async () => {
+    const { complete } = await import("../src/client.ts");
+
+    // Finding 2: OpenRouter returns 200 with an error envelope for upstream faults.
+    // Numeric codes (429, 5xx) should be retried; non-numeric/absent codes are terminal.
+    let attemptCount = 0;
+    global.fetch = vi.fn().mockImplementation(() => {
+      attemptCount++;
+      if (attemptCount === 1) {
+        // First call: 200 + {error:{code:429}} — should retry
+        return Promise.resolve({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              error: { code: 429, message: "rate limited" },
+            }),
+        });
+      }
+      // Second call: success
+      return Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            choices: [{ message: { content: "recovered" }, finish_reason: "stop" }],
+          }),
+      });
+    }) as any;
+
+    const promise = complete({
+      messages: [{ role: "user", content: "test" }],
+      maxAttempts: 3,
+    });
+
+    await vi.runAllTimersAsync();
+
+    const result = await promise;
+    expect(result.content).toBe("recovered");
+    expect(attemptCount).toBe(2); // Retried once
+  });
+
+  it("does NOT retry OpenRouter 200 + {error:{code:'INVALID_KEY'}} — non-numeric is terminal", async () => {
+    const { complete } = await import("../src/client.ts");
+
+    let attemptCount = 0;
+    global.fetch = vi.fn().mockImplementation(() => {
+      attemptCount++;
+      // 200 + non-numeric error code — should NOT retry
+      return Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            error: { code: "INVALID_KEY", message: "authentication failed" },
+          }),
+      });
+    }) as any;
+
+    const promise = complete({
+      messages: [{ role: "user", content: "test" }],
+      maxAttempts: 3,
+    });
+    const rejection = promise.catch((err) => err);
+
+    await vi.runAllTimersAsync();
+
+    const error = await rejection;
+    expect(error.message).toContain("error envelope");
+    expect(error.message).toContain("INVALID_KEY");
+    expect(error.status).toBeUndefined(); // Non-numeric code = no status
+    expect(attemptCount).toBe(1); // No retry
+  });
 });
