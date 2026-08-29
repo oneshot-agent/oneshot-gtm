@@ -355,17 +355,18 @@ describe("complete() retry integration", () => {
     expect(attemptCount).toBe(1);
   });
 
-  it("does NOT retry a 200 error envelope with no choices", async () => {
+  it("does NOT retry a 200 error envelope with a non-retryable code", async () => {
     const { complete } = await import("../src/client.ts");
 
     // OpenRouter reports upstream faults with 200 + an error envelope. Touching
     // data.choices[0] on it throws a bare TypeError, which used to be retryable.
+    // Non-retryable numeric codes (e.g. 400) are terminal.
     let attemptCount = 0;
     global.fetch = vi.fn().mockImplementation(() => {
       attemptCount++;
       return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({ error: { message: "upstream is unhappy", code: 502 } }),
+        json: () => Promise.resolve({ error: { message: "bad request", code: 400 } }),
       });
     }) as any;
 
@@ -378,7 +379,7 @@ describe("complete() retry integration", () => {
     await vi.runAllTimersAsync();
 
     const error = await rejection;
-    expect(error.message).toContain("upstream is unhappy");
+    expect(error.message).toContain("bad request");
     expect(attemptCount).toBe(1);
   });
 
