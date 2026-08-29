@@ -9,8 +9,8 @@ type-checked in CI, and a deliberate error under `apps/web/src` fails the root s
 remaining hole is `apps/*/__tests__`, which the root `tsconfig.json` still excludes, so app test
 files are compiled by vitest and by nothing else; that item is open under Gates and coverage in
 `ROADMAP.md`. Coverage is thin in two packages: `packages/doctor` has one test file against 799
-lines of `check.ts`, and `packages/intel` is now covered for the retry path but not for
-`triage`, `synthesize`, `advise` or `weekly-review`.
+lines of `check.ts`, and `packages/intel` tests cover only `_parse.ts` and `prompts.ts`, not
+`client.ts`, `triage`, `synthesize`, `advise` or `weekly-review`.
 
 **Dependency pins.** The root `package.json` carries `overrides` for `seroval`, `seroval-plugins`
 (CVE-2026-59940) and `ws`. Forks inherit these.
