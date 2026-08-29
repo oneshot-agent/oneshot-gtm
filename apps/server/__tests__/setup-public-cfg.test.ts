@@ -56,7 +56,7 @@ describe("publicCfg — privacy boundary", () => {
   });
 
   it("doesn't mutate the input", () => {
-    const original = { ...FULL_CFG };
+    const original = structuredClone(FULL_CFG);
     publicCfg(FULL_CFG);
     expect(FULL_CFG).toEqual(original);
   });

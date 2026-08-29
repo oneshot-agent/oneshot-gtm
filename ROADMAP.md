@@ -26,15 +26,13 @@ Today every finder polls. These turn it push.
 
 The verify gate has holes an agent can close without touching product behaviour. Ranked.
 
-      _Done when:_ a deliberate type error under `apps/web/src` fails `bun run typecheck` from the repo root on a fresh clone with no prior build.
-
-- [ ] **Assert the README's own counts in a test** · S — README says "48 commands", "47-command CLI" and "1621 cases across 126 files". The real numbers are 49, 49 and 1963/155. The counts drift on every feature PR because nothing checks them.
+- [ ] **Assert the README's own counts in a test** · S — README says "48 commands", "47-command CLI" and "1621 cases across 126 files". The real numbers are 49, 49 and 2010/158. The counts drift on every feature PR because nothing checks them.
       _Done when:_ a test derives the leaf-command count from the commander tree and the play/finder counts from the registries, asserts each against the README text, and fails on drift.
 - [ ] **Prompt inventory test** · S — `packages/prompts` ships 57 markdown files; `agent-builder-extract.md` is referenced by nothing. Prompts are the product here, so an orphan is a fork reading a file the model never sees.
       _Done when:_ a test walks `packages/prompts/*.md`, resolves every name reachable through `loadPrompt` (including the play-derived `${play}-email` / `${play}-followup` shapes), and fails on either an orphan file or a loaded name with no file. Deliberate orphans go in an explicit allow-list with a reason.
 - [ ] **Cover `packages/doctor`** · M — `check.ts` is 799 lines running the deliverability, placement, workspace-collision, GitHub-token and X-credential checks, and `__tests__/workspace-checks.test.ts` is the only test file. Doctor is what a new user reads first when something is wrong.
       _Done when:_ each named check has a case for its pass, warn and fail verdict against a stubbed ledger/config, and the bounce-rate thresholds (warn >2%, fail >5%, 20-send minimum) are pinned.
-- [ ] **Cover `packages/intel`** · M — only `parse.test.ts` and `prompts.test.ts` exist. `client.ts`, `triage.ts`, `synthesize.ts`, `advise.ts` and `weekly-review.ts` are untested, including `complete()`'s truncation branches — the ones that decide whether a truncated response is returned as prose or thrown at a JSON caller.
+- [ ] **Cover `packages/intel`** · M — `parse.test.ts`, `prompts.test.ts` and `retry.test.ts` exist. `retry.test.ts` covers `client.ts`'s retry surface — `backoffDelayMs`, `isRetryableLlmError`, `parseRetryAfter` and `complete()`'s OpenRouter retry paths. Still untested: `triage.ts`, `synthesize.ts`, `advise.ts`, `weekly-review.ts`, `complete()`'s Anthropic path, and the `allowTruncation` split — the branch that decides whether a truncated response is returned as prose or thrown at a JSON caller.
       _Done when:_ `complete()` has cases for each provider path, the `allowTruncation` split, and the reasoning-tokens vs plain-overrun message; the four report modules have cases for a well-formed and a malformed model response.
 
 ## Reliability
@@ -95,7 +93,6 @@ Not code — these need capture, not commits. `demo seed` + `demo ui` now stand 
 
 ## Approved, not yet started
 
-- [ ] **build(typecheck): fold `apps/*/__tests__` into the root `bun run typecheck`** · S
 - [ ] **test(doctor): cover every check in `check.ts` at pass, warn and fail** · M
 - [ ] **test(intel): cover the report modules and `complete()`'s truncation branches** · M
 
