@@ -5,6 +5,11 @@
  * finders ship — and those numbers go stale the moment someone adds a
  * command without re-counting. Each one here is derived from the code that
  * defines it, so the README can only drift for as long as this test is red.
+ *
+ * Some of those numbers appear twice: as digits in the tables and spelled out
+ * in the prose above them ("Seventeen of them", "Eleven **finders**"). Both are
+ * claims a visitor reads, and both drift on the same commit, so both are
+ * asserted.
  */
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -21,6 +26,7 @@ import { runConcierge } from "../../packages/plays/src/concierge.ts";
 import { runDemoNoShow } from "../../packages/plays/src/demo-no-show.ts";
 
 const NON_EMAIL_PLAYS = [runConcierge, runDemoNoShow];
+const playCount = Object.keys(PLAYS).length + NON_EMAIL_PLAYS.length;
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../..");
 const README = fs.readFileSync(path.join(REPO_ROOT, "README.md"), "utf8");
@@ -39,7 +45,7 @@ function countLeafCommands(cmd: Command): number {
 }
 
 /** Pull a single capture group out of the README, failing loudly if the prose moved. */
-function readmeNumber(pattern: RegExp, label: string): number {
+function readmeCapture(pattern: RegExp, label: string): string {
   const match = README.match(pattern);
   if (!match?.[1]) {
     throw new Error(
@@ -47,7 +53,77 @@ function readmeNumber(pattern: RegExp, label: string): number {
         `Update the pattern in this test alongside the prose.`,
     );
   }
-  return Number(match[1]);
+  return match[1];
+}
+
+function readmeNumber(pattern: RegExp, label: string): number {
+  return Number(readmeCapture(pattern, label));
+}
+
+const ONES: Record<string, number> = {
+  zero: 0,
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+  fifteen: 15,
+  sixteen: 16,
+  seventeen: 17,
+  eighteen: 18,
+  nineteen: 19,
+};
+
+const TENS: Record<string, number> = {
+  twenty: 20,
+  thirty: 30,
+  forty: 40,
+  fifty: 50,
+  sixty: 60,
+  seventy: 70,
+  eighty: 80,
+  ninety: 90,
+};
+
+/**
+ * Turn a spelled-out count ("seventeen", "twenty-one") into a number. The
+ * README writes its counts as words in prose and as digits in the tables, and
+ * both drift together — so the word forms need the same guard the digits get.
+ */
+function wordToNumber(word: string): number {
+  const parts = word.toLowerCase().split("-");
+  if (parts.length === 1) {
+    const single = ONES[parts[0]!] ?? TENS[parts[0]!];
+    if (single === undefined) {
+      throw new Error(
+        `"${word}" is not a number word this test knows. Extend ONES/TENS if the ` +
+          `count grew past what they cover.`,
+      );
+    }
+    return single;
+  }
+  const [tens, ones] = parts;
+  if (parts.length !== 2 || TENS[tens!] === undefined || ONES[ones!] === undefined) {
+    throw new Error(
+      `"${word}" is not a number word this test knows. Extend ONES/TENS if the ` +
+        `count grew past what they cover.`,
+    );
+  }
+  return TENS[tens!]! + ONES[ones!]!;
+}
+
+/** Same as `readmeNumber`, but for a count the README spells out in prose. */
+function readmeWordNumber(pattern: RegExp, label: string): number {
+  return wordToNumber(readmeCapture(pattern, label));
 }
 
 let commandCount: number;
@@ -77,13 +153,31 @@ describe("README counts match the code", () => {
 
   it("quotes the right number of plays", () => {
     const claimed = readmeNumber(/(\d+) outreach plays/, "N outreach plays");
-    const actual = Object.keys(PLAYS).length + NON_EMAIL_PLAYS.length;
-    expect(claimed, `README claims ${claimed} plays but code has ${actual}`).toBe(actual);
+    expect(claimed, `README claims ${claimed} plays but code has ${playCount}`).toBe(playCount);
+  });
+
+  // "Seventeen of them." opens the play list a visitor actually reads, and it
+  // goes stale on exactly the commits the digit form does.
+  it("spells out the right number of plays in the play list", () => {
+    const claimed = readmeWordNumber(/^([A-Za-z]+(?:-[A-Za-z]+)?) of them\./m, "'<Word> of them'");
+    expect(claimed, `README spells out ${claimed} plays but code has ${playCount}`).toBe(playCount);
   });
 
   it("quotes the right number of finders", () => {
     const claimed = readmeNumber(/(\d+) finders/, "N finders");
     expect(claimed, `README claims ${claimed} finders but code has ${TRIGGERS.length}`).toBe(
+      TRIGGERS.length,
+    );
+  });
+
+  // Likewise "Eleven **finders** discover prospects" — the sentence that
+  // introduces the finder table, one section above the digit form.
+  it("spells out the right number of finders above the finder table", () => {
+    const claimed = readmeWordNumber(
+      /^([A-Za-z]+(?:-[A-Za-z]+)?) \*\*finders\*\*/m,
+      "'<Word> **finders**'",
+    );
+    expect(claimed, `README spells out ${claimed} finders but code has ${TRIGGERS.length}`).toBe(
       TRIGGERS.length,
     );
   });
