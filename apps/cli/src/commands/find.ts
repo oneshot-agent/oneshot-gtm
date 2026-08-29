@@ -50,7 +50,7 @@ export async function commandFindWatch(opts: { once: boolean; quiet: boolean }):
           if (!opts.quiet) note(`${o.name}: skipped (next due in ${humanMs(o.nextDueInMs)})`);
           continue;
         }
-        if (o.error) {
+        if (o.error !== undefined) {
           errored++;
           fail(`${o.name}: error — ${o.error}`);
         } else if (o.result) {
