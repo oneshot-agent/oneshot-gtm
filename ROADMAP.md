@@ -78,7 +78,7 @@ The ICP filter currently judges each candidate cold — `icpFilter` in `packages
 
 ## Tech debt
 
-- [ ] **Ignore `.worktrees/` everywhere** · S — agent worktrees land in `.worktrees/` and the directory is in neither `.gitignore`, `.oxlintrc.json` nor `.oxfmtrc.json`. It shows up as untracked in `git status`, and `bun run lint` / `bun run fmt:check` walk a full duplicate of the tree per worktree.
+- [x] **Ignore `.worktrees/` everywhere** · S — agent worktrees land in `.worktrees/` and the directory is in neither `.gitignore`, `.oxlintrc.json` nor `.oxfmtrc.json`. It shows up as untracked in `git status`, and `bun run lint` / `bun run fmt:check` walk a full duplicate of the tree per worktree.
       _Done when:_ `.worktrees/` is gitignored and in both tool ignore lists; `git status` is clean with a worktree present, and lint/fmt file counts are unchanged by adding one.
 - [ ] **Surface the server's error body on GET** · S — `getJson` in `apps/web/src/api/client.ts` throws `${status} ${statusText}: ${path}` and discards the `{ error }` JSON the server sends; `postJson` right below it reads the body. A 409 from a not-ready trigger reaches the dashboard as "409 Conflict" with the reason thrown away.
       _Done when:_ `getJson` parses the error body the same way `postJson` does and falls back to the status line when the body isn't JSON; covered by a test with a mocked `fetch`.
