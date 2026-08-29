@@ -84,12 +84,19 @@ export async function postToWebhook(
       signal: controller.signal,
     });
     if (!res.ok) {
-      logEvent("slack.notify.failed", { event_type: payload.event_type, status: res.status }, "warn");
+      logEvent(
+        "slack.notify.failed",
+        { event_type: payload.event_type, status: res.status },
+        "warn",
+      );
     }
   } catch (err) {
     logEvent(
       "slack.notify.failed",
-      { event_type: payload.event_type, message_120: ((err as Error)?.message ?? "").slice(0, 120) },
+      {
+        event_type: payload.event_type,
+        message_120: ((err as Error)?.message ?? "").slice(0, 120),
+      },
       "warn",
     );
   } finally {
@@ -97,7 +104,11 @@ export async function postToWebhook(
   }
 }
 
-async function notify(eventType: SlackEventType, data: SlackEventData, text: string): Promise<void> {
+async function notify(
+  eventType: SlackEventType,
+  data: SlackEventData,
+  text: string,
+): Promise<void> {
   try {
     const url = slackWebhookUrl();
     if (!url) return;

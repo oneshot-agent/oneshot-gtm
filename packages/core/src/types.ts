@@ -274,6 +274,7 @@ export interface OneShotConfig {
    * See `timezone.ts`.
    */
   timezone: string | null;
+  /**
    * Slack incoming-webhook URL for operational notifications (reply received,
    * bounce recorded, daily send summary). Null/empty = feature off. Delivery
    * is best-effort: failures are logged via logEvent and never block or fail

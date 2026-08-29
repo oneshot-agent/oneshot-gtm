@@ -190,13 +190,10 @@ export async function setup(req: Request): Promise<Response> {
     founderAdmission: mergeString(body.founderAdmission, current.founderAdmission),
     productBrief: mergeString(body.productBrief, current.productBrief),
     mobileSignature: body.mobileSignature ?? current.mobileSignature,
-<<<<<<< HEAD
     // Not on the setup form — preserve whatever is on disk so a save can't
     // silently drop a hand-set install timezone.
     timezone: current.timezone,
-=======
     slackWebhookUrl: current.slackWebhookUrl,
->>>>>>> cea5492 (fix: resolve 9 typecheck errors and 1 flaky test)
     clientId: current.clientId,
   });
 

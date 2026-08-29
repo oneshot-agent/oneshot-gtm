@@ -163,14 +163,16 @@ describe("slack-notify", () => {
       expect(payload.text).toContain("invalid@example.com");
     });
 
-    // Note: This test is challenging with mocked fetch + AbortController.
-    // The timeout is now injectable via postToWebhook's timeoutMs parameter,
-    // but the test itself struggles because the mock Promise never resolves,
-    // blocking the test runner even after the AbortController fires.
-    it.skip("does not throw on timeout", async () => {
-      // Directly test postToWebhook with a short timeout
+    it("does not throw on timeout", async () => {
+      // Real fetch rejects with AbortError when the signal fires; the mock
+      // must honor the signal the same way or the await never settles.
       fetchMock.mockImplementation(
-        () => new Promise(() => {}), // Never resolves
+        (_url: unknown, init: unknown) =>
+          new Promise((_resolve, reject) => {
+            (init as RequestInit).signal?.addEventListener("abort", () =>
+              reject(new DOMException("The operation was aborted.", "AbortError")),
+            );
+          }),
       );
 
       // Call postToWebhook directly with 100ms timeout

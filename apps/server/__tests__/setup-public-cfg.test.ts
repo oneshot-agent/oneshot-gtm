@@ -32,6 +32,7 @@ const FULL_CFG: OneShotConfig = {
   productBrief: "docs at https://acme.dev/docs",
   mobileSignature: false,
   timezone: null,
+  slackWebhookUrl: null,
   clientId: "11111111-2222-3333-4444-555555555555",
 };
 
