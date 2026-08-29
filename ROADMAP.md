@@ -41,7 +41,7 @@ The verify gate has holes an agent can close without touching product behaviour.
 
 ## Reliability
 
-- [ ] **Retry and time-bound LLM calls** · M — `complete()` in `packages/intel/src/client.ts` issues one `fetch` with no `AbortSignal` and no retry. A 429 or a 503 from OpenRouter partway through a 50-target drain throws and takes the batch with it.
+- [x] **Retry and time-bound LLM calls** · M — `complete()` in `packages/intel/src/client.ts` issues one `fetch` with no `AbortSignal` and no retry. A 429 or a 503 from OpenRouter partway through a 50-target drain throws and takes the batch with it.
       _Done when:_ 429/5xx/network errors retry with bounded exponential backoff and jitter, honouring `Retry-After` when present; a per-request timeout aborts and counts as retryable; retries and the final give-up are logged as `llm.retry` / `llm.error`; 4xx other than 429 never retries; all covered by fake-timer tests with no real network.
 - [ ] **Rotate `events.jsonl`** · S — `logEvent` in `packages/core/src/events.ts` calls `appendFileSync` with no size cap. A long-running install grows the file until the disk complains, and the README tells people to `tail -f` it.
       _Done when:_ the log rolls to `events.1.jsonl` past a configurable byte ceiling, keeps a bounded number of generations, and rotation failure still drops the event silently rather than throwing at the caller.

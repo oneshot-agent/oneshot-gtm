@@ -213,14 +213,15 @@ describe("complete() retry integration", () => {
       maxAttempts: 3,
     });
 
+    // Attach rejection handler immediately to prevent unhandled rejection
+    const rejection = promise.catch((err) => err);
+
+    // Advance timers to trigger all retry attempts
     await vi.runAllTimersAsync();
 
-    try {
-      await promise;
-      throw new Error("Should have thrown");
-    } catch (err) {
-      expect(err).toMatchObject({ status: 429 });
-    }
+    // Verify the error matches expectations
+    const error = await rejection;
+    expect(error).toMatchObject({ status: 429 });
     expect(attemptCount).toBe(3);
   });
 
