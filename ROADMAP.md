@@ -28,8 +28,6 @@ The verify gate has holes an agent can close without touching product behaviour.
 
       _Done when:_ a deliberate type error under `apps/web/src` fails `bun run typecheck` from the repo root on a fresh clone with no prior build.
 
-- [x] **Typecheck the app test suites** · S — `tsconfig.json` includes `packages/*/__tests__` but not `apps/*/__tests__`, so the server, CLI and web test files are compiled by vitest and by nothing else.
-      _Done when:_ the include list covers `apps/*/__tests__`, and a type error inside `apps/server/__tests__` fails `bun run typecheck`.
 - [ ] **Assert the README's own counts in a test** · S — README says "48 commands", "47-command CLI" and "1621 cases across 126 files". The real numbers are 49, 49 and 1963/155. The counts drift on every feature PR because nothing checks them.
       _Done when:_ a test derives the leaf-command count from the commander tree and the play/finder counts from the registries, asserts each against the README text, and fails on drift.
 - [ ] **Prompt inventory test** · S — `packages/prompts` ships 57 markdown files; `agent-builder-extract.md` is referenced by nothing. Prompts are the product here, so an orphan is a fork reading a file the model never sees.
