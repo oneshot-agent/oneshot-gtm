@@ -76,8 +76,6 @@ The ICP filter currently judges each candidate cold — `icpFilter` in `packages
 
 ## Tech debt
 
-      _Done when:_ `.worktrees/` is gitignored and in both tool ignore lists; `git status` is clean with a worktree present, and lint/fmt file counts are unchanged by adding one.
-
 - [ ] **Surface the server's error body on GET** · S — `getJson` in `apps/web/src/api/client.ts` throws `${status} ${statusText}: ${path}` and discards the `{ error }` JSON the server sends; `postJson` right below it reads the body. A 409 from a not-ready trigger reaches the dashboard as "409 Conflict" with the reason thrown away.
       _Done when:_ `getJson` parses the error body the same way `postJson` does and falls back to the status line when the body isn't JSON; covered by a test with a mocked `fetch`.
 - [ ] **Extract the pure logic out of `queue.tsx`** · M — the route is 1869 lines, the largest file in `apps/web`, and its selection, filter, bulk-approve and drain-eligibility rules are inlined where no test can reach them. `src/lib/` already holds this shape of helper (`drainButton.ts`, `pruneSentRows.ts`, `replyFilter.ts`).
@@ -96,6 +94,12 @@ Not code — these need capture, not commits. `demo seed` + `demo ui` now stand 
 - [ ] "Built with oneshot-gtm" badge program. The artifact shipped; this is the adoption push.
 
 ---
+
+## Approved, not yet started
+
+- [ ] **build(typecheck): fold `apps/*/__tests__` into the root `bun run typecheck`** · S
+- [ ] **test(doctor): cover every check in `check.ts` at pass, warn and fail** · M
+- [ ] **test(intel): cover the report modules and `complete()`'s truncation branches** · M
 
 ## Things we intentionally do NOT do
 
