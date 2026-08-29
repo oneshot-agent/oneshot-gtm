@@ -5,6 +5,7 @@ import { matchesReplyFilter } from "../src/lib/replyFilter.ts";
 function reply(matched: InboxReplyView["matched"]): InboxReplyView {
   return {
     id: "1",
+    kind: "human",
     fromEmail: "a@x.com",
     fromRaw: "a@x.com",
     subject: "s",
