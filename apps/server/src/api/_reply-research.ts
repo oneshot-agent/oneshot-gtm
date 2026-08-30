@@ -1,6 +1,7 @@
 import {
   ENRICH_CACHE_TTL_MS,
   getLedger,
+  hasDossierSignal,
   isTransientToolError,
   logEvent,
   webRead,
@@ -65,14 +66,40 @@ export async function gatherReplyContext(input: {
   let researched = false;
 
   // Tier 1: the dossier we already own.
-  const stored =
-    input.prospectId != null ? ledger.getProspectById(input.prospectId)?.dossier_json : null;
-  if (stored?.trim()) {
+  //
+  // hasDossierSignal, not a bare trim: a contentless dossier (a failed enrich
+  // serialized to `{"status":"failed",...}`, or a person lookup that found
+  // nobody) is non-empty but says nothing, and accepting it here would skip
+  // the paid tiers below and hand the drafter no facts at all. Writers are
+  // gated too; this guards rows written before that gate existed.
+  const prospect = input.prospectId != null ? ledger.getProspectById(input.prospectId) : null;
+  const stored = prospect?.dossier_json;
+  if (stored?.trim() && hasDossierSignal(stored)) {
     parts.push(stored.slice(0, DOSSIER_SLICE));
   } else {
     // Tier 2: paid research, bounded and gated.
     const domain = emailDomain(input.fromEmail)?.toLowerCase() ?? null;
-    if (!input.skipPaid && !isDudDomain(domain)) {
+    if (input.skipPaid) {
+      // Non-human inbound (OOO, unsubscribe): no one to ground a draft for.
+    } else if (isDudDomain(domain)) {
+      // Tier 2b: a personal-provider address has no company site to read and
+      // nothing for enrich to key on, so both are skipped — which used to
+      // leave the drafter with zero facts about the sender. The finder's
+      // source_profile_url (GitHub / X / Luma) is the one handle we do own.
+      // webRead, not deepResearchPerson: this runs behind the founder's
+      // "draft reply" click, and deepResearchPerson is a 2-5 minute async call.
+      const profileUrl = profileUrlFor(prospect?.source_profile_url ?? null);
+      if (profileUrl) {
+        const page = await readSenderPage(profileUrl, profileUrl);
+        if (page) {
+          parts.push(`PROFILE (${profileUrl}):\n${page.text}`);
+          if (page.paid) {
+            researched = true;
+            costUsd += page.costUsd;
+          }
+        }
+      }
+    } else {
       try {
         const enr = await safeEnrich(
           { email: input.fromEmail },
@@ -101,12 +128,13 @@ export async function gatherReplyContext(input: {
         );
       }
 
-      const site = await readSenderSite(siteDomainFor(domain!));
-      if (site) {
-        parts.push(`WEBSITE (${domain}):\n${site.text}`);
-        if (site.paid) {
+      const site = siteDomainFor(domain!);
+      const page = await readSenderPage(`https://${site}`, site);
+      if (page) {
+        parts.push(`WEBSITE (${domain}):\n${page.text}`);
+        if (page.paid) {
           researched = true;
-          costUsd += site.costUsd;
+          costUsd += page.costUsd;
         }
       }
     }
@@ -131,6 +159,27 @@ function bestEffort(fn: () => void): void {
 }
 
 /**
+ * Normalize the finder's stored profile URL into something safe to fetch.
+ * These rows are written by our own finders, so this is a guard against bad
+ * data (a bare handle, a `mailto:`), not against an attacker. Returns null
+ * when there is nothing fetchable.
+ */
+export function profileUrlFor(raw: string | null): string | null {
+  const trimmed = (raw ?? "").trim();
+  if (!trimmed) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return null;
+  // A bare profile host with no path is the finder's fallback, not a profile.
+  if (parsed.pathname === "/" || parsed.pathname === "") return null;
+  return parsed.toString();
+}
+
+/**
  * Strip a well-known mail-ish first label (mail.example.com serves MX, not a
  * website). A full public-suffix list is deliberately out of scope, so
  * multi-label TLDs pass through unchanged.
@@ -142,18 +191,20 @@ export function siteDomainFor(domain: string): string {
 }
 
 /**
- * Read the sender's site, cached in enrichment_cache under `webread:<domain>`
+ * Read one page about the sender — their company site, or the profile URL the
+ * finder sourced them from — cached in enrichment_cache under `webread:<label>`
  * (30d TTL + negative-cache semantics). Returns null on any failure;
  * transient errors are NOT negative-cached (an outage must not suppress
  * research for a month). The cache write rides the LIVE promise, not the
  * deadline race — a read settling after the deadline was still PAID for and
  * must reach the cache.
  */
-async function readSenderSite(
-  domain: string,
+async function readSenderPage(
+  url: string,
+  label: string,
 ): Promise<{ text: string; paid: boolean; costUsd: number } | null> {
   const ledger = getLedger();
-  const cacheKey = `webread:${domain}`;
+  const cacheKey = `webread:${label}`;
 
   let cached: ReturnType<typeof ledger.getCachedEnrichment> = null;
   try {
@@ -175,10 +226,10 @@ async function readSenderSite(
   }
 
   const live = webRead(
-    { url: `https://${domain}` },
+    { url },
     {
       playName: PLAY_NAME,
-      memo: `read sender's site (${domain}) before drafting a reply`,
+      memo: `read sender's page (${label}) before drafting a reply`,
     },
   ).then((read) => {
     const text = (read.result.markdown ?? "").trim().slice(0, WEBREAD_SLICE);
@@ -189,7 +240,7 @@ async function readSenderSite(
   live.catch(() => {});
 
   try {
-    const read = await withDeadline(live, WEBREAD_DEADLINE_MS, `webRead ${domain}`);
+    const read = await withDeadline(live, WEBREAD_DEADLINE_MS, `webRead ${label}`);
     const text = (read.result.markdown ?? "").trim().slice(0, WEBREAD_SLICE);
     if (!text) return null;
     const c = (read.result as unknown as { cost?: number }).cost;
@@ -202,7 +253,7 @@ async function readSenderSite(
     }
     logEvent(
       "inbox.reply.research.webread_failed",
-      { domain, message_120: ((err as Error).message ?? "").slice(0, 120) },
+      { domain: label, message_120: ((err as Error).message ?? "").slice(0, 120) },
       "warn",
     );
     return null;

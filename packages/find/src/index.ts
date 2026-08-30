@@ -31,3 +31,4 @@ export * from "./_pending.ts";
 // resolver so results are cached and billed identically.
 export * from "./_linkedin.ts";
 export * from "./_breaker.ts";
+export * from "./_sdk-safe.ts";

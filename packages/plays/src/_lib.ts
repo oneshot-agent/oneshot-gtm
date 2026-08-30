@@ -437,6 +437,11 @@ export interface SendDraftedOpts {
     source_profile_url?: string | null;
     /** Job title at contact time, from the person-level ICP gate. */
     title?: string | null;
+    /** Research the play assembled for this person while drafting. Persisted so
+     *  the reply drafter's free Tier-1 read (_reply-research.ts) has something
+     *  to use — before this it was always empty and every reply draft paid for
+     *  enrich + webRead again. Read as TEXT, never parsed. */
+    dossier_json?: string | null;
   };
   metadata?: Record<string, unknown>;
   dryRun: boolean;

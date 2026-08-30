@@ -1,6 +1,7 @@
 import {
   deepResearch,
   getLedger,
+  hasDossierSignal,
   isSendDeferred,
   loadConfig,
   parallelMap,
@@ -22,6 +23,10 @@ import {
 import { enrollInCadence } from "./_cadence.ts";
 
 type AppConfig = ReturnType<typeof loadConfig>;
+
+/** Cap on the dossier persisted onto a prospect — matches the slice the
+ *  finders already apply to a queued dossier (x-reposters, add-prospect). */
+const DOSSIER_SLICE = 6000;
 
 /**
  * What a play's per-target `prepare` step hands back to the executor: the
@@ -186,6 +191,17 @@ export async function runEmailPlay<T, X = Record<string, never>>(
             // persisted without each play def naming the field.
             ...(typeof (target as { title?: unknown }).title === "string"
               ? { title: (target as { title: string }).title }
+              : {}),
+            // Persist the research this play just assembled. Every play returns
+            // a dossier from `prepare`, and until now all of it was thrown away
+            // the moment the draft was written — so the reply drafter's free
+            // Tier-1 read always missed and re-bought the same research.
+            // hasDossierSignal, not a bare trim: a FAILED enrich still
+            // serializes to `{"status":"failed",...}`, and storing that would
+            // register as a Tier-1 hit and suppress the paid research the
+            // reply drafter would otherwise do.
+            ...(hasDossierSignal(prep.dossier)
+              ? { dossier_json: prep.dossier.slice(0, DOSSIER_SLICE) }
               : {}),
           },
           ...(def.metadata ? { metadata: def.metadata(target) } : {}),
