@@ -114,4 +114,21 @@ describe("commandFindDrain --fail-on-empty", () => {
       commandFindDrain({ play: "podcast-guest", dryRun: false, failOnEmpty: true }),
     ).rejects.toThrow("ledger locked");
   });
+
+  it("exits 1 (not 2) when an invalid play has no approved rows", async () => {
+    // Regression test for finding PRRT_kwDOSKzrBs6dhQnV: drainQueue validates
+    // the play before checking if rows are empty, so the CLI sees the error
+    // first and exits 1 (invalid play) instead of 2 (empty drain).
+    nextOutcome = outcome({
+      drained: 0,
+      errors: [{ id: -1, message: "drain: unsupported play 'no-such-play'" }],
+    });
+    const err = await commandFindDrain({
+      play: "no-such-play",
+      dryRun: false,
+      failOnEmpty: true,
+    }).catch((e: unknown) => e);
+    expect((err as InstanceType<typeof CommandExit>).code).toBe(1);
+    expect(stdout.join("")).toContain("unsupported play");
+  });
 });

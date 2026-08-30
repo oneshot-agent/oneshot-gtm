@@ -50,15 +50,19 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
   }
   const outcome: DrainOutcome = { drained: rows.length, sent: 0, deferred: 0, errors: [] };
 
-  if (rows.length === 0) return outcome;
-
-  // Global precondition: the play must exist. accelerator-batch no longer
-  // needs a drain-level senderCohort — finder rows carry their own (stamped
-  // from trigger config), and the play falls back to the run-level option.
+  // Global precondition: the play must exist. Validate after initializing outcome
+  // but before checking whether rows are empty, so an unknown play adds an error
+  // to the outcome (exit 1 when the CLI sees it) instead of returning an empty
+  // outcome (exit 2 under --fail-on-empty), regardless of queue state.
+  // accelerator-batch no longer needs a drain-level senderCohort — finder rows
+  // carry their own (stamped from trigger config), and the play falls back to
+  // the run-level option.
   if (!isSupportedPlay(opts.playName)) {
     outcome.errors.push({ id: -1, message: `drain: unsupported play '${opts.playName}'` });
     return outcome;
   }
+
+  if (rows.length === 0) return outcome;
 
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r]!;

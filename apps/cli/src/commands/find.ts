@@ -17,20 +17,25 @@ export async function commandFindDrain(opts: {
     ...(opts.senderCohort ? { senderCohort: opts.senderCohort } : {}),
     ...(opts.offer ? { freeForCohortOffer: opts.offer } : {}),
   });
+
+  // Errors beat emptiness: a drain with row errors (or an invalid play) exits 1,
+  // not the 0 a clean drain returns nor the 2 an idle drain under --fail-on-empty
+  // returns. Check this before checking drained === 0, so an invalid play with no
+  // approved rows exits 1 (unsupported-play error) instead of 2 (empty drain).
+  if (result.errors.length > 0) {
+    for (const e of result.errors) fail(`#${e.id}: ${e.message}`);
+    if (opts.failOnEmpty) bail(`find drain ${opts.play}: ${result.errors.length} row(s) errored`);
+    // Without the flag, a drain with errors still exits 0 (the legacy behavior).
+  }
+
   if (result.drained === 0) {
     note(`No approved rows for ${c.cyan(opts.play)}. Approve some in the dashboard at /queue.`);
-    // Nothing was claimed, so there is nothing that could have errored — an
-    // empty drain under the flag is always the idle case, never the broken one.
+    // Nothing was claimed, and we already checked that there were no errors, so
+    // this is the idle case, never the broken one.
     if (opts.failOnEmpty) bailEmpty(`find drain ${opts.play}: 0 rows drained`);
     return;
   }
   ok(`drained ${result.drained} row(s); ${result.sent} ${opts.dryRun ? "would be sent" : "sent"}.`);
-  if (result.errors.length > 0) {
-    for (const e of result.errors) fail(`#${e.id}: ${e.message}`);
-    // Error beats emptiness: a caller that opted into exit-code signalling gets
-    // 1 for a drain that hit row errors, not the 0 a clean drain returns.
-    if (opts.failOnEmpty) bail(`find drain ${opts.play}: ${result.errors.length} row(s) errored`);
-  }
 }
 
 export async function commandFindWatch(opts: {
