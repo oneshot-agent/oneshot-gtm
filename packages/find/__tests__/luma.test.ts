@@ -64,6 +64,7 @@ let discoveredEvents: Array<{
 let eventDetails: {
   eventTitle: string | null;
   eventDateIso: string | null;
+  eventTimezone?: string | null;
   eventCity: string | null;
   attendees: Array<Record<string, unknown>>;
 } | null = null;
@@ -230,6 +231,7 @@ function event(
   override: Partial<{
     eventTitle: string;
     eventDateIso: string;
+    eventTimezone: string | null;
     eventCity: string;
     eventHasPassed: boolean;
     publicAttendees: Array<Record<string, unknown>>;
@@ -240,6 +242,7 @@ function event(
   const extract = {
     eventTitle: override.eventTitle ?? "SF AI Builders Meetup",
     eventDateIso: override.eventDateIso ?? futureIso(7),
+    eventTimezone: override.eventTimezone ?? null,
     eventCity: override.eventCity ?? "San Francisco",
     eventHasPassed: override.eventHasPassed ?? false,
     publicAttendees: override.publicAttendees ?? [
@@ -360,6 +363,97 @@ describe("runLumaFinder — happy path", () => {
     expect(sdkCalls.findEmail).toBe(2);
     expect(sdkCalls.verifyEmail).toBe(2);
     expect(sdkCalls.enrichVerifiedContact).toBe(2);
+  });
+
+  // The finder is where an event instant stops being an instant. It resolves
+  // the zone once (explicit → city → install) and stamps the rendered string on
+  // the row, so the play and the prompt never see `2026-08-27T02:30:00Z` — the
+  // shape that makes a model call a Wednesday SF evening "Thursday".
+  describe("event zone resolution onto the queued row", () => {
+    // 7:30pm Wednesday in San Francisco; "now" is the Monday before, so the
+    // event lands inside the finder's upcoming window.
+    const SF_EVENING = "2026-08-27T02:30:00Z";
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-08-24T19:00:00Z"));
+    });
+    afterEach(() => vi.useRealTimers());
+
+    it("uses the zone the event page stated", async () => {
+      event("https://luma.com/abc", {
+        eventDateIso: SF_EVENING,
+        eventTimezone: "America/Los_Angeles",
+        // A contradictory city must not win over the page's own zone.
+        eventCity: "London",
+      });
+      await runLumaFinder(baseConfig);
+      expect(enqueued[0]?.payload["eventTimezone"]).toBe("America/Los_Angeles");
+      expect(enqueued[0]?.payload["eventDateLocal"]).toBe("Wednesday, August 26, 7:30 PM PDT");
+    });
+
+    it("derives the zone from the event's city when the page stated none", async () => {
+      event("https://luma.com/abc", { eventDateIso: SF_EVENING, eventTimezone: null });
+      await runLumaFinder(baseConfig);
+      expect(enqueued[0]?.payload["eventTimezone"]).toBe("America/Los_Angeles");
+      expect(enqueued[0]?.payload["eventDateLocal"]).toBe("Wednesday, August 26, 7:30 PM PDT");
+    });
+
+    it("keeps the raw instant on eventDate for the play's own date math", async () => {
+      // The machine field stays — the play still needs a real instant to decide
+      // upcoming/past/stale. It just never reaches the prompt.
+      event("https://luma.com/abc", {
+        eventDateIso: SF_EVENING,
+        eventTimezone: "America/Los_Angeles",
+      });
+      await runLumaFinder(baseConfig);
+      expect(enqueued[0]?.payload["eventDate"]).toBe(SF_EVENING);
+    });
+
+    it("carries the zone through the structured-details path too", async () => {
+      discoveredEvents = [
+        {
+          slug: "sf-evt-1",
+          name: "SF AI Builders",
+          startAtIso: SF_EVENING,
+          city: "San Francisco",
+        },
+      ];
+      eventDetails = {
+        eventTitle: "SF AI Builders",
+        eventDateIso: SF_EVENING,
+        eventTimezone: "America/Los_Angeles",
+        eventCity: "San Francisco",
+        attendees: [
+          {
+            name: "Dana Host",
+            profileUrl: null,
+            websiteUrl: null,
+            linkedinUrl: "https://www.linkedin.com/in/dana",
+            twitterUrl: null,
+            bio: "Organizer",
+            role: "Host",
+          },
+          // The finder requires 2+ attendees before it will spend on an event.
+          {
+            name: "Gabe Guest",
+            profileUrl: null,
+            websiteUrl: "https://gabe.dev",
+            linkedinUrl: null,
+            twitterUrl: null,
+            bio: null,
+            role: "Guest",
+          },
+        ],
+      };
+      enrichByLinkedinUrl["https://www.linkedin.com/in/dana"] = {
+        best_work_email: "dana@org.com",
+        company_domain: "org.com",
+      };
+      await runLumaFinder(baseConfig);
+      expect(enqueued[0]?.payload["eventTimezone"]).toBe("America/Los_Angeles");
+      expect(enqueued[0]?.payload["eventDateLocal"]).toBe("Wednesday, August 26, 7:30 PM PDT");
+    });
   });
 
   it("filters non-event URLs (e.g. /discover, ?k=t) out before webRead", async () => {

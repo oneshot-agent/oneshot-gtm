@@ -94,6 +94,7 @@ describe("bootstrapClientId", () => {
     founderAdmission: null,
     productBrief: null,
     mobileSignature: false,
+    timezone: null,
     clientId: null,
   };
 

@@ -1,3 +1,11 @@
+import {
+  formatLocalDay,
+  formatLocalEventTime,
+  localDayOffset,
+  localShortDate,
+  localWeekday,
+  resolveEventZone,
+} from "@oneshot-gtm/core";
 import { emailDomain } from "./_lib.ts";
 import { type EmailPlayDef, runEmailPlay, standardEnrich } from "./_run-play.ts";
 import { lumaEventsMetadata } from "./_metadata.ts";
@@ -13,30 +21,43 @@ const PLAY_NAME = "luma-events";
 const STALE_AFTER_DAYS = 14;
 
 /**
- * Classify an event's ISO date relative to now and produce a concrete human
- * phrase for the prompt. Three states drive the copy + send decision:
+ * Zone every date on this target is read and rendered in: an explicit zone from
+ * the event page, else the event's city, else the install timezone. Resolved in
+ * one place so the relative phrase, the absolute string, the "today" anchor and
+ * the staleness flag can never disagree about what day it is.
+ */
+function zoneFor(t: Pick<LumaEventsTarget, "eventTimezone" | "eventCity">): string {
+  return resolveEventZone({ zone: t.eventTimezone ?? null, city: t.eventCity });
+}
+
+/**
+ * Classify an event's date relative to now — IN THE EVENT'S OWN ZONE — and
+ * produce a concrete human phrase for the prompt. Three states drive the copy +
+ * send decision:
  *   - "upcoming": today or future → forward-looking pitch, auto-sends.
  *   - "past": within STALE_AFTER_DAYS behind → retrospective pitch, auto-sends.
  *   - "stale": further back → retrospective pitch but HELD (see runLumaEvents
  *     extraFlags). Signal too old to cold-open on without a human glance.
+ *
  * The phrase keeps the prompt input concrete so the LLM never does calendar
- * math (and can't infer a future weekday from a date that's already gone —
- * the bug this replaces: a passed Friday read back as "this Friday").
+ * math (and can't infer a future weekday from a date that's already gone — the
+ * bug this replaces: a passed Friday read back as "this Friday").
+ *
+ * The day count is a CALENDAR-day difference in `zone`, not a millisecond
+ * delta: an event at 11pm tonight is "today", and 7:30pm Wednesday in SF is
+ * Wednesday even though the instant is `…T02:30:00Z` on the Thursday.
  */
-function describeEventDate(iso: string): {
+function describeEventDate(
+  iso: string,
+  zone: string,
+): {
   status: "upcoming" | "past" | "stale";
   phrase: string;
 } {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return { status: "upcoming", phrase: iso };
-  const dayMs = 24 * 3600 * 1000;
-  const days = Math.round((d.getTime() - Date.now()) / dayMs);
-  const weekday = d.toLocaleDateString("en-US", { weekday: "long" });
-  const absolute = d.toLocaleDateString("en-US", {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  });
+  const days = localDayOffset(iso, zone);
+  if (days == null) return { status: "upcoming", phrase: iso };
+  const weekday = localWeekday(iso, zone) ?? "";
+  const absolute = localShortDate(iso, zone) ?? iso;
 
   // Future / today: forward-looking.
   if (days >= 0) {
@@ -76,8 +97,27 @@ export interface LumaEventsTarget {
    * found before this was wired (falls back to title-only inference).
    */
   eventDescription?: string;
-  /** ISO date or datetime; UI/prompt humanizes to "next Tuesday". */
+  /**
+   * ISO date or datetime — the machine field. Drives the upcoming/past
+   * classification, the staleness hold and the queue UI's "· passed" treatment.
+   * It is NEVER put in front of the model: `eventDateLocal` is.
+   */
   eventDate: string;
+  /**
+   * IANA zone the event's times are in, resolved by the finder (explicit zone
+   * on the page → the event's city → the install timezone). Absent on rows
+   * queued before this existed; the play re-resolves from `eventCity` then.
+   */
+  eventTimezone?: string;
+  /**
+   * `eventDate` already rendered in `eventTimezone`, e.g.
+   * "Wednesday, August 26, 7:30 PM PDT". This is the ONLY form of the event's
+   * date/time the draft prompt sees — handed the raw instant, the model
+   * converts it into its own zone and names the wrong weekday, which in a cold
+   * email about the reader's own event is unrecoverable. Absent on older rows;
+   * the play formats from `eventDate` + the resolved zone then.
+   */
+  eventDateLocal?: string;
   /** City or "Online". */
   eventCity: string;
   /** luma.com/<slug>; founder reference only — prompt won't paste it in the body. */
@@ -134,7 +174,20 @@ const lumaEventsDef: EmailPlayDef<LumaEventsTarget> = {
       enrichSlice: 3500,
     }),
   buildInputBlock: (t, prep, cfg) => {
-    const when = describeEventDate(t.eventDate);
+    const zone = resolveEventZone({
+      zone: t.eventTimezone ?? null,
+      city: t.eventCity,
+      installZone: cfg.timezone,
+    });
+    const when = describeEventDate(t.eventDate, zone);
+    // Prefer the string the finder already rendered (it saw the event page's
+    // own zone); fall back to formatting here for rows queued before that
+    // existed, and to the relative phrase alone if the date won't parse. The
+    // instant itself never reaches the prompt.
+    const localWhen = t.eventDateLocal ?? formatLocalEventTime(t.eventDate, zone) ?? when.phrase;
+    // Anchor "today" in the SAME zone so relative phrasing is read off a stated
+    // date instead of the model's guess at what day it is.
+    const todayLocal = formatLocalDay(new Date().toISOString(), zone) ?? "(unknown)";
     // "stale" still reads as PAST to the prompt — it drafts retrospectively;
     // the staleness only changes whether we hold (see extraFlags below).
     const timing =
@@ -154,7 +207,10 @@ const lumaEventsDef: EmailPlayDef<LumaEventsTarget> = {
       // newline here would split the line-delimited input block mid-field.
       `EVENT ABOUT: ${(t.eventDescription ?? "").replace(/\s+/g, " ").trim().slice(0, 600) || "(none)"}`,
       `EVENT CITY: ${t.eventCity}`,
-      `EVENT DATE: ${when.phrase} (${t.eventDate})`,
+      `EVENT DATE: ${localWhen}`,
+      `EVENT WHEN: ${when.phrase}`,
+      `TODAY: ${todayLocal}`,
+      `DATE NOTE: EVENT DATE and TODAY are ALREADY in the event's local time. Repeat the weekday, date and time exactly as written — never convert them to another timezone, never recompute the weekday, and never state a time the input doesn't show.`,
       `EVENT TIMING: ${timing}`,
       `EVENT URL: ${t.eventUrl}`,
       `YOUR EDGE: ${t.yourEdge}`,
@@ -164,7 +220,8 @@ const lumaEventsDef: EmailPlayDef<LumaEventsTarget> = {
   // Hold (don't auto-send) drafts for events past the staleness window — the
   // guest-list signal is too old to cold-open on without a founder glance. A
   // non-empty flags array is what holds a draft (see _lib.ts sendDraftedEmail).
-  extraFlags: (t) => (describeEventDate(t.eventDate).status === "stale" ? ["stale-event"] : []),
+  extraFlags: (t) =>
+    describeEventDate(t.eventDate, zoneFor(t)).status === "stale" ? ["stale-event"] : [],
   prospectMeta: (t) => ({
     name: t.name,
     email: t.email,

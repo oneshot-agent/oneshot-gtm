@@ -1,8 +1,10 @@
 import {
   enrichProfile,
+  formatLocalEventTime,
   getLedger,
   logEvent,
   parallelMap,
+  resolveEventZone,
   webRead,
   webSearch,
 } from "@oneshot-gtm/core";
@@ -56,6 +58,8 @@ interface AttendeeWithEvent {
     url: string;
     title: string;
     dateIso: string;
+    /** IANA zone the event page stated, when it stated one. */
+    timezone: string | null;
     city: string;
     description: string;
   };
@@ -334,6 +338,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
           extract = {
             eventTitle: details.eventTitle,
             eventDateIso: details.eventDateIso,
+            eventTimezone: details.eventTimezone,
             eventCity: details.eventCity,
             eventDescription: details.eventDescription,
             eventHasPassed: false, // the date defense below is the authority
@@ -487,6 +492,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
       url: hit.url,
       title: extract.eventTitle ?? hit.title,
       dateIso: extract.eventDateIso ?? "",
+      timezone: extract.eventTimezone ?? null,
       city: extract.eventCity ?? "",
       description: extract.eventDescription ?? "",
     };
@@ -620,6 +626,7 @@ export function parseLumaEventExtract(raw: string): LumaEventExtract {
   const fallback: LumaEventExtract = {
     eventTitle: null,
     eventDateIso: null,
+    eventTimezone: null,
     eventCity: null,
     eventDescription: null,
     eventHasPassed: false,
@@ -774,6 +781,16 @@ async function resolveAndEnqueueLumaAttendee(
       });
     }
 
+    // Resolve the event's zone ONCE, here, and carry the rendered string on the
+    // candidate: explicit zone from the page → the event's city → the install
+    // timezone. The draft prompt gets `eventDateLocal` and never the instant,
+    // so the model has no timezone conversion left to get wrong.
+    const eventZone = resolveEventZone({
+      zone: work.event.timezone,
+      city: work.event.city,
+    });
+    const eventDateLocal = formatLocalEventTime(work.event.dateIso, eventZone);
+
     const target: LumaEventsTarget = {
       name: work.attendee.name,
       email,
@@ -784,6 +801,8 @@ async function resolveAndEnqueueLumaAttendee(
       ...(work.attendee.role ? { role: work.attendee.role } : {}),
       eventTitle: work.event.title,
       eventDate: work.event.dateIso,
+      eventTimezone: eventZone,
+      ...(eventDateLocal ? { eventDateLocal } : {}),
       eventCity: work.event.city,
       eventUrl: work.event.url,
       ...(work.event.description ? { eventDescription: work.event.description } : {}),
