@@ -186,6 +186,7 @@ function jsonFinderResult(r: FinderResult): Record<string, unknown> {
     droppedEnrichment: r.droppedEnrichment,
     droppedLowSignal: r.droppedLowSignal ?? 0,
     costUsd: r.costUsd,
+    ...(r.perCohort ? { perCohort: r.perCohort } : {}),
     ...(r.halted ? { halted: r.halted } : {}),
   };
 }
