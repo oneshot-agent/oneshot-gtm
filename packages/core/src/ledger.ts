@@ -536,11 +536,18 @@ export class Ledger {
    * DROP TABLE takes the indexes with it, hence the recreate.
    */
   private widenRunsStatusCheck(): void {
-    const row = this.db
-      .query(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'runs'`)
-      .get() as { sql: string | null } | null;
-    if (!row?.sql || row.sql.includes("'cancelled'")) return;
-    this.db.transaction(() => {
+    // Use explicit BEGIN IMMEDIATE so the schema probe happens while holding
+    // the write lock — concurrent processes that see the old schema won't both
+    // migrate it and destroy each other's cancel_reason data.
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const row = this.db
+        .query(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'runs'`)
+        .get() as { sql: string | null } | null;
+      if (!row?.sql || row.sql.includes("'cancelled'")) {
+        this.db.exec("ROLLBACK");
+        return;
+      }
       this.db.exec(`
         CREATE TABLE runs_widened (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -570,7 +577,11 @@ export class Ledger {
         CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(started_at DESC);
         CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
       `);
-    })();
+      this.db.exec("COMMIT");
+    } catch (err) {
+      this.db.exec("ROLLBACK");
+      throw err;
+    }
   }
 
   /**
