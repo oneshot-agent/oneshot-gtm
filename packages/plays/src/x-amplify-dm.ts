@@ -100,6 +100,7 @@ export async function runXAmplifyDm(
           temperature: 0.7,
           maxTokens: 300,
         });
+        throwIfCancelled(opts.signal, `${PLAY_NAME} draft`);
         const body = res.content.trim();
         if (!body) throw new Error("empty draft from the model");
         return {

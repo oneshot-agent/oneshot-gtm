@@ -65,6 +65,7 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
   // the stream's own `cancel()` below: between them they cover a closed tab, a
   // navigation, and a reader that simply stops pulling.
   req.signal.addEventListener("abort", () => abortOnce("client disconnected"), { once: true });
+  if (req.signal.aborted) abortOnce("client disconnected");
 
   const stream = new ReadableStream<Uint8Array>({
     cancel() {
@@ -383,7 +384,9 @@ export async function cancelRunRoute(
   req: Request,
   params: Record<string, string>,
 ): Promise<Response> {
-  const runId = Number.parseInt(params["runId"] ?? "", 10);
+  const rawRunId = params["runId"] ?? "";
+  if (!/^\d+$/.test(rawRunId)) return jsonResponse({ error: "bad run id" }, 400, req);
+  const runId = Number.parseInt(rawRunId, 10);
   if (!Number.isFinite(runId)) return jsonResponse({ error: "bad run id" }, 400, req);
 
   // Body is optional — the dashboard's stop button sends none.

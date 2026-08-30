@@ -690,6 +690,7 @@ function RunPage() {
             )}
             <Button
               variant="ghost"
+              disabled={running}
               onClick={() => {
                 setEvents([]);
                 setError(null);
