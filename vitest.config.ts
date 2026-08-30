@@ -3,7 +3,13 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    include: ["packages/**/__tests__/**/*.test.ts", "apps/**/__tests__/**/*.test.ts"],
+    include: [
+      "packages/**/__tests__/**/*.test.ts",
+      "apps/**/__tests__/**/*.test.ts",
+      // repo/ holds tests about the repository itself (docs vs. code drift),
+      // not about a single package.
+      "repo/__tests__/**/*.test.ts",
+    ],
     exclude: ["**/node_modules/**", "**/dist/**"],
     // Redirect every test's data-dir I/O to a throwaway temp dir so the suite
     // never reads or mutates the developer's real ~/.oneshot-gtm. See setup file.

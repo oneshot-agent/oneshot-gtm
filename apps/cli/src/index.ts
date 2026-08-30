@@ -652,10 +652,18 @@ handoff
 // instead of commander's default non-zero exit.
 attachHelpFallbacks(program);
 
-program.parseAsync(process.argv).catch((err) => {
-  fail((err as Error).message);
-  process.exit(1);
-});
+// The command tree itself is worth reading without running it — the README
+// count guard walks it to check the documented command total. Importing this
+// module used to parse process.argv as a side effect, which under a test
+// runner means parsing the runner's own argv.
+export { program };
+
+if (!process.env["ONESHOT_GTM_CLI_NO_PARSE"]) {
+  program.parseAsync(process.argv).catch((err) => {
+    fail((err as Error).message);
+    process.exit(1);
+  });
+}
 
 function runOrFail<A extends unknown[]>(fn: (...args: A) => void | Promise<void>) {
   return async (...args: A) => {
