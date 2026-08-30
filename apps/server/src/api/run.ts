@@ -82,10 +82,14 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
       // counters `done` would have.
       let sentCount = 0;
       let draftedCount = 0;
-      // Set once the pipeline emitted its `done` frame. The `finally` needs to
-      // tell "the run ended, then the client left" from "the client left, so
-      // the run ended" — only the second is a cancellation.
+      // Set once the run reached a terminal state of its own — a `done` frame
+      // or a real error. The `finally` needs to tell "the run ended, then the
+      // client left" from "the client left, so the run ended" — only the
+      // second is a cancellation.
       let finished = false;
+      // Set once the terminal ledger write happened. Past that point a send
+      // reported by a straggler worker has to be written again (see below).
+      let terminalWritten = false;
       // Non-null once the run is known to have been cancelled; carries the
       // reason that gets persisted on the row.
       let cancelledReason: string | null = null;
@@ -174,7 +178,20 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
                 | { email?: string; founderEmail?: string }
                 | undefined;
               const email = t?.email ?? t?.founderEmail;
-              if (email) sentEmails.push(email);
+              if (!email) return;
+              sentEmails.push(email);
+              // A cancellation rejects the play's Promise.all at once, but its
+              // sibling workers can still be inside sendDraftedEmail — they
+              // report here AFTER the terminal row was written. That email did
+              // leave and did enrol in the cadence, so re-write the list or
+              // /cadences?sinceRun silently omits its recipient.
+              if (terminalWritten) {
+                try {
+                  ledger.setRunSentEmails({ runId, sentEmails });
+                } catch {
+                  // ledger write failing is the sweeper's problem
+                }
+              }
             }
           },
           runAbort.signal,
@@ -216,6 +233,10 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
           return;
         }
         runOutcome = "error";
+        // The run ended on its own terms, badly — not because the client left.
+        // Mark it settled so a disconnect that follows (or caused nothing but
+        // an abort on the way out) can't relabel a real failure a cancellation.
+        finished = true;
         // Log the full error server-side — the SSE event only carries a short
         // message, and the SDK's generic "Tool request failed" is useless
         // without status/body/stack.
@@ -289,6 +310,9 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
         } catch {
           // sweeper safety net
         }
+        // Any send reported from here on is a straggler and writes its own row
+        // update — the array captured above is already in the database.
+        terminalWritten = true;
         // Release BEFORE closing the stream: past here there is nothing left
         // to abort, and a retained entry would leak a controller per run and
         // let a later cancel "succeed" against a run that already ended.

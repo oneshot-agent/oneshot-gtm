@@ -2813,6 +2813,18 @@ export class Ledger {
   }
 
   /**
+   * Overwrite the run's record of which prospects it actually emailed, in any
+   * status. Deliberately not CASed on 'running': a cancelled run's last sends
+   * land after the row went terminal (the play's workers finish one by one),
+   * and the /cadences?sinceRun deep-link needs them.
+   */
+  setRunSentEmails(input: { runId: number; sentEmails: string[] }): void {
+    this.db
+      .prepare(`UPDATE runs SET prospect_emails_json = ? WHERE id = ?`)
+      .run(JSON.stringify(input.sentEmails), input.runId);
+  }
+
+  /**
    * Flip a still-'running' row to the terminal 'cancelled' state with the
    * reason it ended. CAS on `status = 'running'` so this is a no-op — never an
    * error — against a run that already finished, and so it races safely with
@@ -2831,11 +2843,8 @@ export class Ledger {
     // unwinds, and the emails it collected still belong on the record. Only
     // that handler passes `sentEmails`, so the two callers can't clobber
     // each other whichever order they land in.
-    if (input.sentEmails) {
-      this.db
-        .prepare(`UPDATE runs SET prospect_emails_json = ? WHERE id = ?`)
-        .run(JSON.stringify(input.sentEmails), input.runId);
-    }
+    if (input.sentEmails)
+      this.setRunSentEmails({ runId: input.runId, sentEmails: input.sentEmails });
     const completedAt = new Date().toISOString();
     const result = this.db
       .prepare(

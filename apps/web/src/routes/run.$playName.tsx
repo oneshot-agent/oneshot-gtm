@@ -491,8 +491,8 @@ function RunPage() {
           <div className="mt-3 rounded-[var(--radius-sm)] border border-[color:var(--ink-blocked-2)] bg-[color:var(--ink-blocked-2)]/10 px-3 py-2 font-mono text-[12px] text-[color:var(--ink-blocked-2)]">
             Run #{runRecord.id} was cancelled
             {runRecord.cancelReason ? ` — ${runRecord.cancelReason}` : ""}. {runRecord.sentCount} of{" "}
-            {runRecord.targetCount} sent before the stop; the rest never billed. Click{" "}
-            <em>Run again</em> below to re-fire the remaining targets.
+            {runRecord.targetCount} sent before the stop; targets that hadn't started yet were never
+            billed. Click <em>Run again</em> below to re-fire the remaining targets.
           </div>
         )}
       </section>
@@ -643,7 +643,8 @@ function RunPage() {
           <div className="flex items-center gap-2 text-[12px] text-ink-muted">
             <Loader2 size={14} className="animate-spin" />
             <span>
-              Run #{search.runId} in progress · your progress is saved · feel free to navigate away.
+              Run #{search.runId} in progress · your progress is saved · closing or reloading this
+              tab stops the run.
             </span>
             <Button
               variant="ghost"
