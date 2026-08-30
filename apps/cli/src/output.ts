@@ -55,6 +55,23 @@ export function bail(message: string, code = 1): never {
   throw new CommandExit(code);
 }
 
+/**
+ * Exit code for "the run worked, it just produced nothing" under
+ * `--fail-on-empty`. Deliberately distinct from bail()'s 1 so a scheduled
+ * caller can tell an idle run apart from a broken one.
+ */
+export const EXIT_EMPTY = 2;
+
+/**
+ * Print the empty-run line to stderr and abort with EXIT_EMPTY. stderr (not
+ * stdout) because this line is the machine-facing signal a cron wrapper greps
+ * — stdout stays the human report — and it carries no colour or glyph.
+ */
+export function bailEmpty(message: string): never {
+  process.stderr.write(`${message}\n`);
+  throw new CommandExit(EXIT_EMPTY);
+}
+
 export function note(s: string): void {
   process.stdout.write(`${c.dim(s)}\n`);
 }

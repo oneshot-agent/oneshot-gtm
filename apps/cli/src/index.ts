@@ -308,13 +308,31 @@ find
     "with --install-service: write the file to the platform-conventional path instead of stdout",
     false,
   )
+  .option(
+    "--fail-on-empty",
+    "with --once: exit 2 (not 0) when the run queued no candidates, so cron can spot a dry run",
+    false,
+  )
   .description("Daemon: continuously poll registered triggers and enqueue new candidates")
   .action(
     runOrFail(
-      (opts: { once: boolean; quiet: boolean; installService: boolean; write: boolean }) => {
+      (opts: {
+        once: boolean;
+        quiet: boolean;
+        installService: boolean;
+        write: boolean;
+        failOnEmpty: boolean;
+      }) => {
         if (opts.installService) return commandInstallService({ write: opts.write });
         if (opts.write) bail("--write only makes sense with --install-service");
-        return commandFindWatch({ once: opts.once, quiet: opts.quiet });
+        // A daemon run never ends of its own accord, so it has no empty result
+        // to report — refuse the combination rather than silently ignore it.
+        if (opts.failOnEmpty && !opts.once) bail("--fail-on-empty only makes sense with --once");
+        return commandFindWatch({
+          once: opts.once,
+          quiet: opts.quiet,
+          failOnEmpty: opts.failOnEmpty,
+        });
       },
     ),
   );
@@ -324,16 +342,28 @@ find
   .option("--sender-cohort <tag>", "REQUIRED for accelerator-batch (your cohort tag)")
   .option("--offer <text>", "free-for-cohort offer text (accelerator-batch only)")
   .option("--dry-run", "preview drain; don't actually send", false)
+  .option(
+    "--fail-on-empty",
+    "exit 2 (not 0) when no approved rows were drained; 1 if any row errored",
+    false,
+  )
   .description("Pull approved rows for a play and run the existing motion play on them")
   .action(
     runOrFail(
       async (
         play: string,
-        opts: { limit?: number; senderCohort?: string; offer?: string; dryRun: boolean },
+        opts: {
+          limit?: number;
+          senderCohort?: string;
+          offer?: string;
+          dryRun: boolean;
+          failOnEmpty: boolean;
+        },
       ) => {
         await commandFindDrain({
           play,
           dryRun: opts.dryRun,
+          failOnEmpty: opts.failOnEmpty,
           ...(opts.limit ? { limit: opts.limit } : {}),
           ...(opts.senderCohort ? { senderCohort: opts.senderCohort } : {}),
           ...(opts.offer ? { offer: opts.offer } : {}),
