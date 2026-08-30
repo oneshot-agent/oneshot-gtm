@@ -87,9 +87,10 @@ export interface ProspectRecord {
    *  contacted before the gate existed (pre 2026-08). */
   title: string | null;
   /** Person-level ICP verdict: 'pass' | 'reject' | 'unclear'. NULL = never
-   *  judged. 'unclear' means the gate looked and couldn't tell — distinct from
-   *  NULL so a re-audit skips it instead of re-buying the same lookup. Only
-   *  'reject' suppresses sending (packages/plays/src/_cadence.ts). */
+   *  judged. 'unclear' means the gate looked and had nothing to judge on —
+   *  distinct from NULL, and PROVISIONAL: a re-audit re-judges unclear rows
+   *  (so role text arriving later is used) while leaving pass/reject alone.
+   *  Only 'reject' suppresses sending (packages/plays/src/_cadence.ts). */
   icp_verdict: string | null;
   /** Classifier's one-line reason for the verdict. */
   icp_verdict_reason: string | null;

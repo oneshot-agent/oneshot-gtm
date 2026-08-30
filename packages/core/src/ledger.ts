@@ -1568,9 +1568,11 @@ export class Ledger {
    *
    * `unclear` is a real, persisted verdict: qualifyPerson is 4-state, and
    * writing its ambiguity as NULL made "we looked and couldn't tell"
-   * indistinguishable from "never judged", so those rows were re-judged (and
-   * re-paid for) on every audit run. Suppression is unaffected — the cadence
-   * gate tests `=== "reject"`, so `unclear` fails open exactly as NULL did.
+   * indistinguishable from "never judged". It is PROVISIONAL, not settled —
+   * _qualify.ts escalates `unclear` rather than dropping a candidate, so a
+   * re-audit re-judges those rows (picking up role text that arrived since)
+   * and skips only pass/reject. Suppression is unaffected — the cadence gate
+   * tests `=== "reject"`, so `unclear` fails open exactly as NULL did.
    * `transient` is never persisted; it stays a retry signal.
    */
   setProspectIcpVerdict(
