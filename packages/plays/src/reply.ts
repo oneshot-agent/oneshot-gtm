@@ -1,7 +1,13 @@
 import { loadConfig, stripQuotedChain } from "@oneshot-gtm/core";
 import { complete, type LlmMessage, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { getPriorStepsForProspect, type PriorStepRow } from "./_cadence.ts";
-import { firstNameFrom, humanizeDraft, lintEmail, signatureDirective } from "./_lib.ts";
+import {
+  bodyWordsForLint,
+  firstNameFrom,
+  humanizeDraft,
+  lintEmail,
+  signatureDirective,
+} from "./_lib.ts";
 
 // stripQuotedChain moved to core (reply-classify.ts) — the classifier needs it
 // too. Re-exported so existing imports of this module keep working.
@@ -71,6 +77,26 @@ function lintReply(body: string, maxWords: number, priorTexts: readonly string[]
   const flags = lintEmail("x", body, maxWords).filter((f) => !f.startsWith("subject-"));
   if (repeatsPriorText(body, priorTexts)) flags.push("repeats-prior-email");
   return flags;
+}
+
+/**
+ * How bad a draft is: flag count first, then how far over the word budget it
+ * runs. The overage tiebreak matters — a repair that cuts 101 words to 60 is a
+ * real improvement but still carries the single `body-too-long` flag, so
+ * comparing flag counts alone would discard it and keep the worse draft.
+ */
+function replyPenalty(
+  body: string,
+  maxWords: number,
+  priorTexts: readonly string[],
+): [number, number] {
+  const flags = lintReply(body, maxWords, priorTexts);
+  return [flags.length, Math.max(0, bodyWordsForLint(body) - maxWords)];
+}
+
+/** Lexicographic compare: true when `a` is strictly better than `b`. */
+function better(a: [number, number], b: [number, number]): boolean {
+  return a[0] !== b[0] ? a[0] < b[0] : a[1] < b[1];
 }
 
 /** Parse the model's JSON and apply the deterministic autofixes (em-dash,
@@ -213,9 +239,15 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<{ bo
   const flags = lintReply(body, budget, priorTexts);
   if (flags.length > 0) {
     const repaired = await repairReply({ messages, first: res.content, flags, budget, input });
-    // Keep the rewrite only if it actually cleared flags — a repair that trades
-    // one violation for another is not an improvement worth the swap.
-    if (repaired && lintReply(repaired, budget, priorTexts).length < flags.length) body = repaired;
+    // Keep the rewrite only when it is strictly better — fewer flags, or the
+    // same flags but closer to the budget. A repair that trades one violation
+    // for another is not an improvement worth the swap.
+    if (
+      repaired &&
+      better(replyPenalty(repaired, budget, priorTexts), replyPenalty(body, budget, priorTexts))
+    ) {
+      body = repaired;
+    }
   }
   return { body };
 }

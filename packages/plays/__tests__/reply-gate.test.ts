@@ -167,6 +167,18 @@ describe("draftInboxReply gate", () => {
     expect(userBlocks().at(-1)!).toContain("repeats-prior-email");
   });
 
+  it("KEEPS a repair that only shortens, even though the flag is unchanged", async () => {
+    // The real failure this catches: a 101-word reply repaired to 60 still
+    // trips `body-too-long`, so comparing flag COUNTS alone discarded it and
+    // shipped the longer draft. Overage has to break the tie.
+    const long = Array.from({ length: 120 }, () => "pitch").join(" ");
+    const shorter = Array.from({ length: 60 }, () => "pitch").join(" ");
+    completeMock.mockResolvedValueOnce(draftReply(long)).mockResolvedValueOnce(draftReply(shorter));
+
+    const out = await draftInboxReply({ ...BASE, body: "did you hit that wall too?" });
+    expect(out.body).toBe(shorter);
+  });
+
   it("keeps the first draft when the repair is no cleaner", async () => {
     const bloated = Array.from({ length: 120 }, () => "pitch").join(" ");
     completeMock
