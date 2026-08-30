@@ -873,18 +873,25 @@ export type RunPlayEvent =
   | { kind: "send"; index: number; receiptIds: number[] }
   | { kind: "error"; index: number; message: string }
   | { kind: "done"; total: number; sent: number }
+  /**
+   * Terminal frame for an aborted run — the client closed the SSE stream or
+   * POST /api/run/:runId/cancel fired. Distinct from `error`: nothing failed,
+   * the remaining targets simply never billed. `sent` counts what went out
+   * before the abort point.
+   */
+  | { kind: "cancelled"; reason: string; total: number; sent: number }
   /** First frame the server emits — gives the UI the runId so it can resume on nav-back. */
   | { kind: "runStarted"; runId: number; startedAt: string };
 
 /** Lifecycle status of a /run-page dispatch persisted in the `runs` table. */
-export type RunStatus = "running" | "done" | "interrupted";
+export type RunStatus = "running" | "done" | "interrupted" | "cancelled";
 
 /**
  * Snapshot of one /run-page dispatch — returned by GET /api/runs/:id so the UI
  * can rebuild the per-target progress view after navigate-away-and-back, AND
  * decide whether to keep polling (status === 'running') or stop (done /
- * interrupted). `events` is the accumulated SSE stream (same shape callers
- * see live), so the client renderer can be source-shared.
+ * interrupted / cancelled). `events` is the accumulated SSE stream (same shape
+ * callers see live), so the client renderer can be source-shared.
  */
 export interface RunRecord {
   id: number;
@@ -903,6 +910,27 @@ export interface RunRecord {
   events: RunPlayEvent[];
   /** Emails that were actually sent — used by /cadences?sinceRun to filter. */
   prospectEmails: string[];
+  /** Why a `cancelled` run ended (client disconnect vs explicit cancel). Null otherwise. */
+  cancelReason: string | null;
+}
+
+/**
+ * Result of `POST /api/run/:runId/cancel`. Always 200 for a run that exists —
+ * cancelling one that already finished is a no-op, and the caller tells the
+ * cases apart by the fields rather than by a status code.
+ *
+ * `cancelled` — this request is the one that flipped the row to 'cancelled'.
+ * `aborted`   — a live run in this process got the signal (false means the
+ *               row was terminal already, or the run was orphaned by a process
+ *               exit and only the ledger write applied).
+ * `status`    — the row's status after the call.
+ */
+export interface CancelRunResponse {
+  runId: number;
+  status: RunStatus;
+  cancelled: boolean;
+  aborted: boolean;
+  reason: string | null;
 }
 
 /** Workspace identity + roster served by GET /api/workspace. */

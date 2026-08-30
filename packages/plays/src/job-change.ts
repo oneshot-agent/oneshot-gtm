@@ -23,6 +23,8 @@ export interface JobChangeRunOptions {
     index: number,
     draft: { subject: string; body: string; flags: string[]; sent: boolean; receiptIds: number[] },
   ) => void;
+  /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
+  signal?: AbortSignal;
 }
 
 interface JobChangeDraft {
@@ -44,7 +46,7 @@ const jobChangeDef: EmailPlayDef<JobChangeTarget> = {
   toEmail: (t) => t.email,
   // Enrich on both preview and real send (cached by email) so the reviewed
   // draft is personalized; the heavier deepResearch stays real-send only.
-  prepare: (t, dryRun) =>
+  prepare: (t, dryRun, signal) =>
     standardEnrich({
       playName: PLAY_NAME,
       enrichInput: {
@@ -53,6 +55,7 @@ const jobChangeDef: EmailPlayDef<JobChangeTarget> = {
         name: t.name,
       },
       enrichSlice: 4000,
+      ...(signal ? { signal } : {}),
       ...(dryRun
         ? {}
         : {

@@ -38,11 +38,17 @@ export function toDraftedView(d: {
  * happen instead of batching at the end. The PlayDraft → DraftedView
  * projection is applied inside the wrapper so the callback gets the same
  * shape downstream code expects.
+ *
+ * `signal`: the run's cancellation signal, forwarded to the play so it can
+ * bail at its paid-call boundaries. When it fires mid-run this call rejects
+ * with a `RunCancelledError` (see `isRunCancelled`) instead of resolving with
+ * a partial batch — the drafts already finished were reported via `onProgress`.
  */
 export async function dispatchPlay(
   playName: string,
   body: RunPlayRequest,
   onProgress?: (index: number, view: DraftedView) => void,
+  signal?: AbortSignal,
 ): Promise<DraftedView[]> {
   const play = PLAYS[playName];
   if (!play) {
@@ -54,6 +60,7 @@ export async function dispatchPlay(
     targets: body.targets,
     ...(body.senderCohort ? { senderCohort: body.senderCohort } : {}),
     ...(body.freeForCohortOffer ? { freeForCohortOffer: body.freeForCohortOffer } : {}),
+    ...(signal ? { signal } : {}),
     ...(onProgress
       ? {
           onProgress: (index: number, draft: Parameters<typeof toDraftedView>[0]) =>

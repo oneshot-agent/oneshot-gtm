@@ -10,6 +10,7 @@ import {
   logEvent,
   receiptUrlForId,
   sendEmail,
+  throwIfCancelled,
   trackSend,
   verifyEmail,
   withDeadline,
@@ -696,12 +697,17 @@ interface VerifyAndFilterResult<T> {
  * empty input; de-dupes verifyEmail calls so duplicates don't double-bill.
  * Finder-sourced rows through /queue → drain do NOT call this — they were
  * verified at enqueue time.
+ *
+ * `signal` is the run's cancellation signal: the whole batch fires in one
+ * Promise.all, so the boundary that matters is the one before it — a run
+ * cancelled during the pre-flight buys no verifications at all.
  */
 export async function verifyAndFilterTargets<T>(
   targets: T[],
   getEmail: (target: T) => string | null | undefined,
-  opts: { playName: string; dryRun: boolean },
+  opts: { playName: string; dryRun: boolean; signal?: AbortSignal },
 ): Promise<VerifyAndFilterResult<T>> {
+  throwIfCancelled(opts.signal, `${opts.playName} verify`);
   if (opts.dryRun || targets.length === 0) {
     return { verified: targets, dropped: [], receiptIds: [], costUsd: 0 };
   }

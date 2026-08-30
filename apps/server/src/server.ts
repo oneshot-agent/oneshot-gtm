@@ -25,7 +25,7 @@ import { strategistRoute } from "./api/strategist.ts";
 import { doctor } from "./api/doctor.ts";
 import { workspaceInfo, workspaceLaunch } from "./api/workspace.ts";
 import { pauseDomainRoute, resumeDomainRoute } from "./api/domains.ts";
-import { runPlay } from "./api/run.ts";
+import { cancelRunRoute, runPlay } from "./api/run.ts";
 import { getRunRoute } from "./api/runs.ts";
 import {
   approveAllRoute,
@@ -105,6 +105,9 @@ const routes: RouteEntry[] = [
   route("GET", "/api/workspace", workspaceInfo),
   route("POST", "/api/workspace/launch", workspaceLaunch),
   route("POST", "/api/run/:playName", runPlay),
+  // Distinct shape from the line above (three segments, not two), so the
+  // patterns can't collide however they are ordered.
+  route("POST", "/api/run/:runId/cancel", cancelRunRoute),
   route("GET", "/api/runs/:id", getRunRoute),
   route("POST", "/api/prospects/add", addProspectRoute),
   route("GET", "/api/queue", listQueueRoute),

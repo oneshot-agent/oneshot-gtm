@@ -2,9 +2,11 @@ import {
   deepResearch,
   getLedger,
   hasDossierSignal,
+  isRunCancelled,
   isSendDeferred,
   loadConfig,
   parallelMap,
+  throwIfCancelled,
   CONTACTED_ELSEWHERE_FLAG,
   recentTouchElsewhere,
 } from "@oneshot-gtm/core";
@@ -76,8 +78,13 @@ export interface EmailPlayDef<T, X = Record<string, never>> {
    * Enrichment / research / scrape phase. Owns all SDK calls that build
    * context for the draft. Use `standardEnrich` for the safeEnrich(+deepResearch)
    * shape; plays with browser/websearch context supply their own.
+   *
+   * `signal` is the run's cancellation signal. The executor already guards the
+   * boundary before `prepare` is entered, so a def that ignores the arg is
+   * still safe — forward it (or `throwIfCancelled` on it) when `prepare` makes
+   * more than one paid call, so the second one doesn't fire after an abort.
    */
-  prepare: (t: T, dryRun: boolean) => Promise<Prepared<X>>;
+  prepare: (t: T, dryRun: boolean, signal?: AbortSignal) => Promise<Prepared<X>>;
   buildInputBlock: (t: T, prep: Prepared<X>, cfg: AppConfig) => string;
   prospectMeta: (t: T) => SendDraftedOpts["prospectMeta"];
   metadata?: (t: T) => Record<string, unknown>;
@@ -116,6 +123,14 @@ export async function runEmailPlay<T, X = Record<string, never>>(
      * order. Consumers that need stable indexing read the `index` arg.
      */
     onProgress?: (index: number, draft: PlayDraft<T, X>) => void;
+    /**
+     * Cancellation signal for the whole run, owned by the /api/run SSE handler
+     * (it aborts on client disconnect and on POST /api/run/:runId/cancel).
+     * Checked at every paid-call boundary below, so an abort stops the spend
+     * within one in-flight SDK call per worker instead of at the end of the
+     * batch. Absent (CLI, drain) → the run is uncancellable, as before.
+     */
+    signal?: AbortSignal;
   },
 ): Promise<{ drafted: Array<PlayDraft<T, X>> }> {
   const cfg = loadConfig();
@@ -143,7 +158,11 @@ export async function runEmailPlay<T, X = Record<string, never>>(
     concurrency,
     async (target) => {
       try {
-        const prep = await def.prepare(target, opts.dryRun);
+        // Guard #1 — the whole target. Workers pull from a shared cursor, so
+        // every target still queued behind the abort dies here having billed
+        // nothing at all.
+        throwIfCancelled(opts.signal, `${def.playName} prepare`);
+        const prep = await def.prepare(target, opts.dryRun, opts.signal);
 
         // Append SOCIAL PROOF block when any of the three optional fields is
         // set. Prompts treat it as conditional input — present only when set,
@@ -165,6 +184,8 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         if (firstName) {
           inputBlock = `${inputBlock}\n\nPROSPECT_FIRST_NAME: ${firstName}`;
         }
+        // Guard #2 — the LLM draft, the paid call `prepare` was feeding.
+        throwIfCancelled(opts.signal, `${def.playName} draft`);
         const draft = await draftEmailFromPrompt({
           promptName: def.promptName,
           inputBlock,
@@ -179,6 +200,10 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         // sending to someone another workspace emailed this week.
         if (recentTouchElsewhere(def.toEmail(target))) flags.push(CONTACTED_ELSEWHERE_FLAG);
 
+        // Guard #3 — the send. The one call that both bills AND is visible to
+        // the prospect, so it is the boundary that matters most: past here the
+        // founder has an email in someone's inbox they asked us not to send.
+        throwIfCancelled(opts.signal, `${def.playName} send`);
         const send = await sendDraftedEmail({
           playName: def.playName,
           to: def.toEmail(target),
@@ -227,6 +252,10 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         // Daily-cap deferral is not a per-target failure — propagate so the
         // caller (drain / SSE run) leaves remaining targets queued.
         if (isSendDeferred(err)) throw err;
+        // Neither is a cancellation: swallowing it here would turn every
+        // remaining target into an errorDraft and let the run finish 'done'.
+        // Propagating instead is what makes the run row land 'cancelled'.
+        if (isRunCancelled(err)) throw err;
         logTargetError({ playName: def.playName, to: def.toEmail(target), err });
         return {
           target,
@@ -249,21 +278,28 @@ export async function runEmailPlay<T, X = Record<string, never>>(
  * by email, never throws) and, on real sends only, a `deepResearch` dossier.
  * Pass `research` only when you want the research call to fire — callers gate it
  * on `!dryRun` (and, for accelerator-batch, on a launch URL being present).
+ *
+ * `signal` is forwarded by every play's `prepare`: this is the one place two
+ * paid calls sit back to back, so a run cancelled during the enrich must not go
+ * on to buy the dossier.
  */
 export async function standardEnrich(opts: {
   playName: string;
   enrichInput: Parameters<typeof safeEnrich>[0];
   enrichSlice: number;
   research?: { topic: string; slice?: number };
+  signal?: AbortSignal;
 }): Promise<Prepared> {
   const receiptIds: number[] = [];
 
+  throwIfCancelled(opts.signal, `${opts.playName} enrich`);
   const enr = await safeEnrich(opts.enrichInput, { playName: opts.playName });
   if (enr.receiptId) receiptIds.push(enr.receiptId);
   const enrichmentFailed = (enr.result as { status?: string }).status === "failed";
   let dossier = JSON.stringify(enr.result, null, 2).slice(0, opts.enrichSlice);
 
   if (opts.research) {
+    throwIfCancelled(opts.signal, `${opts.playName} research`);
     const research = await deepResearch(
       { topic: opts.research.topic, depth: "quick" },
       { playName: opts.playName },

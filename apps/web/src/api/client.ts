@@ -2,6 +2,7 @@ import type {
   AddProspectResult,
   CadencesResult,
   CadenceView,
+  CancelRunResponse,
   DoctorCheck,
   DrainRequest,
   DrainResult,
@@ -67,6 +68,8 @@ export const api = {
     return getJson<CadencesResult>(`/cadences${qs.length > 0 ? `?${qs.join("&")}` : ""}`);
   },
   run: (id: number) => getJson<RunRecord>(`/runs/${id}`),
+  cancelRun: (id: number, reason?: string) =>
+    postJson<CancelRunResponse>(`/run/${id}/cancel`, reason ? { reason } : {}),
   cadenceForProspect: (id: number) => getJson<{ cadences: CadenceView[] }>(`/cadences/${id}`),
   stopCadence: (id: number, playName?: string) =>
     postJson<{ stopped: number }>(

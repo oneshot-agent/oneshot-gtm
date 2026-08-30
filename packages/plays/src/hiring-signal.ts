@@ -1,4 +1,4 @@
-import { webRead, webSearch } from "@oneshot-gtm/core";
+import { throwIfCancelled, webRead, webSearch } from "@oneshot-gtm/core";
 import { type EmailPlayDef, runEmailPlay } from "./_run-play.ts";
 import { hiringSignalMetadata } from "./_metadata.ts";
 import { buildFollowUpEmail, registerSequence } from "./_cadence.ts";
@@ -32,6 +32,8 @@ export interface HiringSignalRunOptions {
   ) => void;
   /** Skip the web-search/read steps. */
   skipScrape?: boolean;
+  /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
+  signal?: AbortSignal;
 }
 
 interface HiringSignalDraft {
@@ -58,7 +60,7 @@ export function runHiringSignal(
     enrollCadence: true,
     errorExtra: { jobPostHook: "(error)" },
     toEmail: (t) => t.email,
-    prepare: async (t, dryRun) => {
+    prepare: async (t, dryRun, signal) => {
       const receiptIds: number[] = [];
       let jobPostHook = NO_HOOK;
 
@@ -77,6 +79,9 @@ export function runHiringSignal(
         }
 
         if (jobUrl) {
+          // Second paid call of the phase — the search above may have landed
+          // after the abort, so re-check before buying the page read.
+          throwIfCancelled(signal, `${PLAY_NAME} job-post read`);
           const read = await webRead({ url: jobUrl }, { playName: PLAY_NAME });
           receiptIds.push(read.receiptId);
           const md = read.result.markdown ?? "";

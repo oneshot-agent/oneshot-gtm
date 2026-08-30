@@ -1,4 +1,4 @@
-import { loadConfig, parallelMap } from "@oneshot-gtm/core";
+import { isRunCancelled, loadConfig, parallelMap, throwIfCancelled } from "@oneshot-gtm/core";
 import { complete, loadPrompt } from "@oneshot-gtm/intel";
 import { errorDraft, logTargetError } from "./_lib.ts";
 import type { DraftedRow } from "./registry.ts";
@@ -46,6 +46,8 @@ export interface XAmplifyDmRunOptions {
   dryRun: boolean;
   targets: XAmplifyDmTarget[];
   onProgress?: (index: number, draft: DraftedRow) => void;
+  /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
+  signal?: AbortSignal;
 }
 
 interface XAmplifyDmDraft extends DraftedRow {
@@ -76,6 +78,9 @@ export async function runXAmplifyDm(
     4,
     async (t): Promise<XAmplifyDmDraft> => {
       try {
+        // Custom loop, so it repeats runEmailPlay's guard itself: the model
+        // call below is this play's only paid step.
+        throwIfCancelled(opts.signal, `${PLAY_NAME} draft`);
         const input = [
           `FOUNDER: ${cfg.founderName}`,
           `PRODUCT: ${cfg.productOneLiner}`,
@@ -108,6 +113,9 @@ export async function runXAmplifyDm(
           receiptIds: [],
         };
       } catch (err) {
+        // Cancellation is not a target failure — propagate so the run row
+        // lands 'cancelled' instead of a batch of error drafts.
+        if (isRunCancelled(err)) throw err;
         logTargetError({ playName: PLAY_NAME, err });
         return { target: t, ...errorDraft((err as Error)?.message) };
       }

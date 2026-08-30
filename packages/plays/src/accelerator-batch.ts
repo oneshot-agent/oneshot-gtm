@@ -32,6 +32,8 @@ export interface AcceleratorBatchRunOptions {
   /** Run-level fallback applied to any target that doesn't carry its own. */
   senderCohort?: string;
   freeForCohortOffer?: string;
+  /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
+  signal?: AbortSignal;
 }
 
 interface AcceleratorBatchDraft {
@@ -64,7 +66,7 @@ export function runAcceleratorBatch(
     toEmail: (t) => t.email,
     // Enrich on both preview and real send (cached by email); deepResearch is
     // real-send only AND only when a launch URL is present to anchor it.
-    prepare: (t, dryRun) =>
+    prepare: (t, dryRun, signal) =>
       standardEnrich({
         playName: PLAY_NAME,
         enrichInput: {
@@ -73,6 +75,7 @@ export function runAcceleratorBatch(
           name: t.name,
         },
         enrichSlice: 3500,
+        ...(signal ? { signal } : {}),
         ...(!dryRun && t.launchUrl
           ? {
               research: {
