@@ -22,6 +22,7 @@ const ledger = {
 
 vi.mock("@oneshot-gtm/core", () => ({
   getLedger: () => ledger,
+  llmApiKey: () => null,
   loadConfig: () => ({ icpOneLiner: null }),
   logEvent: () => {},
 }));
@@ -85,5 +86,28 @@ describe("bulk CSV import", () => {
       text: `email,name,company,title\n${email},Duplicate,Acme,Founder`,
     });
     expect(result).toMatchObject({ imported: 0, skipped: 1, errors: [] });
+  });
+
+  it("applies deduplication during a dry run without enqueueing", async () => {
+    const email = "queued-existing@example.test";
+    ledger.enqueueTarget({
+      playName: "profile-intro",
+      payload: { email, name: "Already Queued" },
+      dedupeKey: "some-finder-specific-key",
+      source: "find:test",
+    });
+
+    const result = await importCsv({
+      playName: "profile-intro",
+      text: [
+        "email,name,company,title",
+        `${email},Duplicate,Acme,Founder`,
+        "new@example.test,New Lead,Acme,Founder",
+      ].join("\n"),
+      dryRun: true,
+    });
+
+    expect(result).toMatchObject({ imported: 1, skipped: 1, errors: [] });
+    expect(queue).toHaveLength(1);
   });
 });

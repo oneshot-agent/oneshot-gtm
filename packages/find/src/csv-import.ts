@@ -176,13 +176,6 @@ export async function importCsv(input: {
     admitted.push({ row: i + 2, payload, email });
   }
 
-  // A dry run is deliberately side-effect and spend free: report admitted rows
-  // without invoking the configured (potentially paid) ICP classifier.
-  if (input.dryRun) {
-    result.imported = admitted.length;
-    return { ...result, mapping: prepared.mapping, rowCount: prepared.rows.length };
-  }
-
   const icp = resolveIcp();
   const ledger = getLedger();
   for (const candidate of admitted) {
@@ -205,6 +198,10 @@ export async function importCsv(input: {
     const dedupeKey = `email:${candidate.email}`;
     if (isDuplicate({ playName: input.playName, dedupeKey, prospectEmail: candidate.email })) {
       result.skipped++;
+      continue;
+    }
+    if (input.dryRun) {
+      result.imported++;
       continue;
     }
     const id = ledger.enqueueTarget({
