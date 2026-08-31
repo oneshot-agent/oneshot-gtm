@@ -46,8 +46,17 @@ export const JSON_SCHEMA_VERSION = 1;
  * Write the one-and-only JSON document to stdout. Always emits `schemaVersion`
  * first; callers pass the rest. Nothing else may reach stdout in this mode.
  */
-export function emitJson(payload: Record<string, unknown>): void {
-  process.stdout.write(`${JSON.stringify({ schemaVersion: JSON_SCHEMA_VERSION, ...payload })}\n`);
+export function emitJson(payload: Record<string, unknown>): Promise<void> {
+  return new Promise((resolve) => {
+    const ok = process.stdout.write(
+      `${JSON.stringify({ schemaVersion: JSON_SCHEMA_VERSION, ...payload })}\n`,
+    );
+    if (ok) {
+      resolve();
+    } else {
+      process.stdout.once("drain", resolve);
+    }
+  });
 }
 
 export const c = {

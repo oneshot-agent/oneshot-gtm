@@ -71,7 +71,7 @@ export async function commandIdentitiesList(opts: { json?: boolean } = {}): Prom
   }
 
   if (opts.json) {
-    emitJson({
+    await emitJson({
       command: "identities list",
       identities: identities.map((i) => {
         const cap = caps.get(i.id);
@@ -198,7 +198,7 @@ export async function commandDomainsList(opts: { json?: boolean } = {}): Promise
   }
 
   if (opts.json) {
-    emitJson({
+    await emitJson({
       command: "domains list",
       domainsError,
       domains: domains.map((d) => ({
