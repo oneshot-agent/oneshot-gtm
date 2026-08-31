@@ -208,6 +208,12 @@ function twelveHour(hour24: number, minute: number): string {
  *
  * Returns null when the string is not a timestamp at all.
  */
+function isValidDate(year: number, month: number, day: number): boolean {
+  if (month < 1 || month > 12 || day < 1) return false;
+  const d = new Date(Date.UTC(year, month - 1, day, 12));
+  return d.getUTCFullYear() === year && d.getUTCMonth() === month - 1 && d.getUTCDate() === day;
+}
+
 function wallClock(isoInstant: string, zone: string): WallClock | null {
   const raw = (isoInstant ?? "").trim();
   if (raw.length === 0) return null;
@@ -217,6 +223,7 @@ function wallClock(isoInstant: string, zone: string): WallClock | null {
     const year = Number(dateOnly[1]);
     const month = Number(dateOnly[2]);
     const day = Number(dateOnly[3]);
+    if (!isValidDate(year, month, day)) return null;
     return {
       ...namesForCalendarDate(year, month, day),
       year,
@@ -232,12 +239,16 @@ function wallClock(isoInstant: string, zone: string): WallClock | null {
     const year = Number(naive[1]);
     const month = Number(naive[2]);
     const day = Number(naive[3]);
+    if (!isValidDate(year, month, day)) return null;
+    const h = Number(naive[4]);
+    const min = Number(naive[5]);
+    if (h > 23 || min > 59) return null;
     return {
       ...namesForCalendarDate(year, month, day),
       year,
       month,
       day,
-      time: twelveHour(Number(naive[4]), Number(naive[5])),
+      time: twelveHour(h, min),
       tzAbbr: null,
     };
   }
