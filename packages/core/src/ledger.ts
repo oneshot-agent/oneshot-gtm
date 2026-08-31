@@ -2299,6 +2299,7 @@ export class Ledger {
          WHERE reviewed_at IS NOT NULL
            AND json_valid(payload_json)
            AND status IN ('approved', 'rejected', 'sent')
+           AND NOT (status = 'rejected' AND notes = 'Automated rejection')
          ORDER BY reviewed_at DESC, id DESC
          LIMIT ?`,
       )
