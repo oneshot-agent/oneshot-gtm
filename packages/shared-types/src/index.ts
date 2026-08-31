@@ -226,7 +226,7 @@ export type WalletMode = "cdp" | "private-key";
 export type KeySource = "env" | "file" | null;
 
 /** Section a doctor check renders under in the dashboard's grouped panel. */
-export type DoctorGroup = "install" | "senders" | "deliverability" | "spend";
+export type DoctorGroup = "install" | "senders" | "deliverability" | "finders" | "spend";
 
 export interface DoctorCheck {
   name: string;
@@ -235,6 +235,13 @@ export interface DoctorCheck {
   severity: "ok" | "warn" | "fail";
   message: string;
   hint?: string;
+  approvalRate?: number | null;
+  approved?: number;
+  reviewed?: number;
+  threshold?: number;
+  windowDays?: number;
+  minSamples?: number;
+  deprioritized?: boolean;
 }
 
 export interface SetupRequest {
@@ -778,6 +785,13 @@ export interface TriggerView {
   ready: boolean;
   /** Human-readable reason when `ready === false`; null otherwise. */
   notReadyReason: string | null;
+  approvalRate: number | null;
+  approvalReviewed: number;
+  approvalMinSamples: number;
+  approvalRateThreshold: number;
+  approvalRateWindowDays: number;
+  deprioritized: boolean;
+  deprioritizedReason: string | null;
 }
 
 export interface DeriveIcpResult {

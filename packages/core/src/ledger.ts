@@ -2777,6 +2777,34 @@ export class Ledger {
     return out;
   }
 
+  /** Reviewed queue outcomes for one finder inside a trailing time window. */
+  finderApprovalStats(input: { finder: string; sinceIso: string }): {
+    approved: number;
+    reviewed: number;
+    rate: number | null;
+  } {
+    // post-funding-auto predates the registry name and writes find:post-funding.
+    const sourceName = input.finder === "post-funding-auto" ? "post-funding" : input.finder;
+    const source = `find:${sourceName}`;
+    const row = this.db
+      .query(
+        `SELECT
+           SUM(CASE WHEN status IN ('approved','sent') THEN 1 ELSE 0 END) AS approved,
+           COUNT(*) AS reviewed
+         FROM target_queue
+         WHERE (source = ? OR source LIKE ?)
+           AND status IN ('approved','rejected','sent')
+           AND reviewed_at >= ?`,
+      )
+      .get(source, `${source}:%`, input.sinceIso) as {
+      approved: number | null;
+      reviewed: number;
+    };
+    const approved = row.approved ?? 0;
+    const reviewed = row.reviewed ?? 0;
+    return { approved, reviewed, rate: reviewed > 0 ? approved / reviewed : null };
+  }
+
   // ── runs (per-/run-page dispatch records) ──────────────────────────────────
   // One row per /run Execute click; the SSE endpoint persists events/counters,
   // the UI rebuilds progress from the row, and the cold-boot sweep flips

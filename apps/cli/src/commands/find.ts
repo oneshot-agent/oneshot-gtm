@@ -116,6 +116,7 @@ export async function commandFindWatch(opts: {
   quiet: boolean;
   failOnEmpty?: boolean;
   json?: boolean;
+  ignoreApprovalRate?: boolean;
 }): Promise<void> {
   setJsonMode(opts.json ?? false);
   header(`find watch ${opts.once ? c.dim("(--once)") : c.dim("(daemon)")}`);
@@ -138,14 +139,17 @@ export async function commandFindWatch(opts: {
   let lastTick: TriggerRunOutcome[] = [];
   try {
     for (;;) {
-      const outcomes = await runDueTriggers();
+      const outcomes = await runDueTriggers({ ignoreApprovalRate: opts.ignoreApprovalRate });
       lastTick = outcomes;
       errored = 0;
       queued = 0;
       firedNames = [];
       for (const o of outcomes) {
         if (!o.fired) {
-          if (!opts.quiet) note(`${o.name}: skipped (next due in ${humanMs(o.nextDueInMs)})`);
+          if (!opts.quiet)
+            note(
+              `${o.name}: skipped${o.skippedReason ? ` (${o.skippedReason})` : ` (next due in ${humanMs(o.nextDueInMs)})`}`,
+            );
           continue;
         }
         firedNames.push(o.name);
@@ -186,6 +190,7 @@ export async function commandFindWatch(opts: {
         name: o.name,
         fired: o.fired,
         nextDueInMs: o.nextDueInMs,
+        ...(o.skippedReason ? { skippedReason: o.skippedReason } : {}),
         ...(o.duration_ms != null ? { durationMs: o.duration_ms } : {}),
         ...(o.error !== undefined ? { error: o.error } : {}),
         ...(o.result ? { result: jsonFinderResult(o.result) } : {}),

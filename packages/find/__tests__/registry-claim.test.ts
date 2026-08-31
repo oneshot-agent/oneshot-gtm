@@ -44,6 +44,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       updateTriggerLastPoll: (input: { name: string }) => {
         calls.updateTriggerLastPoll.push(input.name);
       },
+      finderApprovalStats: () => ({ approved: 0, reviewed: 0, rate: null }),
       // Methods downstream finders might call — only invoked on claim success,
       // which we deliberately disable in these tests, so no-op stubs suffice.
       isQueueDuplicate: () => false,

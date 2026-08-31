@@ -339,6 +339,11 @@ find
   .option("--quiet", "log summary only, not per-trigger details", false)
   .option("--json", "output as JSON (with --once)")
   .option(
+    "--ignore-approval-rate",
+    "run due finders even when their trailing approval rate is below threshold",
+    false,
+  )
+  .option(
     "--install-service",
     "print a launchd plist (macOS) / systemd user unit (Linux) that runs this daemon; doesn't start watching",
     false,
@@ -363,6 +368,7 @@ find
         write: boolean;
         failOnEmpty: boolean;
         json?: boolean;
+        ignoreApprovalRate: boolean;
       }) => {
         if (opts.json && opts.installService) bail("--json cannot be used with --install-service");
         if (opts.installService) return commandInstallService({ write: opts.write });
@@ -376,6 +382,7 @@ find
           once: opts.once,
           quiet: opts.quiet,
           failOnEmpty: opts.failOnEmpty,
+          ignoreApprovalRate: opts.ignoreApprovalRate,
           ...(opts.json ? { json: opts.json } : {}),
         });
       },

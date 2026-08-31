@@ -3,6 +3,7 @@ import {
   checkReadiness,
   effectiveIntervalMs,
   fireTriggerNow,
+  finderApprovalHealth,
   getTriggerRunningSince,
   isTriggerRunning,
   storedTriggerConfig,
@@ -44,6 +45,17 @@ export function toView(
   const readiness: Readiness = spec
     ? checkReadiness(spec, config ?? spec.defaultConfig)
     : { ready: true };
+  const approval = spec
+    ? finderApprovalHealth(name, config ?? spec.defaultConfig)
+    : {
+        rate: null,
+        reviewed: 0,
+        minSamples: 10,
+        threshold: 0.2,
+        windowDays: 30,
+        deprioritized: false,
+        reason: null,
+      };
   return {
     name,
     enabled: row ? Boolean(row.enabled) : defaultEnabled,
@@ -57,6 +69,13 @@ export function toView(
     runningSince: runningSinceMs != null ? new Date(runningSinceMs).toISOString() : null,
     ready: readiness.ready,
     notReadyReason: readiness.ready ? null : readiness.reason,
+    approvalRate: approval.rate,
+    approvalReviewed: approval.reviewed,
+    approvalMinSamples: approval.minSamples,
+    approvalRateThreshold: approval.threshold,
+    approvalRateWindowDays: approval.windowDays,
+    deprioritized: approval.deprioritized,
+    deprioritizedReason: approval.reason,
   };
 }
 
