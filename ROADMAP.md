@@ -10,7 +10,6 @@ Public — issues mirror the items below, PRs welcome. Items carry an effort tag
 ## In flight
 
 - **feat(notify): Slack incoming-webhook notifications for replies, bounces, and daily send summary** — PR #74, issue #71.
-- **feat(server): cancel an in-flight run — abort on client disconnect and via an explicit cancel route** — PR #322, issue #98.
 
 ---
 
@@ -40,8 +39,6 @@ The verify gate has holes an agent can close without touching product behaviour.
 - [ ] **Install-wide daily spend ceiling** · M — spend caps are per trigger run (`maxCostUsd`, `maxSpendPerRun` in `packages/find/src/registry.ts`). Eleven finders on their own intervals, plus drains and cadence steps, have no shared daily bound and no kill switch.
       _Done when:_ a configurable daily USD ceiling is checked before any paid call; crossing it halts finders and auto-drains with a named reason surfaced on the trigger cards and in `doctor`; manual sends from `/queue` still go through; the counter resets at local midnight and is covered by tests around the boundary.
       _Done when:_ `--once` exits 1 if any due trigger errored, 0 otherwise; the daemon loop keeps its current behaviour; both covered.
-- [x] **Cancel an in-flight run** · M — `POST /api/run/:playName` streams drafts over SSE and there is no cancel path. Closing the tab abandons the stream while the run keeps drafting and spending.
-      _Done when:_ a client disconnect or an explicit cancel aborts the run, the `runs` row lands in a terminal `cancelled` state, no further paid call is issued after the abort, and the cold-boot sweep still reconciles a run orphaned by process exit.
 
 ## Learning loop
 
@@ -91,7 +88,7 @@ Not code — these need capture, not commits. `demo seed` + `demo ui` now stand 
 
 ## Approved, not yet started
 
-- [ ] **fix(find): pre-format event date/time in the event's local timezone before it reaches the draft prompt** — issue #339.
+_Nothing approved and waiting._
 
 ## Things we intentionally do NOT do
 
