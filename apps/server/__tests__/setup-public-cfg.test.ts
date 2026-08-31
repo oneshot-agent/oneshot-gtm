@@ -31,6 +31,7 @@ const FULL_CFG: OneShotConfig = {
   founderAdmission: "two people, no enterprise logos yet",
   productBrief: "docs at https://acme.dev/docs",
   mobileSignature: false,
+  timezone: null,
   clientId: "11111111-2222-3333-4444-555555555555",
 };
 

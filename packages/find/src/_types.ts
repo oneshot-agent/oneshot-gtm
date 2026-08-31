@@ -151,6 +151,12 @@ export interface LumaPublicAttendee {
 export interface LumaEventExtract {
   eventTitle: string | null;
   eventDateIso: string | null;
+  /**
+   * IANA zone the event page states (e.g. "America/Los_Angeles" for "7:30 PM
+   * PDT"). First choice when rendering the date for a draft — see
+   * `resolveEventZone` in `@oneshot-gtm/core`. Null when the page doesn't say.
+   */
+  eventTimezone: string | null;
   eventCity: string | null;
   /** Short summary of what the event is about — grounds the draft's topic. Null when the page has none. */
   eventDescription: string | null;

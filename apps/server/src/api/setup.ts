@@ -190,6 +190,9 @@ export async function setup(req: Request): Promise<Response> {
     founderAdmission: mergeString(body.founderAdmission, current.founderAdmission),
     productBrief: mergeString(body.productBrief, current.productBrief),
     mobileSignature: body.mobileSignature ?? current.mobileSignature,
+    // Not on the setup form — preserve whatever is on disk so a save can't
+    // silently drop a hand-set install timezone.
+    timezone: current.timezone,
     clientId: current.clientId,
   });
 

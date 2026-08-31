@@ -161,6 +161,9 @@ describe("fetchEventDetails", () => {
       api_id: "evt-abc",
       name: "AI Agents Hackathon",
       start_at: "2026-06-20T18:00:00.000Z",
+      // Luma states the zone the host set alongside the instant. It's the most
+      // authoritative input to the date rendering, so it must survive the parse.
+      timezone: "America/Los_Angeles",
       // Real Luma shape: the blurb is a ProseMirror doc, with zero-width spaces.
       description_mirror: {
         type: "doc",
@@ -213,6 +216,7 @@ describe("fetchEventDetails", () => {
     expect(d).not.toBeNull();
     expect(d!.eventTitle).toBe("AI Agents Hackathon");
     expect(d!.eventDateIso).toBe("2026-06-20T18:00:00.000Z");
+    expect(d!.eventTimezone).toBe("America/Los_Angeles");
     expect(d!.eventCity).toBe("San Francisco");
     // ProseMirror flattened to one line; zero-width spaces stripped.
     expect(d!.eventDescription).toBe(
@@ -256,6 +260,26 @@ describe("fetchEventDetails", () => {
     ]);
     expect(d!.eventCity).toBeNull();
     expect(d!.eventDescription).toBeNull();
+    // No `timezone` on the payload → null, so the caller falls through to the
+    // city and then the install zone rather than inheriting a wrong guess.
+    expect(d!.eventTimezone).toBeNull();
+  });
+
+  it("ignores a blank or non-string timezone rather than passing it on", async () => {
+    for (const tz of ["", "   ", 42, null]) {
+      const payload = {
+        data: {
+          api_id: "evt-tz",
+          name: "Zoneless Mixer",
+          start_at: "2026-06-22T18:00:00.000Z",
+          timezone: tz,
+          hosts: [{ name: "Org Anizer", linkedin_handle: "in/organizer" }],
+        },
+      };
+      stubJsonFetch(async () => ({ ok: true, status: 200, json: async () => payload }));
+      const d = await fetchEventDetails("tz1");
+      expect(d!.eventTimezone).toBeNull();
+    }
   });
 
   it("falls back to description_short when the event has no description_mirror", async () => {

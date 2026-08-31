@@ -12,6 +12,7 @@ A JSON object only:
 {
   "eventTitle": string | null,
   "eventDateIso": string | null,
+  "eventTimezone": string | null,
   "eventCity": string | null,
   "eventDescription": string | null,
   "eventHasPassed": boolean,
@@ -31,6 +32,7 @@ A JSON object only:
 
 - `eventTitle`: the event name as displayed (e.g. "SF AI Builders Meetup"). Null if not clearly an event page.
 - `eventDateIso`: ISO 8601 date or datetime when stated. If only "Tuesday, June 10" is shown without year, infer the next future occurrence and emit a date-only ISO. Null if not stated.
+- `eventTimezone`: the IANA zone the page's times are in, when the page shows a zone (a "PDT" / "7:30 PM GMT+1" label, or the venue's city). Emit the IANA name — "America/Los_Angeles", not "PDT". Null if the page gives no zone and no venue city. Do NOT guess from your own clock.
 - `eventCity`: city or "Online" / "Virtual" / region. Null if not stated.
 - `eventDescription`: the event's own summary of what it's ABOUT — the topic/theme, format, and who it's for. Condense the page's description to 1-3 sentences, cap ~500 chars. Strip pure logistics (parking, sponsors, ticket prices, agenda timings) — keep only what conveys the subject. Null if the page shows no description.
 - `eventHasPassed`: true when the page explicitly shows "this event has ended" / past-tense framing / a date older than today. Default false when unclear.

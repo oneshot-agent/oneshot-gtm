@@ -244,6 +244,12 @@ const MAX_DETAIL_DESCRIPTION = 500;
 export interface LumaEventDetails {
   eventTitle: string | null;
   eventDateIso: string | null;
+  /**
+   * IANA zone Luma stamps on the event itself (e.g. "America/Los_Angeles").
+   * The most authoritative input to the date/time rendering chain — it beats
+   * the city lookup and the install zone. Null when the payload omits it.
+   */
+  eventTimezone: string | null;
   eventCity: string | null;
   /** Plain-text event description, capped at MAX_DETAIL_DESCRIPTION. Null when absent. */
   eventDescription: string | null;
@@ -353,6 +359,7 @@ export async function fetchEventDetails(slug: string): Promise<LumaEventDetails 
   // payload, rather than relying on a fixed nesting path.
   let eventTitle: string | null = null;
   let eventDateIso: string | null = null;
+  let eventTimezone: string | null = null;
   let eventCity: string | null = null;
   let eventDescription: string | null = null;
   let hosts: RawUrlPerson[] | null = null;
@@ -377,6 +384,11 @@ export async function fetchEventDetails(slug: string): Promise<LumaEventDetails 
     ) {
       eventTitle = (o["name"] as string).trim() || null;
       eventDateIso = (o["start_at"] as string) || null;
+      // `start_at` is an INSTANT (offset-bearing); `timezone` is the zone the
+      // host set, i.e. the one the attendee reads the event in. Without it we
+      // would be back to converting 7:30pm Wednesday in SF into Thursday.
+      const tz = o["timezone"];
+      if (typeof tz === "string" && tz.trim().length > 0) eventTimezone = tz.trim();
       const geo = o["geo_address_info"];
       if (geo && typeof geo === "object") {
         const c = (geo as Record<string, unknown>)["city"];
@@ -434,5 +446,5 @@ export async function fetchEventDetails(slug: string): Promise<LumaEventDetails 
     logEvent("error.swallowed", { kind: "luma-events.details_shape", slug }, "warn");
     return null;
   }
-  return { eventTitle, eventDateIso, eventCity, eventDescription, attendees };
+  return { eventTitle, eventDateIso, eventTimezone, eventCity, eventDescription, attendees };
 }

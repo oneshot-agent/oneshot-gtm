@@ -27,6 +27,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       founderAdmission: null,
       productBrief: null,
       mobileSignature: false,
+      timezone: null,
       clientId: null,
     }),
     getLedger: () => ({
@@ -100,6 +101,7 @@ function ctx(prospectId = 42) {
       founderAdmission: null,
       productBrief: null,
       mobileSignature: false,
+      timezone: null,
       clientId: null,
     },
     metadata: {},
