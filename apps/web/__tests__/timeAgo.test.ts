@@ -38,7 +38,7 @@ describe("timeAgo", () => {
   const NOW = new Date("2026-06-06T22:00:00Z").getTime();
   beforeEach(() => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date(NOW));
+    vi.setSystemTime(NOW);
   });
   afterEach(() => {
     vi.useRealTimers();

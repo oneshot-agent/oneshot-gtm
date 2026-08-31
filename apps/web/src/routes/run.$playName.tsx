@@ -694,6 +694,10 @@ function RunPage() {
               onClick={() => {
                 setEvents([]);
                 setError(null);
+                if (runRecord?.targets) {
+                  setRows(runRecord.targets as Record<string, string>[]);
+                  // RunRecord doesn't hold dedupeKeys; we'll let verifyAndFilterTargets re-assign them
+                }
                 void navigate({ search: (prev) => ({ ...prev, runId: undefined }) });
               }}
             >

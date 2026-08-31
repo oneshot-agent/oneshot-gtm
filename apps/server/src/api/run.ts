@@ -112,11 +112,27 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
       // First frame: tell the UI its runId so it can switch to progress mode.
       send({ kind: "runStarted", runId, startedAt });
 
+      let emailToDedupeKey = new Map<string, string>();
+      let verify: { verified: unknown[]; dropped: any[]; receiptIds: number[]; costUsd: number } = {
+        verified: [],
+        dropped: [],
+        receiptIds: [],
+        costUsd: 0,
+      };
+      let drafted: Parameters<typeof dispatchPlay> extends [
+        any,
+        any,
+        (index: number, view: infer V) => void,
+        ...any[],
+      ]
+        ? V[]
+        : any[] = [];
+
       try {
         // Build email → dedupeKey map BEFORE the verify filter drops rows —
         // verify changes target indices but not emails. Manual /run entries
         // omit `dedupeKeys`; the map stays empty and persistence is a no-op.
-        const emailToDedupeKey = new Map<string, string>();
+        emailToDedupeKey = new Map<string, string>();
         if (body.dedupeKeys && body.dedupeKeys.length === body.targets.length) {
           body.targets.forEach((t, i) => {
             const target = t as { email?: string; founderEmail?: string };
@@ -132,7 +148,6 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
         const inputCount = body.targets.length;
         fromQueue =
           Array.isArray(body.dedupeKeys) && body.dedupeKeys.length === body.targets.length;
-        let verify: Awaited<ReturnType<typeof verifyAndFilterTargets>>;
         if (fromQueue) {
           verify = { verified: body.targets, dropped: [], receiptIds: [], costUsd: 0 };
         } else {
@@ -154,6 +169,10 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
         // If verify dropped every target, skip dispatch entirely — the play
         // could throw an irrelevant pre-check error on an empty array.
         if (verify.verified.length === 0 && inputCount > 0) {
+          if (runAbort.signal.aborted) {
+            cancelledReason = cancelReasonOf(runAbort.signal);
+            return;
+          }
           send({ kind: "done", total: 0, sent: 0 });
           finished = true;
           return;
@@ -163,7 +182,7 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
         send({ kind: "stage", stage: body.dryRun ? "drafting" : "drafting + sending" });
         // Per-target callback: fires draft/send events live so counters tick
         // per target instead of jumping at the end.
-        const drafted = await dispatchPlay(
+        drafted = await dispatchPlay(
           playName,
           filteredBody,
           (index, d) => {
@@ -199,18 +218,6 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
         );
         send({ kind: "done", total: drafted.length, sent: sentCount });
         finished = true;
-
-        // Persist drafts to their originating queue rows for /queue review.
-        // Best-effort — a SQLite hiccup here must not surface to the user.
-        if (emailToDedupeKey.size > 0) {
-          persistDraftsToQueue({
-            playName,
-            verifiedTargets: verify.verified as Array<{ email?: string; founderEmail?: string }>,
-            drafted,
-            dryRun: body.dryRun,
-            emailToDedupeKey,
-          });
-        }
       } catch (err) {
         // A cancellation is not a failure: the run was told to stop, and every
         // target behind the abort point billed nothing. Handled before the
@@ -231,55 +238,72 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
             },
             "warn",
           );
-          return;
-        }
-        runOutcome = "error";
-        // The run ended on its own terms, badly — not because the client left.
-        // Mark it settled so a disconnect that follows (or caused nothing but
-        // an abort on the way out) can't relabel a real failure a cancellation.
-        finished = true;
-        // Log the full error server-side — the SSE event only carries a short
-        // message, and the SDK's generic "Tool request failed" is useless
-        // without status/body/stack.
-        const e = err as Error & {
-          cause?: unknown;
-          statusCode?: number;
-          responseBody?: string;
-        };
-        const causeMsg =
-          e?.cause instanceof Error ? e.cause.message : e?.cause ? String(e.cause) : null;
-        logEvent(
-          "run.pipeline_error",
-          {
-            play: playName,
-            message_200: (e?.message ?? "").slice(0, 200),
-            // SDK ToolError carries the failing call's HTTP status + body.
-            status_code: typeof e?.statusCode === "number" ? e.statusCode : null,
-            response_body_400:
-              typeof e?.responseBody === "string" ? e.responseBody.slice(0, 400) : null,
-            cause_200: causeMsg ? causeMsg.slice(0, 200) : null,
-            stack_300: (e?.stack ?? "").slice(0, 300),
-          },
-          "error",
-        );
-        // Surface the real reason to the UI from the response body
-        // (e.g. {"error":"domain_not_owned"}).
-        let uiMessage = e?.message ?? "run failed";
-        if (typeof e?.statusCode === "number") {
-          let detail = "";
-          try {
-            const parsed = JSON.parse(e.responseBody ?? "") as {
-              message?: string;
-              error?: string;
-            };
-            detail = parsed.message ?? parsed.error ?? "";
-          } catch {
-            detail = (e.responseBody ?? "").slice(0, 160);
+          // fall through to finally block for persistence instead of returning early
+        } else {
+          runOutcome = "error";
+          // The run ended on its own terms, badly — not because the client left.
+          // Mark it settled so a disconnect that follows (or caused nothing but
+          // an abort on the way out) can't relabel a real failure a cancellation.
+          finished = true;
+          // Log the full error server-side — the SSE event only carries a short
+          // message, and the SDK's generic "Tool request failed" is useless
+          // without status/body/stack.
+          const e = err as Error & {
+            cause?: unknown;
+            statusCode?: number;
+            responseBody?: string;
+          };
+          const causeMsg =
+            e?.cause instanceof Error ? e.cause.message : e?.cause ? String(e.cause) : null;
+          logEvent(
+            "run.pipeline_error",
+            {
+              play: playName,
+              message_200: (e?.message ?? "").slice(0, 200),
+              // SDK ToolError carries the failing call's HTTP status + body.
+              status_code: typeof e?.statusCode === "number" ? e.statusCode : null,
+              response_body_400:
+                typeof e?.responseBody === "string" ? e.responseBody.slice(0, 400) : null,
+              cause_200: causeMsg ? causeMsg.slice(0, 200) : null,
+              stack_300: (e?.stack ?? "").slice(0, 300),
+            },
+            "error",
+          );
+          // Surface the real reason to the UI from the response body
+          // (e.g. {"error":"domain_not_owned"}).
+          let uiMessage = e?.message ?? "run failed";
+          if (typeof e?.statusCode === "number") {
+            let detail = "";
+            try {
+              const parsed = JSON.parse(e.responseBody ?? "") as {
+                message?: string;
+                error?: string;
+              };
+              detail = parsed.message ?? parsed.error ?? "";
+            } catch {
+              detail = (e.responseBody ?? "").slice(0, 160);
+            }
+            uiMessage = `${uiMessage} (HTTP ${e.statusCode})${detail ? ` — ${detail}` : ""}`;
           }
-          uiMessage = `${uiMessage} (HTTP ${e.statusCode})${detail ? ` — ${detail}` : ""}`;
+          send({ kind: "error", index: -1, message: uiMessage });
         }
-        send({ kind: "error", index: -1, message: uiMessage });
       } finally {
+        // Persist drafts to their originating queue rows for /queue review.
+        // Best-effort — a SQLite hiccup here must not surface to the user.
+        if (
+          typeof verify !== "undefined" &&
+          typeof emailToDedupeKey !== "undefined" &&
+          emailToDedupeKey.size > 0
+        ) {
+          persistDraftsToQueue({
+            playName,
+            verifiedTargets: verify.verified as Array<{ email?: string; founderEmail?: string }>,
+            drafted,
+            dryRun: body.dryRun,
+            emailToDedupeKey,
+          });
+        }
+
         // The abort can also land without anything throwing — a play that
         // never reached a guarded boundary, or the last target finishing
         // between the abort and the next check. An aborted run that never
@@ -384,6 +408,19 @@ export async function cancelRunRoute(
   req: Request,
   params: Record<string, string>,
 ): Promise<Response> {
+  // Simple CSRF check for this state-changing POST. The dashboard sends no
+  // body for a cancel, making it a simple request that CORS preflight does not
+  // protect.
+  const origin = req.headers.get("origin") ?? "";
+  const isLoopback =
+    origin === "" ||
+    origin.startsWith("http://127.0.0.1") ||
+    origin.startsWith("http://localhost") ||
+    origin.startsWith("http://[::1]");
+  if (!isLoopback) {
+    return jsonResponse({ error: "cross-origin cancellation rejected" }, 403, req);
+  }
+
   const rawRunId = params["runId"] ?? "";
   if (!/^\d+$/.test(rawRunId)) return jsonResponse({ error: "bad run id" }, 400, req);
   const runId = Number.parseInt(rawRunId, 10);
