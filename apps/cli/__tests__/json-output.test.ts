@@ -621,8 +621,8 @@ describe("domains list --json", () => {
       dailySent: 0,
       dailyLimit: 20,
     });
-    // Clean pool: no domainsError flag.
-    expect(parsed).not.toHaveProperty("domainsError");
+    // Clean pool: no domainsError flag if using the old shape, but we now always emit it.
+    expect(parsed.domainsError).toBe(false);
   });
 
   it("empty pool emits an empty array, not an error flag", async () => {
@@ -632,7 +632,7 @@ describe("domains list --json", () => {
     const stdout = stdoutChunks.join("");
     const parsed = JSON.parse(stdout);
     expect(parsed.domains).toEqual([]);
-    expect(parsed).not.toHaveProperty("domainsError");
+    expect(parsed.domainsError).toBe(false);
   });
 
   it("flags domainsError when the pool is unreachable", async () => {

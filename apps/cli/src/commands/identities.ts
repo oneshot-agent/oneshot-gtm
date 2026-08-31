@@ -200,6 +200,7 @@ export async function commandDomainsList(opts: { json?: boolean } = {}): Promise
   if (opts.json) {
     emitJson({
       command: "domains list",
+      domainsError,
       domains: domains.map((d) => ({
         domain: d.domain,
         poolStatus: d.pool_status,
