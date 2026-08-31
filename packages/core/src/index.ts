@@ -17,5 +17,6 @@ export * from "./identities.ts";
 export * from "./send-routing.ts";
 export * from "./parallel.ts";
 export * from "./dossier.ts";
+export * from "./run-cancel.ts";
 export * from "./types.ts";
 export * from "./reply-classify.ts";

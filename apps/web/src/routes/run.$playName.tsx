@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, CheckCircle2, Loader2, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Loader2, Play, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   parseQueueIds,
@@ -88,6 +88,8 @@ function RunPage() {
   // commonly a preview than a real send.
   const [dryRun, setDryRun] = useState(search.dryRun !== "0");
   const [running, setRunning] = useState(false);
+  // In-flight state for the Stop button, so a slow cancel can't be double-fired.
+  const [cancelling, setCancelling] = useState(false);
   const [events, setEvents] = useState<RunPlayEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const navigate = Route.useNavigate();
@@ -114,7 +116,7 @@ function RunPage() {
     search.runId != null &&
     runQuery.isError &&
     /\b404\b/.test((runQuery.error as Error | null)?.message ?? "");
-  const mode: "edit" | "progress" | "done" | "interrupted" =
+  const mode: "edit" | "progress" | "done" | "interrupted" | "cancelled" =
     search.runId == null || runNotFound
       ? "edit"
       : runRecord == null
@@ -123,7 +125,9 @@ function RunPage() {
           ? "progress"
           : runRecord.status === "interrupted"
             ? "interrupted"
-            : "done";
+            : runRecord.status === "cancelled"
+              ? "cancelled"
+              : "done";
   // When the server-persisted record arrives, mirror its events into the
   // local stream array so the existing per-target rendering keeps working
   // unmodified. Local SSE writes still hit setEvents during a live submit;
@@ -244,6 +248,9 @@ function RunPage() {
   }, [events]);
 
   const doneEvent = events.find((e) => e.kind === "done");
+  // Terminal counterpart to `done` for an aborted run — present on both the
+  // live stream and the persisted resume view.
+  const cancelledEvent = events.find((e) => e.kind === "cancelled");
   const errorEvents = events.filter((e) => e.kind === "error");
   const verifyEvent = events.find((e) => e.kind === "verify");
   // Latest pipeline stage ("verifying" / "drafting + sending"), shown while the
@@ -480,6 +487,14 @@ function RunPage() {
             step-0 dedupe).
           </div>
         )}
+        {mode === "cancelled" && runRecord && (
+          <div className="mt-3 rounded-[var(--radius-sm)] border border-[color:var(--ink-blocked-2)] bg-[color:var(--ink-blocked-2)]/10 px-3 py-2 font-mono text-[12px] text-[color:var(--ink-blocked-2)]">
+            Run #{runRecord.id} was cancelled
+            {runRecord.cancelReason ? ` — ${runRecord.cancelReason}` : ""}. {runRecord.sentCount} of{" "}
+            {runRecord.targetCount} sent before the stop; targets that hadn't started yet were never
+            billed. Click <em>Run again</em> below to re-fire the remaining targets.
+          </div>
+        )}
       </section>
 
       {schema.extras && (
@@ -605,6 +620,9 @@ function RunPage() {
                 sent
               </span>
               {doneEvent?.kind === "done" && <span className="text-ink-muted">· done</span>}
+              {cancelledEvent?.kind === "cancelled" && (
+                <span className="text-ink-muted">· cancelled</span>
+              )}
             </>
           )}
           {running && aggregate.drafts === 0 && (
@@ -625,11 +643,33 @@ function RunPage() {
           <div className="flex items-center gap-2 text-[12px] text-ink-muted">
             <Loader2 size={14} className="animate-spin" />
             <span>
-              Run #{search.runId} in progress · your progress is saved · feel free to navigate away.
+              Run #{search.runId} in progress · your progress is saved · closing or reloading this
+              tab stops the run.
             </span>
+            <Button
+              variant="ghost"
+              disabled={cancelling}
+              onClick={() => {
+                if (search.runId == null) return;
+                setCancelling(true);
+                // Targets already drafted keep their rows; the ones behind the
+                // abort simply never bill. Refetch so the banner flips to the
+                // cancelled state as soon as the row lands.
+                void api
+                  .cancelRun(search.runId, "cancelled from the dashboard")
+                  .catch((e: unknown) => setError((e as Error).message))
+                  .finally(() => {
+                    setCancelling(false);
+                    void runQuery.refetch();
+                  });
+              }}
+            >
+              <X size={14} />
+              {cancelling ? "Stopping…" : "Stop run"}
+            </Button>
           </div>
         )}
-        {(mode === "done" || mode === "interrupted") && (
+        {(mode === "done" || mode === "interrupted" || mode === "cancelled") && (
           <div className="flex items-center gap-2">
             {search.runId != null && (runRecord?.sentCount ?? 0) > 0 && (
               <Button
@@ -650,6 +690,7 @@ function RunPage() {
             )}
             <Button
               variant="ghost"
+              disabled={running}
               onClick={() => {
                 setEvents([]);
                 setError(null);

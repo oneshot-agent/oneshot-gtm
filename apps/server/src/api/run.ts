@@ -1,6 +1,20 @@
-import { getLedger, logEvent, type TelemetryOutcome } from "@oneshot-gtm/core";
+import {
+  abortRun,
+  cancelReasonOf,
+  getLedger,
+  isRunCancelled,
+  logEvent,
+  registerRunController,
+  releaseRunController,
+  type TelemetryOutcome,
+} from "@oneshot-gtm/core";
 import { verifyAndFilterTargets } from "@oneshot-gtm/plays";
-import { isRunnablePlay, type RunPlayEvent, type RunPlayRequest } from "@oneshot-gtm/shared-types";
+import {
+  isRunnablePlay,
+  type CancelRunResponse,
+  type RunPlayEvent,
+  type RunPlayRequest,
+} from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 import { reportServerExecution } from "../telemetry.ts";
 import { dispatchPlay, type DraftedView } from "./_play-dispatch.ts";
@@ -37,7 +51,26 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
   // Emails that actually sent, for the /cadences?sinceRun=N deep-link.
   const sentEmails: string[] = [];
 
+  // The run's cancellation signal. Two things can fire it: the client going
+  // away (below) and POST /api/run/:runId/cancel, which reaches this
+  // controller through the process-local registry. Everything downstream —
+  // verify, every play, every paid call — reads the same signal, so an abort
+  // stops the spend instead of merely abandoning the stream.
+  const runAbort = new AbortController();
+  registerRunController(runId, runAbort);
+  const abortOnce = (reason: string): void => {
+    if (!runAbort.signal.aborted) runAbort.abort(reason);
+  };
+  // Bun aborts `req.signal` when the client disconnects. Belt and braces with
+  // the stream's own `cancel()` below: between them they cover a closed tab, a
+  // navigation, and a reader that simply stops pulling.
+  req.signal.addEventListener("abort", () => abortOnce("client disconnected"), { once: true });
+  if (req.signal.aborted) abortOnce("client disconnected");
+
   const stream = new ReadableStream<Uint8Array>({
+    cancel() {
+      abortOnce("client disconnected");
+    },
     async start(controller) {
       const encoder = new TextEncoder();
       const ledger = getLedger();
@@ -45,6 +78,22 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
       const t0 = performance.now();
       let runOutcome: TelemetryOutcome = "ok";
       let fromQueue = false;
+      // Hoisted out of the try so the cancel path can report what the run got
+      // through before the abort — the `cancelled` frame carries the same
+      // counters `done` would have.
+      let sentCount = 0;
+      let draftedCount = 0;
+      // Set once the run reached a terminal state of its own — a `done` frame
+      // or a real error. The `finally` needs to tell "the run ended, then the
+      // client left" from "the client left, so the run ended" — only the
+      // second is a cancellation.
+      let finished = false;
+      // Set once the terminal ledger write happened. Past that point a send
+      // reported by a straggler worker has to be written again (see below).
+      let terminalWritten = false;
+      // Non-null once the run is known to have been cancelled; carries the
+      // reason that gets persisted on the row.
+      let cancelledReason: string | null = null;
       const send = (event: RunPlayEvent): void => {
         // Persist FIRST — the resume view needs every event even after a
         // client disconnect. SSE write second; swallow if the client is gone.
@@ -91,7 +140,7 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
           verify = await verifyAndFilterTargets(
             body.targets as Array<{ email?: string; founderEmail?: string }>,
             (t) => t.email ?? t.founderEmail ?? null,
-            { playName, dryRun: body.dryRun },
+            { playName, dryRun: body.dryRun, signal: runAbort.signal },
           );
         }
         if (verify.dropped.length > 0) {
@@ -106,30 +155,50 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
         // could throw an irrelevant pre-check error on an empty array.
         if (verify.verified.length === 0 && inputCount > 0) {
           send({ kind: "done", total: 0, sent: 0 });
+          finished = true;
           return;
         }
         const filteredBody: RunPlayRequest = { ...body, targets: verify.verified };
 
         send({ kind: "stage", stage: body.dryRun ? "drafting" : "drafting + sending" });
-        let sentCount = 0;
         // Per-target callback: fires draft/send events live so counters tick
         // per target instead of jumping at the end.
-        const drafted = await dispatchPlay(playName, filteredBody, (index, d) => {
-          send({ kind: "draft", index, subject: d.subject, body: d.body, flags: d.flags });
-          if (d.receiptIds.length > 0) {
-            send({ kind: "send", index, receiptIds: d.receiptIds });
-          }
-          if (d.sent) {
-            sentCount++;
-            // Recover the email for the /cadences?sinceRun resolution.
-            const t = verify.verified[index] as
-              | { email?: string; founderEmail?: string }
-              | undefined;
-            const email = t?.email ?? t?.founderEmail;
-            if (email) sentEmails.push(email);
-          }
-        });
+        const drafted = await dispatchPlay(
+          playName,
+          filteredBody,
+          (index, d) => {
+            draftedCount++;
+            send({ kind: "draft", index, subject: d.subject, body: d.body, flags: d.flags });
+            if (d.receiptIds.length > 0) {
+              send({ kind: "send", index, receiptIds: d.receiptIds });
+            }
+            if (d.sent) {
+              sentCount++;
+              // Recover the email for the /cadences?sinceRun resolution.
+              const t = verify.verified[index] as
+                | { email?: string; founderEmail?: string }
+                | undefined;
+              const email = t?.email ?? t?.founderEmail;
+              if (!email) return;
+              sentEmails.push(email);
+              // A cancellation rejects the play's Promise.all at once, but its
+              // sibling workers can still be inside sendDraftedEmail — they
+              // report here AFTER the terminal row was written. That email did
+              // leave and did enrol in the cadence, so re-write the list or
+              // /cadences?sinceRun silently omits its recipient.
+              if (terminalWritten) {
+                try {
+                  ledger.setRunSentEmails({ runId, sentEmails });
+                } catch {
+                  // ledger write failing is the sweeper's problem
+                }
+              }
+            }
+          },
+          runAbort.signal,
+        );
         send({ kind: "done", total: drafted.length, sent: sentCount });
+        finished = true;
 
         // Persist drafts to their originating queue rows for /queue review.
         // Best-effort — a SQLite hiccup here must not surface to the user.
@@ -143,7 +212,32 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
           });
         }
       } catch (err) {
+        // A cancellation is not a failure: the run was told to stop, and every
+        // target behind the abort point billed nothing. Handled before the
+        // error path so it never lands as an `error` frame or an `error`
+        // telemetry outcome. The message carries the phase that was about to
+        // bill ("show-hn send: client disconnected"), which is exactly what
+        // the row's reason should say.
+        if (isRunCancelled(err)) {
+          cancelledReason = (err as Error).message || cancelReasonOf(runAbort.signal);
+          logEvent(
+            "run.cancelled",
+            {
+              play: playName,
+              run_id: runId,
+              reason_120: cancelledReason.slice(0, 120),
+              drafted: draftedCount,
+              sent: sentCount,
+            },
+            "warn",
+          );
+          return;
+        }
         runOutcome = "error";
+        // The run ended on its own terms, badly — not because the client left.
+        // Mark it settled so a disconnect that follows (or caused nothing but
+        // an abort on the way out) can't relabel a real failure a cancellation.
+        finished = true;
         // Log the full error server-side — the SSE event only carries a short
         // message, and the SDK's generic "Tool request failed" is useless
         // without status/body/stack.
@@ -186,13 +280,44 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
         }
         send({ kind: "error", index: -1, message: uiMessage });
       } finally {
-        // Flip the runs row to 'done' regardless of success/failure so the
-        // cold-boot sweep never sees a false 'running'.
+        // The abort can also land without anything throwing — a play that
+        // never reached a guarded boundary, or the last target finishing
+        // between the abort and the next check. An aborted run that never
+        // emitted `done` is a cancellation too; one that did is genuinely
+        // finished and stays `done` no matter when the client left.
+        if (!cancelledReason && !finished && runAbort.signal.aborted) {
+          cancelledReason = cancelReasonOf(runAbort.signal);
+        }
+        if (cancelledReason) {
+          // Terminal frame: same counters `done` would have carried, so a
+          // resumed view renders what the run got through before the stop.
+          send({
+            kind: "cancelled",
+            reason: cancelledReason,
+            total: draftedCount,
+            sent: sentCount,
+          });
+        }
+        // Flip the runs row to a terminal state regardless of
+        // success/failure/cancel so the cold-boot sweep never sees a false
+        // 'running'. `cancelRun` CASes on 'running', so it is a no-op when the
+        // cancel route already wrote the row.
         try {
-          getLedger().markRunComplete({ runId, status: "done", sentEmails });
+          if (cancelledReason) {
+            getLedger().cancelRun({ runId, reason: cancelledReason, sentEmails });
+          } else {
+            getLedger().markRunComplete({ runId, status: "done", sentEmails });
+          }
         } catch {
           // sweeper safety net
         }
+        // Any send reported from here on is a straggler and writes its own row
+        // update — the array captured above is already in the database.
+        terminalWritten = true;
+        // Release BEFORE closing the stream: past here there is nothing left
+        // to abort, and a retained entry would leak a controller per run and
+        // let a later cancel "succeed" against a run that already ended.
+        releaseRunController(runId);
         try {
           controller.close();
         } catch {
@@ -201,6 +326,7 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
         const flags: string[] = [];
         if (body.dryRun) flags.push("dry-run");
         if (fromQueue) flags.push("from-queue");
+        if (cancelledReason) flags.push("cancelled");
         void reportServerExecution(`server.run.${playName}`, {
           outcome: runOutcome,
           durationMs: performance.now() - t0,
@@ -232,6 +358,78 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
     status: 200,
     headers: sseHeaders,
   });
+}
+
+/** Cap on the caller-supplied reason so a stray body can't bloat the row. */
+const MAX_CANCEL_REASON = 200;
+const DEFAULT_UI_CANCEL_REASON = "cancelled by user";
+
+/**
+ * `POST /api/run/:runId/cancel` — stop an in-flight run.
+ *
+ * Two independent halves, because a `running` row and a live handler are not
+ * the same thing:
+ *  - `abortRun` fires the AbortController the SSE handler registered, which is
+ *    what actually stops the spend: every play checks the signal before each
+ *    paid call, so nothing bills past the next boundary.
+ *  - the ledger write makes the row terminal now rather than whenever the
+ *    handler unwinds — and covers the orphan case, where the run's process is
+ *    gone and no controller will ever unwind. `cancelRun` CASes on 'running',
+ *    so the handler's own write later is a harmless no-op.
+ *
+ * Cancelling an already-terminal run is a 200 no-op, not an error: the stop
+ * button races the run's own completion, and losing that race is not a fault.
+ */
+export async function cancelRunRoute(
+  req: Request,
+  params: Record<string, string>,
+): Promise<Response> {
+  const rawRunId = params["runId"] ?? "";
+  if (!/^\d+$/.test(rawRunId)) return jsonResponse({ error: "bad run id" }, 400, req);
+  const runId = Number.parseInt(rawRunId, 10);
+  if (!Number.isFinite(runId)) return jsonResponse({ error: "bad run id" }, 400, req);
+
+  // Body is optional — the dashboard's stop button sends none.
+  let reason = DEFAULT_UI_CANCEL_REASON;
+  try {
+    const body = (await req.json()) as { reason?: unknown } | null;
+    if (body && typeof body.reason === "string" && body.reason.trim().length > 0) {
+      reason = body.reason.trim().slice(0, MAX_CANCEL_REASON);
+    }
+  } catch {
+    // no/!JSON body — the default reason stands
+  }
+
+  const run = getLedger().getRun(runId);
+  if (!run) return jsonResponse({ error: `run #${runId} not found` }, 404, req);
+  if (run.status !== "running") {
+    const view: CancelRunResponse = {
+      runId,
+      status: run.status,
+      cancelled: false,
+      aborted: false,
+      reason: run.cancelReason,
+    };
+    return jsonResponse(view, 200, req);
+  }
+
+  // Abort first: the sooner the signal fires, the fewer paid calls get past
+  // their boundary. The ledger write follows either way.
+  const aborted = abortRun(runId, reason);
+  const result = getLedger().cancelRun({ runId, reason });
+  logEvent(
+    "run.cancel_requested",
+    { run_id: runId, play: run.playName, aborted, cancelled: result.cancelled },
+    "warn",
+  );
+  const view: CancelRunResponse = {
+    runId,
+    status: result.status ?? run.status,
+    cancelled: result.cancelled,
+    aborted,
+    reason,
+  };
+  return jsonResponse(view, 200, req);
 }
 
 /**

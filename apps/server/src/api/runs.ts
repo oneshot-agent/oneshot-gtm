@@ -5,7 +5,7 @@ import { jsonResponse } from "../server.ts";
 /**
  * `GET /api/runs/:id` — snapshot of one /run-page dispatch. The UI polls this
  * every 2s while `status === 'running'`, then stops once `status` flips to
- * `done` or `interrupted`. The full events array is returned so the resume
+ * `done`, `interrupted` or `cancelled`. The full events array is returned so the resume
  * view can rebuild per-target rows identically to a live SSE consumer.
  */
 export function getRunRoute(req: Request, params: Record<string, string>): Response {
@@ -29,6 +29,7 @@ export function getRunRoute(req: Request, params: Record<string, string>): Respo
     targets: run.targets,
     events: run.events as RunPlayEvent[],
     prospectEmails: run.prospectEmails,
+    cancelReason: run.cancelReason ?? null,
   };
   return jsonResponse(view, 200, req);
 }

@@ -1,4 +1,4 @@
-import { browserTask } from "@oneshot-gtm/core";
+import { browserTask, throwIfCancelled } from "@oneshot-gtm/core";
 import { emailDomain, safeEnrich } from "./_lib.ts";
 import { type EmailPlayDef, runEmailPlay } from "./_run-play.ts";
 import { competitorSwitchMetadata } from "./_metadata.ts";
@@ -36,6 +36,8 @@ export interface CompetitorSwitchRunOptions {
   ) => void;
   /** Skip the browser-scraping step even if evidenceUrl is set. */
   skipBrowserScrape?: boolean;
+  /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
+  signal?: AbortSignal;
 }
 
 interface CompetitorSwitchDraft {
@@ -59,7 +61,7 @@ export function runCompetitorSwitch(
     maxBodyWords: 150,
     enrollCadence: true,
     toEmail: (t) => t.email,
-    prepare: async (t, dryRun) => {
+    prepare: async (t, dryRun, signal) => {
       const receiptIds: number[] = [];
       let scrapedEvidence: string | undefined;
 
@@ -92,6 +94,9 @@ export function runCompetitorSwitch(
         const haveEvidenceText =
           typeof t.evidenceText === "string" && t.evidenceText.trim().length > 0;
         if (t.evidenceUrl && !opts.skipBrowserScrape && !haveEvidenceText) {
+          // The priciest call in the play (~$0.30+, up to 3min). Never start
+          // one for a run the founder has already cancelled.
+          throwIfCancelled(signal, `${PLAY_NAME} scrape`);
           const browse = await browserTask(
             {
               task: `Read the page at ${t.evidenceUrl} and extract: (1) any specific complaints or pain points the user mentioned about ${t.competitor}, (2) any mentions of features they wished existed, (3) any context about company size or use case. Return concise structured JSON.`,
