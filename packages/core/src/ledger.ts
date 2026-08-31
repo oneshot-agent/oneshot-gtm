@@ -291,6 +291,7 @@ export class Ledger {
         sent_count INTEGER NOT NULL DEFAULT 0,
         error_count INTEGER NOT NULL DEFAULT 0,
         targets_json TEXT NOT NULL,
+        dedupe_keys_json TEXT NOT NULL DEFAULT '[]',
         events_json TEXT NOT NULL DEFAULT '[]',
         prospect_emails_json TEXT NOT NULL DEFAULT '[]'
       );
@@ -525,6 +526,8 @@ export class Ledger {
     // install; older installs carry the narrower CHECK and need the rebuild.
     this.widenRunsStatusCheck();
     this.addColumnIfMissing("runs", "cancel_reason", "TEXT");
+    this.addColumnIfMissing("runs", "dedupe_keys_json", "TEXT");
+    this.db.exec(`UPDATE runs SET dedupe_keys_json = '[]' WHERE dedupe_keys_json IS NULL`);
   }
 
   /**
@@ -2736,15 +2739,20 @@ export class Ledger {
   // the UI rebuilds progress from the row, and the cold-boot sweep flips
   // stranded `running` rows to `interrupted`.
 
-  createRun(input: { playName: string; dryRun: boolean; targets: unknown[] }): {
+  createRun(input: {
+    playName: string;
+    dryRun: boolean;
+    targets: unknown[];
+    dedupeKeys?: Array<string | null>;
+  }): {
     runId: number;
     startedAt: string;
   } {
     const startedAt = new Date().toISOString();
     const result = this.db
       .prepare(
-        `INSERT INTO runs(play_name, dry_run, status, started_at, target_count, targets_json)
-         VALUES(?, ?, 'running', ?, ?, ?)`,
+        `INSERT INTO runs(play_name, dry_run, status, started_at, target_count, targets_json, dedupe_keys_json)
+         VALUES(?, ?, 'running', ?, ?, ?, ?)`,
       )
       .run(
         input.playName,
@@ -2752,6 +2760,7 @@ export class Ledger {
         startedAt,
         input.targets.length,
         JSON.stringify(input.targets),
+        JSON.stringify(input.dedupeKeys ?? []),
       );
     return { runId: Number(result.lastInsertRowid), startedAt };
   }
@@ -2882,6 +2891,7 @@ export class Ledger {
     sentCount: number;
     errorCount: number;
     targets: unknown[];
+    dedupeKeys: Array<string | null>;
     events: unknown[];
     prospectEmails: string[];
     cancelReason: string | null;
@@ -2898,6 +2908,7 @@ export class Ledger {
       sent_count: number;
       error_count: number;
       targets_json: string;
+      dedupe_keys_json: string;
       events_json: string;
       prospect_emails_json: string;
       cancel_reason: string | null;
@@ -2915,6 +2926,7 @@ export class Ledger {
       sentCount: row.sent_count,
       errorCount: row.error_count,
       targets: safeParseJsonArray(row.targets_json),
+      dedupeKeys: safeParseJsonArray(row.dedupe_keys_json) as Array<string | null>,
       events: safeParseJsonArray(row.events_json),
       prospectEmails: safeParseJsonArray(row.prospect_emails_json) as string[],
       cancelReason: row.cancel_reason ?? null,

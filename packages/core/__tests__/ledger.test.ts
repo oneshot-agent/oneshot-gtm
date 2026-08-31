@@ -701,6 +701,7 @@ describe("Ledger runs", () => {
         { email: "a@x.dev", name: "A" },
         { email: "b@x.dev", name: "B" },
       ],
+      dedupeKeys: ["queue-a", null],
     });
     expect(runId).toBeGreaterThan(0);
     expect(startedAt).toMatch(/^\d{4}-/);
@@ -713,6 +714,7 @@ describe("Ledger runs", () => {
       draftedCount: 0,
       sentCount: 0,
       errorCount: 0,
+      dedupeKeys: ["queue-a", null],
       completedAt: null,
     });
     expect(run?.targets).toHaveLength(2);

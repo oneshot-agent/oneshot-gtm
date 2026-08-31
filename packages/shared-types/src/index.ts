@@ -906,6 +906,8 @@ export interface RunRecord {
   errorCount: number;
   /** Original targets array as posted to /api/run/:playName. */
   targets: unknown[];
+  /** Queue-origin keys parallel to targets; empty for manually entered runs. */
+  dedupeKeys: Array<string | null>;
   /** All SSE events accumulated so far (or all of them, when status !== 'running'). */
   events: RunPlayEvent[];
   /** Emails that were actually sent — used by /cadences?sinceRun to filter. */

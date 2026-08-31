@@ -47,6 +47,7 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
     playName,
     dryRun: body.dryRun,
     targets: body.targets,
+    dedupeKeys: body.dedupeKeys,
   });
   // Emails that actually sent, for the /cadences?sinceRun=N deep-link.
   const sentEmails: string[] = [];
@@ -186,6 +187,9 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
           playName,
           filteredBody,
           (index, d) => {
+            // dispatchPlay rejects on cancellation, so its returned batch is
+            // unavailable. Retain completed drafts as they arrive.
+            drafted[index] = d;
             draftedCount++;
             send({ kind: "draft", index, subject: d.subject, body: d.body, flags: d.flags });
             if (d.receiptIds.length > 0) {
@@ -295,13 +299,27 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
           typeof emailToDedupeKey !== "undefined" &&
           emailToDedupeKey.size > 0
         ) {
-          persistDraftsToQueue({
-            playName,
-            verifiedTargets: verify.verified as Array<{ email?: string; founderEmail?: string }>,
-            drafted,
-            dryRun: body.dryRun,
-            emailToDedupeKey,
-          });
+          try {
+            persistDraftsToQueue({
+              playName,
+              verifiedTargets: verify.verified as Array<{ email?: string; founderEmail?: string }>,
+              drafted,
+              dryRun: body.dryRun,
+              emailToDedupeKey,
+            });
+          } catch (err) {
+            // Guard setup as well as individual writes so terminal status,
+            // cleanup, and telemetry still happen if ledger access fails.
+            logEvent(
+              "error.swallowed",
+              {
+                kind: "run.persistDraftsToQueue",
+                play: playName,
+                message_120: ((err as Error).message ?? "").slice(0, 120),
+              },
+              "warn",
+            );
+          }
         }
 
         // The abort can also land without anything throwing — a play that
@@ -363,11 +381,7 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
   // Loopback-only CORS for SSE: mirror loopback origins, omit the header
   // otherwise (the outer fetch handler already enforces a loopback Host).
   const origin = req.headers.get("origin") ?? "";
-  const isLoopback =
-    origin === "" ||
-    origin.startsWith("http://127.0.0.1") ||
-    origin.startsWith("http://localhost") ||
-    origin.startsWith("http://[::1]");
+  const isLoopback = isLoopbackOrigin(origin);
   const sseHeaders: Record<string, string> = {
     "content-type": "text/event-stream; charset=utf-8",
     "cache-control": "no-cache, no-transform",
@@ -382,6 +396,21 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
     status: 200,
     headers: sseHeaders,
   });
+}
+
+/** Accept absent Origin (same-origin/non-browser clients) or an exact HTTP loopback host. */
+function isLoopbackOrigin(origin: string): boolean {
+  if (origin === "") return true;
+  try {
+    const url = new URL(origin);
+    return (
+      url.protocol === "http:" &&
+      (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]") &&
+      url.origin === origin
+    );
+  } catch {
+    return false;
+  }
 }
 
 /** Cap on the caller-supplied reason so a stray body can't bloat the row. */
@@ -412,11 +441,7 @@ export async function cancelRunRoute(
   // body for a cancel, making it a simple request that CORS preflight does not
   // protect.
   const origin = req.headers.get("origin") ?? "";
-  const isLoopback =
-    origin === "" ||
-    origin.startsWith("http://127.0.0.1") ||
-    origin.startsWith("http://localhost") ||
-    origin.startsWith("http://[::1]");
+  const isLoopback = isLoopbackOrigin(origin);
   if (!isLoopback) {
     return jsonResponse({ error: "cross-origin cancellation rejected" }, 403, req);
   }
