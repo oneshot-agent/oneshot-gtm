@@ -9,7 +9,7 @@ import {
   setDefaultWorkspace,
   WorkspaceError,
 } from "@oneshot-gtm/core";
-import { bail, c, header, note, ok, warn } from "../output.ts";
+import { bail, c, emitJson, header, note, ok, setJsonMode, warn } from "../output.ts";
 
 function guarded<T>(fn: () => T): T {
   try {
@@ -20,11 +20,13 @@ function guarded<T>(fn: () => T): T {
   }
 }
 
-export async function commandWorkspaceList(): Promise<void> {
+export async function commandWorkspaceList(opts: { json?: boolean } = {}): Promise<void> {
+  setJsonMode(opts.json ?? false);
   header("oneshot-gtm workspaces");
   const reg = loadRegistry();
   const current = currentWorkspaceName();
-  for (const [name, entry] of listWorkspaces(reg)) {
+  const rows = listWorkspaces(reg);
+  for (const [name, entry] of rows) {
     const marks = [
       name === current ? c.green("current") : null,
       name === reg.default ? c.dim("default") : null,
@@ -37,6 +39,21 @@ export async function commandWorkspaceList(): Promise<void> {
   note(
     `Select one per run with ${c.cyan("--workspace <name>")}, or persist it with ${c.cyan("workspace use <name>")}.`,
   );
+
+  if (opts.json) {
+    emitJson({
+      command: "workspace list",
+      current,
+      default: reg.default,
+      workspaces: rows.map(([name, entry]) => ({
+        name,
+        port: entry.port,
+        home: entry.home,
+        isCurrent: name === current,
+        isDefault: name === reg.default,
+      })),
+    });
+  }
 }
 
 export async function commandWorkspaceCreate(name: string): Promise<void> {
