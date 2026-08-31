@@ -176,24 +176,39 @@ export async function commandIdentitiesAdd(): Promise<void> {
 }
 
 /** Show just the wallet's provisioned domain pool with status + warmth + usage. */
-export async function commandDomainsList(): Promise<void> {
+export async function commandDomainsList(opts: { json?: boolean } = {}): Promise<void> {
+  setJsonMode(opts.json ?? false);
   header("Provisioned domains");
-  const { domains } = await safeListDomains();
+  const { domains, error: domainsError } = await safeListDomains();
   if (domains.length === 0) {
     note("None found (or the pool couldn't be reached).");
-    return;
+  } else {
+    for (const d of domains) {
+      const tone =
+        d.pool_status === "active" ? c.green : d.pool_status === "warming" ? c.cyan : c.red;
+      note(
+        `${d.domain}  ${tone(d.pool_status)}` +
+          (d.warmup_score != null ? `  warmth ${d.warmup_score}` : "") +
+          `  sent ${d.daily_sent_count}/${d.daily_send_limit}/day`,
+      );
+    }
+    if (domains.some((d) => d.pool_status === "paused" || d.pool_status === "removed")) {
+      note("Resume a paused domain: oneshot-gtm domains resume <domain>");
+    }
   }
-  for (const d of domains) {
-    const tone =
-      d.pool_status === "active" ? c.green : d.pool_status === "warming" ? c.cyan : c.red;
-    note(
-      `${d.domain}  ${tone(d.pool_status)}` +
-        (d.warmup_score != null ? `  warmth ${d.warmup_score}` : "") +
-        `  sent ${d.daily_sent_count}/${d.daily_send_limit}/day`,
-    );
-  }
-  if (domains.some((d) => d.pool_status === "paused" || d.pool_status === "removed")) {
-    note("Resume a paused domain: oneshot-gtm domains resume <domain>");
+
+  if (opts.json) {
+    emitJson({
+      command: "domains list",
+      domains: domains.map((d) => ({
+        domain: d.domain,
+        poolStatus: d.pool_status,
+        warmupScore: d.warmup_score ?? null,
+        dailySent: d.daily_sent_count,
+        dailyLimit: d.daily_send_limit,
+      })),
+      ...(domainsError ? { domainsError: true } : {}),
+    });
   }
 }
 

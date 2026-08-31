@@ -3,7 +3,9 @@ import type { DomainPoolEntry, EmailIdentity, IdentityCapacityView } from "@ones
 import type { FinderResult, TriggerRunOutcome } from "@oneshot-gtm/find";
 
 /**
- * Tests for #99: --json output on read-only commands
+ * Tests for --json output on read-only commands. #99 shipped doctor,
+ * identities list, find drain --dry-run and find watch --once; the
+ * domains list + workspace list suites below finish the read-only surface.
  * Verifies:
  * - stdout is parseable JSON with no ANSI codes
  * - schemaVersion exists in all payloads
@@ -48,17 +50,35 @@ vi.mock("@oneshot-gtm/find", () => ({
   nextSleepMs: () => 60_000,
 }));
 
-// Identities mocks
+// Identities / domains mocks
 let identitiesFixture: EmailIdentity[] = [];
 let capsFixture = new Map<string, IdentityCapacityView>();
 let domainsFixture: DomainPoolEntry[] = [];
 let configFixture: { emailIdentities?: EmailIdentity[] | null } = {};
+let listDomainsThrows: Error | null = null;
+
+// Workspace mocks
+interface WorkspaceEntryLike {
+  home: string;
+  port: number;
+  createdAt: string;
+}
+let workspaceRowsFixture: Array<[string, WorkspaceEntryLike]> = [];
+let workspaceRegistryFixture: { default: string; workspaces: Record<string, WorkspaceEntryLike> } =
+  {
+    default: "default",
+    workspaces: {},
+  };
+let currentWorkspaceFixture = "default";
 
 vi.mock("@oneshot-gtm/core", () => ({
   loadConfig: () => configFixture,
   resolveIdentities: () => identitiesFixture,
   identityCapacities: () => capsFixture,
-  listSendingDomains: async () => domainsFixture,
+  listSendingDomains: async () => {
+    if (listDomainsThrows) throw listDomainsThrows;
+    return domainsFixture;
+  },
   capGroupKey: (i: EmailIdentity) =>
     i.provider === "oneshot" ? `domain:${i.sendingDomain ?? ""}` : `id:${i.id}`,
   fromLocalpart: (s: string) => s.toLowerCase(),
@@ -67,17 +87,29 @@ vi.mock("@oneshot-gtm/core", () => ({
   pauseSendingDomain: async () => ({ domain: "", pool_status: "paused" }),
   resumeSendingDomain: async () => ({ domain: "", pool_status: "active" }),
   WARMUP_DEFAULTS: { maxPerDay: 40, warmup: { startPerDay: 5, incrementPerWeek: 5 } },
+  // Workspace surface consumed by commandWorkspaceList
+  loadRegistry: () => workspaceRegistryFixture,
+  currentWorkspaceName: () => currentWorkspaceFixture,
+  listWorkspaces: () => workspaceRowsFixture,
+  configDir: () => "/tmp/oneshot-gtm",
+  createWorkspace: () => ({ home: "", port: 0, createdAt: "" }),
+  removeWorkspace: () => ({ home: "", port: 0, createdAt: "" }),
+  resolveWorkspaceHome: () => "",
+  setDefaultWorkspace: () => {},
+  WorkspaceError: class WorkspaceError extends Error {},
 }));
 
 // Import commands after mocks are set up
 const { commandDoctor } = await import("../src/commands/doctor.ts");
 const { commandFindWatch, commandFindDrain } = await import("../src/commands/find.ts");
-const { commandIdentitiesList } = await import("../src/commands/identities.ts");
+const { commandIdentitiesList, commandDomainsList } = await import("../src/commands/identities.ts");
+const { commandWorkspaceList } = await import("../src/commands/workspace.ts");
 const { CommandExit } = await import("../src/output.ts");
 
 beforeEach(() => {
   stdoutChunks = [];
   stderrChunks = [];
+  listDomainsThrows = null;
   stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
     stdoutChunks.push(String(chunk));
     return true;
@@ -503,6 +535,187 @@ describe("identities list --json", () => {
       warmupScore: null,
       dailySent: 2,
       dailyLimit: 20,
+    });
+  });
+});
+
+describe("domains list --json", () => {
+  const ACTIVE_DOMAIN: DomainPoolEntry = {
+    domain: "tracepoint.email",
+    pool_status: "active",
+    provisioning_status: "provisioned",
+    warmup_score: 87,
+    warmup_started_at: "2026-07-06T12:00:00.000Z",
+    daily_send_limit: 50,
+    daily_sent_count: 9,
+    daily_sent_date: "2026-08-29",
+    last_used_at: "2026-08-29T09:12:00.000Z",
+  };
+  const PAUSED_DOMAIN: DomainPoolEntry = {
+    domain: "trace-mail.dev",
+    pool_status: "paused",
+    provisioning_status: "provisioned",
+    warmup_score: null,
+    warmup_started_at: null,
+    daily_send_limit: 20,
+    daily_sent_count: 0,
+    daily_sent_date: "2026-08-29",
+    last_used_at: null,
+  };
+
+  beforeEach(() => {
+    domainsFixture = [ACTIVE_DOMAIN];
+  });
+
+  it("emits valid JSON with schemaVersion on stdout", async () => {
+    await commandDomainsList({ json: true });
+
+    const stdout = stdoutChunks.join("");
+    const parsed = JSON.parse(stdout);
+    expect(parsed).toHaveProperty("schemaVersion", 1);
+    expect(parsed.command).toBe("domains list");
+    expect(parsed.domains).toHaveLength(1);
+  });
+
+  it("stdout has no ANSI codes", async () => {
+    domainsFixture = [ACTIVE_DOMAIN, PAUSED_DOMAIN];
+    await commandDomainsList({ json: true });
+
+    const stdout = stdoutChunks.join("");
+    expect(hasAnsiCodes(stdout)).toBe(false);
+  });
+
+  it("human output goes to stderr, stdout is only the JSON document", async () => {
+    await commandDomainsList({ json: true });
+
+    const stdout = stdoutChunks.join("");
+    const stderr = stderrChunks.join("");
+
+    expect(stdout.trim().split("\n")).toHaveLength(1);
+    expect(() => JSON.parse(stdout)).not.toThrow();
+
+    // Header + rows should be on stderr
+    expect(stderr).toContain("Provisioned domains");
+    expect(stderr).toContain("tracepoint.email");
+  });
+
+  it("pins the domain shape", async () => {
+    domainsFixture = [ACTIVE_DOMAIN, PAUSED_DOMAIN];
+    await commandDomainsList({ json: true });
+
+    const stdout = stdoutChunks.join("");
+    const parsed = JSON.parse(stdout);
+    expect(parsed.domains).toHaveLength(2);
+    expect(parsed.domains[0]).toMatchObject({
+      domain: "tracepoint.email",
+      poolStatus: "active",
+      warmupScore: 87,
+      dailySent: 9,
+      dailyLimit: 50,
+    });
+    // warmup_score null lands as null, not dropped.
+    expect(parsed.domains[1]).toMatchObject({
+      domain: "trace-mail.dev",
+      poolStatus: "paused",
+      warmupScore: null,
+      dailySent: 0,
+      dailyLimit: 20,
+    });
+    // Clean pool: no domainsError flag.
+    expect(parsed).not.toHaveProperty("domainsError");
+  });
+
+  it("empty pool emits an empty array, not an error flag", async () => {
+    domainsFixture = [];
+    await commandDomainsList({ json: true });
+
+    const stdout = stdoutChunks.join("");
+    const parsed = JSON.parse(stdout);
+    expect(parsed.domains).toEqual([]);
+    expect(parsed).not.toHaveProperty("domainsError");
+  });
+
+  it("flags domainsError when the pool is unreachable", async () => {
+    listDomainsThrows = new Error("pool offline");
+    await commandDomainsList({ json: true });
+
+    const stdout = stdoutChunks.join("");
+    const parsed = JSON.parse(stdout);
+    expect(parsed.domains).toEqual([]);
+    expect(parsed.domainsError).toBe(true);
+  });
+});
+
+describe("workspace list --json", () => {
+  const REGISTRY = {
+    default: "gtm",
+    workspaces: {
+      default: { home: "/home/default", port: 3030, createdAt: "" },
+      gtm: { home: "/home/gtm", port: 3031, createdAt: "2026-08-01T00:00:00.000Z" },
+    },
+  };
+  const ROWS: Array<[string, WorkspaceEntryLike]> = [
+    ["default", { home: "/home/default", port: 3030, createdAt: "" }],
+    ["gtm", { home: "/home/gtm", port: 3031, createdAt: "2026-08-01T00:00:00.000Z" }],
+  ];
+
+  beforeEach(() => {
+    workspaceRegistryFixture = REGISTRY;
+    workspaceRowsFixture = ROWS;
+    currentWorkspaceFixture = "gtm";
+  });
+
+  it("emits valid JSON with schemaVersion on stdout", async () => {
+    await commandWorkspaceList({ json: true });
+
+    const stdout = stdoutChunks.join("");
+    const parsed = JSON.parse(stdout);
+    expect(parsed).toHaveProperty("schemaVersion", 1);
+    expect(parsed.command).toBe("workspace list");
+    expect(parsed.workspaces).toHaveLength(2);
+  });
+
+  it("stdout has no ANSI codes", async () => {
+    await commandWorkspaceList({ json: true });
+
+    const stdout = stdoutChunks.join("");
+    expect(hasAnsiCodes(stdout)).toBe(false);
+  });
+
+  it("human output goes to stderr, stdout is only the JSON document", async () => {
+    await commandWorkspaceList({ json: true });
+
+    const stdout = stdoutChunks.join("");
+    const stderr = stderrChunks.join("");
+
+    expect(stdout.trim().split("\n")).toHaveLength(1);
+    expect(() => JSON.parse(stdout)).not.toThrow();
+
+    // Header + rows should be on stderr
+    expect(stderr).toContain("oneshot-gtm workspaces");
+    expect(stderr).toContain("/home/gtm");
+  });
+
+  it("pins the workspace shape, current and default flags", async () => {
+    await commandWorkspaceList({ json: true });
+
+    const stdout = stdoutChunks.join("");
+    const parsed = JSON.parse(stdout);
+    expect(parsed.current).toBe("gtm");
+    expect(parsed.default).toBe("gtm");
+    expect(parsed.workspaces[0]).toMatchObject({
+      name: "default",
+      port: 3030,
+      home: "/home/default",
+      isCurrent: false,
+      isDefault: false,
+    });
+    expect(parsed.workspaces[1]).toMatchObject({
+      name: "gtm",
+      port: 3031,
+      home: "/home/gtm",
+      isCurrent: true,
+      isDefault: true,
     });
   });
 });

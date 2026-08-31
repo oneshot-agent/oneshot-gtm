@@ -183,7 +183,8 @@ const workspace = program
 workspace
   .command("list")
   .description("Show every workspace, the current and the default")
-  .action(runOrFail(commandWorkspaceList));
+  .option("--json", "output as JSON")
+  .action(runOrFail((opts: { json?: boolean }) => commandWorkspaceList(opts)));
 workspace
   .command("create <name>")
   .description("Create an empty workspace (then: --workspace <name> init)")
@@ -286,7 +287,8 @@ const domains = program
 domains
   .command("list")
   .description("Show provisioned domains with pool status, warmth, and daily usage")
-  .action(runOrFail(commandDomainsList));
+  .option("--json", "output as JSON")
+  .action(runOrFail((opts: { json?: boolean }) => commandDomainsList(opts)));
 domains
   .command("resume <domain>")
   .description("Resume a paused sending domain (e.g. oneshotagents.com)")

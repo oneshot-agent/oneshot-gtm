@@ -50,7 +50,7 @@ The ICP filter currently judges each candidate cold — `icpFilter` in `packages
 
 ## Operations
 
-- [ ] **`--json` output on read-only commands** · M — `apps/cli/src/output.ts` is kleur-formatted prose and there is no `--json` flag anywhere in the CLI. The README already points scripted callers at `/api/measure/*` because the terminal has nothing machine-readable, which means booting a server to read your own ledger.
+- [x] **`--json` output on read-only commands** · M — `apps/cli/src/output.ts` is kleur-formatted prose and there is no `--json` flag anywhere in the CLI. The README already points scripted callers at `/api/measure/*` because the terminal has nothing machine-readable, which means booting a server to read your own ledger.
       _Done when:_ `doctor`, `find watch --once`, `find drain --dry-run`, `identities list`, `domains list` and `workspace list` accept `--json` and emit one parseable object on stdout with all human formatting and colour suppressed; a schema test pins each shape.
 - [ ] **Bulk CSV import** — `find import --csv <file> --play <name>` with column mapping, for cohorts you already paid Clay/Apollo to source.
 - [ ] **BYO sending domain** — send from a domain you already own over OneShot's transport, instead of one OneShot provisions. Connecting a Gmail/Workspace account is today's workaround.
