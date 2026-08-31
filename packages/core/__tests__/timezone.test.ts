@@ -74,6 +74,31 @@ describe("formatLocalEventTime", () => {
     );
   });
 
+  it("validates calendar dates, including years before 100", () => {
+    expect(formatLocalEventTime("0001-01-01", "UTC")).toBe("Monday, January 1");
+    expect(formatLocalEventTime("0004-02-29", "UTC")).toBe("Sunday, February 29");
+    for (const invalid of ["0001-02-29", "2026-02-29", "2026-04-31", "2026-13-01"]) {
+      expect(formatLocalEventTime(invalid, "UTC")).toBeNull();
+    }
+  });
+
+  it("validates every wall-clock time component", () => {
+    expect(formatLocalEventTime("2026-08-26T19:30:59", "UTC")).toBe(
+      "Wednesday, August 26, 7:30 PM",
+    );
+    expect(formatLocalEventTime("2026-08-26T19:30:59.999", "UTC")).toBe(
+      "Wednesday, August 26, 7:30 PM",
+    );
+    for (const invalid of [
+      "2026-08-26T24:00:00",
+      "2026-08-26T19:60:00",
+      "2026-08-26T19:30:60",
+      "2026-08-26T19:30:99",
+    ]) {
+      expect(formatLocalEventTime(invalid, "UTC")).toBeNull();
+    }
+  });
+
   it("returns null (not 'Invalid Date') for a non-timestamp", () => {
     for (const junk of ["", "   ", "sometime next week", "TBD"]) {
       expect(formatLocalEventTime(junk, "America/Los_Angeles")).toBeNull();

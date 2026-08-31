@@ -170,7 +170,7 @@ function namesForCalendarDate(
   monthLong: string;
   monthShort: string;
 } {
-  const at = new Date(Date.UTC(year, month - 1, day, 12));
+  const at = utcCalendarDate(year, month, day, 12);
   const long = partsOf(
     new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "long", month: "long" }),
     at,
@@ -210,8 +210,16 @@ function twelveHour(hour24: number, minute: number): string {
  */
 function isValidDate(year: number, month: number, day: number): boolean {
   if (month < 1 || month > 12 || day < 1) return false;
-  const d = new Date(Date.UTC(year, month - 1, day, 12));
+  const d = utcCalendarDate(year, month, day, 12);
   return d.getUTCFullYear() === year && d.getUTCMonth() === month - 1 && d.getUTCDate() === day;
+}
+
+/** Build a UTC calendar date without Date.UTC's special handling of years 0-99. */
+function utcCalendarDate(year: number, month: number, day: number, hour = 0): Date {
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
+  date.setUTCHours(hour, 0, 0, 0);
+  return date;
 }
 
 function wallClock(isoInstant: string, zone: string): WallClock | null {
@@ -242,7 +250,8 @@ function wallClock(isoInstant: string, zone: string): WallClock | null {
     if (!isValidDate(year, month, day)) return null;
     const h = Number(naive[4]);
     const min = Number(naive[5]);
-    if (h > 23 || min > 59) return null;
+    const sec = naive[6] === undefined ? 0 : Number(naive[6]);
+    if (h > 23 || min > 59 || sec > 59) return null;
     return {
       ...namesForCalendarDate(year, month, day),
       year,
