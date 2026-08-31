@@ -188,19 +188,22 @@ describe("commandFindWatch daemon", () => {
     nextOutcomes = [errored("show-hn"), ran("github-stars")];
     const done = commandFindWatch({ once: false, quiet: true });
 
-    // vi is a vitest global and this test is being run via bun test runner
-    // await vi.advanceTimersByTimeAsync(0);
-    // expect(calls.runDueTriggers).toBe(1);
-    // await vi.advanceTimersByTimeAsync(60_000);
-    // expect(calls.runDueTriggers).toBe(2);
-    // await vi.advanceTimersByTimeAsync(60_000);
-    // expect(calls.runDueTriggers).toBe(3);
+    vi.advanceTimersByTime(0);
+    await new Promise(process.nextTick);
+    expect(calls.runDueTriggers).toBe(1);
+    vi.advanceTimersByTime(60_000);
+    await new Promise(process.nextTick);
+    expect(calls.runDueTriggers).toBe(2);
+    vi.advanceTimersByTime(60_000);
+    await new Promise(process.nextTick);
+    expect(calls.runDueTriggers).toBe(3);
 
     // Call the loop's own SIGTERM handler rather than emitting the signal, so
     // the test never touches vitest's runner-level handlers.
     const handlers = process.listeners("SIGTERM");
     (handlers[handlers.length - 1] as () => void)();
-    // await vi.advanceTimersByTimeAsync(0);
+    vi.advanceTimersByTime(0);
+    await new Promise(process.nextTick);
 
     // Resolves — errors during a daemon tick never abort the loop.
     await expect(done).resolves.toBeUndefined();
