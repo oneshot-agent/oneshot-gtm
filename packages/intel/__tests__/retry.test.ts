@@ -312,7 +312,8 @@ describe("complete() retry integration", () => {
     });
 
     // Advance past the timeout
-    await vi.advanceTimersByTimeAsync(1100);
+    await vi.advanceTimersByTime(1100);
+    await new Promise(process.nextTick);
     // Then advance through retry delay
     await vi.runAllTimersAsync();
 
@@ -449,7 +450,8 @@ describe("complete() retry integration", () => {
 
     // Attempt 1's backoff is 500/2 + 0.5 * 250 = 375ms. One tick short of it,
     // the retry must not have fired yet.
-    await vi.advanceTimersByTimeAsync(374);
+    await vi.advanceTimersByTime(374);
+    await new Promise(process.nextTick);
     expect(attemptCount).toBe(1);
 
     await vi.runAllTimersAsync();
@@ -486,7 +488,8 @@ describe("complete() retry integration", () => {
     });
     const rejection = promise.catch((err) => err);
 
-    await vi.advanceTimersByTimeAsync(1100);
+    await vi.advanceTimersByTime(1100);
+    await new Promise(process.nextTick);
     await vi.runAllTimersAsync();
 
     const error = await rejection;
@@ -526,11 +529,13 @@ describe("complete() retry integration", () => {
     });
 
     // Advance past the old 90s default that would have aborted
-    await vi.advanceTimersByTimeAsync(95_000);
+    await vi.advanceTimersByTime(95_000);
+    await new Promise(process.nextTick);
     expect(attemptCount).toBe(1); // Still waiting on first attempt
 
     // Complete the slow response
-    await vi.advanceTimersByTimeAsync(10_000);
+    await vi.advanceTimersByTime(10_000);
+    await new Promise(process.nextTick);
     await vi.runAllTimersAsync();
 
     const result = await promise;

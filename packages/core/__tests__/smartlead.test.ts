@@ -109,7 +109,8 @@ describe("listSmartleadAccounts", () => {
     fetchMock.mockReturnValueOnce(new Promise(() => {}));
     const pending = listSmartleadAccounts(KEY);
     const settled = pending.catch((e: Error) => e);
-    await vi.advanceTimersByTimeAsync(31_000);
+    await vi.advanceTimersByTime(31_000);
+    await new Promise(process.nextTick);
     const err = await settled;
     expect((err as Error).message).toMatch(/deadline exceeded/);
     expect((err as Error).message).not.toContain(KEY);
