@@ -80,7 +80,7 @@ bun run cli -- find drain podcast-guest --dry-run  # preview approved /queue row
 bun run cli -- cadence advance                     # daily tick: poll inbox, fire follow-ups
 ```
 
-49 commands — thirteen groups, plus `init`, `doctor` and `ui` at the top level. `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
+50 commands — thirteen groups, plus `init`, `doctor` and `ui` at the top level. `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
 
 | Group                    | Commands                                                                                                                                                                       |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -90,7 +90,7 @@ bun run cli -- cadence advance                     # daily tick: poll inbox, fir
 | `identities`             | `list` · `add` · `remove <id>` — the sender pool                                                                                                                               |
 | `smartlead`              | `connect` — API key + pick Smartlead mailboxes into the pool (send-only)                                                                                                       |
 | `domains`                | `list` · `pause <domain>` · `resume <domain>` — provisioned OneShot domains                                                                                                    |
-| `find`                   | `watch` · `drain <play>` · `enrich-linkedin` — `--fail-on-empty` makes `watch --once` and `drain` [exit 2 on a run that produced nothing](#background-monitoring-as-a-service) |
+| `find`                   | `watch` · `drain <play>` · `enrich-linkedin` · `research-prospects` — `--fail-on-empty` makes `watch --once` and `drain` [exit 2 on a run that produced nothing](#background-monitoring-as-a-service) |
 | `motion`                 | `post-funding` `concierge` `demo-no-show` `competitor-switch` `hiring-signal` `podcast-guest` — each takes `--target <file>`; `breakup-revive` reads the ledger                |
 | `cadence`                | `advance` — poll inbound, fire due steps                                                                                                                                       |
 | `discover`               | `icp interview-prep` · `icp synthesize` · `pmf classify` · `pmf survey` · `pmf survey-collect`                                                                                 |
@@ -313,7 +313,7 @@ Add a OneShot domain and mailbox from `/setup` or `identities add` — pick a pr
 
 ```
 apps/
-  cli/        49-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
+  cli/        50-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
   server/     Bun.serve + SSE; tsdown bundle published as `oneshot-gtm-server`
   web/        Vite + React 19 + TanStack + Base UI — 9 pages, run form, strategist dock, privacy mode
 packages/

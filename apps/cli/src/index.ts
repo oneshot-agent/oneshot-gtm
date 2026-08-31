@@ -62,6 +62,7 @@ import {
   commandWorkspaceUse,
 } from "./commands/workspace.ts";
 import { commandEnrichLinkedIn } from "./commands/enrich-linkedin.ts";
+import { commandResearchProspects } from "./commands/research-prospects.ts";
 import { commandFindDrain, commandFindWatch } from "./commands/find.ts";
 import { commandInstallService } from "./commands/install-service.ts";
 import {
@@ -401,6 +402,44 @@ find
           skipHandles: opts.skipHandles,
           ...(opts.limit ? { limit: opts.limit } : {}),
           ...(opts.play ? { play: opts.play } : {}),
+          ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
+        });
+      },
+    ),
+  );
+
+find
+  .command("research-prospects")
+  // Defaulted like enrich-linkedin, and lower: each row is a ~$0.05 / 2-5 min
+  // call, so an unflagged run must not quietly bill for hundreds.
+  .option(
+    "--limit <n>",
+    "max prospects to research (default 250)",
+    (v) => Number.parseInt(v, 10),
+    250,
+  )
+  .option(
+    "--scope <list>",
+    "comma-separated: active,replied,unjudged,all (default active,replied,unjudged)",
+  )
+  .option("--concurrency <n>", "parallel research calls (default 3)", (v) => Number.parseInt(v, 10))
+  .option("--refresh", "re-research prospects that already have a dossier", false)
+  .option("--dry-run", "list candidates and estimated cost; research nothing", false)
+  .description("Backfill research dossiers onto existing prospects (~$0.05 each)")
+  .action(
+    runOrFail(
+      async (opts: {
+        limit?: number;
+        scope?: string;
+        concurrency?: number;
+        refresh: boolean;
+        dryRun: boolean;
+      }) => {
+        await commandResearchProspects({
+          dryRun: opts.dryRun,
+          refresh: opts.refresh,
+          ...(opts.limit ? { limit: opts.limit } : {}),
+          ...(opts.scope ? { scope: opts.scope } : {}),
           ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
         });
       },

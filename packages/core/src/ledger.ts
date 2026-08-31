@@ -33,6 +33,19 @@ export const ENRICH_FAILURE_TTL_MS = 3 * 24 * 3600 * 1000;
  */
 export const ENRICH_DEADLINE_MS = 120_000;
 
+/**
+ * How long a SUCCESSFUL person dossier (deepResearchPerson) is reused. Longer
+ * than the enrich TTL: a person's org history and profiles change slowly, and
+ * the call costs 10x as much (~$0.05 vs ~$0.005).
+ */
+export const RESEARCH_CACHE_TTL_MS = 90 * 24 * 3600 * 1000;
+/**
+ * Hard ceiling on one deepResearchPerson call. Its own doc comment puts it at
+ * 2-5 minutes, so this sits above that rather than at the enrich ceiling — the
+ * call is legitimately slow, and racing it at 120s would abandon work we paid for.
+ */
+export const RESEARCH_DEADLINE_MS = 360_000;
+
 /** How long a FOUND LinkedIn URL is reused. Profile URLs effectively never change. */
 export const LINKEDIN_CACHE_TTL_MS = 30 * 24 * 3600 * 1000;
 /**
@@ -1552,11 +1565,37 @@ export class Ledger {
    * Record the person-level ICP verdict for a prospect. Overwrites — a
    * re-audit with better data (a real title instead of a stale event bio)
    * must be able to flip an earlier call in either direction.
+   *
+   * `unclear` is a real, persisted verdict: qualifyPerson is 4-state, and
+   * writing its ambiguity as NULL made "we looked and couldn't tell"
+   * indistinguishable from "never judged". It is PROVISIONAL, not settled —
+   * _qualify.ts escalates `unclear` rather than dropping a candidate, so a
+   * re-audit re-judges those rows (picking up role text that arrived since)
+   * and skips only pass/reject. Suppression is unaffected — the cadence gate
+   * tests `=== "reject"`, so `unclear` fails open exactly as NULL did.
+   * `transient` is never persisted; it stays a retry signal.
    */
-  setProspectIcpVerdict(id: number, verdict: "pass" | "reject", reason?: string | null): void {
+  setProspectIcpVerdict(
+    id: number,
+    verdict: "pass" | "reject" | "unclear",
+    reason?: string | null,
+  ): void {
     this.db
       .prepare("UPDATE prospects SET icp_verdict = ?, icp_verdict_reason = ? WHERE id = ?")
       .run(verdict, reason ?? null, id);
+  }
+
+  /**
+   * Persist a research dossier onto an existing prospect.
+   *
+   * Deliberately NOT part of updateProspectIdentity: that method's column
+   * allowlist is write-once (COALESCE(NULLIF(col,''), ?)), which is right for
+   * identity fields but wrong here — re-researching a person must be able to
+   * refresh a stale dossier. Plain overwrite; callers decide whether to skip
+   * rows that already have one. Pass null to clear.
+   */
+  setProspectDossier(id: number, dossier: string | null): void {
+    this.db.prepare("UPDATE prospects SET dossier_json = ? WHERE id = ?").run(dossier, id);
   }
 
   /**
@@ -1594,6 +1633,82 @@ export class Ledger {
       email: string | null;
       source: string | null;
       source_profile_url: string | null;
+    }>;
+  }
+
+  /**
+   * Prospects worth buying a research dossier for, by scope:
+   *
+   * - `active`   — a cadence is still running, so a dossier changes what gets sent
+   * - `replied`  — a live conversation, where reply drafting reads the dossier
+   * - `unjudged` — no ICP verdict AND a profile URL to research, so the gate can judge
+   * - `all`      — every prospect
+   *
+   * Scopes union. Rows that already hold a dossier are excluded unless
+   * `includeResearched`, so an interrupted run resumes instead of re-buying.
+   * A row needs a social URL or an email — deepResearchPerson has nothing to
+   * chase otherwise.
+   */
+  listProspectsForResearch(
+    opts: {
+      scopes?: ReadonlyArray<"active" | "replied" | "unjudged" | "all">;
+      includeResearched?: boolean;
+      limit?: number;
+    } = {},
+  ): Array<{
+    id: number;
+    name: string | null;
+    company: string | null;
+    email: string | null;
+    source: string | null;
+    source_profile_url: string | null;
+    linkedin_url: string | null;
+  }> {
+    const scopes = opts.scopes?.length ? opts.scopes : (["active", "replied", "unjudged"] as const);
+    const any: string[] = [];
+    if (scopes.includes("all")) {
+      any.push("1 = 1");
+    } else {
+      if (scopes.includes("active")) {
+        any.push(
+          "EXISTS(SELECT 1 FROM cadence_state cs WHERE cs.prospect_id = p.id AND cs.status = 'active')",
+        );
+      }
+      if (scopes.includes("replied")) {
+        any.push("EXISTS(SELECT 1 FROM inbox_replies ir WHERE ir.prospect_id = p.id)");
+      }
+      if (scopes.includes("unjudged")) {
+        any.push(
+          "(p.icp_verdict IS NULL AND COALESCE(NULLIF(TRIM(p.source_profile_url), ''), NULLIF(TRIM(p.linkedin_url), '')) IS NOT NULL)",
+        );
+      }
+    }
+    if (any.length === 0) return [];
+
+    const where = [`(${any.join(" OR ")})`];
+    if (!opts.includeResearched)
+      where.push("(p.dossier_json IS NULL OR TRIM(p.dossier_json) = '')");
+    // Something for deepResearchPerson to key on.
+    where.push(
+      "(COALESCE(NULLIF(TRIM(p.source_profile_url), ''), NULLIF(TRIM(p.linkedin_url), '')) IS NOT NULL OR (p.email IS NOT NULL AND TRIM(p.email) != ''))",
+    );
+
+    return this.db
+      .query(
+        `SELECT p.id, p.name, p.company, p.email, p.source, p.source_profile_url, p.linkedin_url
+           FROM prospects p
+          WHERE ${where.join(" AND ")}
+          ORDER BY p.id DESC
+          LIMIT ?`,
+      )
+      .all(opts.limit ?? 100_000) as Array<{
+      id: number;
+      name: string | null;
+      company: string | null;
+      email: string | null;
+      source: string | null;
+      source_profile_url: string | null;
+      linkedin_url: string | null;
     }>;
   }
 

@@ -32,7 +32,8 @@ vi.mock("@oneshot-gtm/plays", async () => {
   return { ...actual, safeEnrich: safeEnrichMock };
 });
 
-const { gatherReplyContext, siteDomainFor } = await import("../src/api/_reply-research.ts");
+const { gatherReplyContext, profileUrlFor, siteDomainFor } =
+  await import("../src/api/_reply-research.ts");
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -158,6 +159,115 @@ describe("gatherReplyContext", () => {
       threadKey: "t1",
     });
     expect(ctx.threadSent).toEqual([{ body: "already replied once", sentAt: "2026-08-20" }]);
+  });
+});
+
+describe("dud-domain senders fall back to the finder's profile URL", () => {
+  // A stargazer replies from gmail: no company site to read, nothing for
+  // enrich to key on. Before this, the drafter got zero facts about them and
+  // recycled whatever the intro email had asserted.
+  it("reads source_profile_url when the email domain is a dud", async () => {
+    ledger.getProspectById.mockReturnValue({
+      dossier_json: null,
+      source_profile_url: "https://github.com/rishibanota",
+    });
+    webReadMock.mockResolvedValue({
+      result: { markdown: "remembrandt — local agent memory", cost: 0.01 },
+      receiptId: 43,
+    });
+
+    const ctx = await gatherReplyContext({
+      fromEmail: "someone@gmail.com",
+      prospectId: 647,
+      threadKey: null,
+    });
+
+    expect(webReadMock).toHaveBeenCalledWith(
+      { url: "https://github.com/rishibanota" },
+      expect.objectContaining({ playName: "inbox-reply" }),
+    );
+    expect(ctx.dossier).toContain("PROFILE (https://github.com/rishibanota)");
+    expect(ctx.dossier).toContain("remembrandt");
+    expect(ctx.costUsd).toBe(0.01);
+    // The dud domain still buys no enrich — this is one page read, not a tier.
+    expect(safeEnrichMock).not.toHaveBeenCalled();
+  });
+
+  it("spends nothing when a dud-domain prospect has no profile URL", async () => {
+    ledger.getProspectById.mockReturnValue({ dossier_json: null, source_profile_url: null });
+    const ctx = await gatherReplyContext({
+      fromEmail: "someone@gmail.com",
+      prospectId: 647,
+      threadKey: null,
+    });
+    expect(webReadMock).not.toHaveBeenCalled();
+    expect(ctx.dossier).toBeNull();
+    expect(ctx.costUsd).toBe(0);
+  });
+
+  it("skips the profile read for non-human inbound (skipPaid)", async () => {
+    ledger.getProspectById.mockReturnValue({
+      dossier_json: null,
+      source_profile_url: "https://github.com/rishibanota",
+    });
+    const ctx = await gatherReplyContext({
+      fromEmail: "someone@gmail.com",
+      prospectId: 647,
+      threadKey: null,
+      skipPaid: true,
+    });
+    expect(webReadMock).not.toHaveBeenCalled();
+    expect(ctx.dossier).toBeNull();
+  });
+
+  it("prefers a stored dossier over the profile read", async () => {
+    ledger.getProspectById.mockReturnValue({
+      // Carries real signal (a title), so it is a genuine Tier-1 hit — the
+      // shape the demo seeder and the research backfill both write.
+      dossier_json: '{"title":"CTO","company":"Acme","hook":"already known"}',
+      source_profile_url: "https://github.com/rishibanota",
+    });
+    const ctx = await gatherReplyContext({
+      fromEmail: "someone@gmail.com",
+      prospectId: 647,
+      threadKey: null,
+    });
+    expect(webReadMock).not.toHaveBeenCalled();
+    expect(ctx.dossier).toContain("already known");
+  });
+
+  it("a CONTENTLESS stored dossier does not block the profile read", async () => {
+    // A failed enrich serializes to a non-empty string. Treating that as a
+    // Tier-1 hit would hand the drafter no facts AND skip the tier that has some.
+    ledger.getProspectById.mockReturnValue({
+      dossier_json: JSON.stringify({ status: "failed", profile: null, cost: 0 }),
+      source_profile_url: "https://github.com/rishibanota",
+    });
+    webReadMock.mockResolvedValue({
+      result: { markdown: "remembrandt — local agent memory", cost: 0.01 },
+      receiptId: 43,
+    });
+
+    const ctx = await gatherReplyContext({
+      fromEmail: "someone@gmail.com",
+      prospectId: 647,
+      threadKey: null,
+    });
+
+    expect(webReadMock).toHaveBeenCalled();
+    expect(ctx.dossier).toContain("remembrandt");
+    expect(ctx.dossier).not.toContain("failed");
+  });
+
+  it("profileUrlFor rejects anything that isn't a fetchable profile page", () => {
+    expect(profileUrlFor("https://github.com/rishibanota")).toBe("https://github.com/rishibanota");
+    expect(profileUrlFor(null)).toBeNull();
+    expect(profileUrlFor("   ")).toBeNull();
+    expect(profileUrlFor("rishibanota")).toBeNull();
+    expect(profileUrlFor("mailto:a@b.com")).toBeNull();
+    // A bare host is the finder's fallback, not a person's profile.
+    expect(profileUrlFor("https://github.com")).toBeNull();
+    expect(profileUrlFor("https://github.com/")).toBeNull();
   });
 });
 
