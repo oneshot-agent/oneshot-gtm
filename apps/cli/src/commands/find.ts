@@ -1,5 +1,5 @@
 import { drainQueue, nextSleepMs, runDueTriggers, type FinderResult } from "@oneshot-gtm/find";
-import { bail, c, fail, header, note, ok } from "../output.ts";
+import { bail, bailEmpty, c, fail, header, note, ok } from "../output.ts";
 
 export async function commandFindDrain(opts: {
   play: string;
@@ -7,6 +7,7 @@ export async function commandFindDrain(opts: {
   dryRun: boolean;
   senderCohort?: string;
   offer?: string;
+  failOnEmpty?: boolean;
 }): Promise<void> {
   header(`find drain ${opts.play} ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
   const result = await drainQueue({
@@ -16,17 +17,32 @@ export async function commandFindDrain(opts: {
     ...(opts.senderCohort ? { senderCohort: opts.senderCohort } : {}),
     ...(opts.offer ? { freeForCohortOffer: opts.offer } : {}),
   });
+
+  // Errors beat emptiness: a drain with row errors (or an invalid play) exits 1,
+  // not the 0 a clean drain returns nor the 2 an idle drain under --fail-on-empty
+  // returns. Check this before checking drained === 0, so an invalid play with no
+  // approved rows exits 1 (unsupported-play error) instead of 2 (empty drain).
+  if (result.errors.length > 0) {
+    for (const e of result.errors) fail(`#${e.id}: ${e.message}`);
+    if (opts.failOnEmpty) bail(`find drain ${opts.play}: ${result.errors.length} row(s) errored`);
+    // Without the flag, a drain with errors still exits 0 (the legacy behavior).
+  }
+
   if (result.drained === 0) {
     note(`No approved rows for ${c.cyan(opts.play)}. Approve some in the dashboard at /queue.`);
+    // Nothing was claimed, and we already checked that there were no errors, so
+    // this is the idle case, never the broken one.
+    if (opts.failOnEmpty) bailEmpty(`find drain ${opts.play}: 0 rows drained`);
     return;
   }
   ok(`drained ${result.drained} row(s); ${result.sent} ${opts.dryRun ? "would be sent" : "sent"}.`);
-  if (result.errors.length > 0) {
-    for (const e of result.errors) fail(`#${e.id}: ${e.message}`);
-  }
 }
 
-export async function commandFindWatch(opts: { once: boolean; quiet: boolean }): Promise<void> {
+export async function commandFindWatch(opts: {
+  once: boolean;
+  quiet: boolean;
+  failOnEmpty?: boolean;
+}): Promise<void> {
   header(`find watch ${opts.once ? c.dim("(--once)") : c.dim("(daemon)")}`);
   let cancelled = false;
   let wake: (() => void) | null = null;
@@ -38,22 +54,31 @@ export async function commandFindWatch(opts: { once: boolean; quiet: boolean }):
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 
-  // Errors in the most recent tick. Only --once reads it; the daemon reports
+  // State of the most recent tick. Only --once reads it; the daemon reports
   // each error and keeps polling (one flaky finder must not stop the others).
   let errored = 0;
+  let queued = 0;
+  let firedNames: string[] = [];
   try {
     for (;;) {
       const outcomes = await runDueTriggers();
       errored = 0;
+      queued = 0;
+      firedNames = [];
       for (const o of outcomes) {
         if (!o.fired) {
           if (!opts.quiet) note(`${o.name}: skipped (next due in ${humanMs(o.nextDueInMs)})`);
           continue;
         }
+        firedNames.push(o.name);
         if (o.error !== undefined) {
           errored++;
           fail(`${o.name}: error — ${o.error}`);
         } else if (o.result) {
+          // `enqueued`, not `candidates`: the question --fail-on-empty answers
+          // is "did anything land in the queue", and a run whose every hit was
+          // a duplicate or off-ICP left the ledger exactly as it found it.
+          queued += o.result.enqueued;
           printSummaryLine(o.name, o.result);
         }
       }
@@ -78,6 +103,18 @@ export async function commandFindWatch(opts: { once: boolean; quiet: boolean }):
   // a signal, not by a bad tick.
   if (opts.once && errored > 0) {
     bail(`${errored} due trigger(s) errored`);
+  }
+
+  // Opt-in second signal for the same caller: a poll that ran cleanly but
+  // queued nothing exits 2, so cron can tell a dry run from a productive one
+  // without reading the ledger. The error check above runs first on purpose —
+  // a broken run reports as broken (1) even though it was also empty.
+  if (opts.once && opts.failOnEmpty && queued === 0) {
+    bailEmpty(
+      `find watch --once: 0 candidates queued (${
+        firedNames.length > 0 ? `triggers: ${firedNames.join(", ")}` : "no triggers due"
+      })`,
+    );
   }
 }
 

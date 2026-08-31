@@ -82,22 +82,22 @@ bun run cli -- cadence advance                     # daily tick: poll inbox, fir
 
 49 commands — thirteen groups, plus `init`, `doctor` and `ui` at the top level. `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
 
-| Group                    | Commands                                                                                                                                                        |
-| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `init` · `doctor` · `ui` | setup wizard · health check · open the dashboard                                                                                                                |
-| `config`                 | `llm` · `founder` · `keys` · `telemetry on\|off`                                                                                                                |
-| `gmail`                  | `auth` (OAuth a sending account) · `placement` (inbox-placement canary)                                                                                         |
-| `identities`             | `list` · `add` · `remove <id>` — the sender pool                                                                                                                |
-| `smartlead`              | `connect` — API key + pick Smartlead mailboxes into the pool (send-only)                                                                                        |
-| `domains`                | `list` · `pause <domain>` · `resume <domain>` — provisioned OneShot domains                                                                                     |
-| `find`                   | `watch` · `drain <play>` · `enrich-linkedin`                                                                                                                    |
-| `motion`                 | `post-funding` `concierge` `demo-no-show` `competitor-switch` `hiring-signal` `podcast-guest` — each takes `--target <file>`; `breakup-revive` reads the ledger |
-| `cadence`                | `advance` — poll inbound, fire due steps                                                                                                                        |
-| `discover`               | `icp interview-prep` · `icp synthesize` · `pmf classify` · `pmf survey` · `pmf survey-collect`                                                                  |
-| `intel`                  | `advise` · `personalize` · `triage-replies` · `weekly-review`                                                                                                   |
-| `handoff`                | `readiness` · `templatize` · `first-ae`                                                                                                                         |
-| `demo`                   | `seed` · `ui` · `reset` — a fictional install for screenshots and video                                                                                         |
-| `workspace`              | `list` · `create <name>` · `use <name>` · `current` · `path <name>` · `remove <name>` — one isolated install per product; `--workspace <name>` on any command   |
+| Group                    | Commands                                                                                                                                                                       |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `init` · `doctor` · `ui` | setup wizard · health check · open the dashboard                                                                                                                               |
+| `config`                 | `llm` · `founder` · `keys` · `telemetry on\|off`                                                                                                                               |
+| `gmail`                  | `auth` (OAuth a sending account) · `placement` (inbox-placement canary)                                                                                                        |
+| `identities`             | `list` · `add` · `remove <id>` — the sender pool                                                                                                                               |
+| `smartlead`              | `connect` — API key + pick Smartlead mailboxes into the pool (send-only)                                                                                                       |
+| `domains`                | `list` · `pause <domain>` · `resume <domain>` — provisioned OneShot domains                                                                                                    |
+| `find`                   | `watch` · `drain <play>` · `enrich-linkedin` — `--fail-on-empty` makes `watch --once` and `drain` [exit 2 on a run that produced nothing](#background-monitoring-as-a-service) |
+| `motion`                 | `post-funding` `concierge` `demo-no-show` `competitor-switch` `hiring-signal` `podcast-guest` — each takes `--target <file>`; `breakup-revive` reads the ledger                |
+| `cadence`                | `advance` — poll inbound, fire due steps                                                                                                                                       |
+| `discover`               | `icp interview-prep` · `icp synthesize` · `pmf classify` · `pmf survey` · `pmf survey-collect`                                                                                 |
+| `intel`                  | `advise` · `personalize` · `triage-replies` · `weekly-review`                                                                                                                  |
+| `handoff`                | `readiness` · `templatize` · `first-ae`                                                                                                                                        |
+| `demo`                   | `seed` · `ui` · `reset` — a fictional install for screenshots and video                                                                                                        |
+| `workspace`              | `list` · `create <name>` · `use <name>` · `current` · `path <name>` · `remove <name>` — one isolated install per product; `--workspace <name>` on any command                  |
 
 Spend, CAC, RoCS and outcome logging deliberately have no CLI group — they live on the dashboard's Measure and Cadences pages so there's one source of truth. The `/api/measure/*` routes are there if you'd rather script them.
 
@@ -233,6 +233,25 @@ schtasks /Delete /TN "oneshot-gtm find watch" /F
 ```
 
 The classic cron route works the same way on any platform: `*/15 * * * * ONESHOT_GTM_HOME=$HOME/.oneshot-gtm /path/to/bun /path/to/apps/cli/src/main.ts find watch --once --quiet`.
+
+**Exit codes for scheduled runs.** `find watch --once` exits `1` when a due trigger errored. Add `--fail-on-empty` and a run that worked but produced nothing exits `2` instead of `0`, with one line on stderr naming the triggers and the zero count — enough for a cron wrapper to tell a dry run from a productive one without reading the ledger. `find drain <play>` takes the same flag. Both are opt-in: without it, exit codes are exactly what they were.
+
+|       | `find watch --once`                                | `find drain <play>`                                     |
+| ----- | -------------------------------------------------- | ------------------------------------------------------- |
+| **0** | candidates queued, or `--fail-on-empty` not passed | rows drained, or `--fail-on-empty` not passed           |
+| **1** | a due trigger errored (with or without the flag)   | with the flag: a row errored, or the drain itself threw |
+| **2** | with the flag: ran clean, queued nothing           | with the flag: no approved rows to drain                |
+
+Errors win over emptiness: a run that both errored and produced nothing exits `1`, not `2`. "Queued nothing" counts candidates that reached the queue, not raw hits scanned — a poll whose every hit was a duplicate or off-ICP left the ledger untouched and reads as empty. `--fail-on-empty` needs `--once`; on the daemon (which never ends on its own) it's rejected rather than ignored.
+
+```bash
+oneshot-gtm find watch --once --quiet --fail-on-empty
+case $? in
+  0) ;;                                  # candidates queued
+  2) echo "nothing found this tick" ;;   # idle, not broken
+  *) echo "watch failed" >&2 ;;
+esac
+```
 
 ### The plays
 
