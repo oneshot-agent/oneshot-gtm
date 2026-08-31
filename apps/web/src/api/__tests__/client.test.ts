@@ -3,6 +3,12 @@ import { api } from "../client";
 
 const originalFetch = global.fetch;
 
+// vi.fn() is a Mock, not the full `typeof fetch` (which carries `preconnect`),
+// so assigning it to global.fetch fails typecheck. Cast in one place.
+function mockFetch(response: Partial<Response>): void {
+  global.fetch = vi.fn().mockResolvedValue(response) as unknown as typeof fetch;
+}
+
 describe("api client getJson handling", () => {
   afterEach(() => {
     global.fetch = originalFetch;
@@ -10,7 +16,7 @@ describe("api client getJson handling", () => {
   });
 
   it("surfaces JSON { error } body on 409", async () => {
-    global.fetch = vi.fn().mockResolvedValue({
+    mockFetch({
       ok: false,
       status: 409,
       statusText: "Conflict",
@@ -21,7 +27,7 @@ describe("api client getJson handling", () => {
   });
 
   it("falls back to status string on non-JSON body", async () => {
-    global.fetch = vi.fn().mockResolvedValue({
+    mockFetch({
       ok: false,
       status: 400,
       statusText: "Bad Request",
@@ -32,7 +38,7 @@ describe("api client getJson handling", () => {
   });
 
   it("falls back to status string on empty body", async () => {
-    global.fetch = vi.fn().mockResolvedValue({
+    mockFetch({
       ok: false,
       status: 401,
       statusText: "Unauthorized",
@@ -43,7 +49,7 @@ describe("api client getJson handling", () => {
   });
 
   it("falls back to status string on network-like failure without valid JSON", async () => {
-    global.fetch = vi.fn().mockResolvedValue({
+    mockFetch({
       ok: false,
       status: 502,
       statusText: "Bad Gateway",
