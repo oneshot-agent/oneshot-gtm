@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const qualifyPersonMock = vi.fn(async () => ({ verdict: "pass" as const, reason: "stub" }));
+
 interface QueueInput {
   playName: string;
   payload: Record<string, string>;
@@ -27,10 +29,16 @@ vi.mock("@oneshot-gtm/core", () => ({
   logEvent: () => {},
 }));
 
+vi.mock("../src/_filter.ts", () => ({
+  resolveIcp: () => null,
+  qualifyPerson: qualifyPersonMock,
+}));
+
 const { importCsv, prepareCsvImport } = await import("../src/csv-import.ts");
 
 beforeEach(() => {
   queue = [];
+  qualifyPersonMock.mockClear();
 });
 
 describe("bulk CSV import", () => {
@@ -109,5 +117,37 @@ describe("bulk CSV import", () => {
 
     expect(result).toMatchObject({ imported: 1, skipped: 1, errors: [] });
     expect(queue).toHaveLength(1);
+    expect(qualifyPersonMock).not.toHaveBeenCalled();
+  });
+
+  it("simulates within-file dedupe during a dry run", async () => {
+    const result = await importCsv({
+      playName: "profile-intro",
+      text: [
+        "email,name,company,title",
+        "same@example.test,First,Acme,Founder",
+        "same@example.test,Second,Acme,Founder",
+      ].join("\n"),
+      dryRun: true,
+    });
+
+    expect(result).toMatchObject({ imported: 1, skipped: 1, rowCount: 2 });
+    expect(queue).toHaveLength(0);
+    expect(qualifyPersonMock).not.toHaveBeenCalled();
+  });
+
+  it("limits each invocation to 100 source rows", async () => {
+    const rows = Array.from(
+      { length: 101 },
+      (_, index) => `person-${index}@example.test,Person ${index},Acme,Founder`,
+    );
+    const result = await importCsv({
+      playName: "profile-intro",
+      text: ["email,name,company,title", ...rows].join("\n"),
+    });
+
+    expect(result).toMatchObject({ imported: 100, skipped: 0, rowCount: 100 });
+    expect(queue).toHaveLength(100);
+    expect(qualifyPersonMock).toHaveBeenCalledTimes(100);
   });
 });

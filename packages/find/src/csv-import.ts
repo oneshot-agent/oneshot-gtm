@@ -17,6 +17,9 @@ export interface CsvImportResult {
   errors: CsvImportError[];
 }
 
+/** Maximum number of source rows handled by one invocation. */
+export const CSV_IMPORT_BATCH_LIMIT = 100;
+
 export interface ParsedCsvImport {
   headers: string[];
   mapping: CsvColumnMapping;
@@ -143,8 +146,9 @@ export async function importCsv(input: {
   ) as Partial<Record<CsvImportField, number>>;
 
   const admitted: Array<{ row: number; payload: Record<string, string>; email: string }> = [];
-  for (let i = 0; i < prepared.rows.length; i++) {
-    const values = prepared.rows[i]!;
+  const batch = prepared.rows.slice(0, CSV_IMPORT_BATCH_LIMIT);
+  for (let i = 0; i < batch.length; i++) {
+    const values = batch[i]!;
     if (values.every((v) => v.trim() === "")) {
       result.skipped++;
       result.errors.push({ row: i + 2, message: "empty row" });
@@ -176,9 +180,34 @@ export async function importCsv(input: {
     admitted.push({ row: i + 2, payload, email });
   }
 
+  // Check the persisted queue first, then remember candidates admitted during
+  // this invocation. The local set gives dry runs the same within-file dedupe
+  // behavior that enqueueTarget provides to a live run.
+  const unique: typeof admitted = [];
+  const seen = new Set<string>();
+  for (const candidate of admitted) {
+    const dedupeKey = `email:${candidate.email}`;
+    if (
+      seen.has(dedupeKey) ||
+      isDuplicate({ playName: input.playName, dedupeKey, prospectEmail: candidate.email })
+    ) {
+      result.skipped++;
+      continue;
+    }
+    seen.add(dedupeKey);
+    unique.push(candidate);
+  }
+
+  // A dry run is deliberately side-effect and spend free. Dedupe is simulated
+  // above, but the potentially paid person classifier is never invoked.
+  if (input.dryRun) {
+    result.imported = unique.length;
+    return { ...result, mapping: prepared.mapping, rowCount: batch.length };
+  }
+
   const icp = resolveIcp();
   const ledger = getLedger();
-  for (const candidate of admitted) {
+  for (const candidate of unique) {
     const verdict = await qualifyPerson({
       icp,
       person: {
@@ -196,14 +225,6 @@ export async function importCsv(input: {
       continue;
     }
     const dedupeKey = `email:${candidate.email}`;
-    if (isDuplicate({ playName: input.playName, dedupeKey, prospectEmail: candidate.email })) {
-      result.skipped++;
-      continue;
-    }
-    if (input.dryRun) {
-      result.imported++;
-      continue;
-    }
     const id = ledger.enqueueTarget({
       playName: input.playName,
       payload: candidate.payload,
@@ -213,5 +234,5 @@ export async function importCsv(input: {
     if (id == null) result.skipped++;
     else result.imported++;
   }
-  return { ...result, mapping: prepared.mapping, rowCount: prepared.rows.length };
+  return { ...result, mapping: prepared.mapping, rowCount: batch.length };
 }
