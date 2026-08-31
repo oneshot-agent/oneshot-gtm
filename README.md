@@ -82,22 +82,22 @@ bun run cli -- cadence advance                     # daily tick: poll inbox, fir
 
 50 commands — thirteen groups, plus `init`, `doctor` and `ui` at the top level. `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
 
-| Group                    | Commands                                                                                                                                                                       |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `init` · `doctor` · `ui` | setup wizard · health check · open the dashboard                                                                                                                               |
-| `config`                 | `llm` · `founder` · `keys` · `telemetry on\|off`                                                                                                                               |
-| `gmail`                  | `auth` (OAuth a sending account) · `placement` (inbox-placement canary)                                                                                                        |
-| `identities`             | `list` · `add` · `remove <id>` — the sender pool                                                                                                                               |
-| `smartlead`              | `connect` — API key + pick Smartlead mailboxes into the pool (send-only)                                                                                                       |
-| `domains`                | `list` · `pause <domain>` · `resume <domain>` — provisioned OneShot domains                                                                                                    |
+| Group                    | Commands                                                                                                                                                                                              |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `init` · `doctor` · `ui` | setup wizard · health check · open the dashboard                                                                                                                                                      |
+| `config`                 | `llm` · `founder` · `keys` · `telemetry on\|off`                                                                                                                                                      |
+| `gmail`                  | `auth` (OAuth a sending account) · `placement` (inbox-placement canary)                                                                                                                               |
+| `identities`             | `list` · `add` · `remove <id>` — the sender pool                                                                                                                                                      |
+| `smartlead`              | `connect` — API key + pick Smartlead mailboxes into the pool (send-only)                                                                                                                              |
+| `domains`                | `list` · `pause <domain>` · `resume <domain>` — provisioned OneShot domains                                                                                                                           |
 | `find`                   | `watch` · `drain <play>` · `enrich-linkedin` · `research-prospects` — `--fail-on-empty` makes `watch --once` and `drain` [exit 2 on a run that produced nothing](#background-monitoring-as-a-service) |
-| `motion`                 | `post-funding` `concierge` `demo-no-show` `competitor-switch` `hiring-signal` `podcast-guest` — each takes `--target <file>`; `breakup-revive` reads the ledger                |
-| `cadence`                | `advance` — poll inbound, fire due steps                                                                                                                                       |
-| `discover`               | `icp interview-prep` · `icp synthesize` · `pmf classify` · `pmf survey` · `pmf survey-collect`                                                                                 |
-| `intel`                  | `advise` · `personalize` · `triage-replies` · `weekly-review`                                                                                                                  |
-| `handoff`                | `readiness` · `templatize` · `first-ae`                                                                                                                                        |
-| `demo`                   | `seed` · `ui` · `reset` — a fictional install for screenshots and video                                                                                                        |
-| `workspace`              | `list` · `create <name>` · `use <name>` · `current` · `path <name>` · `remove <name>` — one isolated install per product; `--workspace <name>` on any command                  |
+| `motion`                 | `post-funding` `concierge` `demo-no-show` `competitor-switch` `hiring-signal` `podcast-guest` — each takes `--target <file>`; `breakup-revive` reads the ledger                                       |
+| `cadence`                | `advance` — poll inbound, fire due steps                                                                                                                                                              |
+| `discover`               | `icp interview-prep` · `icp synthesize` · `pmf classify` · `pmf survey` · `pmf survey-collect`                                                                                                        |
+| `intel`                  | `advise` · `personalize` · `triage-replies` · `weekly-review`                                                                                                                                         |
+| `handoff`                | `readiness` · `templatize` · `first-ae`                                                                                                                                                               |
+| `demo`                   | `seed` · `ui` · `reset` — a fictional install for screenshots and video                                                                                                                               |
+| `workspace`              | `list` · `create <name>` · `use <name>` · `current` · `path <name>` · `remove <name>` — one isolated install per product; `--workspace <name>` on any command                                         |
 
 Spend, CAC, RoCS and outcome logging deliberately have no CLI group — they live on the dashboard's Measure and Cadences pages so there's one source of truth. The `/api/measure/*` routes are there if you'd rather script them, or add `--json` to a read-only command (`doctor`, `identities list`) for machine-readable output.
 
