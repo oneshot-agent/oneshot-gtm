@@ -1,4 +1,4 @@
-import { loadConfig, logEvent } from "@oneshot-gtm/core";
+import { getLedger, loadConfig, logEvent } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 
 export interface IcpFilterResult {
@@ -43,9 +43,25 @@ export async function icpFilter(input: {
     return { match: true, reason: "no ICP set; pass-through" };
   }
   const system = loadPrompt("icp-filter");
+  let examples: ReturnType<ReturnType<typeof getLedger>["recentIcpDecisions"]> = [];
+  try {
+    examples = getLedger().recentIcpDecisions(20);
+  } catch (err) {
+    // Learning context is optional: a damaged/locked ledger must not turn a
+    // usable classifier into a finder-wide failure.
+    logEvent(
+      "error.swallowed",
+      {
+        kind: "icp-filter-examples",
+        message_120: ((err as Error).message ?? "").slice(0, 120),
+      },
+      "warn",
+    );
+  }
   const user = JSON.stringify({
     icp: input.icp,
     candidate: input.candidate,
+    examples,
   });
   let decision: IcpFilterResult;
   try {

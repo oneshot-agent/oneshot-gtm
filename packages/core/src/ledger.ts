@@ -11,6 +11,7 @@ import type {
   CanaryResultRecord,
   GmailPlacement,
   InboxReplyRecord,
+  IcpDecisionExample,
   InterviewRecord,
   ProspectRecord,
   QueueRow,
@@ -2288,6 +2289,39 @@ export class Ledger {
   }
 
   // ── target_queue ────────────────────────────────────────────────────────────
+
+  /** Recent reviewed rows for few-shot ICP classification. */
+  recentIcpDecisions(limit = 20): IcpDecisionExample[] {
+    const rows = this.db
+      .query(
+        `SELECT payload_json, status, notes
+         FROM target_queue
+         WHERE reviewed_at IS NOT NULL
+           AND json_valid(payload_json)
+           AND status IN ('approved', 'rejected', 'sent')
+         ORDER BY reviewed_at DESC, id DESC
+         LIMIT ?`,
+      )
+      .all(Math.max(1, Math.floor(limit))) as Array<{
+      payload_json: string;
+      status: "approved" | "rejected" | "sent";
+      notes: string | null;
+    }>;
+
+    return rows.flatMap((row) => {
+      try {
+        return [
+          {
+            candidate: JSON.parse(row.payload_json) as unknown,
+            decision: row.status !== "rejected",
+            reason: row.notes,
+          },
+        ];
+      } catch {
+        return [];
+      }
+    });
+  }
 
   /**
    * Insert a row into target_queue. Returns the new id, or null if a row with

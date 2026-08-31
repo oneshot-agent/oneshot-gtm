@@ -285,6 +285,13 @@ export interface OneShotConfig {
 
 export type QueueStatus = "pending" | "approved" | "rejected" | "sent" | "expired";
 
+/** A reviewed queue row, projected into an ICP classifier example. */
+export interface IcpDecisionExample {
+  candidate: unknown;
+  decision: boolean;
+  reason: string | null;
+}
+
 export interface QueueRow {
   id: number;
   play_name: string;

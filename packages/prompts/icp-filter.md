@@ -8,6 +8,9 @@ Recalibrated 2026-08-25. The old rule was "default to false when uncertain" — 
 
 - `icp`: a statement of who the founder is targeting
 - `candidate`: a found prospect-source with title / url / summary / author / signals
+- `examples`: up to 20 recent queue decisions, with a boolean `decision` and optional `reason`
+
+Treat `examples` as demonstrations of prior ICP judgment and queue review outcomes. Apply the demonstrated preferences to the current `candidate`, while using `icp` as the governing definition. Do not classify an example again.
 
 ## Output
 
