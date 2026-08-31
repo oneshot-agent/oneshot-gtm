@@ -1,10 +1,12 @@
 import {
   drainQueue,
+  importCsv,
   nextSleepMs,
   runDueTriggers,
   type FinderResult,
   type TriggerRunOutcome,
 } from "@oneshot-gtm/find";
+import { readFile } from "node:fs/promises";
 import {
   bail,
   bailEmpty,
@@ -16,7 +18,45 @@ import {
   note,
   ok,
   setJsonMode,
+  warn,
 } from "../output.ts";
+
+export async function commandFindImport(opts: {
+  csv: string;
+  play: string;
+  map?: string[];
+  dryRun: boolean;
+  failOnEmpty?: boolean;
+  json?: boolean;
+}): Promise<void> {
+  setJsonMode(opts.json ?? false);
+  header(`find import ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
+  const text = await readFile(opts.csv, "utf8");
+  const result = await importCsv({
+    text,
+    playName: opts.play,
+    dryRun: opts.dryRun,
+    ...(opts.map ? { mapValues: opts.map } : {}),
+  });
+
+  if (opts.json) {
+    emitJson({ imported: result.imported, skipped: result.skipped, errors: result.errors });
+  } else {
+    const mapping = Object.entries(result.mapping)
+      .map(([field, column]) => `${column} → ${field}`)
+      .join(", ");
+    note(`mapping: ${mapping}`);
+    note(`rows: ${result.rowCount}`);
+    for (const error of result.errors) warn(`row ${error.row}: ${error.message}`);
+    ok(
+      `${opts.dryRun ? "would import" : "imported"} ${result.imported}; skipped ${result.skipped}`,
+    );
+  }
+
+  if (opts.failOnEmpty && result.imported === 0) {
+    bailEmpty(`find import ${opts.csv}: 0 rows imported`);
+  }
+}
 
 export async function commandFindDrain(opts: {
   play: string;

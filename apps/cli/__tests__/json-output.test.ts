@@ -43,11 +43,19 @@ let drainResult = {
   deferred: 0,
   errors: [] as { id: string; message: string }[],
 };
+let csvImportResult = {
+  imported: 2,
+  skipped: 1,
+  errors: [{ row: 3, message: "missing or invalid email" }],
+  mapping: { email: "Email" },
+  rowCount: 3,
+};
 
 vi.mock("@oneshot-gtm/find", () => ({
   runDueTriggers: async () => findTriggerOutcomes,
   drainQueue: async () => drainResult,
   nextSleepMs: () => 60_000,
+  importCsv: async () => csvImportResult,
 }));
 
 // Identities / domains mocks
@@ -101,7 +109,8 @@ vi.mock("@oneshot-gtm/core", () => ({
 
 // Import commands after mocks are set up
 const { commandDoctor } = await import("../src/commands/doctor.ts");
-const { commandFindWatch, commandFindDrain } = await import("../src/commands/find.ts");
+const { commandFindWatch, commandFindDrain, commandFindImport } =
+  await import("../src/commands/find.ts");
 const { commandIdentitiesList, commandDomainsList } = await import("../src/commands/identities.ts");
 const { commandWorkspaceList } = await import("../src/commands/workspace.ts");
 const { CommandExit } = await import("../src/output.ts");
@@ -375,6 +384,25 @@ describe("find drain --dry-run --json", () => {
     const parsed = JSON.parse(stdout);
     expect(parsed.errors).toHaveLength(1);
     expect(parsed.errors[0]).toMatchObject({ id: "row-123", message: "Enrichment failed" });
+  });
+});
+
+describe("find import --json schema", () => {
+  it("emits the stable import result shape", async () => {
+    await commandFindImport({
+      csv: "ROADMAP.md",
+      play: "profile-intro",
+      dryRun: true,
+      json: true,
+    });
+
+    const parsed = JSON.parse(stdoutChunks.join(""));
+    expect(parsed).toEqual({
+      schemaVersion: 1,
+      imported: 2,
+      skipped: 1,
+      errors: [{ row: 3, message: "missing or invalid email" }],
+    });
   });
 });
 
