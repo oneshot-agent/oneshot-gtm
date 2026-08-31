@@ -67,10 +67,25 @@ const PLAY_PATTERNS = [
   /PLAY_NAME\s*=\s*["'`]([A-Za-z0-9_-]+)["'`]/g,
   /playName:\s*["'`]([A-Za-z0-9_-]+)["'`]/g,
 ];
+// Prompt names loaded through a variable or template rather than a string
+// literal, e.g. `loadPrompt(PLAY_NAME)` or `loadPrompt(`${PLAY_NAME}-email`)`.
+// These resolve to a concrete loadable name via the referenced const's value,
+// so a deleted file behind one must still trip the missing-file check — the
+// name must not depend on the file's own existence to be counted as loadable.
+const DYNAMIC_BARE_RE = /loadPrompt\(\s*([A-Za-z_$][\w$]*)\s*\)/g;
+const DYNAMIC_TEMPLATE_RE = /loadPrompt\(\s*`\$\{\s*([A-Za-z_$][\w$]*)\s*\}([A-Za-z0-9_-]*)`\s*\)/g;
+// `const NAME = "value"` / `let` / `var` — used to resolve the identifier a
+// dynamic loadPrompt call references back to its string value, within a file.
+const STRING_CONST_RE = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*["'`]([A-Za-z0-9_-]+)["'`]/g;
 
-function collect(): { literalNames: Set<string>; playNames: Set<string> } {
+function collect(): {
+  literalNames: Set<string>;
+  playNames: Set<string>;
+  dynamicNames: Set<string>;
+} {
   const literalNames = new Set<string>();
   const playNames = new Set<string>();
+  const dynamicNames = new Set<string>();
   for (const root of SOURCE_ROOTS) {
     for (const file of sourceFiles(root)) {
       const src = readFileSync(file, "utf8");
@@ -80,9 +95,21 @@ function collect(): { literalNames: Set<string>; playNames: Set<string> } {
       for (const re of PLAY_PATTERNS) {
         for (const m of src.matchAll(re)) if (m[1]) playNames.add(m[1]);
       }
+      // Resolve dynamic loadPrompt calls against the file's own string consts.
+      // Whole file is scanned for consts first, so definition/use order is moot.
+      const consts = new Map<string, string>();
+      for (const m of src.matchAll(STRING_CONST_RE)) if (m[1] && m[2]) consts.set(m[1], m[2]);
+      for (const m of src.matchAll(DYNAMIC_BARE_RE)) {
+        const value = m[1] && consts.get(m[1]);
+        if (value) dynamicNames.add(value);
+      }
+      for (const m of src.matchAll(DYNAMIC_TEMPLATE_RE)) {
+        const value = m[1] && consts.get(m[1]);
+        if (value) dynamicNames.add(`${value}${m[2] ?? ""}`);
+      }
     }
   }
-  return { literalNames, playNames };
+  return { literalNames, playNames, dynamicNames };
 }
 
 function promptFileNames(): string[] {
@@ -95,14 +122,20 @@ function promptFileNames(): string[] {
 
 describe("prompt inventory — files and loadable names stay in sync", () => {
   const files = promptFileNames();
-  const { literalNames, playNames } = collect();
+  const { literalNames, playNames, dynamicNames } = collect();
 
-  // The set of names any loadPrompt path can resolve. Literal names are the
-  // loadable names; play-derived shapes are added only when a matching file
-  // exists so the derivation contributes reachability without inventing a
-  // name that would fail the no-file check below.
-  const reachable = new Set(literalNames);
+  // The loadable names: every name some loadPrompt path can resolve. Literal
+  // names plus dynamically resolved ones (`loadPrompt(PLAY_NAME)` and the
+  // `${play}-email` / `${play}-followup` template shapes) — resolved from the
+  // call site, NOT gated on the file existing, so a deleted file behind a
+  // dynamic load still fails the no-file check below.
+  const loadableNames = new Set([...literalNames, ...dynamicNames]);
   const fileSet = new Set(files);
+
+  // Reachability for the orphan direction. Every loadable name is reachable;
+  // play-derived shapes are added when a matching file exists so a file that a
+  // known play could draw from isn't misflagged as an orphan.
+  const reachable = new Set(loadableNames);
   for (const play of playNames) {
     for (const candidate of [play, `${play}-email`, `${play}-followup`]) {
       if (fileSet.has(candidate)) reachable.add(candidate);
@@ -116,7 +149,7 @@ describe("prompt inventory — files and loadable names stay in sync", () => {
   });
 
   it("every loadable name has a backing file", () => {
-    const missing = [...literalNames].filter((name) => !fileSet.has(name)).toSorted();
+    const missing = [...loadableNames].filter((name) => !fileSet.has(name)).toSorted();
     expect(
       missing,
       `loadPrompt names with no packages/prompts/*.md file: ${missing.join(", ")}`,
