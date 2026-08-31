@@ -67,7 +67,7 @@ The ICP filter currently judges each candidate cold — `icpFilter` in `packages
 
 ## Tech debt
 
-- [ ] **Surface the server's error body on GET** · S — `getJson` in `apps/web/src/api/client.ts` throws `${status} ${statusText}: ${path}` and discards the `{ error }` JSON the server sends; `postJson` right below it reads the body. A 409 from a not-ready trigger reaches the dashboard as "409 Conflict" with the reason thrown away.
+- [x] **Surface the server's error body on GET** · S — `getJson` in `apps/web/src/api/client.ts` throws `${status} ${statusText}: ${path}` and discards the `{ error }` JSON the server sends; `postJson` right below it reads the body. A 409 from a not-ready trigger reaches the dashboard as "409 Conflict" with the reason thrown away, hiding the missing config field.
       _Done when:_ `getJson` parses the error body the same way `postJson` does and falls back to the status line when the body isn't JSON; covered by a test with a mocked `fetch`.
 - [ ] **Extract the pure logic out of `queue.tsx`** · M — the route is 1869 lines, the largest file in `apps/web`, and its selection, filter, bulk-approve and drain-eligibility rules are inlined where no test can reach them. `src/lib/` already holds this shape of helper (`drainButton.ts`, `pruneSentRows.ts`, `replyFilter.ts`).
       _Done when:_ those rules move to `src/lib/` as pure functions with tests, the route imports them, and the rendered markup is byte-identical for a fixed props fixture.

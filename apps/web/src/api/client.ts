@@ -42,7 +42,20 @@ const BASE = "/api";
 
 async function getJson<T>(path: string): Promise<T> {
   const res = await fetch(BASE + path);
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${path}`);
+  if (!res.ok) {
+    const fallback = `${res.status} ${res.statusText}: ${path}`;
+    let message = fallback;
+    try {
+      const text = await res.text();
+      if (text) {
+        const body = JSON.parse(text) as { error?: unknown };
+        if (typeof body.error === "string" && body.error) message = body.error;
+      }
+    } catch {
+      // body absent, empty, or not JSON — keep the fallback message
+    }
+    throw new Error(message);
+  }
   return (await res.json()) as T;
 }
 
