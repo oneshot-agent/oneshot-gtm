@@ -97,7 +97,11 @@ program
 // Bootstrap + launcher
 
 program.command("init").description("First-run setup wizard").action(runOrFail(runInit));
-program.command("doctor").description("Check setup health").action(runOrFail(commandDoctor));
+program
+  .command("doctor")
+  .description("Check setup health")
+  .option("--json", "output as JSON")
+  .action(runOrFail((opts: { json?: boolean }) => commandDoctor(opts)));
 program
   .command("ui")
   .option(
@@ -262,7 +266,8 @@ const identities = program
 identities
   .command("list")
   .description("Show the rotation pool and the wallet's provisioned domain pool")
-  .action(runOrFail(commandIdentitiesList));
+  .option("--json", "output as JSON")
+  .action(runOrFail((opts: { json?: boolean }) => commandIdentitiesList(opts)));
 identities
   .command("add")
   .description("Add an OneShot sending identity (wallet-owned domain + mailbox) to the pool")
@@ -299,6 +304,7 @@ find
   .command("watch")
   .option("--once", "run all due triggers once and exit (cron-friendly)", false)
   .option("--quiet", "log summary only, not per-trigger details", false)
+  .option("--json", "output as JSON (with --once)")
   .option(
     "--install-service",
     "print a launchd plist (macOS) / systemd user unit (Linux) that runs this daemon; doesn't start watching",
@@ -323,16 +329,21 @@ find
         installService: boolean;
         write: boolean;
         failOnEmpty: boolean;
+        json?: boolean;
       }) => {
+        if (opts.json && opts.installService) bail("--json cannot be used with --install-service");
         if (opts.installService) return commandInstallService({ write: opts.write });
         if (opts.write) bail("--write only makes sense with --install-service");
         // A daemon run never ends of its own accord, so it has no empty result
         // to report — refuse the combination rather than silently ignore it.
+        // Same reasoning for --json: the document is written once, at the end.
         if (opts.failOnEmpty && !opts.once) bail("--fail-on-empty only makes sense with --once");
+        if (opts.json && !opts.once) bail("--json only makes sense with --once");
         return commandFindWatch({
           once: opts.once,
           quiet: opts.quiet,
           failOnEmpty: opts.failOnEmpty,
+          ...(opts.json ? { json: opts.json } : {}),
         });
       },
     ),
@@ -348,6 +359,7 @@ find
     "exit 2 (not 0) when no approved rows were drained; 1 if any row errored",
     false,
   )
+  .option("--json", "output as JSON")
   .description("Pull approved rows for a play and run the existing motion play on them")
   .action(
     runOrFail(
@@ -359,6 +371,7 @@ find
           offer?: string;
           dryRun: boolean;
           failOnEmpty: boolean;
+          json?: boolean;
         },
       ) => {
         await commandFindDrain({
@@ -368,6 +381,7 @@ find
           ...(opts.limit ? { limit: opts.limit } : {}),
           ...(opts.senderCohort ? { senderCohort: opts.senderCohort } : {}),
           ...(opts.offer ? { offer: opts.offer } : {}),
+          ...(opts.json ? { json: opts.json } : {}),
         });
       },
     ),

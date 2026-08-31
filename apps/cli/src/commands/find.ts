@@ -1,5 +1,22 @@
-import { drainQueue, nextSleepMs, runDueTriggers, type FinderResult } from "@oneshot-gtm/find";
-import { bail, bailEmpty, c, fail, header, note, ok } from "../output.ts";
+import {
+  drainQueue,
+  nextSleepMs,
+  runDueTriggers,
+  type FinderResult,
+  type TriggerRunOutcome,
+} from "@oneshot-gtm/find";
+import {
+  bail,
+  bailEmpty,
+  c,
+  emitJson,
+  fail,
+  header,
+  human,
+  note,
+  ok,
+  setJsonMode,
+} from "../output.ts";
 
 export async function commandFindDrain(opts: {
   play: string;
@@ -8,7 +25,9 @@ export async function commandFindDrain(opts: {
   senderCohort?: string;
   offer?: string;
   failOnEmpty?: boolean;
+  json?: boolean;
 }): Promise<void> {
+  setJsonMode(opts.json ?? false);
   header(`find drain ${opts.play} ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
   const result = await drainQueue({
     playName: opts.play,
@@ -17,6 +36,20 @@ export async function commandFindDrain(opts: {
     ...(opts.senderCohort ? { senderCohort: opts.senderCohort } : {}),
     ...(opts.offer ? { freeForCohortOffer: opts.offer } : {}),
   });
+  // The document is emitted BEFORE any bail below, so `--json` still explains a
+  // non-zero exit rather than being swallowed by it. The exit code stays the
+  // health signal; the JSON says why.
+  if (opts.json) {
+    emitJson({
+      command: "find drain",
+      play: opts.play,
+      dryRun: opts.dryRun,
+      drained: result.drained,
+      sent: result.sent,
+      deferred: result.deferred,
+      errors: result.errors.map((e) => ({ id: e.id, message: e.message })),
+    });
+  }
 
   // Errors beat emptiness: a drain with row errors (or an invalid play) exits 1,
   // not the 0 a clean drain returns nor the 2 an idle drain under --fail-on-empty
@@ -42,13 +75,15 @@ export async function commandFindWatch(opts: {
   once: boolean;
   quiet: boolean;
   failOnEmpty?: boolean;
+  json?: boolean;
 }): Promise<void> {
+  setJsonMode(opts.json ?? false);
   header(`find watch ${opts.once ? c.dim("(--once)") : c.dim("(daemon)")}`);
   let cancelled = false;
   let wake: (() => void) | null = null;
   const shutdown = (): void => {
     cancelled = true;
-    process.stdout.write(`\n${c.dim("watch: shutting down...")}\n`);
+    human(`\n${c.dim("watch: shutting down...")}\n`);
     if (wake) wake();
   };
   process.on("SIGINT", shutdown);
@@ -59,9 +94,12 @@ export async function commandFindWatch(opts: {
   let errored = 0;
   let queued = 0;
   let firedNames: string[] = [];
+  // Outcomes of the last tick, kept for the --json document (--once only).
+  let lastTick: TriggerRunOutcome[] = [];
   try {
     for (;;) {
       const outcomes = await runDueTriggers();
+      lastTick = outcomes;
       errored = 0;
       queued = 0;
       firedNames = [];
@@ -97,6 +135,24 @@ export async function commandFindWatch(opts: {
     process.removeListener("SIGTERM", shutdown);
   }
 
+  // Emitted before the bail below so the document lands on stdout even on the
+  // exit-1 path — the exit code stays the health signal, JSON explains it.
+  if (opts.json) {
+    emitJson({
+      command: "find watch",
+      ok: errored === 0,
+      errored,
+      triggers: lastTick.map((o) => ({
+        name: o.name,
+        fired: o.fired,
+        nextDueInMs: o.nextDueInMs,
+        ...(o.duration_ms != null ? { durationMs: o.duration_ms } : {}),
+        ...(o.error !== undefined ? { error: o.error } : {}),
+        ...(o.result ? { result: jsonFinderResult(o.result) } : {}),
+      })),
+    });
+  }
+
   // --once is the cron/launchd entry point, where the exit code is the only
   // health signal there is: a finder that errored every run for a week must not
   // look identical to a clean one. Daemon runs still exit 0 — they're killed by
@@ -116,6 +172,23 @@ export async function commandFindWatch(opts: {
       })`,
     );
   }
+}
+
+/** FinderResult in the flag's camelCase contract, optionals normalized to 0. */
+function jsonFinderResult(r: FinderResult): Record<string, unknown> {
+  return {
+    source: r.source,
+    candidates: r.candidates,
+    enqueued: r.enqueued,
+    droppedIcp: r.droppedIcp,
+    droppedRole: r.droppedRole ?? 0,
+    droppedDuplicate: r.droppedDuplicate,
+    droppedEnrichment: r.droppedEnrichment,
+    droppedLowSignal: r.droppedLowSignal ?? 0,
+    costUsd: r.costUsd,
+    ...(r.perCohort ? { perCohort: r.perCohort } : {}),
+    ...(r.halted ? { halted: r.halted } : {}),
+  };
 }
 
 function printSummaryLine(name: string, r: FinderResult): void {

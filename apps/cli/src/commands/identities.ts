@@ -13,20 +13,21 @@ import {
   type DomainPoolEntry,
 } from "@oneshot-gtm/core";
 import prompts from "prompts";
-import { c, header, note, ok, warn } from "../output.ts";
+import { c, emitJson, header, note, ok, setJsonMode, warn } from "../output.ts";
 
 /** Best-effort domain pool — never let a transient/auth failure abort a list/add. */
-async function safeListDomains(): Promise<DomainPoolEntry[]> {
+async function safeListDomains(): Promise<{ domains: DomainPoolEntry[]; error: boolean }> {
   try {
-    return await listSendingDomains();
+    return { domains: await listSendingDomains(), error: false };
   } catch (err) {
     warn(`Could not reach the domain pool: ${(err as Error).message}`);
-    return [];
+    return { domains: [], error: true };
   }
 }
 
 /** Show the rotation pool + the wallet's provisioned domain pool. */
-export async function commandIdentitiesList(): Promise<void> {
+export async function commandIdentitiesList(opts: { json?: boolean } = {}): Promise<void> {
+  setJsonMode(opts.json ?? false);
   header("Sender identities");
   const cfg = loadConfig();
   const identities = resolveIdentities(cfg);
@@ -56,17 +57,47 @@ export async function commandIdentitiesList(): Promise<void> {
   }
 
   header("Provisioned domains");
-  const domains = await safeListDomains();
+  const { domains, error: domainsError } = await safeListDomains();
   if (domains.length === 0) {
     note("None found (OneShot auto-provisions warm domains, or the pool couldn't be reached).");
-    return;
+  } else {
+    for (const d of domains) {
+      note(
+        `${d.domain}  ${c.dim(d.pool_status)}` +
+          (d.warmup_score != null ? `  warmth ${d.warmup_score}` : "") +
+          `  sent ${d.daily_sent_count}/${d.daily_send_limit}/day`,
+      );
+    }
   }
-  for (const d of domains) {
-    note(
-      `${d.domain}  ${c.dim(d.pool_status)}` +
-        (d.warmup_score != null ? `  warmth ${d.warmup_score}` : "") +
-        `  sent ${d.daily_sent_count}/${d.daily_send_limit}/day`,
-    );
+
+  if (opts.json) {
+    emitJson({
+      command: "identities list",
+      identities: identities.map((i) => {
+        const cap = caps.get(i.id);
+        const capToday = cap && Number.isFinite(cap.capToday) ? cap.capToday : null;
+        return {
+          id: i.id,
+          provider: i.provider,
+          address:
+            i.mailbox && i.sendingDomain
+              ? `${i.mailbox}@${i.sendingDomain}`
+              : (i.address ?? i.sendingDomain ?? i.label ?? i.id),
+          sentToday: cap?.identitySentToday ?? 0,
+          capToday,
+          ...(cap?.domainSentToday != null ? { domainSentToday: cap.domainSentToday } : {}),
+          legacy,
+        };
+      }),
+      domains: domains.map((d) => ({
+        domain: d.domain,
+        poolStatus: d.pool_status,
+        warmupScore: d.warmup_score ?? null,
+        dailySent: d.daily_sent_count,
+        dailyLimit: d.daily_send_limit,
+      })),
+      ...(domainsError ? { domainsError: true } : {}),
+    });
   }
 }
 
@@ -74,7 +105,7 @@ export async function commandIdentitiesList(): Promise<void> {
 export async function commandIdentitiesAdd(): Promise<void> {
   header("Add OneShot sender");
   const cfg = loadConfig();
-  const domains = await safeListDomains();
+  const { domains } = await safeListDomains();
 
   // Show the warmed pool as a reference, but accept ANY domain by free text: a
   // brand-new domain auto-provisions on first send, so restricting to the
@@ -147,7 +178,7 @@ export async function commandIdentitiesAdd(): Promise<void> {
 /** Show just the wallet's provisioned domain pool with status + warmth + usage. */
 export async function commandDomainsList(): Promise<void> {
   header("Provisioned domains");
-  const domains = await safeListDomains();
+  const { domains } = await safeListDomains();
   if (domains.length === 0) {
     note("None found (or the pool couldn't be reached).");
     return;
