@@ -27,7 +27,7 @@ The verify gate has holes an agent can close without touching product behaviour.
 
 - [ ] **Assert the README's own counts in a test** · S — README says "48 commands", "47-command CLI" and "1621 cases across 126 files". The real numbers are 49, 49 and 2010/158. The counts drift on every feature PR because nothing checks them.
       _Done when:_ a test derives the leaf-command count from the commander tree and the play/finder counts from the registries, asserts each against the README text, and fails on drift.
-- [ ] **Prompt inventory test** · S — `packages/prompts` ships 57 markdown files; `agent-builder-extract.md` is referenced by nothing. Prompts are the product here, so an orphan is a fork reading a file the model never sees.
+- [x] **Prompt inventory test** · S — `packages/prompts` ships 57 markdown files; `agent-builder-extract.md` is referenced by nothing. Prompts are the product here, so an orphan is a fork reading a file the model never sees.
       _Done when:_ a test walks `packages/prompts/*.md`, resolves every name reachable through `loadPrompt` (including the play-derived `${play}-email` / `${play}-followup` shapes), and fails on either an orphan file or a loaded name with no file. Deliberate orphans go in an explicit allow-list with a reason.
 - [ ] **Cover `packages/doctor`** · M — `check.ts` is 799 lines running the deliverability, placement, workspace-collision, GitHub-token and X-credential checks, and `__tests__/workspace-checks.test.ts` is the only test file. Doctor is what a new user reads first when something is wrong.
       _Done when:_ each named check has a case for its pass, warn and fail verdict against a stubbed ledger/config, and the bounce-rate thresholds (warn >2%, fail >5%, 20-send minimum) are pinned.
