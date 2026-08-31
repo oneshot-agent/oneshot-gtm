@@ -10,7 +10,7 @@ Public — issues mirror the items below, PRs welcome. Items carry an effort tag
 ## In flight
 
 - **feat(notify): Slack incoming-webhook notifications for replies, bounces, and daily send summary** — PR #74, issue #71.
-- **fix(intel): retry and time-bound `complete()` LLM calls** — PR #83, issue #77.
+- **feat(server): cancel an in-flight run — abort on client disconnect and via an explicit cancel route** — PR #322, issue #98.
 
 ---
 
@@ -37,8 +37,6 @@ The verify gate has holes an agent can close without touching product behaviour.
 
 ## Reliability
 
-- [x] **Retry and time-bound LLM calls** · M — `complete()` in `packages/intel/src/client.ts` issues one `fetch` with no `AbortSignal` and no retry. A 429 or a 503 from OpenRouter partway through a 50-target drain throws and takes the batch with it.
-      _Done when:_ 429/5xx/network errors retry with bounded exponential backoff and jitter, honouring `Retry-After` when present; a per-request timeout aborts and counts as retryable; retries and the final give-up are logged as `llm.retry` / `llm.error`; 4xx other than 429 never retries; all covered by fake-timer tests with no real network.
 - [ ] **Install-wide daily spend ceiling** · M — spend caps are per trigger run (`maxCostUsd`, `maxSpendPerRun` in `packages/find/src/registry.ts`). Eleven finders on their own intervals, plus drains and cadence steps, have no shared daily bound and no kill switch.
       _Done when:_ a configurable daily USD ceiling is checked before any paid call; crossing it halts finders and auto-drains with a named reason surfaced on the trigger cards and in `doctor`; manual sends from `/queue` still go through; the counter resets at local midnight and is covered by tests around the boundary.
       _Done when:_ `--once` exits 1 if any due trigger errored, 0 otherwise; the daemon loop keeps its current behaviour; both covered.
@@ -93,8 +91,7 @@ Not code — these need capture, not commits. `demo seed` + `demo ui` now stand 
 
 ## Approved, not yet started
 
-- [ ] **test(doctor): cover every check in `check.ts` at pass, warn and fail** · M
-- [ ] **test(intel): cover the report modules and `complete()`'s truncation branches** · M
+- [ ] **fix(find): pre-format event date/time in the event's local timezone before it reaches the draft prompt** — issue #339.
 
 ## Things we intentionally do NOT do
 
