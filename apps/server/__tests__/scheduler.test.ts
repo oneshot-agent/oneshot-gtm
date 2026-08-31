@@ -73,7 +73,7 @@ describe("startScheduler", () => {
     expect(calls.runDueTriggers).toBe(1);
     expect(calls.nextSleepMs).toBe(1);
     // Bumping just under the next sleep doesn't re-fire.
-    await vi.advanceTimersByTimeAsync(29_900);
+    await vi.advanceTimersByTime(29_900);
     expect(calls.runDueTriggers).toBe(1);
     // Crossing it does.
     await vi.advanceTimersByTime(200);
@@ -101,7 +101,7 @@ describe("startScheduler", () => {
     // The 60s backoff should govern the next attempt; nextSleepMs was never
     // called because the tick threw before reaching it.
     expect(calls.nextSleepMs).toBe(0);
-    await vi.advanceTimersByTimeAsync(59_900);
+    await vi.advanceTimersByTime(59_900);
     expect(calls.runDueTriggers).toBe(1);
     await vi.advanceTimersByTime(200);
     await new Promise(process.nextTick);
