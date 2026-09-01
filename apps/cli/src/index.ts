@@ -7,7 +7,7 @@ import {
   type TelemetryOutcome,
 } from "@oneshot-gtm/core";
 import { isSupportedPlay } from "@oneshot-gtm/plays";
-import { bail, CommandExit, fail } from "./output.ts";
+import { bail, CommandExit, fail, setJsonMode } from "./output.ts";
 import { extractInvocation, type Invocation } from "./dispatch.ts";
 import { runInit } from "./commands/init.ts";
 import {
@@ -327,6 +327,7 @@ find
         failOnEmpty: boolean;
         json?: boolean;
       }) => {
+        setJsonMode(opts.json ?? false);
         if (!isSupportedPlay(opts.play)) bail(`unknown play: ${opts.play}`);
         await commandFindImport(opts);
       },

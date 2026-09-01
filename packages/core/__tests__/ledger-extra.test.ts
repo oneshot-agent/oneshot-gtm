@@ -263,6 +263,29 @@ describe("isEmailPendingInQueue (cross-play pending dedup)", () => {
   });
 });
 
+describe("removePendingQueueTarget", () => {
+  it("removes only unreviewed reservations", () => {
+    const pendingId = ledger.enqueueTarget({
+      playName: "profile-intro",
+      payload: {},
+      dedupeKey: "pending",
+      source: "test",
+    })!;
+    const approvedId = ledger.enqueueTarget({
+      playName: "profile-intro",
+      payload: {},
+      dedupeKey: "approved",
+      source: "test",
+    })!;
+    ledger.setQueueStatus({ id: approvedId, status: "approved" });
+
+    expect(ledger.removePendingQueueTarget(pendingId)).toBe(true);
+    expect(ledger.getQueueRow(pendingId)).toBeNull();
+    expect(ledger.removePendingQueueTarget(approvedId)).toBe(false);
+    expect(ledger.getQueueRow(approvedId)?.status).toBe("approved");
+  });
+});
+
 describe("approvedCountsByPlay", () => {
   it("counts approved rows per play and omits plays with none", () => {
     const enqueue = (playName: string, key: string, status?: "approved" | "sent"): void => {

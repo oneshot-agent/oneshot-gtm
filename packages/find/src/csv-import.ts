@@ -17,9 +17,6 @@ export interface CsvImportResult {
   errors: CsvImportError[];
 }
 
-/** Maximum number of source rows handled by one invocation. */
-export const CSV_IMPORT_BATCH_LIMIT = 100;
-
 export interface ParsedCsvImport {
   headers: string[];
   mapping: CsvColumnMapping;
@@ -95,7 +92,7 @@ export function parseMapOverrides(values: string[]): Record<string, CsvImportFie
     if (eq < 1 || !CSV_IMPORT_FIELDS.includes(field as CsvImportField)) {
       throw new Error(`invalid --map '${value}'; expected column=email|name|company|title`);
     }
-    overrides[normalizeHeader(column)] = field as CsvImportField;
+    overrides[column] = field as CsvImportField;
   }
   return overrides;
 }
@@ -107,17 +104,23 @@ export function prepareCsvImport(text: string, mapValues: string[] = []): Parsed
   if (headers.every((h) => h === "")) throw new Error("CSV header is empty");
   const normalizedHeaders = headers.map(normalizeHeader);
   const overrides = parseMapOverrides(mapValues);
-  for (const column of Object.keys(overrides)) {
-    if (!normalizedHeaders.includes(column)) throw new Error(`mapped column not found: ${column}`);
-  }
-
   const mapping: CsvColumnMapping = {};
   // Explicit mappings win even when a different column happens to match an
   // alias (for example `Email` plus `Verified Email --map "Verified Email=email"`).
-  for (let i = 0; i < headers.length; i++) {
-    const normalized = normalizedHeaders[i]!;
-    const override = overrides[normalized];
-    if (override) mapping[override] = headers[i]!;
+  for (const [column, field] of Object.entries(overrides)) {
+    let index = headers.indexOf(column);
+    if (index === -1) {
+      const normalized = normalizeHeader(column);
+      const matches = normalizedHeaders.flatMap((header, candidate) =>
+        header === normalized ? [candidate] : [],
+      );
+      if (matches.length === 0) throw new Error(`mapped column not found: ${column}`);
+      if (matches.length > 1) {
+        throw new Error(`mapped column is ambiguous: ${column}; use the exact header text`);
+      }
+      index = matches[0]!;
+    }
+    mapping[field] = headers[index]!;
   }
   for (let i = 0; i < headers.length; i++) {
     const normalized = normalizedHeaders[i]!;
@@ -146,9 +149,8 @@ export async function importCsv(input: {
   ) as Partial<Record<CsvImportField, number>>;
 
   const admitted: Array<{ row: number; payload: Record<string, string>; email: string }> = [];
-  const batch = prepared.rows.slice(0, CSV_IMPORT_BATCH_LIMIT);
-  for (let i = 0; i < batch.length; i++) {
-    const values = batch[i]!;
+  for (let i = 0; i < prepared.rows.length; i++) {
+    const values = prepared.rows[i]!;
     if (values.every((v) => v.trim() === "")) {
       result.skipped++;
       result.errors.push({ row: i + 2, message: "empty row" });
@@ -202,37 +204,54 @@ export async function importCsv(input: {
   // above, but the potentially paid person classifier is never invoked.
   if (input.dryRun) {
     result.imported = unique.length;
-    return { ...result, mapping: prepared.mapping, rowCount: batch.length };
+    return { ...result, mapping: prepared.mapping, rowCount: prepared.rows.length };
   }
 
   const icp = resolveIcp();
   const ledger = getLedger();
   for (const candidate of unique) {
-    const verdict = await qualifyPerson({
-      icp,
-      person: {
-        name: candidate.payload.name,
-        company: candidate.payload.company,
-        roleText: candidate.payload.title,
-        evidence: "CSV import",
-      },
-    });
-    if (verdict.verdict === "reject" || verdict.verdict === "transient") {
-      result.skipped++;
-      if (verdict.verdict === "transient") {
-        result.errors.push({ row: candidate.row, message: verdict.reason });
-      }
-      continue;
-    }
     const dedupeKey = `email:${candidate.email}`;
+    // Reserve the unique key before the paid classifier. Concurrent imports
+    // then race on the atomic INSERT, not on the earlier read-only dedupe check.
     const id = ledger.enqueueTarget({
       playName: input.playName,
       payload: candidate.payload,
       dedupeKey,
       source: "find:csv-import",
+      notes: "CSV import: ICP classification in progress",
     });
-    if (id == null) result.skipped++;
-    else result.imported++;
+    if (id == null) {
+      result.skipped++;
+      continue;
+    }
+    let verdict: Awaited<ReturnType<typeof qualifyPerson>>;
+    try {
+      verdict = await qualifyPerson({
+        icp,
+        person: {
+          name: candidate.payload.name,
+          company: candidate.payload.company,
+          roleText: candidate.payload.title,
+          evidence: "CSV import",
+        },
+      });
+    } catch (error) {
+      ledger.removePendingQueueTarget(id);
+      throw error;
+    }
+    if (verdict.verdict === "reject" || verdict.verdict === "transient") {
+      result.skipped++;
+      if (verdict.verdict === "transient") {
+        // A transient failure must remain retryable on a later invocation.
+        ledger.removePendingQueueTarget(id);
+        result.errors.push({ row: candidate.row, message: verdict.reason });
+      } else {
+        ledger.setQueueStatus({ id, status: "rejected", notes: verdict.reason });
+      }
+      continue;
+    }
+    ledger.setQueueNotes({ id, notes: "CSV import: ICP accepted" });
+    result.imported++;
   }
-  return { ...result, mapping: prepared.mapping, rowCount: batch.length };
+  return { ...result, mapping: prepared.mapping, rowCount: prepared.rows.length };
 }
