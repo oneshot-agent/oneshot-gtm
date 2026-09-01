@@ -123,30 +123,57 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
       let drafted: DraftedView[] = [];
 
       try {
-        // Queue runs skip verification, so their target indexes remain aligned
-        // with the parallel dedupe-key array. Manual runs omit the array and
-        // persistence remains a no-op.
-        if (body.dedupeKeys && body.dedupeKeys.length === body.targets.length) {
-          body.dedupeKeys.forEach((dedupeKey, index) => {
-            if (dedupeKey) indexToDedupeKey.set(index, dedupeKey);
-          });
-        }
-
         // Verify emails BEFORE dispatch so undeliverable rows are dropped
-        // before LLM spend. Skipped on dryRun and for queue-sourced runs
-        // (already verified at finder-enqueue time).
+        // before LLM spend. Queue-sourced rows were already verified at
+        // finder-enqueue time, so only manual rows in a mixed batch are sent
+        // through verification.
         const inputCount = body.targets.length;
-        fromQueue =
+        const hasAlignedDedupeKeys =
           Array.isArray(body.dedupeKeys) && body.dedupeKeys.length === body.targets.length;
-        if (fromQueue) {
-          verify = { verified: body.targets, dropped: [], receiptIds: [], costUsd: 0 };
-        } else {
+        const queueIndexes = new Set<number>();
+        const manualTargets = body.targets.filter((_target, index) => {
+          const dedupeKey = hasAlignedDedupeKeys ? body.dedupeKeys?.[index] : null;
+          const isQueueTarget = typeof dedupeKey === "string" && dedupeKey.length > 0;
+          if (isQueueTarget) queueIndexes.add(index);
+          return !isQueueTarget;
+        });
+        fromQueue = queueIndexes.size > 0;
+
+        if (manualTargets.length > 0) {
           send({ kind: "stage", stage: "verifying" });
-          verify = await verifyAndFilterTargets(
-            body.targets as Array<{ email?: string; founderEmail?: string }>,
+          const manualVerify = await verifyAndFilterTargets(
+            manualTargets as Array<{ email?: string; founderEmail?: string }>,
             (t) => t.email ?? t.founderEmail ?? null,
             { playName, dryRun: body.dryRun, signal: runAbort.signal },
           );
+          const verifiedManualEmails = new Set(
+            manualVerify.verified.map((target) =>
+              (target.email ?? target.founderEmail ?? "").trim().toLowerCase(),
+            ),
+          );
+          verify = {
+            ...manualVerify,
+            verified: body.targets.filter((target, index) => {
+              if (queueIndexes.has(index)) return true;
+              const manualTarget = target as { email?: string; founderEmail?: string };
+              const email = (manualTarget.email ?? manualTarget.founderEmail ?? "")
+                .trim()
+                .toLowerCase();
+              return verifiedManualEmails.has(email);
+            }),
+          };
+        } else {
+          verify = { verified: body.targets, dropped: [], receiptIds: [], costUsd: 0 };
+        }
+        // Draft indexes are relative to the verified array. Rebuild the queue
+        // mapping after verification so a dropped manual row in a mixed batch
+        // cannot shift a later queue draft onto the wrong dedupe key.
+        if (Array.isArray(body.dedupeKeys) && body.dedupeKeys.length === body.targets.length) {
+          const originalIndex = new Map(body.targets.map((target, index) => [target, index]));
+          verify.verified.forEach((target, index) => {
+            const dedupeKey = body.dedupeKeys?.[originalIndex.get(target) ?? -1];
+            if (dedupeKey) indexToDedupeKey.set(index, dedupeKey);
+          });
         }
         if (verify.dropped.length > 0) {
           send({
