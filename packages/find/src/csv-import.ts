@@ -219,6 +219,7 @@ export async function importCsv(input: {
       dedupeKey,
       source: "find:csv-import",
       notes: "CSV import: ICP classification in progress",
+      initialStatus: "expired", // abuse expired as a transient state before classification to prevent approveAllPending from picking it up
     });
     if (id == null) {
       result.skipped++;
@@ -250,7 +251,8 @@ export async function importCsv(input: {
       }
       continue;
     }
-    ledger.setQueueNotes({ id, notes: "CSV import: ICP accepted" });
+    // Now that classification passed, we put it into pending
+    ledger.setQueueStatus({ id, status: "pending", notes: "CSV import: ICP accepted" });
     result.imported++;
   }
   return { ...result, mapping: prepared.mapping, rowCount: prepared.rows.length };
