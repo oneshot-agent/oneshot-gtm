@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { configDir } from "./config.ts";
+import { humanDecisionWhereSql } from "./labels.ts";
 import { getSharedDb } from "./shared-db.ts";
 import type { ReplyKind } from "./reply-classify.ts";
 import type {
@@ -2413,10 +2414,8 @@ export class Ledger {
       .query(
         `SELECT payload_json, status, notes
          FROM target_queue
-         WHERE reviewed_at IS NOT NULL
+         WHERE ${humanDecisionWhereSql()}
            AND json_valid(payload_json)
-           AND status IN ('approved', 'rejected', 'sent')
-           AND NOT (status = 'rejected' AND notes LIKE 'auto:%')
          ORDER BY reviewed_at DESC, id DESC
          LIMIT ?`,
       )
@@ -2934,7 +2933,7 @@ export class Ledger {
            COUNT(*) AS reviewed
          FROM target_queue
          WHERE (source = ? OR source LIKE ?)
-           AND status IN ('approved','rejected','sent')
+           AND ${humanDecisionWhereSql()}
            AND reviewed_at >= ?`,
       )
       .get(source, `${source}:%`, input.sinceIso) as {
