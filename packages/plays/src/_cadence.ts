@@ -648,7 +648,20 @@ export async function advanceCadence(
     return result;
   }
 
-  const outs = await parallelMap(due, 3, async (cad): Promise<RunCadenceStepResult> => {
+  // Claim every due row synchronously before any builder awaits. This closes
+  // the scheduler/Stop race: once claimed, stopCadence returns 409; if Stop
+  // won first, the runner re-reads the terminal status and skips the row.
+  const runnable = opts.dryRun
+    ? due
+    : due.filter((cad) =>
+        ledger.claimCadenceSendingMarker({
+          prospectId: cad.prospect_id,
+          playName: cad.play_name,
+          startedAtIso: nowIso,
+        }),
+      );
+
+  const outs = await parallelMap(runnable, 3, async (cad): Promise<RunCadenceStepResult> => {
     try {
       return await runCadenceStepForProspect({
         prospectId: cad.prospect_id,
@@ -668,11 +681,20 @@ export async function advanceCadence(
         };
       }
       throw err;
+    } finally {
+      if (!opts.dryRun) {
+        // Success usually clears through advanceCadence; skips, deferrals and
+        // failures land here. Clearing twice is harmless.
+        ledger.clearCadenceSendingMarker({
+          prospectId: cad.prospect_id,
+          playName: cad.play_name,
+        });
+      }
     }
   });
 
-  for (let i = 0; i < due.length; i++) {
-    const cad = due[i]!;
+  for (let i = 0; i < runnable.length; i++) {
+    const cad = runnable[i]!;
     const out = outs[i]!;
     result.details.push({
       prospectEmail: cad.prospect_email,

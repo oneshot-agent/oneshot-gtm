@@ -686,6 +686,27 @@ describe("manual cadence stops", () => {
         .map((p) => p.id),
     ).toEqual([timing]);
   });
+
+  it("can revive from a stop timestamp when no sequence event exists", () => {
+    const pid = ledger.upsertProspect({ name: "Stop Only", email: "stop-only@x.com", source: "t" });
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "show-hn",
+      nextDueAt: new Date().toISOString(),
+    });
+    ledger.stopCadence({ prospectId: pid, playName: "show-hn", reason: "other", note: "later" });
+    const db = new Database(dbPath);
+    db.exec(
+      `UPDATE cadence_state SET stopped_at = datetime('now', '-75 days') WHERE prospect_id = ${pid};`,
+    );
+    db.close();
+
+    expect(
+      ledger
+        .listColdProspects({ minDaysSinceLastEvent: 60, maxDaysSinceLastEvent: 90 })
+        .map((p) => p.id),
+    ).toEqual([pid]);
+  });
 });
 
 describe("recordInterview", () => {

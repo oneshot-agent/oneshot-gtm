@@ -1969,7 +1969,7 @@ export class Ledger {
              MAX(s.created_at) AS last_sequence_at,
              MAX(CASE WHEN c.status = 'stopped' AND c.stop_reason IN ('bad_timing', 'other')
                       THEN c.stopped_at END) AS last_revivable_stop_at,
-             MAX(MAX(s.created_at), COALESCE(MAX(CASE
+             MAX(COALESCE(MAX(s.created_at), ''), COALESCE(MAX(CASE
                WHEN c.status = 'stopped' AND c.stop_reason IN ('bad_timing', 'other')
                THEN c.stopped_at END), '')) AS last_event_at
       FROM prospects p
@@ -1981,7 +1981,7 @@ export class Ledger {
           AND blocked.stop_reason IN ('not_a_fit', 'do_not_contact')
       )
       GROUP BY p.id
-      HAVING last_event_at IS NOT NULL
+      HAVING last_event_at != ''
         AND julianday('now') - julianday(last_event_at) BETWEEN ? AND ?
       ORDER BY last_event_at ASC
       LIMIT ?

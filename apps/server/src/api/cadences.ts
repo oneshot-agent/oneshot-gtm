@@ -225,7 +225,11 @@ export async function stopCadence(req: Request, params: Record<string, string>):
   if (!playName) return jsonResponse({ error: "play query param required" }, 400, req);
   let body: { reason?: unknown; note?: unknown } = {};
   try {
-    body = (await req.json()) as { reason?: unknown; note?: unknown };
+    const parsed: unknown = await req.json();
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return jsonResponse({ error: "JSON object body required" }, 400, req);
+    }
+    body = parsed as { reason?: unknown; note?: unknown };
   } catch {
     return jsonResponse({ error: "JSON body required" }, 400, req);
   }

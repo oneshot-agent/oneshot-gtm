@@ -49,6 +49,12 @@ describe("stopCadence", () => {
     expect(stopCadenceMock).not.toHaveBeenCalled();
   });
 
+  it("rejects null and array JSON bodies as validation errors", async () => {
+    expect((await stopCadence(request(null), { id: "7" })).status).toBe(400);
+    expect((await stopCadence(request([]), { id: "7" })).status).toBe(400);
+    expect(stopCadenceMock).not.toHaveBeenCalled();
+  });
+
   it("requires a play so the stop remains cadence-scoped", async () => {
     expect((await stopCadence(request({ reason: "not_a_fit" }, ""), { id: "7" })).status).toBe(400);
   });
