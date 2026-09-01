@@ -96,14 +96,20 @@ export function scoreProspectPriority(input: {
     luma: [65, "Relevant event participation"],
     "accelerator-batch": [67, "Recent accelerator cohort signal"],
   };
-  const intent = finderIntent[input.finder];
+  const finderName = input.finder.replace(/^find:/, "");
+  const intent = Object.entries(finderIntent).find(
+    ([name]) => finderName === name || finderName.startsWith(`${name}:`),
+  )?.[1];
   if (intent) {
     c.intentStrength = intent[0];
     reasons.push(intent[1]);
   }
   const points = number(p["points"]) ?? number(p["score"]);
   if (points != null) {
-    c.intentStrength = Math.max(c.intentStrength, 55 + Math.min(35, Math.log2(points + 1) * 5));
+    c.intentStrength = Math.max(
+      c.intentStrength,
+      55 + Math.min(35, Math.log2(Math.max(0, points) + 1) * 5),
+    );
     reasons.push(`Source engagement: ${Math.round(points)}`);
   }
 
@@ -198,21 +204,23 @@ export function scoreStoredProspects(opts: {
     try {
       payload = JSON.parse(row.payload_json);
     } catch {
-      ledger.setQueuePriority(row.id, {
-        version: "heuristic-v1",
-        total: 0,
-        components: {
-          personFit: 0,
-          accountFit: 0,
-          intentStrength: 0,
-          timingFreshness: 0,
-          signalConfidence: 0,
-          contactability: 0,
-        },
-        reasons: ["Payload malformed"],
-        finder: row.play_name,
-        scoredAt: opts.now ? opts.now.toISOString() : new Date().toISOString(),
-      });
+      if (!opts.dryRun) {
+        ledger.setQueuePriority(row.id, {
+          version: "heuristic-v1",
+          total: 0,
+          components: {
+            personFit: 0,
+            accountFit: 0,
+            intentStrength: 0,
+            timingFreshness: 0,
+            signalConfidence: 0,
+            contactability: 0,
+          },
+          reasons: ["Payload malformed"],
+          finder: row.play_name,
+          scoredAt: opts.now ? opts.now.toISOString() : new Date().toISOString(),
+        });
+      }
       skippedMalformed++;
       continue;
     }

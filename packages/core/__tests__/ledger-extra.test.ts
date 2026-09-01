@@ -132,6 +132,38 @@ describe("finderApprovalStats", () => {
   });
 });
 
+describe("listQueueForPriority", () => {
+  it("includes repo-specific source variants in a source scope", () => {
+    const matching = ledger.enqueueTarget({
+      playName: "other-play",
+      payload: {},
+      dedupeKey: "matching",
+      source: "find:github-stars:owner/repo",
+    });
+    ledger.enqueueTarget({
+      playName: "other-play",
+      payload: {},
+      dedupeKey: "not-matching",
+      source: "find:github-topics:owner/repo",
+    });
+
+    expect(
+      ledger.listQueueForPriority({
+        sourceName: "find:github-stars",
+        limit: 10,
+        refresh: false,
+      }),
+    ).toHaveLength(1);
+    expect(
+      ledger.listQueueForPriority({
+        sourceName: "find:github-stars",
+        limit: 10,
+        refresh: false,
+      })[0]?.id,
+    ).toBe(matching);
+  });
+});
+
 describe("recordReceipt — cost handling", () => {
   // Post-SDK-0.15.2 + post-wrapper-cleanup: every wrapper in core/oneshot.ts
   // forwards `result.cost` as explicit costUsd. recordReceipt no longer
