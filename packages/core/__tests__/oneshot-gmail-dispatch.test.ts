@@ -271,8 +271,7 @@ describe("listInbox — multi-identity merge", () => {
         }),
       );
       const pending = listInbox({ limit: 10 });
-      await vi.advanceTimersByTime(15_000);
-      await new Promise(process.nextTick);
+      await vi.advanceTimersByTimeAsync(15_000);
       const out = await pending;
       expect(out.emails.map((e) => e.id)).toEqual(["m-ok"]);
       expect(out.agent_id).toBe("gmail");

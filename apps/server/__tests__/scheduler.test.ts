@@ -55,11 +55,9 @@ describe("startScheduler", () => {
   it("does not fire immediately — waits the 5s initial delay before the first tick", async () => {
     const handle = startScheduler();
     expect(calls.runDueTriggers).toBe(0);
-    await vi.advanceTimersByTime(4_900);
-    await new Promise(process.nextTick);
+    await vi.advanceTimersByTimeAsync(4_900);
     expect(calls.runDueTriggers).toBe(0);
-    await vi.advanceTimersByTime(200);
-    await new Promise(process.nextTick);
+    await vi.advanceTimersByTimeAsync(200);
     expect(calls.runDueTriggers).toBe(1);
     handle.stop();
   });
@@ -68,16 +66,14 @@ describe("startScheduler", () => {
     nextOutcomes = [{ name: "show-hn", fired: true, nextDueInMs: 30_000 }];
     nextSleepValue = 30_000;
     const handle = startScheduler();
-    await vi.advanceTimersByTime(5_000);
-    await new Promise(process.nextTick);
+    await vi.advanceTimersByTimeAsync(5_000);
     expect(calls.runDueTriggers).toBe(1);
     expect(calls.nextSleepMs).toBe(1);
     // Bumping just under the next sleep doesn't re-fire.
-    await vi.advanceTimersByTime(29_900);
+    await vi.advanceTimersByTimeAsync(29_900);
     expect(calls.runDueTriggers).toBe(1);
     // Crossing it does.
-    await vi.advanceTimersByTime(200);
-    await new Promise(process.nextTick);
+    await vi.advanceTimersByTimeAsync(200);
     expect(calls.runDueTriggers).toBe(2);
     handle.stop();
   });
@@ -85,8 +81,7 @@ describe("startScheduler", () => {
   it("emits scheduler.tick.done after each successful tick", async () => {
     nextOutcomes = [{ name: "show-hn", fired: true, nextDueInMs: 1000 }];
     const handle = startScheduler();
-    await vi.advanceTimersByTime(5_000);
-    await new Promise(process.nextTick);
+    await vi.advanceTimersByTimeAsync(5_000);
     expect(calls.eventKinds).toContain("scheduler.tick.done");
     handle.stop();
   });
@@ -94,17 +89,15 @@ describe("startScheduler", () => {
   it("backs off 60s after a tick error and emits scheduler.tick.failed", async () => {
     throwOnNextRun = new Error("ledger borked");
     const handle = startScheduler();
-    await vi.advanceTimersByTime(5_000);
-    await new Promise(process.nextTick);
+    await vi.advanceTimersByTimeAsync(5_000);
     expect(calls.runDueTriggers).toBe(1);
     expect(calls.eventKinds).toContain("scheduler.tick.failed");
     // The 60s backoff should govern the next attempt; nextSleepMs was never
     // called because the tick threw before reaching it.
     expect(calls.nextSleepMs).toBe(0);
-    await vi.advanceTimersByTime(59_900);
+    await vi.advanceTimersByTimeAsync(59_900);
     expect(calls.runDueTriggers).toBe(1);
-    await vi.advanceTimersByTime(200);
-    await new Promise(process.nextTick);
+    await vi.advanceTimersByTimeAsync(200);
     expect(calls.runDueTriggers).toBe(2);
     handle.stop();
   });
@@ -112,12 +105,10 @@ describe("startScheduler", () => {
   it("stop() cancels the pending tick and prevents future ones", async () => {
     nextSleepValue = 10_000;
     const handle = startScheduler();
-    await vi.advanceTimersByTime(5_000);
-    await new Promise(process.nextTick); // first tick
+    await vi.advanceTimersByTimeAsync(5_000); // first tick
     expect(calls.runDueTriggers).toBe(1);
     handle.stop();
-    await vi.advanceTimersByTime(60_000);
-    await new Promise(process.nextTick);
+    await vi.advanceTimersByTimeAsync(60_000);
     // No further ticks.
     expect(calls.runDueTriggers).toBe(1);
   });
@@ -125,14 +116,11 @@ describe("startScheduler", () => {
   it("stop() called mid-sleep prevents the next tick from firing", async () => {
     nextSleepValue = 30_000;
     const handle = startScheduler();
-    await vi.advanceTimersByTime(5_000);
-    await new Promise(process.nextTick); // tick 1 fires; schedules next at +30s
+    await vi.advanceTimersByTimeAsync(5_000); // tick 1 fires; schedules next at +30s
     expect(calls.runDueTriggers).toBe(1);
-    await vi.advanceTimersByTime(15_000); // halfway through sleep
-    await new Promise(process.nextTick);
+    await vi.advanceTimersByTimeAsync(15_000); // halfway through sleep
     handle.stop();
-    await vi.advanceTimersByTime(20_000); // sleep would otherwise have ended
-    await new Promise(process.nextTick);
+    await vi.advanceTimersByTimeAsync(20_000); // sleep would otherwise have ended
     expect(calls.runDueTriggers).toBe(1);
   });
 
@@ -167,14 +155,12 @@ describe("startScheduler", () => {
     // Direct test: stop AFTER a tick completes but BEFORE the next setTimeout
     // fires. The cancelled check at the top of tick (the `if (cancelled) return`
     // before runDueTriggers) handles the "fires anyway" case.
-    await vi.advanceTimersByTime(5_000);
-    await new Promise(process.nextTick); // tick 1 done
+    await vi.advanceTimersByTimeAsync(5_000); // tick 1 done
     expect(calls.runDueTriggers).toBe(1);
     handle.stop();
     // Even if the timer was already scheduled by tick 1's success path,
     // the next tick's first line `if (cancelled) return` aborts it.
-    await vi.advanceTimersByTime(5_000);
-    await new Promise(process.nextTick);
+    await vi.advanceTimersByTimeAsync(5_000);
     expect(calls.runDueTriggers).toBe(1);
   });
 
@@ -184,15 +170,12 @@ describe("startScheduler", () => {
     // 0ms shouldn't fire anything; advancing a tiny amount should.
     nextSleepValue = 0;
     const handle = startScheduler();
-    await vi.advanceTimersByTime(5_000);
-    await new Promise(process.nextTick); // tick 1
+    await vi.advanceTimersByTimeAsync(5_000); // tick 1
     expect(calls.runDueTriggers).toBe(1);
     // setTimeout(fn, 0) still defers to the next macrotask.
-    await vi.advanceTimersByTime(0);
-    await new Promise(process.nextTick);
+    await vi.advanceTimersByTimeAsync(0);
     // Should have rescheduled. Advance a hair more to drain the next tick.
-    await vi.advanceTimersByTime(1);
-    await new Promise(process.nextTick);
+    await vi.advanceTimersByTimeAsync(1);
     expect(calls.runDueTriggers).toBeGreaterThanOrEqual(2);
     handle.stop();
   });
@@ -200,8 +183,7 @@ describe("startScheduler", () => {
   it("multiple startScheduler() calls produce independent loops (no singleton)", async () => {
     const a = startScheduler();
     const b = startScheduler();
-    await vi.advanceTimersByTime(5_000);
-    await new Promise(process.nextTick);
+    await vi.advanceTimersByTimeAsync(5_000);
     expect(calls.runDueTriggers).toBe(2); // both fired
     a.stop();
     b.stop();
@@ -214,8 +196,7 @@ describe("startScheduler", () => {
   it("never ticks in demo mode, no matter how far time advances", async () => {
     demoModeValue = true;
     const handle = startScheduler();
-    await vi.advanceTimersByTime(60 * 60_000);
-    await new Promise(process.nextTick);
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
     expect(calls.runDueTriggers).toBe(0);
     expect(calls.eventKinds).toContain("demo.scheduler_idle");
     expect(() => handle.stop()).not.toThrow();
