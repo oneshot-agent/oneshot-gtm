@@ -183,7 +183,7 @@ export function scoreStoredProspects(opts: {
 }): ScoreProspectsResult {
   const ledger = getLedger();
   const rows = ledger.listQueueForPriority({
-    ...(opts.scope === "all" ? {} : { playName: opts.scope }),
+    ...(opts.scope === "all" ? {} : { sourceName: opts.scope }),
     limit: opts.limit,
     refresh: opts.refresh === true,
   });
@@ -198,12 +198,27 @@ export function scoreStoredProspects(opts: {
     try {
       payload = JSON.parse(row.payload_json);
     } catch {
+      ledger.setQueuePriority(row.id, {
+        version: "heuristic-v1",
+        total: 0,
+        components: {
+          personFit: 0,
+          accountFit: 0,
+          intentStrength: 0,
+          timingFreshness: 0,
+          signalConfidence: 0,
+          contactability: 0,
+        },
+        reasons: ["Payload malformed"],
+        finder: row.play_name,
+        scoredAt: opts.now ? opts.now.toISOString() : new Date().toISOString(),
+      });
       skippedMalformed++;
       continue;
     }
     const priority = scoreProspectPriority({
       payload,
-      finder: row.play_name,
+      finder: row.source ?? row.play_name,
       foundAt: row.found_at,
       now: opts.now,
     });

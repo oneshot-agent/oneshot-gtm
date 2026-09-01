@@ -2685,10 +2685,18 @@ export class Ledger {
   }
 
   /** Oldest unscored rows first makes limited backfills resumable without cursors. */
-  listQueueForPriority(opts: { playName?: string; limit: number; refresh: boolean }): QueueRow[] {
+  listQueueForPriority(opts: {
+    playName?: string;
+    sourceName?: string;
+    limit: number;
+    refresh: boolean;
+  }): QueueRow[] {
     const where = [opts.refresh ? "1 = 1" : "prospect_priority_json IS NULL"];
     const args: unknown[] = [];
-    if (opts.playName) {
+    if (opts.sourceName) {
+      where.push("(source = ? OR play_name = ?)");
+      args.push(opts.sourceName, opts.sourceName);
+    } else if (opts.playName) {
       where.push("play_name = ?");
       args.push(opts.playName);
     }
