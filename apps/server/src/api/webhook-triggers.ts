@@ -35,14 +35,14 @@ async function intakeWebhook(req: Request, kind: WebhookKind): Promise<Response>
     payload = parsed.value;
     company = null;
     context = payload.signupContext ?? "new signup";
-    eventIdentity = payload.email;
+    eventIdentity = payload.email.toLowerCase();
   } else {
     const parsed = parseCalNoShow(raw);
     if (!parsed.ok) return jsonResponse({ error: parsed.error }, 400, req);
     payload = parsed.value;
     company = payload.company;
     context = payload.whatTheyWanted ?? `missed demo at ${payload.missedAt}`;
-    eventIdentity = `${payload.email}:${payload.missedAt}`;
+    eventIdentity = `${payload.email.toLowerCase()}:${payload.missedAt}`;
   }
   const filter = await icpFilter({
     icp: resolveIcp(),
@@ -62,7 +62,7 @@ async function intakeWebhook(req: Request, kind: WebhookKind): Promise<Response>
   const id = getLedger().enqueueTarget({
     playName,
     payload,
-    dedupeKey: `webhook:${kind}:${eventIdentity.toLowerCase()}`,
+    dedupeKey: `webhook:${kind}:${eventIdentity}`,
     source: `webhook:${kind}`,
   });
   return jsonResponse({ accepted: true, queued: id !== null, id }, 202, req);
