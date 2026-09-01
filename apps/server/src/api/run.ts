@@ -123,21 +123,19 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
       let drafted: DraftedView[] = [];
 
       try {
-        // Queue runs skip verification, so their target indexes remain aligned
-        // with the parallel dedupe-key array. Manual runs omit the array and
-        // persistence remains a no-op.
-        if (body.dedupeKeys && body.dedupeKeys.length === body.targets.length) {
-          body.dedupeKeys.forEach((dedupeKey, index) => {
-            if (dedupeKey) indexToDedupeKey.set(index, dedupeKey);
-          });
-        }
-
+        // Fully queue-sourced runs skip verification, so their target indexes
+        // remain aligned with the parallel dedupe-key array. A mixed batch
+        // still verifies its manual rows and is remapped below.
         // Verify emails BEFORE dispatch so undeliverable rows are dropped
         // before LLM spend. Skipped on dryRun and for queue-sourced runs
         // (already verified at finder-enqueue time).
         const inputCount = body.targets.length;
         fromQueue =
-          Array.isArray(body.dedupeKeys) && body.dedupeKeys.length === body.targets.length;
+          Array.isArray(body.dedupeKeys) &&
+          body.dedupeKeys.length === body.targets.length &&
+          body.dedupeKeys.every(
+            (dedupeKey) => typeof dedupeKey === "string" && dedupeKey.length > 0,
+          );
         if (fromQueue) {
           verify = { verified: body.targets, dropped: [], receiptIds: [], costUsd: 0 };
         } else {
@@ -147,6 +145,16 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
             (t) => t.email ?? t.founderEmail ?? null,
             { playName, dryRun: body.dryRun, signal: runAbort.signal },
           );
+        }
+        // Draft indexes are relative to the verified array. Rebuild the queue
+        // mapping after verification so a dropped manual row in a mixed batch
+        // cannot shift a later queue draft onto the wrong dedupe key.
+        if (Array.isArray(body.dedupeKeys) && body.dedupeKeys.length === body.targets.length) {
+          const originalIndex = new Map(body.targets.map((target, index) => [target, index]));
+          verify.verified.forEach((target, index) => {
+            const dedupeKey = body.dedupeKeys?.[originalIndex.get(target) ?? -1];
+            if (dedupeKey) indexToDedupeKey.set(index, dedupeKey);
+          });
         }
         if (verify.dropped.length > 0) {
           send({
