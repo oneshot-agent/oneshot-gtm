@@ -516,7 +516,12 @@ find
     "comma-separated: active,replied,unjudged,all (default active,replied,unjudged)",
   )
   .option("--concurrency <n>", "parallel research calls (default 3)", (v) => Number.parseInt(v, 10))
-  .option("--max-cost-usd <n>", "hard spend ceiling (default $5)", (v) => Number(v), 5)
+  .option(
+    "--max-cost-usd <n>",
+    "stop starting calls after this spend target (default $5; one call may cross it)",
+    (v) => Number(v),
+    5,
+  )
   .option("--no-cost-limit", "run the full backfill without a spend ceiling")
   .option("--first-party-only", "skip external research and retain first-party evidence only")
   .option("--refresh", "refresh rows that already have product research", false)
@@ -544,7 +549,7 @@ find
           ...(opts.costLimit !== false && opts.maxCostUsd != null
             ? { maxCostUsd: opts.maxCostUsd }
             : {}),
-          ...(opts.limit ? { limit: opts.limit } : {}),
+          ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
           ...(opts.scope ? { scope: opts.scope } : {}),
           ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
         });

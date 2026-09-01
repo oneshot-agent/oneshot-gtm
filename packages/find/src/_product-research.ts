@@ -31,6 +31,10 @@ let externalCircuitUntil = 0;
 
 type JsonRecord = Record<string, unknown>;
 
+function isRecord(value: unknown): value is JsonRecord {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
 function str(body: JsonRecord, ...keys: string[]): string | null {
   for (const key of keys) {
     const value = body[key];
@@ -77,7 +81,13 @@ function seedFor(
     str(payload, "sourceProfileUrl", "websiteUrl"),
   ];
   const urls = [...new Set(candidates.map(normalizeUrl).filter((u): u is string => Boolean(u)))];
-  const cacheKey = urls[0]?.toLowerCase() ?? (company ? `company:${company.toLowerCase()}` : null);
+  const productKey =
+    urls[0]?.toLowerCase() ?? (company ? `company:${company.toLowerCase()}` : null);
+  // External research is grounded in both the product and this contact's
+  // signal/identity. Never reuse one person's dossier for a colleague or a
+  // different stargazer of the same repository.
+  const identityKey = email?.toLowerCase() ?? name?.toLowerCase() ?? `queue:${row.id}`;
+  const cacheKey = productKey ? `${productKey}|contact:${identityKey}` : null;
   return {
     name,
     company,
@@ -140,7 +150,15 @@ export async function researchQueueRowProduct(
 }> {
   let payload: JsonRecord;
   try {
-    payload = JSON.parse(row.payload_json) as JsonRecord;
+    const parsed = JSON.parse(row.payload_json) as unknown;
+    if (!isRecord(parsed)) {
+      return {
+        dossier: unavailable(null, null, "invalid queue payload: expected an object"),
+        costUsd: 0,
+        cached: false,
+      };
+    }
+    payload = parsed;
   } catch {
     return {
       dossier: unavailable(null, null, "invalid queue payload"),
@@ -306,6 +324,7 @@ export async function researchNewQueueRows(input: {
   result: FinderResult;
   maxCostUsd?: number;
   enabled: boolean;
+  priorSdkCostUsd?: number;
 }): Promise<void> {
   if (!input.enabled) return;
   const ledger = getLedger();
@@ -316,17 +335,21 @@ export async function researchNewQueueRows(input: {
   const rows = ledger
     .listPendingQueueAfterId(input.afterId)
     .filter((row) => ownsSource(row.source) && !EXCLUDED_PLAYS.has(row.play_name));
-  await parallelMap(rows, 3, async (row) => {
+  const initialResultCostUsd = input.result.costUsd;
+  await parallelMap(rows, input.maxCostUsd === undefined ? 3 : 1, async (row) => {
     let payload: JsonRecord;
     try {
-      payload = JSON.parse(row.payload_json) as JsonRecord;
+      const parsed = JSON.parse(row.payload_json) as unknown;
+      payload = isRecord(parsed) ? parsed : {};
     } catch {
       return;
     }
     if (payload["productResearch"]) return;
     const remainingUsd = Math.max(
       0,
-      (input.maxCostUsd ?? Number.POSITIVE_INFINITY) - input.result.costUsd,
+      (input.maxCostUsd ?? Number.POSITIVE_INFINITY) -
+        ((input.priorSdkCostUsd ?? initialResultCostUsd) +
+          (input.result.costUsd - initialResultCostUsd)),
     );
     const researched = await researchQueueRowProduct(row, { remainingUsd });
     input.result.costUsd += researched.costUsd;

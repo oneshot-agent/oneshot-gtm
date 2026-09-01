@@ -120,7 +120,19 @@ export function hasDossierSignal(value: unknown): boolean {
   // An explicit failure sentinel is never signal, whatever else it carries.
   if (typeof body.status === "string" && body.status.toLowerCase() === "failed") return false;
   if (Array.isArray(body.articles) && body.articles.length > 0) return true;
-  if (Array.isArray(body.sources) && body.sources.length > 0) return true;
+  if (Array.isArray(body.sources)) {
+    const hasExcerpt = body.sources.some(
+      (source) =>
+        source !== null &&
+        typeof source === "object" &&
+        typeof (source as Record<string, unknown>)["excerpt"] === "string" &&
+        ((source as Record<string, unknown>)["excerpt"] as string).trim() !== "",
+    );
+    // Product dossiers carry a subject for identification, but a company/name
+    // alone is not researched context. Only sourced text or an external result
+    // should suppress the reply research fallback.
+    return hasExcerpt || ("external" in body && body["external"] != null);
+  }
   if (substantive(body)) return true;
   return NESTED_KEYS.some((key) => key in body && hasDossierSignal(body[key]));
 }

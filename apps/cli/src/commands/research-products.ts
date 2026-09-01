@@ -24,6 +24,12 @@ function productAlreadyPresent(value: string | null | undefined): boolean {
   }
 }
 
+function recordPayload(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
 export async function commandResearchProducts(opts: ResearchProductsOpts): Promise<void> {
   header(`research-products ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
   const ledger = getLedger();
@@ -38,7 +44,8 @@ export async function commandResearchProducts(opts: ResearchProductsOpts): Promi
   const queueRows = opts.includePending
     ? ledger.listQueue({ status: "pending", limit: 100_000 }).filter((row) => {
         try {
-          const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+          const payload = recordPayload(JSON.parse(row.payload_json) as unknown);
+          if (!payload) return true;
           return opts.refresh || !payload["productResearch"];
         } catch {
           return false;
@@ -77,11 +84,13 @@ export async function commandResearchProducts(opts: ResearchProductsOpts): Promi
   // Serialize capped runs; uncapped callers may still opt into concurrency.
   const concurrency = opts.maxCostUsd == null ? (opts.concurrency ?? 3) : 1;
   await parallelMap(candidates, concurrency, async (item) => {
-    const remainingUsd = (opts.maxCostUsd ?? Number.POSITIVE_INFINITY) - costUsd;
-    if (remainingUsd <= 0) {
-      heldByBudget++;
-      return;
-    }
+    const cap =
+      opts.maxCostUsd === undefined
+        ? Number.POSITIVE_INFINITY
+        : Number.isFinite(opts.maxCostUsd)
+          ? Math.max(0, opts.maxCostUsd)
+          : 0;
+    const remainingUsd = cap - costUsd;
     if (item.kind === "prospect") {
       const row = item.row;
       const researched = await researchQueueRowProduct(
@@ -101,11 +110,12 @@ export async function commandResearchProducts(opts: ResearchProductsOpts): Promi
       );
       costUsd += researched.costUsd;
       if (researched.cached) cached++;
+      if (!researched.cached && researched.dossier.warning?.includes("cost cap reached")) {
+        heldByBudget++;
+        return;
+      }
       if (researched.dossier.status === "unavailable") unavailable++;
-      ledger.setProspectDossier(
-        row.id,
-        mergeProductDossier(row.dossier_json, researched.dossier).slice(0, 12_000),
-      );
+      ledger.setProspectDossier(row.id, mergeProductDossier(row.dossier_json, researched.dossier));
       written++;
       return;
     }
@@ -117,8 +127,12 @@ export async function commandResearchProducts(opts: ResearchProductsOpts): Promi
     });
     costUsd += researched.costUsd;
     if (researched.cached) cached++;
+    if (!researched.cached && researched.dossier.warning?.includes("cost cap reached")) {
+      heldByBudget++;
+      return;
+    }
     if (researched.dossier.status === "unavailable") unavailable++;
-    const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
+    const payload = recordPayload(JSON.parse(row.payload_json) as unknown) ?? {};
     payload["productResearch"] = researched.dossier;
     ledger.updateQueuePayload({ id: row.id, payload });
     written++;

@@ -89,6 +89,35 @@ describe("product research", () => {
     expect(calls.research).toBe(0);
   });
 
+  it("rejects syntactically valid non-object queue payloads", async () => {
+    const result = await researchQueueRowProduct(
+      { ...row, payload_json: "null" },
+      { remainingUsd: 1 },
+    );
+    expect(result.dossier.status).toBe("unavailable");
+    expect(result.dossier.warning).toContain("expected an object");
+    expect(calls.read).toBe(0);
+    expect(calls.research).toBe(0);
+  });
+
+  it("does not share contact-grounded cache entries across people", async () => {
+    await researchQueueRowProduct(row, { remainingUsd: 1 });
+    await researchQueueRowProduct(
+      {
+        ...row,
+        id: 43,
+        payload_json: JSON.stringify({
+          name: "Another Founder",
+          company: "S.C.A.L.A. AI",
+          email: "other@get-scala.com",
+          evidenceUrl: "https://github.com/Alessandro114/sara",
+        }),
+      },
+      { remainingUsd: 1 },
+    );
+    expect(calls.research).toBe(2);
+  });
+
   it("can backfill first-party evidence without calling external research", async () => {
     const result = await researchQueueRowProduct(row, {
       remainingUsd: 1,

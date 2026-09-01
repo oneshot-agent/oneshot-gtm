@@ -57,6 +57,10 @@ describe("hasDossierSignal — real payloads that must be REJECTED", () => {
   it("rejects a failure even when it carries other keys", () => {
     expect(hasDossierSignal({ status: "FAILED", title: "CTO" })).toBe(false);
   });
+
+  it("rejects product source URLs without factual excerpts", () => {
+    expect(hasDossierSignal({ product: { sources: [{ url: "https://acme.dev" }] } })).toBe(false);
+  });
 });
 
 describe("hasDossierSignal — payloads that must be ACCEPTED", () => {
@@ -65,7 +69,11 @@ describe("hasDossierSignal — payloads that must be ACCEPTED", () => {
     expect(hasDossierSignal({ enrichment: { company: "Acme" } })).toBe(true);
     expect(hasDossierSignal({ profile: { title: "Staff Engineer" } })).toBe(true);
     expect(hasDossierSignal({ result: { enrichment: { bio: "builds agent infra" } } })).toBe(true);
-    expect(hasDossierSignal({ product: { sources: [{ url: "https://acme.dev" }] } })).toBe(true);
+    expect(
+      hasDossierSignal({
+        product: { sources: [{ url: "https://acme.dev", excerpt: "Agent platform" }] },
+      }),
+    ).toBe(true);
   });
 
   it("accepts non-empty list fields and articles", () => {

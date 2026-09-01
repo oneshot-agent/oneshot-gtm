@@ -58,6 +58,7 @@ export async function runFinderWithProductResearch(
     afterId,
     result,
     enabled: config["productResearch"] !== false,
+    priorSdkCostUsd: result.sdkCostUsd ?? result.costUsd,
     ...(typeof config["maxCostUsd"] === "number"
       ? { maxCostUsd: config["maxCostUsd"] as number }
       : {}),
