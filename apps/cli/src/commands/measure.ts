@@ -121,8 +121,17 @@ export async function commandMeasureBenchmark(
     if (endpoint && cfg.clientId) {
       const url = new URL(endpoint);
       url.searchParams.set("anonymous_machine_id", cfg.clientId);
-      const response = await fetch(url, { headers: { accept: "application/json" } });
-      if (response.ok) aggregate = parseBenchmarkAggregate(await response.json());
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      try {
+        const response = await fetch(url, {
+          headers: { accept: "application/json" },
+          signal: controller.signal,
+        });
+        if (response.ok) aggregate = parseBenchmarkAggregate(await response.json());
+      } finally {
+        clearTimeout(timeoutId);
+      }
     }
   } catch {
     // The comparison is informational; a bad aggregate must not crash the CLI.
