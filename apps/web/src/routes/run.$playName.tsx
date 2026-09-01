@@ -745,7 +745,7 @@ function RunPage() {
           </div>
           <div className="mt-1 font-mono text-[11px] text-ink-muted">
             {verifyEvent.dropped.map((d, idx) => (
-              <div key={`${d.email}::${d.reason}::${idx}`}>
+              <div key={`${d.email || d.reason}-${idx}`}>
                 {d.email ? mask("email", d.email) : "(missing)"} — {d.reason}
               </div>
             ))}
