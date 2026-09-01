@@ -383,7 +383,7 @@ find
           quiet: opts.quiet,
           failOnEmpty: opts.failOnEmpty,
           ignoreApprovalRate: opts.ignoreApprovalRate,
-          ...(opts.json ? { json: opts.json } : {}),
+          json: opts.json,
         });
       },
     ),

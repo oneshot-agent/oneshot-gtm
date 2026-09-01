@@ -69,18 +69,26 @@ export async function commandFindDrain(opts: {
 }): Promise<void> {
   setJsonMode(opts.json ?? false);
   header(`find drain ${opts.play} ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
-  const result = await drainQueue({
-    playName: opts.play,
-    limit: opts.limit ?? 10,
-    dryRun: opts.dryRun,
-    ...(opts.senderCohort ? { senderCohort: opts.senderCohort } : {}),
-    ...(opts.offer ? { freeForCohortOffer: opts.offer } : {}),
-  });
+  let result;
+  try {
+    result = await drainQueue({
+      playName: opts.play,
+      limit: opts.limit ?? 10,
+      dryRun: opts.dryRun,
+      ...(opts.senderCohort ? { senderCohort: opts.senderCohort } : {}),
+      ...(opts.offer ? { freeForCohortOffer: opts.offer } : {}),
+    });
+  } catch (err: unknown) {
+    if (opts.json) {
+      await emitJson({ error: err instanceof Error ? err.message : String(err) });
+    }
+    throw err;
+  }
   // The document is emitted BEFORE any bail below, so `--json` still explains a
   // non-zero exit rather than being swallowed by it. The exit code stays the
   // health signal; the JSON says why.
   if (opts.json) {
-    emitJson({
+    await emitJson({
       command: "find drain",
       play: opts.play,
       dryRun: opts.dryRun,
@@ -182,7 +190,7 @@ export async function commandFindWatch(opts: {
   // Emitted before the bail below so the document lands on stdout even on the
   // exit-1 path — the exit code stays the health signal, JSON explains it.
   if (opts.json) {
-    emitJson({
+    await emitJson({
       command: "find watch",
       ok: errored === 0,
       errored,
@@ -231,7 +239,7 @@ function jsonFinderResult(r: FinderResult): Record<string, unknown> {
     droppedEnrichment: r.droppedEnrichment,
     droppedLowSignal: r.droppedLowSignal ?? 0,
     costUsd: r.costUsd,
-    ...(r.perCohort ? { perCohort: r.perCohort } : {}),
+    perCohort: r.perCohort,
     ...(r.halted ? { halted: r.halted } : {}),
   };
 }

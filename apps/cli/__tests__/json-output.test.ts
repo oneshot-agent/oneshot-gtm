@@ -119,10 +119,20 @@ beforeEach(() => {
   stdoutChunks = [];
   stderrChunks = [];
   listDomainsThrows = null;
-  stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
-    stdoutChunks.push(String(chunk));
-    return true;
-  });
+  stdoutSpy = vi
+    .spyOn(process.stdout, "write")
+    .mockImplementation(
+      (
+        chunk: string | Uint8Array,
+        encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void),
+        callback?: (error?: Error | null) => void,
+      ) => {
+        stdoutChunks.push(String(chunk));
+        if (typeof encodingOrCallback === "function") encodingOrCallback();
+        else callback?.();
+        return true;
+      },
+    );
   stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
     stderrChunks.push(String(chunk));
     return true;
