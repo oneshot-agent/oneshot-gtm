@@ -513,6 +513,11 @@ find
     "print the per-finder shadow report (score buckets + human approval rate)",
     false,
   )
+  .option(
+    "--all-statuses",
+    "widen from pending/approved to every row (sent/rejected/expired) — evaluation only",
+    false,
+  )
   .description(
     "Backfill shadow-mode priority scores from stored payloads (free, resumable, no network)",
   )
@@ -524,11 +529,13 @@ find
         refresh: boolean;
         dryRun: boolean;
         report: boolean;
+        allStatuses: boolean;
       }) => {
         commandScoreProspects({
           refresh: opts.refresh,
           dryRun: opts.dryRun,
           report: opts.report,
+          allStatuses: opts.allStatuses,
           ...(opts.scope ? { scope: opts.scope } : {}),
           ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
         });

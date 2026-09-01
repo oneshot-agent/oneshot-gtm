@@ -31,6 +31,13 @@ export interface ScoreProspectsOpts {
   dryRun: boolean;
   /** Print the per-finder shadow report (works with --dry-run). */
   report: boolean;
+  /**
+   * Widen the backfill from the live queue (pending/approved) to EVERY row —
+   * sent, rejected, expired — so historical scores can be compared against
+   * the dispositions humans already made. Evaluation only: nothing anywhere
+   * acts on a score, and auto-rejections stay separated from human labels.
+   */
+  allStatuses?: boolean;
 }
 
 /**
@@ -108,6 +115,13 @@ export interface FinderShadowReport {
   humanReviewed: number;
   /** approved+sent over humanReviewed, or null when no human labels exist. */
   humanApprovalRate: number | null;
+  /**
+   * Methodology gauge: mean score among scored human-approved (incl. sent)
+   * vs scored human-rejected rows. If the heuristic carries signal, approved
+   * should average higher than rejected. Auto-rejections never count.
+   */
+  approvedScored: { n: number; mean: number | null };
+  rejectedScored: { n: number; mean: number | null };
 }
 
 /**
@@ -118,6 +132,7 @@ export interface FinderShadowReport {
 export function buildShadowReport(rows: QueueRow[]): FinderShadowReport[] {
   const byFinder = new Map<string, FinderShadowReport>();
   const humanApproved = new Map<string, number>();
+  const scoreSums = new Map<string, { approved: number; rejected: number }>();
   for (const row of rows) {
     let entry = byFinder.get(row.play_name);
     if (!entry) {
@@ -128,33 +143,53 @@ export function buildShadowReport(rows: QueueRow[]): FinderShadowReport[] {
         buckets: { "0-19": 0, "20-39": 0, "40-59": 0, "60-79": 0, "80-100": 0 },
         humanReviewed: 0,
         humanApprovalRate: null,
+        approvedScored: { n: 0, mean: null },
+        rejectedScored: { n: 0, mean: null },
       };
       byFinder.set(row.play_name, entry);
     }
     entry.rows++;
+    const priority = parseProspectPriority(row.priority_json);
     // Buckets describe the live queue only — a dispatched (sent) or dropped
     // row keeps its historical priority_json, and counting it here would make
     // the distribution misrepresent the claimed pending/approved population.
-    if (row.status === "pending" || row.status === "approved") {
-      const priority = parseProspectPriority(row.priority_json);
-      if (priority !== null) {
-        entry.scored++;
-        entry.buckets[bucketOf(priority.total)]++;
-      }
+    if (priority !== null && (row.status === "pending" || row.status === "approved")) {
+      entry.scored++;
+      entry.buckets[bucketOf(priority.total)]++;
     }
     if (row.reviewed_at !== null && !isAutoRejected(row)) {
       entry.humanReviewed++;
+      const sums = scoreSums.get(row.play_name) ?? { approved: 0, rejected: 0 };
       if (row.status === "approved" || row.status === "sent") {
         humanApproved.set(row.play_name, (humanApproved.get(row.play_name) ?? 0) + 1);
+        if (priority !== null) {
+          entry.approvedScored.n++;
+          sums.approved += priority.total;
+        }
+      } else if (row.status === "rejected" && priority !== null) {
+        entry.rejectedScored.n++;
+        sums.rejected += priority.total;
       }
+      scoreSums.set(row.play_name, sums);
     }
   }
   for (const entry of byFinder.values()) {
     if (entry.humanReviewed > 0) {
       entry.humanApprovalRate = (humanApproved.get(entry.finder) ?? 0) / entry.humanReviewed;
     }
+    const sums = scoreSums.get(entry.finder);
+    if (sums && entry.approvedScored.n > 0) {
+      entry.approvedScored.mean = sums.approved / entry.approvedScored.n;
+    }
+    if (sums && entry.rejectedScored.n > 0) {
+      entry.rejectedScored.mean = sums.rejected / entry.rejectedScored.n;
+    }
   }
   return [...byFinder.values()].toSorted((a, b) => a.finder.localeCompare(b.finder));
+}
+
+function gaugeSide(label: string, s: { n: number; mean: number | null }): string {
+  return s.mean === null ? `${label}: n/a` : `${label}: avg ${s.mean.toFixed(0)} (n=${s.n})`;
 }
 
 function printDistribution(label: string, counts: Map<string, Record<string, number>>): void {
@@ -173,14 +208,17 @@ export function commandScoreProspects(opts: ScoreProspectsOpts): void {
 
   // Read the backlog, then cap in memory after the skip filter — `--limit N`
   // means "score N rows", not "consider N rows".
-  const rows = ledger.listQueueRowsForScoring(scope === "all" ? {} : { playName: scope });
+  const rows = ledger.listQueueRowsForScoring({
+    ...(scope === "all" ? {} : { playName: scope }),
+    ...(opts.allStatuses ? { allStatuses: true } : {}),
+  });
   const todo = rows.filter((r) => !shouldSkipRow(r, opts.refresh));
   const cap = resolveCap(opts.limit);
   const candidates = cap === undefined ? todo : todo.slice(0, cap);
 
   process.stdout.write(
     `${c.dim("scope:")} ${scope}` +
-      `  ${c.dim("pending/approved rows:")} ${rows.length}` +
+      `  ${c.dim(opts.allStatuses ? "rows (all statuses):" : "pending/approved rows:")} ${rows.length}` +
       `  ${c.dim("already scored:")} ${rows.length - todo.length}` +
       `  ${c.dim("to score:")} ${candidates.length}` +
       (cap !== undefined && todo.length > candidates.length
@@ -246,6 +284,15 @@ export function commandScoreProspects(opts: ScoreProspectsOpts): void {
           `${c.dim("scored:")} ${String(r.scored).padEnd(5)} ${cells}` +
           `  ${c.dim("human approval (shadow):")} ${rate}\n`,
       );
+      // The methodology gauge: does the heuristic rank what humans approved
+      // above what they rejected? Needs scored rows on both sides to mean
+      // anything, so print whatever exists and let the reader judge n.
+      if (r.approvedScored.n > 0 || r.rejectedScored.n > 0) {
+        process.stdout.write(
+          `  ${"".padEnd(22)} ${c.dim("score vs human call —")} ` +
+            `${gaugeSide("approved", r.approvedScored)}  ${gaugeSide("rejected", r.rejectedScored)}\n`,
+        );
+      }
     }
     process.stdout.write("\n");
   }

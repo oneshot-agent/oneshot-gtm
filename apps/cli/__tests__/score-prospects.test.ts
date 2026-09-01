@@ -247,6 +247,41 @@ describe("--report", () => {
   });
 });
 
+describe("--all-statuses methodology evaluation", () => {
+  it("scores historical rows and gauges score vs human call, auto-rejections excluded", () => {
+    // Human-approved-and-sent strong candidate vs human-rejected weak one.
+    const sent = enqueue("post-funding", FUNDING_PAYLOAD);
+    ledger.setQueueStatus({ id: sent, status: "sent" });
+    const weak = enqueue("post-funding", { name: "Bo", email: "bo@x.dev" });
+    ledger.setQueueStatus({ id: weak, status: "rejected", notes: "not a fit" });
+    const auto = enqueue(
+      "post-funding",
+      { name: "Zed", email: "z@x.dev" },
+      { initialStatus: "rejected", notes: "auto: ICP — no" },
+    );
+
+    // Default scope skips all three (none is pending/approved)…
+    commandScoreProspects({ refresh: false, dryRun: false, report: false });
+    expect(ledger.getQueueRow(sent)!.priority_json).toBeNull();
+    // …and --all-statuses scores them.
+    commandScoreProspects({ refresh: false, dryRun: false, report: false, allStatuses: true });
+    expect(ledger.getQueueRow(sent)!.priority_json).not.toBeNull();
+    expect(ledger.getQueueRow(weak)!.priority_json).not.toBeNull();
+    expect(ledger.getQueueRow(auto)!.priority_json).not.toBeNull();
+
+    const report = buildShadowReport(ledger.listQueue({ limit: 1000 }));
+    const funding = report.find((r) => r.finder === "post-funding")!;
+    // Gauge covers only human calls: 1 approved-and-sent, 1 human-rejected.
+    expect(funding.approvedScored.n).toBe(1);
+    expect(funding.rejectedScored.n).toBe(1);
+    expect(funding.approvedScored.mean).toBeGreaterThan(funding.rejectedScored.mean!);
+    // The scored auto-rejection influences neither side.
+    expect(funding.humanReviewed).toBe(2);
+    // Buckets still describe the live queue only — nothing pending/approved here.
+    expect(funding.scored).toBe(0);
+  });
+});
+
 describe("buildShadowReport — human-vs-auto provenance", () => {
   it("excludes auto: rejections from human labels and rates", () => {
     const approved = enqueue("post-funding", FUNDING_PAYLOAD);
