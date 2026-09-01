@@ -275,6 +275,8 @@ describe("--all-statuses methodology evaluation", () => {
     expect(funding.approvedScored.n).toBe(1);
     expect(funding.rejectedScored.n).toBe(1);
     expect(funding.approvedScored.mean).toBeGreaterThan(funding.rejectedScored.mean!);
+    // One approved above one rejected = perfect separation on this tiny sample.
+    expect(funding.auc).toBe(1);
     // The scored auto-rejection influences neither side.
     expect(funding.humanReviewed).toBe(2);
     // Buckets still describe the live queue only — nothing pending/approved here.
@@ -303,10 +305,24 @@ describe("buildShadowReport — human-vs-auto provenance", () => {
     expect(funding.humanApprovalRate).toBeCloseTo(0.5);
   });
 
-  it("reports null approval rate when no human labels exist", () => {
+  it("reports null approval rate and null AUC when no human labels exist", () => {
     enqueue("post-funding", FUNDING_PAYLOAD);
     const report = buildShadowReport(ledger.listQueue({ limit: 1000 }));
     expect(report[0]!.humanApprovalRate).toBeNull();
+    expect(report[0]!.auc).toBeNull();
+  });
+
+  it("expired rows are never human labels, even when reviewed_at is set", () => {
+    // Reservation/expiry machinery stamps reviewed_at without any human
+    // decision — measured in prod: 137 expired luma rows deflated the
+    // approval rate from 65% to 38% before this guard.
+    const approved = enqueue("post-funding", FUNDING_PAYLOAD);
+    ledger.setQueueStatus({ id: approved, status: "approved" });
+    enqueue("post-funding", { name: "x" }, { initialStatus: "expired" });
+    const report = buildShadowReport(ledger.listQueue({ limit: 1000 }));
+    const funding = report.find((r) => r.finder === "post-funding")!;
+    expect(funding.humanReviewed).toBe(1);
+    expect(funding.humanApprovalRate).toBe(1);
   });
 
   it("excludes dispatched rows from the score buckets — they only describe the live queue", () => {

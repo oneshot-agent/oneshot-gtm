@@ -29,6 +29,7 @@ export * from "./_x-lanes.ts";
 export * from "./_pending.ts";
 export * from "./_priority.ts";
 export * from "./_priority-adapters.ts";
+export * from "./_gauge.ts";
 // Exported for the `find enrich-linkedin` backfill, which reuses the finders'
 // resolver so results are cached and billed identically.
 export * from "./_linkedin.ts";

@@ -75,7 +75,8 @@ export function clamp100(n: number): number {
   return Math.min(100, Math.max(0, Math.round(n)));
 }
 
-const SENIORITY_BANDS: Array<{ score: number; pattern: RegExp }> = [
+/** Exported for the ops feature gauge, so title banding matches the engine. */
+export const SENIORITY_BANDS: Array<{ score: number; pattern: RegExp }> = [
   { score: 90, pattern: /founder|co-?founder|\bceo\b|\bcto\b|\bcoo\b|chief|owner|president/i },
   { score: 75, pattern: /\bvp\b|vice president|head of|director/i },
   { score: 60, pattern: /senior|staff|principal|\blead\b/i },

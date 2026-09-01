@@ -5,7 +5,7 @@ import {
   type QueueRow,
   safeParseJsonRecord,
 } from "@oneshot-gtm/core";
-import { PRIORITY_ADAPTERS, safeScorePriority } from "@oneshot-gtm/find";
+import { PRIORITY_ADAPTERS, mannWhitneyAuc, meanOf, safeScorePriority } from "@oneshot-gtm/find";
 import { c, header, note, ok } from "../output.ts";
 
 /**
@@ -122,6 +122,12 @@ export interface FinderShadowReport {
    */
   approvedScored: { n: number; mean: number | null };
   rejectedScored: { n: number; mean: number | null };
+  /**
+   * Mann-Whitney AUC of score vs human call: P(random approved outranks a
+   * random rejected). 0.5 = no separation. Null until both sides have scored
+   * rows. The Phase 2 acceptance bar reads this number.
+   */
+  auc: number | null;
 }
 
 /**
@@ -132,7 +138,7 @@ export interface FinderShadowReport {
 export function buildShadowReport(rows: QueueRow[]): FinderShadowReport[] {
   const byFinder = new Map<string, FinderShadowReport>();
   const humanApproved = new Map<string, number>();
-  const scoreSums = new Map<string, { approved: number; rejected: number }>();
+  const scores = new Map<string, { approved: number[]; rejected: number[] }>();
   for (const row of rows) {
     let entry = byFinder.get(row.play_name);
     if (!entry) {
@@ -145,6 +151,7 @@ export function buildShadowReport(rows: QueueRow[]): FinderShadowReport[] {
         humanApprovalRate: null,
         approvedScored: { n: 0, mean: null },
         rejectedScored: { n: 0, mean: null },
+        auc: null,
       };
       byFinder.set(row.play_name, entry);
     }
@@ -157,33 +164,33 @@ export function buildShadowReport(rows: QueueRow[]): FinderShadowReport[] {
       entry.scored++;
       entry.buckets[bucketOf(priority.total)]++;
     }
-    if (row.reviewed_at !== null && !isAutoRejected(row)) {
+    // Human label = a person decided. Expired rows carry reviewed_at from the
+    // reservation/expiry machinery, not from a review — counting them as
+    // non-approvals deflated approval rates (measured: luma 38% vs true 65%).
+    const humanDecided =
+      row.reviewed_at !== null &&
+      (row.status === "approved" || row.status === "sent" || row.status === "rejected") &&
+      !isAutoRejected(row);
+    if (humanDecided) {
       entry.humanReviewed++;
-      const sums = scoreSums.get(row.play_name) ?? { approved: 0, rejected: 0 };
+      const sides = scores.get(row.play_name) ?? { approved: [], rejected: [] };
       if (row.status === "approved" || row.status === "sent") {
         humanApproved.set(row.play_name, (humanApproved.get(row.play_name) ?? 0) + 1);
-        if (priority !== null) {
-          entry.approvedScored.n++;
-          sums.approved += priority.total;
-        }
+        if (priority !== null) sides.approved.push(priority.total);
       } else if (row.status === "rejected" && priority !== null) {
-        entry.rejectedScored.n++;
-        sums.rejected += priority.total;
+        sides.rejected.push(priority.total);
       }
-      scoreSums.set(row.play_name, sums);
+      scores.set(row.play_name, sides);
     }
   }
   for (const entry of byFinder.values()) {
     if (entry.humanReviewed > 0) {
       entry.humanApprovalRate = (humanApproved.get(entry.finder) ?? 0) / entry.humanReviewed;
     }
-    const sums = scoreSums.get(entry.finder);
-    if (sums && entry.approvedScored.n > 0) {
-      entry.approvedScored.mean = sums.approved / entry.approvedScored.n;
-    }
-    if (sums && entry.rejectedScored.n > 0) {
-      entry.rejectedScored.mean = sums.rejected / entry.rejectedScored.n;
-    }
+    const sides = scores.get(entry.finder) ?? { approved: [], rejected: [] };
+    entry.approvedScored = { n: sides.approved.length, mean: meanOf(sides.approved) };
+    entry.rejectedScored = { n: sides.rejected.length, mean: meanOf(sides.rejected) };
+    entry.auc = mannWhitneyAuc(sides.approved, sides.rejected);
   }
   return [...byFinder.values()].toSorted((a, b) => a.finder.localeCompare(b.finder));
 }
@@ -290,7 +297,8 @@ export function commandScoreProspects(opts: ScoreProspectsOpts): void {
       if (r.approvedScored.n > 0 || r.rejectedScored.n > 0) {
         process.stdout.write(
           `  ${"".padEnd(22)} ${c.dim("score vs human call —")} ` +
-            `${gaugeSide("approved", r.approvedScored)}  ${gaugeSide("rejected", r.rejectedScored)}\n`,
+            `${gaugeSide("approved", r.approvedScored)}  ${gaugeSide("rejected", r.rejectedScored)}` +
+            `${r.auc === null ? "" : `  ${c.dim("AUC:")} ${r.auc.toFixed(2)}`}\n`,
         );
       }
     }
