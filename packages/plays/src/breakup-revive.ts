@@ -67,7 +67,7 @@ export async function runBreakupRevive(
   }
 
   const targets = opts.targets ?? ledgerScanTargets(opts);
-  const drafted: BreakupReviveDraft[] = new Array(targets.length);
+  const drafted: BreakupReviveDraft[] = [];
 
   for (const [index, t] of targets.entries()) {
     if (!t.email) continue;
@@ -138,7 +138,7 @@ export async function runBreakupRevive(
         flags: stub.flags,
       };
     }
-    drafted[index] = result;
+    drafted.push(result);
     // Keep observer failures distinct from a target's draft/send failure. In
     // particular, do not manufacture a second error draft and callback.
     opts.onProgress?.(index, result);
