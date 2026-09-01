@@ -11,6 +11,7 @@ export * from "./telemetry.ts";
 export * from "./version.ts";
 export * from "./json.ts";
 export * from "./priority.ts";
+export * from "./labels.ts";
 export * from "./gmail.ts";
 export * from "./smartlead.ts";
 export * from "./canary.ts";

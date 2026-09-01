@@ -44,6 +44,11 @@ export function mannWhitneyAuc(positives: number[], negatives: number[]): number
  * Wilson 95% confidence interval for a proportion. Preferred over the normal
  * approximation at the small n this workspace's labels actually have. n = 0
  * returns the uninformative full interval.
+ *
+ * NOT dead code: consumed by ops/gauge-priority-features.ts, which is
+ * maintainer-local tooling kept out of the public tree (/ops/ is gitignored)
+ * — a caller grep will find only the tests. Same situation as
+ * SENIORITY_BANDS in _priority.ts.
  */
 export function wilson95(successes: number, n: number): { lo: number; hi: number } {
   if (n === 0) return { lo: 0, hi: 1 };

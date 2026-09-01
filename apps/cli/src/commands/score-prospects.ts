@@ -1,5 +1,7 @@
 import {
   getLedger,
+  isHumanApproval,
+  isHumanDecision,
   parseProspectPriority,
   type ProspectPriority,
   type QueueRow,
@@ -136,63 +138,70 @@ export interface FinderShadowReport {
  * probability — no calibration has been measured.
  */
 export function buildShadowReport(rows: QueueRow[]): FinderShadowReport[] {
-  const byFinder = new Map<string, FinderShadowReport>();
-  const humanApproved = new Map<string, number>();
-  const scores = new Map<string, { approved: number[]; rejected: number[] }>();
+  // One accumulator per finder; the report objects are constructed once at
+  // the end so no field ever depends on a placeholder being overwritten.
+  interface Acc {
+    rows: number;
+    scored: number;
+    buckets: Record<(typeof SCORE_BUCKETS)[number], number>;
+    humanReviewed: number;
+    /** Human approvals INCLUDING unscored rows — not derivable from approved.length. */
+    approvedCount: number;
+    approved: number[];
+    rejected: number[];
+  }
+  const byFinder = new Map<string, Acc>();
   for (const row of rows) {
-    let entry = byFinder.get(row.play_name);
-    if (!entry) {
-      entry = {
-        finder: row.play_name,
+    let acc = byFinder.get(row.play_name);
+    if (!acc) {
+      acc = {
         rows: 0,
         scored: 0,
         buckets: { "0-19": 0, "20-39": 0, "40-59": 0, "60-79": 0, "80-100": 0 },
         humanReviewed: 0,
-        humanApprovalRate: null,
-        approvedScored: { n: 0, mean: null },
-        rejectedScored: { n: 0, mean: null },
-        auc: null,
+        approvedCount: 0,
+        approved: [],
+        rejected: [],
       };
-      byFinder.set(row.play_name, entry);
+      byFinder.set(row.play_name, acc);
     }
-    entry.rows++;
+    acc.rows++;
     const priority = parseProspectPriority(row.priority_json);
     // Buckets describe the live queue only — a dispatched (sent) or dropped
     // row keeps its historical priority_json, and counting it here would make
     // the distribution misrepresent the claimed pending/approved population.
     if (priority !== null && (row.status === "pending" || row.status === "approved")) {
-      entry.scored++;
-      entry.buckets[bucketOf(priority.total)]++;
+      acc.scored++;
+      acc.buckets[bucketOf(priority.total)]++;
     }
-    // Human label = a person decided. Expired rows carry reviewed_at from the
-    // reservation/expiry machinery, not from a review — counting them as
-    // non-approvals deflated approval rates (measured: luma 38% vs true 65%).
-    const humanDecided =
-      row.reviewed_at !== null &&
-      (row.status === "approved" || row.status === "sent" || row.status === "rejected") &&
-      !isAutoRejected(row);
-    if (humanDecided) {
-      entry.humanReviewed++;
-      const sides = scores.get(row.play_name) ?? { approved: [], rejected: [] };
-      if (row.status === "approved" || row.status === "sent") {
-        humanApproved.set(row.play_name, (humanApproved.get(row.play_name) ?? 0) + 1);
-        if (priority !== null) sides.approved.push(priority.total);
-      } else if (row.status === "rejected" && priority !== null) {
-        sides.rejected.push(priority.total);
+    // Human label = a person decided (shared predicate — expiry machinery
+    // stamps reviewed_at without judgment; counting those as non-approvals
+    // deflated approval rates: measured luma 38% vs true 65%).
+    if (isHumanDecision(row)) {
+      acc.humanReviewed++;
+      if (isHumanApproval(row)) {
+        acc.approvedCount++;
+        if (priority !== null) acc.approved.push(priority.total);
+      } else if (priority !== null) {
+        acc.rejected.push(priority.total);
       }
-      scores.set(row.play_name, sides);
     }
   }
-  for (const entry of byFinder.values()) {
-    if (entry.humanReviewed > 0) {
-      entry.humanApprovalRate = (humanApproved.get(entry.finder) ?? 0) / entry.humanReviewed;
-    }
-    const sides = scores.get(entry.finder) ?? { approved: [], rejected: [] };
-    entry.approvedScored = { n: sides.approved.length, mean: meanOf(sides.approved) };
-    entry.rejectedScored = { n: sides.rejected.length, mean: meanOf(sides.rejected) };
-    entry.auc = mannWhitneyAuc(sides.approved, sides.rejected);
-  }
-  return [...byFinder.values()].toSorted((a, b) => a.finder.localeCompare(b.finder));
+  return [...byFinder.entries()]
+    .map(
+      ([finder, acc]): FinderShadowReport => ({
+        finder,
+        rows: acc.rows,
+        scored: acc.scored,
+        buckets: acc.buckets,
+        humanReviewed: acc.humanReviewed,
+        humanApprovalRate: acc.humanReviewed > 0 ? acc.approvedCount / acc.humanReviewed : null,
+        approvedScored: { n: acc.approved.length, mean: meanOf(acc.approved) },
+        rejectedScored: { n: acc.rejected.length, mean: meanOf(acc.rejected) },
+        auc: mannWhitneyAuc(acc.approved, acc.rejected),
+      }),
+    )
+    .toSorted((a, b) => a.finder.localeCompare(b.finder));
 }
 
 function gaugeSide(label: string, s: { n: number; mean: number | null }): string {
