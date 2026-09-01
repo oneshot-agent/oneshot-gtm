@@ -695,10 +695,25 @@ function RunPage() {
                 setEvents([]);
                 setError(null);
                 if (runRecord?.targets) {
-                  setRows(runRecord.targets as Record<string, string>[]);
-                  setDedupeKeys(
-                    runRecord.targets.map((_, index) => runRecord.dedupeKeys[index] ?? null),
+                  const restoredRows = runRecord.targets.map((target) => {
+                    const row: Record<string, string> = {};
+                    if (!target || typeof target !== "object" || Array.isArray(target)) return row;
+                    for (const [key, value] of Object.entries(target)) {
+                      row[key] =
+                        value == null
+                          ? ""
+                          : typeof value === "string"
+                            ? value
+                            : JSON.stringify(value);
+                    }
+                    return row;
+                  });
+                  const restoredKeys = restoredRows.map(
+                    (_, index) => runRecord.dedupeKeys[index] ?? null,
                   );
+                  const retryable = pruneSentRows(runRecord.events, restoredRows, restoredKeys);
+                  setRows(retryable.rows.length > 0 ? retryable.rows : [{ ...schema.defaultRow }]);
+                  setDedupeKeys(retryable.rows.length > 0 ? retryable.dedupeKeys : [null]);
                 }
                 void navigate({ search: (prev) => ({ ...prev, runId: undefined }) });
               }}

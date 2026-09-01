@@ -43,11 +43,11 @@ export interface BreakupReviveOptions {
   valueDrop?: string;
   /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
   signal?: AbortSignal;
-  /** Live progress callback */
-  onProgress?: (index: number, draft: any) => void;
+  /** Called after each target completes, with the target's original index. */
+  onProgress?: (index: number, draft: BreakupReviveDraft) => void;
 }
 
-interface BreakupReviveDraft {
+export interface BreakupReviveDraft {
   prospectEmail: string | null;
   prospectName: string | null;
   daysCold: number;
@@ -69,8 +69,9 @@ export async function runBreakupRevive(
   const targets = opts.targets ?? ledgerScanTargets(opts);
   const drafted: BreakupReviveDraft[] = [];
 
-  for (const t of targets) {
+  for (const [index, t] of targets.entries()) {
     if (!t.email) continue;
+    let result: BreakupReviveDraft;
     try {
       // Custom serial loop, so it repeats runEmailPlay's guards itself.
       throwIfCancelled(opts.signal, `${PLAY_NAME} draft`);
@@ -108,7 +109,7 @@ export async function runBreakupRevive(
         allowRecontact: true,
       });
 
-      const res = {
+      result = {
         prospectEmail: t.email,
         prospectName: t.name,
         daysCold: t.daysCold,
@@ -118,8 +119,6 @@ export async function runBreakupRevive(
         sent: send.sent,
         flags,
       };
-      drafted.push(res);
-      opts.onProgress?.(drafted.length - 1, res as any);
     } catch (err) {
       // Daily-cap deferral is not a per-target failure — abort the run so the
       // caller leaves remaining targets queued instead of stamping error drafts.
@@ -128,7 +127,7 @@ export async function runBreakupRevive(
       if (isRunCancelled(err)) throw err;
       logTargetError({ playName: PLAY_NAME, to: t.email, err });
       const stub = errorDraft((err as Error)?.message);
-      const res = {
+      result = {
         prospectEmail: t.email,
         prospectName: t.name,
         daysCold: t.daysCold,
@@ -138,9 +137,11 @@ export async function runBreakupRevive(
         sent: stub.sent,
         flags: stub.flags,
       };
-      drafted.push(res);
-      opts.onProgress?.(drafted.length - 1, res as any);
     }
+    drafted.push(result);
+    // Keep observer failures distinct from a target's draft/send failure. In
+    // particular, do not manufacture a second error draft and callback.
+    opts.onProgress?.(index, result);
   }
 
   return { drafted };
