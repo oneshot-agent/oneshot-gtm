@@ -80,7 +80,7 @@ bun run cli -- find drain podcast-guest --dry-run  # preview approved /queue row
 bun run cli -- cadence advance                     # daily tick: poll inbox, fire follow-ups
 ```
 
-51 commands — thirteen groups, plus `init`, `doctor` and `ui` at the top level. `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
+52 commands — fourteen groups, plus `init`, `doctor` and `ui` at the top level. `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
 
 | Group                    | Commands                                                                                                                                                                                                                                    |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -94,12 +94,13 @@ bun run cli -- cadence advance                     # daily tick: poll inbox, fir
 | `motion`                 | `post-funding` `concierge` `demo-no-show` `competitor-switch` `hiring-signal` `podcast-guest` — each takes `--target <file>`; `breakup-revive` reads the ledger                                                                             |
 | `cadence`                | `advance` — poll inbound, fire due steps                                                                                                                                                                                                    |
 | `discover`               | `icp interview-prep` · `icp synthesize` · `pmf classify` · `pmf survey` · `pmf survey-collect`                                                                                                                                              |
+| `measure`                | `benchmark` — compare this install's command activity with the opt-in telemetry cohort; supports `--json`                                                                                                                                   |
 | `intel`                  | `advise` · `personalize` · `triage-replies` · `weekly-review`                                                                                                                                                                               |
 | `handoff`                | `readiness` · `templatize` · `first-ae`                                                                                                                                                                                                     |
 | `demo`                   | `seed` · `ui` · `reset` — a fictional install for screenshots and video                                                                                                                                                                     |
 | `workspace`              | `list` · `create <name>` · `use <name>` · `current` · `path <name>` · `remove <name>` — one isolated install per product; `--workspace <name>` on any command                                                                               |
 
-Spend, CAC, RoCS and outcome logging deliberately have no CLI group — they live on the dashboard's Measure and Cadences pages so there's one source of truth. The `/api/measure/*` routes are there if you'd rather script them, or add `--json` to a read-only command (`doctor`, `identities list`, `domains list`, `workspace list`) for machine-readable output.
+Spend, CAC, RoCS and outcome logging remain in the dashboard's Measure and Cadences pages so there's one source of truth. The CLI's `measure benchmark` surface is limited to anonymous telemetry comparisons. The `/api/measure/*` routes are there if you'd rather script local ledger metrics, or add `--json` to a read-only command for machine-readable output.
 
 ### Dashboard
 
@@ -313,7 +314,7 @@ Add a OneShot domain and mailbox from `/setup` or `identities add` — pick a pr
 
 ```
 apps/
-  cli/        51-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
+  cli/        52-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
   server/     Bun.serve + SSE; tsdown bundle published as `oneshot-gtm-server`
   web/        Vite + React 19 + TanStack + Base UI — 9 pages, run form, strategist dock, privacy mode
 packages/
