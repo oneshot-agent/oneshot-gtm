@@ -1,8 +1,8 @@
 # Status
 
-**Assume green.** The 49 CLI commands, 17 plays, 11 finders, nine dashboard pages plus the run form, and the server's REST + SSE routes are all covered by the test suite — and verified end to end against the live OneShot API: every paid call type has made the live round trip, including the voice and SMS legs (`motion concierge` / `motion demo-no-show`), the PMF survey pair, reply triage, bounce harvesting, and `gmail placement`.
+**Assume green.** The 50 CLI commands, 17 plays, 11 finders, nine dashboard pages plus the run form, and the server's REST + SSE routes are all covered by the test suite — and verified end to end against the live OneShot API: every paid call type has made the live round trip, including the voice and SMS legs (`motion concierge` / `motion demo-no-show`), the PMF survey pair, reply triage, bounce harvesting, and `gmail placement`.
 
-Last verified **2026-08-30** · Bun 1.3.13 · OneShot SDK 0.22.0 · **2245 tests / 172 files** · typecheck + oxlint + oxfmt clean.
+Last verified **2026-09-01** · Bun 1.3.13 · OneShot SDK 0.22.0 · **2396 tests / 183 files** · typecheck + oxlint + oxfmt clean.
 
 **What the gate covers.** `apps/web` is now inside `bun run typecheck` — the dashboard source is
 type-checked in CI, and a deliberate error under `apps/web/src` fails the root script. As of

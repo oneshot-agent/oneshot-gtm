@@ -31,7 +31,7 @@ import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
 import { Field, Input, Textarea } from "../components/primitives/Field.tsx";
 import { Modal } from "../components/primitives/Modal.tsx";
 import { Pii } from "../components/primitives/Pii.tsx";
-import { useMask } from "../lib/privacy.tsx";
+import { useMask, usePrivacy } from "../lib/privacy.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { Toggle } from "../components/primitives/Toggle.tsx";
 import { cn, eventIsPast, formatSendsToday, humanizeEventDate, timeAgo } from "../lib/cn.ts";
@@ -42,6 +42,7 @@ import {
   type RowMeta,
 } from "../lib/drainButton.ts";
 import { humanInterval } from "../lib/humanInterval.ts";
+import { priorityBreakdown, priorityChip } from "../lib/priorityChip.ts";
 import { INTERVAL_PRESETS_MS, withIntervalOverride } from "../lib/triggerInterval.ts";
 import {
   clearDraftGenerating,
@@ -653,6 +654,10 @@ function QueueRow({
   const eventUrl = eventUrlFor(row.payload);
   const eventRole = eventRoleFor(row.payload);
   const eventPassed = eventDate != null && eventIsPast(eventDate);
+  // Privacy mode suppresses reason text — freeform reasons can embed names
+  // and companies the structured <Pii> masking can't reach.
+  const { masked } = usePrivacy();
+  const prio = priorityChip(row.priority, masked);
   return (
     <>
       <tr
@@ -751,6 +756,11 @@ function QueueRow({
                 draft
               </Badge>
             )}
+            {prio && (
+              <Badge tone={prio.tone} title={prio.title}>
+                {prio.label}
+              </Badge>
+            )}
             {eventDate && (
               <span
                 title={eventPassed ? `event passed · ${eventDate}` : eventDate}
@@ -797,6 +807,34 @@ function QueueRow({
           <td colSpan={7} className="px-6 py-3">
             <div className="flex flex-col gap-3 text-[12px] text-ink-muted">
               {row.notes ? <div className="ln-note">{row.notes}</div> : null}
+              {row.priority && (
+                <div className="rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep">
+                  <div className="flex items-center gap-2 border-b border-ink-rule/60 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+                    <span>priority {row.priority.total}</span>
+                    <Badge tone="neutral">experimental · shadow</Badge>
+                    <span className="normal-case tracking-normal">
+                      does not affect ordering or sending
+                    </span>
+                  </div>
+                  <div className="px-3 py-2.5">
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] text-ink-cream-2">
+                      {priorityBreakdown(row.priority).map((b) => (
+                        <span key={b.component}>
+                          {b.component} <span className="text-ink-cream">{b.score}</span>
+                          <span className="text-ink-faint"> ·{b.weightPct}%</span>
+                        </span>
+                      ))}
+                    </div>
+                    {!masked && row.priority.reasons.length > 0 && (
+                      <ul className="mt-1.5 list-disc pl-4 text-[11.5px]">
+                        {row.priority.reasons.map((r) => (
+                          <li key={r}>{r}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              )}
               {(eventTitle || eventDate || eventCity || eventUrl) && (
                 <div className="rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep">
                   <div className="flex items-center gap-2 border-b border-ink-rule/60 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">

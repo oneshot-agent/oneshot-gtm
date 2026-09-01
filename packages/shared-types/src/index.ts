@@ -399,6 +399,30 @@ export interface SenderIdentityView {
 
 export type QueueStatusView = "pending" | "approved" | "rejected" | "sent" | "expired";
 
+/**
+ * Shadow-mode explainable priority score (issue #410, Phase 1). Mirrors
+ * core's `ProspectPriority` — the API contract copy, like
+ * `QueueStatus`/`QueueStatusView`. Display-only: nothing orders, filters, or
+ * gates by it, and it is NOT a conversion probability.
+ */
+export interface ProspectPriorityView {
+  version: "heuristic-v1";
+  /** Weighted total, clamped integer 0..100. */
+  total: number;
+  components: {
+    personFit: number;
+    accountFit: number;
+    intentStrength: number;
+    timingFreshness: number;
+    signalConfidence: number;
+    contactability: number;
+  };
+  /** Concise evidence strings, fixed order. */
+  reasons: string[];
+  finder: string;
+  scoredAt: string;
+}
+
 export interface QueueRowView {
   id: number;
   playName: string;
@@ -426,6 +450,11 @@ export interface QueueRowView {
    * when the row's status flips to a terminal state.
    */
   isSending: boolean;
+  /**
+   * Shadow-mode priority artifact, or null on manual/legacy/pre-migration
+   * rows and rows whose stored artifact fails shape validation.
+   */
+  priority: ProspectPriorityView | null;
 }
 
 /**

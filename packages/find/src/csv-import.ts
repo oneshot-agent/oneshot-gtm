@@ -250,7 +250,10 @@ export async function importCsv(input: {
         removeReservation(id);
         result.errors.push({ row: candidate.row, message: verdict.reason });
       } else {
-        ledger.setQueueStatus({ id, status: "rejected", notes: verdict.reason });
+        // `auto:` prefix = machine rejection. Without it this classifier "no"
+        // reads as a HUMAN label everywhere the convention is checked
+        // (recentIcpDecisions, the shadow-score report).
+        ledger.setQueueStatus({ id, status: "rejected", notes: `auto: ICP — ${verdict.reason}` });
       }
       continue;
     }

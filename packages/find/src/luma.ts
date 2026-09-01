@@ -12,6 +12,7 @@ import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { LumaEventsTarget } from "@oneshot-gtm/plays";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
 import { resolveVerifyEnrichQualify } from "./_contact.ts";
+import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { qualifyPreSpend } from "./_qualify.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
@@ -920,7 +921,7 @@ async function resolveAndEnqueueLumaAttendee(
     // Synchronous cap re-check right before enqueue — no await between here and
     // the caller's enqueued++, so the queue cap is exact even under concurrency.
     if (capReached?.()) return "capped";
-    const id = ledger.enqueueTarget({
+    const id = enqueueScoredTarget(ledger, {
       playName: PLAY_NAME,
       payload: target,
       dedupeKey,

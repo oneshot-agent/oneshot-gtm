@@ -285,6 +285,37 @@ export interface OneShotConfig {
 
 export type QueueStatus = "pending" | "approved" | "rejected" | "sent" | "expired";
 
+/** Per-component sub-scores of a `ProspectPriority`. Each is a clamped integer 0..100. */
+export interface ProspectPriorityComponents {
+  personFit: number;
+  accountFit: number;
+  intentStrength: number;
+  timingFreshness: number;
+  signalConfidence: number;
+  contactability: number;
+}
+
+/**
+ * Versioned, explainable priority artifact computed at enqueue time from the
+ * evidence already in the payload (issue #410, Phase 1). Shadow-mode only: it
+ * is persisted and displayed but never drives ordering, approval, drain, or
+ * send behavior. Missing evidence scores neutral, not zero; rows enqueued by
+ * legacy/manual producers carry null. Hard gates (ICP, role, dedupe,
+ * deliverability) are never rescued by a score.
+ */
+export interface ProspectPriority {
+  version: "heuristic-v1";
+  /** Weighted total, clamped integer 0..100. */
+  total: number;
+  components: ProspectPriorityComponents;
+  /** Concise evidence strings, fixed order, no model chain-of-thought. */
+  reasons: string[];
+  /** The play/finder name the adapter scored under. */
+  finder: string;
+  /** ISO timestamp of scoring (injected clock — deterministic in tests). */
+  scoredAt: string;
+}
+
 /** A reviewed queue row, projected into an ICP classifier example. */
 export interface IcpDecisionExample {
   candidate: unknown;
@@ -321,6 +352,11 @@ export interface QueueRow {
    * on failure or stale by the cold-boot `sweepStaleQueueSends` sweep.
    */
   send_started_at: string | null;
+  /**
+   * Serialized `ProspectPriority` (shadow-mode score, v25) or null on rows
+   * from manual/legacy producers, auto-rejections, and pre-v25 rows.
+   */
+  priority_json: string | null;
 }
 
 export interface TriggerRow {

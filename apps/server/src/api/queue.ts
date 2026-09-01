@@ -3,6 +3,7 @@ import {
   isDraining,
   isRecentlyContacted,
   isSendDeferred,
+  parseProspectPriority,
   type QueueRow,
   type QueueStatus,
   type TelemetryOutcome,
@@ -22,6 +23,7 @@ import {
   type DrainResult,
   type LastDraft,
   parseQueueIds,
+  type ProspectPriorityView,
   type QueueCounts,
   type QueueListResponse,
   type QueueRowView,
@@ -30,6 +32,17 @@ import {
 import { jsonResponse } from "../server.ts";
 import { sendsToday } from "./_capacity.ts";
 import { dispatchPlay } from "./_play-dispatch.ts";
+
+/**
+ * Shape-check a stored priority artifact via the shared core validator —
+ * strict integers 0..100 on every score, so corruption like `total: -1` or
+ * `personFit: 999` reads as null instead of rendering. The backfill's
+ * resume-skip uses the same validator, so anything hidden here is seen as
+ * unscored and repaired on the next `find score-prospects` run.
+ */
+function parsePriority(raw: string | null): ProspectPriorityView | null {
+  return parseProspectPriority(raw);
+}
 
 function toView(row: QueueRow): QueueRowView {
   let payload: unknown = null;
@@ -74,6 +87,7 @@ function toView(row: QueueRow): QueueRowView {
     lastDraft,
     lastDraftedAt: row.last_drafted_at,
     isSending: row.send_started_at != null,
+    priority: parsePriority(row.priority_json),
   };
 }
 

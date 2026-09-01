@@ -1,6 +1,7 @@
 import { getLedger, logEvent, parallelMap } from "@oneshot-gtm/core";
 import type { CompetitorSwitchTarget, RepoInterestTarget } from "@oneshot-gtm/plays";
 import { resolveVerifyEnrichQualify } from "./_contact.ts";
+import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { persistRoleRejection } from "./_qualify.ts";
 import { isDuplicate } from "./_dedupe.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
@@ -305,7 +306,7 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
             ...contactExtras,
           };
 
-    const id = ledger.enqueueTarget({
+    const id = enqueueScoredTarget(ledger, {
       playName,
       payload: target,
       dedupeKey,

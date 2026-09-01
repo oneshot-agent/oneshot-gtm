@@ -7,6 +7,7 @@ import {
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { XAmplifyDmTarget, XAmplifyTarget, XRepostIntroTarget } from "@oneshot-gtm/plays";
+import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { loadXHarvest, saveXHarvest } from "./_x-cache.ts";
 import { CostMeter, estimateHarvestCost, type XEngineName } from "./_x-cost.ts";
 import {
@@ -385,7 +386,7 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
             ...base,
             ...(opts.launchDate ? { launchDate: opts.launchDate } : {}),
           };
-      const id = ledger.enqueueTarget({
+      const id = enqueueScoredTarget(ledger, {
         playName: sdkEmail ? "x-amplify" : "x-amplify-dm",
         payload: target,
         dedupeKey,
@@ -482,7 +483,7 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
         ? { seedEdge: edgeBySeed.get(seedHandle.toLowerCase())! }
         : {}),
     };
-    const id = ledger.enqueueTarget({
+    const id = enqueueScoredTarget(ledger, {
       playName: "x-repost-intro",
       payload: target,
       dedupeKey,
