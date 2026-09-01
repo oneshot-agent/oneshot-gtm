@@ -10,6 +10,7 @@ import type {
   BounceKind,
   BounceRecord,
   CanaryResultRecord,
+  ChannelEventRecord,
   GmailPlacement,
   InboxReplyRecord,
   IcpDecisionExample,
@@ -99,6 +100,20 @@ function canonEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
+/** Stable LinkedIn profile key across www/mobile hosts, schemes, query strings and trailing slashes. */
+export function canonicalLinkedInProfileKey(value: string): string | null {
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    if (!/(^|\.)linkedin\.com$/i.test(url.hostname)) return null;
+    const match = /^\/in\/([^/]+)\/?$/i.exec(url.pathname);
+    if (!match?.[1]) return null;
+    return `linkedin.com/in/${decodeURIComponent(match[1]).toLowerCase()}`;
+  } catch {
+    return null;
+  }
+}
+
 function safeParseJsonArray(raw: string): unknown[] {
   try {
     const parsed = JSON.parse(raw) as unknown;
@@ -137,6 +152,8 @@ export interface CadenceWithProspect {
   prospect_email: string | null;
   prospect_name: string | null;
   prospect_company: string | null;
+  reply_channel: "email" | "linkedin" | null;
+  replied_at: string | null;
 }
 
 /**
@@ -540,6 +557,21 @@ export class Ledger {
         ON inbox_replies(prospect_id, received_at);
       CREATE INDEX IF NOT EXISTS idx_inbox_replies_thread
         ON inbox_replies(thread_key, received_at);
+
+      CREATE TABLE IF NOT EXISTS channel_events (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        source            TEXT NOT NULL,
+        external_event_id TEXT NOT NULL,
+        prospect_id       INTEGER NOT NULL,
+        channel           TEXT NOT NULL,
+        event_type        TEXT NOT NULL,
+        occurred_at       TEXT NOT NULL,
+        created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(source, external_event_id),
+        FOREIGN KEY(prospect_id) REFERENCES prospects(id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_channel_events_prospect_time
+        ON channel_events(prospect_id, occurred_at);
     `);
     // v23: reply classification ('human' | 'auto' | 'auto_permanent' |
     // 'unsubscribe', see reply-classify.ts). NULL = row predates the
@@ -735,7 +767,17 @@ export class Ledger {
       args.push(opts.dueByIso);
     }
     const sql = `
-      SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company
+      SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company,
+             (SELECT channel FROM (
+                SELECT 'email' AS channel, received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
+                UNION ALL
+                SELECT channel, occurred_at AS at FROM channel_events WHERE prospect_id = p.id AND event_type = 'reply'
+              ) ORDER BY at DESC LIMIT 1) AS reply_channel,
+             (SELECT at FROM (
+                SELECT received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
+                UNION ALL
+                SELECT occurred_at AS at FROM channel_events WHERE prospect_id = p.id AND event_type = 'reply'
+              ) ORDER BY at DESC LIMIT 1) AS replied_at
       FROM cadence_state c
       JOIN prospects p ON p.id = c.prospect_id
       WHERE ${where.join(" AND ")}
@@ -746,7 +788,15 @@ export class Ledger {
 
   listAllCadences(): CadenceWithProspect[] {
     const sql = `
-      SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company
+      SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company,
+             (SELECT channel FROM (
+                SELECT 'email' AS channel, received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
+                UNION ALL SELECT channel, occurred_at AS at FROM channel_events WHERE prospect_id = p.id AND event_type = 'reply'
+              ) ORDER BY at DESC LIMIT 1) AS reply_channel,
+             (SELECT at FROM (
+                SELECT received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
+                UNION ALL SELECT occurred_at AS at FROM channel_events WHERE prospect_id = p.id AND event_type = 'reply'
+              ) ORDER BY at DESC LIMIT 1) AS replied_at
       FROM cadence_state c
       JOIN prospects p ON p.id = c.prospect_id
       ORDER BY c.status ASC, c.next_due_at ASC NULLS LAST
@@ -761,7 +811,15 @@ export class Ledger {
    */
   getCadence(prospectId: number, playName: string): CadenceWithProspect | null {
     const sql = `
-      SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company
+      SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company,
+             (SELECT channel FROM (
+                SELECT 'email' AS channel, received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
+                UNION ALL SELECT channel, occurred_at AS at FROM channel_events WHERE prospect_id = p.id AND event_type = 'reply'
+              ) ORDER BY at DESC LIMIT 1) AS reply_channel,
+             (SELECT at FROM (
+                SELECT received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
+                UNION ALL SELECT occurred_at AS at FROM channel_events WHERE prospect_id = p.id AND event_type = 'reply'
+              ) ORDER BY at DESC LIMIT 1) AS replied_at
       FROM cadence_state c
       JOIN prospects p ON p.id = c.prospect_id
       WHERE c.prospect_id = ? AND c.play_name = ?
@@ -772,7 +830,15 @@ export class Ledger {
   /** All cadences for one prospect — index seek on cadence_state.prospect_id (PK prefix). */
   listCadencesForProspect(prospectId: number): CadenceWithProspect[] {
     const sql = `
-      SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company
+      SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company,
+             (SELECT channel FROM (
+                SELECT 'email' AS channel, received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
+                UNION ALL SELECT channel, occurred_at AS at FROM channel_events WHERE prospect_id = p.id AND event_type = 'reply'
+              ) ORDER BY at DESC LIMIT 1) AS reply_channel,
+             (SELECT at FROM (
+                SELECT received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
+                UNION ALL SELECT occurred_at AS at FROM channel_events WHERE prospect_id = p.id AND event_type = 'reply'
+              ) ORDER BY at DESC LIMIT 1) AS replied_at
       FROM cadence_state c
       JOIN prospects p ON p.id = c.prospect_id
       WHERE c.prospect_id = ?
@@ -875,17 +941,7 @@ export class Ledger {
         .run(input.reason, input.note?.trim() || null, input.prospectId, input.playName);
       changed = result.changes > 0;
       if (changed) {
-        this.db
-          .prepare(
-            `UPDATE target_queue
-             SET status = 'expired', send_started_at = NULL,
-                 notes = CASE WHEN notes IS NULL OR notes = '' THEN 'expired: cadence stopped'
-                              ELSE notes || ' · expired: cadence stopped' END
-             WHERE (prospect_id = ? OR dedupe_key = ?)
-               AND play_name = 'breakup-revive'
-               AND status IN ('pending', 'approved')`,
-          )
-          .run(input.prospectId, `prospect:${input.prospectId}`);
+        this.expireBreakupReviveQueue(input.prospectId, "cadence stopped");
       }
     })();
     return changed;
@@ -1170,6 +1226,119 @@ export class Ledger {
         .query("SELECT * FROM prospects WHERE email = ?")
         .get(canonEmail(email)) as ProspectRecord) ?? null
     );
+  }
+
+  resolveProspectForLinkedInReply(input: {
+    email?: string;
+    linkedinUrl?: string;
+  }): { status: "matched"; prospectId: number } | { status: "unmatched" } | { status: "conflict" } {
+    const emailId = input.email ? (this.findProspectByEmail(input.email)?.id ?? null) : null;
+    let linkedinIds: number[] = [];
+    if (input.linkedinUrl) {
+      const key = canonicalLinkedInProfileKey(input.linkedinUrl);
+      if (key) {
+        const rows = this.db
+          .query(
+            `SELECT id, linkedin_url, source_profile_url FROM prospects
+             WHERE linkedin_url LIKE '%linkedin.com/in/%'
+                OR source_profile_url LIKE '%linkedin.com/in/%'`,
+          )
+          .all() as Array<{
+          id: number;
+          linkedin_url: string | null;
+          source_profile_url: string | null;
+        }>;
+        linkedinIds = rows
+          .filter(
+            (row) =>
+              (row.linkedin_url && canonicalLinkedInProfileKey(row.linkedin_url) === key) ||
+              (row.source_profile_url &&
+                canonicalLinkedInProfileKey(row.source_profile_url) === key),
+          )
+          .map((row) => row.id);
+      }
+    }
+    const uniqueLinkedIn = [...new Set(linkedinIds)];
+    if (uniqueLinkedIn.length > 1) return { status: "conflict" };
+    const linkedinId = uniqueLinkedIn[0] ?? null;
+    if (emailId && linkedinId && emailId !== linkedinId) return { status: "conflict" };
+    const prospectId = emailId ?? linkedinId;
+    return prospectId ? { status: "matched", prospectId } : { status: "unmatched" };
+  }
+
+  recordLinkedInReply(input: {
+    prospectId: number;
+    source: string;
+    externalEventId: string;
+    occurredAt: string;
+  }): {
+    duplicate: boolean;
+    prospectId: number;
+    cadencesStopped: number;
+    inFlightSends: number;
+  } {
+    return this.db.transaction(() => {
+      const existing = this.db
+        .query(`SELECT * FROM channel_events WHERE source = ? AND external_event_id = ?`)
+        .get(input.source, input.externalEventId) as ChannelEventRecord | null;
+      if (existing) {
+        const inFlight = this.db
+          .query(
+            `SELECT COUNT(*) AS n FROM cadence_state
+             WHERE prospect_id = ? AND sending_started_at IS NOT NULL`,
+          )
+          .get(existing.prospect_id) as { n: number };
+        return {
+          duplicate: true,
+          prospectId: existing.prospect_id,
+          cadencesStopped: 0,
+          inFlightSends: inFlight.n,
+        };
+      }
+      const live = this.db
+        .query(
+          `SELECT sending_started_at FROM cadence_state
+           WHERE prospect_id = ? AND status IN ('active','paused')`,
+        )
+        .all(input.prospectId) as Array<{ sending_started_at: string | null }>;
+      this.db
+        .prepare(
+          `INSERT INTO channel_events
+             (source, external_event_id, prospect_id, channel, event_type, occurred_at)
+           VALUES (?, ?, ?, 'linkedin', 'reply', ?)`,
+        )
+        .run(input.source, input.externalEventId, input.prospectId, input.occurredAt);
+      this.db
+        .prepare(
+          `UPDATE cadence_state
+           SET status = 'replied', next_due_at = NULL,
+               next_step_draft_json = NULL, next_step_drafted_at = NULL,
+               last_send_error = NULL, last_send_error_at = NULL
+           WHERE prospect_id = ? AND status IN ('active','paused')`,
+        )
+        .run(input.prospectId);
+      this.expireBreakupReviveQueue(input.prospectId, "prospect replied");
+      return {
+        duplicate: false,
+        prospectId: input.prospectId,
+        cadencesStopped: live.length,
+        inFlightSends: live.filter((row) => row.sending_started_at != null).length,
+      };
+    })();
+  }
+
+  private expireBreakupReviveQueue(prospectId: number, reason: string): void {
+    this.db
+      .prepare(
+        `UPDATE target_queue
+         SET status = 'expired', send_started_at = NULL,
+             notes = CASE WHEN notes IS NULL OR notes = '' THEN ?
+                          ELSE notes || ' · ' || ? END
+         WHERE (prospect_id = ? OR dedupe_key = ?)
+           AND play_name = 'breakup-revive'
+           AND status IN ('pending', 'approved')`,
+      )
+      .run(`expired: ${reason}`, `expired: ${reason}`, prospectId, `prospect:${prospectId}`);
   }
 
   /**
@@ -1976,9 +2145,15 @@ export class Ledger {
              MAX(s.created_at) AS last_sequence_at,
              MAX(CASE WHEN c.status = 'stopped' AND c.stop_reason IN ('bad_timing', 'other')
                       THEN c.stopped_at END) AS last_revivable_stop_at,
-             MAX(COALESCE(MAX(s.created_at), ''), COALESCE(MAX(CASE
-               WHEN c.status = 'stopped' AND c.stop_reason IN ('bad_timing', 'other')
-               THEN c.stopped_at END), '')) AS last_event_at
+             MAX(
+               COALESCE(MAX(s.created_at), ''),
+               COALESCE(MAX(CASE WHEN c.status = 'stopped' AND c.stop_reason IN ('bad_timing', 'other')
+                                 THEN c.stopped_at END), ''),
+               COALESCE((SELECT MAX(ir.received_at) FROM inbox_replies ir
+                         WHERE ir.prospect_id = p.id AND coalesce(ir.kind,'human') = 'human'), ''),
+               COALESCE((SELECT MAX(ce.occurred_at) FROM channel_events ce
+                         WHERE ce.prospect_id = p.id AND ce.event_type = 'reply'), '')
+             ) AS last_event_at
       FROM prospects p
       LEFT JOIN sequence_events s ON s.prospect_id = p.id
       LEFT JOIN cadence_state c ON c.prospect_id = p.id
@@ -2155,11 +2330,7 @@ export class Ledger {
       const cad = this.getCadence(input.prospectId, input.playName);
       const newlyReplied = cad?.status === "active" || cad?.status === "paused";
       if (newlyReplied) {
-        this.setCadenceStatus({
-          prospectId: input.prospectId,
-          playName: input.playName,
-          status: "replied",
-        });
+        this.markCadenceReplied(input.prospectId, input.playName);
       }
       const eventRecorded = this.markLatestStepReplied({
         prospectId: input.prospectId,
@@ -2186,7 +2357,7 @@ export class Ledger {
       for (const cad of this.listCadencesForProspect(prospectId)) {
         const live = cad.status === "active" || cad.status === "paused";
         if (live) {
-          this.setCadenceStatus({ prospectId, playName: cad.play_name, status: "replied" });
+          this.markCadenceReplied(prospectId, cad.play_name);
         }
         out.set(cad.play_name, { newlyReplied: live, eventRecorded: false });
       }
@@ -2197,12 +2368,26 @@ export class Ledger {
           eventRecorded,
         });
       }
+      this.expireBreakupReviveQueue(prospectId, "prospect replied");
       return [...out].map(([playName, r]) => ({
         playName,
         newlyReplied: r.newlyReplied,
         eventRecorded: r.eventRecorded,
       }));
     })();
+  }
+
+  /** Stop future work on one live cadence without hiding a send already handed to a provider. */
+  private markCadenceReplied(prospectId: number, playName: string): void {
+    this.db
+      .prepare(
+        `UPDATE cadence_state
+         SET status = 'replied', next_due_at = NULL,
+             next_step_draft_json = NULL, next_step_drafted_at = NULL,
+             last_send_error = NULL, last_send_error_at = NULL
+         WHERE prospect_id = ? AND play_name = ? AND status IN ('active','paused')`,
+      )
+      .run(prospectId, playName);
   }
 
   /**

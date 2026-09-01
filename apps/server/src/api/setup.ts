@@ -106,6 +106,7 @@ export async function getSetupStatus(req: Request): Promise<Response> {
         GMAIL_CLIENT_SECRET: secretSource("GMAIL_CLIENT_SECRET"),
         GMAIL_REFRESH_TOKEN: secretSource("GMAIL_REFRESH_TOKEN"),
         SMARTLEAD_API_KEY: secretSource("SMARTLEAD_API_KEY"),
+        LINKEDIN_REPLY_WEBHOOK_SECRET: secretSource("LINKEDIN_REPLY_WEBHOOK_SECRET"),
         X_API_KEY: secretSource("X_API_KEY"),
         X_API_SECRET: secretSource("X_API_SECRET"),
         X_ACCESS_TOKEN: secretSource("X_ACCESS_TOKEN"),

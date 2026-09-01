@@ -52,6 +52,9 @@ export interface CadenceView {
   stopReason: CadenceStopReason | null;
   stopNote: string | null;
   stoppedAt: string | null;
+  /** Most recent persisted human reply channel; null for legacy reply rows without an inbound event. */
+  replyChannel: "email" | "linkedin" | null;
+  replyAt: string | null;
   /** Persisted next-step preview (set by Preview, cleared on advance). */
   nextStepDraft: CadenceNextStepDraft | null;
   /** Label of the next step ("value follow-up", "breakup", …). Null when
@@ -102,6 +105,22 @@ export interface CadencesResult {
   counts: CadenceCounts;
   /** Absent when the capacity computation failed — pages skip the figure. */
   sendsToday?: SendsToday;
+}
+
+export interface LinkedInReplyWebhookRequest {
+  source: string;
+  eventId: string;
+  occurredAt: string;
+  linkedinUrl?: string;
+  email?: string;
+}
+
+export interface LinkedInReplyResult {
+  accepted: true;
+  duplicate: boolean;
+  prospectId: number;
+  cadencesStopped: number;
+  inFlightSends: number;
 }
 
 /** RoCS value tag attached to a receipt once its outcome is known. */
@@ -322,7 +341,8 @@ export interface SetupRequest {
       | "X_API_SECRET"
       | "X_ACCESS_TOKEN"
       | "X_ACCESS_SECRET"
-      | "TWITTERAPI_IO_KEY",
+      | "TWITTERAPI_IO_KEY"
+      | "LINKEDIN_REPLY_WEBHOOK_SECRET",
       string
     >
   >;

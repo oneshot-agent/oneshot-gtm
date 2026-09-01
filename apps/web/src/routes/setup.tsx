@@ -803,6 +803,24 @@ function SetupPage() {
         </LedgerSection>
 
         <LedgerSection
+          eyebrow="05.6 · LinkedIn replies"
+          lede="Let LinkedIn automation tools report a real prospect reply so OneShot stops every live email cadence. Connection acceptance alone does nothing."
+        >
+          <Field
+            label="LINKEDIN_REPLY_WEBHOOK_SECRET"
+            hint={`${hintFor(sources["LINKEDIN_REPLY_WEBHOOK_SECRET"])} Use a random 32+ character bearer secret.`}
+          >
+            <Input
+              type="password"
+              placeholder={sources["LINKEDIN_REPLY_WEBHOOK_SECRET"] ? "(unchanged)" : ""}
+              value={secrets["LINKEDIN_REPLY_WEBHOOK_SECRET"] ?? ""}
+              onChange={(e) => setSecret("LINKEDIN_REPLY_WEBHOOK_SECRET", e.target.value)}
+              autoComplete="new-password"
+            />
+          </Field>
+        </LedgerSection>
+
+        <LedgerSection
           eyebrow="06 · Email transport"
           lede="The sender rotation pool. Each prospect sticks to the identity that first emailed them; new prospects go to the identity with the most capacity left today."
         >

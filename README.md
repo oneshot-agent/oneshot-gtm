@@ -262,7 +262,7 @@ Seventeen of them. Ten have a **Run** page in the dashboard and drain from the q
 
 Five more drain from the queue without a Run form — `profile-intro` (what Add Prospect enqueues), `breakup-revive`, and the three the `x-reposters` finder feeds: `x-repost-intro` (founder-lane email + cadence), `x-amplify` (one-touch launch-day repost ask), and `x-amplify-dm` — the one play that never auto-sends: it drafts X DM/reply text you copy and send by hand from the X app, then **Mark sent** records it as a channel-`x` touch. The last two, `concierge` and `demo-no-show`, are CLI-only because they open with a voice call and an SMS respectively.
 
-Most carry a cadence — a value follow-up, then a breakup, spread over roughly three to nine days and editable per play from `/plays`. Any reply stops the sequence — and is recorded whether the sequence is still running, already finished, or never existed (one-touch plays like `luma-events`), credited to the play whose subject it threads on.
+Most carry a cadence — a value follow-up, then a breakup, spread over roughly three to nine days and editable per play from `/plays`. Any email reply stops every live cadence for that prospect — and is recorded whether the sequence is still running, already finished, or never existed (one-touch plays like `luma-events`), credited to the play whose subject it threads on. You can also stop one cadence deliberately from `/cadences`, with a reason and note: bad-timing/other stops become breakup-revive candidates after the configured 60–90 day cold window, while not-a-fit/do-not-contact remain excluded.
 
 ---
 
@@ -275,6 +275,7 @@ Outbound ships through a **sender identity pool** — any mix of OneShot wallet-
 - **Defer, never exceed.** When every identity is at cap, cadence steps stay due and queue rows stay approved until midnight. Nothing sends over cap.
 - **Two products, one founder, one inbox.** A workspace (see Workspaces) never first-touches someone another workspace emailed in the last 7 days: the draft is held with a `contacted-elsewhere` flag that you can override on a manual send, and auto paths (drain, cadence steps) wait the window out. Touches and the paid lookup caches live in one shared SQLite (`~/.oneshot-gtm-shared/`), so the same person is never researched twice across products.
 - **Replies follow the pool.** The inbox poll merges the OneShot inbox with every authorized Gmail account, so stop-on-reply works whichever identity sent. It walks everything since its last clean poll — a persisted watermark with an hour of overlap, paged newest-first, parking anything beyond one poll's page budget as a backlog the next ticks drain — so a reply is delayed by an outage, never lost to it. A reply you've already read and archived still counts. Answering from `/inbox` records the reply too, replies from the receiving identity, and threads on both transports — Gmail via `In-Reply-To`/`References`, OneShot via `reply_to_email_id`. Sends carry an idempotency key, so a retry after a timeout can't double-send.
+- **LinkedIn replies stop email too.** On `/cadences`, **Mark LinkedIn reply** records the cross-channel reply and stops every active or paused cadence for that prospect. Automation tools can call the authenticated webhook below. Connection acceptance alone does nothing, message text is not retained, and an email already handed to a sender cannot be recalled. A LinkedIn reply resets breakup-revive's cold clock just like an email reply; it does not receive fake email-play attribution.
 
 Add a OneShot domain and mailbox from `/setup` or `identities add` — pick a provisioned domain or type a new one to auto-provision on first send. Add a Gmail account with `gmail auth` (one-time OAuth; needs a Google Cloud _Desktop_ client with the Gmail API on). Add Smartlead mailboxes with `smartlead connect` (paste the workspace API key, pick from your connected accounts) or from `/setup` — Smartlead does the warmup and hosts the inboxes; the default ramp ceiling clamps to each mailbox's own Smartlead limit. **Send-only for now**: replies to Smartlead-sent mail appear in Smartlead's inbox, not `/inbox`, and its bounces aren't harvested — like OneShot identities, `doctor` reports them as not bounce-covered. With no pool configured, behavior is the classic single OneShot identity.
 
@@ -310,7 +311,40 @@ Add a OneShot domain and mailbox from `/setup` or `identities add` — pick a pr
 
 **Secrets** — `~/.oneshot-gtm/.env`, chmod 600, auto-loaded on first import.
 
-**Server** — single-user, local-first, binds `127.0.0.1` only, no auth.
+**Server** — single-user, local-first, binds `127.0.0.1` only. Dashboard routes rely on that local boundary. Keep unsigned intake endpoints private or protect them at your reverse proxy; the LinkedIn reply endpoint has its own bearer authentication.
+
+### Trigger webhooks
+
+Two JSON endpoints feed warm product signals through the normal ICP filter and review queue:
+
+- `POST /api/triggers/signup` requires `name`, `email`, and `phone`; optional fields are `signupContext`, `callWindow`, and `linkedinUrl`. Accepted ICP matches enqueue the `concierge` play.
+- `POST /api/triggers/cal-no-show` requires `name`, `email`, `company`, `missedAt`, and `rescheduleLink`; optional fields are `phone`, `whatTheyWanted`, and `linkedinUrl`. Accepted ICP matches enqueue `demo-no-show`.
+
+Valid matches return `202`; ICP rejections return `200` with `accepted: false`; malformed JSON or fields return `400`. Signup deliveries deduplicate by lowercase email, while no-shows deduplicate by lowercase `email + missedAt`. These two endpoints do **not** yet implement signing or replay protection—keep them on the local boundary or add authentication in front of them. The remaining work is tracked in [ROADMAP.md](./ROADMAP.md#L21).
+
+### LinkedIn reply webhook
+
+Public LinkedIn inbox APIs require partner approval, so OneShot exposes a provider-neutral intake that Expandi, Zapier, Make, n8n, or another automation can map into. Set a random bearer secret in `/setup` or `~/.oneshot-gtm/.env`:
+
+```bash
+LINKEDIN_REPLY_WEBHOOK_SECRET=<random-32+-character-secret>
+```
+
+Then send one stable event ID per actual reply. At least one of `linkedinUrl` or `email` is required; when both match different prospects the request is rejected.
+
+```bash
+curl -X POST http://127.0.0.1:3000/api/triggers/linkedin-reply \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer <secret>' \
+  -d '{
+    "source": "expandi",
+    "eventId": "provider-event-123",
+    "occurredAt": "2026-09-01T12:00:00Z",
+    "linkedinUrl": "https://www.linkedin.com/in/example-person"
+  }'
+```
+
+Successful responses include `duplicate`, `prospectId`, `cadencesStopped`, and `inFlightSends`. Retries of the same `source + eventId` succeed without applying the event twice. The endpoint stops OneShot email; the source tool remains responsible for stopping its own LinkedIn automation.
 
 ```
 apps/
