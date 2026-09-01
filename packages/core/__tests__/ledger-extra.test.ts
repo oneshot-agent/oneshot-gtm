@@ -3,6 +3,7 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Ledger } from "../src/ledger.ts";
+import { Database } from "bun:sqlite";
 
 let dbPath: string;
 let ledger: Ledger;
@@ -567,6 +568,123 @@ describe("cadence next-step draft round-trip", () => {
       status: "replied",
     });
     expect(ledger.getCadenceDraft({ prospectId: pid, playName: "show-hn" })).toBeNull();
+  });
+});
+
+describe("manual cadence stops", () => {
+  it("stores the disposition, leaves sibling cadences active, and expires queued revives", () => {
+    const pid = ledger.upsertProspect({ name: "Stop Me", email: "stop@x.com", source: "t" });
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "show-hn",
+      nextDueAt: new Date().toISOString(),
+    });
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "repo-interest",
+      nextDueAt: new Date().toISOString(),
+    });
+    const queueId = ledger.enqueueTarget({
+      playName: "breakup-revive",
+      payload: { email: "stop@x.com" },
+      dedupeKey: `prospect:${pid}`,
+      source: "test",
+      initialStatus: "approved",
+    })!;
+    ledger.setQueueProspectId(queueId, pid);
+
+    expect(
+      ledger.stopCadence({
+        prospectId: pid,
+        playName: "show-hn",
+        reason: "not_a_fit",
+        note: "wrong role",
+      }),
+    ).toBe(true);
+
+    const stopped = ledger.getCadence(pid, "show-hn")!;
+    expect(stopped).toMatchObject({
+      status: "stopped",
+      stop_reason: "not_a_fit",
+      stop_note: "wrong role",
+      next_due_at: null,
+    });
+    expect(stopped.stopped_at).toBeTruthy();
+    expect(ledger.getCadence(pid, "repo-interest")?.status).toBe("active");
+    expect(ledger.getQueueRow(queueId)?.status).toBe("expired");
+    expect(ledger.breakupReviveHoldFor("stop@x.com")?.reason).toBe("not_a_fit");
+
+    // Generic enrollment cannot silently erase a deliberate stop disposition.
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "show-hn",
+      nextDueAt: new Date(Date.now() + 86_400_000).toISOString(),
+    });
+    expect(ledger.getCadence(pid, "show-hn")).toMatchObject({
+      status: "stopped",
+      stop_reason: "not_a_fit",
+      stop_note: "wrong role",
+    });
+  });
+
+  it("does not claim a stop while a cadence send is in flight", () => {
+    const pid = ledger.upsertProspect({ name: "Sending", email: "sending@x.com", source: "t" });
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "show-hn",
+      nextDueAt: new Date().toISOString(),
+    });
+    expect(
+      ledger.claimCadenceSendingMarker({
+        prospectId: pid,
+        playName: "show-hn",
+        startedAtIso: new Date().toISOString(),
+      }),
+    ).toBe(true);
+    expect(ledger.stopCadence({ prospectId: pid, playName: "show-hn", reason: "bad_timing" })).toBe(
+      false,
+    );
+    expect(ledger.getCadence(pid, "show-hn")?.status).toBe("active");
+  });
+
+  it("uses a revivable stop as the cold clock and permanently excludes blocking reasons", () => {
+    const timing = ledger.upsertProspect({ name: "Later", email: "later@x.com", source: "t" });
+    const blocked = ledger.upsertProspect({ name: "No Fit", email: "nofit@x.com", source: "t" });
+    for (const [id, reason] of [
+      [timing, "bad_timing"],
+      [blocked, "do_not_contact"],
+    ] as const) {
+      ledger.recordSequenceEvent({
+        prospectId: id,
+        playName: "show-hn",
+        stepIndex: 0,
+        channel: "email",
+        status: "sent",
+      });
+      ledger.enrollCadence({
+        prospectId: id,
+        playName: "show-hn",
+        nextDueAt: new Date().toISOString(),
+      });
+      ledger.stopCadence({ prospectId: id, playName: "show-hn", reason });
+    }
+    const db = new Database(dbPath);
+    db.exec(`UPDATE sequence_events SET created_at = datetime('now', '-75 days');`);
+
+    // A fresh timing stop resets the clock even though the email itself is old.
+    expect(
+      ledger.listColdProspects({ minDaysSinceLastEvent: 60, maxDaysSinceLastEvent: 90 }),
+    ).toEqual([]);
+    db.exec(
+      `UPDATE cadence_state SET stopped_at = datetime('now', '-75 days') WHERE prospect_id = ${timing};`,
+    );
+    db.close();
+
+    expect(
+      ledger
+        .listColdProspects({ minDaysSinceLastEvent: 60, maxDaysSinceLastEvent: 90 })
+        .map((p) => p.id),
+    ).toEqual([timing]);
   });
 });
 

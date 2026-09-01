@@ -1,6 +1,7 @@
 import type {
   AddProspectResult,
   CadencesResult,
+  CadenceStopReason,
   CadenceView,
   CancelRunResponse,
   DoctorCheck,
@@ -84,10 +85,14 @@ export const api = {
   cancelRun: (id: number, reason?: string) =>
     postJson<CancelRunResponse>(`/run/${id}/cancel`, reason ? { reason } : {}),
   cadenceForProspect: (id: number) => getJson<{ cadences: CadenceView[] }>(`/cadences/${id}`),
-  stopCadence: (id: number, playName?: string) =>
+  stopCadence: (
+    id: number,
+    playName: string,
+    input: { reason: CadenceStopReason; note?: string },
+  ) =>
     postJson<{ stopped: number }>(
-      `/cadences/${id}/stop${playName ? `?play=${encodeURIComponent(playName)}` : ""}`,
-      {},
+      `/cadences/${id}/stop?play=${encodeURIComponent(playName)}`,
+      input,
     ),
   previewCadenceNext: (id: number, playName: string) =>
     postJson<{

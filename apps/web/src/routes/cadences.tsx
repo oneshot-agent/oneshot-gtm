@@ -3,7 +3,12 @@ import { createFileRoute } from "@tanstack/react-router";
 import { ChevronDown, CircleStop, Eye, Loader2, RotateCw, Send, Trophy } from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
 import { toast } from "sonner";
-import type { CadenceCounts, CadenceView, OutcomeRequest } from "@oneshot-gtm/shared-types";
+import type {
+  CadenceCounts,
+  CadenceStopReason,
+  CadenceView,
+  OutcomeRequest,
+} from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
@@ -21,6 +26,7 @@ const TILE_GRID_COLS: Record<number, string> = {
   4: "md:grid-cols-4",
   5: "md:grid-cols-5",
   6: "md:grid-cols-6",
+  7: "md:grid-cols-7",
 };
 
 export const Route = createFileRoute("/cadences")({
@@ -59,6 +65,8 @@ function statusTone(status: string): "receipt" | "signal" | "spend" | "blocked" 
       return "spend";
     case "completed":
       return "neutral";
+    case "stopped":
+      return "blocked";
     case "bounced":
       return "blocked";
     case "off-icp":
@@ -76,6 +84,19 @@ interface OutcomeModalState {
   playName: string;
 }
 
+interface StopModalState {
+  prospectId: number;
+  prospectName: string | null;
+  playName: string;
+}
+
+const STOP_REASON_LABELS: Record<CadenceStopReason, string> = {
+  bad_timing: "Bad timing / revisit later",
+  other: "Other",
+  not_a_fit: "Not a fit",
+  do_not_contact: "Do not contact",
+};
+
 const rowKey = (c: CadenceView): string => `${c.prospectId}|${c.playName}`;
 
 function CadencesPage() {
@@ -85,6 +106,9 @@ function CadencesPage() {
   const [outcomeKind, setOutcomeKind] = useState<OutcomeRequest["outcome"]>("meeting_booked");
   const [outcomeAmount, setOutcomeAmount] = useState("");
   const [outcomeNotes, setOutcomeNotes] = useState("");
+  const [stopModal, setStopModal] = useState<StopModalState | null>(null);
+  const [stopReason, setStopReason] = useState<CadenceStopReason>("bad_timing");
+  const [stopNote, setStopNote] = useState("");
 
   const { sinceRun } = Route.useSearch();
   const cadences = useQuery({
@@ -100,10 +124,17 @@ function CadencesPage() {
   };
 
   const stop = useMutation({
-    mutationFn: (vars: { prospectId: number; playName: string }) =>
-      api.stopCadence(vars.prospectId, vars.playName),
+    mutationFn: (vars: {
+      prospectId: number;
+      playName: string;
+      reason: CadenceStopReason;
+      note?: string;
+    }) => api.stopCadence(vars.prospectId, vars.playName, { reason: vars.reason, note: vars.note }),
     onSuccess: (data, vars) => {
       void qc.invalidateQueries({ queryKey: ["cadences"] });
+      setStopModal(null);
+      setStopReason("bad_timing");
+      setStopNote("");
       toast.success(`stopped cadence · ${vars.playName}`);
     },
     onError: (err) => toast.error(`couldn't stop cadence: ${err.message}`),
@@ -352,7 +383,7 @@ function CadencesPage() {
       <section
         className={cn(
           "grid grid-cols-2 divide-x divide-ink-rule border-b border-ink-rule",
-          TILE_GRID_COLS[4 + (counts.bounced > 0 ? 1 : 0) + (cadences.data?.sendsToday ? 1 : 0)],
+          TILE_GRID_COLS[5 + (counts.bounced > 0 ? 1 : 0) + (cadences.data?.sendsToday ? 1 : 0)],
         )}
       >
         <CadenceSummary
@@ -374,6 +405,12 @@ function CadencesPage() {
           tone="spend"
         />
         <CadenceSummary label="Completed" value={counts.completed} caption="full cadence done" />
+        <CadenceSummary
+          label="Stopped"
+          value={counts.stopped}
+          caption="manually ended"
+          tone="blocked"
+        />
         {cadences.data?.sendsToday && (
           <CadenceSummary
             label="Sends today"
@@ -527,6 +564,7 @@ function CadencesPage() {
                 // prior sends, a persisted draft, or a remaining step to generate.
                 const hasExpandable =
                   c.priorSteps.length > 0 ||
+                  c.status === "stopped" ||
                   c.nextStepDraft != null ||
                   (c.status === "active" && c.nextStepLabel != null);
                 return (
@@ -606,7 +644,9 @@ function CadencesPage() {
                                 ? "signal"
                                 : c.status === "breakup"
                                   ? "spend"
-                                  : c.status === "bounced" || c.status === "unsubscribed"
+                                  : c.status === "bounced" ||
+                                      c.status === "unsubscribed" ||
+                                      c.status === "stopped"
                                     ? "blocked"
                                     : "receipt"
                             }
@@ -718,11 +758,16 @@ function CadencesPage() {
                                   <Button
                                     variant="ghost"
                                     size="sm"
-                                    title="stop cadence"
-                                    disabled={stop.isPending}
+                                    title={
+                                      c.isSending
+                                        ? "wait for the in-flight send to finish before stopping"
+                                        : "stop cadence"
+                                    }
+                                    disabled={stop.isPending || c.isSending}
                                     onClick={() =>
-                                      stop.mutate({
+                                      setStopModal({
                                         prospectId: c.prospectId,
+                                        prospectName: c.prospectName,
                                         playName: c.playName,
                                       })
                                     }
@@ -735,7 +780,7 @@ function CadencesPage() {
                           {/* Chevron for non-active rows with history — the active-status
                             block renders its own above. */}
                           {c.status !== "active" &&
-                            c.priorSteps.length > 0 &&
+                            (c.priorSteps.length > 0 || c.status === "stopped") &&
                             (() => {
                               const key = `${c.prospectId}|${c.playName}`;
                               return (
@@ -778,10 +823,26 @@ function CadencesPage() {
                         </div>
                       </td>
                     </tr>
-                    {(c.priorSteps.length > 0 || c.nextStepDraft) &&
+                    {(c.priorSteps.length > 0 || c.nextStepDraft || c.status === "stopped") &&
                       expandedKeys.has(rowKey(c)) && (
                         <tr className="border-b border-ink-rule/60 bg-ink-surface/30">
                           <td colSpan={8} className="px-6 py-3">
+                            {c.status === "stopped" && (
+                              <div className="mb-4 border-l-2 border-[color:var(--ink-blocked)] pl-3">
+                                <div className="ln-eyebrow">Stopped</div>
+                                <div className="mt-1 text-[12px] text-ink-cream-2">
+                                  {c.stopReason
+                                    ? STOP_REASON_LABELS[c.stopReason]
+                                    : "Reason unavailable"}
+                                  {c.stoppedAt ? ` · ${timeAgo(c.stoppedAt)}` : ""}
+                                </div>
+                                {c.stopNote && (
+                                  <div className="mt-1 whitespace-pre-wrap text-[12px] text-ink-muted">
+                                    {c.stopNote}
+                                  </div>
+                                )}
+                              </div>
+                            )}
                             {c.priorSteps.length > 0 && (
                               <>
                                 <div className="ln-eyebrow mb-1">
@@ -972,6 +1033,77 @@ function CadencesPage() {
       </Modal>
 
       <Modal
+        open={stopModal != null}
+        onClose={() => {
+          setStopModal(null);
+          setStopReason("bad_timing");
+          setStopNote("");
+        }}
+        title={`Stop cadence${stopModal?.prospectName ? ` — ${mask("name", stopModal.prospectName)}` : ""}`}
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setStopModal(null);
+                setStopReason("bad_timing");
+                setStopNote("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (!stopModal) return;
+                stop.mutate({
+                  prospectId: stopModal.prospectId,
+                  playName: stopModal.playName,
+                  reason: stopReason,
+                  ...(stopNote.trim() ? { note: stopNote.trim() } : {}),
+                });
+              }}
+              disabled={stop.isPending || (stopReason === "other" && !stopNote.trim())}
+            >
+              {stop.isPending ? "Stopping…" : "Stop cadence"}
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-4">
+          <div className="text-[12px] text-ink-muted">
+            This stops only <code>{stopModal?.playName}</code>. The prospect will be excluded from
+            Expandi. Bad timing and Other may return through breakup-revive after 60–90 days;
+            permanent reasons will not.
+          </div>
+          <Field label="Reason">
+            <Select
+              value={stopReason}
+              onChange={(e) => setStopReason(e.target.value as CadenceStopReason)}
+            >
+              {(Object.entries(STOP_REASON_LABELS) as Array<[CadenceStopReason, string]>).map(
+                ([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ),
+              )}
+            </Select>
+          </Field>
+          <Field
+            label={stopReason === "other" ? "Notes (required)" : "Notes (optional)"}
+            hint="Stored with the cadence for future context."
+          >
+            <Textarea
+              value={stopNote}
+              maxLength={500}
+              onChange={(e) => setStopNote(e.target.value)}
+              placeholder="Why are you stopping this cadence?"
+            />
+          </Field>
+        </div>
+      </Modal>
+
+      <Modal
         open={sendConfirm != null}
         onClose={() => setSendConfirm(null)}
         title={
@@ -1139,6 +1271,7 @@ const EMPTY_COUNTS: CadenceCounts = {
   breakup: 0,
   completed: 0,
   paused: 0,
+  stopped: 0,
   bounced: 0,
   overdue: 0,
 };

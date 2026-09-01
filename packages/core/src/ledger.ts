@@ -115,6 +115,9 @@ export interface CadenceWithProspect {
   enrolled_at: string;
   next_due_at: string | null;
   last_polled_at: string | null;
+  stop_reason: string | null;
+  stop_note: string | null;
+  stopped_at: string | null;
   next_step_draft_json: string | null;
   next_step_drafted_at: string | null;
   /**
@@ -364,6 +367,11 @@ export class Ledger {
     // restart. CAS-claimed (claimCadenceSendingMarker); cleared on success and
     // failure; sweepStaleCadenceSends treats cold-boot markers as stranded.
     this.addColumnIfMissing("cadence_state", "sending_started_at", "TEXT");
+    // Manual stops are distinct from natural completion and carry a durable
+    // disposition used by Expandi and breakup-revive.
+    this.addColumnIfMissing("cadence_state", "stop_reason", "TEXT");
+    this.addColumnIfMissing("cadence_state", "stop_note", "TEXT");
+    this.addColumnIfMissing("cadence_state", "stopped_at", "TEXT");
     // v10: mirror of v9 for the queue Send-draft path (claimQueueSendingMarker
     // + sweepStaleQueueSends; cleared by setQueueStatus on terminal states).
     this.addColumnIfMissing("target_queue", "send_started_at", "TEXT");
@@ -702,8 +710,12 @@ export class Ledger {
            status = 'active',
            next_due_at = excluded.next_due_at,
            last_polled_at = NULL,
+           stop_reason = NULL,
+           stop_note = NULL,
+           stopped_at = NULL,
            last_send_error = NULL,
-           last_send_error_at = NULL`,
+           last_send_error_at = NULL
+         WHERE cadence_state.status != 'stopped'`,
       )
       .run(input.prospectId, input.playName, input.nextDueAt);
   }
@@ -833,6 +845,43 @@ export class Ledger {
         input.prospectId,
         input.playName,
       );
+  }
+
+  stopCadence(input: {
+    prospectId: number;
+    playName: string;
+    reason: "bad_timing" | "other" | "not_a_fit" | "do_not_contact";
+    note?: string;
+  }): boolean {
+    let changed = false;
+    this.db.transaction(() => {
+      const result = this.db
+        .prepare(
+          `UPDATE cadence_state
+           SET status = 'stopped', stop_reason = ?, stop_note = ?, stopped_at = datetime('now'),
+               next_due_at = NULL,
+               next_step_draft_json = NULL, next_step_drafted_at = NULL,
+               sending_started_at = NULL, last_send_error = NULL, last_send_error_at = NULL
+           WHERE prospect_id = ? AND play_name = ? AND status = 'active'
+             AND sending_started_at IS NULL`,
+        )
+        .run(input.reason, input.note?.trim() || null, input.prospectId, input.playName);
+      changed = result.changes > 0;
+      if (changed) {
+        this.db
+          .prepare(
+            `UPDATE target_queue
+             SET status = 'expired', send_started_at = NULL,
+                 notes = CASE WHEN notes IS NULL OR notes = '' THEN 'expired: cadence stopped'
+                              ELSE notes || ' · expired: cadence stopped' END
+             WHERE (prospect_id = ? OR dedupe_key = ?)
+               AND play_name = 'breakup-revive'
+               AND status IN ('pending', 'approved')`,
+          )
+          .run(input.prospectId, `prospect:${input.prospectId}`);
+      }
+    })();
+    return changed;
   }
 
   setCadenceDraft(input: {
@@ -1443,6 +1492,24 @@ export class Ledger {
     );
   }
 
+  /** Permanent manual-stop hold used only by breakup-revive's final send backstop. */
+  breakupReviveHoldFor(email: string): { reason: string; stopped_at: string } | null {
+    const prospect = this.findProspectByEmail(email);
+    if (!prospect) return null;
+    return (
+      (this.db
+        .query(
+          `SELECT stop_reason AS reason, stopped_at
+           FROM cadence_state
+           WHERE prospect_id = ? AND status = 'stopped'
+             AND stop_reason IN ('not_a_fit', 'do_not_contact')
+           ORDER BY stopped_at DESC
+           LIMIT 1`,
+        )
+        .get(prospect.id) as { reason: string; stopped_at: string }) ?? null
+    );
+  }
+
   /** Bounce counts per sending identity since `sinceIso` — the doctor check's numerator. */
   bounceStatsByIdentity(opts: {
     sinceIso: string;
@@ -1898,9 +1965,21 @@ export class Ledger {
     last_event_at: string | null;
   }> {
     const sql = `
-      SELECT p.id, p.name, p.email, p.company, p.linkedin_url, p.phone, MAX(s.created_at) AS last_event_at
+      SELECT p.id, p.name, p.email, p.company, p.linkedin_url, p.phone,
+             MAX(s.created_at) AS last_sequence_at,
+             MAX(CASE WHEN c.status = 'stopped' AND c.stop_reason IN ('bad_timing', 'other')
+                      THEN c.stopped_at END) AS last_revivable_stop_at,
+             MAX(MAX(s.created_at), COALESCE(MAX(CASE
+               WHEN c.status = 'stopped' AND c.stop_reason IN ('bad_timing', 'other')
+               THEN c.stopped_at END), '')) AS last_event_at
       FROM prospects p
       LEFT JOIN sequence_events s ON s.prospect_id = p.id
+      LEFT JOIN cadence_state c ON c.prospect_id = p.id
+      WHERE NOT EXISTS (
+        SELECT 1 FROM cadence_state blocked
+        WHERE blocked.prospect_id = p.id AND blocked.status = 'stopped'
+          AND blocked.stop_reason IN ('not_a_fit', 'do_not_contact')
+      )
       GROUP BY p.id
       HAVING last_event_at IS NOT NULL
         AND julianday('now') - julianday(last_event_at) BETWEEN ? AND ?
