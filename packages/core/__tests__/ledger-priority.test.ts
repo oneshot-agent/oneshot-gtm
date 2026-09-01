@@ -112,6 +112,15 @@ describe("listQueueRowsForScoring", () => {
     expect(rows.map((r) => r.id)).not.toContain(expired);
   });
 
+  it("allStatuses widens to the full history for methodology evaluation", () => {
+    const pending = enqueue();
+    const rejected = enqueue({ initialStatus: "rejected", notes: "auto: ICP — no" });
+    const sent = enqueue();
+    ledger.setQueueStatus({ id: sent, status: "sent" });
+    const ids = ledger.listQueueRowsForScoring({ allStatuses: true }).map((r) => r.id);
+    expect(ids).toEqual([pending, rejected, sent]);
+  });
+
   it("honors playName and limit", () => {
     enqueue();
     const other = ledger.enqueueTarget({

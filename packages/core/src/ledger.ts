@@ -3434,9 +3434,14 @@ export class Ledger {
    * implies unsent — a dispatched row moves to status 'sent'. id-ascending so
    * an interrupted run resumes deterministically.
    */
-  listQueueRowsForScoring(opts: { playName?: string; limit?: number } = {}): QueueRow[] {
+  listQueueRowsForScoring(
+    opts: { playName?: string; limit?: number; allStatuses?: boolean } = {},
+  ): QueueRow[] {
     const args: unknown[] = [];
-    let where = `status IN ('pending','approved')`;
+    // Default scope is the live queue; `allStatuses` widens to full history so
+    // scores can be compared against dispositions already made (methodology
+    // evaluation) — it never changes what any consumer DOES with a score.
+    let where = opts.allStatuses ? `1=1` : `status IN ('pending','approved')`;
     if (opts.playName) {
       where += ` AND play_name = ?`;
       args.push(opts.playName);
