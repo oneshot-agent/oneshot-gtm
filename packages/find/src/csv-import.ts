@@ -209,6 +209,13 @@ export async function importCsv(input: {
 
   const icp = resolveIcp();
   const ledger = getLedger();
+  const removeReservation = (id: number): void => {
+    // Reservations are inserted as expired so bulk approval cannot pick them
+    // up while classification is running. Restore the unreviewed state before
+    // using the ledger's guarded reservation cleanup.
+    ledger.setQueueStatus({ id, status: "pending" });
+    ledger.removePendingQueueTarget(id);
+  };
   for (const candidate of unique) {
     const dedupeKey = `email:${candidate.email}`;
     // Reserve the unique key before the paid classifier. Concurrent imports
@@ -219,6 +226,7 @@ export async function importCsv(input: {
       dedupeKey,
       source: "find:csv-import",
       notes: "CSV import: ICP classification in progress",
+      initialStatus: "expired", // abuse expired as a transient state before classification to prevent approveAllPending from picking it up
     });
     if (id == null) {
       result.skipped++;
@@ -236,21 +244,22 @@ export async function importCsv(input: {
         },
       });
     } catch (error) {
-      ledger.removePendingQueueTarget(id);
+      removeReservation(id);
       throw error;
     }
     if (verdict.verdict === "reject" || verdict.verdict === "transient") {
       result.skipped++;
       if (verdict.verdict === "transient") {
         // A transient failure must remain retryable on a later invocation.
-        ledger.removePendingQueueTarget(id);
+        removeReservation(id);
         result.errors.push({ row: candidate.row, message: verdict.reason });
       } else {
         ledger.setQueueStatus({ id, status: "rejected", notes: verdict.reason });
       }
       continue;
     }
-    ledger.setQueueNotes({ id, notes: "CSV import: ICP accepted" });
+    // Now that classification passed, we put it into pending
+    ledger.setQueueStatus({ id, status: "pending", notes: "CSV import: ICP accepted" });
     result.imported++;
   }
   return { ...result, mapping: prepared.mapping, rowCount: prepared.rows.length };

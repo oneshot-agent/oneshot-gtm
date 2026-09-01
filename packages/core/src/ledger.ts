@@ -2604,6 +2604,16 @@ export class Ledger {
             ? [input.status, now, input.notes, input.id]
             : [input.status, now, input.id]),
         );
+    } else if (input.status === "pending") {
+      this.db
+        .prepare(
+          `UPDATE target_queue SET status = ?, reviewed_at = NULL, send_started_at = NULL ${input.notes !== undefined ? ", notes = ?" : ""} WHERE id = ?`,
+        )
+        .run(
+          ...(input.notes !== undefined
+            ? [input.status, input.notes, input.id]
+            : [input.status, input.id]),
+        );
     } else {
       this.db
         .prepare(`UPDATE target_queue SET status = ?, send_started_at = NULL WHERE id = ?`)
