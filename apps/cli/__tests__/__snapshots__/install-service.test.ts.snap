@@ -38,44 +38,6 @@ exports[`renderLaunchdPlist > matches the template snapshot 1`] = `
 "
 `;
 
-exports[`renderLaunchdPlist matches the template snapshot 1`] = `
-"<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>com.oneshot-gtm.find-watch</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/opt/homebrew/bin/bun</string>
-    <string>/Users/jo/oneshot-gtm/apps/cli/src/main.ts</string>
-    <string>find</string>
-    <string>watch</string>
-    <string>--quiet</string>
-  </array>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>ONESHOT_GTM_HOME</key>
-    <string>/Users/jo/.oneshot-gtm</string>
-    <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/bin:/bin</string>
-  </dict>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <dict>
-    <key>SuccessfulExit</key>
-    <false/>
-  </dict>
-  <key>StandardOutPath</key>
-  <string>/Users/jo/.oneshot-gtm/find-watch.log</string>
-  <key>StandardErrorPath</key>
-  <string>/Users/jo/.oneshot-gtm/find-watch.log</string>
-</dict>
-</plist>
-"
-`;
-
 exports[`renderSystemdUnit > matches the template snapshot 1`] = `
 "[Unit]
 Description=oneshot-gtm find watch — poll registered triggers and enqueue candidates
@@ -94,20 +56,3 @@ WantedBy=default.target
 "
 `;
 
-exports[`renderSystemdUnit matches the template snapshot 1`] = `
-"[Unit]
-Description=oneshot-gtm find watch — poll registered triggers and enqueue candidates
-After=network-online.target
-
-[Service]
-Type=simple
-ExecStart="/opt/homebrew/bin/bun" "/Users/jo/oneshot-gtm/apps/cli/src/main.ts" find watch --quiet
-Environment="ONESHOT_GTM_HOME=/Users/jo/.oneshot-gtm"
-Environment="PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-Restart=on-failure
-RestartSec=30
-
-[Install]
-WantedBy=default.target
-"
-`;
