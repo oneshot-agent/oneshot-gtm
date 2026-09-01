@@ -105,16 +105,55 @@ describe("pure helpers", () => {
     expect(Number.isFinite(anchorFor({ found_at: "garbage" }).getTime())).toBe(true);
   });
 
-  it("hasCurrentScore / shouldSkipRow key off the artifact version", () => {
+  it("hasCurrentScore / shouldSkipRow require the FULL valid artifact, not just the version", () => {
     expect(hasCurrentScore({ priority_json: null })).toBe(false);
     expect(hasCurrentScore({ priority_json: "{broken" })).toBe(false);
     expect(hasCurrentScore({ priority_json: JSON.stringify({ version: "heuristic-v0" }) })).toBe(
       false,
     );
-    const current = JSON.stringify({ version: "heuristic-v1", total: 50 });
+    // A partial/corrupt artifact reads as unscored — the API hides it as
+    // priority:null, so treating it as current would make it unrepairable.
+    expect(hasCurrentScore({ priority_json: JSON.stringify({ version: "heuristic-v1" }) })).toBe(
+      false,
+    );
+    expect(
+      hasCurrentScore({ priority_json: JSON.stringify({ version: "heuristic-v1", total: 50 }) }),
+    ).toBe(false);
+    const current = JSON.stringify({
+      version: "heuristic-v1",
+      total: 50,
+      components: {
+        personFit: 50,
+        accountFit: 50,
+        intentStrength: 50,
+        timingFreshness: 50,
+        signalConfidence: 50,
+        contactability: 50,
+      },
+      reasons: [],
+      finder: "post-funding",
+      scoredAt: "2026-09-01T12:00:00.000Z",
+    });
     expect(hasCurrentScore({ priority_json: current })).toBe(true);
     expect(shouldSkipRow({ priority_json: current }, false)).toBe(true);
     expect(shouldSkipRow({ priority_json: current }, true)).toBe(false);
+  });
+
+  it("a partial artifact is repaired by a plain backfill run, no --refresh needed", () => {
+    const id = enqueue("post-funding", FUNDING_PAYLOAD);
+    const db = (
+      ledger as unknown as {
+        db: { prepare: (sql: string) => { run: (...a: unknown[]) => unknown } };
+      }
+    ).db;
+    db.prepare(`UPDATE target_queue SET priority_json = ? WHERE id = ?`).run(
+      JSON.stringify({ version: "heuristic-v1" }),
+      id,
+    );
+    commandScoreProspects({ refresh: false, dryRun: false, report: false });
+    const repaired = JSON.parse(ledger.getQueueRow(id)!.priority_json!);
+    expect(repaired.finder).toBe("post-funding");
+    expect(typeof repaired.total).toBe("number");
   });
 
   it("isAutoRejected matches only the auto: rejection prefix", () => {

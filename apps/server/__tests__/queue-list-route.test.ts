@@ -150,6 +150,19 @@ describe("listQueueRoute — priority projection", () => {
     expect(await priorityOf(JSON.stringify({ ...VALID_PRIORITY, reasons: "nope" }))).toBeNull();
   });
 
+  it("rejects out-of-range and fractional scores as corruption", async () => {
+    expect(await priorityOf(JSON.stringify({ ...VALID_PRIORITY, total: -1 }))).toBeNull();
+    expect(await priorityOf(JSON.stringify({ ...VALID_PRIORITY, total: 72.5 }))).toBeNull();
+    expect(
+      await priorityOf(
+        JSON.stringify({
+          ...VALID_PRIORITY,
+          components: { ...VALID_PRIORITY.components, personFit: 999 },
+        }),
+      ),
+    ).toBeNull();
+  });
+
   it("drops non-string entries from reasons", async () => {
     const got = (await priorityOf(
       JSON.stringify({ ...VALID_PRIORITY, reasons: ["ok", 42, null] }),

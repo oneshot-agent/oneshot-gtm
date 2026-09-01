@@ -1,10 +1,11 @@
 import {
   getLedger,
+  parseProspectPriority,
   type ProspectPriority,
   type QueueRow,
   safeParseJsonRecord,
 } from "@oneshot-gtm/core";
-import { PRIORITY_ADAPTERS, PRIORITY_VERSION, safeScorePriority } from "@oneshot-gtm/find";
+import { PRIORITY_ADAPTERS, safeScorePriority } from "@oneshot-gtm/find";
 import { c, header, note, ok } from "../output.ts";
 
 /**
@@ -53,11 +54,14 @@ export function resolveCap(limit: number | undefined): number | undefined {
   return Math.max(0, Math.floor(limit));
 }
 
-/** True when the row already carries a current-version artifact. */
+/**
+ * True when the row already carries a valid current-version artifact. Uses
+ * the same full-shape validator as the API projection — an artifact the API
+ * would hide as `priority: null` (partial, corrupt, out-of-range) must read
+ * as "not scored" here too, or a plain backfill run could never repair it.
+ */
 export function hasCurrentScore(row: Pick<QueueRow, "priority_json">): boolean {
-  if (!row.priority_json) return false;
-  const parsed = safeParseJsonRecord(row.priority_json);
-  return parsed?.["version"] === PRIORITY_VERSION;
+  return parseProspectPriority(row.priority_json) !== null;
 }
 
 export function shouldSkipRow(row: Pick<QueueRow, "priority_json">, refresh: boolean): boolean {
@@ -132,10 +136,10 @@ export function buildShadowReport(rows: QueueRow[]): FinderShadowReport[] {
     // row keeps its historical priority_json, and counting it here would make
     // the distribution misrepresent the claimed pending/approved population.
     if (row.status === "pending" || row.status === "approved") {
-      const priority = row.priority_json ? safeParseJsonRecord(row.priority_json) : null;
-      if (priority?.["version"] === PRIORITY_VERSION && typeof priority["total"] === "number") {
+      const priority = parseProspectPriority(row.priority_json);
+      if (priority !== null) {
         entry.scored++;
-        entry.buckets[bucketOf(priority["total"])]++;
+        entry.buckets[bucketOf(priority.total)]++;
       }
     }
     if (row.reviewed_at !== null && !isAutoRejected(row)) {
