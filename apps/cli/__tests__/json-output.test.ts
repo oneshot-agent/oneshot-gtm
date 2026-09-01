@@ -124,8 +124,8 @@ beforeEach(() => {
     .mockImplementation(
       (
         chunk: string | Uint8Array,
-        encodingOrCallback?: BufferEncoding | ((error?: Error | null) => void),
-        callback?: (error?: Error | null) => void,
+        encodingOrCallback?: BufferEncoding | ((error?: Error | undefined) => void),
+        callback?: (error?: Error | undefined) => void,
       ) => {
         stdoutChunks.push(String(chunk));
         if (typeof encodingOrCallback === "function") encodingOrCallback();

@@ -70,10 +70,20 @@ beforeEach(() => {
   nextOutcomes = [];
   stdout = [];
   stderr = [];
-  writeSpy = vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
-    stdout.push(String(chunk));
-    return true;
-  });
+  writeSpy = vi
+    .spyOn(process.stdout, "write")
+    .mockImplementation(
+      (
+        chunk: string | Uint8Array,
+        encodingOrCallback?: BufferEncoding | ((error?: Error | undefined) => void),
+        callback?: (error?: Error | undefined) => void,
+      ) => {
+        stdout.push(String(chunk));
+        if (typeof encodingOrCallback === "function") encodingOrCallback();
+        else callback?.();
+        return true;
+      },
+    );
   errSpy = vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
     stderr.push(String(chunk));
     return true;
