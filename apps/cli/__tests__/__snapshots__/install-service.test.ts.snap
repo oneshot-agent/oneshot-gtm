@@ -38,24 +38,6 @@ exports[`renderLaunchdPlist > matches the template snapshot 1`] = `
 "
 `;
 
-exports[`renderSystemdUnit > matches the template snapshot 1`] = `
-"[Unit]
-Description=oneshot-gtm find watch — poll registered triggers and enqueue candidates
-After=network-online.target
-
-[Service]
-Type=simple
-ExecStart="/opt/homebrew/bin/bun" "/Users/jo/oneshot-gtm/apps/cli/src/main.ts" find watch --quiet
-Environment="ONESHOT_GTM_HOME=/Users/jo/.oneshot-gtm"
-Environment="PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
-Restart=on-failure
-RestartSec=30
-
-[Install]
-WantedBy=default.target
-"
-`;
-
 exports[`renderLaunchdPlist matches the template snapshot 1`] = `
 "<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -91,6 +73,24 @@ exports[`renderLaunchdPlist matches the template snapshot 1`] = `
   <string>/Users/jo/.oneshot-gtm/find-watch.log</string>
 </dict>
 </plist>
+"
+`;
+
+exports[`renderSystemdUnit > matches the template snapshot 1`] = `
+"[Unit]
+Description=oneshot-gtm find watch — poll registered triggers and enqueue candidates
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart="/opt/homebrew/bin/bun" "/Users/jo/oneshot-gtm/apps/cli/src/main.ts" find watch --quiet
+Environment="ONESHOT_GTM_HOME=/Users/jo/.oneshot-gtm"
+Environment="PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target
 "
 `;
 

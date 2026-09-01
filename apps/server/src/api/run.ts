@@ -113,34 +113,22 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
       // First frame: tell the UI its runId so it can switch to progress mode.
       send({ kind: "runStarted", runId, startedAt });
 
-      let emailToDedupeKey = new Map<string, string>();
-      let verify: { verified: unknown[]; dropped: any[]; receiptIds: number[]; costUsd: number } = {
+      const indexToDedupeKey = new Map<number, string>();
+      let verify: Awaited<ReturnType<typeof verifyAndFilterTargets>> = {
         verified: [],
         dropped: [],
         receiptIds: [],
         costUsd: 0,
       };
-      let drafted: Parameters<typeof dispatchPlay> extends [
-        any,
-        any,
-        (index: number, view: infer V) => void,
-        ...any[],
-      ]
-        ? V[]
-        : any[] = [];
+      let drafted: DraftedView[] = [];
 
       try {
-        // Build email → dedupeKey map BEFORE the verify filter drops rows —
-        // verify changes target indices but not emails. Manual /run entries
-        // omit `dedupeKeys`; the map stays empty and persistence is a no-op.
-        emailToDedupeKey = new Map<string, string>();
+        // Queue runs skip verification, so their target indexes remain aligned
+        // with the parallel dedupe-key array. Manual runs omit the array and
+        // persistence remains a no-op.
         if (body.dedupeKeys && body.dedupeKeys.length === body.targets.length) {
-          const keys = body.dedupeKeys;
-          body.targets.forEach((t, i) => {
-            const target = t as { email?: string; founderEmail?: string };
-            const email = target.email ?? target.founderEmail;
-            const dedupeKey = keys[i];
-            if (email && dedupeKey) emailToDedupeKey.set(String(i), dedupeKey);
+          body.dedupeKeys.forEach((dedupeKey, index) => {
+            if (dedupeKey) indexToDedupeKey.set(index, dedupeKey);
           });
         }
 
@@ -295,18 +283,13 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
       } finally {
         // Persist drafts to their originating queue rows for /queue review.
         // Best-effort — a SQLite hiccup here must not surface to the user.
-        if (
-          typeof verify !== "undefined" &&
-          typeof emailToDedupeKey !== "undefined" &&
-          emailToDedupeKey.size > 0
-        ) {
+        if (indexToDedupeKey.size > 0) {
           try {
             persistDraftsToQueue({
               playName,
-              verifiedTargets: verify.verified as Array<{ email?: string; founderEmail?: string }>,
               drafted,
               dryRun: body.dryRun,
-              emailToDedupeKey,
+              indexToDedupeKey,
             });
           } catch (err) {
             // Guard setup as well as individual writes so terminal status,
@@ -502,22 +485,15 @@ export async function cancelRunRoute(
  */
 function persistDraftsToQueue(input: {
   playName: string;
-  verifiedTargets: Array<{ email?: string; founderEmail?: string }>;
   drafted: DraftedView[];
   dryRun: boolean;
-  // Maps verified target index -> queue dedupe key
-  emailToDedupeKey: Map<string, string>;
+  indexToDedupeKey: ReadonlyMap<number, string>;
 }): void {
   const ledger = getLedger();
   for (let i = 0; i < input.drafted.length; i++) {
-    const target = input.verifiedTargets[i];
     const draft = input.drafted[i];
-    if (!target || !draft) continue;
-    // Verify drops rows, so its indexes don't match original `body.targets`.
-    // Wait... if fromQueue is true (which is the only time dedupeKeys are set),
-    // verify.verified is exactly `body.targets`, because it skips the verify step!
-    // So the index `i` of verifiedTargets here matches the original `i` in emailToDedupeKey!
-    const dedupeKey = input.emailToDedupeKey.get(String(i));
+    if (!draft) continue;
+    const dedupeKey = input.indexToDedupeKey.get(i);
     if (!dedupeKey) continue;
     try {
       const row = ledger.getQueueRowByDedupe(input.playName, dedupeKey);
