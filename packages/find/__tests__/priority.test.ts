@@ -21,7 +21,7 @@ describe("priority engine — contract", () => {
 
   it("empty evidence is neutral everywhere, not zero", () => {
     const p = computePriority("show-hn", {}, NOW);
-    expect(p.version).toBe("heuristic-v1");
+    expect(p.version).toBe("heuristic-v2");
     expect(p.finder).toBe("show-hn");
     expect(p.scoredAt).toBe(NOW.toISOString());
     expect(p.total).toBe(NEUTRAL);
@@ -39,8 +39,8 @@ describe("priority engine — contract", () => {
       NOW,
     );
     expect(p.components.intentStrength).toBe(100);
-    // Negative strength loses to the neutral base, and nothing goes below 0.
-    expect(p.components.accountFit).toBe(NEUTRAL);
+    // Signals are authoritative in v2 (anti-signals allowed), clamped at 0.
+    expect(p.components.accountFit).toBe(0);
     expect(p.total).toBeGreaterThanOrEqual(0);
     expect(p.total).toBeLessThanOrEqual(100);
     expect(Number.isInteger(p.total)).toBe(true);
@@ -179,5 +179,39 @@ describe("clamp100", () => {
     expect(clamp100(78.5)).toBe(79);
     expect(clamp100(-3)).toBe(0);
     expect(clamp100(140)).toBe(100);
+  });
+});
+
+describe("v2 personSignals — label-mined priors", () => {
+  it("override title bands entirely, including below neutral", () => {
+    const p = computePriority(
+      "t",
+      {
+        title: "CEO", // band alone would score 90
+        personSignals: [{ kind: "title-prior", strength: 35, reason: "title: CEO" }],
+      },
+      NOW,
+    );
+    expect(p.components.personFit).toBe(35);
+    expect(p.reasons[0]).toBe("title: CEO");
+  });
+
+  it("strongest signal wins and reasons come out strongest-first", () => {
+    const p = computePriority(
+      "t",
+      {
+        personSignals: [
+          { kind: "weak", strength: 40, reason: "weak" },
+          { kind: "strong", strength: 62, reason: "strong" },
+        ],
+      },
+      NOW,
+    );
+    expect(p.components.personFit).toBe(62);
+    expect(p.reasons).toEqual(["strong", "weak"]);
+  });
+
+  it("absent personSignals leave v1 band behavior untouched", () => {
+    expect(computePriority("t", { title: "CTO" }, NOW).components.personFit).toBe(90);
   });
 });

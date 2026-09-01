@@ -195,7 +195,7 @@ describe("per-play adapters", () => {
     it(`${play}: fixture payload → valid heuristic-v1 artifact`, () => {
       const p = safeScorePriority(play, FIXTURES[play], NOW);
       expect(p).not.toBeNull();
-      expect(p!.version).toBe("heuristic-v1");
+      expect(p!.version).toBe("heuristic-v2");
       expect(p!.finder).toBe(play);
       expect(p!.scoredAt).toBe(NOW.toISOString());
       expect(Number.isInteger(p!.total)).toBe(true);
@@ -274,7 +274,7 @@ describe("enqueueScoredTarget", () => {
     });
     expect(id).toBe(42);
     const priority = calls[0]!["priority"] as Record<string, unknown>;
-    expect(priority["version"]).toBe("heuristic-v1");
+    expect(priority["version"]).toBe("heuristic-v2");
     expect(priority["finder"]).toBe("show-hn");
   });
 
@@ -317,5 +317,46 @@ describe("review-hardened evidence edges", () => {
       NOW,
     );
     expect(p!.components.timingFreshness).toBe(50);
+  });
+});
+
+describe("v2 label-mined adapter priors", () => {
+  it("luma: exec titles score DOWN, Host scores below Guest, bios no longer feed seniority", () => {
+    const exec = safeScorePriority(
+      "luma-events",
+      { ...FIXTURES["luma-events"], title: "CEO", attendeeBio: "AI enthusiast" },
+      NOW,
+    )!;
+    expect(exec.components.personFit).toBe(35);
+    const host = safeScorePriority("luma-events", FIXTURES["luma-events"], NOW)!;
+    const guest = safeScorePriority(
+      "luma-events",
+      { ...FIXTURES["luma-events"], role: "Guest" },
+      NOW,
+    )!;
+    expect(host.components.intentStrength).toBe(45);
+    expect(guest.components.intentStrength).toBe(65);
+    // A founder-looking bio alone no longer inflates personFit (measured flat).
+    const bioOnly = safeScorePriority(
+      "luma-events",
+      { ...FIXTURES["luma-events"], title: undefined },
+      NOW,
+    )!;
+    expect(bioOnly.components.personFit).toBe(50);
+  });
+
+  it("repo-interest: exec-title prior inverted, non-exec titles neutral", () => {
+    const exec = safeScorePriority(
+      "repo-interest",
+      { ...FIXTURES["repo-interest"], title: "CTO" },
+      NOW,
+    )!;
+    expect(exec.components.personFit).toBe(35);
+    const ic = safeScorePriority(
+      "repo-interest",
+      { ...FIXTURES["repo-interest"], title: "ML Engineer" },
+      NOW,
+    )!;
+    expect(ic.components.personFit).toBe(50);
   });
 });

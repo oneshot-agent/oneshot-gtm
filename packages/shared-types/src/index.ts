@@ -399,6 +399,49 @@ export interface SenderIdentityView {
 
 export type QueueStatusView = "pending" | "approved" | "rejected" | "sent" | "expired";
 
+export const PRIORITY_COMPONENT_KEYS = [
+  "personFit",
+  "accountFit",
+  "intentStrength",
+  "timingFreshness",
+  "signalConfidence",
+  "contactability",
+] as const;
+export type PriorityComponentKey = (typeof PRIORITY_COMPONENT_KEYS)[number];
+
+/** Every priority-artifact version the system can parse and render. */
+export type PriorityVersion = "heuristic-v1" | "heuristic-v2";
+
+/**
+ * Canonical per-version component weights (percent, each row sums to 100).
+ * The scoring engine (packages/find) AND the web chip both read THIS table —
+ * never restate the numbers elsewhere; a hand-copied weight list drifted
+ * once already. v2 kept v1's weights on purpose: the label-mined fix was
+ * feature DIRECTION (exec titles and Host roles were anti-signals), not the
+ * weighting.
+ */
+export const PRIORITY_WEIGHTS_BY_VERSION: Record<
+  PriorityVersion,
+  Record<PriorityComponentKey, number>
+> = {
+  "heuristic-v1": {
+    personFit: 30,
+    accountFit: 20,
+    intentStrength: 20,
+    timingFreshness: 15,
+    signalConfidence: 10,
+    contactability: 5,
+  },
+  "heuristic-v2": {
+    personFit: 30,
+    accountFit: 20,
+    intentStrength: 20,
+    timingFreshness: 15,
+    signalConfidence: 10,
+    contactability: 5,
+  },
+};
+
 /**
  * Shadow-mode explainable priority score (issue #410, Phase 1). Mirrors
  * core's `ProspectPriority` — the API contract copy, like
@@ -406,17 +449,10 @@ export type QueueStatusView = "pending" | "approved" | "rejected" | "sent" | "ex
  * gates by it, and it is NOT a conversion probability.
  */
 export interface ProspectPriorityView {
-  version: "heuristic-v1";
+  version: PriorityVersion;
   /** Weighted total, clamped integer 0..100. */
   total: number;
-  components: {
-    personFit: number;
-    accountFit: number;
-    intentStrength: number;
-    timingFreshness: number;
-    signalConfidence: number;
-    contactability: number;
-  };
+  components: Record<PriorityComponentKey, number>;
   /** Concise evidence strings, fixed order. */
   reasons: string[];
   finder: string;

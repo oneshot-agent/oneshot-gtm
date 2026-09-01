@@ -23,13 +23,19 @@ describe("parseProspectPriority — the single validity authority", () => {
     expect(parseProspectPriority(JSON.stringify(VALID))).toEqual(VALID);
   });
 
-  it("rejects null, broken JSON, non-objects, and foreign versions", () => {
+  it("rejects null, broken JSON, non-objects, and unknown versions", () => {
     expect(parseProspectPriority(null)).toBeNull();
     expect(parseProspectPriority(undefined)).toBeNull();
     expect(parseProspectPriority("")).toBeNull();
     expect(parseProspectPriority("{broken")).toBeNull();
     expect(parseProspectPriority("[1,2]")).toBeNull();
-    expect(parseProspectPriority(JSON.stringify({ ...VALID, version: "heuristic-v2" }))).toBeNull();
+    expect(parseProspectPriority(JSON.stringify({ ...VALID, version: "heuristic-v3" }))).toBeNull();
+  });
+
+  it("accepts every shipped version and passes it through verbatim", () => {
+    const v2 = { ...VALID, version: "heuristic-v2" as const };
+    expect(parseProspectPriority(JSON.stringify(v2))).toEqual(v2);
+    expect(parseProspectPriority(JSON.stringify(VALID))!.version).toBe("heuristic-v1");
   });
 
   it("rejects partial artifacts — a bare version stamp is not a score", () => {

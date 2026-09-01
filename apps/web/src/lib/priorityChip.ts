@@ -1,4 +1,4 @@
-import type { ProspectPriorityView } from "@oneshot-gtm/shared-types";
+import { PRIORITY_WEIGHTS_BY_VERSION, type ProspectPriorityView } from "@oneshot-gtm/shared-types";
 
 /**
  * Display logic for the shadow-mode priority score (issue #410). Pure so it's
@@ -44,24 +44,25 @@ export interface PriorityBreakdownRow {
   weightPct: number;
 }
 
-/** Fixed weight-descending order, matching how the total is composed. */
-const BREAKDOWN: Array<{
-  key: keyof ProspectPriorityView["components"];
-  label: string;
-  weightPct: number;
-}> = [
-  { key: "personFit", label: "person fit", weightPct: 30 },
-  { key: "accountFit", label: "account fit", weightPct: 20 },
-  { key: "intentStrength", label: "intent", weightPct: 20 },
-  { key: "timingFreshness", label: "freshness", weightPct: 15 },
-  { key: "signalConfidence", label: "confidence", weightPct: 10 },
-  { key: "contactability", label: "contactability", weightPct: 5 },
+/**
+ * Display order and labels only — the weights come from the canonical
+ * per-version table in shared-types, so a v1 artifact renders v1's weights
+ * and a v2 artifact v2's, and nothing here can drift from the engine.
+ */
+const BREAKDOWN: Array<{ key: keyof ProspectPriorityView["components"]; label: string }> = [
+  { key: "personFit", label: "person fit" },
+  { key: "accountFit", label: "account fit" },
+  { key: "intentStrength", label: "intent" },
+  { key: "timingFreshness", label: "freshness" },
+  { key: "signalConfidence", label: "confidence" },
+  { key: "contactability", label: "contactability" },
 ];
 
 export function priorityBreakdown(p: ProspectPriorityView): PriorityBreakdownRow[] {
+  const weights = PRIORITY_WEIGHTS_BY_VERSION[p.version];
   return BREAKDOWN.map((b) => ({
     component: b.label,
     score: p.components[b.key],
-    weightPct: b.weightPct,
+    weightPct: weights[b.key],
   }));
 }

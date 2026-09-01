@@ -68,3 +68,13 @@ describe("priorityBreakdown", () => {
     ]);
   });
 });
+
+describe("per-version rendering", () => {
+  it("a v2 artifact renders with v2's weight table", () => {
+    const v2 = { ...priority(61), version: "heuristic-v2" as const };
+    const rows = priorityBreakdown(v2);
+    expect(rows[0]).toEqual({ component: "person fit", score: 90, weightPct: 30 });
+    expect(rows.reduce((a, r) => a + r.weightPct, 0)).toBe(100);
+    expect(priorityChip(v2)!.label).toBe("61 · shadow");
+  });
+});

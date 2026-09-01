@@ -7,7 +7,13 @@ import {
   type QueueRow,
   safeParseJsonRecord,
 } from "@oneshot-gtm/core";
-import { PRIORITY_ADAPTERS, mannWhitneyAuc, meanOf, safeScorePriority } from "@oneshot-gtm/find";
+import {
+  PRIORITY_ADAPTERS,
+  PRIORITY_VERSION,
+  mannWhitneyAuc,
+  meanOf,
+  safeScorePriority,
+} from "@oneshot-gtm/find";
 import { c, header, note, ok } from "../output.ts";
 
 /**
@@ -64,13 +70,15 @@ export function resolveCap(limit: number | undefined): number | undefined {
 }
 
 /**
- * True when the row already carries a valid current-version artifact. Uses
+ * True when the row already carries a valid CURRENT-version artifact. Uses
  * the same full-shape validator as the API projection — an artifact the API
  * would hide as `priority: null` (partial, corrupt, out-of-range) must read
  * as "not scored" here too, or a plain backfill run could never repair it.
+ * Older versions parse (they keep rendering) but are not current, so a plain
+ * run auto-rescores v1 → v2.
  */
 export function hasCurrentScore(row: Pick<QueueRow, "priority_json">): boolean {
-  return parseProspectPriority(row.priority_json) !== null;
+  return parseProspectPriority(row.priority_json)?.version === PRIORITY_VERSION;
 }
 
 export function shouldSkipRow(row: Pick<QueueRow, "priority_json">, refresh: boolean): boolean {

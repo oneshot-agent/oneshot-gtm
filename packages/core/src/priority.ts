@@ -9,6 +9,8 @@ const COMPONENT_KEYS: Array<keyof ProspectPriorityComponents> = [
   "contactability",
 ];
 
+const ACCEPTED_VERSIONS: Array<ProspectPriority["version"]> = ["heuristic-v1", "heuristic-v2"];
+
 /** A score under the contract: a finite integer in 0..100. */
 function isScore(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 100;
@@ -35,7 +37,11 @@ export function parseProspectPriority(raw: string | null | undefined): ProspectP
   }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
   const p = parsed as Record<string, unknown>;
-  if (p["version"] !== "heuristic-v1") return null;
+  // Every version ever shipped stays parseable — old artifacts on terminal
+  // rows must keep rendering after an engine version bump. Only the backfill's
+  // resume-skip cares about "current"; it checks the version itself.
+  const version = ACCEPTED_VERSIONS.find((v) => v === p["version"]);
+  if (!version) return null;
   if (!isScore(p["total"])) return null;
   const rawComponents = p["components"];
   if (rawComponents === null || typeof rawComponents !== "object" || Array.isArray(rawComponents)) {
@@ -45,7 +51,7 @@ export function parseProspectPriority(raw: string | null | undefined): ProspectP
   if (COMPONENT_KEYS.some((k) => !isScore(c[k]))) return null;
   if (!Array.isArray(p["reasons"]) || typeof p["finder"] !== "string") return null;
   return {
-    version: "heuristic-v1",
+    version,
     total: p["total"],
     components: {
       personFit: c["personFit"] as number,
