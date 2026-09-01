@@ -1,6 +1,8 @@
 import { getLedger, type TriggerRow } from "@oneshot-gtm/core";
 import {
   checkReadiness,
+  DEFAULT_APPROVAL_RATE_MIN_SAMPLES,
+  DEFAULT_APPROVAL_RATE_THRESHOLD,
   effectiveIntervalMs,
   fireTriggerNow,
   finderApprovalHealth,
@@ -50,8 +52,8 @@ export function toView(
     : {
         rate: null,
         reviewed: 0,
-        minSamples: 10,
-        threshold: 0.2,
+        minSamples: DEFAULT_APPROVAL_RATE_MIN_SAMPLES,
+        threshold: DEFAULT_APPROVAL_RATE_THRESHOLD,
         windowDays: 30,
         deprioritized: false,
         reason: null,

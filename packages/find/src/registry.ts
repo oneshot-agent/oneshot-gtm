@@ -606,9 +606,9 @@ export interface TriggerRunOutcome {
   skippedReason?: string;
 }
 
-export const DEFAULT_APPROVAL_RATE_THRESHOLD = 0.2;
+export const DEFAULT_APPROVAL_RATE_THRESHOLD = 0.1;
 export const DEFAULT_APPROVAL_RATE_WINDOW_DAYS = 30;
-export const DEFAULT_APPROVAL_RATE_MIN_SAMPLES = 10;
+export const DEFAULT_APPROVAL_RATE_MIN_SAMPLES = 100;
 
 export interface FinderApprovalHealth {
   approved: number;
