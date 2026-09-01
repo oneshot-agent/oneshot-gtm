@@ -215,7 +215,9 @@ describe("advanceCadence — daily-cap deferral", () => {
     cadenceClaimable = false;
     const result = await advanceCadence({ dryRun: false });
     expect(result.stepsExecuted).toBe(0);
-    expect(result.details).toEqual([]);
+    expect(result.details).toMatchObject([
+      { action: "skipped", note: "cadence changed or is already sending" },
+    ]);
     expect(calls.llm).toBe(0);
     expect(calls.sendEmail).toBe(0);
   });
