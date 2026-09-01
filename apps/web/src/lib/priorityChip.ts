@@ -24,14 +24,21 @@ const MAX_TITLE_REASONS = 4;
  * and companies the structured `<Pii>` masking can't reach, so under the mask
  * they are suppressed entirely (the numeric score is not identifying).
  */
-export function priorityChip(p: ProspectPriorityView | null, masked = false): PriorityChip | null {
+export function priorityChip(
+  p: ProspectPriorityView | null,
+  masked = false,
+  opts: { shadow?: boolean } = {},
+): PriorityChip | null {
   if (!p) return null;
   const tone: PriorityTone = p.total >= 70 ? "signal" : p.total >= 40 ? "neutral" : "receipt";
   const reasons = masked
     ? []
     : p.reasons.filter((r) => r.trim() !== "").slice(0, MAX_TITLE_REASONS);
+  // "· shadow" says the score is informational-only; once the ranked review
+  // order is live on the page the score IS driving the order, so drop it.
+  const shadow = opts.shadow ?? true;
   return {
-    label: `${p.total} · shadow`,
+    label: shadow ? `${p.total} · shadow` : `${p.total}`,
     tone,
     title: reasons.length > 0 ? reasons.join(" · ") : `experimental priority score (${p.finder})`,
   };

@@ -238,6 +238,16 @@ export interface OneShotConfig {
    * breakup position) is NOT overridable — timing only.
    */
   cadenceOverrides: Record<string, number[]> | null;
+  /**
+   * Default order of the /queue pending review list. "ranked" interleaves
+   * finders with score-within-finder + exploration slots (see find/_rank.ts);
+   * "newest" is the classic found_at DESC. Defaults to "newest": the
+   * 2026-09-01 heuristic-v2 measurement (luma AUC 0.59-0.63, gap +1) is under
+   * the Phase 2 acceptance bar for ranked-by-default. Per-request override:
+   * GET /api/queue?order=. Optional so pre-existing config literals and older
+   * config files stay valid; readers treat absent as "newest".
+   */
+  queueReviewOrder?: "ranked" | "newest";
   /** Founder's résumé / credentials — the founder-trust social-proof beat. */
   founderCredentials: string | null;
   /** Products you've shipped — the peer-founder social-proof beat. */

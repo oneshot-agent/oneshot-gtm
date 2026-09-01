@@ -42,6 +42,7 @@ const DEFAULTS: OneShotConfig = {
   emailIdentities: null,
   icpOneLiner: null,
   cadenceOverrides: null,
+  queueReviewOrder: "newest",
   founderCredentials: null,
   productPortfolio: null,
   partners: null,

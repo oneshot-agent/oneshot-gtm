@@ -818,6 +818,12 @@ export interface QueueListResponse {
   approvedByPlay: Record<string, number>;
   /** Absent when the capacity computation failed — pages skip the figure. */
   sendsToday?: SendsToday;
+  /**
+   * The order `rows` actually came back in — `?order=` param, else the
+   * configured `queueReviewOrder`. "ranked" only ever applies to the pending
+   * review view; every other view is "newest" (found_at DESC).
+   */
+  order: "ranked" | "newest";
 }
 
 export interface DrainRequest {

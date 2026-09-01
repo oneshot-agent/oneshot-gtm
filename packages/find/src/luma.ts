@@ -13,6 +13,7 @@ import type { LumaEventsTarget } from "@oneshot-gtm/plays";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
 import { resolveVerifyEnrichQualify } from "./_contact.ts";
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
+import { roundRobin } from "./_rank.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { qualifyPreSpend } from "./_qualify.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
@@ -71,25 +72,8 @@ interface AttendeeWithEvent {
   };
 }
 
-/** Fairly interleave buckets; sparse buckets surrender unused capacity. */
-function roundRobin<T>(buckets: ReadonlyMap<string, readonly T[]>, cap: number): T[] {
-  const out: T[] = [];
-  const cursors = new Map<string, number>();
-  let added = true;
-  while (out.length < cap && added) {
-    added = false;
-    for (const [key, items] of buckets) {
-      if (out.length >= cap) break;
-      const cursor = cursors.get(key) ?? 0;
-      const item = items[cursor];
-      if (item === undefined) continue;
-      out.push(item);
-      cursors.set(key, cursor + 1);
-      added = true;
-    }
-  }
-  return out;
-}
+// roundRobin moved to _rank.ts (shared with the ranked review order);
+// behavior is byte-identical.
 
 /**
  * Extract the single-segment slug from a Luma event URL. Returns null when

@@ -78,3 +78,10 @@ describe("per-version rendering", () => {
     expect(priorityChip(v2)!.label).toBe("61 · shadow");
   });
 });
+
+describe("shadow suffix under ranked order", () => {
+  it("drops the suffix once the score drives ordering", () => {
+    expect(priorityChip(priority(72), false, { shadow: false })!.label).toBe("72");
+    expect(priorityChip(priority(72), false, { shadow: true })!.label).toBe("72 · shadow");
+  });
+});

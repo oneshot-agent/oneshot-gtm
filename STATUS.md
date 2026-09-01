@@ -2,7 +2,7 @@
 
 **Assume green.** The 50 CLI commands, 17 plays, 11 finders, nine dashboard pages plus the run form, and the server's REST + SSE routes are all covered by the test suite — and verified end to end against the live OneShot API: every paid call type has made the live round trip, including the voice and SMS legs (`motion concierge` / `motion demo-no-show`), the PMF survey pair, reply triage, bounce harvesting, and `gmail placement`.
 
-Last verified **2026-09-01** · Bun 1.3.13 · OneShot SDK 0.22.0 · **2425 tests / 186 files** · typecheck + oxlint + oxfmt clean.
+Last verified **2026-09-01** · Bun 1.3.13 · OneShot SDK 0.22.0 · **2437 tests / 187 files** · typecheck + oxlint + oxfmt clean.
 
 **What the gate covers.** `apps/web` is now inside `bun run typecheck` — the dashboard source is
 type-checked in CI, and a deliberate error under `apps/web/src` fails the root script. As of
@@ -18,7 +18,7 @@ The person-level ICP gate (#45) was calibrated against 84 real LinkedIn titles (
 
 Reply detection was verified on 2026-08-23 against the real mailboxes: a sliced sweep of all four inboxes from the first send onward (4,833 inbound, every slice fully covered) found exactly the replies the live poll then recorded on restart. Since 2026-08-28 every inbound is also classified (#63) — out-of-office autoresponders, dead-mailbox notices and unsubscribes are recorded for the conversation history but never count as replies, and the latter two durably suppress the address at the send funnel.
 
-Shadow priority score (#410): heuristic-v2 measured 2026-09-01 on 794 clean human labels — luma-events AUC 0.59-0.63 (up from v1's inverted 0.36), mean gap +1. Under the Phase 2 acceptance bar (gap ≥ +5, AUC ≥ 0.60), so ranked review order ships config-gated with `queueReviewOrder` defaulting to `newest`; scores stay shadow/display-only until richer features clear the bar.
+Shadow priority score (#410): heuristic-v2 measured 2026-09-01 on 794 clean human labels — luma-events AUC 0.59-0.63 (up from v1's inverted 0.36), mean gap +1. Under the Phase 2 acceptance bar (gap ≥ +5, AUC ≥ 0.60), so the ranked review order shipped config-gated with `queueReviewOrder` defaulting to `newest` (a toggle on /queue; scores drive nothing else until richer features clear the bar).
 
 Updated by hand after each dogfood run.
 
