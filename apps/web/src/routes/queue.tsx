@@ -127,17 +127,21 @@ function QueuePage() {
   const [drainSenderCohort, setDrainSenderCohort] = useState("");
   const [drainOffer, setDrainOffer] = useState("");
   const [drainDryRun, setDrainDryRun] = useState(true);
+  // null = follow the configured default; the server echoes what it used.
+  const [orderOverride, setOrderOverride] = useState<"ranked" | "newest" | null>(null);
 
   const queueQuery = useQuery({
-    queryKey: ["queue", statusFilter, playFilter],
+    queryKey: ["queue", statusFilter, playFilter, orderOverride],
     queryFn: () =>
       api.queue({
         ...(statusFilter !== "all" ? { status: statusFilter } : {}),
         ...(playFilter !== "all" ? { play: playFilter } : {}),
+        ...(orderOverride ? { order: orderOverride } : {}),
         limit: 200,
       }),
     refetchInterval: 20_000,
   });
+  const effectiveOrder = queueQuery.data?.order ?? "newest";
 
   const invalidate = (): void => {
     void qc.invalidateQueries({ queryKey: ["queue"] });
@@ -344,6 +348,22 @@ function QueuePage() {
               {s}
             </Button>
           ))}
+          {statusFilter === "pending" && (
+            <>
+              <span className="mx-2 h-4 w-px bg-ink-rule" />
+              <span className="ln-eyebrow">order</span>
+              {(["newest", "ranked"] as const).map((o) => (
+                <Button
+                  key={o}
+                  variant={effectiveOrder === o ? "primary" : "ghost"}
+                  size="sm"
+                  onClick={() => setOrderOverride(o)}
+                >
+                  {o}
+                </Button>
+              ))}
+            </>
+          )}
           <span className="mx-2 h-4 w-px bg-ink-rule" />
           <span className="ln-eyebrow">play</span>
           <Button
@@ -390,7 +410,7 @@ function QueuePage() {
         </div>
 
         {/* 7-day signal strip — enqueues per day from the rows in memory. */}
-        {rows.length > 0 && <SignalStrip rows={rows} />}
+        {rows.length > 0 && <SignalStrip rows={rows} ranked={effectiveOrder === "ranked"} />}
 
         {queueQuery.isLoading ? (
           Array.from({ length: 5 }, (_, i) => <SkeletonRow key={i} />)
@@ -429,6 +449,7 @@ function QueuePage() {
                 <QueueRow
                   key={row.id}
                   row={row}
+                  ranked={effectiveOrder === "ranked"}
                   zebra={i % 2 === 1}
                   expanded={expanded === row.id}
                   selected={selected.has(row.id)}
@@ -619,6 +640,7 @@ function QueuePage() {
 
 function QueueRow({
   row,
+  ranked,
   zebra,
   expanded,
   selected,
@@ -631,6 +653,7 @@ function QueueRow({
   busy,
 }: {
   row: QueueRowView;
+  ranked: boolean;
   zebra: boolean;
   expanded: boolean;
   selected: boolean;
@@ -657,7 +680,7 @@ function QueueRow({
   // Privacy mode suppresses reason text — freeform reasons can embed names
   // and companies the structured <Pii> masking can't reach.
   const { masked } = usePrivacy();
-  const prio = priorityChip(row.priority, masked);
+  const prio = priorityChip(row.priority, masked, { shadow: !ranked });
   return (
     <>
       <tr
@@ -1191,7 +1214,7 @@ function DraftSection({
  * rows currently in memory) but gives a quick visual pulse without any
  * new API.
  */
-function SignalStrip({ rows }: { rows: QueueRowView[] }) {
+function SignalStrip({ rows, ranked = false }: { rows: QueueRowView[]; ranked?: boolean }) {
   const days = buildSignalDays(rows);
   const max = Math.max(1, ...days.map((d) => d.count));
   const total = days.reduce((a, d) => a + d.count, 0);
@@ -1199,7 +1222,9 @@ function SignalStrip({ rows }: { rows: QueueRowView[] }) {
   return (
     <div className="flex items-center gap-4 border-b border-ink-rule/60 bg-ink-bg-deep/40 px-6 py-2.5">
       <div className="ln-eyebrow" style={{ fontSize: 10 }}>
-        last 7d
+        {/* A ranked page is no longer "the newest N", so the histogram only
+            describes the rows shown — make the existing approximation visible. */}
+        {ranked ? "last 7d · shown rows" : "last 7d"}
       </div>
       <div className="flex items-end gap-1" aria-hidden="true">
         {days.map((d) => {

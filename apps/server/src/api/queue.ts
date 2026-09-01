@@ -1,6 +1,7 @@
 import {
   getLedger,
   isDraining,
+  loadConfig,
   isRecentlyContacted,
   isSendDeferred,
   parseProspectPriority,
@@ -8,7 +9,7 @@ import {
   type QueueStatus,
   type TelemetryOutcome,
 } from "@oneshot-gtm/core";
-import { drainQueue } from "@oneshot-gtm/find";
+import { drainQueue, rankPendingRows } from "@oneshot-gtm/find";
 import {
   MANUAL_PLAYS,
   enrollInCadence,
@@ -91,6 +92,15 @@ function toView(row: QueueRow): QueueRowView {
   };
 }
 
+/**
+ * Ranked mode reads a wider pending window than the page, ranks it in memory
+ * (interleave + score-within-finder + exploration — see find/_rank.ts), then
+ * slices. Product logic stays in the tested pure function; listQueue SQL is
+ * untouched. Rows past the window never enter the ranking — the same
+ * truncation class as the 200-row page itself.
+ */
+const RANK_WINDOW = 1000;
+
 export function listQueueRoute(req: Request): Response {
   const url = new URL(req.url);
   const playName = url.searchParams.get("play") ?? undefined;
@@ -101,23 +111,33 @@ export function listQueueRoute(req: Request): Response {
   const ids = parseQueueIds(url.searchParams.get("ids"));
   const limit = Math.min(500, Number.parseInt(url.searchParams.get("limit") ?? "200", 10) || 200);
   const ledger = getLedger();
+  const orderParam = url.searchParams.get("order");
+  const requestedOrder =
+    orderParam === "ranked" || orderParam === "newest"
+      ? orderParam
+      : (loadConfig().queueReviewOrder ?? "newest");
+  // Ranked order exists for ONE surface: the pending review list. Explicit id
+  // picks and every other status keep chronological order.
+  const ranked = requestedOrder === "ranked" && status === "pending" && !ids;
   const filterArgs: {
     playName?: string;
     status?: QueueStatus;
     limit?: number;
     ids?: number[];
-  } = { limit: ids ? Math.max(limit, ids.length) : limit };
+  } = { limit: ranked ? RANK_WINDOW : ids ? Math.max(limit, ids.length) : limit };
   if (playName) filterArgs.playName = playName;
   if (status) filterArgs.status = status;
   if (ids) filterArgs.ids = ids;
   const rows = ledger.listQueue(filterArgs);
+  const ordered = ranked ? rankPendingRows(rows).slice(0, limit) : rows;
   const counts: QueueCounts = ledger.queueCounts();
   // Unfiltered on purpose — the drain button needs per-play approved counts
   // regardless of the page's current filter.
   const body: QueueListResponse = {
-    rows: rows.map(toView),
+    rows: ordered.map(toView),
     counts,
     approvedByPlay: ledger.approvedCountsByPlay(),
+    order: ranked ? "ranked" : "newest",
   };
   const capacity = sendsToday();
   if (capacity) body.sendsToday = capacity;

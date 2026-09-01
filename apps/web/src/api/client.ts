@@ -204,6 +204,8 @@ export const api = {
     play?: string;
     status?: QueueStatusView;
     limit?: number;
+    /** Review-order override; omit to use the configured default. */
+    order?: "ranked" | "newest";
     /** Explicit row pick — the "drain selected" path. */
     ids?: number[];
   }) => {
@@ -211,6 +213,7 @@ export const api = {
     if (opts?.play) q.set("play", opts.play);
     if (opts?.status) q.set("status", opts.status);
     if (opts?.limit != null) q.set("limit", String(opts.limit));
+    if (opts?.order) q.set("order", opts.order);
     // Note the `!= null`, not a length check: an empty array is an explicit
     // "nothing picked" and must reach the server as `ids=`, or the server would
     // read it as absent and return the unscoped batch instead of no rows.

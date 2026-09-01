@@ -111,7 +111,7 @@ bun run cli -- ui [--dev] [--port 4000] [--no-browser]
 Nine pages plus a run form:
 
 - **Home** — spend, reply-rate trend, in-flight cadences, and a scheduler strip showing each trigger's state, last run and next due
-- **Queue** — triggers table (enable, edit config, fire) plus the target queue with bulk approve and per-play **Drain**
+- **Queue** — triggers table (enable, edit config, fire) plus the target queue with bulk approve and per-play **Drain**; the pending review list can be ordered `newest` or `ranked` (finder-interleaved priority score with exploration slots — a toggle on the page, defaulted by `queueReviewOrder` in config)
 - **Add Prospect** — paste a LinkedIn / X / GitHub URL; `deepResearchPerson` builds a dossier, the LLM picks an angle against your ICP and drafts an intro, and the row lands in the queue
 - **Replies** — every reply matched to its prospect, play and cadence status across all sender identities; answer in place, by hand or LLM-drafted. Drafting is research-grounded: known prospects reuse their stored dossier, unknown senders get enriched + their site read (~$0.06, cached 30 days, receipted under `inbox-reply`), and replies may cite links from your product brief — never invented ones
 - **Cadences** — stop, log outcome, preview the next step, batch send
