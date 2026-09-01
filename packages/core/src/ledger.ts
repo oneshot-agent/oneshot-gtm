@@ -2605,7 +2605,6 @@ export class Ledger {
              'hiring-signal', 'podcast-guest', 'github-topics', 'github-stars',
              'competitor-switch', 'stack-consolidation', 'repo-interest', 'luma-events'
            )
-           AND COALESCE(notes, '') NOT LIKE 'auto:%'
            AND json_valid(payload_json)
          ORDER BY reviewed_at DESC, id DESC
          LIMIT ?`,

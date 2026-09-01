@@ -85,7 +85,7 @@ describe("recentIcpDecisions", () => {
     expect(rejected).not.toBeNull();
   });
 
-  it("only learns from ICP-filtered plays and excludes auto decisions after approval", () => {
+  it("only learns from ICP-filtered plays and includes auto decisions after human approval", () => {
     const unrelated = ledger.enqueueTarget({
       playName: "breakup-revive",
       payload: { title: "Unrelated lifecycle target" },
@@ -114,6 +114,11 @@ describe("recentIcpDecisions", () => {
 
     expect(ledger.recentIcpDecisions()).toEqual([
       { candidate: { title: "Human-approved target" }, decision: true, reason: null },
+      {
+        candidate: { title: "Machine-rejected target" },
+        decision: true,
+        reason: "auto: ICP — no match",
+      },
     ]);
   });
 });
