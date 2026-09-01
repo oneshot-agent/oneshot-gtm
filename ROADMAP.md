@@ -17,22 +17,12 @@ Public — issues mirror the items below, PRs welcome. Items carry an effort tag
 
 Today every finder polls. These turn it push.
 
-- [x] **Webhook intake** — `POST /api/triggers/cal-no-show` + `POST /api/triggers/signup` → ICP-filter → enqueue into `demo-no-show` / `concierge`.
 - [ ] **Webhook signing + replay protection** for those endpoints.
 - [ ] **Warm-signal escalation** in cadence (open-tracking → auto phone call). Blocked: needs OneShot to surface open events.
 
 ## Gates and coverage
 
 The verify gate has holes an agent can close without touching product behaviour. Ranked.
-
-- [ ] **Assert the README's own counts in a test** · S — README says "48 commands", "47-command CLI" and "1621 cases across 126 files". The real numbers are 49, 49 and 2010/158. The counts drift on every feature PR because nothing checks them.
-      _Done when:_ a test derives the leaf-command count from the commander tree and the play/finder counts from the registries, asserts each against the README text, and fails on drift.
-- [x] **Prompt inventory test** · S — `packages/prompts` ships 57 markdown files; `agent-builder-extract.md` is referenced by nothing. Prompts are the product here, so an orphan is a fork reading a file the model never sees.
-      _Done when:_ a test walks `packages/prompts/*.md`, resolves every name reachable through `loadPrompt` (including the play-derived `${play}-email` / `${play}-followup` shapes), and fails on either an orphan file or a loaded name with no file. Deliberate orphans go in an explicit allow-list with a reason.
-- [ ] **Cover `packages/doctor`** · M — `check.ts` is 799 lines running the deliverability, placement, workspace-collision, GitHub-token and X-credential checks, and `__tests__/workspace-checks.test.ts` is the only test file. Doctor is what a new user reads first when something is wrong.
-      _Done when:_ each named check has a case for its pass, warn and fail verdict against a stubbed ledger/config, and the bounce-rate thresholds (warn >2%, fail >5%, 20-send minimum) are pinned.
-- [ ] **Cover `packages/intel`** · M — `parse.test.ts`, `prompts.test.ts` and `retry.test.ts` exist. `retry.test.ts` covers `client.ts`'s retry surface — `backoffDelayMs`, `isRetryableLlmError`, `parseRetryAfter` and `complete()`'s OpenRouter retry paths. Still untested: `triage.ts`, `synthesize.ts`, `advise.ts`, `weekly-review.ts`, `complete()`'s Anthropic path, and the `allowTruncation` split — the branch that decides whether a truncated response is returned as prose or thrown at a JSON caller.
-      _Done when:_ `complete()` has cases for each provider path, the `allowTruncation` split, and the reasoning-tokens vs plain-overrun message; the four report modules have cases for a well-formed and a malformed model response.
 
 ## Reliability
 
@@ -44,20 +34,14 @@ The verify gate has holes an agent can close without touching product behaviour.
 
 The ICP filter currently judges each candidate cold — `icpFilter` in `packages/find/src/_filter.ts` sends the model nothing but `{ icp, candidate }`.
 
-- [x] **v1** — feed the last ~20 `(candidate, decision, reason)` tuples from `target_queue` into each `icpFilter` call as in-context examples. No schema change.
 - [ ] **v2** — periodic job proposes a tighter ICP one-liner from accumulated decisions; founder approves the rewrite in `/queue`.
-- [x] **Per-source weighting** — track approval rate per finder, deprioritize noisy sources automatically.
 
 ## Operations
 
-- [x] **`--json` output on read-only commands** · M — `apps/cli/src/output.ts` is kleur-formatted prose and there is no `--json` flag anywhere in the CLI. The README already points scripted callers at `/api/measure/*` because the terminal has nothing machine-readable, which means booting a server to read your own ledger.
-      _Done when:_ `doctor`, `find watch --once`, `find drain --dry-run`, `identities list`, `domains list` and `workspace list` accept `--json` and emit one parseable object on stdout with all human formatting and colour suppressed; a schema test pins each shape.
-- [x] **Bulk CSV import** — `find import --csv <file> --play <name>` with auto-detected/overridden column mapping, ICP filtering, queue dedupe, dry-run and JSON output for cohorts you already paid Clay/Apollo to source.
 - [ ] **BYO sending domain** — send from a domain you already own over OneShot's transport, instead of one OneShot provisions. Connecting a Gmail/Workspace account is today's workaround.
 
 ## Measurement
 
-- [x] **`measure benchmark`** — opt-in cohort comparisons, with human and versioned JSON output. The command does not contact the aggregate endpoint when telemetry sharing is disabled.
 - [ ] **Public benchmarks page** reading aggregates from the telemetry table. The pipeline exists; this is the surface.
 
 ## Integrations
@@ -67,8 +51,6 @@ The ICP filter currently judges each candidate cold — `icpFilter` in `packages
 
 ## Tech debt
 
-- [x] **Surface the server's error body on GET** · S — `getJson` in `apps/web/src/api/client.ts` throws `${status} ${statusText}: ${path}` and discards the `{ error }` JSON the server sends; `postJson` right below it reads the body. A 409 from a not-ready trigger reaches the dashboard as "409 Conflict" with the reason thrown away, hiding the missing config field.
-      _Done when:_ `getJson` parses the error body the same way `postJson` does and falls back to the status line when the body isn't JSON; covered by a test with a mocked `fetch`.
 - [ ] **Extract the pure logic out of `queue.tsx`** · M — the route is 1869 lines, the largest file in `apps/web`, and its selection, filter, bulk-approve and drain-eligibility rules are inlined where no test can reach them. `src/lib/` already holds this shape of helper (`drainButton.ts`, `pruneSentRows.ts`, `replyFilter.ts`).
       _Done when:_ those rules move to `src/lib/` as pure functions with tests, the route imports them, and the rendered markup is byte-identical for a fixed props fixture.
 - [ ] **Split `packages/core/src/ledger.ts`** · L — 2967 lines covering receipts, prospects, queue, cadence, inbox, bounces, canaries and caches behind one class, with `migrate()` at 400 lines of inline DDL.
@@ -88,7 +70,7 @@ Not code — these need capture, not commits. `demo seed` + `demo ui` now stand 
 
 ## Approved, not yet started
 
-- [ ] **fix(web): surface the server's JSON error body in `getJson` instead of discarding it** — issue #345.
+_Nothing approved and waiting._
 
 ## Things we intentionally do NOT do
 
