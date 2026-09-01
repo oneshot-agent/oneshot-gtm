@@ -34,11 +34,13 @@ export class CostMeter {
   users = 0;
   posts = 0;
   requests = 0;
+  private engine: XEngineName;
+  private ceiling: number;
 
-  constructor(
-    private readonly engine: XEngineName,
-    private readonly ceiling: number,
-  ) {}
+  constructor(engine: XEngineName, ceiling: number) {
+    this.engine = engine;
+    this.ceiling = ceiling;
+  }
 
   get rates(): XRates {
     return X_RATES[this.engine];

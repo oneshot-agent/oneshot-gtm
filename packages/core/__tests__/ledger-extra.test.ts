@@ -38,7 +38,14 @@ describe("recentIcpDecisions", () => {
     });
     const approved = ledger.enqueueTarget({
       playName: "show-hn",
-      payload: { title: "Agent builders" },
+      payload: {
+        title: "Agent builders",
+        url: "https://example.com/agent-builders",
+        email: "private@example.com",
+        phone: "+43 555 0100",
+        linkedinUrl: "https://linkedin.com/in/private",
+        nested: { email: "also-private@example.com" },
+      },
       dedupeKey: "approve",
       source: "test",
       notes: "right topic",
@@ -60,7 +67,14 @@ describe("recentIcpDecisions", () => {
 
     expect(ledger.recentIcpDecisions(2)).toEqual([
       { candidate: { title: "Agent SDK" }, decision: true, reason: "founder approved" },
-      { candidate: { title: "Agent builders" }, decision: true, reason: "right topic" },
+      {
+        candidate: {
+          title: "Agent builders",
+          url: "https://example.com/agent-builders",
+        },
+        decision: true,
+        reason: "right topic",
+      },
     ]);
     expect(ledger.recentIcpDecisions()).toContainEqual({
       candidate: { title: "Wine meetup" },

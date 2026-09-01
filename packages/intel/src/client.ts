@@ -41,15 +41,15 @@ export interface LlmCompleteOutput {
   outputTokens?: number;
 }
 
-class LlmError extends Error {
-  constructor(
-    message: string,
-    public readonly status?: number,
-    /** Parsed Retry-After, when the provider sent one. */
-    public readonly retryAfterMs?: number,
-  ) {
+export class LlmError extends Error {
+  public status?: number;
+  public retryAfterMs?: number;
+
+  constructor(message: string, status?: number, retryAfterMs?: number) {
     super(message);
     this.name = "LlmError";
+    this.status = status;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
