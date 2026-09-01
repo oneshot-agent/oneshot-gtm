@@ -1331,7 +1331,7 @@ export class Ledger {
     this.db
       .prepare(
         `UPDATE target_queue
-         SET status = 'expired', send_started_at = NULL,
+         SET status = 'expired',
              notes = CASE WHEN notes IS NULL OR notes = '' THEN ?
                           ELSE notes || ' · ' || ? END
          WHERE (prospect_id = ? OR dedupe_key = ?)
@@ -2948,14 +2948,18 @@ export class Ledger {
     startedAtIso: string;
     staleCutoffIso?: string;
   }): boolean {
-    return this.claimMarker({
-      table: "target_queue",
-      pkeyWhere: "id = ?",
-      column: "send_started_at",
-      pkeyValues: [input.id],
-      startedAtIso: input.startedAtIso,
-      ...(input.staleCutoffIso ? { staleCutoffIso: input.staleCutoffIso } : {}),
-    });
+    const markerWhere = input.staleCutoffIso
+      ? "(send_started_at IS NULL OR send_started_at < ?)"
+      : "send_started_at IS NULL";
+    const args: Array<string | number> = [input.startedAtIso, input.id];
+    if (input.staleCutoffIso) args.push(input.staleCutoffIso);
+    const result = this.db
+      .prepare(
+        `UPDATE target_queue SET send_started_at = ?
+         WHERE id = ? AND status = 'approved' AND ${markerWhere}`,
+      )
+      .run(...args);
+    return result.changes > 0;
   }
 
   clearQueueSendingMarker(id: number): void {

@@ -32,6 +32,7 @@ function webhook(body: unknown, token = "test-secret-with-enough-entropy"): Requ
 
 describe("LinkedIn reply routes", () => {
   beforeEach(() => {
+    delete process.env["VITE_DEV_SERVER_URL"];
     process.env["LINKEDIN_REPLY_WEBHOOK_SECRET"] = "test-secret-with-enough-entropy";
     resolve.mockReset().mockReturnValue({ status: "matched", prospectId: 7 });
     record.mockReset().mockReturnValue({
@@ -102,5 +103,17 @@ describe("LinkedIn reply routes", () => {
     expect(record).toHaveBeenCalledWith(
       expect.objectContaining({ prospectId: 7, source: "manual" }),
     );
+  });
+
+  it("rejects a cross-origin dashboard mutation", () => {
+    const response = markLinkedInReplyRoute(
+      new Request("http://127.0.0.1:3030/api/prospects/7/linkedin-reply", {
+        method: "POST",
+        headers: { origin: "http://localhost.attacker.example" },
+      }),
+      { id: "7" },
+    );
+    expect(response.status).toBe(403);
+    expect(record).not.toHaveBeenCalled();
   });
 });

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { Database } from "bun:sqlite";
 import { Ledger } from "../src/ledger.ts";
 
 let dbPath: string;
@@ -618,6 +619,14 @@ describe("Ledger queue sending marker", () => {
     );
   });
 
+  it("claim fails after the row leaves approved status", () => {
+    const id = enqueue();
+    ledger.setQueueStatus({ id, status: "expired" });
+    expect(ledger.claimQueueSendingMarker({ id, startedAtIso: new Date().toISOString() })).toBe(
+      false,
+    );
+  });
+
   it("reclaim succeeds when previous marker is older than the stale cutoff", () => {
     const id = enqueue();
     ledger.claimQueueSendingMarker({
@@ -668,12 +677,13 @@ describe("Ledger queue sending marker", () => {
     // Simulate by writing the marker AFTER the status flip.
     const id = enqueue();
     ledger.setQueueStatus({ id, status: "sent" });
-    // setQueueStatus('sent') auto-clears the marker; re-claim to simulate the
-    // pre-clear stranded state.
-    ledger.claimQueueSendingMarker({
+    // The public claim now refuses terminal rows; write the legacy/crash state directly.
+    const db = new Database(dbPath);
+    db.prepare("UPDATE target_queue SET send_started_at = ? WHERE id = ?").run(
+      new Date(Date.now() - 1000).toISOString(),
       id,
-      startedAtIso: new Date(Date.now() - 1000).toISOString(),
-    });
+    );
+    db.close();
     const swept = ledger.sweepStaleQueueSends({ now: new Date(), maxAgeMs: 0 });
     expect(swept).toHaveLength(1);
     expect(swept[0]?.actuallySent).toBe(true);

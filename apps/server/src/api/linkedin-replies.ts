@@ -45,6 +45,7 @@ export async function linkedinReplyWebhookRoute(req: Request): Promise<Response>
 }
 
 export function markLinkedInReplyRoute(req: Request, params: Record<string, string>): Response {
+  if (!isDashboardOrigin(req)) return jsonResponse({ error: "forbidden origin" }, 403, req);
   const prospectId = Number.parseInt(params["id"] ?? "", 10);
   if (!Number.isFinite(prospectId)) return jsonResponse({ error: "bad id" }, 400, req);
   const ledger = getLedger();
@@ -62,6 +63,21 @@ export function markLinkedInReplyRoute(req: Request, params: Record<string, stri
     200,
     req,
   );
+}
+
+function isDashboardOrigin(req: Request): boolean {
+  const origin = req.headers.get("origin");
+  if (!origin) return true;
+  const allowed = new Set([new URL(req.url).origin]);
+  const vite = process.env["VITE_DEV_SERVER_URL"];
+  if (vite) {
+    try {
+      allowed.add(new URL(vite).origin);
+    } catch {
+      // Invalid dev configuration grants no extra origin.
+    }
+  }
+  return allowed.has(origin);
 }
 
 function accepted(result: Omit<LinkedInReplyResult, "accepted">): LinkedInReplyResult {

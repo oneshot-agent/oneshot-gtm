@@ -265,11 +265,15 @@ export async function startServer(
 function isLoopbackOrigin(origin: string): boolean {
   // Empty origin = same-origin request (curl, server-side fetch); allow.
   if (origin === "") return true;
-  return (
-    origin.startsWith("http://127.0.0.1") ||
-    origin.startsWith("http://localhost") ||
-    origin.startsWith("http://[::1]")
-  );
+  try {
+    const url = new URL(origin);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]")
+    );
+  } catch {
+    return false;
+  }
 }
 
 function isLoopbackHost(host: string | null): boolean {
