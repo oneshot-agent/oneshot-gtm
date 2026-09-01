@@ -21,6 +21,35 @@ import type {
   TriggerRow,
 } from "./types.ts";
 
+const ICP_EXAMPLE_FIELDS = [
+  "title",
+  "url",
+  "summary",
+  "author",
+  "description",
+  "postTitle",
+  "postUrl",
+  "repo",
+  "repoUrl",
+  "eventName",
+  "eventUrl",
+  "company",
+] as const;
+
+/** Keep classifier examples useful without returning enriched contact data. */
+function icpExampleCandidate(payload: unknown): Record<string, unknown> {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
+  const source = payload as Record<string, unknown>;
+  return Object.fromEntries(
+    ICP_EXAMPLE_FIELDS.flatMap((field) => {
+      const value = source[field];
+      return typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+        ? [[field, value] as const]
+        : [];
+    }),
+  );
+}
+
 const DEFAULT_DB_PATH = join(configDir(), "ledger.sqlite");
 
 /** How long a SUCCESSFUL enrichment is reused before refetching (profiles are stable). */
@@ -2314,9 +2343,13 @@ export class Ledger {
 
     return rows.flatMap((row) => {
       try {
+        const payload = JSON.parse(row.payload_json) as unknown;
         return [
           {
-            candidate: JSON.parse(row.payload_json) as unknown,
+            // Queue payloads grow as a prospect is enriched and can contain
+            // email, phone and social-profile fields. Few-shot topic
+            // classification only needs the original public source context.
+            candidate: icpExampleCandidate(payload),
             decision: row.status !== "rejected",
             reason: row.notes,
           },
