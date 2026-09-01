@@ -158,7 +158,7 @@ export async function commandFindWatch(opts: {
   // look identical to a clean one. Daemon runs still exit 0 — they're killed by
   // a signal, not by a bad tick.
   if (opts.once && errored > 0) {
-    bail(`${errored} due trigger(s) errored`);
+    bail(`${errored} due trigger(s) errored`, 1);
   }
 
   // Opt-in second signal for the same caller: a poll that ran cleanly but
