@@ -84,6 +84,38 @@ describe("recentIcpDecisions", () => {
     });
     expect(rejected).not.toBeNull();
   });
+
+  it("only learns from ICP-filtered plays and excludes auto decisions after approval", () => {
+    const unrelated = ledger.enqueueTarget({
+      playName: "breakup-revive",
+      payload: { title: "Unrelated lifecycle target" },
+      dedupeKey: "unrelated-play",
+      source: "test",
+    });
+    ledger.setQueueStatus({ id: unrelated!, status: "approved" });
+
+    const autoApproved = ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: { title: "Machine-rejected target" },
+      dedupeKey: "auto-approved",
+      source: "test",
+      initialStatus: "rejected",
+      notes: "auto: ICP — no match",
+    });
+    ledger.setQueueStatus({ id: autoApproved!, status: "approved" });
+
+    const humanApproved = ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: { title: "Human-approved target" },
+      dedupeKey: "human-approved",
+      source: "test",
+    });
+    ledger.setQueueStatus({ id: humanApproved!, status: "approved" });
+
+    expect(ledger.recentIcpDecisions()).toEqual([
+      { candidate: { title: "Human-approved target" }, decision: true, reason: null },
+    ]);
+  });
 });
 
 describe("listReceipts filters", () => {

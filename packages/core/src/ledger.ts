@@ -2600,6 +2600,12 @@ export class Ledger {
         `SELECT payload_json, status, notes
          FROM target_queue
          WHERE ${humanDecisionWhereSql()}
+           AND play_name IN (
+             'show-hn', 'post-funding', 'accelerator-batch', 'job-change',
+             'hiring-signal', 'podcast-guest', 'github-topics', 'github-stars',
+             'competitor-switch', 'stack-consolidation', 'repo-interest', 'luma-events'
+           )
+           AND COALESCE(notes, '') NOT LIKE 'auto:%'
            AND json_valid(payload_json)
          ORDER BY reviewed_at DESC, id DESC
          LIMIT ?`,
