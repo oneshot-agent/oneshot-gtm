@@ -135,11 +135,12 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
         // omit `dedupeKeys`; the map stays empty and persistence is a no-op.
         emailToDedupeKey = new Map<string, string>();
         if (body.dedupeKeys && body.dedupeKeys.length === body.targets.length) {
+          const keys = body.dedupeKeys;
           body.targets.forEach((t, i) => {
             const target = t as { email?: string; founderEmail?: string };
             const email = target.email ?? target.founderEmail;
-            const key = body.dedupeKeys?.[i];
-            if (email && key) emailToDedupeKey.set(email, key);
+            const dedupeKey = keys[i];
+            if (email && dedupeKey) emailToDedupeKey.set(String(i), dedupeKey);
           });
         }
 
@@ -504,6 +505,7 @@ function persistDraftsToQueue(input: {
   verifiedTargets: Array<{ email?: string; founderEmail?: string }>;
   drafted: DraftedView[];
   dryRun: boolean;
+  // Maps verified target index -> queue dedupe key
   emailToDedupeKey: Map<string, string>;
 }): void {
   const ledger = getLedger();
@@ -511,9 +513,11 @@ function persistDraftsToQueue(input: {
     const target = input.verifiedTargets[i];
     const draft = input.drafted[i];
     if (!target || !draft) continue;
-    const email = target.email ?? target.founderEmail;
-    if (!email) continue;
-    const dedupeKey = input.emailToDedupeKey.get(email);
+    // Verify drops rows, so its indexes don't match original `body.targets`.
+    // Wait... if fromQueue is true (which is the only time dedupeKeys are set),
+    // verify.verified is exactly `body.targets`, because it skips the verify step!
+    // So the index `i` of verifiedTargets here matches the original `i` in emailToDedupeKey!
+    const dedupeKey = input.emailToDedupeKey.get(String(i));
     if (!dedupeKey) continue;
     try {
       const row = ledger.getQueueRowByDedupe(input.playName, dedupeKey);

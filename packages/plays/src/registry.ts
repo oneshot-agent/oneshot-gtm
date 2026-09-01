@@ -182,13 +182,12 @@ export const PLAYS: Record<string, PlayDispatch> = {
       }),
   },
   "breakup-revive": {
-    // Custom loop (not runEmailPlay). Silently ignores onProgress for now;
-    // counters will jump at the end. Acceptable until breakup-revive grows
-    // a parallelMap-style worker pool.
+    // Custom loop (not runEmailPlay).
     run: (o) =>
       runBreakupRevive({
         dryRun: o.dryRun,
         targets: o.targets as BreakupReviveTarget[],
+        ...progressOpt(o),
         ...signalOpt(o),
       }),
   },
