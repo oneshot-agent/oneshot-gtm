@@ -711,20 +711,7 @@ function RunPage() {
                   const restoredKeys = restoredRows.map(
                     (_, index) => runRecord.dedupeKeys[index] ?? null,
                   );
-                  // Stored targets retain their original order, while event
-                  // indexes are relative to the post-verification batch. Use
-                  // the persisted recipients when rebuilding a resumed run.
-                  const sentEmails = new Set(
-                    runRecord.prospectEmails.map((email) => email.toLowerCase()),
-                  );
-                  const retryableIndexes = restoredRows.flatMap((row, index) => {
-                    const email = (row.email ?? row.founderEmail ?? "").trim().toLowerCase();
-                    return email && sentEmails.has(email) ? [] : [index];
-                  });
-                  const retryable = {
-                    rows: retryableIndexes.map((index) => restoredRows[index]!),
-                    dedupeKeys: retryableIndexes.map((index) => restoredKeys[index] ?? null),
-                  };
+                  const retryable = pruneSentRows(runRecord.events, restoredRows, restoredKeys);
                   setRows(retryable.rows.length > 0 ? retryable.rows : [{ ...schema.defaultRow }]);
                   setDedupeKeys(retryable.rows.length > 0 ? retryable.dedupeKeys : [null]);
                 }

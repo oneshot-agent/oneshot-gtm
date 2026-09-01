@@ -178,6 +178,27 @@ describe("runPlay — verify-then-dispatch", () => {
     expect(playCalls[0]?.targets).toEqual(targets);
   });
 
+  it("verifies only manual targets in a mixed queue batch", async () => {
+    const targets = [
+      { founderEmail: "queued@x.dev", postTitle: "Queued" },
+      { founderEmail: "manual@x.dev", postTitle: "Manual" },
+    ];
+    nextVerify = { verified: [targets[1]!], dropped: [], receiptIds: [], costUsd: 0 };
+
+    const res = await runPlay(
+      makeRequest("show-hn", {
+        targets,
+        dedupeKeys: ["queue-key", null],
+        dryRun: false,
+      }),
+      { playName: "show-hn" },
+    );
+    await readSseFrames(res.body);
+
+    expect(captureVerifyArgs?.targets).toEqual([targets[1]]);
+    expect(playCalls[0]?.targets).toEqual(targets);
+  });
+
   it("emits a verify event when at least one target was dropped + only forwards verified targets", async () => {
     const targets = [
       { email: "good@x.dev", company: "Good" },
