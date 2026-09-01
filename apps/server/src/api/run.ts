@@ -524,7 +524,8 @@ function persistDraftsToQueue(input: {
   for (let i = 0; i < input.drafted.length; i++) {
     const draft = input.drafted[i];
     if (!draft) continue;
-    const dedupeKey = input.indexToDedupeKey.get(i);
+    // The target index is now stored in originalTargetIndex to map back safely
+    const dedupeKey = input.indexToDedupeKey.get(draft.originalTargetIndex ?? i);
     if (!dedupeKey) continue;
     try {
       const row = ledger.getQueueRowByDedupe(input.playName, dedupeKey);

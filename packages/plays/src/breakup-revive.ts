@@ -56,6 +56,7 @@ export interface BreakupReviveDraft {
   receiptIds: number[];
   sent: boolean;
   flags: string[];
+  originalTargetIndex?: number;
 }
 
 export async function runBreakupRevive(
@@ -118,6 +119,7 @@ export async function runBreakupRevive(
         receiptIds: send.receiptIds,
         sent: send.sent,
         flags,
+        originalTargetIndex: index,
       };
     } catch (err) {
       // Daily-cap deferral is not a per-target failure — abort the run so the
@@ -136,6 +138,7 @@ export async function runBreakupRevive(
         receiptIds: stub.receiptIds,
         sent: stub.sent,
         flags: stub.flags,
+        originalTargetIndex: index,
       };
     }
     drafted.push(result);
