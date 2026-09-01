@@ -20,6 +20,11 @@ const ledger = {
     queue.push(input);
     return queue.length;
   },
+  setQueueStatus: (input: { id: number; status: string; notes?: string }) => {
+    if (input.status === "rejected") queue.splice(input.id - 1, 1);
+  },
+  removePendingQueueTarget: (id: number) => queue.splice(id - 1, 1).length > 0,
+  setQueueNotes: () => {},
 };
 
 vi.mock("@oneshot-gtm/core", () => ({
@@ -80,6 +85,13 @@ describe("bulk CSV import", () => {
     });
   });
 
+  it("maps the exact explicitly named header when normalized headers collide", () => {
+    const prepared = prepareCsvImport("E-mail,Email\nselected@example.test,other@example.test", [
+      "E-mail=email",
+    ]);
+    expect(prepared.mapping.email).toBe("E-mail");
+  });
+
   it("dedupes against an existing queue entry", async () => {
     const email = "queued-existing@example.test";
     ledger.enqueueTarget({
@@ -94,6 +106,27 @@ describe("bulk CSV import", () => {
       text: `email,name,company,title\n${email},Duplicate,Acme,Founder`,
     });
     expect(result).toMatchObject({ imported: 0, skipped: 1, errors: [] });
+  });
+
+  it("atomically reserves a candidate before classification", async () => {
+    let release!: () => void;
+    qualifyPersonMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => (release = () => resolve({ verdict: "pass", reason: "stub" }))),
+    );
+    const input = {
+      playName: "profile-intro",
+      text: "email,name,company,title\nsame@example.test,Same,Acme,Founder",
+    };
+
+    const first = importCsv(input);
+    expect(qualifyPersonMock).toHaveBeenCalledTimes(1);
+    const second = await importCsv(input);
+    expect(second).toMatchObject({ imported: 0, skipped: 1 });
+    expect(qualifyPersonMock).toHaveBeenCalledTimes(1);
+
+    release();
+    await expect(first).resolves.toMatchObject({ imported: 1, skipped: 0 });
   });
 
   it("applies deduplication during a dry run without enqueueing", async () => {
@@ -136,7 +169,7 @@ describe("bulk CSV import", () => {
     expect(qualifyPersonMock).not.toHaveBeenCalled();
   });
 
-  it("limits each invocation to 100 source rows", async () => {
+  it("imports every source row", async () => {
     const rows = Array.from(
       { length: 101 },
       (_, index) => `person-${index}@example.test,Person ${index},Acme,Founder`,
@@ -146,8 +179,8 @@ describe("bulk CSV import", () => {
       text: ["email,name,company,title", ...rows].join("\n"),
     });
 
-    expect(result).toMatchObject({ imported: 100, skipped: 0, rowCount: 100 });
-    expect(queue).toHaveLength(100);
-    expect(qualifyPersonMock).toHaveBeenCalledTimes(100);
+    expect(result).toMatchObject({ imported: 101, skipped: 0, rowCount: 101 });
+    expect(queue).toHaveLength(101);
+    expect(qualifyPersonMock).toHaveBeenCalledTimes(101);
   });
 });

@@ -2570,6 +2570,14 @@ export class Ledger {
     return (this.db.query("SELECT * FROM target_queue WHERE id = ?").get(id) as QueueRow) ?? null;
   }
 
+  /** Remove an unreviewed queue reservation, leaving reviewed rows untouched. */
+  removePendingQueueTarget(id: number): boolean {
+    const result = this.db
+      .prepare("DELETE FROM target_queue WHERE id = ? AND status = 'pending'")
+      .run(id);
+    return result.changes > 0;
+  }
+
   setQueueStatus(input: { id: number; status: QueueStatus; notes?: string }): void {
     const now = new Date().toISOString();
     // Every status transition clears `send_started_at` — a deliberate status
