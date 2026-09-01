@@ -45,7 +45,7 @@ async function intakeWebhook(req: Request, kind: WebhookKind): Promise<Response>
     eventIdentity = `${payload.email}:${payload.missedAt}`;
   }
   const filter = await icpFilter({
-    icp: resolveIcp(),
+    icp: await resolveIcp(),
     candidate: {
       title: company ? `${payload.name} at ${company}` : payload.name,
       summary: context,
