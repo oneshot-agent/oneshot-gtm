@@ -6,6 +6,7 @@ import {
   takeMarkedOutcome,
   type TelemetryOutcome,
 } from "@oneshot-gtm/core";
+import { isSupportedPlay } from "@oneshot-gtm/plays";
 import { bail, CommandExit, fail } from "./output.ts";
 import { extractInvocation, type Invocation } from "./dispatch.ts";
 import { runInit } from "./commands/init.ts";
@@ -63,7 +64,7 @@ import {
 } from "./commands/workspace.ts";
 import { commandEnrichLinkedIn } from "./commands/enrich-linkedin.ts";
 import { commandResearchProspects } from "./commands/research-prospects.ts";
-import { commandFindDrain, commandFindWatch } from "./commands/find.ts";
+import { commandFindDrain, commandFindImport, commandFindWatch } from "./commands/find.ts";
 import { commandInstallService } from "./commands/install-service.ts";
 import {
   commandMotionBreakupRevive,
@@ -302,6 +303,35 @@ domains
 const find = program
   .command("find")
   .description("Scheduled discovery (daemon + drain). Ad-hoc runs live in the dashboard.");
+find
+  .command("import")
+  .requiredOption("--csv <file>", "CSV file to import")
+  .requiredOption("--play <name>", "play to enqueue imported prospects into")
+  .option(
+    "--map <column=field>",
+    "override a header mapping (field: email, name, company, title); repeatable",
+    (value: string, previous: string[]) => [...previous, value],
+    [],
+  )
+  .option("--dry-run", "print mapping and row count without ICP checks or enqueueing", false)
+  .option("--fail-on-empty", "exit 2 when zero rows are imported", false)
+  .option("--json", "emit {imported, skipped, errors[]}")
+  .description("Import a CSV cohort through admission, ICP filtering, and queue dedupe")
+  .action(
+    runOrFail(
+      async (opts: {
+        csv: string;
+        play: string;
+        map: string[];
+        dryRun: boolean;
+        failOnEmpty: boolean;
+        json?: boolean;
+      }) => {
+        if (!isSupportedPlay(opts.play)) bail(`unknown play: ${opts.play}`);
+        await commandFindImport(opts);
+      },
+    ),
+  );
 find
   .command("watch")
   .option("--once", "run all due triggers once and exit (cron-friendly)", false)
