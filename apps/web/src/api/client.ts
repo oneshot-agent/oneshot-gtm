@@ -12,6 +12,7 @@ import type {
   InboxDraftReplyRequest,
   InboxDraftReplyResult,
   InboxResult,
+  LinkedInReplyResult,
   InboxSaveDraftRequest,
   InboxSaveDraftResult,
   InboxSendReplyRequest,
@@ -94,6 +95,8 @@ export const api = {
       `/cadences/${id}/stop?play=${encodeURIComponent(playName)}`,
       input,
     ),
+  markLinkedInReply: (id: number) =>
+    postJson<LinkedInReplyResult>(`/prospects/${id}/linkedin-reply`, {}),
   previewCadenceNext: (id: number, playName: string) =>
     postJson<{
       subject: string;

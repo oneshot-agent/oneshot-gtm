@@ -45,6 +45,7 @@ import {
 } from "./api/triggers.ts";
 import { addProspectRoute } from "./api/prospects.ts";
 import { calNoShowWebhookRoute, signupWebhookRoute } from "./api/webhook-triggers.ts";
+import { linkedinReplyWebhookRoute, markLinkedInReplyRoute } from "./api/linkedin-replies.ts";
 
 interface ServerOptions {
   port: number;
@@ -76,6 +77,7 @@ const routes: RouteEntry[] = [
   route("GET", "/api/cadences", listCadences),
   route("GET", "/api/cadences/:id", getCadence),
   route("POST", "/api/cadences/:id/stop", stopCadence),
+  route("POST", "/api/prospects/:id/linkedin-reply", markLinkedInReplyRoute),
   route("POST", "/api/cadences/:id/preview-next", previewCadenceStepRoute),
   route("POST", "/api/cadences/:id/send-next", sendCadenceStepRoute),
   route("POST", "/api/cadences/preview-batch", previewCadenceBatchRoute),
@@ -122,6 +124,7 @@ const routes: RouteEntry[] = [
   route("GET", "/api/triggers", listTriggersRoute),
   route("POST", "/api/triggers/cal-no-show", calNoShowWebhookRoute),
   route("POST", "/api/triggers/signup", signupWebhookRoute),
+  route("POST", "/api/triggers/linkedin-reply", linkedinReplyWebhookRoute),
   route("POST", "/api/triggers/:name/enabled", setTriggerEnabledRoute),
   route("POST", "/api/triggers/:name/config", setTriggerConfigRoute),
   route("POST", "/api/triggers/:name/run", runTriggerRoute),
@@ -262,11 +265,15 @@ export async function startServer(
 function isLoopbackOrigin(origin: string): boolean {
   // Empty origin = same-origin request (curl, server-side fetch); allow.
   if (origin === "") return true;
-  return (
-    origin.startsWith("http://127.0.0.1") ||
-    origin.startsWith("http://localhost") ||
-    origin.startsWith("http://[::1]")
-  );
+  try {
+    const url = new URL(origin);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]")
+    );
+  } catch {
+    return false;
+  }
 }
 
 function isLoopbackHost(host: string | null): boolean {

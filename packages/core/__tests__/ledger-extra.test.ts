@@ -709,6 +709,137 @@ describe("manual cadence stops", () => {
   });
 });
 
+describe("LinkedIn reply events", () => {
+  it("matches normalized identities, stops every live cadence, and is idempotent", () => {
+    const pid = ledger.upsertProspect({
+      name: "Lin Reply",
+      email: "Lin@Example.com",
+      linkedin_url: "https://www.linkedin.com/in/Lin-Reply/?trk=profile",
+      source: "test",
+    });
+    for (const playName of ["show-hn", "repo-interest"]) {
+      ledger.enrollCadence({ prospectId: pid, playName, nextDueAt: new Date().toISOString() });
+    }
+    ledger.recordSequenceEvent({
+      prospectId: pid,
+      playName: "show-hn",
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+    });
+    const queueId = ledger.enqueueTarget({
+      playName: "breakup-revive",
+      payload: { email: "lin@example.com" },
+      dedupeKey: `prospect:${pid}`,
+      source: "test",
+      initialStatus: "approved",
+    })!;
+    ledger.setQueueProspectId(queueId, pid);
+
+    expect(
+      ledger.resolveProspectForLinkedInReply({
+        email: "lin@example.com",
+        linkedinUrl: "http://linkedin.com/in/lin-reply",
+      }),
+    ).toEqual({ status: "matched", prospectId: pid });
+    const first = ledger.recordLinkedInReply({
+      prospectId: pid,
+      source: "expandi",
+      externalEventId: "reply-1",
+      occurredAt: "2026-06-18T10:00:00.000Z",
+    });
+    expect(first).toMatchObject({ duplicate: false, cadencesStopped: 2, inFlightSends: 0 });
+    expect(ledger.listCadencesForProspect(pid).map((c) => c.status)).toEqual([
+      "replied",
+      "replied",
+    ]);
+    expect(ledger.getCadence(pid, "show-hn")).toMatchObject({
+      reply_channel: "linkedin",
+      replied_at: "2026-06-18T10:00:00.000Z",
+    });
+    expect(ledger.listSequenceEventsForProspect(pid)[0]?.status).toBe("sent");
+    expect(ledger.getQueueRow(queueId)?.status).toBe("expired");
+    expect(
+      ledger.recordLinkedInReply({
+        prospectId: pid,
+        source: "expandi",
+        externalEventId: "reply-1",
+        occurredAt: new Date().toISOString(),
+      }),
+    ).toMatchObject({ duplicate: true, cadencesStopped: 0 });
+  });
+
+  it("reports an already claimed send and leaves its marker for the worker", () => {
+    const pid = ledger.upsertProspect({ email: "race@example.com", source: "test" });
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "show-hn",
+      nextDueAt: new Date().toISOString(),
+    });
+    ledger.claimCadenceSendingMarker({
+      prospectId: pid,
+      playName: "show-hn",
+      startedAtIso: new Date().toISOString(),
+    });
+    const result = ledger.recordLinkedInReply({
+      prospectId: pid,
+      source: "manual",
+      externalEventId: "race",
+      occurredAt: new Date().toISOString(),
+    });
+    expect(result).toMatchObject({ cadencesStopped: 1, inFlightSends: 1 });
+    expect(ledger.getCadence(pid, "show-hn")).toMatchObject({
+      status: "replied",
+      sending_started_at: expect.any(String),
+    });
+    expect(ledger.listActiveCadences()).toEqual([]);
+  });
+
+  it("rejects identifiers that resolve to different prospects", () => {
+    ledger.upsertProspect({ email: "one@example.com", source: "test" });
+    ledger.upsertProspect({
+      email: "two@example.com",
+      linkedin_url: "https://linkedin.com/in/two",
+      source: "test",
+    });
+    expect(
+      ledger.resolveProspectForLinkedInReply({
+        email: "one@example.com",
+        linkedinUrl: "https://www.linkedin.com/in/two/",
+      }),
+    ).toEqual({ status: "conflict" });
+  });
+
+  it("anchors breakup-revive to the LinkedIn reply time", () => {
+    const pid = ledger.upsertProspect({ email: "cold-reply@example.com", source: "test" });
+    ledger.recordSequenceEvent({
+      prospectId: pid,
+      playName: "show-hn",
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+    });
+    ledger.recordLinkedInReply({
+      prospectId: pid,
+      source: "test",
+      externalEventId: "cold-clock",
+      occurredAt: new Date().toISOString(),
+    });
+    const db = new Database(dbPath);
+    db.exec(`UPDATE sequence_events SET created_at = datetime('now', '-100 days');`);
+    expect(
+      ledger.listColdProspects({ minDaysSinceLastEvent: 60, maxDaysSinceLastEvent: 90 }),
+    ).toEqual([]);
+    db.exec(`UPDATE channel_events SET occurred_at = datetime('now', '-75 days');`);
+    db.close();
+    expect(
+      ledger
+        .listColdProspects({ minDaysSinceLastEvent: 60, maxDaysSinceLastEvent: 90 })
+        .map((row) => row.id),
+    ).toEqual([pid]);
+  });
+});
+
 describe("recordInterview", () => {
   it("round-trips an interview record", () => {
     const id = ledger.recordInterview({

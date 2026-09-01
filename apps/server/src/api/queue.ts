@@ -415,6 +415,9 @@ export async function sendDraftRoute(
   const row = ledger.getQueueRow(id);
   if (!row) return jsonResponse({ error: `row #${id} not found` }, 404, req);
   if (row.status === "sent") return jsonResponse({ error: "row already sent" }, 400, req);
+  if (row.status !== "approved") {
+    return jsonResponse({ error: `row is ${row.status}; approve it before sending` }, 409, req);
+  }
   if (!row.last_draft_json) {
     return jsonResponse({ error: "no draft to send — regenerate a draft first" }, 400, req);
   }
@@ -457,6 +460,13 @@ export async function sendDraftRoute(
       409,
       req,
     );
+  }
+  // The claim itself requires status='approved'. Re-read so an expiry that
+  // raced immediately after the claim is observed before provider dispatch.
+  const claimedRow = ledger.getQueueRow(id);
+  if (claimedRow?.status !== "approved") {
+    ledger.clearQueueSendingMarker(id);
+    return jsonResponse({ error: "row changed while sending; refresh and retry" }, 409, req);
   }
 
   let payload: Record<string, unknown> = {};

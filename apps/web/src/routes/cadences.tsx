@@ -1,6 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { ChevronDown, CircleStop, Eye, Loader2, RotateCw, Send, Trophy } from "lucide-react";
+import {
+  ChevronDown,
+  CircleStop,
+  Eye,
+  Loader2,
+  MessageCircle,
+  RotateCw,
+  Send,
+  Trophy,
+} from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
 import { toast } from "sonner";
 import type {
@@ -90,6 +99,11 @@ interface StopModalState {
   playName: string;
 }
 
+interface LinkedInReplyModalState {
+  prospectId: number;
+  prospectName: string | null;
+}
+
 const STOP_REASON_LABELS: Record<CadenceStopReason, string> = {
   bad_timing: "Bad timing / revisit later",
   other: "Other",
@@ -107,6 +121,9 @@ function CadencesPage() {
   const [outcomeAmount, setOutcomeAmount] = useState("");
   const [outcomeNotes, setOutcomeNotes] = useState("");
   const [stopModal, setStopModal] = useState<StopModalState | null>(null);
+  const [linkedinReplyModal, setLinkedinReplyModal] = useState<LinkedInReplyModalState | null>(
+    null,
+  );
   const [stopReason, setStopReason] = useState<CadenceStopReason>("bad_timing");
   const [stopNote, setStopNote] = useState("");
 
@@ -138,6 +155,19 @@ function CadencesPage() {
       toast.success(`stopped cadence · ${vars.playName}`);
     },
     onError: (err) => toast.error(`couldn't stop cadence: ${err.message}`),
+  });
+
+  const markLinkedInReply = useMutation({
+    mutationFn: (prospectId: number) => api.markLinkedInReply(prospectId),
+    onSuccess: (data) => {
+      void qc.invalidateQueries({ queryKey: ["cadences"] });
+      setLinkedinReplyModal(null);
+      const warning = data.inFlightSends > 0 ? " · an in-flight email may still complete" : "";
+      toast.success(
+        `LinkedIn reply recorded · ${data.cadencesStopped} cadence(s) stopped${warning}`,
+      );
+    },
+    onError: (err) => toast.error(`couldn't record LinkedIn reply: ${err.message}`),
   });
 
   const previewNext = useMutation({
@@ -622,6 +652,12 @@ function CadencesPage() {
                             sending…
                           </Badge>
                         )}
+                        {c.status === "replied" && c.replyChannel && (
+                          <Badge tone="signal" className="ml-1.5">
+                            {c.replyChannel === "linkedin" ? "LinkedIn reply" : "email reply"}
+                            {c.replyAt ? ` · ${timeAgo(c.replyAt)}` : ""}
+                          </Badge>
+                        )}
                         {!c.isSending && c.status === "active" && c.lastSendError && (
                           <span
                             title={`${c.lastSendError}${
@@ -670,6 +706,21 @@ function CadencesPage() {
                       </td>
                       <td className="px-6 py-2 text-right">
                         <div className="flex items-center justify-end gap-1">
+                          {(c.status === "active" || c.status === "paused") && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              title="mark that this prospect replied on LinkedIn"
+                              onClick={() =>
+                                setLinkedinReplyModal({
+                                  prospectId: c.prospectId,
+                                  prospectName: c.prospectName,
+                                })
+                              }
+                            >
+                              <MessageCircle size={12} />
+                            </Button>
+                          )}
                           {c.status === "active" &&
                             (() => {
                               const key = `${c.prospectId}|${c.playName}`;
@@ -1029,6 +1080,32 @@ function CadencesPage() {
             Server processes serially; ~2 min per email. The UI refreshes every 15s and rows clear
             their preview as each completes.
           </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={linkedinReplyModal != null}
+        onClose={() => setLinkedinReplyModal(null)}
+        title={`Mark LinkedIn reply${linkedinReplyModal?.prospectName ? ` — ${mask("name", linkedinReplyModal.prospectName)}` : ""}`}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setLinkedinReplyModal(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (linkedinReplyModal) markLinkedInReply.mutate(linkedinReplyModal.prospectId);
+              }}
+              disabled={markLinkedInReply.isPending}
+            >
+              {markLinkedInReply.isPending ? "Recording…" : "Mark replied"}
+            </Button>
+          </>
+        }
+      >
+        <div className="text-[12px] text-ink-muted">
+          This records a LinkedIn reply and stops every active or paused email cadence for this
+          prospect. An email already in flight cannot be recalled and may still complete.
         </div>
       </Modal>
 

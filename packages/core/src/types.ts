@@ -68,6 +68,18 @@ export interface InboxReplyRecord {
   created_at: string;
 }
 
+/** Provider-neutral inbound engagement event. V1 records LinkedIn replies only. */
+export interface ChannelEventRecord {
+  id: number;
+  source: string;
+  external_event_id: string;
+  prospect_id: number;
+  channel: "linkedin";
+  event_type: "reply";
+  occurred_at: string;
+  created_at: string;
+}
+
 export interface ProspectRecord {
   id: number;
   name: string | null;

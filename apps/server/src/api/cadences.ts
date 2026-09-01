@@ -110,6 +110,8 @@ function toView(
     stopReason: row.stop_reason as CadenceStopReason | null,
     stopNote: row.stop_note,
     stoppedAt: row.stopped_at,
+    replyChannel: row.reply_channel,
+    replyAt: row.replied_at,
     nextStepDraft,
     nextStepLabel: next?.label ?? null,
     nextStepIsBreakup: next?.isBreakup ?? false,
