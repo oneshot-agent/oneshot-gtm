@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RunPlayEvent } from "@oneshot-gtm/shared-types";
-import { pruneSentRows } from "../src/lib/pruneSentRows";
+import { pruneSentRows, remapFilteredEventIndexes } from "../src/lib/pruneSentRows";
 
 const r = (label: string): Record<string, string> => ({ email: `${label}@x.dev`, name: label });
 
@@ -54,5 +54,52 @@ describe("pruneSentRows", () => {
     const out = pruneSentRows(events, rows, keys);
     expect(out.rows).toEqual([r("a")]);
     expect(out.dedupeKeys).toEqual([null]);
+  });
+});
+
+describe("remapFilteredEventIndexes", () => {
+  it("maps filtered live indexes back to the full rows array", () => {
+    const rows = [r("a"), r("b"), r("c")];
+    const events: RunPlayEvent[] = [
+      {
+        kind: "verify",
+        total: 3,
+        verified: 2,
+        dropped: [{ email: "b@x.dev", reason: "bad", index: 1 }],
+      },
+      { kind: "send", index: 1, receiptIds: [42] },
+    ];
+
+    const mapped = remapFilteredEventIndexes(events, rows);
+    expect(mapped[1]).toEqual({ kind: "send", index: 2, receiptIds: [42] });
+    expect(pruneSentRows(mapped, rows, ["a", "b", "c"]).rows).toEqual([r("a"), r("b")]);
+  });
+
+  it("recovers missing drop indexes in older records by email", () => {
+    const rows = [r("a"), r("b"), r("c")];
+    const events: RunPlayEvent[] = [
+      { kind: "verify", total: 3, verified: 2, dropped: [{ email: "b@x.dev", reason: "bad" }] },
+      { kind: "send", index: 1, receiptIds: [42] },
+    ];
+
+    expect(remapFilteredEventIndexes(events, rows)[1]).toEqual({
+      kind: "send",
+      index: 2,
+      receiptIds: [42],
+    });
+  });
+
+  it("does not identity-map indexed events when a legacy drop cannot be resolved", () => {
+    const events: RunPlayEvent[] = [
+      {
+        kind: "verify",
+        total: 2,
+        verified: 1,
+        dropped: [{ email: "unknown@x.dev", reason: "bad" }],
+      },
+      { kind: "send", index: 0, receiptIds: [42] },
+    ];
+
+    expect(remapFilteredEventIndexes(events, [r("a"), r("b")])).toEqual([events[0]]);
   });
 });

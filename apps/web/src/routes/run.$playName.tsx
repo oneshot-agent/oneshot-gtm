@@ -15,7 +15,7 @@ import { Field, Input, Textarea } from "../components/primitives/Field.tsx";
 import { cn } from "../lib/cn.ts";
 import { PLAY_SCHEMAS } from "../lib/playSchemas.ts";
 import { useMask } from "../lib/privacy.tsx";
-import { pruneSentRows } from "../lib/pruneSentRows.ts";
+import { pruneSentRows, remapFilteredEventIndexes } from "../lib/pruneSentRows.ts";
 
 /**
  * Search-param contract for arrivals from the `/queue` drain modal: `fromQueue=1`
@@ -401,7 +401,8 @@ function RunPage() {
       // After a real-send run, drop rows whose draft actually shipped so
       // they can't be resent by a second submission of the same form.
       // Held / errored / unsent rows stay so the founder can edit and retry.
-      const pruned = pruneSentRows(streamedEvents, rowsSnapshot, dedupeKeysSnapshot);
+      const mappedEvents = remapFilteredEventIndexes(streamedEvents, rowsSnapshot);
+      const pruned = pruneSentRows(mappedEvents, rowsSnapshot, dedupeKeysSnapshot);
       if (pruned.prunedCount > 0) {
         setRows(pruned.rows);
         setDedupeKeys(pruned.dedupeKeys);
@@ -711,7 +712,8 @@ function RunPage() {
                   const restoredKeys = restoredRows.map(
                     (_, index) => runRecord.dedupeKeys[index] ?? null,
                   );
-                  const retryable = pruneSentRows(runRecord.events, restoredRows, restoredKeys);
+                  const mappedEvents = remapFilteredEventIndexes(runRecord.events, restoredRows);
+                  const retryable = pruneSentRows(mappedEvents, restoredRows, restoredKeys);
                   setRows(retryable.rows.length > 0 ? retryable.rows : [{ ...schema.defaultRow }]);
                   setDedupeKeys(retryable.rows.length > 0 ? retryable.dedupeKeys : [null]);
                 }
@@ -742,8 +744,8 @@ function RunPage() {
             {verifyEvent.dropped.length} dropped
           </div>
           <div className="mt-1 font-mono text-[11px] text-ink-muted">
-            {verifyEvent.dropped.map((d) => (
-              <div key={`${d.email}::${d.reason}`}>
+            {verifyEvent.dropped.map((d, idx) => (
+              <div key={`${d.email}::${d.reason}::${idx}`}>
                 {d.email ? mask("email", d.email) : "(missing)"} — {d.reason}
               </div>
             ))}

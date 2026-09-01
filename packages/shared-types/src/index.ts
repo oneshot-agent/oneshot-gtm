@@ -880,7 +880,7 @@ export type RunPlayEvent =
       kind: "verify";
       total: number;
       verified: number;
-      dropped: Array<{ email: string; reason: string }>;
+      dropped: Array<{ email: string; reason: string; index?: number }>;
     }
   | { kind: "stage"; stage: string }
   | { kind: "draft"; index: number; subject: string; body: string; flags: string[] }

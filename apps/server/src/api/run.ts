@@ -178,9 +178,13 @@ export async function runPlay(req: Request, params: Record<string, string>): Pro
         if (verify.dropped.length > 0) {
           send({
             kind: "verify",
-            total: inputCount,
+            total: body.targets.length,
             verified: verify.verified.length,
-            dropped: verify.dropped.map((d) => ({ email: d.email, reason: d.reason })),
+            dropped: verify.dropped.map((d) => ({
+              email: d.email,
+              reason: d.reason,
+              index: d.index,
+            })),
           });
         }
         // If verify dropped every target, skip dispatch entirely — the play
