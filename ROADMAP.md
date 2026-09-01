@@ -17,7 +17,7 @@ Public — issues mirror the items below, PRs welcome. Items carry an effort tag
 
 Today every finder polls. These turn it push.
 
-- [ ] **Webhook intake** — `POST /api/triggers/cal-no-show` + `POST /api/triggers/signup` → ICP-filter → enqueue into `demo-no-show` / `concierge`.
+- [x] **Webhook intake** — `POST /api/triggers/cal-no-show` + `POST /api/triggers/signup` → ICP-filter → enqueue into `demo-no-show` / `concierge`.
 - [ ] **Webhook signing + replay protection** for those endpoints.
 - [ ] **Warm-signal escalation** in cadence (open-tracking → auto phone call). Blocked: needs OneShot to surface open events.
 

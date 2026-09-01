@@ -44,6 +44,7 @@ import {
   setTriggerEnabledRoute,
 } from "./api/triggers.ts";
 import { addProspectRoute } from "./api/prospects.ts";
+import { calNoShowWebhookRoute, signupWebhookRoute } from "./api/webhook-triggers.ts";
 
 interface ServerOptions {
   port: number;
@@ -119,6 +120,8 @@ const routes: RouteEntry[] = [
   route("POST", "/api/queue/:id/send-draft", sendDraftRoute),
   route("POST", "/api/queue/:id/mark-sent", markSentRoute),
   route("GET", "/api/triggers", listTriggersRoute),
+  route("POST", "/api/triggers/cal-no-show", calNoShowWebhookRoute),
+  route("POST", "/api/triggers/signup", signupWebhookRoute),
   route("POST", "/api/triggers/:name/enabled", setTriggerEnabledRoute),
   route("POST", "/api/triggers/:name/config", setTriggerConfigRoute),
   route("POST", "/api/triggers/:name/run", runTriggerRoute),
