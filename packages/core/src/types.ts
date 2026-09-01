@@ -304,7 +304,12 @@ export interface ProspectPriorityComponents {
  * deliverability) are never rescued by a score.
  */
 export interface ProspectPriority {
-  version: "heuristic-v1";
+  /**
+   * Mirrored union of shared-types' `PriorityVersion` (core can't import it —
+   * web depends on shared-types alone; the find version-sync test guards the
+   * two lists against drift).
+   */
+  version: "heuristic-v1" | "heuristic-v2";
   /** Weighted total, clamped integer 0..100. */
   total: number;
   components: ProspectPriorityComponents;

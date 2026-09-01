@@ -1,7 +1,12 @@
 import type { ProspectPriority, ProspectPriorityComponents } from "@oneshot-gtm/core";
+import { PRIORITY_WEIGHTS_BY_VERSION } from "@oneshot-gtm/shared-types";
 
 /**
- * Pure heuristic-v1 priority engine (issue #410, Phase 1 — shadow mode).
+ * Pure heuristic-v2 priority engine (issue #410, Phase 2 — still shadow
+ * mode). v2 is the label-mined correction of v1: on the finders with human
+ * labels, exec titles (35–44% approval vs 55–92% baseline) and Luma Host
+ * roles (35% vs Guest 54%) were ANTI-signals that v1 scored up — adapters
+ * now express those through `personSignals`, which can land below neutral.
  *
  * Turns the evidence a finder already holds at enqueue time into the
  * explainable `ProspectPriority` artifact. No LLM calls, no paid SDK calls,
@@ -10,17 +15,11 @@ import type { ProspectPriority, ProspectPriorityComponents } from "@oneshot-gtm/
  * rescues an off-ICP, duplicate, undeliverable, or role-rejected candidate.
  */
 
-export const PRIORITY_VERSION = "heuristic-v1" as const;
+export const PRIORITY_VERSION = "heuristic-v2" as const;
 
-/** v1 component weights, percent. Sum is 100 by construction. */
-export const PRIORITY_WEIGHTS: Record<keyof ProspectPriorityComponents, number> = {
-  personFit: 30,
-  accountFit: 20,
-  intentStrength: 20,
-  timingFreshness: 15,
-  signalConfidence: 10,
-  contactability: 5,
-};
+/** Current-version component weights — single-sourced from shared-types. */
+export const PRIORITY_WEIGHTS: Record<keyof ProspectPriorityComponents, number> =
+  PRIORITY_WEIGHTS_BY_VERSION[PRIORITY_VERSION];
 
 /** Missing evidence is unknown, not bad: it scores neutral, never zero. */
 export const NEUTRAL = 50;
@@ -44,6 +43,13 @@ export interface PriorityEvidence {
   title?: string | null;
   /** Stronger seniority evidence than `title` (e.g. job-change newRole, a Luma bio). */
   seniorityHint?: string | null;
+  /**
+   * Explicit personFit evidence that OVERRIDES title banding when present —
+   * the channel for label-mined per-finder priors, which may sit BELOW
+   * neutral (an exec title on luma/repo finders is measured as an
+   * anti-signal, something the band table can't express).
+   */
+  personSignals?: PrioritySignal[];
   /** True when the payload names the account/company. */
   companyKnown?: boolean;
   /** Company-level signals: funding, cohort, hiring, audience size… */
@@ -83,6 +89,12 @@ export const SENIORITY_BANDS: Array<{ score: number; pattern: RegExp }> = [
 ];
 
 function scorePersonFit(ev: PriorityEvidence): ComponentResult {
+  // Explicit signals win outright — no neutral floor, because a measured
+  // anti-signal must be allowed to pull the component below 50.
+  if (ev.personSignals && ev.personSignals.length > 0) {
+    const ordered = [...ev.personSignals].toSorted((a, b) => b.strength - a.strength);
+    return { score: ordered[0]!.strength, reasons: ordered.map((s) => s.reason) };
+  }
   // Hint first, but a band-matching title beats a hint that matches nothing —
   // a Luma bio like "AI enthusiast" must not mask an ICP-gate title of "CTO".
   for (const text of [ev.seniorityHint?.trim(), ev.title?.trim()]) {
@@ -100,12 +112,16 @@ function scorePersonFit(ev: PriorityEvidence): ComponentResult {
  * of evidence ("raised Seed") shouldn't be dragged down by a weak second one,
  * and max keeps the arithmetic trivially explainable. Reasons come out
  * strongest-first; ties break on input order, so output stays deterministic.
+ *
+ * v2: the strongest signal is AUTHORITATIVE — no neutral floor. Label mining
+ * found anti-signals (Luma Hosts approve at 35% vs Guests 54%) that a
+ * floored max could never express; adapters that mean "weak but not
+ * negative" say strength 50, not 45.
  */
 function scoreSignals(signals: PrioritySignal[] | undefined, base: number): ComponentResult {
   if (!signals || signals.length === 0) return { score: base, reasons: [] };
   const ordered = [...signals].toSorted((a, b) => b.strength - a.strength);
-  const top = ordered[0]!;
-  return { score: Math.max(base, top.strength), reasons: ordered.map((s) => s.reason) };
+  return { score: ordered[0]!.strength, reasons: ordered.map((s) => s.reason) };
 }
 
 function scoreAccountFit(ev: PriorityEvidence): ComponentResult {

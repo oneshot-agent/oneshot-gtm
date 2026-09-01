@@ -61,6 +61,23 @@ function enqueue(
   })!;
 }
 
+const artifact = (version: string) =>
+  JSON.stringify({
+    version,
+    total: 50,
+    components: {
+      personFit: 50,
+      accountFit: 50,
+      intentStrength: 50,
+      timingFreshness: 50,
+      signalConfidence: 50,
+      contactability: 50,
+    },
+    reasons: [],
+    finder: "post-funding",
+    scoredAt: "2026-09-01T12:00:00.000Z",
+  });
+
 const FUNDING_PAYLOAD = {
   name: "Ada",
   email: "ada@acme.dev",
@@ -119,24 +136,24 @@ describe("pure helpers", () => {
     expect(
       hasCurrentScore({ priority_json: JSON.stringify({ version: "heuristic-v1", total: 50 }) }),
     ).toBe(false);
-    const current = JSON.stringify({
-      version: "heuristic-v1",
-      total: 50,
-      components: {
-        personFit: 50,
-        accountFit: 50,
-        intentStrength: 50,
-        timingFreshness: 50,
-        signalConfidence: 50,
-        contactability: 50,
-      },
-      reasons: [],
-      finder: "post-funding",
-      scoredAt: "2026-09-01T12:00:00.000Z",
-    });
+    // A complete v1 artifact still PARSES (keeps rendering) but is not
+    // CURRENT — a plain backfill run upgrades it to v2.
+    expect(hasCurrentScore({ priority_json: artifact("heuristic-v1") })).toBe(false);
+    const current = artifact("heuristic-v2");
     expect(hasCurrentScore({ priority_json: current })).toBe(true);
     expect(shouldSkipRow({ priority_json: current }, false)).toBe(true);
     expect(shouldSkipRow({ priority_json: current }, true)).toBe(false);
+  });
+
+  it("a valid v1 artifact is auto-upgraded to v2 by a plain backfill run", () => {
+    const id = enqueue("post-funding", FUNDING_PAYLOAD);
+    commandScoreProspects({ refresh: false, dryRun: false, report: false });
+    const v2 = JSON.parse(ledger.getQueueRow(id)!.priority_json!);
+    ledger.setQueuePriority(id, { ...v2, version: "heuristic-v1", total: 42 });
+    commandScoreProspects({ refresh: false, dryRun: false, report: false });
+    const upgraded = JSON.parse(ledger.getQueueRow(id)!.priority_json!);
+    expect(upgraded.version).toBe("heuristic-v2");
+    expect(upgraded).toEqual(v2);
   });
 
   it("a partial artifact is repaired by a plain backfill run, no --refresh needed", () => {
@@ -175,7 +192,7 @@ describe("commandScoreProspects", () => {
     const id = enqueue("post-funding", FUNDING_PAYLOAD);
     commandScoreProspects({ refresh: false, dryRun: false, report: false });
     const written = JSON.parse(ledger.getQueueRow(id)!.priority_json!);
-    expect(written.version).toBe("heuristic-v1");
+    expect(written.version).toBe("heuristic-v2");
     expect(written.finder).toBe("post-funding");
     // Deterministic: anchored to found_at, so a re-run reproduces it exactly…
     commandScoreProspects({ refresh: false, dryRun: false, report: false });

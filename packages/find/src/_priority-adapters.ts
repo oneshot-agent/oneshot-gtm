@@ -1,5 +1,10 @@
 import { type Ledger, type ProspectPriority, logEvent } from "@oneshot-gtm/core";
-import { type PriorityEvidence, type PrioritySignal, computePriority } from "./_priority.ts";
+import {
+  type PriorityEvidence,
+  type PrioritySignal,
+  SENIORITY_BANDS,
+  computePriority,
+} from "./_priority.ts";
 
 /**
  * Per-play adapters: payload already persisted at enqueue time → normalized
@@ -25,6 +30,18 @@ function urlCount(...urls: unknown[]): number {
   return urls.filter((u) => str(u) !== null).length;
 }
 
+/**
+ * Label-mined title prior for the indie-builder finders (luma, github-stars):
+ * exec-band titles measured at 35–44% approval vs a 55–92% baseline — the
+ * classic seniority boost is an ANTI-signal for this ICP. Non-exec titles are
+ * plain neutral evidence; a missing title stays unknown (no signal at all).
+ */
+function minedTitleSignals(title: string | null): PrioritySignal[] {
+  if (!title) return [];
+  const exec = SENIORITY_BANDS[0]!.pattern.test(title);
+  return [{ kind: "title-prior", strength: exec ? 35 : 50, reason: `title: ${title}` }];
+}
+
 function fmtUsd(amount: number): string {
   if (amount >= 1_000_000) return `$${(amount / 1_000_000).toFixed(1)}M`;
   if (amount >= 1_000) return `$${Math.round(amount / 1_000)}k`;
@@ -41,7 +58,9 @@ function xEvidence(p: Record<string, unknown>): PriorityEvidence {
   const accountSignals: PrioritySignal[] = [];
   const followers = num(p["followers"]);
   if (followers !== null) {
-    const strength = followers >= 10_000 ? 70 : followers >= 1_000 ? 60 : 45;
+    // 50 = "weak but not negative": small reach is unknown-ish, and signals
+    // are authoritative in v2 (no neutral floor to lean on).
+    const strength = followers >= 10_000 ? 70 : followers >= 1_000 ? 60 : 50;
     accountSignals.push({
       kind: "reach",
       strength,
@@ -170,16 +189,19 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
     ...contact(p),
   }),
 
+  // v2, label-mined (65 approved / 69 rejected individually-judged rows):
+  // exec titles 35% approval vs 55% title-missing → title prior inverted;
+  // bios no longer feed seniority (bioTitleBand measured flat-to-negative);
+  // Host 35% vs Guest 54% → Host now scores BELOW Guest, not above.
   "luma-events": (p) => {
     const role = str(p["role"]);
     return {
-      title: str(p["title"]),
-      seniorityHint: str(p["attendeeBio"]),
+      personSignals: minedTitleSignals(str(p["title"])),
       companyKnown: str(p["company"]) !== null,
       intentSignals: [
         {
           kind: "event",
-          strength: role === "Host" ? 75 : 65,
+          strength: role === "Host" ? 45 : 65,
           reason: `${role ?? "attendee"} at ${str(p["eventTitle"]) ?? "?"}`,
         },
       ],
@@ -220,8 +242,11 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
     ...contact(p),
   }),
 
+  // v2: exec-title prior inverted here too (44% approval at n=9, matching
+  // luma's direction; repo-interest labels are direction-only — bulk-approve
+  // heavy — so only the title change is applied, candidateRepos left alone).
   "repo-interest": (p) => ({
-    title: str(p["title"]),
+    personSignals: minedTitleSignals(str(p["title"])),
     companyKnown: str(p["company"]) !== null,
     intentSignals: [
       {
