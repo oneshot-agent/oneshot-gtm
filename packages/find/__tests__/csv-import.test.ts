@@ -38,6 +38,10 @@ const ledger = {
     if (queue[id - 1]?.status !== "pending") return false;
     return queue.splice(id - 1, 1).length > 0;
   },
+  removeExpiredQueueTarget: (id: number) => {
+    if (queue[id - 1]?.status !== "expired") return false;
+    return queue.splice(id - 1, 1).length > 0;
+  },
   setQueueNotes: () => {},
 };
 

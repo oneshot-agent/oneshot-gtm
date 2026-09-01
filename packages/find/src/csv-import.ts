@@ -210,11 +210,7 @@ export async function importCsv(input: {
   const icp = resolveIcp();
   const ledger = getLedger();
   const removeReservation = (id: number): void => {
-    // Reservations are inserted as expired so bulk approval cannot pick them
-    // up while classification is running. Restore the unreviewed state before
-    // using the ledger's guarded reservation cleanup.
-    ledger.setQueueStatus({ id, status: "pending" });
-    ledger.removePendingQueueTarget(id);
+    ledger.removeExpiredQueueTarget(id);
   };
   for (const candidate of unique) {
     const dedupeKey = `email:${candidate.email}`;
