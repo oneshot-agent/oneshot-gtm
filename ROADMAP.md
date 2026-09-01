@@ -44,7 +44,7 @@ The verify gate has holes an agent can close without touching product behaviour.
 
 The ICP filter currently judges each candidate cold — `icpFilter` in `packages/find/src/_filter.ts` sends the model nothing but `{ icp, candidate }`.
 
-- [ ] **v1** — feed the last ~20 `(candidate, decision, reason)` tuples from `target_queue` into each `icpFilter` call as in-context examples. No schema change.
+- [x] **v1** — feed the last ~20 `(candidate, decision, reason)` tuples from `target_queue` into each `icpFilter` call as in-context examples. No schema change.
 - [ ] **v2** — periodic job proposes a tighter ICP one-liner from accumulated decisions; founder approves the rewrite in `/queue`.
 - [ ] **Per-source weighting** — track approval rate per finder, deprioritize noisy sources automatically.
 

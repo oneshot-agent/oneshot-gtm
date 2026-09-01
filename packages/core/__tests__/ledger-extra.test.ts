@@ -26,6 +26,51 @@ afterEach(() => {
   }
 });
 
+describe("recentIcpDecisions", () => {
+  it("returns the newest reviewed labels and keeps sent rows as approvals", () => {
+    const rejected = ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: { title: "Wine meetup" },
+      dedupeKey: "reject",
+      source: "test",
+      initialStatus: "rejected",
+      notes: "wrong industry",
+    });
+    const approved = ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: { title: "Agent builders" },
+      dedupeKey: "approve",
+      source: "test",
+      notes: "right topic",
+    });
+    ledger.setQueueStatus({ id: approved!, status: "approved" });
+    const sent = ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: { title: "Agent SDK" },
+      dedupeKey: "sent",
+      source: "test",
+    });
+    ledger.setQueueStatus({ id: sent!, status: "sent", notes: "founder approved" });
+    ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: { title: "Not reviewed" },
+      dedupeKey: "pending",
+      source: "test",
+    });
+
+    expect(ledger.recentIcpDecisions(2)).toEqual([
+      { candidate: { title: "Agent SDK" }, decision: true, reason: "founder approved" },
+      { candidate: { title: "Agent builders" }, decision: true, reason: "right topic" },
+    ]);
+    expect(ledger.recentIcpDecisions()).toContainEqual({
+      candidate: { title: "Wine meetup" },
+      decision: false,
+      reason: "wrong industry",
+    });
+    expect(rejected).not.toBeNull();
+  });
+});
+
 describe("listReceipts filters", () => {
   it("filters by playName", () => {
     ledger.recordReceipt({ playName: "show-hn", callType: "email.send", costUsd: 0.1 });
