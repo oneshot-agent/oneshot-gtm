@@ -66,6 +66,7 @@ import { commandEnrichLinkedIn } from "./commands/enrich-linkedin.ts";
 import { commandResearchProspects } from "./commands/research-prospects.ts";
 import { commandFindDrain, commandFindImport, commandFindWatch } from "./commands/find.ts";
 import { commandInstallService } from "./commands/install-service.ts";
+import { commandMeasureBenchmark } from "./commands/measure.ts";
 import {
   commandMotionBreakupRevive,
   commandMotionCompetitorSwitch,
@@ -719,6 +720,13 @@ pmf
   .option("-o, --out <path>", "write analysis markdown to this file")
   .description("Collect inbound replies and synthesize a Sean Ellis report")
   .action(runOrFail(commandPmfSurveyCollect));
+
+const measure = program.command("measure").description("Compare local GTM performance");
+measure
+  .command("benchmark")
+  .description("Compare this install with the opt-in telemetry cohort")
+  .option("--json", "output as JSON")
+  .action(runOrFail((opts: { json?: boolean }) => commandMeasureBenchmark(opts)));
 
 // Intel: interactive coaching + reply triage + personalize (no UI yet)
 const intel = program.command("intel").description("LLM-powered intelligence layer");

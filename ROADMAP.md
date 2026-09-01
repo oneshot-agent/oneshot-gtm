@@ -57,7 +57,7 @@ The ICP filter currently judges each candidate cold — `icpFilter` in `packages
 
 ## Measurement
 
-- [ ] **`measure benchmark`** — opt-in cohort comparisons. Unblocked: the telemetry endpoint is live.
+- [x] **`measure benchmark`** — opt-in cohort comparisons, with human and versioned JSON output. The command does not contact the aggregate endpoint when telemetry sharing is disabled.
 - [ ] **Public benchmarks page** reading aggregates from the telemetry table. The pipeline exists; this is the surface.
 
 ## Integrations
