@@ -43,6 +43,8 @@ export interface BreakupReviveOptions {
   valueDrop?: string;
   /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
   signal?: AbortSignal;
+  /** Live progress callback */
+  onProgress?: (index: number, draft: any) => void;
 }
 
 interface BreakupReviveDraft {
@@ -106,7 +108,7 @@ export async function runBreakupRevive(
         allowRecontact: true,
       });
 
-      drafted.push({
+      const res = {
         prospectEmail: t.email,
         prospectName: t.name,
         daysCold: t.daysCold,
@@ -115,7 +117,9 @@ export async function runBreakupRevive(
         receiptIds: send.receiptIds,
         sent: send.sent,
         flags,
-      });
+      };
+      drafted.push(res);
+      opts.onProgress?.(drafted.length - 1, res as any);
     } catch (err) {
       // Daily-cap deferral is not a per-target failure — abort the run so the
       // caller leaves remaining targets queued instead of stamping error drafts.
@@ -124,7 +128,7 @@ export async function runBreakupRevive(
       if (isRunCancelled(err)) throw err;
       logTargetError({ playName: PLAY_NAME, to: t.email, err });
       const stub = errorDraft((err as Error)?.message);
-      drafted.push({
+      const res = {
         prospectEmail: t.email,
         prospectName: t.name,
         daysCold: t.daysCold,
@@ -133,7 +137,9 @@ export async function runBreakupRevive(
         receiptIds: stub.receiptIds,
         sent: stub.sent,
         flags: stub.flags,
-      });
+      };
+      drafted.push(res);
+      opts.onProgress?.(drafted.length - 1, res as any);
     }
   }
 

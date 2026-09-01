@@ -27,6 +27,7 @@ export function getRunRoute(req: Request, params: Record<string, string>): Respo
     sentCount: run.sentCount,
     errorCount: run.errorCount,
     targets: run.targets,
+    dedupeKeys: run.dedupeKeys,
     events: run.events as RunPlayEvent[],
     prospectEmails: run.prospectEmails,
     cancelReason: run.cancelReason ?? null,
