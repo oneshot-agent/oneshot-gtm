@@ -1,5 +1,6 @@
 import { getLedger, logEvent, webRead } from "@oneshot-gtm/core";
 import { resolveVerifyEnrichQualify } from "./_contact.ts";
+import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { persistRoleRejection } from "./_qualify.ts";
 import type { ShowHnTarget } from "@oneshot-gtm/plays";
 import { icpFilter, resolveIcp } from "./_filter.ts";
@@ -285,7 +286,7 @@ async function resolveAndEnqueueShowHn(
     ...(phone ? { phone } : {}),
     ...(contact.title ? { title: contact.title } : {}),
   };
-  const id = ledger.enqueueTarget({
+  const id = enqueueScoredTarget(ledger, {
     playName: PLAY_NAME,
     payload: target,
     dedupeKey: hit.objectID,

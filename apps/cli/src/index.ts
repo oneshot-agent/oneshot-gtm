@@ -64,6 +64,7 @@ import {
 } from "./commands/workspace.ts";
 import { commandEnrichLinkedIn } from "./commands/enrich-linkedin.ts";
 import { commandResearchProspects } from "./commands/research-prospects.ts";
+import { commandScoreProspects } from "./commands/score-prospects.ts";
 import { commandFindDrain, commandFindImport, commandFindWatch } from "./commands/find.ts";
 import { commandInstallService } from "./commands/install-service.ts";
 import { commandMeasureBenchmark } from "./commands/measure.ts";
@@ -496,6 +497,40 @@ find
           ...(opts.limit ? { limit: opts.limit } : {}),
           ...(opts.scope ? { scope: opts.scope } : {}),
           ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
+        });
+      },
+    ),
+  );
+
+find
+  .command("score-prospects")
+  .option("--scope <play|all>", "score only this play's rows (default all)")
+  .option("--limit <n>", "max rows to score this run", (v) => Number.parseInt(v, 10))
+  .option("--refresh", "re-score rows that already carry a current-version score", false)
+  .option("--dry-run", "report score distributions; write nothing", false)
+  .option(
+    "--report",
+    "print the per-finder shadow report (score buckets + human approval rate)",
+    false,
+  )
+  .description(
+    "Backfill shadow-mode priority scores from stored payloads (free, resumable, no network)",
+  )
+  .action(
+    runOrFail(
+      (opts: {
+        scope?: string;
+        limit?: number;
+        refresh: boolean;
+        dryRun: boolean;
+        report: boolean;
+      }) => {
+        commandScoreProspects({
+          refresh: opts.refresh,
+          dryRun: opts.dryRun,
+          report: opts.report,
+          ...(opts.scope ? { scope: opts.scope } : {}),
+          ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
         });
       },
     ),

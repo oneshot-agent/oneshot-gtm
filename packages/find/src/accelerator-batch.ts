@@ -1,5 +1,6 @@
 import { getLedger, logEvent, webRead } from "@oneshot-gtm/core";
 import { resolveVerifyEnrichQualify } from "./_contact.ts";
+import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { persistRoleRejection } from "./_qualify.ts";
 import { complete, loadPrompt } from "@oneshot-gtm/intel";
 import type { AcceleratorBatchTarget } from "@oneshot-gtm/plays";
@@ -447,7 +448,7 @@ export async function runAcceleratorBatchFinder(
       ...(opts.senderCohort ? { senderCohort: opts.senderCohort } : {}),
       ...(opts.freeForCohortOffer ? { freeForCohortOffer: opts.freeForCohortOffer } : {}),
     };
-    const id = ledger.enqueueTarget({
+    const id = enqueueScoredTarget(ledger, {
       playName: PLAY_NAME,
       payload: target,
       dedupeKey,

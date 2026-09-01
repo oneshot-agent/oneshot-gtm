@@ -214,3 +214,19 @@ describe("bulk CSV import", () => {
     expect(qualifyPersonMock).toHaveBeenCalledTimes(101);
   });
 });
+
+describe("classifier rejection provenance", () => {
+  it("records a classifier 'no' with the auto: prefix so it never reads as a human label", async () => {
+    qualifyPersonMock.mockResolvedValueOnce({ verdict: "reject", reason: "agency, not a founder" });
+    const result = await importCsv({
+      playName: "profile-intro",
+      text: "Work Email,Full Name,Company Name,Job Title\nada@example.test,Ada,Acme,Founder",
+    });
+
+    expect(result).toMatchObject({ imported: 0, skipped: 1 });
+    expect(queue[0]).toMatchObject({
+      status: "rejected",
+      notes: "auto: ICP — agency, not a founder",
+    });
+  });
+});

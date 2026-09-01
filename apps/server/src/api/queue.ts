@@ -22,6 +22,7 @@ import {
   type DrainResult,
   type LastDraft,
   parseQueueIds,
+  type ProspectPriorityView,
   type QueueCounts,
   type QueueListResponse,
   type QueueRowView,
@@ -30,6 +31,42 @@ import {
 import { jsonResponse } from "../server.ts";
 import { sendsToday } from "./_capacity.ts";
 import { dispatchPlay } from "./_play-dispatch.ts";
+
+const PRIORITY_COMPONENT_KEYS = [
+  "personFit",
+  "accountFit",
+  "intentStrength",
+  "timingFreshness",
+  "signalConfidence",
+  "contactability",
+] as const;
+
+/**
+ * Shape-check a stored priority artifact. Malformed or foreign-versioned JSON
+ * reads as null — the shadow score must never break the queue listing.
+ */
+function parsePriority(raw: string | null): ProspectPriorityView | null {
+  if (!raw) return null;
+  try {
+    const p = JSON.parse(raw) as Partial<ProspectPriorityView>;
+    if (!p || p.version !== "heuristic-v1" || typeof p.total !== "number") return null;
+    const components = p.components as Record<string, unknown> | undefined;
+    if (!components || PRIORITY_COMPONENT_KEYS.some((k) => typeof components[k] !== "number")) {
+      return null;
+    }
+    if (!Array.isArray(p.reasons) || typeof p.finder !== "string") return null;
+    return {
+      version: p.version,
+      total: p.total,
+      components: p.components as ProspectPriorityView["components"],
+      reasons: p.reasons.filter((r): r is string => typeof r === "string"),
+      finder: p.finder,
+      scoredAt: typeof p.scoredAt === "string" ? p.scoredAt : "",
+    };
+  } catch {
+    return null;
+  }
+}
 
 function toView(row: QueueRow): QueueRowView {
   let payload: unknown = null;
@@ -74,6 +111,7 @@ function toView(row: QueueRow): QueueRowView {
     lastDraft,
     lastDraftedAt: row.last_drafted_at,
     isSending: row.send_started_at != null,
+    priority: parsePriority(row.priority_json),
   };
 }
 

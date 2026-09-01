@@ -1,5 +1,6 @@
 import { getLedger, logEvent, webRead, webSearch } from "@oneshot-gtm/core";
 import { resolveVerifyEnrichQualify } from "./_contact.ts";
+import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { persistRoleRejection, qualifyPreSpend } from "./_qualify.ts";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { PodcastGuestTarget } from "@oneshot-gtm/plays";
@@ -254,7 +255,7 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
       ...(phone ? { phone } : {}),
       ...(contact.title ? { title: contact.title } : {}),
     };
-    const id = ledger.enqueueTarget({
+    const id = enqueueScoredTarget(ledger, {
       playName: PLAY_NAME,
       payload: target,
       dedupeKey: hit.url,

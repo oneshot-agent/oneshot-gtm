@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 // status/play filters (the button has to work from the default `pending` view).
 
 const listQueueCalls: Array<Record<string, unknown>> = [];
+let nextRows: unknown[] = [];
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -14,7 +15,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     getLedger: () => ({
       listQueue: (args: Record<string, unknown>) => {
         listQueueCalls.push(args);
-        return [];
+        return nextRows;
       },
       queueCounts: () => ({ pending: 0, approved: 220, rejected: 0, sent: 0, expired: 0 }),
       approvedCountsByPlay: () => ({ "luma-events": 145, "repo-interest": 35 }),
@@ -78,5 +79,81 @@ describe("listQueueRoute", () => {
     expect(out["rows"]).toEqual([]);
     // …but not the counts, which is the whole point.
     expect(out["approvedByPlay"]).toEqual({ "luma-events": 145, "repo-interest": 35 });
+  });
+});
+
+// Shadow-mode priority (issue #410): the view must carry a shape-checked
+// `priority` or null — malformed stored JSON must never 500 the listing.
+
+const VALID_PRIORITY = {
+  version: "heuristic-v1",
+  total: 72,
+  components: {
+    personFit: 90,
+    accountFit: 55,
+    intentStrength: 80,
+    timingFreshness: 60,
+    signalConfidence: 65,
+    contactability: 85,
+  },
+  reasons: ["title: CTO"],
+  finder: "post-funding",
+  scoredAt: "2026-09-01T12:00:00.000Z",
+};
+
+function queueRow(priorityJson: string | null): Record<string, unknown> {
+  return {
+    id: 1,
+    play_name: "post-funding",
+    payload_json: JSON.stringify({ name: "Ada" }),
+    dedupe_key: "k",
+    source: "find:post-funding",
+    status: "pending",
+    found_at: "2026-09-01 10:00:00",
+    reviewed_at: null,
+    sent_at: null,
+    notes: null,
+    prospect_id: null,
+    last_draft_json: null,
+    last_drafted_at: null,
+    send_started_at: null,
+    priority_json: priorityJson,
+  };
+}
+
+describe("listQueueRoute — priority projection", () => {
+  async function priorityOf(priorityJson: string | null): Promise<unknown> {
+    nextRows = [queueRow(priorityJson)];
+    try {
+      const out = await body("http://x/api/queue");
+      return (out["rows"] as Array<Record<string, unknown>>)[0]!["priority"];
+    } finally {
+      nextRows = [];
+    }
+  }
+
+  it("passes a valid artifact through intact", async () => {
+    expect(await priorityOf(JSON.stringify(VALID_PRIORITY))).toEqual(VALID_PRIORITY);
+  });
+
+  it("reads an absent artifact as null", async () => {
+    expect(await priorityOf(null)).toBeNull();
+  });
+
+  it("nulls out malformed or foreign artifacts instead of failing the listing", async () => {
+    expect(await priorityOf("{not json")).toBeNull();
+    expect(await priorityOf(JSON.stringify({ ...VALID_PRIORITY, version: "v2" }))).toBeNull();
+    expect(await priorityOf(JSON.stringify({ ...VALID_PRIORITY, total: "72" }))).toBeNull();
+    expect(
+      await priorityOf(JSON.stringify({ ...VALID_PRIORITY, components: { personFit: 90 } })),
+    ).toBeNull();
+    expect(await priorityOf(JSON.stringify({ ...VALID_PRIORITY, reasons: "nope" }))).toBeNull();
+  });
+
+  it("drops non-string entries from reasons", async () => {
+    const got = (await priorityOf(
+      JSON.stringify({ ...VALID_PRIORITY, reasons: ["ok", 42, null] }),
+    )) as { reasons: string[] };
+    expect(got.reasons).toEqual(["ok"]);
   });
 });

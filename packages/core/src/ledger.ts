@@ -13,6 +13,7 @@ import type {
   InboxReplyRecord,
   IcpDecisionExample,
   InterviewRecord,
+  ProspectPriority,
   ProspectRecord,
   QueueRow,
   QueueStatus,
@@ -566,6 +567,11 @@ export class Ledger {
     this.addColumnIfMissing("runs", "cancel_reason", "TEXT");
     this.addColumnIfMissing("runs", "dedupe_keys_json", "TEXT");
     this.db.exec(`UPDATE runs SET dedupe_keys_json = '[]' WHERE dedupe_keys_json IS NULL`);
+    // v25: shadow-mode prospect priority (issue #410). Serialized
+    // ProspectPriority computed at enqueue time from payload evidence; NULL on
+    // manual/legacy rows, auto-rejections, and everything pre-v25. Read-only
+    // metadata — nothing orders, gates, or drains by it in Phase 1.
+    this.addColumnIfMissing("target_queue", "priority_json", "TEXT");
   }
 
   /**
@@ -2455,14 +2461,19 @@ export class Ledger {
      * founder can see what was filtered out and override if needed.
      */
     initialStatus?: QueueStatus;
+    /**
+     * Shadow-mode priority artifact, persisted verbatim. Omit/null for
+     * producers that can't score (manual rows, legacy callers, auto-drops).
+     */
+    priority?: ProspectPriority | null;
   }): number | null {
     try {
       const status = input.initialStatus ?? "pending";
       const reviewedAt = status === "pending" ? null : new Date().toISOString();
       const result = this.db
         .prepare(
-          `INSERT INTO target_queue(play_name, payload_json, dedupe_key, source, status, reviewed_at, notes)
-           VALUES(?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO target_queue(play_name, payload_json, dedupe_key, source, status, reviewed_at, notes, priority_json)
+           VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.playName,
@@ -2472,6 +2483,7 @@ export class Ledger {
           status,
           reviewedAt,
           input.notes ?? null,
+          input.priority ? JSON.stringify(input.priority) : null,
         );
       return Number(result.lastInsertRowid);
     } catch (err) {
@@ -3405,6 +3417,34 @@ export class Ledger {
     this.db
       .prepare(`UPDATE target_queue SET notes = ? WHERE id = ?`)
       .run(input.notes === "" ? null : input.notes, input.id);
+  }
+
+  /**
+   * Overwrite a queue row's shadow priority (the `score-prospects` backfill
+   * writer). Pass null to clear.
+   */
+  setQueuePriority(id: number, priority: ProspectPriority | null): void {
+    this.db
+      .prepare(`UPDATE target_queue SET priority_json = ? WHERE id = ?`)
+      .run(priority ? JSON.stringify(priority) : null, id);
+  }
+
+  /**
+   * Rows the score-prospects backfill considers: pending + approved. Approved
+   * implies unsent — a dispatched row moves to status 'sent'. id-ascending so
+   * an interrupted run resumes deterministically.
+   */
+  listQueueRowsForScoring(opts: { playName?: string; limit?: number } = {}): QueueRow[] {
+    const args: unknown[] = [];
+    let where = `status IN ('pending','approved')`;
+    if (opts.playName) {
+      where += ` AND play_name = ?`;
+      args.push(opts.playName);
+    }
+    args.push(opts.limit ?? 100_000);
+    return this.db
+      .query(`SELECT * FROM target_queue WHERE ${where} ORDER BY id ASC LIMIT ?`)
+      .all(...(args as never[])) as QueueRow[];
   }
 
   close(): void {
