@@ -286,6 +286,28 @@ describe("removePendingQueueTarget", () => {
   });
 });
 
+describe("setQueueStatus pending", () => {
+  it("restores an unreviewed row and applies notes", () => {
+    const id = ledger.enqueueTarget({
+      playName: "profile-intro",
+      payload: {},
+      dedupeKey: "restore-pending",
+      source: "test",
+      initialStatus: "expired",
+      notes: "classification in progress",
+    })!;
+
+    expect(ledger.getQueueRow(id)?.reviewed_at).not.toBeNull();
+    ledger.setQueueStatus({ id, status: "pending", notes: "ready for review" });
+
+    expect(ledger.getQueueRow(id)).toMatchObject({
+      status: "pending",
+      reviewed_at: null,
+      notes: "ready for review",
+    });
+  });
+});
+
 describe("approvedCountsByPlay", () => {
   it("counts approved rows per play and omits plays with none", () => {
     const enqueue = (playName: string, key: string, status?: "approved" | "sent"): void => {

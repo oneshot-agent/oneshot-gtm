@@ -1,14 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const qualifyPersonMock = vi.fn(async () => ({ verdict: "pass" as const, reason: "stub" }));
+const qualifyPersonMock = vi.fn(
+  async (): Promise<{ verdict: "pass" | "reject" | "transient"; reason: string }> => ({
+    verdict: "pass",
+    reason: "stub",
+  }),
+);
 
 interface QueueInput {
   playName: string;
   payload: Record<string, string>;
   dedupeKey: string;
   source: string;
+  initialStatus?: string;
+  notes?: string;
 }
-let queue: QueueInput[] = [];
+type QueueRow = QueueInput & { status: string; notes?: string };
+let queue: QueueRow[] = [];
 const ledger = {
   isQueueDuplicate: (playName: string, dedupeKey: string) =>
     queue.some((row) => row.playName === playName && row.dedupeKey === dedupeKey),
@@ -17,13 +25,19 @@ const ledger = {
     queue.some((row) => row.payload.email?.toLowerCase() === email.toLowerCase()),
   enqueueTarget: (input: QueueInput) => {
     if (ledger.isQueueDuplicate(input.playName, input.dedupeKey)) return null;
-    queue.push(input);
+    queue.push({ ...input, status: input.initialStatus ?? "pending" });
     return queue.length;
   },
   setQueueStatus: (input: { id: number; status: string; notes?: string }) => {
-    if (input.status === "rejected") queue.splice(input.id - 1, 1);
+    const row = queue[input.id - 1];
+    if (!row) return;
+    row.status = input.status;
+    if (input.notes !== undefined) row.notes = input.notes;
   },
-  removePendingQueueTarget: (id: number) => queue.splice(id - 1, 1).length > 0,
+  removePendingQueueTarget: (id: number) => {
+    if (queue[id - 1]?.status !== "pending") return false;
+    return queue.splice(id - 1, 1).length > 0;
+  },
   setQueueNotes: () => {},
 };
 
@@ -127,6 +141,18 @@ describe("bulk CSV import", () => {
 
     release();
     await expect(first).resolves.toMatchObject({ imported: 1, skipped: 0 });
+  });
+
+  it("removes the expired reservation when classification fails transiently", async () => {
+    qualifyPersonMock.mockResolvedValueOnce({ verdict: "transient", reason: "try later" });
+
+    const result = await importCsv({
+      playName: "profile-intro",
+      text: "email,name,company,title\nretry@example.test,Retry,Acme,Founder",
+    });
+
+    expect(result).toMatchObject({ imported: 0, skipped: 1 });
+    expect(queue).toHaveLength(0);
   });
 
   it("applies deduplication during a dry run without enqueueing", async () => {
