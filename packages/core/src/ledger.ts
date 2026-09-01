@@ -2578,6 +2578,13 @@ export class Ledger {
     return result.changes > 0;
   }
 
+  removeExpiredQueueTarget(id: number): boolean {
+    const result = this.db
+      .prepare("DELETE FROM target_queue WHERE id = ? AND status = 'expired'")
+      .run(id);
+    return result.changes > 0;
+  }
+
   setQueueStatus(input: { id: number; status: QueueStatus; notes?: string }): void {
     const now = new Date().toISOString();
     // Every status transition clears `send_started_at` — a deliberate status
