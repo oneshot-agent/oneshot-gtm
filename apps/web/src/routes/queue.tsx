@@ -1478,6 +1478,7 @@ function TriggerRowFragment(props: TriggerRowProps) {
   // Missing `ready` field = treat as ready (tolerate older servers).
   const notReady = t.ready === false;
   const notReadyReason = t.notReadyReason ?? "missing required config";
+  const approvalBlocked = t.deprioritized === true;
   // Block enabling an unready trigger but still allow disabling.
   const toggleDisabled = props.setEnabledPending || (notReady && !t.enabled);
   const runDisabled = props.running || notReady;
@@ -1584,7 +1585,11 @@ function TriggerRowFragment(props: TriggerRowProps) {
                 : "text-ink-muted",
           )}
         >
-          {notReady ? `not ready · ${notReadyReason}` : props.summary}
+          {notReady
+            ? `not ready · ${notReadyReason}`
+            : approvalBlocked
+              ? `deprioritized · ${t.deprioritizedReason ?? "low-approval-rate"} · ${((t.approvalRate ?? 0) * 100).toFixed(0)}% (${t.approvalReviewed}/${t.approvalMinSamples} min)`
+              : props.summary}
         </td>
         <td className="px-6 py-2 text-right">
           <div className="flex items-center justify-end gap-1">

@@ -13,6 +13,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "@oneshot-gtm/core": "workspace:*"
+    "@oneshot-gtm/core": "workspace:*",
+    "@oneshot-gtm/find": "workspace:*"
   }
 }

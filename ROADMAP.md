@@ -46,7 +46,7 @@ The ICP filter currently judges each candidate cold — `icpFilter` in `packages
 
 - [x] **v1** — feed the last ~20 `(candidate, decision, reason)` tuples from `target_queue` into each `icpFilter` call as in-context examples. No schema change.
 - [ ] **v2** — periodic job proposes a tighter ICP one-liner from accumulated decisions; founder approves the rewrite in `/queue`.
-- [ ] **Per-source weighting** — track approval rate per finder, deprioritize noisy sources automatically.
+- [x] **Per-source weighting** — track approval rate per finder, deprioritize noisy sources automatically.
 
 ## Operations
 

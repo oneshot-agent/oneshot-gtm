@@ -2,6 +2,7 @@ import type { TriggerRow } from "@oneshot-gtm/core";
 import { describe, expect, it } from "vitest";
 import {
   checkReadiness,
+  evaluateFinderApprovalHealth,
   effectiveIntervalMs,
   freshRunningStartedAtMs,
   MAX_RUN_AGE_MS,
@@ -11,6 +12,36 @@ import {
   type TriggerRunOutcome,
   type TriggerSpec,
 } from "../src/registry.ts";
+
+describe("finder approval health", () => {
+  it("does not deprioritize at the threshold boundary, only below it", () => {
+    expect(
+      evaluateFinderApprovalHealth({ approved: 2, reviewed: 10, threshold: 0.2, minSamples: 10 })
+        .deprioritized,
+    ).toBe(false);
+    const below = evaluateFinderApprovalHealth({
+      approved: 1,
+      reviewed: 10,
+      threshold: 0.2,
+      minSamples: 10,
+    });
+    expect(below.deprioritized).toBe(true);
+    expect(below.reason).toBe("low-approval-rate");
+  });
+
+  it("applies no penalty when reviewed data is insufficient", () => {
+    const health = evaluateFinderApprovalHealth({
+      approved: 0,
+      reviewed: 9,
+      threshold: 0.2,
+      minSamples: 10,
+    });
+    expect(health.rate).toBe(0);
+    expect(health.sufficientData).toBe(false);
+    expect(health.deprioritized).toBe(false);
+    expect(health.reason).toBeNull();
+  });
+});
 
 describe("nextSleepMs", () => {
   it("defaults to 1h when there are no outcomes", () => {

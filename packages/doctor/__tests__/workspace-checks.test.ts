@@ -71,7 +71,7 @@ describe("doctor workspace checks", () => {
 
   it("every check carries a valid group (the dashboard panel keys sections off it)", async () => {
     const checks = await runDoctor();
-    const valid = new Set(["install", "senders", "deliverability", "spend"]);
+    const valid = new Set(["install", "senders", "deliverability", "finders", "spend"]);
     for (const c of checks) {
       expect(valid.has(c.group), `check '${c.name}' has group '${c.group}'`).toBe(true);
     }

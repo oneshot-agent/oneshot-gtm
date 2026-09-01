@@ -97,6 +97,26 @@ describe("listReceipts filters", () => {
   });
 });
 
+describe("finderApprovalStats", () => {
+  it("counts reviewed source variants and treats sent as approved", () => {
+    const add = (key: string, source: string): number =>
+      ledger.enqueueTarget({ playName: "github-stars", payload: {}, dedupeKey: key, source })!;
+    const approved = add("a", "find:github-stars:owner/repo");
+    const sent = add("b", "find:github-stars:other/repo");
+    const rejected = add("c", "find:github-stars");
+    add("pending", "find:github-stars");
+    ledger.setQueueStatus({ id: approved, status: "approved" });
+    ledger.setQueueStatus({ id: sent, status: "sent" });
+    ledger.setQueueStatus({ id: rejected, status: "rejected" });
+
+    expect(ledger.finderApprovalStats({ finder: "github-stars", sinceIso: "2000-01-01" })).toEqual({
+      approved: 2,
+      reviewed: 3,
+      rate: 2 / 3,
+    });
+  });
+});
+
 describe("recordReceipt — cost handling", () => {
   // Post-SDK-0.15.2 + post-wrapper-cleanup: every wrapper in core/oneshot.ts
   // forwards `result.cost` as explicit costUsd. recordReceipt no longer

@@ -602,6 +602,74 @@ export interface TriggerRunOutcome {
   duration_ms?: number;
   /** ms until this trigger is next due */
   nextDueInMs: number;
+  /** Named scheduler skip reason (disabled/not-due remain unnamed). */
+  skippedReason?: string;
+}
+
+export const DEFAULT_APPROVAL_RATE_THRESHOLD = 0.2;
+export const DEFAULT_APPROVAL_RATE_WINDOW_DAYS = 30;
+export const DEFAULT_APPROVAL_RATE_MIN_SAMPLES = 10;
+
+export interface FinderApprovalHealth {
+  approved: number;
+  reviewed: number;
+  rate: number | null;
+  threshold: number;
+  windowDays: number;
+  minSamples: number;
+  sufficientData: boolean;
+  deprioritized: boolean;
+  reason: string | null;
+}
+
+/** Pure boundary logic shared by scheduler, API, doctor, and tests. */
+export function evaluateFinderApprovalHealth(input: {
+  approved: number;
+  reviewed: number;
+  threshold?: number;
+  windowDays?: number;
+  minSamples?: number;
+}): FinderApprovalHealth {
+  const threshold = input.threshold ?? DEFAULT_APPROVAL_RATE_THRESHOLD;
+  const windowDays = input.windowDays ?? DEFAULT_APPROVAL_RATE_WINDOW_DAYS;
+  const minSamples = input.minSamples ?? DEFAULT_APPROVAL_RATE_MIN_SAMPLES;
+  const rate = input.reviewed > 0 ? input.approved / input.reviewed : null;
+  const sufficientData = input.reviewed >= minSamples;
+  const deprioritized = sufficientData && rate !== null && rate < threshold;
+  return {
+    ...input,
+    rate,
+    threshold,
+    windowDays,
+    minSamples,
+    sufficientData,
+    deprioritized,
+    reason: deprioritized ? "low-approval-rate" : null,
+  };
+}
+
+export function finderApprovalHealth(
+  name: string,
+  config: Record<string, unknown>,
+): FinderApprovalHealth {
+  const numberOr = (key: string, fallback: number): number => {
+    const value = config[key];
+    return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
+  };
+  const threshold = Math.min(1, numberOr("approvalRateThreshold", DEFAULT_APPROVAL_RATE_THRESHOLD));
+  const windowDays = Math.max(
+    1,
+    numberOr("approvalRateWindowDays", DEFAULT_APPROVAL_RATE_WINDOW_DAYS),
+  );
+  const minSamples = Math.max(
+    1,
+    Math.floor(numberOr("approvalRateMinSamples", DEFAULT_APPROVAL_RATE_MIN_SAMPLES)),
+  );
+  const stats = getLedger().finderApprovalStats({
+    finder: name,
+    sinceIso: new Date(Date.now() - windowDays * 86_400_000).toISOString(),
+  });
+  return evaluateFinderApprovalHealth({ ...stats, threshold, windowDays, minSamples });
 }
 
 /**
@@ -784,7 +852,9 @@ export async function runTriggerNow(name: string): Promise<TriggerRunOutcome> {
  * Run every registered trigger that's due. Persists last_polled_at + last_run_summary.
  * Returns one outcome per trigger so the caller can log + decide sleep duration.
  */
-export async function runDueTriggers(): Promise<TriggerRunOutcome[]> {
+export async function runDueTriggers(
+  options: { ignoreApprovalRate?: boolean } = {},
+): Promise<TriggerRunOutcome[]> {
   startRun();
   const ledger = getLedger();
   const now = Date.now();
@@ -815,11 +885,35 @@ export async function runDueTriggers(): Promise<TriggerRunOutcome[]> {
     // picked up on the next tick, not the next interval boundary.
     const readiness = checkReadiness(spec, config);
     if (!readiness.ready) {
-      outcomes.push({ name: spec.name, fired: false, nextDueInMs: intervalMs });
+      outcomes.push({
+        name: spec.name,
+        fired: false,
+        nextDueInMs: intervalMs,
+        skippedReason: readiness.reason,
+      });
       logEvent("trigger.run.skipped", {
         name: spec.name,
         source: "watch",
         reason: readiness.reason,
+      });
+      continue;
+    }
+
+    const approval = finderApprovalHealth(spec.name, config);
+    if (approval.deprioritized && !options.ignoreApprovalRate) {
+      outcomes.push({
+        name: spec.name,
+        fired: false,
+        nextDueInMs: intervalMs,
+        skippedReason: approval.reason ?? "low-approval-rate",
+      });
+      logEvent("trigger.run.skipped", {
+        name: spec.name,
+        source: "watch",
+        reason: approval.reason,
+        approval_rate: approval.rate,
+        reviewed: approval.reviewed,
+        threshold: approval.threshold,
       });
       continue;
     }
