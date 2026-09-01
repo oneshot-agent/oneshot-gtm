@@ -356,6 +356,8 @@ export class Ledger {
     // v6: persisted per-row drafts (the /run SSE stream is ephemeral).
     this.addColumnIfMissing("target_queue", "last_draft_json", "TEXT");
     this.addColumnIfMissing("target_queue", "last_drafted_at", "TEXT");
+    // Experimental finder-only heuristic score. Kept separate from source payloads.
+    this.addColumnIfMissing("target_queue", "prospect_priority_json", "TEXT");
     // v7: lease column — dequeueApproved flips it in a transaction so
     // concurrent drains claim disjoint slices; 15-min lease self-heals a
     // crashed drain.
@@ -2680,6 +2682,26 @@ export class Ledger {
 
   getQueueRow(id: number): QueueRow | null {
     return (this.db.query("SELECT * FROM target_queue WHERE id = ?").get(id) as QueueRow) ?? null;
+  }
+
+  /** Oldest unscored rows first makes limited backfills resumable without cursors. */
+  listQueueForPriority(opts: { playName?: string; limit: number; refresh: boolean }): QueueRow[] {
+    const where = [opts.refresh ? "1 = 1" : "prospect_priority_json IS NULL"];
+    const args: unknown[] = [];
+    if (opts.playName) {
+      where.push("play_name = ?");
+      args.push(opts.playName);
+    }
+    args.push(Math.max(1, Math.floor(opts.limit)));
+    return this.db
+      .query(`SELECT * FROM target_queue WHERE ${where.join(" AND ")} ORDER BY id ASC LIMIT ?`)
+      .all(...(args as never[])) as QueueRow[];
+  }
+
+  setQueuePriority(id: number, priority: unknown): void {
+    this.db
+      .prepare("UPDATE target_queue SET prospect_priority_json = ? WHERE id = ?")
+      .run(JSON.stringify(priority), id);
   }
 
   /** Remove an unreviewed queue reservation, leaving reviewed rows untouched. */

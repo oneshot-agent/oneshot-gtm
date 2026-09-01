@@ -76,7 +76,7 @@ export async function commandIdentitiesList(opts: { json?: boolean } = {}): Prom
       identities: identities.map((i) => {
         const cap = caps.get(i.id);
         const capToday = cap && Number.isFinite(cap.capToday) ? cap.capToday : null;
-        return {
+        const identity: Record<string, unknown> = {
           id: i.id,
           provider: i.provider,
           address:
@@ -85,9 +85,10 @@ export async function commandIdentitiesList(opts: { json?: boolean } = {}): Prom
               : (i.address ?? i.sendingDomain ?? i.label ?? i.id),
           sentToday: cap?.identitySentToday ?? 0,
           capToday,
-          ...(cap?.domainSentToday != null ? { domainSentToday: cap.domainSentToday } : {}),
           legacy,
         };
+        if (cap?.domainSentToday != null) identity["domainSentToday"] = cap.domainSentToday;
+        return identity;
       }),
       domains: domains.map((d) => ({
         domain: d.domain,

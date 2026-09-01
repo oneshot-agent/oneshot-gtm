@@ -220,7 +220,7 @@ function ConversationRow({
   const c = conversation;
   const who = c.name ?? c.email;
   const replyCount = c.items.filter((i) => i.kind === "reply").length;
-  const newest = [...c.items].reverse().find((i) => i.kind === "reply");
+  const newest = c.items.toReversed().find((i) => i.kind === "reply");
   // The composer answers the newest inbound; sent history renders in the
   // timeline, so the composer's own history is deliberately empty.
   const composerReply: InboxReplyView | null = newest
@@ -288,8 +288,8 @@ function ConversationRow({
       {expanded && (
         <div className="border-b border-ink-rule/60 bg-ink-bg-deep/50 px-6 py-3">
           <div className="flex flex-col gap-2">
-            {c.items.map((item, i) => (
-              <ConversationItemBlock key={i} item={item} />
+            {c.items.map((item) => (
+              <ConversationItemBlock key={JSON.stringify(item)} item={item} />
             ))}
           </div>
           {composerReply ? (

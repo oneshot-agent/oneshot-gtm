@@ -9,6 +9,18 @@ const KNOBS = { ...DEFAULT_KNOBS.xapi, tweetsPerSeed: 5, maxPerTweet: 50 };
 
 const fresh = () => new Date(Date.now() - 3600_000).toISOString();
 
+const mkUser = (username: string) => ({
+  id: `u-${username}`,
+  username,
+  name: username,
+  description: "building AI agents",
+  followers: 8_000,
+  following: 900,
+  tweetCount: 4_000,
+  dmOpen: true,
+  links: [],
+});
+
 function userJson(username: string, over: Record<string, unknown> = {}) {
   return {
     id: `u-${username}`,
@@ -79,7 +91,7 @@ describe("harvestReposters", () => {
     );
 
     const alice = res.candidates.find((c) => c.user.username === "alice")!;
-    expect(res.candidates.map((c) => c.user.username).sort()).toEqual(["alice", "bob"]);
+    expect(res.candidates.map((c) => c.user.username).toSorted()).toEqual(["alice", "bob"]);
     // Same tweet id from both seeds in this fixture, so hits dedupe by tweet.
     expect(alice.modes.toSorted()).toEqual(["quote", "retweet"]);
     expect(res.tweetsScanned).toBe(2);
@@ -113,17 +125,6 @@ describe("harvestReposters", () => {
   test("a mid-run stop keeps what was harvested and lists only paid tweets", async () => {
     // Hand-rolled engine: tweet t1 harvests fine, t2's reposter call trips the
     // budget. t1's candidates and paid-id survive; t2 leaves no trace.
-    const mkUser = (username: string) => ({
-      id: `u-${username}`,
-      username,
-      name: username,
-      description: "building AI agents",
-      followers: 8_000,
-      following: 900,
-      tweetCount: 4_000,
-      dmOpen: true,
-      links: [],
-    });
     const seedTweet = (id: string) => ({
       id,
       seed: "iamdevloper",

@@ -28,6 +28,7 @@ let seqEvents: Array<{ prospectId: number; playName: string; status: string }> =
 // Persisted poll_state rows (watermark + backlog), as the real ledger holds them.
 let pollState: Record<string, string> = {};
 const watermarkOf = () => pollState["inbox_replies"] ?? null;
+const atHour = (hour: number) => `2026-08-20T${String(hour).padStart(2, "0")}:00:00.000Z`;
 
 type Row = {
   prospect_id: number;
@@ -59,7 +60,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     listInbox: async (opts: { since?: string; until?: string; limit?: number }) => {
       listInboxArgs.push(opts);
       const pool = inboxEmails
-        .map((e, i) => ({ id: e.id ?? `m${i}`, ...e }))
+        .map((e, i) => Object.assign({ id: e.id ?? `m${i}` }, e))
         .filter((e) => !opts.since || !e.received_at || e.received_at >= opts.since)
         .filter((e) => !opts.until || !e.received_at || e.received_at < opts.until)
         .toSorted((a, b) => ((a.received_at ?? "") < (b.received_at ?? "") ? 1 : -1));
@@ -353,13 +354,12 @@ describe("pollInboxReplies — watermark", () => {
   });
 
   it("pages backwards through a catch-up larger than one window and finds the reply on page 3", async () => {
-    const at = (h: number) => `2026-08-20T${String(h).padStart(2, "0")}:00:00.000Z`;
     inboxEmails = [
-      { from: "a@elsewhere.com", subject: "noise", received_at: at(15) },
-      { from: "b@elsewhere.com", subject: "noise", received_at: at(14) },
-      { from: "c@elsewhere.com", subject: "noise", received_at: at(13) },
-      { from: "d@elsewhere.com", subject: "noise", received_at: at(12) },
-      { from: "sophia@agenticarchitect.ai", subject: "re: stack", received_at: at(11) },
+      { from: "a@elsewhere.com", subject: "noise", received_at: atHour(15) },
+      { from: "b@elsewhere.com", subject: "noise", received_at: atHour(14) },
+      { from: "c@elsewhere.com", subject: "noise", received_at: atHour(13) },
+      { from: "d@elsewhere.com", subject: "noise", received_at: atHour(12) },
+      { from: "sophia@agenticarchitect.ai", subject: "re: stack", received_at: atHour(11) },
     ];
 
     const result = await pollInboxReplies({ pageSize: 2 });
@@ -368,7 +368,7 @@ describe("pollInboxReplies — watermark", () => {
     expect(listInboxArgs[1]).toMatchObject({ until: "2026-08-20T14:00:01.000Z" });
     expect(result.polled).toBe(5);
     expect(result.repliesDetected).toBe(1);
-    expect(watermarkOf()).toBe(at(15));
+    expect(watermarkOf()).toBe(atHour(15));
     expect(pollState["inbox_replies_backlog"]).toBeUndefined();
   });
 
@@ -392,19 +392,18 @@ describe("pollInboxReplies — watermark", () => {
   });
 
   it("parks the unreached remainder as backlog and drains it on the next poll", async () => {
-    const at = (h: number) => `2026-08-20T${String(h).padStart(2, "0")}:00:00.000Z`;
     inboxEmails = [
-      { from: "a@elsewhere.com", subject: "noise", received_at: at(16) },
-      { from: "b@elsewhere.com", subject: "noise", received_at: at(15) },
-      { from: "c@elsewhere.com", subject: "noise", received_at: at(14) },
-      { from: "sophia@agenticarchitect.ai", subject: "re: stack", received_at: at(13) },
+      { from: "a@elsewhere.com", subject: "noise", received_at: atHour(16) },
+      { from: "b@elsewhere.com", subject: "noise", received_at: atHour(15) },
+      { from: "c@elsewhere.com", subject: "noise", received_at: atHour(14) },
+      { from: "sophia@agenticarchitect.ai", subject: "re: stack", received_at: atHour(13) },
     ];
 
     // Budget of one page of two: sees 16:00 and 15:00, parks (floor, 15:00].
     const first = await pollInboxReplies({ pageSize: 2, maxPages: 1 });
     expect(first.repliesDetected).toBe(0);
-    expect(watermarkOf()).toBe(at(16)); // the live window is done; it advances
-    expect(JSON.parse(pollState["inbox_replies_backlog"]!)).toMatchObject({ until: at(15) });
+    expect(watermarkOf()).toBe(atHour(16)); // the live window is done; it advances
+    expect(JSON.parse(pollState["inbox_replies_backlog"]!)).toMatchObject({ until: atHour(15) });
 
     // Next poll: the live window is empty past the watermark; the spare page
     // budget drains the backlog and finds the reply.

@@ -19,8 +19,8 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
-    "test": "vitest run",
-    "test:watch": "vitest",
+    "test": "bun --bun vitest run",
+    "test:watch": "bun --bun vitest",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --report-unused-disable-directives",
     "fmt": "oxfmt",

@@ -321,6 +321,8 @@ export interface QueueRow {
    * on failure or stale by the cold-boot `sweepStaleQueueSends` sweep.
    */
   send_started_at: string | null;
+  /** Experimental heuristic priority artifact; null until scored. */
+  prospect_priority_json?: string | null;
 }
 
 export interface TriggerRow {

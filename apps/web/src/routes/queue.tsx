@@ -720,6 +720,14 @@ function QueueRow({
         </td>
         <td className="py-2 text-ink-cream-2">
           {row.playName}
+          {row.priority && (
+            <div
+              className="mt-0.5 font-mono text-[10.5px] text-ink-muted"
+              title={`Experimental priority\n${row.priority.reasons.slice(0, 3).join("\n")}`}
+            >
+              score {row.priority.total} · experimental
+            </div>
+          )}
           {/* The source column is gone (redundant with play), but its meaningful
               suffix — which repo / cohort the finder matched — survives here. */}
           {sourceDetail(row.source) && (

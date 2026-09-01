@@ -30,6 +30,12 @@ vi.stubGlobal("fetch", fetchMock);
 
 const { workspaceInfo, workspaceLaunch, _setLaunchSpawn } = await import("../src/api/workspace.ts");
 
+const launchRequest = (body: unknown) =>
+  new Request("http://x/api/workspace/launch", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+
 afterAll(() => {
   rmSync(tmp, { recursive: true, force: true });
   vi.unstubAllGlobals();
@@ -65,24 +71,18 @@ describe("GET /api/workspace", () => {
 });
 
 describe("POST /api/workspace/launch", () => {
-  const req = (body: unknown) =>
-    new Request("http://x/api/workspace/launch", {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
-
   it("400s on the current workspace — switching to yourself is a no-op", async () => {
-    const res = await workspaceLaunch(req({ name: "default" }));
+    const res = await workspaceLaunch(launchRequest({ name: "default" }));
     expect(res.status).toBe(400);
   });
 
   it("404s on an unknown name", async () => {
-    const res = await workspaceLaunch(req({ name: "nope" }));
+    const res = await workspaceLaunch(launchRequest({ name: "nope" }));
     expect(res.status).toBe(404);
   });
 
   it("400s on a malformed body", async () => {
-    const res = await workspaceLaunch(req({}));
+    const res = await workspaceLaunch(launchRequest({}));
     expect(res.status).toBe(400);
   });
 
@@ -90,7 +90,7 @@ describe("POST /api/workspace/launch", () => {
     const spawns: Array<{ binPath: string; env: Record<string, string | undefined> }> = [];
     _setLaunchSpawn((opts) => spawns.push(opts));
 
-    const res = await workspaceLaunch(req({ name: "gtm" }));
+    const res = await workspaceLaunch(launchRequest({ name: "gtm" }));
     const out = (await res.json()) as { status: string; port: number };
     expect(out).toEqual({ status: "starting", port: 3999 });
 
@@ -111,7 +111,7 @@ describe("POST /api/workspace/launch", () => {
     const spawns: unknown[] = [];
     _setLaunchSpawn((opts) => spawns.push(opts));
 
-    const res = await workspaceLaunch(req({ name: "gtm" }));
+    const res = await workspaceLaunch(launchRequest({ name: "gtm" }));
     const out = (await res.json()) as { status: string };
     expect(out.status).toBe("already-running");
     expect(spawns).toHaveLength(0);

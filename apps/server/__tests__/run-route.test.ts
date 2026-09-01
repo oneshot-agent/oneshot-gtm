@@ -26,6 +26,13 @@ interface FakeDraft {
   sent: boolean;
   receiptIds: number[];
 }
+const fakeDraft = (index: number): FakeDraft => ({
+  subject: `subj-${index}`,
+  body: `body-${index}`,
+  flags: [],
+  sent: true,
+  receiptIds: [100 + index],
+});
 type FakeRunInput = {
   targets: unknown[];
   onProgress?: (index: number, draft: FakeDraft) => void;
@@ -282,16 +289,9 @@ describe("runPlay — verify-then-dispatch", () => {
     const targets = [{ founderEmail: "a@x.dev" }, { founderEmail: "b@x.dev" }];
     nextVerify = { verified: targets, dropped: [], receiptIds: [], costUsd: 0 };
     const straggler: { fire: () => void } = { fire: () => {} };
-    const draft = (i: number): FakeDraft => ({
-      subject: `subj-${i}`,
-      body: `body-${i}`,
-      flags: [],
-      sent: true,
-      receiptIds: [100 + i],
-    });
     runOverride = (input) => {
-      input.onProgress?.(0, draft(0));
-      straggler.fire = () => input.onProgress?.(1, draft(1));
+      input.onProgress?.(0, fakeDraft(0));
+      straggler.fire = () => input.onProgress?.(1, fakeDraft(1));
       return Promise.reject(new RunCancelledError("show-hn send: cancelled by user"));
     };
     const res = await runPlay(makeRequest("show-hn", { targets, dryRun: false }), {

@@ -54,16 +54,13 @@ function finderApprovalChecks(): CheckResult[] {
       storedTriggerConfig(ledger.getTrigger(spec.name), spec),
     );
     const pct = health.rate == null ? "no reviewed rows" : `${(health.rate * 100).toFixed(1)}%`;
-    return {
+    const result: CheckResult = {
       name: `finder ${spec.name}`,
       group: "finders",
       severity: health.deprioritized ? "warn" : "ok",
       message: health.sufficientData
         ? `${pct} approved (${health.approved}/${health.reviewed}, ${health.windowDays}d)${health.deprioritized ? " — deprioritized: low-approval-rate" : ""}`
         : `${pct} (${health.reviewed}/${health.minSamples} reviewed minimum) — insufficient data, no penalty`,
-      ...(health.deprioritized
-        ? { hint: "tune approvalRateThreshold in the trigger config or use --ignore-approval-rate" }
-        : {}),
       approvalRate: health.rate,
       approved: health.approved,
       reviewed: health.reviewed,
@@ -72,6 +69,11 @@ function finderApprovalChecks(): CheckResult[] {
       minSamples: health.minSamples,
       deprioritized: health.deprioritized,
     };
+    if (health.deprioritized) {
+      result.hint =
+        "tune approvalRateThreshold in the trigger config or use --ignore-approval-rate";
+    }
+    return result;
   });
 }
 

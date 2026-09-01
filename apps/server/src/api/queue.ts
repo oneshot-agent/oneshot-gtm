@@ -39,6 +39,24 @@ function toView(row: QueueRow): QueueRowView {
     payload = row.payload_json;
   }
   let lastDraft: LastDraft | null = null;
+  let priority: QueueRowView["priority"] = null;
+  if (row.prospect_priority_json) {
+    try {
+      const parsed = JSON.parse(row.prospect_priority_json) as {
+        total?: unknown;
+        reasons?: unknown;
+      };
+      if (typeof parsed.total === "number" && Array.isArray(parsed.reasons)) {
+        priority = {
+          total: parsed.total,
+          reasons: parsed.reasons.filter((r): r is string => typeof r === "string").slice(0, 3),
+          experimental: true,
+        };
+      }
+    } catch {
+      priority = null;
+    }
+  }
   if (row.last_draft_json) {
     try {
       const parsed = JSON.parse(row.last_draft_json) as Partial<LastDraft>;
@@ -74,6 +92,7 @@ function toView(row: QueueRow): QueueRowView {
     lastDraft,
     lastDraftedAt: row.last_drafted_at,
     isSending: row.send_started_at != null,
+    priority,
   };
 }
 

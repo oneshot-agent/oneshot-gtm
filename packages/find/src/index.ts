@@ -33,3 +33,4 @@ export * from "./_linkedin.ts";
 export * from "./_breaker.ts";
 export * from "./_sdk-safe.ts";
 export * from "./csv-import.ts";
+export * from "./prospect-priority.ts";

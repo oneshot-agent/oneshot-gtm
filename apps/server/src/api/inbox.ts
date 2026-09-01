@@ -94,7 +94,7 @@ export async function listInboxRoute(req: Request): Promise<Response> {
         const seen = new Set(emails.map((e) => e.id));
         const extra = targeted.filter((e) => !seen.has(e.id));
         if (extra.length > 0) {
-          emails = [...emails, ...extra].sort(
+          emails = [...emails, ...extra].toSorted(
             (a, b) => new Date(b.received_at).getTime() - new Date(a.received_at).getTime(),
           );
         }

@@ -7,7 +7,7 @@ import {
   type TelemetryOutcome,
 } from "@oneshot-gtm/core";
 import { isSupportedPlay } from "@oneshot-gtm/plays";
-import { bail, CommandExit, fail, setJsonMode } from "./output.ts";
+import { bail, c, CommandExit, fail, header, note, ok, setJsonMode, warn } from "./output.ts";
 import { extractInvocation, type Invocation } from "./dispatch.ts";
 import { runInit } from "./commands/init.ts";
 import {
@@ -65,6 +65,7 @@ import {
 import { commandEnrichLinkedIn } from "./commands/enrich-linkedin.ts";
 import { commandResearchProspects } from "./commands/research-prospects.ts";
 import { commandFindDrain, commandFindImport, commandFindWatch } from "./commands/find.ts";
+import { scoreStoredProspects } from "@oneshot-gtm/find";
 import { commandInstallService } from "./commands/install-service.ts";
 import { commandMeasureBenchmark } from "./commands/measure.ts";
 import {
@@ -304,6 +305,30 @@ domains
 const find = program
   .command("find")
   .description("Scheduled discovery (daemon + drain). Ad-hoc runs live in the dashboard.");
+
+program
+  .command("score-prospects")
+  .requiredOption("--scope <play|all>", "one play/finder name, or all")
+  .option("--limit <n>", "maximum rows to score", (v) => Number.parseInt(v, 10), 200)
+  .option("--refresh", "replace existing heuristic-v1 artifacts", false)
+  .option("--dry-run", "compute and report without persisting", false)
+  .description("Experimental: offline priority backfill from stored finder payloads")
+  .action(
+    runOrFail((opts: { scope: string; limit: number; refresh: boolean; dryRun: boolean }) => {
+      if (!Number.isFinite(opts.limit) || opts.limit < 1)
+        bail("--limit must be a positive integer");
+      const result = scoreStoredProspects(opts);
+      header(`score-prospects ${c.dim("(experimental)")}`);
+      for (const row of result.byFinder) {
+        note(
+          `${row.finder}: ${row.scored} scored · avg ${row.average} · human provenance ${row.approved} approve / ${row.rejected} reject / ${row.pending} pending`,
+        );
+      }
+      if (result.skippedMalformed)
+        warn(`${result.skippedMalformed} malformed stored payload(s) skipped`);
+      ok(`${result.dryRun ? "would score" : "scored"} ${result.scored} prospect(s)`);
+    }),
+  );
 find
   .command("import")
   .requiredOption("--csv <file>", "CSV file to import")

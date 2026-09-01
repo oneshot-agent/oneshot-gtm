@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { backoffDelayMs, isRetryableLlmError, parseRetryAfter } from "../src/client.ts";
 
+const fixedRandom = () => 0.5;
+
 describe("isRetryableLlmError", () => {
   it("does NOT retry a bare Error — only the classified set is retryable", () => {
     // A TypeError here is a property access on a malformed body, not a socket
@@ -53,16 +55,14 @@ describe("backoffDelayMs", () => {
   });
 
   it("floors Retry-After at the exponential backoff", () => {
-    const fixed = () => 0.5;
-
     // Retry-After: 0 and a past HTTP-date both parse to 0. Honouring them
     // literally would fire every attempt within milliseconds, unpaced.
-    expect(backoffDelayMs(1, 0, fixed)).toBe(375);
-    expect(backoffDelayMs(3, 0, fixed)).toBe(1500);
+    expect(backoffDelayMs(1, 0, fixedRandom)).toBe(375);
+    expect(backoffDelayMs(3, 0, fixedRandom)).toBe(1500);
 
     // A hint shorter than our own backoff is raised to it; a longer one wins.
-    expect(backoffDelayMs(3, 100, fixed)).toBe(1500);
-    expect(backoffDelayMs(3, 9000, fixed)).toBe(9000);
+    expect(backoffDelayMs(3, 100, fixedRandom)).toBe(1500);
+    expect(backoffDelayMs(3, 9000, fixedRandom)).toBe(9000);
   });
 
   it("caps Retry-After at MAX_RETRY_AFTER_MS (60s)", () => {
@@ -71,23 +71,19 @@ describe("backoffDelayMs", () => {
   });
 
   it("uses exponential backoff without Retry-After", () => {
-    const fixed = () => 0.5;
-
     // Attempt 1: 500 * 2^0 = 500, half fixed (250) + half jitter (250 * 0.5 = 125) = 375
-    expect(backoffDelayMs(1, undefined, fixed)).toBe(375);
+    expect(backoffDelayMs(1, undefined, fixedRandom)).toBe(375);
 
     // Attempt 2: 500 * 2^1 = 1000, 500 + 250 = 750
-    expect(backoffDelayMs(2, undefined, fixed)).toBe(750);
+    expect(backoffDelayMs(2, undefined, fixedRandom)).toBe(750);
 
     // Attempt 3: 500 * 2^2 = 2000, 1000 + 500 = 1500
-    expect(backoffDelayMs(3, undefined, fixed)).toBe(1500);
+    expect(backoffDelayMs(3, undefined, fixedRandom)).toBe(1500);
   });
 
   it("caps backoff at MAX_DELAY_MS (20s)", () => {
-    const fixed = () => 0.5;
-
     // Attempt 10: 500 * 2^9 = 256000 > 20000, capped to 20000, 10000 + 5000 = 15000
-    expect(backoffDelayMs(10, undefined, fixed)).toBe(15_000);
+    expect(backoffDelayMs(10, undefined, fixedRandom)).toBe(15_000);
   });
 
   it("adds jitter to prevent thundering herd", () => {

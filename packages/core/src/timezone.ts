@@ -73,7 +73,7 @@ const CITY_ZONES: Record<string, string> = {
 export function isValidTimeZone(zone: string | null | undefined): boolean {
   if (!zone || typeof zone !== "string" || zone.trim().length === 0) return false;
   try {
-    new Intl.DateTimeFormat("en-US", { timeZone: zone.trim() });
+    Intl.DateTimeFormat("en-US", { timeZone: zone.trim() });
     return true;
   } catch {
     return false;

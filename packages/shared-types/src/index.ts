@@ -426,6 +426,8 @@ export interface QueueRowView {
    * when the row's status flips to a terminal state.
    */
   isSending: boolean;
+  /** Experimental heuristic score, intentionally compact on the queue surface. */
+  priority?: { total: number; reasons: string[]; experimental: true } | null;
 }
 
 /**
@@ -561,7 +563,7 @@ export function withXEngine(
   config: Record<string, unknown> | null | undefined,
   engine: XEngine,
 ): Record<string, unknown> {
-  const out = { ...(config ?? {}) };
+  const out = { ...config };
   if (out["engine"] !== engine) {
     delete out["maxSpendPerRun"];
     delete out["knobs"];

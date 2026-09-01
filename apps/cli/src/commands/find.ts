@@ -194,15 +194,18 @@ export async function commandFindWatch(opts: {
       command: "find watch",
       ok: errored === 0,
       errored,
-      triggers: lastTick.map((o) => ({
-        name: o.name,
-        fired: o.fired,
-        nextDueInMs: o.nextDueInMs,
-        ...(o.skippedReason ? { skippedReason: o.skippedReason } : {}),
-        ...(o.duration_ms != null ? { durationMs: o.duration_ms } : {}),
-        ...(o.error !== undefined ? { error: o.error } : {}),
-        ...(o.result ? { result: jsonFinderResult(o.result) } : {}),
-      })),
+      triggers: lastTick.map((o) => {
+        const trigger: Record<string, unknown> = {
+          name: o.name,
+          fired: o.fired,
+          nextDueInMs: o.nextDueInMs,
+        };
+        if (o.skippedReason) trigger["skippedReason"] = o.skippedReason;
+        if (o.duration_ms != null) trigger["durationMs"] = o.duration_ms;
+        if (o.error !== undefined) trigger["error"] = o.error;
+        if (o.result) trigger["result"] = jsonFinderResult(o.result);
+        return trigger;
+      }),
     });
   }
 
