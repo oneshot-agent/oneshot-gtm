@@ -100,7 +100,7 @@ bun run cli -- cadence advance                     # daily tick: poll inbox, fir
 | `demo`                   | `seed` · `ui` · `reset` — a fictional install for screenshots and video                                                                                                                                                                     |
 | `workspace`              | `list` · `create <name>` · `use <name>` · `current` · `path <name>` · `remove <name>` — one isolated install per product; `--workspace <name>` on any command                                                                               |
 
-Spend, CAC, RoCS and outcome logging remain in the dashboard's Measure and Cadences pages so there's one source of truth. The CLI's `measure benchmark` surface is limited to anonymous telemetry comparisons. The `/api/measure/*` routes are there if you'd rather script local ledger metrics, or add `--json` to a read-only command for machine-readable output.
+Spend, CAC, RoCS and outcome logging remain in the dashboard's Measure and Cadences pages so there's one source of truth. The CLI's `measure benchmark` surface is limited to anonymous telemetry comparisons. The `/api/measure/*` routes are there if you'd rather script local ledger metrics, or add `--json` to a read-only command (`doctor`, `identities list`, `domains list`, `workspace list`) for machine-readable output.
 
 ### Dashboard
 
