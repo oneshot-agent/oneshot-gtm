@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasDossierSignal } from "../src/dossier.ts";
+import { hasDossierSignal, mergeProductDossier } from "../src/dossier.ts";
 
 // The gate that decides whether a dossier is worth writing to
 // prospects.dossier_json. It is load-bearing: _reply-research.ts treats any
@@ -65,6 +65,7 @@ describe("hasDossierSignal — payloads that must be ACCEPTED", () => {
     expect(hasDossierSignal({ enrichment: { company: "Acme" } })).toBe(true);
     expect(hasDossierSignal({ profile: { title: "Staff Engineer" } })).toBe(true);
     expect(hasDossierSignal({ result: { enrichment: { bio: "builds agent infra" } } })).toBe(true);
+    expect(hasDossierSignal({ product: { sources: [{ url: "https://acme.dev" }] } })).toBe(true);
   });
 
   it("accepts non-empty list fields and articles", () => {
@@ -89,5 +90,22 @@ describe("hasDossierSignal — payloads that must be ACCEPTED", () => {
     // Dossiers are sliced to 6000 chars, so a stored payload may not re-parse.
     const truncated = `{"status":"completed","profile":{"title":"Head of Platform","comp`;
     expect(hasDossierSignal(truncated)).toBe(true);
+  });
+});
+
+describe("mergeProductDossier", () => {
+  it("preserves legacy person context and adds sourced product context", () => {
+    const merged = JSON.parse(
+      mergeProductDossier(JSON.stringify({ title: "Founder", company: "Acme" }), {
+        version: 1,
+        status: "complete",
+        researchedAt: "2026-09-02T00:00:00.000Z",
+        subject: { company: "Acme" },
+        sources: [{ url: "https://acme.dev", kind: "website", excerpt: "Agent platform" }],
+      }),
+    ) as Record<string, Record<string, unknown>>;
+    expect(merged["person"]?.["title"]).toBe("Founder");
+    expect(merged["product"]?.["status"]).toBe("complete");
+    expect(hasDossierSignal(merged)).toBe(true);
   });
 });

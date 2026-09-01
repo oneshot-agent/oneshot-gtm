@@ -318,6 +318,12 @@ export class Ledger {
         fetched_at TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS product_research_cache (
+        cache_key TEXT PRIMARY KEY,
+        dossier_json TEXT NOT NULL,
+        fetched_at TEXT NOT NULL
+      );
+
       -- v17 (2026-08): persistent LinkedIn-lookup cache. findLinkedInUrl used a
       -- per-process Map, so every scheduler restart re-paid ~$0.01/webSearch for
       -- the same misses. Keyed by the normalized (fullName, disambiguators)
@@ -2002,6 +2008,7 @@ export class Ledger {
     source: string | null;
     source_profile_url: string | null;
     linkedin_url: string | null;
+    dossier_json: string | null;
   }> {
     const scopes = opts.scopes?.length ? opts.scopes : (["active", "replied", "unjudged"] as const);
     const any: string[] = [];
@@ -2034,7 +2041,8 @@ export class Ledger {
 
     return this.db
       .query(
-        `SELECT p.id, p.name, p.company, p.email, p.source, p.source_profile_url, p.linkedin_url
+        `SELECT p.id, p.name, p.company, p.email, p.source, p.source_profile_url, p.linkedin_url,
+                p.dossier_json
            FROM prospects p
           WHERE ${where.join(" AND ")}
           ORDER BY p.id DESC
@@ -2048,6 +2056,7 @@ export class Ledger {
       source: string | null;
       source_profile_url: string | null;
       linkedin_url: string | null;
+      dossier_json: string | null;
     }>;
   }
 
@@ -3593,6 +3602,42 @@ export class Ledger {
     this.db
       .prepare(`UPDATE target_queue SET payload_json = ? WHERE id = ?`)
       .run(JSON.stringify(input.payload), input.id);
+  }
+
+  latestQueueId(): number {
+    const row = this.db.query("SELECT COALESCE(MAX(id), 0) AS id FROM target_queue").get() as {
+      id: number;
+    };
+    return row.id;
+  }
+
+  /** Newly-created pending rows, used by the post-finder product research stage. */
+  listPendingQueueAfterId(id: number): QueueRow[] {
+    return this.db
+      .query("SELECT * FROM target_queue WHERE id > ? AND status = 'pending' ORDER BY id ASC")
+      .all(id) as QueueRow[];
+  }
+
+  getProductResearchCache(cacheKey: string, maxAgeMs: number): string | null {
+    const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
+    const row = this.db
+      .query(
+        "SELECT dossier_json FROM product_research_cache WHERE cache_key = ? AND fetched_at >= ?",
+      )
+      .get(cacheKey, cutoff) as { dossier_json: string } | undefined;
+    return row?.dossier_json ?? null;
+  }
+
+  setProductResearchCache(cacheKey: string, dossierJson: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO product_research_cache(cache_key, dossier_json, fetched_at)
+         VALUES(?, ?, ?)
+         ON CONFLICT(cache_key) DO UPDATE SET
+           dossier_json = excluded.dossier_json,
+           fetched_at = excluded.fetched_at`,
+      )
+      .run(cacheKey, dossierJson, new Date().toISOString());
   }
 
   /**

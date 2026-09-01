@@ -37,7 +37,46 @@ const SIGNAL_FIELDS = [
 const ROLE_MAILBOX = /is a role based email address/i;
 
 /** Nested places the payload shapes put the same keys. */
-const NESTED_KEYS = ["enrichment", "profile", "result"] as const;
+const NESTED_KEYS = ["enrichment", "profile", "result", "person", "product"] as const;
+
+export interface ProductResearchSource {
+  url: string;
+  kind: "repository" | "website" | "profile" | "external";
+  /** Bounded first-party text. External research keeps its own citations. */
+  excerpt?: string;
+}
+
+export interface ProductResearchDossier {
+  version: 1;
+  status: "complete" | "partial" | "unavailable";
+  researchedAt: string;
+  subject: { name?: string; company?: string };
+  sources: ProductResearchSource[];
+  external?: unknown;
+  warning?: string;
+}
+
+/** Merge new product context without discarding legacy person-enrichment JSON. */
+export function mergeProductDossier(
+  current: string | null | undefined,
+  product: ProductResearchDossier,
+): string {
+  let person: unknown = null;
+  if (current?.trim()) {
+    try {
+      const parsed = JSON.parse(current) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const record = parsed as Record<string, unknown>;
+        person = "person" in record ? record["person"] : parsed;
+      } else {
+        person = parsed;
+      }
+    } catch {
+      person = current;
+    }
+  }
+  return JSON.stringify({ person, product }, null, 2);
+}
 
 function substantive(scope: unknown): boolean {
   if (!scope || typeof scope !== "object") return false;
@@ -81,6 +120,7 @@ export function hasDossierSignal(value: unknown): boolean {
   // An explicit failure sentinel is never signal, whatever else it carries.
   if (typeof body.status === "string" && body.status.toLowerCase() === "failed") return false;
   if (Array.isArray(body.articles) && body.articles.length > 0) return true;
+  if (Array.isArray(body.sources) && body.sources.length > 0) return true;
   if (substantive(body)) return true;
   return NESTED_KEYS.some((key) => key in body && hasDossierSignal(body[key]));
 }

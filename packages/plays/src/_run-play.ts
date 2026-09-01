@@ -2,6 +2,7 @@ import {
   deepResearch,
   getLedger,
   hasDossierSignal,
+  mergeProductDossier,
   isRunCancelled,
   isSendDeferred,
   loadConfig,
@@ -28,7 +29,7 @@ type AppConfig = ReturnType<typeof loadConfig>;
 
 /** Cap on the dossier persisted onto a prospect — matches the slice the
  *  finders already apply to a queued dossier (x-reposters, add-prospect). */
-const DOSSIER_SLICE = 6000;
+const DOSSIER_SLICE = 12_000;
 
 /**
  * What a play's per-target `prepare` step hands back to the executor: the
@@ -162,7 +163,21 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         // every target still queued behind the abort dies here having billed
         // nothing at all.
         throwIfCancelled(opts.signal, `${def.playName} prepare`);
-        const prep = await def.prepare(target, opts.dryRun, opts.signal);
+        let prep = await def.prepare(target, opts.dryRun, opts.signal);
+        const productResearch = (target as { productResearch?: unknown }).productResearch;
+        if (
+          productResearch &&
+          typeof productResearch === "object" &&
+          (productResearch as { version?: unknown }).version === 1
+        ) {
+          prep = {
+            ...prep,
+            dossier: mergeProductDossier(
+              prep.dossier,
+              productResearch as Parameters<typeof mergeProductDossier>[1],
+            ),
+          };
+        }
 
         // Append SOCIAL PROOF block when any of the three optional fields is
         // set. Prompts treat it as conditional input — present only when set,

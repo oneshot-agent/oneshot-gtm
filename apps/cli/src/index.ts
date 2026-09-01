@@ -64,6 +64,7 @@ import {
 } from "./commands/workspace.ts";
 import { commandEnrichLinkedIn } from "./commands/enrich-linkedin.ts";
 import { commandResearchProspects } from "./commands/research-prospects.ts";
+import { commandResearchProducts } from "./commands/research-products.ts";
 import { commandScoreProspects } from "./commands/score-prospects.ts";
 import { commandFindDrain, commandFindImport, commandFindWatch } from "./commands/find.ts";
 import { commandInstallService } from "./commands/install-service.ts";
@@ -503,6 +504,55 @@ find
   );
 
 find
+  .command("research-products")
+  .option(
+    "--limit <n>",
+    "max combined prospects and queue rows",
+    (v) => Number.parseInt(v, 10),
+    250,
+  )
+  .option(
+    "--scope <list>",
+    "comma-separated: active,replied,unjudged,all (default active,replied,unjudged)",
+  )
+  .option("--concurrency <n>", "parallel research calls (default 3)", (v) => Number.parseInt(v, 10))
+  .option("--max-cost-usd <n>", "hard spend ceiling (default $5)", (v) => Number(v), 5)
+  .option("--no-cost-limit", "run the full backfill without a spend ceiling")
+  .option("--first-party-only", "skip external research and retain first-party evidence only")
+  .option("--refresh", "refresh rows that already have product research", false)
+  .option("--no-include-pending", "exclude pending queue rows")
+  .option("--dry-run", "list candidates and estimated coverage; research nothing", false)
+  .description("Backfill product-aware dossiers onto live prospects and pending review rows")
+  .action(
+    runOrFail(
+      async (opts: {
+        limit?: number;
+        scope?: string;
+        concurrency?: number;
+        maxCostUsd?: number;
+        costLimit: boolean;
+        firstPartyOnly: boolean;
+        refresh: boolean;
+        includePending: boolean;
+        dryRun: boolean;
+      }) => {
+        await commandResearchProducts({
+          dryRun: opts.dryRun,
+          refresh: opts.refresh,
+          includePending: opts.includePending,
+          externalResearch: !opts.firstPartyOnly,
+          ...(opts.costLimit !== false && opts.maxCostUsd != null
+            ? { maxCostUsd: opts.maxCostUsd }
+            : {}),
+          ...(opts.limit ? { limit: opts.limit } : {}),
+          ...(opts.scope ? { scope: opts.scope } : {}),
+          ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
+        });
+      },
+    ),
+  );
+
+find
   .command("score-prospects")
   .option("--scope <play|all>", "score only this play's rows (default all)")
   .option("--limit <n>", "max rows to score this run", (v) => Number.parseInt(v, 10))
@@ -565,7 +615,10 @@ motion
   .description("Trigger play: prospect's company recently raised (send day 3+, not day 0)")
   .action(
     runOrFail(async (opts: { target: string; dryRun: boolean }) => {
-      await commandMotionPostFunding({ targetFile: opts.target, dryRun: opts.dryRun });
+      await commandMotionPostFunding({
+        targetFile: opts.target,
+        dryRun: opts.dryRun,
+      });
     }),
   );
 motion
