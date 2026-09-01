@@ -47,15 +47,22 @@ export const JSON_SCHEMA_VERSION = 1;
  * first; callers pass the rest. Nothing else may reach stdout in this mode.
  */
 export function emitJson(payload: Record<string, unknown>): Promise<void> {
-  return new Promise((resolve) => {
-    const ok = process.stdout.write(
+  return new Promise((resolve, reject) => {
+    const stdout = process.stdout;
+    const onError = (err: Error): void => {
+      stdout.off("error", onError);
+      reject(err);
+    };
+
+    stdout.once("error", onError);
+    stdout.write(
       `${JSON.stringify({ schemaVersion: JSON_SCHEMA_VERSION, ...payload })}\n`,
+      (err) => {
+        stdout.off("error", onError);
+        if (err) reject(err);
+        else resolve();
+      },
     );
-    if (ok) {
-      resolve();
-    } else {
-      process.stdout.once("drain", resolve);
-    }
   });
 }
 
