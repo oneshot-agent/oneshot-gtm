@@ -15,7 +15,7 @@ import { Field, Input, Textarea } from "../components/primitives/Field.tsx";
 import { cn } from "../lib/cn.ts";
 import { PLAY_SCHEMAS } from "../lib/playSchemas.ts";
 import { useMask } from "../lib/privacy.tsx";
-import { pruneSentRows } from "../lib/pruneSentRows.ts";
+import { pruneSentRows, remapFilteredEventIndexes } from "../lib/pruneSentRows.ts";
 
 /**
  * Search-param contract for arrivals from the `/queue` drain modal: `fromQueue=1`
@@ -401,7 +401,8 @@ function RunPage() {
       // After a real-send run, drop rows whose draft actually shipped so
       // they can't be resent by a second submission of the same form.
       // Held / errored / unsent rows stay so the founder can edit and retry.
-      const pruned = pruneSentRows(streamedEvents, rowsSnapshot, dedupeKeysSnapshot);
+      const mappedEvents = remapFilteredEventIndexes(streamedEvents, rowsSnapshot);
+      const pruned = pruneSentRows(mappedEvents, rowsSnapshot, dedupeKeysSnapshot);
       if (pruned.prunedCount > 0) {
         setRows(pruned.rows);
         setDedupeKeys(pruned.dedupeKeys);
@@ -711,38 +712,7 @@ function RunPage() {
                   const restoredKeys = restoredRows.map(
                     (_, index) => runRecord.dedupeKeys[index] ?? null,
                   );
-                  const verifyEvent = runRecord.events.find(
-                    (e): e is Extract<RunPlayEvent, { kind: "verify" }> => e.kind === "verify",
-                  );
-                  const postDropToOriginal = new Map<number, number>();
-                  if (verifyEvent) {
-                    const dropped = new Set(
-                      verifyEvent.dropped
-                        .map((d) => d.index)
-                        .filter((idx): idx is number => typeof idx === "number"),
-                    );
-                    let postIdx = 0;
-                    for (let i = 0; i < restoredRows.length; i++) {
-                      if (!dropped.has(i)) {
-                        postDropToOriginal.set(postIdx, i);
-                        postIdx++;
-                      }
-                    }
-                  } else {
-                    for (let i = 0; i < restoredRows.length; i++) {
-                      postDropToOriginal.set(i, i);
-                    }
-                  }
-
-                  const mappedEvents = runRecord.events.map((ev) => {
-                    if (ev.kind === "draft" || ev.kind === "send" || ev.kind === "error") {
-                      const origIndex = postDropToOriginal.get(ev.index);
-                      if (origIndex !== undefined) {
-                        return { ...ev, index: origIndex };
-                      }
-                    }
-                    return ev;
-                  });
+                  const mappedEvents = remapFilteredEventIndexes(runRecord.events, restoredRows);
                   const retryable = pruneSentRows(mappedEvents, restoredRows, restoredKeys);
                   setRows(retryable.rows.length > 0 ? retryable.rows : [{ ...schema.defaultRow }]);
                   setDedupeKeys(retryable.rows.length > 0 ? retryable.dedupeKeys : [null]);
