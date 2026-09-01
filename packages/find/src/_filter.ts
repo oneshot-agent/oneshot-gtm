@@ -52,7 +52,10 @@ export async function icpFilter(input: {
       .map((example) => ({
         candidate: publicCandidateContext(example.candidate),
         decision: example.decision,
-        reason: example.reason,
+        // Review notes are free-form and routinely include prospect names,
+        // job changes, and other identifying context. The decision itself is
+        // sufficient few-shot feedback; never forward those notes to the LLM.
+        reason: null,
       }));
   } catch (err) {
     // Learning context is optional: a damaged/locked ledger must not turn a

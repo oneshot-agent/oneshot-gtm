@@ -21,7 +21,7 @@ const RESEARCH_COST_USD = 0.05;
 const DOSSIER_SLICE = 6000;
 
 export type ResearchScope = "active" | "replied" | "unjudged" | "all";
-const SCOPES: readonly ResearchScope[] = ["active", "replied", "unjudged", "all"];
+const SCOPES: ResearchScope[] = ["active", "replied", "unjudged", "all"];
 
 export interface ResearchProspectsOpts {
   dryRun: boolean;

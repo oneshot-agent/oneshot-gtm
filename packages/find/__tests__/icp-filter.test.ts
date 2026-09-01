@@ -14,7 +14,7 @@ const examples = [
       linkedinUrl: "https://linkedin.com/in/private",
     },
     decision: false,
-    reason: "wrong industry",
+    reason: "Ada Lovelace just left Private Corp for a new role",
   },
 ];
 
@@ -70,7 +70,9 @@ describe("icpFilter — failure isolation", () => {
     expect(JSON.parse(capturedUser)).toEqual({
       icp: "B2B SaaS",
       candidate: { title: "Acme" },
-      examples: [{ candidate: { company: "Prior Co" }, decision: false, reason: "wrong industry" }],
+      examples: [{ candidate: { company: "Prior Co" }, decision: false, reason: null }],
     });
+    expect(capturedUser).not.toContain("Ada Lovelace");
+    expect(capturedUser).not.toContain("Private Corp");
   });
 });

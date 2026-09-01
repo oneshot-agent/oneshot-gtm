@@ -151,7 +151,7 @@ function normalizeSubject(subject: string | null | undefined): string | null {
 
 export class Ledger {
   private db: Database;
-  private readonly path: string;
+  private path: string;
 
   constructor(path: string = DEFAULT_DB_PATH) {
     this.path = path;

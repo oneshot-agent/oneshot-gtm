@@ -83,7 +83,7 @@ export function fail(s: string): void {
  * recognizes it, records telemetry, and exits WITHOUT re-printing.
  */
 export class CommandExit extends Error {
-  readonly code: number;
+  public code: number;
   constructor(code = 1) {
     super("command-exit");
     this.name = "CommandExit";
