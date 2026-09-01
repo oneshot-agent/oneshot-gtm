@@ -379,6 +379,14 @@ async function dispatchEmail(input: SendEmailInput, ctx: CallContext) {
       `${input.to} ${why} (${contactStop.kind} reply on ${contactStop.received_at.slice(0, 10)}) — not sending`,
     );
   }
+  if (ctx.playName === "breakup-revive") {
+    const manualHold = getLedger().breakupReviveHoldFor(input.to);
+    if (manualHold) {
+      throw new SuppressedRecipientError(
+        `${input.to} has a ${manualHold.reason} manual stop from ${manualHold.stopped_at.slice(0, 10)} — not reviving`,
+      );
+    }
+  }
   // Sender rotation: resolve the sticky per-prospect identity BEFORE any
   // network call. Throws SendDeferredError when every identity is at its
   // daily cap — callers leave the work queued for tomorrow.

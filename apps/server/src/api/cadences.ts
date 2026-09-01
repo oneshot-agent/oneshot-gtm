@@ -14,6 +14,7 @@ import type {
   CadenceCounts,
   CadenceNextStepDraft,
   CadenceStatus,
+  CadenceStopReason,
   CadenceView,
   CadencesResult,
 } from "@oneshot-gtm/shared-types";
@@ -106,6 +107,9 @@ function toView(
     enrolledAt: row.enrolled_at,
     nextDueAt: row.next_due_at,
     lastPolledAt: row.last_polled_at,
+    stopReason: row.stop_reason as CadenceStopReason | null,
+    stopNote: row.stop_note,
+    stoppedAt: row.stopped_at,
     nextStepDraft,
     nextStepLabel: next?.label ?? null,
     nextStepIsBreakup: next?.isBreakup ?? false,
@@ -174,6 +178,7 @@ function tallyCounts(
     breakup: 0,
     completed: 0,
     paused: 0,
+    stopped: 0,
     bounced: 0,
     overdue: 0,
   };
@@ -184,6 +189,7 @@ function tallyCounts(
       r.status === "breakup" ||
       r.status === "completed" ||
       r.status === "paused" ||
+      r.status === "stopped" ||
       r.status === "bounced"
     ) {
       counts[r.status]++;
@@ -204,24 +210,60 @@ export function getCadence(req: Request, params: Record<string, string>): Respon
   return jsonResponse({ cadences: viewsForRows(all) }, 200, req);
 }
 
-export function stopCadence(req: Request, params: Record<string, string>): Response {
+const STOP_REASONS = new Set<CadenceStopReason>([
+  "bad_timing",
+  "other",
+  "not_a_fit",
+  "do_not_contact",
+]);
+
+export async function stopCadence(req: Request, params: Record<string, string>): Promise<Response> {
   const id = Number.parseInt(params["id"] ?? "", 10);
   if (!Number.isFinite(id)) return jsonResponse({ error: "bad id" }, 400, req);
   const url = new URL(req.url);
   const playName = url.searchParams.get("play");
-  const ledger = getLedger();
-  const cadences = ledger.listCadencesForProspect(id).filter((c) => {
-    if (playName && c.play_name !== playName) return false;
-    return c.status === "active";
-  });
-  for (const cad of cadences) {
-    ledger.setCadenceStatus({
-      prospectId: id,
-      playName: cad.play_name,
-      status: "completed",
-    });
+  if (!playName) return jsonResponse({ error: "play query param required" }, 400, req);
+  let body: { reason?: unknown; note?: unknown } = {};
+  try {
+    const parsed: unknown = await req.json();
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return jsonResponse({ error: "JSON object body required" }, 400, req);
+    }
+    body = parsed as { reason?: unknown; note?: unknown };
+  } catch {
+    return jsonResponse({ error: "JSON body required" }, 400, req);
   }
-  return jsonResponse({ stopped: cadences.length }, 200, req);
+  if (typeof body.reason !== "string" || !STOP_REASONS.has(body.reason as CadenceStopReason)) {
+    return jsonResponse({ error: "valid stop reason required" }, 400, req);
+  }
+  const note = typeof body.note === "string" ? body.note.trim() : "";
+  if (body.reason === "other" && !note) {
+    return jsonResponse({ error: "note required for other" }, 400, req);
+  }
+  if (note.length > 500)
+    return jsonResponse({ error: "note must be 500 characters or less" }, 400, req);
+  const ledger = getLedger();
+  const cadence = ledger.getCadence(id, playName);
+  if (!cadence) return jsonResponse({ error: "cadence not found" }, 404, req);
+  if (cadence.status !== "active") {
+    return jsonResponse({ error: `cadence is already ${cadence.status}` }, 409, req);
+  }
+  if (cadence.sending_started_at) {
+    return jsonResponse(
+      { error: "cadence send is already in flight; wait for it to finish" },
+      409,
+      req,
+    );
+  }
+  const stopped = ledger.stopCadence({
+    prospectId: id,
+    playName,
+    reason: body.reason as CadenceStopReason,
+    ...(note ? { note } : {}),
+  });
+  if (!stopped)
+    return jsonResponse({ error: "cadence changed while stopping; refresh and retry" }, 409, req);
+  return jsonResponse({ stopped: stopped ? 1 : 0 }, 200, req);
 }
 
 function parseProspectAndPlay(

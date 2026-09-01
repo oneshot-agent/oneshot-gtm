@@ -649,6 +649,25 @@ export async function advanceCadence(
   }
 
   const outs = await parallelMap(due, 3, async (cad): Promise<RunCadenceStepResult> => {
+    // The claim is the worker's first synchronous operation, before any await.
+    // Rows waiting for a concurrency slot remain stoppable; once a worker
+    // starts, Stop and dispatch serialize through this marker. If Stop won,
+    // the runner re-reads the terminal status and skips.
+    const claimed =
+      !opts.dryRun &&
+      ledger.claimCadenceSendingMarker({
+        prospectId: cad.prospect_id,
+        playName: cad.play_name,
+        startedAtIso: nowIso,
+      });
+    if (!opts.dryRun && !claimed) {
+      return {
+        action: "skipped",
+        payload: null,
+        receiptIds: [],
+        note: "cadence changed or is already sending",
+      };
+    }
     try {
       return await runCadenceStepForProspect({
         prospectId: cad.prospect_id,
@@ -668,6 +687,15 @@ export async function advanceCadence(
         };
       }
       throw err;
+    } finally {
+      if (claimed) {
+        // Success usually clears through advanceCadence; skips, deferrals and
+        // failures land here. Clearing twice is harmless.
+        ledger.clearCadenceSendingMarker({
+          prospectId: cad.prospect_id,
+          playName: cad.play_name,
+        });
+      }
     }
   });
 

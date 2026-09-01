@@ -9,10 +9,14 @@ export type CadenceStatus =
   | "breakup"
   | "completed"
   | "paused"
+  /** Explicitly stopped by the founder before the cadence naturally finished. */
+  | "stopped"
   /** Stopped by a hard bounce — the address is dead and is suppressed from further sends. */
   | "bounced"
   /** Stopped by an explicit do-not-contact reply — the prospect is suppressed from further sends. */
   | "unsubscribed";
+
+export type CadenceStopReason = "bad_timing" | "other" | "not_a_fit" | "do_not_contact";
 
 export interface CadenceNextStepDraft {
   subject: string;
@@ -45,6 +49,9 @@ export interface CadenceView {
   enrolledAt: string;
   nextDueAt: string | null;
   lastPolledAt: string | null;
+  stopReason: CadenceStopReason | null;
+  stopNote: string | null;
+  stoppedAt: string | null;
   /** Persisted next-step preview (set by Preview, cleared on advance). */
   nextStepDraft: CadenceNextStepDraft | null;
   /** Label of the next step ("value follow-up", "breakup", …). Null when
@@ -85,6 +92,7 @@ export interface CadenceCounts {
   breakup: number;
   completed: number;
   paused: number;
+  stopped: number;
   bounced: number;
   overdue: number;
 }

@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const calls = { sendEmail: 0, llm: 0 };
 let capacityAvailable = true;
 let sendEmailDefers = false;
+let cadenceClaimable = true;
 
 let cadenceRows: Array<{
   prospect_id: number;
@@ -68,6 +69,8 @@ vi.mock("@oneshot-gtm/core", async () => {
       contactSuppressionFor: () => null,
       listAllCadences: () => cadenceRows,
       listActiveCadences: () => cadenceRows.filter((c) => c.status === "active"),
+      claimCadenceSendingMarker: () => cadenceClaimable,
+      clearCadenceSendingMarker: () => {},
       listCadencesForProspect: (prospectId: number) =>
         cadenceRows.filter((c) => c.prospect_id === prospectId),
       getCadence: (prospectId: number, playName: string) =>
@@ -166,6 +169,7 @@ beforeEach(() => {
   calls.llm = 0;
   capacityAvailable = true;
   sendEmailDefers = false;
+  cadenceClaimable = true;
   advanceCalls.length = 0;
   seedOverdueCadence();
 });
@@ -204,6 +208,17 @@ describe("advanceCadence — daily-cap deferral", () => {
     const detail = result.details.find((d) => d.playName === "stack-consolidation");
     expect(detail).toBeDefined();
     expect(detail?.note ?? "").not.toMatch(/deferred/);
+    expect(calls.sendEmail).toBe(0);
+  });
+
+  it("does not draft or send when Stop wins the scheduler claim race", async () => {
+    cadenceClaimable = false;
+    const result = await advanceCadence({ dryRun: false });
+    expect(result.stepsExecuted).toBe(0);
+    expect(result.details).toMatchObject([
+      { action: "skipped", note: "cadence changed or is already sending" },
+    ]);
+    expect(calls.llm).toBe(0);
     expect(calls.sendEmail).toBe(0);
   });
 });
