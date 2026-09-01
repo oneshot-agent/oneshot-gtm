@@ -711,7 +711,39 @@ function RunPage() {
                   const restoredKeys = restoredRows.map(
                     (_, index) => runRecord.dedupeKeys[index] ?? null,
                   );
-                  const retryable = pruneSentRows(runRecord.events, restoredRows, restoredKeys);
+                  const verifyEvent = runRecord.events.find(
+                    (e): e is Extract<RunPlayEvent, { kind: "verify" }> => e.kind === "verify",
+                  );
+                  const postDropToOriginal = new Map<number, number>();
+                  if (verifyEvent) {
+                    const dropped = new Set(
+                      verifyEvent.dropped
+                        .map((d) => d.index)
+                        .filter((idx): idx is number => typeof idx === "number"),
+                    );
+                    let postIdx = 0;
+                    for (let i = 0; i < restoredRows.length; i++) {
+                      if (!dropped.has(i)) {
+                        postDropToOriginal.set(postIdx, i);
+                        postIdx++;
+                      }
+                    }
+                  } else {
+                    for (let i = 0; i < restoredRows.length; i++) {
+                      postDropToOriginal.set(i, i);
+                    }
+                  }
+
+                  const mappedEvents = runRecord.events.map((ev) => {
+                    if (ev.kind === "draft" || ev.kind === "send" || ev.kind === "error") {
+                      const origIndex = postDropToOriginal.get(ev.index);
+                      if (origIndex !== undefined) {
+                        return { ...ev, index: origIndex };
+                      }
+                    }
+                    return ev;
+                  });
+                  const retryable = pruneSentRows(mappedEvents, restoredRows, restoredKeys);
                   setRows(retryable.rows.length > 0 ? retryable.rows : [{ ...schema.defaultRow }]);
                   setDedupeKeys(retryable.rows.length > 0 ? retryable.dedupeKeys : [null]);
                 }
@@ -742,8 +774,8 @@ function RunPage() {
             {verifyEvent.dropped.length} dropped
           </div>
           <div className="mt-1 font-mono text-[11px] text-ink-muted">
-            {verifyEvent.dropped.map((d) => (
-              <div key={`${d.email}::${d.reason}`}>
+            {verifyEvent.dropped.map((d, idx) => (
+              <div key={`${d.email}::${d.reason}::${idx}`}>
                 {d.email ? mask("email", d.email) : "(missing)"} — {d.reason}
               </div>
             ))}

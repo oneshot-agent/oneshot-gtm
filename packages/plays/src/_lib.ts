@@ -686,7 +686,7 @@ export function firstNameFrom(name: string | null | undefined): string | null {
 
 interface VerifyAndFilterResult<T> {
   verified: T[];
-  dropped: Array<{ target: T; email: string; reason: string }>;
+  dropped: Array<{ target: T; email: string; reason: string; index?: number }>;
   receiptIds: number[];
   costUsd: number;
 }
@@ -755,26 +755,32 @@ export async function verifyAndFilterTargets<T>(
     if (v.receiptId > 0) receiptIds.push(v.receiptId);
   }
 
+  let i = 0;
   for (const t of targets) {
     const email = emailFor.get(t);
     if (!email) {
-      dropped.push({ target: t, email: "", reason: "missing email" });
+      dropped.push({ target: t, email: "", reason: "missing email", index: i });
+      i++;
       continue;
     }
     const v = byEmail.get(email);
     if (!v) {
-      dropped.push({ target: t, email, reason: "undeliverable" });
+      dropped.push({ target: t, email, reason: "undeliverable", index: i });
+      i++;
       continue;
     }
     if (v.errored) {
-      dropped.push({ target: t, email, reason: `verify-error: ${v.message}` });
+      dropped.push({ target: t, email, reason: `verify-error: ${v.message}`, index: i });
+      i++;
       continue;
     }
     if (!v.deliverable) {
-      dropped.push({ target: t, email, reason: "undeliverable" });
+      dropped.push({ target: t, email, reason: "undeliverable", index: i });
+      i++;
       continue;
     }
     verified.push(t);
+    i++;
   }
 
   return { verified, dropped, receiptIds, costUsd };
