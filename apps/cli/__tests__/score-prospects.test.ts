@@ -234,4 +234,15 @@ describe("buildShadowReport — human-vs-auto provenance", () => {
     const report = buildShadowReport(ledger.listQueue({ limit: 1000 }));
     expect(report[0]!.humanApprovalRate).toBeNull();
   });
+
+  it("excludes dispatched rows from the score buckets — they only describe the live queue", () => {
+    const sent = enqueue("post-funding", FUNDING_PAYLOAD);
+    commandScoreProspects({ refresh: false, dryRun: false, report: false });
+    ledger.setQueueStatus({ id: sent, status: "sent" });
+    const report = buildShadowReport(ledger.listQueue({ limit: 1000 }));
+    const funding = report.find((r) => r.finder === "post-funding")!;
+    expect(funding.rows).toBe(1);
+    expect(funding.scored).toBe(0);
+    expect(Object.values(funding.buckets).reduce((a, b) => a + b, 0)).toBe(0);
+  });
 });

@@ -31,7 +31,7 @@ import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
 import { Field, Input, Textarea } from "../components/primitives/Field.tsx";
 import { Modal } from "../components/primitives/Modal.tsx";
 import { Pii } from "../components/primitives/Pii.tsx";
-import { useMask } from "../lib/privacy.tsx";
+import { useMask, usePrivacy } from "../lib/privacy.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { Toggle } from "../components/primitives/Toggle.tsx";
 import { cn, eventIsPast, formatSendsToday, humanizeEventDate, timeAgo } from "../lib/cn.ts";
@@ -654,7 +654,10 @@ function QueueRow({
   const eventUrl = eventUrlFor(row.payload);
   const eventRole = eventRoleFor(row.payload);
   const eventPassed = eventDate != null && eventIsPast(eventDate);
-  const prio = priorityChip(row.priority);
+  // Privacy mode suppresses reason text — freeform reasons can embed names
+  // and companies the structured <Pii> masking can't reach.
+  const { masked } = usePrivacy();
+  const prio = priorityChip(row.priority, masked);
   return (
     <>
       <tr
@@ -822,7 +825,7 @@ function QueueRow({
                         </span>
                       ))}
                     </div>
-                    {row.priority.reasons.length > 0 && (
+                    {!masked && row.priority.reasons.length > 0 && (
                       <ul className="mt-1.5 list-disc pl-4 text-[11.5px]">
                         {row.priority.reasons.map((r) => (
                           <li key={r}>{r}</li>

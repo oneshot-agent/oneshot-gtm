@@ -303,3 +303,19 @@ describe("enqueueScoredTarget", () => {
     expect(calls[0]!["priority"]).toBeNull();
   });
 });
+
+describe("review-hardened evidence edges", () => {
+  it("post-funding treats amountUsd 0 as the missing-amount sentinel, never '$0'", () => {
+    const p = safeScorePriority("post-funding", { ...FIXTURES["post-funding"], amountUsd: 0 }, NOW);
+    expect(p!.reasons.join(" ")).not.toContain("$0");
+  });
+
+  it("x lanes score freshness neutral — launchDate must not decay a fresh repost", () => {
+    const p = safeScorePriority(
+      "x-amplify",
+      { ...FIXTURES["x-amplify"], launchDate: "2020-01-01T00:00:00Z" },
+      NOW,
+    );
+    expect(p!.components.timingFreshness).toBe(50);
+  });
+});

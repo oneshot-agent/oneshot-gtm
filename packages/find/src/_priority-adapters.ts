@@ -61,7 +61,10 @@ function xEvidence(p: Record<string, unknown>): PriorityEvidence {
     title: str(p["title"]),
     accountSignals,
     intentSignals,
-    eventAt: str(p["launchDate"]),
+    // No eventAt on purpose: the repost itself is inside the finder's 48h
+    // harvest window, so it's inherently fresh at enqueue time — while the
+    // campaign's configured launchDate can be far in the past and would
+    // wrongly decay a repost that happened yesterday.
     evidenceUrlCount: urlCount(p["tweetUrl"], p["twitterUrl"]),
     hasEvidenceText: str(p["tweetText"]) !== null,
     hasEmail: str(p["email"]) !== null,
@@ -90,7 +93,8 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
     const lead = str(p["leadInvestor"]);
     const evidence = [
       round,
-      amount !== null ? fmtUsd(amount) : null,
+      // amountUsd 0 is the producer's missing-amount sentinel, not a $0 round.
+      amount !== null && amount > 0 ? fmtUsd(amount) : null,
       lead ? `led by ${lead}` : null,
     ]
       .filter(Boolean)

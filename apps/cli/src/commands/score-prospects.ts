@@ -128,10 +128,15 @@ export function buildShadowReport(rows: QueueRow[]): FinderShadowReport[] {
       byFinder.set(row.play_name, entry);
     }
     entry.rows++;
-    const priority = row.priority_json ? safeParseJsonRecord(row.priority_json) : null;
-    if (priority?.["version"] === PRIORITY_VERSION && typeof priority["total"] === "number") {
-      entry.scored++;
-      entry.buckets[bucketOf(priority["total"])]++;
+    // Buckets describe the live queue only — a dispatched (sent) or dropped
+    // row keeps its historical priority_json, and counting it here would make
+    // the distribution misrepresent the claimed pending/approved population.
+    if (row.status === "pending" || row.status === "approved") {
+      const priority = row.priority_json ? safeParseJsonRecord(row.priority_json) : null;
+      if (priority?.["version"] === PRIORITY_VERSION && typeof priority["total"] === "number") {
+        entry.scored++;
+        entry.buckets[bucketOf(priority["total"])]++;
+      }
     }
     if (row.reviewed_at !== null && !isAutoRejected(row)) {
       entry.humanReviewed++;

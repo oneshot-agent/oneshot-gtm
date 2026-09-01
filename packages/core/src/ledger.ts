@@ -3441,9 +3441,16 @@ export class Ledger {
       where += ` AND play_name = ?`;
       args.push(opts.playName);
     }
-    args.push(opts.limit ?? 100_000);
+    // Unbounded by default: the caller filters already-scored rows AFTER this
+    // read, so a default LIMIT would pin every run to the same prefix and rows
+    // past it could never be reached.
+    let limitSql = "";
+    if (opts.limit !== undefined) {
+      limitSql = ` LIMIT ?`;
+      args.push(opts.limit);
+    }
     return this.db
-      .query(`SELECT * FROM target_queue WHERE ${where} ORDER BY id ASC LIMIT ?`)
+      .query(`SELECT * FROM target_queue WHERE ${where} ORDER BY id ASC${limitSql}`)
       .all(...(args as never[])) as QueueRow[];
   }
 

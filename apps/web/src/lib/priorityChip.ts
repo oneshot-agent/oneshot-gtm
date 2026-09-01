@@ -19,10 +19,17 @@ export interface PriorityChip {
 
 const MAX_TITLE_REASONS = 4;
 
-export function priorityChip(p: ProspectPriorityView | null): PriorityChip | null {
+/**
+ * `masked` = privacy mode: reason strings are freeform and can embed names
+ * and companies the structured `<Pii>` masking can't reach, so under the mask
+ * they are suppressed entirely (the numeric score is not identifying).
+ */
+export function priorityChip(p: ProspectPriorityView | null, masked = false): PriorityChip | null {
   if (!p) return null;
   const tone: PriorityTone = p.total >= 70 ? "signal" : p.total >= 40 ? "neutral" : "receipt";
-  const reasons = p.reasons.filter((r) => r.trim() !== "").slice(0, MAX_TITLE_REASONS);
+  const reasons = masked
+    ? []
+    : p.reasons.filter((r) => r.trim() !== "").slice(0, MAX_TITLE_REASONS);
   return {
     label: `${p.total} · shadow`,
     tone,

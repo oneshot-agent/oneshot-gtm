@@ -47,6 +47,12 @@ describe("priorityChip", () => {
       "experimental priority score (post-funding)",
     );
   });
+
+  it("suppresses reason text under privacy mode (reasons can embed names/companies)", () => {
+    const chip = priorityChip(priority(72, ["just started as CTO at Acme"]), true)!;
+    expect(chip.title).toBe("experimental priority score (post-funding)");
+    expect(chip.label).toBe("72 · shadow");
+  });
 });
 
 describe("priorityBreakdown", () => {
