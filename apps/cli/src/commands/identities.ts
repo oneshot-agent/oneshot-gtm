@@ -208,7 +208,6 @@ export async function commandDomainsList(opts: { json?: boolean } = {}): Promise
         dailySent: d.daily_sent_count,
         dailyLimit: d.daily_send_limit,
       })),
-      ...(domainsError ? { domainsError: true } : {}),
     });
   }
 }

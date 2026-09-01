@@ -659,7 +659,7 @@ describe("domains list --json", () => {
       dailySent: 0,
       dailyLimit: 20,
     });
-    // Clean pool: no domainsError flag if using the old shape, but we now always emit it.
+    // Always emit the boolean so consumers can distinguish this schema from the old shape.
     expect(parsed.domainsError).toBe(false);
   });
 
