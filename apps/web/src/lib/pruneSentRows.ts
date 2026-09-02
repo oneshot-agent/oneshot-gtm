@@ -59,13 +59,18 @@ export function remapFilteredEventIndexes(
     }
   }
 
-  return events.map((event) => {
-    if (event.kind === "draft" || event.kind === "send" || event.kind === "error") {
-      const originalIndex = postDropToOriginal.get(event.index);
-      if (originalIndex !== undefined) return { ...event, index: originalIndex };
-    }
-    return event;
-  });
+  return events
+    .map((event) => {
+      if (event.kind === "draft" || event.kind === "send" || event.kind === "error") {
+        const originalIndex = postDropToOriginal.get(event.index);
+        if (originalIndex !== undefined) return { ...event, index: originalIndex };
+        // Drop unmappable indexed events instead of returning them unchanged
+        // with a filtered index that pruneSentRows will misinterpret.
+        return null;
+      }
+      return event;
+    })
+    .filter((event): event is RunPlayEvent => event !== null);
 }
 
 /**
