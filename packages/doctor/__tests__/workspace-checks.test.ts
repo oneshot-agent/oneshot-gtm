@@ -42,7 +42,7 @@ vi.mock("@oneshot-gtm/core", async () => {
 });
 
 const { runDoctor } = await import("../src/check.ts");
-const { createWorkspace } = await import("@oneshot-gtm/core");
+const { createWorkspace, secretsPath } = await import("@oneshot-gtm/core");
 
 let wsDir: string;
 beforeEach(() => {
@@ -740,7 +740,7 @@ describe("github token check", () => {
     expect(hit?.severity).toBe("warn");
     expect(hit?.message).toContain("GITHUB_TOKEN not set");
     expect(hit?.message).toContain("60 req/hr");
-    expect(hit?.hint).toContain("~/.oneshot-gtm/.env");
+    expect(hit?.hint).toContain(secretsPath());
   });
 
   it("warn: multiple finders enabled without token", async () => {

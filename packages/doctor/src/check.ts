@@ -20,6 +20,7 @@ import {
   oneshotEnvReady,
   resolveIdentities,
   secretSource,
+  secretsPath,
   currentWorkspaceName,
   listWorkspaces,
   loadGmailTokens,
@@ -453,7 +454,7 @@ function githubTokenCheck(): CheckResult | null {
     group: "install",
     severity: "warn",
     message: `GITHUB_TOKEN not set — ${enabled.join(", ")} limited to 60 req/hr and will halt on 403`,
-    hint: "create a classic token with NO scopes at https://github.com/settings/tokens/new, then add GITHUB_TOKEN=... to ~/.oneshot-gtm/.env",
+    hint: `create a classic token with NO scopes at https://github.com/settings/tokens/new, then add GITHUB_TOKEN=... to ${secretsPath()}`,
   };
 }
 
