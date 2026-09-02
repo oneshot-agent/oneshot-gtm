@@ -168,8 +168,19 @@ function scrubWorkspace(body: unknown): unknown {
  * nested inside one. Whatever absolute path is left after that belongs to the
  * machine and not to the install, so it collapses to the placeholder's parent.
  */
+/** A path as it can appear in raw JSON: literal, and backslash-escaped. */
+function pathForms(p: string): string[] {
+  return [p, p.replaceAll("\\", "\\\\")];
+}
+
 function scrubText(text: string, demoHome: string): string {
-  return text.split(demoHome).join(PLACEHOLDER_HOME).split(HOME).join("/home/founder");
+  // Both spellings, because this runs over the raw JSON body: a Windows home
+  // arrives as C:\\Users\\… with the backslashes escaped, and searching only
+  // for the literal path would walk straight past it.
+  let out = text;
+  for (const form of pathForms(demoHome)) out = out.split(form).join(PLACEHOLDER_HOME);
+  for (const form of pathForms(HOME)) out = out.split(form).join("/home/founder");
+  return out;
 }
 
 // ── the walk ─────────────────────────────────────────────────────────────────
@@ -247,6 +258,8 @@ async function guard(): Promise<void> {
   const forbidden: Array<[string, RegExp]> = [
     ["an absolute macOS path", /\/Users\//],
     ["an absolute Linux home", /\/home\/(?!founder\b)[A-Za-z0-9._-]+/],
+    // Escaped and unescaped, since the tree on disk is JSON.
+    ["an absolute Windows path", /[A-Za-z]:\\{1,2}Users\\{1,2}/],
     ["the operator's home", new RegExp(HOME.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))],
     ["a named workspace's home", /\.oneshot-gtm-workspaces/],
   ];

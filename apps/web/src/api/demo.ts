@@ -106,15 +106,23 @@ export function demoGet<T>(apiPath: string): Promise<T> {
   if (hit) return hit as Promise<T>;
 
   const file = fixturePath(apiPath);
-  const pending = fetch(ROOT + file).then(async (res) => {
-    if (!res.ok) {
-      // A miss is permanent, so it must not stay in the cache poisoning every
-      // later poll of the same path with a promise that can never resolve.
+  const pending = fetch(ROOT + file)
+    .then(async (res) => {
+      if (!res.ok) throw new DemoMissingFixtureError(apiPath, file);
+      return res.json();
+    })
+    .catch((err: unknown) => {
+      /*
+       * Every failure evicts, not only the 404.
+       *
+       * A rejected promise left in this map is handed to every later read of
+       * the same path, so one dropped connection or one truncated body would
+       * keep failing for the life of the page — after the network came back,
+       * and with nothing to do about it but reload.
+       */
       cache.delete(apiPath);
-      throw new DemoMissingFixtureError(apiPath, file);
-    }
-    return res.json();
-  });
+      throw err;
+    });
 
   cache.set(apiPath, pending);
   return pending as Promise<T>;

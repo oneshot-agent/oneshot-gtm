@@ -7,9 +7,16 @@
  * interchangeable when each had been found for a completely different reason.
  *
  * Keyed off the play rather than sniffed from the payload keys, because the
- * same key does not mean the same thing twice: `role` on hiring-signal is the
- * open req, `role` on job-change is the person's new one, and labelling either
- * with the other's word would put a false sentence on the page.
+ * same key does not mean the same thing twice: `role` on luma-events is the
+ * attendee's, `newRole` on job-change is the person's new one, and labelling
+ * either with the other's word would put a false sentence on the page.
+ *
+ * The per-play field names come from `packages/find/src/_priority-adapters.ts`,
+ * which already reads every queued payload to score it. Keep the two in step:
+ * that file is the one that knows what a finder actually enqueues, and the
+ * first draft of this one guessed from the seeded ledger instead and got
+ * hiring-signal wrong (`role`, where the finder writes `jobTitle`) while
+ * missing stack-consolidation, breakup-revive and the three x-* plays.
  *
  * Pure and total: an unrecognised play, a missing field or a payload of the
  * wrong shape all return null and the row simply renders without a line.
@@ -45,12 +52,14 @@ export function queueEvidence(playName: string, payload: unknown): string | null
     case "post-funding": {
       const round = str(p, "round");
       if (!round) return null;
-      return join([`raised ${round}`, amount(p)]);
+      const lead = str(p, "leadInvestor");
+      return join([`raised ${round}`, amount(p), lead ? `led by ${lead}` : null]);
     }
 
     case "hiring-signal": {
-      const role = str(p, "role");
-      return role ? `hiring: ${role}` : null;
+      // `jobTitle` from the finder, `role` in the seeded ledger.
+      const opening = str(p, "jobTitle") ?? str(p, "role");
+      return opening ? `hiring: ${opening}` : null;
     }
 
     case "job-change": {
@@ -79,8 +88,33 @@ export function queueEvidence(playName: string, payload: unknown): string | null
     case "github-stars":
     case "github-topics":
     case "repo-interest": {
-      const repo = str(p, "repo");
+      const repo = str(p, "repoLabel") ?? str(p, "repo");
       return repo ? `starred ${repo}` : null;
+    }
+
+    case "stack-consolidation": {
+      const stack = str(p, "vendorStack");
+      return stack ? `runs ${stack}` : null;
+    }
+
+    case "breakup-revive": {
+      const n = p["daysCold"];
+      return typeof n === "number" && Number.isFinite(n) && n > 0 ? `${n}d cold` : null;
+    }
+
+    case "x-repost-intro":
+    case "x-amplify":
+    case "x-amplify-dm": {
+      const seed = str(p, "seedHandle");
+      const followers = p["followers"];
+      const reach =
+        typeof followers === "number" && followers > 0
+          ? followers >= 1000
+            ? `${(followers / 1000).toFixed(1)}k followers`
+            : `${followers} followers`
+          : null;
+      if (!seed) return reach;
+      return join([p["mode"] === "quote" ? `quoted ${seed}` : `reposted ${seed}`, reach]);
     }
 
     case "accelerator-batch": {

@@ -399,6 +399,7 @@ function QueuePage() {
                 if (!drain.playName) return;
                 setDrainModal({ playName: drain.playName, approvedCount: drain.approvedCount });
               }}
+              {...readOnly}
             >
               <Send size={12} /> {drain.label}
             </Button>

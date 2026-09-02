@@ -15,6 +15,7 @@ import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { cn, timeAgo } from "../lib/cn.ts";
 import { matchesReplyFilter, type ReplyMatchFilter } from "../lib/replyFilter.ts";
 import { readOnly } from "../lib/readOnly.ts";
+import { IS_DEMO } from "../api/demo.ts";
 
 const MATCH_FILTERS: Array<{ key: ReplyMatchFilter; label: string }> = [
   { key: "all", label: "all" },
@@ -471,7 +472,11 @@ function ReplyComposer({ reply }: { reply: InboxReplyView }) {
 
   const persist = useCallback(
     (value: string) => {
-      if (!identityId || value === lastSaved.current) return;
+      // Nothing to persist to in a demo build, and the rejection below is
+      // swallowed by design, so scheduling the write would fail silently once
+      // a second while someone typed. Surfacing it instead would be worse: a
+      // toast per keystroke pause. The textarea keeps the text either way.
+      if (IS_DEMO || !identityId || value === lastSaved.current) return;
       lastSaved.current = value;
       // Empty body clears the persisted draft server-side (so deleting all text
       // and refreshing doesn't bring the old draft back).

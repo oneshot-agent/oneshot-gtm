@@ -58,11 +58,44 @@ describe("queueEvidence", () => {
     );
   });
 
+  // The finder writes `jobTitle`; the seeded ledger writes `role`. Reading only
+  // one left every real hiring-signal row with no evidence line.
+  it("reads the opening from either field on hiring-signal", () => {
+    expect(queueEvidence("hiring-signal", { jobTitle: "Staff SRE" })).toBe("hiring: Staff SRE");
+    expect(queueEvidence("hiring-signal", { role: "Staff SRE" })).toBe("hiring: Staff SRE");
+  });
+
+  it("covers the plays the first draft missed", () => {
+    expect(queueEvidence("stack-consolidation", { vendorStack: "Datadog + Honeycomb" })).toBe(
+      "runs Datadog + Honeycomb",
+    );
+    expect(queueEvidence("breakup-revive", { daysCold: 94 })).toBe("94d cold");
+    expect(queueEvidence("x-amplify", { seedHandle: "@patio11", followers: 12_400 })).toBe(
+      "reposted @patio11 · 12.4k followers",
+    );
+    expect(
+      queueEvidence("x-repost-intro", { seedHandle: "@patio11", mode: "quote", followers: 800 }),
+    ).toBe("quoted @patio11 · 800 followers");
+  });
+
+  it("names the lead investor when the finder found one", () => {
+    expect(
+      queueEvidence("post-funding", {
+        round: "Series A",
+        amountUsd: 14_000_000,
+        leadInvestor: "a16z",
+      }),
+    ).toBe("raised Series A · $14.0M · led by a16z");
+  });
+
   it("covers the remaining plays", () => {
     expect(queueEvidence("competitor-switch", { competitor: "Datadog" })).toBe("on Datadog");
     expect(queueEvidence("luma-events", { eventTitle: "SF Infra Night" })).toBe("SF Infra Night");
     expect(queueEvidence("github-stars", { repo: "temporalio/temporal" })).toBe(
       "starred temporalio/temporal",
+    );
+    expect(queueEvidence("repo-interest", { repoLabel: "temporal", repo: "x/y" })).toBe(
+      "starred temporal",
     );
     expect(queueEvidence("accelerator-batch", { cohort: "W25" })).toBe("cohort W25");
   });
@@ -77,5 +110,46 @@ describe("queueEvidence", () => {
     expect(queueEvidence("show-hn", "not an object")).toBeNull();
     expect(queueEvidence("show-hn", ["array"])).toBeNull();
     expect(queueEvidence("post-funding", { round: "Seed", amountUsd: 0 })).toBe("raised Seed");
+  });
+});
+
+/*
+ * The queue row and the priority scorer read the same payloads, and the row's
+ * first draft drifted from the scorer immediately — wrong field on one play,
+ * five plays missing entirely. This pins them together: every play the scorer
+ * knows how to read must also render an evidence line.
+ */
+describe("coverage against the priority adapters", () => {
+  it("handles every play the scorer has an adapter for", async () => {
+    const src = await Bun.file(
+      new URL("../../../packages/find/src/_priority-adapters.ts", import.meta.url),
+    ).text();
+    const adapters = [...src.matchAll(/^ {2}"([a-z0-9-]+)":/gm)].map((m) => m[1]!);
+    expect(adapters.length).toBeGreaterThan(10);
+
+    // A payload carrying every field any adapter reads, so a play that is
+    // handled returns something and a play that is missing returns null.
+    const kitchenSink = {
+      postTitle: "t",
+      round: "Seed",
+      amountUsd: 1_000_000,
+      newRole: "r",
+      newCompany: "c",
+      jobTitle: "j",
+      podcast: "p",
+      episodeTitle: "e",
+      cohort: "W25",
+      eventTitle: "ev",
+      vendorStack: "s",
+      competitor: "x",
+      repo: "r/r",
+      daysCold: 30,
+      seedHandle: "@h",
+      followers: 2000,
+      role: "role",
+    };
+
+    const unhandled = adapters.filter((play) => queueEvidence(play, kitchenSink) === null);
+    expect(unhandled).toEqual([]);
   });
 });

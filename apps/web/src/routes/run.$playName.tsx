@@ -16,6 +16,8 @@ import { cn } from "../lib/cn.ts";
 import { PLAY_SCHEMAS } from "../lib/playSchemas.ts";
 import { useMask } from "../lib/privacy.tsx";
 import { pruneSentRows, remapFilteredEventIndexes } from "../lib/pruneSentRows.ts";
+import { IS_DEMO, demoWrite } from "../api/demo.ts";
+import { readOnly } from "../lib/readOnly.ts";
 
 /**
  * Search-param contract for arrivals from the `/queue` drain modal: `fromQueue=1`
@@ -328,6 +330,20 @@ function RunPage() {
   };
 
   const submit = async (): Promise<void> => {
+    /*
+     * The read-only guarantee is enforced HERE and not only on the button.
+     *
+     * This dispatch is the one write in the app that does not go through
+     * `postJson` — it needs an SSE body, which that wrapper cannot carry — so
+     * the transport-level refusal in api/demo.ts never sees it. A disabled
+     * button is a courtesy; this is the guarantee, and without it a demo build
+     * would POST a real run payload at whatever origin it was served from.
+     */
+    if (IS_DEMO) {
+      demoWrite(`/run/${playName}`);
+      return;
+    }
+
     setError(null);
     setEvents([]);
     setRunning(true);
@@ -634,7 +650,7 @@ function RunPage() {
           )}
         </div>
         {mode === "edit" && (
-          <Button onClick={submit} disabled={running}>
+          <Button onClick={submit} disabled={running} {...readOnly}>
             <Play size={14} />
             {running
               ? "Running…"
