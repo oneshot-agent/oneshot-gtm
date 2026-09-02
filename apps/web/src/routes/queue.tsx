@@ -43,6 +43,7 @@ import {
 } from "../lib/drainButton.ts";
 import { humanInterval } from "../lib/humanInterval.ts";
 import { priorityBreakdown, priorityChip } from "../lib/priorityChip.ts";
+import { queueEvidence } from "../lib/queueEvidence.ts";
 import { INTERVAL_PRESETS_MS, withIntervalOverride } from "../lib/triggerInterval.ts";
 import { summarizeTriggers } from "../lib/triggerSummary.ts";
 import { useLocalStorage } from "../lib/useLocalStorage.ts";
@@ -688,6 +689,7 @@ function QueueRow({
   const eventCity = eventCityFor(row.payload);
   const eventUrl = eventUrlFor(row.payload);
   const eventRole = eventRoleFor(row.payload);
+  const evidence = queueEvidence(row.playName, row.payload);
   const eventPassed = eventDate != null && eventIsPast(eventDate);
   // Privacy mode suppresses reason text — freeform reasons can embed names
   // and companies the structured <Pii> masking can't reach.
@@ -757,6 +759,20 @@ function QueueRow({
               </span>
             ) : null}
           </div>
+          {/*
+            Why this row is here at all. A queued candidate has no dossier yet,
+            so the finder's evidence is the only thing distinguishing one row
+            from the next, and it used to be reachable only by expanding.
+
+            Suppressed under privacy mode for the reason the priority reasons
+            are: it is freeform text that can name a person or a company, which
+            the structured <Pii> masking cannot reach inside.
+          */}
+          {evidence && !masked ? (
+            <div className="mt-0.5 max-w-[46ch] truncate text-[11px] text-ink-muted">
+              {evidence}
+            </div>
+          ) : null}
         </td>
         <td className="py-2 text-ink-cream-2">
           {row.playName}
