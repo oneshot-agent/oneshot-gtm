@@ -42,6 +42,8 @@ import {
   type RowMeta,
 } from "../lib/drainButton.ts";
 import { humanInterval } from "../lib/humanInterval.ts";
+import { summarizeTriggers } from "../lib/triggerSummary.ts";
+import { useLocalStorage } from "../lib/useLocalStorage.ts";
 import { priorityBreakdown, priorityChip } from "../lib/priorityChip.ts";
 import { INTERVAL_PRESETS_MS, withIntervalOverride } from "../lib/triggerInterval.ts";
 import {
@@ -320,18 +322,22 @@ function QueuePage() {
 
       <IcpBanner />
 
-      <TriggersCard />
+      <TriggersCard queueEmpty={queueQuery.isLoading ? null : rows.length === 0} />
 
       {/* Target Queue. The play filter is inline because it narrows this table only. */}
       <section className="border-t-2 border-ink-rule">
-        <div className="flex flex-wrap items-center justify-between gap-3 px-6 pb-3 pt-5">
-          <div className="flex items-baseline gap-3">
+        {/* The 7-day histogram rides the caption rather than holding a band of
+            its own. It is one line of context about the rows below, and a full
+            width strip for it was 42px of the first screen. */}
+        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 px-6 pb-3 pt-5">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
             <div className="ln-eyebrow">
               Target Queue{" "}
               <span className="text-ink-faint">
                 · {queueQuery.data ? rows.length : "…"} row{rows.length === 1 ? "" : "s"}
               </span>
             </div>
+            {rows.length > 0 && <SignalStrip rows={rows} ranked={effectiveOrder === "ranked"} />}
           </div>
           <div className="font-mono text-[11px] text-ink-faint">refresh · 20s</div>
         </div>
@@ -384,35 +390,34 @@ function QueuePage() {
               {p}
             </Button>
           ))}
-        </div>
 
-        {/* Approve-all + drain both respect the current play filter. */}
-        <div className="flex flex-wrap items-center gap-2 border-b border-ink-rule/60 bg-ink-surface/30 px-6 py-3">
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={approveAll.isPending || counts.pending === 0}
-            onClick={() => approveAll.mutate(playFilter === "all" ? undefined : playFilter)}
-            {...readOnly}
-          >
-            <Check size={12} /> approve all pending
-            {playFilter !== "all" ? ` (${playFilter})` : ""}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={!drain.enabled}
-            onClick={() => {
-              if (!drain.playName) return;
-              setDrainModal({ playName: drain.playName, approvedCount: drain.approvedCount });
-            }}
-          >
-            <Send size={12} /> {drain.label}
-          </Button>
+          {/* Approve-all and drain both respect the play filter to their left,
+              which is the argument for putting them on the same line as it
+              rather than in a band of their own below. */}
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={approveAll.isPending || counts.pending === 0}
+              onClick={() => approveAll.mutate(playFilter === "all" ? undefined : playFilter)}
+              {...readOnly}
+            >
+              <Check size={12} /> approve all pending
+              {playFilter !== "all" ? ` (${playFilter})` : ""}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={!drain.enabled}
+              onClick={() => {
+                if (!drain.playName) return;
+                setDrainModal({ playName: drain.playName, approvedCount: drain.approvedCount });
+              }}
+            >
+              <Send size={12} /> {drain.label}
+            </Button>
+          </div>
         </div>
-
-        {/* 7-day signal strip — enqueues per day from the rows in memory. */}
-        {rows.length > 0 && <SignalStrip rows={rows} ranked={effectiveOrder === "ranked"} />}
 
         {queueQuery.isLoading ? (
           Array.from({ length: 5 }, (_, i) => <SkeletonRow key={i} />)
@@ -1233,7 +1238,7 @@ function SignalStrip({ rows, ranked = false }: { rows: QueueRowView[]; ranked?: 
   const total = days.reduce((a, d) => a + d.count, 0);
 
   return (
-    <div className="flex items-center gap-4 border-b border-ink-rule/60 bg-ink-bg-deep/40 px-6 py-2.5">
+    <div className="flex items-center gap-3">
       <div className="ln-eyebrow" style={{ fontSize: 10 }}>
         {/* A ranked page is no longer "the newest N", so the histogram only
             describes the rows shown — make the existing approximation visible. */}
@@ -1265,7 +1270,10 @@ function SignalStrip({ rows, ranked = false }: { rows: QueueRowView[]; ranked?: 
   );
 }
 
-function TriggersCard() {
+/** Per-browser memory of whether the panel is open. */
+const TRIGGERS_OPEN_KEY = "oneshot-gtm:queue-triggers-open";
+
+function TriggersCard({ queueEmpty }: { queueEmpty: boolean | null }) {
   const qc = useQueryClient();
   const triggersQuery = useQuery({
     queryKey: ["triggers"],
@@ -1359,6 +1367,57 @@ function TriggersCard() {
   const activeTriggers = triggers.filter((t) => t.enabled);
   const inactiveTriggers = triggers.filter((t) => !t.enabled);
   const [showInactive, setShowInactive] = useState(false);
+
+  const summary = summarizeTriggers(triggers);
+
+  /*
+   * Shut by default, because this page is named for the candidates below it
+   * and the table was taking 336px of the first screen. Trigger status is
+   * already on /home; this panel is where you act on them, which is
+   * occasional. The choice is remembered per browser.
+   *
+   * `useLocalStorage` only ever hydrates a stored value TO true, so the stored
+   * flag has to be the open one with a false default. Storing "collapsed"
+   * instead would make the remembered state unreadable.
+   */
+  const [storedOpen, setStoredOpen] = useLocalStorage(TRIGGERS_OPEN_KEY, false);
+
+  /*
+   * Open itself once when the panel is the thing you came for: something is
+   * mid-run, something refuses to fire until it is configured, or the queue is
+   * empty and EmptyQueueHelp is telling the reader to pick a finder from a
+   * panel that would otherwise be shut.
+   *
+   * Kept separate from the stored flag on purpose. A panel that opened because
+   * a finder happened to be running must not write itself into the reader's
+   * remembered preference. Seeded through a ref so it fires once per mount:
+   * without that, every 30s refetch would re-open a panel just closed.
+   */
+  const [autoOpen, setAutoOpen] = useState(false);
+  const seeded = useRef(false);
+  // `queueEmpty` is null until the queue itself has loaded. Seeding on the
+  // triggers response alone would race it: whichever query lands first decides,
+  // and an empty queue would fail to open the panel about half the time.
+  if (!seeded.current && triggersQuery.data && queueEmpty !== null) {
+    seeded.current = true;
+    if (summary.running > 0 || summary.notReady > 0 || queueEmpty) setAutoOpen(true);
+  }
+
+  const expanded = storedOpen || autoOpen;
+
+  const toggle = (): void => {
+    if (expanded) {
+      // Collapsing hides the JSON editor rather than unmounting it, so without
+      // this a reopened panel restores unsaved text the reader walked away from.
+      setEditing(null);
+      setEditError(null);
+      setShowInactive(false);
+      setAutoOpen(false);
+      setStoredOpen(false);
+      return;
+    }
+    setStoredOpen(true);
+  };
 
   const renderTriggerRow = (t: TriggerView, i: number) => {
     const summary = summarizeRun(t.lastRunSummary);
@@ -1465,62 +1524,91 @@ function TriggersCard() {
   );
 
   return (
-    <>
-      <section className="border-b border-ink-rule">
-        <div className="flex items-baseline justify-between px-6 pb-2 pt-5">
+    <section className="border-b border-ink-rule">
+      <div className="flex items-baseline justify-between pr-6">
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={expanded}
+          aria-label={`${expanded ? "Collapse" : "Expand"} the triggers table`}
+          className="flex flex-1 items-baseline gap-3 px-6 pb-2 pt-5 text-left transition-colors duration-[var(--dur-stamp)] hover:bg-ink-surface/40"
+        >
+          <span className="text-ink-faint">
+            {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          </span>
           <div className="ln-eyebrow">
             Triggers <span className="text-ink-faint">· {triggers.length}</span>
           </div>
-          <div className="font-mono text-[11px] text-ink-faint">refresh · 30s</div>
-        </div>
-        {triggersQuery.isLoading ? (
-          Array.from({ length: 3 }, (_, i) => <SkeletonRow key={i} />)
-        ) : triggers.length === 0 ? (
-          <div className="px-6 pb-6">
-            <EmptyNote
-              note="No triggers stored yet. Enable one below and it bootstraps itself on the next watch tick — or run the watch loop once to initialise."
-              cli="oneshot-gtm find watch --once"
-            />
+          {/* The facts you would open the panel to check, so that most of the
+              time you do not have to. Only while shut: expanded, the table
+              below says all of this in more detail. */}
+          <div className="font-mono text-[11px] text-ink-faint">
+            {summary.enabled} on
+            {summary.running > 0 && (
+              <span className="ml-2 text-[color:var(--ink-signal-2)]">
+                · {summary.running} running
+              </span>
+            )}
+            {summary.notReady > 0 && (
+              <span className="ml-2 text-[color:var(--ink-blocked-2)]">
+                · {summary.notReady} need config
+              </span>
+            )}
+            {!expanded && summary.nextDueMs != null && (
+              <span className="ml-2">· next in {humanInterval(summary.nextDueMs)}</span>
+            )}
+            {!expanded && <span className="ml-2 text-ink-faint">· see more</span>}
           </div>
-        ) : (
-          <table className="w-full text-[13px]">
-            <thead>
-              <tr className="border-b border-ink-rule/60 text-[10px] uppercase tracking-[0.14em] text-ink-faint">
-                <th className="px-6 py-2 text-left font-medium">name</th>
-                <th className="py-2 text-left font-medium">enabled</th>
-                <th className="py-2 text-left font-medium">interval</th>
-                <th className="py-2 text-left font-medium">last polled</th>
-                <th className="py-2 text-left font-medium">last run</th>
-                <th className="px-6 py-2 text-right font-medium">actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {activeTriggers.map(renderTriggerRow)}
-              {/* Disabled finders are dormant, not broken — collapsed behind one
+        </button>
+        <div className="font-mono text-[11px] text-ink-faint">refresh · 30s</div>
+      </div>
+      {!expanded ? null : triggersQuery.isLoading ? (
+        Array.from({ length: 3 }, (_, i) => <SkeletonRow key={i} />)
+      ) : triggers.length === 0 ? (
+        <div className="px-6 pb-6">
+          <EmptyNote
+            note="No triggers stored yet. Enable one below and it bootstraps itself on the next watch tick — or run the watch loop once to initialise."
+            cli="oneshot-gtm find watch --once"
+          />
+        </div>
+      ) : (
+        <table className="w-full text-[13px]">
+          <thead>
+            <tr className="border-b border-ink-rule/60 text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+              <th className="px-6 py-2 text-left font-medium">name</th>
+              <th className="py-2 text-left font-medium">enabled</th>
+              <th className="py-2 text-left font-medium">interval</th>
+              <th className="py-2 text-left font-medium">last polled</th>
+              <th className="py-2 text-left font-medium">last run</th>
+              <th className="px-6 py-2 text-right font-medium">actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {activeTriggers.map(renderTriggerRow)}
+            {/* Disabled finders are dormant, not broken — collapsed behind one
                   quiet row (same-tbody colSpan trick as SchedulerStrip, so the
                   shared column widths hold). */}
-              {inactiveTriggers.length > 0 && (
-                <tr className="border-b border-ink-rule/60">
-                  <td colSpan={6} className="px-6 py-2">
-                    <button
-                      type="button"
-                      aria-expanded={showInactive}
-                      onClick={() => setShowInactive((v) => !v)}
-                      className="flex items-center gap-1.5 font-mono text-[11px] text-ink-faint transition-colors hover:text-ink-cream-2"
-                    >
-                      {showInactive ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-                      {inactiveTriggers.length} inactive finder
-                      {inactiveTriggers.length === 1 ? "" : "s"} · {showInactive ? "hide" : "show"}
-                    </button>
-                  </td>
-                </tr>
-              )}
-              {showInactive && inactiveTriggers.map(renderTriggerRow)}
-            </tbody>
-          </table>
-        )}
-      </section>
-    </>
+            {inactiveTriggers.length > 0 && (
+              <tr className="border-b border-ink-rule/60">
+                <td colSpan={6} className="px-6 py-2">
+                  <button
+                    type="button"
+                    aria-expanded={showInactive}
+                    onClick={() => setShowInactive((v) => !v)}
+                    className="flex items-center gap-1.5 font-mono text-[11px] text-ink-faint transition-colors hover:text-ink-cream-2"
+                  >
+                    {showInactive ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                    {inactiveTriggers.length} inactive finder
+                    {inactiveTriggers.length === 1 ? "" : "s"} · {showInactive ? "hide" : "show"}
+                  </button>
+                </td>
+              </tr>
+            )}
+            {showInactive && inactiveTriggers.map(renderTriggerRow)}
+          </tbody>
+        </table>
+      )}
+    </section>
   );
 }
 
