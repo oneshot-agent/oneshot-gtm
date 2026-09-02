@@ -99,6 +99,16 @@ describe("formatLocalEventTime", () => {
     }
   });
 
+  it("rejects invalid calendar dates in zoned and offset timestamps", () => {
+    for (const invalid of [
+      "2026-02-29T19:30:00Z",
+      "2026-04-31T19:30:00+02:00",
+      "0001-02-29T19:30:00-08:00",
+    ]) {
+      expect(formatLocalEventTime(invalid, "UTC")).toBeNull();
+    }
+  });
+
   it("returns null (not 'Invalid Date') for a non-timestamp", () => {
     for (const junk of ["", "   ", "sometime next week", "TBD"]) {
       expect(formatLocalEventTime(junk, "America/Los_Angeles")).toBeNull();
