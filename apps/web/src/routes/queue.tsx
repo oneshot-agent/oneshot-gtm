@@ -479,7 +479,10 @@ function QueuePage() {
       </section>
 
       {someSelected && (
-        <div className="sticky bottom-0 z-20 flex items-center justify-between gap-4 border-b border-t border-ink-rule bg-ink-bg/95 px-6 py-3 backdrop-blur-[2px]">
+        <div
+          className="sticky bottom-0 z-20 flex items-center justify-between gap-4 border-b border-t border-ink-rule bg-ink-bg/95 px-6 py-3 backdrop-blur-[2px]"
+          data-foot-bar
+        >
           <div className="flex items-center gap-3">
             <span className="inline-flex h-6 min-w-[24px] items-center justify-center rounded-full bg-[color:var(--ink-signal)]/20 px-2 font-mono text-[12px] text-[color:var(--ink-signal-2)]">
               {selected.size}

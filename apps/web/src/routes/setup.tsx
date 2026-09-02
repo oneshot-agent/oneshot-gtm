@@ -1282,7 +1282,10 @@ function SetupPage() {
           />
         </LedgerSection>
 
-        <div className="sticky bottom-0 z-10 flex items-center justify-between gap-4 border-b border-t border-ink-rule bg-ink-bg/90 px-6 py-3 backdrop-blur-[2px]">
+        <div
+          className="sticky bottom-0 z-10 flex items-center justify-between gap-4 border-b border-t border-ink-rule bg-ink-bg/90 px-6 py-3 backdrop-blur-[2px]"
+          data-foot-bar
+        >
           <div className="font-mono text-[11px] text-ink-muted">
             {save.isSuccess && savedAt != null ? (
               <span className="text-[color:var(--ink-receipt-2)]">

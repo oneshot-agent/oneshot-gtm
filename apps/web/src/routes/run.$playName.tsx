@@ -578,7 +578,10 @@ function RunPage() {
         </div>
       </RunLedgerSection>
 
-      <section className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-t border-ink-rule bg-ink-bg/90 px-6 py-3 backdrop-blur-[2px]">
+      <section
+        className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-t border-ink-rule bg-ink-bg/90 px-6 py-3 backdrop-blur-[2px]"
+        data-foot-bar
+      >
         {mode === "edit" && (
           <button
             type="button"

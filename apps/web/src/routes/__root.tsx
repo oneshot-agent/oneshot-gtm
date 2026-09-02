@@ -230,6 +230,14 @@ function RootLayout() {
             </div>
           </header>
 
+          {/*
+            The bottom gutter is NOT padding here. `sticky bottom-0` resolves
+            against this scroller's content box, so padding-bottom lifts the
+            queue's selection bar and the setup and run action bars off the
+            footer at every scroll position, not just at the end. The gutter is
+            a margin on the page's last in-flow block instead — see
+            `--ledger-gutter` in styles.css.
+          */}
           <main ref={mainRef} className="overflow-y-auto px-6 py-6">
             <Outlet />
           </main>
