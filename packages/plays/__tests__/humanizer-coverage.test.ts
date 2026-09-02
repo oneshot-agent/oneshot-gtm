@@ -61,6 +61,9 @@ const PROBES: RuleProbe[] = [
   { flag: "subject-shouty", marker: "lowercase the whole subject" },
   { flag: "body-too-long", marker: "≤80 words" },
   { flag: "calendar-link", marker: "calendly" },
+  // Not a SLOP_PHRASES regex — lintOpenerFrequency reads the ledger — but the
+  // humanizer must still document the rule it enforces.
+  { flag: "opener-overused", marker: "opener-overused" },
 ];
 
 describe("_humanizer.md covers every lintEmail rule (drift guard)", () => {

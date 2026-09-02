@@ -1889,6 +1889,42 @@ export class Ledger {
     return null;
   }
 
+  /**
+   * Bodies of the most recent email sends for one play + step, newest first.
+   * Feeds the opener-frequency lint: a follow-up step that keeps reaching for
+   * the same opening words is a fingerprint, and only the ledger knows what
+   * the last N sends actually opened with.
+   *
+   * Same status set as `latestSentEmailCopy` — 'sent' rows are UPDATEd in
+   * place to 'replied', so matching only 'sent' would silently drop every
+   * prospect who answered and skew the share.
+   */
+  recentSentEmailBodies(opts: { playName: string; stepIndex: number; limit?: number }): string[] {
+    const limit = Math.max(1, Math.min(opts.limit ?? 40, 200));
+    const rows = this.db
+      .query(
+        `SELECT metadata_json FROM sequence_events
+         WHERE play_name = ? AND step_index = ?
+           AND status IN ('sent', 'delivered', 'replied')
+           AND channel = 'email' AND metadata_json IS NOT NULL
+           AND json_valid(metadata_json)
+           AND trim(coalesce(json_extract(metadata_json, '$.body'), '')) != ''
+         ORDER BY created_at DESC, id DESC LIMIT ?`,
+      )
+      .all(opts.playName, opts.stepIndex, limit) as Array<{ metadata_json: string }>;
+    const out: string[] = [];
+    for (const row of rows) {
+      let body: unknown;
+      try {
+        body = (JSON.parse(row.metadata_json) as { body?: unknown }).body;
+      } catch {
+        continue;
+      }
+      if (typeof body === "string" && body.trim()) out.push(body);
+    }
+    return out;
+  }
+
   getReceipt(id: number): ReceiptRecord | null {
     return (this.db.query("SELECT * FROM receipts WHERE id = ?").get(id) as ReceiptRecord) ?? null;
   }

@@ -184,6 +184,90 @@ export function bodyWordsForLint(body: string, sigLines?: string[]): number {
   return trimmed.split(/\s+/).filter(Boolean).length;
 }
 
+/**
+ * Words of the body that make up an opener fingerprint. Two, measured: across
+ * 411 sent follow-ups the opener "still curious" held 55% at two words but
+ * fragmented to 18% by six, so a longer stem slips under any usable cap while
+ * the mail still reads identically to anyone who sees two of them.
+ */
+const OPENER_STEM_WORDS = 2;
+
+/** Below this many prior sends the share is noise, so the cap never fires. */
+const OPENER_MIN_SAMPLE = 8;
+
+/** Share of recent sends one stem may hold before it counts as a fingerprint. */
+const OPENER_MAX_SHARE = 0.25;
+
+/**
+ * The body's first `words` words, minus a greeting line, lowercased and
+ * stripped of punctuation — the unit the opener-frequency cap compares.
+ *
+ * The greeting goes because it is generated from the prospect's name: leaving
+ * "Hey Sam," in would make every stem unique and the cap would never fire.
+ */
+export function openerStem(body: string, words = OPENER_STEM_WORDS): string {
+  const lines = body
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  const first = lines[0] ?? "";
+  const rest =
+    lines.length > 1 &&
+    /^(?:hey|hi|hello|good (?:morning|afternoon))\b[^,]{0,40}[,\-–—]?$/i.test(first)
+      ? lines.slice(1)
+      : lines;
+  const normalized = rest
+    .join(" ")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ");
+  return normalized.split(" ").filter(Boolean).slice(0, words).join(" ");
+}
+
+/**
+ * Flags a draft whose opening words already carry more than their share of
+ * this play + step's recent sends.
+ *
+ * A frequency cap rather than a ban: the goal is not that every opener be
+ * unique, it is that no single opener speaks for the majority of a domain's
+ * touches. Prompt text alone did not hold this — the prompts advertise four
+ * shapes and the model still reached for the same one — so it is gated here,
+ * where a rule cannot be talked out of.
+ *
+ * `recentBodies` is the caller's window (newest first); an empty or short
+ * window returns no flags rather than guessing.
+ *
+ * Paired with `overusedOpeners`, which the follow-up builder feeds to the
+ * model BEFORE it drafts — the flag alone would only reject, and every
+ * rejection costs another paid draft.
+ */
+export function overusedOpeners(
+  recentBodies: readonly string[],
+  opts: { minSample?: number; maxShare?: number } = {},
+): string[] {
+  const minSample = opts.minSample ?? OPENER_MIN_SAMPLE;
+  const maxShare = opts.maxShare ?? OPENER_MAX_SHARE;
+  if (recentBodies.length < minSample) return [];
+  const counts = new Map<string, number>();
+  for (const prior of recentBodies) {
+    const stem = openerStem(prior);
+    if (stem.length > 0) counts.set(stem, (counts.get(stem) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .filter(([, n]) => n / recentBodies.length >= maxShare)
+    .toSorted((a, b) => b[1] - a[1])
+    .map(([stem]) => stem);
+}
+
+export function lintOpenerFrequency(
+  body: string,
+  recentBodies: readonly string[],
+  opts: { minSample?: number; maxShare?: number } = {},
+): string[] {
+  const stem = openerStem(body);
+  if (stem.length === 0) return [];
+  return overusedOpeners(recentBodies, opts).includes(stem) ? ["opener-overused"] : [];
+}
+
 export function lintEmail(subject: string, body: string, maxBodyWords = 110): string[] {
   const flags: string[] = [];
   if (subject.length === 0) flags.push("empty-subject");
