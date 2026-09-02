@@ -372,29 +372,9 @@ function QueuePage() {
               ))}
             </>
           )}
-          <span className="mx-2 h-4 w-px bg-ink-rule" />
-          <span className="ln-eyebrow">play</span>
-          <Button
-            variant={playFilter === "all" ? "primary" : "ghost"}
-            size="sm"
-            onClick={() => setPlayFilter("all")}
-          >
-            all
-          </Button>
-          {playList.map((p) => (
-            <Button
-              key={p}
-              variant={playFilter === p ? "primary" : "ghost"}
-              size="sm"
-              onClick={() => setPlayFilter(p)}
-            >
-              {p}
-            </Button>
-          ))}
-
-          {/* Approve-all and drain both respect the play filter to their left,
-              which is the argument for putting them on the same line as it
-              rather than in a band of their own below. */}
+          {/* Approve-all and drain scope to the play filter below, and sit up
+              here because status and order are a fixed, short set: this row's
+              width does not change with the install, so the buttons stay put. */}
           <div className="ml-auto flex items-center gap-2">
             <Button
               variant="secondary"
@@ -418,6 +398,31 @@ function QueuePage() {
               <Send size={12} /> {drain.label}
             </Button>
           </div>
+        </div>
+
+        {/* The play filter earns its own line: it is the only group here whose
+            length grows with the install — seven chips against this seeded
+            ledger, eleven on a working one — and on one row it shunted the
+            actions around every time the status tab changed. */}
+        <div className="flex flex-wrap items-center gap-2 border-b border-ink-rule/60 px-6 py-2.5">
+          <span className="ln-eyebrow">play</span>
+          <Button
+            variant={playFilter === "all" ? "primary" : "ghost"}
+            size="sm"
+            onClick={() => setPlayFilter("all")}
+          >
+            all
+          </Button>
+          {playList.map((p) => (
+            <Button
+              key={p}
+              variant={playFilter === p ? "primary" : "ghost"}
+              size="sm"
+              onClick={() => setPlayFilter(p)}
+            >
+              {p}
+            </Button>
+          ))}
         </div>
 
         {queueQuery.isLoading ? (
