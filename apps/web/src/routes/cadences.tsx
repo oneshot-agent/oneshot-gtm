@@ -198,7 +198,6 @@ function CadencesPage() {
         next.delete(`${vars.prospectId}|${vars.playName}`);
         return next;
       });
-      setSendConfirm(null);
       toast.success(`sending · ${vars.playName} — refreshes when complete`);
     },
     onError: (err) => toast.error(`send failed: ${err.message}`),
@@ -250,18 +249,6 @@ function CadencesPage() {
       else next.add(key);
       return next;
     });
-  const [sendConfirm, setSendConfirm] = useState<{
-    prospectId: number;
-    playName: string;
-    prospectEmail: string | null;
-    prospectName: string | null;
-    subject: string;
-    isBreakup: boolean;
-    /** ISO timestamp of the scheduled fire time; null when cadence has no schedule. */
-    nextDueAt: string | null;
-    /** True when next_due_at is in the future at the moment Send was clicked. */
-    isEarly: boolean;
-  } | null>(null);
   const pendingPreviewKey =
     previewNext.isPending && previewNext.variables
       ? `${previewNext.variables.prospectId}|${previewNext.variables.playName}`
@@ -764,6 +751,12 @@ function CadencesPage() {
                                 pendingSendKey != null ||
                                 pendingPreviewKey != null ||
                                 c.isSending;
+                              // Send fires immediately (no confirm modal), so the
+                              // early/breakup warnings live in the button tooltip.
+                              const earlyNote =
+                                c.nextDueAt != null && c.nextDueAt > new Date().toISOString()
+                                  ? ` · ${earlyByCopy(c.nextDueAt)} ahead of schedule — remaining steps recompute from today`
+                                  : "";
                               return (
                                 <>
                                   <Button
@@ -793,23 +786,15 @@ function CadencesPage() {
                                         : draft.flags.length > 0
                                           ? `draft held by lint (${draft.flags.length} flag(s)) — re-preview`
                                           : c.nextStepIsBreakup
-                                            ? "send breakup (final touch) — confirms first"
-                                            : "send next step — confirms first"
+                                            ? `send breakup (final touch) — sends now, no more emails after this${earlyNote}`
+                                            : `send next step — sends now${earlyNote}`
                                     }
                                     disabled={sendDisabled}
                                     onClick={() => {
                                       if (!draft) return;
-                                      setSendConfirm({
+                                      sendNext.mutate({
                                         prospectId: c.prospectId,
                                         playName: c.playName,
-                                        prospectEmail: c.prospectEmail,
-                                        prospectName: c.prospectName,
-                                        subject: draft.subject,
-                                        isBreakup: c.nextStepIsBreakup,
-                                        nextDueAt: c.nextDueAt,
-                                        isEarly:
-                                          c.nextDueAt != null &&
-                                          c.nextDueAt > new Date().toISOString(),
                                       });
                                     }}
                                   >
@@ -1210,73 +1195,6 @@ function CadencesPage() {
               placeholder="Why are you stopping this cadence?"
             />
           </Field>
-        </div>
-      </Modal>
-
-      <Modal
-        open={sendConfirm != null}
-        onClose={() => setSendConfirm(null)}
-        title={
-          sendConfirm?.isBreakup
-            ? `Send breakup — ${mask("auto", sendConfirm?.prospectName ?? sendConfirm?.prospectEmail ?? "(prospect)")}`
-            : `Send next step — ${mask("auto", sendConfirm?.prospectName ?? sendConfirm?.prospectEmail ?? "(prospect)")}`
-        }
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setSendConfirm(null)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={() => {
-                if (!sendConfirm) return;
-                sendNext.mutate(
-                  { prospectId: sendConfirm.prospectId, playName: sendConfirm.playName },
-                  { onSettled: () => setSendConfirm(null) },
-                );
-              }}
-              disabled={sendNext.isPending}
-            >
-              {sendNext.isPending ? "Sending…" : sendConfirm?.isBreakup ? "Send breakup" : "Send"}
-            </Button>
-          </>
-        }
-      >
-        <div className="flex flex-col gap-3">
-          {sendConfirm?.isEarly && sendConfirm.nextDueAt && (
-            <div className="rounded border border-ink-rule bg-ink-surface/40 px-3 py-2 text-[12px] text-ink-cream-2">
-              Heads up: this step isn't scheduled to fire until{" "}
-              <span className="text-ink-cream">{timeAgo(sendConfirm.nextDueAt)}</span> (
-              {earlyByCopy(sendConfirm.nextDueAt)}). Sending now fires it ahead of schedule; the
-              remaining cadence steps will recompute their due dates from today, not the original
-              schedule.
-            </div>
-          )}
-          {sendConfirm?.isBreakup && (
-            <div className="rounded border border-ink-rule bg-ink-surface/40 px-3 py-2 text-[12px] text-[color:var(--ink-spend-2)]">
-              This is the breakup — the final touch in{" "}
-              <code className="font-mono text-[11px]">{sendConfirm.playName}</code>. After this, no
-              more emails will go to this prospect.
-            </div>
-          )}
-          <div className="font-mono text-[12px] text-ink-muted">
-            <div>
-              To:{" "}
-              <span className="text-ink-cream-2">
-                {sendConfirm?.prospectEmail
-                  ? mask("email", sendConfirm.prospectEmail)
-                  : "(no email)"}
-              </span>
-            </div>
-            <div>
-              Play: <span className="text-ink-cream-2">{sendConfirm?.playName}</span>
-            </div>
-            <div>
-              Subject: <span className="text-ink-cream-2">{sendConfirm?.subject}</span>
-            </div>
-          </div>
-          <div className="ln-eyebrow text-[10px] text-ink-faint">
-            sends the persisted preview verbatim — no LLM reroll.
-          </div>
         </div>
       </Modal>
 
