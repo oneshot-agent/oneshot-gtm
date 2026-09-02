@@ -95,7 +95,8 @@ export function SchedulerStrip(): React.ReactElement {
           type="button"
           onClick={() => setExpanded((v) => !v)}
           aria-expanded={expanded}
-          aria-label={`${expanded ? "Collapse" : "Expand"} the scheduler table`}
+          // No aria-label: it would replace the summary beside it as this
+          // button's accessible name. See the same note on /queue's panel.
           className="flex flex-1 items-baseline gap-3 px-6 pb-2 pt-5 text-left transition-colors duration-[var(--dur-stamp)] hover:bg-ink-surface/40"
         >
           <span className="text-ink-faint">
@@ -103,7 +104,7 @@ export function SchedulerStrip(): React.ReactElement {
           </span>
           <div className="ln-eyebrow">Scheduler</div>
           <div className="font-mono text-[11px] text-ink-faint">
-            {enabledCount} enabled
+            · {enabledCount} enabled
             {overdueCount > 0 && (
               <span className="ml-2 text-[color:var(--ink-blocked-2)]">
                 · {overdueCount} overdue

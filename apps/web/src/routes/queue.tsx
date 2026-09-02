@@ -42,10 +42,10 @@ import {
   type RowMeta,
 } from "../lib/drainButton.ts";
 import { humanInterval } from "../lib/humanInterval.ts";
-import { summarizeTriggers } from "../lib/triggerSummary.ts";
-import { useLocalStorage } from "../lib/useLocalStorage.ts";
 import { priorityBreakdown, priorityChip } from "../lib/priorityChip.ts";
 import { INTERVAL_PRESETS_MS, withIntervalOverride } from "../lib/triggerInterval.ts";
+import { summarizeTriggers } from "../lib/triggerSummary.ts";
+import { useLocalStorage } from "../lib/useLocalStorage.ts";
 import {
   clearDraftGenerating,
   markDraftGenerating,
@@ -1530,7 +1530,13 @@ function TriggersCard({ queueEmpty }: { queueEmpty: boolean | null }) {
           type="button"
           onClick={toggle}
           aria-expanded={expanded}
-          aria-label={`${expanded ? "Collapse" : "Expand"} the triggers table`}
+          /*
+           * No aria-label. The summary beside the chevron is the whole point of
+           * the collapsed state, and a label would replace it as the button's
+           * accessible name — leaving a screen reader with "expand the triggers
+           * table" where a sighted reader gets "5 on, next in 4h".
+           * `aria-expanded` already carries the open/shut part.
+           */
           className="flex flex-1 items-baseline gap-3 px-6 pb-2 pt-5 text-left transition-colors duration-[var(--dur-stamp)] hover:bg-ink-surface/40"
         >
           <span className="text-ink-faint">
@@ -1543,7 +1549,9 @@ function TriggersCard({ queueEmpty }: { queueEmpty: boolean | null }) {
               time you do not have to. Only while shut: expanded, the table
               below says all of this in more detail. */}
           <div className="font-mono text-[11px] text-ink-faint">
-            {summary.enabled} on
+            {/* Leading separator so the accessible name reads "· 11 · 5 on"
+                rather than running the two counts together as "115 on". */}
+            · {summary.enabled} on
             {summary.running > 0 && (
               <span className="ml-2 text-[color:var(--ink-signal-2)]">
                 · {summary.running} running

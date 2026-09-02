@@ -578,6 +578,8 @@ export interface DemoProspectRow {
   name: string;
   email: string;
   company: string;
+  /** The role, as the prospects table stores it — not only inside the dossier. */
+  title: string;
   linkedinUrl: string | null;
   dossierJson: string;
   source: string;
@@ -739,6 +741,7 @@ export function buildDemoDataset(anchor: Date): DemoDataset {
       name: p.name,
       email: p.email,
       company: p.company,
+      title: p.title,
       linkedinUrl: p.linkedin,
       dossierJson: JSON.stringify({
         title: p.title,
