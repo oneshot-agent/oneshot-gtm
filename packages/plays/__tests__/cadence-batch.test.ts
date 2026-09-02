@@ -50,6 +50,8 @@ vi.mock("@oneshot-gtm/core", async () => {
     },
     listInbox: async () => ({ emails: [], has_more: false }),
     getLedger: () => ({
+      // Opener-frequency cap: no send history in these fakes, so nothing is worn out.
+      recentSentEmailBodies: () => [],
       // Reply-poll plumbing: no watermark, nothing to record (inbox is stubbed empty).
       getPollWatermark: () => null,
       setPollWatermark: () => {},

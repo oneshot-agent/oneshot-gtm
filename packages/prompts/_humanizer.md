@@ -143,6 +143,8 @@ A follow-up body is ANCHORED to the concrete thing the first email named — the
 
 Requiring every body to literally begin with the noun would just trade one uniform shape for another. Vary the sentence, keep the anchor.
 
+This one is measured, not trusted: a draft whose first two words already open more than a quarter of that play + step's recent sends is flagged `opener-overused` and held until it is rewritten.
+
 The example lines in each play prompt are SHAPES, not strings. They show how long the sentence is and what it is allowed to reference. Copying one verbatim, or reusing the same first three words every send, is a failure of this rule even when the copied line breaks no other ban.
 
 ## Banned CTAs

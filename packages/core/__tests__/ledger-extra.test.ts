@@ -1031,3 +1031,70 @@ describe("receipt annotation (memo / decisionContext / value_tag)", () => {
     expect(ledger.goalLabels([]).size).toBe(0);
   });
 });
+
+describe("recentSentEmailBodies", () => {
+  const write = (
+    prospectId: number,
+    stepIndex: number,
+    body: string | null,
+    status: "sent" | "replied" | "failed" = "sent",
+  ): void => {
+    ledger.recordSequenceEvent({
+      prospectId,
+      playName: "repo-interest",
+      stepIndex,
+      channel: "email",
+      status,
+      metadata: body == null ? { subject: "s" } : { subject: "s", body },
+    });
+  };
+
+  it("returns bodies for one play + step, newest first", () => {
+    const pid = ledger.upsertProspect({ name: "A", email: "a@x.com", source: "t" });
+    write(pid, 1, "first");
+    write(pid, 1, "second");
+    expect(ledger.recentSentEmailBodies({ playName: "repo-interest", stepIndex: 1 })).toEqual([
+      "second",
+      "first",
+    ]);
+  });
+
+  it("counts replied rows — they are sends that were answered, not non-sends", () => {
+    const pid = ledger.upsertProspect({ name: "B", email: "b@x.com", source: "t" });
+    write(pid, 1, "answered", "replied");
+    expect(ledger.recentSentEmailBodies({ playName: "repo-interest", stepIndex: 1 })).toEqual([
+      "answered",
+    ]);
+  });
+
+  it("excludes other steps, other plays, failures, and bodyless rows", () => {
+    const pid = ledger.upsertProspect({ name: "C", email: "c@x.com", source: "t" });
+    write(pid, 0, "intro");
+    write(pid, 1, "kept");
+    write(pid, 1, null);
+    write(pid, 1, "   ");
+    write(pid, 1, "dropped", "failed");
+    ledger.recordSequenceEvent({
+      prospectId: pid,
+      playName: "stack-consolidation",
+      stepIndex: 1,
+      channel: "email",
+      status: "sent",
+      metadata: { subject: "s", body: "other play" },
+    });
+    expect(ledger.recentSentEmailBodies({ playName: "repo-interest", stepIndex: 1 })).toEqual([
+      "kept",
+    ]);
+  });
+
+  it("honours the limit and clamps it", () => {
+    const pid = ledger.upsertProspect({ name: "D", email: "d@x.com", source: "t" });
+    for (let i = 0; i < 5; i++) write(pid, 1, `body ${i}`);
+    expect(
+      ledger.recentSentEmailBodies({ playName: "repo-interest", stepIndex: 1, limit: 2 }),
+    ).toHaveLength(2);
+    expect(
+      ledger.recentSentEmailBodies({ playName: "repo-interest", stepIndex: 1, limit: 0 }),
+    ).toHaveLength(1);
+  });
+});

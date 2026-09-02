@@ -25,6 +25,8 @@ import {
   firstNameFrom,
   humanizeDraft,
   lintEmail,
+  lintOpenerFrequency,
+  overusedOpeners,
   signatureDirective,
   socialProofBlock,
 } from "./_lib.ts";
@@ -1057,7 +1059,20 @@ export async function previewCadenceStep(input: {
         : built.kind === "voice"
           ? built.objective
           : "";
-  const flags = built.kind === "email" ? lintEmail(subject, body, 100) : [];
+  // Opener-frequency cap on top of the phrase lint: the phrase rules cannot
+  // see that this play's last 40 sends all opened the same way. Scoped to the
+  // same play + step because that is the population a reader would ever
+  // compare — an intro and a day-3 ping are allowed to sound different.
+  const flags =
+    built.kind === "email"
+      ? [
+          ...lintEmail(subject, body, 100),
+          ...lintOpenerFrequency(
+            body,
+            ledger.recentSentEmailBodies({ playName: input.playName, stepIndex: nextIndex }),
+          ),
+        ]
+      : [];
   ledger.setCadenceDraft({
     prospectId: input.prospectId,
     playName: input.playName,
@@ -1316,6 +1331,31 @@ function loadProspect(id: number): ProspectRecord | null {
   return getLedger().getProspectById(id);
 }
 
+/**
+ * The OPENERS ALREADY WORN OUT block, or "" when nothing is over the cap.
+ *
+ * Scoped to this prospect's next step on this play — the same population the
+ * `opener-overused` lint measures, so the guidance and the gate cannot
+ * disagree. Returns "" on any missing cadence rather than throwing: steering
+ * copy is a nicety, and a follow-up must still draft without it.
+ */
+function overusedOpenersBlock(prospectId: number, playName: string): string {
+  const ledger = getLedger();
+  const cadence = ledger.getCadence(prospectId, playName);
+  if (!cadence) return "";
+  const recent = ledger.recentSentEmailBodies({
+    playName,
+    stepIndex: cadence.current_step + 1,
+  });
+  const worn = overusedOpeners(recent);
+  if (worn.length === 0) return "";
+  return [
+    "OPENERS ALREADY WORN OUT ON THIS STEP — do not open the body with these words:",
+    ...worn.map((stem) => `- "${stem}"`),
+    "Pick a different shape from the ones the prompt lists.",
+  ].join("\n");
+}
+
 export function buildFollowUpEmail(opts: {
   playName: string;
   promptName: string;
@@ -1328,6 +1368,10 @@ export function buildFollowUpEmail(opts: {
     // Optional first-name field: prompt rule lets the LLM occasionally open
     // with "Hey {firstName},". Absent when name is null / (unknown) / handle.
     const firstName = firstNameFrom(ctx.prospect.name);
+    // Steer the draft away from openers this step has already worn out, rather
+    // than only rejecting them afterwards: a rejected draft costs another paid
+    // completion, and the model cannot see the last 40 sends on its own.
+    const avoidBlock = overusedOpenersBlock(ctx.prospect.id, opts.playName);
     const user = [
       `FOUNDER: ${ctx.cfg.founderName}`,
       `PRODUCT: ${ctx.cfg.productOneLiner}`,
@@ -1338,6 +1382,7 @@ export function buildFollowUpEmail(opts: {
       ...(priorBlock ? ["", priorBlock] : []),
       ...(proofBlock ? ["", proofBlock] : []),
       ...(firstName ? ["", `PROSPECT_FIRST_NAME: ${firstName}`] : []),
+      ...(avoidBlock ? ["", avoidBlock] : []),
     ].join("\n");
     const res = await complete({
       messages: [
