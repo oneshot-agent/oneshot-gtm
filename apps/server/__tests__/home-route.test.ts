@@ -7,20 +7,24 @@ const listActiveCadencesMock = vi.fn();
 const totalSpendUsdMock = vi.fn();
 const countSendsMock = vi.fn();
 
-vi.mock("@oneshot-gtm/core", () => ({
-  getLedger: () => ({
-    listReceipts: listReceiptsMock,
-    eventsByPlay: eventsByPlayMock,
-    listActiveCadences: listActiveCadencesMock,
-    totalSpendUsd: totalSpendUsdMock,
-    listRuns: listRunsMock,
-    countSends: countSendsMock,
-  }),
-  // Home capacity is best-effort and unrelated to this route contract test.
-  poolSendCapacity: () => {
-    throw new Error("not configured in test");
-  },
-}));
+vi.mock("@oneshot-gtm/core", async () => {
+  const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
+  return {
+    ...actual,
+    getLedger: () => ({
+      listReceipts: listReceiptsMock,
+      eventsByPlay: eventsByPlayMock,
+      listActiveCadences: listActiveCadencesMock,
+      totalSpendUsd: totalSpendUsdMock,
+      listRuns: listRunsMock,
+      countSends: countSendsMock,
+    }),
+    // Home capacity is best-effort and unrelated to this route contract test.
+    poolSendCapacity: () => {
+      throw new Error("not configured in test");
+    },
+  };
+});
 
 const { homeMetrics } = await import("../src/api/home.ts");
 

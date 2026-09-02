@@ -984,6 +984,7 @@ function DraftSection({
     mutationFn: () => api.sendDraft(id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["queue"] });
+      void qc.invalidateQueries({ queryKey: ["home"] });
       toast.success("sent · the reviewed draft went out as-is");
     },
     onError: (err) => {
@@ -1032,6 +1033,7 @@ function DraftSection({
     mutationFn: () => api.markSent(id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["queue"] });
+      void qc.invalidateQueries({ queryKey: ["home"] });
       toast.success("recorded · hand-send logged on channel x");
     },
     onError: (err) => {
