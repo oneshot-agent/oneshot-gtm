@@ -15,6 +15,9 @@ export interface BenchmarkAggregate {
 
 type BenchmarkStatus = "ok" | "opted-out" | "unavailable";
 
+const MAX_BENCHMARK_RESPONSE_BYTES = 512 * 1024;
+const BENCHMARK_TIMEOUT_MS = 10000;
+
 /** The aggregate reader lives beside the telemetry ingest route. */
 export function benchmarkUrl(env: NodeJS.ProcessEnv = process.env): string {
   const override = env["ONESHOT_GTM_BENCHMARK_URL"];
@@ -63,6 +66,35 @@ export function parseBenchmarkAggregate(value: unknown): BenchmarkAggregate | nu
   if (!Number.isInteger(row["cohortSize"]) || !finiteNonNegative(row["cohortSize"])) return null;
   if (!local || !cohort || row["cohortSize"] === 0) return null;
   return { cohortSize: row["cohortSize"], local, cohort };
+}
+
+async function readBenchmarkJson(response: Response): Promise<unknown> {
+  const reader = response.body?.getReader();
+  if (!reader) return null;
+
+  const chunks: Uint8Array[] = [];
+  let bytesRead = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      bytesRead += value.byteLength;
+      if (bytesRead > MAX_BENCHMARK_RESPONSE_BYTES) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  const decoder = new TextDecoder();
+  let json = "";
+  for (const chunk of chunks) json += decoder.decode(chunk, { stream: true });
+  json += decoder.decode();
+  return JSON.parse(json);
 }
 
 function renderMetric(label: string, local: string, cohort: string): void {
@@ -122,13 +154,13 @@ export async function commandMeasureBenchmark(
       const url = new URL(endpoint);
       url.searchParams.set("anonymous_machine_id", cfg.clientId);
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const timeoutId = setTimeout(() => controller.abort(), BENCHMARK_TIMEOUT_MS);
       try {
         const response = await fetch(url, {
           headers: { accept: "application/json" },
           signal: controller.signal,
         });
-        if (response.ok) aggregate = parseBenchmarkAggregate(await response.json());
+        if (response.ok) aggregate = parseBenchmarkAggregate(await readBenchmarkJson(response));
       } finally {
         clearTimeout(timeoutId);
       }
