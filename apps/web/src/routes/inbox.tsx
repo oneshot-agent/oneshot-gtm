@@ -128,7 +128,7 @@ function InboxPage() {
         {MATCH_FILTERS.map((f) => (
           <Button
             key={f.key}
-            variant={matchFilter === f.key ? "primary" : "ghost"}
+            variant={matchFilter === f.key ? "secondary" : "ghost"}
             size="sm"
             onClick={() => setMatchFilter(f.key)}
           >

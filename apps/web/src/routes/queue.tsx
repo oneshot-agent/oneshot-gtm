@@ -343,13 +343,18 @@ function QueuePage() {
           <div className="font-mono text-[11px] text-ink-faint">refresh · 20s</div>
         </div>
 
-        {/* Status + play filters, scoped to this table. */}
-        <div className="flex flex-wrap items-center gap-2 border-b border-ink-rule/60 px-6 pb-3">
+        {/*
+          Status, order and play are one filter block, so one rule closes it.
+          A rule between these two rows made them read as separate bands, which
+          on top of the caption's rule and the table head put four hairlines in
+          200px of page.
+        */}
+        <div className="flex flex-wrap items-center gap-2 px-6 pb-3">
           <span className="ln-eyebrow">status</span>
           {STATUSES.map((s) => (
             <Button
               key={s}
-              variant={statusFilter === s ? "primary" : "ghost"}
+              variant={statusFilter === s ? "secondary" : "ghost"}
               size="sm"
               onClick={() => setStatusFilter(s)}
             >
@@ -363,7 +368,7 @@ function QueuePage() {
               {(["newest", "ranked"] as const).map((o) => (
                 <Button
                   key={o}
-                  variant={effectiveOrder === o ? "primary" : "ghost"}
+                  variant={effectiveOrder === o ? "secondary" : "ghost"}
                   size="sm"
                   onClick={() => setOrderOverride(o)}
                 >
@@ -407,7 +412,7 @@ function QueuePage() {
         <div className="flex flex-wrap items-center gap-2 border-b border-ink-rule/60 px-6 py-2.5">
           <span className="ln-eyebrow">play</span>
           <Button
-            variant={playFilter === "all" ? "primary" : "ghost"}
+            variant={playFilter === "all" ? "secondary" : "ghost"}
             size="sm"
             onClick={() => setPlayFilter("all")}
           >
@@ -416,7 +421,7 @@ function QueuePage() {
           {playList.map((p) => (
             <Button
               key={p}
-              variant={playFilter === p ? "primary" : "ghost"}
+              variant={playFilter === p ? "secondary" : "ghost"}
               size="sm"
               onClick={() => setPlayFilter(p)}
             >
