@@ -58,6 +58,7 @@ export function NextStep() {
 
   const icpDone = (setup.data?.cfg.icpOneLiner ?? "").trim().length > 0;
   const strategyDone =
+    home.data?.hasFirstSend === true ||
     (triggers.data?.triggers ?? []).some((t) => t.lastPolledAt !== null) ||
     (queue.data?.counts.pending ?? 0) + (queue.data?.counts.approved ?? 0) > 0;
   const sendDone = home.data?.hasFirstSend === true;
