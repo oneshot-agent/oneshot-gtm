@@ -70,7 +70,10 @@ Not code — these need capture, not commits. `demo seed` + `demo ui` now stand 
 
 ## Approved, not yet started
 
-_Nothing approved and waiting._
+- [ ] **Deferred review findings from ai/gtm/issue-344** — issue #363.
+- [ ] **Deferred review findings from ai/gtm/issue-360** — issue #367.
+- [ ] **Deferred review findings from ai/gtm/issue-365** — issue #422.
+- [ ] **feat(server): sign webhook intake and reject replayed events** — issue #430.
 
 ## Things we intentionally do NOT do
 
