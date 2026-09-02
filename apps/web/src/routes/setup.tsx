@@ -13,6 +13,7 @@ import { api } from "../api/client.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
 import { Checkbox, Field, Input, Select, Textarea } from "../components/primitives/Field.tsx";
+import { readOnly } from "../lib/readOnly.ts";
 
 export const Route = createFileRoute("/setup")({
   component: SetupPage,
@@ -462,6 +463,7 @@ function SetupPage() {
                   className="shrink-0 whitespace-nowrap"
                   disabled={deriveIcp.isPending || icpDomain.trim().length === 0}
                   onClick={() => deriveIcp.mutate(icpDomain.trim())}
+                  {...readOnly}
                 >
                   <Wand2 size={12} className={deriveIcp.isPending ? "animate-pulse" : undefined} />
                   {deriveIcp.isPending ? `Working · ${deriveElapsed}s` : "Derive ICP"}
@@ -603,6 +605,7 @@ function SetupPage() {
                         .slice(0, 5),
                     )
                   }
+                  {...readOnly}
                 >
                   <Wand2
                     size={12}
@@ -968,6 +971,7 @@ function SetupPage() {
                                 action: paused ? "resume" : "pause",
                               })
                             }
+                            {...readOnly}
                           >
                             {busy ? "…" : paused ? "Resume" : "Pause"}
                           </Button>
@@ -1124,6 +1128,7 @@ function SetupPage() {
                     variant="secondary"
                     disabled={!smartleadKeyReady || loadSmartlead.isPending}
                     onClick={() => loadSmartlead.mutate()}
+                    {...readOnly}
                   >
                     {loadSmartlead.isPending ? "Loading…" : "Load Smartlead accounts"}
                   </Button>
@@ -1290,6 +1295,7 @@ function SetupPage() {
           <Button
             type="submit"
             disabled={save.isPending || deriveBrief.isPending}
+            {...readOnly}
             title={
               deriveBrief.isPending ? "wait for the brief derive to finish, then save" : undefined
             }

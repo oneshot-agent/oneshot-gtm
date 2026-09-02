@@ -39,10 +39,20 @@ import type {
   SpendByPlay,
   TriggerView,
 } from "@oneshot-gtm/shared-types";
+import { demoGet, demoWrite, IS_DEMO } from "./demo.ts";
 
 const BASE = "/api";
 
+/*
+ * Demo mode swaps the transport and nothing else.
+ *
+ * Every read in this file goes through getJson and every write through
+ * postJson, so these two branches are the entire seam: the api object below,
+ * the 36 mutation sites behind it and all nine routes stay untouched. That is
+ * why the seam is worth keeping narrow.
+ */
 async function getJson<T>(path: string): Promise<T> {
+  if (IS_DEMO) return demoGet<T>(path);
   const res = await fetch(BASE + path);
   if (!res.ok) {
     const fallback = `${res.status} ${res.statusText}: ${path}`;
@@ -62,6 +72,7 @@ async function getJson<T>(path: string): Promise<T> {
 }
 
 async function postJson<T>(path: string, body: unknown): Promise<T> {
+  if (IS_DEMO) demoWrite(path);
   const res = await fetch(BASE + path, {
     method: "POST",
     headers: { "content-type": "application/json" },

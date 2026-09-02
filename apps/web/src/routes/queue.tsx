@@ -51,6 +51,7 @@ import {
 } from "../lib/draftRunState.ts";
 import { buildSignalDays } from "../lib/signalDays.ts";
 import { summarizeRun } from "../lib/summarizeRun.ts";
+import { READ_ONLY, readOnly } from "../lib/readOnly.ts";
 import {
   clearTriggerRunning,
   hasAnyRunningTrigger,
@@ -392,6 +393,7 @@ function QueuePage() {
             size="sm"
             disabled={approveAll.isPending || counts.pending === 0}
             onClick={() => approveAll.mutate(playFilter === "all" ? undefined : playFilter)}
+            {...readOnly}
           >
             <Check size={12} /> approve all pending
             {playFilter !== "all" ? ` (${playFilter})` : ""}
@@ -499,6 +501,7 @@ function QueuePage() {
               size="sm"
               disabled={bulkApprove.isPending || selected.size === 0}
               onClick={() => bulkApprove.mutate([...selected])}
+              {...readOnly}
             >
               <Check size={12} /> approve {selected.size}
             </Button>
@@ -507,6 +510,7 @@ function QueuePage() {
               size="sm"
               disabled={bulkReject.isPending || selected.size === 0}
               onClick={() => bulkReject.mutate([...selected])}
+              {...readOnly}
             >
               <X size={12} /> reject {selected.size}
             </Button>
@@ -805,7 +809,7 @@ function QueueRow({
         <td className="px-6 py-2 text-right" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-end gap-1.5">
             {row.status === "pending" && (
-              <Button variant="primary" size="sm" disabled={busy} onClick={onApprove}>
+              <Button variant="primary" size="sm" disabled={busy} onClick={onApprove} {...readOnly}>
                 <Check size={12} />
                 approve
               </Button>
@@ -816,6 +820,7 @@ function QueueRow({
                 size="sm"
                 disabled={busy}
                 onClick={onReject}
+                {...readOnly}
                 className="text-[color:var(--ink-blocked-2)]"
               >
                 <X size={12} />
@@ -1018,6 +1023,7 @@ function DraftSection({
       size="sm"
       disabled={isGenerating}
       onClick={() => regenerate.mutate()}
+      {...readOnly}
       title="Draft this row in preview mode — dry-run, never sends"
     >
       {isGenerating ? <Loader2 size={11} className="animate-spin" /> : <RotateCw size={11} />}
@@ -1087,6 +1093,7 @@ function DraftSection({
           size="sm"
           disabled={markSent.isPending}
           onClick={() => markSent.mutate()}
+          {...readOnly}
           title="Record that you sent this by hand from the X app"
         >
           {markSent.isPending ? (
@@ -1114,6 +1121,7 @@ function DraftSection({
         size="sm"
         disabled={sending || !cleanDraft}
         onClick={() => send.mutate()}
+        {...readOnly}
         title={
           softHold
             ? draft?.flags.includes("contacted-elsewhere")
@@ -1545,8 +1553,11 @@ function TriggerRowFragment(props: TriggerRowProps) {
   const notReadyReason = t.notReadyReason ?? "missing required config";
   const approvalBlocked = t.deprioritized === true;
   // Block enabling an unready trigger but still allow disabling.
-  const toggleDisabled = props.setEnabledPending || (notReady && !t.enabled);
-  const runDisabled = props.running || notReady;
+  // Both fold in READ_ONLY rather than taking `readOnly` as props: these two
+  // controls compute their own disabled state, and `run now` gates clicks
+  // through pointer-events rather than the `disabled` attribute.
+  const toggleDisabled = props.setEnabledPending || (notReady && !t.enabled) || READ_ONLY;
+  const runDisabled = props.running || notReady || READ_ONLY;
   return (
     <>
       <tr
@@ -1594,7 +1605,7 @@ function TriggerRowFragment(props: TriggerRowProps) {
               aria-label={`polling interval for ${t.name}`}
               className="rounded border border-ink-rule bg-ink-surface px-1 py-0.5 font-mono text-[12px] text-ink-cream"
               value={String(t.intervalMs)}
-              disabled={props.setConfigPending}
+              disabled={props.setConfigPending || READ_ONLY}
               onBlur={() => setEditingInterval(false)}
               onKeyDown={(e) => {
                 if (e.key === "Escape") setEditingInterval(false);
@@ -1620,7 +1631,7 @@ function TriggerRowFragment(props: TriggerRowProps) {
             <button
               type="button"
               title="change polling interval"
-              disabled={props.setConfigPending}
+              disabled={props.setConfigPending || READ_ONLY}
               className="cursor-pointer underline decoration-ink-faint decoration-dotted underline-offset-2 hover:text-ink-cream disabled:cursor-default disabled:opacity-60"
               onClick={() => setEditingInterval(true)}
             >
@@ -1733,7 +1744,7 @@ function TriggerRowFragment(props: TriggerRowProps) {
                       variant="ghost"
                       size="sm"
                       onClick={props.onResetDefaults}
-                      disabled={props.setConfigPending}
+                      disabled={props.setConfigPending || READ_ONLY}
                       title="Replace the textarea with the registry default config"
                     >
                       reset
@@ -1743,7 +1754,7 @@ function TriggerRowFragment(props: TriggerRowProps) {
                     variant="ghost"
                     size="sm"
                     onClick={props.onCancelEdit}
-                    disabled={props.setConfigPending}
+                    disabled={props.setConfigPending || READ_ONLY}
                   >
                     cancel
                   </Button>
@@ -1751,7 +1762,7 @@ function TriggerRowFragment(props: TriggerRowProps) {
                     variant="primary"
                     size="sm"
                     onClick={props.onSaveEdit}
-                    disabled={props.setConfigPending}
+                    disabled={props.setConfigPending || READ_ONLY}
                   >
                     {props.setConfigPending ? "saving…" : "save"}
                   </Button>

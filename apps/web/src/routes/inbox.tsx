@@ -14,6 +14,7 @@ import { Textarea } from "../components/primitives/Field.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { cn, timeAgo } from "../lib/cn.ts";
 import { matchesReplyFilter, type ReplyMatchFilter } from "../lib/replyFilter.ts";
+import { readOnly } from "../lib/readOnly.ts";
 
 const MATCH_FILTERS: Array<{ key: ReplyMatchFilter; label: string }> = [
   { key: "all", label: "all" },
@@ -610,6 +611,7 @@ function ReplyComposer({ reply }: { reply: InboxReplyView }) {
           disabled={!reply.body || generate.isPending || send.isPending}
           title={reply.body ? undefined : "this email has no body to draft a reply from"}
           onClick={() => generate.mutate()}
+          {...readOnly}
         >
           {generate.isPending ? (
             <Loader2 size={12} className="animate-spin" />
@@ -629,6 +631,7 @@ function ReplyComposer({ reply }: { reply: InboxReplyView }) {
           size="sm"
           disabled={!draft.trim() || send.isPending || generate.isPending}
           onClick={() => send.mutate()}
+          {...readOnly}
         >
           {send.isPending ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
           {send.isPending ? "sending" : "send reply"}

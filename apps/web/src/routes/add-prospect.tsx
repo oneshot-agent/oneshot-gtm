@@ -7,6 +7,7 @@ import type { AddProspectResult } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { Button } from "../components/primitives/Button.tsx";
 import { Field, Input } from "../components/primitives/Field.tsx";
+import { readOnly } from "../lib/readOnly.ts";
 
 export const Route = createFileRoute("/add-prospect")({
   component: AddProspectPage,
@@ -102,7 +103,7 @@ function AddProspectPage() {
             </Field>
 
             <div className="flex items-center gap-3 pt-1">
-              <Button type="submit" variant="primary" size="md" disabled={!canSubmit}>
+              <Button type="submit" variant="primary" size="md" disabled={!canSubmit} {...readOnly}>
                 <UserPlus size={14} />
                 {add.isPending ? "Adding…" : "Research & draft"}
               </Button>
