@@ -59,7 +59,7 @@ bun run cli -- ui                               # http://127.0.0.1:3030
 
 `init` also asks for the founder profile the prompts draw on: background that builds trust, products you've shipped, notable partners or customers, and one true concession. All optional — when a field is blank, the beat that uses it is skipped rather than improvised. Edit any of them later from `/setup` or `config founder`.
 
-Some credentials are env-only — `init` never asks about them, but `/setup` and `config keys` can store them, and they land in the same `.env` in the config dir. The `x-reposters` finder's keys live here too: four OAuth1 values for the first-party X API, or `TWITTERAPI_IO_KEY` for the cheaper third-party engine — pick the provider on `/setup` or with `config x-engine`. `GITHUB_TOKEN` is the one most people need: without it the two GitHub finders share GitHub's unauthenticated ceiling of 60 requests/hour per IP and halt on a `403`, so a classic token with **no scopes** is worth creating before you enable them. `LUMA_SESSION_COOKIE` is optional, and only buys authed Luma guest lists. `doctor` warns about a missing `GITHUB_TOKEN` once a GitHub finder is on.
+Some credentials are env-only — `init` never asks about them, but `/setup` and `config keys` can store them in `~/.oneshot-gtm/.env`. The `x-reposters` finder's keys live here too: four OAuth1 values for the first-party X API, or `TWITTERAPI_IO_KEY` for the cheaper third-party engine — pick the provider on `/setup` or with `config x-engine`. `GITHUB_TOKEN` is the one most people need: without it the two GitHub finders share GitHub's unauthenticated ceiling of 60 requests/hour per IP and halt on a `403`, so a classic token with **no scopes** is worth creating before you enable them. `LUMA_SESSION_COOKIE` is optional, and only buys authed Luma guest lists. `doctor` warns about a missing `GITHUB_TOKEN` once a GitHub finder is on.
 
 To call it from anywhere: `cd apps/cli && bun link && bun link oneshot-gtm && cd -`. If you linked before workspaces landed, re-run that — the bin target moved to the bootstrap shim (`src/main.ts`).
 
@@ -80,7 +80,7 @@ bun run cli -- find drain podcast-guest --dry-run  # preview approved /queue row
 bun run cli -- cadence advance                     # daily tick: poll inbox, fire follow-ups
 ```
 
-54 commands — fourteen groups, plus `init`, `doctor` and `ui` at the top level. `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
+55 commands — fourteen groups, plus `init`, `doctor` and `ui` at the top level. `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
 
 | Group                    | Commands                                                                                                                                                                                                                                                                                            |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -350,7 +350,7 @@ Successful responses include `duplicate`, `prospectId`, `cadencesStopped`, and `
 
 ```
 apps/
-  cli/        54-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
+  cli/        55-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
   server/     Bun.serve + SSE; tsdown bundle published as `oneshot-gtm-server`
   web/        Vite + React 19 + TanStack + Base UI — 9 pages, run form, strategist dock, privacy mode
 packages/

@@ -267,6 +267,16 @@ export async function configKeys(): Promise<void> {
         name: "twitterApiIoKey",
         message: "TWITTERAPI_IO_KEY",
       },
+      {
+        type: "password",
+        name: "githubToken",
+        message: "GITHUB_TOKEN (GitHub finders; classic token needs no scopes)",
+      },
+      {
+        type: "password",
+        name: "lumaSessionCookie",
+        message: "LUMA_SESSION_COOKIE (optional; hosted-event guest lists)",
+      },
     ],
     { onCancel: () => process.exit(0) },
   );
@@ -283,6 +293,9 @@ export async function configKeys(): Promise<void> {
   if (answers["xAccessSecret"]) updates["X_ACCESS_SECRET"] = answers["xAccessSecret"] as string;
   if (answers["twitterApiIoKey"])
     updates["TWITTERAPI_IO_KEY"] = answers["twitterApiIoKey"] as string;
+  if (answers["githubToken"]) updates["GITHUB_TOKEN"] = answers["githubToken"] as string;
+  if (answers["lumaSessionCookie"])
+    updates["LUMA_SESSION_COOKIE"] = answers["lumaSessionCookie"] as string;
 
   if (Object.keys(updates).length === 0) {
     note("No changes.");

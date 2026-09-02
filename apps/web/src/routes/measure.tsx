@@ -129,8 +129,8 @@ function MeasurePage() {
         ) : cac.data?.spend.length === 0 ? (
           <div className="px-6 pb-6">
             <EmptyNote
-              note="No spend in this window. Run a play and the dollars will account for themselves."
-              cli="oneshot-gtm motion show-hn --target targets.json"
+              note="No spend in this window. Find prospects from /queue's finder flow, or run the watcher; spend appears after calls run."
+              cli="oneshot-gtm find watch"
             />
           </div>
         ) : (

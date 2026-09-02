@@ -345,6 +345,8 @@ export interface SetupRequest {
       | "X_ACCESS_TOKEN"
       | "X_ACCESS_SECRET"
       | "TWITTERAPI_IO_KEY"
+      | "GITHUB_TOKEN"
+      | "LUMA_SESSION_COOKIE"
       | "LINKEDIN_REPLY_WEBHOOK_SECRET",
       string
     >
