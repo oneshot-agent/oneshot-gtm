@@ -1,10 +1,21 @@
+import { createHmac } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const enqueued: Array<Record<string, unknown>> = [];
 let icpMatch: boolean | null = true;
+const webhookReplays = new Map<string, number>();
 
 vi.mock("@oneshot-gtm/core", () => ({
   getLedger: () => ({
+    consumeWebhookReplay: (key: string, expiresAt: number, now: number) => {
+      for (const [storedKey, storedExpiry] of webhookReplays) {
+        if (storedExpiry < now) webhookReplays.delete(storedKey);
+      }
+      if (webhookReplays.has(key)) return false;
+      webhookReplays.set(key, expiresAt);
+      return true;
+    },
+    clearWebhookReplays: () => webhookReplays.clear(),
     enqueueTarget: (row: Record<string, unknown>) => {
       enqueued.push(row);
       return 42;
@@ -19,18 +30,33 @@ vi.mock("@oneshot-gtm/find", () => ({
 
 const { calNoShowWebhookRoute, signupWebhookRoute } =
   await import("../src/api/webhook-triggers.ts");
+const { resetWebhookReplayCache } = await import("../src/api/webhook-verifier.ts");
 
-function request(path: string, body: unknown): Request {
+function request(
+  path: string,
+  body: unknown,
+  secret?: string,
+  timestamp = Math.floor(Date.now() / 1_000),
+): Request {
+  const raw = typeof body === "string" ? body : JSON.stringify(body);
+  const signature = secret
+    ? `t=${timestamp},v1=${createHmac("sha256", secret).update(`${timestamp}.${raw}`).digest("hex")}`
+    : undefined;
   return new Request(`http://localhost/api/triggers/${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
-    body: typeof body === "string" ? body : JSON.stringify(body),
+    headers: {
+      "content-type": "application/json",
+      ...(signature ? { "x-webhook-signature": signature } : {}),
+    },
+    body: raw,
   });
 }
 
 beforeEach(() => {
   enqueued.length = 0;
   icpMatch = true;
+  delete process.env["WEBHOOK_SECRET"];
+  resetWebhookReplayCache();
 });
 
 describe("webhook trigger intake", () => {
@@ -80,5 +106,65 @@ describe("webhook trigger intake", () => {
     expect(malformed.status).toBe(400);
     expect(await malformed.json()).toEqual({ error: "invalid JSON body" });
     expect(enqueued).toHaveLength(0);
+  });
+
+  it("accepts valid signed events on both intake endpoints", async () => {
+    process.env["WEBHOOK_SECRET"] = "whsec-test";
+    const signup = { name: "Grace", email: "grace@example.com", phone: "+15555550101" };
+    const noShow = {
+      name: "Ada",
+      email: "ada@example.com",
+      company: "Analytical Engines",
+      missedAt: "2026-09-01T10:00:00Z",
+      rescheduleLink: "https://example.com/reschedule",
+    };
+
+    expect(
+      (await signupWebhookRoute(request("signup", signup, process.env["WEBHOOK_SECRET"]))).status,
+    ).toBe(202);
+    expect(
+      (await calNoShowWebhookRoute(request("cal-no-show", noShow, process.env["WEBHOOK_SECRET"])))
+        .status,
+    ).toBe(202);
+  });
+
+  it("rejects tampered, expired, and replayed deliveries", async () => {
+    const secret = "whsec-test";
+    process.env["WEBHOOK_SECRET"] = secret;
+    const payload = { name: "Grace", email: "grace@example.com", phone: "+15555550101" };
+    const signed = request("signup", payload, secret);
+    const signature = signed.headers.get("x-webhook-signature")!;
+    const tampered = request("signup", { ...payload, name: "Mallory" });
+    tampered.headers.set("x-webhook-signature", signature);
+
+    expect((await signupWebhookRoute(tampered)).status).toBe(401);
+    expect(
+      (
+        await signupWebhookRoute(
+          request("signup", payload, secret, Math.floor(Date.now() / 1_000) - 301),
+        )
+      ).status,
+    ).toBe(401);
+    expect((await signupWebhookRoute(signed.clone())).status).toBe(202);
+    const replay = await signupWebhookRoute(signed.clone());
+    expect(replay.status).toBe(401);
+    expect(await replay.json()).toEqual({ error: "replayed webhook" });
+  });
+
+  it("does not consume a valid signature when the JSON is malformed", async () => {
+    const secret = "whsec-test";
+    process.env["WEBHOOK_SECRET"] = secret;
+    const signed = request("signup", "{", secret);
+
+    expect((await signupWebhookRoute(signed.clone())).status).toBe(400);
+    expect(webhookReplays.size).toBe(0);
+    expect((await signupWebhookRoute(signed.clone())).status).toBe(400);
+  });
+
+  it("keeps unsigned local intake enabled when no secret is configured", async () => {
+    const response = await signupWebhookRoute(
+      request("signup", { name: "Pat", email: "pat@example.com", phone: "+15555550102" }),
+    );
+    expect(response.status).toBe(202);
   });
 });

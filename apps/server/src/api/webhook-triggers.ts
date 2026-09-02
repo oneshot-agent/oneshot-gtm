@@ -2,6 +2,7 @@ import { getLedger } from "@oneshot-gtm/core";
 import { icpFilter, resolveIcp } from "@oneshot-gtm/find";
 import type { ConciergeTarget, DemoNoShowTarget } from "@oneshot-gtm/plays";
 import { jsonResponse } from "../server.ts";
+import { verifyWebhook } from "./webhook-verifier.ts";
 
 type WebhookKind = "cal-no-show" | "signup";
 
@@ -18,12 +19,26 @@ async function intakeWebhook(req: Request, kind: WebhookKind): Promise<Response>
     return jsonResponse({ error: "content-type must be application/json" }, 400, req);
   }
 
-  let raw: unknown;
+  let body: string;
   try {
-    raw = await req.json();
+    body = await req.text();
   } catch {
     return jsonResponse({ error: "invalid JSON body" }, 400, req);
   }
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(body);
+  } catch {
+    return jsonResponse({ error: "invalid JSON body" }, 400, req);
+  }
+
+  const verification = verifyWebhook(
+    req.headers.get("x-webhook-signature"),
+    body,
+    process.env["WEBHOOK_SECRET"],
+  );
+  if (!verification.ok) return jsonResponse({ error: verification.error }, 401, req);
 
   let payload: ConciergeTarget | DemoNoShowTarget;
   let company: string | null;
