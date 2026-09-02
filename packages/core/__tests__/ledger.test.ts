@@ -38,6 +38,30 @@ describe("Ledger schema migration", () => {
     expect(() => second.upsertProspect({ name: "x", email: "x@y.com", source: "t" })).not.toThrow();
     second.close();
   });
+
+  it("stores product research cache entries and expires old reads", () => {
+    ledger.setProductResearchCache("https://acme.dev", '{"version":1}');
+    expect(ledger.getProductResearchCache("https://acme.dev", 60_000)).toBe('{"version":1}');
+    expect(ledger.getProductResearchCache("https://acme.dev", -1)).toBeNull();
+  });
+
+  it("lists only new pending queue rows after a queue watermark", () => {
+    const before = ledger.latestQueueId();
+    ledger.enqueueTarget({
+      playName: "x",
+      payload: { email: "a@x.dev" },
+      dedupeKey: "a",
+      source: "t",
+    });
+    ledger.enqueueTarget({
+      playName: "x",
+      payload: { email: "b@x.dev" },
+      dedupeKey: "b",
+      source: "t",
+      initialStatus: "rejected",
+    });
+    expect(ledger.listPendingQueueAfterId(before).map((row) => row.dedupe_key)).toEqual(["a"]);
+  });
 });
 
 describe("Ledger receipts + prospects + spend rollups", () => {

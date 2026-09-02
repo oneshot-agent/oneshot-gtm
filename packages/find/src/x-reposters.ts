@@ -495,6 +495,7 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
   });
 
   result.costUsd = meter.total + sdkCost;
+  result.sdkCostUsd = sdkCost;
   logEvent("finder.done", {
     name: PLAY_NAME,
     candidates: result.candidates,

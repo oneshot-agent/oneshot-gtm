@@ -20,6 +20,7 @@ import { runXRepostersFinder } from "./x-reposters.ts";
 import type { XSeed } from "./_x-types.ts";
 import type { HarvestKnobs } from "./_x-engine.ts";
 import type { FinderResult } from "./_types.ts";
+import { researchNewQueueRows } from "./_product-research.ts";
 
 export interface TriggerSpec {
   name: string;
@@ -45,6 +46,26 @@ export interface TriggerSpec {
   run: (config: Record<string, unknown>) => Promise<FinderResult>;
 }
 
+/** Run a finder, then attach product context to only the pending rows it created. */
+export async function runFinderWithProductResearch(
+  spec: TriggerSpec,
+  config: Record<string, unknown>,
+): Promise<FinderResult> {
+  const ledger = getLedger();
+  const afterId = ledger.latestQueueId();
+  const result = await spec.run(config);
+  await researchNewQueueRows({
+    afterId,
+    result,
+    enabled: config["productResearch"] !== false,
+    priorSdkCostUsd: result.sdkCostUsd ?? result.costUsd,
+    ...(typeof config["maxCostUsd"] === "number"
+      ? { maxCostUsd: config["maxCostUsd"] as number }
+      : {}),
+  });
+  return result;
+}
+
 export type Readiness = { ready: true } | { ready: false; reason: string };
 
 /** Evaluate a spec's readiness fn (defaulting to ready when absent). */
@@ -60,6 +81,7 @@ export function checkReadiness(spec: TriggerSpec, config: Record<string, unknown
 }
 
 const ONE_HOUR = 3600 * 1000;
+const PRODUCT_RESEARCH_DEFAULT = { productResearch: true } as const;
 
 /**
  * Default cohort sweep for `accelerator-batch`. Only yc-* entries hit the
@@ -90,7 +112,7 @@ export const TRIGGERS: TriggerSpec[] = [
   {
     name: "show-hn",
     defaultIntervalMs: 6 * ONE_HOUR,
-    defaultConfig: { sinceDays: 1, limit: 25, maxCostUsd: 5 },
+    defaultConfig: { ...PRODUCT_RESEARCH_DEFAULT, sinceDays: 1, limit: 25, maxCostUsd: 5 },
     configBrief:
       "Polls Hacker News Algolia for recent Show HN posts, ICP-filters them, enriches founder contact, and enqueues them for review. Config: `sinceDays` (lookback window, default 1), `limit` (max kept, default 25), `maxCostUsd` (per-run spend cap), `minPoints` (upvote floor, default 5 — posts below it drop as low-signal). Defaults work for most ICPs — bump sinceDays to 7+ if your ICP is niche enough that daily volume is thin. STRATEGIST NOTE: minPoints is a MOTION choice, not noise control — selling a paid product, keep ≥5 (traction = budget); driving adoption of a founder tool, drop to 1-2 (the quiet launch IS the pain signal).",
     run: (cfg) =>
@@ -108,6 +130,7 @@ export const TRIGGERS: TriggerSpec[] = [
     enabledByDefault: false,
     // Every known incubator × {latest, previous-latest}; editable in /queue.
     defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
       cohorts: DEFAULT_COHORTS,
       limit: 25,
       maxCostUsd: 15,
@@ -183,6 +206,7 @@ export const TRIGGERS: TriggerSpec[] = [
     name: "post-funding-auto",
     defaultIntervalMs: 12 * ONE_HOUR,
     defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
       autoRounds: ["Seed", "Series A"],
       autoSinceDays: 7,
       limit: 25,
@@ -210,6 +234,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
       personas: ["VP Engineering", "Head of Growth", "Director of Product", "Chief of Staff"],
       sinceDays: 14,
       limit: 25,
@@ -232,6 +257,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
       roles: ["Staff Engineer", "ML Engineer", "Solutions Engineer"],
       sinceDays: 14,
       limit: 25,
@@ -261,6 +287,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
       podcasts: ["Latent Space", "Lenny's Podcast", "20VC", "Acquired", "Invest Like the Best"],
       sinceDays: 21,
       skipRead: false,
@@ -287,6 +314,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
       topics: ["AI", "founders"] as string[],
       cities: ["San Francisco", "New York"] as string[],
       sinceDays: 14,
@@ -342,6 +370,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 12 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
       topics: [] as string[],
       vendors: [] as string[],
       directCompetitors: [] as string[],
@@ -412,6 +441,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 12 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
       repos: [] as Array<{ repo: string; rel: string; label?: string; repoEdge?: string }>,
       yourEdge: "",
       sinceDays: 30,
@@ -476,6 +506,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
       seeds: [] as Array<{ handle: string; edge?: string }>,
       engine: "xapi",
       laneSplit: 0.5,
@@ -814,7 +845,7 @@ export async function runTriggerNow(name: string): Promise<TriggerRunOutcome> {
   const startedAt = Date.now();
   logEvent("trigger.run.start", { name, source: "ad_hoc" });
   try {
-    const result = await spec.run(config);
+    const result = await runFinderWithProductResearch(spec, config);
     ledger.updateTriggerLastPoll({ name, summary: result });
     logEvent("trigger.run.done", {
       name,
@@ -944,7 +975,7 @@ export async function runDueTriggers(
     const startedAt = Date.now();
     logEvent("trigger.run.start", { name: spec.name, source: "watch" });
     try {
-      const result = await spec.run(config);
+      const result = await runFinderWithProductResearch(spec, config);
       const durationMs = Date.now() - startedAt;
       ledger.updateTriggerLastPoll({ name: spec.name, summary: result });
       logEvent("trigger.run.done", {

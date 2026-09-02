@@ -21,6 +21,8 @@ export interface FinderResult {
   enqueued: number;
   /** Approximate USD spent on OneShot calls during this run. */
   costUsd: number;
+  /** SDK/LLM portion when costUsd also includes a separate source meter (for example X). */
+  sdkCostUsd?: number;
   /** Reason the run halted early, if any (e.g. "max-cost cap"). */
   halted?: string;
   /**
