@@ -6,8 +6,14 @@
  * install at ~/.oneshot-gtm-demo is left alone:
  *
  *   bun run cli -- demo seed --home ~/.oneshot-gtm-demo-site
+ *   ONESHOT_GTM_HOME=~/.oneshot-gtm-demo-site bun run cli -- find score-prospects --scope all
  *   bun run cli -- demo ui   --home ~/.oneshot-gtm-demo-site --port 3141 --no-browser
  *   bun run --cwd apps/web capture
+ *
+ * The scoring pass is not optional. `demo seed` leaves every row's priority
+ * null, and a queue with no scores is missing the chip a real install shows
+ * against every pending row. It reads stored payloads only: no network, no LLM,
+ * no spend, and the numbers are the scorer's own.
  *
  * Seed with no --now so the ledger is anchored at the moment of capture. The
  * screenshots pin their anchor because a re-shoot has to match an earlier take;
