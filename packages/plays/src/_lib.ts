@@ -117,9 +117,15 @@ export const SLOP_PHRASES: Array<[RegExp, string]> = [
   [/\bLoved your launch\b/i, "banned-opener:loved-your-launch"],
   [/\bReaching out because\b/i, "banned-opener:reaching-out"],
   [/\bI'd love to (?:chat|connect|jump on a call|hear)\b/i, "banned-cta:love-to-chat"],
-  [/\bWorth a 15.?min\b/i, "banned-cta:worth-15-min"],
+  // Any time-boxed meeting ask, not just the 15-minute one: "worth a 10-min
+  // back and forth" shipped 291 times past the literal 15 in this pattern.
+  [/\bWorth a \d+.?min/i, "banned-cta:worth-n-min"],
   [/\bMind if I\b/i, "banned-cta:mind-if-i"],
   [/\bJust wanted to\b/i, "banned-filler:just-wanted-to"],
+  // A meeting ask dressed as a small one (_humanizer.md -> Banned CTAs). Prompt
+  // text alone did not hold it: 120 of 312 repo-interest second touches shipped
+  // with one, because several play prompts quoted the phrase while banning it.
+  [/\b(?:compare notes|swap takes|back.?and.?forth|trade notes)\b/i, "banned-cta:compare-notes"],
   [/\bcurious to (?:learn|hear)\b/i, "banned-filler:curious-to"],
   [
     /\b(?:additionally|crucial|delve|enduring|enhance|fostering|garner|highlight|interplay|intricate|pivotal|showcase|tapestry|testament|underscore|leverage|navigate|elevate|empower|seamless|robust|comprehensive|vibrant|profound|groundbreaking|revolutionary)\b/i,

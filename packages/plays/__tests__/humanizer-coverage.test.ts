@@ -31,7 +31,8 @@ const PROBES: RuleProbe[] = [
   { flag: "banned-opener:reaching-out", marker: "reaching out because" },
   // Banned CTAs
   { flag: "banned-cta:love-to-chat", marker: "i'd love to chat" },
-  { flag: "banned-cta:worth-15-min", marker: "worth a 15" },
+  { flag: "banned-cta:worth-n-min", marker: "worth a 15" },
+  { flag: "banned-cta:compare-notes", marker: "compare notes" },
   { flag: "banned-cta:mind-if-i", marker: "mind if i" },
   // Banned filler
   { flag: "banned-filler:just-wanted-to", marker: "just wanted to" },
