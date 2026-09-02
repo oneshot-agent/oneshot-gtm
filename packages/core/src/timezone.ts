@@ -20,7 +20,7 @@ const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
 /** `2026-08-26T19:30` / `2026-08-26 19:30:00` — a wall clock with no zone. */
 const NAIVE_DATETIME = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?$/;
 /** Calendar fields at the start of an ISO timestamp with a zone or offset. */
-const ZONED_DATETIME_DATE = /^(\d{4})-(\d{2})-(\d{2})[T ]/;
+const ZONED_DATETIME_DATE = /^(\d{4})-(\d{2})-(\d{2})[Tt ]/;
 
 /**
  * City → IANA zone for the cities the luma-events finder can be configured
