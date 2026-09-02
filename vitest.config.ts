@@ -6,6 +6,7 @@ export default defineConfig({
     include: [
       "packages/**/__tests__/**/*.test.ts",
       "apps/**/__tests__/**/*.test.ts",
+      "apps/web/src/lib/**/*.test.ts",
       // repo/ holds tests about the repository itself (docs vs. code drift),
       // not about a single package.
       "repo/__tests__/**/*.test.ts",
