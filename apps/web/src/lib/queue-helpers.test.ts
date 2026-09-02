@@ -66,8 +66,8 @@ describe("queue selection and bulk approval", () => {
       { id: 3, status: "approved", isSending: false },
       { id: 4, status: "sent", isSending: false },
     ];
-    expect(mixedRows.map((row) => row.id)).toEqual([1, 2, 3, 4]);
-    expect(bulkApprovalIds(selected)).toEqual([2, 4]);
+    const selectedRows = mixedRows.filter((row) => selected.has(row.id));
+    expect(bulkApprovalIds(new Set(selectedRows.map((row) => row.id)))).toEqual([2, 4]);
   });
 });
 
