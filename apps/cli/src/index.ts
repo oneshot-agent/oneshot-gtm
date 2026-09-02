@@ -66,6 +66,7 @@ import { commandEnrichLinkedIn } from "./commands/enrich-linkedin.ts";
 import { commandResearchProspects } from "./commands/research-prospects.ts";
 import { commandResearchProducts } from "./commands/research-products.ts";
 import { commandScoreProspects } from "./commands/score-prospects.ts";
+import { commandCalibrate } from "./commands/calibrate.ts";
 import { commandFindDrain, commandFindImport, commandFindWatch } from "./commands/find.ts";
 import { commandInstallService } from "./commands/install-service.ts";
 import { commandMeasureBenchmark } from "./commands/measure.ts";
@@ -597,6 +598,14 @@ find
       },
     ),
   );
+
+find
+  .command("calibrate")
+  .option("--fit", "fit finders that meet the floors and write the artifact", false)
+  .description(
+    "Readiness-gated outcome calibration for priority scores (shadow only; no --force by design)",
+  )
+  .action(runOrFail((opts: { fit: boolean }) => commandCalibrate({ fit: opts.fit })));
 
 // Cadence: cron-able advance. List/stop are in the dashboard.
 const cadence = program
