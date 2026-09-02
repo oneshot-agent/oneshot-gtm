@@ -605,6 +605,64 @@ export class Ledger {
     // manual/legacy rows, auto-rejections, and everything pre-v25. Read-only
     // metadata — nothing orders, gates, or drains by it in Phase 1.
     this.addColumnIfMissing("target_queue", "priority_json", "TEXT");
+    // v26: decision provenance (issue #410 Phase 3). `status` is a lossy
+    // record of the decision HISTORY — expiry overwrites approvals (a reply
+    // used to destroy the approval label on its own breakup-revive row),
+    // re-open nulls reviewed_at, and bulk approves share one timestamp.
+    // These columns record the decision itself and are never touched by
+    // expiry or re-open.
+    this.addColumnIfMissing("target_queue", "decision", "TEXT"); // 'approve'|'reject'|'auto_reject'
+    this.addColumnIfMissing("target_queue", "decided_at", "TEXT");
+    this.addColumnIfMissing("target_queue", "decided_by", "TEXT"); // 'human'|'human_bulk'|'machine'
+    this.backfillDecisionProvenance();
+  }
+
+  /**
+   * One-time (guard-idempotent, boot-run) inference of decision provenance
+   * for pre-v26 rows, reproducing the status-based `isHumanDecision`
+   * predicate exactly so every existing metric is unchanged by the migration.
+   * Pending/expired rows stay NULL — labels machinery already destroyed are
+   * not fabricated. Safe under concurrent boots: the `decision IS NULL`
+   * guard makes the loser's UPDATE a no-op.
+   */
+  private backfillDecisionProvenance(): void {
+    // Approvals. A human cannot hand-approve 20 rows in one millisecond, so
+    // >=20 rows sharing (play_name, reviewed_at) is an approveAllPending
+    // batch (the gauge measured a single 108-row millisecond) → human_bulk.
+    this.db.exec(`
+      UPDATE target_queue SET
+        decision = 'approve',
+        decided_at = reviewed_at,
+        decided_by = CASE WHEN (
+          SELECT COUNT(*) FROM target_queue t2
+          WHERE t2.play_name = target_queue.play_name
+            AND t2.reviewed_at = target_queue.reviewed_at
+            AND t2.status IN ('approved','sent')
+        ) >= 20 THEN 'human_bulk' ELSE 'human' END
+      WHERE decision IS NULL
+        AND status IN ('approved','sent')
+        AND reviewed_at IS NOT NULL
+    `);
+    // Human rejections (COALESCE: NULL notes is a human rejection, the
+    // three-valued-logic trap documented in labels.ts).
+    this.db.exec(`
+      UPDATE target_queue SET
+        decision = 'reject', decided_at = reviewed_at, decided_by = 'human'
+      WHERE decision IS NULL
+        AND status = 'rejected'
+        AND reviewed_at IS NOT NULL
+        AND COALESCE(notes, '') NOT LIKE 'auto:%'
+    `);
+    // Machine rejections (ICP/role gates, import classifiers).
+    this.db.exec(`
+      UPDATE target_queue SET
+        decision = 'auto_reject',
+        decided_at = COALESCE(reviewed_at, found_at),
+        decided_by = 'machine'
+      WHERE decision IS NULL
+        AND status = 'rejected'
+        AND COALESCE(notes, '') LIKE 'auto:%'
+    `);
   }
 
   /**
@@ -2656,8 +2714,8 @@ export class Ledger {
       const reviewedAt = status === "pending" ? null : new Date().toISOString();
       const result = this.db
         .prepare(
-          `INSERT INTO target_queue(play_name, payload_json, dedupe_key, source, status, reviewed_at, notes, priority_json)
-           VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO target_queue(play_name, payload_json, dedupe_key, source, status, reviewed_at, notes, priority_json, decision, decided_at, decided_by)
+           VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.playName,
@@ -2668,6 +2726,12 @@ export class Ledger {
           reviewedAt,
           input.notes ?? null,
           input.priority ? JSON.stringify(input.priority) : null,
+          // An insert-time rejection is a gate's verdict, never a human's —
+          // structural provenance replaces the `auto:` notes-sniffing (the
+          // notes convention stays for humans and pre-v26 fallback).
+          status === "rejected" ? "auto_reject" : null,
+          status === "rejected" ? reviewedAt : null,
+          status === "rejected" ? "machine" : null,
         );
       return Number(result.lastInsertRowid);
     } catch (err) {
@@ -2893,31 +2957,53 @@ export class Ledger {
     return result.changes > 0;
   }
 
-  setQueueStatus(input: { id: number; status: QueueStatus; notes?: string }): void {
+  setQueueStatus(input: {
+    id: number;
+    status: QueueStatus;
+    notes?: string;
+    /**
+     * Who made this transition. Defaults are per-status, chosen so every
+     * existing unannotated caller stays correctly classified:
+     * - approved → "human": approving IS the review act; no machine path
+     *   approves single rows today (bulk goes through approveAllPending).
+     * - rejected/sent → "machine": auto-reject gates and drain sends call
+     *   this unannotated, and an unannotated caller must never mint a human
+     *   REJECTION label (a mislabeled negative poisons any future fit) —
+     *   the per-row UI routes pass "human" explicitly.
+     */
+    decidedBy?: "human" | "machine";
+  }): void {
     const now = new Date().toISOString();
+    const decidedBy = input.decidedBy ?? (input.status === "approved" ? "human" : "machine");
     // Every status transition clears `send_started_at` — a deliberate status
     // change means the previous "sending" attempt (if any) is settled. Terminal
     // states (sent/rejected/expired) clear naturally. Approved → approved
     // doesn't need to preserve a marker (caller re-claims on the next send).
     if (input.status === "sent") {
+      // COALESCE on the decision columns: a drain/run send must never
+      // overwrite the human approve that put the row here; a send on a
+      // never-decided row records an honest machine disposition.
       this.db
         .prepare(
-          `UPDATE target_queue SET status = ?, sent_at = ?, reviewed_at = COALESCE(reviewed_at, ?), send_started_at = NULL ${input.notes ? ", notes = ?" : ""} WHERE id = ?`,
+          `UPDATE target_queue SET status = ?, sent_at = ?, reviewed_at = COALESCE(reviewed_at, ?), decision = COALESCE(decision, 'approve'), decided_at = COALESCE(decided_at, ?), decided_by = COALESCE(decided_by, ?), send_started_at = NULL ${input.notes ? ", notes = ?" : ""} WHERE id = ?`,
         )
         .run(
           ...(input.notes
-            ? [input.status, now, now, input.notes, input.id]
-            : [input.status, now, now, input.id]),
+            ? [input.status, now, now, now, decidedBy, input.notes, input.id]
+            : [input.status, now, now, now, decidedBy, input.id]),
         );
     } else if (input.status === "approved" || input.status === "rejected") {
+      // Always overwrites: the latest decision wins on a re-decide.
+      const decision =
+        input.status === "approved" ? "approve" : decidedBy === "human" ? "reject" : "auto_reject";
       this.db
         .prepare(
-          `UPDATE target_queue SET status = ?, reviewed_at = ?, send_started_at = NULL ${input.notes ? ", notes = ?" : ""} WHERE id = ?`,
+          `UPDATE target_queue SET status = ?, reviewed_at = ?, decision = ?, decided_at = ?, decided_by = ?, send_started_at = NULL ${input.notes ? ", notes = ?" : ""} WHERE id = ?`,
         )
         .run(
           ...(input.notes
-            ? [input.status, now, input.notes, input.id]
-            : [input.status, now, input.id]),
+            ? [input.status, now, decision, now, decidedBy, input.notes, input.id]
+            : [input.status, now, decision, now, decidedBy, input.id]),
         );
     } else if (input.status === "pending") {
       this.db
@@ -3019,11 +3105,15 @@ export class Ledger {
       where.push("play_name = ?");
       args.push(opts.playName);
     }
+    // decided_by='human_bulk': a human sanctioned the batch, but no per-row
+    // judgment happened — evaluation code can include or exclude these
+    // explicitly instead of reverse-engineering shared timestamps.
+    const now = new Date().toISOString();
     const result = this.db
       .prepare(
-        `UPDATE target_queue SET status = 'approved', reviewed_at = ? WHERE ${where.join(" AND ")}`,
+        `UPDATE target_queue SET status = 'approved', reviewed_at = ?, decision = 'approve', decided_at = ?, decided_by = 'human_bulk' WHERE ${where.join(" AND ")}`,
       )
-      .run(...([new Date().toISOString(), ...args] as never[]));
+      .run(...([now, now, ...args] as never[]));
     return Number(result.changes);
   }
 

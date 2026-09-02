@@ -29,13 +29,20 @@ afterEach(() => {
 
 describe("recentIcpDecisions", () => {
   it("returns the newest reviewed labels and keeps sent rows as approvals", () => {
+    // Human rejections happen post-enqueue via the /queue route (insert-time
+    // rejections are always machine gates and are excluded structurally
+    // since v26 — decision='auto_reject').
     const rejected = ledger.enqueueTarget({
       playName: "show-hn",
       payload: { title: "Wine meetup" },
       dedupeKey: "reject",
       source: "test",
-      initialStatus: "rejected",
+    });
+    ledger.setQueueStatus({
+      id: rejected!,
+      status: "rejected",
       notes: "wrong industry",
+      decidedBy: "human",
     });
     const approved = ledger.enqueueTarget({
       playName: "show-hn",
@@ -58,7 +65,12 @@ describe("recentIcpDecisions", () => {
       dedupeKey: "sent",
       source: "test",
     });
-    ledger.setQueueStatus({ id: sent!, status: "sent", notes: "founder approved" });
+    ledger.setQueueStatus({
+      id: sent!,
+      status: "sent",
+      notes: "founder approved",
+      decidedBy: "human",
+    });
     ledger.enqueueTarget({
       playName: "show-hn",
       payload: { title: "Not reviewed" },
@@ -121,8 +133,8 @@ describe("finderApprovalStats", () => {
     const rejected = add("c", "find:github-stars");
     add("pending", "find:github-stars");
     ledger.setQueueStatus({ id: approved, status: "approved" });
-    ledger.setQueueStatus({ id: sent, status: "sent" });
-    ledger.setQueueStatus({ id: rejected, status: "rejected" });
+    ledger.setQueueStatus({ id: sent, status: "sent", decidedBy: "human" });
+    ledger.setQueueStatus({ id: rejected, status: "rejected", decidedBy: "human" });
 
     expect(ledger.finderApprovalStats({ finder: "github-stars", sinceIso: "2000-01-01" })).toEqual({
       approved: 2,

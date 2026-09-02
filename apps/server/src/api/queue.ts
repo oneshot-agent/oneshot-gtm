@@ -153,7 +153,7 @@ export async function approveQueueRoute(
   const ledger = getLedger();
   const row = ledger.getQueueRow(id);
   if (!row) return jsonResponse({ error: `row #${id} not found` }, 404, req);
-  ledger.setQueueStatus({ id, status: "approved" });
+  ledger.setQueueStatus({ id, status: "approved", decidedBy: "human" });
   return jsonResponse({ ok: true }, 200, req);
 }
 
@@ -173,7 +173,9 @@ export async function rejectQueueRoute(
   const row = ledger.getQueueRow(id);
   if (!row) return jsonResponse({ error: `row #${id} not found` }, 404, req);
   ledger.setQueueStatus(
-    body.reason ? { id, status: "rejected", notes: body.reason } : { id, status: "rejected" },
+    body.reason
+      ? { id, status: "rejected", notes: body.reason, decidedBy: "human" }
+      : { id, status: "rejected", decidedBy: "human" },
   );
   return jsonResponse({ ok: true }, 200, req);
 }
@@ -392,7 +394,8 @@ export async function markSentRoute(
   } catch {
     // best-effort backfill — the marked send is already recorded
   }
-  ledger.setQueueStatus({ id: row.id, status: "sent" });
+  // A per-row human action (manually sent via another channel).
+  ledger.setQueueStatus({ id: row.id, status: "sent", decidedBy: "human" });
   return jsonResponse({ ok: true, prospectId }, 200, req);
 }
 
@@ -571,7 +574,8 @@ export async function sendDraftRoute(
 
   const prospect = ledger.findProspectByEmail(email);
   if (prospect) enrollInCadence({ prospectId: prospect.id, playName: row.play_name });
-  ledger.setQueueStatus({ id, status: "sent" });
+  // The human read this draft and clicked Send — a per-row judgment.
+  ledger.setQueueStatus({ id, status: "sent", decidedBy: "human" });
   ledger.setQueueDraft({
     id,
     draft: { subject, body, flags: [], sent: true, receiptIds: result.receiptIds, dryRun: false },

@@ -384,6 +384,15 @@ export interface QueueRow {
    * from manual/legacy producers, auto-rejections, and pre-v25 rows.
    */
   priority_json: string | null;
+  /**
+   * Decision provenance (v26): the decision itself, durable against expiry
+   * and re-open — `status` alone is lossy history. NULL on undecided and
+   * pre-v26-unbackfillable rows. See core/labels.ts.
+   */
+  decision: "approve" | "reject" | "auto_reject" | null;
+  decided_at: string | null;
+  /** 'human' (per-row click) | 'human_bulk' (approve-all batch) | 'machine'. */
+  decided_by: "human" | "human_bulk" | "machine" | null;
 }
 
 export interface TriggerRow {

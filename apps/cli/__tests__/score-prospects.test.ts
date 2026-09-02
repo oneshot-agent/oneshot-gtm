@@ -268,9 +268,9 @@ describe("--all-statuses methodology evaluation", () => {
   it("scores historical rows and gauges score vs human call, auto-rejections excluded", () => {
     // Human-approved-and-sent strong candidate vs human-rejected weak one.
     const sent = enqueue("post-funding", FUNDING_PAYLOAD);
-    ledger.setQueueStatus({ id: sent, status: "sent" });
+    ledger.setQueueStatus({ id: sent, status: "sent", decidedBy: "human" });
     const weak = enqueue("post-funding", { name: "Bo", email: "bo@x.dev" });
-    ledger.setQueueStatus({ id: weak, status: "rejected", notes: "not a fit" });
+    ledger.setQueueStatus({ id: weak, status: "rejected", notes: "not a fit", decidedBy: "human" });
     const auto = enqueue(
       "post-funding",
       { name: "Zed", email: "z@x.dev" },
@@ -308,7 +308,12 @@ describe("buildShadowReport — human-vs-auto provenance", () => {
     const humanRejected = enqueue("post-funding", FUNDING_PAYLOAD, {
       notes: "wrong segment",
     });
-    ledger.setQueueStatus({ id: humanRejected, status: "rejected", notes: "wrong segment" });
+    ledger.setQueueStatus({
+      id: humanRejected,
+      status: "rejected",
+      notes: "wrong segment",
+      decidedBy: "human",
+    });
     enqueue("post-funding", { name: "x" }, { initialStatus: "rejected", notes: "auto: ICP — no" });
     commandScoreProspects({ refresh: false, dryRun: false, report: false });
 
