@@ -226,6 +226,8 @@ export interface HomeMetrics {
   sentLast7d: number;
   repliedLast7d: number;
   activeCadences: number;
+  /** Durable, all-time first-send milestone derived from sent sequence events. */
+  hasFirstSend: boolean;
   /** Absent when the capacity computation failed — pages skip the figure. */
   sendsToday?: SendsToday;
   /**

@@ -4,13 +4,15 @@ import { ArrowRight } from "lucide-react";
 import { api } from "../../api/client.ts";
 import { Button } from "../primitives/Button.tsx";
 import { useLocalStorage } from "../../lib/useLocalStorage.ts";
+import { openStrategist } from "../../lib/openStrategist.ts";
 
 interface Step {
-  id: "icp" | "find" | "drain";
+  id: "icp" | "strategy" | "send";
   title: string;
   lede: string;
   cta: string;
-  href: "/setup" | "/queue";
+  href?: "/setup" | "/queue";
+  opensStrategist?: boolean;
 }
 
 const STEPS: Step[] = [
@@ -22,17 +24,17 @@ const STEPS: Step[] = [
     href: "/setup",
   },
   {
-    id: "find",
-    title: "Run your first finder",
-    lede: "Pick a trigger (Show HN is cheapest) and click Run now. Results land in the queue for your review before anything sends.",
-    cta: "Open the queue",
-    href: "/queue",
+    id: "strategy",
+    title: "Plan your first motion",
+    lede: "Your strategist knows your product and ICP. It will recommend a signal, propose the exact config, and ask before applying it.",
+    cta: "Open strategist",
+    opensStrategist: true,
   },
   {
-    id: "drain",
-    title: "Approve a target and drain",
-    lede: "Approve a queued row, then click drain to send. The cadence engine takes over from there.",
-    cta: "Open the queue",
+    id: "send",
+    title: "Review and send",
+    lede: "The strategist has handed candidates to your queue. Review the evidence and draft, approve one, then send it.",
+    cta: "Review the queue",
     href: "/queue",
   },
 ];
@@ -44,6 +46,7 @@ export function NextStep() {
 
   const setup = useQuery({ queryKey: ["setup"], queryFn: api.setupStatus });
   const triggers = useQuery({ queryKey: ["triggers"], queryFn: api.triggers });
+  const home = useQuery({ queryKey: ["home"], queryFn: api.home });
   // Reuses the cache key from index.tsx's home queue query.
   const queue = useQuery({
     queryKey: ["queue", "recent", "home"],
@@ -51,15 +54,20 @@ export function NextStep() {
   });
 
   if (skipped) return null;
-  if (setup.isLoading || triggers.isLoading || queue.isLoading) return null;
+  if (setup.isLoading || triggers.isLoading || queue.isLoading || home.isLoading) return null;
 
   const icpDone = (setup.data?.cfg.icpOneLiner ?? "").trim().length > 0;
-  const findDone =
+  const strategyDone =
+    home.data?.hasFirstSend === true ||
     (triggers.data?.triggers ?? []).some((t) => t.lastPolledAt !== null) ||
-    (queue.data?.counts.pending ?? 0) + (queue.data?.counts.sent ?? 0) > 0;
-  const drainDone = (queue.data?.counts.sent ?? 0) > 0;
+    (queue.data?.counts.pending ?? 0) + (queue.data?.counts.approved ?? 0) > 0;
+  const sendDone = home.data?.hasFirstSend === true;
 
-  const done: Record<Step["id"], boolean> = { icp: icpDone, find: findDone, drain: drainDone };
+  const done: Record<Step["id"], boolean> = {
+    icp: icpDone,
+    strategy: strategyDone,
+    send: sendDone,
+  };
   const ix = STEPS.findIndex((s) => !done[s.id]);
   if (ix === -1) return null;
 
@@ -87,11 +95,17 @@ export function NextStep() {
           <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink-cream-2">{step.lede}</p>
         </div>
         <div className="flex flex-col items-end gap-2">
-          <Link to={step.href}>
-            <Button size="sm" variant="primary">
+          {step.opensStrategist ? (
+            <Button size="sm" variant="primary" onClick={openStrategist}>
               {step.cta} <ArrowRight size={12} />
             </Button>
-          </Link>
+          ) : (
+            <Link to={step.href!}>
+              <Button size="sm" variant="primary">
+                {step.cta} <ArrowRight size={12} />
+              </Button>
+            </Link>
+          )}
           <button
             type="button"
             onClick={() => setSkipped(true)}

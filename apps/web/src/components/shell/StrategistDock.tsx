@@ -1,5 +1,6 @@
 import { Sparkles } from "lucide-react";
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
+import { OPEN_STRATEGIST_EVENT } from "../../lib/openStrategist.ts";
 
 // Heavy half (assistant-ui runtime + drawer) is lazy-loaded on first open so
 // @assistant-ui/react stays out of the main bundle.
@@ -14,6 +15,15 @@ const StrategistPanel = lazy(() => import("./StrategistPanel.tsx"));
 export function StrategistDock() {
   const [open, setOpen] = useState(false);
   const [everOpened, setEverOpened] = useState(false);
+
+  useEffect(() => {
+    const openFromCta = () => {
+      setEverOpened(true);
+      setOpen(true);
+    };
+    window.addEventListener(OPEN_STRATEGIST_EVENT, openFromCta);
+    return () => window.removeEventListener(OPEN_STRATEGIST_EVENT, openFromCta);
+  }, []);
 
   return (
     <>
