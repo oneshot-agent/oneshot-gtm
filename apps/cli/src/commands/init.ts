@@ -211,20 +211,20 @@ export function mergeInitConfig(
     llmProvider: provider,
     llmModel: (answers["llmModel"] as string | undefined) ?? cfg.llmModel,
     telemetryEnabled: (answers["telemetryEnabled"] as boolean | undefined) ?? cfg.telemetryEnabled,
-    founderName: (answers["founderName"] as string | undefined) || cfg.founderName || null,
-    founderEmail: (answers["founderEmail"] as string | undefined) || cfg.founderEmail || null,
+    founderName: (answers["founderName"] as string | undefined) ?? cfg.founderName ?? null,
+    founderEmail: (answers["founderEmail"] as string | undefined) ?? cfg.founderEmail ?? null,
     productOneLiner:
-      (answers["productOneLiner"] as string | undefined) || cfg.productOneLiner || null,
-    productDomain: (answers["productDomain"] as string | undefined) || cfg.productDomain || null,
-    sendingDomain: (answers["sendingDomain"] as string | undefined) || cfg.sendingDomain || null,
-    icpOneLiner: (answers["icpOneLiner"] as string | undefined) || cfg.icpOneLiner || null,
+      (answers["productOneLiner"] as string | undefined) ?? cfg.productOneLiner ?? null,
+    productDomain: (answers["productDomain"] as string | undefined) ?? cfg.productDomain ?? null,
+    sendingDomain: (answers["sendingDomain"] as string | undefined) ?? cfg.sendingDomain ?? null,
+    icpOneLiner: (answers["icpOneLiner"] as string | undefined) ?? cfg.icpOneLiner ?? null,
     founderCredentials:
-      (answers["founderCredentials"] as string | undefined) || cfg.founderCredentials || null,
+      (answers["founderCredentials"] as string | undefined) ?? cfg.founderCredentials ?? null,
     productPortfolio:
-      (answers["productPortfolio"] as string | undefined) || cfg.productPortfolio || null,
-    partners: (answers["partners"] as string | undefined) || cfg.partners || null,
+      (answers["productPortfolio"] as string | undefined) ?? cfg.productPortfolio ?? null,
+    partners: (answers["partners"] as string | undefined) ?? cfg.partners ?? null,
     founderAdmission:
-      (answers["founderAdmission"] as string | undefined) || cfg.founderAdmission || null,
+      (answers["founderAdmission"] as string | undefined) ?? cfg.founderAdmission ?? null,
   };
 }
 
