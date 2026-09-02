@@ -70,8 +70,7 @@ Not code — these need capture, not commits. `demo seed` + `demo ui` now stand 
 
 ## Approved, not yet started
 
-- [ ] **Deferred review findings from ai/gtm/issue-359** — issue #365.
-- [ ] **Deferred review findings from ai/gtm/issue-374** — issue #381.
+_Nothing approved and waiting._
 
 ## Things we intentionally do NOT do
 
