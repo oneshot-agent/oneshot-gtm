@@ -123,7 +123,7 @@ function safeParseJsonArray(raw: string): unknown[] {
   }
 }
 
-/** A `cadence_state` row joined with its prospect's email/name/company. */
+/** A `cadence_state` row joined with the prospect details needed by cadence surfaces. */
 export interface CadenceWithProspect {
   prospect_id: number;
   play_name: string;
@@ -152,6 +152,8 @@ export interface CadenceWithProspect {
   prospect_email: string | null;
   prospect_name: string | null;
   prospect_company: string | null;
+  prospect_title: string | null;
+  prospect_linkedin_url: string | null;
   reply_channel: "email" | "linkedin" | null;
   replied_at: string | null;
 }
@@ -832,6 +834,7 @@ export class Ledger {
     }
     const sql = `
       SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company,
+             p.title AS prospect_title, p.linkedin_url AS prospect_linkedin_url,
              (SELECT channel FROM (
                 SELECT 'email' AS channel, received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
                 UNION ALL
@@ -853,6 +856,7 @@ export class Ledger {
   listAllCadences(): CadenceWithProspect[] {
     const sql = `
       SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company,
+             p.title AS prospect_title, p.linkedin_url AS prospect_linkedin_url,
              (SELECT channel FROM (
                 SELECT 'email' AS channel, received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
                 UNION ALL SELECT channel, occurred_at AS at FROM channel_events WHERE prospect_id = p.id AND event_type = 'reply'
@@ -876,6 +880,7 @@ export class Ledger {
   getCadence(prospectId: number, playName: string): CadenceWithProspect | null {
     const sql = `
       SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company,
+             p.title AS prospect_title, p.linkedin_url AS prospect_linkedin_url,
              (SELECT channel FROM (
                 SELECT 'email' AS channel, received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
                 UNION ALL SELECT channel, occurred_at AS at FROM channel_events WHERE prospect_id = p.id AND event_type = 'reply'
@@ -895,6 +900,7 @@ export class Ledger {
   listCadencesForProspect(prospectId: number): CadenceWithProspect[] {
     const sql = `
       SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company,
+             p.title AS prospect_title, p.linkedin_url AS prospect_linkedin_url,
              (SELECT channel FROM (
                 SELECT 'email' AS channel, received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
                 UNION ALL SELECT channel, occurred_at AS at FROM channel_events WHERE prospect_id = p.id AND event_type = 'reply'

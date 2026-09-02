@@ -43,6 +43,9 @@ export interface CadenceView {
   prospectEmail: string | null;
   prospectName: string | null;
   prospectCompany: string | null;
+  prospectTitle: string | null;
+  /** Present only when the stored polymorphic profile field is a valid LinkedIn member URL. */
+  prospectLinkedinUrl: string | null;
   playName: string;
   status: CadenceStatus;
   currentStep: number;
