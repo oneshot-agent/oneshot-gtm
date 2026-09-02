@@ -137,6 +137,12 @@ NEVER start the email body with any of these phrasings:
 
 These openers signal cold outreach to anyone who has read a sales email. Start with the specific evidence or angle.
 
+### Opener variety (second and later touches)
+
+A follow-up body opens with the CONCRETE NOUN from the first email — the thing you actually named (the seam, the half that bites, the handoff, the ramp) — not with a stock ping stem that would fit any prospect on any play. A stem that reads identically across a hundred sends is a fingerprint: it tells the reader they are on a list, and it gives filters one string to cluster on.
+
+The example lines in each play prompt are SHAPES, not strings. They show how long the sentence is and what it is allowed to reference. Copying one verbatim, or reusing the same first three words every send, is a failure of this rule even when the copied line breaks no other ban.
+
 ## Banned CTAs
 
 NEVER use these calls-to-action:

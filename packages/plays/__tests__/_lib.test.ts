@@ -89,3 +89,19 @@ describe("lintEmail — humanizer canon", () => {
     expect(lintEmail("hi", body, 100)).toContain("body-too-long");
   });
 });
+
+describe("lintEmail — meeting asks dressed as small ones", () => {
+  it("flags compare notes / swap takes / back-and-forth", () => {
+    for (const ask of [
+      "Still open to compare notes on it? Sam",
+      "want to swap takes on this? Sam",
+      "worth a quick back-and-forth? Sam",
+    ]) {
+      expect(lintEmail("ping", ask)).toContain("banned-cta:compare-notes");
+    }
+  });
+
+  it("leaves a one-line question answerable from their own experience alone", () => {
+    expect(lintEmail("ping", "the keys or the billing, which one actually bites? Sam")).toEqual([]);
+  });
+});
