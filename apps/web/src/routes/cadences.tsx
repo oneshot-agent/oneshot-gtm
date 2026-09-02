@@ -588,6 +588,10 @@ function CadencesPage() {
             <tbody>
               {list.map((c, i) => {
                 const totalSteps = c.followupCount + 1;
+                const knownCompany =
+                  c.prospectCompany && !/^\(?unknown\)?$/i.test(c.prospectCompany.trim())
+                    ? c.prospectCompany
+                    : null;
                 const isOverdue =
                   c.status === "active" && c.nextDueAt !== null && c.nextDueAt <= nowIso;
                 // Expandable when there's something to show OR something to do:
@@ -637,9 +641,36 @@ function CadencesPage() {
                         />
                       </td>
                       <td className="px-6 py-2">
-                        <div className="text-ink-cream">
-                          {c.prospectName ? <Pii kind="name">{c.prospectName}</Pii> : "(unknown)"}
+                        <div className="flex items-center gap-2 text-ink-cream">
+                          <span>
+                            {c.prospectName ? <Pii kind="name">{c.prospectName}</Pii> : "(unknown)"}
+                          </span>
+                          {c.prospectLinkedinUrl && (
+                            <a
+                              href={c.prospectLinkedinUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="font-mono text-[10px] text-ink-muted underline decoration-ink-rule underline-offset-2 hover:text-ink-cream-2"
+                              title="Open LinkedIn profile"
+                            >
+                              LinkedIn ↗
+                            </a>
+                          )}
                         </div>
+                        {(c.prospectTitle || knownCompany) && (
+                          <div className="max-w-[280px] truncate text-[11px] text-ink-muted">
+                            {c.prospectTitle ?? "Role unknown"}
+                            {knownCompany && (
+                              <>
+                                {" · "}
+                                <Pii kind="company">{knownCompany}</Pii>
+                              </>
+                            )}
+                          </div>
+                        )}
+                        {!c.prospectTitle && !knownCompany && c.prospectLinkedinUrl && (
+                          <div className="text-[11px] text-ink-faint">Role/company not enriched</div>
+                        )}
                         <div className="font-mono text-[11px] text-ink-faint">
                           {c.prospectEmail ? <Pii kind="email">{c.prospectEmail}</Pii> : "—"}
                         </div>

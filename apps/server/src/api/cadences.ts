@@ -1,4 +1,4 @@
-import { getLedger, isDraining, logEvent } from "@oneshot-gtm/core";
+import { canonicalLinkedInProfileKey, getLedger, isDraining, logEvent } from "@oneshot-gtm/core";
 import {
   getPriorStepsBulk,
   nextStepInfo,
@@ -101,6 +101,11 @@ function toView(
     prospectEmail: row.prospect_email,
     prospectName: row.prospect_name,
     prospectCompany: row.prospect_company,
+    prospectTitle: row.prospect_title,
+    prospectLinkedinUrl:
+      row.prospect_linkedin_url && canonicalLinkedInProfileKey(row.prospect_linkedin_url)
+        ? row.prospect_linkedin_url.trim()
+        : null,
     playName: row.play_name,
     status: row.status as CadenceStatus,
     currentStep: row.current_step,
