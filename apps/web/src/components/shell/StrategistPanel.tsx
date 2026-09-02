@@ -22,10 +22,10 @@ import {
 // them concrete + outcome-oriented (not vague "tune everything"). Each one
 // should map cleanly to a single proactive proposal the strategist can make.
 const SUGGESTIONS = [
+  "Guide me through my first send",
   "Which triggers fit my ICP?",
   "Propose github-topics topics + vendors",
   "Pick an accelerator-batch cohort for my ICP",
-  "Audit my current trigger config",
 ];
 
 /**
@@ -89,8 +89,8 @@ function ChatBody() {
       <ThreadPrimitive.Empty>
         <div className="border-b border-ink-rule/60 px-5 py-4">
           <p className="text-sm text-ink-cream-2">
-            Tell me what to set up. I'll propose configs anchored in your ICP + product and ask
-            before applying anything. Try a chip below or ask anything.
+            I can guide your first motion from signal choice to a review-ready queue. I'll propose
+            configs anchored in your ICP + product and ask before applying anything.
           </p>
         </div>
       </ThreadPrimitive.Empty>

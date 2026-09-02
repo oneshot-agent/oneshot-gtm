@@ -5,20 +5,22 @@ const listReceiptsMock = vi.fn();
 const eventsByPlayMock = vi.fn();
 const listActiveCadencesMock = vi.fn();
 const totalSpendUsdMock = vi.fn();
+const countSendsMock = vi.fn();
 
-vi.mock("@oneshot-gtm/core", async () => {
-  const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
-  return {
-    ...actual,
-    getLedger: () => ({
-      listReceipts: listReceiptsMock,
-      eventsByPlay: eventsByPlayMock,
-      listActiveCadences: listActiveCadencesMock,
-      totalSpendUsd: totalSpendUsdMock,
-      listRuns: listRunsMock,
-    }),
-  };
-});
+vi.mock("@oneshot-gtm/core", () => ({
+  getLedger: () => ({
+    listReceipts: listReceiptsMock,
+    eventsByPlay: eventsByPlayMock,
+    listActiveCadences: listActiveCadencesMock,
+    totalSpendUsd: totalSpendUsdMock,
+    listRuns: listRunsMock,
+    countSends: countSendsMock,
+  }),
+  // Home capacity is best-effort and unrelated to this route contract test.
+  poolSendCapacity: () => {
+    throw new Error("not configured in test");
+  },
+}));
 
 const { homeMetrics } = await import("../src/api/home.ts");
 
@@ -48,16 +50,19 @@ describe("homeMetrics — currentRuns surfacing", () => {
         errorCount: 0,
       },
     ]);
+    countSendsMock.mockReturnValue(1);
     const res = homeMetrics(req());
     const body = (await res.json()) as {
       currentRuns: Array<{ id: number; playName: string; status: string }>;
       callsLast7d: number;
       sentLast7d: number;
       activeCadences: number;
+      hasFirstSend: boolean;
     };
     expect(body.callsLast7d).toBe(3);
     expect(body.sentLast7d).toBe(8); // 5 + 3
     expect(body.activeCadences).toBe(2);
+    expect(body.hasFirstSend).toBe(true);
     expect(body.currentRuns).toHaveLength(1);
     expect(body.currentRuns[0]).toMatchObject({
       id: 7,
@@ -73,8 +78,10 @@ describe("homeMetrics — currentRuns surfacing", () => {
     listActiveCadencesMock.mockReturnValue([]);
     totalSpendUsdMock.mockReturnValue(0);
     listRunsMock.mockReturnValue([]);
+    countSendsMock.mockReturnValue(0);
     const res = homeMetrics(req());
-    const body = (await res.json()) as { currentRuns: unknown[] };
+    const body = (await res.json()) as { currentRuns: unknown[]; hasFirstSend: boolean };
     expect(body.currentRuns).toEqual([]);
+    expect(body.hasFirstSend).toBe(false);
   });
 });
