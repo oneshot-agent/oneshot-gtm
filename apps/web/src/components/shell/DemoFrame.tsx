@@ -1,4 +1,5 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
+import { DEMO_MISS_EVENT } from "../../api/demo.ts";
 import { cn } from "../../lib/cn.ts";
 
 /**
@@ -43,6 +44,8 @@ export function DemoFrame({ children }: { children: ReactNode }) {
 }
 
 function DemoRibbon({ forced, onNarrow }: { forced: boolean; onNarrow: () => void }) {
+  const missing = useFixtureMiss();
+
   return (
     <div className="flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-1 border-b border-ink-rule bg-ink-surface px-4 py-1.5 text-[11.5px] text-ink-muted">
       <div className="flex items-center gap-2.5">
@@ -55,10 +58,17 @@ function DemoRibbon({ forced, onNarrow }: { forced: boolean; onNarrow: () => voi
           site says of the screenshots shot against this same ledger and has to
           say here too. Read-only covers the rest: nothing can be sent or spent.
         */}
-        <span>
-          A seeded ledger, read only. The prospects are invented, and the per-call prices are the
-          seed&rsquo;s own, higher than OneShot charges.
-        </span>
+        {missing ? (
+          <span className="text-[color:var(--ink-blocked-2)]">
+            Part of this demo did not load, so a page may be showing less than the ledger holds.
+            Reloading is worth a try.
+          </span>
+        ) : (
+          <span>
+            A seeded ledger, read only. The prospects are invented, and the per-call prices are the
+            seed&rsquo;s own, higher than OneShot charges.
+          </span>
+        )}
       </div>
 
       <div className="flex items-center gap-4">
@@ -80,6 +90,26 @@ function DemoRibbon({ forced, onNarrow }: { forced: boolean; onNarrow: () => voi
       </div>
     </div>
   );
+}
+
+/**
+ * True once any fixture has 404'd.
+ *
+ * The transport can miss before this mounts, hence the initial read of the
+ * attribute rather than waiting only on the event.
+ */
+function useFixtureMiss(): boolean {
+  const [missing, setMissing] = useState(
+    () => document.documentElement.dataset["demoFixtureMiss"] != null,
+  );
+
+  useEffect(() => {
+    const onMiss = (): void => setMissing(true);
+    window.addEventListener(DEMO_MISS_EVENT, onMiss);
+    return () => window.removeEventListener(DEMO_MISS_EVENT, onMiss);
+  }, []);
+
+  return missing;
 }
 
 function NarrowGate({ onShowAnyway }: { onShowAnyway: () => void }) {

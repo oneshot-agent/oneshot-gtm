@@ -52,9 +52,39 @@ export function isDemoReadOnly(err: unknown): err is DemoReadOnlyError {
  */
 export class DemoMissingFixtureError extends Error {
   constructor(apiPath: string, file: string) {
-    super(`No captured response for ${apiPath} (expected ${file}). Re-run capture-fixtures.`);
+    // Two audiences. The message is what a route prints on the page, so it
+    // says what happened in terms a visitor can act on. The file name is the
+    // whole repro and belongs in the console, where whoever re-captures looks.
+    super(
+      `This corner of the demo was not captured. It is a snapshot, and ${apiPath} is not in it.`,
+    );
     this.name = "DemoMissingFixtureError";
+    console.error(`[demo] no fixture for ${apiPath} \u2014 expected ${file}`);
+    reportMiss(apiPath);
   }
+}
+
+/** Fires when a fixture turns up missing, so the frame can say so. */
+export const DEMO_MISS_EVENT = "oneshot-gtm:demo-fixture-miss";
+
+const missed = new Set<string>();
+
+/**
+ * A miss, recorded where both a visitor and a build script can see it.
+ *
+ * The routes were written against a server that answers, so some of them read
+ * a failed query as an empty one: Replies with no fixture renders "No
+ * conversations yet." On a site whose argument is that nothing in it was
+ * invented, a fetch failure that reads as a real result is the worst way this
+ * can break, and it breaks quietly.
+ *
+ * So DemoFrame shows a line, and the attribute on <html> lets `pull-demo`'s
+ * headless sweep catch the same thing before any of it is vendored.
+ */
+function reportMiss(apiPath: string): void {
+  missed.add(apiPath);
+  document.documentElement.dataset["demoFixtureMiss"] = [...missed].join(" ");
+  window.dispatchEvent(new CustomEvent(DEMO_MISS_EVENT));
 }
 
 /*

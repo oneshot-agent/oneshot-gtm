@@ -38,6 +38,11 @@ const queryClient = new QueryClient({
       // A captured response cannot go stale, and a demo left open in a
       // background tab should not wake up to re-read files it already holds.
       refetchOnWindowFocus: !IS_DEMO,
+      // A file that 404s will 404 again. Retrying it three times on a backoff
+      // only holds the route on its loading skeleton for ten seconds before
+      // telling the visitor anything, which reads as a demo that hangs rather
+      // than one with a gap in it.
+      ...(IS_DEMO ? { retry: false } : {}),
     },
   },
 });
