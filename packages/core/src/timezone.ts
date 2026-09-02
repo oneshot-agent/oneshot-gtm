@@ -19,6 +19,8 @@ import { loadConfig } from "./config.ts";
 const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
 /** `2026-08-26T19:30` / `2026-08-26 19:30:00` — a wall clock with no zone. */
 const NAIVE_DATETIME = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?$/;
+/** Calendar fields at the start of an ISO timestamp with a zone or offset. */
+const ZONED_DATETIME_DATE = /^(\d{4})-(\d{2})-(\d{2})[Tt ]/;
 
 /**
  * City → IANA zone for the cities the luma-events finder can be configured
@@ -260,6 +262,14 @@ function wallClock(isoInstant: string, zone: string): WallClock | null {
       time: twelveHour(h, min),
       tzAbbr: null,
     };
+  }
+
+  const zonedDate = ZONED_DATETIME_DATE.exec(raw);
+  if (zonedDate) {
+    const year = Number(zonedDate[1]);
+    const month = Number(zonedDate[2]);
+    const day = Number(zonedDate[3]);
+    if (!isValidDate(year, month, day)) return null;
   }
 
   const ms = Date.parse(raw);
