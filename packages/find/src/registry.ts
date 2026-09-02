@@ -796,7 +796,7 @@ export function fireTriggerNow(name: string): void {
   }
   // Explicit catch (not `void`): a rejection before runTriggerNow's own
   // try/catch must surface AND clear the stranded `running_started_at`.
-  runTriggerNow(name).catch((err) => {
+  runTriggerNow(name, { claimHeld: true }).catch((err) => {
     const message = (err as Error).message ?? "runTriggerNow rejected";
     logEvent("trigger.run.fire_failed", { name, message_120: message.slice(0, 120) }, "error");
     try {
@@ -815,7 +815,10 @@ export function fireTriggerNow(name: string): void {
  * (the founder explicitly asked). Persists last_polled_at + last_run_summary
  * so the watch loop respects the run.
  */
-export async function runTriggerNow(name: string): Promise<TriggerRunOutcome> {
+export async function runTriggerNow(
+  name: string,
+  options: { claimHeld?: boolean } = {},
+): Promise<TriggerRunOutcome> {
   startRun();
   const spec = TRIGGERS.find((t) => t.name === name);
   if (!spec) throw new Error(`unknown trigger '${name}'`);
@@ -841,6 +844,16 @@ export async function runTriggerNow(name: string): Promise<TriggerRunOutcome> {
     });
     logEvent("trigger.run.skipped", { name, source: "ad_hoc", reason: readiness.reason });
     return { name, fired: false, error: message, nextDueInMs: intervalMs };
+  }
+  // fireTriggerNow claims before detaching its promise. Direct callers must
+  // claim here so this exported boundary cannot overlap same-trigger runs.
+  if (!options.claimHeld) {
+    const claimNowIso = new Date().toISOString();
+    const staleCutoffIso = new Date(Date.now() - MAX_RUN_AGE_MS).toISOString();
+    if (!ledger.markTriggerRunning(name, claimNowIso, staleCutoffIso)) {
+      const message = `trigger '${name}' is already running`;
+      return { name, fired: false, error: message, nextDueInMs: intervalMs };
+    }
   }
   const startedAt = Date.now();
   logEvent("trigger.run.start", { name, source: "ad_hoc" });

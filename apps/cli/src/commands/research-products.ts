@@ -115,7 +115,8 @@ export async function commandResearchProducts(opts: ResearchProductsOpts): Promi
         return;
       }
       if (researched.dossier.status === "unavailable") unavailable++;
-      ledger.setProspectDossier(row.id, mergeProductDossier(row.dossier_json, researched.dossier));
+      const latestDossier = ledger.getProspectById(row.id)?.dossier_json ?? row.dossier_json;
+      ledger.setProspectDossier(row.id, mergeProductDossier(latestDossier, researched.dossier));
       written++;
       return;
     }

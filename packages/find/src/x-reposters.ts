@@ -250,6 +250,7 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
 
   if (picks.length === 0) {
     result.costUsd = meter.total;
+    result.sdkCostUsd = 0;
     if (!result.halted) {
       result.halted =
         result.candidates === 0
