@@ -49,9 +49,15 @@ function DemoRibbon({ forced, onNarrow }: { forced: boolean; onNarrow: () => voi
         <span className="rounded-[var(--radius-xs)] border border-[color:var(--ink-spend)] px-1.5 py-px font-mono text-[10px] uppercase tracking-[0.16em] text-[color:var(--ink-spend-2)]">
           Demo
         </span>
+        {/*
+          Both halves are load-bearing. The prospects are invented, and the
+          per-call prices are `demo seed`'s own rather than OneShot's, which the
+          site says of the screenshots shot against this same ledger and has to
+          say here too. Read-only covers the rest: nothing can be sent or spent.
+        */}
         <span>
-          A seeded ledger, read only. The prospects are invented and nothing here can be sent or
-          spent.
+          A seeded ledger, read only. The prospects are invented, and the per-call prices are the
+          seed&rsquo;s own, higher than OneShot charges.
         </span>
       </div>
 

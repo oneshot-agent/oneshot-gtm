@@ -20,6 +20,17 @@ export default defineConfig(({ mode }) => {
   return {
     ...(isDemo ? { base: "/demo/" } : {}),
 
+    resolve: {
+      alias: isDemo
+        ? [
+            {
+              find: /\/StrategistDock\.tsx$/,
+              replacement: "/StrategistDock.demo.tsx",
+            },
+          ]
+        : [],
+    },
+
     plugins: [
       TanStackRouterVite({
         target: "react",
@@ -72,19 +83,47 @@ function demoHead(): Plugin {
   return {
     name: "oneshot-gtm-demo-head",
     transformIndexHtml(html) {
-      return html.replace(
-        "<title>oneshot-gtm</title>",
-        [
-          `<title>${TITLE}</title>`,
-          `<meta name="description" content="${DESCRIPTION}" />`,
-          `<meta name="robots" content="noindex" />`,
-          `<meta property="og:type" content="website" />`,
-          `<meta property="og:title" content="${TITLE}" />`,
-          `<meta property="og:description" content="${DESCRIPTION}" />`,
-          `<meta property="og:url" content="https://oneshot-gtm.com/demo" />`,
-          `<meta name="twitter:card" content="summary_large_image" />`,
-        ].join("\n    "),
-      );
+      return html
+        .replace(
+          '<div id="root"></div>',
+          // The demo is a client-rendered app, so with scripting off there is
+          // nothing to render and nothing to fix. Say so, and point back at
+          // the page, which needs no JavaScript to be read.
+          [
+            '<div id="root"></div>',
+            "<noscript>",
+            '  <div style="font-family:system-ui,sans-serif;color:#e8e3d9;background:#14120f;',
+            "              min-height:100vh;display:flex;flex-direction:column;justify-content:center;",
+            '              gap:16px;padding:32px;max-width:44rem;margin:0 auto">',
+            '    <h1 style="font-size:1.6rem;margin:0">The demo needs JavaScript.</h1>',
+            '    <p style="margin:0;line-height:1.55;color:#b9b2a5">',
+            "      It is the dashboard itself, rendered in the browser. The page that explains it reads",
+            "      fine without scripting.",
+            "    </p>",
+            '    <p style="margin:0"><a href="https://oneshot-gtm.com" style="color:#e8e3d9">',
+            "      Back to oneshot-gtm.com</a></p>",
+            '    <p style="margin:0;font-family:ui-monospace,monospace;color:#b9b2a5">',
+            "      Or run it yourself: bunx oneshot-gtm-server</p>",
+            "  </div>",
+            "</noscript>",
+          ].join("\n    "),
+        )
+        .replace(
+          "<title>oneshot-gtm</title>",
+          [
+            `<title>${TITLE}</title>`,
+            // The site's own mark. Without it the browser asks the origin for
+            // /favicon.ico, which oneshot-gtm.com does not serve.
+            `<link rel="icon" href="/icon.svg" type="image/svg+xml" />`,
+            `<meta name="description" content="${DESCRIPTION}" />`,
+            `<meta name="robots" content="noindex" />`,
+            `<meta property="og:type" content="website" />`,
+            `<meta property="og:title" content="${TITLE}" />`,
+            `<meta property="og:description" content="${DESCRIPTION}" />`,
+            `<meta property="og:url" content="https://oneshot-gtm.com/demo" />`,
+            `<meta name="twitter:card" content="summary_large_image" />`,
+          ].join("\n    "),
+        );
     },
   };
 }
