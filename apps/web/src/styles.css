@@ -168,6 +168,38 @@ a {
   font-feature-settings: "zero", "ss01";
 }
 
+/* ── the foot of the page ────────────────────────────────────────── */
+
+/*
+ * Every page here ends in a list, and the last row used to sit 24px off the
+ * footer rule, which reads as a row that got cut off rather than a ledger that
+ * ended.
+ *
+ * The obvious fix, padding-bottom on <main>, is wrong: `sticky bottom-0`
+ * resolves against the scroller's content box, so padding lifts the queue's
+ * selection bar and the setup and run action bars away from the footer at every
+ * scroll position. The gutter belongs to the page's last in-flow block instead.
+ *
+ * Two selectors, because the last block is not always the one that wants it.
+ * When an action bar ends the page it stays flush and the block above it takes
+ * the gutter, so the list breathes and the bar still sits on the footer rule.
+ *
+ * The second one is depth-agnostic on purpose. /queue puts its bar beside the
+ * table as a sibling; /setup puts its save bar inside the form. Matching only
+ * direct children handled the first and quietly broke the second: the form was
+ * the last block, took the gutter, and lifted the save bar 56px off the footer
+ * — the exact bug this rule exists to prevent. The `:has` exclusion keeps a
+ * container that holds a bar from taking the gutter meant for the block above.
+ */
+:root {
+  --ledger-gutter: 3.5rem;
+}
+
+main > * > :last-child:not([data-foot-bar]):not([data-overlay]):not(:has([data-foot-bar])),
+main :has(+ [data-foot-bar]) {
+  margin-bottom: var(--ledger-gutter);
+}
+
 /* ── ledger row rhythm ───────────────────────────────────────────── */
 
 .ln-row {

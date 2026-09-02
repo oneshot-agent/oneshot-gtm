@@ -14,6 +14,11 @@ node_modules/
 
 # ── Build output (per-app + per-package dist/) ────────────────────────────────
 dist/
+dist-demo/
+
+# Captured demo API responses (apps/web/scripts/capture-fixtures.ts). Vendored
+# into oneshotgtm-site, regenerated from a seeded install, never committed here.
+apps/web/fixtures/
 dist-electron/
 build/
 out/

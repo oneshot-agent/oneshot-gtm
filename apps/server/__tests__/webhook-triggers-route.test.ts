@@ -6,6 +6,12 @@ let icpMatch: boolean | null = true;
 const webhookReplays = new Map<string, number>();
 
 vi.mock("@oneshot-gtm/core", () => ({
+  // jsonResponse scrubs demo paths out of every response, so the module's
+  // demo seam has to exist on the mock even though these routes never run in
+  // demo mode.
+  demoMode: () => false,
+  scrubDemoPaths: (json: string) => json,
+  configDir: () => "/tmp/webhook-test-home",
   getLedger: () => ({
     consumeWebhookReplay: (key: string, expiresAt: number, now: number) => {
       for (const [storedKey, storedExpiry] of webhookReplays) {

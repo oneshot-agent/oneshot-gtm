@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite --open",
     "build": "vite build",
+    "build:demo": "vite build --mode demo && cp -R fixtures dist-demo/fixtures",
+    "capture": "bun run scripts/capture-fixtures.ts",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit"
   },

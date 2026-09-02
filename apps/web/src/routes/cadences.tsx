@@ -29,6 +29,7 @@ import { Modal } from "../components/primitives/Modal.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { StepProgress } from "../components/primitives/StepProgress.tsx";
 import { cn, formatSendsToday, timeAgo } from "../lib/cn.ts";
+import { readOnly } from "../lib/readOnly.ts";
 
 /** Tailwind can't build class names dynamically — enumerate the tile-count variants. */
 const TILE_GRID_COLS: Record<number, string> = {
@@ -499,6 +500,7 @@ function CadencesPage() {
                   })),
                 )
               }
+              {...readOnly}
             >
               {previewBatch.isPending
                 ? `Previewing ${selectedRows.length}…`
@@ -774,6 +776,7 @@ function CadencesPage() {
                                         playName: c.playName,
                                       })
                                     }
+                                    {...readOnly}
                                   >
                                     <Eye size={12} />
                                   </Button>
@@ -797,6 +800,7 @@ function CadencesPage() {
                                         playName: c.playName,
                                       });
                                     }}
+                                    {...readOnly}
                                   >
                                     <Send size={12} />
                                   </Button>
@@ -974,6 +978,7 @@ function CadencesPage() {
                                             playName: c.playName,
                                           })
                                         }
+                                        {...readOnly}
                                       >
                                         {pending ? (
                                           <Loader2 size={11} className="animate-spin" />
@@ -1046,6 +1051,7 @@ function CadencesPage() {
                 )
               }
               disabled={sendBatch.isPending || sendableRows.length === 0}
+              {...readOnly}
             >
               {sendBatch.isPending ? "Sending…" : `Send ${sendableRows.length}`}
             </Button>
@@ -1115,6 +1121,7 @@ function CadencesPage() {
                 if (linkedinReplyModal) markLinkedInReply.mutate(linkedinReplyModal.prospectId);
               }}
               disabled={markLinkedInReply.isPending}
+              {...readOnly}
             >
               {markLinkedInReply.isPending ? "Recording…" : "Mark replied"}
             </Button>
@@ -1158,6 +1165,7 @@ function CadencesPage() {
                 });
               }}
               disabled={stop.isPending || (stopReason === "other" && !stopNote.trim())}
+              {...readOnly}
             >
               {stop.isPending ? "Stopping…" : "Stop cadence"}
             </Button>
@@ -1207,7 +1215,11 @@ function CadencesPage() {
             <Button variant="ghost" onClick={() => setOutcomeModal(null)}>
               Cancel
             </Button>
-            <Button onClick={() => logOutcome.mutate()} disabled={logOutcome.isPending}>
+            <Button
+              onClick={() => logOutcome.mutate()}
+              disabled={logOutcome.isPending}
+              {...readOnly}
+            >
               {logOutcome.isPending ? "Saving…" : "Save outcome"}
             </Button>
           </>
