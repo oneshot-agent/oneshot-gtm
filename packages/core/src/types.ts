@@ -395,6 +395,29 @@ export interface QueueRow {
   decided_by: "human" | "human_bulk" | "machine" | null;
 }
 
+/**
+ * One sent queue row joined to its outcome evidence (Phase 3 of #410).
+ * Produced by `Ledger.listSentOutcomeRows`; labeled by find/_outcomes.ts.
+ */
+export interface SentOutcomeRawRow {
+  id: number;
+  play_name: string;
+  dedupe_key: string;
+  priority_json: string | null;
+  sent_at: string;
+  decision: QueueRow["decision"];
+  decided_by: QueueRow["decided_by"];
+  /** prospect_id, falling back to an email join; NULL = unjoinable. */
+  joined_prospect_id: number | null;
+  payload_email: string | null;
+  /** Earliest human-classified email reply (COALESCE(kind,'human')). */
+  first_email_reply_at: string | null;
+  /** Earliest LinkedIn reply (channel_events, never machine-classified). */
+  first_channel_reply_at: string | null;
+  /** Max deal_outcomes rank: 4 won / 3 qualified / 2 meeting; NULL = none. */
+  deal_rank: number | null;
+}
+
 export interface TriggerRow {
   name: string;
   last_polled_at: string | null;
