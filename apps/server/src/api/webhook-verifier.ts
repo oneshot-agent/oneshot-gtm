@@ -1,8 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { getLedger } from "@oneshot-gtm/core";
 
 export const WEBHOOK_REPLAY_WINDOW_SECONDS = 5 * 60;
-
-const seen = new Map<string, number>();
 
 export type WebhookVerification =
   | { ok: true }
@@ -34,10 +33,13 @@ export function verifyWebhook(
   const valid = parsed.signatures.some((candidate) => safeDigestEqual(expected, candidate));
   if (!valid) return { ok: false, error: "invalid webhook signature" };
 
-  pruneSeen(now);
   const replayKey = `${parsed.timestamp}:${expected.toString("hex")}`;
-  if (seen.has(replayKey)) return { ok: false, error: "replayed webhook" };
-  seen.set(replayKey, timestampMs + WEBHOOK_REPLAY_WINDOW_SECONDS * 1_000);
+  const consumed = getLedger().consumeWebhookReplay(
+    replayKey,
+    timestampMs + WEBHOOK_REPLAY_WINDOW_SECONDS * 1_000,
+    now,
+  );
+  if (!consumed) return { ok: false, error: "replayed webhook" };
   return { ok: true };
 }
 
@@ -60,13 +62,7 @@ function safeDigestEqual(expected: Buffer, candidate: Buffer): boolean {
   return expected.length === candidate.length && timingSafeEqual(expected, candidate);
 }
 
-function pruneSeen(now: number): void {
-  for (const [key, expiresAt] of seen) {
-    if (expiresAt < now) seen.delete(key);
-  }
-}
-
-/** Test-only process-state reset. */
+/** Test-only durable-state reset. */
 export function resetWebhookReplayCache(): void {
-  seen.clear();
+  getLedger().clearWebhookReplays();
 }

@@ -3,9 +3,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const enqueued: Array<Record<string, unknown>> = [];
 let icpMatch: boolean | null = true;
+const webhookReplays = new Map<string, number>();
 
 vi.mock("@oneshot-gtm/core", () => ({
   getLedger: () => ({
+    consumeWebhookReplay: (key: string, expiresAt: number, now: number) => {
+      for (const [storedKey, storedExpiry] of webhookReplays) {
+        if (storedExpiry < now) webhookReplays.delete(storedKey);
+      }
+      if (webhookReplays.has(key)) return false;
+      webhookReplays.set(key, expiresAt);
+      return true;
+    },
+    clearWebhookReplays: () => webhookReplays.clear(),
     enqueueTarget: (row: Record<string, unknown>) => {
       enqueued.push(row);
       return 42;
@@ -139,6 +149,16 @@ describe("webhook trigger intake", () => {
     const replay = await signupWebhookRoute(signed.clone());
     expect(replay.status).toBe(401);
     expect(await replay.json()).toEqual({ error: "replayed webhook" });
+  });
+
+  it("does not consume a valid signature when the JSON is malformed", async () => {
+    const secret = "configured-webhook-secret";
+    process.env["WEBHOOK_SECRET"] = secret;
+    const signed = request("signup", "{", secret);
+
+    expect((await signupWebhookRoute(signed.clone())).status).toBe(400);
+    expect(webhookReplays.size).toBe(0);
+    expect((await signupWebhookRoute(signed.clone())).status).toBe(400);
   });
 
   it("keeps unsigned local intake enabled when no secret is configured", async () => {

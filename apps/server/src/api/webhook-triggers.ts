@@ -26,19 +26,19 @@ async function intakeWebhook(req: Request, kind: WebhookKind): Promise<Response>
     return jsonResponse({ error: "invalid JSON body" }, 400, req);
   }
 
-  const verification = verifyWebhook(
-    req.headers.get("x-webhook-signature"),
-    body,
-    process.env["WEBHOOK_SECRET"],
-  );
-  if (!verification.ok) return jsonResponse({ error: verification.error }, 401, req);
-
   let raw: unknown;
   try {
     raw = JSON.parse(body);
   } catch {
     return jsonResponse({ error: "invalid JSON body" }, 400, req);
   }
+
+  const verification = verifyWebhook(
+    req.headers.get("x-webhook-signature"),
+    body,
+    process.env["WEBHOOK_SECRET"],
+  );
+  if (!verification.ok) return jsonResponse({ error: verification.error }, 401, req);
 
   let payload: ConciergeTarget | DemoNoShowTarget;
   let company: string | null;

@@ -624,6 +624,17 @@ export class Ledger {
     this.addColumnIfMissing("target_queue", "decided_at", "TEXT");
     this.addColumnIfMissing("target_queue", "decided_by", "TEXT"); // 'human'|'human_bulk'|'machine'
     this.backfillDecisionProvenance();
+    // v27: signed webhook replay keys. Keeping these in the ledger makes replay
+    // protection survive server restarts; expired rows are pruned when a new
+    // valid delivery is consumed.
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS webhook_replays (
+        replay_key TEXT PRIMARY KEY,
+        expires_at INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_webhook_replays_expiry
+        ON webhook_replays(expires_at);
+    `);
   }
 
   /**
@@ -3855,6 +3866,22 @@ export class Ledger {
 
   close(): void {
     this.db.close();
+  }
+
+  /** Atomically consume a signed webhook replay key. */
+  consumeWebhookReplay(replayKey: string, expiresAt: number, now: number): boolean {
+    return this.db.transaction(() => {
+      this.db.prepare("DELETE FROM webhook_replays WHERE expires_at < ?").run(now);
+      const result = this.db
+        .prepare("INSERT OR IGNORE INTO webhook_replays(replay_key, expires_at) VALUES(?, ?)")
+        .run(replayKey, expiresAt);
+      return result.changes > 0;
+    })();
+  }
+
+  /** Test helper for isolating webhook verification cases. */
+  clearWebhookReplays(): void {
+    this.db.exec("DELETE FROM webhook_replays");
   }
 }
 

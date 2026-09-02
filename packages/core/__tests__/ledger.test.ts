@@ -45,6 +45,14 @@ describe("Ledger schema migration", () => {
     expect(ledger.getProductResearchCache("https://acme.dev", -1)).toBeNull();
   });
 
+  it("persists webhook replay keys across ledger instances and expires them", () => {
+    expect(ledger.consumeWebhookReplay("signed-event", 2_000, 1_000)).toBe(true);
+    ledger.close();
+    ledger = new Ledger(dbPath);
+    expect(ledger.consumeWebhookReplay("signed-event", 2_000, 1_500)).toBe(false);
+    expect(ledger.consumeWebhookReplay("signed-event", 3_000, 2_001)).toBe(true);
+  });
+
   it("lists only new pending queue rows after a queue watermark", () => {
     const before = ledger.latestQueueId();
     ledger.enqueueTarget({
