@@ -20,6 +20,7 @@ import {
   oneshotEnvReady,
   resolveIdentities,
   secretSource,
+  secretsPath,
   currentWorkspaceName,
   listWorkspaces,
   loadGmailTokens,
@@ -453,7 +454,7 @@ function githubTokenCheck(): CheckResult | null {
     group: "install",
     severity: "warn",
     message: `GITHUB_TOKEN not set — ${enabled.join(", ")} limited to 60 req/hr and will halt on 403`,
-    hint: "create a classic token with NO scopes at https://github.com/settings/tokens/new, then add GITHUB_TOKEN=... to .env",
+    hint: `create a classic token with NO scopes at https://github.com/settings/tokens/new, then add GITHUB_TOKEN=... to ${secretsPath()}`,
   };
 }
 
@@ -826,11 +827,14 @@ export async function runDoctor(): Promise<CheckResult[]> {
   if (oneshotEnvReady()) {
     try {
       const bal = await getBalance();
+      const amount = Number.parseFloat(bal.balance.trim());
+      const usable = Number.isFinite(amount) && amount > 0;
       results.push({
         name: "wallet balance",
         group: "spend",
-        severity: "ok",
+        severity: usable ? "ok" : "warn",
         message: `${bal.balance}`,
+        ...(usable ? {} : { hint: "paid calls require USDC on Base" }),
       });
     } catch (err) {
       results.push({

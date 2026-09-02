@@ -7,6 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // warns when this one shares a sending domain or a Gmail account with them.
 
 let cfgOverride: Record<string, unknown> = {};
+let walletReady = false;
+let balanceValue = "1 USDC";
 let ledgerMock: {
   bounceStatsByIdentity?: () => Map<string, { hard: number; block: number }>;
   countEmailSendsSince?: (identityId: string, _since: string) => number;
@@ -27,6 +29,8 @@ vi.mock("@oneshot-gtm/core", async () => {
   return {
     ...actual,
     loadConfig: () => ({ ...actual.loadConfig(), ...cfgOverride }),
+    oneshotEnvReady: () => walletReady,
+    getBalance: async () => ({ balance: balanceValue, raw: balanceValue }),
     getLedger: () => ({
       bounceStatsByIdentity: ledgerMock.bounceStatsByIdentity || (() => new Map()),
       countEmailSendsSince: ledgerMock.countEmailSendsSince || (() => 0),
@@ -38,7 +42,7 @@ vi.mock("@oneshot-gtm/core", async () => {
 });
 
 const { runDoctor } = await import("../src/check.ts");
-const { createWorkspace } = await import("@oneshot-gtm/core");
+const { createWorkspace, secretsPath } = await import("@oneshot-gtm/core");
 
 let wsDir: string;
 beforeEach(() => {
@@ -47,6 +51,8 @@ beforeEach(() => {
   process.env["ONESHOT_GTM_WORKSPACE"] = "gtm";
   createWorkspace("gtm");
   cfgOverride = {};
+  walletReady = false;
+  balanceValue = "1 USDC";
   ledgerMock = {};
 });
 afterEach(() => {
@@ -734,6 +740,7 @@ describe("github token check", () => {
     expect(hit?.severity).toBe("warn");
     expect(hit?.message).toContain("GITHUB_TOKEN not set");
     expect(hit?.message).toContain("60 req/hr");
+    expect(hit?.hint).toContain(secretsPath());
   });
 
   it("warn: multiple finders enabled without token", async () => {
@@ -745,6 +752,25 @@ describe("github token check", () => {
     const hit = checks.find((c) => c.name === "github token");
     expect(hit?.severity).toBe("warn");
     expect(hit?.message).toContain("github-stars, github-watch");
+  });
+});
+
+describe("wallet balance check", () => {
+  it.each(["0 USDC", "unavailable"])("warns when the balance is %s", async (balance) => {
+    walletReady = true;
+    balanceValue = balance;
+
+    const hit = (await runDoctor()).find((c) => c.name === "wallet balance");
+    expect(hit?.severity).toBe("warn");
+    expect(hit?.hint).toContain("USDC on Base");
+  });
+
+  it("passes for a positive parsed balance", async () => {
+    walletReady = true;
+    balanceValue = "2.50 USDC";
+
+    const hit = (await runDoctor()).find((c) => c.name === "wallet balance");
+    expect(hit?.severity).toBe("ok");
   });
 });
 

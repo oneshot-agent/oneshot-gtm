@@ -41,6 +41,8 @@ const SECRET_LABELS: Record<string, string> = {
   X_ACCESS_TOKEN: "X_ACCESS_TOKEN",
   X_ACCESS_SECRET: "X_ACCESS_SECRET",
   TWITTERAPI_IO_KEY: "twitterapi.io API key",
+  GITHUB_TOKEN: "GitHub token",
+  LUMA_SESSION_COOKIE: "Luma session cookie",
 };
 
 const X_OAUTH_KEYS = ["X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_SECRET"] as const;
@@ -821,6 +823,25 @@ function SetupPage() {
         </LedgerSection>
 
         <LedgerSection
+          eyebrow="05.75 · Finder access"
+          lede="Optional credentials for richer GitHub and Luma discovery. They are stored in the same local .env."
+        >
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {(["GITHUB_TOKEN", "LUMA_SESSION_COOKIE"] as const).map((key) => (
+              <Field key={key} label={SECRET_LABELS[key] ?? key} hint={hintFor(sources[key])}>
+                <Input
+                  type="password"
+                  placeholder={sources[key] ? "(unchanged)" : ""}
+                  value={secrets[key] ?? ""}
+                  onChange={(e) => setSecret(key, e.target.value)}
+                  autoComplete="new-password"
+                />
+              </Field>
+            ))}
+          </div>
+        </LedgerSection>
+
+        <LedgerSection
           eyebrow="06 · Email transport"
           lede="The sender rotation pool. Each prospect sticks to the identity that first emailed them; new prospects go to the identity with the most capacity left today."
         >
@@ -1184,7 +1205,7 @@ function SetupPage() {
                 )}
               </div>
             </div>
-            {!isLegacyPool && !gmailCredsReady && (
+            {!gmailCredsReady && (
               <>
                 <Field label="GMAIL_CLIENT_ID" hint={hintFor(sources["GMAIL_CLIENT_ID"])}>
                   <Input
@@ -1227,24 +1248,6 @@ function SetupPage() {
                   </code>{" "}
                   to authorize in the browser and fill all three values automatically.
                 </div>
-                <Field label="GMAIL_CLIENT_ID" hint={hintFor(sources["GMAIL_CLIENT_ID"])}>
-                  <Input
-                    type="password"
-                    placeholder={sources["GMAIL_CLIENT_ID"] ? "(unchanged)" : ""}
-                    value={secrets["GMAIL_CLIENT_ID"] ?? ""}
-                    onChange={(e) => setSecret("GMAIL_CLIENT_ID", e.target.value)}
-                    autoComplete="new-password"
-                  />
-                </Field>
-                <Field label="GMAIL_CLIENT_SECRET" hint={hintFor(sources["GMAIL_CLIENT_SECRET"])}>
-                  <Input
-                    type="password"
-                    placeholder={sources["GMAIL_CLIENT_SECRET"] ? "(unchanged)" : ""}
-                    value={secrets["GMAIL_CLIENT_SECRET"] ?? ""}
-                    onChange={(e) => setSecret("GMAIL_CLIENT_SECRET", e.target.value)}
-                    autoComplete="new-password"
-                  />
-                </Field>
                 <Field
                   label="GMAIL_REFRESH_TOKEN"
                   hint={hintFor(sources["GMAIL_REFRESH_TOKEN"])}

@@ -544,8 +544,8 @@ function CadencesPage() {
         ) : list.length === 0 ? (
           <div className="px-6 py-8">
             <EmptyNote
-              note="No cadences in flight. The engine only runs for prospects you've already touched; send a play and they appear here."
-              cli="oneshot-gtm motion show-hn --target show-hn.json"
+              note="No cadences in flight. Find prospects from /queue's finder flow, or run the watcher; approved sends appear here."
+              cli="oneshot-gtm find watch"
             />
           </div>
         ) : (

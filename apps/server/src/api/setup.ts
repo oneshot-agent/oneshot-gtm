@@ -112,6 +112,8 @@ export async function getSetupStatus(req: Request): Promise<Response> {
         X_ACCESS_TOKEN: secretSource("X_ACCESS_TOKEN"),
         X_ACCESS_SECRET: secretSource("X_ACCESS_SECRET"),
         TWITTERAPI_IO_KEY: secretSource("TWITTERAPI_IO_KEY"),
+        GITHUB_TOKEN: secretSource("GITHUB_TOKEN"),
+        LUMA_SESSION_COOKIE: secretSource("LUMA_SESSION_COOKIE"),
       },
     },
     200,
@@ -168,34 +170,7 @@ export async function setup(req: Request): Promise<Response> {
   // ignored so a malicious or accidental web POST can't rotate the anonymous
   // install id. saveConfig writes the entire cfg, so omitting clientId here
   // would silently drop it from disk.
-  saveConfig({
-    walletMode,
-    llmProvider,
-    llmModel: body.llmModel ?? current.llmModel,
-    telemetryEnabled: body.telemetryEnabled ?? current.telemetryEnabled,
-    founderName: mergeString(body.founderName, current.founderName),
-    founderEmail: mergeString(body.founderEmail, current.founderEmail),
-    productOneLiner: mergeString(body.productOneLiner, current.productOneLiner),
-    productDomain: mergeString(body.productDomain, current.productDomain),
-    sendingDomain: mergeString(body.sendingDomain, current.sendingDomain),
-    emailProvider:
-      body.emailProvider === "gmail" || body.emailProvider === "oneshot"
-        ? body.emailProvider
-        : current.emailProvider,
-    emailIdentities,
-    icpOneLiner: mergeString(body.icpOneLiner, current.icpOneLiner),
-    cadenceOverrides: current.cadenceOverrides,
-    founderCredentials: mergeString(body.founderCredentials, current.founderCredentials),
-    productPortfolio: mergeString(body.productPortfolio, current.productPortfolio),
-    partners: mergeString(body.partners, current.partners),
-    founderAdmission: mergeString(body.founderAdmission, current.founderAdmission),
-    productBrief: mergeString(body.productBrief, current.productBrief),
-    mobileSignature: body.mobileSignature ?? current.mobileSignature,
-    // Not on the setup form — preserve whatever is on disk so a save can't
-    // silently drop a hand-set install timezone.
-    timezone: current.timezone,
-    clientId: current.clientId,
-  });
+  saveConfig(mergeSetupConfig(current, body, emailIdentities, llmProvider, walletMode));
 
   // Adds run AFTER the main saveConfig: registerOneShotIdentity reloads the
   // freshly-persisted config (so it sees the cap/removal edits above and any
@@ -225,6 +200,39 @@ export async function setup(req: Request): Promise<Response> {
   }
 
   return jsonResponse({ ok: true }, 200, req);
+}
+
+export function mergeSetupConfig(
+  current: OneShotConfig,
+  body: SetupRequest,
+  emailIdentities: EmailIdentity[] | null,
+  llmProvider: LlmProvider = body.llmProvider ?? current.llmProvider,
+  walletMode: WalletMode = body.walletMode ?? current.walletMode,
+): OneShotConfig {
+  return {
+    ...current,
+    walletMode,
+    llmProvider,
+    llmModel: body.llmModel ?? current.llmModel,
+    telemetryEnabled: body.telemetryEnabled ?? current.telemetryEnabled,
+    founderName: mergeString(body.founderName, current.founderName),
+    founderEmail: mergeString(body.founderEmail, current.founderEmail),
+    productOneLiner: mergeString(body.productOneLiner, current.productOneLiner),
+    productDomain: mergeString(body.productDomain, current.productDomain),
+    sendingDomain: mergeString(body.sendingDomain, current.sendingDomain),
+    emailProvider:
+      body.emailProvider === "gmail" || body.emailProvider === "oneshot"
+        ? body.emailProvider
+        : current.emailProvider,
+    emailIdentities,
+    icpOneLiner: mergeString(body.icpOneLiner, current.icpOneLiner),
+    founderCredentials: mergeString(body.founderCredentials, current.founderCredentials),
+    productPortfolio: mergeString(body.productPortfolio, current.productPortfolio),
+    partners: mergeString(body.partners, current.partners),
+    founderAdmission: mergeString(body.founderAdmission, current.founderAdmission),
+    productBrief: mergeString(body.productBrief, current.productBrief),
+    mobileSignature: body.mobileSignature ?? current.mobileSignature,
+  };
 }
 
 /**
