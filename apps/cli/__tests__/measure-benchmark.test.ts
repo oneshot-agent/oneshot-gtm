@@ -46,6 +46,7 @@ afterEach(() => {
   stdoutSpy.mockRestore();
   setJsonMode(false);
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("measure benchmark", () => {
@@ -111,5 +112,89 @@ describe("measure benchmark", () => {
       status: "ok",
       ...aggregate,
     });
+  });
+
+  it("stops reading benchmark responses larger than 512KB", async () => {
+    let cancelled = false;
+    let pulls = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulls += 1;
+        controller.enqueue(new Uint8Array(256 * 1024));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(body, { status: 200 })),
+    );
+
+    await commandMeasureBenchmark({}, {});
+
+    expect(stdout.join("")).toContain("Benchmark data is unavailable");
+    expect(pulls).toBeLessThanOrEqual(4);
+    expect(cancelled).toBe(true);
+  });
+
+  it("accepts a benchmark response exactly 512KB long", async () => {
+    const json = JSON.stringify(aggregate);
+    const body = `${json}${" ".repeat(512 * 1024 - Buffer.byteLength(json))}`;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(body, { status: 200 })),
+    );
+
+    await commandMeasureBenchmark({ json: true }, {});
+
+    expect(JSON.parse(stdout.join(""))).toMatchObject({ status: "ok", ...aggregate });
+  });
+
+  it("times out a benchmark request after 10 seconds", async () => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_input: URL, init?: RequestInit) => {
+        signal = init?.signal ?? undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          signal?.addEventListener("abort", () => reject(signal?.reason), { once: true });
+        });
+      }),
+    );
+
+    const benchmark = commandMeasureBenchmark({}, {});
+    await vi.advanceTimersByTimeAsync(10000);
+    await benchmark;
+
+    expect(signal?.aborted).toBe(true);
+    expect(stdout.join("")).toContain("Benchmark data is unavailable");
+  });
+
+  it("times out while reading a stalled benchmark response", async () => {
+    vi.useFakeTimers();
+    let signal: AbortSignal | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: URL, init?: RequestInit) => {
+        signal = init?.signal ?? undefined;
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            signal?.addEventListener("abort", () => controller.error(signal?.reason), {
+              once: true,
+            });
+          },
+        });
+        return new Response(body, { status: 200 });
+      }),
+    );
+
+    const benchmark = commandMeasureBenchmark({}, {});
+    await vi.advanceTimersByTimeAsync(10000);
+    await benchmark;
+
+    expect(signal?.aborted).toBe(true);
+    expect(stdout.join("")).toContain("Benchmark data is unavailable");
   });
 });
