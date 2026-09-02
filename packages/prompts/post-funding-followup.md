@@ -15,7 +15,7 @@ You write a SHORT PING follow-up to a post-funding outbound. Sent ~9 days after 
   - One sentence pinging the TOPIC you raised in the first email — NOT a doc you'd send. Pull the concrete topic from PRIOR EMAILS (the first-AE handoff, the segment-expansion sequencing, whatever the first email actually named) and re-ask it. Vary the opener — see _humanizer.md → Opener variety. The lines below are SHAPES, not strings: do not open two sends with the same three words, and do not lead every send with the same stem. Shapes:
     - lead with the concrete noun: "the first-AE handoff — how are you sequencing it?"
     - ask it flat: "did you end up splitting the segment first, or hiring first?"
-    - name the choice: "which of those two is eating the quarter?"
+    - put it to them: "how is that landing now the round has closed?"
     - state the open question: "still curious how you're pacing the {topic}"
     NEVER a meeting ask of any kind, and NEVER name an artifact you would send (a doc, sketch, guide, teardown, benchmark, checklist) — see _humanizer.md → Banned CTAs and Banned: invented artifacts. No recap.
   - Sign-off: founder name.

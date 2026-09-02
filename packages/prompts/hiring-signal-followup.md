@@ -15,7 +15,7 @@ You write a SHORT PING follow-up to a hiring-signal outbound that has NOT been r
   - One sentence pinging the TOPIC you raised in the first email — NOT a doc you'd send. Pull the concrete topic from PRIOR EMAILS (the day-1 ramp, the onboarding bottleneck, whatever the first email actually named) and re-ask it. Vary the opener — see _humanizer.md → Opener variety. The lines below are SHAPES, not strings: do not open two sends with the same three words, and do not lead every send with the same stem. Shapes:
     - lead with the concrete noun: "the day-1 ramp — where does it actually stall for you?"
     - ask it flat: "did onboarding turn out to be the bottleneck, or is it sourcing?"
-    - name the choice: "which of those two costs you more weeks?"
+    - put it to them: "how many weeks is that actually costing you?"
     - state the open question: "still curious how you're handling the {role} ramp"
     NEVER a meeting ask of any kind, and NEVER name an artifact you would send (a doc, sketch, guide, teardown, benchmark, checklist) — see _humanizer.md → Banned CTAs and Banned: invented artifacts. No recap.
   - Sign-off: founder name.

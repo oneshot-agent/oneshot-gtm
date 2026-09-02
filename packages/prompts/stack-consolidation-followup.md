@@ -15,7 +15,7 @@ You write a SHORT PING follow-up to a founder-to-founder stack-consolidation out
   - Re-ask the ONE-LINE question from the first email, using only what PRIOR EMAILS already say — this prompt has no other factual source, so a "second seam" here would be invented. Vary the opener — see _humanizer.md → Opener variety. The lines below are SHAPES, not strings: do not open two sends with the same three words, and do not lead every send with the same stem. Shapes:
     - lead with the concrete noun: "the keys or the billing — which half is the actual tax?"
     - ask it flat: "did that seam turn out to be the one that bites, or is it somewhere else?"
-    - name the choice: "which of those two would you rip out first?"
+    - put it to them: "how bad is that in practice for you?"
     - state the open question: "still curious which half of that is the annoying one for you"
     NEVER a meeting ask of any kind, and NEVER name an artifact you would send (a doc, sketch, guide, teardown, benchmark, checklist) — see _humanizer.md → Banned CTAs and Banned: invented artifacts. Do NOT recap PRIOR EMAILS in the body; the recipient knows.
   - Sign-off: founder name.
