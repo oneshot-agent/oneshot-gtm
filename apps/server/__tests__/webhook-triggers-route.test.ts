@@ -109,7 +109,7 @@ describe("webhook trigger intake", () => {
   });
 
   it("accepts valid signed events on both intake endpoints", async () => {
-    process.env["WEBHOOK_SECRET"] = "configured-webhook-secret";
+    process.env["WEBHOOK_SECRET"] = "whsec-test";
     const signup = { name: "Grace", email: "grace@example.com", phone: "+15555550101" };
     const noShow = {
       name: "Ada",
@@ -129,7 +129,7 @@ describe("webhook trigger intake", () => {
   });
 
   it("rejects tampered, expired, and replayed deliveries", async () => {
-    const secret = "configured-webhook-secret";
+    const secret = "whsec-test";
     process.env["WEBHOOK_SECRET"] = secret;
     const payload = { name: "Grace", email: "grace@example.com", phone: "+15555550101" };
     const signed = request("signup", payload, secret);
@@ -152,7 +152,7 @@ describe("webhook trigger intake", () => {
   });
 
   it("does not consume a valid signature when the JSON is malformed", async () => {
-    const secret = "configured-webhook-secret";
+    const secret = "whsec-test";
     process.env["WEBHOOK_SECRET"] = secret;
     const signed = request("signup", "{", secret);
 
