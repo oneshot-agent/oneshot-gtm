@@ -48,8 +48,10 @@ export interface RankOptions {
   explorationInterval?: number;
 }
 
-/** Same stable hash as plays' admissionSlot: decisions must not flap across refetches. */
-function stableHash(key: string): number {
+/** Same stable hash as plays' admissionSlot: decisions must not flap across
+ *  refetches. Exported for the calibration holdout split (_fit.ts), which
+ *  needs the identical time-uncorrelated, refit-stable partition. */
+export function stableHash(key: string): number {
   let h = 0;
   for (const ch of key) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
   return h;
