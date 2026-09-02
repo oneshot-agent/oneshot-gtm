@@ -36,11 +36,18 @@ import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { Toggle } from "../components/primitives/Toggle.tsx";
 import { cn, eventIsPast, formatSendsToday, humanizeEventDate, timeAgo } from "../lib/cn.ts";
 import {
+  bulkApprovalIds,
   drainButtonState,
   drainSelectionState,
+  isQueueFilterActive,
   mergeRowMeta,
+  queuePlayList,
+  queueRequest,
+  queueSelectionState,
+  selectVisibleQueueRows,
+  toggleQueueSelection,
   type RowMeta,
-} from "../lib/drainButton.ts";
+} from "../lib/queue-helpers.ts";
 import { humanInterval } from "../lib/humanInterval.ts";
 import { priorityBreakdown, priorityChip } from "../lib/priorityChip.ts";
 import { INTERVAL_PRESETS_MS, withIntervalOverride } from "../lib/triggerInterval.ts";
@@ -132,13 +139,7 @@ function QueuePage() {
 
   const queueQuery = useQuery({
     queryKey: ["queue", statusFilter, playFilter, orderOverride],
-    queryFn: () =>
-      api.queue({
-        ...(statusFilter !== "all" ? { status: statusFilter } : {}),
-        ...(playFilter !== "all" ? { play: playFilter } : {}),
-        ...(orderOverride ? { order: orderOverride } : {}),
-        limit: 200,
-      }),
+    queryFn: () => api.queue(queueRequest({ statusFilter, playFilter, orderOverride })),
     refetchInterval: 20_000,
   });
   const effectiveOrder = queueQuery.data?.order ?? "newest";
@@ -268,9 +269,7 @@ function QueuePage() {
   // Plays on the visible page, plus any play holding approved rows anywhere —
   // the chip both filters the table and scopes the drain button, so a play with
   // drainable rows must stay selectable even when the page shows none of them.
-  const playList = Array.from(
-    new Set([...rows.map((r) => r.playName), ...Object.keys(approvedByPlay)]),
-  ).toSorted();
+  const playList = queuePlayList(rows, approvedByPlay);
   const drain = drainButtonState({ playFilter, approvedByPlay, isRunnable: isRunnablePlay });
   // Selection outlives the filters, so read each selected row from the session
   // map rather than the visible page — otherwise filtering to one play makes a
@@ -284,8 +283,7 @@ function QueuePage() {
   });
 
   // Selection derived state — stable across renders even if rows refetch.
-  const someSelected = selected.size > 0;
-  const allSelected = rows.length > 0 && selected.size === rows.length;
+  const { someSelected, allSelected } = queueSelectionState(rows, selected);
 
   return (
     <div className="-mx-6 -my-6 flex flex-col">
@@ -415,7 +413,7 @@ function QueuePage() {
         {queueQuery.isLoading ? (
           Array.from({ length: 5 }, (_, i) => <SkeletonRow key={i} />)
         ) : rows.length === 0 ? (
-          <EmptyQueueHelp filterActive={statusFilter !== "pending" || playFilter !== "all"} />
+          <EmptyQueueHelp filterActive={isQueueFilterActive(statusFilter, playFilter)} />
         ) : (
           <table className="w-full text-[13px]">
             <thead className="sticky top-0 z-10 bg-ink-bg">
@@ -431,7 +429,7 @@ function QueuePage() {
                         if (el) el.indeterminate = someSelected && !allSelected;
                       }}
                       onChange={(e) =>
-                        setSelected(e.target.checked ? new Set(rows.map((r) => r.id)) : new Set())
+                        setSelected(new Set(selectVisibleQueueRows(rows, e.target.checked)))
                       }
                       aria-label={allSelected ? "deselect all" : "select all"}
                     />
@@ -455,12 +453,7 @@ function QueuePage() {
                   selected={selected.has(row.id)}
                   anySelected={someSelected}
                   onToggleSelect={() => {
-                    setSelected((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(row.id)) next.delete(row.id);
-                      else next.add(row.id);
-                      return next;
-                    });
+                    setSelected((prev) => new Set(toggleQueueSelection(prev, row.id)));
                   }}
                   onToggle={() => setExpanded(expanded === row.id ? null : row.id)}
                   generating={generating.has(row.id)}
@@ -498,7 +491,7 @@ function QueuePage() {
               variant="secondary"
               size="sm"
               disabled={bulkApprove.isPending || selected.size === 0}
-              onClick={() => bulkApprove.mutate([...selected])}
+              onClick={() => bulkApprove.mutate(bulkApprovalIds(selected))}
             >
               <Check size={12} /> approve {selected.size}
             </Button>
@@ -638,7 +631,7 @@ function QueuePage() {
   );
 }
 
-function QueueRow({
+export function QueueRow({
   row,
   ranked,
   zebra,
