@@ -212,6 +212,36 @@ afterEach(() => {
 });
 
 describe("previewCadenceStepBatch", () => {
+  it("counts drafts accepted earlier in the same batch, so a batch cannot agree on one opener", async () => {
+    // Every mocked draft opens the same way. With an empty ledger the cap has
+    // no history to measure, so without carrying accepted drafts forward the
+    // whole batch would pass and ship one identical opener.
+    for (let id = 4; id <= 15; id++) {
+      cadenceRows.push({
+        prospect_id: id,
+        play_name: "stack-consolidation",
+        current_step: 0,
+        status: "active",
+        enrolled_at: new Date().toISOString(),
+        next_due_at: new Date(Date.now() - 1000).toISOString(),
+        last_polled_at: null,
+        next_step_draft_json: null,
+        next_step_drafted_at: null,
+        prospect_email: `p${id}@x.dev`,
+        prospect_name: `P${id}`,
+        prospect_company: "PC",
+      });
+    }
+    const out = await previewCadenceStepBatch(
+      cadenceRows
+        .filter((c) => c.status === "active")
+        .map((c) => ({ prospectId: c.prospect_id, playName: c.play_name })),
+    );
+    const flagged = out.filter((r) => r.preview?.flags.includes("opener-overused"));
+    expect(out[0]?.preview?.flags ?? []).not.toContain("opener-overused");
+    expect(flagged.length).toBeGreaterThan(0);
+  });
+
   it("processes all items; a non-active row records ok:false but the rest succeed", async () => {
     const out = await previewCadenceStepBatch([
       { prospectId: 1, playName: "stack-consolidation" },

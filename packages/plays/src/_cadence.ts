@@ -1028,6 +1028,10 @@ export interface CadenceStepPreview {
 export async function previewCadenceStep(input: {
   prospectId: number;
   playName: string;
+  /** Bodies accepted earlier in the same batch — they are not in the ledger
+   *  yet, and without them a batch can agree on one brand-new opener and every
+   *  row passes the cap individually. */
+  extraRecentBodies?: readonly string[];
 }): Promise<CadenceStepPreview> {
   const ledger = getLedger();
   const cfg = loadConfig();
@@ -1067,10 +1071,10 @@ export async function previewCadenceStep(input: {
     built.kind === "email"
       ? [
           ...lintEmail(subject, body, 100),
-          ...lintOpenerFrequency(
-            body,
-            ledger.recentSentEmailBodies({ playName: input.playName, stepIndex: nextIndex }),
-          ),
+          ...lintOpenerFrequency(body, [
+            ...(input.extraRecentBodies ?? []),
+            ...ledger.recentSentEmailBodies({ playName: input.playName, stepIndex: nextIndex }),
+          ]),
         ]
       : [];
   ledger.setCadenceDraft({
@@ -1106,6 +1110,11 @@ export async function sendCadenceStep(input: {
   const ledger = getLedger();
   const draft = ledger.getCadenceDraft(input);
   if (!draft) throw new Error("no persisted preview — click Preview first");
+  // The UI disables Send on a flagged draft; enforce the same rule here so a
+  // direct API call cannot dispatch copy the lint held back.
+  if (draft.flags.length > 0) {
+    throw new Error(`draft held by lint (${draft.flags.join(", ")}) — re-preview first`);
+  }
   return runCadenceStepForProspect({
     prospectId: input.prospectId,
     playName: input.playName,
@@ -1142,9 +1151,20 @@ export interface BatchSendResult {
  * preserves input order so the result matches `items` 1:1.
  */
 export async function previewCadenceStepBatch(items: BatchItem[]): Promise<BatchPreviewResult[]> {
+  // Drafts this batch has already accepted, keyed by play (the step is fixed
+  // per prospect but the play is what the cap is scoped to). Concurrency 3
+  // means the last couple of rows may not see each other; that still closes
+  // the batch-wide agreement this exists to catch.
+  const accepted = new Map<string, string[]>();
   return parallelMap(items, 3, async (item) => {
     try {
-      const preview = await previewCadenceStep(item);
+      const preview = await previewCadenceStep({
+        ...item,
+        extraRecentBodies: accepted.get(item.playName) ?? [],
+      });
+      if (preview.flags.length === 0) {
+        accepted.set(item.playName, [...(accepted.get(item.playName) ?? []), preview.body]);
+      }
       return { prospectId: item.prospectId, playName: item.playName, ok: true, preview };
     } catch (err) {
       return {

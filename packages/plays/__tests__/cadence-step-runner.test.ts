@@ -315,6 +315,15 @@ describe("sendCadenceStep", () => {
     ).rejects.toThrow(/no persisted preview/);
   });
 
+  it("refuses to send a draft the lint held, so the API matches the disabled button", async () => {
+    await previewCadenceStep({ prospectId: 1, playName: "stack-consolidation" });
+    persistedDraft = { ...persistedDraft!, flags: ["opener-overused"] };
+    await expect(
+      sendCadenceStep({ prospectId: 1, playName: "stack-consolidation" }),
+    ).rejects.toThrow(/held by lint \(opener-overused\)/);
+    expect(calls.sendEmail).toBe(0);
+  });
+
   it("attaches audit context (memo + decisionContext.source='cadence') to the SDK call", async () => {
     await previewCadenceStep({ prospectId: 1, playName: "stack-consolidation" });
     await sendCadenceStep({ prospectId: 1, playName: "stack-consolidation" });
