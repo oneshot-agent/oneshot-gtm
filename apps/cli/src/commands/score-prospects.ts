@@ -1,6 +1,7 @@
 import {
   cadenceGoalId,
   getLedger,
+  readProspectCalibration,
   isHumanApproval,
   isHumanDecision,
   parseProspectPriority,
@@ -222,9 +223,17 @@ export function buildShadowReport(rows: QueueRow[]): FinderShadowReport[] {
  * immature and unjoinable rows never enter a denominator. This is NOT a
  * conversion probability.
  */
-function printOutcomeReport(ledger: ReturnType<typeof getLedger>, scope: string): void {
+/**
+ * Assemble outcome labels for every sent row in scope. Shared by the report
+ * below and `find calibrate`, so the two can never disagree about what a
+ * label is.
+ */
+export function assembleOutcomeLabels(
+  ledger: ReturnType<typeof getLedger>,
+  scope: string,
+  now: Date = new Date(),
+): ReturnType<typeof labelSentRow>[] {
   const raw = ledger.listSentOutcomeRows(scope === "all" ? {} : { playName: scope });
-  if (raw.length === 0) return;
   // Fold the receipts value-tag ladder into one max rank per goal.
   const rankByGoal = new Map<string, OutcomeRank>();
   for (const receipt of ledger.listValueTaggedReceipts()) {
@@ -234,13 +243,26 @@ function printOutcomeReport(ledger: ReturnType<typeof getLedger>, scope: string)
       maxOutcomeRank(rankByGoal.get(receipt.goal_id) ?? "none", rank),
     );
   }
-  const now = new Date();
-  const labels = raw.map((row) => {
+  return raw.map((row) => {
     // Mirror tagOutcomeValue's goal derivation, pid: fallback included.
     const email = row.payload_email?.trim();
     const goalId = cadenceGoalId(row.play_name, email || `pid:${row.joined_prospect_id ?? 0}`);
     return labelSentRow(row, rankByGoal.get(goalId) ?? "none", now);
   });
+}
+
+function printOutcomeReport(ledger: ReturnType<typeof getLedger>, scope: string): void {
+  const labels = assembleOutcomeLabels(ledger, scope);
+  if (labels.length === 0) return;
+
+  // Shadow display of the fitted calibration, when one exists (written by
+  // `find calibrate --fit`). Display only — nothing consumes it for ordering.
+  let calibration: ReturnType<typeof readProspectCalibration> = null;
+  try {
+    calibration = readProspectCalibration();
+  } catch (err) {
+    note((err as Error).message);
+  }
 
   process.stdout.write(
     `${c.dim(`outcome report (not a conversion probability) · maturity ${OUTCOME_MATURITY_DAYS}d:`)}\n`,
@@ -262,6 +284,14 @@ function printOutcomeReport(ledger: ReturnType<typeof getLedger>, scope: string)
       .join("  ");
     if (cells) {
       process.stdout.write(`  ${"".padEnd(22)} ${c.dim("replies by score bucket —")} ${cells}\n`);
+    }
+    const fitted = calibration?.perFinder[r.finder];
+    if (fitted) {
+      process.stdout.write(
+        `  ${"".padEnd(22)} ${c.dim("calibrated holdout AUC:")} ` +
+          `${fitted.holdoutAuc === null ? "n/a" : fitted.holdoutAuc.toFixed(2)} ` +
+          `${c.dim(`(fitted ${calibration!.fittedAt.slice(0, 10)}, n=${fitted.nPos}+/${fitted.nNeg}-)`)}\n`,
+      );
     }
   }
   process.stdout.write("\n");

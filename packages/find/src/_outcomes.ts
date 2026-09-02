@@ -42,6 +42,8 @@ const DEAL_RANK_TO_OUTCOME: Record<number, OutcomeRank> = {
 export interface SentOutcomeLabel {
   id: number;
   finder: string;
+  /** Stable per-row key — drives the deterministic calibration holdout split. */
+  dedupeKey: string;
   priorityTotal: number | null;
   components: ProspectPriorityComponents | null;
   joinable: boolean;
@@ -101,6 +103,7 @@ export function labelSentRow(
   return {
     id: raw.id,
     finder: raw.play_name,
+    dedupeKey: raw.dedupe_key,
     priorityTotal: priority?.total ?? null,
     components: priority?.components ?? null,
     joinable,
