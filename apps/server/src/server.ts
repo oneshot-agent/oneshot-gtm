@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { configDir, demoMode, scrubDemoPaths } from "@oneshot-gtm/core";
 import { health } from "./api/health.ts";
 import { homeMetrics } from "./api/home.ts";
 import {
@@ -303,5 +304,10 @@ export function jsonResponse(body: unknown, status = 200, req?: Request): Respon
     "content-type": "application/json; charset=utf-8",
   };
   if (req) Object.assign(headers, corsHeaders(req));
-  return new Response(JSON.stringify(body), { status, headers });
+
+  // Every JSON response the server produces passes through here, which is the
+  // only place a demo install can be stopped from printing the operator's home
+  // directory back at a camera. See scrubDemoPaths.
+  const json = JSON.stringify(body);
+  return new Response(demoMode() ? scrubDemoPaths(json, configDir()) : json, { status, headers });
 }
