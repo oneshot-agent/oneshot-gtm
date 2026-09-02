@@ -669,7 +669,9 @@ function CadencesPage() {
                           </div>
                         )}
                         {!c.prospectTitle && !knownCompany && c.prospectLinkedinUrl && (
-                          <div className="text-[11px] text-ink-faint">Role/company not enriched</div>
+                          <div className="text-[11px] text-ink-faint">
+                            Role/company not enriched
+                          </div>
                         )}
                         <div className="font-mono text-[11px] text-ink-faint">
                           {c.prospectEmail ? <Pii kind="email">{c.prospectEmail}</Pii> : "—"}
