@@ -1,4 +1,5 @@
 import {
+  cadenceGoalId,
   getLedger,
   isHumanApproval,
   isHumanDecision,
@@ -8,11 +9,19 @@ import {
   safeParseJsonRecord,
 } from "@oneshot-gtm/core";
 import {
+  OUTCOME_MATURITY_DAYS,
+  type OutcomeRank,
   PRIORITY_ADAPTERS,
   PRIORITY_VERSION,
+  SCORE_BUCKETS,
+  bucketOf,
+  buildOutcomeReport,
+  labelSentRow,
   mannWhitneyAuc,
+  maxOutcomeRank,
   meanOf,
   safeScorePriority,
+  valueTagToRank,
 } from "@oneshot-gtm/find";
 import { c, header, note, ok } from "../output.ts";
 
@@ -97,15 +106,9 @@ export function anchorFor(row: Pick<QueueRow, "found_at">): Date {
   return Number.isFinite(t) ? new Date(t) : new Date();
 }
 
-export const SCORE_BUCKETS = ["0-19", "20-39", "40-59", "60-79", "80-100"] as const;
-
-export function bucketOf(total: number): (typeof SCORE_BUCKETS)[number] {
-  if (total < 20) return "0-19";
-  if (total < 40) return "20-39";
-  if (total < 60) return "40-59";
-  if (total < 80) return "60-79";
-  return "80-100";
-}
+// Moved to @oneshot-gtm/find (_buckets.ts) so the outcome report shares the
+// bands; re-exported here for existing importers/tests.
+export { SCORE_BUCKETS, bucketOf };
 
 /**
  * Machine rejections carry the `auto:` notes prefix (same discriminator as
@@ -210,6 +213,58 @@ export function buildShadowReport(rows: QueueRow[]): FinderShadowReport[] {
       }),
     )
     .toSorted((a, b) => a.finder.localeCompare(b.finder));
+}
+
+/**
+ * Per-finder outcome section (Phase 3 of #410): what the sends actually did.
+ * Positives are real outcomes only (human replies, meetings, deals, receipt
+ * value tags); a row counts negative only once mature and joinable —
+ * immature and unjoinable rows never enter a denominator. This is NOT a
+ * conversion probability.
+ */
+function printOutcomeReport(ledger: ReturnType<typeof getLedger>, scope: string): void {
+  const raw = ledger.listSentOutcomeRows(scope === "all" ? {} : { playName: scope });
+  if (raw.length === 0) return;
+  // Fold the receipts value-tag ladder into one max rank per goal.
+  const rankByGoal = new Map<string, OutcomeRank>();
+  for (const receipt of ledger.listValueTaggedReceipts()) {
+    const rank = valueTagToRank(receipt.value_tag);
+    rankByGoal.set(
+      receipt.goal_id,
+      maxOutcomeRank(rankByGoal.get(receipt.goal_id) ?? "none", rank),
+    );
+  }
+  const now = new Date();
+  const labels = raw.map((row) => {
+    // Mirror tagOutcomeValue's goal derivation, pid: fallback included.
+    const email = row.payload_email?.trim();
+    const goalId = cadenceGoalId(row.play_name, email || `pid:${row.joined_prospect_id ?? 0}`);
+    return labelSentRow(row, rankByGoal.get(goalId) ?? "none", now);
+  });
+
+  process.stdout.write(
+    `${c.dim(`outcome report (not a conversion probability) · maturity ${OUTCOME_MATURITY_DAYS}d:`)}\n`,
+  );
+  for (const r of buildOutcomeReport(labels)) {
+    const rate =
+      r.replyRate === null
+        ? "n/a"
+        : `${(r.replyRate.rate * 100).toFixed(1)}% [${(r.replyRate.lo * 100).toFixed(0)}–${(r.replyRate.hi * 100).toFixed(0)}%]`;
+    process.stdout.write(
+      `  ${r.finder.padEnd(22)} ${c.dim("sends:")} ${String(r.sends).padEnd(5)} ` +
+        `${c.dim("mature:")} ${String(r.mature).padEnd(5)} ` +
+        `${c.dim(`(immature ${r.immature}, unjoinable ${r.unjoinable})`)}  ` +
+        `${c.dim("replies:")} ${r.replies} ${c.dim(rate)}  ${c.dim("meetings+:")} ${r.meetingsPlus}` +
+        `${r.scoreVsOutcomeAuc === null ? "" : `  ${c.dim("score vs outcome AUC:")} ${r.scoreVsOutcomeAuc.toFixed(2)}`}\n`,
+    );
+    const cells = SCORE_BUCKETS.filter((b) => r.repliesByBucket[b].n > 0)
+      .map((b) => `${c.dim(b + ":")} ${r.repliesByBucket[b].replied}/${r.repliesByBucket[b].n}`)
+      .join("  ");
+    if (cells) {
+      process.stdout.write(`  ${"".padEnd(22)} ${c.dim("replies by score bucket —")} ${cells}\n`);
+    }
+  }
+  process.stdout.write("\n");
 }
 
 function gaugeSide(label: string, s: { n: number; mean: number | null }): string {
@@ -320,6 +375,7 @@ export function commandScoreProspects(opts: ScoreProspectsOpts): void {
       }
     }
     process.stdout.write("\n");
+    printOutcomeReport(ledger, scope);
   }
 
   if (opts.dryRun) {

@@ -17,6 +17,7 @@ import type {
   InterviewRecord,
   ProspectPriority,
   ProspectRecord,
+  SentOutcomeRawRow,
   QueueRow,
   QueueStatus,
   ReceiptRecord,
@@ -3791,6 +3792,65 @@ export class Ledger {
     return this.db
       .query(`SELECT * FROM target_queue WHERE ${where} ORDER BY id ASC${limitSql}`)
       .all(...(args as never[])) as QueueRow[];
+  }
+
+  /**
+   * Every sent queue row joined to its outcome evidence (Phase 3 of #410).
+   * The prospect link is `prospect_id` when the post-send backfill caught it,
+   * else an email join (LOWER/TRIM defeats the index — acceptable, this is an
+   * offline report path over hundreds of rows). `COALESCE(kind,'human')` is
+   * mandatory: pre-v23 replies have NULL kind and read as human everywhere.
+   * `deal_lost`/`ghosted` map to no rank on purpose — deal_outcomes is
+   * positives-only by construction (the cadences modal offers only the three
+   * positive states), so its absence is never evidence of failure.
+   */
+  listSentOutcomeRows(opts: { playName?: string } = {}): SentOutcomeRawRow[] {
+    const args: unknown[] = [];
+    let where = `q.status = 'sent' AND q.sent_at IS NOT NULL`;
+    if (opts.playName) {
+      where += ` AND q.play_name = ?`;
+      args.push(opts.playName);
+    }
+    return this.db
+      .query(
+        `SELECT q.id, q.play_name, q.dedupe_key, q.priority_json, q.sent_at,
+                q.decision, q.decided_by,
+                COALESCE(q.prospect_id, p.id) AS joined_prospect_id,
+                json_extract(q.payload_json, '$.email') AS payload_email,
+                (SELECT MIN(ir.received_at) FROM inbox_replies ir
+                  WHERE ir.prospect_id = COALESCE(q.prospect_id, p.id)
+                    AND COALESCE(ir.kind, 'human') = 'human') AS first_email_reply_at,
+                (SELECT MIN(ce.occurred_at) FROM channel_events ce
+                  WHERE ce.prospect_id = COALESCE(q.prospect_id, p.id)
+                    AND ce.event_type = 'reply') AS first_channel_reply_at,
+                (SELECT MAX(CASE d.outcome WHEN 'deal_won' THEN 4
+                                           WHEN 'sql_qualified' THEN 3
+                                           WHEN 'meeting_booked' THEN 2
+                                           ELSE NULL END)
+                   FROM deal_outcomes d
+                  WHERE d.prospect_id = COALESCE(q.prospect_id, p.id)) AS deal_rank
+         FROM target_queue q
+         LEFT JOIN prospects p
+           ON p.email = LOWER(TRIM(json_extract(q.payload_json, '$.email')))
+         WHERE ${where}
+         ORDER BY q.id ASC`,
+      )
+      .all(...(args as never[])) as SentOutcomeRawRow[];
+  }
+
+  /**
+   * The local funnel ladder: receipts value-tagged by outcome attribution
+   * (engagement < meeting < qualified < revenue). goal_id is a sha256 of
+   * (play, email) — not computable in SQLite, so the caller joins in JS via
+   * `cadenceGoalId`.
+   */
+  listValueTaggedReceipts(): Array<{ goal_id: string; value_tag: string }> {
+    return this.db
+      .query(
+        `SELECT goal_id, value_tag FROM receipts
+         WHERE value_tag IS NOT NULL AND goal_id IS NOT NULL`,
+      )
+      .all() as Array<{ goal_id: string; value_tag: string }>;
   }
 
   close(): void {
