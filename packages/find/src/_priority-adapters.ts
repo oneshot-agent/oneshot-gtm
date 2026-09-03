@@ -189,6 +189,41 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
     ...contact(p),
   }),
 
+  "new-business": (p) => ({
+    title: str(p["title"]),
+    companyKnown: str(p["company"]) !== null,
+    accountSignals: [
+      {
+        kind: "new-registration",
+        strength: 85,
+        reason:
+          `${str(p["sourceLabel"]) ?? "registry"} match ${str(p["matchedDateIso"])?.slice(0, 10) ?? ""}`.trim(),
+      },
+    ],
+    intentSignals: [
+      { kind: "greenfield", strength: 80, reason: "newly licensed — nothing to rip out" },
+    ],
+    hasEvidenceText: str(p["sourceLabel"]) !== null,
+    ...contact(p),
+  }),
+
+  "free-pilot": (p) => ({
+    title: str(p["title"]),
+    companyKnown: str(p["company"]) !== null,
+    accountSignals: [
+      {
+        kind: "registry-match",
+        strength: 55,
+        reason: `${str(p["sourceLabel"]) ?? "public registry"} match`,
+      },
+    ],
+    intentSignals: [
+      { kind: "free-pilot-fit", strength: 50, reason: "main-street pilot candidate" },
+    ],
+    hasEvidenceText: str(p["sourceLabel"]) !== null,
+    ...contact(p),
+  }),
+
   // v2, label-mined (65 approved / 69 rejected individually-judged rows):
   // exec titles 35% approval vs 55% title-missing → title prior inverted;
   // bios no longer feed seniority (bioTitleBand measured flat-to-negative);

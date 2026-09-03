@@ -169,7 +169,7 @@ The dashboard always knows where it is: a masthead chip names the workspace and 
 
 ## Where targets come from
 
-Eleven **finders** discover prospects, ICP-filter them, and enqueue into `/queue` for one-click approve or reject. Each runs as a trigger with its own interval and spend cap.
+Twelve **finders** discover prospects, ICP-filter them, and enqueue into `/queue` for one-click approve or reject. Each runs as a trigger with its own interval and spend cap.
 
 | Finder              | Signal                                                                                                                                                                                                                                                                                                                            |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -184,6 +184,7 @@ Eleven **finders** discover prospects, ICP-filter them, and enqueue into `/queue
 | `luma-events`       | upcoming events from Luma's own city pages, gated per event by a topic + ICP check before any spend; pitches the hosts and featured guests Luma exposes publicly                                                                                                                                                                  |
 | `breakup-revive`    | your own ledger — prospects cold for 60–90 days. No LLM or OneShot spend                                                                                                                                                                                                                                                          |
 | `x-reposters`       | people who repost/quote X accounts you watch, in two lanes: builders who'd adopt (founder lane → email cadence) and dev accounts with reach who'd boost a launch (amplifier lane → one-touch email, or a hand-sent DM draft when no email is found) — needs X API OAuth1 keys, or `TWITTERAPI_IO_KEY` for the ~55x cheaper engine |
+| `local-registry`    | newly-licensed or newly-enumerated main-street businesses over free, keyless public registries (Socrata business-license open data + the NPPES NPI registry) — a recent issue/enumeration date routes to `new-business`, older records to `free-pilot`                                                                            |
 
 Only `show-hn` and `post-funding-auto` are on by default; enable the rest from `/queue`. A trigger missing required config reads as **not ready** — the toggle and Run button disable with the reason, and the API returns `409`, so scripted callers can't bypass the gate either.
 
@@ -359,7 +360,7 @@ packages/
   core/       SDK wrapper, SQLite ledger, config + secrets, Gmail transport, JSONL events
   intel/      LLM client, advise, personalize, triage, weekly-review
   plays/      17 outreach plays + handoff/icp/pmf modules + cadence engine
-  find/       11 finders + shared pipeline (manifest scan, dedupe, ICP filter, drain, registry)
+  find/       12 finders + shared pipeline (manifest scan, dedupe, ICP filter, drain, registry)
   prompts/    Markdown prompts — humanizer canon, per-play, per-extract
   doctor/     Wallet, ledger, key and deliverability health checks
   shared-types/  Wire types shared across CLI / server / web

@@ -28,6 +28,8 @@ const SCORED_PLAYS = [
   "x-repost-intro",
   "x-amplify",
   "x-amplify-dm",
+  "new-business",
+  "free-pilot",
 ] as const;
 
 /** Manual/legacy producers that intentionally stay unscored (null path). */
@@ -178,6 +180,25 @@ const FIXTURES: Record<(typeof SCORED_PLAYS)[number], Record<string, unknown>> =
     score: 70,
     why: "5k followers",
     dmOpen: true,
+  },
+  "new-business": {
+    name: "Rae's Dental",
+    email: "rae@raesdental.com",
+    company: "Rae's Dental",
+    source: "nppes",
+    sourceLabel: "NPPES Dentist (NY)",
+    matchedDateIso: "2026-08-25T00:00:00Z",
+    yourEdge: "we set it up free, you keep it if it works",
+    title: "Owner",
+  },
+  "free-pilot": {
+    name: "Sam's Plumbing",
+    email: "sam@samsplumbing.com",
+    company: "Sam's Plumbing",
+    source: "socrata-license",
+    sourceLabel: "NYC business licenses",
+    matchedDateIso: "2026-06-01T00:00:00Z",
+    yourEdge: "we set it up free, you keep it if it works",
   },
 };
 

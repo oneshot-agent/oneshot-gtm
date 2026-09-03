@@ -1,6 +1,8 @@
 import {
   deepResearchPerson,
   ENRICH_FAILURE_TTL_MS,
+  type EnrichCompanyInput,
+  enrichCompany,
   findEmail,
   getLedger,
   isTransientToolError,
@@ -77,6 +79,23 @@ export async function safeVerifyEmail(
       },
       receiptId: 0,
     };
+  }
+}
+
+/**
+ * enrichCompany that never throws — a failure resolves to an empty company
+ * record (drop) instead of aborting the whole finder run. Mirrors
+ * safeFindEmail's status:"error" sentinel shape.
+ */
+export async function safeEnrichCompany(
+  input: EnrichCompanyInput,
+  ctx: CallContext,
+): Promise<Awaited<ReturnType<typeof enrichCompany>>> {
+  try {
+    return await enrichCompany(input, ctx);
+  } catch (err) {
+    swallow(ctx, "enrich_company", err);
+    return { result: { status: "error", company: {}, cost: 0 }, receiptId: 0 };
   }
 }
 
