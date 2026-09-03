@@ -78,8 +78,20 @@ describe("routePlayFor", () => {
   });
 
   it("treats the boundary (exactly freshnessDays old) as still fresh", () => {
-    const boundary = new Date(Date.now() - 21 * 86_400_000).toISOString();
-    expect(routePlayFor(boundary, 21)).toBe("new-business");
+    // Freeze the clock so `boundary` and routePlayFor's own `Date.now()` read
+    // the identical millisecond — otherwise a 1ms advance between the two
+    // reads pushes cutoffMs past Date.parse(boundary) and the `>=` comparison
+    // in local-registry.ts routes this record to free-pilot instead,
+    // flaking the assertion (finding PRRT_kwDOSKzrBs6fCBc-).
+    vi.useFakeTimers();
+    try {
+      const now = Date.now();
+      vi.setSystemTime(now);
+      const boundary = new Date(now - 21 * 86_400_000).toISOString();
+      expect(routePlayFor(boundary, 21)).toBe("new-business");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -106,6 +118,8 @@ let socrataShouldThrow = false;
 let nppesShouldThrow = false;
 let fmcsaShouldThrow = false;
 let inspectionShouldThrow = false;
+/** dedupeKeys that isQueueDuplicate reports as already queued. */
+let duplicateDedupeKeys: Set<string> = new Set();
 
 const RECENT_ISO = new Date(Date.now() - 3 * 86_400_000).toISOString();
 const OLD_ISO = new Date(Date.now() - 90 * 86_400_000).toISOString();
@@ -258,7 +272,8 @@ vi.mock("@oneshot-gtm/core", async () => {
       return { result: { deliverable: true, cost: 0.005 }, receiptId: 1 };
     },
     getLedger: () => ({
-      isQueueDuplicate: () => false,
+      isQueueDuplicate: (_playName: string, dedupeKey: string) =>
+        duplicateDedupeKeys.has(dedupeKey),
       enqueueTarget: (row: EnqueuedRow) => {
         enqueued.push(row);
         return enqueued.length;
@@ -294,6 +309,7 @@ beforeEach(() => {
   nppesShouldThrow = false;
   fmcsaShouldThrow = false;
   inspectionShouldThrow = false;
+  duplicateDedupeKeys = new Set();
   nextEnrichCompanyDomain = "acme.dev";
   enrichCompanyCalls = 0;
   findEmailCalls = 0;
@@ -461,6 +477,43 @@ describe("runLocalRegistryFinder — routing + isolation", () => {
     });
     expect(out.enqueued).toBe(1);
     expect(enqueued).toHaveLength(1);
+  });
+
+  it("releases the reserved slot on a queue-duplicate drop so it doesn't starve fresh candidates behind it (finding PRRT_kwDOSKzrBs6fCBdz)", async () => {
+    // A tick with `limit: 1`: the first record is already queued from a
+    // prior run (isQueueDuplicate hits, no paid call runs), the second is
+    // fresh. Pre-fix, `reserved` stayed at 1 forever after the duplicate and
+    // the fresh candidate never got a turn — the run halted having enqueued
+    // nothing, even though the whole point of the tick was the fresh one.
+    const dup = makeRecord({ name: "Already Queued LLC", matchedDateIso: RECENT_ISO });
+    const fresh = makeRecord({ name: "Brand New Co", matchedDateIso: RECENT_ISO });
+    duplicateDedupeKeys = new Set([dedupeKeyFor(dup)]);
+    nextSocrataRecords = [dup, fresh];
+    const out = await runLocalRegistryFinder({
+      dryRun: false,
+      yourEdge: "x",
+      limit: 1,
+      concurrency: 1,
+      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
+    });
+    expect(out.droppedDuplicate).toBe(1);
+    expect(out.enqueued).toBe(1);
+    expect(enqueued).toHaveLength(1);
+    expect(enqueued[0]?.dedupeKey).toBe(dedupeKeyFor(fresh));
+  });
+
+  it("sets result.halted (not just the local flag) when the reserved-slot limit is reached", async () => {
+    nextSocrataRecords = Array.from({ length: 3 }, (_, i) =>
+      makeRecord({ name: `Candidate ${i}`, matchedDateIso: RECENT_ISO }),
+    );
+    const out = await runLocalRegistryFinder({
+      dryRun: false,
+      yourEdge: "x",
+      limit: 1,
+      concurrency: 1,
+      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
+    });
+    expect(out.halted).toMatch(/limit \(1\) reached/);
   });
 
   it("carries subjectType through to the queued LocalRegistryTarget payload so a /queue reviewer can see it", async () => {
