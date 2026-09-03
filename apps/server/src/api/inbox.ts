@@ -641,12 +641,20 @@ export async function steerRoute(req: Request): Promise<Response> {
       intent,
       steer,
     });
+    const needsDecision = draft.flags.includes("commits-terms");
+    // Round-1 correction (#480): persist the generated body itself, not just
+    // the steer instruction — the client's autosave effects only fire on a
+    // body DIFF from the last SAVED value, and `onSuccess` sets that value
+    // directly from this response without ever calling the save API, so
+    // without this write the redraft displayed in the composer was never
+    // durably stored and a refresh/collapse reverted to the prior draft.
+    ledger.setInboxDraftBody(threadKey, draft.body, needsDecision ? "needs_decision" : null);
     const out: InboxSteerResult = {
       body: draft.body,
       costUsd: context.costUsd,
       researched: context.researched,
       flags: draft.flags,
-      needsDecision: draft.flags.includes("commits-terms"),
+      needsDecision,
     };
     return jsonResponse(out, 200, req);
   } catch (err) {

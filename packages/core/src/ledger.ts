@@ -769,6 +769,22 @@ export class Ledger {
     this.db.prepare(`UPDATE inbox_drafts SET steer = ? WHERE thread_key = ?`).run(steer, threadKey);
   }
 
+  /**
+   * Persist a server-generated draft body (round-1 correction, #480's steer
+   * flow): `steerRoute` computes a redraft and returned it to the client
+   * without ever writing it back to `inbox_drafts`, so the debounced
+   * autosave (which only fires on a body DIFF) never saw a change and the
+   * redraft was lost on refresh/collapse. Mirrors `saveDraftRoute`'s body
+   * write but leaves `steer` and every other column untouched — the standing
+   * steer instruction is set separately via `setInboxDraftSteer` and must
+   * survive this call.
+   */
+  setInboxDraftBody(threadKey: string, body: string, status: "needs_decision" | null): void {
+    this.db
+      .prepare(`UPDATE inbox_drafts SET body = ?, status = ?, updated_at = ? WHERE thread_key = ?`)
+      .run(body, status, new Date().toISOString(), threadKey);
+  }
+
   clearInboxDraft(threadKey: string): void {
     this.db.prepare(`DELETE FROM inbox_drafts WHERE thread_key = ?`).run(threadKey);
   }

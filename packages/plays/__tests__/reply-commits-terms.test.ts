@@ -53,6 +53,29 @@ describe("bodyCommitsTerms (issue #480)", () => {
       ),
     ).toBe(false);
   });
+
+  // Round-1 correction (#480): the send gate matched bare topic words, not
+  // actual commitments, so ordinary declines/neutral mentions of the same
+  // words tripped `commits-terms` and blocked Send on harmless replies.
+  it("does not fire on a neutral, non-committing mention of pricing", () => {
+    expect(bodyCommitsTerms("Our pricing is public, check the website.")).toBe(false);
+  });
+
+  it("does not fire when discounts are explicitly declined", () => {
+    expect(bodyCommitsTerms("We don't offer discounts right now, sorry.")).toBe(false);
+  });
+
+  it("does not fire when exclusivity is explicitly declined", () => {
+    expect(bodyCommitsTerms("We can't agree to exclusivity at this stage.")).toBe(false);
+  });
+
+  it("does not fire when a partnership is explicitly declined", () => {
+    expect(bodyCommitsTerms("We're not looking for any partnership right now.")).toBe(false);
+  });
+
+  it("does not fire when hiring is explicitly declined", () => {
+    expect(bodyCommitsTerms("No, we won't be hiring for this.")).toBe(false);
+  });
 });
 
 describe("intentDirectiveBlock (issue #480)", () => {

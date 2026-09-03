@@ -72,36 +72,83 @@ export function repeatsPriorText(body: string, priorTexts: readonly string[]): b
 }
 
 /**
- * Patterns a reply must never carry: unauthorised commitments on the
- * founder's behalf (issue #480 — the Aladdin/AladdinAI thread, where a draft
- * promised documentation placement, a "recommended partner" designation, and
- * a reference-implementation feature that nobody approved). Each pattern
+ * A commitment pattern paired with how strictly it must be gated. Each entry
  * names one commitment shape; ANY match is one `commits-terms` flag, not one
  * per pattern — `replyPenalty` counts flags, and a draft that trips three of
  * these is not three times worse than one that trips one.
+ *
+ * `requireAffirmative`: some keywords (pricing, discount) show up just as
+ * often in a neutral or declining sentence ("Our pricing is public, check
+ * the website.") as in an actual commitment ("Sure, I can do a 20% discount
+ * for the first year."). For those, a bare keyword match is not enough —
+ * the sentence must also carry an affirmative commitment cue (can/could/
+ * will/would/I'll/we'll/happy to/etc).
  */
-const COMMITS_TERMS_PATTERNS: RegExp[] = [
-  // Pricing, discounts, free tiers.
-  /\b(?:pric(?:e|es|ing)|discount(?:s|ed)?|% off|free tier|for free)\b/i,
+interface CommitPattern {
+  regex: RegExp;
+  requireAffirmative?: boolean;
+}
+
+const COMMITS_TERMS_PATTERNS: CommitPattern[] = [
+  // Pricing, discounts, free tiers. Bare mentions ("our pricing is public")
+  // are common in ordinary, harmless replies — only count it when the same
+  // sentence also affirmatively offers something.
+  {
+    regex: /\b(?:pric(?:e|es|ing)|discount(?:s|ed)?|% off|free tier|for free)\b/i,
+    requireAffirmative: true,
+  },
   // Distribution / traffic promises ("point our builders toward X", "route users to Y").
-  /\bdistribution\b|\btraffic\b|\bpoint\b[^.]{0,60}\btoward\b|\brout(?:e|ing)\b[^.]{0,40}\b(?:users|traffic|customers|people)\b/i,
+  {
+    regex:
+      /\bdistribution\b|\btraffic\b|\bpoint\b[^.]{0,60}\btoward\b|\brout(?:e|ing)\b[^.]{0,40}\b(?:users|traffic|customers|people)\b/i,
+  },
   // Partnership / exclusivity language.
-  /\bpartner(?:ship)?\b|\bexclusiv(?:e|ity)\b/i,
+  { regex: /\bpartner(?:ship)?\b|\bexclusiv(?:e|ity)\b/i },
   // Roadmap dates.
-  /\broadmap\b|\bby (?:Q[1-4]\s?\d{0,4}|\d{4})\b|\bnext (?:quarter|month)\b/i,
+  { regex: /\broadmap\b|\bby (?:Q[1-4]\s?\d{0,4}|\d{4})\b|\bnext (?:quarter|month)\b/i },
   // Headcount / hiring commitments.
-  /\bheadcount\b|\bhir(?:e|ing)\b/i,
+  { regex: /\bheadcount\b|\bhir(?:e|ing)\b/i },
   // Documentation placement ("adding X to our documentation").
-  /\b(?:add(?:ing)?|list(?:ing)?)\b[^.]{0,60}\b(?:documentation|docs)\b/i,
+  { regex: /\b(?:add(?:ing)?|list(?:ing)?)\b[^.]{0,60}\b(?:documentation|docs)\b/i },
   // "Recommended / preferred partner" (or environment/integration/provider) designations.
-  /\b(?:recommended|preferred)\b[^.]{0,40}\b(?:partner|environment|integration|provider|option|vendor|choice)\b/i,
+  {
+    regex:
+      /\b(?:recommended|preferred)\b[^.]{0,40}\b(?:partner|environment|integration|provider|option|vendor|choice)\b/i,
+  },
   // Featuring the sender in a reference implementation / case study / website.
-  /\bfeatur(?:e|ing)\b[^.]{0,60}\b(?:reference implementation|case study|website|repo|documentation)\b/i,
+  {
+    regex:
+      /\bfeatur(?:e|ing)\b[^.]{0,60}\b(?:reference implementation|case study|website|repo|documentation)\b/i,
+  },
 ];
+
+/** A sentence that declines, refuses, or is otherwise negative about its topic is not a commitment. */
+const NEGATION_CUE = /\b(?:not|no|never|nobody|nothing|unable|cannot)\b|n['’]t\b/i;
+
+/** A sentence that affirmatively offers or agrees to something. */
+const AFFIRMATIVE_CUE =
+  /\b(?:can|could|will|would|able to|happy to|glad to|going to|let's|sure)\b|['’]ll\b/i;
+
+/** Body split into sentence-ish chunks — the unit `bodyCommitsTerms` reasons about, so a
+ *  commitment made in one sentence can't be masked by a negation two sentences away. */
+function splitSentences(text: string): string[] {
+  return text
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
 
 /** True when the body makes (or looks like it's making) a commitment the founder never authorised. */
 export function bodyCommitsTerms(body: string): boolean {
-  return COMMITS_TERMS_PATTERNS.some((re) => re.test(body));
+  const sentences = splitSentences(body);
+  return COMMITS_TERMS_PATTERNS.some(({ regex, requireAffirmative }) =>
+    sentences.some((sentence) => {
+      if (!regex.test(sentence)) return false;
+      if (NEGATION_CUE.test(sentence)) return false;
+      if (requireAffirmative && !AFFIRMATIVE_CUE.test(sentence)) return false;
+      return true;
+    }),
+  );
 }
 
 /**
