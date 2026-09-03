@@ -65,9 +65,14 @@ describe("backoffDelayMs", () => {
     expect(backoffDelayMs(3, 9000, fixed)).toBe(9000);
   });
 
-  it("caps Retry-After at MAX_RETRY_AFTER_MS (60s)", () => {
-    expect(backoffDelayMs(1, 120_000)).toBe(60_000);
-    expect(backoffDelayMs(1, 900_000)).toBe(60_000);
+  it("no longer silently caps Retry-After — over-budget values are rejected by complete() before a delay is computed", () => {
+    // Finding 1 (#87): a Retry-After beyond MAX_RETRY_AFTER_MS used to be
+    // silently truncated here and then honoured as a real (guaranteed-failing)
+    // wait. Capping is now complete()'s job — see the "gives up immediately on
+    // an over-budget Retry-After" integration test below — so at this layer an
+    // over-budget hint is honoured like any other, same as a hint under budget.
+    expect(backoffDelayMs(1, 120_000)).toBe(120_000);
+    expect(backoffDelayMs(1, 900_000)).toBe(900_000);
   });
 
   it("uses exponential backoff without Retry-After", () => {
@@ -607,5 +612,136 @@ describe("complete() retry integration", () => {
     expect(error.message).toContain("INVALID_KEY");
     expect(error.status).toBeUndefined(); // Non-numeric code = no status
     expect(attemptCount).toBe(1); // No retry
+  });
+
+  it("gives up immediately on a Retry-After beyond the retry budget, instead of burning attempts", async () => {
+    const { complete } = await import("../src/client.ts");
+
+    // Finding 1 (#87): Retry-After: 300 used to be silently capped to 60s and
+    // then honoured as a real wait — two guaranteed-failing retries and ~120s
+    // of dead time. It must now fail on the FIRST attempt, with no sleep.
+    let attemptCount = 0;
+    global.fetch = vi.fn().mockImplementation(() => {
+      attemptCount++;
+      return Promise.resolve({
+        ok: false,
+        status: 429,
+        headers: new Headers({ "retry-after": "300" }),
+        text: () => Promise.resolve("rate limited"),
+      });
+    }) as any;
+
+    const promise = complete({
+      messages: [{ role: "user", content: "test" }],
+      maxAttempts: 3,
+    });
+    const rejection = promise.catch((err) => err);
+
+    await vi.runAllTimersAsync();
+
+    const error = await rejection;
+    expect(error.message).toContain("300s");
+    expect(error.message).toContain("60s retry budget");
+    expect(attemptCount).toBe(1); // No retries burned on a guaranteed-failing wait
+  });
+
+  it("still retries a Retry-After within the budget, waiting the full hint", async () => {
+    const { complete } = await import("../src/client.ts");
+
+    // A hint under MAX_RETRY_AFTER_MS is still honoured in full — only
+    // over-budget hints are terminal.
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+
+    let attemptCount = 0;
+    global.fetch = vi.fn().mockImplementation(() => {
+      attemptCount++;
+      if (attemptCount === 1) {
+        return Promise.resolve({
+          ok: false,
+          status: 429,
+          headers: new Headers({ "retry-after": "45" }),
+          text: () => Promise.resolve("rate limited"),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+          }),
+      });
+    }) as any;
+
+    const promise = complete({
+      messages: [{ role: "user", content: "test" }],
+      maxAttempts: 3,
+    });
+
+    // Just under the 45s hint, the retry must not have fired yet.
+    await vi.advanceTimersByTimeAsync(44_000);
+    expect(attemptCount).toBe(1);
+
+    await vi.runAllTimersAsync();
+
+    const result = await promise;
+    expect(result.content).toBe("ok");
+    expect(attemptCount).toBe(2);
+  });
+
+  it("treats a 2xx JSON null body as a classified provider error, not a bare TypeError", async () => {
+    const { complete } = await import("../src/client.ts");
+
+    // Finding 2 (#87): postJson returned `unknown`, so a 2xx body that parses
+    // to JSON `null` used to reach `data.choices?.[0]` and throw a bare
+    // TypeError there instead of a named, classified LlmError.
+    let attemptCount = 0;
+    global.fetch = vi.fn().mockImplementation(() => {
+      attemptCount++;
+      return Promise.resolve({ ok: true, json: () => Promise.resolve(null) });
+    }) as any;
+
+    const promise = complete({
+      messages: [{ role: "user", content: "test" }],
+      maxAttempts: 3,
+    });
+    const rejection = promise.catch((err) => err);
+
+    await vi.runAllTimersAsync();
+
+    const error = await rejection;
+    expect(error.name).toBe("LlmError");
+    expect(error.message).toContain("non-object JSON body");
+    expect(attemptCount).toBe(1); // Terminal, not a TypeError worth retrying
+  });
+
+  it("clamps a non-positive timeoutMs instead of aborting every attempt instantly", async () => {
+    const { complete } = await import("../src/client.ts");
+
+    // Finding 3 (#87): timeoutMs: 0 survived `??` as "supplied", so the
+    // AbortController fired on the same tick, on every attempt, without ever
+    // reaching the provider. A clamp lets the request actually go out.
+    let attemptCount = 0;
+    global.fetch = vi.fn().mockImplementation(() => {
+      attemptCount++;
+      return Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            choices: [{ message: { content: "reached the provider" }, finish_reason: "stop" }],
+          }),
+      });
+    }) as any;
+
+    const promise = complete({
+      messages: [{ role: "user", content: "test" }],
+      timeoutMs: 0,
+      maxAttempts: 3,
+    });
+
+    await vi.runAllTimersAsync();
+
+    const result = await promise;
+    expect(result.content).toBe("reached the provider");
+    expect(attemptCount).toBe(1);
   });
 });

@@ -30,8 +30,20 @@ export interface LlmCompleteInput {
 const DEFAULT_MAX_ATTEMPTS = 3;
 const BASE_DELAY_MS = 500;
 const MAX_DELAY_MS = 20_000;
-/** Ceiling on a server-supplied Retry-After — a 15-minute hint is a give-up, not a wait. */
+/**
+ * Ceiling on a server-supplied Retry-After we are willing to wait out. Beyond
+ * this it is a give-up, not a wait — see the budget check in complete(),
+ * which fails fast instead of burning attempts on a guaranteed-failing retry.
+ */
 const MAX_RETRY_AFTER_MS = 60_000;
+/**
+ * Floor on an explicitly-supplied timeoutMs. `maxAttempts` is already clamped
+ * to >= 1; timeoutMs needs the same treatment — 0 (or a negative value) would
+ * abort the request before it ever reaches the provider, on every attempt.
+ * Leaving timeoutMs unset is unaffected: that still means no client-side
+ * timeout at all, not "use the floor".
+ */
+const MIN_TIMEOUT_MS = 1_000;
 
 export interface LlmCompleteOutput {
   content: string;
@@ -121,8 +133,11 @@ export function backoffDelayMs(
   // Retry-After raises the wait, it never lowers it. `Retry-After: 0` and an
   // HTTP-date already in the past (clock skew, second-rounding) are both common
   // and both parse to 0 — honouring them literally would fire every attempt
-  // within milliseconds, unpaced and unjittered.
-  return Math.max(Math.min(retryAfterMs, MAX_RETRY_AFTER_MS), backoff);
+  // within milliseconds, unpaced and unjittered. Anything past our retry
+  // budget (MAX_RETRY_AFTER_MS) never reaches here — complete() rejects it as
+  // terminal before computing a delay, rather than silently truncating a
+  // 300s hint down to a guaranteed-failing 60s wait.
+  return Math.max(retryAfterMs, backoff);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -194,7 +209,11 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
 
   const expanded: LlmCompleteInput = { ...input, messages: injectHumanizer(input.messages) };
 
-  const timeoutMs = input.timeoutMs;
+  // `??` treats 0 as "supplied", and 0 (or a negative value) would abort every
+  // attempt before it reaches the provider. Only clamp when a value was
+  // actually given — leaving timeoutMs unset must keep meaning "no timeout".
+  const timeoutMs =
+    input.timeoutMs === undefined ? undefined : Math.max(MIN_TIMEOUT_MS, input.timeoutMs);
   const maxAttempts = Math.max(1, input.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
 
   const startedAt = Date.now();
@@ -221,6 +240,12 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
       break;
     } catch (err) {
       const status = err instanceof LlmError ? (err.status ?? null) : null;
+      const retryAfterMs = err instanceof LlmError ? err.retryAfterMs : undefined;
+      // A Retry-After past our budget is a guaranteed-failing retry: honouring
+      // it literally would burn the remaining attempts on ~120s+ of dead wait
+      // in a sequential caller. Treat it as terminal instead, with a message
+      // that names the wait so it reads as a deliberate give-up, not a bug.
+      const overRetryBudget = retryAfterMs !== undefined && retryAfterMs > MAX_RETRY_AFTER_MS;
       const ctx = {
         provider: cfg.llmProvider,
         model: cfg.llmModel,
@@ -231,14 +256,21 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
         attempt,
         max_attempts: maxAttempts,
       };
-      if (attempt < maxAttempts && isRetryableLlmError(err)) {
-        const delayMs = backoffDelayMs(
-          attempt,
-          err instanceof LlmError ? err.retryAfterMs : undefined,
-        );
+      if (attempt < maxAttempts && isRetryableLlmError(err) && !overRetryBudget) {
+        const delayMs = backoffDelayMs(attempt, retryAfterMs);
         logEvent("llm.retry", { ...ctx, delay_ms: delayMs }, "warn");
         await sleep(delayMs);
         continue;
+      }
+      if (overRetryBudget) {
+        logEvent("llm.error", { ...ctx, retry_after_ms: retryAfterMs }, "error");
+        throw new LlmError(
+          `${cfg.llmProvider} asked us to wait ${Math.round((retryAfterMs as number) / 1000)}s (Retry-After), ` +
+            `longer than the ${MAX_RETRY_AFTER_MS / 1000}s retry budget — giving up instead of ` +
+            `burning attempts on a guaranteed-failing retry.`,
+          status ?? undefined,
+          retryAfterMs,
+        );
       }
       logEvent("llm.error", ctx, "error");
       throw err;
@@ -302,7 +334,7 @@ async function postJson(args: {
   body: unknown;
   provider: string;
   timeoutMs: number | undefined;
-}): Promise<unknown> {
+}): Promise<Record<string, unknown>> {
   const controller = new AbortController();
   const timer = args.timeoutMs ? setTimeout(() => controller.abort(), args.timeoutMs) : undefined;
   const timedOut = () =>
@@ -341,8 +373,20 @@ async function postJson(args: {
     }
 
     try {
-      return await res.json();
+      const parsed: unknown = await res.json();
+      // A 2xx body that parses to JSON `null` (or any non-object shape) is the
+      // same "nothing usable" case as a body that never arrives — both provider
+      // paths immediately do `data.choices` / `data.content`, so an
+      // unclassified null here used to surface as a bare TypeError at the call
+      // site instead of a named, retry-classified error.
+      if (parsed === null || typeof parsed !== "object") {
+        throw new LlmError(
+          `${args.provider} returned a 2xx response with a non-object JSON body (${JSON.stringify(parsed)})`,
+        );
+      }
+      return parsed as Record<string, unknown>;
     } catch (err) {
+      if (err instanceof LlmError) throw err;
       // A 2xx whose body never arrives or is not JSON leaves us with nothing
       // usable, so this one genuinely is worth another attempt.
       if (controller.signal.aborted) throw timedOut();
