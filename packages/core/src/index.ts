@@ -25,3 +25,4 @@ export * from "./types.ts";
 export { activeSendCount } from "./inflight.ts";
 export * from "./reply-classify.ts";
 export * from "./timezone.ts";
+export * from "./daily-spend.ts";

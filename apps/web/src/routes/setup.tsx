@@ -101,6 +101,9 @@ function SetupPage() {
   const [briefSources, setBriefSources] = useState("");
   const [briefDeriveInfo, setBriefDeriveInfo] = useState<string | null>(null);
   const [mobileSignature, setMobileSignature] = useState(false);
+  // "" = unlimited (no ceiling). A positive-number string is the ceiling in
+  // USD; kept as a string so the field can be temporarily empty while typing.
+  const [dailySpendCeiling, setDailySpendCeiling] = useState("");
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
@@ -136,6 +139,7 @@ function SetupPage() {
     if (!briefDirty.current) setProductBrief(c.productBrief ?? "");
     setBriefSources((prev) => prev || (c.productDomain ? `https://${c.productDomain}` : ""));
     setMobileSignature(c.mobileSignature ?? false);
+    setDailySpendCeiling(c.dailySpendCeilingUsd != null ? String(c.dailySpendCeilingUsd) : "");
     setLlmProvider(c.llmProvider);
     setLlmModel(c.llmModel || LLM_DEFAULTS[c.llmProvider] || "");
     setTelemetryEnabled(c.telemetryEnabled);
@@ -258,6 +262,8 @@ function SetupPage() {
         founderAdmission,
         productBrief,
         mobileSignature,
+        dailySpendCeilingUsd:
+          dailySpendCeiling.trim() === "" ? null : Number.parseFloat(dailySpendCeiling),
         llmProvider,
         llmModel,
         telemetryEnabled,
@@ -746,6 +752,20 @@ function SetupPage() {
                 />
               </Field>
             )}
+            <Field
+              label="Daily spend ceiling (USD)"
+              className="md:col-span-2"
+              hint="Install-wide cap across every automated finder run and drain — blank = unlimited. Once reached, scheduled/run-now finders and drains halt with a named reason (visible here and in doctor) until local midnight; manual /queue sends are never blocked."
+            >
+              <Input
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder="unlimited"
+                value={dailySpendCeiling}
+                onChange={(e) => setDailySpendCeiling(e.target.value)}
+              />
+            </Field>
           </div>
         </LedgerSection>
 

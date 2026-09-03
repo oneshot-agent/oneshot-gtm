@@ -1,4 +1,11 @@
-import { getLedger, loadConfig, saveConfig, saveSecrets, secretsPath } from "@oneshot-gtm/core";
+import {
+  getLedger,
+  dailySpendStatus,
+  loadConfig,
+  saveConfig,
+  saveSecrets,
+  secretsPath,
+} from "@oneshot-gtm/core";
 import { TRIGGERS, checkReadiness } from "@oneshot-gtm/find";
 import { withXEngine, type XEngine } from "@oneshot-gtm/shared-types";
 import prompts from "prompts";
@@ -124,6 +131,43 @@ export async function configTelemetry(state: "on" | "off"): Promise<void> {
   const cfg = loadConfig();
   saveConfig({ ...cfg, telemetryEnabled: state === "on" });
   ok(`telemetry ${state === "on" ? c.green("enabled") : c.dim("disabled")}`);
+}
+
+/**
+ * Show or set the install-wide daily USD spend ceiling (issue #481). No
+ * argument prints the current ceiling + today's spend; `off` clears it back
+ * to unlimited (the historical default); any other value must parse as a
+ * positive number.
+ */
+export async function configSpendCeiling(amountArg?: string): Promise<void> {
+  header("Daily spend ceiling");
+  const cfg = loadConfig();
+
+  if (amountArg === undefined) {
+    const status = dailySpendStatus();
+    if (cfg.dailySpendCeilingUsd == null) {
+      note("unlimited (no ceiling set)");
+    } else {
+      note(
+        `$${status.effectiveUsd.toFixed(2)} / $${cfg.dailySpendCeilingUsd.toFixed(2)} spent today${status.ceilingReached ? c.dim(" — ceiling reached, automated paths halted") : ""}`,
+      );
+    }
+    note(c.dim(`set with: oneshot-gtm config spend-ceiling <amount|off>`));
+    return;
+  }
+
+  if (amountArg === "off") {
+    saveConfig({ ...cfg, dailySpendCeilingUsd: null });
+    ok("daily spend ceiling cleared — unlimited");
+    return;
+  }
+
+  const amount = Number.parseFloat(amountArg);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error(`invalid amount '${amountArg}' — pass a positive number of USD, or 'off'`);
+  }
+  saveConfig({ ...cfg, dailySpendCeilingUsd: amount });
+  ok(`daily spend ceiling set to $${amount.toFixed(2)}`);
 }
 
 const X_TRIGGER = "x-reposters";

@@ -45,6 +45,12 @@ const runXAmplifyDmMock = vi.fn();
 vi.mock("@oneshot-gtm/core", () => ({
   getLedger: () => ledgerStub,
   isSendDeferred: (err: unknown) => err instanceof Error && err.name === "SendDeferredError",
+  DEFAULT_DRAIN_ROW_RESERVATION_USD: 0.05,
+  // Daily spend ceiling (issue #481): the drain test suite exercises drain
+  // dispatch/persistence behavior, not the ceiling gate itself (that's
+  // covered in daily-spend.test.ts and registry-claim.test.ts), so every
+  // reservation here is granted with a no-op release.
+  tryReserveDailySpend: () => ({ granted: true, status: {}, release: () => {} }),
 }));
 
 vi.mock("@oneshot-gtm/plays", () => {

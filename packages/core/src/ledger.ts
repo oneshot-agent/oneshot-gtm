@@ -2149,6 +2149,52 @@ export class Ledger {
     return (this.db.query(sql).get(...(args as never[])) as { total: number } | null)?.total ?? 0;
   }
 
+  // ── spend_reservations (issue #481: install-wide daily USD spend ceiling) ──
+
+  /**
+   * Hold `amountUsd` against the daily ceiling for the duration of an
+   * automated call. Returns the reservation id — callers MUST release it
+   * (on success or failure) via `releaseSpendReservation`, else it counts
+   * against the ceiling until `sweepStaleSpendReservations` reclaims it.
+   */
+  reserveSpend(amountUsd: number): number {
+    const result = this.db
+      .prepare(`INSERT INTO spend_reservations(amount_usd) VALUES(?)`)
+      .run(amountUsd);
+    return Number(result.lastInsertRowid);
+  }
+
+  /** Release a reservation once the caller's actual spend has posted (or the call was skipped/failed). */
+  releaseSpendReservation(id: number): void {
+    this.db.prepare(`DELETE FROM spend_reservations WHERE id = ?`).run(id);
+  }
+
+  /** Sum of currently-held reservations since `sinceIso` (the local-midnight boundary). */
+  reservedSpendUsd(sinceIso: string): number {
+    const row = this.db
+      .query(
+        `SELECT COALESCE(SUM(amount_usd), 0) AS total FROM spend_reservations WHERE created_at >= ?`,
+      )
+      .get(sinceIso) as { total: number } | null;
+    return row?.total ?? 0;
+  }
+
+  /**
+   * Sweep reservations older than `maxAgeMs` — a crashed process (kill -9
+   * between reserve and release) must not hold spend against the ceiling for
+   * the rest of the day. Returns the number of rows swept.
+   */
+  sweepStaleSpendReservations(maxAgeMs: number, now = new Date()): number {
+    const cutoffIso = new Date(now.getTime() - maxAgeMs)
+      .toISOString()
+      .slice(0, 19)
+      .replace("T", " ");
+    const result = this.db
+      .prepare(`DELETE FROM spend_reservations WHERE created_at < ?`)
+      .run(cutoffIso);
+    return Number(result.changes);
+  }
+
   // ── target_queue ────────────────────────────────────────────────────────────
 
   /** Recent reviewed rows for few-shot ICP classification. */

@@ -96,6 +96,7 @@ describe("bootstrapClientId", () => {
     mobileSignature: false,
     timezone: null,
     clientId: null,
+    dailySpendCeilingUsd: null,
   };
 
   it("mints a UUID-shaped clientId when none is stored", () => {

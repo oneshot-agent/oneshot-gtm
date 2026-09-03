@@ -232,6 +232,10 @@ export function mergeSetupConfig(
     founderAdmission: mergeString(body.founderAdmission, current.founderAdmission),
     productBrief: mergeString(body.productBrief, current.productBrief),
     mobileSignature: body.mobileSignature ?? current.mobileSignature,
+    dailySpendCeilingUsd:
+      body.dailySpendCeilingUsd === undefined
+        ? current.dailySpendCeilingUsd
+        : body.dailySpendCeilingUsd,
   };
 }
 

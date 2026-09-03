@@ -1,4 +1,11 @@
-import { getLedger, isSendDeferred, type ProspectRecord, type QueueRow } from "@oneshot-gtm/core";
+import {
+  DEFAULT_DRAIN_ROW_RESERVATION_USD,
+  getLedger,
+  isSendDeferred,
+  tryReserveDailySpend,
+  type ProspectRecord,
+  type QueueRow,
+} from "@oneshot-gtm/core";
 import { type DraftedRow, isSupportedPlay, MANUAL_PLAYS, PLAYS } from "@oneshot-gtm/plays";
 
 export interface DrainOpts {
@@ -16,6 +23,14 @@ export interface DrainOutcome {
   /** Rows left approved because every sender identity hit its daily cap. */
   deferred: number;
   errors: Array<{ id: number; message: string }>;
+  /**
+   * Set when the install-wide daily spend ceiling (issue #481) was already
+   * reached before this drain could claim any rows — the named reason
+   * surfaced on trigger cards / in `doctor`. Rows stay approved untouched;
+   * a manual `/queue` send-draft or mark-sent for an individual row still
+   * works, only this BATCH drain path is bound by the ceiling.
+   */
+  haltedReason?: string;
 }
 
 /**
@@ -64,62 +79,79 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
 
   if (rows.length === 0) return outcome;
 
-  for (let r = 0; r < rows.length; r++) {
-    const row = rows[r]!;
-    let draft: DraftedRow;
-    try {
-      draft = await dispatchOneTarget(opts, row);
-    } catch (err) {
-      // Daily caps exhausted: leave this row (and the rest of the batch)
-      // approved with their reviewed drafts intact — the 15-min drain lease
-      // expires and tomorrow's drain picks them up with fresh capacity.
-      // Writing the "(error)" stub here would stomp a founder-reviewed draft.
-      if (isSendDeferred(err)) {
-        outcome.deferred += rows.length - r;
-        break;
-      }
-      const msg = ((err as Error).message ?? "play failed").slice(0, 200);
-      draft = {
-        subject: "(error)",
-        body: "",
-        flags: [`error: ${msg}`],
-        sent: false,
-        receiptIds: [],
-      };
-      outcome.errors.push({ id: row.id, message: msg });
-    }
+  // Install-wide daily spend ceiling (issue #481): a drain is an AUTOMATED
+  // paid path (whether fired by the button, `find drain`, or a cron-driven
+  // `--once`), so it's bound by the same ceiling as finder trigger runs.
+  // Reserved for the whole claimed batch up front — a conservative
+  // worst-case per row — and released once every row's actual spend has
+  // posted to `receipts`. When refused, the claimed rows are left approved
+  // untouched (dequeueApproved's lease self-expires) so the next drain
+  // (today with headroom, or tomorrow after the reset) picks them up.
+  const reservation = tryReserveDailySpend(rows.length * DEFAULT_DRAIN_ROW_RESERVATION_USD);
+  if (!reservation.granted) {
+    return { drained: 0, sent: 0, deferred: 0, errors: [], haltedReason: reservation.reason };
+  }
 
-    try {
-      ledger.setQueueDraft({
-        id: row.id,
-        draft: {
-          subject: draft.subject,
-          body: draft.body,
-          flags: draft.flags,
-          sent: draft.sent,
-          receiptIds: draft.receiptIds,
-          dryRun: opts.dryRun,
-          ...(draft.enrichmentFailed ? { enrichmentFailed: true } : {}),
-        },
-      });
-      if (draft.sent && !opts.dryRun) {
-        ledger.setQueueStatus({ id: row.id, status: "sent" });
-        const prospectId = backfillProspectId(row);
-        if (prospectId != null) {
-          try {
-            ledger.setQueueProspectId(row.id, prospectId);
-          } catch {
-            // best-effort backfill — a schema mismatch shouldn't break the drain
-          }
+  try {
+    for (let r = 0; r < rows.length; r++) {
+      const row = rows[r]!;
+      let draft: DraftedRow;
+      try {
+        draft = await dispatchOneTarget(opts, row);
+      } catch (err) {
+        // Daily caps exhausted: leave this row (and the rest of the batch)
+        // approved with their reviewed drafts intact — the 15-min drain lease
+        // expires and tomorrow's drain picks them up with fresh capacity.
+        // Writing the "(error)" stub here would stomp a founder-reviewed draft.
+        if (isSendDeferred(err)) {
+          outcome.deferred += rows.length - r;
+          break;
         }
-        outcome.sent++;
+        const msg = ((err as Error).message ?? "play failed").slice(0, 200);
+        draft = {
+          subject: "(error)",
+          body: "",
+          flags: [`error: ${msg}`],
+          sent: false,
+          receiptIds: [],
+        };
+        outcome.errors.push({ id: row.id, message: msg });
       }
-    } catch (err) {
-      outcome.errors.push({
-        id: row.id,
-        message: ((err as Error).message ?? "persist failed").slice(0, 200),
-      });
+
+      try {
+        ledger.setQueueDraft({
+          id: row.id,
+          draft: {
+            subject: draft.subject,
+            body: draft.body,
+            flags: draft.flags,
+            sent: draft.sent,
+            receiptIds: draft.receiptIds,
+            dryRun: opts.dryRun,
+            ...(draft.enrichmentFailed ? { enrichmentFailed: true } : {}),
+          },
+        });
+        if (draft.sent && !opts.dryRun) {
+          ledger.setQueueStatus({ id: row.id, status: "sent" });
+          const prospectId = backfillProspectId(row);
+          if (prospectId != null) {
+            try {
+              ledger.setQueueProspectId(row.id, prospectId);
+            } catch {
+              // best-effort backfill — a schema mismatch shouldn't break the drain
+            }
+          }
+          outcome.sent++;
+        }
+      } catch (err) {
+        outcome.errors.push({
+          id: row.id,
+          message: ((err as Error).message ?? "persist failed").slice(0, 200),
+        });
+      }
     }
+  } finally {
+    reservation.release();
   }
 
   if (opts.dryRun) outcome.sent = rows.length; // would-be-sent (no actual send in dryRun)

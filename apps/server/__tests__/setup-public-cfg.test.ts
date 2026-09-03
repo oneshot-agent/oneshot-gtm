@@ -34,6 +34,7 @@ const FULL_CFG: OneShotConfig = {
   mobileSignature: false,
   timezone: "Europe/Vienna",
   clientId: "11111111-2222-3333-4444-555555555555",
+  dailySpendCeilingUsd: null,
 };
 
 describe("publicCfg — privacy boundary", () => {
