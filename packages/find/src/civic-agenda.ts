@@ -225,7 +225,10 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
         summary: `${candidate.event.eventBodyName ?? "a city body"} in ${candidate.city}`,
       },
     });
-    result.costUsd += ICP_FILTER_COST_USD;
+    // icpFilter is a free pass-through when no ICP is configured (icp ===
+    // null): zero LLM calls, so nothing to charge — only count the estimate
+    // when a real classifier call was made.
+    if (icp) result.costUsd += ICP_FILTER_COST_USD;
     if (filter.match === null) {
       // Transient classifier failure — drop without persisting (same
       // reasoning as every other finder's icpFilter call site).
