@@ -214,10 +214,6 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
   // how small `limit` is.
   for (const candidate of gated.slice(0, Math.max(0, limit))) {
     if (result.enqueued >= limit) break;
-    if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
-      result.halted = `max-cost cap (${opts.maxCostUsd})`;
-      break;
-    }
 
     const dedupeKey = dedupeKeyFor(candidate);
     if (
@@ -228,6 +224,20 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
       continue;
     }
 
+    // icpFilter is a pass-through with no LLM call when no ICP is configured
+    // (see _filter.ts) — only count/guard spend once an ICP is actually set,
+    // or a no-ICP dry sweep would falsely trip maxCostUsd. Check the
+    // PROJECTED cost (already spent + this call's estimate) BEFORE calling,
+    // not just cost already spent — otherwise a cap below one classifier
+    // estimate (e.g. maxCostUsd 0.0005 with a 0.001 estimate) let one
+    // over-budget call through, since 0 < 0.0005 passed the old pre-call
+    // check and the breach was only caught a full iteration late (#513).
+    const projectedCostUsd = result.costUsd + (icp ? ICP_FILTER_COST_ESTIMATE_USD : 0);
+    if (opts.maxCostUsd != null && projectedCostUsd > opts.maxCostUsd) {
+      result.halted = `max-cost cap (${opts.maxCostUsd})`;
+      break;
+    }
+
     const filter = await icpFilter({
       icp,
       candidate: {
@@ -235,10 +245,7 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
         summary: `${candidate.event.eventBodyName ?? "a city body"} in ${candidate.city}`,
       },
     });
-    // icpFilter is a pass-through with no LLM call when no ICP is configured
-    // (see _filter.ts) — only count spend once an ICP is actually set, or a
-    // no-ICP dry sweep would falsely trip maxCostUsd.
-    if (icp) result.costUsd += ICP_FILTER_COST_ESTIMATE_USD;
+    result.costUsd = projectedCostUsd;
     if (filter.match === null) {
       // Transient classifier failure — drop without persisting (same
       // reasoning as every other finder's icpFilter call site).

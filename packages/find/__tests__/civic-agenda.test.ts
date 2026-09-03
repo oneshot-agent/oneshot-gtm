@@ -297,6 +297,21 @@ describe("runCivicAgendaFinder — happy path", () => {
     expect(icpCalls).toBe(1);
     expect(capped.halted).toMatch(/max-cost cap/);
   });
+
+  it("halts BEFORE any classifier call when maxCostUsd is below one estimate (#513)", async () => {
+    // Regression for #513: the guard used to check only cost already spent
+    // (0 < 0.0005), letting one over-budget icpFilter call through and only
+    // recording the breach a full iteration late. The guard must check the
+    // PROJECTED cost (already spent + this call's estimate) instead.
+    itemsByEventId = {
+      1: [{ eventItemId: 100, title: "Resolution on AI use in permitting", matterFile: "R-1" }],
+    };
+    const capped = await runCivicAgendaFinder({ ...baseConfig, maxCostUsd: 0.0005 });
+    expect(icpCalls).toBe(0);
+    expect(capped.enqueued).toBe(0);
+    expect(capped.costUsd).toBe(0);
+    expect(capped.halted).toMatch(/max-cost cap/);
+  });
 });
 
 describe("runCivicAgendaFinder — readiness / halts", () => {
