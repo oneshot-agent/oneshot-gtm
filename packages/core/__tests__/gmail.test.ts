@@ -3,6 +3,7 @@ import {
   _resetGmailCache,
   buildRawMessage,
   getGmailAccessToken,
+  getGmailProfile,
   listGmailReplies,
   missingGmailSecrets,
 } from "../src/gmail.ts";
@@ -125,6 +126,87 @@ describe("buildRawMessage", () => {
     );
     const expected = `=?UTF-8?B?${Buffer.from(subject, "utf8").toString("base64")}?=`;
     expect(msg).toContain(`Subject: ${expected}`);
+  });
+});
+
+describe("gmailJson error formatting", () => {
+  // A representative Google quota envelope — same shape and metric wording
+  // as the truncated production sample from issue #485.
+  const QUOTA_BODY = JSON.stringify({
+    error: {
+      code: 403,
+      message:
+        "Quota exceeded for quota metric 'Gmail API requests' and limit " +
+        "'Requests per minute per user' of service 'gmail.googleapis.com' " +
+        "for consumer 'project_number:123456789'.",
+      status: "RESOURCE_EXHAUSTED",
+      errors: [{ message: "Quota exceeded", domain: "global", reason: "rateLimitExceeded" }],
+    },
+  });
+
+  function stubFetchWith(body: string, status: number): ReturnType<typeof vi.fn> {
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      if (String(url).startsWith("https://oauth2.googleapis.com/")) return tokenResponse();
+      return new Response(body, { status });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("surfaces error.status and the full error.message for a parseable Google error envelope", async () => {
+    stubFetchWith(QUOTA_BODY, 403);
+    await expect(getGmailProfile()).rejects.toThrow(
+      /Gmail API \/profile failed \(403\): RESOURCE_EXHAUSTED — Quota exceeded for quota metric 'Gmail API requests'/,
+    );
+  });
+
+  it("keeps the quota metric name legible within the existing 120-char log convention", async () => {
+    stubFetchWith(QUOTA_BODY, 403);
+    let message = "";
+    try {
+      await getGmailProfile();
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    // Mirrors the message_120 truncation every call site applies (e.g.
+    // oneshot.ts's inbox.source_failed logging) — this is the actual
+    // acceptance bar, not just "the untruncated message is fine".
+    const truncated = message.slice(0, 120);
+    expect(truncated).toContain("RESOURCE_EXHAUSTED");
+    expect(truncated).toContain("Quota exceeded for quota metric 'Gmail API requests'");
+  });
+
+  it("distinguishes a permission/scope failure from a quota failure by error.status", async () => {
+    stubFetchWith(
+      JSON.stringify({
+        error: {
+          code: 403,
+          message: "The caller does not have permission",
+          status: "PERMISSION_DENIED",
+        },
+      }),
+      403,
+    );
+    await expect(getGmailProfile()).rejects.toThrow(/PERMISSION_DENIED/);
+  });
+
+  it("falls back to the raw-slice behaviour when the body does not parse as Google's envelope", async () => {
+    stubFetchWith("<html>502 Bad Gateway</html>", 502);
+    await expect(getGmailProfile()).rejects.toThrow(
+      "Gmail API /profile failed (502): <html>502 Bad Gateway</html>",
+    );
+  });
+
+  it("falls back to the raw-slice behaviour when the JSON body has no error.message", async () => {
+    stubFetchWith(JSON.stringify({ error: { code: 500 } }), 500);
+    await expect(getGmailProfile()).rejects.toThrow(
+      `Gmail API /profile failed (500): ${JSON.stringify({ error: { code: 500 } })}`,
+    );
+  });
+
+  it("keeps the 401 branch unchanged — no body parsing, no status field", async () => {
+    stubFetchWith(QUOTA_BODY, 401);
+    await expect(getGmailProfile()).rejects.toThrow(/^Gmail auth rejected \(401\) —/);
   });
 });
 

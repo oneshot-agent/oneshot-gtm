@@ -154,14 +154,53 @@ async function gmailFetch(
   });
 }
 
+/** Google's stable API error envelope: `{ error: { code, message, status, errors[] } }`. */
+interface GoogleApiErrorEnvelope {
+  error?: {
+    code?: number;
+    message?: string;
+    /** Canonical gRPC-style code — e.g. `RESOURCE_EXHAUSTED` (quota, self-heals)
+     *  vs `PERMISSION_DENIED` (scope/auth lost, needs re-auth). This is the
+     *  field that actually distinguishes the two, and it was previously
+     *  discarded along with the rest of the raw body. */
+    status?: string;
+    errors?: Array<{ reason?: string; message?: string }>;
+  };
+}
+
+/**
+ * Renders the actionable part of a failed Gmail API response: Google's own
+ * `error.status` + `error.message` when the body parses as its stable error
+ * envelope, so a quota 403 (`RESOURCE_EXHAUSTED`) reads differently from a
+ * permission 403 (`PERMISSION_DENIED`) from the log line alone. Falls back
+ * to today's raw-slice behaviour when the body isn't that shape — the raw
+ * JSON is mostly whitespace/scaffolding, so 200 chars of it is the same
+ * "better than nothing" fallback the old code always used.
+ */
+function formatGmailApiError(raw: string): string {
+  try {
+    const parsed = JSON.parse(raw) as GoogleApiErrorEnvelope;
+    const message = parsed.error?.message;
+    if (typeof message === "string" && message.trim()) {
+      const status = parsed.error?.status;
+      return status ? `${status} — ${message}` : message;
+    }
+  } catch {
+    // Not Google's JSON envelope (or not JSON at all) — fall through.
+  }
+  return raw.slice(0, 200);
+}
+
 async function gmailJson<T>(path: string, init?: RequestInit, account?: GmailAccount): Promise<T> {
   const res = await gmailFetch(path, init, account);
   if (!res.ok) {
-    const body = (await res.text()).slice(0, 200);
+    const raw = await res.text();
     if (res.status === 401) {
       throw new Error(`Gmail auth rejected (401) — ${GMAIL_AUTH_HINT}`);
     }
-    throw new Error(`Gmail API ${path.split("?")[0]} failed (${res.status}): ${body}`);
+    throw new Error(
+      `Gmail API ${path.split("?")[0]} failed (${res.status}): ${formatGmailApiError(raw)}`,
+    );
   }
   return (await res.json()) as T;
 }
