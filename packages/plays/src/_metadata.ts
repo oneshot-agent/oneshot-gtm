@@ -106,6 +106,8 @@ export const civicPilotMetadata = (t: object): Record<string, unknown> => ({
 export const designPartnerLoiMetadata = (t: object): Record<string, unknown> => ({
   buyerType: str(t, "buyerType"),
   company: str(t, "company"),
+});
+
 export const newBusinessMetadata = (t: object): Record<string, unknown> => ({
   businessType: str(t, "businessType"),
   licenseType: str(t, "licenseType"),

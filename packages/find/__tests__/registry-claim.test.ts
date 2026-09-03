@@ -12,6 +12,7 @@ const fakeStore: Record<string, FakeRow> = {};
 const calls = {
   markTriggerRunning: [] as Array<{ name: string; nowIso: string; staleCutoffIso?: string }>,
   updateTriggerLastPoll: [] as string[],
+  clearTriggerClaim: [] as string[],
   events: [] as Array<{ kind: string; ctx: Record<string, unknown> }>,
 };
 let markReturnsTrue = false;
@@ -44,6 +45,9 @@ vi.mock("@oneshot-gtm/core", async () => {
       updateTriggerLastPoll: (input: { name: string }) => {
         calls.updateTriggerLastPoll.push(input.name);
       },
+      clearTriggerClaim: (input: { name: string }) => {
+        calls.clearTriggerClaim.push(input.name);
+      },
       finderApprovalStats: () => ({ approved: 0, reviewed: 0, rate: null }),
       latestQueueId: () => 0,
       listPendingQueueAfterId: () => [],
@@ -63,6 +67,7 @@ beforeEach(() => {
   for (const k of Object.keys(fakeStore)) delete fakeStore[k];
   calls.markTriggerRunning = [];
   calls.updateTriggerLastPoll = [];
+  calls.clearTriggerClaim = [];
   calls.events = [];
   markReturnsTrue = false;
 

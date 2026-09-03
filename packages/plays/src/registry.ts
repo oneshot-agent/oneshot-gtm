@@ -265,6 +265,11 @@ export const PLAYS: Record<string, PlayDispatch> = {
       runDesignPartnerLoi({
         dryRun: o.dryRun,
         targets: o.targets as DesignPartnerLoiTarget[],
+        ...progressOpt(o),
+        ...signalOpt(o),
+      }),
+  },
+
   "new-business": {
     run: (o) =>
       runNewBusiness({
