@@ -59,6 +59,7 @@ const SEEDS = [
   "/doctor",
   "/workspace",
   "/triggers",
+  "/packs",
   "/plays",
   "/inbox",
   "/setup",

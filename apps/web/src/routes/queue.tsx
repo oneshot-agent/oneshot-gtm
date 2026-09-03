@@ -8,6 +8,7 @@ import {
   Copy,
   ExternalLink,
   Loader2,
+  Package,
   Pencil,
   Play,
   RotateCw,
@@ -20,6 +21,8 @@ import { toast } from "sonner";
 import {
   blockingFlags,
   isRunnablePlay,
+  type PackApplyResult,
+  type PackView,
   type QueueRowView,
   type QueueStatusView,
   type TriggerView,
@@ -320,6 +323,8 @@ function QueuePage() {
       </section>
 
       <IcpBanner />
+
+      <PacksCard />
 
       <TriggersCard queueEmpty={queueQuery.isLoading ? null : rows.length === 0} />
 
@@ -1292,6 +1297,139 @@ function SignalStrip({ rows, ranked = false }: { rows: QueueRowView[]; ranked?: 
 
 /** Per-browser memory of whether the panel is open. */
 const TRIGGERS_OPEN_KEY = "oneshot-gtm:queue-triggers-open";
+
+/**
+ * Industry pack cards: a working starting config for a founder's vertical,
+ * applied to several triggers at once instead of one `apply-config` per
+ * trigger. Sits above the Triggers panel it feeds — applying a pack is what
+ * populates the trigger rows below with real config.
+ */
+function PacksCard() {
+  const qc = useQueryClient();
+  const packsQuery = useQuery({
+    queryKey: ["packs"],
+    queryFn: () => api.packs(),
+  });
+  const applyPack = useMutation({
+    mutationFn: (id: string) => api.applyPack(id),
+    onSuccess: (result: PackApplyResult) => {
+      setLastResult(result);
+      const readyCount = result.applied.filter((t) => t.ready).length;
+      const notReadyCount = result.applied.length - readyCount;
+      toast.success(
+        notReadyCount > 0
+          ? `${result.id} · ${result.applied.length} triggers · ${notReadyCount} need config`
+          : `${result.id} · ${result.applied.length} triggers applied`,
+      );
+      if (result.skipped.length > 0) {
+        toast.info(`${result.id} · skipped ${result.skipped.map((s) => s.name).join(", ")}`);
+      }
+      void qc.invalidateQueries({ queryKey: ["triggers"] });
+      void qc.invalidateQueries({ queryKey: ["queue"] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+  const [lastResult, setLastResult] = useState<PackApplyResult | null>(null);
+
+  const packs = packsQuery.data?.packs ?? [];
+  if (!packsQuery.isLoading && packs.length === 0) return null;
+
+  return (
+    <section className="border-b border-ink-rule px-6 py-5">
+      <div className="mb-3 flex items-center gap-2">
+        <Package size={12} className="text-ink-faint" />
+        <div className="ln-eyebrow">
+          Industry packs <span className="text-ink-faint">· {packs.length}</span>
+        </div>
+      </div>
+      {packsQuery.isLoading ? (
+        <SkeletonRow />
+      ) : (
+        <div className="space-y-3">
+          {packs.map((pack) => (
+            <PackRow
+              key={pack.id}
+              pack={pack}
+              applying={applyPack.isPending && applyPack.variables === pack.id}
+              onApply={() => applyPack.mutate(pack.id)}
+              result={lastResult?.id === pack.id ? lastResult : null}
+              disabled={READ_ONLY}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function PackRow({
+  pack,
+  applying,
+  onApply,
+  result,
+  disabled,
+}: {
+  pack: PackView;
+  applying: boolean;
+  onApply: () => void;
+  result: PackApplyResult | null;
+  disabled: boolean;
+}) {
+  // After apply: the fields still needed, spelled out per-trigger so the
+  // founder knows exactly what to fill in next (via the strategist or the
+  // trigger's own JSON editor below).
+  const stillNeeded = result?.applied.filter((t) => !t.ready) ?? [];
+  return (
+    <div className="rounded-[var(--radius-sm)] border border-ink-rule px-4 py-3">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="text-[13px] font-medium text-ink-cream">{pack.label}</div>
+          <div className="mt-0.5 text-[12px] text-ink-cream-2">{pack.buyerBrief}</div>
+          <div className="mt-1.5 font-mono text-[11px] text-ink-faint">
+            triggers · {pack.triggers.join(", ")}
+          </div>
+          <div className="mt-1.5 font-mono text-[11px] text-ink-muted">
+            ICP · <span className="text-ink-cream-2">{pack.icpOneLiner}</span>
+          </div>
+        </div>
+        <Button size="sm" disabled={applying || disabled} onClick={onApply}>
+          {applying ? "Applying…" : "Apply"}
+        </Button>
+      </div>
+      {result && (
+        <div className="mt-2.5 border-t border-ink-rule/60 pt-2.5 font-mono text-[11px]">
+          <div className="text-ink-receipt-2">
+            ✓ applied · {result.applied.map((t) => t.name).join(", ")}
+          </div>
+          {stillNeeded.length > 0 && (
+            <div className="mt-1 text-[color:var(--ink-blocked-2)]">
+              still needs: {stillNeeded.map((t) => `${t.name} (${t.notReadyReason})`).join(" · ")}
+            </div>
+          )}
+          {result.skipped.length > 0 && (
+            <div className="mt-1 text-ink-faint">
+              skipped: {result.skipped.map((s) => `${s.name} (${s.reason})`).join(" · ")}
+            </div>
+          )}
+          {/* Apply never touches icpOneLiner in config.json (see packs.ts) —
+              the proposed ICP only reaches the founder's config if they
+              explicitly accept it from /setup. */}
+          <div className="mt-1.5 flex items-center gap-2 text-ink-muted">
+            <span>proposed ICP · {result.proposedIcpOneLiner}</span>
+            <Link
+              to="/setup"
+              search={{ proposedIcp: result.proposedIcpOneLiner, packLabel: pack.label }}
+            >
+              <Button variant="secondary" size="sm">
+                Accept in Setup
+              </Button>
+            </Link>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function TriggersCard({ queueEmpty }: { queueEmpty: boolean | null }) {
   const qc = useQueryClient();
