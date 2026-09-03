@@ -253,7 +253,26 @@ describe("gmailJson error formatting", () => {
   });
 
   it("cancels an unread body's stream on a 401 instead of leaving it open", async () => {
-    const cancelSpy = vi.fn();
+    // cancel() always returns a Promise per the ReadableStream spec — a
+    // mock that returned undefined would let a `.catch()` on the call
+    // site go unexercised, so resolve it like the real API does.
+    const cancelSpy = vi.fn().mockResolvedValue(undefined);
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      if (String(url).startsWith("https://oauth2.googleapis.com/")) return tokenResponse();
+      return {
+        ok: false,
+        status: 401,
+        text: vi.fn(),
+        body: { cancel: cancelSpy },
+      } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(getGmailProfile()).rejects.toThrow(/^Gmail auth rejected \(401\) —/);
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not throw an unhandled rejection when a 401 body's cancel() rejects", async () => {
+    const cancelSpy = vi.fn().mockRejectedValue(new Error("stream already locked"));
     const fetchMock = vi.fn(async (url: string | URL) => {
       if (String(url).startsWith("https://oauth2.googleapis.com/")) return tokenResponse();
       return {

@@ -218,7 +218,10 @@ async function gmailJson<T>(path: string, init?: RequestInit, account?: GmailAcc
     if (res.status === 401) {
       // Release the unread body's stream now rather than leaving it open
       // until GC — matters for a long-running worker hitting repeated 401s.
-      void res.body?.cancel();
+      // cancel() can reject (locked stream / source cancel-algorithm
+      // failure); swallow that rather than letting it surface as an
+      // unhandled rejection right after the 401 error below is thrown.
+      res.body?.cancel().catch(() => {});
       throw new Error(`Gmail auth rejected (401) — ${GMAIL_AUTH_HINT}`);
     }
     const raw = await res.text();
