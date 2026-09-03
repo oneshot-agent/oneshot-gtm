@@ -214,7 +214,12 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
   // how small `limit` is.
   for (const candidate of gated.slice(0, Math.max(0, limit))) {
     if (result.enqueued >= limit) break;
-    if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
+    // Compare the CAP against the cost this call would leave behind, not the
+    // cost already spent — checking result.costUsd alone let a cap smaller
+    // than one classifier estimate (e.g. 0.0005 against a 0.001 estimate)
+    // slip a paid icpFilter call through before ever tripping (issue #514).
+    const projectedCostUsd = result.costUsd + (icp ? ICP_FILTER_COST_ESTIMATE_USD : 0);
+    if (opts.maxCostUsd != null && projectedCostUsd > opts.maxCostUsd) {
       result.halted = `max-cost cap (${opts.maxCostUsd})`;
       break;
     }
@@ -238,7 +243,7 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
     // icpFilter is a pass-through with no LLM call when no ICP is configured
     // (see _filter.ts) — only count spend once an ICP is actually set, or a
     // no-ICP dry sweep would falsely trip maxCostUsd.
-    if (icp) result.costUsd += ICP_FILTER_COST_ESTIMATE_USD;
+    result.costUsd = projectedCostUsd;
     if (filter.match === null) {
       // Transient classifier failure — drop without persisting (same
       // reasoning as every other finder's icpFilter call site).
