@@ -271,23 +271,37 @@ export function lintOpenerFrequency(
 /**
  * A run of 2+ consecutive uppercase letters normally reads as shouting
  * (the humanizer's own rule: "lowercase the whole subject line ... acronyms
- * (`api` not `API`)"). But a token shaped like a SAM.gov notice number —
- * hyphen-separated alphanumeric segments such as `W912DY-26-R-0042` — is an
+ * (`api` not `API`)"). But a token shaped like a SAM.gov solicitation number
+ * — hyphen-separated alphanumeric segments such as `W912DY-26-R-0042` — is an
  * identifier the play is REQUIRED to reproduce verbatim
  * (packages/prompts/sources-sought-email.md line 11/20), not a shouted word
  * choice. Exempt only that hyphenated identifier shape so a compliant
  * sources-sought subject doesn't get flagged and held from the guarded send
- * path (finding PRRT_kwDOSKzrBs6ewQdB), without also exempting ordinary
- * shouty-but-alphanumeric tokens like "URGENT2" or "SAVE20NOW" (finding
- * PRRT_kwDOSKzrBs6ewQdB round 2: the digit+letter test alone was too broad).
+ * path (finding PRRT_kwDOSKzrBs6ewQdB).
+ *
+ * round-2 correction: exempting ANY token with a letter+digit mix (regardless
+ * of hyphens) let plain shouty promo tokens like "SAVE20NOW" or "URGENT2"
+ * slip past. round-3 correction (finding PRRT_kwDOSKzrBs6ewQdB, round 3):
+ * even WITH the hyphen-count guard, a purely alphabetic shouty phrase written
+ * with hyphens instead of spaces — "SAVE-20-NOW" — still matched, because the
+ * regex only checked segment SHAPE (alphanumeric), not that at least one
+ * segment carries digits the way a real SAM.gov solicitation number's suffix
+ * segments do. round-4 correction (finding PRRT_kwDOSKzrBs6ewQdB, round 4):
+ * the round-3 fix required the final segment to be all-digits, but real
+ * SAM.gov/DoD PIID serial segments can be alphanumeric — e.g.
+ * `N00164-24-Q-GR04` (final segment `GR04`) or a multi-segment procurement
+ * type such as `N00164-26-RFPREQ-CR-JXN-0036`. Match the real shape: a
+ * leading alphanumeric agency code, a 2-digit fiscal year, one or more
+ * alphabetic procurement-type segments, then a final alphanumeric serial
+ * segment that carries at least one digit (so a purely alphabetic phrase like
+ * "SAVE-20-NOW" still fails to match and stays flagged as shouty).
  */
-const SOLICITATION_NUMBER_RE = /^[A-Za-z0-9]+(-[A-Za-z0-9]+){2,}$/;
+const SOLICITATION_NUMBER_RE =
+  /^[A-Za-z0-9]{4,8}-\d{2}(?:-[A-Za-z]{1,8})*-[A-Za-z0-9]{0,6}\d[A-Za-z0-9]{0,6}$/;
 
 function subjectShouty(subject: string): boolean {
   return subject.split(/\s+/).some((token) => {
-    const isSolicitationNumber =
-      SOLICITATION_NUMBER_RE.test(token) && /\d/.test(token) && /[A-Za-z]/.test(token);
-    return !isSolicitationNumber && /[A-Z]{2,}/.test(token);
+    return !SOLICITATION_NUMBER_RE.test(token) && /[A-Z]{2,}/.test(token);
   });
 }
 
