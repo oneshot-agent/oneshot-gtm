@@ -5,9 +5,14 @@ vi.mock("@oneshot-gtm/core", () => ({ logEvent: () => {} }));
 const {
   socrataLicenseSource,
   nppesSource,
+  fmcsaSource,
+  socrataInspectionSource,
   mapSocrataRows,
   mapNppesResults,
+  mapFmcsaRows,
+  mapInspectionRows,
   buildSocrataSearchTerm,
+  buildFmcsaWhere,
 } = await import("../src/_registry-sources.ts");
 
 function stubFetch(impl: (url: string) => Promise<unknown>): void {
@@ -223,5 +228,219 @@ describe("nppesSource.fetch — per taxonomy×state isolation", () => {
     });
     expect(out.records).toHaveLength(0);
     expect(out.perSource).toHaveLength(0);
+  });
+});
+
+describe("buildFmcsaWhere", () => {
+  it("always requires an active status + a published email", () => {
+    const where = buildFmcsaWhere({ sinceDays: 60, limit: 25 });
+    expect(where).toContain("status_code='A'");
+    expect(where).toContain("email_address IS NOT NULL");
+  });
+
+  it("adds an OR'd carship clause for multiple entity types", () => {
+    const where = buildFmcsaWhere({
+      sinceDays: 60,
+      limit: 25,
+      entityTypes: ["carrier", "broker"],
+    });
+    expect(where).toContain("carship like '%C%'");
+    expect(where).toContain("carship like '%B%'");
+    expect(where).toContain(" OR ");
+  });
+
+  it("adds a phy_state IN clause, uppercased", () => {
+    const where = buildFmcsaWhere({ sinceDays: 60, limit: 25, states: ["ny", "ca"] });
+    expect(where).toContain("phy_state in('NY','CA')");
+  });
+
+  it("adds power-unit floor/ceiling clauses", () => {
+    const where = buildFmcsaWhere({
+      sinceDays: 60,
+      limit: 25,
+      minPowerUnits: 10,
+      maxPowerUnits: 100,
+    });
+    expect(where).toContain("power_units::number>=10");
+    expect(where).toContain("power_units::number<=100");
+  });
+});
+
+describe("mapFmcsaRows — canned payload", () => {
+  const NOW_STR = new Date(NOW).toISOString().slice(0, 10).replace(/-/g, "");
+  const OLD_STR = "20200101";
+  const rows = [
+    {
+      legal_name: "Slack Truck Line Inc",
+      email_address: "Dispatch@SlackTruck.com",
+      add_date: NOW_STR,
+      phy_street: "7th and Gibbon Rd",
+      phy_city: "Gibbon",
+      phy_state: "NE",
+      phone: "3083802037",
+      power_units: "4",
+    },
+    // Old registration — dropped by the freshness window.
+    {
+      legal_name: "Old Hauling Co",
+      email_address: "old@hauling.com",
+      add_date: OLD_STR,
+    },
+    // No email on file — dropped (fmcsa never falls through to findEmail).
+    { legal_name: "No Email Trucking", add_date: NOW_STR },
+    // No usable name — dropped.
+    { email_address: "noname@x.com", add_date: NOW_STR },
+  ];
+
+  it("maps a recent row with a published email and drops the rest", () => {
+    const out = mapFmcsaRows(rows, 5);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      name: "Slack Truck Line Inc",
+      knownEmail: "dispatch@slacktruck.com",
+      city: "Gibbon",
+      state: "NE",
+      phone: "3083802037",
+      source: "fmcsa",
+      sourceLabel: "FMCSA Company Census",
+    });
+  });
+
+  it("keeps the old row once the freshness window is wide enough", () => {
+    const out = mapFmcsaRows(rows, 3000);
+    const names = out.map((r) => r.name).toSorted();
+    expect(names).toEqual(["Old Hauling Co", "Slack Truck Line Inc"]);
+  });
+});
+
+describe("fmcsaSource.fetch", () => {
+  it("returns records with knownEmail set, costUsd 0", async () => {
+    stubFetch(async () => [
+      {
+        legal_name: "Slack Truck Line Inc",
+        email_address: "dispatch@slacktruck.com",
+        add_date: new Date(NOW).toISOString().slice(0, 10).replace(/-/g, ""),
+        phy_state: "NE",
+      },
+    ]);
+    const out = await fmcsaSource.fetch({ sinceDays: 30, limit: 25 });
+    expect(out.costUsd).toBe(0);
+    expect(out.records).toHaveLength(1);
+    expect(out.records[0]?.knownEmail).toBe("dispatch@slacktruck.com");
+    expect(out.perSource[0]?.records).toBe(1);
+  });
+
+  it("surfaces a diagnostic without throwing when the endpoint is unreachable", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("ECONNREFUSED");
+      }),
+    );
+    const out = await fmcsaSource.fetch({ sinceDays: 30, limit: 25 });
+    expect(out.records).toHaveLength(0);
+    expect(out.perSource[0]?.error).toBeTruthy();
+  });
+});
+
+describe("mapInspectionRows — canned payload, violation-free by construction", () => {
+  const rows = [
+    {
+      dba: "3M Bar & Grill",
+      street: "119-15 Liberty Avenue",
+      city: "Queens",
+      state: "NY",
+      phone: "7183743144",
+      inspection_date: RECENT_ISO,
+      // Violation/score fields present on the RAW row — must NOT survive mapping.
+      violation_code: "04L",
+      violation_description:
+        "Evidence of mice or live mice in establishment's food or non-food areas.",
+      critical_flag: "Critical",
+      score: "35",
+      action: "Violations were cited in the following area(s).",
+    },
+    // Second, older inspection of the SAME establishment — collapsed by the
+    // per-portal (name, state) dedupe to just the row above.
+    {
+      dba: "3M Bar & Grill",
+      state: "NY",
+      inspection_date: OLD_ISO,
+      violation_code: "02G",
+    },
+    // No usable name — dropped.
+    { inspection_date: RECENT_ISO },
+    // No usable date — dropped.
+    { dba: "No Date Diner" },
+  ];
+
+  it("maps the most recent row per establishment and drops the rest", () => {
+    const out = mapInspectionRows(rows, "NYC restaurant inspections", 60);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      name: "3M Bar & Grill",
+      address: "119-15 Liberty Avenue",
+      city: "Queens",
+      state: "NY",
+      phone: "7183743144",
+      source: "socrata-inspection",
+      sourceLabel: "NYC restaurant inspections",
+    });
+  });
+
+  it("never carries violation/score/action fields onto the mapped record", () => {
+    const out = mapInspectionRows(rows, "NYC restaurant inspections", 60);
+    const json = JSON.stringify(out);
+    expect(json).not.toMatch(/violation/i);
+    expect(json.toLowerCase()).not.toContain("critical");
+    expect(json).not.toContain("35");
+    expect(json).not.toMatch(/cited/i);
+    // Only the declared RegistryRecord keys are present.
+    for (const rec of out) {
+      expect(Object.keys(rec).toSorted()).toEqual(
+        [
+          "address",
+          "city",
+          "matchedDateIso",
+          "name",
+          "phone",
+          "source",
+          "sourceLabel",
+          "state",
+        ].toSorted(),
+      );
+    }
+  });
+});
+
+describe("socrataInspectionSource.fetch — per-portal isolation", () => {
+  it("keeps records from a healthy portal when a sibling portal is dead", async () => {
+    stubFetch(async (url) => {
+      if (url.includes("dead-portal")) throw new Error("ECONNREFUSED");
+      return [
+        {
+          dba: "3M Bar & Grill",
+          city: "Queens",
+          state: "NY",
+          inspection_date: RECENT_ISO,
+        },
+      ];
+    });
+    const out = await socrataInspectionSource.fetch({
+      sinceDays: 60,
+      limit: 25,
+      inspectionPortals: [
+        { host: "dead-portal.example.com", dataset: "xxxx-xxxx", label: "Dead Portal" },
+        { host: "data.cityofnewyork.us", dataset: "43nn-pn8j", label: "NYC inspections" },
+      ],
+    });
+    expect(out.records).toHaveLength(1);
+    expect(out.records[0]?.name).toBe("3M Bar & Grill");
+    expect(out.perSource).toHaveLength(2);
+    const dead = out.perSource.find((p) => p.label === "Dead Portal");
+    const healthy = out.perSource.find((p) => p.label === "NYC inspections");
+    expect(dead?.records).toBe(0);
+    expect(dead?.error).toBeTruthy();
+    expect(healthy?.records).toBe(1);
   });
 });

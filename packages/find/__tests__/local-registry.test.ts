@@ -67,8 +67,12 @@ const enqueued: EnqueuedRow[] = [];
 let icpMatch: boolean | null = true;
 let nextSocrataRecords: RegistryRecord[] = [];
 let nextNppesRecords: RegistryRecord[] = [];
+let nextFmcsaRecords: RegistryRecord[] = [];
+let nextInspectionRecords: RegistryRecord[] = [];
 let socrataShouldThrow = false;
 let nppesShouldThrow = false;
+let fmcsaShouldThrow = false;
+let inspectionShouldThrow = false;
 
 const RECENT_ISO = new Date(Date.now() - 3 * 86_400_000).toISOString();
 const OLD_ISO = new Date(Date.now() - 90 * 86_400_000).toISOString();
@@ -113,6 +117,49 @@ vi.mock("../src/_registry-sources.ts", async () => {
           };
         },
       },
+      {
+        id: "fmcsa",
+        fetch: async () => {
+          if (fmcsaShouldThrow) throw new Error("fmcsa boom");
+          return {
+            records: nextFmcsaRecords,
+            costUsd: 0,
+            perSource:
+              nextFmcsaRecords.length > 0
+                ? nextFmcsaRecords.map((r) => ({
+                    source: r.sourceLabel,
+                    label: r.sourceLabel,
+                    records: 1,
+                  }))
+                : [{ source: "fmcsa", label: "fmcsa", records: 0, error: "no records" }],
+          };
+        },
+      },
+      {
+        id: "socrata-inspection",
+        fetch: async () => {
+          if (inspectionShouldThrow) throw new Error("inspection boom");
+          return {
+            records: nextInspectionRecords,
+            costUsd: 0,
+            perSource:
+              nextInspectionRecords.length > 0
+                ? nextInspectionRecords.map((r) => ({
+                    source: r.sourceLabel,
+                    label: r.sourceLabel,
+                    records: 1,
+                  }))
+                : [
+                    {
+                      source: "socrata-inspection",
+                      label: "socrata-inspection",
+                      records: 0,
+                      error: "no records",
+                    },
+                  ],
+          };
+        },
+      },
     ],
   };
 });
@@ -146,24 +193,32 @@ vi.mock("../src/_dedupe.ts", () => ({
 vi.mock("../src/_findemail-prescreen.ts", () => ({ shouldSkipFindEmail: () => ({ ok: true }) }));
 
 let nextEnrichCompanyDomain: string | null = "acme.dev";
+let enrichCompanyCalls = 0;
+let findEmailCalls = 0;
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
   return {
     ...actual,
     logEvent: () => {},
-    enrichCompany: async () => ({
-      result: {
-        status: "ok",
-        company: nextEnrichCompanyDomain ? { domain: nextEnrichCompanyDomain } : {},
-        cost: 0.005,
-      },
-      receiptId: 2,
-    }),
-    findEmail: async () => ({
-      result: { found: true, email: "owner@acme.dev", cost: 0.01 },
-      receiptId: 1,
-    }),
+    enrichCompany: async () => {
+      enrichCompanyCalls++;
+      return {
+        result: {
+          status: "ok",
+          company: nextEnrichCompanyDomain ? { domain: nextEnrichCompanyDomain } : {},
+          cost: 0.005,
+        },
+        receiptId: 2,
+      };
+    },
+    findEmail: async () => {
+      findEmailCalls++;
+      return {
+        result: { found: true, email: "owner@acme.dev", cost: 0.01 },
+        receiptId: 1,
+      };
+    },
     verifyEmail: async () => ({ result: { deliverable: true, cost: 0.005 }, receiptId: 1 }),
     getLedger: () => ({
       isQueueDuplicate: () => false,
@@ -196,9 +251,15 @@ beforeEach(() => {
   icpMatch = true;
   nextSocrataRecords = [];
   nextNppesRecords = [];
+  nextFmcsaRecords = [];
+  nextInspectionRecords = [];
   socrataShouldThrow = false;
   nppesShouldThrow = false;
+  fmcsaShouldThrow = false;
+  inspectionShouldThrow = false;
   nextEnrichCompanyDomain = "acme.dev";
+  enrichCompanyCalls = 0;
+  findEmailCalls = 0;
 });
 afterEach(() => vi.clearAllMocks());
 
@@ -304,5 +365,93 @@ describe("runLocalRegistryFinder — routing + isolation", () => {
     // Both fetch adapters returned the same (source, name, state) record —
     // the finder's within-run dedupe collapses it to one candidate.
     expect(out.candidates).toBe(1);
+  });
+});
+
+describe("runLocalRegistryFinder — fmcsa knownEmail skip", () => {
+  it("enqueues an fmcsa record without calling enrichCompany or findEmail", async () => {
+    nextFmcsaRecords = [
+      makeRecord({
+        name: "Slack Truck Line Inc",
+        source: "fmcsa",
+        sourceLabel: "FMCSA Company Census",
+        knownEmail: "dispatch@slacktruck.com",
+      }),
+    ];
+    const out = await runLocalRegistryFinder({
+      dryRun: false,
+      yourEdge: "we help small carriers dispatch smarter",
+      entityTypes: ["carrier"],
+      states: ["NE"],
+    });
+    expect(out.enqueued).toBe(1);
+    expect(enrichCompanyCalls).toBe(0);
+    expect(findEmailCalls).toBe(0);
+    expect(enqueued[0]?.payload["email"]).toBe("dispatch@slacktruck.com");
+    expect(enqueued[0]?.payload["source"]).toBe("fmcsa");
+  });
+
+  it("fmcsa per-candidate cost is at or near zero (no enrichCompany/findEmail spend)", async () => {
+    nextFmcsaRecords = [
+      makeRecord({
+        name: "Slack Truck Line Inc",
+        source: "fmcsa",
+        sourceLabel: "FMCSA Company Census",
+        knownEmail: "dispatch@slacktruck.com",
+      }),
+    ];
+    const out = await runLocalRegistryFinder({
+      dryRun: false,
+      yourEdge: "x",
+      entityTypes: ["carrier"],
+      states: ["NE"],
+    });
+    // verifyEmail still runs (0.005) — findEmail (0.01) and enrichCompany
+    // (0.005) are the calls this path is meant to skip.
+    expect(out.costUsd).toBeLessThan(0.01);
+  });
+
+  it("a socrata-license record (no knownEmail) still goes through enrichCompany + findEmail", async () => {
+    nextSocrataRecords = [makeRecord()];
+    const out = await runLocalRegistryFinder({
+      dryRun: false,
+      yourEdge: "x",
+      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
+    });
+    expect(out.enqueued).toBe(1);
+    expect(enrichCompanyCalls).toBe(1);
+    expect(findEmailCalls).toBe(1);
+  });
+});
+
+describe("runLocalRegistryFinder — socrata-inspection joins the licence lane", () => {
+  it("enqueues an inspection-sourced row carrying the establishment + recency but no violation text anywhere in its payload", async () => {
+    nextInspectionRecords = [
+      makeRecord({
+        name: "3M Bar & Grill",
+        source: "socrata-inspection",
+        sourceLabel: "NYC restaurant inspections",
+        matchedDateIso: RECENT_ISO,
+      }),
+    ];
+    const out = await runLocalRegistryFinder({
+      dryRun: false,
+      yourEdge: "we help restaurants run tighter ops",
+      inspectionPortals: [
+        {
+          host: "data.cityofnewyork.us",
+          dataset: "43nn-pn8j",
+          label: "NYC restaurant inspections",
+        },
+      ],
+    });
+    expect(out.enqueued).toBe(1);
+    const payload = enqueued[0]?.payload;
+    expect(payload?.["company"]).toBe("3M Bar & Grill");
+    expect(payload?.["matchedDateIso"]).toBe(RECENT_ISO);
+    const json = JSON.stringify(payload);
+    expect(json).not.toMatch(/violation/i);
+    expect(json).not.toMatch(/score/i);
+    expect(json).not.toMatch(/lapsed/i);
   });
 });

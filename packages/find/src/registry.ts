@@ -14,7 +14,7 @@ import { runHiringSignalFinder } from "./hiring-signal.ts";
 import { runJobChangeFinder } from "./job-change.ts";
 import { runLumaFinder } from "./luma.ts";
 import { runLocalRegistryFinder } from "./local-registry.ts";
-import type { SocrataPortalConfig } from "./_registry-sources.ts";
+import type { SocrataInspectionPortalConfig, SocrataPortalConfig } from "./_registry-sources.ts";
 import { runPodcastGuestFinder } from "./podcast-guest.ts";
 import { runPostFundingFinder } from "./post-funding.ts";
 import { runShowHnFinder } from "./show-hn.ts";
@@ -366,10 +366,12 @@ export const TRIGGERS: TriggerSpec[] = [
   },
   {
     // Local-registry finder over free, keyless public-registry APIs
-    // (Socrata business-license open data + NPPES NPI). Recent-issue lane
+    // (Socrata business-license open data + NPPES NPI + FMCSA Company
+    // Census + Socrata city health-inspection open data). Recent-issue lane
     // routes to new-business, the rest to free-pilot. Ships empty (no
-    // portals/taxonomies configured) so nothing fires until the founder or
-    // an industry pack (#458/#464) sets a source.
+    // portals/taxonomies/entityTypes/inspectionPortals configured) so
+    // nothing fires until the founder or an industry pack (#458/#464) sets
+    // a source.
     name: "local-registry",
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
@@ -380,6 +382,10 @@ export const TRIGGERS: TriggerSpec[] = [
       licenseTypes: [] as string[],
       taxonomies: [] as string[],
       states: [] as string[],
+      entityTypes: [] as string[],
+      minPowerUnits: null as number | null,
+      maxPowerUnits: null as number | null,
+      inspectionPortals: [] as SocrataInspectionPortalConfig[],
       sinceDays: 60,
       freshnessDays: 21,
       yourEdge: "",
@@ -387,7 +393,7 @@ export const TRIGGERS: TriggerSpec[] = [
       maxCostUsd: 5,
     },
     configBrief:
-      "Discovers newly-licensed or newly-enumerated main-street businesses over free, keyless public registries — no maps/places/Yelp capability exists in the SDK, so this is the only recency-driven local-business signal available. Two sources, either or both may be configured: `portals` (array of `{host, dataset, label}` — a Socrata open-data business-license portal, e.g. `{host:\"data.cityofnewyork.us\", dataset:\"w7w3-xahh\", label:\"NYC business licenses\"}`) filtered by `naics`/`licenseTypes` (free-text terms matched against the dataset); and `taxonomies` + `states` (NPPES NPI registry — taxonomy description like 'Dentist', 'Veterinarian', 'Chiropractor' crossed with 2-letter state codes — this one covers healthcare practices completely, 9M+ providers, refreshed weekly by CMS). `sinceDays` (discovery window against the issue/enumeration date, default 60) and `freshnessDays` (records inside this window route to the new-business play — nothing to rip out, the main-street equivalent of post-funding; everything else routes to free-pilot — clamped to sinceDays, default 21). `yourEdge` (the pitch angle for an owner-operator, REQUIRED — short and concrete, no founder jargon). A dead portal or an empty taxonomy×state pair logs and continues; the run only halts when EVERY configured source returns 0 records. These sources carry a business name + address but no email — each candidate resolves a domain via enrichCompany before falling through to the normal contact-resolution spine. STRATEGIST DUTY: propose `taxonomies`+`states` for healthcare verticals (dental, vet, chiropractic) and `portals`+`naics`/`licenseTypes` for everything else — NY, CO, PA, OR and CT publish full state license registries as open data.",
+      "Discovers newly-licensed or newly-enumerated main-street businesses over free, keyless public registries. Four sources, any combination may be configured: `portals` (array of {host, dataset, label} - a Socrata open-data business-license portal) filtered by `naics`/`licenseTypes`; `taxonomies` + `states` (NPPES NPI registry - taxonomy description like 'Dentist', 'Veterinarian', 'Chiropractor' crossed with 2-letter state codes); `entityTypes` (carrier/broker/freight-forwarder) + `states` + `minPowerUnits`/`maxPowerUnits` (FMCSA Company Census - the whole trucking/freight/3PL vertical, ~2.2M active entities; carries a published email on the record so there is no findEmail/verifyEmail spend at all, and the 10-100 power-unit fleet-size band is the segment that actually buys software); and `inspectionPortals` (array of {host, dataset, label} - a Socrata city health-inspection portal, e.g. NYC's 43nn-pn8j - the only cheap public proof a restaurant is CURRENTLY OPERATING rather than a stale license row; used as a recency/operating-status confirmation joined to the license lane, never violation/score content, which the adapter strips before the record ever reaches a draft). `sinceDays` (discovery window against the issue/enumeration/registration/inspection date, default 60) and `freshnessDays` (records inside this window route to the new-business play - nothing to rip out, the main-street equivalent of post-funding; everything else routes to free-pilot - clamped to sinceDays, default 21). `yourEdge` (the pitch angle for an owner-operator, REQUIRED - short and concrete, no founder jargon; may reference why a shop is relevant, e.g. new to the neighborhood - NEVER a violation, a score, or a lapsed license, which the copy lint holds regardless). A dead portal or an empty taxonomy state pair logs and continues; the run only halts when EVERY configured source returns 0 records. socrata-license/nppes/socrata-inspection carry a business name + address but no email - each such candidate resolves a domain via enrichCompany before falling through to the normal contact-resolution spine; fmcsa skips that entirely. STRATEGIST DUTY: propose taxonomies+states for healthcare verticals, portals+naics/licenseTypes for general main-street, and entityTypes+states+minPowerUnits/maxPowerUnits for trucking/freight/logistics ICPs.",
     readiness: (cfg) => {
       const portals = Array.isArray(cfg["portals"]) ? cfg["portals"] : [];
       const validPortals = portals.filter(
@@ -406,17 +412,37 @@ export const TRIGGERS: TriggerSpec[] = [
         ? (cfg["states"] as unknown[]).filter((s) => typeof s === "string" && s.trim())
         : [];
       const hasNppes = taxonomies.length > 0 && states.length > 0;
-      if (validPortals.length === 0 && !hasNppes) {
+      const entityTypes = Array.isArray(cfg["entityTypes"])
+        ? (cfg["entityTypes"] as unknown[]).filter((t) => typeof t === "string" && t.trim())
+        : [];
+      const hasFmcsa =
+        entityTypes.length > 0 ||
+        typeof cfg["minPowerUnits"] === "number" ||
+        typeof cfg["maxPowerUnits"] === "number";
+      const inspectionPortals = Array.isArray(cfg["inspectionPortals"])
+        ? cfg["inspectionPortals"]
+        : [];
+      const hasInspection = inspectionPortals.some(
+        (p) =>
+          p &&
+          typeof p === "object" &&
+          typeof (p as Record<string, unknown>)["host"] === "string" &&
+          ((p as Record<string, unknown>)["host"] as string).trim().length > 0 &&
+          typeof (p as Record<string, unknown>)["dataset"] === "string" &&
+          ((p as Record<string, unknown>)["dataset"] as string).trim().length > 0,
+      );
+      if (validPortals.length === 0 && !hasNppes && !hasFmcsa && !hasInspection) {
         return {
           ready: false,
-          reason: "set `portals[]` ({host, dataset, label}) or `taxonomies[]` + `states[]`",
+          reason:
+            "set `portals[]` ({host, dataset, label}), `taxonomies[]` + `states[]`, `entityTypes[]`/`minPowerUnits`/`maxPowerUnits` (fmcsa), or `inspectionPortals[]`",
         };
       }
       const edge = cfg["yourEdge"];
       if (typeof edge !== "string" || edge.trim().length === 0) {
         return {
           ready: false,
-          reason: "set `yourEdge` — your one-line pitch for an owner-operator",
+          reason: "set `yourEdge` - your one-line pitch for an owner-operator",
         };
       }
       return { ready: true };
@@ -436,6 +462,20 @@ export const TRIGGERS: TriggerSpec[] = [
           return { host, dataset, label };
         })
         .filter((p): p is SocrataPortalConfig => p !== null);
+      const inspectionPortals: SocrataInspectionPortalConfig[] = (
+        Array.isArray(cfg["inspectionPortals"]) ? (cfg["inspectionPortals"] as unknown[]) : []
+      )
+        .map((p): SocrataInspectionPortalConfig | null => {
+          if (!p || typeof p !== "object") return null;
+          const e = p as Record<string, unknown>;
+          const host = typeof e["host"] === "string" ? e["host"].trim() : "";
+          const dataset = typeof e["dataset"] === "string" ? e["dataset"].trim() : "";
+          if (host.length === 0 || dataset.length === 0) return null;
+          const label =
+            typeof e["label"] === "string" && e["label"].trim() ? e["label"].trim() : host;
+          return { host, dataset, label };
+        })
+        .filter((p): p is SocrataInspectionPortalConfig => p !== null);
       const naics = Array.isArray(cfg["naics"])
         ? (cfg["naics"] as unknown[]).filter((t): t is string => typeof t === "string")
         : [];
@@ -448,6 +488,13 @@ export const TRIGGERS: TriggerSpec[] = [
       const states = Array.isArray(cfg["states"])
         ? (cfg["states"] as unknown[]).filter((s): s is string => typeof s === "string")
         : [];
+      const validEntityTypes = new Set(["carrier", "broker", "freight-forwarder"]);
+      const entityTypes = Array.isArray(cfg["entityTypes"])
+        ? (cfg["entityTypes"] as unknown[]).filter(
+            (t): t is "carrier" | "broker" | "freight-forwarder" =>
+              typeof t === "string" && validEntityTypes.has(t),
+          )
+        : [];
       return runLocalRegistryFinder({
         dryRun: false,
         ...(portals.length > 0 ? { portals } : {}),
@@ -455,6 +502,14 @@ export const TRIGGERS: TriggerSpec[] = [
         ...(licenseTypes.length > 0 ? { licenseTypes } : {}),
         ...(taxonomies.length > 0 ? { taxonomies } : {}),
         ...(states.length > 0 ? { states } : {}),
+        ...(entityTypes.length > 0 ? { entityTypes } : {}),
+        ...(typeof cfg["minPowerUnits"] === "number"
+          ? { minPowerUnits: cfg["minPowerUnits"] as number }
+          : {}),
+        ...(typeof cfg["maxPowerUnits"] === "number"
+          ? { maxPowerUnits: cfg["maxPowerUnits"] as number }
+          : {}),
+        ...(inspectionPortals.length > 0 ? { inspectionPortals } : {}),
         sinceDays: (cfg["sinceDays"] as number) ?? 60,
         freshnessDays: (cfg["freshnessDays"] as number) ?? 21,
         yourEdge: typeof cfg["yourEdge"] === "string" ? cfg["yourEdge"] : "",

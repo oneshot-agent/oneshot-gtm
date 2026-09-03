@@ -284,7 +284,30 @@ export function lintEmail(subject: string, body: string, maxBodyWords = 110): st
   if (/(\b\w+\b),\s+(\b\w+\b),\s+and\s+\b\w+\b/.test(body)) flags.push("rule-of-three");
   if ((body.match(/!/g) ?? []).length > 1) flags.push("excess-exclamations");
   if (body.toLowerCase().includes("calendly")) flags.push("calendar-link");
+  if (citesPublicRecordLeverage(body)) flags.push("public-record-leverage");
   return flags;
+}
+
+/**
+ * A public record (health inspection, license status, registration) may
+ * establish RELEVANCE, never LEVERAGE — see issue #460's copy guardrail. A
+ * draft that opens on a failed inspection, a violation, a score, or a
+ * lapsed/revoked licence is both a bad look and the fastest way to burn a
+ * sending domain, so it's held here where a rule can't be talked out of it
+ * rather than trusted to prompt text alone.
+ *
+ * Deliberately broad and word-based (not tied to any one finder's payload
+ * shape): the guard has to hold regardless of which registry/adapter fed the
+ * draft, including ones that don't exist yet.
+ */
+export function citesPublicRecordLeverage(body: string): boolean {
+  return (
+    /\b(?:failed|flunked)\s+(?:your\s+|the\s+|a\s+|an\s+)?(?:health\s+)?inspection\b/i.test(body) ||
+    /\b(?:inspection|health)\s+(?:score|grade)\b/i.test(body) ||
+    /\bviolation(?:s)?\b/i.test(body) ||
+    /\b(?:licen[sc]e|permit|registration)\s+(?:lapsed|expired|revoked|suspended)\b/i.test(body) ||
+    /\blapsed\s+(?:licen[sc]e|permit|registration)\b/i.test(body)
+  );
 }
 
 export interface DraftedEmail {
