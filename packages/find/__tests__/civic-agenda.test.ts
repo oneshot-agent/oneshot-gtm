@@ -34,6 +34,7 @@ const pendingPersisted: Array<{
 }> = [];
 let icpMatch: boolean | null = true;
 let icpCalls = 0;
+let resolvedIcp: string | null = "icp";
 let eventsBySlug: Record<string, Array<Record<string, unknown>>> = {};
 let itemsByEventId: Record<number, Array<Record<string, unknown>>> = {};
 
@@ -54,9 +55,12 @@ vi.mock("../src/_pending.ts", () => ({
 }));
 
 vi.mock("../src/_filter.ts", () => ({
-  resolveIcp: () => "icp",
-  icpFilter: async (input: { candidate: { title: string } }) => {
+  resolveIcp: () => resolvedIcp,
+  // Mirrors the REAL _filter.ts contract: a null icp is a free pass-through
+  // (no LLM call, always match:true) — see civic-agenda.ts's costUsd gate.
+  icpFilter: async (input: { icp: string | null; candidate: { title: string } }) => {
     icpCalls++;
+    if (!input.icp) return { match: true, reason: "no ICP set; pass-through" };
     return { match: icpMatch, reason: icpMatch ? `fits: ${input.candidate.title}` : "nope" };
   },
 }));
@@ -102,6 +106,7 @@ beforeEach(() => {
   pendingPersisted.length = 0;
   icpMatch = true;
   icpCalls = 0;
+  resolvedIcp = "icp";
   officeRecordsBehavior = "contact";
   eventsBySlug = {
     nyc: [
@@ -270,6 +275,21 @@ describe("runCivicAgendaFinder — happy path", () => {
     expect(out.droppedDuplicate).toBe(1);
     expect(enqueued).toHaveLength(1);
     expect(enqueued[0]!.payload["email"]).toBe("alex.chen+nyc-10@council.nyc.gov");
+  });
+
+  it("records zero costUsd when no ICP is configured — icpFilter's null-icp path is a free pass-through, not a paid call", async () => {
+    // Regression: `icpFilter` short-circuits to `{match:true}` with no LLM
+    // call whenever `icp` is null (see _filter.ts), and civic-agenda's own
+    // readiness gate does NOT require `icpOneLiner` to be set. Charging
+    // ICP_FILTER_COST_USD unconditionally after every call — regardless of
+    // whether an ICP was actually resolved — would record phantom spend on
+    // an install with no ICP configured, letting `maxCostUsd` halt the
+    // finder on cost that never happened.
+    resolvedIcp = null;
+    const out = await runCivicAgendaFinder(baseConfig);
+    expect(icpCalls).toBe(1);
+    expect(out.costUsd).toBe(0);
+    expect(out.enqueued).toBe(1);
   });
 });
 

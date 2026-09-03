@@ -233,8 +233,15 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
     });
     // Charge the classifier call regardless of verdict — a rejected or
     // transient-failed candidate still spent the LLM call, and without this
-    // the maxCostUsd check above never sees any spend at all.
-    result.costUsd += ICP_FILTER_COST_USD;
+    // the maxCostUsd check above never sees any spend at all. But only when
+    // an ICP is actually configured: `icpFilter` short-circuits to a free
+    // pass-through with no LLM call when `icp` is null (see `_filter.ts`),
+    // and civic-agenda's own readiness gate does NOT require `icpOneLiner`
+    // to be set — charging here in that case would record phantom spend and
+    // let `maxCostUsd` halt the finder on cost that never happened.
+    if (icp !== null) {
+      result.costUsd += ICP_FILTER_COST_USD;
+    }
     if (filter.match === null) {
       // Transient classifier failure — drop without persisting (same
       // reasoning as every other finder's icpFilter call site).
