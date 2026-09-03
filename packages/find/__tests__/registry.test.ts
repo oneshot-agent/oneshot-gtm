@@ -1,5 +1,5 @@
 import type { TriggerRow } from "@oneshot-gtm/core";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   checkReadiness,
   evaluateFinderApprovalHealth,
@@ -88,8 +88,10 @@ describe("TRIGGERS registry", () => {
     expect(names).toEqual([
       "accelerator-batch",
       "breakup-revive",
+      "civic-agenda",
       "github-stars",
       "github-topics",
+      "gov-solicitation",
       "hiring-signal",
       "job-change",
       "local-business",
@@ -119,6 +121,8 @@ describe("TRIGGERS registry", () => {
       "github-stars",
       "accelerator-batch",
       "luma-events",
+      "gov-solicitation",
+      "civic-agenda",
     ];
     for (const name of optIn) {
       const spec = TRIGGERS.find((t) => t.name === name);
@@ -346,6 +350,8 @@ describe("checkReadiness", () => {
       "luma-events",
       "local-business",
       "x-reposters",
+      "gov-solicitation",
+      "civic-agenda",
     ]);
     for (const spec of TRIGGERS) {
       if (intentionallyUnreadyByDefault.has(spec.name)) continue;
@@ -406,6 +412,103 @@ describe("checkReadiness", () => {
     const ycCount = cohorts.filter((c) => /^yc-/i.test(c.cohort)).length;
     expect(ycCount).toBeGreaterThan(0);
     expect(cohorts.length - ycCount).toBeGreaterThan(0);
+  });
+});
+
+describe("gov-solicitation readiness", () => {
+  const ORIGINAL_KEY = process.env["SAM_GOV_API_KEY"];
+  beforeEach(() => {
+    process.env["SAM_GOV_API_KEY"] = "test-key";
+  });
+  afterEach(() => {
+    if (ORIGINAL_KEY === undefined) delete process.env["SAM_GOV_API_KEY"];
+    else process.env["SAM_GOV_API_KEY"] = ORIGINAL_KEY;
+  });
+
+  it("is not ready with its default config (naics missing)", () => {
+    const spec = TRIGGERS.find((t) => t.name === "gov-solicitation")!;
+    expect(spec.readiness).toBeDefined();
+    const out = checkReadiness(spec, spec.defaultConfig);
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/naics/);
+  });
+
+  it("is not ready without SAM_GOV_API_KEY even with naics + yourEdge set", () => {
+    delete process.env["SAM_GOV_API_KEY"];
+    const spec = TRIGGERS.find((t) => t.name === "gov-solicitation")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      naics: ["541511"],
+      yourEdge: "we cut integration time",
+    });
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/SAM_GOV_API_KEY/);
+  });
+
+  it("is not ready without yourEdge even with naics + key set", () => {
+    const spec = TRIGGERS.find((t) => t.name === "gov-solicitation")!;
+    const out = checkReadiness(spec, { ...spec.defaultConfig, naics: ["541511"] });
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/yourEdge/);
+  });
+
+  it("becomes ready with naics + yourEdge + the API key", () => {
+    const spec = TRIGGERS.find((t) => t.name === "gov-solicitation")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      naics: ["541511"],
+      yourEdge: "we cut integration time",
+    });
+    expect(out).toEqual({ ready: true });
+  });
+
+  it("defaults noticeTypes to sources-sought + presolicitation", () => {
+    const spec = TRIGGERS.find((t) => t.name === "gov-solicitation")!;
+    expect(spec.defaultConfig["noticeTypes"]).toEqual(["r", "p"]);
+  });
+});
+
+describe("civic-agenda readiness", () => {
+  it("is not ready with its default config (cities missing)", () => {
+    const spec = TRIGGERS.find((t) => t.name === "civic-agenda")!;
+    expect(spec.readiness).toBeDefined();
+    const out = checkReadiness(spec, spec.defaultConfig);
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/cities/);
+  });
+
+  it("is not ready when keywords is empty even with cities set", () => {
+    const spec = TRIGGERS.find((t) => t.name === "civic-agenda")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      cities: ["New York"],
+      keywords: [],
+      yourEdge: "a free pilot",
+    });
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/keywords/);
+  });
+
+  it("is not ready without yourEdge even with cities + keywords set", () => {
+    const spec = TRIGGERS.find((t) => t.name === "civic-agenda")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      cities: ["New York"],
+      keywords: ["AI"],
+    });
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/yourEdge/);
+  });
+
+  it("becomes ready with cities + keywords + yourEdge", () => {
+    const spec = TRIGGERS.find((t) => t.name === "civic-agenda")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      cities: ["New York"],
+      keywords: ["AI"],
+      yourEdge: "a free pilot",
+    });
+    expect(out).toEqual({ ready: true });
   });
 });
 

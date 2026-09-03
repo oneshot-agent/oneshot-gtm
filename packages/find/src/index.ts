@@ -37,6 +37,9 @@ export * from "./_rank.ts";
 export * from "./_buckets.ts";
 export * from "./_outcomes.ts";
 export * from "./_fit.ts";
+export * from "./gov-solicitation.ts";
+export * from "./civic-agenda.ts";
+export * from "./_civic-legistar.ts";
 // Exported for the `find enrich-linkedin` backfill, which reuses the finders'
 // resolver so results are cached and billed identically.
 export * from "./_linkedin.ts";

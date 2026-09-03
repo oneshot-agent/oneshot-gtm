@@ -362,7 +362,7 @@ packages/
   core/       SDK wrapper, SQLite ledger, config + secrets, Gmail transport, JSONL events
   intel/      LLM client, advise, personalize, triage, weekly-review
   plays/      21 outreach plays + handoff/icp/pmf modules + cadence engine
-  find/       12 finders + shared pipeline (manifest scan, dedupe, ICP filter, drain, registry)
+  find/       14 finders + shared pipeline (manifest scan, dedupe, ICP filter, drain, registry)
   prompts/    Markdown prompts — humanizer canon, per-play, per-extract
   doctor/     Wallet, ledger, key and deliverability health checks
   shared-types/  Wire types shared across CLI / server / web
