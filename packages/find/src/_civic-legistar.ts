@@ -203,6 +203,14 @@ interface RawLegistarEventItem {
 }
 
 function parseEventItem(raw: RawLegistarEventItem): LegistarEventItem | null {
+  // Mirrors parseEvent's guard: an `EventItems` response can likewise
+  // contain a null/malformed element alongside good ones. Without this,
+  // dereferencing `.EventItemId` off a null `raw` throws inside
+  // fetchEventItems' `.map`, the outer catch turns that into a full
+  // fetch failure (`return null`), and the caller (civic-agenda.ts,
+  // `if (!items) continue;`) silently discards every valid agenda item
+  // for the event — not just the one malformed element.
+  if (!raw || typeof raw !== "object") return null;
   const eventItemId = raw.EventItemId;
   if (typeof eventItemId !== "number") return null;
   const title =

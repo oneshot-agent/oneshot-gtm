@@ -84,6 +84,9 @@ vi.mock("@oneshot-gtm/core", async () => {
     getLedger: () => ({
       isQueueDuplicate: () => false,
       isPendingResolution: () => false,
+      findProspectByEmail: () => null,
+      isEmailPendingInQueue: (email: string) =>
+        enqueued.some((row) => row.payload["email"] === email),
       enqueueTarget: (row: EnqueuedRow) => {
         enqueued.push(row);
         return enqueued.length;
@@ -132,13 +135,18 @@ beforeEach(() => {
         if (officeRecordsBehavior === "no-email") {
           return { ok: true, status: 200, json: async () => [] };
         }
+        // Contact varies by body (via the URL's slug/bodyId segment) so
+        // tests exercising multiple distinct bodies (e.g. multi-city runs)
+        // don't collide with the same-body dedupe check.
+        const bodyMatch = /\/(\w+)\/Bodies\/(\d+)\/OfficeRecords/.exec(url);
+        const bodyKey = bodyMatch ? `${bodyMatch[1]}-${bodyMatch[2]}` : "default";
         return {
           ok: true,
           status: 200,
           json: async () => [
             {
               OfficeRecordFullName: "Alex Chen",
-              OfficeRecordEmail: "alex.chen@council.nyc.gov",
+              OfficeRecordEmail: `alex.chen+${bodyKey}@council.nyc.gov`,
               OfficeRecordPhone: "555-0100",
               OfficeRecordTitle: "Chief of Staff",
             },
@@ -177,7 +185,7 @@ describe("runCivicAgendaFinder — happy path", () => {
     expect(row.payload["city"]).toBe("New York");
     expect(row.payload["agendaItemTitle"]).toBe("Resolution on AI use in permitting");
     expect(row.payload["meetingDate"]).toBe("2026-09-10");
-    expect(row.payload["email"]).toBe("alex.chen@council.nyc.gov");
+    expect(row.payload["email"]).toBe("alex.chen+nyc-10@council.nyc.gov");
     expect(row.payload["name"]).toBe("Alex Chen");
   });
 
@@ -243,6 +251,25 @@ describe("runCivicAgendaFinder — happy path", () => {
     expect(out.enqueued).toBe(0);
     expect(out.droppedEnrichment).toBe(1);
     expect(enqueued).toHaveLength(0);
+  });
+
+  it("drops the second item as a duplicate when two agenda items from the same body resolve to the identical contact email", async () => {
+    // Two distinct agenda items, same event/body → fetchBodyContact resolves
+    // the identical office-holder contact for both, but each carries a
+    // different item-level dedupeKey. Without the cross-play/same-contact
+    // email check, both would enqueue as separate rows to the same email.
+    itemsByEventId = {
+      1: [
+        { eventItemId: 100, title: "Resolution on AI use in permitting", matterFile: "R-1" },
+        { eventItemId: 102, title: "AI automation budget amendment", matterFile: null },
+      ],
+    };
+    const out = await runCivicAgendaFinder(baseConfig);
+    expect(icpCalls).toBe(2);
+    expect(out.enqueued).toBe(1);
+    expect(out.droppedDuplicate).toBe(1);
+    expect(enqueued).toHaveLength(1);
+    expect(enqueued[0]!.payload["email"]).toBe("alex.chen+nyc-10@council.nyc.gov");
   });
 });
 

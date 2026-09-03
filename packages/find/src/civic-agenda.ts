@@ -1,4 +1,5 @@
 import { getLedger, logEvent } from "@oneshot-gtm/core";
+import { isDuplicate } from "./_dedupe.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { persistPending, registerPendingRetry } from "./_pending.ts";
@@ -77,6 +78,14 @@ async function resolveAndEnqueueAgendaItem(
     // a retry: retrying a body with no email will never resolve, and a run
     // that persisted every silent body would grow the pending table forever.
     return "dropped";
+  }
+  // Cross-play + same-contact email dedupe, AFTER the contact is known:
+  // two distinct agenda items from the same body (different item-level
+  // dedupeKeys) resolve to the identical office-holder contact, so the
+  // item-scoped `dedupeKey` alone can't catch the second one — same
+  // reasoning as gov-solicitation.ts's `resolveAndEnqueueNotice`.
+  if (isDuplicate({ playName: "civic-pilot", dedupeKey, prospectEmail: contact.email })) {
+    return "duplicate";
   }
   const target: CivicAgendaTarget = {
     city: candidate.city,

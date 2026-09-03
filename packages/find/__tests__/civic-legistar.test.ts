@@ -177,6 +177,25 @@ describe("fetchEventItems", () => {
     expect(items![1]).toMatchObject({ eventItemId: 2, title: "Fallback title" });
   });
 
+  it("drops a null/malformed element without discarding the rest — mirrors parseEvent's guard", async () => {
+    stubFetch(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => [
+        { EventItemId: 1, EventItemTitle: "Resolution on AI use", EventItemMatterFile: "R-1" },
+        // A null/non-object element (malformed upstream payload) must not
+        // throw inside the outer .map — that would trip fetchEventItems'
+        // catch and silently drop every valid item for the event, not just
+        // this one malformed element.
+        null,
+        "unexpected-string",
+      ],
+    }));
+    const items = await fetchEventItems("nyc", 1);
+    expect(items).toHaveLength(1);
+    expect(items![0]).toMatchObject({ eventItemId: 1, title: "Resolution on AI use" });
+  });
+
   it("returns null on non-2xx / fetch rejection / empty inputs", async () => {
     stubFetch(async () => ({ ok: false, status: 404, json: async () => ({}) }));
     expect(await fetchEventItems("nyc", 1)).toBeNull();
