@@ -284,7 +284,7 @@ export function lintEmail(subject: string, body: string, maxBodyWords = 110): st
   if (/(\b\w+\b),\s+(\b\w+\b),\s+and\s+\b\w+\b/.test(body)) flags.push("rule-of-three");
   if ((body.match(/!/g) ?? []).length > 1) flags.push("excess-exclamations");
   if (body.toLowerCase().includes("calendly")) flags.push("calendar-link");
-  if (citesPublicRecordLeverage(body)) flags.push("public-record-leverage");
+  if (citesPublicRecordLeverage(`${subject}\n${body}`)) flags.push("public-record-leverage");
   return flags;
 }
 
@@ -304,7 +304,17 @@ export function citesPublicRecordLeverage(body: string): boolean {
   return (
     /\b(?:failed|flunked)\s+(?:your\s+|the\s+|a\s+|an\s+)?(?:health\s+)?inspection\b/i.test(body) ||
     /\b(?:inspection|health)\s+(?:score|grade)\b/i.test(body) ||
-    /\bviolation(?:s)?\b/i.test(body) ||
+    // Bare `/\bviolation\b/` also flagged legitimate non-leverage copy like
+    // "we help teams avoid compliance violations" (finding
+    // PRRT_kwDOSKzrBs6exPH6) — a violation only reads as public-record
+    // LEVERAGE when the copy points at a specific one on record (cited,
+    // reported, flagged, found, noted), in either word order.
+    /\b(?:cit(?:e|es|ed|ation)|report(?:ed)?|flagged|found|noted)\b[\s\S]{0,60}\bviolation(?:s)?\b/i.test(
+      body,
+    ) ||
+    /\bviolation(?:s)?\b[\s\S]{0,60}\b(?:cit(?:e|es|ed|ation)|report(?:ed)?|flagged|found|noted)\b/i.test(
+      body,
+    ) ||
     /\b(?:licen[sc]e|permit|registration)\s+(?:lapsed|expired|revoked|suspended)\b/i.test(body) ||
     /\blapsed\s+(?:licen[sc]e|permit|registration)\b/i.test(body)
   );

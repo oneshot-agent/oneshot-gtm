@@ -381,3 +381,61 @@ describe("v2 label-mined adapter priors", () => {
     expect(ic.components.personFit).toBe(50);
   });
 });
+
+describe("new-business / free-pilot — matchedDateIso feeds timing freshness", () => {
+  it("new-business: a fresh matchedDateIso scores timingFreshness high, not neutral", () => {
+    const fresh = safeScorePriority(
+      "new-business",
+      {
+        ...FIXTURES["new-business"],
+        matchedDateIso: new Date(NOW.getTime() - 86_400_000).toISOString(),
+      },
+      NOW,
+    )!;
+    expect(fresh.components.timingFreshness).toBe(90);
+  });
+
+  it("new-business: an old matchedDateIso decays timingFreshness, not neutral", () => {
+    const old = safeScorePriority(
+      "new-business",
+      {
+        ...FIXTURES["new-business"],
+        matchedDateIso: new Date(NOW.getTime() - 200 * 86_400_000).toISOString(),
+      },
+      NOW,
+    )!;
+    expect(old.components.timingFreshness).toBe(25);
+  });
+
+  it("free-pilot: a fresh matchedDateIso scores timingFreshness high, not neutral", () => {
+    const fresh = safeScorePriority(
+      "free-pilot",
+      {
+        ...FIXTURES["free-pilot"],
+        matchedDateIso: new Date(NOW.getTime() - 86_400_000).toISOString(),
+      },
+      NOW,
+    )!;
+    expect(fresh.components.timingFreshness).toBe(90);
+  });
+
+  it("free-pilot: a missing matchedDateIso still degrades to neutral, no throw", () => {
+    const missing = safeScorePriority(
+      "free-pilot",
+      { ...FIXTURES["free-pilot"], matchedDateIso: undefined },
+      NOW,
+    )!;
+    expect(missing.components.timingFreshness).toBe(50);
+  });
+});
+
+describe("free-pilot — sourceLabel is registry metadata, not evidence text", () => {
+  it("does not overstate signalConfidence off sourceLabel alone", () => {
+    const p = safeScorePriority("free-pilot", FIXTURES["free-pilot"], NOW)!;
+    // sourceLabel is always present on a real registry payload, so this
+    // pins the pre-fix regression: hasEvidenceText must NOT be derived from
+    // it (finding PRRT_kwDOSKzrBs6exPH9). Neutral == no evidenceUrlCount and
+    // no genuine quoted-evidence signal.
+    expect(p.components.signalConfidence).toBe(50);
+  });
+});

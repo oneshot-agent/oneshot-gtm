@@ -692,9 +692,12 @@ export function mapInspectionRows(
     const state = pickField(rec, INSPECTION_STATE_FIELDS);
     // Same establishment shows multiple rows (one per violation cited on an
     // inspection, or one per repeat inspection) — keep only the most recent
-    // per (name, state) within this portal so the finder sees one candidate
-    // per restaurant, not one per citation.
-    const dedupeKey = `${name.toLowerCase()}:${(state ?? "").toLowerCase()}`;
+    // per (name, address, city, state) within this portal so the finder
+    // sees one candidate per restaurant, not one per citation. name+state
+    // alone collapsed distinct establishments that share a chain name in
+    // the same state (e.g. two different "Subway" locations statewide) —
+    // address+city narrow the key to one physical location.
+    const dedupeKey = `${name.toLowerCase()}:${(pickField(rec, INSPECTION_ADDRESS_FIELDS) ?? "").toLowerCase()}:${(pickField(rec, INSPECTION_CITY_FIELDS) ?? "").toLowerCase()}:${(state ?? "").toLowerCase()}`;
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
     out.push({

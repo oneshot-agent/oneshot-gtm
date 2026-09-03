@@ -411,13 +411,27 @@ describe("mapInspectionRows — canned payload, violation-free by construction",
       score: "35",
       action: "Violations were cited in the following area(s).",
     },
-    // Second, older inspection of the SAME establishment — collapsed by the
-    // per-portal (name, state) dedupe to just the row above.
+    // Second, older inspection of the SAME establishment (same name, street,
+    // city, state) — collapsed by the per-portal (name, address, city,
+    // state) dedupe to just the row above.
     {
       dba: "3M Bar & Grill",
+      street: "119-15 Liberty Avenue",
+      city: "Queens",
       state: "NY",
       inspection_date: OLD_ISO,
       violation_code: "02G",
+    },
+    // A DIFFERENT establishment that happens to share the same chain name +
+    // state but a different address — must NOT collapse with the row above
+    // (finding PRRT_kwDOSKzrBs6exPH1: name+state alone over-collapsed
+    // distinct statewide locations).
+    {
+      dba: "3M Bar & Grill",
+      street: "500 Ocean Parkway",
+      city: "Brooklyn",
+      state: "NY",
+      inspection_date: RECENT_ISO,
     },
     // No usable name — dropped.
     { inspection_date: RECENT_ISO },
@@ -427,7 +441,7 @@ describe("mapInspectionRows — canned payload, violation-free by construction",
 
   it("maps the most recent row per establishment and drops the rest", () => {
     const out = mapInspectionRows(rows, "NYC restaurant inspections", 60);
-    expect(out).toHaveLength(1);
+    expect(out).toHaveLength(2);
     expect(out[0]).toMatchObject({
       name: "3M Bar & Grill",
       address: "119-15 Liberty Avenue",
@@ -436,6 +450,17 @@ describe("mapInspectionRows — canned payload, violation-free by construction",
       phone: "7183743144",
       source: "socrata-inspection",
       sourceLabel: "NYC restaurant inspections",
+    });
+  });
+
+  it("keeps distinct establishments that share a chain name + state but differ by address", () => {
+    const out = mapInspectionRows(rows, "NYC restaurant inspections", 60);
+    const brooklyn = out.find((r) => r.city === "Brooklyn");
+    expect(brooklyn).toMatchObject({
+      name: "3M Bar & Grill",
+      address: "500 Ocean Parkway",
+      city: "Brooklyn",
+      state: "NY",
     });
   });
 

@@ -195,6 +195,7 @@ vi.mock("../src/_findemail-prescreen.ts", () => ({ shouldSkipFindEmail: () => ({
 let nextEnrichCompanyDomain: string | null = "acme.dev";
 let enrichCompanyCalls = 0;
 let findEmailCalls = 0;
+let verifyEmailCalls = 0;
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -219,7 +220,10 @@ vi.mock("@oneshot-gtm/core", async () => {
         receiptId: 1,
       };
     },
-    verifyEmail: async () => ({ result: { deliverable: true, cost: 0.005 }, receiptId: 1 }),
+    verifyEmail: async () => {
+      verifyEmailCalls++;
+      return { result: { deliverable: true, cost: 0.005 }, receiptId: 1 };
+    },
     getLedger: () => ({
       isQueueDuplicate: () => false,
       enqueueTarget: (row: EnqueuedRow) => {
@@ -260,6 +264,7 @@ beforeEach(() => {
   nextEnrichCompanyDomain = "acme.dev";
   enrichCompanyCalls = 0;
   findEmailCalls = 0;
+  verifyEmailCalls = 0;
 });
 afterEach(() => vi.clearAllMocks());
 
@@ -387,11 +392,16 @@ describe("runLocalRegistryFinder — fmcsa knownEmail skip", () => {
     expect(out.enqueued).toBe(1);
     expect(enrichCompanyCalls).toBe(0);
     expect(findEmailCalls).toBe(0);
+    // fmcsa's knownEmail is USDOT's own on-file contact address — trusted
+    // enough to skip verifyEmail too (finding PRRT_kwDOSKzrBs6exPH2), unlike
+    // github-stars/luma's knownEmail (a scraped/surfaced address) which still
+    // verifies.
+    expect(verifyEmailCalls).toBe(0);
     expect(enqueued[0]?.payload["email"]).toBe("dispatch@slacktruck.com");
     expect(enqueued[0]?.payload["source"]).toBe("fmcsa");
   });
 
-  it("fmcsa per-candidate cost is at or near zero (no enrichCompany/findEmail spend)", async () => {
+  it("fmcsa per-candidate cost is zero (no enrichCompany/findEmail/verifyEmail spend)", async () => {
     nextFmcsaRecords = [
       makeRecord({
         name: "Slack Truck Line Inc",
@@ -406,9 +416,9 @@ describe("runLocalRegistryFinder — fmcsa knownEmail skip", () => {
       entityTypes: ["carrier"],
       states: ["NE"],
     });
-    // verifyEmail still runs (0.005) — findEmail (0.01) and enrichCompany
-    // (0.005) are the calls this path is meant to skip.
-    expect(out.costUsd).toBeLessThan(0.01);
+    // enrichCompany (0.005), findEmail (0.01), and now verifyEmail (0.005)
+    // are all skipped for a trusted fmcsa knownEmail candidate.
+    expect(out.costUsd).toBe(0);
   });
 
   it("a socrata-license record (no knownEmail) still goes through enrichCompany + findEmail", async () => {

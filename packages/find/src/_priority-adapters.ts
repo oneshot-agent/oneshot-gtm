@@ -203,7 +203,19 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
     intentSignals: [
       { kind: "greenfield", strength: 80, reason: "newly licensed — nothing to rip out" },
     ],
-    hasEvidenceText: str(p["sourceLabel"]) !== null,
+    // matchedDateIso is the license/enumeration/registration/inspection date
+    // this record matched on — the same freshness evidence routePlayFor used
+    // to route it to new-business vs free-pilot in the first place. Without
+    // it every registry row scores a neutral timingFreshness component,
+    // regardless of whether it's 2 days or 55 days old.
+    // hasEvidenceText intentionally omitted: sourceLabel is registry
+    // metadata (e.g. "NPPES Dentist (NY)"), not quoted/concrete candidate
+    // evidence — mapping it here overstated the signalConfidence component
+    // on every registry row regardless of whether any real evidence text
+    // exists (finding PRRT_kwDOSKzrBs6exPH9, filed against free-pilot;
+    // new-business shares the identical payload shape and had the same
+    // bug at this line).
+    eventAt: str(p["matchedDateIso"]),
     ...contact(p),
   }),
 
@@ -220,7 +232,9 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
     intentSignals: [
       { kind: "free-pilot-fit", strength: 50, reason: "main-street pilot candidate" },
     ],
-    hasEvidenceText: str(p["sourceLabel"]) !== null,
+    // See new-business above — same registry payload shape, same missing
+    // freshness signal.
+    eventAt: str(p["matchedDateIso"]),
     ...contact(p),
   }),
 
