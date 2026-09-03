@@ -75,19 +75,34 @@ export interface LocalRegistryTarget {
   title?: string;
 }
 
+/**
+ * Unicode-preserving slug: lowercase, collapse whitespace to hyphens, strip
+ * everything that isn't a Unicode letter/number/hyphen. `\p{L}`/`\p{N}` (not
+ * the old `a-z0-9` ASCII class) keep non-Latin scripts intact — a Chinese or
+ * Cyrillic business name must not collapse to the same empty string as every
+ * other non-ASCII name in the run.
+ */
 function slugify(s: string): string {
   return s
     .toLowerCase()
+    .trim()
     .replace(/\s+/g, "-")
-    .replace(/[^a-z0-9-]/g, "");
+    .replace(/[^\p{L}\p{N}-]+/gu, "");
 }
 
-/** Stable within-run + cross-run dedupe key: name slug + state, source-agnostic.
+/** Stable within-run + cross-run dedupe key: name slug + state + city, source-agnostic.
  * Cross-source dedup is the stated intent (see the run-level dedupe below) —
  * a business appearing in both socrata-license and nppes must collapse to
- * one candidate, not be double-enriched and potentially double-queued. */
+ * one candidate, not be double-enriched and potentially double-queued. City
+ * is included (address is not — its formatting varies too much between a
+ * Socrata portal and NPPES to dedupe reliably) so two genuinely distinct
+ * same-name businesses in a state-less or shared-state/city record don't
+ * collapse into one candidate.
+ */
 export function dedupeKeyFor(record: RegistryRecord): string {
-  return `${slugify(record.name)}:${(record.state ?? "").toLowerCase()}`;
+  const state = (record.state ?? "").toLowerCase().trim();
+  const city = (record.city ?? "").toLowerCase().trim();
+  return `${slugify(record.name)}:${state}:${city}`;
 }
 
 /** Recent-issue routing: fresh (within `freshnessDays`) → new-business, else → free-pilot. */
@@ -160,12 +175,23 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
 
   // Dedupe across sources within this run before touching the queue —
   // NY state + NYC-city portals commonly double-publish the same license.
-  const seen = new Set<string>();
+  // Keep the record with the LATEST matchedDateIso, not just the first one
+  // seen: source fetch order (socrata before nppes, see REGISTRY_SOURCES)
+  // must not decide routing. An older socrata license row must not suppress
+  // a newer NPPES enumeration and wrongly route the business to free-pilot
+  // instead of new-business.
+  const seen = new Map<string, number>();
   const deduped: RegistryRecord[] = [];
   for (const r of allRecords) {
     const key = dedupeKeyFor(r);
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const priorIndex = seen.get(key);
+    if (priorIndex !== undefined) {
+      if (Date.parse(r.matchedDateIso) > Date.parse(deduped[priorIndex]!.matchedDateIso)) {
+        deduped[priorIndex] = r;
+      }
+      continue;
+    }
+    seen.set(key, deduped.length);
     deduped.push(r);
   }
   result.candidates = deduped.length;
@@ -180,13 +206,23 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
   }
 
   let halted = false;
+  // Reserve a slot the moment a worker commits to processing a record —
+  // BEFORE its own paid calls run — not after. Checking `result.enqueued`
+  // (mutated only once a candidate fully clears every gate) lets multiple
+  // in-flight workers all see it below `limit` and all proceed: with
+  // `limit:1, concurrency:3`, all three could enqueue before the first one's
+  // async pipeline finishes and bumps the counter. `reserved` is bumped
+  // synchronously (no `await` before the increment), so it caps how many
+  // pipelines are ever launched, independent of completion order.
+  let reserved = 0;
 
   await parallelMap(deduped, concurrency, async (record) => {
     if (halted) return;
-    if (result.enqueued >= limit) {
+    if (reserved >= limit) {
       halted = true;
       return;
     }
+    reserved++;
     if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
       result.halted = `max-cost cap (${opts.maxCostUsd})`;
       halted = true;

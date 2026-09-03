@@ -18,7 +18,7 @@ describe("dedupeKeyFor", () => {
     expect(dedupeKeyFor(a)).toBe(dedupeKeyFor(b));
   });
 
-  it("is the SAME across sources for the same name/state — cross-source dedup is the point (a business licensed AND NPI-enumerated must collapse to one candidate)", () => {
+  it("is the SAME across sources for the same name/state/city — cross-source dedup is the point (a business licensed AND NPI-enumerated must collapse to one candidate)", () => {
     const base: RegistryRecord = {
       name: "Rae's Dental",
       address: null,
@@ -30,6 +30,39 @@ describe("dedupeKeyFor", () => {
       sourceLabel: "x",
     };
     expect(dedupeKeyFor(base)).toBe(dedupeKeyFor({ ...base, source: "nppes" }));
+  });
+
+  it("preserves non-ASCII business names instead of stripping them to an empty slug (finding PRRT_kwDOSKzrBs6ewn0O)", () => {
+    const a: RegistryRecord = {
+      name: "北京饭店",
+      address: null,
+      city: "Flushing",
+      state: "NY",
+      phone: null,
+      matchedDateIso: "2026-06-01T00:00:00Z",
+      source: "socrata-license",
+      sourceLabel: "x",
+    };
+    const b: RegistryRecord = { ...a, name: "上海小吃" };
+    // Distinct non-ASCII names must produce distinct keys — the old
+    // `[^a-z0-9-]` slug stripped every character of both names to "",
+    // colliding them into one dedupe key.
+    expect(dedupeKeyFor(a)).not.toBe(dedupeKeyFor(b));
+  });
+
+  it("distinguishes same-name businesses in different cities when state is absent (finding PRRT_kwDOSKzrBs6ewn0O)", () => {
+    const a: RegistryRecord = {
+      name: "Main Street Cafe",
+      address: null,
+      city: "Springfield",
+      state: null,
+      phone: null,
+      matchedDateIso: "2026-06-01T00:00:00Z",
+      source: "socrata-license",
+      sourceLabel: "x",
+    };
+    const b: RegistryRecord = { ...a, city: "Riverside" };
+    expect(dedupeKeyFor(a)).not.toBe(dedupeKeyFor(b));
   });
 });
 
@@ -308,6 +341,60 @@ describe("runLocalRegistryFinder — routing + isolation", () => {
     // and potentially double-queued to different plays.
     expect(out.candidates).toBe(1);
     expect(out.enqueued).toBe(1);
+  });
+
+  it("keeps the NEWER cross-source duplicate's matchedDateIso so routing isn't decided by source fetch order (finding PRRT_kwDOSKzrBs6ewn0H)", async () => {
+    // socrata (fetched first, per REGISTRY_SOURCES order) reports an OLD
+    // license; nppes (fetched second) reports a RECENT enumeration for the
+    // same business. Keeping "the first one seen" would keep the old date
+    // and wrongly route this business to free-pilot instead of new-business.
+    nextSocrataRecords = [
+      makeRecord({
+        name: "Rae's Dental",
+        source: "socrata-license",
+        sourceLabel: "NYC licenses",
+        matchedDateIso: OLD_ISO,
+      }),
+    ];
+    nextNppesRecords = [
+      makeRecord({
+        name: "Rae's Dental",
+        source: "nppes",
+        sourceLabel: "NPPES Dentist",
+        matchedDateIso: RECENT_ISO,
+      }),
+    ];
+    const out = await runLocalRegistryFinder({
+      dryRun: false,
+      yourEdge: "x",
+      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
+      taxonomies: ["Dentist"],
+      states: ["NY"],
+    });
+    expect(out.candidates).toBe(1);
+    expect(out.enqueued).toBe(1);
+    expect(enqueued[0]?.playName).toBe("new-business");
+    expect(enqueued[0]?.payload["matchedDateIso"]).toBe(RECENT_ISO);
+  });
+
+  it("never enqueues more than `limit` even at concurrency > 1 (finding PRRT_kwDOSKzrBs6ewnz7)", async () => {
+    // Five distinct fresh candidates, concurrency 3, limit 1 — the exact
+    // review-cited repro shape. A check against `result.enqueued` (mutated
+    // only after each candidate's async pipeline fully resolves) lets every
+    // in-flight worker see 0 < 1 and proceed; a slot reserved synchronously
+    // before the pipeline starts must cap this at exactly 1.
+    nextSocrataRecords = Array.from({ length: 5 }, (_, i) =>
+      makeRecord({ name: `Candidate ${i}`, matchedDateIso: RECENT_ISO }),
+    );
+    const out = await runLocalRegistryFinder({
+      dryRun: false,
+      yourEdge: "x",
+      limit: 1,
+      concurrency: 3,
+      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
+    });
+    expect(out.enqueued).toBe(1);
+    expect(enqueued).toHaveLength(1);
   });
 
   it("carries subjectType through to the queued LocalRegistryTarget payload so a /queue reviewer can see it", async () => {

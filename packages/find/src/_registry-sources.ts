@@ -207,35 +207,70 @@ const SOCRATA_PAGE_SIZE = 200;
  */
 const SOCRATA_MAX_PAGES = 5;
 
+/**
+ * Resolve this portal's date column from the dataset's own column metadata
+ * (Socrata's `/api/views/{4x4}.json`), which lists every column by name
+ * regardless of whether any single row happens to have a value in it. A
+ * one-row `$limit=1` probe can omit the date field entirely on a
+ * sparsely-populated dataset (or just an unlucky row) and wrongly report "no
+ * date column" even though the column exists and is populated on the vast
+ * majority of rows. Returns null (never throws) so the caller can fall back.
+ */
+async function resolveSocrataDateFieldFromMetadata(
+  portal: SocrataPortalConfig,
+): Promise<string | null> {
+  try {
+    const metaUrl = `https://${portal.host}/api/views/${portal.dataset}.json`;
+    const res = await fetch(metaUrl);
+    if (!res.ok) return null;
+    const meta = (await res.json()) as { columns?: Array<{ fieldName?: unknown }> };
+    const fieldNames = (meta.columns ?? [])
+      .map((c) => c.fieldName)
+      .filter((f): f is string => typeof f === "string" && f.length > 0);
+    if (fieldNames.length === 0) return null;
+    const lowerMap = new Map(fieldNames.map((f) => [f.toLowerCase(), f]));
+    for (const candidate of SOCRATA_DATE_FIELDS) {
+      const actual = lowerMap.get(candidate.toLowerCase());
+      if (actual) return actual;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchSocrataPortal(
   portal: SocrataPortalConfig,
   cfg: RegistryQuery,
 ): Promise<{ records: RegistryRecord[]; diagnostic: string | null }> {
   const q = buildSocrataSearchTerm(cfg.naics, cfg.licenseTypes);
 
-  // Business-license schemas vary portal to portal (see SOCRATA_DATE_FIELDS),
-  // so a single cheap probe row tells us which actual column this portal
-  // uses for its issue/creation date before we build the real query — that
-  // column is required for both `$order` (recency-first) and `$where`
-  // (server-side freshness predicate) below.
-  const probeParams = new URLSearchParams();
-  probeParams.set("$limit", "1");
-  if (q) probeParams.set("$q", q);
-  const probeUrl = `https://${portal.host}/resource/${portal.dataset}.json?${probeParams.toString()}`;
-  let dateField: string | null = null;
-  try {
-    const probeRes = await fetch(probeUrl);
-    if (probeRes.ok) {
-      const probeRows = await probeRes.json();
-      const probeRow =
-        Array.isArray(probeRows) && probeRows.length > 0 && typeof probeRows[0] === "object"
-          ? (probeRows[0] as Record<string, unknown>)
-          : null;
-      if (probeRow) dateField = findDateFieldKey(probeRow, SOCRATA_DATE_FIELDS);
+  // Business-license schemas vary portal to portal (see SOCRATA_DATE_FIELDS).
+  // Prefer the dataset's own column metadata — it names every column
+  // regardless of row-level nulls — and fall back to a single cheap probe
+  // row only when the metadata call itself is unavailable. Either way, the
+  // resolved column is required for both `$order` (recency-first) and
+  // `$where` (server-side freshness predicate) below.
+  let dateField: string | null = await resolveSocrataDateFieldFromMetadata(portal);
+  if (!dateField) {
+    const probeParams = new URLSearchParams();
+    probeParams.set("$limit", "1");
+    if (q) probeParams.set("$q", q);
+    const probeUrl = `https://${portal.host}/resource/${portal.dataset}.json?${probeParams.toString()}`;
+    try {
+      const probeRes = await fetch(probeUrl);
+      if (probeRes.ok) {
+        const probeRows = await probeRes.json();
+        const probeRow =
+          Array.isArray(probeRows) && probeRows.length > 0 && typeof probeRows[0] === "object"
+            ? (probeRows[0] as Record<string, unknown>)
+            : null;
+        if (probeRow) dateField = findDateFieldKey(probeRow, SOCRATA_DATE_FIELDS);
+      }
+    } catch {
+      // Schema probe is best-effort: fall through without ordering rather than
+      // failing the whole portal — the main fetch below still runs.
     }
-  } catch {
-    // Schema probe is best-effort: fall through without ordering rather than
-    // failing the whole portal — the main fetch below still runs.
   }
   const sinceIso = new Date(Date.now() - cfg.sinceDays * 86_400_000).toISOString().split(".")[0];
 

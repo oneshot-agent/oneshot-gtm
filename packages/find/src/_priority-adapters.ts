@@ -203,7 +203,14 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
     intentSignals: [
       { kind: "greenfield", strength: 80, reason: "newly licensed — nothing to rip out" },
     ],
-    hasEvidenceText: str(p["sourceLabel"]) !== null,
+    // matchedDateIso is the trigger evidence (license issue / NPI enumeration
+    // date) — feed it into timingFreshness so a genuinely fresh registration
+    // scores as fresh and an old one decays, same as every other finder that
+    // has a real event timestamp.
+    eventAt: str(p["matchedDateIso"]),
+    // sourceLabel is a registry/portal label ("NYC business licenses"), not
+    // quoted candidate evidence — it must not trip the quoted-evidence bonus
+    // in scoreSignalConfidence.
     ...contact(p),
   }),
 
@@ -220,7 +227,7 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
     intentSignals: [
       { kind: "free-pilot-fit", strength: 50, reason: "main-street pilot candidate" },
     ],
-    hasEvidenceText: str(p["sourceLabel"]) !== null,
+    eventAt: str(p["matchedDateIso"]),
     ...contact(p),
   }),
 
