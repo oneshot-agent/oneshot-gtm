@@ -196,7 +196,7 @@ describe("tryReserveDailySpend — concurrent reservations", () => {
     // A fresh caller shortly after would normally be refused (5 held + a new
     // 5 estimate tips over 6), but tryReserveDailySpend sweeps anything past
     // its stale window first — simulate that by aging the row past it.
-    rawDb().prepare(`UPDATE spend_reservations SET created_at = datetime('now', '-3 hours')`).run();
+    rawDb().prepare(`UPDATE spend_reservations SET created_at = datetime('now', '-6 hours')`).run();
     const later = tryReserveDailySpend(5);
     expect(later.granted).toBe(true); // the orphan was swept, so full room is available
   });

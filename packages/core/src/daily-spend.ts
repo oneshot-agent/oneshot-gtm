@@ -31,8 +31,21 @@ import { todayStartSqliteUtc } from "./send-routing.ts";
  * starts and reset together.
  */
 
-/** A held-open reservation older than this is presumed orphaned by a crashed process and swept. */
-const SPEND_RESERVATION_STALE_MS = 2 * 3600 * 1000;
+/**
+ * A held-open reservation older than this is presumed orphaned by a crashed
+ * process and swept. Must stay ABOVE `find/src/registry.ts`'s
+ * `MAX_RUN_AGE_MS` (4h) — that's the threshold governing how long a
+ * trigger's own claim (`running_started_at`) is still treated as a
+ * legitimately-running, non-crashed process. `core` can't import that
+ * constant directly (`find` depends on `core`, not the reverse), so this is
+ * a deliberately-generous fixed value instead of a shared import; if
+ * `MAX_RUN_AGE_MS` ever changes, this needs a matching bump. A shorter
+ * staleness window here than the claim's own would let any concurrent
+ * `tryReserveDailySpend` caller sweep — and re-grant to someone else — the
+ * reservation of a run that's still legitimately in flight and whose real
+ * spend hasn't posted to `receipts` yet.
+ */
+const SPEND_RESERVATION_STALE_MS = 5 * 3600 * 1000;
 
 /**
  * Reservation estimate for an automated call whose own config doesn't state
@@ -45,11 +58,16 @@ export const DEFAULT_SPEND_RESERVATION_USD = 1;
 /**
  * Worst-case per-row reservation for an automatic drain call. Drain rows are
  * already enriched (email found + verified) at enqueue time, so a drain's
- * per-row cost is just drafting (LLM) + send — the low end of the "$0.05-$2
- * per outbound touch" range this repo's own launch copy quotes — not a fresh
- * finder's per-candidate discovery + enrichment cost.
+ * per-row cost is just drafting (LLM) + send — but `tryReserveDailySpend`'s
+ * own contract requires callers pass their worst-case bound, not a typical
+ * or low-end estimate. This repo's own launch copy quotes "$0.05-$2 per
+ * outbound touch" depending on what enrichment/research is stacked on, so
+ * the worst case for a drafting+send touch is the top of that range, not
+ * the bottom — reserving the low end would let a batch of real per-touch
+ * cost above $0.05 blow through the install-wide ceiling substantially
+ * before the release-on-completion true-up ever catches it.
  */
-export const DEFAULT_DRAIN_ROW_RESERVATION_USD = 0.05;
+export const DEFAULT_DRAIN_ROW_RESERVATION_USD = 2;
 
 export interface DailySpendStatus {
   /** The configured ceiling, or null when unlimited (default). */
