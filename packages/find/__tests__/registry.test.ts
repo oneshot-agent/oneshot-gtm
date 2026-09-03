@@ -95,6 +95,7 @@ describe("TRIGGERS registry", () => {
       "hiring-signal",
       "job-change",
       "local-business",
+      "local-registry",
       "luma-events",
       "podcast-guest",
       "post-funding-auto",
@@ -123,6 +124,7 @@ describe("TRIGGERS registry", () => {
       "luma-events",
       "gov-solicitation",
       "civic-agenda",
+      "local-registry",
     ];
     for (const name of optIn) {
       const spec = TRIGGERS.find((t) => t.name === name);
@@ -352,6 +354,7 @@ describe("checkReadiness", () => {
       "x-reposters",
       "gov-solicitation",
       "civic-agenda",
+      "local-registry",
     ]);
     for (const spec of TRIGGERS) {
       if (intentionallyUnreadyByDefault.has(spec.name)) continue;
@@ -412,6 +415,56 @@ describe("checkReadiness", () => {
     const ycCount = cohorts.filter((c) => /^yc-/i.test(c.cohort)).length;
     expect(ycCount).toBeGreaterThan(0);
     expect(cohorts.length - ycCount).toBeGreaterThan(0);
+  });
+
+  it("local-registry is not ready with its empty default config (no sources)", () => {
+    const spec = TRIGGERS.find((t) => t.name === "local-registry")!;
+    expect(spec.readiness).toBeDefined();
+    const out = checkReadiness(spec, spec.defaultConfig);
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/portals|taxonomies/);
+  });
+
+  it("local-registry is not ready with a socrata portal configured but no yourEdge", () => {
+    const spec = TRIGGERS.find((t) => t.name === "local-registry")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
+    });
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/yourEdge/);
+  });
+
+  it("local-registry becomes ready with a valid socrata portal + yourEdge", () => {
+    const spec = TRIGGERS.find((t) => t.name === "local-registry")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
+      yourEdge: "we set it up for free, you keep it if it works",
+    });
+    expect(out).toEqual({ ready: true });
+  });
+
+  it("local-registry becomes ready with taxonomies + states + yourEdge alone (no portals)", () => {
+    const spec = TRIGGERS.find((t) => t.name === "local-registry")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      taxonomies: ["Dentist"],
+      states: ["NY"],
+      yourEdge: "we set it up for free, you keep it if it works",
+    });
+    expect(out).toEqual({ ready: true });
+  });
+
+  it("local-registry stays not ready when taxonomies is set but states is empty", () => {
+    const spec = TRIGGERS.find((t) => t.name === "local-registry")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      taxonomies: ["Dentist"],
+      states: [],
+      yourEdge: "we set it up for free, you keep it if it works",
+    });
+    expect(out.ready).toBe(false);
   });
 });
 

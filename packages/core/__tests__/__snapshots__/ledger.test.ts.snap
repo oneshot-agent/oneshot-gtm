@@ -193,6 +193,12 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
       "type": "index",
     },
     {
+      "name": "idx_spend_reservations_created",
+      "sql": "CREATE INDEX idx_spend_reservations_created ON spend_reservations(created_at)",
+      "tbl_name": "spend_reservations",
+      "type": "index",
+    },
+    {
       "name": "idx_webhook_replays_expiry",
       "sql": "CREATE INDEX idx_webhook_replays_expiry
         ON webhook_replays(expires_at)",
@@ -483,6 +489,16 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
         FOREIGN KEY(prospect_id) REFERENCES prospects(id)
       )",
       "tbl_name": "sequence_events",
+      "type": "table",
+    },
+    {
+      "name": "spend_reservations",
+      "sql": "CREATE TABLE spend_reservations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        amount_usd REAL NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )",
+      "tbl_name": "spend_reservations",
       "type": "table",
     },
     {

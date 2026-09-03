@@ -55,6 +55,7 @@ function makeCtx(overrides: Partial<ProspectRecord> = {}): CadenceContext {
       mobileSignature: false,
       timezone: null,
       clientId: null,
+      dailySpendCeilingUsd: null,
     },
     metadata: {},
   };

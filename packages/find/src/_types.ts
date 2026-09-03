@@ -32,6 +32,13 @@ export interface FinderResult {
    * Only set by `accelerator-batch`; other finders leave it unset.
    */
   perCohort?: Array<{ cohort: string; records: number; error?: string }>;
+  /**
+   * Per-source fetch outcomes for `local-registry` (one entry per configured
+   * Socrata portal or nppes taxonomy×state pair). Same isolation contract as
+   * `perCohort`: a dead portal logs and continues, the run only halts when
+   * every source returns 0. Only set by `local-registry`.
+   */
+  perSource?: Array<{ source: string; label: string; records: number; error?: string }>;
 }
 
 export interface ShowHnHit {

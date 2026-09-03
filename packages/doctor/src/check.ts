@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   capGroupKey,
   configDir,
+  dailySpendStatus,
   daysAgoSqliteUtc,
   getBalance,
   getGmailProfile,
@@ -24,6 +25,7 @@ import {
   currentWorkspaceName,
   listWorkspaces,
   loadGmailTokens,
+  spendCeilingReason,
 } from "@oneshot-gtm/core";
 import { finderApprovalHealth, storedTriggerConfig, TRIGGERS } from "@oneshot-gtm/find";
 
@@ -531,6 +533,44 @@ function readJson<T>(path: string): T | null {
   }
 }
 
+/**
+ * Install-wide daily USD spend ceiling (issue #481). Read-only: never
+ * reserves or mutates anything, just reports today's spend against the
+ * configured ceiling so a founder sees the same number that gates automated
+ * finder/drain runs. Absent a configured ceiling, this is silent — the
+ * historical behavior — so an install that never opted in doesn't get a
+ * confusing "unlimited" line cluttering the panel.
+ */
+function dailySpendCeilingCheck(): CheckResult | null {
+  let status: ReturnType<typeof dailySpendStatus>;
+  try {
+    status = dailySpendStatus();
+  } catch (err) {
+    return {
+      name: "daily spend ceiling",
+      group: "spend",
+      severity: "warn",
+      message: `could not evaluate: ${(err as Error).message}`,
+    };
+  }
+  if (status.ceilingUsd == null) return null;
+  return {
+    name: "daily spend ceiling",
+    group: "spend",
+    severity: status.ceilingReached ? "warn" : "ok",
+    message: status.ceilingReached
+      ? spendCeilingReason(status)
+      : // effectiveUsd = spentUsd (posted receipts) + reservedUsd (calls
+        // currently in flight) — the same total the ceiling is compared
+        // against. Labeling it "spent" alone would understate it whenever a
+        // concurrent automated call is holding a reservation.
+        `$${status.effectiveUsd.toFixed(2)}/$${status.ceilingUsd.toFixed(2)} spent or reserved today (resets at local midnight)`,
+    ...(status.ceilingReached
+      ? { hint: "automated finder runs + drains are halted; manual /queue sends still work" }
+      : {}),
+  };
+}
+
 export async function runDoctor(): Promise<CheckResult[]> {
   const cfg = loadConfig();
   const results: CheckResult[] = [];
@@ -845,6 +885,9 @@ export async function runDoctor(): Promise<CheckResult[]> {
       });
     }
   }
+
+  const spendCeiling = dailySpendCeilingCheck();
+  if (spendCeiling) results.push(spendCeiling);
 
   return results;
 }

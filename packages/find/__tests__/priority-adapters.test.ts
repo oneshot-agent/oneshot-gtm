@@ -32,6 +32,7 @@ const SCORED_PLAYS = [
   "sources-sought",
   "design-partner-loi",
   "civic-pilot",
+  "new-business",
 ] as const;
 
 /** Manual/legacy producers that intentionally stay unscored (null path). */
@@ -230,6 +231,16 @@ const FIXTURES: Record<(typeof SCORED_PLAYS)[number], Record<string, unknown>> =
     role: "Chief of Staff",
     yourEdge: "a free 30-day pilot",
   },
+  "new-business": {
+    name: "Rae's Dental",
+    email: "rae@raesdental.com",
+    company: "Rae's Dental",
+    source: "nppes",
+    sourceLabel: "NPPES Dentist (NY)",
+    matchedDateIso: "2026-08-25T00:00:00Z",
+    yourEdge: "we set it up free, you keep it if it works",
+    title: "Owner",
+  },
 };
 
 describe("adapter registry coverage", () => {
@@ -409,5 +420,42 @@ describe("v2 label-mined adapter priors", () => {
       NOW,
     )!;
     expect(ic.components.personFit).toBe(50);
+  });
+});
+
+describe("new-business — matchedDateIso feeds timing freshness", () => {
+  it("new-business: a fresh matchedDateIso scores timingFreshness high, not neutral", () => {
+    const fresh = safeScorePriority(
+      "new-business",
+      {
+        ...FIXTURES["new-business"],
+        matchedDateIso: new Date(NOW.getTime() - 86_400_000).toISOString(),
+      },
+      NOW,
+    )!;
+    expect(fresh.components.timingFreshness).toBe(90);
+  });
+
+  it("new-business: an old matchedDateIso decays timingFreshness, not neutral", () => {
+    const old = safeScorePriority(
+      "new-business",
+      {
+        ...FIXTURES["new-business"],
+        matchedDateIso: new Date(NOW.getTime() - 200 * 86_400_000).toISOString(),
+      },
+      NOW,
+    )!;
+    expect(old.components.timingFreshness).toBe(25);
+  });
+});
+
+describe("new-business — sourceLabel is registry metadata, not evidence text", () => {
+  it("does not overstate signalConfidence off sourceLabel alone", () => {
+    const p = safeScorePriority("new-business", FIXTURES["new-business"], NOW)!;
+    // sourceLabel is always present on a real registry payload, so this
+    // pins the pre-fix regression: hasEvidenceText must NOT be derived from
+    // it (finding PRRT_kwDOSKzrBs6exPH9). Neutral == no evidenceUrlCount and
+    // no genuine quoted-evidence signal.
+    expect(p.components.signalConfidence).toBe(50);
   });
 });

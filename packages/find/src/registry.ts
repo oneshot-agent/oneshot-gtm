@@ -1,8 +1,12 @@
 import {
+  DEFAULT_SPEND_RESERVATION_USD,
+  dailySpendStatus,
   getLedger,
   logEvent,
   safeParseJsonRecord,
+  spendCeilingReason,
   startRun,
+  tryReserveDailySpend,
   type TriggerRow,
 } from "@oneshot-gtm/core";
 import { type CohortEntry, runAcceleratorBatchFinder } from "./accelerator-batch.ts";
@@ -16,6 +20,8 @@ import { runHiringSignalFinder } from "./hiring-signal.ts";
 import { runJobChangeFinder } from "./job-change.ts";
 import { runLocalBusinessFinder } from "./local-business.ts";
 import { runLumaFinder } from "./luma.ts";
+import { runLocalRegistryFinder } from "./local-registry.ts";
+import type { SocrataInspectionPortalConfig, SocrataPortalConfig } from "./_registry-sources.ts";
 import { runPodcastGuestFinder } from "./podcast-guest.ts";
 import { runPostFundingFinder } from "./post-funding.ts";
 import { runShowHnFinder } from "./show-hn.ts";
@@ -70,6 +76,23 @@ export async function runFinderWithProductResearch(
 }
 
 export type Readiness = { ready: true } | { ready: false; reason: string };
+
+/**
+ * Worst-case spend estimate for reserving against the daily ceiling before a
+ * trigger fires. Reads `maxCostUsd` (every finder's SDK/LLM cap) plus, for
+ * x-reposters, `maxSpendPerRun` (its separate X-read meter) — the two are
+ * independent budgets on that one finder, so both must be held. Falls back
+ * to `DEFAULT_SPEND_RESERVATION_USD` for a finder with neither configured
+ * (e.g. `breakup-revive`, which is ledger-only and spends nothing) so a
+ * free finder can't starve the day's reservation slot for a paid one.
+ */
+export function estimatedTriggerSpendUsd(config: Record<string, unknown>): number {
+  const maxCostUsd = typeof config["maxCostUsd"] === "number" ? config["maxCostUsd"] : 0;
+  const maxSpendPerRun =
+    typeof config["maxSpendPerRun"] === "number" ? config["maxSpendPerRun"] : 0;
+  const total = maxCostUsd + maxSpendPerRun;
+  return total > 0 ? total : DEFAULT_SPEND_RESERVATION_USD;
+}
 
 /** Evaluate a spec's readiness fn (defaulting to ready when absent). */
 export function checkReadiness(spec: TriggerSpec, config: Record<string, unknown>): Readiness {
@@ -364,6 +387,166 @@ export const TRIGGERS: TriggerSpec[] = [
         limit: (cfg["limit"] as number) ?? 25,
         maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
       }),
+  },
+  {
+    // Local-registry finder over free, keyless public-registry APIs
+    // (Socrata business-license open data + NPPES NPI + FMCSA Company
+    // Census + Socrata city health-inspection open data). Recent-issue lane
+    // routes to new-business, the rest to free-pilot. Ships empty (no
+    // portals/taxonomies/entityTypes/inspectionPortals configured) so
+    // nothing fires until the founder or an industry pack (#458/#464) sets
+    // a source.
+    name: "local-registry",
+    defaultIntervalMs: 24 * ONE_HOUR,
+    enabledByDefault: false,
+    defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
+      portals: [] as SocrataPortalConfig[],
+      naics: [] as string[],
+      licenseTypes: [] as string[],
+      taxonomies: [] as string[],
+      states: [] as string[],
+      entityTypes: [] as string[],
+      minPowerUnits: null as number | null,
+      maxPowerUnits: null as number | null,
+      inspectionPortals: [] as SocrataInspectionPortalConfig[],
+      sinceDays: 60,
+      freshnessDays: 21,
+      yourEdge: "",
+      limit: 25,
+      maxCostUsd: 5,
+    },
+    configBrief:
+      "Discovers newly-licensed or newly-enumerated main-street businesses over free, keyless public registries. Four sources, any combination may be configured: `portals` (array of {host, dataset, label} - a Socrata open-data business-license portal) filtered by `naics`/`licenseTypes`; `taxonomies` + `states` (NPPES NPI registry - taxonomy description like 'Dentist', 'Veterinarian', 'Chiropractor' crossed with 2-letter state codes); `entityTypes` (carrier/broker/freight-forwarder) + `states` + `minPowerUnits`/`maxPowerUnits` (FMCSA Company Census - the whole trucking/freight/3PL vertical, ~2.2M active entities; carries a published email on the record so there is no findEmail/verifyEmail spend at all, and the 10-100 power-unit fleet-size band is the segment that actually buys software); and `inspectionPortals` (array of {host, dataset, label} - a Socrata city health-inspection portal, e.g. NYC's 43nn-pn8j - the only cheap public proof a restaurant is CURRENTLY OPERATING rather than a stale license row; used as a recency/operating-status confirmation joined to the license lane, never violation/score content, which the adapter strips before the record ever reaches a draft). `sinceDays` (discovery window against the issue/enumeration/registration/inspection date, default 60) and `freshnessDays` (records inside this window route to the new-business play - nothing to rip out, the main-street equivalent of post-funding; everything else routes to free-pilot - clamped to sinceDays, default 21). `yourEdge` (the pitch angle for an owner-operator, REQUIRED - short and concrete, no founder jargon; may reference why a shop is relevant, e.g. new to the neighborhood - NEVER a violation, a score, or a lapsed license, which the copy lint holds regardless). A dead portal or an empty taxonomy state pair logs and continues; the run only halts when EVERY configured source returns 0 records. socrata-license/nppes/socrata-inspection carry a business name + address but no email - each such candidate resolves a domain via enrichCompany before falling through to the normal contact-resolution spine; fmcsa skips that entirely. STRATEGIST DUTY: propose taxonomies+states for healthcare verticals, portals+naics/licenseTypes for general main-street, and entityTypes+states+minPowerUnits/maxPowerUnits for trucking/freight/logistics ICPs.",
+    readiness: (cfg) => {
+      const portals = Array.isArray(cfg["portals"]) ? cfg["portals"] : [];
+      const validPortals = portals.filter(
+        (p) =>
+          p &&
+          typeof p === "object" &&
+          typeof (p as Record<string, unknown>)["host"] === "string" &&
+          ((p as Record<string, unknown>)["host"] as string).trim().length > 0 &&
+          typeof (p as Record<string, unknown>)["dataset"] === "string" &&
+          ((p as Record<string, unknown>)["dataset"] as string).trim().length > 0,
+      );
+      const taxonomies = Array.isArray(cfg["taxonomies"])
+        ? (cfg["taxonomies"] as unknown[]).filter((t) => typeof t === "string" && t.trim())
+        : [];
+      const states = Array.isArray(cfg["states"])
+        ? (cfg["states"] as unknown[]).filter((s) => typeof s === "string" && s.trim())
+        : [];
+      const hasNppes = taxonomies.length > 0 && states.length > 0;
+      const entityTypes = Array.isArray(cfg["entityTypes"])
+        ? (cfg["entityTypes"] as unknown[]).filter((t) => typeof t === "string" && t.trim())
+        : [];
+      const hasFmcsa =
+        entityTypes.length > 0 ||
+        typeof cfg["minPowerUnits"] === "number" ||
+        typeof cfg["maxPowerUnits"] === "number";
+      const inspectionPortals = Array.isArray(cfg["inspectionPortals"])
+        ? cfg["inspectionPortals"]
+        : [];
+      const hasInspection = inspectionPortals.some(
+        (p) =>
+          p &&
+          typeof p === "object" &&
+          typeof (p as Record<string, unknown>)["host"] === "string" &&
+          ((p as Record<string, unknown>)["host"] as string).trim().length > 0 &&
+          typeof (p as Record<string, unknown>)["dataset"] === "string" &&
+          ((p as Record<string, unknown>)["dataset"] as string).trim().length > 0,
+      );
+      if (validPortals.length === 0 && !hasNppes && !hasFmcsa && !hasInspection) {
+        return {
+          ready: false,
+          reason:
+            "set `portals[]` ({host, dataset, label}), `taxonomies[]` + `states[]`, `entityTypes[]`/`minPowerUnits`/`maxPowerUnits` (fmcsa), or `inspectionPortals[]`",
+        };
+      }
+      const edge = cfg["yourEdge"];
+      if (typeof edge !== "string" || edge.trim().length === 0) {
+        return {
+          ready: false,
+          reason: "set `yourEdge` - your one-line pitch for an owner-operator",
+        };
+      }
+      return { ready: true };
+    },
+    run: (cfg) => {
+      const portals: SocrataPortalConfig[] = (
+        Array.isArray(cfg["portals"]) ? (cfg["portals"] as unknown[]) : []
+      )
+        .map((p): SocrataPortalConfig | null => {
+          if (!p || typeof p !== "object") return null;
+          const e = p as Record<string, unknown>;
+          const host = typeof e["host"] === "string" ? e["host"].trim() : "";
+          const dataset = typeof e["dataset"] === "string" ? e["dataset"].trim() : "";
+          if (host.length === 0 || dataset.length === 0) return null;
+          const label =
+            typeof e["label"] === "string" && e["label"].trim() ? e["label"].trim() : host;
+          return { host, dataset, label };
+        })
+        .filter((p): p is SocrataPortalConfig => p !== null);
+      const inspectionPortals: SocrataInspectionPortalConfig[] = (
+        Array.isArray(cfg["inspectionPortals"]) ? (cfg["inspectionPortals"] as unknown[]) : []
+      )
+        .map((p): SocrataInspectionPortalConfig | null => {
+          if (!p || typeof p !== "object") return null;
+          const e = p as Record<string, unknown>;
+          const host = typeof e["host"] === "string" ? e["host"].trim() : "";
+          const dataset = typeof e["dataset"] === "string" ? e["dataset"].trim() : "";
+          if (host.length === 0 || dataset.length === 0) return null;
+          const label =
+            typeof e["label"] === "string" && e["label"].trim() ? e["label"].trim() : host;
+          const result: SocrataInspectionPortalConfig = { host, dataset, label };
+          const dateField =
+            typeof e["dateField"] === "string" && e["dateField"].trim()
+              ? e["dateField"].trim()
+              : undefined;
+          if (dateField) result.dateField = dateField;
+          return result;
+        })
+        .filter((p): p is SocrataInspectionPortalConfig => p !== null);
+      const naics = Array.isArray(cfg["naics"])
+        ? (cfg["naics"] as unknown[]).filter((t): t is string => typeof t === "string")
+        : [];
+      const licenseTypes = Array.isArray(cfg["licenseTypes"])
+        ? (cfg["licenseTypes"] as unknown[]).filter((t): t is string => typeof t === "string")
+        : [];
+      const taxonomies = Array.isArray(cfg["taxonomies"])
+        ? (cfg["taxonomies"] as unknown[]).filter((t): t is string => typeof t === "string")
+        : [];
+      const states = Array.isArray(cfg["states"])
+        ? (cfg["states"] as unknown[]).filter((s): s is string => typeof s === "string")
+        : [];
+      const validEntityTypes = new Set(["carrier", "broker", "freight-forwarder"]);
+      const entityTypes = Array.isArray(cfg["entityTypes"])
+        ? (cfg["entityTypes"] as unknown[]).filter(
+            (t): t is "carrier" | "broker" | "freight-forwarder" =>
+              typeof t === "string" && validEntityTypes.has(t),
+          )
+        : [];
+      return runLocalRegistryFinder({
+        dryRun: false,
+        ...(portals.length > 0 ? { portals } : {}),
+        ...(naics.length > 0 ? { naics } : {}),
+        ...(licenseTypes.length > 0 ? { licenseTypes } : {}),
+        ...(taxonomies.length > 0 ? { taxonomies } : {}),
+        ...(states.length > 0 ? { states } : {}),
+        ...(entityTypes.length > 0 ? { entityTypes } : {}),
+        ...(typeof cfg["minPowerUnits"] === "number"
+          ? { minPowerUnits: cfg["minPowerUnits"] as number }
+          : {}),
+        ...(typeof cfg["maxPowerUnits"] === "number"
+          ? { maxPowerUnits: cfg["maxPowerUnits"] as number }
+          : {}),
+        ...(inspectionPortals.length > 0 ? { inspectionPortals } : {}),
+        sinceDays: (cfg["sinceDays"] as number) ?? 60,
+        freshnessDays: (cfg["freshnessDays"] as number) ?? 21,
+        yourEdge: typeof cfg["yourEdge"] === "string" ? cfg["yourEdge"] : "",
+        limit: (cfg["limit"] as number) ?? 25,
+        maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
+      });
+    },
   },
   {
     // GitHub-Topic-driven repo finder (free Search API, `topic:<slug>`).
@@ -950,6 +1133,16 @@ export function fireTriggerNow(name: string): void {
   if (!readiness.ready) {
     throw new Error(`not ready: ${readiness.reason}`);
   }
+  // Daily spend ceiling gate (issue #481): a manual "run now" click is still
+  // an AUTOMATED paid call (as opposed to a human-reviewed /queue send), so it
+  // is bound by the same install-wide ceiling as scheduled runs. This is an
+  // early read-only check for a fast 409 — runTriggerNow re-checks
+  // atomically via tryReserveDailySpend right before firing, which is what
+  // actually closes the race between two concurrent automated calls.
+  const status = dailySpendStatus();
+  if (status.ceilingReached) {
+    throw new Error(`not ready: ${spendCeilingReason(status)}`);
+  }
   // Bootstrap the row if it doesn't exist yet — markTriggerRunning is an
   // UPDATE that no-ops on a missing row, so we'd silently lose state.
   if (!stored) {
@@ -1029,6 +1222,26 @@ export async function runTriggerNow(
       return { name, fired: false, error: message, nextDueInMs: intervalMs };
     }
   }
+  // Install-wide daily spend ceiling (issue #481): reserve this run's
+  // worst-case cost against the day's budget BEFORE firing the finder. A
+  // refusal here still clears the claim taken above (updateTriggerLastPoll
+  // resets running_started_at), so a later run-now click isn't stuck behind
+  // a phantom in-flight marker.
+  const reservation = tryReserveDailySpend(estimatedTriggerSpendUsd(config));
+  if (!reservation.granted) {
+    // clearTriggerClaim, not updateTriggerLastPoll: the finder never ran, so
+    // stamping last_polled_at would push this trigger's next-due a full
+    // interval out even though it was refused with $0 spent — the ceiling
+    // resetting (or headroom opening from a released reservation) wouldn't
+    // un-stick it until the next scheduled poll, which could be hours away
+    // (issue #481 review finding).
+    ledger.clearTriggerClaim({
+      name,
+      summary: { error: reservation.reason, at: new Date().toISOString() },
+    });
+    logEvent("trigger.run.skipped", { name, source: "ad_hoc", reason: reservation.reason });
+    return { name, fired: false, error: reservation.reason, nextDueInMs: intervalMs };
+  }
   const startedAt = Date.now();
   logEvent("trigger.run.start", { name, source: "ad_hoc" });
   try {
@@ -1063,6 +1276,8 @@ export async function runTriggerNow(
       "error",
     );
     return { name, fired: true, error: message, nextDueInMs: intervalMs };
+  } finally {
+    reservation.release();
   }
 }
 
@@ -1159,6 +1374,34 @@ export async function runDueTriggers(
       continue;
     }
 
+    // Install-wide daily spend ceiling (issue #481): reserve this run's
+    // worst-case cost before firing. Refused calls clear the claim taken
+    // above (via updateTriggerLastPoll) so the trigger isn't stuck
+    // "running" for the rest of the day.
+    const reservation = tryReserveDailySpend(estimatedTriggerSpendUsd(config));
+    if (!reservation.granted) {
+      // clearTriggerClaim, not updateTriggerLastPoll (issue #481 review
+      // finding) — see fireTriggerNow's matching comment: stamping
+      // last_polled_at on a refusal would delay the NEXT scheduled attempt
+      // by a full interval even though this one never actually ran.
+      ledger.clearTriggerClaim({
+        name: spec.name,
+        summary: { error: reservation.reason, at: new Date().toISOString() },
+      });
+      outcomes.push({
+        name: spec.name,
+        fired: false,
+        nextDueInMs: intervalMs,
+        skippedReason: reservation.reason,
+      });
+      logEvent("trigger.run.skipped", {
+        name: spec.name,
+        source: "watch",
+        reason: reservation.reason,
+      });
+      continue;
+    }
+
     const startedAt = Date.now();
     logEvent("trigger.run.start", { name: spec.name, source: "watch" });
     try {
@@ -1207,6 +1450,8 @@ export async function runDueTriggers(
         duration_ms: durationMs,
         nextDueInMs: intervalMs,
       });
+    } finally {
+      reservation.release();
     }
   }
   logEvent("watch.tick.done", { fired: outcomes.filter((o) => o.fired).length });

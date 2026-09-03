@@ -177,6 +177,7 @@ describe("coverage against the priority adapters", () => {
       seedHandle: "@h",
       followers: 2000,
       role: "role",
+      sourceLabel: "NYC business licenses",
       businessType: "HVAC contractor",
       title: "notice title",
       agency: "an agency",

@@ -55,6 +55,22 @@ export async function resolveAndVerifyContact(args: {
   companyDomain?: string | null;
   isDuplicate?: (email: string) => boolean;
   decisionContext?: CallContext["decisionContext"];
+  /**
+   * Forwarded to `shouldSkipFindEmail` — opt in only when the caller has no
+   * owner/operator name on the source record at all (see that function's
+   * doc comment). Defaults to off.
+   */
+  allowMissingFullName?: boolean;
+  /**
+   * Skip the paid `verifyEmail` call for a `knownEmail` the caller trusts as
+   * already-deliverable (e.g. a government filing's on-file contact address,
+   * not a scraped/guessed one) — mirrors `knownEmail` itself skipping
+   * `findEmail`. Has no effect when `knownEmail` is absent (the
+   * findEmail-resolved path is never trusted enough to skip verify). Default
+   * off, so every existing `knownEmail` caller (github-stars, luma) keeps
+   * verifying unless it explicitly opts in.
+   */
+  skipVerify?: boolean;
 }): Promise<ContactResolution> {
   const ctx: CallContext = { playName: args.playName };
   if (args.decisionContext) ctx.decisionContext = args.decisionContext;
@@ -70,6 +86,7 @@ export async function resolveAndVerifyContact(args: {
     const skip = shouldSkipFindEmail({
       fullName: args.fullName,
       companyDomain: args.companyDomain,
+      allowMissingFullName: args.allowMissingFullName,
     });
     if (!skip.ok) {
       logEvent("finder.skipped_findemail", { name: args.playName, reason: skip.reason }, "info");
@@ -98,6 +115,10 @@ export async function resolveAndVerifyContact(args: {
   }
 
   if (args.isDuplicate?.(email)) return { ok: false, reason: "duplicate", costUsd };
+
+  if (args.knownEmail && args.skipVerify) {
+    return { ok: true, email, fullName, costUsd };
+  }
 
   if (isCircuitOpen()) return { ok: false, reason: "platform-error", costUsd };
   const verified = await safeVerifyEmail({ email }, ctx);
@@ -189,6 +210,14 @@ export async function resolveVerifyEnrichQualify(args: {
    * post-verify enrichment title, since it came from the richer lookup.
    */
   titleHint?: string | null;
+  /**
+   * Forwarded to `resolveAndVerifyContact` / `shouldSkipFindEmail` — opt in
+   * only when the caller has no owner/operator name on the source record at
+   * all. Defaults to off.
+   */
+  allowMissingFullName?: boolean;
+  /** Forwarded to `resolveAndVerifyContact` — see its doc comment. Default off. */
+  skipVerify?: boolean;
 }): Promise<QualifiedContact> {
   const contact = await resolveAndVerifyContact({
     playName: args.playName,
@@ -197,6 +226,8 @@ export async function resolveVerifyEnrichQualify(args: {
     companyDomain: args.companyDomain,
     isDuplicate: args.isDuplicate,
     decisionContext: args.decisionContext,
+    allowMissingFullName: args.allowMissingFullName,
+    skipVerify: args.skipVerify,
   });
   let costUsd = contact.costUsd;
   if (!contact.ok) return { ok: false, reason: contact.reason, costUsd };

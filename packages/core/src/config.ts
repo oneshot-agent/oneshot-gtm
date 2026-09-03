@@ -52,6 +52,7 @@ const DEFAULTS: OneShotConfig = {
   mobileSignature: false,
   timezone: null,
   clientId: null,
+  dailySpendCeilingUsd: null,
 };
 
 export function configDir(): string {

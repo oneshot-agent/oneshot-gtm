@@ -96,7 +96,18 @@ export async function commandFindDrain(opts: {
       sent: result.sent,
       deferred: result.deferred,
       errors: result.errors.map((e) => ({ id: e.id, message: e.message })),
+      ...(result.haltedReason ? { haltedReason: result.haltedReason } : {}),
     });
+  }
+
+  // Daily spend ceiling (issue #481): distinct from "nothing to drain" — rows
+  // ARE approved and waiting, the automated path is just blocked until the
+  // ceiling resets at local midnight or the founder raises it. Manual sends
+  // from /queue still work; only this batch path is gated.
+  if (result.haltedReason) {
+    warn(`find drain ${opts.play}: ${result.haltedReason}`);
+    if (opts.failOnEmpty) bail(`find drain ${opts.play}: ${result.haltedReason}`);
+    return;
   }
 
   // Errors beat emptiness: a drain with row errors (or an invalid play) exits 1,

@@ -4,6 +4,8 @@ import {
   runCompetitorSwitch,
   runConcierge,
   runDemoNoShow,
+  runDiscoveryInterview,
+  runFreePilot,
   runHiringSignal,
   runPodcastGuest,
   runPostFunding,
@@ -11,6 +13,8 @@ import {
   type CompetitorSwitchTarget,
   type ConciergeTarget,
   type DemoNoShowTarget,
+  type DiscoveryInterviewTarget,
+  type FreePilotTarget,
   type HiringSignalTarget,
   type PodcastGuestTarget,
   type PostFundingTarget,
@@ -240,6 +244,56 @@ export async function commandMotionHiringSignal(opts: {
       );
     if (d.sent) ok("sent");
   }
+}
+
+export async function commandMotionDiscoveryInterview(opts: {
+  targetFile: string;
+  dryRun: boolean;
+}): Promise<void> {
+  header(`motion discovery-interview ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
+  const raw = readJson<DiscoveryInterviewTarget[]>(opts.targetFile);
+  note(`${raw.length} target(s) loaded from ${c.cyan(opts.targetFile)}\n`);
+  const targets = await preVerify(raw, (t) => t.email, {
+    playName: "discovery-interview",
+    dryRun: opts.dryRun,
+  });
+  const result = await runDiscoveryInterview({ dryRun: opts.dryRun, targets });
+  printDrafts(
+    result.drafted.map((d) => ({
+      label: `${d.target.name} — ${d.target.company} (${d.target.businessType})`,
+      subject: d.subject,
+      body: d.body,
+      flags: d.flags,
+      receiptIds: d.receiptIds,
+      sent: d.sent,
+    })),
+    opts.dryRun,
+  );
+}
+
+export async function commandMotionFreePilot(opts: {
+  targetFile: string;
+  dryRun: boolean;
+}): Promise<void> {
+  header(`motion free-pilot ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
+  const raw = readJson<FreePilotTarget[]>(opts.targetFile);
+  note(`${raw.length} target(s) loaded from ${c.cyan(opts.targetFile)}\n`);
+  const targets = await preVerify(raw, (t) => t.email, {
+    playName: "free-pilot",
+    dryRun: opts.dryRun,
+  });
+  const result = await runFreePilot({ dryRun: opts.dryRun, targets });
+  printDrafts(
+    result.drafted.map((d) => ({
+      label: `${d.target.name} — ${d.target.company} (${d.target.businessType})`,
+      subject: d.subject,
+      body: d.body,
+      flags: d.flags,
+      receiptIds: d.receiptIds,
+      sent: d.sent,
+    })),
+    opts.dryRun,
+  );
 }
 
 export async function commandMotionPodcastGuest(opts: {
