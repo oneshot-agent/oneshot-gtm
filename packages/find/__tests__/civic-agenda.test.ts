@@ -34,6 +34,7 @@ const pendingPersisted: Array<{
 }> = [];
 let icpMatch: boolean | null = true;
 let icpCalls = 0;
+let icpResolved: string | null = "icp";
 let eventsBySlug: Record<string, Array<Record<string, unknown>>> = {};
 let itemsByEventId: Record<number, Array<Record<string, unknown>>> = {};
 
@@ -54,7 +55,7 @@ vi.mock("../src/_pending.ts", () => ({
 }));
 
 vi.mock("../src/_filter.ts", () => ({
-  resolveIcp: () => "icp",
+  resolveIcp: () => icpResolved,
   icpFilter: async (input: { candidate: { title: string } }) => {
     icpCalls++;
     return { match: icpMatch, reason: icpMatch ? `fits: ${input.candidate.title}` : "nope" };
@@ -102,6 +103,7 @@ beforeEach(() => {
   pendingPersisted.length = 0;
   icpMatch = true;
   icpCalls = 0;
+  icpResolved = "icp";
   officeRecordsBehavior = "contact";
   eventsBySlug = {
     nyc: [
@@ -296,6 +298,26 @@ describe("runCivicAgendaFinder — happy path", () => {
     // the loop before the second candidate's classifier call.
     expect(icpCalls).toBe(1);
     expect(capped.halted).toMatch(/max-cost cap/);
+  });
+
+  it("does not charge icpFilter spend when no ICP is configured (pass-through)", async () => {
+    // resolveIcp() returning null is a normal, documented state (see
+    // _filter.ts's tri-state contract) — icpFilter() is then a free
+    // pass-through with zero LLM calls, so result.costUsd must stay at 0
+    // no matter how many keyword-surviving candidates it classifies.
+    // Without the `if (icp)` gate this would falsely accrue spend and could
+    // trip maxCostUsd on cost that was never incurred.
+    icpResolved = null;
+    itemsByEventId = {
+      1: [
+        { eventItemId: 100, title: "Resolution on AI use in permitting", matterFile: "R-1" },
+        { eventItemId: 102, title: "AI automation budget amendment", matterFile: null },
+      ],
+    };
+    const out = await runCivicAgendaFinder(baseConfig);
+    expect(icpCalls).toBe(2);
+    expect(out.costUsd).toBe(0);
+    expect(out.halted).toBeUndefined();
   });
 });
 
