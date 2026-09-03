@@ -26,3 +26,4 @@ export * from "./luma-events.ts";
 export * from "./x-repost-intro.ts";
 export * from "./x-amplify.ts";
 export * from "./x-amplify-dm.ts";
+export * from "./free-pilot.ts";
