@@ -41,13 +41,18 @@ function sentRow(email: string | null, opts: { prospectId?: number; play?: strin
   return id;
 }
 
-function insertReply(prospectId: number, kind: string | null, receivedAt = "2026-09-01T10:00:00Z") {
+function insertReply(
+  prospectId: number,
+  kind: string | null,
+  receivedAt = "2026-09-01T10:00:00Z",
+  intent: string | null = null,
+) {
   rawDb()
     .prepare(
-      `INSERT INTO inbox_replies(id, thread_key, prospect_id, from_email, body, received_at, kind)
-       VALUES(?, 't', ?, 'x@y.z', 'hi', ?, ?)`,
+      `INSERT INTO inbox_replies(id, thread_key, prospect_id, from_email, body, received_at, kind, intent)
+       VALUES(?, 't', ?, 'x@y.z', 'hi', ?, ?, ?)`,
     )
-    .run(`r-${Math.random().toString(36).slice(2)}`, prospectId, receivedAt, kind);
+    .run(`r-${Math.random().toString(36).slice(2)}`, prospectId, receivedAt, kind, intent);
 }
 
 describe("listSentOutcomeRows", () => {
@@ -81,6 +86,25 @@ describe("listSentOutcomeRows", () => {
     expect(byId.get(idHuman)!.first_email_reply_at).not.toBeNull();
     expect(byId.get(idAuto)!.first_email_reply_at).toBeNull();
     expect(byId.get(idLegacy)!.first_email_reply_at).not.toBeNull();
+  });
+
+  it("surfaces the reply's triaged intent alongside the reply timestamp (issue #480)", () => {
+    const pInterested = ledger.upsertProspect({ email: "int@a.dev" });
+    const idInterested = sentRow(null, { prospectId: pInterested });
+    insertReply(pInterested, "human", "2026-09-01T10:00:00Z", "interested");
+
+    const pDecline = ledger.upsertProspect({ email: "dec@a.dev" });
+    const idDecline = sentRow(null, { prospectId: pDecline });
+    insertReply(pDecline, "human", "2026-09-01T10:00:00Z", "not_now");
+
+    const pUntriaged = ledger.upsertProspect({ email: "unt@a.dev" });
+    const idUntriaged = sentRow(null, { prospectId: pUntriaged });
+    insertReply(pUntriaged, "human"); // no intent arg — NULL
+
+    const byId = new Map(ledger.listSentOutcomeRows().map((r) => [r.id, r]));
+    expect(byId.get(idInterested)!.first_email_reply_intent).toBe("interested");
+    expect(byId.get(idDecline)!.first_email_reply_intent).toBe("not_now");
+    expect(byId.get(idUntriaged)!.first_email_reply_intent).toBeNull();
   });
 
   it("surfaces LinkedIn replies and positive deal outcomes; deal_lost is never a rank", () => {

@@ -733,11 +733,37 @@ export function withXEngine(
  */
 export type InboundReplyKind = "human" | "auto" | "auto_permanent" | "unsubscribe";
 
+/**
+ * Sentiment/intent classification of a HUMAN reply (issue #480), mirrors
+ * intel/triage.ts's `TriageCategory` — independent of `InboundReplyKind`
+ * above (that's deliverability triage; this is sentiment). NULL/absent on a
+ * reply means it hasn't been triaged yet, or the triage call failed.
+ */
+export type ReplyIntent =
+  | "interested"
+  | "not_now"
+  | "wrong_person"
+  | "objection"
+  | "question"
+  | "unsubscribe"
+  | "auto_reply"
+  | "other";
+
+/** Positive-signal intents that surface the intent badge + needs-decision state on /inbox. */
+export const POSITIVE_REPLY_INTENTS: readonly ReplyIntent[] = [
+  "interested",
+  "question",
+  "objection",
+];
+
 /** A single inbox email (reply to outreach), with prospect/play context when matched. */
 export interface InboxReplyView {
   id: string;
   /** What this inbound actually is — only `human` counts as a reply anywhere. */
   kind: InboundReplyKind;
+  /** Sentiment classification (issue #480); null = not yet triaged (or triage failed). */
+  intent: ReplyIntent | null;
+  intentReason: string | null;
   /** Normalized sender address (lowercased, display-name stripped). */
   fromEmail: string;
   /** Raw From header as received (may include a display name). */
@@ -768,6 +794,10 @@ export interface InboxReplyView {
   thread: {
     draftBody: string | null;
     sent: { body: string; sentAt: string }[];
+    /** Founder's standing redraft instruction for this thread, if set. */
+    steer: string | null;
+    /** 'needs_decision' when the current draft's `commits-terms` lint flag survived the repair pass — Send is blocked until edited or steered. Null otherwise. */
+    status: "needs_decision" | null;
   } | null;
 }
 
@@ -805,6 +835,8 @@ export type ConversationItem =
       messageId: string | null;
       /** Classification of this inbound (NULL rows from before the classifier read as human). */
       replyKind: InboundReplyKind;
+      /** Sentiment classification (issue #480); null = not yet triaged. */
+      intent: ReplyIntent | null;
     }
   | {
       /** A manual reply the founder sent from /inbox (inbox_sent). */
@@ -825,6 +857,12 @@ export interface ConversationView {
   lastActivityAt: string;
   /** Saved (auto-saved) composer draft for the newest inbound's thread, if any. */
   draftBody: string | null;
+  /** Founder's standing redraft instruction for the newest inbound's thread, if set. */
+  steer: string | null;
+  /** 'needs_decision' when the current draft's `commits-terms` lint flag survived the repair pass. */
+  status: "needs_decision" | null;
+  /** Sentiment classification of the newest inbound reply; null = not yet triaged. */
+  intent: ReplyIntent | null;
   items: ConversationItem[];
 }
 
@@ -853,6 +891,10 @@ export interface InboxDraftReplyResult {
   costUsd: number;
   /** True when the server ran paid research on the sender before drafting. */
   researched: boolean;
+  /** Lint flags that survived the repair pass — currently only ever `commits-terms`. */
+  flags: string[];
+  /** True when `flags` includes `commits-terms` — /inbox blocks Send until edited or steered. */
+  needsDecision: boolean;
 }
 
 /** POST /api/inbox/draft — persist the in-progress draft for a thread (auto-save). */
@@ -867,7 +909,25 @@ export interface InboxSaveDraftRequest {
 
 export interface InboxSaveDraftResult {
   saved: boolean;
+  /** 'needs_decision' when the SAVED body's `commits-terms` lint flag fires — recomputed server-side from the text itself, never client-supplied. */
+  status: "needs_decision" | null;
 }
+
+/**
+ * POST /api/inbox/steer — persist a founder redraft instruction on a thread
+ * and generate a fresh draft grounded in it (issue #480).
+ */
+export interface InboxSteerRequest {
+  fromEmail: string;
+  subject: string;
+  body: string;
+  id?: string;
+  threadId?: string | null;
+  threadKey: string;
+  steer: string;
+}
+
+export type InboxSteerResult = InboxDraftReplyResult;
 
 /** POST /api/inbox/reply — send a (possibly edited) reply. */
 export interface InboxSendReplyRequest {

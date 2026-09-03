@@ -3,8 +3,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { ChevronDown, ChevronRight, Loader2, RefreshCw, Send, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
-import type { ConversationView, InboxReplyView } from "@oneshot-gtm/shared-types";
-import { inboxThreadKey } from "@oneshot-gtm/shared-types";
+import type { ConversationView, InboxReplyView, OutcomeRequest } from "@oneshot-gtm/shared-types";
+import { inboxThreadKey, POSITIVE_REPLY_INTENTS } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
 import { Pii } from "../components/primitives/Pii.tsx";
@@ -72,6 +72,11 @@ function InboxPage() {
   const suffixFor = (key: ReplyMatchFilter): string => (key === "matched" ? "" : windowSuffix);
   const visible = replies.filter((r) => matchesReplyFilter(r, matchFilter));
   const showConversations = matchFilter === "matched";
+  const needsDecisionCount = conversations.filter(
+    (c) =>
+      c.status === "needs_decision" ||
+      (c.intent != null && POSITIVE_REPLY_INTENTS.includes(c.intent)),
+  ).length;
 
   return (
     <div className="-mx-6 -my-6 flex flex-col">
@@ -92,6 +97,11 @@ function InboxPage() {
           </h1>
         </div>
         <div className="flex items-center gap-3">
+          {needsDecisionCount > 0 && (
+            <Badge tone="spend">
+              {needsDecisionCount} need{needsDecisionCount === 1 ? "s" : ""} a decision
+            </Badge>
+          )}
           <span className="font-mono text-[11px] text-ink-faint">
             {!inbox.data
               ? "…"
@@ -230,6 +240,8 @@ function ConversationRow({
     ? {
         id: newest.id,
         kind: newest.replyKind,
+        intent: newest.intent,
+        intentReason: null,
         fromEmail: c.email,
         fromRaw: c.email,
         subject: newest.subject ?? "",
@@ -245,9 +257,10 @@ function ConversationRow({
           playName: c.playName,
           cadenceStatus: c.cadenceStatus,
         },
-        thread: { draftBody: c.draftBody, sent: [] },
+        thread: { draftBody: c.draftBody, sent: [], steer: c.steer, status: c.status },
       }
     : null;
+  const kb = intentBadge(c.intent);
   return (
     <>
       <button
@@ -284,6 +297,8 @@ function ConversationRow({
           {c.playName ?? "prospect"}
           {c.cadenceStatus ? ` · ${c.cadenceStatus}` : ""}
         </Badge>
+        {kb ? <Badge tone={kb.tone}>{kb.label}</Badge> : null}
+        {c.status === "needs_decision" && <Badge tone="blocked">needs decision</Badge>}
         <span className="shrink-0 font-mono text-[12px] text-ink-muted">
           {timeAgo(c.lastActivityAt)}
         </span>
@@ -300,7 +315,7 @@ function ConversationRow({
             // composer remounts for it (the unmount flush saves the old draft
             // under the OLD thread key) instead of silently sending old text
             // into the new thread.
-            <ReplyComposer key={composerReply.id} reply={composerReply} />
+            <ReplyComposer key={composerReply.id} reply={composerReply} prospectId={c.prospectId} />
           ) : (
             <div className="mt-3 border-t border-ink-rule/60 pt-3 font-mono text-[11px] text-ink-faint">
               nothing inbound to answer yet
@@ -328,14 +343,42 @@ function replyKindBadge(
   }
 }
 
+/**
+ * Badge copy + tone for a triaged reply intent (issue #480) — the first
+ * positive badge anywhere in the app. `replyKindBadge` above only ever
+ * renders negatives (auto-reply, dead mailbox, unsubscribe); this is its
+ * counterpart for sentiment. Null when untriaged or when the intent has no
+ * useful badge of its own (unsubscribe/auto_reply are already covered by
+ * `kind`).
+ */
+function intentBadge(
+  intent: string | null | undefined,
+): { label: string; tone: "signal" | "spend" | "blocked" | "neutral" } | null {
+  switch (intent) {
+    case "interested":
+      return { label: "interested", tone: "signal" };
+    case "question":
+      return { label: "question", tone: "spend" };
+    case "objection":
+      return { label: "objection", tone: "blocked" };
+    case "not_now":
+      return { label: "not now", tone: "neutral" };
+    case "wrong_person":
+      return { label: "wrong person", tone: "neutral" };
+    default:
+      return null;
+  }
+}
+
 function ConversationItemBlock({ item }: { item: ConversationView["items"][number] }) {
   if (item.kind === "reply") {
+    const kb = intentBadge(item.intent) ?? replyKindBadge(item.replyKind);
     return (
       <div className="rounded-sm border border-[color:var(--ink-signal)]/40 bg-ink-surface/40 px-3 py-2">
         <div className="mb-1 font-mono text-[10px] uppercase tracking-wide text-ink-faint">
           them · {timeAgo(item.at)}
           {item.subject ? ` · ${item.subject}` : ""}
-          {replyKindBadge(item.replyKind) ? ` · ${replyKindBadge(item.replyKind)!.label}` : ""}
+          {kb ? ` · ${kb.label}` : ""}
         </div>
         <pre className="max-h-[280px] overflow-auto whitespace-pre-wrap font-mono text-[12px] leading-[1.6] text-ink-cream">
           {item.body || "(no body)"}
@@ -385,6 +428,7 @@ function ReplyRow({
 }) {
   const who = reply.matched?.name ?? reply.fromEmail;
   const company = reply.matched?.company;
+  const kb = intentBadge(reply.intent) ?? replyKindBadge(reply.kind);
   return (
     <>
       <button
@@ -420,10 +464,7 @@ function ReplyRow({
         ) : (
           <Badge tone="neutral">no match</Badge>
         )}
-        {(() => {
-          const kb = replyKindBadge(reply.kind);
-          return kb ? <Badge tone={kb.tone}>{kb.label}</Badge> : null;
-        })()}
+        {kb ? <Badge tone={kb.tone}>{kb.label}</Badge> : null}
         <span className="shrink-0 font-mono text-[12px] text-ink-muted">
           {timeAgo(reply.receivedAt)}
         </span>
@@ -458,7 +499,22 @@ function identityAddress(id: string): string {
   return id;
 }
 
-function ReplyComposer({ reply }: { reply: InboxReplyView }) {
+const OUTCOME_OPTIONS: OutcomeRequest["outcome"][] = [
+  "meeting_booked",
+  "sql_qualified",
+  "deal_won",
+  "deal_lost",
+  "ghosted",
+];
+
+function ReplyComposer({
+  reply,
+  prospectId,
+}: {
+  reply: InboxReplyView;
+  /** Present on the conversations (matched) tab — lets the outcome control record against a known prospect. */
+  prospectId?: number;
+}) {
   const queryClient = useQueryClient();
   const threadKey = inboxThreadKey({ threadId: reply.threadId, id: reply.id });
   const sentHistory = reply.thread?.sent ?? [];
@@ -470,6 +526,15 @@ function ReplyComposer({ reply }: { reply: InboxReplyView }) {
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const identityId = reply.sourceIdentityId;
+  // needs-decision state (issue #480): starts from the persisted status, then
+  // tracks whatever the last draft/generate/steer call actually verified —
+  // never trusted from the textarea's raw content (the client can't run the
+  // lint), only from a server round trip.
+  const [needsDecision, setNeedsDecision] = useState(reply.thread?.status === "needs_decision");
+  const [steerOpen, setSteerOpen] = useState(false);
+  const [steerText, setSteerText] = useState(reply.thread?.steer ?? "");
+  const [outcomeOpen, setOutcomeOpen] = useState(false);
+  const [outcomeKind, setOutcomeKind] = useState<OutcomeRequest["outcome"]>("meeting_booked");
 
   const persist = useCallback(
     (value: string) => {
@@ -490,6 +555,7 @@ function ReplyComposer({ reply }: { reply: InboxReplyView }) {
           identityId,
           body: value,
         })
+        .then((res) => setNeedsDecision(res.status === "needs_decision"))
         .catch(() => {
           // best-effort — the draft is still in the textarea; a later edit retries.
         });
@@ -508,11 +574,36 @@ function ReplyComposer({ reply }: { reply: InboxReplyView }) {
       }),
     onSuccess: (res) => {
       setDraft(res.body);
+      setNeedsDecision(res.needsDecision);
       if (res.researched && res.costUsd > 0) {
         toast.success(`draft ready · researched sender ($${res.costUsd.toFixed(2)})`);
       }
+      if (res.needsDecision) {
+        toast.warning("this draft commits to something unauthorised — edit it or steer a redraft");
+      }
     },
     onError: (err) => toast.error(`couldn't draft · ${err.message}`),
+  });
+
+  const steer = useMutation({
+    mutationFn: () =>
+      api.steerInboxReply({
+        fromEmail: reply.fromEmail,
+        subject: reply.subject,
+        body: reply.body,
+        id: reply.id,
+        threadId: reply.threadId,
+        threadKey,
+        steer: steerText.trim(),
+      }),
+    onSuccess: (res) => {
+      setDraft(res.body);
+      setNeedsDecision(res.needsDecision);
+      lastSaved.current = res.body;
+      setSteerOpen(false);
+      toast.success("redraft ready, grounded in your steer");
+    },
+    onError: (err) => toast.error(`couldn't steer · ${err.message}`),
   });
 
   const send = useMutation({
@@ -535,10 +626,23 @@ function ReplyComposer({ reply }: { reply: InboxReplyView }) {
       // reply shows up.
       lastSaved.current = "";
       setDraft("");
+      setNeedsDecision(false);
       void queryClient.invalidateQueries({ queryKey: ["inbox"] });
       toast.success(res.costUsd > 0 ? `reply sent · $${res.costUsd.toFixed(2)}` : "reply sent");
     },
     onError: (err) => toast.error(`couldn't send · ${err.message}`),
+  });
+
+  const logOutcome = useMutation({
+    mutationFn: async () => {
+      const req: OutcomeRequest = { email: reply.fromEmail, outcome: outcomeKind };
+      return await api.recordOutcome(req);
+    },
+    onSuccess: () => {
+      setOutcomeOpen(false);
+      toast.success("outcome recorded");
+    },
+    onError: (err) => toast.error(`couldn't record outcome · ${err.message}`),
   });
 
   // Debounced auto-save: persist ~1s after typing stops so a refresh or
@@ -566,6 +670,8 @@ function ReplyComposer({ reply }: { reply: InboxReplyView }) {
       </div>
     );
   }
+
+  const showOutcomeControl = reply.intent === "interested" && prospectId != null;
 
   return (
     <div className="mt-3 border-t border-ink-rule/60 pt-3">
@@ -603,6 +709,13 @@ function ReplyComposer({ reply }: { reply: InboxReplyView }) {
           <span className="font-mono text-[11px] text-ink-spend-2">paid · threaded</span>
         )}
       </div>
+      {needsDecision && (
+        <div className="mb-2 rounded-sm border border-[color:var(--ink-blocked)]/50 bg-[color:var(--ink-blocked)]/10 px-3 py-2 font-mono text-[11px] text-[color:var(--ink-blocked-2)]">
+          This draft commits to something unauthorised (pricing, distribution, partnership terms,
+          documentation placement, or similar). Send is blocked — edit the commitment out, or steer
+          a redraft below.
+        </div>
+      )}
       <Textarea
         rows={6}
         value={draft}
@@ -633,16 +746,97 @@ function ReplyComposer({ reply }: { reply: InboxReplyView }) {
               : "generate with llm"}
         </Button>
         <Button
+          variant="ghost"
+          size="sm"
+          disabled={!reply.body || steer.isPending || send.isPending}
+          title="give the drafter a short standing instruction and redraft"
+          onClick={() => setSteerOpen((v) => !v)}
+          {...readOnly}
+        >
+          steer
+        </Button>
+        <Button
           variant="primary"
           size="sm"
-          disabled={!draft.trim() || send.isPending || generate.isPending}
+          disabled={!draft.trim() || send.isPending || generate.isPending || needsDecision}
+          title={
+            needsDecision
+              ? "edit out the unauthorised commitment, or steer a redraft, before sending"
+              : undefined
+          }
           onClick={() => send.mutate()}
           {...readOnly}
         >
           {send.isPending ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
           {send.isPending ? "sending" : "send reply"}
         </Button>
+        {showOutcomeControl && !outcomeOpen && (
+          <Button variant="ghost" size="sm" onClick={() => setOutcomeOpen(true)} {...readOnly}>
+            log outcome
+          </Button>
+        )}
       </div>
+      {steerOpen && (
+        <div className="mt-2 flex flex-col gap-2 rounded-sm border border-ink-rule/60 bg-ink-surface/30 px-3 py-2">
+          <div className="font-mono text-[11px] text-ink-faint">
+            A short standing instruction for this thread — e.g. "docs listing only, no exclusivity,
+            no traffic promise". Persists on the thread and grounds every redraft.
+          </div>
+          <Textarea
+            rows={2}
+            value={steerText}
+            onChange={(e) => setSteerText(e.target.value)}
+            placeholder="docs listing only, no exclusivity, no traffic promise"
+          />
+          <div className="flex items-center gap-2">
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={!steerText.trim() || steer.isPending}
+              onClick={() => steer.mutate()}
+              {...readOnly}
+            >
+              {steer.isPending ? <Loader2 size={12} className="animate-spin" /> : null}
+              {steer.isPending ? "redrafting" : "steer + redraft"}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setSteerOpen(false)}>
+              cancel
+            </Button>
+          </div>
+        </div>
+      )}
+      {outcomeOpen && (
+        <div className="mt-2 flex flex-col gap-2 rounded-sm border border-ink-rule/60 bg-ink-surface/30 px-3 py-2">
+          <div className="font-mono text-[11px] text-ink-faint">
+            Record what this interest became.
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              className="rounded-sm border border-ink-rule bg-ink-bg-deep px-2 py-1 font-mono text-[12px] text-ink-cream"
+              value={outcomeKind}
+              onChange={(e) => setOutcomeKind(e.target.value as OutcomeRequest["outcome"])}
+            >
+              {OUTCOME_OPTIONS.map((o) => (
+                <option key={o} value={o}>
+                  {o}
+                </option>
+              ))}
+            </select>
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={logOutcome.isPending}
+              onClick={() => logOutcome.mutate()}
+              {...readOnly}
+            >
+              {logOutcome.isPending ? "saving…" : "save outcome"}
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setOutcomeOpen(false)}>
+              cancel
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

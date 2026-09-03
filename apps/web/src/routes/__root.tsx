@@ -4,6 +4,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import { Activity, BarChart3, Feather, Inbox, Layers, Mail, Receipt, Settings } from "lucide-react";
 import { useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { Toaster } from "sonner";
+import { POSITIVE_REPLY_INTENTS } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { IS_DEMO } from "../api/demo.ts";
 import { DemoFrame } from "../components/shell/DemoFrame.tsx";
@@ -31,13 +32,13 @@ interface NavItem {
   label: string;
   icon: ComponentType<{ size?: number; className?: string }>;
   /** Which alert-data key, if any, lights a dot next to this nav item. */
-  alert?: "queue-pending" | "doctor-fail";
+  alert?: "queue-pending" | "doctor-fail" | "inbox-positive";
 }
 
 const NAV: NavItem[] = [
   { to: "/", label: "Today", icon: Activity },
   { to: "/queue", label: "Queue", icon: Inbox, alert: "queue-pending" },
-  { to: "/inbox", label: "Replies", icon: Mail },
+  { to: "/inbox", label: "Replies", icon: Mail, alert: "inbox-positive" },
   { to: "/cadences", label: "Cadences", icon: Layers },
   { to: "/receipts", label: "Receipts", icon: Receipt },
   { to: "/measure", label: "Measure", icon: BarChart3 },
@@ -64,6 +65,14 @@ function RootLayout() {
   const doctor = useQuery({
     queryKey: ["doctor"],
     queryFn: api.doctor,
+    refetchInterval: 60_000,
+  });
+  // A positive reply is the highest-value event in the product and the one
+  // thing that never announced itself (issue #480) — polled at the same
+  // cadence /inbox itself uses, so the dot and the page never disagree.
+  const inboxAlertQuery = useQuery({
+    queryKey: ["inbox"],
+    queryFn: () => api.inbox(),
     refetchInterval: 60_000,
   });
 
@@ -98,6 +107,9 @@ function RootLayout() {
   const alerts: Record<NonNullable<NavItem["alert"]>, boolean> = {
     "queue-pending": (queueQuery.data?.counts.pending ?? 0) > 0,
     "doctor-fail": (doctor.data?.checks ?? []).some((c) => c.severity === "fail"),
+    "inbox-positive": (inboxAlertQuery.data?.conversations ?? []).some(
+      (c) => c.intent != null && POSITIVE_REPLY_INTENTS.includes(c.intent),
+    ),
   };
 
   return (
@@ -275,5 +287,6 @@ function Frame({ children }: { children: ReactNode }) {
 function alertLabel(alert: NavItem["alert"]): string {
   if (alert === "queue-pending") return "pending candidates waiting for review";
   if (alert === "doctor-fail") return "doctor has a failing check";
+  if (alert === "inbox-positive") return "a positive reply is waiting for a decision";
   return "";
 }

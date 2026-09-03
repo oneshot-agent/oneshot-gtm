@@ -1374,6 +1374,22 @@ describe("Ledger inbox drafts + sent replies", () => {
     expect(sent.map((s) => s.body)).toEqual(["first reply", "second reply"]);
     expect(sent.every((s) => typeof s.sentAt === "string" && s.sentAt.length > 0)).toBe(true);
   });
+
+  it("persists the commits-terms status on the draft (issue #480)", () => {
+    ledger.upsertInboxDraft({ ...draft, status: "needs_decision" });
+    expect(ledger.getInboxThreads().get("thread-1")?.status).toBe("needs_decision");
+    ledger.upsertInboxDraft({ ...draft, status: null });
+    expect(ledger.getInboxThreads().get("thread-1")?.status).toBeNull();
+  });
+
+  it("setInboxDraftSteer persists a founder redraft instruction (issue #480)", () => {
+    ledger.upsertInboxDraft(draft);
+    expect(ledger.getInboxThreads().get("thread-1")?.steer).toBeNull();
+    ledger.setInboxDraftSteer("thread-1", "docs listing only, no exclusivity");
+    expect(ledger.getInboxThreads().get("thread-1")?.steer).toBe(
+      "docs listing only, no exclusivity",
+    );
+  });
 });
 
 describe("Ledger pending_resolution (outage retry queue)", () => {

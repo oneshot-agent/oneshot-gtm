@@ -65,6 +65,10 @@ export interface InboxReplyRecord {
   message_id: string | null;
   /** Reply classification (reply-classify.ts). NULL = pre-classifier row, read as 'human'. */
   kind: string | null;
+  /** Sentiment/intent classification (intel/triage.ts TriageCategory). NULL = not yet triaged. */
+  intent: string | null;
+  /** One-sentence justification for `intent`, from the triage LLM call. */
+  intent_reason: string | null;
   created_at: string;
 }
 
@@ -448,6 +452,14 @@ export interface SentOutcomeRawRow {
   payload_email: string | null;
   /** Earliest human-classified email reply (COALESCE(kind,'human')). */
   first_email_reply_at: string | null;
+  /**
+   * Sentiment intent of that earliest human email reply (issue #480) —
+   * `interested` / `not_now` / `wrong_person` / `objection` / `question` /
+   * `unsubscribe` / `auto_reply` / `other`, or NULL when not yet triaged (or
+   * there was no email reply at all). `_outcomes.ts` uses this to stop
+   * labeling a decline (`not_now`) the same `positive` as an interested lead.
+   */
+  first_email_reply_intent: string | null;
   /** Earliest LinkedIn reply (channel_events, never machine-classified). */
   first_channel_reply_at: string | null;
   /** Max deal_outcomes rank: 4 won / 3 qualified / 2 meeting; NULL = none. */

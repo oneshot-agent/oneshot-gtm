@@ -25,7 +25,7 @@ import {
   describeTouch,
   recentTouchElsewhere,
 } from "@oneshot-gtm/core";
-import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
+import { complete, loadPrompt, tryParseJsonObject, triageEmails } from "@oneshot-gtm/intel";
 import {
   firstNameFrom,
   humanizeDraft,
@@ -522,6 +522,24 @@ async function walkInboxWindow(
           }
         }
         continue;
+      }
+      // Sentiment/intent classification (issue #480), via the existing
+      // triage taxonomy — distinct from `kind` above (deliverability, not
+      // sentiment). Best-effort and non-blocking, like the neighbouring
+      // tagOutcomeValue call below: a triage failure logs and leaves
+      // `intent` NULL, it never loses the reply itself (already persisted
+      // above).
+      try {
+        const [triaged] = await triageEmails([e]);
+        if (triaged) {
+          ledger.setInboxReplyIntent(e.id, triaged.category, triaged.reasoning || null);
+        }
+      } catch (err) {
+        logEvent(
+          "inbox.reply.triage_failed",
+          { message_120: ((err as Error)?.message ?? "").slice(0, 120) },
+          "warn",
+        );
       }
       for (const r of ledger.recordProspectReply(prospect.id, { subject: e.subject })) {
         if (r.newlyReplied) out.cadencesStopped++;

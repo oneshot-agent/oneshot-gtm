@@ -495,6 +495,22 @@ export function migrateLedgerSchema(db: Database): void {
       );
       CREATE INDEX IF NOT EXISTS idx_spend_reservations_created ON spend_reservations(created_at);
     `);
+  // v29: reply INTENT (issue #480) — sentiment classification, distinct from
+  // `kind` (deliverability triage, v23). Populated best-effort by
+  // pollInboxReplies right after a reply classifies as `kind: 'human'`, via
+  // the existing intel/triage.ts taxonomy (TriageCategory). NULL = not yet
+  // triaged (a triage-call failure never blocks recording the reply itself).
+  addColumnIfMissing(db, "inbox_replies", "intent", "TEXT");
+  addColumnIfMissing(db, "inbox_replies", "intent_reason", "TEXT");
+  // v30: founder steer + draft status (issue #480). `steer` is a short
+  // standing instruction for the NEXT redraft of this thread ("docs listing
+  // only, no exclusivity"), set from /inbox and read by draftInboxReply.
+  // `status` is recomputed on every save from the draft body's own lint
+  // state ('needs_decision' when the commits-terms flag survives, else
+  // NULL) — never hand-set, so it can never drift from the text it
+  // describes.
+  addColumnIfMissing(db, "inbox_drafts", "steer", "TEXT");
+  addColumnIfMissing(db, "inbox_drafts", "status", "TEXT");
 }
 
 /**

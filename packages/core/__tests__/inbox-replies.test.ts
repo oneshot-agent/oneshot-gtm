@@ -160,3 +160,61 @@ describe("contactSuppressionFor", () => {
     expect(ledger.contactSuppressionFor("jane@prospect.example")).toBeNull();
   });
 });
+
+describe("inbox_replies.intent (issue #480)", () => {
+  it("defaults to NULL and can be set independently of kind", () => {
+    record({ kind: "human" });
+    expect(ledger.listInboxRepliesForProspect(1)[0]!.intent).toBeNull();
+    ledger.setInboxReplyIntent("msg-1", "interested", "asked about pricing tiers");
+    const row = ledger.listInboxRepliesForProspect(1)[0]!;
+    expect(row.intent).toBe("interested");
+    expect(row.intent_reason).toBe("asked about pricing tiers");
+    // kind is untouched by the intent write — the two classifiers are independent.
+    expect(row.kind).toBe("human");
+  });
+
+  it("a bare 'not interested' stays kind: human AND classifies as a decline", () => {
+    // classifyReply (reply-classify.ts) keeps a soft no as `human` — only an
+    // explicit removal request promotes to `unsubscribe`. The intent
+    // classifier is the layer that tells declines apart from interest.
+    record({ kind: "human", body: "Thanks, but not interested right now." });
+    ledger.setInboxReplyIntent("msg-1", "not_now", "declined, no explicit removal request");
+    const row = ledger.listInboxRepliesForProspect(1)[0]!;
+    expect(row.kind).toBe("human");
+    expect(row.intent).toBe("not_now");
+  });
+
+  it("listInboxReplyIntents bulk-reads by id and is empty-safe", () => {
+    expect(ledger.listInboxReplyIntents([])).toEqual(new Map());
+    record({ kind: "human" });
+    record({ id: "msg-2", kind: "human" });
+    ledger.setInboxReplyIntent("msg-1", "interested", "r1");
+    const out = ledger.listInboxReplyIntents(["msg-1", "msg-2", "msg-nonexistent"]);
+    expect(out.get("msg-1")).toEqual({ intent: "interested", intentReason: "r1" });
+    expect(out.get("msg-2")).toEqual({ intent: null, intentReason: null });
+    expect(out.has("msg-nonexistent")).toBe(false);
+  });
+
+  it("a triage failure leaves intent NULL without losing the reply", () => {
+    // Simulates the best-effort path in pollInboxReplies: recordInboxReply
+    // always runs; setInboxReplyIntent is skipped entirely on a triage error.
+    record({ kind: "human" });
+    expect(ledger.listInboxRepliesForProspect(1)).toHaveLength(1);
+    expect(ledger.listInboxRepliesForProspect(1)[0]!.intent).toBeNull();
+  });
+
+  it("listUntriagedHumanReplies finds human replies with no intent yet, oldest first", () => {
+    record({ id: "msg-1", kind: "human", receivedAt: "2026-08-20T00:00:00.000Z" });
+    record({ id: "msg-2", kind: "human", receivedAt: "2026-08-25T00:00:00.000Z" });
+    record({ id: "msg-3", kind: "auto" }); // never human — excluded
+    ledger.setInboxReplyIntent("msg-2", "interested", "already triaged");
+
+    const untriaged = ledger.listUntriagedHumanReplies();
+    expect(untriaged.map((r) => r.id)).toEqual(["msg-1"]);
+  });
+
+  it("listUntriagedHumanReplies includes pre-v23 NULL-kind rows (they read as human)", () => {
+    record({ id: "msg-legacy" }); // no kind arg → NULL
+    expect(ledger.listUntriagedHumanReplies().map((r) => r.id)).toEqual(["msg-legacy"]);
+  });
+});

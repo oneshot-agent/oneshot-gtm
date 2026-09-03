@@ -13,6 +13,7 @@ const listInboxRepliesForProspectMock = vi.fn((): unknown[] => []);
 const listSequenceEventsForProspectMock = vi.fn((): unknown[] => []);
 const recordInboxReplyMock = vi.fn(() => true);
 const getProspectByIdMock = vi.fn((): unknown => null);
+const listInboxReplyIntentsMock = vi.fn(() => new Map());
 let knownProspect: { id: number } | null = null;
 
 const ledger = {
@@ -32,6 +33,8 @@ const ledger = {
   getProspectByEmail: () => null,
   findProspectByEmail: () => knownProspect,
   recordProspectReply: recordProspectReplyMock,
+  // issue #480: sentiment/intent, bulk-read for the list route's badge.
+  listInboxReplyIntents: listInboxReplyIntentsMock,
 };
 
 vi.mock("@oneshot-gtm/core", async () => {
@@ -51,7 +54,13 @@ vi.mock("@oneshot-gtm/core", async () => {
 });
 
 const draftInboxReplyMock = vi.fn();
-vi.mock("@oneshot-gtm/plays", () => ({ draftInboxReply: draftInboxReplyMock }));
+// bodyCommitsTerms is the real (deterministic, no-LLM) implementation — the
+// send gate's regex check is cheap enough not to need mocking, and mocking
+// it to always-false would silently stop testing the gate at all.
+vi.mock("@oneshot-gtm/plays", async () => {
+  const actual = await vi.importActual<typeof import("@oneshot-gtm/plays")>("@oneshot-gtm/plays");
+  return { ...actual, draftInboxReply: draftInboxReplyMock };
+});
 
 // Research is unit-tested in reply-research.test.ts; here it's a seam.
 const gatherReplyContextMock = vi.fn();
@@ -185,7 +194,7 @@ describe("inbox route — persisted drafts & sent replies", () => {
       }),
     );
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ saved: true });
+    expect(await res.json()).toEqual({ saved: true, status: null });
     expect(upsertInboxDraftMock).toHaveBeenCalledWith(
       expect.objectContaining({ threadKey: "t1", inboundEmailId: "e1", body: "draft body" }),
     );
@@ -339,7 +348,7 @@ describe("inbox route — research-grounded drafting", () => {
       costUsd: 0.06,
       researched: true,
     });
-    draftInboxReplyMock.mockResolvedValue({ body: "the draft" });
+    draftInboxReplyMock.mockResolvedValue({ body: "the draft", flags: [] });
   });
 
   it("passes research context into draftInboxReply and reports the spend", async () => {
@@ -353,8 +362,20 @@ describe("inbox route — research-grounded drafting", () => {
       }),
     );
     expect(res.status).toBe(200);
-    const out = (await res.json()) as { body: string; costUsd: number; researched: boolean };
-    expect(out).toEqual({ body: "the draft", costUsd: 0.06, researched: true });
+    const out = (await res.json()) as {
+      body: string;
+      costUsd: number;
+      researched: boolean;
+      flags: string[];
+      needsDecision: boolean;
+    };
+    expect(out).toEqual({
+      body: "the draft",
+      costUsd: 0.06,
+      researched: true,
+      flags: [],
+      needsDecision: false,
+    });
     expect(gatherReplyContextMock).toHaveBeenCalledWith({
       fromEmail: "aladdin@aliyev.site",
       prospectId: null,

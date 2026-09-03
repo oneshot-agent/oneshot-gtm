@@ -22,6 +22,7 @@ import {
 import { commandDoctor } from "./commands/doctor.ts";
 import {
   commandIntelAdvise,
+  commandIntelBackfillIntent,
   commandIntelPersonalize,
   commandIntelTriage,
   commandIntelWeeklyReview,
@@ -909,6 +910,17 @@ intel
   .option("-l, --limit <n>", "max replies to process", (v) => Number.parseInt(v, 10))
   .description("Classify and draft responses for inbound replies")
   .action(runOrFail(commandIntelTriage));
+intel
+  .command("backfill-intent")
+  .option("-l, --limit <n>", "max untriaged human replies to process (default 200)", (v) =>
+    Number.parseInt(v, 10),
+  )
+  .description("Classify sentiment intent onto persisted human replies that predate the classifier")
+  .action(
+    runOrFail(async (opts: { limit?: number }) =>
+      commandIntelBackfillIntent(opts.limit != null ? { limit: opts.limit } : {}),
+    ),
+  );
 intel
   .command("personalize")
   .requiredOption("--prospect-name <name>", "prospect's first or full name")
