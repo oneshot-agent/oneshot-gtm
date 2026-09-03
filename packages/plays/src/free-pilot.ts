@@ -46,7 +46,7 @@ export interface FreePilotDraft {
 const freePilotDef: EmailPlayDef<FreePilotTarget> = {
   playName: PLAY_NAME,
   promptName: "free-pilot-email",
-  maxBodyWords: 150,
+  maxBodyWords: 90,
   // One touch + one follow-up that doubles as the breakup — mirrors
   // accelerator-batch's shape. An owner-operator who didn't bite on a free,
   // no-obligation setup doesn't want a multi-touch chase.
