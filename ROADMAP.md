@@ -10,6 +10,19 @@ Public — issues mirror the items below, PRs welcome. Items carry an effort tag
 ## In flight
 
 - **feat(notify): Slack incoming-webhook notifications for replies, bounces, and daily send summary** — PR #74, issue #71.
+- **Deferred review findings from ai/gtm/issue-434** — PR #453, issue #439.
+- **fix(intel): three deferred review findings in complete() retry logic** — PR #454, issue #87.
+- **feat(plays): free-pilot, discovery-interview, new-business — the main-street asks** — PR #465, issue #462.
+- **feat(find): pack registry, apply endpoint, and /queue pack cards** — PR #466, issue #458.
+- **feat(plays): design-partner-loi, sources-sought, civic-pilot — the institutional asks** — PR #467, issue #463.
+- **feat(find): local-registry finder + socrata-license and nppes adapters** — PR #469, issue #459.
+- **feat(find): local-business finder on peopleSearch/companySearch** — PR #470, issue #457.
+- **feat(find): local-registry fmcsa and health-inspection adapters** — PR #473, issue #460.
+- **Deferred review findings from ai/gtm/issue-430** — PR #474, issue #433.
+- **feat(find): gov-solicitation and civic-agenda finders** — PR #475, issue #461.
+- **refactor(core): extract fresh-install schema migration from ledger.ts** — PR #476, issue #452.
+- **feat(find): seven industry packs (data + strategist wiring)** — PR #477, issue #464.
+- **feat(core): peopleSearch, companySearch and enrichCompany wrappers** — PR #479, issue #456.
 
 ---
 
@@ -67,8 +80,7 @@ Not code — these need capture, not commits. `demo seed` + `demo ui` now stand 
 
 ## Approved, not yet started
 
-- [ ] **Deferred review findings from ai/gtm/issue-430** — issue #433.
-- [ ] **Deferred review findings from ai/gtm/issue-434** — issue #439.
+- [ ] **feat(inbox): reply intent — classify, guard against unauthorised commitments, steer, record** — issue #480.
 
 ## Things we intentionally do NOT do
 
