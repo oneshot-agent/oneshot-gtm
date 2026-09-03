@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { RUNNABLE_PLAYS } from "@oneshot-gtm/shared-types";
-import { missingRequiredFields, PLAY_SCHEMAS } from "../src/lib/playSchemas";
+import { missingRequiredExtras, missingRequiredFields, PLAY_SCHEMAS } from "../src/lib/playSchemas";
 
 // The list and the schemas are edited in different files by different features,
 // and they drifted twice before this test existed: /queue's drain list lost
@@ -66,5 +66,69 @@ describe("missingRequiredFields", () => {
     }
     expect(row["requirementSummary"]).toBe("");
     expect(missingRequiredFields(schema, row)).toEqual([]);
+  });
+});
+
+// finding PRRT_kwDOSKzrBs6ewsAf: missingRequiredFields only ever filtered
+// schema.fields — a required EXTRA (accelerator-batch's senderCohort) passed
+// validation blank and reached /api/run omitted, a paid malformed draft.
+describe("missingRequiredExtras", () => {
+  const schema = PLAY_SCHEMAS["accelerator-batch"]!;
+
+  it("flags a blank required extra (senderCohort)", () => {
+    expect(missingRequiredExtras(schema, {})).toContain("Your cohort tag (sender)");
+  });
+
+  it("treats whitespace-only extras as blank", () => {
+    expect(missingRequiredExtras(schema, { senderCohort: "   " })).toContain(
+      "Your cohort tag (sender)",
+    );
+  });
+
+  it("passes once the required extra is filled, ignoring the optional one", () => {
+    expect(missingRequiredExtras(schema, { senderCohort: "yc-w23" })).toEqual([]);
+  });
+
+  it("returns [] for a schema with no extras", () => {
+    const noExtras = PLAY_SCHEMAS["show-hn"]!;
+    expect(missingRequiredExtras(noExtras, {})).toEqual([]);
+  });
+});
+
+// finding PRRT_kwDOSKzrBs6fD-hS/hc / issue #463: civic-pilot's pilot must be
+// sized under the micro-purchase threshold OR bought off a cooperative
+// purchasing vehicle — a bare per-field `required` on purchasingVehicle would
+// force fabricating a vehicle for a threshold-only target.
+describe("missingRequiredFields — requireOneOf (civic-pilot purchasing route)", () => {
+  const schema = PLAY_SCHEMAS["civic-pilot"]!;
+
+  it("flags the OR-group when neither route is filled", () => {
+    const row = { ...schema.defaultRow };
+    expect(missingRequiredFields(schema, row)).toContain(
+      "Purchasing vehicle or micro-purchase threshold",
+    );
+  });
+
+  it("passes when only purchasingVehicle is filled", () => {
+    const row: Record<string, string> = { ...schema.defaultRow, purchasingVehicle: "Sourcewell" };
+    for (const f of schema.fields) {
+      if (f.required) row[f.key] = row[f.key] || "x";
+    }
+    expect(missingRequiredFields(schema, row)).not.toContain(
+      "Purchasing vehicle or micro-purchase threshold",
+    );
+  });
+
+  it("passes when only microPurchaseThreshold is filled", () => {
+    const row: Record<string, string> = {
+      ...schema.defaultRow,
+      microPurchaseThreshold: "$10,000",
+    };
+    for (const f of schema.fields) {
+      if (f.required) row[f.key] = row[f.key] || "x";
+    }
+    expect(missingRequiredFields(schema, row)).not.toContain(
+      "Purchasing vehicle or micro-purchase threshold",
+    );
   });
 });

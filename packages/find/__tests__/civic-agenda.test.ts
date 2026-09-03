@@ -271,6 +271,32 @@ describe("runCivicAgendaFinder — happy path", () => {
     expect(enqueued).toHaveLength(1);
     expect(enqueued[0]!.payload["email"]).toBe("alex.chen+nyc-10@council.nyc.gov");
   });
+
+  it("accounts for icpFilter spend in result.costUsd so maxCostUsd can halt the run", async () => {
+    // Regression for #503: icpFilter is the ONLY paid call this finder makes
+    // (fetchBodyContact is a free, keyless Legistar lookup) — before the fix,
+    // result.costUsd never left 0, so maxCostUsd could never trip regardless
+    // of classifier spend.
+    itemsByEventId = {
+      1: [
+        { eventItemId: 100, title: "Resolution on AI use in permitting", matterFile: "R-1" },
+        { eventItemId: 102, title: "AI automation budget amendment", matterFile: null },
+      ],
+    };
+    const unlimited = await runCivicAgendaFinder(baseConfig);
+    expect(icpCalls).toBe(2);
+    expect(unlimited.costUsd).toBeGreaterThan(0);
+    expect(unlimited.costUsd).toBeCloseTo(0.002, 5);
+
+    icpCalls = 0;
+    enqueued.length = 0;
+    const capped = await runCivicAgendaFinder({ ...baseConfig, maxCostUsd: 0.001 });
+    // The cap is checked before each icpFilter call: one call is allowed
+    // through (costUsd 0 < 0.001), which pushes costUsd to 0.001 and halts
+    // the loop before the second candidate's classifier call.
+    expect(icpCalls).toBe(1);
+    expect(capped.halted).toMatch(/max-cost cap/);
+  });
 });
 
 describe("runCivicAgendaFinder — max-cost cap", () => {

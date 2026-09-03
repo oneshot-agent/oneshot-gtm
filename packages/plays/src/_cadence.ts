@@ -1376,6 +1376,34 @@ function overusedOpenersBlock(prospectId: number, playName: string): string {
   ].join("\n");
 }
 
+/**
+ * A single field's value from a prospect's step-0 (initial send) metadata_json
+ * for this play, e.g. sources-sought's `responseDeadline`. Returns null when
+ * there's no step-0 row, no metadata, or the key isn't a string — callers
+ * treat that as "unknown deadline", never as "expired".
+ */
+export function getStep0MetadataField(
+  prospectId: number,
+  playName: string,
+  key: string,
+): string | null {
+  if (!prospectId) return null;
+  let rows: Array<{ step_index: number; metadata_json: string | null }>;
+  try {
+    rows = getLedger().listSequenceEventsForProspectPlay(prospectId, playName) as Array<{
+      step_index: number;
+      metadata_json: string | null;
+    }>;
+  } catch {
+    return null;
+  }
+  const step0 = rows.find((r) => r.step_index === 0);
+  if (!step0) return null;
+  const meta = tryParseJsonObject<Record<string, unknown>>(step0.metadata_json ?? "", {});
+  const value = meta[key];
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
 export function buildFollowUpEmail(opts: {
   playName: string;
   promptName: string;
