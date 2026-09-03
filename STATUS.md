@@ -9,9 +9,10 @@ type-checked in CI, and a deliberate error under `apps/web/src` fails the root s
 2026-08-29, `apps/*/__tests__` is also included, so all app test files are type-checked. Coverage
 is thin in two packages: `packages/doctor` has one test file against 799
 lines of `check.ts`, and `packages/intel`'s `retry.test.ts` covers `client.ts`'s retry surface
-(`backoffDelayMs`, `isRetryableLlmError`, `parseRetryAfter`, `complete()`'s OpenRouter paths) but
-`triage`, `synthesize`, `advise`, `weekly-review`, `complete()`'s Anthropic path, and the
-`allowTruncation` split remain untested.
+(`backoffDelayMs`, `isRetryableLlmError`, `parseRetryAfter`, `complete()`'s OpenRouter paths),
+while `reports.test.ts` covers `triageEmails`, `synthesizeInterviews`, `adviseOnce` and
+`weeklyReview`, and `truncation.test.ts` covers `complete()`'s Anthropic path and the
+`allowTruncation` split across all three providers.
 
 **Dependency pins.** The root `package.json` carries `overrides` for `seroval`, `seroval-plugins`
 (CVE-2026-59940) and `ws`. Forks inherit these.
