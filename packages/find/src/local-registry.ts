@@ -239,6 +239,7 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
   await parallelMap(deduped, concurrency, async (record) => {
     if (halted) return;
     if (reserved >= limit) {
+      result.halted = `limit (${limit}) reached`;
       halted = true;
       return;
     }
@@ -256,6 +257,12 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
       ledger.isQueueDuplicate(FREE_PILOT_PLAY, dedupeKey)
     ) {
       result.droppedDuplicate++;
+      // No paid call ran for this record — release the slot instead of
+      // spending it, or a tick full of prior-run duplicates (the common
+      // steady-state case: isQueueDuplicate matches rows from every past
+      // run) starves the fresh candidates behind them (finding
+      // PRRT_kwDOSKzrBs6fCBdz).
+      reserved--;
       return;
     }
 
