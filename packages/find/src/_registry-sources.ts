@@ -552,6 +552,21 @@ export function mapFmcsaRows(rows: unknown[], sinceDays: number): RegistryRecord
 export const fmcsaSource: RegistrySource = {
   id: "fmcsa",
   async fetch(cfg) {
+    // Mirror nppesSource's empty-config guard (line ~415 above): without at
+    // least one FMCSA-specific filter, buildFmcsaWhere still yields a valid
+    // non-empty $where (active status + published email + freshness) that
+    // queries the full nationwide ~2.2M-row trucking dataset. A trigger
+    // configured for socrata-license/socrata-inspection/nppes only — never
+    // touching fmcsa's own config keys — must not silently fire this query
+    // and enqueue unrelated trucking carriers.
+    const hasFmcsaFilter =
+      (cfg.entityTypes?.length ?? 0) > 0 ||
+      (cfg.states?.length ?? 0) > 0 ||
+      typeof cfg.minPowerUnits === "number" ||
+      typeof cfg.maxPowerUnits === "number";
+    if (!hasFmcsaFilter) {
+      return { records: [], costUsd: 0, perSource: [] };
+    }
     const params = new URLSearchParams();
     params.set("$limit", "200");
     params.set("$where", buildFmcsaWhere(cfg));

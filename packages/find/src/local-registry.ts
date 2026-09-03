@@ -267,8 +267,11 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
     const contact = await resolveVerifyEnrichQualify({
       playName,
       // No owner/operator name in any registry — findEmail resolves a
-      // company-level address off the domain alone (fullName optional).
+      // company-level address off the domain alone (fullName is optional on
+      // the SDK call; allowMissingFullName opts into that instead of the
+      // prescreen's default "no name = probably a bad extraction" rejection).
       fullName: null,
+      allowMissingFullName: true,
       ...(record.knownEmail ? { knownEmail: record.knownEmail } : { companyDomain: domain }),
       isDuplicate: (email) => isDuplicate({ playName, dedupeKey, prospectEmail: email }),
       errKindPrefix: "local-registry",

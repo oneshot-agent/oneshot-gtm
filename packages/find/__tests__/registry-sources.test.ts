@@ -340,11 +340,45 @@ describe("fmcsaSource.fetch", () => {
         phy_state: "NE",
       },
     ]);
-    const out = await fmcsaSource.fetch({ sinceDays: 30, limit: 25 });
+    const out = await fmcsaSource.fetch({ sinceDays: 30, limit: 25, entityTypes: ["carrier"] });
     expect(out.costUsd).toBe(0);
     expect(out.records).toHaveLength(1);
     expect(out.records[0]?.knownEmail).toBe("dispatch@slacktruck.com");
     expect(out.perSource[0]?.records).toBe(1);
+  });
+
+  it("returns empty with no perSource entries and does NOT call fetch when no fmcsa-specific filter is configured", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const out = await fmcsaSource.fetch({ sinceDays: 30, limit: 25 });
+    expect(out.records).toHaveLength(0);
+    expect(out.perSource).toHaveLength(0);
+    expect(out.costUsd).toBe(0);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("still queries when only states is configured (no entityTypes/power-unit filters)", async () => {
+    const fetchSpy = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => [],
+    }));
+    vi.stubGlobal("fetch", fetchSpy);
+    await fmcsaSource.fetch({ sinceDays: 30, limit: 25, states: ["NE"] });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("still queries when only minPowerUnits is configured", async () => {
+    const fetchSpy = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => [],
+    }));
+    vi.stubGlobal("fetch", fetchSpy);
+    await fmcsaSource.fetch({ sinceDays: 30, limit: 25, minPowerUnits: 10 });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it("surfaces a diagnostic without throwing when the endpoint is unreachable", async () => {
@@ -354,7 +388,7 @@ describe("fmcsaSource.fetch", () => {
         throw new Error("ECONNREFUSED");
       }),
     );
-    const out = await fmcsaSource.fetch({ sinceDays: 30, limit: 25 });
+    const out = await fmcsaSource.fetch({ sinceDays: 30, limit: 25, states: ["NE"] });
     expect(out.records).toHaveLength(0);
     expect(out.perSource[0]?.error).toBeTruthy();
   });
