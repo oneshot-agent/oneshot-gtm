@@ -204,7 +204,17 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
   // how small `limit` is.
   for (const candidate of gated.slice(0, Math.max(0, limit))) {
     if (result.enqueued >= limit) break;
-    if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
+    // Compare the PROSPECTIVE cost (current spend + this candidate's paid
+    // icpFilter call, if one will actually happen) against the cap — not
+    // just the spend accrued so far. icpFilter is the only cost source in
+    // this finder, and it's free (no LLM call) when `icp` is null, so the
+    // estimate is 0 in that case. Checking post-hoc spend alone would let a
+    // single call through whenever `0 < maxCostUsd < ICP_FILTER_COST_USD`,
+    // since costUsd is still 0 right up until this call runs.
+    if (
+      opts.maxCostUsd != null &&
+      result.costUsd + (icp ? ICP_FILTER_COST_USD : 0) > opts.maxCostUsd
+    ) {
       result.halted = `max-cost cap (${opts.maxCostUsd})`;
       break;
     }
