@@ -64,6 +64,25 @@ describe("dedupeKeyFor", () => {
     const b: RegistryRecord = { ...a, city: "Riverside" };
     expect(dedupeKeyFor(a)).not.toBe(dedupeKeyFor(b));
   });
+
+  it("distinguishes 'A&B Plumbing' from 'AB Plumbing' — punctuation must not be stripped without a separator", () => {
+    // finding: slugify's old `[^a-z0-9-]` strip (with no replacement)
+    // collapsed "A&B Plumbing" and "AB Plumbing" to the identical
+    // "ab-plumbing" slug in the same source/state, silently dropping one
+    // record as a duplicate of the other.
+    const a: RegistryRecord = {
+      name: "A&B Plumbing",
+      address: null,
+      city: null,
+      state: "NY",
+      phone: null,
+      matchedDateIso: "2026-06-01T00:00:00Z",
+      source: "socrata-license",
+      sourceLabel: "x",
+    };
+    const b: RegistryRecord = { ...a, name: "AB Plumbing" };
+    expect(dedupeKeyFor(a)).not.toBe(dedupeKeyFor(b));
+  });
 });
 
 describe("routePlayFor", () => {
@@ -635,7 +654,64 @@ describe("runLocalRegistryFinder — mid-turn max-cost recheck", () => {
 });
 
 describe("runLocalRegistryFinder — socrata-inspection joins the licence lane", () => {
-  it("enqueues an inspection-sourced row carrying the establishment + recency but no violation text anywhere in its payload", async () => {
+  it("enqueues an inspection-sourced row carrying the establishment + recency but no violation text anywhere in its payload, when a matching license record confirms it", async () => {
+    // finding: inspection records were processed as independent outreach
+    // candidates regardless of whether a licence match existed. This test
+    // sets up BOTH a socrata-license record and a socrata-inspection record
+    // for the same establishment (name + state + city) to prove the join
+    // path still enqueues a confirmed match.
+    nextSocrataRecords = [
+      makeRecord({
+        name: "3M Bar & Grill",
+        city: "Queens",
+        source: "socrata-license",
+        sourceLabel: "NYC licenses",
+        matchedDateIso: OLD_ISO,
+      }),
+    ];
+    nextInspectionRecords = [
+      makeRecord({
+        name: "3M Bar & Grill",
+        city: "Queens",
+        source: "socrata-inspection",
+        sourceLabel: "NYC restaurant inspections",
+        matchedDateIso: RECENT_ISO,
+      }),
+    ];
+    const out = await runLocalRegistryFinder({
+      dryRun: false,
+      yourEdge: "we help restaurants run tighter ops",
+      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
+      inspectionPortals: [
+        {
+          host: "data.cityofnewyork.us",
+          dataset: "43nn-pn8j",
+          label: "NYC restaurant inspections",
+        },
+      ],
+    });
+    // Both records share the same (name, state, city) dedupeKey, so the
+    // run-level dedupe collapses them to ONE candidate — the one with the
+    // more recent matchedDateIso (the inspection row) wins.
+    expect(out.candidates).toBe(1);
+    expect(out.enqueued).toBe(1);
+    const payload = enqueued[0]?.payload;
+    expect(payload?.["company"]).toBe("3M Bar & Grill");
+    expect(payload?.["matchedDateIso"]).toBe(RECENT_ISO);
+    expect(payload?.["source"]).toBe("socrata-inspection");
+    const json = JSON.stringify(payload);
+    expect(json).not.toMatch(/violation/i);
+    expect(json).not.toMatch(/score/i);
+    expect(json).not.toMatch(/lapsed/i);
+  });
+
+  it("drops an inspection record with no matching license/nppes/fmcsa record in the same run (never used standalone)", async () => {
+    // finding PRRT_kwDOSKzrBs6fE-2U / duplicate at _registry-sources.ts:759:
+    // an inspection-only config (or one paired with an UNRELATED license
+    // portal) enqueued health-inspection establishments as independent
+    // outreach candidates. An inspection record with no same-run
+    // non-inspection match for the same (name, state, city) must be
+    // dropped entirely, not enqueued and not counted as a candidate.
     nextInspectionRecords = [
       makeRecord({
         name: "3M Bar & Grill",
@@ -655,13 +731,46 @@ describe("runLocalRegistryFinder — socrata-inspection joins the licence lane",
         },
       ],
     });
+    expect(out.candidates).toBe(0);
+    expect(out.enqueued).toBe(0);
+    expect(enqueued).toHaveLength(0);
+  });
+
+  it("drops an inspection record when only an UNRELATED license portal is configured (different establishment)", async () => {
+    nextSocrataRecords = [
+      makeRecord({
+        name: "Old Plumbing Co",
+        city: "Manhattan",
+        source: "socrata-license",
+        sourceLabel: "NYC licenses",
+        matchedDateIso: OLD_ISO,
+      }),
+    ];
+    nextInspectionRecords = [
+      makeRecord({
+        name: "3M Bar & Grill",
+        city: "Queens",
+        source: "socrata-inspection",
+        sourceLabel: "NYC restaurant inspections",
+        matchedDateIso: RECENT_ISO,
+      }),
+    ];
+    const out = await runLocalRegistryFinder({
+      dryRun: false,
+      yourEdge: "we help restaurants run tighter ops",
+      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
+      inspectionPortals: [
+        {
+          host: "data.cityofnewyork.us",
+          dataset: "43nn-pn8j",
+          label: "NYC restaurant inspections",
+        },
+      ],
+    });
+    // Only the unrelated license row survives; the inspection row for a
+    // different establishment is dropped, not enqueued standalone.
+    expect(out.candidates).toBe(1);
     expect(out.enqueued).toBe(1);
-    const payload = enqueued[0]?.payload;
-    expect(payload?.["company"]).toBe("3M Bar & Grill");
-    expect(payload?.["matchedDateIso"]).toBe(RECENT_ISO);
-    const json = JSON.stringify(payload);
-    expect(json).not.toMatch(/violation/i);
-    expect(json).not.toMatch(/score/i);
-    expect(json).not.toMatch(/lapsed/i);
+    expect(enqueued[0]?.payload["company"]).toBe("Old Plumbing Co");
   });
 });

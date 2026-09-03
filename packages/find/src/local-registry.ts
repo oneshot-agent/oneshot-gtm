@@ -92,18 +92,23 @@ export interface LocalRegistryTarget {
 }
 
 /**
- * Unicode-preserving slug: lowercase, collapse whitespace to hyphens, strip
- * everything that isn't a Unicode letter/number/hyphen. `\p{L}`/`\p{N}` (not
- * the old `a-z0-9` ASCII class) keep non-Latin scripts intact — a Chinese or
- * Cyrillic business name must not collapse to the same empty string as every
- * other non-ASCII name in the run.
+ * Unicode-preserving slug: lowercase, trim, then collapse EVERY run of
+ * non-letter/non-number characters (whitespace AND punctuation like "&") to
+ * a single hyphen separator, instead of stripping punctuation outright.
+ * `\p{L}`/`\p{N}` (not the old `a-z0-9` ASCII class) keep non-Latin scripts
+ * intact — a Chinese or Cyrillic business name must not collapse to the
+ * same empty string as every other non-ASCII name in the run. Preserving a
+ * boundary at every punctuation run also keeps "A&B Plumbing" distinct from
+ * "AB Plumbing" ("a-b-plumbing" vs "ab-plumbing") — stripping "&" outright
+ * collapsed both to "ab-plumbing" and silently dropped one as a duplicate
+ * of the other.
  */
 function slugify(s: string): string {
   return s
     .toLowerCase()
     .trim()
-    .replace(/\s+/g, "-")
-    .replace(/[^\p{L}\p{N}-]+/gu, "");
+    .replace(/[^\p{L}\p{N}]+/gu, "-")
+    .replace(/^-+|-+$/g, "");
 }
 
 /** Stable within-run + cross-run dedupe key: name slug + state + city, source-agnostic.
@@ -193,6 +198,18 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
   }
   result.perSource = perSource;
 
+  // socrata-inspection is an operating-status/recency CONFIRMATION joined to
+  // the licence lane (issue #460's own design), never a standalone source —
+  // an inspection-only trigger (or one paired with an unrelated license
+  // portal) must not enqueue inspection rows as independent outreach
+  // candidates on health-inspection data alone. Compute which (name, state,
+  // city) keys have a non-inspection match BEFORE the merge/dedupe step
+  // below, from the full unfiltered `allRecords`, so REGISTRY_SOURCES fetch
+  // order can't decide the outcome.
+  const licenseMatchKeys = new Set(
+    allRecords.filter((r) => r.source !== "socrata-inspection").map((r) => dedupeKeyFor(r)),
+  );
+
   // Dedupe across sources within this run before touching the queue —
   // NY state + NYC-city portals commonly double-publish the same license.
   // Keep the record with the LATEST matchedDateIso, not just the first one
@@ -203,6 +220,7 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
   const seen = new Map<string, number>();
   const deduped: RegistryRecord[] = [];
   for (const r of allRecords) {
+    if (r.source === "socrata-inspection" && !licenseMatchKeys.has(dedupeKeyFor(r))) continue;
     const key = dedupeKeyFor(r);
     const priorIndex = seen.get(key);
     if (priorIndex !== undefined) {

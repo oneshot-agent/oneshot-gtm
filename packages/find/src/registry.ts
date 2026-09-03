@@ -436,8 +436,17 @@ export const TRIGGERS: TriggerSpec[] = [
         ? (cfg["states"] as unknown[]).filter((s) => typeof s === "string" && s.trim())
         : [];
       const hasNppes = taxonomies.length > 0 && states.length > 0;
+      // Same allowlist `run` applies below (validEntityTypes) — an invalid
+      // entityTypes value (e.g. "trucking" instead of "carrier") must not
+      // pass readiness only to have `run` normalize it away and start with
+      // no configured fmcsa source, which reports the unhelpful "every
+      // configured source returned 0 records" instead of pointing at the
+      // bad value.
+      const validEntityTypes = new Set(["carrier", "broker", "freight-forwarder"]);
       const entityTypes = Array.isArray(cfg["entityTypes"])
-        ? (cfg["entityTypes"] as unknown[]).filter((t) => typeof t === "string" && t.trim())
+        ? (cfg["entityTypes"] as unknown[]).filter(
+            (t) => typeof t === "string" && validEntityTypes.has(t.trim()),
+          )
         : [];
       const hasFmcsa =
         entityTypes.length > 0 ||

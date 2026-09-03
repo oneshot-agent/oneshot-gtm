@@ -470,6 +470,32 @@ describe("checkReadiness", () => {
     });
     expect(out.ready).toBe(false);
   });
+
+  it("local-registry stays not ready when entityTypes carries only an invalid value (matches run's allowlist)", () => {
+    // finding: readiness accepted any non-empty string in entityTypes, but
+    // `run` filters the same array against validEntityTypes — a config with
+    // entityTypes: ["trucking"] (not a valid carrier/broker/freight-forwarder
+    // value) and no other fmcsa key passed readiness, then normalized to an
+    // empty array and reported the generic "every configured source
+    // returned 0 records" instead of pointing at the invalid value.
+    const spec = TRIGGERS.find((t) => t.name === "local-registry")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      entityTypes: ["trucking"],
+      yourEdge: "we set it up for free, you keep it if it works",
+    });
+    expect(out.ready).toBe(false);
+  });
+
+  it("local-registry becomes ready with a valid entityTypes value", () => {
+    const spec = TRIGGERS.find((t) => t.name === "local-registry")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      entityTypes: ["carrier"],
+      yourEdge: "we set it up for free, you keep it if it works",
+    });
+    expect(out).toEqual({ ready: true });
+  });
 });
 
 describe("gov-solicitation readiness", () => {
