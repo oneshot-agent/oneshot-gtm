@@ -200,8 +200,8 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
 
   const fallbackBusinessType = industries.length > 0 ? industries.join(" / ") : "local business";
 
-  for (const person of candidates) {
-    if (result.enqueued >= limit) break;
+  for (const [index, person] of candidates.entries()) {
+    if (index >= limit) break;
     if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
       result.halted = `max-cost cap (${opts.maxCostUsd})`;
       break;
