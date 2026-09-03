@@ -845,7 +845,21 @@ export interface EnrichCompanyInput {
   ticker?: string;
 }
 
-/** Company enrichment from a domain, name, LinkedIn URL or stock ticker — $0.005 per call. */
+/**
+ * Company enrichment from a domain, name, LinkedIn URL or stock ticker — $0.005 per call.
+ *
+ * No client-side identifier check here by design: the pinned SDK's own
+ * `enrichCompany` (node_modules/@oneshot-agent/sdk dist/index.js) already
+ * throws `ValidationError('At least one of domain, name, linkedin_url, or
+ * ticker is required', 'identifier')` when all four are omitted, before any
+ * network call is made. Re-validating here would just duplicate that check
+ * one frame earlier with a different message, which is inconsistent with
+ * enrichProfile (line 641), deepResearchPerson (line 680) and findEmail (line
+ * 709) above, all of which likewise rely on the SDK's own required-field
+ * validation. Callers that need a non-throwing path already have
+ * safeEnrichCompany (packages/find/src/_sdk-safe.ts), which catches this
+ * exact ValidationError and resolves to an empty-result sentinel.
+ */
 export async function enrichCompany(input: EnrichCompanyInput, ctx: CallContext) {
   const agent = await getAgent();
   const opts: Parameters<OneShot["enrichCompany"]>[0] = {
