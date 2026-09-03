@@ -169,7 +169,7 @@ The dashboard always knows where it is: a masthead chip names the workspace and 
 
 ## Where targets come from
 
-Eleven **finders** discover prospects, ICP-filter them, and enqueue into `/queue` for one-click approve or reject. Each runs as a trigger with its own interval and spend cap.
+Twelve **finders** discover prospects, ICP-filter them, and enqueue into `/queue` for one-click approve or reject. Each runs as a trigger with its own interval and spend cap.
 
 | Finder              | Signal                                                                                                                                                                                                                                                                                                                            |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -184,6 +184,7 @@ Eleven **finders** discover prospects, ICP-filter them, and enqueue into `/queue
 | `luma-events`       | upcoming events from Luma's own city pages, gated per event by a topic + ICP check before any spend; pitches the hosts and featured guests Luma exposes publicly                                                                                                                                                                  |
 | `breakup-revive`    | your own ledger — prospects cold for 60–90 days. No LLM or OneShot spend                                                                                                                                                                                                                                                          |
 | `x-reposters`       | people who repost/quote X accounts you watch, in two lanes: builders who'd adopt (founder lane → email cadence) and dev accounts with reach who'd boost a launch (amplifier lane → one-touch email, or a hand-sent DM draft when no email is found) — needs X API OAuth1 keys, or `TWITTERAPI_IO_KEY` for the ~55x cheaper engine |
+| `local-business`    | main-street businesses via `peopleSearch`/`companySearch` (job title × industry × location × company size) — routed to the `free-pilot` play; a candidate carrying `best_work_email` skips `findEmail`/`verifyEmail` entirely, but `qualifyPostEnrich` may still perform paid `enrichProfile` lookups when `fillGaps` is enabled  |
 
 Only `show-hn` and `post-funding-auto` are on by default; enable the rest from `/queue`. A trigger missing required config reads as **not ready** — the toggle and Run button disable with the reason, and the API returns `409`, so scripted callers can't bypass the gate either.
 
@@ -258,11 +259,11 @@ esac
 
 ### The plays
 
-Seventeen of them. Ten have a **Run** page in the dashboard and drain from the queue:
+Eighteen of them. Ten have a **Run** page in the dashboard and drain from the queue:
 
 `show-hn` · `job-change` · `post-funding` · `accelerator-batch` · `hiring-signal` · `podcast-guest` · `competitor-switch` · `stack-consolidation` · `repo-interest` · `luma-events`
 
-Five more drain from the queue without a Run form — `profile-intro` (what Add Prospect enqueues), `breakup-revive`, and the three the `x-reposters` finder feeds: `x-repost-intro` (founder-lane email + cadence), `x-amplify` (one-touch launch-day repost ask), and `x-amplify-dm` — the one play that never auto-sends: it drafts X DM/reply text you copy and send by hand from the X app, then **Mark sent** records it as a channel-`x` touch. The last two, `concierge` and `demo-no-show`, are CLI-only because they open with a voice call and an SMS respectively.
+Six more drain from the queue without a Run form — `profile-intro` (what Add Prospect enqueues), `breakup-revive`, `free-pilot` (fed by the `local-business` finder), and the three the `x-reposters` finder feeds: `x-repost-intro` (founder-lane email + cadence), `x-amplify` (one-touch launch-day repost ask), and `x-amplify-dm` — the one play that never auto-sends: it drafts X DM/reply text you copy and send by hand from the X app, then **Mark sent** records it as a channel-`x` touch. The last two, `concierge` and `demo-no-show`, are CLI-only because they open with a voice call and an SMS respectively.
 
 Most carry a cadence — a value follow-up, then a breakup, spread over roughly three to nine days and editable per play from `/plays`. Any email reply stops every live cadence for that prospect — and is recorded whether the sequence is still running, already finished, or never existed (one-touch plays like `luma-events`), credited to the play whose subject it threads on. You can also stop one cadence deliberately from `/cadences`, with a reason and note: bad-timing/other stops become breakup-revive candidates after the configured 60–90 day cold window, while not-a-fit/do-not-contact remain excluded.
 
@@ -358,8 +359,8 @@ apps/
 packages/
   core/       SDK wrapper, SQLite ledger, config + secrets, Gmail transport, JSONL events
   intel/      LLM client, advise, personalize, triage, weekly-review
-  plays/      17 outreach plays + handoff/icp/pmf modules + cadence engine
-  find/       11 finders + shared pipeline (manifest scan, dedupe, ICP filter, drain, registry)
+  plays/      18 outreach plays + handoff/icp/pmf modules + cadence engine
+  find/       12 finders + shared pipeline (manifest scan, dedupe, ICP filter, drain, registry)
   prompts/    Markdown prompts — humanizer canon, per-play, per-extract
   doctor/     Wallet, ledger, key and deliverability health checks
   shared-types/  Wire types shared across CLI / server / web

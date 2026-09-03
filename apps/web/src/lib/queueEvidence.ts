@@ -122,6 +122,11 @@ export function queueEvidence(playName: string, payload: unknown): string | null
       return cohort ? `cohort ${cohort}` : null;
     }
 
+    case "free-pilot": {
+      const businessType = str(p, "businessType");
+      return businessType ? `matched ${businessType}` : null;
+    }
+
     default:
       return null;
   }

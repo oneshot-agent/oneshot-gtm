@@ -1,6 +1,7 @@
 import { type AcceleratorBatchTarget, runAcceleratorBatch } from "./accelerator-batch.ts";
 import { type BreakupReviveTarget, runBreakupRevive } from "./breakup-revive.ts";
 import { type CompetitorSwitchTarget, runCompetitorSwitch } from "./competitor-switch.ts";
+import { type FreePilotTarget, runFreePilot } from "./free-pilot.ts";
 import { type HiringSignalTarget, runHiringSignal } from "./hiring-signal.ts";
 import { type JobChangeTarget, runJobChange } from "./job-change.ts";
 import { type LumaEventsTarget, runLumaEvents } from "./luma-events.ts";
@@ -214,6 +215,15 @@ export const PLAYS: Record<string, PlayDispatch> = {
       runXAmplifyDm({
         dryRun: o.dryRun,
         targets: o.targets as XAmplifyDmTarget[],
+        ...progressOpt(o),
+        ...signalOpt(o),
+      }),
+  },
+  "free-pilot": {
+    run: (o) =>
+      runFreePilot({
+        dryRun: o.dryRun,
+        targets: o.targets as FreePilotTarget[],
         ...progressOpt(o),
         ...signalOpt(o),
       }),
