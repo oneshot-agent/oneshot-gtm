@@ -16,8 +16,18 @@ import type { FinderResult, RunOpts } from "./_types.ts";
 
 const PLAY_NAME = "civic-agenda";
 const SOURCE = "find:civic-agenda";
-/** Rough LLM cost per icpFilter call, same estimate used by show-hn.ts / accelerator-batch.ts. */
-const ICP_FILTER_COST_USD = 0.001;
+/**
+ * Rough per-call LLM cost for the `icpFilter` classifier — same estimate
+ * documented (but never applied) at job-change.ts's and show-hn.ts's call
+ * sites. Those finders have a real downstream paid call to fall back on, but
+ * this finder's only network call after icpFilter is the free, keyless
+ * Legistar `OfficeRecords` contact lookup (see resolveAndEnqueueAgendaItem's
+ * docstring) — icpFilter is the ONLY spend source here. Leaving it out of
+ * `result.costUsd` left `opts.maxCostUsd` fully inert: costUsd never left 0,
+ * so a configured cap could never halt a run regardless of how many paid
+ * classifier calls it made.
+ */
+const ICP_FILTER_COST_ESTIMATE_USD = 0.001;
 
 export interface CivicAgendaFinderOpts extends RunOpts {
   /** City names mapped to Legistar clients (see `_civic-legistar.ts`). REQUIRED via readiness gate. */
@@ -204,7 +214,17 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
   // how small `limit` is.
   for (const candidate of gated.slice(0, Math.max(0, limit))) {
     if (result.enqueued >= limit) break;
-    if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
+    // Compare the PROSPECTIVE cost (current spend + this candidate's paid
+    // icpFilter call, if one will actually happen) against the cap — not
+    // just the spend accrued so far. icpFilter is the only cost source in
+    // this finder, and it's free (no LLM call) when `icp` is null, so the
+    // estimate is 0 in that case. Checking post-hoc spend alone would let a
+    // single call through whenever `0 < maxCostUsd < ICP_FILTER_COST_ESTIMATE_USD`,
+    // since costUsd is still 0 right up until this call runs.
+    if (
+      opts.maxCostUsd != null &&
+      result.costUsd + (icp ? ICP_FILTER_COST_ESTIMATE_USD : 0) > opts.maxCostUsd
+    ) {
       result.halted = `max-cost cap (${opts.maxCostUsd})`;
       break;
     }
@@ -225,10 +245,10 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
         summary: `${candidate.event.eventBodyName ?? "a city body"} in ${candidate.city}`,
       },
     });
-    // icpFilter is a free pass-through when no ICP is configured (icp ===
-    // null): zero LLM calls, so nothing to charge — only count the estimate
-    // when a real classifier call was made.
-    if (icp) result.costUsd += ICP_FILTER_COST_USD;
+    // icpFilter is a pass-through with no LLM call when no ICP is configured
+    // (see _filter.ts) — only count spend once an ICP is actually set, or a
+    // no-ICP dry sweep would falsely trip maxCostUsd.
+    if (icp) result.costUsd += ICP_FILTER_COST_ESTIMATE_USD;
     if (filter.match === null) {
       // Transient classifier failure — drop without persisting (same
       // reasoning as every other finder's icpFilter call site).

@@ -34,6 +34,7 @@ const pendingPersisted: Array<{
 }> = [];
 let icpMatch: boolean | null = true;
 let icpCalls = 0;
+let icpResolved: string | null = "icp";
 let eventsBySlug: Record<string, Array<Record<string, unknown>>> = {};
 let itemsByEventId: Record<number, Array<Record<string, unknown>>> = {};
 
@@ -54,7 +55,7 @@ vi.mock("../src/_pending.ts", () => ({
 }));
 
 vi.mock("../src/_filter.ts", () => ({
-  resolveIcp: () => "icp",
+  resolveIcp: () => icpResolved,
   icpFilter: async (input: { candidate: { title: string } }) => {
     icpCalls++;
     return { match: icpMatch, reason: icpMatch ? `fits: ${input.candidate.title}` : "nope" };
@@ -102,6 +103,7 @@ beforeEach(() => {
   pendingPersisted.length = 0;
   icpMatch = true;
   icpCalls = 0;
+  icpResolved = "icp";
   officeRecordsBehavior = "contact";
   eventsBySlug = {
     nyc: [
@@ -270,6 +272,71 @@ describe("runCivicAgendaFinder — happy path", () => {
     expect(out.droppedDuplicate).toBe(1);
     expect(enqueued).toHaveLength(1);
     expect(enqueued[0]!.payload["email"]).toBe("alex.chen+nyc-10@council.nyc.gov");
+  });
+
+  it("accounts for icpFilter spend in result.costUsd so maxCostUsd can halt the run", async () => {
+    // Regression for #503: icpFilter is the ONLY paid call this finder makes
+    // (fetchBodyContact is a free, keyless Legistar lookup) — before the fix,
+    // result.costUsd never left 0, so maxCostUsd could never trip regardless
+    // of classifier spend.
+    itemsByEventId = {
+      1: [
+        { eventItemId: 100, title: "Resolution on AI use in permitting", matterFile: "R-1" },
+        { eventItemId: 102, title: "AI automation budget amendment", matterFile: null },
+      ],
+    };
+    const unlimited = await runCivicAgendaFinder(baseConfig);
+    expect(icpCalls).toBe(2);
+    expect(unlimited.costUsd).toBeGreaterThan(0);
+    expect(unlimited.costUsd).toBeCloseTo(0.002, 5);
+
+    icpCalls = 0;
+    enqueued.length = 0;
+    const capped = await runCivicAgendaFinder({ ...baseConfig, maxCostUsd: 0.001 });
+    // The cap is checked before each icpFilter call: one call is allowed
+    // through (costUsd 0 < 0.001), which pushes costUsd to 0.001 and halts
+    // the loop before the second candidate's classifier call.
+    expect(icpCalls).toBe(1);
+    expect(capped.halted).toMatch(/max-cost cap/);
+  });
+
+  it("does not charge icpFilter spend when no ICP is configured (pass-through)", async () => {
+    // resolveIcp() returning null is a normal, documented state (see
+    // _filter.ts's tri-state contract) — icpFilter() is then a free
+    // pass-through with zero LLM calls, so result.costUsd must stay at 0
+    // no matter how many keyword-surviving candidates it classifies.
+    // Without the `if (icp)` gate this would falsely accrue spend and could
+    // trip maxCostUsd on cost that was never incurred.
+    icpResolved = null;
+    itemsByEventId = {
+      1: [
+        { eventItemId: 100, title: "Resolution on AI use in permitting", matterFile: "R-1" },
+        { eventItemId: 102, title: "AI automation budget amendment", matterFile: null },
+      ],
+    };
+    const out = await runCivicAgendaFinder(baseConfig);
+    expect(icpCalls).toBe(2);
+    expect(out.costUsd).toBe(0);
+    expect(out.halted).toBeUndefined();
+  });
+});
+
+describe("runCivicAgendaFinder — max-cost cap", () => {
+  it("halts BEFORE the paid icpFilter call when maxCostUsd is positive but below one call's cost", async () => {
+    // Regression for finding PRRT_kwDOSKzrBs6fGix5: the guard used to check
+    // costUsd (still 0 at this point) instead of the PROSPECTIVE cost, so
+    // 0 < maxCostUsd < ICP_FILTER_COST_USD let the call through anyway.
+    const out = await runCivicAgendaFinder({ ...baseConfig, maxCostUsd: 0.0001 });
+    expect(icpCalls).toBe(0);
+    expect(out.enqueued).toBe(0);
+    expect(out.halted).toMatch(/max-cost cap/);
+  });
+
+  it("still allows the call when maxCostUsd comfortably covers one icpFilter call", async () => {
+    const out = await runCivicAgendaFinder({ ...baseConfig, maxCostUsd: 1 });
+    expect(icpCalls).toBe(1);
+    expect(out.enqueued).toBe(1);
+    expect(out.halted).toBeUndefined();
   });
 });
 

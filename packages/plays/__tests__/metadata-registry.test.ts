@@ -101,6 +101,24 @@ describe("shared fns are what the play defs reference", () => {
       agency: "GSA",
       noticeNumber: "W912DY-26-R-0042",
       noticeType: "Sources Sought",
+      responseDeadline: null,
+    });
+  });
+  // finding PRRT_kwDOSKzrBs6ewQdC / issue #463: responseDeadline persists so
+  // the day-5 follow-up can skip once the notice's response window closes.
+  it("sources-sought carries responseDeadline when set", () => {
+    expect(
+      sourcesSoughtMetadata({
+        agency: "GSA",
+        noticeNumber: "W912DY-26-R-0042",
+        noticeType: "Sources Sought",
+        responseDeadline: "2026-07-01",
+      }),
+    ).toEqual({
+      agency: "GSA",
+      noticeNumber: "W912DY-26-R-0042",
+      noticeType: "Sources Sought",
+      responseDeadline: "2026-07-01",
     });
   });
   it("civic-pilot", () => {

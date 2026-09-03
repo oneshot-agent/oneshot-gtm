@@ -10,7 +10,7 @@ REGISTER OVERRIDE (binding, takes precedence over any founder-to-founder framing
 - Prospect name, city/county
 - AGENDA ITEM: the specific agenda item title — must appear in the body
 - MEETING DATE: the date the item was/is heard — must appear in the body
-- PURCHASING VEHICLE: the specific cooperative vehicle to buy through (Sourcewell / NASPO ValuePoint / OMNIA / other named vehicle) — must appear in the body
+- PURCHASING ROUTE: the concrete purchase mechanism this buyer can use — either a cooperative purchasing vehicle (Sourcewell / NASPO ValuePoint / OMNIA / other named vehicle) or a micro-purchase threshold (a dollar ceiling this buyer can approve without a full procurement process), or both — must appear in the body
 - YOUR EDGE: one concrete fact about how your product fits the agenda item's stated need
 - Optional dossier with extra context
 
@@ -21,7 +21,7 @@ REGISTER OVERRIDE (binding, takes precedence over any founder-to-founder framing
   - Hook (1-2 sentences): name the AGENDA ITEM and MEETING DATE outright — "I saw {agenda item} on the {meeting date} agenda." The agenda item is the reason for the email; state it plainly rather than disguising it as an outreach hook.
   - Identity (1 sentence): say what the company does plainly ("we build X" is correct here).
   - Offer (1-2 sentences): the one concrete fact from YOUR EDGE tied to what the agenda item is trying to solve — a fact, not a feature list, not a value claim.
-  - CTA (1 sentence): propose a pilot sized under the micro-purchase threshold, OR bought off PURCHASING VEHICLE — name the vehicle explicitly. Example shape: "Happy to scope a pilot sized under your micro-purchase threshold, or we're available through {purchasing vehicle} if that's a simpler path." NEVER ask for a demo, NEVER ask for an RFP process — the ask is a specific, small, already-approved-path purchase.
+  - CTA (1 sentence): propose a pilot sized under the micro-purchase threshold when one is given, OR bought off the named purchasing vehicle when one is given — name whichever route PURCHASING ROUTE actually supplied (never invent a vehicle or threshold that wasn't given). Example shape: "Happy to scope a pilot sized under your micro-purchase threshold, or we're available through {purchasing vehicle} if that's a simpler path." NEVER ask for a demo, NEVER ask for an RFP process — the ask is a specific, small, already-approved-path purchase.
   - Sign-off: founder name.
 - Forbidden: any founder-to-founder peer language; any discount / trial / "free for you" offer; asking the reader to "run an RFP" or "put this out to bid" (defeats the whole point of citing the cooperative vehicle); vague capability claims not tied to YOUR EDGE.
 

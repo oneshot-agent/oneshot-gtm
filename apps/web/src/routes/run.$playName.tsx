@@ -13,7 +13,7 @@ import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
 import { Field, Input, Textarea } from "../components/primitives/Field.tsx";
 import { cn } from "../lib/cn.ts";
-import { missingRequiredFields, PLAY_SCHEMAS } from "../lib/playSchemas.ts";
+import { missingRequiredFields, missingRequiredExtras, PLAY_SCHEMAS } from "../lib/playSchemas.ts";
 import { useMask } from "../lib/privacy.tsx";
 import { pruneSentRows, remapFilteredEventIndexes } from "../lib/pruneSentRows.ts";
 import { IS_DEMO, demoWrite } from "../api/demo.ts";
@@ -350,11 +350,23 @@ function RunPage() {
     // strips blank fields below, which would otherwise let e.g. a blank
     // `agency` or `yourEdge` reach the play as `undefined` and produce a
     // malformed, paid draft.
+    //
+    // finding PRRT_kwDOSKzrBs6ewsAf / PRRT_kwDOSKzrBs6fD-hj: this only ever
+    // checked target-row fields (`schema.fields`). Required EXTRAS (e.g.
+    // accelerator-batch's `senderCohort`) bypassed the guard entirely and
+    // `submit` below omits a blank extra from the request despite its schema
+    // contract — validate both collections before dispatching.
     const rowIssues = rows
       .map((row, idx) => ({ idx, missing: missingRequiredFields(schema, row) }))
       .filter((r) => r.missing.length > 0);
-    if (rowIssues.length > 0) {
-      const detail = rowIssues.map((r) => `row ${r.idx + 1}: ${r.missing.join(", ")}`).join("; ");
+    const missingExtras = missingRequiredExtras(schema, extras);
+    if (rowIssues.length > 0 || missingExtras.length > 0) {
+      const rowDetail = rowIssues
+        .map((r) => `row ${r.idx + 1}: ${r.missing.join(", ")}`)
+        .join("; ");
+      const extraDetail =
+        missingExtras.length > 0 ? `run options: ${missingExtras.join(", ")}` : "";
+      const detail = [rowDetail, extraDetail].filter(Boolean).join("; ");
       setError(`fill in the required fields before dispatching — ${detail}`);
       return;
     }

@@ -14,8 +14,18 @@ export interface CivicPilotTarget {
   /** The meeting date the item is/was heard, ISO date. */
   meetingDate: string;
   agendaUrl?: string;
-  /** A cooperative purchasing vehicle the city/county can buy off (Sourcewell, NASPO ValuePoint, OMNIA) — REQUIRED so the ask is concrete, not "let's do an RFP". */
-  purchasingVehicle: string;
+  /**
+   * A cooperative purchasing vehicle the city/county can buy off (Sourcewell,
+   * NASPO ValuePoint, OMNIA). One of `purchasingVehicle` /
+   * `microPurchaseThreshold` must be set — issue #463's ask is a pilot sized
+   * under the micro-purchase threshold OR bought off a cooperative vehicle,
+   * so a target on the threshold-only route can't be forced to fabricate a
+   * vehicle name.
+   */
+  purchasingVehicle?: string;
+  /** The dollar ceiling this buyer can approve without a full procurement
+   *  process — the alternate route to `purchasingVehicle`. */
+  microPurchaseThreshold?: string;
   /** One fact about how your product fits the agenda item's stated need. */
   yourEdge: string;
   phone?: string;
@@ -44,14 +54,55 @@ export interface CivicPilotDraft {
   flags: string[];
 }
 
+/**
+ * Throws unless at least one of `purchasingVehicle` / `microPurchaseThreshold`
+ * is set — issue #463's civic-pilot ask is a pilot sized under the
+ * micro-purchase threshold OR bought off a cooperative purchasing vehicle;
+ * with neither set there is no concrete purchase route to offer and the
+ * draft would either fabricate one or ask for an RFP (exactly what this play
+ * exists to avoid). Checked BEFORE any paid call, same pattern as
+ * design-partner-loi's assertNotOwnerOperatorBuyer.
+ */
+export function assertHasPurchaseRoute(
+  t: Pick<CivicPilotTarget, "purchasingVehicle" | "microPurchaseThreshold">,
+): void {
+  const hasVehicle = Boolean(t.purchasingVehicle?.trim());
+  const hasThreshold = Boolean(t.microPurchaseThreshold?.trim());
+  if (!hasVehicle && !hasThreshold) {
+    throw new Error(
+      "civic-pilot: refusing to draft — neither purchasingVehicle nor microPurchaseThreshold " +
+        "is set. The pilot must be sized under a micro-purchase threshold or bought off a " +
+        "cooperative purchasing vehicle; provide at least one.",
+    );
+  }
+}
+
+/**
+ * The concrete purchase-route sentence for the prompt's PURCHASING ROUTE
+ * input — names whichever of the two routes the target actually supplied
+ * (both, when set) instead of assuming `purchasingVehicle` is always present.
+ */
+function purchaseRouteLine(
+  t: Pick<CivicPilotTarget, "purchasingVehicle" | "microPurchaseThreshold">,
+): string {
+  const parts: string[] = [];
+  if (t.purchasingVehicle?.trim())
+    parts.push(`cooperative purchasing vehicle: ${t.purchasingVehicle}`);
+  if (t.microPurchaseThreshold?.trim()) {
+    parts.push(`micro-purchase threshold: ${t.microPurchaseThreshold}`);
+  }
+  return parts.join("; ");
+}
+
 const civicPilotDef: EmailPlayDef<CivicPilotTarget> = {
   playName: PLAY_NAME,
   promptName: "civic-pilot-email",
   maxBodyWords: 150,
   enrollCadence: true,
   toEmail: (t) => t.email,
-  prepare: (t) =>
-    standardEnrich({
+  prepare: (t) => {
+    assertHasPurchaseRoute(t);
+    return standardEnrich({
       playName: PLAY_NAME,
       enrichInput: {
         ...(t.email ? { email: t.email } : {}),
@@ -59,7 +110,8 @@ const civicPilotDef: EmailPlayDef<CivicPilotTarget> = {
         companyDomain: emailDomain(t.email),
       },
       enrichSlice: 3500,
-    }),
+    });
+  },
   buildInputBlock: (t, prep, cfg) =>
     [
       `FOUNDER: ${cfg.founderName}`,
@@ -67,7 +119,7 @@ const civicPilotDef: EmailPlayDef<CivicPilotTarget> = {
       `PROSPECT: ${t.name} at ${t.city}`,
       `AGENDA ITEM: ${t.agendaItemTitle}`,
       `MEETING DATE: ${t.meetingDate}`,
-      `PURCHASING VEHICLE: ${t.purchasingVehicle}`,
+      `PURCHASING ROUTE: ${purchaseRouteLine(t)}`,
       `YOUR EDGE: ${t.yourEdge}`,
       `DOSSIER:\n${prep.dossier || "(dry-run)"}`,
     ].join("\n"),
