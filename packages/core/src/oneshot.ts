@@ -5,6 +5,7 @@ import {
   type DomainPoolEntry,
   type DomainPoolStatusResult,
   type EmailResult,
+  type EnrichCompanyResult,
   type EnrichProfileResult,
   type FindEmailResult,
   type InboxEmail,
@@ -43,6 +44,9 @@ import type { EmailIdentity } from "./types.ts";
 
 /** Re-exported so callers don't reach into the SDK for the domain-pool shape. */
 export type { DomainPoolEntry, DomainPoolStatusResult } from "@oneshot-agent/sdk";
+
+/** Re-exported so callers don't reach into the SDK for the company-enrich result shape. */
+export type { CompanyResult, EnrichCompanyResult } from "@oneshot-agent/sdk";
 
 export interface SendEmailInput {
   to: string;
@@ -727,6 +731,40 @@ export async function verifyEmail(input: VerifyEmailInput, ctx: CallContext) {
   const receiptId = recordCallReceipt({
     ctx,
     callType: "email.verify",
+    signedReceipt: result,
+    costUsd: result.cost,
+    oneshotRequestId: result.request_id,
+  });
+  return { result, receiptId };
+}
+
+export interface EnrichCompanyInput {
+  domain?: string;
+  name?: string;
+  linkedinUrl?: string;
+  ticker?: string;
+}
+
+/**
+ * Company enrichment from a domain, name, LinkedIn URL or stock ticker —
+ * $0.005 per call. Used by `local-registry` (issue #459) to resolve a domain
+ * for open-registry records that carry a business name/address but no email,
+ * before falling through to the normal `resolveVerifyEnrichQualify` spine.
+ */
+export async function enrichCompany(input: EnrichCompanyInput, ctx: CallContext) {
+  const agent = await getAgent();
+  const opts: Parameters<OneShot["enrichCompany"]>[0] = {
+    ...buildAuditOpts(ctx, "enrich.company"),
+  };
+  if (input.domain) opts.domain = input.domain;
+  if (input.name) opts.name = input.name;
+  if (input.linkedinUrl) opts.linkedin_url = input.linkedinUrl;
+  if (input.ticker) opts.ticker = input.ticker;
+
+  const result: EnrichCompanyResult = await agent.enrichCompany(opts);
+  const receiptId = recordCallReceipt({
+    ctx,
+    callType: "enrich.company",
     signedReceipt: result,
     costUsd: result.cost,
     oneshotRequestId: result.request_id,

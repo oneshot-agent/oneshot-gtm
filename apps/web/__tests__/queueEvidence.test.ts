@@ -147,6 +147,7 @@ describe("coverage against the priority adapters", () => {
       seedHandle: "@h",
       followers: 2000,
       role: "role",
+      sourceLabel: "NYC business licenses",
     };
 
     const unhandled = adapters.filter((play) => queueEvidence(play, kitchenSink) === null);

@@ -18,6 +18,8 @@ export * from "./github-stars.ts";
 export * from "./_stargazers.ts";
 export * from "./_repo-utils.ts";
 export * from "./_repo-pipeline.ts";
+export * from "./local-registry.ts";
+export * from "./_registry-sources.ts";
 export * from "./registry.ts";
 export * from "./drain.ts";
 export * from "./luma.ts";
