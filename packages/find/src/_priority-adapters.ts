@@ -203,33 +203,61 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
     intentSignals: [
       { kind: "greenfield", strength: 80, reason: "newly licensed — nothing to rip out" },
     ],
-    // matchedDateIso is the trigger evidence (license issue / NPI enumeration
-    // date) — feed it into timingFreshness so a genuinely fresh registration
-    // scores as fresh and an old one decays, same as every other finder that
-    // has a real event timestamp.
+    // matchedDateIso is the license/enumeration/registration/inspection date
+    // this record matched on — the same freshness evidence routePlayFor used
+    // to route it to new-business vs free-pilot in the first place. Without
+    // it every registry row scores a neutral timingFreshness component,
+    // regardless of whether it's 2 days or 55 days old.
+    // hasEvidenceText intentionally omitted: sourceLabel is registry
+    // metadata (e.g. "NPPES Dentist (NY)"), not quoted/concrete candidate
+    // evidence — mapping it here overstated the signalConfidence component
+    // on every registry row regardless of whether any real evidence text
+    // exists (finding PRRT_kwDOSKzrBs6exPH9, filed against free-pilot;
+    // new-business shares the identical payload shape and had the same
+    // bug at this line).
     eventAt: str(p["matchedDateIso"]),
-    // sourceLabel is a registry/portal label ("NYC business licenses"), not
-    // quoted candidate evidence — it must not trip the quoted-evidence bonus
-    // in scoreSignalConfidence.
     ...contact(p),
   }),
 
-  "free-pilot": (p) => ({
-    title: str(p["title"]),
-    companyKnown: str(p["company"]) !== null,
-    accountSignals: [
-      {
-        kind: "registry-match",
-        strength: 55,
-        reason: `${str(p["sourceLabel"]) ?? "public registry"} match`,
-      },
-    ],
-    intentSignals: [
-      { kind: "free-pilot-fit", strength: 50, reason: "main-street pilot candidate" },
-    ],
-    eventAt: str(p["matchedDateIso"]),
-    ...contact(p),
-  }),
+  // Both local-business (#457, `businessType` field) and local-registry
+  // (#459, `sourceLabel`+`matchedDateIso`) route through this one play —
+  // branch on whichever shape the payload carries.
+  "free-pilot": (p) => {
+    const businessType = str(p["businessType"]);
+    if (businessType !== null) {
+      // local-business: reuses the exec-title inversion mined for
+      // luma/repo-interest — an owner-operator main-street buyer is the
+      // opposite population of a startup founder, and title data here is
+      // thin/absent for most rows anyway.
+      return {
+        personSignals: minedTitleSignals(str(p["title"])),
+        companyKnown: str(p["company"]) !== null,
+        intentSignals: [
+          { kind: "business-match", strength: 55, reason: `matched ${businessType} search` },
+        ],
+        hasEvidenceText: true,
+        ...contact(p),
+      };
+    }
+    return {
+      title: str(p["title"]),
+      companyKnown: str(p["company"]) !== null,
+      accountSignals: [
+        {
+          kind: "registry-match",
+          strength: 55,
+          reason: `${str(p["sourceLabel"]) ?? "public registry"} match`,
+        },
+      ],
+      intentSignals: [
+        { kind: "free-pilot-fit", strength: 50, reason: "main-street pilot candidate" },
+      ],
+      // See new-business above — same registry payload shape, same missing
+      // freshness signal.
+      eventAt: str(p["matchedDateIso"]),
+      ...contact(p),
+    };
+  },
 
   // v2, label-mined (65 approved / 69 rejected individually-judged rows):
   // exec titles 35% approval vs 55% title-missing → title prior inverted;
@@ -312,24 +340,6 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
       },
     ],
     ageDays: num(p["daysCold"]),
-    ...contact(p),
-  }),
-
-  // local-business (find:local-business), routed to the free-pilot play.
-  // Reuses the exec-title inversion mined for luma/repo-interest: an
-  // owner-operator main-street buyer is the opposite population of a startup
-  // founder, and title data here is thin/absent for most rows anyway.
-  "free-pilot": (p) => ({
-    personSignals: minedTitleSignals(str(p["title"])),
-    companyKnown: str(p["company"]) !== null,
-    intentSignals: [
-      {
-        kind: "business-match",
-        strength: 55,
-        reason: `matched ${str(p["businessType"]) ?? "local business"} search`,
-      },
-    ],
-    hasEvidenceText: str(p["businessType"]) !== null,
     ...contact(p),
   }),
 

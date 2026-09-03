@@ -69,6 +69,52 @@ describe("lintEmail — humanizer canon", () => {
     expect(lintEmail("hi", "Here's my calendly link to book. Sam")).toContain("calendar-link");
   });
 
+  it("flags a draft that cites a violation, an inspection score, or a lapsed license", () => {
+    expect(lintEmail("hi", "Saw your place failed a health inspection. Sam")).toContain(
+      "public-record-leverage",
+    );
+    expect(lintEmail("hi", "Your inspection score dropped last cycle. Sam")).toContain(
+      "public-record-leverage",
+    );
+    expect(lintEmail("hi", "The report cites a violation for pest evidence. Sam")).toContain(
+      "public-record-leverage",
+    );
+    expect(lintEmail("hi", "Noticed your license lapsed last month. Sam")).toContain(
+      "public-record-leverage",
+    );
+  });
+
+  it("does not flag relevance-only copy about a public record (no leverage)", () => {
+    expect(
+      lintEmail("hi", "Saw you're new to the neighborhood and work on European imports. Sam"),
+    ).not.toContain("public-record-leverage");
+  });
+
+  it("flags leverage cited in the SUBJECT even when the body reads neutral", () => {
+    // finding PRRT_kwDOSKzrBs6exPHz: the guard only checked body, so a
+    // leverage claim moved into the subject line sailed through.
+    expect(
+      lintEmail("Your failed health inspection", "Hope your week is going well. Sam"),
+    ).toContain("public-record-leverage");
+  });
+
+  it("does not flag ordinary compliance copy that merely contains the word 'violation'", () => {
+    // finding PRRT_kwDOSKzrBs6exPH6: a bare /\bviolation\b/ match rejected
+    // valid copy with no public-record claim at all.
+    expect(
+      lintEmail("hi", "We help teams avoid compliance violations before they happen. Sam"),
+    ).not.toContain("public-record-leverage");
+  });
+
+  it("still flags a violation when it's cited as a specific finding on record", () => {
+    expect(lintEmail("hi", "The report cites a violation for pest evidence. Sam")).toContain(
+      "public-record-leverage",
+    );
+    expect(lintEmail("hi", "A violation was reported at the last inspection. Sam")).toContain(
+      "public-record-leverage",
+    );
+  });
+
   it("flags emojis and curly quotes", () => {
     expect(lintEmail("hi", "Awesome work 🚀. Sam")).toContain("emoji");
     expect(lintEmail("hi", "He said “hi” to me. Sam")).toContain("curly-quotes");

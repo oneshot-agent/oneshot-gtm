@@ -8,20 +8,28 @@ import { parallelMap } from "./_parallel.ts";
 import { safeEnrichCompany } from "./_sdk-safe.ts";
 import {
   REGISTRY_SOURCES,
+  type FmcsaEntityType,
   type RegistryQuery,
   type RegistryRecord,
+  type SocrataInspectionPortalConfig,
   type SocrataPortalConfig,
 } from "./_registry-sources.ts";
 import type { FinderResult, RunOpts } from "./_types.ts";
 
 /**
  * Local-business finder over free, keyless public registries: open-data
- * business licenses (Socrata) and the NPPES NPI registry. Both give a
- * business name + address and a recency signal (issue/enumeration date) but
- * no email — every candidate resolves its domain via `enrichCompany` before
- * falling through to the normal `resolveVerifyEnrichQualify` spine, exactly
- * like `accelerator-batch`'s yc-oss records resolve a founder name before
- * `findEmail`.
+ * business licenses (Socrata), the NPPES NPI registry, the FMCSA Company
+ * Census (trucking/freight), and city health-inspection open data (Socrata).
+ * socrata-license/nppes give a business name + address but no email — every
+ * such candidate resolves its domain via `enrichCompany` before falling
+ * through to the normal `resolveVerifyEnrichQualify` spine, exactly like
+ * `accelerator-batch`'s yc-oss records resolve a founder name before
+ * `findEmail`. fmcsa carries an email ON the record — like `gov-solicitation`
+ * carries a verified SAM.gov contact address, this skips `findEmail`/
+ * `verifyEmail` entirely rather than paying to re-derive what the record
+ * already answers (`RegistryRecord.knownEmail`). socrata-inspection records
+ * carry no contact info at all and are consumed as a recency/operating-status
+ * confirmation joined to the licence lane, not standalone.
  *
  * Recent-issue routing: a record inside `freshnessDays` of "now" is the
  * main-street equivalent of `post-funding` — nothing to rip out — and goes
@@ -39,8 +47,16 @@ export interface LocalRegistryFinderOpts extends RunOpts {
   licenseTypes?: string[];
   /** nppes source config. */
   taxonomies?: string[];
+  /** Two-letter state codes — shared by nppes (crossed with taxonomies) and fmcsa (filters phy_state). */
   states?: string[];
-  /** Discovery window against the issue/enumeration date. Default 60. */
+  /** fmcsa source config. Entity type filter: carrier / broker / freight-forwarder. */
+  entityTypes?: FmcsaEntityType[];
+  /** fmcsa source config. Fleet-size band — the 10-100 power-unit band is who actually buys software. */
+  minPowerUnits?: number;
+  maxPowerUnits?: number;
+  /** socrata-inspection source config. Named distinctly from `portals` (socrata-license's own list) since both adapters share this one trigger config. */
+  inspectionPortals?: SocrataInspectionPortalConfig[];
+  /** Discovery window against the issue/enumeration/registration/inspection date. Default 60. */
   sinceDays?: number;
   /** Records matched inside this window route to new-business; older ones to free-pilot. Default 21, clamped to sinceDays. */
   freshnessDays?: number;
@@ -55,9 +71,9 @@ export interface LocalRegistryTarget {
   name: string;
   email: string;
   company: string;
-  source: "socrata-license" | "nppes";
+  source: "socrata-license" | "nppes" | "fmcsa" | "socrata-inspection";
   sourceLabel: string;
-  /** ISO issue/enumeration date this record matched on — the trigger evidence. */
+  /** ISO issue/enumeration/registration/inspection date this record matched on — the trigger evidence. */
   matchedDateIso: string;
   yourEdge: string;
   /**
@@ -137,6 +153,10 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
     ...(opts.licenseTypes ? { licenseTypes: opts.licenseTypes } : {}),
     ...(opts.taxonomies ? { taxonomies: opts.taxonomies } : {}),
     ...(opts.states ? { states: opts.states } : {}),
+    ...(opts.entityTypes ? { entityTypes: opts.entityTypes } : {}),
+    ...(opts.minPowerUnits != null ? { minPowerUnits: opts.minPowerUnits } : {}),
+    ...(opts.maxPowerUnits != null ? { maxPowerUnits: opts.maxPowerUnits } : {}),
+    ...(opts.inspectionPortals ? { inspectionPortals: opts.inspectionPortals } : {}),
   };
 
   // Step 1: fetch every configured source. Per-portal / per-taxonomy×state
@@ -275,21 +295,54 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
 
     // Resolve a domain from the business name — the registries carry a name
     // and address, never a website. #456's enrichCompany ($0.005) is the
-    // cheapest resolver in the toolbox for that.
-    const enriched = await safeEnrichCompany({ name: record.name }, { playName });
-    result.costUsd += enriched.result.cost ?? 0;
-    const domain = enriched.result.company?.domain ?? null;
-    if (!domain) {
-      result.droppedEnrichment++;
+    // cheapest resolver in the toolbox for that. fmcsa is the one source
+    // that already carries a published email on the record (like
+    // gov-solicitation's SAM.gov contact) — paying to re-derive a domain the
+    // record never needed is exactly the spend this card says to skip.
+    let domain: string | null = null;
+    if (!record.knownEmail) {
+      const enriched = await safeEnrichCompany({ name: record.name }, { playName });
+      result.costUsd += enriched.result.cost ?? 0;
+      domain = enriched.result.company?.domain ?? null;
+      if (!domain) {
+        result.droppedEnrichment++;
+        return;
+      }
+    }
+
+    // Recheck the cap after enrichCompany's paid call and before
+    // resolveVerifyEnrichQualify's own paid calls (findEmail/verifyEmail/
+    // enrich/qualify — up to 4 more). The top-of-turn check above only
+    // guards entry to a candidate's turn; concurrent workers can each pass
+    // it at the same accumulated cost and then all incur enrichCompany +
+    // contact-resolution spend before the next candidate's pre-check
+    // catches it (finding PRRT_kwDOSKzrBs6exPH4). This narrows, not
+    // eliminates, the overshoot window — the alternative (a hard
+    // reservation) would require threading a lock through every paid call
+    // this spine makes, a bigger change than a correction round justifies.
+    if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
+      result.halted = `max-cost cap (${opts.maxCostUsd})`;
+      halted = true;
       return;
     }
 
     const contact = await resolveVerifyEnrichQualify({
       playName,
-      // No owner/operator name in either registry — findEmail resolves a
-      // company-level address off the domain alone (fullName optional).
+      // No owner/operator name in any registry — findEmail resolves a
+      // company-level address off the domain alone (fullName is optional on
+      // the SDK call; allowMissingFullName opts into that instead of the
+      // prescreen's default "no name = probably a bad extraction" rejection).
       fullName: null,
-      companyDomain: domain,
+      allowMissingFullName: true,
+      ...(record.knownEmail ? { knownEmail: record.knownEmail } : { companyDomain: domain }),
+      // fmcsa's knownEmail is USDOT's own on-file carrier contact address —
+      // a federal registration field, not a scraped/guessed one — so paying
+      // to re-verify what the record already asserts is exactly the spend
+      // this card says to skip (mirrors knownEmail already skipping
+      // findEmail above). Has no effect for socrata-license/nppes/
+      // socrata-inspection records, which never carry knownEmail and always
+      // go through the normal companyDomain + verify path.
+      skipVerify: record.source === "fmcsa",
       isDuplicate: (email) => isDuplicate({ playName, dedupeKey, prospectEmail: email }),
       errKindPrefix: "local-registry",
       icp,
@@ -314,6 +367,17 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
           dryRun: opts.dryRun,
         });
       } else result.droppedEnrichment++;
+      return;
+    }
+
+    // Recheck the cap immediately before the synchronous enqueue call: the
+    // top-of-turn check above ran before this candidate's own async work
+    // (icpFilter/enrichCompany/resolveVerifyEnrichQualify), so with
+    // concurrency > 1 multiple workers can pass that check together and
+    // each still be racing toward enqueueScoredTarget when `limit` is
+    // small (e.g. 1) — only the first to reach this point should win.
+    if (result.enqueued >= limit) {
+      halted = true;
       return;
     }
 
