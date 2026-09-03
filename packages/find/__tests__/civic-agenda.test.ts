@@ -299,6 +299,25 @@ describe("runCivicAgendaFinder — happy path", () => {
   });
 });
 
+describe("runCivicAgendaFinder — max-cost cap", () => {
+  it("halts BEFORE the paid icpFilter call when maxCostUsd is positive but below one call's cost", async () => {
+    // Regression for finding PRRT_kwDOSKzrBs6fGix5: the guard used to check
+    // costUsd (still 0 at this point) instead of the PROSPECTIVE cost, so
+    // 0 < maxCostUsd < ICP_FILTER_COST_USD let the call through anyway.
+    const out = await runCivicAgendaFinder({ ...baseConfig, maxCostUsd: 0.0001 });
+    expect(icpCalls).toBe(0);
+    expect(out.enqueued).toBe(0);
+    expect(out.halted).toMatch(/max-cost cap/);
+  });
+
+  it("still allows the call when maxCostUsd comfortably covers one icpFilter call", async () => {
+    const out = await runCivicAgendaFinder({ ...baseConfig, maxCostUsd: 1 });
+    expect(icpCalls).toBe(1);
+    expect(out.enqueued).toBe(1);
+    expect(out.halted).toBeUndefined();
+  });
+});
+
 describe("runCivicAgendaFinder — readiness / halts", () => {
   it("halts when cities is empty", async () => {
     const out = await runCivicAgendaFinder({ ...baseConfig, cities: [] });
