@@ -147,6 +147,12 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     }
   }
 
+  if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
+    result.halted = `max-cost cap (${opts.maxCostUsd})`;
+    logEvent("finder.done", { name: PLAY_NAME, candidates: 0, halted: result.halted });
+    return result;
+  }
+
   const peopleRes = await safePeopleSearch(
     {
       ...(businessShaped

@@ -246,6 +246,28 @@ describe("runLocalBusinessFinder — business-shaped targeting", () => {
     expect(out.enqueued).toBe(0);
     expect(out.halted).toBeTruthy();
   });
+
+  it("halts before peopleSearch when companySearch alone already hit maxCostUsd (finding PRRT_kwDOSKzrBs6ewrQT)", async () => {
+    nextCompanySearchResults = [
+      { name: "Smile Dental", domain: "smiledental.com", industry: "Dental Practices" },
+    ];
+    nextPeopleSearchResults = [
+      { ...basePerson, company_domain: "smiledental.com", best_work_email: "dana@smiledental.com" },
+    ];
+    const out = await runLocalBusinessFinder({
+      dryRun: false,
+      industries: ["Dental Practices"],
+      maxCostUsd: 0.01,
+      yourEdge: "x",
+    });
+    // companySearch alone costs $0.01 and hits the cap — peopleSearch must
+    // never run, so the second $0.01 charge never accrues.
+    expect(companySearchCalls).toHaveLength(1);
+    expect(peopleSearchCalls).toHaveLength(0);
+    expect(out.enqueued).toBe(0);
+    expect(out.costUsd).toBeCloseTo(0.01, 5);
+    expect(out.halted).toMatch(/max-cost cap/);
+  });
 });
 
 describe("runLocalBusinessFinder — ICP gate and limits", () => {
