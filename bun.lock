@@ -101,6 +101,7 @@
       "version": "0.7.0",
       "dependencies": {
         "@oneshot-gtm/core": "workspace:*",
+        "@oneshot-gtm/find": "workspace:*",
       },
     },
     "packages/find": {
@@ -110,6 +111,7 @@
         "@oneshot-gtm/core": "workspace:*",
         "@oneshot-gtm/intel": "workspace:*",
         "@oneshot-gtm/plays": "workspace:*",
+        "@oneshot-gtm/shared-types": "workspace:*",
       },
     },
     "packages/intel": {

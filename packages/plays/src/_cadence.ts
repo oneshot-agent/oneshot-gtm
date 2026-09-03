@@ -26,6 +26,8 @@ import {
   firstNameFrom,
   humanizeDraft,
   lintEmail,
+  lintOpenerFrequency,
+  overusedOpeners,
   signatureDirective,
   socialProofBlock,
 } from "./_lib.ts";
@@ -657,6 +659,25 @@ export async function advanceCadence(
   }
 
   const outs = await parallelMap(due, 3, async (cad): Promise<RunCadenceStepResult> => {
+    // The claim is the worker's first synchronous operation, before any await.
+    // Rows waiting for a concurrency slot remain stoppable; once a worker
+    // starts, Stop and dispatch serialize through this marker. If Stop won,
+    // the runner re-reads the terminal status and skips.
+    const claimed =
+      !opts.dryRun &&
+      ledger.claimCadenceSendingMarker({
+        prospectId: cad.prospect_id,
+        playName: cad.play_name,
+        startedAtIso: nowIso,
+      });
+    if (!opts.dryRun && !claimed) {
+      return {
+        action: "skipped",
+        payload: null,
+        receiptIds: [],
+        note: "cadence changed or is already sending",
+      };
+    }
     try {
       return await runCadenceStepForProspect({
         prospectId: cad.prospect_id,
@@ -676,6 +697,15 @@ export async function advanceCadence(
         };
       }
       throw err;
+    } finally {
+      if (claimed) {
+        // Success usually clears through advanceCadence; skips, deferrals and
+        // failures land here. Clearing twice is harmless.
+        ledger.clearCadenceSendingMarker({
+          prospectId: cad.prospect_id,
+          playName: cad.play_name,
+        });
+      }
     }
   });
 
@@ -1006,6 +1036,10 @@ export interface CadenceStepPreview {
 export async function previewCadenceStep(input: {
   prospectId: number;
   playName: string;
+  /** Bodies accepted earlier in the same batch — they are not in the ledger
+   *  yet, and without them a batch can agree on one brand-new opener and every
+   *  row passes the cap individually. */
+  extraRecentBodies?: readonly string[];
 }): Promise<CadenceStepPreview> {
   const ledger = getLedger();
   const cfg = loadConfig();
@@ -1037,7 +1071,20 @@ export async function previewCadenceStep(input: {
         : built.kind === "voice"
           ? built.objective
           : "";
-  const flags = built.kind === "email" ? lintEmail(subject, body, 100) : [];
+  // Opener-frequency cap on top of the phrase lint: the phrase rules cannot
+  // see that this play's last 40 sends all opened the same way. Scoped to the
+  // same play + step because that is the population a reader would ever
+  // compare — an intro and a day-3 ping are allowed to sound different.
+  const flags =
+    built.kind === "email"
+      ? [
+          ...lintEmail(subject, body, 100),
+          ...lintOpenerFrequency(body, [
+            ...(input.extraRecentBodies ?? []),
+            ...ledger.recentSentEmailBodies({ playName: input.playName, stepIndex: nextIndex }),
+          ]),
+        ]
+      : [];
   ledger.setCadenceDraft({
     prospectId: input.prospectId,
     playName: input.playName,
@@ -1071,6 +1118,11 @@ export async function sendCadenceStep(input: {
   const ledger = getLedger();
   const draft = ledger.getCadenceDraft(input);
   if (!draft) throw new Error("no persisted preview — click Preview first");
+  // The UI disables Send on a flagged draft; enforce the same rule here so a
+  // direct API call cannot dispatch copy the lint held back.
+  if (draft.flags.length > 0) {
+    throw new Error(`draft held by lint (${draft.flags.join(", ")}) — re-preview first`);
+  }
   return runCadenceStepForProspect({
     prospectId: input.prospectId,
     playName: input.playName,
@@ -1107,9 +1159,20 @@ export interface BatchSendResult {
  * preserves input order so the result matches `items` 1:1.
  */
 export async function previewCadenceStepBatch(items: BatchItem[]): Promise<BatchPreviewResult[]> {
+  // Drafts this batch has already accepted, keyed by play (the step is fixed
+  // per prospect but the play is what the cap is scoped to). Concurrency 3
+  // means the last couple of rows may not see each other; that still closes
+  // the batch-wide agreement this exists to catch.
+  const accepted = new Map<string, string[]>();
   return parallelMap(items, 3, async (item) => {
     try {
-      const preview = await previewCadenceStep(item);
+      const preview = await previewCadenceStep({
+        ...item,
+        extraRecentBodies: accepted.get(item.playName) ?? [],
+      });
+      if (preview.flags.length === 0) {
+        accepted.set(item.playName, [...(accepted.get(item.playName) ?? []), preview.body]);
+      }
       return { prospectId: item.prospectId, playName: item.playName, ok: true, preview };
     } catch (err) {
       return {
@@ -1296,6 +1359,31 @@ function loadProspect(id: number): ProspectRecord | null {
   return getLedger().getProspectById(id);
 }
 
+/**
+ * The OPENERS ALREADY WORN OUT block, or "" when nothing is over the cap.
+ *
+ * Scoped to this prospect's next step on this play — the same population the
+ * `opener-overused` lint measures, so the guidance and the gate cannot
+ * disagree. Returns "" on any missing cadence rather than throwing: steering
+ * copy is a nicety, and a follow-up must still draft without it.
+ */
+function overusedOpenersBlock(prospectId: number, playName: string): string {
+  const ledger = getLedger();
+  const cadence = ledger.getCadence(prospectId, playName);
+  if (!cadence) return "";
+  const recent = ledger.recentSentEmailBodies({
+    playName,
+    stepIndex: cadence.current_step + 1,
+  });
+  const worn = overusedOpeners(recent);
+  if (worn.length === 0) return "";
+  return [
+    "OPENERS ALREADY WORN OUT ON THIS STEP — do not open the body with these words:",
+    ...worn.map((stem) => `- "${stem}"`),
+    "Pick a different shape from the ones the prompt lists.",
+  ].join("\n");
+}
+
 export function buildFollowUpEmail(opts: {
   playName: string;
   promptName: string;
@@ -1308,6 +1396,10 @@ export function buildFollowUpEmail(opts: {
     // Optional first-name field: prompt rule lets the LLM occasionally open
     // with "Hey {firstName},". Absent when name is null / (unknown) / handle.
     const firstName = firstNameFrom(ctx.prospect.name);
+    // Steer the draft away from openers this step has already worn out, rather
+    // than only rejecting them afterwards: a rejected draft costs another paid
+    // completion, and the model cannot see the last 40 sends on its own.
+    const avoidBlock = overusedOpenersBlock(ctx.prospect.id, opts.playName);
     const user = [
       `FOUNDER: ${ctx.cfg.founderName}`,
       `PRODUCT: ${ctx.cfg.productOneLiner}`,
@@ -1318,6 +1410,7 @@ export function buildFollowUpEmail(opts: {
       ...(priorBlock ? ["", priorBlock] : []),
       ...(proofBlock ? ["", proofBlock] : []),
       ...(firstName ? ["", `PROSPECT_FIRST_NAME: ${firstName}`] : []),
+      ...(avoidBlock ? ["", avoidBlock] : []),
     ].join("\n");
     const res = await complete({
       messages: [

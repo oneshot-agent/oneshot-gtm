@@ -15,6 +15,7 @@
   "dependencies": {
     "@oneshot-gtm/core": "workspace:*",
     "@oneshot-gtm/intel": "workspace:*",
-    "@oneshot-gtm/plays": "workspace:*"
+    "@oneshot-gtm/plays": "workspace:*",
+    "@oneshot-gtm/shared-types": "workspace:*"
   }
 }

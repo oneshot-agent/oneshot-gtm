@@ -13,9 +13,11 @@ import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
 import { Field, Input, Textarea } from "../components/primitives/Field.tsx";
 import { cn } from "../lib/cn.ts";
-import { PLAY_SCHEMAS } from "../lib/playSchemas.ts";
+import { missingRequiredFields, PLAY_SCHEMAS } from "../lib/playSchemas.ts";
 import { useMask } from "../lib/privacy.tsx";
-import { pruneSentRows } from "../lib/pruneSentRows.ts";
+import { pruneSentRows, remapFilteredEventIndexes } from "../lib/pruneSentRows.ts";
+import { IS_DEMO, demoWrite } from "../api/demo.ts";
+import { readOnly } from "../lib/readOnly.ts";
 
 /**
  * Search-param contract for arrivals from the `/queue` drain modal: `fromQueue=1`
@@ -328,6 +330,35 @@ function RunPage() {
   };
 
   const submit = async (): Promise<void> => {
+    /*
+     * The read-only guarantee is enforced HERE and not only on the button.
+     *
+     * This dispatch is the one write in the app that does not go through
+     * `postJson` — it needs an SSE body, which that wrapper cannot carry — so
+     * the transport-level refusal in api/demo.ts never sees it. A disabled
+     * button is a courtesy; this is the guarantee, and without it a demo build
+     * would POST a real run payload at whatever origin it was served from.
+     */
+    if (IS_DEMO) {
+      demoWrite(`/run/${playName}`);
+      return;
+    }
+
+    // Enforce the schema's `required` keys before dispatch. Rows here render
+    // outside a <form> (this is a plain button onClick, not a submit event),
+    // so the `required` attribute on each field is decorative — and `submit`
+    // strips blank fields below, which would otherwise let e.g. a blank
+    // `agency` or `yourEdge` reach the play as `undefined` and produce a
+    // malformed, paid draft.
+    const rowIssues = rows
+      .map((row, idx) => ({ idx, missing: missingRequiredFields(schema, row) }))
+      .filter((r) => r.missing.length > 0);
+    if (rowIssues.length > 0) {
+      const detail = rowIssues.map((r) => `row ${r.idx + 1}: ${r.missing.join(", ")}`).join("; ");
+      setError(`fill in the required fields before dispatching — ${detail}`);
+      return;
+    }
+
     setError(null);
     setEvents([]);
     setRunning(true);
@@ -401,7 +432,8 @@ function RunPage() {
       // After a real-send run, drop rows whose draft actually shipped so
       // they can't be resent by a second submission of the same form.
       // Held / errored / unsent rows stay so the founder can edit and retry.
-      const pruned = pruneSentRows(streamedEvents, rowsSnapshot, dedupeKeysSnapshot);
+      const mappedEvents = remapFilteredEventIndexes(streamedEvents, rowsSnapshot);
+      const pruned = pruneSentRows(mappedEvents, rowsSnapshot, dedupeKeysSnapshot);
       if (pruned.prunedCount > 0) {
         setRows(pruned.rows);
         setDedupeKeys(pruned.dedupeKeys);
@@ -577,7 +609,10 @@ function RunPage() {
         </div>
       </RunLedgerSection>
 
-      <section className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-t border-ink-rule bg-ink-bg/90 px-6 py-3 backdrop-blur-[2px]">
+      <section
+        className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-t border-ink-rule bg-ink-bg/90 px-6 py-3 backdrop-blur-[2px]"
+        data-foot-bar
+      >
         {mode === "edit" && (
           <button
             type="button"
@@ -630,7 +665,7 @@ function RunPage() {
           )}
         </div>
         {mode === "edit" && (
-          <Button onClick={submit} disabled={running}>
+          <Button onClick={submit} disabled={running} {...readOnly}>
             <Play size={14} />
             {running
               ? "Running…"
@@ -694,6 +729,28 @@ function RunPage() {
               onClick={() => {
                 setEvents([]);
                 setError(null);
+                if (runRecord?.targets) {
+                  const restoredRows = runRecord.targets.map((target) => {
+                    const row: Record<string, string> = {};
+                    if (!target || typeof target !== "object" || Array.isArray(target)) return row;
+                    for (const [key, value] of Object.entries(target)) {
+                      row[key] =
+                        value == null
+                          ? ""
+                          : typeof value === "string"
+                            ? value
+                            : JSON.stringify(value);
+                    }
+                    return row;
+                  });
+                  const restoredKeys = restoredRows.map(
+                    (_, index) => runRecord.dedupeKeys[index] ?? null,
+                  );
+                  const mappedEvents = remapFilteredEventIndexes(runRecord.events, restoredRows);
+                  const retryable = pruneSentRows(mappedEvents, restoredRows, restoredKeys);
+                  setRows(retryable.rows.length > 0 ? retryable.rows : [{ ...schema.defaultRow }]);
+                  setDedupeKeys(retryable.rows.length > 0 ? retryable.dedupeKeys : [null]);
+                }
                 void navigate({ search: (prev) => ({ ...prev, runId: undefined }) });
               }}
             >
@@ -721,8 +778,8 @@ function RunPage() {
             {verifyEvent.dropped.length} dropped
           </div>
           <div className="mt-1 font-mono text-[11px] text-ink-muted">
-            {verifyEvent.dropped.map((d) => (
-              <div key={`${d.email}::${d.reason}`}>
+            {verifyEvent.dropped.map((d, idx) => (
+              <div key={`${d.email || d.reason}-${idx}`}>
                 {d.email ? mask("email", d.email) : "(missing)"} — {d.reason}
               </div>
             ))}

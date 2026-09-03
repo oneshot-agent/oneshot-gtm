@@ -8,6 +8,7 @@ import {
   Copy,
   ExternalLink,
   Loader2,
+  Package,
   Pencil,
   Play,
   RotateCw,
@@ -20,6 +21,8 @@ import { toast } from "sonner";
 import {
   blockingFlags,
   isRunnablePlay,
+  type PackApplyResult,
+  type PackView,
   type QueueRowView,
   type QueueStatusView,
   type TriggerView,
@@ -31,18 +34,29 @@ import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
 import { Field, Input, Textarea } from "../components/primitives/Field.tsx";
 import { Modal } from "../components/primitives/Modal.tsx";
 import { Pii } from "../components/primitives/Pii.tsx";
-import { useMask } from "../lib/privacy.tsx";
+import { useMask, usePrivacy } from "../lib/privacy.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { Toggle } from "../components/primitives/Toggle.tsx";
 import { cn, eventIsPast, formatSendsToday, humanizeEventDate, timeAgo } from "../lib/cn.ts";
 import {
+  bulkApprovalIds,
   drainButtonState,
   drainSelectionState,
+  isQueueFilterActive,
   mergeRowMeta,
+  queuePlayList,
+  queueRequest,
+  queueSelectionState,
+  selectVisibleQueueRows,
+  toggleQueueSelection,
   type RowMeta,
-} from "../lib/drainButton.ts";
+} from "../lib/queue-helpers.ts";
 import { humanInterval } from "../lib/humanInterval.ts";
+import { priorityBreakdown, priorityChip } from "../lib/priorityChip.ts";
+import { queueEvidence } from "../lib/queueEvidence.ts";
 import { INTERVAL_PRESETS_MS, withIntervalOverride } from "../lib/triggerInterval.ts";
+import { summarizeTriggers } from "../lib/triggerSummary.ts";
+import { useLocalStorage } from "../lib/useLocalStorage.ts";
 import {
   clearDraftGenerating,
   markDraftGenerating,
@@ -50,6 +64,7 @@ import {
 } from "../lib/draftRunState.ts";
 import { buildSignalDays } from "../lib/signalDays.ts";
 import { summarizeRun } from "../lib/summarizeRun.ts";
+import { READ_ONLY, readOnly } from "../lib/readOnly.ts";
 import {
   clearTriggerRunning,
   hasAnyRunningTrigger,
@@ -126,17 +141,15 @@ function QueuePage() {
   const [drainSenderCohort, setDrainSenderCohort] = useState("");
   const [drainOffer, setDrainOffer] = useState("");
   const [drainDryRun, setDrainDryRun] = useState(true);
+  // null = follow the configured default; the server echoes what it used.
+  const [orderOverride, setOrderOverride] = useState<"ranked" | "newest" | null>(null);
 
   const queueQuery = useQuery({
-    queryKey: ["queue", statusFilter, playFilter],
-    queryFn: () =>
-      api.queue({
-        ...(statusFilter !== "all" ? { status: statusFilter } : {}),
-        ...(playFilter !== "all" ? { play: playFilter } : {}),
-        limit: 200,
-      }),
+    queryKey: ["queue", statusFilter, playFilter, orderOverride],
+    queryFn: () => api.queue(queueRequest({ statusFilter, playFilter, orderOverride })),
     refetchInterval: 20_000,
   });
+  const effectiveOrder = queueQuery.data?.order ?? "newest";
 
   const invalidate = (): void => {
     void qc.invalidateQueries({ queryKey: ["queue"] });
@@ -263,9 +276,7 @@ function QueuePage() {
   // Plays on the visible page, plus any play holding approved rows anywhere —
   // the chip both filters the table and scopes the drain button, so a play with
   // drainable rows must stay selectable even when the page shows none of them.
-  const playList = Array.from(
-    new Set([...rows.map((r) => r.playName), ...Object.keys(approvedByPlay)]),
-  ).toSorted();
+  const playList = queuePlayList(rows, approvedByPlay);
   const drain = drainButtonState({ playFilter, approvedByPlay, isRunnable: isRunnablePlay });
   // Selection outlives the filters, so read each selected row from the session
   // map rather than the visible page — otherwise filtering to one play makes a
@@ -279,8 +290,7 @@ function QueuePage() {
   });
 
   // Selection derived state — stable across renders even if rows refetch.
-  const someSelected = selected.size > 0;
-  const allSelected = rows.length > 0 && selected.size === rows.length;
+  const { someSelected, allSelected } = queueSelectionState(rows, selected);
 
   return (
     <div className="-mx-6 -my-6 flex flex-col">
@@ -314,39 +324,99 @@ function QueuePage() {
 
       <IcpBanner />
 
-      <TriggersCard />
+      <PacksCard />
+
+      <TriggersCard queueEmpty={queueQuery.isLoading ? null : rows.length === 0} />
 
       {/* Target Queue. The play filter is inline because it narrows this table only. */}
       <section className="border-t-2 border-ink-rule">
-        <div className="flex flex-wrap items-center justify-between gap-3 px-6 pb-3 pt-5">
-          <div className="flex items-baseline gap-3">
+        {/* The 7-day histogram rides the caption rather than holding a band of
+            its own. It is one line of context about the rows below, and a full
+            width strip for it was 42px of the first screen. */}
+        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 px-6 pb-3 pt-5">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
             <div className="ln-eyebrow">
               Target Queue{" "}
               <span className="text-ink-faint">
                 · {queueQuery.data ? rows.length : "…"} row{rows.length === 1 ? "" : "s"}
               </span>
             </div>
+            {rows.length > 0 && <SignalStrip rows={rows} ranked={effectiveOrder === "ranked"} />}
           </div>
           <div className="font-mono text-[11px] text-ink-faint">refresh · 20s</div>
         </div>
 
-        {/* Status + play filters, scoped to this table. */}
-        <div className="flex flex-wrap items-center gap-2 border-b border-ink-rule/60 px-6 pb-3">
+        {/*
+          Status, order and play are one filter block, so one rule closes it.
+          A rule between these two rows made them read as separate bands, which
+          on top of the caption's rule and the table head put four hairlines in
+          200px of page.
+        */}
+        <div className="flex flex-wrap items-center gap-2 px-6 pb-3">
           <span className="ln-eyebrow">status</span>
           {STATUSES.map((s) => (
             <Button
               key={s}
-              variant={statusFilter === s ? "primary" : "ghost"}
+              variant={statusFilter === s ? "secondary" : "ghost"}
               size="sm"
               onClick={() => setStatusFilter(s)}
             >
               {s}
             </Button>
           ))}
-          <span className="mx-2 h-4 w-px bg-ink-rule" />
+          {statusFilter === "pending" && (
+            <>
+              <span className="mx-2 h-4 w-px bg-ink-rule" />
+              <span className="ln-eyebrow">order</span>
+              {(["newest", "ranked"] as const).map((o) => (
+                <Button
+                  key={o}
+                  variant={effectiveOrder === o ? "secondary" : "ghost"}
+                  size="sm"
+                  onClick={() => setOrderOverride(o)}
+                >
+                  {o}
+                </Button>
+              ))}
+            </>
+          )}
+          {/* Approve-all and drain scope to the play filter below, and sit up
+              here because status and order are a fixed, short set: this row's
+              width does not change with the install, so the buttons stay put. */}
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={approveAll.isPending || counts.pending === 0}
+              onClick={() => approveAll.mutate(playFilter === "all" ? undefined : playFilter)}
+              {...readOnly}
+            >
+              <Check size={12} /> approve all pending
+              {playFilter !== "all" ? ` (${playFilter})` : ""}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={!drain.enabled}
+              onClick={() => {
+                if (!drain.playName) return;
+                setDrainModal({ playName: drain.playName, approvedCount: drain.approvedCount });
+              }}
+              {...readOnly}
+            >
+              <Send size={12} /> {drain.label}
+            </Button>
+          </div>
+        </div>
+
+        {/* The play filter earns its own line: it is the only group here whose
+            length grows with the install — seven chips against this seeded
+            ledger, eleven on a working one — and on one row it shunted the
+            actions around every time the status tab changed. */}
+        <div className="flex flex-wrap items-center gap-2 border-b border-ink-rule/60 px-6 py-2.5">
           <span className="ln-eyebrow">play</span>
           <Button
-            variant={playFilter === "all" ? "primary" : "ghost"}
+            variant={playFilter === "all" ? "secondary" : "ghost"}
             size="sm"
             onClick={() => setPlayFilter("all")}
           >
@@ -355,7 +425,7 @@ function QueuePage() {
           {playList.map((p) => (
             <Button
               key={p}
-              variant={playFilter === p ? "primary" : "ghost"}
+              variant={playFilter === p ? "secondary" : "ghost"}
               size="sm"
               onClick={() => setPlayFilter(p)}
             >
@@ -364,37 +434,10 @@ function QueuePage() {
           ))}
         </div>
 
-        {/* Approve-all + drain both respect the current play filter. */}
-        <div className="flex flex-wrap items-center gap-2 border-b border-ink-rule/60 bg-ink-surface/30 px-6 py-3">
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={approveAll.isPending || counts.pending === 0}
-            onClick={() => approveAll.mutate(playFilter === "all" ? undefined : playFilter)}
-          >
-            <Check size={12} /> approve all pending
-            {playFilter !== "all" ? ` (${playFilter})` : ""}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={!drain.enabled}
-            onClick={() => {
-              if (!drain.playName) return;
-              setDrainModal({ playName: drain.playName, approvedCount: drain.approvedCount });
-            }}
-          >
-            <Send size={12} /> {drain.label}
-          </Button>
-        </div>
-
-        {/* 7-day signal strip — enqueues per day from the rows in memory. */}
-        {rows.length > 0 && <SignalStrip rows={rows} />}
-
         {queueQuery.isLoading ? (
           Array.from({ length: 5 }, (_, i) => <SkeletonRow key={i} />)
         ) : rows.length === 0 ? (
-          <EmptyQueueHelp filterActive={statusFilter !== "pending" || playFilter !== "all"} />
+          <EmptyQueueHelp filterActive={isQueueFilterActive(statusFilter, playFilter)} />
         ) : (
           <table className="w-full text-[13px]">
             <thead className="sticky top-0 z-10 bg-ink-bg">
@@ -410,7 +453,7 @@ function QueuePage() {
                         if (el) el.indeterminate = someSelected && !allSelected;
                       }}
                       onChange={(e) =>
-                        setSelected(e.target.checked ? new Set(rows.map((r) => r.id)) : new Set())
+                        setSelected(new Set(selectVisibleQueueRows(rows, e.target.checked)))
                       }
                       aria-label={allSelected ? "deselect all" : "select all"}
                     />
@@ -428,17 +471,13 @@ function QueuePage() {
                 <QueueRow
                   key={row.id}
                   row={row}
+                  ranked={effectiveOrder === "ranked"}
                   zebra={i % 2 === 1}
                   expanded={expanded === row.id}
                   selected={selected.has(row.id)}
                   anySelected={someSelected}
                   onToggleSelect={() => {
-                    setSelected((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(row.id)) next.delete(row.id);
-                      else next.add(row.id);
-                      return next;
-                    });
+                    setSelected((prev) => new Set(toggleQueueSelection(prev, row.id)));
                   }}
                   onToggle={() => setExpanded(expanded === row.id ? null : row.id)}
                   generating={generating.has(row.id)}
@@ -455,7 +494,10 @@ function QueuePage() {
       </section>
 
       {someSelected && (
-        <div className="sticky bottom-0 z-20 flex items-center justify-between gap-4 border-b border-t border-ink-rule bg-ink-bg/95 px-6 py-3 backdrop-blur-[2px]">
+        <div
+          className="sticky bottom-0 z-20 flex items-center justify-between gap-4 border-b border-t border-ink-rule bg-ink-bg/95 px-6 py-3 backdrop-blur-[2px]"
+          data-foot-bar
+        >
           <div className="flex items-center gap-3">
             <span className="inline-flex h-6 min-w-[24px] items-center justify-center rounded-full bg-[color:var(--ink-signal)]/20 px-2 font-mono text-[12px] text-[color:var(--ink-signal-2)]">
               {selected.size}
@@ -476,7 +518,8 @@ function QueuePage() {
               variant="secondary"
               size="sm"
               disabled={bulkApprove.isPending || selected.size === 0}
-              onClick={() => bulkApprove.mutate([...selected])}
+              onClick={() => bulkApprove.mutate(bulkApprovalIds(selected))}
+              {...readOnly}
             >
               <Check size={12} /> approve {selected.size}
             </Button>
@@ -485,6 +528,7 @@ function QueuePage() {
               size="sm"
               disabled={bulkReject.isPending || selected.size === 0}
               onClick={() => bulkReject.mutate([...selected])}
+              {...readOnly}
             >
               <X size={12} /> reject {selected.size}
             </Button>
@@ -616,8 +660,9 @@ function QueuePage() {
   );
 }
 
-function QueueRow({
+export function QueueRow({
   row,
+  ranked,
   zebra,
   expanded,
   selected,
@@ -630,6 +675,7 @@ function QueueRow({
   busy,
 }: {
   row: QueueRowView;
+  ranked: boolean;
   zebra: boolean;
   expanded: boolean;
   selected: boolean;
@@ -652,7 +698,12 @@ function QueueRow({
   const eventCity = eventCityFor(row.payload);
   const eventUrl = eventUrlFor(row.payload);
   const eventRole = eventRoleFor(row.payload);
+  const evidence = queueEvidence(row.playName, row.payload);
   const eventPassed = eventDate != null && eventIsPast(eventDate);
+  // Privacy mode suppresses reason text — freeform reasons can embed names
+  // and companies the structured <Pii> masking can't reach.
+  const { masked } = usePrivacy();
+  const prio = priorityChip(row.priority, masked, { shadow: !ranked });
   return (
     <>
       <tr
@@ -717,6 +768,20 @@ function QueueRow({
               </span>
             ) : null}
           </div>
+          {/*
+            Why this row is here at all. A queued candidate has no dossier yet,
+            so the finder's evidence is the only thing distinguishing one row
+            from the next, and it used to be reachable only by expanding.
+
+            Suppressed under privacy mode for the reason the priority reasons
+            are: it is freeform text that can name a person or a company, which
+            the structured <Pii> masking cannot reach inside.
+          */}
+          {evidence && !masked ? (
+            <div className="mt-0.5 max-w-[46ch] truncate text-[11px] text-ink-muted">
+              {evidence}
+            </div>
+          ) : null}
         </td>
         <td className="py-2 text-ink-cream-2">
           {row.playName}
@@ -751,6 +816,11 @@ function QueueRow({
                 draft
               </Badge>
             )}
+            {prio && (
+              <Badge tone={prio.tone} title={prio.title}>
+                {prio.label}
+              </Badge>
+            )}
             {eventDate && (
               <span
                 title={eventPassed ? `event passed · ${eventDate}` : eventDate}
@@ -772,7 +842,7 @@ function QueueRow({
         <td className="px-6 py-2 text-right" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-end gap-1.5">
             {row.status === "pending" && (
-              <Button variant="primary" size="sm" disabled={busy} onClick={onApprove}>
+              <Button variant="primary" size="sm" disabled={busy} onClick={onApprove} {...readOnly}>
                 <Check size={12} />
                 approve
               </Button>
@@ -783,6 +853,7 @@ function QueueRow({
                 size="sm"
                 disabled={busy}
                 onClick={onReject}
+                {...readOnly}
                 className="text-[color:var(--ink-blocked-2)]"
               >
                 <X size={12} />
@@ -797,6 +868,34 @@ function QueueRow({
           <td colSpan={7} className="px-6 py-3">
             <div className="flex flex-col gap-3 text-[12px] text-ink-muted">
               {row.notes ? <div className="ln-note">{row.notes}</div> : null}
+              {row.priority && (
+                <div className="rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep">
+                  <div className="flex items-center gap-2 border-b border-ink-rule/60 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+                    <span>priority {row.priority.total}</span>
+                    <Badge tone="neutral">experimental · shadow</Badge>
+                    <span className="normal-case tracking-normal">
+                      does not affect ordering or sending
+                    </span>
+                  </div>
+                  <div className="px-3 py-2.5">
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] text-ink-cream-2">
+                      {priorityBreakdown(row.priority).map((b) => (
+                        <span key={b.component}>
+                          {b.component} <span className="text-ink-cream">{b.score}</span>
+                          <span className="text-ink-faint"> ·{b.weightPct}%</span>
+                        </span>
+                      ))}
+                    </div>
+                    {!masked && row.priority.reasons.length > 0 && (
+                      <ul className="mt-1.5 list-disc pl-4 text-[11.5px]">
+                        {row.priority.reasons.map((r) => (
+                          <li key={r}>{r}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              )}
               {(eventTitle || eventDate || eventCity || eventUrl) && (
                 <div className="rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep">
                   <div className="flex items-center gap-2 border-b border-ink-rule/60 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
@@ -923,6 +1022,7 @@ function DraftSection({
     mutationFn: () => api.sendDraft(id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["queue"] });
+      void qc.invalidateQueries({ queryKey: ["home"] });
       toast.success("sent · the reviewed draft went out as-is");
     },
     onError: (err) => {
@@ -956,6 +1056,7 @@ function DraftSection({
       size="sm"
       disabled={isGenerating}
       onClick={() => regenerate.mutate()}
+      {...readOnly}
       title="Draft this row in preview mode — dry-run, never sends"
     >
       {isGenerating ? <Loader2 size={11} className="animate-spin" /> : <RotateCw size={11} />}
@@ -971,6 +1072,7 @@ function DraftSection({
     mutationFn: () => api.markSent(id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["queue"] });
+      void qc.invalidateQueries({ queryKey: ["home"] });
       toast.success("recorded · hand-send logged on channel x");
     },
     onError: (err) => {
@@ -1024,6 +1126,7 @@ function DraftSection({
           size="sm"
           disabled={markSent.isPending}
           onClick={() => markSent.mutate()}
+          {...readOnly}
           title="Record that you sent this by hand from the X app"
         >
           {markSent.isPending ? (
@@ -1051,6 +1154,7 @@ function DraftSection({
         size="sm"
         disabled={sending || !cleanDraft}
         onClick={() => send.mutate()}
+        {...readOnly}
         title={
           softHold
             ? draft?.flags.includes("contacted-elsewhere")
@@ -1153,15 +1257,17 @@ function DraftSection({
  * rows currently in memory) but gives a quick visual pulse without any
  * new API.
  */
-function SignalStrip({ rows }: { rows: QueueRowView[] }) {
+function SignalStrip({ rows, ranked = false }: { rows: QueueRowView[]; ranked?: boolean }) {
   const days = buildSignalDays(rows);
   const max = Math.max(1, ...days.map((d) => d.count));
   const total = days.reduce((a, d) => a + d.count, 0);
 
   return (
-    <div className="flex items-center gap-4 border-b border-ink-rule/60 bg-ink-bg-deep/40 px-6 py-2.5">
+    <div className="flex items-center gap-3">
       <div className="ln-eyebrow" style={{ fontSize: 10 }}>
-        last 7d
+        {/* A ranked page is no longer "the newest N", so the histogram only
+            describes the rows shown — make the existing approximation visible. */}
+        {ranked ? "last 7d · shown rows" : "last 7d"}
       </div>
       <div className="flex items-end gap-1" aria-hidden="true">
         {days.map((d) => {
@@ -1189,7 +1295,143 @@ function SignalStrip({ rows }: { rows: QueueRowView[] }) {
   );
 }
 
-function TriggersCard() {
+/** Per-browser memory of whether the panel is open. */
+const TRIGGERS_OPEN_KEY = "oneshot-gtm:queue-triggers-open";
+
+/**
+ * Industry pack cards: a working starting config for a founder's vertical,
+ * applied to several triggers at once instead of one `apply-config` per
+ * trigger. Sits above the Triggers panel it feeds — applying a pack is what
+ * populates the trigger rows below with real config.
+ */
+function PacksCard() {
+  const qc = useQueryClient();
+  const packsQuery = useQuery({
+    queryKey: ["packs"],
+    queryFn: () => api.packs(),
+  });
+  const applyPack = useMutation({
+    mutationFn: (id: string) => api.applyPack(id),
+    onSuccess: (result: PackApplyResult) => {
+      setLastResult(result);
+      const readyCount = result.applied.filter((t) => t.ready).length;
+      const notReadyCount = result.applied.length - readyCount;
+      toast.success(
+        notReadyCount > 0
+          ? `${result.id} · ${result.applied.length} triggers · ${notReadyCount} need config`
+          : `${result.id} · ${result.applied.length} triggers applied`,
+      );
+      if (result.skipped.length > 0) {
+        toast.info(`${result.id} · skipped ${result.skipped.map((s) => s.name).join(", ")}`);
+      }
+      void qc.invalidateQueries({ queryKey: ["triggers"] });
+      void qc.invalidateQueries({ queryKey: ["queue"] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+  const [lastResult, setLastResult] = useState<PackApplyResult | null>(null);
+
+  const packs = packsQuery.data?.packs ?? [];
+  if (!packsQuery.isLoading && packs.length === 0) return null;
+
+  return (
+    <section className="border-b border-ink-rule px-6 py-5">
+      <div className="mb-3 flex items-center gap-2">
+        <Package size={12} className="text-ink-faint" />
+        <div className="ln-eyebrow">
+          Industry packs <span className="text-ink-faint">· {packs.length}</span>
+        </div>
+      </div>
+      {packsQuery.isLoading ? (
+        <SkeletonRow />
+      ) : (
+        <div className="space-y-3">
+          {packs.map((pack) => (
+            <PackRow
+              key={pack.id}
+              pack={pack}
+              applying={applyPack.isPending && applyPack.variables === pack.id}
+              onApply={() => applyPack.mutate(pack.id)}
+              result={lastResult?.id === pack.id ? lastResult : null}
+              disabled={READ_ONLY}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function PackRow({
+  pack,
+  applying,
+  onApply,
+  result,
+  disabled,
+}: {
+  pack: PackView;
+  applying: boolean;
+  onApply: () => void;
+  result: PackApplyResult | null;
+  disabled: boolean;
+}) {
+  // After apply: the fields still needed, spelled out per-trigger so the
+  // founder knows exactly what to fill in next (via the strategist or the
+  // trigger's own JSON editor below).
+  const stillNeeded = result?.applied.filter((t) => !t.ready) ?? [];
+  return (
+    <div className="rounded-[var(--radius-sm)] border border-ink-rule px-4 py-3">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="text-[13px] font-medium text-ink-cream">{pack.label}</div>
+          <div className="mt-0.5 text-[12px] text-ink-cream-2">{pack.buyerBrief}</div>
+          <div className="mt-1.5 font-mono text-[11px] text-ink-faint">
+            triggers · {pack.triggers.join(", ")}
+          </div>
+          <div className="mt-1.5 font-mono text-[11px] text-ink-muted">
+            ICP · <span className="text-ink-cream-2">{pack.icpOneLiner}</span>
+          </div>
+        </div>
+        <Button size="sm" disabled={applying || disabled} onClick={onApply}>
+          {applying ? "Applying…" : "Apply"}
+        </Button>
+      </div>
+      {result && (
+        <div className="mt-2.5 border-t border-ink-rule/60 pt-2.5 font-mono text-[11px]">
+          <div className="text-ink-receipt-2">
+            ✓ applied · {result.applied.map((t) => t.name).join(", ")}
+          </div>
+          {stillNeeded.length > 0 && (
+            <div className="mt-1 text-[color:var(--ink-blocked-2)]">
+              still needs: {stillNeeded.map((t) => `${t.name} (${t.notReadyReason})`).join(" · ")}
+            </div>
+          )}
+          {result.skipped.length > 0 && (
+            <div className="mt-1 text-ink-faint">
+              skipped: {result.skipped.map((s) => `${s.name} (${s.reason})`).join(" · ")}
+            </div>
+          )}
+          {/* Apply never touches icpOneLiner in config.json (see packs.ts) —
+              the proposed ICP only reaches the founder's config if they
+              explicitly accept it from /setup. */}
+          <div className="mt-1.5 flex items-center gap-2 text-ink-muted">
+            <span>proposed ICP · {result.proposedIcpOneLiner}</span>
+            <Link
+              to="/setup"
+              search={{ proposedIcp: result.proposedIcpOneLiner, packLabel: pack.label }}
+            >
+              <Button variant="secondary" size="sm">
+                Accept in Setup
+              </Button>
+            </Link>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TriggersCard({ queueEmpty }: { queueEmpty: boolean | null }) {
   const qc = useQueryClient();
   const triggersQuery = useQuery({
     queryKey: ["triggers"],
@@ -1283,6 +1525,57 @@ function TriggersCard() {
   const activeTriggers = triggers.filter((t) => t.enabled);
   const inactiveTriggers = triggers.filter((t) => !t.enabled);
   const [showInactive, setShowInactive] = useState(false);
+
+  const summary = summarizeTriggers(triggers);
+
+  /*
+   * Shut by default, because this page is named for the candidates below it
+   * and the table was taking 336px of the first screen. Trigger status is
+   * already on /home; this panel is where you act on them, which is
+   * occasional. The choice is remembered per browser.
+   *
+   * `useLocalStorage` only ever hydrates a stored value TO true, so the stored
+   * flag has to be the open one with a false default. Storing "collapsed"
+   * instead would make the remembered state unreadable.
+   */
+  const [storedOpen, setStoredOpen] = useLocalStorage(TRIGGERS_OPEN_KEY, false);
+
+  /*
+   * Open itself once when the panel is the thing you came for: something is
+   * mid-run, something refuses to fire until it is configured, or the queue is
+   * empty and EmptyQueueHelp is telling the reader to pick a finder from a
+   * panel that would otherwise be shut.
+   *
+   * Kept separate from the stored flag on purpose. A panel that opened because
+   * a finder happened to be running must not write itself into the reader's
+   * remembered preference. Seeded through a ref so it fires once per mount:
+   * without that, every 30s refetch would re-open a panel just closed.
+   */
+  const [autoOpen, setAutoOpen] = useState(false);
+  const seeded = useRef(false);
+  // `queueEmpty` is null until the queue itself has loaded. Seeding on the
+  // triggers response alone would race it: whichever query lands first decides,
+  // and an empty queue would fail to open the panel about half the time.
+  if (!seeded.current && triggersQuery.data && queueEmpty !== null) {
+    seeded.current = true;
+    if (summary.running > 0 || summary.notReady > 0 || queueEmpty) setAutoOpen(true);
+  }
+
+  const expanded = storedOpen || autoOpen;
+
+  const toggle = (): void => {
+    if (expanded) {
+      // Collapsing hides the JSON editor rather than unmounting it, so without
+      // this a reopened panel restores unsaved text the reader walked away from.
+      setEditing(null);
+      setEditError(null);
+      setShowInactive(false);
+      setAutoOpen(false);
+      setStoredOpen(false);
+      return;
+    }
+    setStoredOpen(true);
+  };
 
   const renderTriggerRow = (t: TriggerView, i: number) => {
     const summary = summarizeRun(t.lastRunSummary);
@@ -1389,62 +1682,99 @@ function TriggersCard() {
   );
 
   return (
-    <>
-      <section className="border-b border-ink-rule">
-        <div className="flex items-baseline justify-between px-6 pb-2 pt-5">
+    <section className="border-b border-ink-rule">
+      <div className="flex items-baseline justify-between pr-6">
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={expanded}
+          /*
+           * No aria-label. The summary beside the chevron is the whole point of
+           * the collapsed state, and a label would replace it as the button's
+           * accessible name — leaving a screen reader with "expand the triggers
+           * table" where a sighted reader gets "5 on, next in 4h".
+           * `aria-expanded` already carries the open/shut part.
+           */
+          className="flex flex-1 items-baseline gap-3 px-6 pb-2 pt-5 text-left transition-colors duration-[var(--dur-stamp)] hover:bg-ink-surface/40"
+        >
+          <span className="text-ink-faint">
+            {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          </span>
           <div className="ln-eyebrow">
             Triggers <span className="text-ink-faint">· {triggers.length}</span>
           </div>
-          <div className="font-mono text-[11px] text-ink-faint">refresh · 30s</div>
-        </div>
-        {triggersQuery.isLoading ? (
-          Array.from({ length: 3 }, (_, i) => <SkeletonRow key={i} />)
-        ) : triggers.length === 0 ? (
-          <div className="px-6 pb-6">
-            <EmptyNote
-              note="No triggers stored yet. Enable one below and it bootstraps itself on the next watch tick — or run the watch loop once to initialise."
-              cli="oneshot-gtm find watch --once"
-            />
+          {/* The facts you would open the panel to check, so that most of the
+              time you do not have to. Only while shut: expanded, the table
+              below says all of this in more detail. */}
+          <div className="font-mono text-[11px] text-ink-faint">
+            {/* Leading separator so the accessible name reads "· 11 · 5 on"
+                rather than running the two counts together as "115 on". */}
+            · {summary.enabled} on
+            {summary.running > 0 && (
+              <span className="ml-2 text-[color:var(--ink-signal-2)]">
+                · {summary.running} running
+              </span>
+            )}
+            {summary.notReady > 0 && (
+              <span className="ml-2 text-[color:var(--ink-blocked-2)]">
+                · {summary.notReady} need config
+              </span>
+            )}
+            {!expanded && summary.nextDueMs != null && (
+              <span className="ml-2">· next in {humanInterval(summary.nextDueMs)}</span>
+            )}
+            {!expanded && <span className="ml-2 text-ink-faint">· see more</span>}
           </div>
-        ) : (
-          <table className="w-full text-[13px]">
-            <thead>
-              <tr className="border-b border-ink-rule/60 text-[10px] uppercase tracking-[0.14em] text-ink-faint">
-                <th className="px-6 py-2 text-left font-medium">name</th>
-                <th className="py-2 text-left font-medium">enabled</th>
-                <th className="py-2 text-left font-medium">interval</th>
-                <th className="py-2 text-left font-medium">last polled</th>
-                <th className="py-2 text-left font-medium">last run</th>
-                <th className="px-6 py-2 text-right font-medium">actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {activeTriggers.map(renderTriggerRow)}
-              {/* Disabled finders are dormant, not broken — collapsed behind one
+        </button>
+        <div className="font-mono text-[11px] text-ink-faint">refresh · 30s</div>
+      </div>
+      {!expanded ? null : triggersQuery.isLoading ? (
+        Array.from({ length: 3 }, (_, i) => <SkeletonRow key={i} />)
+      ) : triggers.length === 0 ? (
+        <div className="px-6 pb-6">
+          <EmptyNote
+            note="No triggers stored yet. Enable one below and it bootstraps itself on the next watch tick — or run the watch loop once to initialise."
+            cli="oneshot-gtm find watch --once"
+          />
+        </div>
+      ) : (
+        <table className="w-full text-[13px]">
+          <thead>
+            <tr className="border-b border-ink-rule/60 text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+              <th className="px-6 py-2 text-left font-medium">name</th>
+              <th className="py-2 text-left font-medium">enabled</th>
+              <th className="py-2 text-left font-medium">interval</th>
+              <th className="py-2 text-left font-medium">last polled</th>
+              <th className="py-2 text-left font-medium">last run</th>
+              <th className="px-6 py-2 text-right font-medium">actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {activeTriggers.map(renderTriggerRow)}
+            {/* Disabled finders are dormant, not broken — collapsed behind one
                   quiet row (same-tbody colSpan trick as SchedulerStrip, so the
                   shared column widths hold). */}
-              {inactiveTriggers.length > 0 && (
-                <tr className="border-b border-ink-rule/60">
-                  <td colSpan={6} className="px-6 py-2">
-                    <button
-                      type="button"
-                      aria-expanded={showInactive}
-                      onClick={() => setShowInactive((v) => !v)}
-                      className="flex items-center gap-1.5 font-mono text-[11px] text-ink-faint transition-colors hover:text-ink-cream-2"
-                    >
-                      {showInactive ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-                      {inactiveTriggers.length} inactive finder
-                      {inactiveTriggers.length === 1 ? "" : "s"} · {showInactive ? "hide" : "show"}
-                    </button>
-                  </td>
-                </tr>
-              )}
-              {showInactive && inactiveTriggers.map(renderTriggerRow)}
-            </tbody>
-          </table>
-        )}
-      </section>
-    </>
+            {inactiveTriggers.length > 0 && (
+              <tr className="border-b border-ink-rule/60">
+                <td colSpan={6} className="px-6 py-2">
+                  <button
+                    type="button"
+                    aria-expanded={showInactive}
+                    onClick={() => setShowInactive((v) => !v)}
+                    className="flex items-center gap-1.5 font-mono text-[11px] text-ink-faint transition-colors hover:text-ink-cream-2"
+                  >
+                    {showInactive ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                    {inactiveTriggers.length} inactive finder
+                    {inactiveTriggers.length === 1 ? "" : "s"} · {showInactive ? "hide" : "show"}
+                  </button>
+                </td>
+              </tr>
+            )}
+            {showInactive && inactiveTriggers.map(renderTriggerRow)}
+          </tbody>
+        </table>
+      )}
+    </section>
   );
 }
 
@@ -1478,9 +1808,13 @@ function TriggerRowFragment(props: TriggerRowProps) {
   // Missing `ready` field = treat as ready (tolerate older servers).
   const notReady = t.ready === false;
   const notReadyReason = t.notReadyReason ?? "missing required config";
+  const approvalBlocked = t.deprioritized === true;
   // Block enabling an unready trigger but still allow disabling.
-  const toggleDisabled = props.setEnabledPending || (notReady && !t.enabled);
-  const runDisabled = props.running || notReady;
+  // Both fold in READ_ONLY rather than taking `readOnly` as props: these two
+  // controls compute their own disabled state, and `run now` gates clicks
+  // through pointer-events rather than the `disabled` attribute.
+  const toggleDisabled = props.setEnabledPending || (notReady && !t.enabled) || READ_ONLY;
+  const runDisabled = props.running || notReady || READ_ONLY;
   return (
     <>
       <tr
@@ -1528,7 +1862,7 @@ function TriggerRowFragment(props: TriggerRowProps) {
               aria-label={`polling interval for ${t.name}`}
               className="rounded border border-ink-rule bg-ink-surface px-1 py-0.5 font-mono text-[12px] text-ink-cream"
               value={String(t.intervalMs)}
-              disabled={props.setConfigPending}
+              disabled={props.setConfigPending || READ_ONLY}
               onBlur={() => setEditingInterval(false)}
               onKeyDown={(e) => {
                 if (e.key === "Escape") setEditingInterval(false);
@@ -1554,7 +1888,7 @@ function TriggerRowFragment(props: TriggerRowProps) {
             <button
               type="button"
               title="change polling interval"
-              disabled={props.setConfigPending}
+              disabled={props.setConfigPending || READ_ONLY}
               className="cursor-pointer underline decoration-ink-faint decoration-dotted underline-offset-2 hover:text-ink-cream disabled:cursor-default disabled:opacity-60"
               onClick={() => setEditingInterval(true)}
             >
@@ -1584,7 +1918,11 @@ function TriggerRowFragment(props: TriggerRowProps) {
                 : "text-ink-muted",
           )}
         >
-          {notReady ? `not ready · ${notReadyReason}` : props.summary}
+          {notReady
+            ? `not ready · ${notReadyReason}`
+            : approvalBlocked
+              ? `deprioritized · ${t.deprioritizedReason ?? "low-approval-rate"} · ${((t.approvalRate ?? 0) * 100).toFixed(0)}% (${t.approvalReviewed}/${t.approvalMinSamples} min)`
+              : props.summary}
         </td>
         <td className="px-6 py-2 text-right">
           <div className="flex items-center justify-end gap-1">
@@ -1663,7 +2001,7 @@ function TriggerRowFragment(props: TriggerRowProps) {
                       variant="ghost"
                       size="sm"
                       onClick={props.onResetDefaults}
-                      disabled={props.setConfigPending}
+                      disabled={props.setConfigPending || READ_ONLY}
                       title="Replace the textarea with the registry default config"
                     >
                       reset
@@ -1673,7 +2011,7 @@ function TriggerRowFragment(props: TriggerRowProps) {
                     variant="ghost"
                     size="sm"
                     onClick={props.onCancelEdit}
-                    disabled={props.setConfigPending}
+                    disabled={props.setConfigPending || READ_ONLY}
                   >
                     cancel
                   </Button>
@@ -1681,7 +2019,7 @@ function TriggerRowFragment(props: TriggerRowProps) {
                     variant="primary"
                     size="sm"
                     onClick={props.onSaveEdit}
-                    disabled={props.setConfigPending}
+                    disabled={props.setConfigPending || READ_ONLY}
                   >
                     {props.setConfigPending ? "saving…" : "save"}
                   </Button>

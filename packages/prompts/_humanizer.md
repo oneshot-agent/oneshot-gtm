@@ -137,6 +137,16 @@ NEVER start the email body with any of these phrasings:
 
 These openers signal cold outreach to anyone who has read a sales email. Start with the specific evidence or angle.
 
+### Opener variety (second and later touches)
+
+A follow-up body is ANCHORED to the concrete thing the first email named — the seam, the half that bites, the handoff, the ramp. It may lead with that noun, or ask a question about it; what it may not do is open on a stock ping stem that would fit any prospect on any play. The test: could the first six words be pasted unchanged into a follow-up to a different prospect? If yes, rewrite. A stem that reads identically across a hundred sends is a fingerprint — it tells the reader they are on a list, and it gives filters one string to cluster on.
+
+Requiring every body to literally begin with the noun would just trade one uniform shape for another. Vary the sentence, keep the anchor.
+
+This one is measured, not trusted: a draft whose first two words already open more than a quarter of that play + step's recent sends is flagged `opener-overused` and held until it is rewritten.
+
+The example lines in each play prompt are SHAPES, not strings. They show how long the sentence is and what it is allowed to reference. Copying one verbatim, or reusing the same first three words every send, is a failure of this rule even when the copied line breaks no other ban.
+
 ## Banned CTAs
 
 NEVER use these calls-to-action:

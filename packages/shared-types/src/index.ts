@@ -9,10 +9,14 @@ export type CadenceStatus =
   | "breakup"
   | "completed"
   | "paused"
+  /** Explicitly stopped by the founder before the cadence naturally finished. */
+  | "stopped"
   /** Stopped by a hard bounce — the address is dead and is suppressed from further sends. */
   | "bounced"
   /** Stopped by an explicit do-not-contact reply — the prospect is suppressed from further sends. */
   | "unsubscribed";
+
+export type CadenceStopReason = "bad_timing" | "other" | "not_a_fit" | "do_not_contact";
 
 export interface CadenceNextStepDraft {
   subject: string;
@@ -39,12 +43,21 @@ export interface CadenceView {
   prospectEmail: string | null;
   prospectName: string | null;
   prospectCompany: string | null;
+  prospectTitle: string | null;
+  /** Present only when the stored polymorphic profile field is a valid LinkedIn member URL. */
+  prospectLinkedinUrl: string | null;
   playName: string;
   status: CadenceStatus;
   currentStep: number;
   enrolledAt: string;
   nextDueAt: string | null;
   lastPolledAt: string | null;
+  stopReason: CadenceStopReason | null;
+  stopNote: string | null;
+  stoppedAt: string | null;
+  /** Most recent persisted human reply channel; null for legacy reply rows without an inbound event. */
+  replyChannel: "email" | "linkedin" | null;
+  replyAt: string | null;
   /** Persisted next-step preview (set by Preview, cleared on advance). */
   nextStepDraft: CadenceNextStepDraft | null;
   /** Label of the next step ("value follow-up", "breakup", …). Null when
@@ -85,6 +98,7 @@ export interface CadenceCounts {
   breakup: number;
   completed: number;
   paused: number;
+  stopped: number;
   bounced: number;
   overdue: number;
 }
@@ -94,6 +108,22 @@ export interface CadencesResult {
   counts: CadenceCounts;
   /** Absent when the capacity computation failed — pages skip the figure. */
   sendsToday?: SendsToday;
+}
+
+export interface LinkedInReplyWebhookRequest {
+  source: string;
+  eventId: string;
+  occurredAt: string;
+  linkedinUrl?: string;
+  email?: string;
+}
+
+export interface LinkedInReplyResult {
+  accepted: true;
+  duplicate: boolean;
+  prospectId: number;
+  cadencesStopped: number;
+  inFlightSends: number;
 }
 
 /** RoCS value tag attached to a receipt once its outcome is known. */
@@ -196,6 +226,8 @@ export interface HomeMetrics {
   sentLast7d: number;
   repliedLast7d: number;
   activeCadences: number;
+  /** Durable, all-time first-send milestone derived from sent sequence events. */
+  hasFirstSend: boolean;
   /** Absent when the capacity computation failed — pages skip the figure. */
   sendsToday?: SendsToday;
   /**
@@ -226,7 +258,7 @@ export type WalletMode = "cdp" | "private-key";
 export type KeySource = "env" | "file" | null;
 
 /** Section a doctor check renders under in the dashboard's grouped panel. */
-export type DoctorGroup = "install" | "senders" | "deliverability" | "spend";
+export type DoctorGroup = "install" | "senders" | "deliverability" | "finders" | "spend";
 
 export interface DoctorCheck {
   name: string;
@@ -235,6 +267,13 @@ export interface DoctorCheck {
   severity: "ok" | "warn" | "fail";
   message: string;
   hint?: string;
+  approvalRate?: number | null;
+  approved?: number;
+  reviewed?: number;
+  threshold?: number;
+  windowDays?: number;
+  minSamples?: number;
+  deprioritized?: boolean;
 }
 
 export interface SetupRequest {
@@ -307,7 +346,10 @@ export interface SetupRequest {
       | "X_API_SECRET"
       | "X_ACCESS_TOKEN"
       | "X_ACCESS_SECRET"
-      | "TWITTERAPI_IO_KEY",
+      | "TWITTERAPI_IO_KEY"
+      | "GITHUB_TOKEN"
+      | "LUMA_SESSION_COOKIE"
+      | "LINKEDIN_REPLY_WEBHOOK_SECRET",
       string
     >
   >;
@@ -384,6 +426,66 @@ export interface SenderIdentityView {
 
 export type QueueStatusView = "pending" | "approved" | "rejected" | "sent" | "expired";
 
+export const PRIORITY_COMPONENT_KEYS = [
+  "personFit",
+  "accountFit",
+  "intentStrength",
+  "timingFreshness",
+  "signalConfidence",
+  "contactability",
+] as const;
+export type PriorityComponentKey = (typeof PRIORITY_COMPONENT_KEYS)[number];
+
+/** Every priority-artifact version the system can parse and render. */
+export type PriorityVersion = "heuristic-v1" | "heuristic-v2";
+
+/**
+ * Canonical per-version component weights (percent, each row sums to 100).
+ * The scoring engine (packages/find) AND the web chip both read THIS table —
+ * never restate the numbers elsewhere; a hand-copied weight list drifted
+ * once already. v2 kept v1's weights on purpose: the label-mined fix was
+ * feature DIRECTION (exec titles and Host roles were anti-signals), not the
+ * weighting.
+ */
+export const PRIORITY_WEIGHTS_BY_VERSION: Record<
+  PriorityVersion,
+  Record<PriorityComponentKey, number>
+> = {
+  "heuristic-v1": {
+    personFit: 30,
+    accountFit: 20,
+    intentStrength: 20,
+    timingFreshness: 15,
+    signalConfidence: 10,
+    contactability: 5,
+  },
+  "heuristic-v2": {
+    personFit: 30,
+    accountFit: 20,
+    intentStrength: 20,
+    timingFreshness: 15,
+    signalConfidence: 10,
+    contactability: 5,
+  },
+};
+
+/**
+ * Shadow-mode explainable priority score (issue #410, Phase 1). Mirrors
+ * core's `ProspectPriority` — the API contract copy, like
+ * `QueueStatus`/`QueueStatusView`. Display-only: nothing orders, filters, or
+ * gates by it, and it is NOT a conversion probability.
+ */
+export interface ProspectPriorityView {
+  version: PriorityVersion;
+  /** Weighted total, clamped integer 0..100. */
+  total: number;
+  components: Record<PriorityComponentKey, number>;
+  /** Concise evidence strings, fixed order. */
+  reasons: string[];
+  finder: string;
+  scoredAt: string;
+}
+
 export interface QueueRowView {
   id: number;
   playName: string;
@@ -411,6 +513,11 @@ export interface QueueRowView {
    * when the row's status flips to a terminal state.
    */
   isSending: boolean;
+  /**
+   * Shadow-mode priority artifact, or null on manual/legacy/pre-migration
+   * rows and rows whose stored artifact fails shape validation.
+   */
+  priority: ProspectPriorityView | null;
 }
 
 /**
@@ -501,6 +608,9 @@ export const RUNNABLE_PLAYS: readonly string[] = [
   "stack-consolidation",
   "repo-interest",
   "luma-events",
+  "sources-sought",
+  "civic-pilot",
+  "design-partner-loi",
 ];
 
 /**
@@ -738,6 +848,12 @@ export interface QueueListResponse {
   approvedByPlay: Record<string, number>;
   /** Absent when the capacity computation failed — pages skip the figure. */
   sendsToday?: SendsToday;
+  /**
+   * The order `rows` actually came back in — `?order=` param, else the
+   * configured `queueReviewOrder`. "ranked" only ever applies to the pending
+   * review view; every other view is "newest" (found_at DESC).
+   */
+  order: "ranked" | "newest";
 }
 
 export interface DrainRequest {
@@ -778,6 +894,41 @@ export interface TriggerView {
   ready: boolean;
   /** Human-readable reason when `ready === false`; null otherwise. */
   notReadyReason: string | null;
+  approvalRate: number | null;
+  approvalReviewed: number;
+  approvalMinSamples: number;
+  approvalRateThreshold: number;
+  approvalRateWindowDays: number;
+  deprioritized: boolean;
+  deprioritizedReason: string | null;
+}
+
+export interface PackView {
+  id: string;
+  label: string;
+  buyerBrief: string;
+  icpOneLiner: string;
+  /** Trigger names this pack touches. */
+  triggers: string[];
+  /** Founder-voice keys left blank by the pack (e.g. `yourEdge`, `yourClaim`). */
+  requires: string[];
+}
+
+export interface PackApplyTriggerResult {
+  name: string;
+  enabled: boolean;
+  ready: boolean;
+  /** Human-readable reason when `ready === false`; null otherwise. */
+  notReadyReason: string | null;
+}
+
+export interface PackApplyResult {
+  id: string;
+  applied: PackApplyTriggerResult[];
+  /** Trigger names in the pack that aren't in the registry — patch skipped, apply still succeeds. */
+  skipped: Array<{ name: string; reason: string }>;
+  /** The pack's proposed icpOneLiner — never written to config.json; the founder accepts it separately. */
+  proposedIcpOneLiner: string;
 }
 
 export interface DeriveIcpResult {
@@ -866,7 +1017,7 @@ export type RunPlayEvent =
       kind: "verify";
       total: number;
       verified: number;
-      dropped: Array<{ email: string; reason: string }>;
+      dropped: Array<{ email: string; reason: string; index?: number }>;
     }
   | { kind: "stage"; stage: string }
   | { kind: "draft"; index: number; subject: string; body: string; flags: string[] }
@@ -906,6 +1057,8 @@ export interface RunRecord {
   errorCount: number;
   /** Original targets array as posted to /api/run/:playName. */
   targets: unknown[];
+  /** Queue-origin keys parallel to targets; empty for manually entered runs. */
+  dedupeKeys: Array<string | null>;
   /** All SSE events accumulated so far (or all of them, when status !== 'running'). */
   events: RunPlayEvent[];
   /** Emails that were actually sent — used by /cadences?sinceRun to filter. */

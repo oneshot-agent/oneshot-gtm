@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { configDir, demoMode, scrubDemoPaths } from "@oneshot-gtm/core";
 import { health } from "./api/health.ts";
 import { homeMetrics } from "./api/home.ts";
 import {
@@ -43,7 +44,10 @@ import {
   setTriggerConfigRoute,
   setTriggerEnabledRoute,
 } from "./api/triggers.ts";
+import { applyPackRoute, listPacksRoute } from "./api/packs.ts";
 import { addProspectRoute } from "./api/prospects.ts";
+import { calNoShowWebhookRoute, signupWebhookRoute } from "./api/webhook-triggers.ts";
+import { linkedinReplyWebhookRoute, markLinkedInReplyRoute } from "./api/linkedin-replies.ts";
 
 interface ServerOptions {
   port: number;
@@ -75,6 +79,7 @@ const routes: RouteEntry[] = [
   route("GET", "/api/cadences", listCadences),
   route("GET", "/api/cadences/:id", getCadence),
   route("POST", "/api/cadences/:id/stop", stopCadence),
+  route("POST", "/api/prospects/:id/linkedin-reply", markLinkedInReplyRoute),
   route("POST", "/api/cadences/:id/preview-next", previewCadenceStepRoute),
   route("POST", "/api/cadences/:id/send-next", sendCadenceStepRoute),
   route("POST", "/api/cadences/preview-batch", previewCadenceBatchRoute),
@@ -119,9 +124,14 @@ const routes: RouteEntry[] = [
   route("POST", "/api/queue/:id/send-draft", sendDraftRoute),
   route("POST", "/api/queue/:id/mark-sent", markSentRoute),
   route("GET", "/api/triggers", listTriggersRoute),
+  route("POST", "/api/triggers/cal-no-show", calNoShowWebhookRoute),
+  route("POST", "/api/triggers/signup", signupWebhookRoute),
+  route("POST", "/api/triggers/linkedin-reply", linkedinReplyWebhookRoute),
   route("POST", "/api/triggers/:name/enabled", setTriggerEnabledRoute),
   route("POST", "/api/triggers/:name/config", setTriggerConfigRoute),
   route("POST", "/api/triggers/:name/run", runTriggerRoute),
+  route("GET", "/api/packs", listPacksRoute),
+  route("POST", "/api/packs/:id/apply", applyPackRoute),
 ];
 
 function findRoute(req: Request): { handler: RouteHandler; params: Record<string, string> } | null {
@@ -259,11 +269,15 @@ export async function startServer(
 function isLoopbackOrigin(origin: string): boolean {
   // Empty origin = same-origin request (curl, server-side fetch); allow.
   if (origin === "") return true;
-  return (
-    origin.startsWith("http://127.0.0.1") ||
-    origin.startsWith("http://localhost") ||
-    origin.startsWith("http://[::1]")
-  );
+  try {
+    const url = new URL(origin);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]")
+    );
+  } catch {
+    return false;
+  }
 }
 
 function isLoopbackHost(host: string | null): boolean {
@@ -293,5 +307,10 @@ export function jsonResponse(body: unknown, status = 200, req?: Request): Respon
     "content-type": "application/json; charset=utf-8",
   };
   if (req) Object.assign(headers, corsHeaders(req));
-  return new Response(JSON.stringify(body), { status, headers });
+
+  // Every JSON response the server produces passes through here, which is the
+  // only place a demo install can be stopped from printing the operator's home
+  // directory back at a camera. See scrubDemoPaths.
+  const json = JSON.stringify(body);
+  return new Response(demoMode() ? scrubDemoPaths(json, configDir()) : json, { status, headers });
 }

@@ -108,7 +108,7 @@ vi.mock("@oneshot-gtm/plays", async () => {
   };
 });
 
-const { runPlay } = await import("../src/api/run.ts");
+const { cancelRunRoute, runPlay } = await import("../src/api/run.ts");
 
 function makeRequest(playName: string, body: unknown, signal?: AbortSignal): Request {
   return new Request(`http://127.0.0.1:3030/api/run/${playName}`, {
@@ -175,6 +175,27 @@ describe("runPlay — verify-then-dispatch", () => {
     const frames = await readSseFrames(res.body);
     expect(frames.find((f) => f.kind === "verify")).toBeUndefined();
     // dispatchPlay was still invoked, with the verified targets.
+    expect(playCalls[0]?.targets).toEqual(targets);
+  });
+
+  it("verifies only manual targets in a mixed queue batch", async () => {
+    const targets = [
+      { founderEmail: "queued@x.dev", postTitle: "Queued" },
+      { founderEmail: "manual@x.dev", postTitle: "Manual" },
+    ];
+    nextVerify = { verified: [targets[1]!], dropped: [], receiptIds: [], costUsd: 0 };
+
+    const res = await runPlay(
+      makeRequest("show-hn", {
+        targets,
+        dedupeKeys: ["queue-key", null],
+        dryRun: false,
+      }),
+      { playName: "show-hn" },
+    );
+    await readSseFrames(res.body);
+
+    expect(captureVerifyArgs?.targets).toEqual([targets[1]]);
     expect(playCalls[0]?.targets).toEqual(targets);
   });
 
@@ -286,6 +307,41 @@ describe("runPlay — verify-then-dispatch", () => {
     expect(row?.prospectEmails).toEqual(["a@x.dev", "b@x.dev"]);
   });
 
+  it("persists drafts completed before dispatch rejects on cancellation", async () => {
+    const target = { founderEmail: "partial@x.dev" };
+    getLedger().enqueueTarget({
+      playName: "show-hn",
+      payload: target,
+      dedupeKey: "queue-partial",
+      source: "test",
+      initialStatus: "approved",
+    });
+    runOverride = (input) => {
+      input.onProgress?.(0, {
+        subject: "partial subject",
+        body: "partial body",
+        flags: [],
+        sent: false,
+        receiptIds: [],
+      });
+      return Promise.reject(new RunCancelledError("cancelled by user"));
+    };
+    const res = await runPlay(
+      makeRequest("show-hn", {
+        targets: [target],
+        dedupeKeys: ["queue-partial"],
+        dryRun: true,
+      }),
+      { playName: "show-hn" },
+    );
+    await readSseFrames(res.body);
+    const row = getLedger().getQueueRowByDedupe("show-hn", "queue-partial");
+    expect(JSON.parse(row?.last_draft_json ?? "{}")).toMatchObject({
+      subject: "partial subject",
+      body: "partial body",
+    });
+  });
+
   it("reports a real error as an error even when the client already disconnected", async () => {
     // Disconnect fires the run's abort, but what actually ended the run was an
     // SDK failure — it must land as `error`, not get relabelled a cancellation.
@@ -323,5 +379,16 @@ describe("runPlay — verify-then-dispatch", () => {
       playName: "show-hn",
     });
     expect(noTargets.status).toBe(400);
+  });
+});
+
+describe("cancelRunRoute — origin validation", () => {
+  it("rejects a hostname that merely starts with localhost", async () => {
+    const req = new Request("http://127.0.0.1/api/run/1/cancel", {
+      method: "POST",
+      headers: { origin: "http://localhost.evil.example" },
+    });
+    const res = await cancelRunRoute(req, { runId: "1" });
+    expect(res.status).toBe(403);
   });
 });

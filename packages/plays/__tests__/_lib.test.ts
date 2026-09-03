@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { lintEmail } from "../src/_lib.ts";
+import { lintEmail, lintOpenerFrequency, openerStem, overusedOpeners } from "../src/_lib.ts";
 
 describe("lintEmail — humanizer canon", () => {
   it("returns no flags for a clean founder-to-founder email", () => {
@@ -65,6 +65,36 @@ describe("lintEmail — humanizer canon", () => {
     expect(lintEmail("hi", "First!! Second!! Sam")).toContain("excess-exclamations");
   });
 
+  // finding PRRT_kwDOSKzrBs6ewQdB: a SAM.gov notice number the play must
+  // reproduce verbatim (e.g. W912DY-26-R-0042) mixes letters and digits in
+  // one token — that's an identifier, not shouting, so it must not trip the
+  // guarded send-path lint that sources-sought-email.md line 20 requires.
+  it("does not flag alphanumeric identifier tokens as shouty", () => {
+    expect(lintEmail("W912DY-26-R-0042 — capability question", "Body. Sam")).not.toContain(
+      "subject-shouty",
+    );
+    expect(lintEmail("re: W912DY-26-R-0042", "Body. Sam")).not.toContain("subject-shouty");
+    expect(lintEmail("SP4701-26-R-0007 — capability question", "Body. Sam")).not.toContain(
+      "subject-shouty",
+    );
+  });
+
+  it("still flags a genuinely shouty subject next to an identifier token", () => {
+    // "URGENT" carries no digit, so it stays a real shout even alongside a
+    // compliant notice-number token in the same subject.
+    expect(lintEmail("URGENT W912DY-26-R-0042", "Body. Sam")).toContain("subject-shouty");
+  });
+
+  // round-2 correction for finding PRRT_kwDOSKzrBs6ewQdB: the round-1 fix
+  // exempted ANY token mixing a letter and a digit, so a shouty promo token
+  // that merely happens to contain a digit (not a hyphenated solicitation
+  // number) would have slipped past the lint. That must still be caught.
+  it("still flags a shouty alphanumeric token that is not a solicitation number", () => {
+    expect(lintEmail("SAVE20NOW offer", "Body. Sam")).toContain("subject-shouty");
+    expect(lintEmail("URGENT2 offer", "Body. Sam")).toContain("subject-shouty");
+    expect(lintEmail("FREE50 off today", "Body. Sam")).toContain("subject-shouty");
+  });
+
   it("flags calendar links", () => {
     expect(lintEmail("hi", "Here's my calendly link to book. Sam")).toContain("calendar-link");
   });
@@ -87,5 +117,111 @@ describe("lintEmail — humanizer canon", () => {
   it("flags body over the maxBodyWords cap", () => {
     const body = Array.from({ length: 150 }, () => "word").join(" ");
     expect(lintEmail("hi", body, 100)).toContain("body-too-long");
+  });
+});
+
+describe("lintEmail — meeting asks dressed as small ones", () => {
+  it("flags compare notes / swap takes / back-and-forth", () => {
+    for (const ask of [
+      "Still open to compare notes on it? Sam",
+      "want to swap takes on this? Sam",
+      "worth a quick back-and-forth? Sam",
+    ]) {
+      expect(lintEmail("ping", ask)).toContain("banned-cta:compare-notes");
+    }
+  });
+
+  it("leaves a one-line question answerable from their own experience alone", () => {
+    expect(lintEmail("ping", "the keys or the billing, which one actually bites? Sam")).toEqual([]);
+  });
+});
+
+describe("openerStem", () => {
+  it("drops a generated greeting so the stem is the actual opener", () => {
+    expect(openerStem("Hey Akhilesh,\n\nStill curious if the keys bit you.\n\nJ.")).toBe(
+      "still curious",
+    );
+    expect(openerStem("Hi Dr. Chen -\nthe keys or the billing?")).toBe("the keys");
+  });
+
+  it("keeps a first line that only looks like a greeting", () => {
+    expect(openerStem("Heya the ramp stalled?")).toBe("heya the");
+  });
+
+  it("normalizes case and punctuation, and survives an empty body", () => {
+    expect(openerStem("  STILL, curious...  whether\n")).toBe("still curious");
+    expect(openerStem("\n\n")).toBe("");
+  });
+});
+
+/** `n` bodies that all open with `stem`, each otherwise distinct. */
+const withStem = (stem: string, n: number): string[] =>
+  Array.from({ length: n }, (_, i) => `Hey Sam,\n\n${stem} thing number ${i}.\n\nJ.`);
+
+describe("lintOpenerFrequency — cap, not ban", () => {
+  it("flags an opener that holds more than a quarter of recent sends", () => {
+    const recent = [...withStem("still curious", 12), ...withStem("the keys", 8)];
+    expect(lintOpenerFrequency("Hey Ada,\n\nstill curious about it.", recent)).toEqual([
+      "opener-overused",
+    ]);
+  });
+
+  it("allows the same opener while it is still a minority", () => {
+    const recent = [...withStem("still curious", 4), ...withStem("the keys", 16)];
+    expect(lintOpenerFrequency("Hey Ada,\n\nstill curious about it.", recent)).toEqual([]);
+  });
+
+  it("stays quiet below the minimum sample rather than guessing", () => {
+    expect(
+      lintOpenerFrequency("Hey Ada,\n\nstill curious about it.", withStem("still curious", 7)),
+    ).toEqual([]);
+    expect(lintOpenerFrequency("Hey Ada,\n\nstill curious about it.", [])).toEqual([]);
+  });
+
+  it("does not flag a body with no opener at all", () => {
+    expect(lintOpenerFrequency("\n\n", withStem("still curious", 20))).toEqual([]);
+  });
+
+  it("measures the real shape: a six-word stem would have missed this", () => {
+    // "still curious how you handle the" held 18% of 411 real follow-ups while
+    // "still curious" held 55% — the cap has to compare the short stem.
+    const recent = [
+      ...withStem("still curious how you handle the", 8),
+      ...withStem("still curious whether the keys are", 8),
+      ...withStem("the migration", 4),
+    ];
+    expect(lintOpenerFrequency("Hey Ada,\n\nstill curious if it bit you.", recent)).toEqual([
+      "opener-overused",
+    ]);
+  });
+});
+
+describe("overusedOpeners", () => {
+  it("names every stem over the cap, worst first", () => {
+    const recent = [
+      ...withStem("still curious", 10),
+      ...withStem("still open", 6),
+      ...withStem("the keys", 4),
+    ];
+    expect(overusedOpeners(recent)).toEqual(["still curious", "still open"]);
+  });
+
+  it("names nothing when the window is short or evenly spread", () => {
+    expect(overusedOpeners(withStem("still curious", 7))).toEqual([]);
+    const spread = ["a x", "b x", "c x", "d x", "e x", "f x", "g x", "h x"];
+    expect(overusedOpeners(spread)).toEqual([]);
+  });
+
+  it("agrees with the flag it steers away from", () => {
+    // 12 of 20 on one stem; the rest spread thin enough to stay under the cap.
+    const spread = ["alpha one", "bravo two", "charlie three", "delta four"].flatMap((s) =>
+      withStem(s, 2),
+    );
+    const recent = [...withStem("still curious", 12), ...spread];
+    expect(overusedOpeners(recent)).toEqual(["still curious"]);
+    expect(lintOpenerFrequency("Hey Ada,\n\nstill curious about it.", recent)).toEqual([
+      "opener-overused",
+    ]);
+    expect(lintOpenerFrequency("Hey Ada,\n\nalpha one thing.", recent)).toEqual([]);
   });
 });

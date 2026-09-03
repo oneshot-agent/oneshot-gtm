@@ -117,9 +117,15 @@ export const SLOP_PHRASES: Array<[RegExp, string]> = [
   [/\bLoved your launch\b/i, "banned-opener:loved-your-launch"],
   [/\bReaching out because\b/i, "banned-opener:reaching-out"],
   [/\bI'd love to (?:chat|connect|jump on a call|hear)\b/i, "banned-cta:love-to-chat"],
-  [/\bWorth a 15.?min\b/i, "banned-cta:worth-15-min"],
+  // Any time-boxed meeting ask, not just the 15-minute one: "worth a 10-min
+  // back and forth" shipped 291 times past the literal 15 in this pattern.
+  [/\bWorth a \d+.?min/i, "banned-cta:worth-n-min"],
   [/\bMind if I\b/i, "banned-cta:mind-if-i"],
   [/\bJust wanted to\b/i, "banned-filler:just-wanted-to"],
+  // A meeting ask dressed as a small one (_humanizer.md -> Banned CTAs). Prompt
+  // text alone did not hold it: 120 of 312 repo-interest second touches shipped
+  // with one, because several play prompts quoted the phrase while banning it.
+  [/\b(?:compare notes|swap takes|back.?and.?forth|trade notes)\b/i, "banned-cta:compare-notes"],
   [/\bcurious to (?:learn|hear)\b/i, "banned-filler:curious-to"],
   [
     /\b(?:additionally|crucial|delve|enduring|enhance|fostering|garner|highlight|interplay|intricate|pivotal|showcase|tapestry|testament|underscore|leverage|navigate|elevate|empower|seamless|robust|comprehensive|vibrant|profound|groundbreaking|revolutionary)\b/i,
@@ -178,11 +184,118 @@ export function bodyWordsForLint(body: string, sigLines?: string[]): number {
   return trimmed.split(/\s+/).filter(Boolean).length;
 }
 
+/**
+ * Words of the body that make up an opener fingerprint. Two, measured: across
+ * 411 sent follow-ups the opener "still curious" held 55% at two words but
+ * fragmented to 18% by six, so a longer stem slips under any usable cap while
+ * the mail still reads identically to anyone who sees two of them.
+ */
+const OPENER_STEM_WORDS = 2;
+
+/** Below this many prior sends the share is noise, so the cap never fires. */
+const OPENER_MIN_SAMPLE = 8;
+
+/** Share of recent sends one stem may hold before it counts as a fingerprint. */
+const OPENER_MAX_SHARE = 0.25;
+
+/**
+ * The body's first `words` words, minus a greeting line, lowercased and
+ * stripped of punctuation — the unit the opener-frequency cap compares.
+ *
+ * The greeting goes because it is generated from the prospect's name: leaving
+ * "Hey Sam," in would make every stem unique and the cap would never fire.
+ */
+export function openerStem(body: string, words = OPENER_STEM_WORDS): string {
+  const lines = body
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  const first = lines[0] ?? "";
+  const rest =
+    lines.length > 1 &&
+    /^(?:hey|hi|hello|good (?:morning|afternoon))\b[^,]{0,40}[,\-–—]?$/i.test(first)
+      ? lines.slice(1)
+      : lines;
+  const normalized = rest
+    .join(" ")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ");
+  return normalized.split(" ").filter(Boolean).slice(0, words).join(" ");
+}
+
+/**
+ * Flags a draft whose opening words already carry more than their share of
+ * this play + step's recent sends.
+ *
+ * A frequency cap rather than a ban: the goal is not that every opener be
+ * unique, it is that no single opener speaks for the majority of a domain's
+ * touches. Prompt text alone did not hold this — the prompts advertise four
+ * shapes and the model still reached for the same one — so it is gated here,
+ * where a rule cannot be talked out of.
+ *
+ * `recentBodies` is the caller's window (newest first); an empty or short
+ * window returns no flags rather than guessing.
+ *
+ * Paired with `overusedOpeners`, which the follow-up builder feeds to the
+ * model BEFORE it drafts — the flag alone would only reject, and every
+ * rejection costs another paid draft.
+ */
+export function overusedOpeners(
+  recentBodies: readonly string[],
+  opts: { minSample?: number; maxShare?: number } = {},
+): string[] {
+  const minSample = opts.minSample ?? OPENER_MIN_SAMPLE;
+  const maxShare = opts.maxShare ?? OPENER_MAX_SHARE;
+  if (recentBodies.length < minSample) return [];
+  const counts = new Map<string, number>();
+  for (const prior of recentBodies) {
+    const stem = openerStem(prior);
+    if (stem.length > 0) counts.set(stem, (counts.get(stem) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .filter(([, n]) => n / recentBodies.length >= maxShare)
+    .toSorted((a, b) => b[1] - a[1])
+    .map(([stem]) => stem);
+}
+
+export function lintOpenerFrequency(
+  body: string,
+  recentBodies: readonly string[],
+  opts: { minSample?: number; maxShare?: number } = {},
+): string[] {
+  const stem = openerStem(body);
+  if (stem.length === 0) return [];
+  return overusedOpeners(recentBodies, opts).includes(stem) ? ["opener-overused"] : [];
+}
+
+/**
+ * A run of 2+ consecutive uppercase letters normally reads as shouting
+ * (the humanizer's own rule: "lowercase the whole subject line ... acronyms
+ * (`api` not `API`)"). But a token shaped like a SAM.gov notice number —
+ * hyphen-separated alphanumeric segments such as `W912DY-26-R-0042` — is an
+ * identifier the play is REQUIRED to reproduce verbatim
+ * (packages/prompts/sources-sought-email.md line 11/20), not a shouted word
+ * choice. Exempt only that hyphenated identifier shape so a compliant
+ * sources-sought subject doesn't get flagged and held from the guarded send
+ * path (finding PRRT_kwDOSKzrBs6ewQdB), without also exempting ordinary
+ * shouty-but-alphanumeric tokens like "URGENT2" or "SAVE20NOW" (finding
+ * PRRT_kwDOSKzrBs6ewQdB round 2: the digit+letter test alone was too broad).
+ */
+const SOLICITATION_NUMBER_RE = /^[A-Za-z0-9]+(-[A-Za-z0-9]+){2,}$/;
+
+function subjectShouty(subject: string): boolean {
+  return subject.split(/\s+/).some((token) => {
+    const isSolicitationNumber =
+      SOLICITATION_NUMBER_RE.test(token) && /\d/.test(token) && /[A-Za-z]/.test(token);
+    return !isSolicitationNumber && /[A-Z]{2,}/.test(token);
+  });
+}
+
 export function lintEmail(subject: string, body: string, maxBodyWords = 110): string[] {
   const flags: string[] = [];
   if (subject.length === 0) flags.push("empty-subject");
   if (subject.length > 60) flags.push("subject-too-long");
-  if (/[A-Z]{2,}/.test(subject)) flags.push("subject-shouty");
+  if (subjectShouty(subject)) flags.push("subject-shouty");
   if (body.length === 0) flags.push("empty-body");
   if (bodyWordsForLint(body) > maxBodyWords) flags.push("body-too-long");
   if (body.includes("—")) flags.push("em-dash");
@@ -686,7 +799,7 @@ export function firstNameFrom(name: string | null | undefined): string | null {
 
 interface VerifyAndFilterResult<T> {
   verified: T[];
-  dropped: Array<{ target: T; email: string; reason: string }>;
+  dropped: Array<{ target: T; email: string; reason: string; index?: number }>;
   receiptIds: number[];
   costUsd: number;
 }
@@ -755,26 +868,32 @@ export async function verifyAndFilterTargets<T>(
     if (v.receiptId > 0) receiptIds.push(v.receiptId);
   }
 
+  let i = 0;
   for (const t of targets) {
     const email = emailFor.get(t);
     if (!email) {
-      dropped.push({ target: t, email: "", reason: "missing email" });
+      dropped.push({ target: t, email: "", reason: "missing email", index: i });
+      i++;
       continue;
     }
     const v = byEmail.get(email);
     if (!v) {
-      dropped.push({ target: t, email, reason: "undeliverable" });
+      dropped.push({ target: t, email, reason: "undeliverable", index: i });
+      i++;
       continue;
     }
     if (v.errored) {
-      dropped.push({ target: t, email, reason: `verify-error: ${v.message}` });
+      dropped.push({ target: t, email, reason: `verify-error: ${v.message}`, index: i });
+      i++;
       continue;
     }
     if (!v.deliverable) {
-      dropped.push({ target: t, email, reason: "undeliverable" });
+      dropped.push({ target: t, email, reason: "undeliverable", index: i });
+      i++;
       continue;
     }
     verified.push(t);
+    i++;
   }
 
   return { verified, dropped, receiptIds, costUsd };

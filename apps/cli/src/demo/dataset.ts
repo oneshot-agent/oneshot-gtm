@@ -1,4 +1,5 @@
 import { cadenceGoalId } from "@oneshot-gtm/core";
+import { lintEmail } from "@oneshot-gtm/plays";
 
 /**
  * The demo install, as pure data — `seed.ts` writes it. Deterministic: every
@@ -578,6 +579,8 @@ export interface DemoProspectRow {
   name: string;
   email: string;
   company: string;
+  /** The role, as the prospects table stores it — not only inside the dossier. */
+  title: string;
   linkedinUrl: string | null;
   dossierJson: string;
   source: string;
@@ -739,6 +742,7 @@ export function buildDemoDataset(anchor: Date): DemoDataset {
       name: p.name,
       email: p.email,
       company: p.company,
+      title: p.title,
       linkedinUrl: p.linkedin,
       dossierJson: JSON.stringify({
         title: p.title,
@@ -866,7 +870,10 @@ export function buildDemoDataset(anchor: Date): DemoDataset {
           ? JSON.stringify({
               subject: subjectFor(p, p.steps),
               body: bodyFor(p, p.steps),
-              flags: [],
+              // What the real linter says about this exact text, so a demo
+              // draft can never claim a flag its body does not earn — nor hide
+              // one it does.
+              flags: lintEmail(subjectFor(p, p.steps), bodyFor(p, p.steps)),
               payload: { name: p.name, company: p.company, hook: p.hook },
               draftedAt: isoAt(anchor, 1, 7, jitter(i)),
             })
@@ -1117,6 +1124,16 @@ function buildQueue(anchor: Date): DemoDataset["queue"] {
     },
   ];
 
+  /*
+   * Three approved rows: two clean drafts and one the linter holds.
+   *
+   * The held one is the point. Every play runs its draft through `lintEmail`
+   * before it is allowed out, and with three clean drafts the demo showed a
+   * gate that never fires — a claim with nothing behind it. This body is what
+   * an unlinted model writes: a borrowed opener, an em dash, a rule of three
+   * and a soft CTA. Its flags are not written down anywhere; they are whatever
+   * the real linter says about this exact text, computed at seed time below.
+   */
   const approved = [
     {
       play: "job-change",
@@ -1151,6 +1168,23 @@ function buildQueue(anchor: Date): DemoDataset["queue"] {
       draft: {
         subject: "The line in your postmortem about turning off tracing",
         body: "Hey Grace,\n\nYour postmortem says you disabled tracing on the worker fleet because per-host pricing made it untenable, and then the next incident took six hours to reconstruct. Those two sentences are the whole pitch.\n\nTracepoint prices per job, not per host.\n\nWorth a look?\n\nMira",
+      },
+    },
+    {
+      play: "post-funding",
+      source: "post-funding",
+      payload: {
+        name: "Priya Raman",
+        email: "priya@northwind.dev",
+        company: "Northwind",
+        round: "Series A",
+        amount: "$14M",
+        announcementUrl: "https://techcrunch.com/northwind-series-a-fake",
+      },
+      daysAgo: 1,
+      draft: {
+        subject: "Northwind + background job traces",
+        body: "Hi Priya,\n\nI came across Northwind's engineering blog and wanted to reach out — the post on queue backpressure was a great read.\n\nTracepoint helps teams leverage per-job tracing, so incidents get faster, cheaper, and clearer.\n\nI'd love to connect if you are open to it.\n\nBest,\nMira",
       },
     },
   ];
@@ -1189,7 +1223,7 @@ function buildQueue(anchor: Date): DemoDataset["queue"] {
       lastDraftJson: JSON.stringify({
         subject: r.draft.subject,
         body: r.draft.body,
-        flags: [],
+        flags: lintEmail(r.draft.subject, r.draft.body),
         sent: false,
         receiptIds: [],
         dryRun: false,

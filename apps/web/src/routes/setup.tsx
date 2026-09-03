@@ -13,8 +13,24 @@ import { api } from "../api/client.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
 import { Checkbox, Field, Input, Select, Textarea } from "../components/primitives/Field.tsx";
+import { readOnly } from "../lib/readOnly.ts";
+
+interface SetupSearch {
+  /**
+   * A pack's proposed ICP, deep-linked from /queue's "Accept in Setup" action
+   * (see PackRow in queue.tsx). Prefills the ICP field only — apply-pack never
+   * writes icpOneLiner to config.json itself; the founder still has to Save.
+   */
+  proposedIcp?: string;
+  /** Which pack proposed it, for the banner copy. */
+  packLabel?: string;
+}
 
 export const Route = createFileRoute("/setup")({
+  validateSearch: (search: Record<string, unknown>): SetupSearch => ({
+    proposedIcp: typeof search["proposedIcp"] === "string" ? search["proposedIcp"] : undefined,
+    packLabel: typeof search["packLabel"] === "string" ? search["packLabel"] : undefined,
+  }),
   component: SetupPage,
 });
 
@@ -41,6 +57,8 @@ const SECRET_LABELS: Record<string, string> = {
   X_ACCESS_TOKEN: "X_ACCESS_TOKEN",
   X_ACCESS_SECRET: "X_ACCESS_SECRET",
   TWITTERAPI_IO_KEY: "twitterapi.io API key",
+  GITHUB_TOKEN: "GitHub token",
+  LUMA_SESSION_COOKIE: "Luma session cookie",
 };
 
 const X_OAUTH_KEYS = ["X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_SECRET"] as const;
@@ -49,6 +67,7 @@ function SetupPage() {
   const qc = useQueryClient();
   const status = useQuery({ queryKey: ["setup"], queryFn: api.setupStatus });
   const triggers = useQuery({ queryKey: ["triggers"], queryFn: api.triggers });
+  const { proposedIcp, packLabel } = Route.useSearch();
 
   const [founderName, setFounderName] = useState("");
   const [founderEmail, setFounderEmail] = useState("");
@@ -101,6 +120,33 @@ function SetupPage() {
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
+  // A pack's proposed ICP arrives via ?proposedIcp= from /queue's "Accept in
+  // Setup" action (PackRow). Seed it into the field once on arrival — same
+  // one-shot-then-hands-off-to-the-founder pattern as briefDirty above — so a
+  // background ["setup"] refetch doesn't clobber the founder's edits after.
+  // Clear proposedIcp/packLabel from the URL once consumed (same pattern as
+  // the gmailAuth outcome below) so a later reload of /setup doesn't reset
+  // icpFromPack and silently re-seed — and re-save — the stale pack proposal
+  // over the founder's own edits.
+  const icpFromPack = useRef(false);
+  useEffect(() => {
+    if (!proposedIcp || icpFromPack.current) return;
+    icpFromPack.current = true;
+    setIcpOneLiner(proposedIcp);
+    const params = new URLSearchParams(window.location.search);
+    params.delete("proposedIcp");
+    params.delete("packLabel");
+    const qs = params.toString();
+    // Preserve window.history.state (TanStack Router's __TSR_index/__TSR_key
+    // live there) — replacing it with {} desyncs the router's history index
+    // and turns the next back/forward into a generic GO instead of BACK/FORWARD.
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${window.location.pathname}${qs ? `?${qs}` : ""}`,
+    );
+  }, [proposedIcp]);
+
   // X channel: engine choice lives in the x-reposters trigger config, not in
   // config.json. Seed local state once from the stored trigger; after that the
   // select is the founder's — a background refetch must not clobber it.
@@ -125,7 +171,7 @@ function SetupPage() {
     setProductOneLiner(c.productOneLiner ?? "");
     setProductDomain(c.productDomain ?? "");
     setSendingDomain(c.sendingDomain ?? "");
-    setIcpOneLiner(c.icpOneLiner ?? "");
+    setIcpOneLiner((prev) => (icpFromPack.current ? prev : (c.icpOneLiner ?? "")));
     setFounderCredentials(c.founderCredentials ?? "");
     setProductPortfolio(c.productPortfolio ?? "");
     setPartners(c.partners ?? "");
@@ -438,6 +484,12 @@ function SetupPage() {
           lede="A free-text classifier. The find layer uses this to drop candidates that don't match."
         >
           <div className="flex flex-col gap-4">
+            {proposedIcp && icpFromPack.current && (
+              <div className="border-l-2 border-[color:var(--ink-receipt)] bg-[color:var(--ink-receipt)]/10 px-3 py-2 font-mono text-[11.5px] text-ink-cream-2">
+                Proposed by {packLabel ?? "an industry pack"} — never written until you Save below.
+                Edit or clear it first if it's not right.
+              </div>
+            )}
             <Field
               label="Derive from a website"
               hint="Paste a domain (or full URL) of a company whose customers look like yours. We'll read the page and propose an ICP — you can edit before saving. Spends ~$0.02–0.05 (one webRead + one LLM call)."
@@ -460,6 +512,7 @@ function SetupPage() {
                   className="shrink-0 whitespace-nowrap"
                   disabled={deriveIcp.isPending || icpDomain.trim().length === 0}
                   onClick={() => deriveIcp.mutate(icpDomain.trim())}
+                  {...readOnly}
                 >
                   <Wand2 size={12} className={deriveIcp.isPending ? "animate-pulse" : undefined} />
                   {deriveIcp.isPending ? `Working · ${deriveElapsed}s` : "Derive ICP"}
@@ -601,6 +654,7 @@ function SetupPage() {
                         .slice(0, 5),
                     )
                   }
+                  {...readOnly}
                 >
                   <Wand2
                     size={12}
@@ -803,6 +857,43 @@ function SetupPage() {
         </LedgerSection>
 
         <LedgerSection
+          eyebrow="05.6 · LinkedIn replies"
+          lede="Let LinkedIn automation tools report a real prospect reply so OneShot stops every live email cadence. Connection acceptance alone does nothing."
+        >
+          <Field
+            label="LINKEDIN_REPLY_WEBHOOK_SECRET"
+            hint={`${hintFor(sources["LINKEDIN_REPLY_WEBHOOK_SECRET"])} Use a random 32+ character bearer secret.`}
+          >
+            <Input
+              type="password"
+              placeholder={sources["LINKEDIN_REPLY_WEBHOOK_SECRET"] ? "(unchanged)" : ""}
+              value={secrets["LINKEDIN_REPLY_WEBHOOK_SECRET"] ?? ""}
+              onChange={(e) => setSecret("LINKEDIN_REPLY_WEBHOOK_SECRET", e.target.value)}
+              autoComplete="new-password"
+            />
+          </Field>
+        </LedgerSection>
+
+        <LedgerSection
+          eyebrow="05.75 · Finder access"
+          lede="Optional credentials for richer GitHub and Luma discovery. They are stored in the same local .env."
+        >
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {(["GITHUB_TOKEN", "LUMA_SESSION_COOKIE"] as const).map((key) => (
+              <Field key={key} label={SECRET_LABELS[key] ?? key} hint={hintFor(sources[key])}>
+                <Input
+                  type="password"
+                  placeholder={sources[key] ? "(unchanged)" : ""}
+                  value={secrets[key] ?? ""}
+                  onChange={(e) => setSecret(key, e.target.value)}
+                  autoComplete="new-password"
+                />
+              </Field>
+            ))}
+          </div>
+        </LedgerSection>
+
+        <LedgerSection
           eyebrow="06 · Email transport"
           lede="The sender rotation pool. Each prospect sticks to the identity that first emailed them; new prospects go to the identity with the most capacity left today."
         >
@@ -929,6 +1020,7 @@ function SetupPage() {
                                 action: paused ? "resume" : "pause",
                               })
                             }
+                            {...readOnly}
                           >
                             {busy ? "…" : paused ? "Resume" : "Pause"}
                           </Button>
@@ -1085,6 +1177,7 @@ function SetupPage() {
                     variant="secondary"
                     disabled={!smartleadKeyReady || loadSmartlead.isPending}
                     onClick={() => loadSmartlead.mutate()}
+                    {...readOnly}
                   >
                     {loadSmartlead.isPending ? "Loading…" : "Load Smartlead accounts"}
                   </Button>
@@ -1166,7 +1259,7 @@ function SetupPage() {
                 )}
               </div>
             </div>
-            {!isLegacyPool && !gmailCredsReady && (
+            {!gmailCredsReady && (
               <>
                 <Field label="GMAIL_CLIENT_ID" hint={hintFor(sources["GMAIL_CLIENT_ID"])}>
                   <Input
@@ -1209,24 +1302,6 @@ function SetupPage() {
                   </code>{" "}
                   to authorize in the browser and fill all three values automatically.
                 </div>
-                <Field label="GMAIL_CLIENT_ID" hint={hintFor(sources["GMAIL_CLIENT_ID"])}>
-                  <Input
-                    type="password"
-                    placeholder={sources["GMAIL_CLIENT_ID"] ? "(unchanged)" : ""}
-                    value={secrets["GMAIL_CLIENT_ID"] ?? ""}
-                    onChange={(e) => setSecret("GMAIL_CLIENT_ID", e.target.value)}
-                    autoComplete="new-password"
-                  />
-                </Field>
-                <Field label="GMAIL_CLIENT_SECRET" hint={hintFor(sources["GMAIL_CLIENT_SECRET"])}>
-                  <Input
-                    type="password"
-                    placeholder={sources["GMAIL_CLIENT_SECRET"] ? "(unchanged)" : ""}
-                    value={secrets["GMAIL_CLIENT_SECRET"] ?? ""}
-                    onChange={(e) => setSecret("GMAIL_CLIENT_SECRET", e.target.value)}
-                    autoComplete="new-password"
-                  />
-                </Field>
                 <Field
                   label="GMAIL_REFRESH_TOKEN"
                   hint={hintFor(sources["GMAIL_REFRESH_TOKEN"])}
@@ -1256,7 +1331,10 @@ function SetupPage() {
           />
         </LedgerSection>
 
-        <div className="sticky bottom-0 z-10 flex items-center justify-between gap-4 border-b border-t border-ink-rule bg-ink-bg/90 px-6 py-3 backdrop-blur-[2px]">
+        <div
+          className="sticky bottom-0 z-10 flex items-center justify-between gap-4 border-b border-t border-ink-rule bg-ink-bg/90 px-6 py-3 backdrop-blur-[2px]"
+          data-foot-bar
+        >
           <div className="font-mono text-[11px] text-ink-muted">
             {save.isSuccess && savedAt != null ? (
               <span className="text-[color:var(--ink-receipt-2)]">
@@ -1269,6 +1347,7 @@ function SetupPage() {
           <Button
             type="submit"
             disabled={save.isPending || deriveBrief.isPending}
+            {...readOnly}
             title={
               deriveBrief.isPending ? "wait for the brief derive to finish, then save" : undefined
             }

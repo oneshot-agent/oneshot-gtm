@@ -70,10 +70,20 @@ beforeEach(() => {
   nextOutcomes = [];
   stdout = [];
   stderr = [];
-  writeSpy = vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
-    stdout.push(String(chunk));
-    return true;
-  });
+  writeSpy = vi
+    .spyOn(process.stdout, "write")
+    .mockImplementation(
+      (
+        chunk: string | Uint8Array,
+        encodingOrCallback?: BufferEncoding | ((error?: Error | undefined) => void),
+        callback?: (error?: Error | undefined) => void,
+      ) => {
+        stdout.push(String(chunk));
+        if (typeof encodingOrCallback === "function") encodingOrCallback();
+        else callback?.();
+        return true;
+      },
+    );
   errSpy = vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
     stderr.push(String(chunk));
     return true;
@@ -188,18 +198,22 @@ describe("commandFindWatch daemon", () => {
     nextOutcomes = [errored("show-hn"), ran("github-stars")];
     const done = commandFindWatch({ once: false, quiet: true });
 
-    await vi.advanceTimersByTimeAsync(0);
+    vi.advanceTimersByTime(0);
+    await new Promise(process.nextTick);
     expect(calls.runDueTriggers).toBe(1);
-    await vi.advanceTimersByTimeAsync(60_000);
+    vi.advanceTimersByTime(60_000);
+    await new Promise(process.nextTick);
     expect(calls.runDueTriggers).toBe(2);
-    await vi.advanceTimersByTimeAsync(60_000);
+    vi.advanceTimersByTime(60_000);
+    await new Promise(process.nextTick);
     expect(calls.runDueTriggers).toBe(3);
 
     // Call the loop's own SIGTERM handler rather than emitting the signal, so
     // the test never touches vitest's runner-level handlers.
     const handlers = process.listeners("SIGTERM");
     (handlers[handlers.length - 1] as () => void)();
-    await vi.advanceTimersByTimeAsync(0);
+    vi.advanceTimersByTime(0);
+    await new Promise(process.nextTick);
 
     // Resolves — errors during a daemon tick never abort the loop.
     await expect(done).resolves.toBeUndefined();

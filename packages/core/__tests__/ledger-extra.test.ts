@@ -3,6 +3,8 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Ledger } from "../src/ledger.ts";
+import { addColumnIfMissing } from "../src/ledger-schema.ts";
+import { Database } from "bun:sqlite";
 
 let dbPath: string;
 let ledger: Ledger;
@@ -24,6 +26,77 @@ afterEach(() => {
       // ignore
     }
   }
+});
+
+describe("recentIcpDecisions", () => {
+  it("returns the newest reviewed labels and keeps sent rows as approvals", () => {
+    // Human rejections happen post-enqueue via the /queue route (insert-time
+    // rejections are always machine gates and are excluded structurally
+    // since v26 — decision='auto_reject').
+    const rejected = ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: { title: "Wine meetup" },
+      dedupeKey: "reject",
+      source: "test",
+    });
+    ledger.setQueueStatus({
+      id: rejected!,
+      status: "rejected",
+      notes: "wrong industry",
+      decidedBy: "human",
+    });
+    const approved = ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: {
+        title: "Agent builders",
+        url: "https://example.com/agent-builders",
+        email: "private@example.com",
+        phone: "+43 555 0100",
+        linkedinUrl: "https://linkedin.com/in/private",
+        nested: { email: "also-private@example.com" },
+      },
+      dedupeKey: "approve",
+      source: "test",
+      notes: "right topic",
+    });
+    ledger.setQueueStatus({ id: approved!, status: "approved" });
+    const sent = ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: { title: "Agent SDK" },
+      dedupeKey: "sent",
+      source: "test",
+    });
+    ledger.setQueueStatus({
+      id: sent!,
+      status: "sent",
+      notes: "founder approved",
+      decidedBy: "human",
+    });
+    ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: { title: "Not reviewed" },
+      dedupeKey: "pending",
+      source: "test",
+    });
+
+    expect(ledger.recentIcpDecisions(2)).toEqual([
+      { candidate: { title: "Agent SDK" }, decision: true, reason: "founder approved" },
+      {
+        candidate: {
+          title: "Agent builders",
+          url: "https://example.com/agent-builders",
+        },
+        decision: true,
+        reason: "right topic",
+      },
+    ]);
+    expect(ledger.recentIcpDecisions()).toContainEqual({
+      candidate: { title: "Wine meetup" },
+      decision: false,
+      reason: "wrong industry",
+    });
+    expect(rejected).not.toBeNull();
+  });
 });
 
 describe("listReceipts filters", () => {
@@ -49,6 +122,26 @@ describe("listReceipts filters", () => {
     // future cutoff → no receipts qualify
     const future = new Date(Date.now() + 60 * 1000).toISOString();
     expect(ledger.listReceipts({ sinceIso: future })).toHaveLength(0);
+  });
+});
+
+describe("finderApprovalStats", () => {
+  it("counts reviewed source variants and treats sent as approved", () => {
+    const add = (key: string, source: string): number =>
+      ledger.enqueueTarget({ playName: "github-stars", payload: {}, dedupeKey: key, source })!;
+    const approved = add("a", "find:github-stars:owner/repo");
+    const sent = add("b", "find:github-stars:other/repo");
+    const rejected = add("c", "find:github-stars");
+    add("pending", "find:github-stars");
+    ledger.setQueueStatus({ id: approved, status: "approved" });
+    ledger.setQueueStatus({ id: sent, status: "sent", decidedBy: "human" });
+    ledger.setQueueStatus({ id: rejected, status: "rejected", decidedBy: "human" });
+
+    expect(ledger.finderApprovalStats({ finder: "github-stars", sinceIso: "2000-01-01" })).toEqual({
+      approved: 2,
+      reviewed: 3,
+      rate: 2 / 3,
+    });
   });
 });
 
@@ -215,6 +308,51 @@ describe("isEmailPendingInQueue (cross-play pending dedup)", () => {
     // terminal rows don't block future work.
     ledger.setQueueStatus({ id: pendingId!, status: "rejected" });
     expect(ledger.isEmailPendingInQueue("dup@x.com")).toBe(false);
+  });
+});
+
+describe("removePendingQueueTarget", () => {
+  it("removes only unreviewed reservations", () => {
+    const pendingId = ledger.enqueueTarget({
+      playName: "profile-intro",
+      payload: {},
+      dedupeKey: "pending",
+      source: "test",
+    })!;
+    const approvedId = ledger.enqueueTarget({
+      playName: "profile-intro",
+      payload: {},
+      dedupeKey: "approved",
+      source: "test",
+    })!;
+    ledger.setQueueStatus({ id: approvedId, status: "approved" });
+
+    expect(ledger.removePendingQueueTarget(pendingId)).toBe(true);
+    expect(ledger.getQueueRow(pendingId)).toBeNull();
+    expect(ledger.removePendingQueueTarget(approvedId)).toBe(false);
+    expect(ledger.getQueueRow(approvedId)?.status).toBe("approved");
+  });
+});
+
+describe("setQueueStatus pending", () => {
+  it("restores an unreviewed row and applies notes", () => {
+    const id = ledger.enqueueTarget({
+      playName: "profile-intro",
+      payload: {},
+      dedupeKey: "restore-pending",
+      source: "test",
+      initialStatus: "expired",
+      notes: "classification in progress",
+    })!;
+
+    expect(ledger.getQueueRow(id)?.reviewed_at).not.toBeNull();
+    ledger.setQueueStatus({ id, status: "pending", notes: "ready for review" });
+
+    expect(ledger.getQueueRow(id)).toMatchObject({
+      status: "pending",
+      reviewed_at: null,
+      notes: "ready for review",
+    });
   });
 });
 
@@ -446,6 +584,275 @@ describe("cadence next-step draft round-trip", () => {
   });
 });
 
+describe("manual cadence stops", () => {
+  it("stores the disposition, leaves sibling cadences active, and expires queued revives", () => {
+    const pid = ledger.upsertProspect({ name: "Stop Me", email: "stop@x.com", source: "t" });
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "show-hn",
+      nextDueAt: new Date().toISOString(),
+    });
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "repo-interest",
+      nextDueAt: new Date().toISOString(),
+    });
+    const queueId = ledger.enqueueTarget({
+      playName: "breakup-revive",
+      payload: { email: "stop@x.com" },
+      dedupeKey: `prospect:${pid}`,
+      source: "test",
+      initialStatus: "approved",
+    })!;
+    ledger.setQueueProspectId(queueId, pid);
+
+    expect(
+      ledger.stopCadence({
+        prospectId: pid,
+        playName: "show-hn",
+        reason: "not_a_fit",
+        note: "wrong role",
+      }),
+    ).toBe(true);
+
+    const stopped = ledger.getCadence(pid, "show-hn")!;
+    expect(stopped).toMatchObject({
+      status: "stopped",
+      stop_reason: "not_a_fit",
+      stop_note: "wrong role",
+      next_due_at: null,
+    });
+    expect(stopped.stopped_at).toBeTruthy();
+    expect(ledger.getCadence(pid, "repo-interest")?.status).toBe("active");
+    expect(ledger.getQueueRow(queueId)?.status).toBe("expired");
+    expect(ledger.breakupReviveHoldFor("stop@x.com")?.reason).toBe("not_a_fit");
+
+    // Generic enrollment cannot silently erase a deliberate stop disposition.
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "show-hn",
+      nextDueAt: new Date(Date.now() + 86_400_000).toISOString(),
+    });
+    expect(ledger.getCadence(pid, "show-hn")).toMatchObject({
+      status: "stopped",
+      stop_reason: "not_a_fit",
+      stop_note: "wrong role",
+    });
+  });
+
+  it("does not claim a stop while a cadence send is in flight", () => {
+    const pid = ledger.upsertProspect({ name: "Sending", email: "sending@x.com", source: "t" });
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "show-hn",
+      nextDueAt: new Date().toISOString(),
+    });
+    expect(
+      ledger.claimCadenceSendingMarker({
+        prospectId: pid,
+        playName: "show-hn",
+        startedAtIso: new Date().toISOString(),
+      }),
+    ).toBe(true);
+    expect(ledger.stopCadence({ prospectId: pid, playName: "show-hn", reason: "bad_timing" })).toBe(
+      false,
+    );
+    expect(ledger.getCadence(pid, "show-hn")?.status).toBe("active");
+  });
+
+  it("uses a revivable stop as the cold clock and permanently excludes blocking reasons", () => {
+    const timing = ledger.upsertProspect({ name: "Later", email: "later@x.com", source: "t" });
+    const blocked = ledger.upsertProspect({ name: "No Fit", email: "nofit@x.com", source: "t" });
+    for (const [id, reason] of [
+      [timing, "bad_timing"],
+      [blocked, "do_not_contact"],
+    ] as const) {
+      ledger.recordSequenceEvent({
+        prospectId: id,
+        playName: "show-hn",
+        stepIndex: 0,
+        channel: "email",
+        status: "sent",
+      });
+      ledger.enrollCadence({
+        prospectId: id,
+        playName: "show-hn",
+        nextDueAt: new Date().toISOString(),
+      });
+      ledger.stopCadence({ prospectId: id, playName: "show-hn", reason });
+    }
+    const db = new Database(dbPath);
+    db.exec(`UPDATE sequence_events SET created_at = datetime('now', '-75 days');`);
+
+    // A fresh timing stop resets the clock even though the email itself is old.
+    expect(
+      ledger.listColdProspects({ minDaysSinceLastEvent: 60, maxDaysSinceLastEvent: 90 }),
+    ).toEqual([]);
+    db.exec(
+      `UPDATE cadence_state SET stopped_at = datetime('now', '-75 days') WHERE prospect_id = ${timing};`,
+    );
+    db.close();
+
+    expect(
+      ledger
+        .listColdProspects({ minDaysSinceLastEvent: 60, maxDaysSinceLastEvent: 90 })
+        .map((p) => p.id),
+    ).toEqual([timing]);
+  });
+
+  it("can revive from a stop timestamp when no sequence event exists", () => {
+    const pid = ledger.upsertProspect({ name: "Stop Only", email: "stop-only@x.com", source: "t" });
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "show-hn",
+      nextDueAt: new Date().toISOString(),
+    });
+    ledger.stopCadence({ prospectId: pid, playName: "show-hn", reason: "other", note: "later" });
+    const db = new Database(dbPath);
+    db.exec(
+      `UPDATE cadence_state SET stopped_at = datetime('now', '-75 days') WHERE prospect_id = ${pid};`,
+    );
+    db.close();
+
+    expect(
+      ledger
+        .listColdProspects({ minDaysSinceLastEvent: 60, maxDaysSinceLastEvent: 90 })
+        .map((p) => p.id),
+    ).toEqual([pid]);
+  });
+});
+
+describe("LinkedIn reply events", () => {
+  it("matches normalized identities, stops every live cadence, and is idempotent", () => {
+    const pid = ledger.upsertProspect({
+      name: "Lin Reply",
+      email: "Lin@Example.com",
+      linkedin_url: "https://www.linkedin.com/in/Lin-Reply/?trk=profile",
+      source: "test",
+    });
+    for (const playName of ["show-hn", "repo-interest"]) {
+      ledger.enrollCadence({ prospectId: pid, playName, nextDueAt: new Date().toISOString() });
+    }
+    ledger.recordSequenceEvent({
+      prospectId: pid,
+      playName: "show-hn",
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+    });
+    const queueId = ledger.enqueueTarget({
+      playName: "breakup-revive",
+      payload: { email: "lin@example.com" },
+      dedupeKey: `prospect:${pid}`,
+      source: "test",
+      initialStatus: "approved",
+    })!;
+    ledger.setQueueProspectId(queueId, pid);
+
+    expect(
+      ledger.resolveProspectForLinkedInReply({
+        email: "lin@example.com",
+        linkedinUrl: "http://linkedin.com/in/lin-reply",
+      }),
+    ).toEqual({ status: "matched", prospectId: pid });
+    const first = ledger.recordLinkedInReply({
+      prospectId: pid,
+      source: "expandi",
+      externalEventId: "reply-1",
+      occurredAt: "2026-06-18T10:00:00.000Z",
+    });
+    expect(first).toMatchObject({ duplicate: false, cadencesStopped: 2, inFlightSends: 0 });
+    expect(ledger.listCadencesForProspect(pid).map((c) => c.status)).toEqual([
+      "replied",
+      "replied",
+    ]);
+    expect(ledger.getCadence(pid, "show-hn")).toMatchObject({
+      reply_channel: "linkedin",
+      replied_at: "2026-06-18T10:00:00.000Z",
+    });
+    expect(ledger.listSequenceEventsForProspect(pid)[0]?.status).toBe("sent");
+    expect(ledger.getQueueRow(queueId)?.status).toBe("expired");
+    expect(
+      ledger.recordLinkedInReply({
+        prospectId: pid,
+        source: "expandi",
+        externalEventId: "reply-1",
+        occurredAt: new Date().toISOString(),
+      }),
+    ).toMatchObject({ duplicate: true, cadencesStopped: 0 });
+  });
+
+  it("reports an already claimed send and leaves its marker for the worker", () => {
+    const pid = ledger.upsertProspect({ email: "race@example.com", source: "test" });
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "show-hn",
+      nextDueAt: new Date().toISOString(),
+    });
+    ledger.claimCadenceSendingMarker({
+      prospectId: pid,
+      playName: "show-hn",
+      startedAtIso: new Date().toISOString(),
+    });
+    const result = ledger.recordLinkedInReply({
+      prospectId: pid,
+      source: "manual",
+      externalEventId: "race",
+      occurredAt: new Date().toISOString(),
+    });
+    expect(result).toMatchObject({ cadencesStopped: 1, inFlightSends: 1 });
+    expect(ledger.getCadence(pid, "show-hn")).toMatchObject({
+      status: "replied",
+      sending_started_at: expect.any(String),
+    });
+    expect(ledger.listActiveCadences()).toEqual([]);
+  });
+
+  it("rejects identifiers that resolve to different prospects", () => {
+    ledger.upsertProspect({ email: "one@example.com", source: "test" });
+    ledger.upsertProspect({
+      email: "two@example.com",
+      linkedin_url: "https://linkedin.com/in/two",
+      source: "test",
+    });
+    expect(
+      ledger.resolveProspectForLinkedInReply({
+        email: "one@example.com",
+        linkedinUrl: "https://www.linkedin.com/in/two/",
+      }),
+    ).toEqual({ status: "conflict" });
+  });
+
+  it("anchors breakup-revive to the LinkedIn reply time", () => {
+    const pid = ledger.upsertProspect({ email: "cold-reply@example.com", source: "test" });
+    ledger.recordSequenceEvent({
+      prospectId: pid,
+      playName: "show-hn",
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+    });
+    ledger.recordLinkedInReply({
+      prospectId: pid,
+      source: "test",
+      externalEventId: "cold-clock",
+      occurredAt: new Date().toISOString(),
+    });
+    const db = new Database(dbPath);
+    db.exec(`UPDATE sequence_events SET created_at = datetime('now', '-100 days');`);
+    expect(
+      ledger.listColdProspects({ minDaysSinceLastEvent: 60, maxDaysSinceLastEvent: 90 }),
+    ).toEqual([]);
+    db.exec(`UPDATE channel_events SET occurred_at = datetime('now', '-75 days');`);
+    db.close();
+    expect(
+      ledger
+        .listColdProspects({ minDaysSinceLastEvent: 60, maxDaysSinceLastEvent: 90 })
+        .map((row) => row.id),
+    ).toEqual([pid]);
+  });
+});
+
 describe("recordInterview", () => {
   it("round-trips an interview record", () => {
     const id = ledger.recordInterview({
@@ -499,20 +906,20 @@ describe("triggers listing", () => {
 
 describe("addColumnIfMissing identifier guards", () => {
   it("rejects unsafe table names", () => {
-    // The only way to reach this code path is the private method; we access it
-    // via the instance to verify the guard is in place (defense-in-depth).
-    const priv = ledger as unknown as {
-      addColumnIfMissing(t: string, c: string, tp: string): void;
-    };
-    expect(() => priv.addColumnIfMissing("receipts; DROP TABLE receipts", "x", "TEXT")).toThrow(
+    // Defense-in-depth guard now lives in ledger-schema.ts, exercised
+    // directly against a throwaway in-memory database — the identifier
+    // check runs before any table lookup, so no schema setup is needed.
+    const db = new Database(":memory:");
+    expect(() => addColumnIfMissing(db, "receipts; DROP TABLE receipts", "x", "TEXT")).toThrow(
       /unsafe identifier/,
     );
-    expect(() => priv.addColumnIfMissing("receipts", "x; DROP TABLE y", "TEXT")).toThrow(
+    expect(() => addColumnIfMissing(db, "receipts", "x; DROP TABLE y", "TEXT")).toThrow(
       /unsafe identifier/,
     );
-    expect(() => priv.addColumnIfMissing("receipts", "x", "TEXT); DROP")).toThrow(
+    expect(() => addColumnIfMissing(db, "receipts", "x", "TEXT); DROP")).toThrow(
       /unsafe column type/,
     );
+    db.close();
   });
 });
 
@@ -623,5 +1030,72 @@ describe("receipt annotation (memo / decisionContext / value_tag)", () => {
     expect(labels.get("goal_2")).toEqual({ playName: "concierge", prospect: "Pat" });
     expect(labels.has("goal_missing")).toBe(false);
     expect(ledger.goalLabels([]).size).toBe(0);
+  });
+});
+
+describe("recentSentEmailBodies", () => {
+  const write = (
+    prospectId: number,
+    stepIndex: number,
+    body: string | null,
+    status: "sent" | "replied" | "failed" = "sent",
+  ): void => {
+    ledger.recordSequenceEvent({
+      prospectId,
+      playName: "repo-interest",
+      stepIndex,
+      channel: "email",
+      status,
+      metadata: body == null ? { subject: "s" } : { subject: "s", body },
+    });
+  };
+
+  it("returns bodies for one play + step, newest first", () => {
+    const pid = ledger.upsertProspect({ name: "A", email: "a@x.com", source: "t" });
+    write(pid, 1, "first");
+    write(pid, 1, "second");
+    expect(ledger.recentSentEmailBodies({ playName: "repo-interest", stepIndex: 1 })).toEqual([
+      "second",
+      "first",
+    ]);
+  });
+
+  it("counts replied rows — they are sends that were answered, not non-sends", () => {
+    const pid = ledger.upsertProspect({ name: "B", email: "b@x.com", source: "t" });
+    write(pid, 1, "answered", "replied");
+    expect(ledger.recentSentEmailBodies({ playName: "repo-interest", stepIndex: 1 })).toEqual([
+      "answered",
+    ]);
+  });
+
+  it("excludes other steps, other plays, failures, and bodyless rows", () => {
+    const pid = ledger.upsertProspect({ name: "C", email: "c@x.com", source: "t" });
+    write(pid, 0, "intro");
+    write(pid, 1, "kept");
+    write(pid, 1, null);
+    write(pid, 1, "   ");
+    write(pid, 1, "dropped", "failed");
+    ledger.recordSequenceEvent({
+      prospectId: pid,
+      playName: "stack-consolidation",
+      stepIndex: 1,
+      channel: "email",
+      status: "sent",
+      metadata: { subject: "s", body: "other play" },
+    });
+    expect(ledger.recentSentEmailBodies({ playName: "repo-interest", stepIndex: 1 })).toEqual([
+      "kept",
+    ]);
+  });
+
+  it("honours the limit and clamps it", () => {
+    const pid = ledger.upsertProspect({ name: "D", email: "d@x.com", source: "t" });
+    for (let i = 0; i < 5; i++) write(pid, 1, `body ${i}`);
+    expect(
+      ledger.recentSentEmailBodies({ playName: "repo-interest", stepIndex: 1, limit: 2 }),
+    ).toHaveLength(2);
+    expect(
+      ledger.recentSentEmailBodies({ playName: "repo-interest", stepIndex: 1, limit: 0 }),
+    ).toHaveLength(1);
   });
 });

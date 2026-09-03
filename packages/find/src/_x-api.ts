@@ -54,12 +54,12 @@ function mapUser(u: any): XUser {
 }
 
 export class XApiEngine implements HarvestEngine {
-  readonly name = "xapi";
-  readonly meter: CostMeter;
-  private readonly creds: XCreds;
-  private readonly fetchImpl: FetchLike;
-  private readonly knobs: HarvestKnobs;
-  private readonly apiBase: string;
+  name = "xapi";
+  meter: CostMeter;
+  knobs: HarvestKnobs;
+  private creds: XCreds;
+  private fetchImpl: FetchLike;
+  private apiBase: string;
   /** retweeted_by + quote_tweets calls made this run. */
   private lookups = 0;
   /** Lowest x-rate-limit-remaining seen on a lookup endpoint. */

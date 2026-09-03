@@ -136,7 +136,7 @@ function ReceiptsPage() {
         {VALUE_FILTERS.map((f) => (
           <Button
             key={f.key}
-            variant={valueFilter === f.key ? "primary" : "ghost"}
+            variant={valueFilter === f.key ? "secondary" : "ghost"}
             size="sm"
             onClick={() => setValueFilter(f.key)}
           >

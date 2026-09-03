@@ -10,6 +10,7 @@ import { Input } from "../components/primitives/Field.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { CadenceTimeline, type CadenceStep } from "../components/plays/CadenceTimeline.tsx";
 import { cn } from "../lib/cn.ts";
+import { readOnly } from "../lib/readOnly.ts";
 
 export const Route = createFileRoute("/plays")({
   component: PlaysPage,
@@ -390,6 +391,7 @@ function CadenceEditor({ play }: { play: PlayDescriptor }) {
               size="sm"
               disabled={save.isPending || !isModified}
               onClick={() => save.mutate(null)}
+              {...readOnly}
               title="Restore the code-default timing"
             >
               reset to default

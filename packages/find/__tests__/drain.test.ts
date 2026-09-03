@@ -24,6 +24,10 @@ function row(id: number, payload: Record<string, unknown> = {}): QueueRow {
     last_draft_json: null,
     last_drafted_at: null,
     send_started_at: null,
+    priority_json: null,
+    decision: null,
+    decided_at: null,
+    decided_by: null,
   };
 }
 

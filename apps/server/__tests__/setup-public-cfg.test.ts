@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { OneShotConfig } from "@oneshot-gtm/core";
-import { publicCfg } from "../src/api/setup.ts";
+import { mergeSetupConfig, publicCfg } from "../src/api/setup.ts";
 
 const FULL_CFG: OneShotConfig = {
   walletMode: "cdp",
@@ -25,13 +25,14 @@ const FULL_CFG: OneShotConfig = {
   ],
   icpOneLiner: "y",
   cadenceOverrides: { "show-hn": [2, 5] },
+  queueReviewOrder: "ranked",
   founderCredentials: "shipped two dev tools",
   productPortfolio: "acme-cli",
   partners: "Acme Corp",
   founderAdmission: "two people, no enterprise logos yet",
   productBrief: "docs at https://acme.dev/docs",
   mobileSignature: false,
-  timezone: null,
+  timezone: "Europe/Vienna",
   slackWebhookUrl: null,
   clientId: "11111111-2222-3333-4444-555555555555",
 };
@@ -67,5 +68,16 @@ describe("publicCfg — privacy boundary", () => {
     const view = publicCfg({ ...FULL_CFG, clientId: null });
     expect("clientId" in view).toBe(false);
     expect(view.founderName).toBe("Jane");
+  });
+});
+
+describe("setup config writer", () => {
+  it("overlays submitted fields without wiping fields outside the form", () => {
+    const next = mergeSetupConfig(FULL_CFG, { founderName: "Janet" }, FULL_CFG.emailIdentities);
+
+    expect(next.founderName).toBe("Janet");
+    expect(next.queueReviewOrder).toBe("ranked");
+    expect(next.timezone).toBe("Europe/Vienna");
+    expect(next.cadenceOverrides).toEqual({ "show-hn": [2, 5] });
   });
 });

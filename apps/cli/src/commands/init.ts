@@ -7,6 +7,7 @@ import {
   saveSecrets,
   secretsPath,
   configDir,
+  type OneShotConfig,
 } from "@oneshot-gtm/core";
 import prompts from "prompts";
 import { box, c, header, note, ok, warn } from "../output.ts";
@@ -115,37 +116,7 @@ export async function runInit(): Promise<void> {
   );
 
   const provider = answers["llmProvider"] ?? cfg.llmProvider;
-  saveConfig({
-    walletMode: cfg.walletMode,
-    llmProvider: provider,
-    llmModel: answers["llmModel"] ?? cfg.llmModel,
-    telemetryEnabled: answers["telemetryEnabled"] ?? cfg.telemetryEnabled,
-    founderName: (answers["founderName"] ?? cfg.founderName) || null,
-    founderEmail: (answers["founderEmail"] ?? cfg.founderEmail) || null,
-    productOneLiner: (answers["productOneLiner"] ?? cfg.productOneLiner) || null,
-    productDomain: (answers["productDomain"] ?? cfg.productDomain) || null,
-    sendingDomain: (answers["sendingDomain"] ?? cfg.sendingDomain) || null,
-    emailProvider: cfg.emailProvider,
-    emailIdentities: cfg.emailIdentities,
-    icpOneLiner: (answers["icpOneLiner"] ?? cfg.icpOneLiner) || null,
-    cadenceOverrides: cfg.cadenceOverrides,
-    founderCredentials: (answers["founderCredentials"] ?? cfg.founderCredentials) || null,
-    productPortfolio: (answers["productPortfolio"] ?? cfg.productPortfolio) || null,
-    partners: (answers["partners"] ?? cfg.partners) || null,
-    founderAdmission: (answers["founderAdmission"] ?? cfg.founderAdmission) || null,
-    // Not part of the wizard (it's a dashboard-native, multiline document) —
-    // but re-running init must never wipe an existing brief.
-    productBrief: cfg.productBrief,
-    mobileSignature: cfg.mobileSignature,
-    // Not part of the wizard either — the runtime zone is the default and a
-    // founder who hand-set one must keep it across a re-run.
-    timezone: cfg.timezone,
-    slackWebhookUrl: cfg.slackWebhookUrl,
-    // Preserve the anonymous install id (loadConfig already bootstrapped it
-    // by the time we got here). Omitting it would silently drop it from disk
-    // and the next loadConfig() would mint a fresh one.
-    clientId: cfg.clientId,
-  });
+  saveConfig(mergeInitConfig(cfg, answers));
   ok(`Saved profile to ${c.dim(join(configDir(), "config.json"))}`);
 
   // Phase 2: collect secrets interactively (saved chmod 600 to ~/.oneshot-gtm/.env)
@@ -223,14 +194,77 @@ export async function runInit(): Promise<void> {
     "Next steps",
     [
       `1. Sanity check: ${c.cyan(`${cmd} doctor`)}`,
-      `2. Try the coach (no agent calls — just your LLM key): ${c.cyan(`${cmd} intel advise`)}`,
-      `3. Run a play in dry-run: ${c.cyan(`${cmd} motion show-hn --dry-run --target ./examples/show-hn.json`)}`,
-      `4. Drop --dry-run when you're ready to send.`,
-      "",
-      `${c.dim("Tip: to use the bare")} ${c.cyan("oneshot-gtm")} ${c.dim("command from anywhere, run:")}`,
-      `  ${c.cyan("cd packages/cli && bun link && bun link oneshot-gtm && cd -")}`,
+      `2. Build the dashboard: ${c.cyan("bun run --cwd apps/web build")}`,
+      `3. Open the dashboard: ${c.cyan(`${cmd} ui`)}`,
     ].join("\n"),
   );
+}
+
+/**
+ * Merge a wizard answer for an optional text field onto the existing config
+ * value. An omitted key (the field wasn't part of this wizard run) falls
+ * back to whatever was already stored. An explicitly supplied empty string
+ * (the user cleared the field) normalizes to null rather than persisting
+ * "" — downstream fallbacks like `cfg.icpOneLiner ?? "(not set)"` only work
+ * against null, not an empty string.
+ */
+function normalizeOptionalAnswer(
+  answer: string | undefined,
+  existing: string | null,
+): string | null {
+  if (answer === undefined) return existing ?? null;
+  return answer === "" ? null : answer;
+}
+
+export function mergeInitConfig(
+  cfg: OneShotConfig,
+  answers: Record<string, unknown>,
+): OneShotConfig {
+  const provider =
+    (answers["llmProvider"] as OneShotConfig["llmProvider"] | undefined) ?? cfg.llmProvider;
+  return {
+    ...cfg,
+    llmProvider: provider,
+    llmModel: (answers["llmModel"] as string | undefined) ?? cfg.llmModel,
+    telemetryEnabled: (answers["telemetryEnabled"] as boolean | undefined) ?? cfg.telemetryEnabled,
+    founderName: normalizeOptionalAnswer(
+      answers["founderName"] as string | undefined,
+      cfg.founderName,
+    ),
+    founderEmail: normalizeOptionalAnswer(
+      answers["founderEmail"] as string | undefined,
+      cfg.founderEmail,
+    ),
+    productOneLiner: normalizeOptionalAnswer(
+      answers["productOneLiner"] as string | undefined,
+      cfg.productOneLiner,
+    ),
+    productDomain: normalizeOptionalAnswer(
+      answers["productDomain"] as string | undefined,
+      cfg.productDomain,
+    ),
+    sendingDomain: normalizeOptionalAnswer(
+      answers["sendingDomain"] as string | undefined,
+      cfg.sendingDomain,
+    ),
+    icpOneLiner: normalizeOptionalAnswer(
+      answers["icpOneLiner"] as string | undefined,
+      cfg.icpOneLiner,
+    ),
+    founderCredentials: normalizeOptionalAnswer(
+      answers["founderCredentials"] as string | undefined,
+      cfg.founderCredentials,
+    ),
+    productPortfolio: normalizeOptionalAnswer(
+      answers["productPortfolio"] as string | undefined,
+      cfg.productPortfolio,
+    ),
+    partners: normalizeOptionalAnswer(answers["partners"] as string | undefined, cfg.partners),
+    founderAdmission: normalizeOptionalAnswer(
+      answers["founderAdmission"] as string | undefined,
+      cfg.founderAdmission,
+    ),
+  };
 }
 
 function whichCommand(): string {

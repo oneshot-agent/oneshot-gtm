@@ -2,6 +2,7 @@ import type { TriggerRow } from "@oneshot-gtm/core";
 import { describe, expect, it } from "vitest";
 import {
   checkReadiness,
+  evaluateFinderApprovalHealth,
   effectiveIntervalMs,
   freshRunningStartedAtMs,
   MAX_RUN_AGE_MS,
@@ -11,6 +12,45 @@ import {
   type TriggerRunOutcome,
   type TriggerSpec,
 } from "../src/registry.ts";
+
+describe("finder approval health", () => {
+  it("defaults to a 10% threshold after 100 reviewed prospects", () => {
+    const insufficient = evaluateFinderApprovalHealth({ approved: 0, reviewed: 99 });
+    expect(insufficient.sufficientData).toBe(false);
+    expect(insufficient.deprioritized).toBe(false);
+
+    expect(evaluateFinderApprovalHealth({ approved: 10, reviewed: 100 }).deprioritized).toBe(false);
+    expect(evaluateFinderApprovalHealth({ approved: 9, reviewed: 100 }).deprioritized).toBe(true);
+  });
+
+  it("does not deprioritize at the threshold boundary, only below it", () => {
+    expect(
+      evaluateFinderApprovalHealth({ approved: 2, reviewed: 10, threshold: 0.2, minSamples: 10 })
+        .deprioritized,
+    ).toBe(false);
+    const below = evaluateFinderApprovalHealth({
+      approved: 1,
+      reviewed: 10,
+      threshold: 0.2,
+      minSamples: 10,
+    });
+    expect(below.deprioritized).toBe(true);
+    expect(below.reason).toBe("low-approval-rate");
+  });
+
+  it("applies no penalty when reviewed data is insufficient", () => {
+    const health = evaluateFinderApprovalHealth({
+      approved: 0,
+      reviewed: 9,
+      threshold: 0.2,
+      minSamples: 10,
+    });
+    expect(health.rate).toBe(0);
+    expect(health.sufficientData).toBe(false);
+    expect(health.deprioritized).toBe(false);
+    expect(health.reason).toBeNull();
+  });
+});
 
 describe("nextSleepMs", () => {
   it("defaults to 1h when there are no outcomes", () => {
@@ -52,6 +92,7 @@ describe("TRIGGERS registry", () => {
       "github-topics",
       "hiring-signal",
       "job-change",
+      "local-business",
       "luma-events",
       "podcast-guest",
       "post-funding-auto",
@@ -303,6 +344,7 @@ describe("checkReadiness", () => {
       "hiring-signal",
       "accelerator-batch",
       "luma-events",
+      "local-business",
       "x-reposters",
     ]);
     for (const spec of TRIGGERS) {

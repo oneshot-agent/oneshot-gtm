@@ -32,6 +32,9 @@ vi.mock("@oneshot-gtm/core", async () => {
       clientId: null,
     }),
     getLedger: () => ({
+      // Opener-frequency cap: no send history in these fakes, so nothing is worn out.
+      recentSentEmailBodies: () => [],
+      getCadence: () => ({ current_step: 0, status: "active" }),
       listSequenceEventsForProspectPlay: (_pid: number, _play: string) => storedRows,
     }),
     receiptUrlForId: (id: number) => `local://receipt/${id}`,

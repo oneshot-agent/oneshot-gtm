@@ -1,6 +1,7 @@
 import type {
   AddProspectResult,
   CadencesResult,
+  CadenceStopReason,
   CadenceView,
   CancelRunResponse,
   DoctorCheck,
@@ -11,6 +12,7 @@ import type {
   InboxDraftReplyRequest,
   InboxDraftReplyResult,
   InboxResult,
+  LinkedInReplyResult,
   InboxSaveDraftRequest,
   InboxSaveDraftResult,
   InboxSendReplyRequest,
@@ -18,6 +20,8 @@ import type {
   LastDraft,
   OutcomeByPlay,
   OutcomeRequest,
+  PackApplyResult,
+  PackView,
   PlayDescriptor,
   WorkspaceInfo,
   DomainActionResult,
@@ -37,10 +41,20 @@ import type {
   SpendByPlay,
   TriggerView,
 } from "@oneshot-gtm/shared-types";
+import { demoGet, demoWrite, IS_DEMO } from "./demo.ts";
 
 const BASE = "/api";
 
+/*
+ * Demo mode swaps the transport and nothing else.
+ *
+ * Every read in this file goes through getJson and every write through
+ * postJson, so these two branches are the entire seam: the api object below,
+ * the 36 mutation sites behind it and all nine routes stay untouched. That is
+ * why the seam is worth keeping narrow.
+ */
 async function getJson<T>(path: string): Promise<T> {
+  if (IS_DEMO) return demoGet<T>(path);
   const res = await fetch(BASE + path);
   if (!res.ok) {
     const fallback = `${res.status} ${res.statusText}: ${path}`;
@@ -60,6 +74,7 @@ async function getJson<T>(path: string): Promise<T> {
 }
 
 async function postJson<T>(path: string, body: unknown): Promise<T> {
+  if (IS_DEMO) demoWrite(path);
   const res = await fetch(BASE + path, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -84,11 +99,17 @@ export const api = {
   cancelRun: (id: number, reason?: string) =>
     postJson<CancelRunResponse>(`/run/${id}/cancel`, reason ? { reason } : {}),
   cadenceForProspect: (id: number) => getJson<{ cadences: CadenceView[] }>(`/cadences/${id}`),
-  stopCadence: (id: number, playName?: string) =>
+  stopCadence: (
+    id: number,
+    playName: string,
+    input: { reason: CadenceStopReason; note?: string },
+  ) =>
     postJson<{ stopped: number }>(
-      `/cadences/${id}/stop${playName ? `?play=${encodeURIComponent(playName)}` : ""}`,
-      {},
+      `/cadences/${id}/stop?play=${encodeURIComponent(playName)}`,
+      input,
     ),
+  markLinkedInReply: (id: number) =>
+    postJson<LinkedInReplyResult>(`/prospects/${id}/linkedin-reply`, {}),
   previewCadenceNext: (id: number, playName: string) =>
     postJson<{
       subject: string;
@@ -199,6 +220,8 @@ export const api = {
     play?: string;
     status?: QueueStatusView;
     limit?: number;
+    /** Review-order override; omit to use the configured default. */
+    order?: "ranked" | "newest";
     /** Explicit row pick — the "drain selected" path. */
     ids?: number[];
   }) => {
@@ -206,6 +229,7 @@ export const api = {
     if (opts?.play) q.set("play", opts.play);
     if (opts?.status) q.set("status", opts.status);
     if (opts?.limit != null) q.set("limit", String(opts.limit));
+    if (opts?.order) q.set("order", opts.order);
     // Note the `!= null`, not a length check: an empty array is an explicit
     // "nothing picked" and must reach the server as `ids=`, or the server would
     // read it as absent and return the unscoped batch instead of no rows.
@@ -239,4 +263,7 @@ export const api = {
     postJson<{ ok: boolean }>(`/triggers/${encodeURIComponent(name)}/config`, { config }),
   runTrigger: (name: string) =>
     postJson<RunTriggerResult>(`/triggers/${encodeURIComponent(name)}/run`, {}),
+  packs: () => getJson<{ packs: PackView[] }>("/packs"),
+  applyPack: (id: string) =>
+    postJson<PackApplyResult>(`/packs/${encodeURIComponent(id)}/apply`, {}),
 };

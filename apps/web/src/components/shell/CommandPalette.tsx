@@ -21,6 +21,7 @@ import { toast } from "sonner";
 import { api } from "../../api/client.ts";
 import { openWorkspace } from "../../lib/openWorkspace.ts";
 import { usePrivacy } from "../../lib/privacy.tsx";
+import { READ_ONLY } from "../../lib/readOnly.ts";
 
 type NavTarget = "/" | "/queue" | "/cadences" | "/receipts" | "/measure" | "/plays" | "/setup";
 
@@ -136,7 +137,7 @@ export function CommandPalette({
           <Command.Item
             value="approve all pending candidates"
             onSelect={act(() => approveAll.mutate())}
-            disabled={approveAll.isPending}
+            disabled={approveAll.isPending || READ_ONLY}
           >
             <Check size={14} /> Approve all pending
           </Command.Item>
@@ -181,7 +182,7 @@ export function CommandPalette({
                 key={t.name}
                 value={`run trigger ${t.name}`}
                 onSelect={act(() => runTrigger.mutate(t.name))}
-                disabled={runTrigger.isPending}
+                disabled={runTrigger.isPending || READ_ONLY}
               >
                 <Play size={14} /> Run <code>{t.name}</code>
                 <span className="ml-auto font-mono text-[11px] text-ink-faint">

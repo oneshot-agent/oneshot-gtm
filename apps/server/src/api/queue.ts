@@ -1,13 +1,15 @@
 import {
   getLedger,
   isDraining,
+  loadConfig,
   isRecentlyContacted,
   isSendDeferred,
+  parseProspectPriority,
   type QueueRow,
   type QueueStatus,
   type TelemetryOutcome,
 } from "@oneshot-gtm/core";
-import { drainQueue } from "@oneshot-gtm/find";
+import { drainQueue, rankPendingRows } from "@oneshot-gtm/find";
 import {
   MANUAL_PLAYS,
   enrollInCadence,
@@ -22,6 +24,7 @@ import {
   type DrainResult,
   type LastDraft,
   parseQueueIds,
+  type ProspectPriorityView,
   type QueueCounts,
   type QueueListResponse,
   type QueueRowView,
@@ -30,6 +33,17 @@ import {
 import { jsonResponse } from "../server.ts";
 import { sendsToday } from "./_capacity.ts";
 import { dispatchPlay } from "./_play-dispatch.ts";
+
+/**
+ * Shape-check a stored priority artifact via the shared core validator —
+ * strict integers 0..100 on every score, so corruption like `total: -1` or
+ * `personFit: 999` reads as null instead of rendering. The backfill's
+ * resume-skip uses the same validator, so anything hidden here is seen as
+ * unscored and repaired on the next `find score-prospects` run.
+ */
+function parsePriority(raw: string | null): ProspectPriorityView | null {
+  return parseProspectPriority(raw);
+}
 
 function toView(row: QueueRow): QueueRowView {
   let payload: unknown = null;
@@ -74,8 +88,18 @@ function toView(row: QueueRow): QueueRowView {
     lastDraft,
     lastDraftedAt: row.last_drafted_at,
     isSending: row.send_started_at != null,
+    priority: parsePriority(row.priority_json),
   };
 }
+
+/**
+ * Ranked mode reads a wider pending window than the page, ranks it in memory
+ * (interleave + score-within-finder + exploration — see find/_rank.ts), then
+ * slices. Product logic stays in the tested pure function; listQueue SQL is
+ * untouched. Rows past the window never enter the ranking — the same
+ * truncation class as the 200-row page itself.
+ */
+const RANK_WINDOW = 1000;
 
 export function listQueueRoute(req: Request): Response {
   const url = new URL(req.url);
@@ -87,23 +111,33 @@ export function listQueueRoute(req: Request): Response {
   const ids = parseQueueIds(url.searchParams.get("ids"));
   const limit = Math.min(500, Number.parseInt(url.searchParams.get("limit") ?? "200", 10) || 200);
   const ledger = getLedger();
+  const orderParam = url.searchParams.get("order");
+  const requestedOrder =
+    orderParam === "ranked" || orderParam === "newest"
+      ? orderParam
+      : (loadConfig().queueReviewOrder ?? "newest");
+  // Ranked order exists for ONE surface: the pending review list. Explicit id
+  // picks and every other status keep chronological order.
+  const ranked = requestedOrder === "ranked" && status === "pending" && !ids;
   const filterArgs: {
     playName?: string;
     status?: QueueStatus;
     limit?: number;
     ids?: number[];
-  } = { limit: ids ? Math.max(limit, ids.length) : limit };
+  } = { limit: ranked ? RANK_WINDOW : ids ? Math.max(limit, ids.length) : limit };
   if (playName) filterArgs.playName = playName;
   if (status) filterArgs.status = status;
   if (ids) filterArgs.ids = ids;
   const rows = ledger.listQueue(filterArgs);
+  const ordered = ranked ? rankPendingRows(rows).slice(0, limit) : rows;
   const counts: QueueCounts = ledger.queueCounts();
   // Unfiltered on purpose — the drain button needs per-play approved counts
   // regardless of the page's current filter.
   const body: QueueListResponse = {
-    rows: rows.map(toView),
+    rows: ordered.map(toView),
     counts,
     approvedByPlay: ledger.approvedCountsByPlay(),
+    order: ranked ? "ranked" : "newest",
   };
   const capacity = sendsToday();
   if (capacity) body.sendsToday = capacity;
@@ -119,7 +153,7 @@ export async function approveQueueRoute(
   const ledger = getLedger();
   const row = ledger.getQueueRow(id);
   if (!row) return jsonResponse({ error: `row #${id} not found` }, 404, req);
-  ledger.setQueueStatus({ id, status: "approved" });
+  ledger.setQueueStatus({ id, status: "approved", decidedBy: "human" });
   return jsonResponse({ ok: true }, 200, req);
 }
 
@@ -139,7 +173,9 @@ export async function rejectQueueRoute(
   const row = ledger.getQueueRow(id);
   if (!row) return jsonResponse({ error: `row #${id} not found` }, 404, req);
   ledger.setQueueStatus(
-    body.reason ? { id, status: "rejected", notes: body.reason } : { id, status: "rejected" },
+    body.reason
+      ? { id, status: "rejected", notes: body.reason, decidedBy: "human" }
+      : { id, status: "rejected", decidedBy: "human" },
   );
   return jsonResponse({ ok: true }, 200, req);
 }
@@ -358,7 +394,8 @@ export async function markSentRoute(
   } catch {
     // best-effort backfill — the marked send is already recorded
   }
-  ledger.setQueueStatus({ id: row.id, status: "sent" });
+  // A per-row human action (manually sent via another channel).
+  ledger.setQueueStatus({ id: row.id, status: "sent", decidedBy: "human" });
   return jsonResponse({ ok: true, prospectId }, 200, req);
 }
 
@@ -381,6 +418,9 @@ export async function sendDraftRoute(
   const row = ledger.getQueueRow(id);
   if (!row) return jsonResponse({ error: `row #${id} not found` }, 404, req);
   if (row.status === "sent") return jsonResponse({ error: "row already sent" }, 400, req);
+  if (row.status !== "approved") {
+    return jsonResponse({ error: `row is ${row.status}; approve it before sending` }, 409, req);
+  }
   if (!row.last_draft_json) {
     return jsonResponse({ error: "no draft to send — regenerate a draft first" }, 400, req);
   }
@@ -423,6 +463,13 @@ export async function sendDraftRoute(
       409,
       req,
     );
+  }
+  // The claim itself requires status='approved'. Re-read so an expiry that
+  // raced immediately after the claim is observed before provider dispatch.
+  const claimedRow = ledger.getQueueRow(id);
+  if (claimedRow?.status !== "approved") {
+    ledger.clearQueueSendingMarker(id);
+    return jsonResponse({ error: "row changed while sending; refresh and retry" }, 409, req);
   }
 
   let payload: Record<string, unknown> = {};
@@ -527,7 +574,8 @@ export async function sendDraftRoute(
 
   const prospect = ledger.findProspectByEmail(email);
   if (prospect) enrollInCadence({ prospectId: prospect.id, playName: row.play_name });
-  ledger.setQueueStatus({ id, status: "sent" });
+  // The human read this draft and clicked Send — a per-row judgment.
+  ledger.setQueueStatus({ id, status: "sent", decidedBy: "human" });
   ledger.setQueueDraft({
     id,
     draft: { subject, body, flags: [], sent: true, receiptIds: result.receiptIds, dryRun: false },

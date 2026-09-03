@@ -12,6 +12,8 @@ import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { LumaEventsTarget } from "@oneshot-gtm/plays";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
 import { resolveVerifyEnrichQualify } from "./_contact.ts";
+import { enqueueScoredTarget } from "./_priority-adapters.ts";
+import { roundRobin } from "./_rank.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { qualifyPreSpend } from "./_qualify.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
@@ -52,8 +54,13 @@ interface SearchHit {
   description: string;
 }
 
+interface CitySearchHit extends SearchHit {
+  discoveryCity: string;
+}
+
 interface AttendeeWithEvent {
   attendee: LumaPublicAttendee;
+  discoveryCity: string;
   event: {
     url: string;
     title: string;
@@ -64,6 +71,9 @@ interface AttendeeWithEvent {
     description: string;
   };
 }
+
+// roundRobin moved to _rank.ts (shared with the ranked review order);
+// behavior is byte-identical.
 
 /**
  * Extract the single-segment slug from a Luma event URL. Returns null when
@@ -163,7 +173,15 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
   const limit = opts.limit ?? 25;
   const sinceDays = opts.sinceDays ?? 14;
   const topics = (opts.topics ?? []).filter((t) => t.trim().length > 0);
-  const cities = (opts.cities ?? []).filter((c) => c.trim().length > 0);
+  const seenCities = new Set<string>();
+  const cities = (opts.cities ?? [])
+    .map((raw) => raw.trim())
+    .filter((city) => {
+      const key = city.toLocaleLowerCase();
+      if (!city || seenCities.has(key)) return false;
+      seenCities.add(key);
+      return true;
+    });
   const yourEdge = (opts.yourEdge ?? "").trim();
   const icp = resolveIcp(opts.icpOverride);
   const ledger = getLedger();
@@ -200,16 +218,22 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
   // after extract still enforces the exact window.
   const windowMonths = upcomingMonths(sinceDays);
   const seenUrls = new Set<string>();
-  const hits: SearchHit[] = [];
+  const cityHits = new Map<string, CitySearchHit[]>(cities.map((city) => [city, []]));
+  const discoveryStats = new Map(cities.map((city) => [city, { discovered: 0, inWindow: 0 }]));
   const cap = limit * 3;
   const windowStart = Date.now() - 24 * 3600 * 1000;
   const windowEnd = Date.now() + sinceDays * 24 * 3600 * 1000;
 
-  const pushHit = (url: string, title: string, description: string): void => {
+  const pushHit = (city: string, url: string, title: string, description: string): boolean => {
     const canonical = url.split("?")[0]!.replace(/\/$/, "");
-    if (seenUrls.has(canonical)) return;
+    if (seenUrls.has(canonical)) return false;
+    if (topics.length > 0 && !eventNameMatchesTopics(title, topics)) {
+      logEvent("finder.skipped_off_topic", { name: PLAY_NAME, url: canonical, title, city });
+      return false;
+    }
     seenUrls.add(canonical);
-    hits.push({ url: canonical, title, description });
+    cityHits.get(city)!.push({ url: canonical, title, description, discoveryCity: city });
+    return true;
   };
 
   // webSearch fallback for a single city — used when the city isn't a mapped
@@ -217,7 +241,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
   // (older) pages, which is why the date defense downstream still matters.
   const webSearchCity = async (city: string): Promise<void> => {
     for (const topic of topics) {
-      if (hits.length >= cap) return;
+      if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) return;
       const query = `site:luma.com "${topic}" "${city}" upcoming event ${windowMonths}`;
       try {
         const search = await webSearch(
@@ -231,7 +255,8 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
           // query string (`?k=t` / `?k=c` mark Luma's category + calendar
           // pages); canonicalizing first would strip those markers.
           if (!looksLikeLumaEventUrl(hit.url)) continue;
-          pushHit(hit.url, hit.title, hit.description);
+          discoveryStats.get(city)!.discovered++;
+          pushHit(city, hit.url, hit.title, hit.description);
         }
       } catch (err) {
         logEvent(
@@ -254,28 +279,57 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
   // genuinely-upcoming events. Fall back to webSearch per city when the city
   // isn't a mapped hub, the page won't parse, or nothing lands in the window.
   for (const city of cities) {
-    if (hits.length >= cap) break;
     const slug = cityToSlug(city);
     const discovered = slug ? await fetchCityEvents(slug) : null;
     if (discovered && discovered.length > 0) {
-      let kept = 0;
+      const stats = discoveryStats.get(city)!;
+      stats.discovered += discovered.length;
+      let eligible = 0;
       for (const ev of discovered) {
-        if (hits.length >= cap) break;
         const ms = new Date(ev.startAtIso).getTime();
         if (!Number.isFinite(ms) || ms < windowStart || ms > windowEnd) continue;
-        pushHit(`https://luma.com/${ev.slug}`, ev.name, "");
-        kept++;
+        stats.inWindow++;
+        if (pushHit(city, `https://luma.com/${ev.slug}`, ev.name, "")) eligible++;
       }
       logEvent(
         "luma-events.discover_ok",
-        { name: PLAY_NAME, city, slug, found: discovered.length, in_window: kept },
+        {
+          name: PLAY_NAME,
+          city,
+          slug,
+          found: discovered.length,
+          in_window: stats.inWindow,
+          eligible,
+        },
         "info",
       );
-      if (kept > 0) continue;
+      if (eligible > 0) continue;
     }
     await webSearchCity(city);
   }
+  const hits = roundRobin(cityHits, cap);
   result.candidates = hits.length;
+
+  logEvent(
+    "luma-events.discovery_sampled",
+    {
+      name: PLAY_NAME,
+      cap,
+      total_selected: hits.length,
+      by_city: Object.fromEntries(
+        cities.map((city) => [
+          city,
+          {
+            discovered: discoveryStats.get(city)?.discovered ?? 0,
+            in_window: discoveryStats.get(city)?.inWindow ?? 0,
+            eligible: cityHits.get(city)?.length ?? 0,
+            selected: hits.filter((hit) => hit.discoveryCity === city).length,
+          },
+        ]),
+      ),
+    },
+    "info",
+  );
 
   // Event-level relevance criterion: one LLM call (below) weighs the founder's
   // ICP AND topics, on the event NAME, BEFORE any webRead — so we never pay to
@@ -292,15 +346,9 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
   // Phase 2: topic/ICP gate → webRead + LLM extract per event, parallelized.
   // Each surviving event yields 0..N attendees; flatten into one work list.
   const concurrency = 3;
-  const eventExtracts: Array<{ hit: SearchHit; extract: LumaEventExtract } | null> =
+  const eventExtracts: Array<{ hit: CitySearchHit; extract: LumaEventExtract } | null> =
     await parallelMap(hits.slice(0, limit * 2), concurrency, async (hit) => {
       if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) return null;
-
-      // Free keyword pre-filter: skip the LLM call for obvious off-topic names.
-      if (topics.length > 0 && !eventNameMatchesTopics(hit.title, topics)) {
-        logEvent("finder.skipped_off_topic", { name: PLAY_NAME, url: hit.url, title: hit.title });
-        return null;
-      }
       // Event-level relevance gate (topic + ICP in one call), on the name only.
       if (relevanceCriteria) {
         const ev = await icpFilter({
@@ -484,7 +532,9 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
       }
     });
 
-  const attendeesWork: AttendeeWithEvent[] = [];
+  const attendeeEventBuckets = new Map(
+    cities.map((city) => [city, new Map<string, AttendeeWithEvent[]>()]),
+  );
   for (const item of eventExtracts) {
     if (!item) continue;
     const { hit, extract } = item;
@@ -496,11 +546,40 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
       city: extract.eventCity ?? "",
       description: extract.eventDescription ?? "",
     };
+    const eventAttendees: AttendeeWithEvent[] = [];
     for (const attendee of extract.publicAttendees.slice(0, MAX_ATTENDEES_PER_EVENT)) {
       if (!attendee.name || attendee.name.trim().length === 0) continue;
-      attendeesWork.push({ attendee, event: eventCtx });
+      eventAttendees.push({
+        attendee,
+        discoveryCity: hit.discoveryCity,
+        event: eventCtx,
+      });
     }
+    attendeeEventBuckets.get(hit.discoveryCity)!.set(hit.url, eventAttendees);
   }
+  const attendeeBuckets = new Map(
+    cities.map((city) => {
+      const eventBuckets = attendeeEventBuckets.get(city)!;
+      const count = [...eventBuckets.values()].reduce((sum, bucket) => sum + bucket.length, 0);
+      return [city, roundRobin(eventBuckets, count)] as const;
+    }),
+  );
+  const attendeeCount = [...attendeeBuckets.values()].reduce(
+    (sum, bucket) => sum + bucket.length,
+    0,
+  );
+  const attendeesWork = roundRobin(attendeeBuckets, attendeeCount);
+  logEvent(
+    "luma-events.attendees_sampled",
+    {
+      name: PLAY_NAME,
+      total: attendeesWork.length,
+      by_city: Object.fromEntries(
+        cities.map((city) => [city, attendeeBuckets.get(city)?.length ?? 0]),
+      ),
+    },
+    "info",
+  );
 
   // Phase 3: per-attendee contact resolution, concurrency 3 to bound SDK
   // burst. Soft halt via boxed flag (same pattern as _repo-pipeline): workers
@@ -509,12 +588,14 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
   // The enqueue count itself stays exact via the synchronous re-check right
   // before enqueueTarget below.
   const phase3Halted = { value: false };
+  const attemptsByCity = new Map(cities.map((city) => [city, 0]));
   await parallelMap(attendeesWork, 3, async (work) => {
     if (phase3Halted.value) return;
     if (result.enqueued >= limit) {
       phase3Halted.value = true;
       return;
     }
+    attemptsByCity.set(work.discoveryCity, (attemptsByCity.get(work.discoveryCity) ?? 0) + 1);
     if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
       result.halted = `max-cost cap (${opts.maxCostUsd})`;
       phase3Halted.value = true;
@@ -618,6 +699,15 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
       result.droppedEnrichment++;
     } else result.droppedEnrichment++;
   });
+  logEvent(
+    "luma-events.attendees_attempted",
+    {
+      name: PLAY_NAME,
+      total: [...attemptsByCity.values()].reduce((sum, count) => sum + count, 0),
+      by_city: Object.fromEntries(attemptsByCity),
+    },
+    "info",
+  );
 
   return result;
 }
@@ -815,7 +905,7 @@ async function resolveAndEnqueueLumaAttendee(
     // Synchronous cap re-check right before enqueue — no await between here and
     // the caller's enqueued++, so the queue cap is exact even under concurrency.
     if (capReached?.()) return "capped";
-    const id = ledger.enqueueTarget({
+    const id = enqueueScoredTarget(ledger, {
       playName: PLAY_NAME,
       payload: target,
       dedupeKey,

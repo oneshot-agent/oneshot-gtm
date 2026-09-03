@@ -7,6 +7,7 @@ import {
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { XAmplifyDmTarget, XAmplifyTarget, XRepostIntroTarget } from "@oneshot-gtm/plays";
+import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { loadXHarvest, saveXHarvest } from "./_x-cache.ts";
 import { CostMeter, estimateHarvestCost, type XEngineName } from "./_x-cost.ts";
 import {
@@ -249,6 +250,7 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
 
   if (picks.length === 0) {
     result.costUsd = meter.total;
+    result.sdkCostUsd = 0;
     if (!result.halted) {
       result.halted =
         result.candidates === 0
@@ -385,7 +387,7 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
             ...base,
             ...(opts.launchDate ? { launchDate: opts.launchDate } : {}),
           };
-      const id = ledger.enqueueTarget({
+      const id = enqueueScoredTarget(ledger, {
         playName: sdkEmail ? "x-amplify" : "x-amplify-dm",
         payload: target,
         dedupeKey,
@@ -482,7 +484,7 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
         ? { seedEdge: edgeBySeed.get(seedHandle.toLowerCase())! }
         : {}),
     };
-    const id = ledger.enqueueTarget({
+    const id = enqueueScoredTarget(ledger, {
       playName: "x-repost-intro",
       payload: target,
       dedupeKey,
@@ -494,6 +496,7 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
   });
 
   result.costUsd = meter.total + sdkCost;
+  result.sdkCostUsd = sdkCost;
   logEvent("finder.done", {
     name: PLAY_NAME,
     candidates: result.candidates,

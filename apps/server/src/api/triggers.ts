@@ -1,8 +1,11 @@
 import { getLedger, type TriggerRow } from "@oneshot-gtm/core";
 import {
   checkReadiness,
+  DEFAULT_APPROVAL_RATE_MIN_SAMPLES,
+  DEFAULT_APPROVAL_RATE_THRESHOLD,
   effectiveIntervalMs,
   fireTriggerNow,
+  finderApprovalHealth,
   getTriggerRunningSince,
   isTriggerRunning,
   storedTriggerConfig,
@@ -44,6 +47,17 @@ export function toView(
   const readiness: Readiness = spec
     ? checkReadiness(spec, config ?? spec.defaultConfig)
     : { ready: true };
+  const approval = spec
+    ? finderApprovalHealth(name, config ?? spec.defaultConfig)
+    : {
+        rate: null,
+        reviewed: 0,
+        minSamples: DEFAULT_APPROVAL_RATE_MIN_SAMPLES,
+        threshold: DEFAULT_APPROVAL_RATE_THRESHOLD,
+        windowDays: 30,
+        deprioritized: false,
+        reason: null,
+      };
   return {
     name,
     enabled: row ? Boolean(row.enabled) : defaultEnabled,
@@ -57,6 +71,13 @@ export function toView(
     runningSince: runningSinceMs != null ? new Date(runningSinceMs).toISOString() : null,
     ready: readiness.ready,
     notReadyReason: readiness.ready ? null : readiness.reason,
+    approvalRate: approval.rate,
+    approvalReviewed: approval.reviewed,
+    approvalMinSamples: approval.minSamples,
+    approvalRateThreshold: approval.threshold,
+    approvalRateWindowDays: approval.windowDays,
+    deprioritized: approval.deprioritized,
+    deprioritizedReason: approval.reason,
   };
 }
 

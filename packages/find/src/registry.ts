@@ -12,6 +12,7 @@ import { type RepoWatch, runGitHubStarsFinder } from "./github-stars.ts";
 import { runGitHubTopicsFinder } from "./github-topics.ts";
 import { runHiringSignalFinder } from "./hiring-signal.ts";
 import { runJobChangeFinder } from "./job-change.ts";
+import { runLocalBusinessFinder } from "./local-business.ts";
 import { runLumaFinder } from "./luma.ts";
 import { runPodcastGuestFinder } from "./podcast-guest.ts";
 import { runPostFundingFinder } from "./post-funding.ts";
@@ -20,6 +21,7 @@ import { runXRepostersFinder } from "./x-reposters.ts";
 import type { XSeed } from "./_x-types.ts";
 import type { HarvestKnobs } from "./_x-engine.ts";
 import type { FinderResult } from "./_types.ts";
+import { researchNewQueueRows } from "./_product-research.ts";
 
 export interface TriggerSpec {
   name: string;
@@ -45,6 +47,26 @@ export interface TriggerSpec {
   run: (config: Record<string, unknown>) => Promise<FinderResult>;
 }
 
+/** Run a finder, then attach product context to only the pending rows it created. */
+export async function runFinderWithProductResearch(
+  spec: TriggerSpec,
+  config: Record<string, unknown>,
+): Promise<FinderResult> {
+  const ledger = getLedger();
+  const afterId = ledger.latestQueueId();
+  const result = await spec.run(config);
+  await researchNewQueueRows({
+    afterId,
+    result,
+    enabled: config["productResearch"] !== false,
+    priorSdkCostUsd: result.sdkCostUsd ?? result.costUsd,
+    ...(typeof config["maxCostUsd"] === "number"
+      ? { maxCostUsd: config["maxCostUsd"] as number }
+      : {}),
+  });
+  return result;
+}
+
 export type Readiness = { ready: true } | { ready: false; reason: string };
 
 /** Evaluate a spec's readiness fn (defaulting to ready when absent). */
@@ -60,6 +82,7 @@ export function checkReadiness(spec: TriggerSpec, config: Record<string, unknown
 }
 
 const ONE_HOUR = 3600 * 1000;
+const PRODUCT_RESEARCH_DEFAULT = { productResearch: true } as const;
 
 /**
  * Default cohort sweep for `accelerator-batch`. Only yc-* entries hit the
@@ -90,7 +113,7 @@ export const TRIGGERS: TriggerSpec[] = [
   {
     name: "show-hn",
     defaultIntervalMs: 6 * ONE_HOUR,
-    defaultConfig: { sinceDays: 1, limit: 25, maxCostUsd: 5 },
+    defaultConfig: { ...PRODUCT_RESEARCH_DEFAULT, sinceDays: 1, limit: 25, maxCostUsd: 5 },
     configBrief:
       "Polls Hacker News Algolia for recent Show HN posts, ICP-filters them, enriches founder contact, and enqueues them for review. Config: `sinceDays` (lookback window, default 1), `limit` (max kept, default 25), `maxCostUsd` (per-run spend cap), `minPoints` (upvote floor, default 5 — posts below it drop as low-signal). Defaults work for most ICPs — bump sinceDays to 7+ if your ICP is niche enough that daily volume is thin. STRATEGIST NOTE: minPoints is a MOTION choice, not noise control — selling a paid product, keep ≥5 (traction = budget); driving adoption of a founder tool, drop to 1-2 (the quiet launch IS the pain signal).",
     run: (cfg) =>
@@ -108,6 +131,7 @@ export const TRIGGERS: TriggerSpec[] = [
     enabledByDefault: false,
     // Every known incubator × {latest, previous-latest}; editable in /queue.
     defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
       cohorts: DEFAULT_COHORTS,
       limit: 25,
       maxCostUsd: 15,
@@ -183,6 +207,7 @@ export const TRIGGERS: TriggerSpec[] = [
     name: "post-funding-auto",
     defaultIntervalMs: 12 * ONE_HOUR,
     defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
       autoRounds: ["Seed", "Series A"],
       autoSinceDays: 7,
       limit: 25,
@@ -210,6 +235,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
       personas: ["VP Engineering", "Head of Growth", "Director of Product", "Chief of Staff"],
       sinceDays: 14,
       limit: 25,
@@ -232,6 +258,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
       roles: ["Staff Engineer", "ML Engineer", "Solutions Engineer"],
       sinceDays: 14,
       limit: 25,
@@ -261,6 +288,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
       podcasts: ["Latent Space", "Lenny's Podcast", "20VC", "Acquired", "Invest Like the Best"],
       sinceDays: 21,
       skipRead: false,
@@ -287,6 +315,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
       topics: ["AI", "founders"] as string[],
       cities: ["San Francisco", "New York"] as string[],
       sinceDays: 14,
@@ -342,6 +371,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 12 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
       topics: [] as string[],
       vendors: [] as string[],
       directCompetitors: [] as string[],
@@ -412,6 +442,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 12 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
       repos: [] as Array<{ repo: string; rel: string; label?: string; repoEdge?: string }>,
       yourEdge: "",
       sinceDays: 30,
@@ -472,10 +503,64 @@ export const TRIGGERS: TriggerSpec[] = [
     },
   },
   {
+    name: "local-business",
+    defaultIntervalMs: 24 * ONE_HOUR,
+    enabledByDefault: false,
+    defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
+      jobTitles: [] as string[],
+      industries: [] as string[],
+      locations: [] as string[],
+      employeeRange: "",
+      keywords: [] as string[],
+      yourEdge: "",
+      limit: 25,
+      maxCostUsd: 5,
+    },
+    configBrief:
+      "Reaches businesses with no GitHub repo, no Show HN post, no funding round and no accelerator batch — the local-business/main-street population the other ten finders can't touch. One `peopleSearch` call ($0.01 flat) returns up to 500 people matching `jobTitles` × `industries` × `locations` × `employeeRange`, many already carrying a `best_work_email` — those skip findEmail/verifyEmail entirely and go straight to the person-level ICP gate, so a run where every result has an email costs about one search call, not one per candidate. Config: `jobTitles` (roles that make the buying decision — e.g. 'Owner', 'Office Manager', 'Practice Manager'), `industries` (e.g. 'Dental Practices', 'HVAC Contractors', 'Independent Restaurants'), `locations` (metro/city/state filters), `employeeRange` (company-size band, e.g. '1-10', '11-50'), `keywords` (free-text refinement), `yourEdge` (the free-pilot pitch — what you set up for them free and what it saves them, REQUIRED, fed to the `free-pilot` play), `limit`, `maxCostUsd`. When `industries` is set and `jobTitles` is empty, the search is business-shaped: a `companySearch` pass resolves matching company domains first, then `peopleSearch` is scoped to those domains instead of searching on industry directly. STRATEGIST DUTY: propose `jobTitles` AND `industries` proactively from the founder's ICP — a pre-PMF founder selling to dental practices or HVAC companies shouldn't have to enumerate either by hand.",
+    readiness: (cfg) => {
+      const jobTitles = Array.isArray(cfg["jobTitles"])
+        ? (cfg["jobTitles"] as unknown[]).filter((t) => typeof t === "string" && t.trim())
+        : [];
+      const industries = Array.isArray(cfg["industries"])
+        ? (cfg["industries"] as unknown[]).filter((t) => typeof t === "string" && t.trim())
+        : [];
+      if (jobTitles.length === 0 && industries.length === 0) {
+        return { ready: false, reason: "set `jobTitles` or `industries` (at least one)" };
+      }
+      const edge = cfg["yourEdge"];
+      if (typeof edge !== "string" || edge.trim().length === 0) {
+        return { ready: false, reason: "set `yourEdge` — your one-line free-pilot pitch" };
+      }
+      return { ready: true };
+    },
+    run: (cfg) => {
+      const strArray = (key: string): string[] =>
+        Array.isArray(cfg[key])
+          ? (cfg[key] as unknown[]).filter((t): t is string => typeof t === "string")
+          : [];
+      return runLocalBusinessFinder({
+        dryRun: false,
+        jobTitles: strArray("jobTitles"),
+        industries: strArray("industries"),
+        locations: strArray("locations"),
+        keywords: strArray("keywords"),
+        ...(typeof cfg["employeeRange"] === "string" && cfg["employeeRange"].trim().length > 0
+          ? { employeeRange: (cfg["employeeRange"] as string).trim() }
+          : {}),
+        yourEdge: typeof cfg["yourEdge"] === "string" ? cfg["yourEdge"] : "",
+        limit: (cfg["limit"] as number) ?? 25,
+        maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
+      });
+    },
+  },
+  {
     name: "x-reposters",
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
       seeds: [] as Array<{ handle: string; edge?: string }>,
       engine: "xapi",
       laneSplit: 0.5,
@@ -602,6 +687,74 @@ export interface TriggerRunOutcome {
   duration_ms?: number;
   /** ms until this trigger is next due */
   nextDueInMs: number;
+  /** Named scheduler skip reason (disabled/not-due remain unnamed). */
+  skippedReason?: string;
+}
+
+export const DEFAULT_APPROVAL_RATE_THRESHOLD = 0.1;
+export const DEFAULT_APPROVAL_RATE_WINDOW_DAYS = 30;
+export const DEFAULT_APPROVAL_RATE_MIN_SAMPLES = 100;
+
+export interface FinderApprovalHealth {
+  approved: number;
+  reviewed: number;
+  rate: number | null;
+  threshold: number;
+  windowDays: number;
+  minSamples: number;
+  sufficientData: boolean;
+  deprioritized: boolean;
+  reason: string | null;
+}
+
+/** Pure boundary logic shared by scheduler, API, doctor, and tests. */
+export function evaluateFinderApprovalHealth(input: {
+  approved: number;
+  reviewed: number;
+  threshold?: number;
+  windowDays?: number;
+  minSamples?: number;
+}): FinderApprovalHealth {
+  const threshold = input.threshold ?? DEFAULT_APPROVAL_RATE_THRESHOLD;
+  const windowDays = input.windowDays ?? DEFAULT_APPROVAL_RATE_WINDOW_DAYS;
+  const minSamples = input.minSamples ?? DEFAULT_APPROVAL_RATE_MIN_SAMPLES;
+  const rate = input.reviewed > 0 ? input.approved / input.reviewed : null;
+  const sufficientData = input.reviewed >= minSamples;
+  const deprioritized = sufficientData && rate !== null && rate < threshold;
+  return {
+    ...input,
+    rate,
+    threshold,
+    windowDays,
+    minSamples,
+    sufficientData,
+    deprioritized,
+    reason: deprioritized ? "low-approval-rate" : null,
+  };
+}
+
+export function finderApprovalHealth(
+  name: string,
+  config: Record<string, unknown>,
+): FinderApprovalHealth {
+  const numberOr = (key: string, fallback: number): number => {
+    const value = config[key];
+    return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
+  };
+  const threshold = Math.min(1, numberOr("approvalRateThreshold", DEFAULT_APPROVAL_RATE_THRESHOLD));
+  const windowDays = Math.max(
+    1,
+    numberOr("approvalRateWindowDays", DEFAULT_APPROVAL_RATE_WINDOW_DAYS),
+  );
+  const minSamples = Math.max(
+    1,
+    Math.floor(numberOr("approvalRateMinSamples", DEFAULT_APPROVAL_RATE_MIN_SAMPLES)),
+  );
+  const stats = getLedger().finderApprovalStats({
+    finder: name,
+    sinceIso: new Date(Date.now() - windowDays * 86_400_000).toISOString(),
+  });
+  return evaluateFinderApprovalHealth({ ...stats, threshold, windowDays, minSamples });
 }
 
 /**
@@ -697,7 +850,7 @@ export function fireTriggerNow(name: string): void {
   }
   // Explicit catch (not `void`): a rejection before runTriggerNow's own
   // try/catch must surface AND clear the stranded `running_started_at`.
-  runTriggerNow(name).catch((err) => {
+  runTriggerNow(name, { claimHeld: true }).catch((err) => {
     const message = (err as Error).message ?? "runTriggerNow rejected";
     logEvent("trigger.run.fire_failed", { name, message_120: message.slice(0, 120) }, "error");
     try {
@@ -716,7 +869,10 @@ export function fireTriggerNow(name: string): void {
  * (the founder explicitly asked). Persists last_polled_at + last_run_summary
  * so the watch loop respects the run.
  */
-export async function runTriggerNow(name: string): Promise<TriggerRunOutcome> {
+export async function runTriggerNow(
+  name: string,
+  options: { claimHeld?: boolean } = {},
+): Promise<TriggerRunOutcome> {
   startRun();
   const spec = TRIGGERS.find((t) => t.name === name);
   if (!spec) throw new Error(`unknown trigger '${name}'`);
@@ -743,10 +899,20 @@ export async function runTriggerNow(name: string): Promise<TriggerRunOutcome> {
     logEvent("trigger.run.skipped", { name, source: "ad_hoc", reason: readiness.reason });
     return { name, fired: false, error: message, nextDueInMs: intervalMs };
   }
+  // fireTriggerNow claims before detaching its promise. Direct callers must
+  // claim here so this exported boundary cannot overlap same-trigger runs.
+  if (!options.claimHeld) {
+    const claimNowIso = new Date().toISOString();
+    const staleCutoffIso = new Date(Date.now() - MAX_RUN_AGE_MS).toISOString();
+    if (!ledger.markTriggerRunning(name, claimNowIso, staleCutoffIso)) {
+      const message = `trigger '${name}' is already running`;
+      return { name, fired: false, error: message, nextDueInMs: intervalMs };
+    }
+  }
   const startedAt = Date.now();
   logEvent("trigger.run.start", { name, source: "ad_hoc" });
   try {
-    const result = await spec.run(config);
+    const result = await runFinderWithProductResearch(spec, config);
     ledger.updateTriggerLastPoll({ name, summary: result });
     logEvent("trigger.run.done", {
       name,
@@ -784,7 +950,9 @@ export async function runTriggerNow(name: string): Promise<TriggerRunOutcome> {
  * Run every registered trigger that's due. Persists last_polled_at + last_run_summary.
  * Returns one outcome per trigger so the caller can log + decide sleep duration.
  */
-export async function runDueTriggers(): Promise<TriggerRunOutcome[]> {
+export async function runDueTriggers(
+  options: { ignoreApprovalRate?: boolean } = {},
+): Promise<TriggerRunOutcome[]> {
   startRun();
   const ledger = getLedger();
   const now = Date.now();
@@ -815,11 +983,35 @@ export async function runDueTriggers(): Promise<TriggerRunOutcome[]> {
     // picked up on the next tick, not the next interval boundary.
     const readiness = checkReadiness(spec, config);
     if (!readiness.ready) {
-      outcomes.push({ name: spec.name, fired: false, nextDueInMs: intervalMs });
+      outcomes.push({
+        name: spec.name,
+        fired: false,
+        nextDueInMs: intervalMs,
+        skippedReason: readiness.reason,
+      });
       logEvent("trigger.run.skipped", {
         name: spec.name,
         source: "watch",
         reason: readiness.reason,
+      });
+      continue;
+    }
+
+    const approval = finderApprovalHealth(spec.name, config);
+    if (approval.deprioritized && !options.ignoreApprovalRate) {
+      outcomes.push({
+        name: spec.name,
+        fired: false,
+        nextDueInMs: intervalMs,
+        skippedReason: approval.reason ?? "low-approval-rate",
+      });
+      logEvent("trigger.run.skipped", {
+        name: spec.name,
+        source: "watch",
+        reason: approval.reason,
+        approval_rate: approval.rate,
+        reviewed: approval.reviewed,
+        threshold: approval.threshold,
       });
       continue;
     }
@@ -850,7 +1042,7 @@ export async function runDueTriggers(): Promise<TriggerRunOutcome[]> {
     const startedAt = Date.now();
     logEvent("trigger.run.start", { name: spec.name, source: "watch" });
     try {
-      const result = await spec.run(config);
+      const result = await runFinderWithProductResearch(spec, config);
       const durationMs = Date.now() - startedAt;
       ledger.updateTriggerLastPoll({ name: spec.name, summary: result });
       logEvent("trigger.run.done", {

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { Database } from "bun:sqlite";
 import { Ledger } from "../src/ledger.ts";
 
 let dbPath: string;
@@ -36,6 +37,70 @@ describe("Ledger schema migration", () => {
     const second = new Ledger(dbPath);
     expect(() => second.upsertProspect({ name: "x", email: "x@y.com", source: "t" })).not.toThrow();
     second.close();
+  });
+
+  it("stores product research cache entries and expires old reads", () => {
+    ledger.setProductResearchCache("https://acme.dev", '{"version":1}');
+    expect(ledger.getProductResearchCache("https://acme.dev", 60_000)).toBe('{"version":1}');
+    expect(ledger.getProductResearchCache("https://acme.dev", -1)).toBeNull();
+  });
+
+  it("persists webhook replay keys across ledger instances and expires them", () => {
+    expect(ledger.consumeWebhookReplay("signed-event", 2_000, 1_000)).toBe(true);
+    ledger.close();
+    ledger = new Ledger(dbPath);
+    expect(ledger.consumeWebhookReplay("signed-event", 2_000, 1_500)).toBe(false);
+    expect(ledger.consumeWebhookReplay("signed-event", 3_000, 2_001)).toBe(true);
+  });
+
+  it("releases a consumed webhook replay key so it can be consumed again", () => {
+    expect(ledger.consumeWebhookReplay("signed-event", 2_000, 1_000)).toBe(true);
+    expect(ledger.consumeWebhookReplay("signed-event", 2_000, 1_100)).toBe(false);
+    ledger.releaseWebhookReplay("signed-event");
+    expect(ledger.consumeWebhookReplay("signed-event", 2_000, 1_200)).toBe(true);
+  });
+
+  it("releasing an unknown webhook replay key is a no-op", () => {
+    expect(() => ledger.releaseWebhookReplay("never-consumed")).not.toThrow();
+  });
+
+  it("lists only new pending queue rows after a queue watermark", () => {
+    const before = ledger.latestQueueId();
+    ledger.enqueueTarget({
+      playName: "x",
+      payload: { email: "a@x.dev" },
+      dedupeKey: "a",
+      source: "t",
+    });
+    ledger.enqueueTarget({
+      playName: "x",
+      payload: { email: "b@x.dev" },
+      dedupeKey: "b",
+      source: "t",
+      initialStatus: "rejected",
+    });
+    expect(ledger.listPendingQueueAfterId(before).map((row) => row.dedupe_key)).toEqual(["a"]);
+  });
+
+  it("fresh-install schema (tables, columns, indexes, triggers, schema_version) matches the snapshot", () => {
+    // Deterministic proof that extracting the migration DDL into
+    // ledger-schema.ts (issue #452) didn't change what a fresh install
+    // produces. sqlite_master carries every table/index/trigger's exact
+    // CREATE statement; schema_version is the migration's own version
+    // marker. If this snapshot ever needs updating, confirm the DDL change
+    // was intentional before accepting the new baseline.
+    const db = (ledger as unknown as { db: Database }).db;
+    const objects = db
+      .query(
+        `SELECT type, name, tbl_name, sql FROM sqlite_master
+         WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'
+         ORDER BY type, name`,
+      )
+      .all() as Array<{ type: string; name: string; tbl_name: string; sql: string }>;
+    const version = db.query("SELECT version FROM schema_version").all() as Array<{
+      version: number;
+    }>;
+    expect({ objects, version }).toMatchSnapshot();
   });
 });
 
@@ -618,6 +683,14 @@ describe("Ledger queue sending marker", () => {
     );
   });
 
+  it("claim fails after the row leaves approved status", () => {
+    const id = enqueue();
+    ledger.setQueueStatus({ id, status: "expired" });
+    expect(ledger.claimQueueSendingMarker({ id, startedAtIso: new Date().toISOString() })).toBe(
+      false,
+    );
+  });
+
   it("reclaim succeeds when previous marker is older than the stale cutoff", () => {
     const id = enqueue();
     ledger.claimQueueSendingMarker({
@@ -668,12 +741,13 @@ describe("Ledger queue sending marker", () => {
     // Simulate by writing the marker AFTER the status flip.
     const id = enqueue();
     ledger.setQueueStatus({ id, status: "sent" });
-    // setQueueStatus('sent') auto-clears the marker; re-claim to simulate the
-    // pre-clear stranded state.
-    ledger.claimQueueSendingMarker({
+    // The public claim now refuses terminal rows; write the legacy/crash state directly.
+    const db = new Database(dbPath);
+    db.prepare("UPDATE target_queue SET send_started_at = ? WHERE id = ?").run(
+      new Date(Date.now() - 1000).toISOString(),
       id,
-      startedAtIso: new Date(Date.now() - 1000).toISOString(),
-    });
+    );
+    db.close();
     const swept = ledger.sweepStaleQueueSends({ now: new Date(), maxAgeMs: 0 });
     expect(swept).toHaveLength(1);
     expect(swept[0]?.actuallySent).toBe(true);
@@ -701,6 +775,7 @@ describe("Ledger runs", () => {
         { email: "a@x.dev", name: "A" },
         { email: "b@x.dev", name: "B" },
       ],
+      dedupeKeys: ["queue-a", null],
     });
     expect(runId).toBeGreaterThan(0);
     expect(startedAt).toMatch(/^\d{4}-/);
@@ -713,6 +788,7 @@ describe("Ledger runs", () => {
       draftedCount: 0,
       sentCount: 0,
       errorCount: 0,
+      dedupeKeys: ["queue-a", null],
       completedAt: null,
     });
     expect(run?.targets).toHaveLength(2);

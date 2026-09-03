@@ -14,6 +14,8 @@ import { Textarea } from "../components/primitives/Field.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { cn, timeAgo } from "../lib/cn.ts";
 import { matchesReplyFilter, type ReplyMatchFilter } from "../lib/replyFilter.ts";
+import { readOnly } from "../lib/readOnly.ts";
+import { IS_DEMO } from "../api/demo.ts";
 
 const MATCH_FILTERS: Array<{ key: ReplyMatchFilter; label: string }> = [
   { key: "all", label: "all" },
@@ -127,7 +129,7 @@ function InboxPage() {
         {MATCH_FILTERS.map((f) => (
           <Button
             key={f.key}
-            variant={matchFilter === f.key ? "primary" : "ghost"}
+            variant={matchFilter === f.key ? "secondary" : "ghost"}
             size="sm"
             onClick={() => setMatchFilter(f.key)}
           >
@@ -470,7 +472,11 @@ function ReplyComposer({ reply }: { reply: InboxReplyView }) {
 
   const persist = useCallback(
     (value: string) => {
-      if (!identityId || value === lastSaved.current) return;
+      // Nothing to persist to in a demo build, and the rejection below is
+      // swallowed by design, so scheduling the write would fail silently once
+      // a second while someone typed. Surfacing it instead would be worse: a
+      // toast per keystroke pause. The textarea keeps the text either way.
+      if (IS_DEMO || !identityId || value === lastSaved.current) return;
       lastSaved.current = value;
       // Empty body clears the persisted draft server-side (so deleting all text
       // and refreshing doesn't bring the old draft back).
@@ -610,6 +616,7 @@ function ReplyComposer({ reply }: { reply: InboxReplyView }) {
           disabled={!reply.body || generate.isPending || send.isPending}
           title={reply.body ? undefined : "this email has no body to draft a reply from"}
           onClick={() => generate.mutate()}
+          {...readOnly}
         >
           {generate.isPending ? (
             <Loader2 size={12} className="animate-spin" />
@@ -629,6 +636,7 @@ function ReplyComposer({ reply }: { reply: InboxReplyView }) {
           size="sm"
           disabled={!draft.trim() || send.isPending || generate.isPending}
           onClick={() => send.mutate()}
+          {...readOnly}
         >
           {send.isPending ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
           {send.isPending ? "sending" : "send reply"}

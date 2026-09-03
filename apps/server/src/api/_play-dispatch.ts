@@ -8,6 +8,7 @@ export interface DraftedView {
   receiptIds: number[];
   sent: boolean;
   enrichmentFailed?: boolean;
+  originalTargetIndex?: number;
 }
 
 export function toDraftedView(d: {
@@ -17,6 +18,7 @@ export function toDraftedView(d: {
   receiptIds: number[];
   sent: boolean;
   enrichmentFailed?: boolean;
+  originalTargetIndex?: number;
 }): DraftedView {
   return {
     subject: d.subject,
@@ -25,6 +27,7 @@ export function toDraftedView(d: {
     receiptIds: d.receiptIds,
     sent: d.sent,
     ...(d.enrichmentFailed ? { enrichmentFailed: true } : {}),
+    ...(d.originalTargetIndex !== undefined ? { originalTargetIndex: d.originalTargetIndex } : {}),
   };
 }
 

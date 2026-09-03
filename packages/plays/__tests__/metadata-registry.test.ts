@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   acceleratorBatchMetadata,
+  civicPilotMetadata,
+  designPartnerLoiMetadata,
   lumaEventsMetadata,
   playMetadata,
   postFundingMetadata,
   repoInterestMetadata,
+  sourcesSoughtMetadata,
 } from "../src/_metadata.ts";
 
 // The registry exists so the /queue send-draft route stamps the SAME step-0
@@ -85,6 +88,38 @@ describe("shared fns are what the play defs reference", () => {
     expect(acceleratorBatchMetadata({ senderCohort: "yc-w26", cohort: "spc-1" })).toEqual({
       senderCohort: "yc-w26",
       prospectCohort: "spc-1",
+    });
+  });
+  it("sources-sought", () => {
+    expect(
+      sourcesSoughtMetadata({
+        agency: "GSA",
+        noticeNumber: "W912DY-26-R-0042",
+        noticeType: "Sources Sought",
+      }),
+    ).toEqual({
+      agency: "GSA",
+      noticeNumber: "W912DY-26-R-0042",
+      noticeType: "Sources Sought",
+    });
+  });
+  it("civic-pilot", () => {
+    expect(
+      civicPilotMetadata({
+        city: "Austin",
+        agendaItemTitle: "AI vendor pilot budget",
+        meetingDate: "2026-06-10",
+      }),
+    ).toEqual({
+      city: "Austin",
+      agendaItemTitle: "AI vendor pilot budget",
+      meetingDate: "2026-06-10",
+    });
+  });
+  it("design-partner-loi", () => {
+    expect(designPartnerLoiMetadata({ buyerType: "enterprise", company: "Acme Corp" })).toEqual({
+      buyerType: "enterprise",
+      company: "Acme Corp",
     });
   });
 });

@@ -41,7 +41,7 @@ export async function commandWorkspaceList(opts: { json?: boolean } = {}): Promi
   );
 
   if (opts.json) {
-    emitJson({
+    await emitJson({
       command: "workspace list",
       current,
       default: reg.default,

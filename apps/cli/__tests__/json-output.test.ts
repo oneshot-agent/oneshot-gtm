@@ -43,11 +43,19 @@ let drainResult = {
   deferred: 0,
   errors: [] as { id: string; message: string }[],
 };
+let csvImportResult = {
+  imported: 2,
+  skipped: 1,
+  errors: [{ row: 3, message: "missing or invalid email" }],
+  mapping: { email: "Email" },
+  rowCount: 3,
+};
 
 vi.mock("@oneshot-gtm/find", () => ({
   runDueTriggers: async () => findTriggerOutcomes,
   drainQueue: async () => drainResult,
   nextSleepMs: () => 60_000,
+  importCsv: async () => csvImportResult,
 }));
 
 // Identities / domains mocks
@@ -101,7 +109,8 @@ vi.mock("@oneshot-gtm/core", () => ({
 
 // Import commands after mocks are set up
 const { commandDoctor } = await import("../src/commands/doctor.ts");
-const { commandFindWatch, commandFindDrain } = await import("../src/commands/find.ts");
+const { commandFindWatch, commandFindDrain, commandFindImport } =
+  await import("../src/commands/find.ts");
 const { commandIdentitiesList, commandDomainsList } = await import("../src/commands/identities.ts");
 const { commandWorkspaceList } = await import("../src/commands/workspace.ts");
 const { CommandExit } = await import("../src/output.ts");
@@ -110,10 +119,20 @@ beforeEach(() => {
   stdoutChunks = [];
   stderrChunks = [];
   listDomainsThrows = null;
-  stdoutSpy = vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
-    stdoutChunks.push(String(chunk));
-    return true;
-  });
+  stdoutSpy = vi
+    .spyOn(process.stdout, "write")
+    .mockImplementation(
+      (
+        chunk: string | Uint8Array,
+        encodingOrCallback?: BufferEncoding | ((error?: Error | undefined) => void),
+        callback?: (error?: Error | undefined) => void,
+      ) => {
+        stdoutChunks.push(String(chunk));
+        if (typeof encodingOrCallback === "function") encodingOrCallback();
+        else callback?.();
+        return true;
+      },
+    );
   stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation((chunk: unknown) => {
     stderrChunks.push(String(chunk));
     return true;
@@ -378,6 +397,25 @@ describe("find drain --dry-run --json", () => {
   });
 });
 
+describe("find import --json schema", () => {
+  it("emits the stable import result shape", async () => {
+    await commandFindImport({
+      csv: "ROADMAP.md",
+      play: "profile-intro",
+      dryRun: true,
+      json: true,
+    });
+
+    const parsed = JSON.parse(stdoutChunks.join(""));
+    expect(parsed).toEqual({
+      schemaVersion: 1,
+      imported: 2,
+      skipped: 1,
+      errors: [{ row: 3, message: "missing or invalid email" }],
+    });
+  });
+});
+
 describe("identities list --json", () => {
   // Two identities on the same sending domain: they share a cap group, so the
   // human line reports the shared domain usage and the JSON carries
@@ -621,8 +659,8 @@ describe("domains list --json", () => {
       dailySent: 0,
       dailyLimit: 20,
     });
-    // Clean pool: no domainsError flag.
-    expect(parsed).not.toHaveProperty("domainsError");
+    // Always emit the boolean so consumers can distinguish this schema from the old shape.
+    expect(parsed.domainsError).toBe(false);
   });
 
   it("empty pool emits an empty array, not an error flag", async () => {
@@ -632,7 +670,7 @@ describe("domains list --json", () => {
     const stdout = stdoutChunks.join("");
     const parsed = JSON.parse(stdout);
     expect(parsed.domains).toEqual([]);
-    expect(parsed).not.toHaveProperty("domainsError");
+    expect(parsed.domainsError).toBe(false);
   });
 
   it("flags domainsError when the pool is unreachable", async () => {

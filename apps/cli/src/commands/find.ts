@@ -1,10 +1,12 @@
 import {
   drainQueue,
+  importCsv,
   nextSleepMs,
   runDueTriggers,
   type FinderResult,
   type TriggerRunOutcome,
 } from "@oneshot-gtm/find";
+import { readFile } from "node:fs/promises";
 import {
   bail,
   bailEmpty,
@@ -16,7 +18,45 @@ import {
   note,
   ok,
   setJsonMode,
+  warn,
 } from "../output.ts";
+
+export async function commandFindImport(opts: {
+  csv: string;
+  play: string;
+  map?: string[];
+  dryRun: boolean;
+  failOnEmpty?: boolean;
+  json?: boolean;
+}): Promise<void> {
+  setJsonMode(opts.json ?? false);
+  header(`find import ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
+  const text = await readFile(opts.csv, "utf8");
+  const result = await importCsv({
+    text,
+    playName: opts.play,
+    dryRun: opts.dryRun,
+    ...(opts.map ? { mapValues: opts.map } : {}),
+  });
+
+  if (opts.json) {
+    emitJson({ imported: result.imported, skipped: result.skipped, errors: result.errors });
+  } else {
+    const mapping = Object.entries(result.mapping)
+      .map(([field, column]) => `${column} → ${field}`)
+      .join(", ");
+    note(`mapping: ${mapping}`);
+    note(`rows: ${result.rowCount}`);
+    for (const error of result.errors) warn(`row ${error.row}: ${error.message}`);
+    ok(
+      `${opts.dryRun ? "would import" : "imported"} ${result.imported}; skipped ${result.skipped}`,
+    );
+  }
+
+  if (opts.failOnEmpty && result.imported === 0) {
+    bailEmpty(`find import ${opts.csv}: 0 rows imported`);
+  }
+}
 
 export async function commandFindDrain(opts: {
   play: string;
@@ -29,18 +69,26 @@ export async function commandFindDrain(opts: {
 }): Promise<void> {
   setJsonMode(opts.json ?? false);
   header(`find drain ${opts.play} ${opts.dryRun ? c.dim("(dry-run)") : ""}`);
-  const result = await drainQueue({
-    playName: opts.play,
-    limit: opts.limit ?? 10,
-    dryRun: opts.dryRun,
-    ...(opts.senderCohort ? { senderCohort: opts.senderCohort } : {}),
-    ...(opts.offer ? { freeForCohortOffer: opts.offer } : {}),
-  });
+  let result;
+  try {
+    result = await drainQueue({
+      playName: opts.play,
+      limit: opts.limit ?? 10,
+      dryRun: opts.dryRun,
+      ...(opts.senderCohort ? { senderCohort: opts.senderCohort } : {}),
+      ...(opts.offer ? { freeForCohortOffer: opts.offer } : {}),
+    });
+  } catch (err: unknown) {
+    if (opts.json) {
+      await emitJson({ error: err instanceof Error ? err.message : String(err) });
+    }
+    throw err;
+  }
   // The document is emitted BEFORE any bail below, so `--json` still explains a
   // non-zero exit rather than being swallowed by it. The exit code stays the
   // health signal; the JSON says why.
   if (opts.json) {
-    emitJson({
+    await emitJson({
       command: "find drain",
       play: opts.play,
       dryRun: opts.dryRun,
@@ -76,6 +124,7 @@ export async function commandFindWatch(opts: {
   quiet: boolean;
   failOnEmpty?: boolean;
   json?: boolean;
+  ignoreApprovalRate?: boolean;
 }): Promise<void> {
   setJsonMode(opts.json ?? false);
   header(`find watch ${opts.once ? c.dim("(--once)") : c.dim("(daemon)")}`);
@@ -98,14 +147,17 @@ export async function commandFindWatch(opts: {
   let lastTick: TriggerRunOutcome[] = [];
   try {
     for (;;) {
-      const outcomes = await runDueTriggers();
+      const outcomes = await runDueTriggers({ ignoreApprovalRate: opts.ignoreApprovalRate });
       lastTick = outcomes;
       errored = 0;
       queued = 0;
       firedNames = [];
       for (const o of outcomes) {
         if (!o.fired) {
-          if (!opts.quiet) note(`${o.name}: skipped (next due in ${humanMs(o.nextDueInMs)})`);
+          if (!opts.quiet)
+            note(
+              `${o.name}: skipped${o.skippedReason ? ` (${o.skippedReason})` : ` (next due in ${humanMs(o.nextDueInMs)})`}`,
+            );
           continue;
         }
         firedNames.push(o.name);
@@ -138,7 +190,7 @@ export async function commandFindWatch(opts: {
   // Emitted before the bail below so the document lands on stdout even on the
   // exit-1 path — the exit code stays the health signal, JSON explains it.
   if (opts.json) {
-    emitJson({
+    await emitJson({
       command: "find watch",
       ok: errored === 0,
       errored,
@@ -146,6 +198,7 @@ export async function commandFindWatch(opts: {
         name: o.name,
         fired: o.fired,
         nextDueInMs: o.nextDueInMs,
+        ...(o.skippedReason ? { skippedReason: o.skippedReason } : {}),
         ...(o.duration_ms != null ? { durationMs: o.duration_ms } : {}),
         ...(o.error !== undefined ? { error: o.error } : {}),
         ...(o.result ? { result: jsonFinderResult(o.result) } : {}),
@@ -158,7 +211,7 @@ export async function commandFindWatch(opts: {
   // look identical to a clean one. Daemon runs still exit 0 — they're killed by
   // a signal, not by a bad tick.
   if (opts.once && errored > 0) {
-    bail(`${errored} due trigger(s) errored`);
+    bail(`${errored} due trigger(s) errored`, 1);
   }
 
   // Opt-in second signal for the same caller: a poll that ran cleanly but
@@ -186,7 +239,7 @@ function jsonFinderResult(r: FinderResult): Record<string, unknown> {
     droppedEnrichment: r.droppedEnrichment,
     droppedLowSignal: r.droppedLowSignal ?? 0,
     costUsd: r.costUsd,
-    ...(r.perCohort ? { perCohort: r.perCohort } : {}),
+    perCohort: r.perCohort,
     ...(r.halted ? { halted: r.halted } : {}),
   };
 }
