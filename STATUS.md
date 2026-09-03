@@ -35,7 +35,7 @@ Only **`show-hn`** and **`post-funding-auto`** fire out of the box. The other th
 Ten of those also stay **not ready** until you give them required config, and refuse to fire until you do (the API returns `409`):
 
 | Finder              | Needs                                                                                                                               |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `accelerator-batch` | `cohorts[]` + `senderCohort`                                                                                                        |
 | `hiring-signal`     | `yourClaim`                                                                                                                         |
 | `github-topics`     | `topics[]` + `vendors[]` + `yourEdge`                                                                                               |
