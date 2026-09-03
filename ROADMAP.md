@@ -17,7 +17,6 @@ Public — issues mirror the items below, PRs welcome. Items carry an effort tag
 
 Today every finder polls. These turn it push.
 
-- [ ] **Webhook signing + replay protection** for those endpoints.
 - [ ] **Warm-signal escalation** in cadence (open-tracking → auto phone call). Blocked: needs OneShot to surface open events.
 
 ## Gates and coverage
@@ -51,8 +50,6 @@ The ICP filter currently judges each candidate cold — `icpFilter` in `packages
 
 ## Tech debt
 
-- [ ] **Extract the pure logic out of `queue.tsx`** · M — the route is 1869 lines, the largest file in `apps/web`, and its selection, filter, bulk-approve and drain-eligibility rules are inlined where no test can reach them. `src/lib/` already holds this shape of helper (`drainButton.ts`, `pruneSentRows.ts`, `replyFilter.ts`).
-      _Done when:_ those rules move to `src/lib/` as pure functions with tests, the route imports them, and the rendered markup is byte-identical for a fixed props fixture.
 - [ ] **Split `packages/core/src/ledger.ts`** · L — 2967 lines covering receipts, prospects, queue, cadence, inbox, bounces, canaries and caches behind one class, with `migrate()` at 400 lines of inline DDL.
       _Done when:_ the file is split by domain with the exported class surface and every call site unchanged, `migrate()` still produces a byte-identical schema for a fresh install, and `packages/core/__tests__/ledger.test.ts` passes untouched.
 
@@ -70,10 +67,7 @@ Not code — these need capture, not commits. `demo seed` + `demo ui` now stand 
 
 ## Approved, not yet started
 
-- [ ] **Deferred review findings from ai/gtm/issue-344** — issue #363.
-- [ ] **Deferred review findings from ai/gtm/issue-360** — issue #367.
-- [ ] **Deferred review findings from ai/gtm/issue-365** — issue #422.
-- [ ] **feat(server): sign webhook intake and reject replayed events** — issue #430.
+_Nothing approved and waiting._
 
 ## Things we intentionally do NOT do
 
