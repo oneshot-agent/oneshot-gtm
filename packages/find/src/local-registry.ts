@@ -92,21 +92,30 @@ export interface LocalRegistryTarget {
 }
 
 /**
- * Unicode-preserving slug: lowercase, trim, then collapse EVERY run of
- * non-letter/non-number characters (whitespace AND punctuation like "&") to
- * a single hyphen separator, instead of stripping punctuation outright.
- * `\p{L}`/`\p{N}` (not the old `a-z0-9` ASCII class) keep non-Latin scripts
- * intact — a Chinese or Cyrillic business name must not collapse to the
- * same empty string as every other non-ASCII name in the run. Preserving a
- * boundary at every punctuation run also keeps "A&B Plumbing" distinct from
- * "AB Plumbing" ("a-b-plumbing" vs "ab-plumbing") — stripping "&" outright
- * collapsed both to "ab-plumbing" and silently dropped one as a duplicate
- * of the other.
+ * Unicode-preserving slug: lowercase, trim, drop apostrophes outright (no
+ * separator), then collapse every remaining run of non-letter/non-number
+ * characters (whitespace AND punctuation like "&") to a single hyphen
+ * separator. `\p{L}`/`\p{N}` (not the old `a-z0-9` ASCII class) keep
+ * non-Latin scripts intact — a Chinese or Cyrillic business name must not
+ * collapse to the same empty string as every other non-ASCII name in the
+ * run. Preserving a boundary at every OTHER punctuation run also keeps
+ * "A&B Plumbing" distinct from "AB Plumbing" ("a-b-plumbing" vs
+ * "ab-plumbing") — stripping "&" outright collapsed both to "ab-plumbing"
+ * and silently dropped one as a duplicate of the other.
+ *
+ * Apostrophes are the one punctuation mark stripped WITHOUT a separator:
+ * business names are spelled inconsistently across sources with vs.
+ * without the possessive apostrophe ("Joe's Pizza" / "Joes Pizza",
+ * "McDonald's" / "McDonalds"), and those variants must still collide to
+ * the same dedupe key — both same-run cross-source dedup and the cross-run
+ * ledger.isQueueDuplicate() check key off this slug, so a punctuation-only
+ * spelling difference must not be treated as a new business.
  */
 function slugify(s: string): string {
   return s
     .toLowerCase()
     .trim()
+    .replace(/['’`]/g, "")
     .replace(/[^\p{L}\p{N}]+/gu, "-")
     .replace(/^-+|-+$/g, "");
 }

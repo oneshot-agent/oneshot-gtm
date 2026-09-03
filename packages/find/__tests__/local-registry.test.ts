@@ -83,6 +83,38 @@ describe("dedupeKeyFor", () => {
     const b: RegistryRecord = { ...a, name: "AB Plumbing" };
     expect(dedupeKeyFor(a)).not.toBe(dedupeKeyFor(b));
   });
+
+  it("collapses apostrophe-bearing name variants to the SAME key (round 2 correction: #500)", () => {
+    // finding: the ampersand fix (round 1, commit 2388ac8) collapsed EVERY
+    // punctuation run — apostrophes included — to a hyphen separator, so
+    // "Joe's Pizza" (-> "joe-s-pizza") and "Joes Pizza" (-> "joes-pizza")
+    // stopped colliding even though the OLD slugify deduped them. Apostrophes
+    // must be stripped WITHOUT a separator so possessive-spelling variants
+    // across sources still dedupe (same-run AND cross-run ledger checks key
+    // off this slug).
+    const joesApostrophe: RegistryRecord = {
+      name: "Joe's Pizza",
+      address: null,
+      city: null,
+      state: "NY",
+      phone: null,
+      matchedDateIso: "2026-06-01T00:00:00Z",
+      source: "socrata-license",
+      sourceLabel: "x",
+    };
+    const joesNoApostrophe: RegistryRecord = { ...joesApostrophe, name: "Joes Pizza" };
+    expect(dedupeKeyFor(joesApostrophe)).toBe(dedupeKeyFor(joesNoApostrophe));
+
+    const mcdonaldsApostrophe: RegistryRecord = { ...joesApostrophe, name: "McDonald's" };
+    const mcdonaldsNoApostrophe: RegistryRecord = { ...joesApostrophe, name: "McDonalds" };
+    expect(dedupeKeyFor(mcdonaldsApostrophe)).toBe(dedupeKeyFor(mcdonaldsNoApostrophe));
+
+    // Still distinct from the ampersand case above — apostrophe-stripping
+    // must not regress the punctuation-as-separator fix for OTHER marks.
+    const ampersand: RegistryRecord = { ...joesApostrophe, name: "A&B Plumbing" };
+    const noAmpersand: RegistryRecord = { ...joesApostrophe, name: "AB Plumbing" };
+    expect(dedupeKeyFor(ampersand)).not.toBe(dedupeKeyFor(noAmpersand));
+  });
 });
 
 describe("routePlayFor", () => {
