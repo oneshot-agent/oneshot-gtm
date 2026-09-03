@@ -19,6 +19,7 @@ export * from "./_stargazers.ts";
 export * from "./_repo-utils.ts";
 export * from "./_repo-pipeline.ts";
 export * from "./registry.ts";
+export * from "./packs.ts";
 export * from "./drain.ts";
 export * from "./luma.ts";
 export * from "./x-reposters.ts";
