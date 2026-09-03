@@ -264,6 +264,23 @@ describe("buildFmcsaWhere", () => {
     expect(where).toContain("power_units::number>=10");
     expect(where).toContain("power_units::number<=100");
   });
+
+  it("filters $where on add_date so the wire query itself is scoped to the freshness window", () => {
+    const where = buildFmcsaWhere({ sinceDays: 60, limit: 25 });
+    // add_date is a zero-padded YYYYMMDD string column; a lexical >= bound
+    // against another zero-padded YYYYMMDD string is a correct freshness
+    // filter server-side, so the ~2.2M-row active-carrier table isn't
+    // sampled at random relative to `sinceDays` before the local filter runs.
+    expect(where).toMatch(/add_date>='\d{8}'/);
+    const sinceStr = where.match(/add_date>='(\d{8})'/)?.[1];
+    expect(sinceStr).toBeTruthy();
+    const expected = new Date(Date.now() - 60 * 86_400_000);
+    const expectedStr =
+      expected.getUTCFullYear().toString().padStart(4, "0") +
+      (expected.getUTCMonth() + 1).toString().padStart(2, "0") +
+      expected.getUTCDate().toString().padStart(2, "0");
+    expect(sinceStr).toBe(expectedStr);
+  });
 });
 
 describe("mapFmcsaRows — canned payload", () => {
@@ -442,5 +459,54 @@ describe("socrataInspectionSource.fetch — per-portal isolation", () => {
     expect(dead?.records).toBe(0);
     expect(dead?.error).toBeTruthy();
     expect(healthy?.records).toBe(1);
+  });
+
+  it("defaults the $order column to inspection_date when the portal doesn't declare dateField", async () => {
+    let seenUrl = "";
+    stubFetch(async (url) => {
+      seenUrl = url;
+      return [];
+    });
+    await socrataInspectionSource.fetch({
+      sinceDays: 60,
+      limit: 25,
+      inspectionPortals: [
+        { host: "data.cityofnewyork.us", dataset: "43nn-pn8j", label: "NYC inspections" },
+      ],
+    });
+    expect(seenUrl).toContain("%24order=inspection_date+DESC");
+  });
+
+  it("orders on the portal's declared dateField instead of the default, for alternate schemas", async () => {
+    // INSPECTION_DATE_FIELDS documents "date"/"activity_date" as alternates
+    // to "inspection_date" for row mapping — the $order clause on the wire
+    // has to name whichever column the portal actually has, or Socrata 400s
+    // before mapInspectionRows' flexible field fallback ever runs.
+    let seenUrl = "";
+    stubFetch(async (url) => {
+      seenUrl = url;
+      return [
+        {
+          business_name: "Alt Schema Diner",
+          state: "CA",
+          activity_date: RECENT_ISO,
+        },
+      ];
+    });
+    const out = await socrataInspectionSource.fetch({
+      sinceDays: 60,
+      limit: 25,
+      inspectionPortals: [
+        {
+          host: "data.alt-portal.example.gov",
+          dataset: "yyyy-yyyy",
+          label: "Alt Portal",
+          dateField: "activity_date",
+        },
+      ],
+    });
+    expect(seenUrl).toContain("%24order=activity_date+DESC");
+    expect(out.records).toHaveLength(1);
+    expect(out.records[0]?.name).toBe("Alt Schema Diner");
   });
 });
