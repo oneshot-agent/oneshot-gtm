@@ -53,6 +53,17 @@ describe("Ledger schema migration", () => {
     expect(ledger.consumeWebhookReplay("signed-event", 3_000, 2_001)).toBe(true);
   });
 
+  it("releases a consumed webhook replay key so it can be consumed again", () => {
+    expect(ledger.consumeWebhookReplay("signed-event", 2_000, 1_000)).toBe(true);
+    expect(ledger.consumeWebhookReplay("signed-event", 2_000, 1_100)).toBe(false);
+    ledger.releaseWebhookReplay("signed-event");
+    expect(ledger.consumeWebhookReplay("signed-event", 2_000, 1_200)).toBe(true);
+  });
+
+  it("releasing an unknown webhook replay key is a no-op", () => {
+    expect(() => ledger.releaseWebhookReplay("never-consumed")).not.toThrow();
+  });
+
   it("lists only new pending queue rows after a queue watermark", () => {
     const before = ledger.latestQueueId();
     ledger.enqueueTarget({
@@ -69,6 +80,27 @@ describe("Ledger schema migration", () => {
       initialStatus: "rejected",
     });
     expect(ledger.listPendingQueueAfterId(before).map((row) => row.dedupe_key)).toEqual(["a"]);
+  });
+
+  it("fresh-install schema (tables, columns, indexes, triggers, schema_version) matches the snapshot", () => {
+    // Deterministic proof that extracting the migration DDL into
+    // ledger-schema.ts (issue #452) didn't change what a fresh install
+    // produces. sqlite_master carries every table/index/trigger's exact
+    // CREATE statement; schema_version is the migration's own version
+    // marker. If this snapshot ever needs updating, confirm the DDL change
+    // was intentional before accepting the new baseline.
+    const db = (ledger as unknown as { db: Database }).db;
+    const objects = db
+      .query(
+        `SELECT type, name, tbl_name, sql FROM sqlite_master
+         WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'
+         ORDER BY type, name`,
+      )
+      .all() as Array<{ type: string; name: string; tbl_name: string; sql: string }>;
+    const version = db.query("SELECT version FROM schema_version").all() as Array<{
+      version: number;
+    }>;
+    expect({ objects, version }).toMatchSnapshot();
   });
 });
 
