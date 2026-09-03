@@ -65,6 +65,21 @@ interface SequenceStep {
   builder: (ctx: CadenceContext) => Promise<StepPayload | null>;
   /** Optional label for logs. */
   label?: string;
+  /**
+   * Word cap enforced on this step's drafted body — same role as
+   * `EmailPlayDef.maxBodyWords` for a step 0 send. Every follow-up prompt
+   * states its own hard cap in prose (discovery-interview-followup.md's
+   * "Body: ≤ 30 words", new-business-followup.md's "≤ 45 words"), but
+   * `previewCadenceStep`/the batch preview path used to lint every step
+   * against a flat 100 regardless of what the prompt promised, so a
+   * 31-100-word discovery-interview re-ask or a 46-100-word new-business
+   * breakup could pass the lint clean and be sent (finding:
+   * discovery-interview-email.md:31 / discovery-interview-followup.md:18 /
+   * new-business-followup.md:14). Defaults to 100 (the prior flat value)
+   * when a step doesn't set one, so every other registered sequence's
+   * behavior is unchanged.
+   */
+  maxBodyWords?: number;
 }
 
 export interface Sequence {
@@ -1295,7 +1310,7 @@ export async function previewCadenceStep(input: {
   const flags =
     built.kind === "email"
       ? [
-          ...lintEmail(subject, body, 100),
+          ...lintEmail(subject, body, step.maxBodyWords ?? 100),
           ...lintOpenerFrequency(body, [
             ...(input.extraRecentBodies ?? []),
             ...ledger.recentSentEmailBodies({ playName: input.playName, stepIndex: nextIndex }),

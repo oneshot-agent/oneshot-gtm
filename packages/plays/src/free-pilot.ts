@@ -51,6 +51,10 @@ const freePilotDef: EmailPlayDef<FreePilotTarget> = {
   // accelerator-batch's shape. An owner-operator who didn't bite on a free,
   // no-obligation setup doesn't want a multi-touch chase.
   enrollCadence: true,
+  // Server-side mirror of playSchemas.ts's required fields for this play
+  // (finding: apps/web/src/lib/playSchemas.ts:417 — the client-only check
+  // can be bypassed by a direct API call or a hand-edited queue row).
+  requiredFields: ["name", "email", "company", "businessType", "yourEdge"],
   toEmail: (t) => t.email,
   prepare: (t) =>
     standardEnrich({
@@ -98,6 +102,11 @@ registerSequence({
       channel: "email",
       breakOnReply: true,
       label: "single follow-up + breakup",
+      // Prompt caps this at ≤ 45 words (free-pilot-followup.md) — enforced
+      // here, not the cadence-wide default of 100 (finding:
+      // discovery-interview-email.md:31, listing free-pilot-followup.md:14
+      // as one of the affected plays).
+      maxBodyWords: 45,
       builder: buildFollowUpEmail({
         playName: PLAY_NAME,
         promptName: "free-pilot-followup",

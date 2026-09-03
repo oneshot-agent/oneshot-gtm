@@ -367,6 +367,34 @@ export function citesPublicRecordLeverage(body: string): boolean {
   );
 }
 
+/**
+ * Additional pre-send flags for plays whose prompt declares a hard ban on a
+ * product link, a price/cost figure, or a discount/trial framing — e.g.
+ * discovery-interview-email.md's "Hard bans (binding, no exceptions)"
+ * section. `lintEmail()` only ever checked for the literal string "calendly"
+ * as a link-like pattern and had no price/discount check at all, so a
+ * completion carrying a bare URL, a dollar figure, or "free trial" language
+ * reached `sendDraftedEmail()` with an empty flags array and could autosend
+ * (finding: discovery-interview-email.md:9). Deliberately NOT folded into
+ * `lintEmail` itself: several plays legitimately cite a dollar figure
+ * (post-funding's raise amount) or a URL (competitor-switch/stack-
+ * consolidation/repo-interest's evidence link), so this is opt-in per play
+ * via `EmailPlayDef.extraBodyFlags` rather than a global check.
+ *
+ * The signature's plain domain line (see `signatureDirective`) is written
+ * without "http://", "https://", or "www." by contract, so it never trips
+ * the link check here.
+ */
+export function hardBanFlags(body: string): string[] {
+  const flags: string[] = [];
+  if (/https?:\/\/|www\./i.test(body)) flags.push("hard-ban:link");
+  if (/\$\s?\d|\b\d+(?:\.\d+)?\s?(?:usd|dollars?)\b/i.test(body)) flags.push("hard-ban:price");
+  if (/\bfree trial\b|\bfree for you\b|\bdiscount\b/i.test(body)) {
+    flags.push("hard-ban:discount-offer");
+  }
+  return flags;
+}
+
 export interface DraftedEmail {
   subject: string;
   body: string;

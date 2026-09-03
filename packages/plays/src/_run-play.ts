@@ -16,6 +16,7 @@ import {
   draftEmailFromPrompt,
   errorDraft,
   firstNameFrom,
+  hardBanFlags,
   lintEmail,
   logTargetError,
   safeEnrich,
@@ -97,6 +98,36 @@ export interface EmailPlayDef<T, X = Record<string, never>> {
    * (e.g. luma-events flags `stale-event` for long-passed events).
    */
   extraFlags?: (t: T) => string[];
+  /**
+   * When true, run `hardBanFlags()` (link / price / discount patterns)
+   * against the drafted body and merge any hits into the lint flags before
+   * sending. `lintEmail()` alone only checks for the literal string
+   * "calendly" — no generic link, price or discount check — so a play whose
+   * prompt declares those a hard, no-exceptions ban (discovery-interview:
+   * no product link, no price, no discount) needs this to actually block an
+   * offending completion rather than relying on prompt text alone. Opt-in
+   * per play: several plays legitimately cite a URL or a dollar figure
+   * (post-funding's amountUsd, competitor-switch's evidenceUrl) and must not
+   * be held for saying so.
+   */
+  hardBans?: boolean;
+  /**
+   * Keys on `T` that must be a non-empty (post-trim) string before this
+   * target is processed — server-side mirror of the web app's
+   * `PLAY_SCHEMAS[playName].fields[].required` (apps/web/src/lib/
+   * playSchemas.ts, enforced client-side by `missingRequiredFields()`).
+   * That check runs in the browser only: `/run`'s `submit()` calls
+   * `fetch('/api/run/...')` directly, so a target missing a required field
+   * (blank `businessType`, `topic`, `yourEdge`, ...) still reaches
+   * `buildInputBlock` as `undefined` if it arrives by any other path — a
+   * direct API call, a future refactor of the web form, or a queue row
+   * hand-edited before drain (finding: apps/web/src/lib/playSchemas.ts:417
+   * — "validate each play's target shape server-side"). Checked before any
+   * paid call, same boundary as `design-partner-loi`'s
+   * `assertNotOwnerOperatorBuyer` guard: a failing target lands as an
+   * `errorDraft`, not a malformed send.
+   */
+  requiredFields?: ReadonlyArray<keyof T & string>;
   /** Enroll the prospect in this play's cadence after a real send. */
   enrollCadence?: boolean;
   /** Extra fields merged onto the row when a target throws (e.g. jobPostHook). */
@@ -160,6 +191,20 @@ export async function runEmailPlay<T, X = Record<string, never>>(
     concurrency,
     async (target) => {
       try {
+        // Guard #0 — required-field shape check, before Guard #1's paid
+        // `prepare` call. Mirrors the web form's client-side
+        // `missingRequiredFields()` so a target that skipped that check
+        // (direct API call, hand-edited queue row) can't reach the LLM with
+        // an undefined field baked into the prompt.
+        if (def.requiredFields && def.requiredFields.length > 0) {
+          const missing = def.requiredFields.filter((key) => {
+            const value = (target as Record<string, unknown>)[key];
+            return typeof value !== "string" || value.trim().length === 0;
+          });
+          if (missing.length > 0) {
+            throw new Error(`missing required field(s): ${missing.join(", ")}`);
+          }
+        }
         // Guard #1 — the whole target. Workers pull from a shared cursor, so
         // every target still queued behind the abort dies here having billed
         // nothing at all.
@@ -209,6 +254,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
 
         const flags = [
           ...lintEmail(draft.subject, draft.body, def.maxBodyWords),
+          ...(def.hardBans ? hardBanFlags(draft.body) : []),
           ...(def.extraFlags?.(target) ?? []),
           ...lintGrounding(target, prep),
         ];

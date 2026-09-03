@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // soft re-ask, no breakup) on a real send — mirrors repo-interest's shape.
 
 const calls = { llmInputBlocks: [] as string[], enrolled: 0 };
+let completeResponse: { subject: string; body: string } = { subject: "s", body: "b" };
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -51,7 +52,7 @@ vi.mock("@oneshot-gtm/intel", async () => {
     loadPrompt: () => "system",
     complete: async (input: { messages: Array<{ role: string; content: string }> }) => {
       calls.llmInputBlocks.push(input.messages.find((m) => m.role === "user")?.content ?? "");
-      return { content: JSON.stringify({ subject: "s", body: "b" }), provider: "t", model: "t" };
+      return { content: JSON.stringify(completeResponse), provider: "t", model: "t" };
     },
   };
 });
@@ -69,6 +70,7 @@ const base = {
 beforeEach(() => {
   calls.llmInputBlocks = [];
   calls.enrolled = 0;
+  completeResponse = { subject: "s", body: "b" };
 });
 afterEach(() => vi.clearAllMocks());
 
@@ -84,5 +86,47 @@ describe("runDiscoveryInterview", () => {
     expect(out.drafted).toHaveLength(1);
     expect(out.drafted[0]?.sent).toBe(true);
     expect(calls.enrolled).toBe(1);
+  });
+
+  // finding apps/web/src/lib/playSchemas.ts:417: the web form's required-field
+  // check is client-side only, so a target that bypasses it (a direct API
+  // call, a hand-edited queue row) must still be rejected before any paid
+  // call rather than reaching buildInputBlock with an undefined field.
+  it("refuses a target missing a required field, before any paid call", async () => {
+    const { businessType: _drop, ...withoutBusinessType } = base;
+    const out = await runDiscoveryInterview({
+      dryRun: true,
+      targets: [withoutBusinessType as typeof base],
+    });
+    expect(out.drafted).toHaveLength(1);
+    expect(out.drafted[0]?.sent).toBe(false);
+    expect(out.drafted[0]?.flags.some((f) => f.startsWith("error:"))).toBe(true);
+    expect(calls.llmInputBlocks).toHaveLength(0);
+  });
+
+  it("refuses a target whose required field is blank/whitespace-only", async () => {
+    const out = await runDiscoveryInterview({
+      dryRun: true,
+      targets: [{ ...base, topic: "   " }],
+    });
+    expect(out.drafted[0]?.sent).toBe(false);
+    expect(out.drafted[0]?.flags.some((f) => f.startsWith("error:"))).toBe(true);
+    expect(calls.llmInputBlocks).toHaveLength(0);
+  });
+
+  // finding discovery-interview-email.md:9: lintEmail() alone never checked
+  // for a product link/price/discount, so a completion violating the
+  // prompt's hard bans could reach sendDraftedEmail with an empty flags
+  // array. hardBans: true wires hardBanFlags() into the pre-send flag set.
+  it("holds a draft whose body violates the hard-ban link/price/discount rules", async () => {
+    completeResponse = {
+      subject: "s",
+      body: "Check out https://example.com - it's $50/mo, free trial available.",
+    };
+    const out = await runDiscoveryInterview({ dryRun: false, targets: [base] });
+    expect(out.drafted[0]?.sent).toBe(false);
+    expect(out.drafted[0]?.flags).toContain("hard-ban:link");
+    expect(out.drafted[0]?.flags).toContain("hard-ban:price");
+    expect(out.drafted[0]?.flags).toContain("hard-ban:discount-offer");
   });
 });

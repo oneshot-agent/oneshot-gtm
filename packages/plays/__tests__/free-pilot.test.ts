@@ -94,4 +94,19 @@ describe("runFreePilot", () => {
     expect(seq?.steps).toHaveLength(1);
     expect(seq?.steps[0]?.label).toMatch(/breakup/i);
   });
+
+  // finding apps/web/src/lib/playSchemas.ts:417: the web form's required-field
+  // check is client-side only, so a target that bypasses it must still be
+  // rejected before any paid call.
+  it("refuses a target missing a required field, before any paid call", async () => {
+    const { yourEdge: _drop, ...withoutYourEdge } = base;
+    const out = await runFreePilot({
+      dryRun: true,
+      targets: [withoutYourEdge as typeof base],
+    });
+    expect(out.drafted).toHaveLength(1);
+    expect(out.drafted[0]?.sent).toBe(false);
+    expect(out.drafted[0]?.flags.some((f) => f.startsWith("error:"))).toBe(true);
+    expect(calls.llmInputBlocks).toHaveLength(0);
+  });
 });
