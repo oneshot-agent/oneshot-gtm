@@ -120,7 +120,8 @@ export async function safeCompanySearch(
 
 /**
  * enrichCompany that never throws — a failure resolves to an empty company
- * record (drop) instead of aborting the whole finder run.
+ * record (drop) instead of aborting the whole finder run. Mirrors
+ * safeFindEmail's status:"error" sentinel shape.
  */
 export async function safeEnrichCompany(
   input: EnrichCompanyInput,

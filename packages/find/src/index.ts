@@ -19,6 +19,8 @@ export * from "./_stargazers.ts";
 export * from "./local-business.ts";
 export * from "./_repo-utils.ts";
 export * from "./_repo-pipeline.ts";
+export * from "./local-registry.ts";
+export * from "./_registry-sources.ts";
 export * from "./registry.ts";
 export * from "./packs.ts";
 export * from "./drain.ts";

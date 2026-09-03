@@ -14,6 +14,8 @@ import { runHiringSignalFinder } from "./hiring-signal.ts";
 import { runJobChangeFinder } from "./job-change.ts";
 import { runLocalBusinessFinder } from "./local-business.ts";
 import { runLumaFinder } from "./luma.ts";
+import { runLocalRegistryFinder } from "./local-registry.ts";
+import type { SocrataPortalConfig } from "./_registry-sources.ts";
 import { runPodcastGuestFinder } from "./podcast-guest.ts";
 import { runPostFundingFinder } from "./post-funding.ts";
 import { runShowHnFinder } from "./show-hn.ts";
@@ -362,6 +364,105 @@ export const TRIGGERS: TriggerSpec[] = [
         limit: (cfg["limit"] as number) ?? 25,
         maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
       }),
+  },
+  {
+    // Local-registry finder over free, keyless public-registry APIs
+    // (Socrata business-license open data + NPPES NPI). Recent-issue lane
+    // routes to new-business, the rest to free-pilot. Ships empty (no
+    // portals/taxonomies configured) so nothing fires until the founder or
+    // an industry pack (#458/#464) sets a source.
+    name: "local-registry",
+    defaultIntervalMs: 24 * ONE_HOUR,
+    enabledByDefault: false,
+    defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
+      portals: [] as SocrataPortalConfig[],
+      naics: [] as string[],
+      licenseTypes: [] as string[],
+      taxonomies: [] as string[],
+      states: [] as string[],
+      sinceDays: 60,
+      freshnessDays: 21,
+      yourEdge: "",
+      limit: 25,
+      maxCostUsd: 5,
+    },
+    configBrief:
+      "Discovers newly-licensed or newly-enumerated main-street businesses over free, keyless public registries — no maps/places/Yelp capability exists in the SDK, so this is the only recency-driven local-business signal available. Two sources, either or both may be configured: `portals` (array of `{host, dataset, label}` — a Socrata open-data business-license portal, e.g. `{host:\"data.cityofnewyork.us\", dataset:\"w7w3-xahh\", label:\"NYC business licenses\"}`) filtered by `naics`/`licenseTypes` (free-text terms matched against the dataset); and `taxonomies` + `states` (NPPES NPI registry — taxonomy description like 'Dentist', 'Veterinarian', 'Chiropractor' crossed with 2-letter state codes — this one covers healthcare practices completely, 9M+ providers, refreshed weekly by CMS). `sinceDays` (discovery window against the issue/enumeration date, default 60) and `freshnessDays` (records inside this window route to the new-business play — nothing to rip out, the main-street equivalent of post-funding; everything else routes to free-pilot — clamped to sinceDays, default 21). `yourEdge` (the pitch angle for an owner-operator, REQUIRED — short and concrete, no founder jargon). A dead portal or an empty taxonomy×state pair logs and continues; the run only halts when EVERY configured source returns 0 records. These sources carry a business name + address but no email — each candidate resolves a domain via enrichCompany before falling through to the normal contact-resolution spine. STRATEGIST DUTY: propose `taxonomies`+`states` for healthcare verticals (dental, vet, chiropractic) and `portals`+`naics`/`licenseTypes` for everything else — NY, CO, PA, OR and CT publish full state license registries as open data.",
+    readiness: (cfg) => {
+      const portals = Array.isArray(cfg["portals"]) ? cfg["portals"] : [];
+      const validPortals = portals.filter(
+        (p) =>
+          p &&
+          typeof p === "object" &&
+          typeof (p as Record<string, unknown>)["host"] === "string" &&
+          ((p as Record<string, unknown>)["host"] as string).trim().length > 0 &&
+          typeof (p as Record<string, unknown>)["dataset"] === "string" &&
+          ((p as Record<string, unknown>)["dataset"] as string).trim().length > 0,
+      );
+      const taxonomies = Array.isArray(cfg["taxonomies"])
+        ? (cfg["taxonomies"] as unknown[]).filter((t) => typeof t === "string" && t.trim())
+        : [];
+      const states = Array.isArray(cfg["states"])
+        ? (cfg["states"] as unknown[]).filter((s) => typeof s === "string" && s.trim())
+        : [];
+      const hasNppes = taxonomies.length > 0 && states.length > 0;
+      if (validPortals.length === 0 && !hasNppes) {
+        return {
+          ready: false,
+          reason: "set `portals[]` ({host, dataset, label}) or `taxonomies[]` + `states[]`",
+        };
+      }
+      const edge = cfg["yourEdge"];
+      if (typeof edge !== "string" || edge.trim().length === 0) {
+        return {
+          ready: false,
+          reason: "set `yourEdge` — your one-line pitch for an owner-operator",
+        };
+      }
+      return { ready: true };
+    },
+    run: (cfg) => {
+      const portals: SocrataPortalConfig[] = (
+        Array.isArray(cfg["portals"]) ? (cfg["portals"] as unknown[]) : []
+      )
+        .map((p): SocrataPortalConfig | null => {
+          if (!p || typeof p !== "object") return null;
+          const e = p as Record<string, unknown>;
+          const host = typeof e["host"] === "string" ? e["host"].trim() : "";
+          const dataset = typeof e["dataset"] === "string" ? e["dataset"].trim() : "";
+          if (host.length === 0 || dataset.length === 0) return null;
+          const label =
+            typeof e["label"] === "string" && e["label"].trim() ? e["label"].trim() : host;
+          return { host, dataset, label };
+        })
+        .filter((p): p is SocrataPortalConfig => p !== null);
+      const naics = Array.isArray(cfg["naics"])
+        ? (cfg["naics"] as unknown[]).filter((t): t is string => typeof t === "string")
+        : [];
+      const licenseTypes = Array.isArray(cfg["licenseTypes"])
+        ? (cfg["licenseTypes"] as unknown[]).filter((t): t is string => typeof t === "string")
+        : [];
+      const taxonomies = Array.isArray(cfg["taxonomies"])
+        ? (cfg["taxonomies"] as unknown[]).filter((t): t is string => typeof t === "string")
+        : [];
+      const states = Array.isArray(cfg["states"])
+        ? (cfg["states"] as unknown[]).filter((s): s is string => typeof s === "string")
+        : [];
+      return runLocalRegistryFinder({
+        dryRun: false,
+        ...(portals.length > 0 ? { portals } : {}),
+        ...(naics.length > 0 ? { naics } : {}),
+        ...(licenseTypes.length > 0 ? { licenseTypes } : {}),
+        ...(taxonomies.length > 0 ? { taxonomies } : {}),
+        ...(states.length > 0 ? { states } : {}),
+        sinceDays: (cfg["sinceDays"] as number) ?? 60,
+        freshnessDays: (cfg["freshnessDays"] as number) ?? 21,
+        yourEdge: typeof cfg["yourEdge"] === "string" ? cfg["yourEdge"] : "",
+        limit: (cfg["limit"] as number) ?? 25,
+        maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
+      });
+    },
   },
   {
     // GitHub-Topic-driven repo finder (free Search API, `topic:<slug>`).

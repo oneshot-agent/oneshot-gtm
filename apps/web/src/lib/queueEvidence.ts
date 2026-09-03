@@ -122,9 +122,23 @@ export function queueEvidence(playName: string, payload: unknown): string | null
       return cohort ? `cohort ${cohort}` : null;
     }
 
+    case "new-business":
     case "free-pilot": {
+      // local-business (#457) enqueues `businessType`; local-registry (#459)
+      // enqueues `sourceLabel`/`matchedDateIso`/`subjectType` — both route
+      // through this same play, so branch on whichever shape is present.
       const businessType = str(p, "businessType");
-      return businessType ? `matched ${businessType}` : null;
+      if (businessType) return `matched ${businessType}`;
+      const label = str(p, "sourceLabel");
+      const matched = str(p, "matchedDateIso");
+      const subjectType = str(p, "subjectType");
+      // nppes-only: NPI-1 (individual) vs NPI-2 (organization) — tells a
+      // reviewer why a "company" row shows a person's name instead of
+      // leaving them to assume a mapping bug (see RegistryRecord's doc).
+      const subject = subjectType ? `${subjectType} record` : null;
+      if (!label) return subject;
+      const labelled = matched ? `${label} — matched ${matched.slice(0, 10)}` : label;
+      return subject ? `${labelled} (${subject})` : labelled;
     }
 
     default:

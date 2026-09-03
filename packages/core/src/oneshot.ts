@@ -845,7 +845,12 @@ export interface EnrichCompanyInput {
   ticker?: string;
 }
 
-/** Company enrichment from a domain, name, LinkedIn URL or stock ticker — $0.005 per call. */
+/**
+ * Company enrichment from a domain, name, LinkedIn URL or stock ticker —
+ * $0.005 per call. Used by `local-registry` (issue #459) to resolve a domain
+ * for open-registry records that carry a business name/address but no email,
+ * before falling through to the normal `resolveVerifyEnrichQualify` spine.
+ */
 export async function enrichCompany(input: EnrichCompanyInput, ctx: CallContext) {
   const agent = await getAgent();
   const opts: Parameters<OneShot["enrichCompany"]>[0] = {
