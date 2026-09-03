@@ -15,7 +15,22 @@ import { Button } from "../components/primitives/Button.tsx";
 import { Checkbox, Field, Input, Select, Textarea } from "../components/primitives/Field.tsx";
 import { readOnly } from "../lib/readOnly.ts";
 
+interface SetupSearch {
+  /**
+   * A pack's proposed ICP, deep-linked from /queue's "Accept in Setup" action
+   * (see PackRow in queue.tsx). Prefills the ICP field only — apply-pack never
+   * writes icpOneLiner to config.json itself; the founder still has to Save.
+   */
+  proposedIcp?: string;
+  /** Which pack proposed it, for the banner copy. */
+  packLabel?: string;
+}
+
 export const Route = createFileRoute("/setup")({
+  validateSearch: (search: Record<string, unknown>): SetupSearch => ({
+    proposedIcp: typeof search["proposedIcp"] === "string" ? search["proposedIcp"] : undefined,
+    packLabel: typeof search["packLabel"] === "string" ? search["packLabel"] : undefined,
+  }),
   component: SetupPage,
 });
 
@@ -52,6 +67,7 @@ function SetupPage() {
   const qc = useQueryClient();
   const status = useQuery({ queryKey: ["setup"], queryFn: api.setupStatus });
   const triggers = useQuery({ queryKey: ["triggers"], queryFn: api.triggers });
+  const { proposedIcp, packLabel } = Route.useSearch();
 
   const [founderName, setFounderName] = useState("");
   const [founderEmail, setFounderEmail] = useState("");
@@ -104,6 +120,17 @@ function SetupPage() {
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
+  // A pack's proposed ICP arrives via ?proposedIcp= from /queue's "Accept in
+  // Setup" action (PackRow). Seed it into the field once on arrival — same
+  // one-shot-then-hands-off-to-the-founder pattern as briefDirty above — so a
+  // background ["setup"] refetch doesn't clobber the founder's edits after.
+  const icpFromPack = useRef(false);
+  useEffect(() => {
+    if (!proposedIcp || icpFromPack.current) return;
+    icpFromPack.current = true;
+    setIcpOneLiner(proposedIcp);
+  }, [proposedIcp]);
+
   // X channel: engine choice lives in the x-reposters trigger config, not in
   // config.json. Seed local state once from the stored trigger; after that the
   // select is the founder's — a background refetch must not clobber it.
@@ -128,7 +155,7 @@ function SetupPage() {
     setProductOneLiner(c.productOneLiner ?? "");
     setProductDomain(c.productDomain ?? "");
     setSendingDomain(c.sendingDomain ?? "");
-    setIcpOneLiner(c.icpOneLiner ?? "");
+    setIcpOneLiner((prev) => (icpFromPack.current ? prev : (c.icpOneLiner ?? "")));
     setFounderCredentials(c.founderCredentials ?? "");
     setProductPortfolio(c.productPortfolio ?? "");
     setPartners(c.partners ?? "");
@@ -441,6 +468,12 @@ function SetupPage() {
           lede="A free-text classifier. The find layer uses this to drop candidates that don't match."
         >
           <div className="flex flex-col gap-4">
+            {proposedIcp && icpFromPack.current && (
+              <div className="border-l-2 border-[color:var(--ink-receipt)] bg-[color:var(--ink-receipt)]/10 px-3 py-2 font-mono text-[11.5px] text-ink-cream-2">
+                Proposed by {packLabel ?? "an industry pack"} — never written until you Save below.
+                Edit or clear it first if it's not right.
+              </div>
+            )}
             <Field
               label="Derive from a website"
               hint="Paste a domain (or full URL) of a company whose customers look like yours. We'll read the page and propose an ICP — you can edit before saving. Spends ~$0.02–0.05 (one webRead + one LLM call)."
