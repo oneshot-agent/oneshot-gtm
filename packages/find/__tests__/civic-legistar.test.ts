@@ -99,6 +99,25 @@ describe("fetchCityEvents", () => {
     stubFetch(async () => ({ ok: true, status: 200, json: async () => ({ error: "bad" }) }));
     expect(await fetchCityEvents("nyc", 30)).toBeNull();
   });
+
+  it("floors the lower filter bound to the start of today, not the current instant — so a same-day meeting that already started isn't excluded", async () => {
+    // Freeze "now" to mid-afternoon on the meeting's own day. A lower bound
+    // of the exact instant (old behavior) would read
+    // `EventDate ge datetime'2026-09-10T15:30:00'`, which excludes a
+    // meeting stamped at that day's midnight — the meeting has already
+    // "started" relative to the instant, per Legistar's date-only semantics.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-10T15:30:00Z"));
+    let capturedUrl = "";
+    stubFetch(async (...args: unknown[]) => {
+      capturedUrl = args[0] as string;
+      return { ok: true, status: 200, json: async () => [] };
+    });
+    await fetchCityEvents("nyc", 30);
+    vi.useRealTimers();
+    const filterParam = decodeURIComponent(/\$filter=([^&]+)/.exec(capturedUrl)![1]!);
+    expect(filterParam).toContain("EventDate ge datetime'2026-09-10T00:00:00'");
+  });
 });
 
 describe("fetchEventItems", () => {
@@ -181,37 +200,52 @@ describe("fetchBodyContact", () => {
         },
       ],
     }));
-    const contact = await fetchBodyContact("nyc", 10);
-    expect(contact).toEqual({
-      fullName: "Jamie Ruiz",
-      email: "jamie.ruiz@city.gov",
-      phone: "555-0100",
-      title: "Committee Chair",
+    const outcome = await fetchBodyContact("nyc", 10);
+    expect(outcome).toEqual({
+      ok: true,
+      contact: {
+        fullName: "Jamie Ruiz",
+        email: "jamie.ruiz@city.gov",
+        phone: "555-0100",
+        title: "Committee Chair",
+      },
     });
   });
 
-  it("returns null when the body publishes no member email", async () => {
+  it("returns ok:true with a null contact when the body publishes no member email", async () => {
     stubFetch(async () => ({
       ok: true,
       status: 200,
       json: async () => [{ OfficeRecordFullName: "Jamie Ruiz", OfficeRecordEmail: "" }],
     }));
-    expect(await fetchBodyContact("nyc", 10)).toBeNull();
+    expect(await fetchBodyContact("nyc", 10)).toEqual({ ok: true, contact: null });
   });
 
-  it("returns null on non-2xx / fetch rejection / invalid bodyId", async () => {
+  it("returns a transient platform error on a 5xx or 429", async () => {
     stubFetch(async () => ({ ok: false, status: 500, json: async () => ({}) }));
-    expect(await fetchBodyContact("nyc", 10)).toBeNull();
+    expect(await fetchBodyContact("nyc", 10)).toEqual({ ok: false, transient: true });
 
+    stubFetch(async () => ({ ok: false, status: 429, json: async () => ({}) }));
+    expect(await fetchBodyContact("nyc", 10)).toEqual({ ok: false, transient: true });
+  });
+
+  it("returns ok:true with a null contact (not a platform error) on a non-retryable 4xx like 404", async () => {
+    stubFetch(async () => ({ ok: false, status: 404, json: async () => ({}) }));
+    expect(await fetchBodyContact("nyc", 10)).toEqual({ ok: true, contact: null });
+  });
+
+  it("returns a transient platform error when fetch rejects (network failure)", async () => {
     stubFetch(async () => {
       throw new Error("boom");
     });
-    expect(await fetchBodyContact("nyc", 10)).toBeNull();
+    expect(await fetchBodyContact("nyc", 10)).toEqual({ ok: false, transient: true });
+  });
 
+  it("returns ok:true with a null contact for an invalid bodyId or empty slug, without fetching", async () => {
     const f = vi.fn(async () => ({ ok: true, status: 200, json: async () => [] }));
     vi.stubGlobal("fetch", f);
-    expect(await fetchBodyContact("nyc", 0)).toBeNull();
-    expect(await fetchBodyContact("", 10)).toBeNull();
+    expect(await fetchBodyContact("nyc", 0)).toEqual({ ok: true, contact: null });
+    expect(await fetchBodyContact("", 10)).toEqual({ ok: true, contact: null });
     expect(f).not.toHaveBeenCalled();
   });
 });

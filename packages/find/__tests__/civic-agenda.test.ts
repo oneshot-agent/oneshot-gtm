@@ -5,6 +5,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // free keyword gate runs BEFORE the paid icpFilter call, and that a body with
 // no published contact drops (not a retry) while a fetch failure on the
 // contact lookup persists for retry.
+//
+// fetchCityEvents / fetchEventItems are mocked out entirely (canned in-memory
+// data — no HTTP involved for event discovery). fetchBodyContact is left as
+// the REAL implementation from _civic-legistar.ts; its own HTTP call is
+// driven through a stubbed global `fetch`, the same pattern
+// gov-solicitation.test.ts uses for fetchDescription. This means the
+// transient-error test below actually exercises fetchBodyContact's real
+// error-classification logic (5xx/429/network-error → retryable; a
+// malformed/empty response or non-retryable 4xx → real negative) rather than
+// a mock standing in for it.
 
 interface EnqueuedRow {
   playName: string;
@@ -26,10 +36,10 @@ let icpMatch: boolean | null = true;
 let icpCalls = 0;
 let eventsBySlug: Record<string, Array<Record<string, unknown>>> = {};
 let itemsByEventId: Record<number, Array<Record<string, unknown>>> = {};
-let contactByBodyId: Record<
-  number,
-  { fullName: string; email: string; phone: string | null; title: string | null } | null | "throw"
-> = {};
+
+/** Controls what the stubbed global `fetch` returns for the OfficeRecords call. */
+type OfficeRecordsBehavior = "contact" | "no-email" | "throw" | "5xx";
+let officeRecordsBehavior: OfficeRecordsBehavior = "contact";
 
 vi.mock("../src/_pending.ts", () => ({
   persistPending: (input: {
@@ -61,11 +71,8 @@ vi.mock("../src/_civic-legistar.ts", async () => {
       ({ "new york": "nyc", chicago: "chicago" })[city.trim().toLowerCase()] ?? null,
     fetchCityEvents: async (slug: string) => eventsBySlug[slug] ?? null,
     fetchEventItems: async (_slug: string, eventId: number) => itemsByEventId[eventId] ?? null,
-    fetchBodyContact: async (_slug: string, bodyId: number) => {
-      const entry = contactByBodyId[bodyId];
-      if (entry === "throw") throw new Error("network down");
-      return entry ?? null;
-    },
+    // fetchBodyContact is intentionally NOT overridden — the real
+    // implementation runs, hitting the stubbed global `fetch` below.
   };
 });
 
@@ -92,6 +99,7 @@ beforeEach(() => {
   pendingPersisted.length = 0;
   icpMatch = true;
   icpCalls = 0;
+  officeRecordsBehavior = "contact";
   eventsBySlug = {
     nyc: [
       {
@@ -112,17 +120,40 @@ beforeEach(() => {
       { eventItemId: 101, title: "Appointment of a new librarian", matterFile: null },
     ],
   };
-  contactByBodyId = {
-    10: {
-      fullName: "Alex Chen",
-      email: "alex.chen@council.nyc.gov",
-      phone: "555-0100",
-      title: "Chief of Staff",
-    },
-  };
+
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (typeof url === "string" && url.includes("/OfficeRecords")) {
+        if (officeRecordsBehavior === "throw") throw new Error("network down");
+        if (officeRecordsBehavior === "5xx") {
+          return { ok: false, status: 503, json: async () => ({}) };
+        }
+        if (officeRecordsBehavior === "no-email") {
+          return { ok: true, status: 200, json: async () => [] };
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => [
+            {
+              OfficeRecordFullName: "Alex Chen",
+              OfficeRecordEmail: "alex.chen@council.nyc.gov",
+              OfficeRecordPhone: "555-0100",
+              OfficeRecordTitle: "Chief of Staff",
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected fetch call in civic-agenda test: ${url}`);
+    }),
+  );
 });
 
-afterEach(() => vi.clearAllMocks());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.clearAllMocks();
+});
 
 const baseConfig = {
   dryRun: false,
@@ -151,15 +182,24 @@ describe("runCivicAgendaFinder — happy path", () => {
   });
 
   it("drops (does not persist) an item whose body publishes no member email", async () => {
-    contactByBodyId[10] = null;
+    officeRecordsBehavior = "no-email";
     const out = await runCivicAgendaFinder(baseConfig);
     expect(out.enqueued).toBe(0);
     expect(out.droppedEnrichment).toBe(1);
     expect(pendingPersisted).toHaveLength(0);
   });
 
-  it("persists for retry when the contact lookup hits a transient error", async () => {
-    contactByBodyId[10] = "throw";
+  it("persists for retry when the contact lookup hits a network error", async () => {
+    officeRecordsBehavior = "throw";
+    const out = await runCivicAgendaFinder(baseConfig);
+    expect(out.enqueued).toBe(0);
+    expect(out.droppedEnrichment).toBe(1);
+    expect(pendingPersisted).toHaveLength(1);
+    expect(pendingPersisted[0]!.playName).toBe("civic-agenda");
+  });
+
+  it("persists for retry when the contact lookup hits a 5xx", async () => {
+    officeRecordsBehavior = "5xx";
     const out = await runCivicAgendaFinder(baseConfig);
     expect(out.enqueued).toBe(0);
     expect(out.droppedEnrichment).toBe(1);
@@ -181,12 +221,6 @@ describe("runCivicAgendaFinder — happy path", () => {
       },
     ];
     itemsByEventId[2] = [{ eventItemId: 200, title: "AI automation study", matterFile: null }];
-    contactByBodyId[20] = {
-      fullName: "Sam Lee",
-      email: "sam.lee@chicago.gov",
-      phone: null,
-      title: null,
-    };
     const out = await runCivicAgendaFinder({
       ...baseConfig,
       cities: ["New York", "Reykjavik", "Chicago"],

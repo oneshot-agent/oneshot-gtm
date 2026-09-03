@@ -8,7 +8,6 @@ import {
   fetchBodyContact,
   fetchCityEvents,
   fetchEventItems,
-  type LegistarContact,
   type LegistarEvent,
   type LegistarEventItem,
 } from "./_civic-legistar.ts";
@@ -65,18 +64,16 @@ async function resolveAndEnqueueAgendaItem(
 ): Promise<"enqueued" | "duplicate" | "dropped" | "platform-error"> {
   const ledger = getLedger();
   const dedupeKey = dedupeKeyFor(candidate);
-  let contact: LegistarContact | null;
-  try {
-    contact = await fetchBodyContact(candidate.slug, candidate.event.eventBodyId);
-  } catch {
-    // fetchBodyContact never throws by contract, but a defensive catch here
-    // still routes any surprise into the retryable path rather than a drop.
+  const outcome = await fetchBodyContact(candidate.slug, candidate.event.eventBodyId);
+  if (!outcome.ok) {
+    // Genuine platform error (network/5xx/429) on the free Legistar contact
+    // lookup — retryable, unlike a body that simply publishes no email.
     return "platform-error";
   }
+  const contact = outcome.contact;
   if (!contact) {
-    // Either the fetch genuinely failed (network/5xx — indistinguishable from
-    // "no one on this body lists an email" by design; see _civic-legistar.ts)
-    // or the body really does publish no member email. Treat as a drop, not
+    // The body really does publish no member email (or a non-retryable 4xx
+    // like an unknown body id) — not a fetch failure. Treat as a drop, not
     // a retry: retrying a body with no email will never resolve, and a run
     // that persisted every silent body would grow the pending table forever.
     return "dropped";

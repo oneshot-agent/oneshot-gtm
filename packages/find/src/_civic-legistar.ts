@@ -3,8 +3,12 @@ import { logEvent } from "@oneshot-gtm/core";
 /**
  * Legistar/Granicus Web API helpers for the `civic-agenda` finder. Same
  * fault-tolerance posture as `_luma-discover.ts`: undocumented/shape-drifting
- * upstream, so every parse is defensive and every failure returns null rather
- * than throwing — the caller decides what a missing result means.
+ * upstream, so every parse is defensive. `fetchCityEvents`/`fetchEventItems`
+ * return null on any failure rather than throwing — the caller decides what
+ * a missing result means. `fetchBodyContact` returns a discriminated
+ * `LegistarContactOutcome` instead, since its caller needs to tell a
+ * genuine platform error (retryable) apart from a body that simply
+ * publishes no member email (not retryable) — see that type's doc comment.
  *
  * No auth, no API key: the whole surface is public JSON (`Accept:
  * application/json` — the default response is XML). Docs:
@@ -92,9 +96,24 @@ function odataDateTime(d: Date): string {
 }
 
 /**
- * Fetch upcoming events for a city within `[now, now + sinceDays]`. Returns
- * null on any failure (unmapped-shape response, non-2xx, network blip) so the
- * caller can skip this city and continue with the rest.
+ * The OData literal for midnight of `d`'s own calendar day, in the same
+ * (offset-free) representation `EventDate` itself uses. `EventDate` is a
+ * local civil date stamped at midnight, not an instant — filtering with the
+ * exact "now" instant as the lower bound excludes a meeting happening later
+ * on its own day (midnight-today < now-this-afternoon) any time the finder
+ * runs after midnight. Flooring to the calendar day's start — derived from
+ * the same ISO slice `odataDateTime` already uses, not local Date getters,
+ * so this doesn't introduce a second, server-timezone-dependent notion of
+ * "today" — keeps same-day meetings in the window regardless of run time.
+ */
+function odataStartOfDay(d: Date): string {
+  return `datetime'${d.toISOString().slice(0, 10)}T00:00:00'`;
+}
+
+/**
+ * Fetch upcoming events for a city within `[start of today, now + sinceDays]`.
+ * Returns null on any failure (unmapped-shape response, non-2xx, network
+ * blip) so the caller can skip this city and continue with the rest.
  */
 export async function fetchCityEvents(
   slug: string,
@@ -103,7 +122,7 @@ export async function fetchCityEvents(
   if (!slug) return null;
   const now = new Date();
   const end = new Date(now.getTime() + Math.max(1, sinceDays) * 24 * 3600 * 1000);
-  const filter = `EventDate ge ${odataDateTime(now)} and EventDate lt ${odataDateTime(end)}`;
+  const filter = `EventDate ge ${odataStartOfDay(now)} and EventDate lt ${odataDateTime(end)}`;
   const url =
     `${LEGISTAR_BASE}/${encodeURIComponent(slug)}/Events` +
     `?$filter=${encodeURIComponent(filter)}&$orderby=${encodeURIComponent("EventDate asc")}` +
@@ -221,6 +240,20 @@ export interface LegistarContact {
   title: string | null;
 }
 
+/**
+ * Outcome of a body-contact lookup. Mirrors `DescriptionOutcome` in
+ * `gov-solicitation.ts`: `ok: false` is a genuine platform failure the
+ * caller should retry (network error, 5xx, 429); `ok: true` with a `null`
+ * contact is a real negative — the body simply publishes no member email —
+ * which is NOT retryable (re-fetching a body with no email will never
+ * resolve). Before this type existed, both cases collapsed to `null` and
+ * were indistinguishable to the caller; see civic-agenda.ts's outage-retry
+ * path, which depends on telling them apart.
+ */
+export type LegistarContactOutcome =
+  | { ok: true; contact: LegistarContact | null }
+  | { ok: false; transient: boolean };
+
 interface RawOfficeRecord {
   OfficeRecordFullName?: unknown;
   OfficeRecordEmail?: unknown;
@@ -271,16 +304,18 @@ function parseOfficeRecord(raw: RawOfficeRecord): LegistarContact | null {
 
 /**
  * Fetch the office-holders for one body and return the best publicly-listed
- * contact (see `pickOfficeContact`). Returns null on fetch failure OR when
- * the body publishes no member email at all — the caller can't tell those
- * apart from the return value alone, which is fine: either way there's
- * nothing to enqueue against for this candidate.
+ * contact (see `pickOfficeContact`). Distinguishes a genuine platform error
+ * (network failure, 5xx, 429 — worth retrying) from a real negative — a
+ * malformed/empty response or a body that simply publishes no member email
+ * (a 404 for an unknown body, or 200 with no email on any record) — which is
+ * not retryable: re-fetching won't make an email appear. See
+ * `LegistarContactOutcome`.
  */
 export async function fetchBodyContact(
   slug: string,
   bodyId: number,
-): Promise<LegistarContact | null> {
-  if (!slug || !Number.isFinite(bodyId) || bodyId <= 0) return null;
+): Promise<LegistarContactOutcome> {
+  if (!slug || !Number.isFinite(bodyId) || bodyId <= 0) return { ok: true, contact: null };
   const url = `${LEGISTAR_BASE}/${encodeURIComponent(slug)}/Bodies/${bodyId}/OfficeRecords`;
   try {
     const res = await fetch(url, {
@@ -294,15 +329,19 @@ export async function fetchBodyContact(
         { kind: "civic-agenda.office_records_status", slug, bodyId, status: res.status },
         "warn",
       );
-      return null;
+      // 5xx/429 are worth a retry; a 404 (unknown body) or any other 4xx
+      // will never resolve on retry, so treat it as a real negative.
+      return res.status >= 500 || res.status === 429
+        ? { ok: false, transient: true }
+        : { ok: true, contact: null };
     }
     const data = (await res.json()) as unknown;
-    if (!Array.isArray(data)) return null;
+    if (!Array.isArray(data)) return { ok: true, contact: null };
     const records = data
       .slice(0, MAX_OFFICE_RECORDS)
       .map((r) => parseOfficeRecord(r as RawOfficeRecord))
       .filter((r): r is LegistarContact => r !== null);
-    return pickOfficeContact(records);
+    return { ok: true, contact: pickOfficeContact(records) };
   } catch (err) {
     logEvent(
       "error.swallowed",
@@ -314,7 +353,8 @@ export async function fetchBodyContact(
       },
       "warn",
     );
-    return null;
+    // Network error / timeout — always transient.
+    return { ok: false, transient: true };
   }
 }
 
