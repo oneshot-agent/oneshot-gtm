@@ -130,8 +130,24 @@ type DescriptionOutcome = { ok: true; text: string | null } | { ok: false; trans
  * 404 (deleted notice, or "Description Not Found") is a real negative, so the
  * candidate still enqueues with an empty description rather than looping
  * forever on a link that will never resolve.
+ *
+ * `url` comes from the upstream `description` field on an untrusted SAM.gov
+ * response, not a value this code constructs — before attaching the API key,
+ * it must be an `https://api.sam.gov/...` URL, or a compromised/incorrect
+ * upstream response could exfiltrate `SAM_GOV_API_KEY` to an arbitrary host.
+ * `redirect: "manual"` on the credentialed request closes the same hole via
+ * a same-origin 3xx that redirects off api.sam.gov after the key is attached.
  */
 async function fetchDescription(url: string, apiKey: string): Promise<DescriptionOutcome> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { ok: true, text: null };
+  }
+  if (parsed.protocol !== "https:" || parsed.hostname !== "api.sam.gov") {
+    return { ok: true, text: null };
+  }
   const withKey = url.includes("?")
     ? `${url}&api_key=${encodeURIComponent(apiKey)}`
     : `${url}?api_key=${encodeURIComponent(apiKey)}`;
@@ -139,6 +155,7 @@ async function fetchDescription(url: string, apiKey: string): Promise<Descriptio
     const res = await fetch(withKey, {
       method: "GET",
       headers: { Accept: "application/json" },
+      redirect: "manual",
       signal: AbortSignal.timeout(DESCRIPTION_TIMEOUT_MS),
     });
     if (res.status === 404) return { ok: true, text: null };
@@ -398,6 +415,21 @@ export async function runGovSolicitationFinder(
     if (opportunities == null) continue;
     anyFetchSucceeded = true;
     for (const o of opportunities) {
+      // `data.opportunitiesData` is only cast `as SamSearchResponse`, never
+      // validated element-by-element — a null/non-object entry, or one
+      // missing a real `noticeId`, would otherwise throw reading `o.noticeId`
+      // below (outside any try/catch, failing the WHOLE run and losing every
+      // already-fetched notice) or silently produce an `undefined` dedupe key
+      // / a `https://sam.gov/opp/undefined/view` notice URL. Same defensive
+      // posture as `_civic-legistar.ts`'s `parseEvent`/`parseEventItem`.
+      if (
+        !o ||
+        typeof o !== "object" ||
+        typeof o.noticeId !== "string" ||
+        o.noticeId.trim().length === 0
+      ) {
+        continue;
+      }
       if (seenNoticeIds.has(o.noticeId)) continue;
       seenNoticeIds.add(o.noticeId);
       rawOpportunities.push(o);
