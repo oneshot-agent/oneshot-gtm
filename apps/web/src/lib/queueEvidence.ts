@@ -158,6 +158,23 @@ export function queueEvidence(playName: string, payload: unknown): string | null
       return city ? `${title} — ${city}` : title;
     }
 
+    // gov-solicitation's two routes share the same evidence shape: the
+    // notice title, plus the agency when known.
+    case "sources-sought":
+    case "design-partner-loi": {
+      const title = str(p, "title");
+      if (!title) return null;
+      const agency = str(p, "agency");
+      return agency ? `${title} — ${agency}` : title;
+    }
+
+    case "civic-pilot": {
+      const title = str(p, "agendaItemTitle");
+      if (!title) return null;
+      const city = str(p, "city");
+      return city ? `${title} — ${city}` : title;
+    }
+
     default:
       return null;
   }

@@ -1,4 +1,5 @@
 import { getLedger, logEvent } from "@oneshot-gtm/core";
+import { isDuplicate } from "./_dedupe.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { persistPending, registerPendingRetry } from "./_pending.ts";
@@ -77,6 +78,14 @@ async function resolveAndEnqueueAgendaItem(
     // a retry: retrying a body with no email will never resolve, and a run
     // that persisted every silent body would grow the pending table forever.
     return "dropped";
+  }
+  // Cross-play + same-contact email dedupe, AFTER the contact is known:
+  // two distinct agenda items from the same body (different item-level
+  // dedupeKeys) resolve to the identical office-holder contact, so the
+  // item-scoped `dedupeKey` alone can't catch the second one — same
+  // reasoning as gov-solicitation.ts's `resolveAndEnqueueNotice`.
+  if (isDuplicate({ playName: "civic-pilot", dedupeKey, prospectEmail: contact.email })) {
+    return "duplicate";
   }
   const target: CivicAgendaTarget = {
     city: candidate.city,
@@ -159,7 +168,7 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
       logEvent("finder.skipped_unmapped_city", { name: PLAY_NAME, city }, "info");
       continue;
     }
-    const events = await fetchCityEvents(slug, sinceDays);
+    const events = await fetchCityEvents(slug, sinceDays, city);
     if (events == null) continue;
     anyCityResolved = true;
     for (const event of events) {
@@ -185,7 +194,13 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
 
   // Phase 2: one paid LLM relevance call per keyword-surviving title — the
   // same pre-spend discipline as luma.ts's event-level icpFilter gate.
-  for (const candidate of gated) {
+  // Bounded to the first `limit` gated candidates: `limit` is a cap on
+  // candidates CONSIDERED (and therefore on paid icpFilter calls), not on
+  // successful enqueues — duplicates, rejections, contactless bodies, and
+  // classifier failures don't consume it, so an unbounded `gated` array
+  // could otherwise trigger icpFilter for every keyword match regardless of
+  // how small `limit` is.
+  for (const candidate of gated.slice(0, Math.max(0, limit))) {
     if (result.enqueued >= limit) break;
     if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
       result.halted = `max-cost cap (${opts.maxCostUsd})`;

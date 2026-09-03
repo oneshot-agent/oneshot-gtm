@@ -29,10 +29,10 @@ const SCORED_PLAYS = [
   "x-repost-intro",
   "x-amplify",
   "x-amplify-dm",
-  "new-business",
   "sources-sought",
   "design-partner-loi",
   "civic-pilot",
+  "new-business",
 ] as const;
 
 /** Manual/legacy producers that intentionally stay unscored (null path). */
@@ -192,16 +192,6 @@ const FIXTURES: Record<(typeof SCORED_PLAYS)[number], Record<string, unknown>> =
     why: "5k followers",
     dmOpen: true,
   },
-  "new-business": {
-    name: "Rae's Dental",
-    email: "rae@raesdental.com",
-    company: "Rae's Dental",
-    source: "nppes",
-    sourceLabel: "NPPES Dentist (NY)",
-    matchedDateIso: "2026-08-25T00:00:00Z",
-    yourEdge: "we set it up free, you keep it if it works",
-    title: "Owner",
-  },
   "sources-sought": {
     agency: "GENERAL SERVICES ADMINISTRATION",
     noticeNumber: "47PF0018R0023",
@@ -240,6 +230,16 @@ const FIXTURES: Record<(typeof SCORED_PLAYS)[number], Record<string, unknown>> =
     email: "alex.chen@council.nyc.gov",
     role: "Chief of Staff",
     yourEdge: "a free 30-day pilot",
+  },
+  "new-business": {
+    name: "Rae's Dental",
+    email: "rae@raesdental.com",
+    company: "Rae's Dental",
+    source: "nppes",
+    sourceLabel: "NPPES Dentist (NY)",
+    matchedDateIso: "2026-08-25T00:00:00Z",
+    yourEdge: "we set it up free, you keep it if it works",
+    title: "Owner",
   },
 };
 

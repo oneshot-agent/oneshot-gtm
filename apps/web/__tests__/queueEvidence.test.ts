@@ -126,7 +126,6 @@ describe("queueEvidence", () => {
       }),
     ).toBe("NYC licenses — matched 2026-06-01");
   });
-
   it("names the notice title (plus agency) for gov-solicitation's two routes", () => {
     expect(
       queueEvidence("sources-sought", {

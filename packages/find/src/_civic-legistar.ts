@@ -1,4 +1,4 @@
-import { logEvent } from "@oneshot-gtm/core";
+import { cityTimeZone, isValidTimeZone, logEvent } from "@oneshot-gtm/core";
 
 /**
  * Legistar/Granicus Web API helpers for the `civic-agenda` finder. Same
@@ -73,6 +73,13 @@ interface RawLegistarEvent {
 }
 
 function parseEvent(raw: RawLegistarEvent): LegistarEvent | null {
+  // An `Events` response can contain a null/malformed element alongside good
+  // ones. Guarding here means only THAT element drops (via the caller's
+  // `.filter`) — reading `.EventId` off a null `raw` would throw, and since
+  // this runs inside `fetchCityEvents`'s try/catch, an uncaught throw here
+  // is classified as a full fetch failure and discards every valid event for
+  // the city.
+  if (!raw || typeof raw !== "object") return null;
   const eventId = raw.EventId;
   const eventDate = raw.EventDate;
   if (typeof eventId !== "number" || typeof eventDate !== "string" || eventDate.length === 0) {
@@ -95,34 +102,55 @@ function odataDateTime(d: Date): string {
   return `datetime'${d.toISOString().slice(0, 19)}'`;
 }
 
+/** `YYYY-MM-DD` for `d` as it reads on the wall clock in `zone`, via Intl (no manual offset math). */
+function calendarDateInZone(d: Date, zone: string): string {
+  // en-CA formats as YYYY-MM-DD directly — no field reassembly needed.
+  return new Intl.DateTimeFormat("en-CA", { timeZone: zone }).format(d);
+}
+
 /**
- * The OData literal for midnight of `d`'s own calendar day, in the same
- * (offset-free) representation `EventDate` itself uses. `EventDate` is a
- * local civil date stamped at midnight, not an instant — filtering with the
- * exact "now" instant as the lower bound excludes a meeting happening later
- * on its own day (midnight-today < now-this-afternoon) any time the finder
- * runs after midnight. Flooring to the calendar day's start — derived from
- * the same ISO slice `odataDateTime` already uses, not local Date getters,
- * so this doesn't introduce a second, server-timezone-dependent notion of
- * "today" — keeps same-day meetings in the window regardless of run time.
+ * The OData literal for midnight of `d`'s own calendar day IN THE CITY'S
+ * OWN LOCAL TIMEZONE, in the same (offset-free) representation `EventDate`
+ * itself uses. `EventDate` is a local civil date stamped at midnight, not
+ * an instant — filtering with the exact "now" instant as the lower bound
+ * excludes a meeting happening later on its own day (midnight-today <
+ * now-this-afternoon) any time the finder runs after midnight.
+ *
+ * The calendar day itself must be the CITY's, not the run's UTC day: a
+ * finder running at, say, 01:00 UTC is already 17:00 the previous day in
+ * Los Angeles (UTC-8) — flooring to UTC's calendar day would send a lower
+ * bound one day ahead of LA's actual "today" and silently omit that day's
+ * remaining meetings. Symmetrically, a UTC-east city (say Vienna, UTC+1)
+ * running early enough could floor to a UTC day still in Vienna's
+ * yesterday and pull in already-past meetings. `zone` — the city's own
+ * IANA zone, resolved by the caller — is what makes "today" mean the same
+ * thing here as it does on the ground in that city.
  */
-function odataStartOfDay(d: Date): string {
-  return `datetime'${d.toISOString().slice(0, 10)}T00:00:00'`;
+function odataStartOfDay(d: Date, zone: string): string {
+  return `datetime'${calendarDateInZone(d, zone)}T00:00:00'`;
 }
 
 /**
  * Fetch upcoming events for a city within `[start of today, now + sinceDays]`.
  * Returns null on any failure (unmapped-shape response, non-2xx, network
  * blip) so the caller can skip this city and continue with the rest.
+ *
+ * `city` — the founder-supplied city name (NOT the Legistar `slug`) — is
+ * used only to resolve the local timezone for the "start of today" boundary
+ * (see `odataStartOfDay`); an unmapped/omitted city falls back to UTC, same
+ * as the previous behavior, rather than guessing.
  */
 export async function fetchCityEvents(
   slug: string,
   sinceDays: number,
+  city?: string | null,
 ): Promise<LegistarEvent[] | null> {
   if (!slug) return null;
+  const zoneCandidate = cityTimeZone(city);
+  const zone = isValidTimeZone(zoneCandidate) ? zoneCandidate! : "UTC";
   const now = new Date();
   const end = new Date(now.getTime() + Math.max(1, sinceDays) * 24 * 3600 * 1000);
-  const filter = `EventDate ge ${odataStartOfDay(now)} and EventDate lt ${odataDateTime(end)}`;
+  const filter = `EventDate ge ${odataStartOfDay(now, zone)} and EventDate lt ${odataDateTime(end)}`;
   const url =
     `${LEGISTAR_BASE}/${encodeURIComponent(slug)}/Events` +
     `?$filter=${encodeURIComponent(filter)}&$orderby=${encodeURIComponent("EventDate asc")}` +
@@ -175,6 +203,14 @@ interface RawLegistarEventItem {
 }
 
 function parseEventItem(raw: RawLegistarEventItem): LegistarEventItem | null {
+  // Mirrors parseEvent's guard: an `EventItems` response can likewise
+  // contain a null/malformed element alongside good ones. Without this,
+  // dereferencing `.EventItemId` off a null `raw` throws inside
+  // fetchEventItems' `.map`, the outer catch turns that into a full
+  // fetch failure (`return null`), and the caller (civic-agenda.ts,
+  // `if (!items) continue;`) silently discards every valid agenda item
+  // for the event — not just the one malformed element.
+  if (!raw || typeof raw !== "object") return null;
   const eventItemId = raw.EventItemId;
   if (typeof eventItemId !== "number") return null;
   const title =
@@ -329,9 +365,12 @@ export async function fetchBodyContact(
         { kind: "civic-agenda.office_records_status", slug, bodyId, status: res.status },
         "warn",
       );
-      // 5xx/429 are worth a retry; a 404 (unknown body) or any other 4xx
-      // will never resolve on retry, so treat it as a real negative.
-      return res.status >= 500 || res.status === 429
+      // 5xx/429/408 are worth a retry; a 404 (unknown body) or any other
+      // 4xx will never resolve on retry, so treat it as a real negative.
+      // 408 Request Timeout is a transient server-side hiccup, not "this
+      // body has no email" — without it a timed-out lookup silently drops
+      // the agenda item instead of persisting it for outage retry.
+      return res.status >= 500 || res.status === 429 || res.status === 408
         ? { ok: false, transient: true }
         : { ok: true, contact: null };
     }

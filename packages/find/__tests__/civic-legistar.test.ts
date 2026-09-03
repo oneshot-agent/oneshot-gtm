@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@oneshot-gtm/core", () => ({ logEvent: () => {} }));
+vi.mock("@oneshot-gtm/core", async () => {
+  const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
+  return { ...actual, logEvent: () => {} };
+});
 
 const {
   cityToLegistarSlug,
@@ -118,6 +121,38 @@ describe("fetchCityEvents", () => {
     const filterParam = decodeURIComponent(/\$filter=([^&]+)/.exec(capturedUrl)![1]!);
     expect(filterParam).toContain("EventDate ge datetime'2026-09-10T00:00:00'");
   });
+
+  it("floors to the CITY's local calendar day, not UTC's — so a run just after UTC midnight in a UTC-west city doesn't skip that city's still-current day", async () => {
+    // 2026-09-10T02:00:00Z is already Sep 10 in UTC, but only 18:00 on
+    // Sep 9 in Los Angeles (UTC-8). The old UTC-day flooring would emit a
+    // lower bound of 2026-09-10, which is tomorrow relative to LA's actual
+    // "today" and would exclude the rest of LA's Sep 9 meetings.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-10T02:00:00Z"));
+    let capturedUrl = "";
+    stubFetch(async (...args: unknown[]) => {
+      capturedUrl = args[0] as string;
+      return { ok: true, status: 200, json: async () => [] };
+    });
+    await fetchCityEvents("lacity", 30, "Los Angeles");
+    vi.useRealTimers();
+    const filterParam = decodeURIComponent(/\$filter=([^&]+)/.exec(capturedUrl)![1]!);
+    expect(filterParam).toContain("EventDate ge datetime'2026-09-09T00:00:00'");
+  });
+
+  it("falls back to UTC when the city is unmapped or omitted — same as previous behavior, not a guess", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-10T02:00:00Z"));
+    let capturedUrl = "";
+    stubFetch(async (...args: unknown[]) => {
+      capturedUrl = args[0] as string;
+      return { ok: true, status: 200, json: async () => [] };
+    });
+    await fetchCityEvents("nyc", 30, "Reykjavik");
+    vi.useRealTimers();
+    const filterParam = decodeURIComponent(/\$filter=([^&]+)/.exec(capturedUrl)![1]!);
+    expect(filterParam).toContain("EventDate ge datetime'2026-09-10T00:00:00'");
+  });
 });
 
 describe("fetchEventItems", () => {
@@ -140,6 +175,25 @@ describe("fetchEventItems", () => {
       matterFile: "R-1",
     });
     expect(items![1]).toMatchObject({ eventItemId: 2, title: "Fallback title" });
+  });
+
+  it("drops a null/malformed element without discarding the rest — mirrors parseEvent's guard", async () => {
+    stubFetch(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => [
+        { EventItemId: 1, EventItemTitle: "Resolution on AI use", EventItemMatterFile: "R-1" },
+        // A null/non-object element (malformed upstream payload) must not
+        // throw inside the outer .map — that would trip fetchEventItems'
+        // catch and silently drop every valid item for the event, not just
+        // this one malformed element.
+        null,
+        "unexpected-string",
+      ],
+    }));
+    const items = await fetchEventItems("nyc", 1);
+    expect(items).toHaveLength(1);
+    expect(items![0]).toMatchObject({ eventItemId: 1, title: "Resolution on AI use" });
   });
 
   it("returns null on non-2xx / fetch rejection / empty inputs", async () => {
