@@ -35,16 +35,16 @@ Only **`show-hn`** and **`post-funding-auto`** fire out of the box. The other el
 
 Eight of those also stay **not ready** until you give them required config, and refuse to fire until you do (the API returns `409`):
 
-| Finder              | Needs                                                                                                                      |
-| ------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| `accelerator-batch` | `cohorts[]` + `senderCohort`                                                                                               |
-| `hiring-signal`     | `yourClaim`                                                                                                                |
-| `github-topics`     | `topics[]` + `vendors[]` + `yourEdge`                                                                                      |
-| `github-stars`      | `repos[]` + `yourEdge`                                                                                                     |
-| `luma-events`       | `topics[]` + `cities[]` + `yourEdge`                                                                                       |
-| `x-reposters`       | `seeds[]` + engine credentials                                                                                             |
-| `local-business`    | `jobTitles[]` or `industries[]` + `yourEdge`                                                                               |
-| `local-registry`    | at least one of `portals[]` / `taxonomies[]`+`states[]` / `entityTypes[]`+`states[]` / `inspectionPortals[]`, + `yourEdge` |
+| Finder              | Needs                                                                                                                                                                            |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `accelerator-batch` | `cohorts[]` + `senderCohort`                                                                                                                                                     |
+| `hiring-signal`     | `yourClaim`                                                                                                                                                                      |
+| `github-topics`     | `topics[]` + `vendors[]` + `yourEdge`                                                                                                                                            |
+| `github-stars`      | `repos[]` + `yourEdge`                                                                                                                                                           |
+| `luma-events`       | `topics[]` + `cities[]` + `yourEdge`                                                                                                                                             |
+| `x-reposters`       | `seeds[]` + engine credentials                                                                                                                                                   |
+| `local-business`    | `jobTitles[]` or `industries[]` + `yourEdge`                                                                                                                                     |
+| `local-registry`    | at least one of `portals[]` / `taxonomies[]`+`states[]` / `entityTypes[]` or `minPowerUnits`/`maxPowerUnits` (fmcsa, no `states[]` needed) / `inspectionPortals[]`, + `yourEdge` |
 
 Both GitHub finders need `GITHUB_TOKEN`. Unauthenticated, GitHub allows 60 requests/hour per IP **shared across the two** — one `github-stars` pass (each repo, up to 3 pages) can spend that alone, and the finder then halts on a `403` that reads like a dead endpoint rather than degrading to lower volume. A classic token with **no scopes** is enough for the public data both read, and lifts the ceiling to 5,000/hour. `doctor` warns when either finder is enabled without one. `luma-events` accepts an optional `LUMA_SESSION_COOKIE` to read authed guest lists. `x-reposters` needs the X credentials for whichever engine its config names (`xapi`: 4 OAuth1 keys, `twitterapiio`: 1 key) — settable from `/setup`'s X card or `config keys`, switchable with `config x-engine`.
 
