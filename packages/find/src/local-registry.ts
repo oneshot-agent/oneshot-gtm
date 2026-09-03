@@ -60,6 +60,13 @@ export interface LocalRegistryTarget {
   /** ISO issue/enumeration date this record matched on — the trigger evidence. */
   matchedDateIso: string;
   yourEdge: string;
+  /**
+   * nppes only. Carried through from `RegistryRecord.subjectType` so a
+   * `/queue` reviewer sees the same NPI-1 (individual) vs NPI-2
+   * (organization) signal that explains why a "company" row shows a
+   * person's name — see `_registry-sources.ts`'s `RegistryRecord` doc.
+   */
+  subjectType?: "individual" | "organization";
   address?: string;
   city?: string;
   state?: string;
@@ -75,9 +82,12 @@ function slugify(s: string): string {
     .replace(/[^a-z0-9-]/g, "");
 }
 
-/** Stable within-run + cross-run dedupe key: source + name slug + state. */
+/** Stable within-run + cross-run dedupe key: name slug + state, source-agnostic.
+ * Cross-source dedup is the stated intent (see the run-level dedupe below) —
+ * a business appearing in both socrata-license and nppes must collapse to
+ * one candidate, not be double-enriched and potentially double-queued. */
 export function dedupeKeyFor(record: RegistryRecord): string {
-  return `${record.source}:${slugify(record.name)}:${(record.state ?? "").toLowerCase()}`;
+  return `${slugify(record.name)}:${(record.state ?? "").toLowerCase()}`;
 }
 
 /** Recent-issue routing: fresh (within `freshnessDays`) → new-business, else → free-pilot. */
@@ -280,6 +290,7 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
       sourceLabel: record.sourceLabel,
       matchedDateIso: record.matchedDateIso,
       yourEdge: opts.yourEdge,
+      ...(record.subjectType ? { subjectType: record.subjectType } : {}),
       ...(record.address ? { address: record.address } : {}),
       ...(record.city ? { city: record.city } : {}),
       ...(record.state ? { state: record.state } : {}),

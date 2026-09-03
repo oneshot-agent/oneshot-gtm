@@ -100,6 +100,33 @@ describe("queueEvidence", () => {
     expect(queueEvidence("accelerator-batch", { cohort: "W25" })).toBe("cohort W25");
   });
 
+  // local-registry's NPPES adapter tags a record NPI-1 (individual) or
+  // NPI-2 (organization) so a queue reviewer isn't left assuming a mapping
+  // bug when a "company" row shows a person's name — that signal has to
+  // reach this line, the only evidence a reviewer actually sees.
+  it("surfaces subjectType on new-business/free-pilot rows sourced from nppes", () => {
+    expect(
+      queueEvidence("new-business", {
+        sourceLabel: "NPPES Dentist (NY)",
+        matchedDateIso: "2026-06-01T00:00:00Z",
+        subjectType: "individual",
+      }),
+    ).toBe("NPPES Dentist (NY) — matched 2026-06-01 (individual record)");
+    expect(
+      queueEvidence("free-pilot", {
+        sourceLabel: "NPPES Dentist (NY)",
+        subjectType: "organization",
+      }),
+    ).toBe("NPPES Dentist (NY) (organization record)");
+    // socrata-license rows carry no subjectType — unaffected.
+    expect(
+      queueEvidence("new-business", {
+        sourceLabel: "NYC licenses",
+        matchedDateIso: "2026-06-01T00:00:00Z",
+      }),
+    ).toBe("NYC licenses — matched 2026-06-01");
+  });
+
   // Total by construction: a row whose payload lost a field, or a play this
   // does not know, renders without a line rather than with a broken one.
   it("returns null rather than a half-built line", () => {

@@ -126,8 +126,14 @@ export function queueEvidence(playName: string, payload: unknown): string | null
     case "free-pilot": {
       const label = str(p, "sourceLabel");
       const matched = str(p, "matchedDateIso");
-      if (!label) return null;
-      return matched ? `${label} — matched ${matched.slice(0, 10)}` : label;
+      const subjectType = str(p, "subjectType");
+      // nppes-only: NPI-1 (individual) vs NPI-2 (organization) — tells a
+      // reviewer why a "company" row shows a person's name instead of
+      // leaving them to assume a mapping bug (see RegistryRecord's doc).
+      const subject = subjectType ? `${subjectType} record` : null;
+      if (!label) return subject;
+      const labelled = matched ? `${label} — matched ${matched.slice(0, 10)}` : label;
+      return subject ? `${labelled} (${subject})` : labelled;
     }
 
     default:

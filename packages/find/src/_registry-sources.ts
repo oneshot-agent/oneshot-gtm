@@ -472,10 +472,16 @@ async function fetchNppesPair(
     }
     const pageResults = parsed.results ?? [];
     if (pageResults.length === 0) break;
-    // NPPES has no `$order`-equivalent sort param, so pagination (rather than
-    // ordering) is what closes the gap: walking every page up to the API's
-    // own 1,200-record ceiling means a newly-enumerated provider on page 3
-    // is no longer invisible just because it wasn't on page 1.
+    // NPPES has no `$order`-equivalent sort param (confirmed against the
+    // API's own field reference: only `limit`/`skip`), so walking every
+    // page up to the 1,200-record ceiling closes the gap ONLY when a
+    // taxonomy×state pair's total result count is <=1200. A pair that
+    // exceeds that (e.g. Dentist in a populous state like CA/TX/NY) can
+    // still leave a newly-enumerated provider past page 6 invisible —
+    // there is no ordering guarantee to bring it forward, unlike the
+    // Socrata fix's server-side $order+$where. See STATUS.md's known
+    // limitations for the honest statement of what this does and doesn't
+    // cover.
     results.push(...pageResults);
     if (pageResults.length < NPPES_PAGE_SIZE) break; // last page
   }
