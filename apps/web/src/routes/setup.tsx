@@ -124,11 +124,20 @@ function SetupPage() {
   // Setup" action (PackRow). Seed it into the field once on arrival — same
   // one-shot-then-hands-off-to-the-founder pattern as briefDirty above — so a
   // background ["setup"] refetch doesn't clobber the founder's edits after.
+  // Clear proposedIcp/packLabel from the URL once consumed (same pattern as
+  // the gmailAuth outcome below) so a later reload of /setup doesn't reset
+  // icpFromPack and silently re-seed — and re-save — the stale pack proposal
+  // over the founder's own edits.
   const icpFromPack = useRef(false);
   useEffect(() => {
     if (!proposedIcp || icpFromPack.current) return;
     icpFromPack.current = true;
     setIcpOneLiner(proposedIcp);
+    const params = new URLSearchParams(window.location.search);
+    params.delete("proposedIcp");
+    params.delete("packLabel");
+    const qs = params.toString();
+    window.history.replaceState({}, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`);
   }, [proposedIcp]);
 
   // X channel: engine choice lives in the x-reposters trigger config, not in
