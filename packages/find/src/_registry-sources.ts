@@ -51,6 +51,16 @@ export interface SocrataInspectionPortalConfig {
   dataset: string;
   /** Human label shown in queue notes + perSource outcomes. */
   label: string;
+  /**
+   * Column this portal's inspection date lives under — matches one of
+   * INSPECTION_DATE_FIELDS ("inspection_date" | "date" | "activity_date").
+   * Defaults to "inspection_date". The mapper already falls back across all
+   * three names locally, but the Socrata `$order` clause sent on the wire
+   * has to name one column that actually exists on the portal or the API
+   * 400s before any row comes back — so a portal using an alternate schema
+   * must declare it here.
+   */
+  dateField?: string;
 }
 
 export interface RegistryQuery {
@@ -466,9 +476,26 @@ function fmcsaDateIso(raw: string | undefined): string | null {
   return new Date(t).toISOString();
 }
 
+/** Inverse of `fmcsaDateIso`'s slicing: a Date → FMCSA's zero-padded "YYYYMMDD" string, UTC. */
+function yyyymmdd(d: Date): string {
+  const y = d.getUTCFullYear().toString().padStart(4, "0");
+  const m = (d.getUTCMonth() + 1).toString().padStart(2, "0");
+  const day = d.getUTCDate().toString().padStart(2, "0");
+  return `${y}${m}${day}`;
+}
+
 /** Build the FMCSA `$where` clause from entity type / state / power-unit / freshness filters. */
 export function buildFmcsaWhere(cfg: RegistryQuery): string {
   const clauses: string[] = ["status_code='A'", "email_address IS NOT NULL"];
+  // `add_date` is a zero-padded "YYYYMMDD" string column, so a lexical `>=`
+  // comparison against another zero-padded "YYYYMMDD" string sorts/filters
+  // identically to a numeric/date comparison. Without this, $where never
+  // touches add_date at all and Socrata's default row order has no
+  // relationship to it — against the ~2.2M-row active-carrier table, the
+  // first $limit rows returned almost never fall inside `sinceDays`, so
+  // the local freshness filter in `mapFmcsaRows` silently drops everything.
+  const sinceDate = new Date(Date.now() - cfg.sinceDays * 86_400_000);
+  clauses.push(`add_date>='${yyyymmdd(sinceDate)}'`);
   const entityTypes = cfg.entityTypes ?? [];
   if (entityTypes.length > 0) {
     const letters = entityTypes.map((t) => FMCSA_ENTITY_LETTERS[t]);
@@ -528,6 +555,7 @@ export const fmcsaSource: RegistrySource = {
     const params = new URLSearchParams();
     params.set("$limit", "200");
     params.set("$where", buildFmcsaWhere(cfg));
+    params.set("$order", "add_date DESC");
     const url = `https://data.transportation.gov/resource/az4n-8mr2.json?${params.toString()}`;
     const tag = "data.transportation.gov/az4n-8mr2";
 
@@ -672,9 +700,10 @@ async function fetchInspectionPortal(
   portal: SocrataInspectionPortalConfig,
   cfg: RegistryQuery,
 ): Promise<{ records: RegistryRecord[]; diagnostic: string | null }> {
+  const dateField = portal.dateField?.trim() || "inspection_date";
   const params = new URLSearchParams();
   params.set("$limit", "500");
-  params.set("$order", "inspection_date DESC");
+  params.set("$order", `${dateField} DESC`);
   const url = `https://${portal.host}/resource/${portal.dataset}.json?${params.toString()}`;
 
   let res: Response;

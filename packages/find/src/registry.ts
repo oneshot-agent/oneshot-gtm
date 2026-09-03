@@ -473,7 +473,13 @@ export const TRIGGERS: TriggerSpec[] = [
           if (host.length === 0 || dataset.length === 0) return null;
           const label =
             typeof e["label"] === "string" && e["label"].trim() ? e["label"].trim() : host;
-          return { host, dataset, label };
+          const result: SocrataInspectionPortalConfig = { host, dataset, label };
+          const dateField =
+            typeof e["dateField"] === "string" && e["dateField"].trim()
+              ? e["dateField"].trim()
+              : undefined;
+          if (dateField) result.dateField = dateField;
+          return result;
         })
         .filter((p): p is SocrataInspectionPortalConfig => p !== null);
       const naics = Array.isArray(cfg["naics"])
