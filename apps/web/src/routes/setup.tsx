@@ -137,7 +137,14 @@ function SetupPage() {
     params.delete("proposedIcp");
     params.delete("packLabel");
     const qs = params.toString();
-    window.history.replaceState({}, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`);
+    // Preserve window.history.state (TanStack Router's __TSR_index/__TSR_key
+    // live there) — replacing it with {} desyncs the router's history index
+    // and turns the next back/forward into a generic GO instead of BACK/FORWARD.
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${window.location.pathname}${qs ? `?${qs}` : ""}`,
+    );
   }, [proposedIcp]);
 
   // X channel: engine choice lives in the x-reposters trigger config, not in
