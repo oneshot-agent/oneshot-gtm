@@ -381,7 +381,7 @@ describe("v2 label-mined adapter priors", () => {
   });
 });
 
-describe("new-business / free-pilot — matchedDateIso feeds timing freshness", () => {
+describe("new-business — matchedDateIso feeds timing freshness", () => {
   it("new-business: a fresh matchedDateIso scores timingFreshness high, not neutral", () => {
     const fresh = safeScorePriority(
       "new-business",
@@ -405,7 +405,6 @@ describe("new-business / free-pilot — matchedDateIso feeds timing freshness", 
     )!;
     expect(old.components.timingFreshness).toBe(25);
   });
-
 });
 
 describe("new-business — sourceLabel is registry metadata, not evidence text", () => {

@@ -219,7 +219,6 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
     ...contact(p),
   }),
 
-
   // v2, label-mined (65 approved / 69 rejected individually-judged rows):
   // exec titles 35% approval vs 55% title-missing → title prior inverted;
   // bios no longer feed seniority (bioTitleBand measured flat-to-negative);
