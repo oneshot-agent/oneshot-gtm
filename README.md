@@ -169,7 +169,7 @@ The dashboard always knows where it is: a masthead chip names the workspace and 
 
 ## Where targets come from
 
-Twelve **finders** discover prospects, ICP-filter them, and enqueue into `/queue` for one-click approve or reject. Each runs as a trigger with its own interval and spend cap.
+Thirteen **finders** discover prospects, ICP-filter them, and enqueue into `/queue` for one-click approve or reject. Each runs as a trigger with its own interval and spend cap.
 
 | Finder              | Signal                                                                                                                                                                                                                                                                                                                            |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -364,7 +364,7 @@ packages/
   core/       SDK wrapper, SQLite ledger, config + secrets, Gmail transport, JSONL events
   intel/      LLM client, advise, personalize, triage, weekly-review
   plays/      23 outreach plays + handoff/icp/pmf modules + cadence engine
-  find/       12 finders + shared pipeline (manifest scan, dedupe, ICP filter, drain, registry)
+  find/       13 finders + shared pipeline (manifest scan, dedupe, ICP filter, drain, registry)
   prompts/    Markdown prompts — humanizer canon, per-play, per-extract
   doctor/     Wallet, ledger, key and deliverability health checks
   shared-types/  Wire types shared across CLI / server / web

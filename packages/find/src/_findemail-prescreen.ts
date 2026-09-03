@@ -126,10 +126,22 @@ export function looksLikeUserHandle(name: string | null | undefined): boolean {
  * Pre-flight guard. `{ok:false, reason}` skips the SDK call; reasons are
  * stable across releases (logged for blocklist tuning). Check order matters:
  * a missing/dud domain dominates the handle check.
+ *
+ * `allowMissingFullName` is an explicit per-caller opt-in for genuine
+ * company-level lookups (no owner/operator name exists on the source record
+ * at all, e.g. `local-registry`'s socrata-license/nppes/socrata-inspection
+ * candidates) — the underlying `findEmail` SDK call accepts `companyDomain`
+ * alone (see `FindEmailInput` in `packages/core/src/oneshot.ts`, where every
+ * name field is optional). Without opting in, a missing name still blocks
+ * the call (the default for every person-targeting finder, where a missing
+ * name usually means the extraction failed rather than "no name exists").
+ * A *provided* name that looks like a handle is rejected either way — the
+ * flag only waives the "no name at all" case, not a bad one.
  */
 export function shouldSkipFindEmail(input: {
   fullName?: string | null;
   companyDomain: string | null;
+  allowMissingFullName?: boolean;
 }): { ok: true } | { ok: false; reason: string } {
   if (!input.companyDomain || input.companyDomain.trim().length === 0) {
     return { ok: false, reason: "no-domain" };
@@ -139,6 +151,7 @@ export function shouldSkipFindEmail(input: {
   }
   const name = input.fullName?.trim() ?? "";
   if (name.length === 0) {
+    if (input.allowMissingFullName) return { ok: true };
     return { ok: false, reason: "no-fullname" };
   }
   if (looksLikeUserHandle(name)) {

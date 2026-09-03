@@ -189,6 +189,36 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
     ...contact(p),
   }),
 
+  "new-business": (p) => ({
+    title: str(p["title"]),
+    companyKnown: str(p["company"]) !== null,
+    accountSignals: [
+      {
+        kind: "new-registration",
+        strength: 85,
+        reason:
+          `${str(p["sourceLabel"]) ?? "registry"} match ${str(p["matchedDateIso"])?.slice(0, 10) ?? ""}`.trim(),
+      },
+    ],
+    intentSignals: [
+      { kind: "greenfield", strength: 80, reason: "newly licensed — nothing to rip out" },
+    ],
+    // matchedDateIso is the license/enumeration/registration/inspection date
+    // this record matched on — the same freshness evidence routePlayFor used
+    // to route it to new-business vs free-pilot in the first place. Without
+    // it every registry row scores a neutral timingFreshness component,
+    // regardless of whether it's 2 days or 55 days old.
+    // hasEvidenceText intentionally omitted: sourceLabel is registry
+    // metadata (e.g. "NPPES Dentist (NY)"), not quoted/concrete candidate
+    // evidence — mapping it here overstated the signalConfidence component
+    // on every registry row regardless of whether any real evidence text
+    // exists (finding PRRT_kwDOSKzrBs6exPH9, filed against free-pilot;
+    // new-business shares the identical payload shape and had the same
+    // bug at this line).
+    eventAt: str(p["matchedDateIso"]),
+    ...contact(p),
+  }),
+
   // v2, label-mined (65 approved / 69 rejected individually-judged rows):
   // exec titles 35% approval vs 55% title-missing → title prior inverted;
   // bios no longer feed seniority (bioTitleBand measured flat-to-negative);
