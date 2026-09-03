@@ -273,6 +273,24 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
     ...contact(p),
   }),
 
+  // local-business (find:local-business), routed to the free-pilot play.
+  // Reuses the exec-title inversion mined for luma/repo-interest: an
+  // owner-operator main-street buyer is the opposite population of a startup
+  // founder, and title data here is thin/absent for most rows anyway.
+  "free-pilot": (p) => ({
+    personSignals: minedTitleSignals(str(p["title"])),
+    companyKnown: str(p["company"]) !== null,
+    intentSignals: [
+      {
+        kind: "business-match",
+        strength: 55,
+        reason: `matched ${str(p["businessType"]) ?? "local business"} search`,
+      },
+    ],
+    hasEvidenceText: str(p["businessType"]) !== null,
+    ...contact(p),
+  }),
+
   "x-repost-intro": xEvidence,
   "x-amplify": xEvidence,
   "x-amplify-dm": xEvidence,

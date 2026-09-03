@@ -2,7 +2,7 @@ import { getLedger } from "@oneshot-gtm/core";
 import { icpFilter, resolveIcp } from "@oneshot-gtm/find";
 import type { ConciergeTarget, DemoNoShowTarget } from "@oneshot-gtm/plays";
 import { jsonResponse } from "../server.ts";
-import { verifyWebhook } from "./webhook-verifier.ts";
+import { releaseWebhookReplay, verifyWebhook } from "./webhook-verifier.ts";
 
 type WebhookKind = "cal-no-show" | "signup";
 
@@ -12,6 +12,23 @@ export async function calNoShowWebhookRoute(req: Request): Promise<Response> {
 
 export async function signupWebhookRoute(req: Request): Promise<Response> {
   return intakeWebhook(req, "signup");
+}
+
+/**
+ * Best-effort replay-key release: this performs its own ledger write, which
+ * can itself throw under the same failure condition (DB unavailable) that
+ * triggered the cleanup in the first place. Never let that mask the
+ * original error that's about to be re-thrown by the caller.
+ */
+function releaseReplayBestEffort(replayKey: string | null): void {
+  try {
+    releaseWebhookReplay(replayKey);
+  } catch {
+    // Swallow: the original error takes priority and is re-thrown by the
+    // caller. Worst case here is the replay key stays consumed until it
+    // expires, which is safe (just delays a retry) — unlike masking the
+    // original error, which is not.
+  }
 }
 
 async function intakeWebhook(req: Request, kind: WebhookKind): Promise<Response> {
@@ -39,6 +56,7 @@ async function intakeWebhook(req: Request, kind: WebhookKind): Promise<Response>
     process.env["WEBHOOK_SECRET"],
   );
   if (!verification.ok) return jsonResponse({ error: verification.error }, 401, req);
+  const { replayKey } = verification;
 
   let payload: ConciergeTarget | DemoNoShowTarget;
   let company: string | null;
@@ -59,27 +77,44 @@ async function intakeWebhook(req: Request, kind: WebhookKind): Promise<Response>
     context = payload.whatTheyWanted ?? `missed demo at ${payload.missedAt}`;
     eventIdentity = `${payload.email}:${payload.missedAt}`;
   }
-  const filter = await icpFilter({
-    icp: await resolveIcp(),
-    candidate: {
-      title: company ? `${payload.name} at ${company}` : payload.name,
-      summary: context,
-      author: payload.name,
-      url: payload.linkedinUrl ?? null,
-    },
-  });
+
+  let filter: Awaited<ReturnType<typeof icpFilter>>;
+  try {
+    filter = await icpFilter({
+      icp: await resolveIcp(),
+      candidate: {
+        title: company ? `${payload.name} at ${company}` : payload.name,
+        summary: context,
+        author: payload.name,
+        url: payload.linkedinUrl ?? null,
+      },
+    });
+  } catch (err) {
+    // Downstream failure after a successful verification: release the
+    // replay key so the provider's retry of this same signed payload isn't
+    // rejected as replayed. Only a successful 2xx response should
+    // permanently consume the key.
+    releaseReplayBestEffort(replayKey);
+    throw err;
+  }
 
   if (filter.match !== true) {
     return jsonResponse({ accepted: false, reason: filter.reason }, 200, req);
   }
 
   const playName = kind === "signup" ? "concierge" : "demo-no-show";
-  const id = getLedger().enqueueTarget({
-    playName,
-    payload,
-    dedupeKey: `webhook:${kind}:${eventIdentity.toLowerCase()}`,
-    source: `webhook:${kind}`,
-  });
+  let id: number | null;
+  try {
+    id = getLedger().enqueueTarget({
+      playName,
+      payload,
+      dedupeKey: `webhook:${kind}:${eventIdentity.toLowerCase()}`,
+      source: `webhook:${kind}`,
+    });
+  } catch (err) {
+    releaseReplayBestEffort(replayKey);
+    throw err;
+  }
   return jsonResponse({ accepted: true, queued: id !== null, id }, 202, req);
 }
 

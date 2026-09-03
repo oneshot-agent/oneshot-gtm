@@ -1,0 +1,38 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# Without this file CodeRabbit runs on UI defaults, and the default auto-review
+# covers ONLY the default branch. Every PR in the tormine/oneshot stack targets
+# `staging` or another `feat/*` branch, so CodeRabbit skipped all four with
+# "Auto reviews are disabled on base/target branches other than the default
+# branch" — the stack had no CodeRabbit coverage at all.
+reviews:
+  profile: chill
+
+  # Do NOT turn this off. CodeRabbit posts no check-run of its own (measured on
+  # gtm#453 and gtm#477, whose only checks are CodeQL, Macroscope and Actions),
+  # so this status comment is the single signal that a CLEAN review happened —
+  # a pass with no findings leaves no review threads either. dev-runner reads
+  # the comment to answer "has any reviewer run?"; with it off, every clean PR
+  # would be flagged NO INDEPENDENT REVIEW in the review queue.
+  # See codeRabbitReviewRan() in packs/dev-runner/findings.ts (second-brain-pack).
+  review_status: true
+
+  auto_review:
+    enabled: true
+    drafts: false
+    # The default branch is always reviewed; these are the EXTRA bases. `feat/.*`
+    # is a regex, not a glob — the schema takes regex here.
+    base_branches:
+      - staging
+      - "feat/.*"
+
+  # Generated and vendored files carry no review signal and cost real money.
+  # This is not theoretical: Macroscope refused gtm#477 outright at an estimated
+  # $10.77 against a $10.00 per-review cap, and nto-optimizer#120 is 234 files.
+  path_filters:
+    - "!**/*.lock"
+    - "!**/*.lockb"
+    - "!**/package-lock.json"
+    - "!**/dist/**"
+    - "!**/build/**"
+    - "!**/*.snap"

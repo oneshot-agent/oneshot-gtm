@@ -3,6 +3,7 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Ledger } from "../src/ledger.ts";
+import { addColumnIfMissing } from "../src/ledger-schema.ts";
 import { Database } from "bun:sqlite";
 
 let dbPath: string;
@@ -905,20 +906,20 @@ describe("triggers listing", () => {
 
 describe("addColumnIfMissing identifier guards", () => {
   it("rejects unsafe table names", () => {
-    // The only way to reach this code path is the private method; we access it
-    // via the instance to verify the guard is in place (defense-in-depth).
-    const priv = ledger as unknown as {
-      addColumnIfMissing(t: string, c: string, tp: string): void;
-    };
-    expect(() => priv.addColumnIfMissing("receipts; DROP TABLE receipts", "x", "TEXT")).toThrow(
+    // Defense-in-depth guard now lives in ledger-schema.ts, exercised
+    // directly against a throwaway in-memory database — the identifier
+    // check runs before any table lookup, so no schema setup is needed.
+    const db = new Database(":memory:");
+    expect(() => addColumnIfMissing(db, "receipts; DROP TABLE receipts", "x", "TEXT")).toThrow(
       /unsafe identifier/,
     );
-    expect(() => priv.addColumnIfMissing("receipts", "x; DROP TABLE y", "TEXT")).toThrow(
+    expect(() => addColumnIfMissing(db, "receipts", "x; DROP TABLE y", "TEXT")).toThrow(
       /unsafe identifier/,
     );
-    expect(() => priv.addColumnIfMissing("receipts", "x", "TEXT); DROP")).toThrow(
+    expect(() => addColumnIfMissing(db, "receipts", "x", "TEXT); DROP")).toThrow(
       /unsafe column type/,
     );
+    db.close();
   });
 });
 
