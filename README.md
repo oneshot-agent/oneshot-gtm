@@ -80,7 +80,7 @@ bun run cli -- find drain podcast-guest --dry-run  # preview approved /queue row
 bun run cli -- cadence advance                     # daily tick: poll inbox, fire follow-ups
 ```
 
-56 commands — fourteen groups, plus `init`, `doctor` and `ui` at the top level. `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
+58 commands — fourteen groups, plus `init`, `doctor` and `ui` at the top level. `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
 
 | Group                    | Commands                                                                                                                                                                                                                                                                                            |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -261,7 +261,7 @@ esac
 
 ### The plays
 
-Twenty-one of them. Thirteen have a **Run** page in the dashboard and drain from the queue:
+Twenty-three of them. Thirteen have a **Run** page in the dashboard and drain from the queue:
 
 `show-hn` · `job-change` · `post-funding` · `accelerator-batch` · `hiring-signal` · `podcast-guest` · `competitor-switch` · `stack-consolidation` · `repo-interest` · `luma-events` · `sources-sought` · `civic-pilot` · `design-partner-loi`
 
@@ -357,13 +357,13 @@ Successful responses include `duplicate`, `prospectId`, `cadencesStopped`, and `
 
 ```
 apps/
-  cli/        56-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
+  cli/        58-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
   server/     Bun.serve + SSE; tsdown bundle published as `oneshot-gtm-server`
   web/        Vite + React 19 + TanStack + Base UI — 9 pages, run form, strategist dock, privacy mode
 packages/
   core/       SDK wrapper, SQLite ledger, config + secrets, Gmail transport, JSONL events
   intel/      LLM client, advise, personalize, triage, weekly-review
-  plays/      21 outreach plays + handoff/icp/pmf modules + cadence engine
+  plays/      23 outreach plays + handoff/icp/pmf modules + cadence engine
   find/       12 finders + shared pipeline (manifest scan, dedupe, ICP filter, drain, registry)
   prompts/    Markdown prompts — humanizer canon, per-play, per-extract
   doctor/     Wallet, ledger, key and deliverability health checks

@@ -76,6 +76,8 @@ import {
   commandMotionCompetitorSwitch,
   commandMotionConcierge,
   commandMotionDemoNoShow,
+  commandMotionDiscoveryInterview,
+  commandMotionFreePilot,
   commandMotionHiringSignal,
   commandMotionPodcastGuest,
   commandMotionPostFunding,
@@ -744,6 +746,40 @@ motion
         targetFile: opts.target,
         dryRun: opts.dryRun,
         skipSearch: opts.skipSearch,
+      });
+    }),
+  );
+motion
+  .command("discovery-interview")
+  .requiredOption(
+    "-t, --target <file>",
+    "JSON file: { name, email, company, businessType, topic }[]",
+  )
+  .option("--dry-run", "draft only, do not send", false)
+  .description(
+    "Main-street ask: ten minutes on how the owner-operator does this today. No pitch, no link, no price.",
+  )
+  .action(
+    runOrFail(async (opts: { target: string; dryRun: boolean }) => {
+      await commandMotionDiscoveryInterview({
+        targetFile: opts.target,
+        dryRun: opts.dryRun,
+      });
+    }),
+  );
+motion
+  .command("free-pilot")
+  .requiredOption(
+    "-t, --target <file>",
+    "JSON file: { name, email, company, businessType, yourEdge }[]",
+  )
+  .option("--dry-run", "draft only, do not send", false)
+  .description("Main-street close: set it up free for them, they keep it if it works")
+  .action(
+    runOrFail(async (opts: { target: string; dryRun: boolean }) => {
+      await commandMotionFreePilot({
+        targetFile: opts.target,
+        dryRun: opts.dryRun,
       });
     }),
   );
