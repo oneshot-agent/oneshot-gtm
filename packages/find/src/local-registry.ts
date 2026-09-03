@@ -273,6 +273,14 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
       fullName: null,
       allowMissingFullName: true,
       ...(record.knownEmail ? { knownEmail: record.knownEmail } : { companyDomain: domain }),
+      // fmcsa's knownEmail is USDOT's own on-file carrier contact address —
+      // a federal registration field, not a scraped/guessed one — so paying
+      // to re-verify what the record already asserts is exactly the spend
+      // this card says to skip (mirrors knownEmail already skipping
+      // findEmail above). Has no effect for socrata-license/nppes/
+      // socrata-inspection records, which never carry knownEmail and always
+      // go through the normal companyDomain + verify path.
+      skipVerify: record.source === "fmcsa",
       isDuplicate: (email) => isDuplicate({ playName, dedupeKey, prospectEmail: email }),
       errKindPrefix: "local-registry",
       icp,
@@ -297,6 +305,17 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
           dryRun: opts.dryRun,
         });
       } else result.droppedEnrichment++;
+      return;
+    }
+
+    // Recheck the cap immediately before the synchronous enqueue call: the
+    // top-of-turn check above ran before this candidate's own async work
+    // (icpFilter/enrichCompany/resolveVerifyEnrichQualify), so with
+    // concurrency > 1 multiple workers can pass that check together and
+    // each still be racing toward enqueueScoredTarget when `limit` is
+    // small (e.g. 1) — only the first to reach this point should win.
+    if (result.enqueued >= limit) {
+      halted = true;
       return;
     }
 
