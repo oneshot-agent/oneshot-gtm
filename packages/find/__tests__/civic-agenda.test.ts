@@ -299,6 +299,26 @@ describe("runCivicAgendaFinder — happy path", () => {
     expect(icpCalls).toBe(1);
     expect(capped.halted).toMatch(/max-cost cap/);
   });
+
+  it("does not charge icpFilter spend when no ICP is configured (pass-through)", async () => {
+    // resolveIcp() returning null is a normal, documented state (see
+    // _filter.ts's tri-state contract) — icpFilter() is then a free
+    // pass-through with zero LLM calls, so result.costUsd must stay at 0
+    // no matter how many keyword-surviving candidates it classifies.
+    // Without the `if (icp)` gate this would falsely accrue spend and could
+    // trip maxCostUsd on cost that was never incurred.
+    icpResolved = null;
+    itemsByEventId = {
+      1: [
+        { eventItemId: 100, title: "Resolution on AI use in permitting", matterFile: "R-1" },
+        { eventItemId: 102, title: "AI automation budget amendment", matterFile: null },
+      ],
+    };
+    const out = await runCivicAgendaFinder(baseConfig);
+    expect(icpCalls).toBe(2);
+    expect(out.costUsd).toBe(0);
+    expect(out.halted).toBeUndefined();
+  });
 });
 
 describe("runCivicAgendaFinder — readiness / halts", () => {
