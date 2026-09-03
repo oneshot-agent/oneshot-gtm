@@ -271,6 +271,22 @@ describe("runCivicAgendaFinder — happy path", () => {
     expect(enqueued).toHaveLength(1);
     expect(enqueued[0]!.payload["email"]).toBe("alex.chen+nyc-10@council.nyc.gov");
   });
+
+  it("accounts icpFilter spend in costUsd so maxCostUsd can halt the run", async () => {
+    // Two distinct agenda items both survive the free keyword gate, so two
+    // paid icpFilter calls are possible — but a cap sized for exactly one
+    // call's approximate cost must stop the loop after the first.
+    itemsByEventId = {
+      1: [
+        { eventItemId: 100, title: "Resolution on AI use in permitting", matterFile: "R-1" },
+        { eventItemId: 102, title: "AI automation budget amendment", matterFile: null },
+      ],
+    };
+    const out = await runCivicAgendaFinder({ ...baseConfig, maxCostUsd: 0.001 });
+    expect(icpCalls).toBe(1);
+    expect(out.costUsd).toBeGreaterThanOrEqual(0.001);
+    expect(out.halted).toMatch(/max-cost cap/);
+  });
 });
 
 describe("runCivicAgendaFinder — readiness / halts", () => {

@@ -16,6 +16,17 @@ import type { FinderResult, RunOpts } from "./_types.ts";
 
 const PLAY_NAME = "civic-agenda";
 const SOURCE = "find:civic-agenda";
+/**
+ * Rough per-call cost of the paid `icpFilter` classifier (LLM tokens, not
+ * OneShot SDK spend) — same approximation every sibling finder's `icpFilter`
+ * call site comments (job-change.ts, accelerator-batch.ts, show-hn.ts). This
+ * finder has NO other paid call in its loop (the Legistar contact lookup is
+ * free), so unlike those siblings — where a later resolveVerifyEnrichQualify
+ * or webRead call still contributes real spend to `result.costUsd` — leaving
+ * this uncounted makes `maxCostUsd` a complete no-op here: the cap could
+ * never trip no matter how many keyword-surviving candidates it classifies.
+ */
+const ICP_FILTER_APPROX_COST_USD = 0.001;
 
 export interface CivicAgendaFinderOpts extends RunOpts {
   /** City names mapped to Legistar clients (see `_civic-legistar.ts`). REQUIRED via readiness gate. */
@@ -223,6 +234,7 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
         summary: `${candidate.event.eventBodyName ?? "a city body"} in ${candidate.city}`,
       },
     });
+    result.costUsd += ICP_FILTER_APPROX_COST_USD;
     if (filter.match === null) {
       // Transient classifier failure — drop without persisting (same
       // reasoning as every other finder's icpFilter call site).
