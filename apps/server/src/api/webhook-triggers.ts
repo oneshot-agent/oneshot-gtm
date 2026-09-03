@@ -14,6 +14,23 @@ export async function signupWebhookRoute(req: Request): Promise<Response> {
   return intakeWebhook(req, "signup");
 }
 
+/**
+ * Best-effort replay-key release: this performs its own ledger write, which
+ * can itself throw under the same failure condition (DB unavailable) that
+ * triggered the cleanup in the first place. Never let that mask the
+ * original error that's about to be re-thrown by the caller.
+ */
+function releaseReplayBestEffort(replayKey: string | null): void {
+  try {
+    releaseWebhookReplay(replayKey);
+  } catch {
+    // Swallow: the original error takes priority and is re-thrown by the
+    // caller. Worst case here is the replay key stays consumed until it
+    // expires, which is safe (just delays a retry) — unlike masking the
+    // original error, which is not.
+  }
+}
+
 async function intakeWebhook(req: Request, kind: WebhookKind): Promise<Response> {
   if (!isJsonRequest(req)) {
     return jsonResponse({ error: "content-type must be application/json" }, 400, req);
@@ -77,7 +94,7 @@ async function intakeWebhook(req: Request, kind: WebhookKind): Promise<Response>
     // replay key so the provider's retry of this same signed payload isn't
     // rejected as replayed. Only a successful 2xx response should
     // permanently consume the key.
-    releaseWebhookReplay(replayKey);
+    releaseReplayBestEffort(replayKey);
     throw err;
   }
 
@@ -95,7 +112,7 @@ async function intakeWebhook(req: Request, kind: WebhookKind): Promise<Response>
       source: `webhook:${kind}`,
     });
   } catch (err) {
-    releaseWebhookReplay(replayKey);
+    releaseReplayBestEffort(replayKey);
     throw err;
   }
   return jsonResponse({ accepted: true, queued: id !== null, id }, 202, req);

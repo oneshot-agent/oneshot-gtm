@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const enqueued: Array<Record<string, unknown>> = [];
 let icpMatch: boolean | null = true;
 let icpFilterImpl: (() => Promise<{ match: boolean | null; reason: string }>) | null = null;
+let enqueueTargetImpl: ((row: Record<string, unknown>) => number | null) | null = null;
 const webhookReplays = new Map<string, number>();
 
 vi.mock("@oneshot-gtm/core", () => ({
@@ -27,6 +28,7 @@ vi.mock("@oneshot-gtm/core", () => ({
       webhookReplays.delete(key);
     },
     enqueueTarget: (row: Record<string, unknown>) => {
+      if (enqueueTargetImpl) return enqueueTargetImpl(row);
       enqueued.push(row);
       return 42;
     },
@@ -67,6 +69,7 @@ beforeEach(() => {
   enqueued.length = 0;
   icpMatch = true;
   icpFilterImpl = null;
+  enqueueTargetImpl = null;
   delete process.env["WEBHOOK_SECRET"];
   resetWebhookReplayCache();
 });
@@ -200,6 +203,30 @@ describe("webhook trigger intake", () => {
     // must succeed now that the transient failure is over, proving the
     // replay key was released rather than burned by the failed attempt.
     icpFilterImpl = async () => ({ match: true, reason: "fits" });
+    const retry = await signupWebhookRoute(signed.clone());
+    expect(retry.status).toBe(202);
+    expect(enqueued).toHaveLength(1);
+  });
+
+  it("releases the replay key on a downstream enqueueTarget failure so a retry is not rejected as replayed", async () => {
+    const secret = "whsec-test";
+    process.env["WEBHOOK_SECRET"] = secret;
+    const signup = { name: "Grace", email: "grace@example.com", phone: "+155****0101" };
+    const signed = request("signup", signup, secret);
+
+    // First attempt: icpFilter passes but enqueueTarget throws (simulated
+    // DB enqueue failure — the exact "database enqueue failure" scenario
+    // named by issue #433).
+    enqueueTargetImpl = () => {
+      throw new Error("database enqueue failure");
+    };
+    await expect(signupWebhookRoute(signed.clone())).rejects.toThrow("database enqueue failure");
+    expect(enqueued).toHaveLength(0);
+
+    // Retry with the identical signed payload: must succeed now that the
+    // transient failure is over, proving the replay key was released
+    // rather than burned by the failed enqueueTarget attempt.
+    enqueueTargetImpl = null;
     const retry = await signupWebhookRoute(signed.clone());
     expect(retry.status).toBe(202);
     expect(enqueued).toHaveLength(1);
