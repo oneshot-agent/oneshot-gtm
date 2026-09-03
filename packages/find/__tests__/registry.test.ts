@@ -92,6 +92,7 @@ describe("TRIGGERS registry", () => {
       "github-topics",
       "hiring-signal",
       "job-change",
+      "local-business",
       "luma-events",
       "podcast-guest",
       "post-funding-auto",
@@ -343,6 +344,7 @@ describe("checkReadiness", () => {
       "hiring-signal",
       "accelerator-batch",
       "luma-events",
+      "local-business",
       "x-reposters",
     ]);
     for (const spec of TRIGGERS) {
