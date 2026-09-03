@@ -1,10 +1,16 @@
 import {
+  type CompanySearchInput,
+  companySearch,
   deepResearchPerson,
   ENRICH_FAILURE_TTL_MS,
+  type EnrichCompanyInput,
+  enrichCompany,
   findEmail,
   getLedger,
   isTransientToolError,
   logEvent,
+  peopleSearch,
+  type PeopleSearchInput,
   RESEARCH_CACHE_TTL_MS,
   RESEARCH_DEADLINE_MS,
   verifyEmail,
@@ -77,6 +83,54 @@ export async function safeVerifyEmail(
       },
       receiptId: 0,
     };
+  }
+}
+
+/**
+ * peopleSearch that never throws — a failure resolves to an empty result set
+ * (no candidates found) instead of aborting the whole finder run.
+ */
+export async function safePeopleSearch(
+  input: PeopleSearchInput,
+  ctx: CallContext,
+): Promise<Awaited<ReturnType<typeof peopleSearch>>> {
+  try {
+    return await peopleSearch(input, ctx);
+  } catch (err) {
+    swallow(ctx, "people_search", err);
+    return { result: { status: "error", results: [], total_found: 0, cost: 0 }, receiptId: 0 };
+  }
+}
+
+/**
+ * companySearch that never throws — a failure resolves to an empty result
+ * set instead of aborting the whole finder run.
+ */
+export async function safeCompanySearch(
+  input: CompanySearchInput,
+  ctx: CallContext,
+): Promise<Awaited<ReturnType<typeof companySearch>>> {
+  try {
+    return await companySearch(input, ctx);
+  } catch (err) {
+    swallow(ctx, "company_search", err);
+    return { result: { status: "error", results: [], total_found: 0, cost: 0 }, receiptId: 0 };
+  }
+}
+
+/**
+ * enrichCompany that never throws — a failure resolves to an empty company
+ * record (drop) instead of aborting the whole finder run.
+ */
+export async function safeEnrichCompany(
+  input: EnrichCompanyInput,
+  ctx: CallContext,
+): Promise<Awaited<ReturnType<typeof enrichCompany>>> {
+  try {
+    return await enrichCompany(input, ctx);
+  } catch (err) {
+    swallow(ctx, "enrich_company", err);
+    return { result: { status: "error", company: {}, cost: 0 }, receiptId: 0 };
   }
 }
 

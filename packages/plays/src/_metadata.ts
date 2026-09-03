@@ -82,6 +82,10 @@ export const xAmplifyMetadata = (t: object): Record<string, unknown> => ({
   launchDate: str(t, "launchDate"),
 });
 
+export const freePilotMetadata = (t: object): Record<string, unknown> => ({
+  businessType: str(t, "businessType"),
+});
+
 const REGISTRY: Record<string, (t: object) => Record<string, unknown>> = {
   "repo-interest": repoInterestMetadata,
   "luma-events": lumaEventsMetadata,
@@ -96,6 +100,7 @@ const REGISTRY: Record<string, (t: object) => Record<string, unknown>> = {
   "x-repost-intro": xRepostIntroMetadata,
   "x-amplify": xAmplifyMetadata,
   "x-amplify-dm": xAmplifyMetadata,
+  "free-pilot": freePilotMetadata,
 };
 
 /**
