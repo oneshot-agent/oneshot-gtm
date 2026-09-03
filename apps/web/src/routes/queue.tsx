@@ -1388,6 +1388,9 @@ function PackRow({
           <div className="mt-1.5 font-mono text-[11px] text-ink-faint">
             triggers · {pack.triggers.join(", ")}
           </div>
+          <div className="mt-1.5 font-mono text-[11px] text-ink-muted">
+            ICP · <span className="text-ink-cream-2">{pack.icpOneLiner}</span>
+          </div>
         </div>
         <Button size="sm" disabled={applying || disabled} onClick={onApply}>
           {applying ? "Applying…" : "Apply"}
@@ -1408,6 +1411,20 @@ function PackRow({
               skipped: {result.skipped.map((s) => `${s.name} (${s.reason})`).join(" · ")}
             </div>
           )}
+          {/* Apply never touches icpOneLiner in config.json (see packs.ts) —
+              the proposed ICP only reaches the founder's config if they
+              explicitly accept it from /setup. */}
+          <div className="mt-1.5 flex items-center gap-2 text-ink-muted">
+            <span>proposed ICP · {result.proposedIcpOneLiner}</span>
+            <Link
+              to="/setup"
+              search={{ proposedIcp: result.proposedIcpOneLiner, packLabel: pack.label }}
+            >
+              <Button variant="secondary" size="sm">
+                Accept in Setup
+              </Button>
+            </Link>
+          </div>
         </div>
       )}
     </div>
