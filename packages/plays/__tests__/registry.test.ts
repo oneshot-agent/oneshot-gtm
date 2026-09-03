@@ -20,6 +20,7 @@ const EXPECTED = [
   "x-repost-intro",
   "x-amplify",
   "x-amplify-dm",
+  "free-pilot",
 ];
 
 describe("play registry", () => {
