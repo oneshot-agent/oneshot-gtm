@@ -259,11 +259,11 @@ esac
 
 ### The plays
 
-Seventeen of them. Ten have a **Run** page in the dashboard and drain from the queue:
+Eighteen of them. Ten have a **Run** page in the dashboard and drain from the queue:
 
 `show-hn` · `job-change` · `post-funding` · `accelerator-batch` · `hiring-signal` · `podcast-guest` · `competitor-switch` · `stack-consolidation` · `repo-interest` · `luma-events`
 
-Five more drain from the queue without a Run form — `profile-intro` (what Add Prospect enqueues), `breakup-revive`, and the three the `x-reposters` finder feeds: `x-repost-intro` (founder-lane email + cadence), `x-amplify` (one-touch launch-day repost ask), and `x-amplify-dm` — the one play that never auto-sends: it drafts X DM/reply text you copy and send by hand from the X app, then **Mark sent** records it as a channel-`x` touch. The last two, `concierge` and `demo-no-show`, are CLI-only because they open with a voice call and an SMS respectively.
+Six more drain from the queue without a Run form — `profile-intro` (what Add Prospect enqueues), `breakup-revive`, `free-pilot` (fed by the `local-business` finder), and the three the `x-reposters` finder feeds: `x-repost-intro` (founder-lane email + cadence), `x-amplify` (one-touch launch-day repost ask), and `x-amplify-dm` — the one play that never auto-sends: it drafts X DM/reply text you copy and send by hand from the X app, then **Mark sent** records it as a channel-`x` touch. The last two, `concierge` and `demo-no-show`, are CLI-only because they open with a voice call and an SMS respectively.
 
 Most carry a cadence — a value follow-up, then a breakup, spread over roughly three to nine days and editable per play from `/plays`. Any email reply stops every live cadence for that prospect — and is recorded whether the sequence is still running, already finished, or never existed (one-touch plays like `luma-events`), credited to the play whose subject it threads on. You can also stop one cadence deliberately from `/cadences`, with a reason and note: bad-timing/other stops become breakup-revive candidates after the configured 60–90 day cold window, while not-a-fit/do-not-contact remain excluded.
 
@@ -359,7 +359,7 @@ apps/
 packages/
   core/       SDK wrapper, SQLite ledger, config + secrets, Gmail transport, JSONL events
   intel/      LLM client, advise, personalize, triage, weekly-review
-  plays/      17 outreach plays + handoff/icp/pmf modules + cadence engine
+  plays/      18 outreach plays + handoff/icp/pmf modules + cadence engine
   find/       12 finders + shared pipeline (manifest scan, dedupe, ICP filter, drain, registry)
   prompts/    Markdown prompts — humanizer canon, per-play, per-extract
   doctor/     Wallet, ledger, key and deliverability health checks
