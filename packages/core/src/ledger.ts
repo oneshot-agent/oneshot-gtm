@@ -2180,6 +2180,37 @@ export class Ledger {
   }
 
   /**
+   * Atomic check-then-reserve against the daily ceiling (issue #481
+   * round-1 review finding). The read (posted spend + held reservations
+   * since `sinceIso`) and the write (INSERT into `spend_reservations`)
+   * happen inside ONE transaction on this connection — the same
+   * `BEGIN IMMEDIATE` pattern `dequeueApproved` uses to close its own
+   * cross-process claim race. IMMEDIATE takes SQLite's RESERVED write lock
+   * at the START of the transaction (not the default DEFERRED, which only
+   * locks on the first write), so in WAL mode two separate OS processes —
+   * e.g. a `find watch --once` cron run and the server's in-process
+   * scheduler firing the same tick — cannot both read the pre-reservation
+   * total and both pass the check before either commits: the second
+   * caller's transaction blocks until the first one's reservation is
+   * already reflected in the sum it reads. Returns the new reservation id
+   * when granted, or null when posted+reserved+`amountUsd` would meet or
+   * exceed `ceilingUsd`.
+   */
+  reserveSpendIfUnderCeiling(opts: {
+    sinceIso: string;
+    ceilingUsd: number;
+    amountUsd: number;
+  }): number | null {
+    const txn = this.db.transaction((): number | null => {
+      const effectiveUsd =
+        this.totalSpendUsd({ sinceIso: opts.sinceIso }) + this.reservedSpendUsd(opts.sinceIso);
+      if (effectiveUsd + opts.amountUsd >= opts.ceilingUsd) return null;
+      return this.reserveSpend(opts.amountUsd);
+    });
+    return txn.immediate();
+  }
+
+  /**
    * Sweep reservations older than `maxAgeMs` — a crashed process (kill -9
    * between reserve and release) must not hold spend against the ceiling for
    * the rest of the day. Returns the number of rows swept.

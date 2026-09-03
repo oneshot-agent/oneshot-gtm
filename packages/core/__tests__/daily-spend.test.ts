@@ -239,3 +239,62 @@ describe("estimation defaults", () => {
     expect(DEFAULT_DRAIN_ROW_RESERVATION_USD).toBeGreaterThan(0);
   });
 });
+
+describe("Ledger.reserveSpendIfUnderCeiling — cross-connection atomicity", () => {
+  // Round-1 review finding: tryReserveDailySpend's check-then-reserve used to
+  // be a plain SELECT (dailySpendStatus) followed by a separate INSERT
+  // (ledger.reserveSpend) — two round-trips. That's serialized for free
+  // within one Bun process (same event loop, same Ledger instance, as every
+  // other test in this file exercises), but the issue's own scope is eleven
+  // independently-scheduled finders, and this repo runs `find watch --once`
+  // as a SEPARATE OS process from the server's in-process scheduler. Two
+  // separate SQLite connections in WAL mode can each pass a plain SELECT
+  // before either INSERTs. This test opens a SECOND real connection to the
+  // SAME on-disk database — not just a second call on the same Ledger
+  // instance — to prove the check-then-reserve is atomic across connections,
+  // the way Ledger.dequeueApproved's own BEGIN IMMEDIATE closes the same
+  // TOCTOU class for concurrent drains.
+  it("two separate connections racing the same budget: only one is granted", () => {
+    const secondConnection = new Ledger(dbPath);
+    try {
+      const sinceIso = "1970-01-01 00:00:00";
+      const ceilingUsd = 6;
+      // Both "processes" read the SAME pre-reservation state (nothing spent
+      // yet) before either reserves — simulating two finders firing on the
+      // same tick from different OS processes.
+      const first = ledger.reserveSpendIfUnderCeiling({ sinceIso, ceilingUsd, amountUsd: 4 });
+      const second = secondConnection.reserveSpendIfUnderCeiling({
+        sinceIso,
+        ceilingUsd,
+        amountUsd: 4,
+      });
+      expect(first).not.toBeNull();
+      // Without cross-connection atomicity, `second` would also read "0
+      // reserved" and be granted too — 4+4=8 blowing past the 6 ceiling
+      // before either reservation's estimate was accounted for.
+      expect(second).toBeNull();
+      expect(ledger.reservedSpendUsd(sinceIso)).toBe(4);
+    } finally {
+      secondConnection.close();
+    }
+  });
+
+  it("a released reservation on one connection frees room seen by another connection", () => {
+    const secondConnection = new Ledger(dbPath);
+    try {
+      const sinceIso = "1970-01-01 00:00:00";
+      const ceilingUsd = 6;
+      const first = ledger.reserveSpendIfUnderCeiling({ sinceIso, ceilingUsd, amountUsd: 4 });
+      expect(first).not.toBeNull();
+      ledger.releaseSpendReservation(first as number);
+      const second = secondConnection.reserveSpendIfUnderCeiling({
+        sinceIso,
+        ceilingUsd,
+        amountUsd: 4,
+      });
+      expect(second).not.toBeNull();
+    } finally {
+      secondConnection.close();
+    }
+  });
+});

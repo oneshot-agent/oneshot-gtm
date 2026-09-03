@@ -235,7 +235,7 @@ export function mergeSetupConfig(
     dailySpendCeilingUsd:
       body.dailySpendCeilingUsd === undefined
         ? current.dailySpendCeilingUsd
-        : body.dailySpendCeilingUsd,
+        : validateSpendCeiling(body.dailySpendCeilingUsd),
   };
 }
 
@@ -249,4 +249,25 @@ function mergeString(incoming: string | undefined, current: string | null): stri
   if (incoming === undefined) return current;
   const trimmed = incoming.trim();
   return trimmed.length === 0 ? null : trimmed;
+}
+
+/**
+ * Same validation the CLI path (`configSpendCeiling`) already enforces
+ * before persisting the daily USD spend ceiling — `null` clears it back to
+ * unlimited, anything else must be a positive finite number. Without this,
+ * a direct API client (or a founder typing/submitting 0 in the /setup form,
+ * whose `<Input type="number" min="0">` doesn't stop 0) could persist a
+ * ceiling of 0, negative, or NaN. A ceiling of 0 makes
+ * `effectiveUsd (0) >= ceilingUsd (0)` true immediately with zero spend —
+ * silently halting every scheduled finder, run-now, and automatic drain
+ * install-wide, the opposite of the unlimited default this feature ships.
+ */
+function validateSpendCeiling(value: number | null): number | null {
+  if (value === null) return null;
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error(
+      `invalid dailySpendCeilingUsd '${value}' — must be a positive number of USD, or null to clear`,
+    );
+  }
+  return value;
 }

@@ -98,9 +98,23 @@ export type SpendReservationOutcome =
  * Gate + reserve in one call: the shared entry point for every automated
  * paid path (finder trigger runs, automatic drains). Sweeps orphaned
  * reservations first so a crashed process can't hold spend hostage for the
- * rest of the day, then checks the ceiling BEFORE reserving — a call that
- * would push effective spend at/over the ceiling is refused outright rather
- * than reserved-then-immediately-over.
+ * rest of the day, then checks the ceiling and reserves atomically — a call
+ * that would push effective spend at/over the ceiling is refused outright
+ * rather than reserved-then-immediately-over.
+ *
+ * The check-then-reserve itself happens in ONE SQLite transaction on the
+ * ledger connection (`Ledger.reserveSpendIfUnderCeiling`, `BEGIN IMMEDIATE`
+ * — the same pattern `Ledger.dequeueApproved`/`claimMarker` use to close
+ * their own cross-process claim races). That matters beyond this one Bun
+ * process: the issue's own scope is eleven independently-scheduled finders,
+ * and this repo runs `find watch --once` as a separate cron/launchd process
+ * from the server's in-process scheduler (apps/cli/src/commands/install-service.ts,
+ * apps/server/src/scheduler.ts) — two OS processes hitting the same SQLite
+ * file in WAL mode. A plain SELECT-then-INSERT across two connections can
+ * let both pass the SELECT before either INSERTs; wrapping both steps in one
+ * IMMEDIATE transaction on the ledger's own connection serializes them, so
+ * the second caller's read only happens after the first caller's write has
+ * committed (or vice versa).
  *
  * `estimateUsd` should be the caller's own worst-case bound for this one
  * call (a finder's `maxCostUsd`, a drain's conservative per-batch estimate)
@@ -114,21 +128,24 @@ export function tryReserveDailySpend(
 ): SpendReservationOutcome {
   const ledger = getLedger();
   ledger.sweepStaleSpendReservations(SPEND_RESERVATION_STALE_MS, now);
+  const amountUsd = Math.max(0, estimateUsd);
+  const ceilingUsd = loadConfig().dailySpendCeilingUsd;
+
+  // Unlimited (no ceiling configured): nothing to race against — reserve
+  // directly so `reservedUsd` still reports accurately, same as before.
+  const id =
+    ceilingUsd == null
+      ? ledger.reserveSpend(amountUsd)
+      : ledger.reserveSpendIfUnderCeiling({
+          sinceIso: todayStartSqliteUtc(now),
+          ceilingUsd,
+          amountUsd,
+        });
+
   const status = dailySpendStatus(now);
-  // Refuse when EITHER the ceiling is already reached OR this call's own
-  // worst-case estimate would push effective spend at/over it. Checking
-  // `status.ceilingReached` alone (the current effective spend) is not
-  // enough: two concurrent calls can each pass that check against the SAME
-  // pre-reservation total and both reserve, together blowing past the
-  // ceiling before either one's estimate is accounted for. Folding the
-  // incoming estimate into the comparison is what actually closes the race.
-  const wouldExceed =
-    status.ceilingUsd != null &&
-    status.effectiveUsd + Math.max(0, estimateUsd) >= status.ceilingUsd;
-  if (status.ceilingReached || wouldExceed) {
+  if (id == null) {
     return { granted: false, reason: spendCeilingReason(status), status };
   }
-  const id = ledger.reserveSpend(Math.max(0, estimateUsd));
   let released = false;
   return {
     granted: true,
