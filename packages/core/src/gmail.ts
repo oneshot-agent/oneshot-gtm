@@ -169,6 +169,23 @@ interface GoogleApiErrorEnvelope {
 }
 
 /**
+ * Google's quota-exceeded messages read as: `Quota exceeded for quota metric
+ * 'X' and limit 'Y' of service '...' for consumer '...'.` — the "of
+ * service"/"for consumer" tail is boilerplate repeated on every quota error,
+ * while the metric ('X': which API surface) and limit ('Y': which specific
+ * quota — per-second, per-minute-per-user, or the daily project ceiling)
+ * are the two facts a caller actually needs to diagnose the hit. Compacting
+ * to just those two keeps both within the first ~90 chars of the rendered
+ * error regardless of which endpoint failed, so they still survive the
+ * 120-char log-line truncation every call site applies (oneshot.ts's
+ * `message_120`) even for long paths like `/messages/<id>?format=full`.
+ */
+function compactQuotaMessage(message: string): string | null {
+  const m = message.match(/quota metric '([^']+)' and limit '([^']+)'/);
+  return m ? `quota metric '${m[1]}' / limit '${m[2]}'` : null;
+}
+
+/**
  * Renders the actionable part of a failed Gmail API response: Google's own
  * `error.status` + `error.message` when the body parses as its stable error
  * envelope, so a quota 403 (`RESOURCE_EXHAUSTED`) reads differently from a
@@ -183,7 +200,8 @@ function formatGmailApiError(raw: string): string {
     const message = parsed.error?.message;
     if (typeof message === "string" && message.trim()) {
       const status = parsed.error?.status;
-      return status ? `${status} — ${message}` : message;
+      const body = compactQuotaMessage(message) ?? message;
+      return status ? `${status} — ${body}` : body;
     }
   } catch {
     // Not Google's JSON envelope (or not JSON at all) — fall through.
@@ -198,11 +216,20 @@ async function gmailJson<T>(path: string, init?: RequestInit, account?: GmailAcc
     // auth-rejected response must not delay the auth error the caller needs
     // to act on (re-auth), and there's nothing in that body worth parsing.
     if (res.status === 401) {
+      // Release the unread body's stream now rather than leaving it open
+      // until GC — matters for a long-running worker hitting repeated 401s.
+      void res.body?.cancel();
       throw new Error(`Gmail auth rejected (401) — ${GMAIL_AUTH_HINT}`);
     }
     const raw = await res.text();
+    // The endpoint path is put LAST, not first: it's diagnostic but
+    // variable-length (e.g. `/messages/<id>?format=full`), and every call
+    // site truncates this message to its first ~120 chars for logging
+    // (oneshot.ts's `message_120`) — a long path pushed to the front would
+    // crowd out the status/quota-metric text that actually explains the
+    // failure.
     throw new Error(
-      `Gmail API ${path.split("?")[0]} failed (${res.status}): ${formatGmailApiError(raw)}`,
+      `Gmail API failed (${res.status}): ${formatGmailApiError(raw)} [${path.split("?")[0]}]`,
     );
   }
   return (await res.json()) as T;
