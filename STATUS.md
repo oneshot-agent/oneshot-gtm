@@ -60,3 +60,7 @@ Both GitHub finders need `GITHUB_TOKEN`. Unauthenticated, GitHub allows 60 reque
 ## GitHub stargazer discovery is degraded by upstream
 
 GitHub restricted `/stargazers` to repo admins in July 2026. `github-stars` falls back to the public `/events` feed, which only exposes `WatchEvent`s within roughly a 90-day, 300-event window. Stars outside that window are invisible — not a bug in the finder.
+
+## NPPES recency pagination has a hard ceiling on busy taxonomy×state pairs
+
+`local-registry`'s nppes adapter (`fetchNppesPair` in `packages/find/src/_registry-sources.ts`) pages through NPPES's `skip`/`limit` API up to its own documented ceiling — 6 pages of 200, 1,200 records per taxonomy×state pair per run. The NPPES API has no `$order`-equivalent sort parameter, so this closes the "invisible past page 1" gap only when a pair's total result count is at or under 1,200. A busy pair that exceeds it (e.g. Dentist in a populous state like CA/TX/NY) can still leave a newly-enumerated provider past page 6 unseen, with no ordering guarantee to surface it sooner — unlike the Socrata adapter, which closes the equivalent gap for real via server-side `$order`+`$where`. Narrowing `states[]`/`taxonomies[]` to smaller pairs sidesteps it; there is no client-side fix for a pair NPPES itself won't sort.

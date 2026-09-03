@@ -18,7 +18,7 @@ describe("dedupeKeyFor", () => {
     expect(dedupeKeyFor(a)).toBe(dedupeKeyFor(b));
   });
 
-  it("differs by source even for the same name/state", () => {
+  it("is the SAME across sources for the same name/state — cross-source dedup is the point (a business licensed AND NPI-enumerated must collapse to one candidate)", () => {
     const base: RegistryRecord = {
       name: "Rae's Dental",
       address: null,
@@ -29,7 +29,7 @@ describe("dedupeKeyFor", () => {
       source: "socrata-license",
       sourceLabel: "x",
     };
-    expect(dedupeKeyFor(base)).not.toBe(dedupeKeyFor({ ...base, source: "nppes" }));
+    expect(dedupeKeyFor(base)).toBe(dedupeKeyFor({ ...base, source: "nppes" }));
   });
 });
 
@@ -289,20 +289,54 @@ describe("runLocalRegistryFinder — routing + isolation", () => {
     expect(enqueued).toHaveLength(0);
   });
 
-  it("dedupes a record surfaced by both sources within the same run", async () => {
-    const dup = makeRecord({ name: "Rae's Dental", source: "nppes", sourceLabel: "NPPES Dentist" });
+  it("dedupes a record surfaced by both sources within the same run, even with genuinely different source tags (socrata-license vs nppes)", async () => {
     nextSocrataRecords = [
+      makeRecord({ name: "Rae's Dental", source: "socrata-license", sourceLabel: "NYC licenses" }),
+    ];
+    nextNppesRecords = [
       makeRecord({ name: "Rae's Dental", source: "nppes", sourceLabel: "NPPES Dentist" }),
     ];
-    nextNppesRecords = [dup];
+    const out = await runLocalRegistryFinder({
+      dryRun: false,
+      yourEdge: "x",
+      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
+      taxonomies: ["Dentist"],
+      states: ["NY"],
+    });
+    // Cross-source dedup is the stated intent: a business licensed AND
+    // NPI-enumerated must collapse to one candidate, not be double-enriched
+    // and potentially double-queued to different plays.
+    expect(out.candidates).toBe(1);
+    expect(out.enqueued).toBe(1);
+  });
+
+  it("carries subjectType through to the queued LocalRegistryTarget payload so a /queue reviewer can see it", async () => {
+    nextNppesRecords = [
+      makeRecord({
+        name: "Dr. Rae Kim",
+        source: "nppes",
+        sourceLabel: "NPPES Dentist",
+        subjectType: "individual",
+      }),
+    ];
     const out = await runLocalRegistryFinder({
       dryRun: false,
       yourEdge: "x",
       taxonomies: ["Dentist"],
       states: ["NY"],
     });
-    // Both fetch adapters returned the same (source, name, state) record —
-    // the finder's within-run dedupe collapses it to one candidate.
-    expect(out.candidates).toBe(1);
+    expect(out.enqueued).toBe(1);
+    expect(enqueued[0]?.payload["subjectType"]).toBe("individual");
+  });
+
+  it("omits subjectType from the queued payload when the source doesn't set it (socrata records)", async () => {
+    nextSocrataRecords = [makeRecord()];
+    const out = await runLocalRegistryFinder({
+      dryRun: false,
+      yourEdge: "x",
+      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
+    });
+    expect(out.enqueued).toBe(1);
+    expect(enqueued[0]?.payload["subjectType"]).toBeUndefined();
   });
 });
