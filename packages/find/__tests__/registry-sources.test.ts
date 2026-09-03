@@ -573,7 +573,6 @@ describe("mapInspectionRows — canned payload, violation-free by construction",
     const json = JSON.stringify(out);
     expect(json).not.toMatch(/violation/i);
     expect(json.toLowerCase()).not.toContain("critical");
-    expect(json).not.toContain("35");
     expect(json).not.toMatch(/cited/i);
     // Only the declared RegistryRecord keys are present.
     for (const rec of out) {
@@ -589,6 +588,13 @@ describe("mapInspectionRows — canned payload, violation-free by construction",
           "state",
         ].toSorted(),
       );
+      // The raw row's score ("35") must not survive onto any mapped field.
+      // Checked per-value with strict equality rather than as a substring of
+      // the whole JSON blob: RECENT_ISO/OLD_ISO are real wall-clock
+      // timestamps, and any two-digit ISO component (month/day/hour/minute/
+      // second/ms) can legitimately read "35", which would make a substring
+      // check flaky against the run-time clock.
+      expect(Object.values(rec as unknown as Record<string, unknown>)).not.toContain("35");
     }
   });
 });
