@@ -80,7 +80,10 @@ Not code — these need capture, not commits. `demo seed` + `demo ui` now stand 
 
 ## Approved, not yet started
 
+- [ ] **Deferred review findings from ai/gtm/issue-342** — issue #364.
+- [ ] **Deferred review findings from ai/gtm/issue-440** — issue #441.
 - [ ] **feat(inbox): reply intent — classify, guard against unauthorised commitments, steer, record** — issue #480.
+- [ ] **feat(find): enforce an install-wide daily USD spend ceiling** — issue #481.
 
 ## Things we intentionally do NOT do
 
