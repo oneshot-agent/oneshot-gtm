@@ -95,6 +95,18 @@ const PLAY_CATALOG: PlayMeta[] = [
     name: "design-partner-loi",
     cli: "oneshot-gtm find watch  # fed by the gov-solicitation finder (non-r/p notices) today; enterprise/hardware targets are manually queued until a matching finder exists, drained from /queue",
   },
+  {
+    name: "discovery-interview",
+    cli: "oneshot-gtm motion discovery-interview --target ./examples/discovery-interview.json",
+  },
+  {
+    name: "free-pilot",
+    cli: "oneshot-gtm motion free-pilot --target ./examples/free-pilot.json",
+  },
+  {
+    name: "new-business",
+    cli: "oneshot-gtm find watch  # fed by the local-registry finder's recent-issue lane, drained from /queue",
+  },
 ];
 
 /** Relative per-step dayOffsets → cumulative days from the day-0 initial send. */

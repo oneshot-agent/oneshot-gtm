@@ -1,6 +1,7 @@
 import { type AcceleratorBatchTarget, runAcceleratorBatch } from "./accelerator-batch.ts";
 import { type BreakupReviveTarget, runBreakupRevive } from "./breakup-revive.ts";
 import { type CompetitorSwitchTarget, runCompetitorSwitch } from "./competitor-switch.ts";
+import { type DiscoveryInterviewTarget, runDiscoveryInterview } from "./discovery-interview.ts";
 import { type FreePilotTarget, runFreePilot } from "./free-pilot.ts";
 import { type SourcesSoughtTarget, runSourcesSought } from "./sources-sought.ts";
 import { type CivicPilotTarget, runCivicPilot } from "./civic-pilot.ts";
@@ -8,6 +9,7 @@ import { type DesignPartnerLoiTarget, runDesignPartnerLoi } from "./design-partn
 import { type HiringSignalTarget, runHiringSignal } from "./hiring-signal.ts";
 import { type JobChangeTarget, runJobChange } from "./job-change.ts";
 import { type LumaEventsTarget, runLumaEvents } from "./luma-events.ts";
+import { type NewBusinessTarget, runNewBusiness } from "./new-business.ts";
 import { type PodcastGuestTarget, runPodcastGuest } from "./podcast-guest.ts";
 import { type PostFundingTarget, runPostFunding } from "./post-funding.ts";
 import { type ProfileIntroTarget, runProfileIntro } from "./profile-intro.ts";
@@ -222,6 +224,15 @@ export const PLAYS: Record<string, PlayDispatch> = {
         ...signalOpt(o),
       }),
   },
+  "discovery-interview": {
+    run: (o) =>
+      runDiscoveryInterview({
+        dryRun: o.dryRun,
+        targets: o.targets as DiscoveryInterviewTarget[],
+        ...progressOpt(o),
+        ...signalOpt(o),
+      }),
+  },
   "free-pilot": {
     run: (o) =>
       runFreePilot({
@@ -254,6 +265,11 @@ export const PLAYS: Record<string, PlayDispatch> = {
       runDesignPartnerLoi({
         dryRun: o.dryRun,
         targets: o.targets as DesignPartnerLoiTarget[],
+  "new-business": {
+    run: (o) =>
+      runNewBusiness({
+        dryRun: o.dryRun,
+        targets: o.targets as NewBusinessTarget[],
         ...progressOpt(o),
         ...signalOpt(o),
       }),

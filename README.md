@@ -80,7 +80,7 @@ bun run cli -- find drain podcast-guest --dry-run  # preview approved /queue row
 bun run cli -- cadence advance                     # daily tick: poll inbox, fire follow-ups
 ```
 
-55 commands — fourteen groups, plus `init`, `doctor` and `ui` at the top level. `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
+57 commands — fourteen groups, plus `init`, `doctor` and `ui` at the top level. `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
 
 | Group                    | Commands                                                                                                                                                                                                                                                                                            |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -91,7 +91,7 @@ bun run cli -- cadence advance                     # daily tick: poll inbox, fir
 | `smartlead`              | `connect` — API key + pick Smartlead mailboxes into the pool (send-only)                                                                                                                                                                                                                            |
 | `domains`                | `list` · `pause <domain>` · `resume <domain>` — provisioned OneShot domains                                                                                                                                                                                                                         |
 | `find`                   | `watch` · `drain <play>` · `import --csv <file> --play <name>` · `enrich-linkedin` · `research-prospects` · `research-products` · `score-prospects` · `calibrate` — `--fail-on-empty` makes `watch --once` and `drain` [exit 2 on a run that produced nothing](#background-monitoring-as-a-service) |
-| `motion`                 | `post-funding` `concierge` `demo-no-show` `competitor-switch` `hiring-signal` `podcast-guest` — each takes `--target <file>`; `breakup-revive` reads the ledger                                                                                                                                     |
+| `motion`                 | `post-funding` `concierge` `demo-no-show` `competitor-switch` `hiring-signal` `podcast-guest` `discovery-interview` `free-pilot` — each takes `--target <file>`; `breakup-revive` reads the ledger                                                                                                  |
 | `cadence`                | `advance` — poll inbound, fire due steps                                                                                                                                                                                                                                                            |
 | `discover`               | `icp interview-prep` · `icp synthesize` · `pmf classify` · `pmf survey` · `pmf survey-collect`                                                                                                                                                                                                      |
 | `measure`                | `benchmark` — compare this install's command activity with the opt-in telemetry cohort; supports `--json`                                                                                                                                                                                           |
@@ -259,11 +259,13 @@ esac
 
 ### The plays
 
-Twenty-one of them. Thirteen have a **Run** page in the dashboard and drain from the queue:
+Twenty-three of them. Fifteen have a **Run** page in the dashboard and drain from the queue:
 
 `show-hn` · `job-change` · `post-funding` · `accelerator-batch` · `hiring-signal` · `podcast-guest` · `competitor-switch` · `stack-consolidation` · `repo-interest` · `luma-events` · `sources-sought` · `civic-pilot` · `design-partner-loi`
 
 The last three are the institutional counterparts to the founder-to-founder register above: `sources-sought` cites a specific SAM.gov Sources Sought / Presolicitation notice number and agency, `civic-pilot` cites a council/county agenda item, meeting date, and a cooperative purchasing vehicle (Sourcewell, NASPO ValuePoint, OMNIA), and `design-partner-loi` walks an ask ladder — conversation, then a scoped pilot, then a non-binding LOI — for enterprise, government and hardware buyers. `design-partner-loi` refuses to draft (before any paid call) when its target's `buyerType` names an owner-operator; that guard is asserted in code rather than left to finder-config convention, since a future pack could route the wrong lane at it.
+
+Two more have a **Run** page for the main-street epic (pre-PMF, owner-operator buyers — see #455): `discovery-interview` (a ten-minute learn-not-sell ask, no pitch, no link, no price) and `new-business` (greenfield outreach to a licence or authority issued in the last few weeks, fed by the local-registry finder's recent-issue lane).
 
 Six more drain from the queue without a Run form — `profile-intro` (what Add Prospect enqueues), `breakup-revive`, `free-pilot` (fed by the `local-business` finder), and the three the `x-reposters` finder feeds: `x-repost-intro` (founder-lane email + cadence), `x-amplify` (one-touch launch-day repost ask), and `x-amplify-dm` — the one play that never auto-sends: it drafts X DM/reply text you copy and send by hand from the X app, then **Mark sent** records it as a channel-`x` touch. The last two, `concierge` and `demo-no-show`, are CLI-only because they open with a voice call and an SMS respectively.
 
@@ -355,14 +357,13 @@ Successful responses include `duplicate`, `prospectId`, `cadencesStopped`, and `
 
 ```
 apps/
-  cli/        55-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
+  cli/        57-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
   server/     Bun.serve + SSE; tsdown bundle published as `oneshot-gtm-server`
   web/        Vite + React 19 + TanStack + Base UI — 9 pages, run form, strategist dock, privacy mode
 packages/
   core/       SDK wrapper, SQLite ledger, config + secrets, Gmail transport, JSONL events
   intel/      LLM client, advise, personalize, triage, weekly-review
   plays/      21 outreach plays + handoff/icp/pmf modules + cadence engine
-  find/       12 finders + shared pipeline (manifest scan, dedupe, ICP filter, drain, registry)
   prompts/    Markdown prompts — humanizer canon, per-play, per-extract
   doctor/     Wallet, ledger, key and deliverability health checks
   shared-types/  Wire types shared across CLI / server / web
