@@ -147,6 +147,7 @@ describe("coverage against the priority adapters", () => {
       seedHandle: "@h",
       followers: 2000,
       role: "role",
+      businessType: "HVAC contractor",
     };
 
     const unhandled = adapters.filter((play) => queueEvidence(play, kitchenSink) === null);

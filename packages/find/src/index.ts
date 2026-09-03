@@ -16,6 +16,7 @@ export * from "./github-topics.ts";
 export * from "./_product-research.ts";
 export * from "./github-stars.ts";
 export * from "./_stargazers.ts";
+export * from "./local-business.ts";
 export * from "./_repo-utils.ts";
 export * from "./_repo-pipeline.ts";
 export * from "./registry.ts";

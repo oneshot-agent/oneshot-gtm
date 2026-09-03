@@ -12,6 +12,7 @@ import { type RepoWatch, runGitHubStarsFinder } from "./github-stars.ts";
 import { runGitHubTopicsFinder } from "./github-topics.ts";
 import { runHiringSignalFinder } from "./hiring-signal.ts";
 import { runJobChangeFinder } from "./job-change.ts";
+import { runLocalBusinessFinder } from "./local-business.ts";
 import { runLumaFinder } from "./luma.ts";
 import { runPodcastGuestFinder } from "./podcast-guest.ts";
 import { runPostFundingFinder } from "./post-funding.ts";
@@ -496,6 +497,59 @@ export const TRIGGERS: TriggerSpec[] = [
         yourEdge: typeof cfg["yourEdge"] === "string" ? cfg["yourEdge"] : "",
         sinceDays: (cfg["sinceDays"] as number) ?? 30,
         concurrency: (cfg["concurrency"] as number) ?? 3,
+        limit: (cfg["limit"] as number) ?? 25,
+        maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
+      });
+    },
+  },
+  {
+    name: "local-business",
+    defaultIntervalMs: 24 * ONE_HOUR,
+    enabledByDefault: false,
+    defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
+      jobTitles: [] as string[],
+      industries: [] as string[],
+      locations: [] as string[],
+      employeeRange: "",
+      keywords: [] as string[],
+      yourEdge: "",
+      limit: 25,
+      maxCostUsd: 5,
+    },
+    configBrief:
+      "Reaches businesses with no GitHub repo, no Show HN post, no funding round and no accelerator batch — the local-business/main-street population the other ten finders can't touch. One `peopleSearch` call ($0.01 flat) returns up to 500 people matching `jobTitles` × `industries` × `locations` × `employeeRange`, many already carrying a `best_work_email` — those skip findEmail/verifyEmail entirely and go straight to the person-level ICP gate, so a run where every result has an email costs about one search call, not one per candidate. Config: `jobTitles` (roles that make the buying decision — e.g. 'Owner', 'Office Manager', 'Practice Manager'), `industries` (e.g. 'Dental Practices', 'HVAC Contractors', 'Independent Restaurants'), `locations` (metro/city/state filters), `employeeRange` (company-size band, e.g. '1-10', '11-50'), `keywords` (free-text refinement), `yourEdge` (the free-pilot pitch — what you set up for them free and what it saves them, REQUIRED, fed to the `free-pilot` play), `limit`, `maxCostUsd`. When `industries` is set and `jobTitles` is empty, the search is business-shaped: a `companySearch` pass resolves matching company domains first, then `peopleSearch` is scoped to those domains instead of searching on industry directly. STRATEGIST DUTY: propose `jobTitles` AND `industries` proactively from the founder's ICP — a pre-PMF founder selling to dental practices or HVAC companies shouldn't have to enumerate either by hand.",
+    readiness: (cfg) => {
+      const jobTitles = Array.isArray(cfg["jobTitles"])
+        ? (cfg["jobTitles"] as unknown[]).filter((t) => typeof t === "string" && t.trim())
+        : [];
+      const industries = Array.isArray(cfg["industries"])
+        ? (cfg["industries"] as unknown[]).filter((t) => typeof t === "string" && t.trim())
+        : [];
+      if (jobTitles.length === 0 && industries.length === 0) {
+        return { ready: false, reason: "set `jobTitles` or `industries` (at least one)" };
+      }
+      const edge = cfg["yourEdge"];
+      if (typeof edge !== "string" || edge.trim().length === 0) {
+        return { ready: false, reason: "set `yourEdge` — your one-line free-pilot pitch" };
+      }
+      return { ready: true };
+    },
+    run: (cfg) => {
+      const strArray = (key: string): string[] =>
+        Array.isArray(cfg[key])
+          ? (cfg[key] as unknown[]).filter((t): t is string => typeof t === "string")
+          : [];
+      return runLocalBusinessFinder({
+        dryRun: false,
+        jobTitles: strArray("jobTitles"),
+        industries: strArray("industries"),
+        locations: strArray("locations"),
+        keywords: strArray("keywords"),
+        ...(typeof cfg["employeeRange"] === "string" && cfg["employeeRange"].trim().length > 0
+          ? { employeeRange: (cfg["employeeRange"] as string).trim() }
+          : {}),
+        yourEdge: typeof cfg["yourEdge"] === "string" ? cfg["yourEdge"] : "",
         limit: (cfg["limit"] as number) ?? 25,
         maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
       });

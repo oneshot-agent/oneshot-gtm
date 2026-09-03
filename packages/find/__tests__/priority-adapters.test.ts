@@ -25,6 +25,7 @@ const SCORED_PLAYS = [
   "competitor-switch",
   "repo-interest",
   "breakup-revive",
+  "free-pilot",
   "x-repost-intro",
   "x-amplify",
   "x-amplify-dm",
@@ -136,6 +137,14 @@ const FIXTURES: Record<(typeof SCORED_PLAYS)[number], Record<string, unknown>> =
     company: "Acme",
     daysCold: 14,
     lastEventAt: "2026-08-18T00:00:00Z",
+  },
+  "free-pilot": {
+    name: "Dana",
+    email: "dana@riverahvac.com",
+    company: "Rivera HVAC",
+    businessType: "HVAC contractor",
+    yourEdge: "free scheduling setup",
+    title: "Owner",
   },
   "x-repost-intro": {
     name: "Ken",
