@@ -464,11 +464,25 @@ export const TRIGGERS: TriggerSpec[] = [
           typeof (p as Record<string, unknown>)["dataset"] === "string" &&
           ((p as Record<string, unknown>)["dataset"] as string).trim().length > 0,
       );
-      if (validPortals.length === 0 && !hasNppes && !hasFmcsa && !hasInspection) {
+      // socrata-inspection is a recency/operating-status CONFIRMATION joined
+      // to the licence lane (local-registry.ts's licenseMatchKeys join),
+      // never a standalone source — every socrata-inspection record with no
+      // same-run non-inspection match is dropped before it can be enqueued.
+      // An inspectionPortals-only config can therefore never produce a
+      // candidate, so it must not pass readiness on its own.
+      const hasNonInspectionSource = validPortals.length > 0 || hasNppes || hasFmcsa;
+      if (!hasNonInspectionSource && !hasInspection) {
         return {
           ready: false,
           reason:
             "set `portals[]` ({host, dataset, label}), `taxonomies[]` + `states[]`, `entityTypes[]`/`minPowerUnits`/`maxPowerUnits` (fmcsa), or `inspectionPortals[]`",
+        };
+      }
+      if (!hasNonInspectionSource && hasInspection) {
+        return {
+          ready: false,
+          reason:
+            "`inspectionPortals[]` alone can never enqueue anything — it only confirms a match from `portals[]`, `taxonomies[]`+`states[]`, or `entityTypes[]`/`minPowerUnits`/`maxPowerUnits`; configure one of those too",
         };
       }
       const edge = cfg["yourEdge"];
