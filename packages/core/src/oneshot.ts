@@ -1,5 +1,6 @@
 import {
   OneShot,
+  ValidationError,
   type BrowserResult,
   type CompanySearchResult,
   type DeepResearchPersonResult,
@@ -848,19 +849,28 @@ export interface EnrichCompanyInput {
 /**
  * Company enrichment from a domain, name, LinkedIn URL or stock ticker — $0.005 per call.
  *
- * No client-side identifier check here by design: the pinned SDK's own
- * `enrichCompany` (node_modules/@oneshot-agent/sdk dist/index.js) already
- * throws `ValidationError('At least one of domain, name, linkedin_url, or
- * ticker is required', 'identifier')` when all four are omitted, before any
- * network call is made. Re-validating here would just duplicate that check
- * one frame earlier with a different message, which is inconsistent with
+ * The identifier check below is duplicated ahead of `getAgent()` — not because
+ * the pinned SDK's own `enrichCompany` (node_modules/@oneshot-agent/sdk
+ * dist/index.js) fails to validate (it does, throwing the exact same
+ * `ValidationError` before any network call), but because `getAgent()` runs
+ * BEFORE `agent.enrichCompany(opts)` and, on a cold singleton, itself makes an
+ * outbound network call (`OneShot.create({ cdp: true })` →
+ * `CdpWalletProvider.create()` → `cdp.evm.createAccount()`) that would fire
+ * for an all-empty call before the SDK ever got a chance to reject it. Guard
+ * here first so an invalid call never pays for wallet initialization.
  * enrichProfile (line 641), deepResearchPerson (line 680) and findEmail (line
- * 709) above, all of which likewise rely on the SDK's own required-field
- * validation. Callers that need a non-throwing path already have
+ * 709) above still rely solely on the SDK's own required-field validation and
+ * are unaffected by this. Callers that need a non-throwing path already have
  * safeEnrichCompany (packages/find/src/_sdk-safe.ts), which catches this
  * exact ValidationError and resolves to an empty-result sentinel.
  */
 export async function enrichCompany(input: EnrichCompanyInput, ctx: CallContext) {
+  if (!input.domain && !input.name && !input.linkedinUrl && !input.ticker) {
+    throw new ValidationError(
+      "At least one of domain, name, linkedin_url, or ticker is required",
+      "identifier",
+    );
+  }
   const agent = await getAgent();
   const opts: Parameters<OneShot["enrichCompany"]>[0] = {
     ...buildAuditOpts(ctx, "enrich.company"),
