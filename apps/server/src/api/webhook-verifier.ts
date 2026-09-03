@@ -4,7 +4,7 @@ import { getLedger } from "@oneshot-gtm/core";
 export const WEBHOOK_REPLAY_WINDOW_SECONDS = 5 * 60;
 
 export type WebhookVerification =
-  | { ok: true }
+  | { ok: true; replayKey: string | null }
   | { ok: false; error: "invalid webhook signature" | "stale webhook" | "replayed webhook" };
 
 /**
@@ -19,7 +19,7 @@ export function verifyWebhook(
   now = Date.now(),
 ): WebhookVerification {
   const secret = configuredSecret?.trim() ?? "";
-  if (!secret) return { ok: true };
+  if (!secret) return { ok: true, replayKey: null };
 
   const parsed = parseSignature(signature);
   if (!parsed) return { ok: false, error: "invalid webhook signature" };
@@ -40,7 +40,20 @@ export function verifyWebhook(
     now,
   );
   if (!consumed) return { ok: false, error: "replayed webhook" };
-  return { ok: true };
+  return { ok: true, replayKey };
+}
+
+/**
+ * Release a replay key that `verifyWebhook` consumed, so a provider retry of
+ * the same signed payload isn't rejected as replayed. Callers must invoke
+ * this when downstream processing fails after successful verification but
+ * before the webhook is durably queued, so a genuine retry after a
+ * transient failure (e.g. LLM API error, DB enqueue failure) isn't
+ * permanently dropped.
+ */
+export function releaseWebhookReplay(replayKey: string | null): void {
+  if (replayKey === null) return;
+  getLedger().releaseWebhookReplay(replayKey);
 }
 
 function parseSignature(value: string | null): { timestamp: number; signatures: Buffer[] } | null {

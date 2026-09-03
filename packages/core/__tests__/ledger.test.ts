@@ -53,6 +53,17 @@ describe("Ledger schema migration", () => {
     expect(ledger.consumeWebhookReplay("signed-event", 3_000, 2_001)).toBe(true);
   });
 
+  it("releases a consumed webhook replay key so it can be consumed again", () => {
+    expect(ledger.consumeWebhookReplay("signed-event", 2_000, 1_000)).toBe(true);
+    expect(ledger.consumeWebhookReplay("signed-event", 2_000, 1_100)).toBe(false);
+    ledger.releaseWebhookReplay("signed-event");
+    expect(ledger.consumeWebhookReplay("signed-event", 2_000, 1_200)).toBe(true);
+  });
+
+  it("releasing an unknown webhook replay key is a no-op", () => {
+    expect(() => ledger.releaseWebhookReplay("never-consumed")).not.toThrow();
+  });
+
   it("lists only new pending queue rows after a queue watermark", () => {
     const before = ledger.latestQueueId();
     ledger.enqueueTarget({
