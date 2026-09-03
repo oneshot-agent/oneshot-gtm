@@ -28,6 +28,7 @@ import {
   type InboxSteerResult,
   type ReplyIntent,
   inboxThreadKey,
+  POSITIVE_REPLY_INTENTS,
 } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 import { gatherReplyContext } from "./_reply-research.ts";
@@ -119,7 +120,12 @@ export async function listInboxRoute(req: Request): Promise<Response> {
     // render so a mailbox outage never empties the matched view.
     let conversations: ConversationView[] = [];
     try {
-      conversations = buildConversations(ledger, cadenceIndex(ledger), ledger.getInboxThreads());
+      conversations = buildConversations(
+        ledger,
+        cadenceIndex(ledger),
+        ledger.getInboxThreads(),
+        ledger.listProspectIdsWithOutcomes(),
+      );
     } catch {
       // degraded twice over — return the error state alone.
     }
@@ -246,7 +252,12 @@ export async function listInboxRoute(req: Request): Promise<Response> {
   // sent from /inbox, merged per prospect and sorted oldest-first.
   let conversations: ConversationView[] = [];
   try {
-    conversations = buildConversations(ledger, byEmail, threads);
+    conversations = buildConversations(
+      ledger,
+      byEmail,
+      threads,
+      ledger.listProspectIdsWithOutcomes(),
+    );
   } catch (err) {
     logEvent(
       "inbox.conversations_failed",
@@ -295,6 +306,7 @@ function buildConversations(
     { name: string | null; company: string | null; playName: string; status: string }
   >,
   threads: ReturnType<ReturnType<typeof getLedger>["getInboxThreads"]>,
+  outcomeProspectIds: Set<number>,
 ): ConversationView[] {
   const out: ConversationView[] = [];
   for (const prospectId of ledger.listProspectIdsWithReplies()) {
@@ -350,6 +362,18 @@ function buildConversations(
 
     const cadence = byEmail.get(prospect.email.trim().toLowerCase());
     const newestThread = threads.get(inbound.at(-1)!.thread_key) ?? null;
+    const newestInbound = inbound.at(-1)!;
+    // Round-2 correction (#480): a positive-intent inbound stays "awaiting
+    // reply" until the founder answers it (any sent item on the thread after
+    // it arrived) or records a deal outcome for this prospect — otherwise
+    // the nav dot lit by POSITIVE_REPLY_INTENTS never turns off.
+    const positiveIntent =
+      newestInbound.intent != null &&
+      POSITIVE_REPLY_INTENTS.includes(newestInbound.intent as ReplyIntent);
+    const repliedSince = (newestThread?.sent ?? []).some(
+      (s) => s.sentAt > newestInbound.received_at,
+    );
+    const awaitingReply = positiveIntent && !repliedSince && !outcomeProspectIds.has(prospectId);
     out.push({
       prospectId,
       name: prospect.name,
@@ -362,6 +386,7 @@ function buildConversations(
       steer: newestThread?.steer ?? null,
       status: newestThread?.status ?? null,
       intent: (inbound.at(-1)?.intent as ReplyIntent | null) ?? null,
+      awaitingReply,
       items,
     });
   }

@@ -76,6 +76,28 @@ describe("bodyCommitsTerms (issue #480)", () => {
   it("does not fire when hiring is explicitly declined", () => {
     expect(bodyCommitsTerms("No, we won't be hiring for this.")).toBe(false);
   });
+
+  // Round-2 correction (#480): 6 of 8 patterns had no requireAffirmative
+  // guard, so a harmless mention/question tripped commits-terms and blocked
+  // Send. Verbatim reviewer-reproduced false positives, now gated the same
+  // way pricing already was.
+  it("does not fire on a harmless acknowledgement that merely mentions partnership", () => {
+    expect(bodyCommitsTerms("Thanks for explaining the partnership, that makes sense.")).toBe(
+      false,
+    );
+  });
+
+  it("does not fire when the roadmap is only being asked about, not promised", () => {
+    expect(bodyCommitsTerms("Could you clarify your roadmap?")).toBe(false);
+  });
+
+  it("does not fire on a neutral, non-committing mention of distribution", () => {
+    expect(bodyCommitsTerms("We read about your distribution model on the website.")).toBe(false);
+  });
+
+  it("does not fire on small talk about hiring", () => {
+    expect(bodyCommitsTerms("How is your hiring going this quarter?")).toBe(false);
+  });
 });
 
 describe("intentDirectiveBlock (issue #480)", () => {

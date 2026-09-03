@@ -4,7 +4,6 @@ import type { QueryClient } from "@tanstack/react-query";
 import { Activity, BarChart3, Feather, Inbox, Layers, Mail, Receipt, Settings } from "lucide-react";
 import { useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { Toaster } from "sonner";
-import { POSITIVE_REPLY_INTENTS } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { IS_DEMO } from "../api/demo.ts";
 import { DemoFrame } from "../components/shell/DemoFrame.tsx";
@@ -107,9 +106,10 @@ function RootLayout() {
   const alerts: Record<NonNullable<NavItem["alert"]>, boolean> = {
     "queue-pending": (queueQuery.data?.counts.pending ?? 0) > 0,
     "doctor-fail": (doctor.data?.checks ?? []).some((c) => c.severity === "fail"),
-    "inbox-positive": (inboxAlertQuery.data?.conversations ?? []).some(
-      (c) => c.intent != null && POSITIVE_REPLY_INTENTS.includes(c.intent),
-    ),
+    // Round-2 correction (#480): `awaitingReply` (not a bare `intent` check)
+    // — it clears once the founder replies to the thread or records a deal
+    // outcome, so the dot doesn't stay lit forever after the first use.
+    "inbox-positive": (inboxAlertQuery.data?.conversations ?? []).some((c) => c.awaitingReply),
   };
 
   return (

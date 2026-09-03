@@ -2009,6 +2009,20 @@ export class Ledger {
     return Number(result.lastInsertRowid);
   }
 
+  /**
+   * Prospects with at least one recorded deal outcome (round-2 correction,
+   * #480) — the /inbox nav dot's acknowledgement signal. A recorded outcome
+   * is the founder's explicit "I've handled this" for a positive reply, so a
+   * prospect in this set no longer needs the alert even if their latest
+   * inbound is still classified interested/question/objection.
+   */
+  listProspectIdsWithOutcomes(): Set<number> {
+    const rows = this.db.query(`SELECT DISTINCT prospect_id FROM deal_outcomes`).all() as Array<{
+      prospect_id: number;
+    }>;
+    return new Set(rows.map((r) => r.prospect_id));
+  }
+
   countOutcomes(
     opts: {
       sinceIso?: string;

@@ -16,6 +16,7 @@ const listSequenceEventsForProspectMock = vi.fn((): unknown[] => []);
 const recordInboxReplyMock = vi.fn(() => true);
 const getProspectByIdMock = vi.fn((): unknown => null);
 const listInboxReplyIntentsMock = vi.fn(() => new Map());
+const listProspectIdsWithOutcomesMock = vi.fn((): Set<number> => new Set());
 let knownProspect: { id: number } | null = null;
 
 const ledger = {
@@ -39,6 +40,8 @@ const ledger = {
   listInboxReplyIntents: listInboxReplyIntentsMock,
   setInboxDraftSteer: setInboxDraftSteerMock,
   setInboxDraftBody: setInboxDraftBodyMock,
+  // round-2 correction (#480): the nav-dot ack signal — empty by default.
+  listProspectIdsWithOutcomes: listProspectIdsWithOutcomesMock,
 };
 
 vi.mock("@oneshot-gtm/core", async () => {

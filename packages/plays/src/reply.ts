@@ -98,22 +98,36 @@ const COMMITS_TERMS_PATTERNS: CommitPattern[] = [
     requireAffirmative: true,
   },
   // Distribution / traffic promises ("point our builders toward X", "route users to Y").
+  // Round-2 correction (#480): a bare mention ("we read about your distribution
+  // model") is as common as an actual promise — same affirmative-cue gate as pricing.
   {
     regex:
       /\bdistribution\b|\btraffic\b|\bpoint\b[^.]{0,60}\btoward\b|\brout(?:e|ing)\b[^.]{0,40}\b(?:users|traffic|customers|people)\b/i,
+    requireAffirmative: true,
   },
-  // Partnership / exclusivity language.
-  { regex: /\bpartner(?:ship)?\b|\bexclusiv(?:e|ity)\b/i },
-  // Roadmap dates.
-  { regex: /\broadmap\b|\bby (?:Q[1-4]\s?\d{0,4}|\d{4})\b|\bnext (?:quarter|month)\b/i },
-  // Headcount / hiring commitments.
-  { regex: /\bheadcount\b|\bhir(?:e|ing)\b/i },
+  // Partnership / exclusivity language. Round-2 correction (#480): "thanks for
+  // explaining the partnership, that makes sense" is not a commitment.
+  { regex: /\bpartner(?:ship)?\b|\bexclusiv(?:e|ity)\b/i, requireAffirmative: true },
+  // Roadmap dates. Round-2 correction (#480): "could you clarify your roadmap?"
+  // is a question, not a commitment — gated the same way (QUESTION_CUE below
+  // also strips the "could you"/"can you" phrasing the bare cue list would miss).
+  {
+    regex: /\broadmap\b|\bby (?:Q[1-4]\s?\d{0,4}|\d{4})\b|\bnext (?:quarter|month)\b/i,
+    requireAffirmative: true,
+  },
+  // Headcount / hiring commitments. Round-2 correction (#480): "how is your
+  // hiring going this quarter?" is small talk, not a commitment.
+  { regex: /\bheadcount\b|\bhir(?:e|ing)\b/i, requireAffirmative: true },
   // Documentation placement ("adding X to our documentation").
-  { regex: /\b(?:add(?:ing)?|list(?:ing)?)\b[^.]{0,60}\b(?:documentation|docs)\b/i },
+  {
+    regex: /\b(?:add(?:ing)?|list(?:ing)?)\b[^.]{0,60}\b(?:documentation|docs)\b/i,
+    requireAffirmative: true,
+  },
   // "Recommended / preferred partner" (or environment/integration/provider) designations.
   {
     regex:
       /\b(?:recommended|preferred)\b[^.]{0,40}\b(?:partner|environment|integration|provider|option|vendor|choice)\b/i,
+    requireAffirmative: true,
   },
   // Featuring the sender in a reference implementation / case study / website.
   {
@@ -125,9 +139,25 @@ const COMMITS_TERMS_PATTERNS: CommitPattern[] = [
 /** A sentence that declines, refuses, or is otherwise negative about its topic is not a commitment. */
 const NEGATION_CUE = /\b(?:not|no|never|nobody|nothing|unable|cannot)\b|n['’]t\b/i;
 
-/** A sentence that affirmatively offers or agrees to something. */
+/**
+ * A sentence that affirmatively offers or agrees to something. Includes
+ * "plan(ning) to" / "aim to" (round-2 correction, #480) so a founder stating a
+ * roadmap intent ("we're planning to ship SSO by Q1") still counts as a
+ * commitment — only the *question* form ("could you clarify your roadmap?")
+ * is meant to fall through, and that's excluded separately by QUESTION_CUE.
+ */
 const AFFIRMATIVE_CUE =
-  /\b(?:can|could|will|would|able to|happy to|glad to|going to|let's|sure)\b|['’]ll\b/i;
+  /\b(?:can|could|will|would|able to|happy to|glad to|going to|planning to|plan to|aim to|let's|sure)\b|['’]ll\b/i;
+
+/**
+ * A modal cue addressed AT the recipient ("could you", "can you", "would
+ * you", "will you") — a question, never a commitment, even though it shares
+ * the same modal verbs AFFIRMATIVE_CUE looks for ("we could hire someone" is
+ * a commitment; "could you clarify your roadmap?" is not). Round-2
+ * correction (#480): without this, "Could you clarify your roadmap?" still
+ * tripped the roadmap pattern's affirmative-cue guard on the bare "could".
+ */
+const QUESTION_CUE = /\b(?:could|can|would|will)\s+you\b/i;
 
 /** Body split into sentence-ish chunks — the unit `bodyCommitsTerms` reasons about, so a
  *  commitment made in one sentence can't be masked by a negation two sentences away. */
@@ -145,7 +175,9 @@ export function bodyCommitsTerms(body: string): boolean {
     sentences.some((sentence) => {
       if (!regex.test(sentence)) return false;
       if (NEGATION_CUE.test(sentence)) return false;
-      if (requireAffirmative && !AFFIRMATIVE_CUE.test(sentence)) return false;
+      if (requireAffirmative && (QUESTION_CUE.test(sentence) || !AFFIRMATIVE_CUE.test(sentence))) {
+        return false;
+      }
       return true;
     }),
   );
