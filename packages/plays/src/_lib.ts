@@ -281,18 +281,23 @@ export function lintOpenerFrequency(
  *
  * round-2 correction: exempting ANY token with a letter+digit mix (regardless
  * of hyphens) let plain shouty promo tokens like "SAVE20NOW" or "URGENT2"
- * slip past. round-3 correction (finding PRRT_kwDOSKzrBs6ewQdB, this round):
+ * slip past. round-3 correction (finding PRRT_kwDOSKzrBs6ewQdB, round 3):
  * even WITH the hyphen-count guard, a purely alphabetic shouty phrase written
  * with hyphens instead of spaces — "SAVE-20-NOW" — still matched, because the
  * regex only checked segment SHAPE (alphanumeric), not that at least one
  * segment carries digits the way a real SAM.gov solicitation number's suffix
- * segments do. A real solicitation number always has this shape: a leading
- * alphanumeric agency code, then a 2-digit fiscal year, a single-letter
- * procurement-type code, and a numeric sequence — e.g. `W912DY-26-R-0042`,
- * `SP4701-26-R-0007`. Match that shape specifically instead of "any
- * hyphen-joined alphanumeric run".
+ * segments do. round-4 correction (finding PRRT_kwDOSKzrBs6ewQdB, round 4):
+ * the round-3 fix required the final segment to be all-digits, but real
+ * SAM.gov/DoD PIID serial segments can be alphanumeric — e.g.
+ * `N00164-24-Q-GR04` (final segment `GR04`) or a multi-segment procurement
+ * type such as `N00164-26-RFPREQ-CR-JXN-0036`. Match the real shape: a
+ * leading alphanumeric agency code, a 2-digit fiscal year, one or more
+ * alphabetic procurement-type segments, then a final alphanumeric serial
+ * segment that carries at least one digit (so a purely alphabetic phrase like
+ * "SAVE-20-NOW" still fails to match and stays flagged as shouty).
  */
-const SOLICITATION_NUMBER_RE = /^[A-Za-z0-9]{4,8}-\d{2}-[A-Za-z]-\d{3,7}$/;
+const SOLICITATION_NUMBER_RE =
+  /^[A-Za-z0-9]{4,8}-\d{2}(?:-[A-Za-z]{1,8})*-[A-Za-z0-9]{0,6}\d[A-Za-z0-9]{0,6}$/;
 
 function subjectShouty(subject: string): boolean {
   return subject.split(/\s+/).some((token) => {

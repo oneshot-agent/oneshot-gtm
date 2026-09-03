@@ -122,10 +122,24 @@ registerSequence({
         // optional (not every finder captures it) — an unknown deadline is
         // NOT treated as expired, only a deadline that has actually passed
         // skips the send.
+        //
+        // round-2 correction (finding PRRT_kwDOSKzrBs6ewQdC, round 2):
+        // `responseDeadline` is a date-only ISO string (e.g. "2026-07-01"),
+        // and `Date.parse` on a date-only string resolves to midnight UTC of
+        // that date, not end-of-day. Comparing that instant against
+        // `Date.now()` treated the entire deadline day (and, in US
+        // timezones, part of the day before) as already expired, suppressing
+        // a legitimate day-5 follow-up up to a day early. A calendar date
+        // deadline means "actionable through the end of that day" — compare
+        // against the end of the deadline's UTC day instead of its start.
         const deadline = getStep0MetadataField(ctx.prospect.id, PLAY_NAME, "responseDeadline");
         if (deadline) {
           const deadlineMs = Date.parse(deadline);
-          if (Number.isFinite(deadlineMs) && deadlineMs < Date.now()) return null;
+          if (Number.isFinite(deadlineMs)) {
+            const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(deadline.trim());
+            const expiresAtMs = isDateOnly ? deadlineMs + 24 * 60 * 60 * 1000 - 1 : deadlineMs;
+            if (expiresAtMs < Date.now()) return null;
+          }
         }
         return buildFollowUpEmail({
           playName: PLAY_NAME,

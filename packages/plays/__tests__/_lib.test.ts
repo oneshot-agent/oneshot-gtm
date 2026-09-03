@@ -79,6 +79,21 @@ describe("lintEmail — humanizer canon", () => {
     );
   });
 
+  // round-4 correction, same finding: real DoD PIID notice numbers can end in
+  // an alphanumeric serial segment, not just digits — e.g. N00164-24-Q-GR04's
+  // `GR04` suffix, or a multi-segment procurement type such as
+  // N00164-26-RFPREQ-CR-JXN-0036. The round-3 fix required an all-digit final
+  // segment, which would have flagged these as shouty and held a compliant
+  // subject from the guarded send path.
+  it("does not flag alphanumeric-serial notice numbers as shouty", () => {
+    expect(lintEmail("N00164-24-Q-GR04 — capability question", "Body. Sam")).not.toContain(
+      "subject-shouty",
+    );
+    expect(
+      lintEmail("N00164-26-RFPREQ-CR-JXN-0036 — capability question", "Body. Sam"),
+    ).not.toContain("subject-shouty");
+  });
+
   it("still flags a genuinely shouty subject next to an identifier token", () => {
     // "URGENT" carries no digit, so it stays a real shout even alongside a
     // compliant notice-number token in the same subject.
