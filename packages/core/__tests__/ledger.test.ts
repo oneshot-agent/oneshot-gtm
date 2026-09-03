@@ -1394,3 +1394,45 @@ describe("Ledger pending_resolution (outage retry queue)", () => {
     expect(ledger.isPendingResolution("p", "new")).toBe(true);
   });
 });
+
+describe("applyTriggerConfigs", () => {
+  it("writes every entry in one batch — insert for a fresh trigger, update+enable for an existing one", () => {
+    ledger.upsertTrigger({
+      name: "show-hn",
+      configJson: JSON.stringify({ sinceDays: 1 }),
+      enabled: false,
+    });
+    ledger.applyTriggerConfigs([
+      { name: "show-hn", configJson: JSON.stringify({ sinceDays: 1, minPoints: 50 }) },
+      { name: "hiring-signal", configJson: JSON.stringify({ keywords: ["engineer"] }) },
+    ]);
+    const showHn = ledger.getTrigger("show-hn");
+    expect(showHn?.enabled).toBe(1);
+    expect(JSON.parse(showHn!.config_json!)).toEqual({ sinceDays: 1, minPoints: 50 });
+    const hiring = ledger.getTrigger("hiring-signal");
+    expect(hiring?.enabled).toBe(1);
+    expect(JSON.parse(hiring!.config_json!)).toEqual({ keywords: ["engineer"] });
+  });
+
+  it("rolls back the WHOLE batch when one entry's write throws — no half-applied pack (finding PRRT_kwDOSKzrBs6fCBct)", () => {
+    ledger.upsertTrigger({
+      name: "show-hn",
+      configJson: JSON.stringify({ sinceDays: 1 }),
+      enabled: true,
+    });
+    // bun:sqlite's bind() throws for an unsupported JS value — force that on
+    // the SECOND entry so the transaction has already run the first
+    // statement before the throw, exercising the rollback.
+    expect(() =>
+      ledger.applyTriggerConfigs([
+        { name: "show-hn", configJson: JSON.stringify({ sinceDays: 2 }) },
+        // @ts-expect-error — deliberately unsupported bind type to force the statement to throw mid-batch
+        { name: "hiring-signal", configJson: { bad: true } },
+      ]),
+    ).toThrow();
+    // The first entry's write must NOT have persisted — the transaction
+    // rolled back the whole batch, not just the failing statement.
+    const showHn = ledger.getTrigger("show-hn");
+    expect(JSON.parse(showHn!.config_json!)).toEqual({ sinceDays: 1 });
+  });
+});

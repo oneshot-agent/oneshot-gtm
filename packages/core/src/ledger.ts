@@ -3709,6 +3709,30 @@ export class Ledger {
   }
 
   /**
+   * Apply a batch of trigger config writes atomically — insert a fresh
+   * enabled row for a trigger with no stored config, or update an existing
+   * row's config and enable it, for every entry in ONE transaction. Used by
+   * the packs apply route: `applyPackRoute` previously ran each trigger's
+   * upsert/update pair outside a transaction, so a later write throwing left
+   * earlier writes in the batch persisted and the route returned a 500 with
+   * a half-applied pack (finding PRRT_kwDOSKzrBs6fCBct). A throw here rolls
+   * back every write in the batch, not just the failing one.
+   */
+  applyTriggerConfigs(entries: Array<{ name: string; configJson: string }>): void {
+    const upsert = this.db.prepare(
+      `INSERT INTO triggers(name, enabled, config_json)
+       VALUES(?, 1, ?)
+       ON CONFLICT(name) DO UPDATE SET
+         enabled = 1,
+         config_json = excluded.config_json`,
+    );
+    const tx = this.db.transaction(() => {
+      for (const entry of entries) upsert.run(entry.name, entry.configJson);
+    });
+    tx();
+  }
+
+  /**
    * Associate a queued target with a known prospect (so the queue page can
    * link back to the prospect record). Best-effort — the caller is expected
    * to swallow failures since the link is a convenience, not a correctness

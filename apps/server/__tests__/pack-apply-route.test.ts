@@ -38,6 +38,27 @@ vi.mock("@oneshot-gtm/core", async () => {
         const row = stored.get(name);
         if (row) row.enabled = enabled ? 1 : 0;
       },
+      applyTriggerConfigs: (entries: Array<{ name: string; configJson: string }>) => {
+        for (const { name, configJson } of entries) {
+          const row = stored.get(name);
+          if (row) {
+            configWrites.push({ name, json: configJson });
+            enabledWrites.push({ name, enabled: true });
+            row.config_json = configJson;
+            row.enabled = 1;
+          } else {
+            upserts.push({ name, configJson, enabled: true });
+            stored.set(name, {
+              name,
+              last_polled_at: null,
+              last_run_summary: null,
+              enabled: 1,
+              config_json: configJson,
+              running_started_at: null,
+            });
+          }
+        }
+      },
     }),
   };
 });

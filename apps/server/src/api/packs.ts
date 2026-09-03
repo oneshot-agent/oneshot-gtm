@@ -40,6 +40,7 @@ export async function applyPackRoute(
   const ledger = getLedger();
   const applied: PackApplyResult["applied"] = [];
   const skipped: PackApplyResult["skipped"] = [];
+  const toApply: Array<{ name: string; mergedConfig: Record<string, unknown> }> = [];
 
   for (const [name, patch] of Object.entries(pack.triggers)) {
     const spec = TRIGGERS.find((t) => t.name === name);
@@ -50,16 +51,19 @@ export async function applyPackRoute(
     const stored = ledger.getTrigger(name);
     const baseConfig = storedTriggerConfig(stored, spec);
     const mergedConfig = { ...baseConfig, ...patch };
-    if (!stored) {
-      ledger.upsertTrigger({
-        name,
-        configJson: JSON.stringify(mergedConfig),
-        enabled: true,
-      });
-    } else {
-      ledger.setTriggerConfig(name, JSON.stringify(mergedConfig));
-      ledger.setTriggerEnabled(name, true);
-    }
+    toApply.push({ name, mergedConfig });
+  }
+
+  // One transaction for the whole batch: a later write throwing must not
+  // leave earlier triggers in this pack half-applied (finding
+  // PRRT_kwDOSKzrBs6fCBct) — either every trigger in `toApply` lands, or
+  // none do.
+  ledger.applyTriggerConfigs(
+    toApply.map(({ name, mergedConfig }) => ({ name, configJson: JSON.stringify(mergedConfig) })),
+  );
+
+  for (const { name, mergedConfig } of toApply) {
+    const spec = TRIGGERS.find((t) => t.name === name)!;
     const readiness = checkReadiness(spec, mergedConfig);
     applied.push({
       name,
