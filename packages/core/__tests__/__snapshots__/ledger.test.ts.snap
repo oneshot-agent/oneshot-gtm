@@ -1,0 +1,547 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Ledger schema migration > fresh-install schema (tables, columns, indexes, triggers, schema_version) matches the snapshot 1`] = `
+{
+  "objects": [
+    {
+      "name": "idx_bounces_identity",
+      "sql": "CREATE INDEX idx_bounces_identity ON bounces(identity_id, bounced_at)",
+      "tbl_name": "bounces",
+      "type": "index",
+    },
+    {
+      "name": "idx_bounces_recipient",
+      "sql": "CREATE INDEX idx_bounces_recipient ON bounces(recipient, kind)",
+      "tbl_name": "bounces",
+      "type": "index",
+    },
+    {
+      "name": "idx_cadence_next_due",
+      "sql": "CREATE INDEX idx_cadence_next_due ON cadence_state(next_due_at)",
+      "tbl_name": "cadence_state",
+      "type": "index",
+    },
+    {
+      "name": "idx_cadence_status",
+      "sql": "CREATE INDEX idx_cadence_status ON cadence_state(status)",
+      "tbl_name": "cadence_state",
+      "type": "index",
+    },
+    {
+      "name": "idx_canary_created",
+      "sql": "CREATE INDEX idx_canary_created ON canary_results(created_at DESC)",
+      "tbl_name": "canary_results",
+      "type": "index",
+    },
+    {
+      "name": "idx_channel_events_prospect_time",
+      "sql": "CREATE INDEX idx_channel_events_prospect_time
+        ON channel_events(prospect_id, occurred_at)",
+      "tbl_name": "channel_events",
+      "type": "index",
+    },
+    {
+      "name": "idx_inbox_replies_from_kind",
+      "sql": "CREATE INDEX idx_inbox_replies_from_kind ON inbox_replies(from_email, kind)",
+      "tbl_name": "inbox_replies",
+      "type": "index",
+    },
+    {
+      "name": "idx_inbox_replies_prospect",
+      "sql": "CREATE INDEX idx_inbox_replies_prospect
+        ON inbox_replies(prospect_id, received_at)",
+      "tbl_name": "inbox_replies",
+      "type": "index",
+    },
+    {
+      "name": "idx_inbox_replies_thread",
+      "sql": "CREATE INDEX idx_inbox_replies_thread
+        ON inbox_replies(thread_key, received_at)",
+      "tbl_name": "inbox_replies",
+      "type": "index",
+    },
+    {
+      "name": "idx_inbox_sent_thread",
+      "sql": "CREATE INDEX idx_inbox_sent_thread
+        ON inbox_sent(thread_key, sent_at)",
+      "tbl_name": "inbox_sent",
+      "type": "index",
+    },
+    {
+      "name": "idx_outcomes_outcome",
+      "sql": "CREATE INDEX idx_outcomes_outcome ON deal_outcomes(outcome)",
+      "tbl_name": "deal_outcomes",
+      "type": "index",
+    },
+    {
+      "name": "idx_outcomes_play",
+      "sql": "CREATE INDEX idx_outcomes_play ON deal_outcomes(play_name)",
+      "tbl_name": "deal_outcomes",
+      "type": "index",
+    },
+    {
+      "name": "idx_outcomes_prospect",
+      "sql": "CREATE INDEX idx_outcomes_prospect ON deal_outcomes(prospect_id)",
+      "tbl_name": "deal_outcomes",
+      "type": "index",
+    },
+    {
+      "name": "idx_pending_resolution_seen",
+      "sql": "CREATE INDEX idx_pending_resolution_seen
+        ON pending_resolution(first_seen_at)",
+      "tbl_name": "pending_resolution",
+      "type": "index",
+    },
+    {
+      "name": "idx_prospects_email",
+      "sql": "CREATE UNIQUE INDEX idx_prospects_email ON prospects(email) WHERE email IS NOT NULL",
+      "tbl_name": "prospects",
+      "type": "index",
+    },
+    {
+      "name": "idx_queue_dedupe",
+      "sql": "CREATE UNIQUE INDEX idx_queue_dedupe ON target_queue(play_name, dedupe_key)",
+      "tbl_name": "target_queue",
+      "type": "index",
+    },
+    {
+      "name": "idx_queue_play",
+      "sql": "CREATE INDEX idx_queue_play ON target_queue(play_name)",
+      "tbl_name": "target_queue",
+      "type": "index",
+    },
+    {
+      "name": "idx_queue_status",
+      "sql": "CREATE INDEX idx_queue_status ON target_queue(status)",
+      "tbl_name": "target_queue",
+      "type": "index",
+    },
+    {
+      "name": "idx_queue_status_play",
+      "sql": "CREATE INDEX idx_queue_status_play ON target_queue(status, play_name)",
+      "tbl_name": "target_queue",
+      "type": "index",
+    },
+    {
+      "name": "idx_receipts_calltype_sender",
+      "sql": "CREATE INDEX idx_receipts_calltype_sender
+        ON receipts(call_type, sender_identity, created_at)",
+      "tbl_name": "receipts",
+      "type": "index",
+    },
+    {
+      "name": "idx_receipts_created",
+      "sql": "CREATE INDEX idx_receipts_created ON receipts(created_at)",
+      "tbl_name": "receipts",
+      "type": "index",
+    },
+    {
+      "name": "idx_receipts_goal",
+      "sql": "CREATE INDEX idx_receipts_goal
+        ON receipts(goal_id) WHERE goal_id IS NOT NULL",
+      "tbl_name": "receipts",
+      "type": "index",
+    },
+    {
+      "name": "idx_receipts_play",
+      "sql": "CREATE INDEX idx_receipts_play ON receipts(play_name)",
+      "tbl_name": "receipts",
+      "type": "index",
+    },
+    {
+      "name": "idx_receipts_play_created",
+      "sql": "CREATE INDEX idx_receipts_play_created ON receipts(play_name, created_at)",
+      "tbl_name": "receipts",
+      "type": "index",
+    },
+    {
+      "name": "idx_receipts_request",
+      "sql": "CREATE INDEX idx_receipts_request ON receipts(oneshot_request_id)
+        WHERE oneshot_request_id IS NOT NULL",
+      "tbl_name": "receipts",
+      "type": "index",
+    },
+    {
+      "name": "idx_receipts_value_tag",
+      "sql": "CREATE INDEX idx_receipts_value_tag
+        ON receipts(value_tag, created_at) WHERE value_tag IS NOT NULL",
+      "tbl_name": "receipts",
+      "type": "index",
+    },
+    {
+      "name": "idx_runs_started",
+      "sql": "CREATE INDEX idx_runs_started ON runs(started_at DESC)",
+      "tbl_name": "runs",
+      "type": "index",
+    },
+    {
+      "name": "idx_runs_status",
+      "sql": "CREATE INDEX idx_runs_status ON runs(status)",
+      "tbl_name": "runs",
+      "type": "index",
+    },
+    {
+      "name": "idx_sequence_events_prospect_created",
+      "sql": "CREATE INDEX idx_sequence_events_prospect_created ON sequence_events(prospect_id, created_at)",
+      "tbl_name": "sequence_events",
+      "type": "index",
+    },
+    {
+      "name": "idx_sequence_events_prospect_play",
+      "sql": "CREATE INDEX idx_sequence_events_prospect_play ON sequence_events(prospect_id, play_name, step_index)",
+      "tbl_name": "sequence_events",
+      "type": "index",
+    },
+    {
+      "name": "idx_webhook_replays_expiry",
+      "sql": "CREATE INDEX idx_webhook_replays_expiry
+        ON webhook_replays(expires_at)",
+      "tbl_name": "webhook_replays",
+      "type": "index",
+    },
+    {
+      "name": "bounces",
+      "sql": "CREATE TABLE bounces (
+        message_id  TEXT NOT NULL,
+        recipient   TEXT NOT NULL,
+        identity_id TEXT,
+        kind        TEXT NOT NULL,
+        status_code TEXT,
+        diagnostic  TEXT,
+        prospect_id INTEGER,
+        bounced_at  TEXT NOT NULL,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (message_id, recipient)
+      )",
+      "tbl_name": "bounces",
+      "type": "table",
+    },
+    {
+      "name": "cadence_state",
+      "sql": "CREATE TABLE cadence_state (
+        prospect_id INTEGER NOT NULL,
+        play_name TEXT NOT NULL,
+        current_step INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'active',
+        enrolled_at TEXT NOT NULL DEFAULT (datetime('now')),
+        next_due_at TEXT,
+        last_polled_at TEXT, next_step_draft_json TEXT, next_step_drafted_at TEXT, sending_started_at TEXT, stop_reason TEXT, stop_note TEXT, stopped_at TEXT, last_send_error TEXT, last_send_error_at TEXT,
+        PRIMARY KEY (prospect_id, play_name)
+      )",
+      "tbl_name": "cadence_state",
+      "type": "table",
+    },
+    {
+      "name": "canary_results",
+      "sql": "CREATE TABLE canary_results (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        from_identity TEXT NOT NULL,
+        to_identity   TEXT NOT NULL,
+        placement     TEXT NOT NULL,
+        labels_json   TEXT,
+        spf           TEXT NOT NULL,
+        dkim          TEXT NOT NULL,
+        dmarc         TEXT NOT NULL,
+        subject       TEXT,
+        source_play   TEXT,
+        same_domain   INTEGER NOT NULL DEFAULT 0,
+        latency_ms    INTEGER,
+        created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+      )",
+      "tbl_name": "canary_results",
+      "type": "table",
+    },
+    {
+      "name": "channel_events",
+      "sql": "CREATE TABLE channel_events (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        source            TEXT NOT NULL,
+        external_event_id TEXT NOT NULL,
+        prospect_id       INTEGER NOT NULL,
+        channel           TEXT NOT NULL,
+        event_type        TEXT NOT NULL,
+        occurred_at       TEXT NOT NULL,
+        created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(source, external_event_id),
+        FOREIGN KEY(prospect_id) REFERENCES prospects(id)
+      )",
+      "tbl_name": "channel_events",
+      "type": "table",
+    },
+    {
+      "name": "deal_outcomes",
+      "sql": "CREATE TABLE deal_outcomes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        prospect_id INTEGER NOT NULL,
+        play_name TEXT,
+        outcome TEXT NOT NULL,
+        amount_usd REAL,
+        notes TEXT,
+        recorded_at TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY(prospect_id) REFERENCES prospects(id)
+      )",
+      "tbl_name": "deal_outcomes",
+      "type": "table",
+    },
+    {
+      "name": "enrichment_cache",
+      "sql": "CREATE TABLE enrichment_cache (
+        email TEXT PRIMARY KEY,
+        result_json TEXT NOT NULL,
+        fetched_at TEXT NOT NULL
+      , status TEXT)",
+      "tbl_name": "enrichment_cache",
+      "type": "table",
+    },
+    {
+      "name": "inbox_drafts",
+      "sql": "CREATE TABLE inbox_drafts (
+        thread_key       TEXT PRIMARY KEY,
+        inbound_email_id TEXT NOT NULL,
+        to_email         TEXT NOT NULL,
+        subject          TEXT,
+        identity_id      TEXT,
+        body             TEXT NOT NULL,
+        updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+      )",
+      "tbl_name": "inbox_drafts",
+      "type": "table",
+    },
+    {
+      "name": "inbox_replies",
+      "sql": "CREATE TABLE inbox_replies (
+        id                 TEXT PRIMARY KEY,
+        thread_key         TEXT NOT NULL,
+        prospect_id        INTEGER NOT NULL,
+        play_name          TEXT,
+        from_email         TEXT NOT NULL,
+        subject            TEXT,
+        body               TEXT NOT NULL,
+        received_at        TEXT NOT NULL,
+        source_identity_id TEXT,
+        thread_id          TEXT,
+        message_id         TEXT,
+        created_at         TEXT NOT NULL DEFAULT (datetime('now'))
+      , kind TEXT)",
+      "tbl_name": "inbox_replies",
+      "type": "table",
+    },
+    {
+      "name": "inbox_sent",
+      "sql": "CREATE TABLE inbox_sent (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        thread_key  TEXT NOT NULL,
+        to_email    TEXT NOT NULL,
+        subject     TEXT,
+        body        TEXT NOT NULL,
+        identity_id TEXT,
+        request_id  TEXT,
+        sent_at     TEXT NOT NULL DEFAULT (datetime('now'))
+      )",
+      "tbl_name": "inbox_sent",
+      "type": "table",
+    },
+    {
+      "name": "interviews",
+      "sql": "CREATE TABLE interviews (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        person TEXT NOT NULL,
+        transcript_path TEXT,
+        jtbd TEXT,
+        pain_quotes_json TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )",
+      "tbl_name": "interviews",
+      "type": "table",
+    },
+    {
+      "name": "linkedin_lookup_cache",
+      "sql": "CREATE TABLE linkedin_lookup_cache (
+        query_key  TEXT PRIMARY KEY,
+        url        TEXT,
+        status     TEXT NOT NULL,
+        fetched_at TEXT NOT NULL
+      )",
+      "tbl_name": "linkedin_lookup_cache",
+      "type": "table",
+    },
+    {
+      "name": "pending_resolution",
+      "sql": "CREATE TABLE pending_resolution (
+        play_name       TEXT NOT NULL,
+        dedupe_key      TEXT NOT NULL,
+        source          TEXT NOT NULL,
+        raw_json        TEXT NOT NULL,
+        first_seen_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        last_attempt_at TEXT,
+        attempts        INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (play_name, dedupe_key)
+      )",
+      "tbl_name": "pending_resolution",
+      "type": "table",
+    },
+    {
+      "name": "poll_state",
+      "sql": "CREATE TABLE poll_state (
+        key        TEXT PRIMARY KEY,
+        value      TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )",
+      "tbl_name": "poll_state",
+      "type": "table",
+    },
+    {
+      "name": "product_research_cache",
+      "sql": "CREATE TABLE product_research_cache (
+        cache_key TEXT PRIMARY KEY,
+        dossier_json TEXT NOT NULL,
+        fetched_at TEXT NOT NULL
+      )",
+      "tbl_name": "product_research_cache",
+      "type": "table",
+    },
+    {
+      "name": "prospects",
+      "sql": "CREATE TABLE prospects (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        email TEXT,
+        phone TEXT,
+        company TEXT,
+        linkedin_url TEXT,
+        dossier_json TEXT,
+        source TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      , source_profile_url TEXT, title TEXT, icp_verdict TEXT, icp_verdict_reason TEXT)",
+      "tbl_name": "prospects",
+      "type": "table",
+    },
+    {
+      "name": "receipts",
+      "sql": "CREATE TABLE receipts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        play_name TEXT NOT NULL,
+        call_type TEXT NOT NULL,
+        cost_usd REAL,
+        signed_receipt TEXT,
+        oneshot_request_id TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      , sender_identity TEXT, memo TEXT, decision_context TEXT, value_tag TEXT, value_tagged_at TEXT, goal_id TEXT)",
+      "tbl_name": "receipts",
+      "type": "table",
+    },
+    {
+      "name": "runs",
+      "sql": "CREATE TABLE runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        play_name TEXT NOT NULL,
+        dry_run INTEGER NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('running','done','interrupted','cancelled')),
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        target_count INTEGER NOT NULL,
+        drafted_count INTEGER NOT NULL DEFAULT 0,
+        sent_count INTEGER NOT NULL DEFAULT 0,
+        error_count INTEGER NOT NULL DEFAULT 0,
+        targets_json TEXT NOT NULL,
+        dedupe_keys_json TEXT NOT NULL DEFAULT '[]',
+        events_json TEXT NOT NULL DEFAULT '[]',
+        prospect_emails_json TEXT NOT NULL DEFAULT '[]'
+      , cancel_reason TEXT)",
+      "tbl_name": "runs",
+      "type": "table",
+    },
+    {
+      "name": "schema_version",
+      "sql": "CREATE TABLE schema_version (
+        version INTEGER PRIMARY KEY
+      )",
+      "tbl_name": "schema_version",
+      "type": "table",
+    },
+    {
+      "name": "sender_assignments",
+      "sql": "CREATE TABLE sender_assignments (
+        email TEXT PRIMARY KEY,
+        identity_id TEXT NOT NULL,
+        assigned_at TEXT NOT NULL DEFAULT (datetime('now'))
+      )",
+      "tbl_name": "sender_assignments",
+      "type": "table",
+    },
+    {
+      "name": "sequence_events",
+      "sql": "CREATE TABLE sequence_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        prospect_id INTEGER NOT NULL,
+        play_name TEXT NOT NULL,
+        step_index INTEGER NOT NULL,
+        channel TEXT NOT NULL,
+        status TEXT NOT NULL,
+        metadata_json TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')), receipt_id INTEGER,
+        FOREIGN KEY(prospect_id) REFERENCES prospects(id)
+      )",
+      "tbl_name": "sequence_events",
+      "type": "table",
+    },
+    {
+      "name": "target_queue",
+      "sql": "CREATE TABLE target_queue (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        play_name TEXT NOT NULL,
+        payload_json TEXT NOT NULL,
+        dedupe_key TEXT NOT NULL,
+        source TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        found_at TEXT NOT NULL DEFAULT (datetime('now')),
+        reviewed_at TEXT,
+        sent_at TEXT,
+        notes TEXT,
+        prospect_id INTEGER,
+        last_draft_json TEXT,
+        last_drafted_at TEXT, drain_claimed_at TEXT, send_started_at TEXT, priority_json TEXT, decision TEXT, decided_at TEXT, decided_by TEXT,
+        FOREIGN KEY(prospect_id) REFERENCES prospects(id)
+      )",
+      "tbl_name": "target_queue",
+      "type": "table",
+    },
+    {
+      "name": "triggers",
+      "sql": "CREATE TABLE triggers (
+        name TEXT PRIMARY KEY,
+        last_polled_at TEXT,
+        last_run_summary TEXT,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        config_json TEXT,
+        running_started_at TEXT
+      )",
+      "tbl_name": "triggers",
+      "type": "table",
+    },
+    {
+      "name": "webhook_replays",
+      "sql": "CREATE TABLE webhook_replays (
+        replay_key TEXT PRIMARY KEY,
+        expires_at INTEGER NOT NULL
+      )",
+      "tbl_name": "webhook_replays",
+      "type": "table",
+    },
+    {
+      "name": "x_harvested_tweets",
+      "sql": "CREATE TABLE x_harvested_tweets (
+        tweet_id     TEXT PRIMARY KEY,
+        harvested_at TEXT NOT NULL
+      )",
+      "tbl_name": "x_harvested_tweets",
+      "type": "table",
+    },
+  ],
+  "version": [
+    {
+      "version": 6,
+    },
+  ],
+}
+`;
