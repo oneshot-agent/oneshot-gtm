@@ -608,6 +608,9 @@ export const RUNNABLE_PLAYS: readonly string[] = [
   "stack-consolidation",
   "repo-interest",
   "luma-events",
+  "sources-sought",
+  "civic-pilot",
+  "design-partner-loi",
 ];
 
 /**

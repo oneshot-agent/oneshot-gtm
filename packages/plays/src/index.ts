@@ -27,3 +27,6 @@ export * from "./x-repost-intro.ts";
 export * from "./x-amplify.ts";
 export * from "./x-amplify-dm.ts";
 export * from "./free-pilot.ts";
+export * from "./sources-sought.ts";
+export * from "./civic-pilot.ts";
+export * from "./design-partner-loi.ts";

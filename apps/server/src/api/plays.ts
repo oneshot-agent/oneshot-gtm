@@ -83,6 +83,18 @@ const PLAY_CATALOG: PlayMeta[] = [
     name: "x-amplify-dm",
     cli: "manual X send — draft on /queue, send by hand from the X app, then Mark sent",
   },
+  {
+    name: "sources-sought",
+    cli: "oneshot-gtm find watch  # fed by the gov-solicitation finder (ptype r/p), drained from /queue",
+  },
+  {
+    name: "civic-pilot",
+    cli: "oneshot-gtm find watch  # fed by the civic-agenda finder, drained from /queue",
+  },
+  {
+    name: "design-partner-loi",
+    cli: "oneshot-gtm find watch  # fed by gov-solicitation (non-r/p notices) and enterprise/hardware finders, drained from /queue",
+  },
 ];
 
 /** Relative per-step dayOffsets → cumulative days from the day-0 initial send. */
