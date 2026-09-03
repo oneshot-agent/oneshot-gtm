@@ -235,7 +235,12 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
         intentSignals: [
           { kind: "business-match", strength: 55, reason: `matched ${businessType} search` },
         ],
-        hasEvidenceText: true,
+        // The local-business payload has no evidence-text field — matched
+        // businessType/company category is not quoted/concrete candidate
+        // evidence, same distinction new-business/free-pilot's registry
+        // branch below already draws for sourceLabel. A hardcoded `true`
+        // here overstated signalConfidence on every local-business row
+        // (finding PRRT_kwDOSKzrBs6fCBdJ).
         ...contact(p),
       };
     }
