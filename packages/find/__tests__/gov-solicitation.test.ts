@@ -28,6 +28,9 @@ let searchThrows = false;
 let descriptionText: string | null = "Full RFP body text.";
 let descriptionStatus = 200;
 let descriptionThrows = false;
+let descriptionJsonThrows = false;
+let findProspectByEmailResult: { id: number } | null = null;
+let emailPendingInQueue = false;
 
 vi.mock("../src/_pending.ts", () => ({
   persistPending: (input: {
@@ -49,6 +52,8 @@ vi.mock("@oneshot-gtm/core", async () => {
     getLedger: () => ({
       isQueueDuplicate: () => false,
       isPendingResolution: () => false,
+      findProspectByEmail: () => findProspectByEmailResult,
+      isEmailPendingInQueue: () => emailPendingInQueue,
       enqueueTarget: (row: EnqueuedRow) => {
         enqueued.push(row);
         return enqueued.length;
@@ -69,7 +74,7 @@ function samOpportunity(overrides: Partial<Record<string, unknown>> = {}): Recor
     type: "Sources Sought",
     baseType: "Sources Sought",
     naicsCode: "541511",
-    responseDeadLine: "2026-09-01",
+    responseDeadLine: "2026-12-01",
     pointOfContact: [
       {
         type: "primary",
@@ -95,6 +100,9 @@ beforeEach(() => {
   descriptionText = "Full RFP body text.";
   descriptionStatus = 200;
   descriptionThrows = false;
+  descriptionJsonThrows = false;
+  findProspectByEmailResult = null;
+  emailPendingInQueue = false;
 
   vi.stubGlobal(
     "fetch",
@@ -103,6 +111,15 @@ beforeEach(() => {
         if (descriptionThrows) throw new Error("network down");
         if (descriptionStatus !== 200) {
           return { ok: false, status: descriptionStatus, json: async () => ({}) };
+        }
+        if (descriptionJsonThrows) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => {
+              throw new Error("invalid json");
+            },
+          };
         }
         return { ok: true, status: 200, json: async () => ({ description: descriptionText }) };
       }
@@ -235,6 +252,75 @@ describe("runGovSolicitationFinder — transient platform errors defer to pendin
     expect(out.enqueued).toBe(1);
     expect(pendingPersisted).toHaveLength(0);
     expect(enqueued[0]!.payload["descriptionSnippet"]).toBeUndefined();
+  });
+
+  it("persists for retry when a 200 response body isn't valid JSON, rather than silently enqueuing without a description", async () => {
+    descriptionJsonThrows = true;
+    const out = await runGovSolicitationFinder(baseConfig);
+    expect(out.enqueued).toBe(0);
+    expect(pendingPersisted).toHaveLength(1);
+  });
+});
+
+describe("runGovSolicitationFinder — SAM.gov 'null' string sentinels", () => {
+  it('falls back to the sam.gov opp URL when uiLink is the literal string "null"', async () => {
+    searchResponses["541511"] = [samOpportunity({ noticeId: "nulllink", uiLink: "null" })];
+    const out = await runGovSolicitationFinder(baseConfig);
+    expect(out.enqueued).toBe(1);
+    expect(enqueued[0]!.payload["noticeUrl"]).toBe("https://sam.gov/opp/nulllink/view");
+  });
+
+  it('treats a literal "null" description URL as missing — no fetch, no descriptionSnippet', async () => {
+    searchResponses["541511"] = [samOpportunity({ noticeId: "nulldesc", description: "null" })];
+    const out = await runGovSolicitationFinder(baseConfig);
+    expect(out.enqueued).toBe(1);
+    expect(enqueued[0]!.payload["descriptionSnippet"]).toBeUndefined();
+    expect(pendingPersisted).toHaveLength(0);
+  });
+});
+
+describe("runGovSolicitationFinder — expired response deadlines", () => {
+  it("drops a notice whose response deadline has already passed", async () => {
+    searchResponses["541511"] = [
+      samOpportunity({ noticeId: "expired", responseDeadLine: "2020-01-01" }),
+    ];
+    const out = await runGovSolicitationFinder(baseConfig);
+    expect(out.enqueued).toBe(0);
+    expect(out.droppedEnrichment).toBe(1);
+    expect(enqueued).toHaveLength(0);
+  });
+
+  it("keeps a notice with an unparseable deadline — fails open rather than guessing", async () => {
+    searchResponses["541511"] = [
+      samOpportunity({ noticeId: "garbage-deadline", responseDeadLine: "not-a-date" }),
+    ];
+    const out = await runGovSolicitationFinder(baseConfig);
+    expect(out.enqueued).toBe(1);
+  });
+
+  it("does not enqueue an expired notice in dry-run either — the preview should match a live run", async () => {
+    searchResponses["541511"] = [
+      samOpportunity({ noticeId: "expired-dry", responseDeadLine: "2020-01-01" }),
+    ];
+    const out = await runGovSolicitationFinder({ ...baseConfig, dryRun: true });
+    expect(out.enqueued).toBe(0);
+  });
+});
+
+describe("runGovSolicitationFinder — cross-play email dedupe", () => {
+  it("drops a second distinct notice sharing an already-known prospect email", async () => {
+    findProspectByEmailResult = { id: 1 };
+    const out = await runGovSolicitationFinder(baseConfig);
+    expect(out.enqueued).toBe(0);
+    expect(out.droppedDuplicate).toBe(1);
+    expect(enqueued).toHaveLength(0);
+  });
+
+  it("drops a notice whose POC email is already pending in the queue under another play", async () => {
+    emailPendingInQueue = true;
+    const out = await runGovSolicitationFinder(baseConfig);
+    expect(out.enqueued).toBe(0);
+    expect(out.droppedDuplicate).toBe(1);
   });
 });
 

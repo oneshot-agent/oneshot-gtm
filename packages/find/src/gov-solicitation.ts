@@ -1,4 +1,5 @@
 import { getLedger, logEvent } from "@oneshot-gtm/core";
+import { isDuplicate } from "./_dedupe.ts";
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { persistPending, registerPendingRetry } from "./_pending.ts";
 import type { FinderResult, RunOpts } from "./_types.ts";
@@ -142,13 +143,11 @@ async function fetchDescription(url: string, apiKey: string): Promise<Descriptio
     });
     if (res.status === 404) return { ok: true, text: null };
     if (!res.ok) return { ok: false, transient: res.status >= 500 || res.status === 429 };
-    let text: string | null = null;
-    try {
-      const json = (await res.json()) as { description?: string };
-      text = typeof json.description === "string" ? json.description : null;
-    } catch {
-      text = null;
-    }
+    // A 200 whose body isn't valid JSON is a platform anomaly, not "no
+    // description" — let it reach the outer catch so it's classified
+    // transient (retryable) rather than silently swallowed as ok/null.
+    const json = (await res.json()) as { description?: string };
+    const text = typeof json.description === "string" ? json.description : null;
     return { ok: true, text };
   } catch {
     // Network error / timeout — always transient.
@@ -156,10 +155,30 @@ async function fetchDescription(url: string, apiKey: string): Promise<Descriptio
   }
 }
 
-/** Strip the HTML SAM.gov description bodies are often wrapped in, cheaply. */
+/**
+ * Strip the HTML SAM.gov description bodies are often wrapped in, cheaply.
+ * Deliberately a single linear pass (not a `<[^>]+>` regex replace) — that
+ * regex backtracks quadratically on a string of unclosed `<` characters with
+ * no `>` (each failed match retries one char shorter at every position, an
+ * O(n²) blowup CodeQL flags as "Polynomial regular expression used on
+ * uncontrolled data": SAM.gov's own description bodies are exactly the
+ * uncontrolled string this walks). This scan is O(n) regardless of input.
+ */
 export function stripHtml(html: string): string {
-  return html
-    .replace(/<[^>]+>/g, " ")
+  let out = "";
+  let inTag = false;
+  for (let i = 0; i < html.length; i++) {
+    const ch = html[i];
+    if (ch === "<") {
+      inTag = true;
+    } else if (ch === ">") {
+      inTag = false;
+      out += " ";
+    } else if (!inTag) {
+      out += ch;
+    }
+  }
+  return out
     .replace(/&nbsp;/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -192,6 +211,17 @@ function pickPoc(pocs: SamPointOfContact[] | null | undefined): SamPointOfContac
 function toCandidate(o: SamOpportunity): GovSolicitationCandidate | null {
   const poc = pickPoc(o.pointOfContact);
   if (!poc) return null;
+  // SAM.gov documents `uiLink`/`description` as literal the STRING "null"
+  // (not JSON null) when the field has no real value — see
+  // open.gsa.gov/api/get-opportunities-public-api. Trim + compare against
+  // that sentinel before using either field, or a "null" uiLink becomes an
+  // unusable notice link and a "null" description becomes an unfetchable
+  // `null?api_key=...` request.
+  const trimmedUiLink = o.uiLink?.trim();
+  const usableUiLink = trimmedUiLink && trimmedUiLink !== "null" ? trimmedUiLink : null;
+  const trimmedDescription = o.description?.trim();
+  const usableDescriptionUrl =
+    trimmedDescription && trimmedDescription !== "null" ? trimmedDescription : null;
   return {
     noticeId: o.noticeId,
     title: o.title,
@@ -201,8 +231,8 @@ function toCandidate(o: SamOpportunity): GovSolicitationCandidate | null {
     naicsCode: o.naicsCode?.trim() || "",
     postedDate: o.postedDate?.trim() || "",
     responseDeadline: o.responseDeadLine?.trim() || null,
-    noticeUrl: o.uiLink?.trim() || `https://sam.gov/opp/${o.noticeId}/view`,
-    descriptionUrl: o.description?.trim() || null,
+    noticeUrl: usableUiLink ?? `https://sam.gov/opp/${o.noticeId}/view`,
+    descriptionUrl: usableDescriptionUrl,
     poc,
   };
 }
@@ -252,6 +282,20 @@ function playForNoticeType(noticeType: string): "sources-sought" | "design-partn
 }
 
 /**
+ * True when `deadline` parses to an instant strictly before `now`. An
+ * unparseable/missing deadline is NOT treated as expired — SAM.gov's
+ * `responseDeadLine` is optional and its format isn't guaranteed, so failing
+ * open (keep the candidate) beats silently dropping a real notice on a date
+ * this can't read.
+ */
+function isExpiredDeadline(deadline: string | null, now: Date = new Date()): boolean {
+  if (!deadline) return false;
+  const parsed = new Date(deadline);
+  if (Number.isNaN(parsed.getTime())) return false;
+  return parsed.getTime() < now.getTime();
+}
+
+/**
  * Resolve + enqueue one already-discovered SAM.gov notice. Shared by the live
  * run loop and the outage retry handler. The only network call here is the
  * plain (non-SDK) description fetch — findEmail/verifyEmail are never called,
@@ -261,9 +305,20 @@ async function resolveAndEnqueueNotice(
   candidate: GovSolicitationCandidate,
   yourEdge: string,
   apiKey: string,
-): Promise<"enqueued" | "duplicate" | "platform-error"> {
+): Promise<"enqueued" | "duplicate" | "expired" | "platform-error"> {
   const ledger = getLedger();
   const dedupeKey = candidate.noticeId;
+  // A closed response window is never worth enqueueing, and a deadline only
+  // moves further into the past, so it's never worth a retry either.
+  if (isExpiredDeadline(candidate.responseDeadline)) return "expired";
+  const playName = playForNoticeType(candidate.noticeType);
+  // Cross-play email dedupe BEFORE the description fetch: two distinct SAM
+  // notices can share the same POC email (an office admin listed on
+  // multiple solicitations), and enqueueTarget's own (playName, dedupeKey)
+  // check can't see that — it only catches the exact same noticeId twice.
+  if (isDuplicate({ playName, dedupeKey, prospectEmail: candidate.poc.email })) {
+    return "duplicate";
+  }
   let description: string | null = null;
   if (candidate.descriptionUrl) {
     const outcome = await fetchDescription(candidate.descriptionUrl, apiKey);
@@ -274,7 +329,6 @@ async function resolveAndEnqueueNotice(
       description = outcome.text;
     }
   }
-  const playName = playForNoticeType(candidate.noticeType);
   const target = buildTarget(candidate, description, yourEdge);
   const id = enqueueScoredTarget(ledger, {
     playName,
@@ -359,7 +413,7 @@ export async function runGovSolicitationFinder(
   result.candidates = rawOpportunities.length;
   logEvent("finder.start", { name: PLAY_NAME, naics: naics.length, since_days: sinceDays, limit });
 
-  for (const raw of rawOpportunities) {
+  for (const raw of rawOpportunities.slice(0, limit)) {
     if (result.enqueued >= limit) break;
 
     if (agencies.length > 0) {
@@ -387,6 +441,13 @@ export async function runGovSolicitationFinder(
       continue;
     }
 
+    if (isExpiredDeadline(candidate.responseDeadline)) {
+      // A closed response window is never a real candidate — keep the
+      // dry-run preview honest with what a live run would actually enqueue.
+      result.droppedEnrichment++;
+      continue;
+    }
+
     if (opts.dryRun) {
       result.enqueued++;
       continue;
@@ -395,6 +456,7 @@ export async function runGovSolicitationFinder(
     const outcome = await resolveAndEnqueueNotice(candidate, yourEdge, apiKey);
     if (outcome === "enqueued") result.enqueued++;
     else if (outcome === "duplicate") result.droppedDuplicate++;
+    else if (outcome === "expired") result.droppedEnrichment++;
     else {
       // Transient platform error fetching the description — the notice's
       // response window is time-boxed, so persist rather than lose it.
@@ -430,7 +492,7 @@ registerPendingRetry(PLAY_NAME, async (raw) => {
   const outcome = await resolveAndEnqueueNotice(candidate, yourEdge, apiKey);
   return outcome === "enqueued"
     ? "enqueued"
-    : outcome === "duplicate"
+    : outcome === "duplicate" || outcome === "expired"
       ? "dropped"
       : "platform-error";
 });
