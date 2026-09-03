@@ -645,6 +645,43 @@ describe("complete() retry integration", () => {
     expect(attemptCount).toBe(1); // No retries burned on a guaranteed-failing wait
   });
 
+  it("preserves the original error for a non-retryable status with an over-budget Retry-After", async () => {
+    const { complete } = await import("../src/client.ts");
+
+    // Correction round 1 (#87): overRetryBudget used to be derived only from
+    // retryAfterMs > MAX_RETRY_AFTER_MS, with no gate on isRetryableLlmError
+    // or attempt < maxAttempts. A non-retryable 401 (bad API key) that happens
+    // to carry a Retry-After over 60s would then be discarded and replaced
+    // with the generic "giving up instead of burning attempts" message, even
+    // though no retry was ever eligible for a 401. The real status + provider
+    // body must survive unchanged, and no retry budget message must appear.
+    let attemptCount = 0;
+    global.fetch = vi.fn().mockImplementation(() => {
+      attemptCount++;
+      return Promise.resolve({
+        ok: false,
+        status: 401,
+        headers: new Headers({ "retry-after": "300" }),
+        text: () => Promise.resolve("Invalid API key"),
+      });
+    }) as any;
+
+    const promise = complete({
+      messages: [{ role: "user", content: "test" }],
+      maxAttempts: 3,
+    });
+    const rejection = promise.catch((err) => err);
+
+    await vi.runAllTimersAsync();
+
+    const error = await rejection;
+    expect(error.status).toBe(401);
+    expect(error.message).toContain("401");
+    expect(error.message).toContain("Invalid API key");
+    expect(error.message).not.toContain("retry budget");
+    expect(attemptCount).toBe(1); // Non-retryable: no retry was ever eligible
+  });
+
   it("still retries a Retry-After within the budget, waiting the full hint", async () => {
     const { complete } = await import("../src/client.ts");
 

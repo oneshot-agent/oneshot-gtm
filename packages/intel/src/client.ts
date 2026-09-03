@@ -245,7 +245,16 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
       // it literally would burn the remaining attempts on ~120s+ of dead wait
       // in a sequential caller. Treat it as terminal instead, with a message
       // that names the wait so it reads as a deliberate give-up, not a bug.
-      const overRetryBudget = retryAfterMs !== undefined && retryAfterMs > MAX_RETRY_AFTER_MS;
+      // Only applies when a retry was actually still on the table — a
+      // non-retryable status (400/401/404) or an exhausted attempt count was
+      // never going to retry regardless of Retry-After, so there is nothing
+      // to "give up" on and the original error (status + provider body) must
+      // survive unchanged.
+      const overRetryBudget =
+        attempt < maxAttempts &&
+        isRetryableLlmError(err) &&
+        retryAfterMs !== undefined &&
+        retryAfterMs > MAX_RETRY_AFTER_MS;
       const ctx = {
         provider: cfg.llmProvider,
         model: cfg.llmModel,
