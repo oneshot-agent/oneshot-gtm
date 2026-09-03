@@ -69,6 +69,27 @@ describe("lintEmail — humanizer canon", () => {
     expect(lintEmail("hi", "Here's my calendly link to book. Sam")).toContain("calendar-link");
   });
 
+  it("flags a draft that cites a violation, an inspection score, or a lapsed license", () => {
+    expect(lintEmail("hi", "Saw your place failed a health inspection. Sam")).toContain(
+      "public-record-leverage",
+    );
+    expect(lintEmail("hi", "Your inspection score dropped last cycle. Sam")).toContain(
+      "public-record-leverage",
+    );
+    expect(lintEmail("hi", "The report cites a violation for pest evidence. Sam")).toContain(
+      "public-record-leverage",
+    );
+    expect(lintEmail("hi", "Noticed your license lapsed last month. Sam")).toContain(
+      "public-record-leverage",
+    );
+  });
+
+  it("does not flag relevance-only copy about a public record (no leverage)", () => {
+    expect(
+      lintEmail("hi", "Saw you're new to the neighborhood and work on European imports. Sam"),
+    ).not.toContain("public-record-leverage");
+  });
+
   it("flags emojis and curly quotes", () => {
     expect(lintEmail("hi", "Awesome work 🚀. Sam")).toContain("emoji");
     expect(lintEmail("hi", "He said “hi” to me. Sam")).toContain("curly-quotes");
