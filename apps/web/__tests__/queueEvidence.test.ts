@@ -127,6 +127,36 @@ describe("queueEvidence", () => {
     ).toBe("NYC licenses — matched 2026-06-01");
   });
 
+  it("names the notice title (plus agency) for gov-solicitation's two routes", () => {
+    expect(
+      queueEvidence("sources-sought", {
+        title: "AI-assisted document review pilot",
+        agency: "GENERAL SERVICES ADMINISTRATION",
+      }),
+    ).toBe("AI-assisted document review pilot — GENERAL SERVICES ADMINISTRATION");
+    expect(queueEvidence("sources-sought", { title: "AI-assisted document review pilot" })).toBe(
+      "AI-assisted document review pilot",
+    );
+    expect(
+      queueEvidence("design-partner-loi", {
+        title: "Records digitization support",
+        agency: "DEPARTMENT OF VETERANS AFFAIRS",
+      }),
+    ).toBe("Records digitization support — DEPARTMENT OF VETERANS AFFAIRS");
+  });
+
+  it("names the agenda item title (plus city) for civic-pilot", () => {
+    expect(
+      queueEvidence("civic-pilot", {
+        agendaItemTitle: "Resolution on AI use in permitting",
+        city: "New York",
+      }),
+    ).toBe("Resolution on AI use in permitting — New York");
+    expect(queueEvidence("civic-pilot", { agendaItemTitle: "Resolution on AI use" })).toBe(
+      "Resolution on AI use",
+    );
+  });
+
   // Total by construction: a row whose payload lost a field, or a play this
   // does not know, renders without a line rather than with a broken one.
   it("returns null rather than a half-built line", () => {
@@ -176,6 +206,10 @@ describe("coverage against the priority adapters", () => {
       role: "role",
       businessType: "HVAC contractor",
       sourceLabel: "NYC business licenses",
+      title: "notice title",
+      agency: "an agency",
+      agendaItemTitle: "an agenda item",
+      city: "a city",
     };
 
     const unhandled = adapters.filter((play) => queueEvidence(play, kitchenSink) === null);

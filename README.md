@@ -169,7 +169,7 @@ The dashboard always knows where it is: a masthead chip names the workspace and 
 
 ## Where targets come from
 
-Twelve **finders** discover prospects, ICP-filter them, and enqueue into `/queue` for one-click approve or reject. Each runs as a trigger with its own interval and spend cap.
+Fifteen **finders** discover prospects, ICP-filter them, and enqueue into `/queue` for one-click approve or reject. Each runs as a trigger with its own interval and spend cap.
 
 | Finder              | Signal                                                                                                                                                                                                                                                                                                                            |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -182,6 +182,8 @@ Twelve **finders** discover prospects, ICP-filter them, and enqueue into `/queue
 | `github-topics`     | repos by topic, then a manifest scan (`package.json`, `pyproject.toml`, `requirements.txt`) that detects the vendor stack deterministically — needs `GITHUB_TOKEN`                                                                                                                                                                |
 | `github-stars`      | recent stargazers of repos you watch; tag each repo `competitor` or `adjacent` to route the play — needs `GITHUB_TOKEN`                                                                                                                                                                                                           |
 | `luma-events`       | upcoming events from Luma's own city pages, gated per event by a topic + ICP check before any spend; pitches the hosts and featured guests Luma exposes publicly                                                                                                                                                                  |
+| `gov-solicitation`  | SAM.gov Sources Sought / Presolicitation notices by NAICS code — pitches the notice's own published point of contact, no `findEmail`/`verifyEmail` spend at all — needs `SAM_GOV_API_KEY`                                                                                                                                         |
+| `civic-agenda`      | city/county council agenda items via the Legistar/Granicus Web API, keyword-gated free before any paid call; pitches the meeting body's own published contact                                                                                                                                                                     |
 | `breakup-revive`    | your own ledger — prospects cold for 60–90 days. No LLM or OneShot spend                                                                                                                                                                                                                                                          |
 | `x-reposters`       | people who repost/quote X accounts you watch, in two lanes: builders who'd adopt (founder lane → email cadence) and dev accounts with reach who'd boost a launch (amplifier lane → one-touch email, or a hand-sent DM draft when no email is found) — needs X API OAuth1 keys, or `TWITTERAPI_IO_KEY` for the ~55x cheaper engine |
 | `local-business`    | main-street businesses via `peopleSearch`/`companySearch` (job title × industry × location × company size) — routed to the `free-pilot` play; a candidate carrying `best_work_email` skips `findEmail`/`verifyEmail` entirely, but `qualifyPostEnrich` may still perform paid `enrichProfile` lookups when `fillGaps` is enabled  |
@@ -361,7 +363,7 @@ packages/
   core/       SDK wrapper, SQLite ledger, config + secrets, Gmail transport, JSONL events
   intel/      LLM client, advise, personalize, triage, weekly-review
   plays/      18 outreach plays + handoff/icp/pmf modules + cadence engine
-  find/       12 finders + shared pipeline (manifest scan, dedupe, ICP filter, drain, registry)
+  find/       15 finders + shared pipeline (manifest scan, dedupe, ICP filter, drain, registry)
   prompts/    Markdown prompts — humanizer canon, per-play, per-extract
   doctor/     Wallet, ledger, key and deliverability health checks
   shared-types/  Wire types shared across CLI / server / web

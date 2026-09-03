@@ -346,6 +346,74 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
   "x-repost-intro": xEvidence,
   "x-amplify": xEvidence,
   "x-amplify-dm": xEvidence,
+
+  // gov-solicitation routes here for ptype r/p (Sources Sought / Presolicitation) —
+  // the pre-PMF window: the agency is still writing the requirement.
+  "sources-sought": (p) => ({
+    title: str(p["role"]),
+    companyKnown: str(p["agency"]) !== null,
+    accountSignals: [
+      { kind: "agency", strength: 60, reason: `${str(p["agency"]) ?? "an agency"} notice` },
+    ],
+    intentSignals: [
+      {
+        kind: "sources-sought",
+        strength: 85,
+        reason: `sources sought: ${str(p["title"]) ?? "?"}`,
+      },
+    ],
+    // A response deadline is the actionable date (an upcoming ask, like a
+    // Luma event); absent that, fall back to when the notice posted.
+    eventAt: str(p["responseDeadline"]) ?? str(p["postedDate"]),
+    evidenceUrlCount: urlCount(p["noticeUrl"]),
+    hasEvidenceText: str(p["descriptionSnippet"]) !== null,
+    ...contact(p),
+  }),
+
+  // gov-solicitation routes here for every other ptype (the requirement is
+  // already fixed — a weaker window than sources-sought, never stronger).
+  "design-partner-loi": (p) => ({
+    title: str(p["role"]),
+    companyKnown: str(p["agency"]) !== null,
+    accountSignals: [
+      { kind: "agency", strength: 60, reason: `${str(p["agency"]) ?? "an agency"} notice` },
+    ],
+    intentSignals: [
+      {
+        kind: "solicitation",
+        strength: 65,
+        reason: `${str(p["noticeType"]) ?? "solicitation"}: ${str(p["title"]) ?? "?"}`,
+      },
+    ],
+    eventAt: str(p["responseDeadline"]) ?? str(p["postedDate"]),
+    evidenceUrlCount: urlCount(p["noticeUrl"]),
+    hasEvidenceText: str(p["descriptionSnippet"]) !== null,
+    ...contact(p),
+  }),
+
+  "civic-pilot": (p) => ({
+    title: str(p["role"]),
+    companyKnown: str(p["city"]) !== null,
+    accountSignals: [
+      {
+        kind: "civic",
+        strength: 60,
+        reason: `${str(p["meetingBody"]) ?? "a city body"} in ${str(p["city"]) ?? "?"}`,
+      },
+    ],
+    intentSignals: [
+      {
+        kind: "agenda-item",
+        strength: 65,
+        reason: `agenda item: ${str(p["agendaItemTitle"]) ?? "?"}`,
+      },
+    ],
+    // The meeting date is the upcoming event, same semantics as luma-events.
+    eventAt: str(p["meetingDate"]),
+    evidenceUrlCount: urlCount(p["meetingUrl"]),
+    hasEvidenceText: false,
+    ...contact(p),
+  }),
 };
 
 /**

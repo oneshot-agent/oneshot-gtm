@@ -1,0 +1,247 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// Integration test for runGovSolicitationFinder — mocks the SAM.gov HTTP
+// boundary (plain fetch, no OneShot SDK) and the ledger. Unlike every other
+// finder, this one makes NO findEmail/verifyEmail/enrichProfile calls at
+// all — the notice's own pointOfContact is the contact — so there is no SDK
+// mock surface to set up.
+
+interface EnqueuedRow {
+  playName: string;
+  payload: Record<string, unknown>;
+  dedupeKey: string;
+  source: string;
+  initialStatus?: string;
+  notes?: string;
+}
+
+const enqueued: EnqueuedRow[] = [];
+const pendingPersisted: Array<{
+  playName: string;
+  dedupeKey: string;
+  source: string;
+  raw: unknown;
+}> = [];
+let searchResponses: Record<string, unknown> = {};
+let searchStatus = 200;
+let searchThrows = false;
+let descriptionText: string | null = "Full RFP body text.";
+let descriptionStatus = 200;
+let descriptionThrows = false;
+
+vi.mock("../src/_pending.ts", () => ({
+  persistPending: (input: {
+    playName: string;
+    dedupeKey: string;
+    source: string;
+    raw: unknown;
+  }) => {
+    pendingPersisted.push(input);
+  },
+  registerPendingRetry: () => {},
+}));
+
+vi.mock("@oneshot-gtm/core", async () => {
+  const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
+  return {
+    ...actual,
+    logEvent: () => {},
+    getLedger: () => ({
+      isQueueDuplicate: () => false,
+      isPendingResolution: () => false,
+      enqueueTarget: (row: EnqueuedRow) => {
+        enqueued.push(row);
+        return enqueued.length;
+      },
+    }),
+  };
+});
+
+const { runGovSolicitationFinder } = await import("../src/gov-solicitation.ts");
+
+function samOpportunity(overrides: Partial<Record<string, unknown>> = {}): Record<string, unknown> {
+  return {
+    noticeId: "abc123",
+    title: "AI-assisted document review pilot",
+    solicitationNumber: "47PF0018R0023",
+    fullParentPathName: "GENERAL SERVICES ADMINISTRATION",
+    postedDate: "2026-08-01",
+    type: "Sources Sought",
+    baseType: "Sources Sought",
+    naicsCode: "541511",
+    responseDeadLine: "2026-09-01",
+    pointOfContact: [
+      {
+        type: "primary",
+        title: "Contracting Officer",
+        fullName: "Jesse L. Jones",
+        email: "jesse.jones@gsa.gov",
+        phone: "2174941263",
+      },
+    ],
+    description: "https://api.sam.gov/prod/opportunities/v1/noticedesc?noticeid=abc123",
+    uiLink: "https://sam.gov/opp/abc123/view",
+    ...overrides,
+  };
+}
+
+beforeEach(() => {
+  process.env["SAM_GOV_API_KEY"] = "test-key";
+  enqueued.length = 0;
+  pendingPersisted.length = 0;
+  searchResponses = { "541511": [samOpportunity()] };
+  searchStatus = 200;
+  searchThrows = false;
+  descriptionText = "Full RFP body text.";
+  descriptionStatus = 200;
+  descriptionThrows = false;
+
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (typeof url === "string" && url.includes("noticedesc")) {
+        if (descriptionThrows) throw new Error("network down");
+        if (descriptionStatus !== 200) {
+          return { ok: false, status: descriptionStatus, json: async () => ({}) };
+        }
+        return { ok: true, status: 200, json: async () => ({ description: descriptionText }) };
+      }
+      if (searchThrows) throw new Error("network down");
+      if (searchStatus !== 200) {
+        return { ok: false, status: searchStatus, json: async () => ({}) };
+      }
+      const naicsMatch = /ncode=([^&]+)/.exec(url);
+      const naics = naicsMatch ? decodeURIComponent(naicsMatch[1]!) : "";
+      const opportunitiesData = (searchResponses[naics] as unknown[]) ?? [];
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ totalRecords: opportunitiesData.length, opportunitiesData }),
+      };
+    }),
+  );
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  delete process.env["SAM_GOV_API_KEY"];
+});
+
+const baseConfig = {
+  dryRun: false,
+  naics: ["541511"],
+  noticeTypes: ["r", "p"],
+  yourEdge: "we cut review time in half",
+  sinceDays: 30,
+  limit: 25,
+};
+
+describe("runGovSolicitationFinder — happy path", () => {
+  it("enqueues a notice carrying the notice number, type, and published POC email — no SDK spend", async () => {
+    const out = await runGovSolicitationFinder(baseConfig);
+    expect(out.enqueued).toBe(1);
+    expect(out.costUsd).toBe(0);
+    expect(enqueued).toHaveLength(1);
+    const row = enqueued[0]!;
+    expect(row.playName).toBe("sources-sought"); // Sources Sought → sources-sought
+    expect(row.payload["noticeNumber"]).toBe("47PF0018R0023");
+    expect(row.payload["noticeType"]).toBe("Sources Sought");
+    expect(row.payload["email"]).toBe("jesse.jones@gsa.gov");
+    expect(row.payload["name"]).toBe("Jesse L. Jones");
+    expect(row.payload["phone"]).toBe("2174941263");
+    expect(row.payload["descriptionSnippet"]).toContain("Full RFP body text.");
+  });
+
+  it("routes a non-sources-sought/presolicitation notice type to design-partner-loi", async () => {
+    searchResponses["541511"] = [
+      samOpportunity({ noticeId: "def456", type: "Solicitation", baseType: "Solicitation" }),
+    ];
+    const out = await runGovSolicitationFinder({ ...baseConfig, noticeTypes: ["o"] });
+    expect(out.enqueued).toBe(1);
+    expect(enqueued[0]!.playName).toBe("design-partner-loi");
+  });
+
+  it("drops a notice with no POC carrying both a name and an email — nothing to enrich", async () => {
+    searchResponses["541511"] = [
+      samOpportunity({ noticeId: "noc-poc", pointOfContact: [{ email: "no-name@gsa.gov" }] }),
+    ];
+    const out = await runGovSolicitationFinder(baseConfig);
+    expect(out.enqueued).toBe(0);
+    expect(out.droppedEnrichment).toBe(1);
+  });
+
+  it("filters by agencies (case-insensitive substring) before any fetch", async () => {
+    const out = await runGovSolicitationFinder({
+      ...baseConfig,
+      agencies: ["department of defense"],
+    });
+    expect(out.enqueued).toBe(0);
+    expect(out.droppedIcp).toBe(1);
+  });
+
+  it("sweeps multiple NAICS codes and dedupes overlapping notice IDs", async () => {
+    searchResponses = {
+      "541511": [samOpportunity({ noticeId: "shared" })],
+      "541512": [samOpportunity({ noticeId: "shared" }), samOpportunity({ noticeId: "unique-2" })],
+    };
+    const out = await runGovSolicitationFinder({ ...baseConfig, naics: ["541511", "541512"] });
+    expect(out.candidates).toBe(2); // shared counted once
+    expect(out.enqueued).toBe(2);
+  });
+});
+
+describe("runGovSolicitationFinder — readiness / halts", () => {
+  it("halts when SAM_GOV_API_KEY is unset", async () => {
+    delete process.env["SAM_GOV_API_KEY"];
+    const out = await runGovSolicitationFinder(baseConfig);
+    expect(out.halted).toMatch(/SAM_GOV_API_KEY/);
+    expect(out.enqueued).toBe(0);
+  });
+
+  it("halts when naics is empty", async () => {
+    const out = await runGovSolicitationFinder({ ...baseConfig, naics: [] });
+    expect(out.halted).toMatch(/naics/);
+  });
+
+  it("halts when every NAICS search fails", async () => {
+    searchStatus = 500;
+    const out = await runGovSolicitationFinder(baseConfig);
+    expect(out.halted).toMatch(/SAM.gov search failed/);
+    expect(out.enqueued).toBe(0);
+  });
+});
+
+describe("runGovSolicitationFinder — transient platform errors defer to pending_resolution", () => {
+  it("persists a candidate for retry when the description fetch times out, rather than dropping it", async () => {
+    descriptionThrows = true;
+    const out = await runGovSolicitationFinder(baseConfig);
+    expect(out.enqueued).toBe(0);
+    expect(out.droppedEnrichment).toBe(1);
+    expect(pendingPersisted).toHaveLength(1);
+    expect(pendingPersisted[0]!.playName).toBe("gov-solicitation");
+    expect(pendingPersisted[0]!.dedupeKey).toBe("abc123");
+  });
+
+  it("persists on a 5xx from the description endpoint", async () => {
+    descriptionStatus = 503;
+    const out = await runGovSolicitationFinder(baseConfig);
+    expect(out.enqueued).toBe(0);
+    expect(pendingPersisted).toHaveLength(1);
+  });
+
+  it("proceeds without a description on a 404 (deleted notice) — a real negative, not a retry", async () => {
+    descriptionStatus = 404;
+    const out = await runGovSolicitationFinder(baseConfig);
+    expect(out.enqueued).toBe(1);
+    expect(pendingPersisted).toHaveLength(0);
+    expect(enqueued[0]!.payload["descriptionSnippet"]).toBeUndefined();
+  });
+});
+
+describe("runGovSolicitationFinder — dry run", () => {
+  it("counts without enqueuing or fetching descriptions", async () => {
+    const out = await runGovSolicitationFinder({ ...baseConfig, dryRun: true });
+    expect(out.enqueued).toBe(1);
+    expect(enqueued).toHaveLength(0);
+  });
+});

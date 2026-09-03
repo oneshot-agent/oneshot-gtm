@@ -25,7 +25,7 @@ The verify gate has holes an agent can close without touching product behaviour.
 
 ## Reliability
 
-- [ ] **Install-wide daily spend ceiling** · M — spend caps are per trigger run (`maxCostUsd`, `maxSpendPerRun` in `packages/find/src/registry.ts`). Eleven finders on their own intervals, plus drains and cadence steps, have no shared daily bound and no kill switch.
+- [ ] **Install-wide daily spend ceiling** · M — spend caps are per trigger run (`maxCostUsd`, `maxSpendPerRun` in `packages/find/src/registry.ts`). Thirteen finders on their own intervals, plus drains and cadence steps, have no shared daily bound and no kill switch.
       _Done when:_ a configurable daily USD ceiling is checked before any paid call; crossing it halts finders and auto-drains with a named reason surfaced on the trigger cards and in `doctor`; manual sends from `/queue` still go through; the counter resets at local midnight and is covered by tests around the boundary.
       _Done when:_ `--once` exits 1 if any due trigger errored, 0 otherwise; the daemon loop keeps its current behaviour; both covered.
 

@@ -8,8 +8,10 @@ import {
 import { type CohortEntry, runAcceleratorBatchFinder } from "./accelerator-batch.ts";
 import { deriveCohortLabel } from "./_yc-oss-adapter.ts";
 import { runBreakupReviveFinder } from "./breakup-revive.ts";
-import { type RepoWatch, runGitHubStarsFinder } from "./github-stars.ts";
+import { runCivicAgendaFinder } from "./civic-agenda.ts";
+import { runGitHubStarsFinder, type RepoWatch } from "./github-stars.ts";
 import { runGitHubTopicsFinder } from "./github-topics.ts";
+import { runGovSolicitationFinder } from "./gov-solicitation.ts";
 import { runHiringSignalFinder } from "./hiring-signal.ts";
 import { runJobChangeFinder } from "./job-change.ts";
 import { runLocalBusinessFinder } from "./local-business.ts";
@@ -821,6 +823,124 @@ export const TRIGGERS: TriggerSpec[] = [
         minDays: (cfg["minDays"] as number) ?? 60,
         maxDays: (cfg["maxDays"] as number) ?? 90,
         limit: (cfg["limit"] as number) ?? 25,
+      }),
+  },
+  {
+    // SAM.gov Get Opportunities: every notice publishes a full pointOfContact
+    // (name, title, email, phone), so this finder needs no findEmail/verifyEmail
+    // at all — near-zero SDK spend per candidate.
+    name: "gov-solicitation",
+    defaultIntervalMs: 24 * ONE_HOUR,
+    enabledByDefault: false,
+    defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
+      naics: [] as string[],
+      noticeTypes: ["r", "p"] as string[],
+      agencies: [] as string[],
+      sinceDays: 30,
+      yourEdge: "",
+      limit: 25,
+      maxCostUsd: 5,
+    },
+    configBrief:
+      "Polls SAM.gov's Get Opportunities API for federal notices matching your NAICS codes, and pitches the notice's own published point of contact — no findEmail/verifyEmail spend, since the notice already carries a name, title, email and phone. Config: `naics` (one or more 6-digit NAICS codes describing what you sell — REQUIRED), `noticeTypes` (SAM.gov `ptype` codes, default `['r','p']`), `agencies` (optional case-insensitive substring allowlist to narrow to agencies you actually want to sell to), `sinceDays` (lookback window for `postedFrom`, default 30, capped at 365 — SAM.gov's own one-year max range), `yourEdge` (your one-line pitch, REQUIRED), `limit`, `maxCostUsd`. Needs `SAM_GOV_API_KEY` in .env (free registration on sam.gov). STRATEGIST NOTE: `noticeTypes` is a MOTION choice, not a filter — `r` (Sources Sought) and `p` (Presolicitation) reach the agency WHILE the requirement is still being written, the one window where a startup with no past-performance record can shape it; `o` (Solicitation) reaches it AFTER the requirement is fixed, when a competitor with an incumbent relationship has usually already shaped it. Default to r/p unless the founder explicitly wants to bid on finished RFPs. `r`/`p` notices route to `sources-sought`; everything else routes to `design-partner-loi`.",
+    readiness: (cfg) => {
+      const naics = Array.isArray(cfg["naics"]) ? cfg["naics"] : null;
+      if (!naics || naics.filter((n) => typeof n === "string" && n.trim()).length === 0) {
+        return { ready: false, reason: "set `naics` (one or more 6-digit NAICS codes)" };
+      }
+      if (!process.env["SAM_GOV_API_KEY"]) {
+        return { ready: false, reason: "set SAM_GOV_API_KEY in .env" };
+      }
+      const edge = cfg["yourEdge"];
+      if (typeof edge !== "string" || edge.trim().length === 0) {
+        return { ready: false, reason: "set `yourEdge` — one-line pitch for the agency POC" };
+      }
+      return { ready: true };
+    },
+    run: (cfg) =>
+      runGovSolicitationFinder({
+        dryRun: false,
+        ...(Array.isArray(cfg["naics"])
+          ? { naics: (cfg["naics"] as unknown[]).filter((n): n is string => typeof n === "string") }
+          : {}),
+        ...(Array.isArray(cfg["noticeTypes"])
+          ? {
+              noticeTypes: (cfg["noticeTypes"] as unknown[]).filter(
+                (t): t is string => typeof t === "string",
+              ),
+            }
+          : {}),
+        ...(Array.isArray(cfg["agencies"])
+          ? {
+              agencies: (cfg["agencies"] as unknown[]).filter(
+                (a): a is string => typeof a === "string",
+              ),
+            }
+          : {}),
+        ...(typeof cfg["yourEdge"] === "string" ? { yourEdge: cfg["yourEdge"] as string } : {}),
+        sinceDays: (cfg["sinceDays"] as number) ?? 30,
+        limit: (cfg["limit"] as number) ?? 25,
+        maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
+      }),
+  },
+  {
+    // Legistar/Granicus council agendas: keyword-gate agenda item titles free,
+    // then one LLM relevance call on the survivors — same pre-spend discipline
+    // as luma.ts. The body's own OfficeRecords contact is used; no SDK spend.
+    name: "civic-agenda",
+    defaultIntervalMs: 24 * ONE_HOUR,
+    enabledByDefault: false,
+    defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
+      cities: [] as string[],
+      keywords: [] as string[],
+      sinceDays: 30,
+      yourEdge: "",
+      limit: 25,
+      maxCostUsd: 5,
+    },
+    configBrief:
+      "Scans city/county council agendas via the Legistar/Granicus Web API for items matching your keywords, and pitches the meeting body's own published contact. Config: `cities` (city names mapped to a Legistar client — see `_civic-legistar.ts` for the curated list; unmapped cities are skipped and logged), `keywords` (free word-boundary gate applied to agenda item TITLES before any paid call — e.g. ['AI', 'automation', 'software'] — REQUIRED), `sinceDays` (forward-looking window, default 30), `yourEdge` (your one-line pilot pitch, REQUIRED), `limit`, `maxCostUsd`. No API key needed (Legistar is a public, keyless JSON API). STRATEGIST DUTY: keywords must match the VOCABULARY agenda clerks actually use, not marketing language — 'body-worn camera' beats 'law enforcement AI', 'permitting software' beats 'GovTech'. Routes to `civic-pilot`.",
+    readiness: (cfg) => {
+      const cities = Array.isArray(cfg["cities"]) ? cfg["cities"] : null;
+      if (!cities || cities.filter((c) => typeof c === "string" && c.trim()).length === 0) {
+        return { ready: false, reason: "set `cities` (e.g. ['New York', 'Chicago'])" };
+      }
+      const keywords = Array.isArray(cfg["keywords"]) ? cfg["keywords"] : null;
+      if (!keywords || keywords.filter((k) => typeof k === "string" && k.trim()).length === 0) {
+        return {
+          ready: false,
+          reason: "set `keywords` (agenda-title gate, e.g. ['AI','automation'])",
+        };
+      }
+      const edge = cfg["yourEdge"];
+      if (typeof edge !== "string" || edge.trim().length === 0) {
+        return { ready: false, reason: "set `yourEdge` — one-line pilot pitch" };
+      }
+      return { ready: true };
+    },
+    run: (cfg) =>
+      runCivicAgendaFinder({
+        dryRun: false,
+        ...(Array.isArray(cfg["cities"])
+          ? {
+              cities: (cfg["cities"] as unknown[]).filter(
+                (c): c is string => typeof c === "string",
+              ),
+            }
+          : {}),
+        ...(Array.isArray(cfg["keywords"])
+          ? {
+              keywords: (cfg["keywords"] as unknown[]).filter(
+                (k): k is string => typeof k === "string",
+              ),
+            }
+          : {}),
+        ...(typeof cfg["yourEdge"] === "string" ? { yourEdge: cfg["yourEdge"] as string } : {}),
+        sinceDays: (cfg["sinceDays"] as number) ?? 30,
+        limit: (cfg["limit"] as number) ?? 25,
+        maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
       }),
   },
 ];
