@@ -434,6 +434,32 @@ describe("runLocalRegistryFinder — fmcsa knownEmail skip", () => {
   });
 });
 
+describe("runLocalRegistryFinder — mid-turn max-cost recheck", () => {
+  it("halts before findEmail when enrichCompany's own spend already crossed the cap", async () => {
+    // finding PRRT_kwDOSKzrBs6exPH4: the top-of-turn cap check ran before
+    // enrichCompany's paid call, so a single candidate could push spend past
+    // maxCostUsd (enrichCompany 0.005) and still enter
+    // resolveVerifyEnrichQualify's own paid calls. A cap of exactly
+    // enrichCompany's cost pins the fix: the SAME candidate's findEmail must
+    // never fire once the recheck sees costUsd >= maxCostUsd.
+    nextSocrataRecords = [
+      makeRecord({ name: "Rae's Taqueria" }),
+      makeRecord({ name: "Sam's Diner" }),
+    ];
+    const out = await runLocalRegistryFinder({
+      dryRun: false,
+      yourEdge: "x",
+      concurrency: 1,
+      maxCostUsd: 0.005,
+      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
+    });
+    expect(enrichCompanyCalls).toBe(1);
+    expect(findEmailCalls).toBe(0);
+    expect(out.enqueued).toBe(0);
+    expect(out.halted).toContain("max-cost cap");
+  });
+});
+
 describe("runLocalRegistryFinder — socrata-inspection joins the licence lane", () => {
   it("enqueues an inspection-sourced row carrying the establishment + recency but no violation text anywhere in its payload", async () => {
     nextInspectionRecords = [
