@@ -8,8 +8,11 @@ Last verified **2026-09-03** · Bun 1.3.13 · OneShot SDK 0.22.0 · **2586 tests
 type-checked in CI, and a deliberate error under `apps/web/src` fails the root script. As of
 2026-08-29, `apps/*/__tests__` is also included, so all app test files are type-checked. Coverage
 is thin in two packages: `packages/doctor` has one test file against 799
-lines of `check.ts`, and `packages/intel` tests cover only `_parse.ts` and `prompts.ts`, not
-`client.ts`, `triage`, `synthesize`, `advise` or `weekly-review`.
+lines of `check.ts`, and `packages/intel`'s `retry.test.ts` covers `client.ts`'s retry surface
+(`backoffDelayMs`, `isRetryableLlmError`, `parseRetryAfter`, `complete()`'s OpenRouter paths),
+while `reports.test.ts` covers `triageEmails`, `synthesizeInterviews`, `adviseOnce` and
+`weeklyReview`, and `truncation.test.ts` covers `complete()`'s Anthropic path and the
+`allowTruncation` split across all three providers.
 
 **Dependency pins.** The root `package.json` carries `overrides` for `seroval`, `seroval-plugins`
 (CVE-2026-59940) and `ws`. Forks inherit these.
