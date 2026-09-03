@@ -131,7 +131,31 @@ type DescriptionOutcome = { ok: true; text: string | null } | { ok: false; trans
  * candidate still enqueues with an empty description rather than looping
  * forever on a link that will never resolve.
  */
+const SAM_GOV_DESCRIPTION_HOST = "api.sam.gov";
+
+/**
+ * True when `raw` parses as an `https://api.sam.gov/...` URL — the only host
+ * this credentialed request is ever allowed to hit. SAM.gov's own
+ * `description` field is server-controlled today, but treating it as trusted
+ * input would let a future compromised/spoofed response redirect the
+ * `SAM_GOV_API_KEY` query param to an attacker-controlled origin.
+ */
+function isSamGovDescriptionUrl(raw: string): boolean {
+  try {
+    const parsed = new URL(raw);
+    return parsed.protocol === "https:" && parsed.hostname === SAM_GOV_DESCRIPTION_HOST;
+  } catch {
+    return false;
+  }
+}
+
 async function fetchDescription(url: string, apiKey: string): Promise<DescriptionOutcome> {
+  // Reject anything that isn't exactly https://api.sam.gov/... BEFORE
+  // attaching the API key — never let a credentialed request leave for an
+  // unexpected host.
+  if (!isSamGovDescriptionUrl(url)) {
+    return { ok: false, transient: false };
+  }
   const withKey = url.includes("?")
     ? `${url}&api_key=${encodeURIComponent(apiKey)}`
     : `${url}?api_key=${encodeURIComponent(apiKey)}`;
@@ -140,6 +164,10 @@ async function fetchDescription(url: string, apiKey: string): Promise<Descriptio
       method: "GET",
       headers: { Accept: "application/json" },
       signal: AbortSignal.timeout(DESCRIPTION_TIMEOUT_MS),
+      // Never let a 3xx forward the api_key query param to a different
+      // origin — treat any redirect as a platform anomaly instead of
+      // following it.
+      redirect: "manual",
     });
     if (res.status === 404) return { ok: true, text: null };
     if (!res.ok) return { ok: false, transient: res.status >= 500 || res.status === 429 };
@@ -398,6 +426,16 @@ export async function runGovSolicitationFinder(
     if (opportunities == null) continue;
     anyFetchSucceeded = true;
     for (const o of opportunities) {
+      // A search response can carry a null/malformed element, or one with no
+      // noticeId, alongside good ones. Dereferencing `o.noticeId` here (or in
+      // toCandidate below) throws outside any try/catch, failing the whole
+      // run and losing every already-fetched notice; a bare missing-noticeId
+      // element that DID survive would otherwise produce `undefined` as the
+      // dedupe key and a `https://sam.gov/opp/undefined/view` notice URL.
+      // `_civic-legistar.ts` guards this exact case in `parseEvent` — same
+      // fix here.
+      if (!o || typeof o !== "object") continue;
+      if (typeof o.noticeId !== "string" || o.noticeId.trim().length === 0) continue;
       if (seenNoticeIds.has(o.noticeId)) continue;
       seenNoticeIds.add(o.noticeId);
       rawOpportunities.push(o);

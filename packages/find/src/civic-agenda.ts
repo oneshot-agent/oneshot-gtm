@@ -16,6 +16,14 @@ import type { FinderResult, RunOpts } from "./_types.ts";
 
 const PLAY_NAME = "civic-agenda";
 const SOURCE = "find:civic-agenda";
+/**
+ * Rough per-call cost of the `icpFilter` classifier (LLM tokens, not a
+ * metered OneShot SDK call — same order-of-magnitude estimate show-hn.ts
+ * documents inline for its own icpFilter call). Without incrementing
+ * `result.costUsd` here, `maxCostUsd` never sees any spend and the cap never
+ * trips no matter how many keyword-surviving titles get classified.
+ */
+const ICP_FILTER_COST_USD = 0.001;
 
 export interface CivicAgendaFinderOpts extends RunOpts {
   /** City names mapped to Legistar clients (see `_civic-legistar.ts`). REQUIRED via readiness gate. */
@@ -223,6 +231,10 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
         summary: `${candidate.event.eventBodyName ?? "a city body"} in ${candidate.city}`,
       },
     });
+    // Charge the classifier call regardless of verdict — a rejected or
+    // transient-failed candidate still spent the LLM call, and without this
+    // the maxCostUsd check above never sees any spend at all.
+    result.costUsd += ICP_FILTER_COST_USD;
     if (filter.match === null) {
       // Transient classifier failure — drop without persisting (same
       // reasoning as every other finder's icpFilter call site).

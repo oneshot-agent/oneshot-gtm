@@ -885,7 +885,8 @@ export const TRIGGERS: TriggerSpec[] = [
         ...(Array.isArray(cfg["naics"])
           ? { naics: (cfg["naics"] as unknown[]).filter((n): n is string => typeof n === "string") }
           : {}),
-        ...(Array.isArray(cfg["noticeTypes"])
+        ...(Array.isArray(cfg["noticeTypes"]) &&
+        (cfg["noticeTypes"] as unknown[]).some((t) => typeof t === "string" && t.trim())
           ? {
               noticeTypes: (cfg["noticeTypes"] as unknown[]).filter(
                 (t): t is string => typeof t === "string",

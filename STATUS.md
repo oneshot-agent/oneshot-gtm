@@ -1,6 +1,6 @@
 # Status
 
-**Assume green.** The 51 CLI commands, 23 plays, 13 finders, nine dashboard pages plus the run form, and the server's REST + SSE routes are all covered by the test suite — and verified end to end against the live OneShot API: every paid call type has made the live round trip, including the voice and SMS legs (`motion concierge` / `motion demo-no-show`), the PMF survey pair, reply triage, bounce harvesting, and `gmail placement`.
+**Assume green.** The 51 CLI commands, 23 plays, 15 finders, nine dashboard pages plus the run form, and the server's REST + SSE routes are all covered by the test suite — and verified end to end against the live OneShot API: every paid call type has made the live round trip, including the voice and SMS legs (`motion concierge` / `motion demo-no-show`), the PMF survey pair, reply triage, bounce harvesting, and `gmail placement`.
 
 Last verified **2026-09-03** · Bun 1.3.13 · OneShot SDK 0.22.0 · **2740 tests / 213 files** · typecheck + oxlint + oxfmt clean.
 
@@ -31,11 +31,11 @@ Updated by hand after each dogfood run.
 
 ## Off by default
 
-Only **`show-hn`** and **`post-funding-auto`** fire out of the box. The other eleven finders are opt-in, enabled per trigger from `/queue`:
+Only **`show-hn`** and **`post-funding-auto`** fire out of the box. The other thirteen finders are opt-in, enabled per trigger from `/queue`:
 
-`accelerator-batch` · `job-change` · `hiring-signal` · `podcast-guest` · `luma-events` · `github-topics` · `github-stars` · `breakup-revive` · `x-reposters` · `local-business` · `local-registry`
+`accelerator-batch` · `job-change` · `hiring-signal` · `podcast-guest` · `luma-events` · `github-topics` · `github-stars` · `breakup-revive` · `x-reposters` · `local-business` · `local-registry` · `gov-solicitation` · `civic-agenda`
 
-Eight of those also stay **not ready** until you give them required config, and refuse to fire until you do (the API returns `409`):
+Ten of those also stay **not ready** until you give them required config, and refuse to fire until you do (the API returns `409`):
 
 | Finder              | Needs                                                                                                                                                                            |
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -47,6 +47,8 @@ Eight of those also stay **not ready** until you give them required config, and 
 | `x-reposters`       | `seeds[]` + engine credentials                                                                                                                                                   |
 | `local-business`    | `jobTitles[]` or `industries[]` + `yourEdge`                                                                                                                                     |
 | `local-registry`    | at least one of `portals[]` / `taxonomies[]`+`states[]` / `entityTypes[]` or `minPowerUnits`/`maxPowerUnits` (fmcsa, no `states[]` needed) / `inspectionPortals[]`, + `yourEdge` |
+| `gov-solicitation`  | `naics[]` + `yourEdge` + `SAM_GOV_API_KEY`                                                                                                                                       |
+| `civic-agenda`      | `cities[]` + `keywords[]` + `yourEdge`                                                                                                                                           |
 
 Both GitHub finders need `GITHUB_TOKEN`. Unauthenticated, GitHub allows 60 requests/hour per IP **shared across the two** — one `github-stars` pass (each repo, up to 3 pages) can spend that alone, and the finder then halts on a `403` that reads like a dead endpoint rather than degrading to lower volume. A classic token with **no scopes** is enough for the public data both read, and lifts the ceiling to 5,000/hour. `doctor` warns when either finder is enabled without one. `luma-events` accepts an optional `LUMA_SESSION_COOKIE` to read authed guest lists. `x-reposters` needs the X credentials for whichever engine its config names (`xapi`: 4 OAuth1 keys, `twitterapiio`: 1 key) — settable from `/setup`'s X card or `config keys`, switchable with `config x-engine`.
 
