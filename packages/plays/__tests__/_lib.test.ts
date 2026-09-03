@@ -86,13 +86,22 @@ describe("lintEmail — humanizer canon", () => {
   });
 
   // round-2 correction for finding PRRT_kwDOSKzrBs6ewQdB: the round-1 fix
-  // exempted ANY token mixing a letter and a digit, so a shouty promo token
-  // that merely happens to contain a digit (not a hyphenated solicitation
+  // exempted ANY token mixing a letter and a digit, so a shouty alphanumeric
+  // token that merely happens to contain a digit (not a hyphenated solicitation
   // number) would have slipped past the lint. That must still be caught.
   it("still flags a shouty alphanumeric token that is not a solicitation number", () => {
     expect(lintEmail("SAVE20NOW offer", "Body. Sam")).toContain("subject-shouty");
     expect(lintEmail("URGENT2 offer", "Body. Sam")).toContain("subject-shouty");
     expect(lintEmail("FREE50 off today", "Body. Sam")).toContain("subject-shouty");
+  });
+
+  // round-3 correction, same finding: the round-2 fix required 3+ hyphenated
+  // alphanumeric segments, which a purely-alphabetic shouty phrase written
+  // with hyphens (e.g. "SAVE-20-NOW") still matched — the hyphen-count guard
+  // checked segment SHAPE only, not that the token actually has a real
+  // solicitation number's fiscal-year+type-code+sequence structure.
+  it("still flags a shouty hyphenated phrase shaped like a solicitation number but isn't one", () => {
+    expect(lintEmail("SAVE-20-NOW offer", "Body. Sam")).toContain("subject-shouty");
   });
 
   it("flags calendar links", () => {

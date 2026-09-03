@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // enrolls a 2-touch cadence (initial + one day-5 follow-up before the
 // response window closes).
 
-const calls = { llmInputBlocks: [] as string[], enrolled: 0 };
+const calls = { llmInputBlocks: [] as string[], enrolled: 0, upsertedProspects: [] as unknown[] };
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -26,7 +26,10 @@ vi.mock("@oneshot-gtm/core", async () => {
     enrichProfile: async () => ({ result: { profile: {} }, receiptId: 1 }),
     sendEmail: async () => ({ receiptId: 3 }),
     getLedger: () => ({
-      upsertProspect: () => 1,
+      upsertProspect: (meta: unknown) => {
+        calls.upsertedProspects.push(meta);
+        return 1;
+      },
       recordSequenceEvent: () => 1,
       hasSentSequenceEvent: () => false,
       findProspectByEmail: () => ({ id: 1 }),
@@ -69,6 +72,7 @@ const base = {
 beforeEach(() => {
   calls.llmInputBlocks = [];
   calls.enrolled = 0;
+  calls.upsertedProspects = [];
 });
 afterEach(() => vi.clearAllMocks());
 
@@ -101,5 +105,25 @@ describe("runSourcesSought", () => {
     expect(out.drafted).toHaveLength(1);
     expect(out.drafted[0]?.sent).toBe(true);
     expect(calls.enrolled).toBe(1);
+  });
+
+  // finding PRRT_kwDOSKzrBs6fD-h0 / issue #463: title generically flows
+  // target -> prospectMeta via _run-play.ts's runner (mirrors the /queue
+  // route's prospectMeta), same mechanism as accelerator-batch etc. — no
+  // per-play `title: t.title` line needed in prospectMeta itself.
+  it("persists the POC's title generically via the shared runner", async () => {
+    await runSourcesSought({
+      dryRun: false,
+      targets: [{ ...base, title: "Contracting Officer" }],
+    });
+    expect(calls.upsertedProspects[0]).toMatchObject({ title: "Contracting Officer" });
+  });
+
+  it("carries the response deadline into metadata for the follow-up gate", async () => {
+    await runSourcesSought({
+      dryRun: false,
+      targets: [{ ...base, responseDeadline: "2026-07-01" }],
+    });
+    expect(calls.llmInputBlocks[0]).toContain("RESPONSE DEADLINE: 2026-07-01");
   });
 });

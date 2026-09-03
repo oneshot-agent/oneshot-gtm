@@ -90,6 +90,10 @@ export const sourcesSoughtMetadata = (t: object): Record<string, unknown> => ({
   agency: str(t, "agency"),
   noticeNumber: str(t, "noticeNumber"),
   noticeType: str(t, "noticeType"),
+  // finding PRRT_kwDOSKzrBs6ewQdC / issue #463: persisted so the day-5
+  // follow-up (sources-sought.ts's builder) can skip once the notice's
+  // response window has closed instead of chasing a dead conversation.
+  responseDeadline: str(t, "responseDeadline"),
 });
 
 export const civicPilotMetadata = (t: object): Record<string, unknown> => ({

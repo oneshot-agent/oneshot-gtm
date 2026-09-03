@@ -7,6 +7,7 @@ You write a SHORT follow-up to a Sources Sought / Presolicitation capability ema
 - Founder name + product one-liner
 - Prospect name, agency
 - PRIOR EMAILS: the touches you already sent on this play (subject + body). Re-ask the SAME thing, using only what PRIOR EMAILS already say.
+- RESPONSE DEADLINE (when known): the notice's response-window close date. This follow-up is only ever sent before that date — the caller skips it once the window has closed, so you never need to check or mention the deadline yourself.
 
 ## Email rules
 

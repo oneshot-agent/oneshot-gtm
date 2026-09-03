@@ -72,14 +72,40 @@ beforeEach(() => {
 afterEach(() => vi.clearAllMocks());
 
 describe("runCivicPilot", () => {
-  it("names the agenda item, meeting date, and purchasing vehicle in the input block", async () => {
+  it("names the agenda item, meeting date, and purchasing route in the input block", async () => {
     await runCivicPilot({ dryRun: true, targets: [{ ...base }] });
     expect(calls.llmInputBlocks[0]).toContain(
       "AGENDA ITEM: AI vendor evaluation for permitting workflow",
     );
     expect(calls.llmInputBlocks[0]).toContain("MEETING DATE: 2026-06-10");
-    expect(calls.llmInputBlocks[0]).toContain("PURCHASING VEHICLE: Sourcewell");
+    expect(calls.llmInputBlocks[0]).toContain(
+      "PURCHASING ROUTE: cooperative purchasing vehicle: Sourcewell",
+    );
     expect(calls.llmInputBlocks[0]).toContain("PROSPECT: Jordan Manager at Austin");
+  });
+
+  // finding PRRT_kwDOSKzrBs6fD-hc / issue #463: the pilot must be sized under
+  // the micro-purchase threshold OR bought off a cooperative vehicle — a
+  // target that only gave the threshold route must not be forced to name a
+  // vehicle, and the threshold must appear in the drafting input.
+  it("supports the micro-purchase-threshold-only route (no purchasing vehicle)", async () => {
+    const { purchasingVehicle: _drop, ...withoutVehicle } = base;
+    await runCivicPilot({
+      dryRun: true,
+      targets: [{ ...withoutVehicle, microPurchaseThreshold: "$10,000" }],
+    });
+    expect(calls.llmInputBlocks[0]).toContain(
+      "PURCHASING ROUTE: micro-purchase threshold: $10,000",
+    );
+  });
+
+  it("refuses to draft when neither purchasing vehicle nor threshold is set", async () => {
+    const { purchasingVehicle: _drop, ...withoutVehicle } = base;
+    const out = await runCivicPilot({ dryRun: true, targets: [{ ...withoutVehicle }] });
+    // The per-target error is caught by the shared runner and lands as an
+    // errorDraft (flags: ["error: ..."]) rather than throwing out of
+    // runCivicPilot — assert the flag names the refusal reason.
+    expect(out.drafted[0]?.flags[0]).toContain("refusing to draft");
   });
 
   it("enrolls a cadence on a real send (day-5 follow-up)", async () => {
