@@ -219,11 +219,11 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
     // just the spend accrued so far. icpFilter is the only cost source in
     // this finder, and it's free (no LLM call) when `icp` is null, so the
     // estimate is 0 in that case. Checking post-hoc spend alone would let a
-    // single call through whenever `0 < maxCostUsd < ICP_FILTER_COST_USD`,
+    // single call through whenever `0 < maxCostUsd < ICP_FILTER_COST_ESTIMATE_USD`,
     // since costUsd is still 0 right up until this call runs.
     if (
       opts.maxCostUsd != null &&
-      result.costUsd + (icp ? ICP_FILTER_COST_USD : 0) > opts.maxCostUsd
+      result.costUsd + (icp ? ICP_FILTER_COST_ESTIMATE_USD : 0) > opts.maxCostUsd
     ) {
       result.halted = `max-cost cap (${opts.maxCostUsd})`;
       break;
