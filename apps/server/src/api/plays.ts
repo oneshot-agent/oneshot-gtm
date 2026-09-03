@@ -93,7 +93,7 @@ const PLAY_CATALOG: PlayMeta[] = [
   },
   {
     name: "design-partner-loi",
-    cli: "oneshot-gtm find watch  # fed by gov-solicitation (non-r/p notices) and enterprise/hardware finders, drained from /queue",
+    cli: "oneshot-gtm find watch  # fed by the gov-solicitation finder (non-r/p notices) today; enterprise/hardware targets are manually queued until a matching finder exists, drained from /queue",
   },
 ];
 

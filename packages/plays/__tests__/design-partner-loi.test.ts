@@ -86,6 +86,18 @@ describe("assertNotOwnerOperatorBuyer — the routing guard", () => {
     expect(() => assertNotOwnerOperatorBuyer("government")).not.toThrow();
     expect(() => assertNotOwnerOperatorBuyer("hardware")).not.toThrow();
   });
+
+  // The guard is an ALLOWLIST of the three supported buyer types, not an
+  // enumeration of known-bad labels — so an owner-operator-ish label the
+  // guard has never seen before (a future finder/pack's own wording, or a
+  // typo of a known-bad string) is refused too, not let through.
+  it("throws for an unrecognized owner-operator-ish label, not just the known ones", () => {
+    expect(() => assertNotOwnerOperatorBuyer("restaurant")).toThrow();
+    expect(() => assertNotOwnerOperatorBuyer("small-business")).toThrow();
+    expect(() => assertNotOwnerOperatorBuyer("sole-proprietor")).toThrow();
+    expect(() => assertNotOwnerOperatorBuyer("main street business")).toThrow();
+    expect(() => assertNotOwnerOperatorBuyer("owner-operater")).toThrow(); // typo of a known-bad string
+  });
 });
 
 describe("runDesignPartnerLoi", () => {

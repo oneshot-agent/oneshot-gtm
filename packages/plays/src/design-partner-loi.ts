@@ -6,31 +6,34 @@ import { buildFollowUpEmail, registerSequence } from "./_cadence.ts";
 const PLAY_NAME = "design-partner-loi";
 
 /**
- * Buyer-type strings this play must NEVER draft for. The finders that feed
- * this play route by config (gov-solicitation, a future local-business pack),
- * so a misconfigured trigger — or a future pack pointing the wrong lane at
- * it — could hand this play an owner-operator target. Convention (the
- * TypeScript field being typed as a union) is not a guard: `buyerType`
- * arrives as a plain string off a finder payload, so the check must be a
- * runtime one, not just a type. Checked BEFORE any paid call.
+ * Buyer-type strings this play is allowed to draft for. The finders that
+ * feed this play route by config (gov-solicitation, a future local-business
+ * pack), so a misconfigured trigger — or a future pack pointing the wrong
+ * lane at it — could hand this play an owner-operator target under a label
+ * we've never seen (e.g. "restaurant", "small-business", a typo of
+ * "owner-operator"). An enumeration of known-bad labels can't defend against
+ * an unknown future one, so this is an ALLOWLIST of the three supported
+ * buyer types: anything else is rejected, not just the labels we happen to
+ * know about today. Convention (the TypeScript field being typed as a union)
+ * is not a guard: `buyerType` arrives as a plain string off a finder
+ * payload, so the check must be a runtime one, not just a type. Checked
+ * BEFORE any paid call.
  */
-const BLOCKED_BUYER_TYPES = new Set([
-  "owner-operator",
-  "owner operator",
-  "main-street",
-  "main street",
-]);
+const ALLOWED_BUYER_TYPES = new Set(["enterprise", "government", "hardware"]);
 
 /**
- * Throws when `buyerType` names an owner-operator counterpart — the "design
- * partner" / "non-binding LOI" register is real language for enterprise,
- * government and hardware buyers and exactly the wrong language for an
- * independent restaurateur or a two-truck plumber (see #457's free-pilot /
- * discovery-interview instead). Exported so a test can assert the guard
- * directly, not just observe its effect on a drafted row.
+ * Throws unless `buyerType` is one of the supported buyer types
+ * (enterprise/government/hardware) — the "design partner" / "non-binding
+ * LOI" register is real language for those buyers and exactly the wrong
+ * language for an owner-operator counterpart such as an independent
+ * restaurateur or a two-truck plumber (see #457's free-pilot /
+ * discovery-interview instead). Rejects by allowlist rather than by naming
+ * known-bad labels, so an unrecognized or misspelled owner-operator-ish
+ * label from a future finder/pack is refused too. Exported so a test can
+ * assert the guard directly, not just observe its effect on a drafted row.
  */
 export function assertNotOwnerOperatorBuyer(buyerType: string): void {
-  if (BLOCKED_BUYER_TYPES.has(buyerType.trim().toLowerCase())) {
+  if (!ALLOWED_BUYER_TYPES.has(buyerType.trim().toLowerCase())) {
     throw new Error(
       `design-partner-loi: refusing to draft for buyerType "${buyerType}" — this play is for ` +
         `enterprise/government/hardware counterparties only, never an owner-operator. Route this ` +
