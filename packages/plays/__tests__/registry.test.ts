@@ -21,6 +21,9 @@ const EXPECTED = [
   "x-amplify",
   "x-amplify-dm",
   "free-pilot",
+  "sources-sought",
+  "civic-pilot",
+  "design-partner-loi",
 ];
 
 describe("play registry", () => {

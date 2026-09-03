@@ -65,6 +65,36 @@ describe("lintEmail — humanizer canon", () => {
     expect(lintEmail("hi", "First!! Second!! Sam")).toContain("excess-exclamations");
   });
 
+  // finding PRRT_kwDOSKzrBs6ewQdB: a SAM.gov notice number the play must
+  // reproduce verbatim (e.g. W912DY-26-R-0042) mixes letters and digits in
+  // one token — that's an identifier, not shouting, so it must not trip the
+  // guarded send-path lint that sources-sought-email.md line 20 requires.
+  it("does not flag alphanumeric identifier tokens as shouty", () => {
+    expect(lintEmail("W912DY-26-R-0042 — capability question", "Body. Sam")).not.toContain(
+      "subject-shouty",
+    );
+    expect(lintEmail("re: W912DY-26-R-0042", "Body. Sam")).not.toContain("subject-shouty");
+    expect(lintEmail("SP4701-26-R-0007 — capability question", "Body. Sam")).not.toContain(
+      "subject-shouty",
+    );
+  });
+
+  it("still flags a genuinely shouty subject next to an identifier token", () => {
+    // "URGENT" carries no digit, so it stays a real shout even alongside a
+    // compliant notice-number token in the same subject.
+    expect(lintEmail("URGENT W912DY-26-R-0042", "Body. Sam")).toContain("subject-shouty");
+  });
+
+  // round-2 correction for finding PRRT_kwDOSKzrBs6ewQdB: the round-1 fix
+  // exempted ANY token mixing a letter and a digit, so a shouty promo token
+  // that merely happens to contain a digit (not a hyphenated solicitation
+  // number) would have slipped past the lint. That must still be caught.
+  it("still flags a shouty alphanumeric token that is not a solicitation number", () => {
+    expect(lintEmail("SAVE20NOW offer", "Body. Sam")).toContain("subject-shouty");
+    expect(lintEmail("URGENT2 offer", "Body. Sam")).toContain("subject-shouty");
+    expect(lintEmail("FREE50 off today", "Body. Sam")).toContain("subject-shouty");
+  });
+
   it("flags calendar links", () => {
     expect(lintEmail("hi", "Here's my calendly link to book. Sam")).toContain("calendar-link");
   });

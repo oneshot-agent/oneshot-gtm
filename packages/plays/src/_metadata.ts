@@ -86,6 +86,23 @@ export const freePilotMetadata = (t: object): Record<string, unknown> => ({
   businessType: str(t, "businessType"),
 });
 
+export const sourcesSoughtMetadata = (t: object): Record<string, unknown> => ({
+  agency: str(t, "agency"),
+  noticeNumber: str(t, "noticeNumber"),
+  noticeType: str(t, "noticeType"),
+});
+
+export const civicPilotMetadata = (t: object): Record<string, unknown> => ({
+  city: str(t, "city"),
+  agendaItemTitle: str(t, "agendaItemTitle"),
+  meetingDate: str(t, "meetingDate"),
+});
+
+export const designPartnerLoiMetadata = (t: object): Record<string, unknown> => ({
+  buyerType: str(t, "buyerType"),
+  company: str(t, "company"),
+});
+
 const REGISTRY: Record<string, (t: object) => Record<string, unknown>> = {
   "repo-interest": repoInterestMetadata,
   "luma-events": lumaEventsMetadata,
@@ -101,6 +118,9 @@ const REGISTRY: Record<string, (t: object) => Record<string, unknown>> = {
   "x-amplify": xAmplifyMetadata,
   "x-amplify-dm": xAmplifyMetadata,
   "free-pilot": freePilotMetadata,
+  "sources-sought": sourcesSoughtMetadata,
+  "civic-pilot": civicPilotMetadata,
+  "design-partner-loi": designPartnerLoiMetadata,
 };
 
 /**
