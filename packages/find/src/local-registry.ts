@@ -264,6 +264,22 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
       }
     }
 
+    // Recheck the cap after enrichCompany's paid call and before
+    // resolveVerifyEnrichQualify's own paid calls (findEmail/verifyEmail/
+    // enrich/qualify — up to 4 more). The top-of-turn check above only
+    // guards entry to a candidate's turn; concurrent workers can each pass
+    // it at the same accumulated cost and then all incur enrichCompany +
+    // contact-resolution spend before the next candidate's pre-check
+    // catches it (finding PRRT_kwDOSKzrBs6exPH4). This narrows, not
+    // eliminates, the overshoot window — the alternative (a hard
+    // reservation) would require threading a lock through every paid call
+    // this spine makes, a bigger change than a correction round justifies.
+    if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
+      result.halted = `max-cost cap (${opts.maxCostUsd})`;
+      halted = true;
+      return;
+    }
+
     const contact = await resolveVerifyEnrichQualify({
       playName,
       // No owner/operator name in any registry — findEmail resolves a
