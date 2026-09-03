@@ -13,7 +13,7 @@ import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
 import { Field, Input, Textarea } from "../components/primitives/Field.tsx";
 import { cn } from "../lib/cn.ts";
-import { PLAY_SCHEMAS } from "../lib/playSchemas.ts";
+import { missingRequiredFields, PLAY_SCHEMAS } from "../lib/playSchemas.ts";
 import { useMask } from "../lib/privacy.tsx";
 import { pruneSentRows, remapFilteredEventIndexes } from "../lib/pruneSentRows.ts";
 import { IS_DEMO, demoWrite } from "../api/demo.ts";
@@ -341,6 +341,21 @@ function RunPage() {
      */
     if (IS_DEMO) {
       demoWrite(`/run/${playName}`);
+      return;
+    }
+
+    // Enforce the schema's `required` keys before dispatch. Rows here render
+    // outside a <form> (this is a plain button onClick, not a submit event),
+    // so the `required` attribute on each field is decorative — and `submit`
+    // strips blank fields below, which would otherwise let e.g. a blank
+    // `agency` or `yourEdge` reach the play as `undefined` and produce a
+    // malformed, paid draft.
+    const rowIssues = rows
+      .map((row, idx) => ({ idx, missing: missingRequiredFields(schema, row) }))
+      .filter((r) => r.missing.length > 0);
+    if (rowIssues.length > 0) {
+      const detail = rowIssues.map((r) => `row ${r.idx + 1}: ${r.missing.join(", ")}`).join("; ");
+      setError(`fill in the required fields before dispatching — ${detail}`);
       return;
     }
 

@@ -190,7 +190,6 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     logEvent("finder.done", { name: PLAY_NAME, candidates: 0, halted: result.halted });
     return result;
   }
-
   if (candidates.length === 0) {
     result.halted = businessShaped
       ? "peopleSearch returned no matches for the resolved company domains"

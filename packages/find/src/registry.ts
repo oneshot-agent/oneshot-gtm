@@ -1,8 +1,12 @@
 import {
+  DEFAULT_SPEND_RESERVATION_USD,
+  dailySpendStatus,
   getLedger,
   logEvent,
   safeParseJsonRecord,
+  spendCeilingReason,
   startRun,
+  tryReserveDailySpend,
   type TriggerRow,
 } from "@oneshot-gtm/core";
 import { type CohortEntry, runAcceleratorBatchFinder } from "./accelerator-batch.ts";
@@ -72,6 +76,23 @@ export async function runFinderWithProductResearch(
 }
 
 export type Readiness = { ready: true } | { ready: false; reason: string };
+
+/**
+ * Worst-case spend estimate for reserving against the daily ceiling before a
+ * trigger fires. Reads `maxCostUsd` (every finder's SDK/LLM cap) plus, for
+ * x-reposters, `maxSpendPerRun` (its separate X-read meter) — the two are
+ * independent budgets on that one finder, so both must be held. Falls back
+ * to `DEFAULT_SPEND_RESERVATION_USD` for a finder with neither configured
+ * (e.g. `breakup-revive`, which is ledger-only and spends nothing) so a
+ * free finder can't starve the day's reservation slot for a paid one.
+ */
+export function estimatedTriggerSpendUsd(config: Record<string, unknown>): number {
+  const maxCostUsd = typeof config["maxCostUsd"] === "number" ? config["maxCostUsd"] : 0;
+  const maxSpendPerRun =
+    typeof config["maxSpendPerRun"] === "number" ? config["maxSpendPerRun"] : 0;
+  const total = maxCostUsd + maxSpendPerRun;
+  return total > 0 ? total : DEFAULT_SPEND_RESERVATION_USD;
+}
 
 /** Evaluate a spec's readiness fn (defaulting to ready when absent). */
 export function checkReadiness(spec: TriggerSpec, config: Record<string, unknown>): Readiness {
@@ -1112,6 +1133,16 @@ export function fireTriggerNow(name: string): void {
   if (!readiness.ready) {
     throw new Error(`not ready: ${readiness.reason}`);
   }
+  // Daily spend ceiling gate (issue #481): a manual "run now" click is still
+  // an AUTOMATED paid call (as opposed to a human-reviewed /queue send), so it
+  // is bound by the same install-wide ceiling as scheduled runs. This is an
+  // early read-only check for a fast 409 — runTriggerNow re-checks
+  // atomically via tryReserveDailySpend right before firing, which is what
+  // actually closes the race between two concurrent automated calls.
+  const status = dailySpendStatus();
+  if (status.ceilingReached) {
+    throw new Error(`not ready: ${spendCeilingReason(status)}`);
+  }
   // Bootstrap the row if it doesn't exist yet — markTriggerRunning is an
   // UPDATE that no-ops on a missing row, so we'd silently lose state.
   if (!stored) {
@@ -1191,6 +1222,26 @@ export async function runTriggerNow(
       return { name, fired: false, error: message, nextDueInMs: intervalMs };
     }
   }
+  // Install-wide daily spend ceiling (issue #481): reserve this run's
+  // worst-case cost against the day's budget BEFORE firing the finder. A
+  // refusal here still clears the claim taken above (updateTriggerLastPoll
+  // resets running_started_at), so a later run-now click isn't stuck behind
+  // a phantom in-flight marker.
+  const reservation = tryReserveDailySpend(estimatedTriggerSpendUsd(config));
+  if (!reservation.granted) {
+    // clearTriggerClaim, not updateTriggerLastPoll: the finder never ran, so
+    // stamping last_polled_at would push this trigger's next-due a full
+    // interval out even though it was refused with $0 spent — the ceiling
+    // resetting (or headroom opening from a released reservation) wouldn't
+    // un-stick it until the next scheduled poll, which could be hours away
+    // (issue #481 review finding).
+    ledger.clearTriggerClaim({
+      name,
+      summary: { error: reservation.reason, at: new Date().toISOString() },
+    });
+    logEvent("trigger.run.skipped", { name, source: "ad_hoc", reason: reservation.reason });
+    return { name, fired: false, error: reservation.reason, nextDueInMs: intervalMs };
+  }
   const startedAt = Date.now();
   logEvent("trigger.run.start", { name, source: "ad_hoc" });
   try {
@@ -1225,6 +1276,8 @@ export async function runTriggerNow(
       "error",
     );
     return { name, fired: true, error: message, nextDueInMs: intervalMs };
+  } finally {
+    reservation.release();
   }
 }
 
@@ -1321,6 +1374,34 @@ export async function runDueTriggers(
       continue;
     }
 
+    // Install-wide daily spend ceiling (issue #481): reserve this run's
+    // worst-case cost before firing. Refused calls clear the claim taken
+    // above (via updateTriggerLastPoll) so the trigger isn't stuck
+    // "running" for the rest of the day.
+    const reservation = tryReserveDailySpend(estimatedTriggerSpendUsd(config));
+    if (!reservation.granted) {
+      // clearTriggerClaim, not updateTriggerLastPoll (issue #481 review
+      // finding) — see fireTriggerNow's matching comment: stamping
+      // last_polled_at on a refusal would delay the NEXT scheduled attempt
+      // by a full interval even though this one never actually ran.
+      ledger.clearTriggerClaim({
+        name: spec.name,
+        summary: { error: reservation.reason, at: new Date().toISOString() },
+      });
+      outcomes.push({
+        name: spec.name,
+        fired: false,
+        nextDueInMs: intervalMs,
+        skippedReason: reservation.reason,
+      });
+      logEvent("trigger.run.skipped", {
+        name: spec.name,
+        source: "watch",
+        reason: reservation.reason,
+      });
+      continue;
+    }
+
     const startedAt = Date.now();
     logEvent("trigger.run.start", { name: spec.name, source: "watch" });
     try {
@@ -1369,6 +1450,8 @@ export async function runDueTriggers(
         duration_ms: durationMs,
         nextDueInMs: intervalMs,
       });
+    } finally {
+      reservation.release();
     }
   }
   logEvent("watch.tick.done", { fired: outcomes.filter((o) => o.fired).length });

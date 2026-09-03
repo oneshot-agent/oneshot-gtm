@@ -171,7 +171,6 @@ function findDateFieldKey(record: Record<string, unknown>, candidates: string[])
   }
   return null;
 }
-
 function pickDateIso(record: Record<string, unknown>, candidates: string[]): string | null {
   const raw = pickField(record, candidates);
   if (!raw) return null;
@@ -276,7 +275,6 @@ async function resolveSocrataDateFieldFromMetadata(
     return null;
   }
 }
-
 async function fetchSocrataPortal(
   portal: SocrataPortalConfig,
   cfg: RegistryQuery,
@@ -460,7 +458,6 @@ function nppesDisplayName(basic: NppesBasic | undefined): string | null {
 function nppesSubjectType(basic: NppesBasic | undefined): "individual" | "organization" {
   return basic?.organization_name?.trim() ? "organization" : "individual";
 }
-
 /** Map + freshness-filter one taxonomy×state pair's raw NPPES results. Exported for the unit test. */
 export function mapNppesResults(
   results: NppesResult[],
@@ -497,7 +494,6 @@ export function mapNppesResults(
 const NPPES_PAGE_SIZE = 200;
 /** NPPES's own documented ceiling: skip caps at 1000, so 6 pages of 200 (1200 records) is the max obtainable for any one query — matches the ropensci npi_search client's documented limit. */
 const NPPES_MAX_PAGES = 6;
-
 async function fetchNppesPair(
   taxonomy: string,
   state: string,
@@ -558,7 +554,6 @@ async function fetchNppesPair(
     results.push(...pageResults);
     if (pageResults.length < NPPES_PAGE_SIZE) break; // last page
   }
-
   if (results.length === 0) {
     return { records: [], diagnostic: `nppes has no ${taxonomy} providers in ${state}` };
   }

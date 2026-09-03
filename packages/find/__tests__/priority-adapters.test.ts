@@ -423,7 +423,7 @@ describe("v2 label-mined adapter priors", () => {
   });
 });
 
-describe("new-business / free-pilot — matchedDateIso feeds timing freshness", () => {
+describe("new-business — matchedDateIso feeds timing freshness", () => {
   it("new-business: a fresh matchedDateIso scores timingFreshness high, not neutral", () => {
     const fresh = safeScorePriority(
       "new-business",
@@ -447,52 +447,11 @@ describe("new-business / free-pilot — matchedDateIso feeds timing freshness", 
     )!;
     expect(old.components.timingFreshness).toBe(25);
   });
-
-  it("free-pilot: a fresh matchedDateIso scores timingFreshness high, not neutral", () => {
-    // free-pilot's FIXTURES entry carries local-business's `businessType`
-    // shape; this test exercises the local-registry shape
-    // (`sourceLabel`/`matchedDateIso`) that also routes through free-pilot.
-    const registryPayload = {
-      name: "Sam's Plumbing",
-      email: "sam@samsplumbing.com",
-      company: "Sam's Plumbing",
-      source: "socrata-license",
-      sourceLabel: "NYC business licenses",
-      yourEdge: "we set it up free, you keep it if it works",
-    };
-    const fresh = safeScorePriority(
-      "free-pilot",
-      {
-        ...registryPayload,
-        matchedDateIso: new Date(NOW.getTime() - 86_400_000).toISOString(),
-      },
-      NOW,
-    )!;
-    expect(fresh.components.timingFreshness).toBe(90);
-  });
-
-  it("free-pilot: a missing matchedDateIso still degrades to neutral, no throw", () => {
-    const missing = safeScorePriority(
-      "free-pilot",
-      { ...FIXTURES["free-pilot"], matchedDateIso: undefined },
-      NOW,
-    )!;
-    expect(missing.components.timingFreshness).toBe(50);
-  });
 });
 
-describe("free-pilot — sourceLabel is registry metadata, not evidence text", () => {
+describe("new-business — sourceLabel is registry metadata, not evidence text", () => {
   it("does not overstate signalConfidence off sourceLabel alone", () => {
-    const registryPayload = {
-      name: "Sam's Plumbing",
-      email: "sam@samsplumbing.com",
-      company: "Sam's Plumbing",
-      source: "socrata-license",
-      sourceLabel: "NYC business licenses",
-      matchedDateIso: "2026-06-01T00:00:00Z",
-      yourEdge: "we set it up free, you keep it if it works",
-    };
-    const p = safeScorePriority("free-pilot", registryPayload, NOW)!;
+    const p = safeScorePriority("new-business", FIXTURES["new-business"], NOW)!;
     // sourceLabel is always present on a real registry payload, so this
     // pins the pre-fix regression: hasEvidenceText must NOT be derived from
     // it (finding PRRT_kwDOSKzrBs6exPH9). Neutral == no evidenceUrlCount and

@@ -268,6 +268,29 @@ describe("trigger registry state", () => {
     expect(JSON.parse(t!.last_run_summary ?? "{}")).toEqual({ found: 5, kept: 2 });
   });
 
+  it("clearTriggerClaim clears running_started_at + records summary WITHOUT touching last_polled_at (issue #481 review finding)", () => {
+    const iso = "2026-04-24T18:23:54.607Z";
+    ledger.upsertTrigger({ name: "show-hn", configJson: "{}" });
+    ledger.markTriggerRunning("show-hn", iso);
+    expect(ledger.getTrigger("show-hn")?.running_started_at).toBe(iso);
+    // last_polled_at starts null (never successfully polled) — a ceiling
+    // refusal must leave it null so the trigger is still "due" the instant
+    // headroom opens, not stuck for a full interval as if it had run.
+    expect(ledger.getTrigger("show-hn")?.last_polled_at).toBeNull();
+
+    ledger.clearTriggerClaim({
+      name: "show-hn",
+      summary: { error: "daily spend ceiling reached ($10.00/$10.00 spent or reserved today)" },
+    });
+
+    const t = ledger.getTrigger("show-hn");
+    expect(t?.running_started_at).toBeNull(); // claim released
+    expect(t?.last_polled_at).toBeNull(); // NOT stamped — the key behavior
+    expect(JSON.parse(t!.last_run_summary ?? "{}")).toMatchObject({
+      error: expect.stringContaining("ceiling reached"),
+    });
+  });
+
   it("setTriggerEnabled flips the flag", () => {
     ledger.upsertTrigger({ name: "show-hn", configJson: "{}" });
     ledger.setTriggerEnabled("show-hn", false);

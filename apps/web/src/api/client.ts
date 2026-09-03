@@ -201,6 +201,7 @@ export const api = {
         founderAdmission: string | null;
         productBrief: string | null;
         mobileSignature: boolean;
+        dailySpendCeilingUsd: number | null;
         llmProvider: "openrouter" | "openai" | "anthropic";
         llmModel: string;
         telemetryEnabled: boolean;

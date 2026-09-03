@@ -325,6 +325,11 @@ export interface SetupRequest {
   productBrief?: string;
   /** When true, signature appends a literal "Sent from my iPhone" line. */
   mobileSignature?: boolean;
+  /**
+   * Install-wide daily USD spend ceiling (issue #481). `undefined` = leave
+   * unchanged; `null` = clear it (unlimited); a positive number = set it.
+   */
+  dailySpendCeilingUsd?: number | null;
   llmProvider?: LlmProvider;
   llmModel?: string;
   telemetryEnabled?: boolean;
@@ -608,6 +613,12 @@ export const RUNNABLE_PLAYS: readonly string[] = [
   "stack-consolidation",
   "repo-interest",
   "luma-events",
+  "sources-sought",
+  "civic-pilot",
+  "design-partner-loi",
+  "discovery-interview",
+  "free-pilot",
+  "new-business",
 ];
 
 /**
@@ -866,6 +877,8 @@ export interface DrainResult {
   drained: number;
   sent: number;
   errors: Array<{ id: number; message: string }>;
+  /** Named reason the daily spend ceiling (issue #481) blocked this drain, if it did. */
+  haltedReason?: string;
 }
 
 export interface TriggerView {

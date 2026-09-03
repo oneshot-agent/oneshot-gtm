@@ -29,6 +29,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       mobileSignature: false,
       timezone: null,
       clientId: null,
+      dailySpendCeilingUsd: null,
     }),
     getLedger: () => ({
       // Opener-frequency cap: no send history in these fakes, so nothing is worn out.
@@ -106,6 +107,7 @@ function ctx(prospectId = 42) {
       mobileSignature: false,
       timezone: null,
       clientId: null,
+      dailySpendCeilingUsd: null,
     },
     metadata: {},
   };

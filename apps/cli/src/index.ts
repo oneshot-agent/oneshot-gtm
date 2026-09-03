@@ -14,6 +14,7 @@ import {
   configFounder,
   configKeys,
   configLlm,
+  configSpendCeiling,
   configTelemetry,
   configXEngine,
 } from "./commands/config.ts";
@@ -75,6 +76,8 @@ import {
   commandMotionCompetitorSwitch,
   commandMotionConcierge,
   commandMotionDemoNoShow,
+  commandMotionDiscoveryInterview,
+  commandMotionFreePilot,
   commandMotionHiringSignal,
   commandMotionPodcastGuest,
   commandMotionPostFunding,
@@ -234,6 +237,12 @@ config
     "Show or switch the x-reposters data provider (xapi = first-party X API, twitterapiio = ~55x cheaper third-party)",
   )
   .action(runOrFail((engine?: string) => configXEngine(engine)));
+config
+  .command("spend-ceiling [amount]")
+  .description(
+    "Show or set the install-wide daily USD spend ceiling (halts automated finder/drain runs once reached; 'off' clears it)",
+  )
+  .action(runOrFail((amount?: string) => configSpendCeiling(amount)));
 
 // Gmail send path: OAuth consent flow for the alternate (non-OneShot) provider.
 const gmail = program
@@ -737,6 +746,40 @@ motion
         targetFile: opts.target,
         dryRun: opts.dryRun,
         skipSearch: opts.skipSearch,
+      });
+    }),
+  );
+motion
+  .command("discovery-interview")
+  .requiredOption(
+    "-t, --target <file>",
+    "JSON file: { name, email, company, businessType, topic }[]",
+  )
+  .option("--dry-run", "draft only, do not send", false)
+  .description(
+    "Main-street ask: ten minutes on how the owner-operator does this today. No pitch, no link, no price.",
+  )
+  .action(
+    runOrFail(async (opts: { target: string; dryRun: boolean }) => {
+      await commandMotionDiscoveryInterview({
+        targetFile: opts.target,
+        dryRun: opts.dryRun,
+      });
+    }),
+  );
+motion
+  .command("free-pilot")
+  .requiredOption(
+    "-t, --target <file>",
+    "JSON file: { name, email, company, businessType, yourEdge }[]",
+  )
+  .option("--dry-run", "draft only, do not send", false)
+  .description("Main-street close: set it up free for them, they keep it if it works")
+  .action(
+    runOrFail(async (opts: { target: string; dryRun: boolean }) => {
+      await commandMotionFreePilot({
+        targetFile: opts.target,
+        dryRun: opts.dryRun,
       });
     }),
   );
