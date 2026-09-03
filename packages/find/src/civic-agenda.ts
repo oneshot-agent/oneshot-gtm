@@ -16,6 +16,8 @@ import type { FinderResult, RunOpts } from "./_types.ts";
 
 const PLAY_NAME = "civic-agenda";
 const SOURCE = "find:civic-agenda";
+/** Rough LLM cost per icpFilter call, same estimate used by show-hn.ts / accelerator-batch.ts. */
+const ICP_FILTER_COST_USD = 0.001;
 
 export interface CivicAgendaFinderOpts extends RunOpts {
   /** City names mapped to Legistar clients (see `_civic-legistar.ts`). REQUIRED via readiness gate. */
@@ -223,6 +225,10 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
         summary: `${candidate.event.eventBodyName ?? "a city body"} in ${candidate.city}`,
       },
     });
+    // icpFilter is a free pass-through when no ICP is configured (icp ===
+    // null): zero LLM calls, so nothing to charge — only count the estimate
+    // when a real classifier call was made.
+    if (icp) result.costUsd += ICP_FILTER_COST_USD;
     if (filter.match === null) {
       // Transient classifier failure — drop without persisting (same
       // reasoning as every other finder's icpFilter call site).
