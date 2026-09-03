@@ -49,8 +49,10 @@ vi.mock("@oneshot-gtm/core", () => ({
   // Daily spend ceiling (issue #481): the drain test suite exercises drain
   // dispatch/persistence behavior, not the ceiling gate itself (that's
   // covered in daily-spend.test.ts and registry-claim.test.ts), so every
-  // reservation here is granted with a no-op release.
-  tryReserveDailySpend: () => ({ granted: true, status: {}, release: () => {} }),
+  // reservation here is granted with a no-op release by default. The
+  // "downsizes the batch to headroom" test below overrides this per-call to
+  // exercise the refusal + retry path.
+  tryReserveDailySpend: vi.fn(() => ({ granted: true, status: {}, release: () => {} })),
 }));
 
 vi.mock("@oneshot-gtm/plays", () => {
@@ -74,6 +76,7 @@ vi.mock("@oneshot-gtm/plays", () => {
 });
 
 const { drainQueue, idsForSentDrafts } = await import("../src/drain.ts");
+const { tryReserveDailySpend: tryReserveDailySpendMock } = await import("@oneshot-gtm/core");
 
 beforeEach(() => {
   ledgerStub.dequeueApproved.mockReset();
@@ -83,6 +86,12 @@ beforeEach(() => {
   ledgerStub.findProspectByEmail.mockReset().mockReturnValue(null);
   runStackConsolidationMock.mockReset();
   runXAmplifyDmMock.mockReset();
+  vi.mocked(tryReserveDailySpendMock).mockReset();
+  vi.mocked(tryReserveDailySpendMock).mockReturnValue({
+    granted: true,
+    status: {} as never,
+    release: () => {},
+  });
 });
 
 afterEach(() => {
@@ -251,6 +260,52 @@ describe("drainQueue per-target dispatch + persistence", () => {
     expect(out.errors[0]?.id).toBe(-1);
     expect(out.errors[0]?.message).toMatch(/unsupported/);
     expect(ledgerStub.setQueueDraft).not.toHaveBeenCalled();
+  });
+
+  it("downsizes the batch to headroom instead of refusing outright (issue #481 finding)", async () => {
+    // $10 ceiling, $0 spent, 10 rows at $2/row = a $20 ask that the ceiling
+    // refuses outright. remainingUsd=10 means 4 rows ($8) fit under the
+    // strict `<` reservation check (5 rows = $10 would land AT the ceiling).
+    const rows = Array.from({ length: 10 }, (_, i) => row((i + 1) * 10));
+    ledgerStub.dequeueApproved.mockReturnValue(rows);
+    vi.mocked(tryReserveDailySpendMock)
+      .mockReturnValueOnce({
+        granted: false,
+        reason: "daily spend ceiling reached ($0.00/$10.00 spent or reserved today)",
+        status: { remainingUsd: 10 } as never,
+      })
+      .mockReturnValueOnce({ granted: true, status: {} as never, release: () => {} });
+    runStackConsolidationMock.mockResolvedValue({
+      drafted: [{ subject: "ok", body: "b", flags: [], sent: true, receiptIds: [1] }],
+    });
+
+    const out = await drainQueue({ playName: "stack-consolidation", dryRun: false });
+
+    // Only the affordable 4 rows were dispatched, not zero.
+    expect(out.drained).toBe(4);
+    expect(runStackConsolidationMock).toHaveBeenCalledTimes(4);
+    expect(out.haltedReason).toBeUndefined();
+    // Second reservation call asked for the downsized batch's cost (4 * $2 = $8).
+    expect(tryReserveDailySpendMock).toHaveBeenCalledTimes(2);
+    expect(tryReserveDailySpendMock).toHaveBeenNthCalledWith(1, 10 * 2);
+    expect(tryReserveDailySpendMock).toHaveBeenNthCalledWith(2, 4 * 2);
+  });
+
+  it("still refuses outright when even the downsized batch doesn't fit (no headroom)", async () => {
+    ledgerStub.dequeueApproved.mockReturnValue([row(10), row(20)]);
+    vi.mocked(tryReserveDailySpendMock).mockReturnValue({
+      granted: false,
+      reason: "daily spend ceiling reached ($10.00/$10.00 spent or reserved today)",
+      status: { remainingUsd: 0 } as never,
+    });
+
+    const out = await drainQueue({ playName: "stack-consolidation", dryRun: false });
+
+    expect(out.drained).toBe(0);
+    expect(out.haltedReason).toContain("daily spend ceiling reached");
+    expect(runStackConsolidationMock).not.toHaveBeenCalled();
+    // No retry attempted — affordableRows was 0.
+    expect(tryReserveDailySpendMock).toHaveBeenCalledTimes(1);
   });
 
   it("manual-play rows with a clean draft are left alone — no re-draft, no stomp", async () => {

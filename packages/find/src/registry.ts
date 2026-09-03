@@ -947,7 +947,13 @@ export async function runTriggerNow(
   // a phantom in-flight marker.
   const reservation = tryReserveDailySpend(estimatedTriggerSpendUsd(config));
   if (!reservation.granted) {
-    ledger.updateTriggerLastPoll({
+    // clearTriggerClaim, not updateTriggerLastPoll: the finder never ran, so
+    // stamping last_polled_at would push this trigger's next-due a full
+    // interval out even though it was refused with $0 spent — the ceiling
+    // resetting (or headroom opening from a released reservation) wouldn't
+    // un-stick it until the next scheduled poll, which could be hours away
+    // (issue #481 review finding).
+    ledger.clearTriggerClaim({
       name,
       summary: { error: reservation.reason, at: new Date().toISOString() },
     });
@@ -1092,7 +1098,11 @@ export async function runDueTriggers(
     // "running" for the rest of the day.
     const reservation = tryReserveDailySpend(estimatedTriggerSpendUsd(config));
     if (!reservation.granted) {
-      ledger.updateTriggerLastPoll({
+      // clearTriggerClaim, not updateTriggerLastPoll (issue #481 review
+      // finding) — see fireTriggerNow's matching comment: stamping
+      // last_polled_at on a refusal would delay the NEXT scheduled attempt
+      // by a full interval even though this one never actually ran.
+      ledger.clearTriggerClaim({
         name: spec.name,
         summary: { error: reservation.reason, at: new Date().toISOString() },
       });

@@ -87,9 +87,33 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
   // posted to `receipts`. When refused, the claimed rows are left approved
   // untouched (dequeueApproved's lease self-expires) so the next drain
   // (today with headroom, or tomorrow after the reset) picks them up.
-  const reservation = tryReserveDailySpend(rows.length * DEFAULT_DRAIN_ROW_RESERVATION_USD);
+  //
+  // A refusal at the FULL batch size doesn't mean zero headroom, though —
+  // it only means the whole batch's worst-case cost doesn't fit. Size the
+  // batch down to what remainingUsd actually allows and retry once before
+  // giving up outright, so e.g. a $10 ceiling with $0 spent and 10 rows at
+  // $2/row (a $20 ask) still dispatches the four rows that fit under the
+  // ceiling instead of none. The retry is still one atomic
+  // reserveSpendIfUnderCeiling call — this only changes how large a batch
+  // we ask it to reserve, never how the reservation itself is checked.
+  let reservation = tryReserveDailySpend(rows.length * DEFAULT_DRAIN_ROW_RESERVATION_USD);
   if (!reservation.granted) {
-    return { drained: 0, sent: 0, deferred: 0, errors: [], haltedReason: reservation.reason };
+    const rowCost = DEFAULT_DRAIN_ROW_RESERVATION_USD;
+    const remainingUsd = reservation.status.remainingUsd ?? 0;
+    // Subtract a tiny epsilon before flooring so a remainingUsd that's an
+    // exact multiple of rowCost doesn't round up into a batch cost that
+    // would land AT the ceiling — reserveSpendIfUnderCeiling's own check is
+    // strict (`>=` refuses), so the affordable batch must cost strictly
+    // less than remainingUsd, not merely no more than it.
+    const affordableRows = Math.max(0, Math.floor((remainingUsd - 1e-9) / rowCost));
+    if (affordableRows > 0 && affordableRows < rows.length) {
+      rows.length = affordableRows;
+      outcome.drained = rows.length;
+      reservation = tryReserveDailySpend(rows.length * rowCost);
+    }
+    if (!reservation.granted) {
+      return { drained: 0, sent: 0, deferred: 0, errors: [], haltedReason: reservation.reason };
+    }
   }
 
   try {

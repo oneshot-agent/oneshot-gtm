@@ -122,7 +122,12 @@ function SetupPage() {
   const [mobileSignature, setMobileSignature] = useState(false);
   // "" = unlimited (no ceiling). A positive-number string is the ceiling in
   // USD; kept as a string so the field can be temporarily empty while typing.
+  // Same dirty-flag pattern as briefDirty: a pause/resume action invalidates
+  // ["setup"] mid-edit, and without this the hydrate effect below would
+  // silently overwrite whatever the founder just typed with the persisted
+  // value.
   const [dailySpendCeiling, setDailySpendCeiling] = useState("");
+  const spendCeilingDirty = useRef(false);
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
@@ -158,7 +163,13 @@ function SetupPage() {
     if (!briefDirty.current) setProductBrief(c.productBrief ?? "");
     setBriefSources((prev) => prev || (c.productDomain ? `https://${c.productDomain}` : ""));
     setMobileSignature(c.mobileSignature ?? false);
-    setDailySpendCeiling(c.dailySpendCeilingUsd != null ? String(c.dailySpendCeilingUsd) : "");
+    setDailySpendCeiling((prev) =>
+      spendCeilingDirty.current
+        ? prev
+        : c.dailySpendCeilingUsd != null
+          ? String(c.dailySpendCeilingUsd)
+          : "",
+    );
     setLlmProvider(c.llmProvider);
     setLlmModel(c.llmModel || LLM_DEFAULTS[c.llmProvider] || "");
     setTelemetryEnabled(c.telemetryEnabled);
@@ -309,6 +320,7 @@ function SetupPage() {
       setAddMailbox("");
       setAddCap("");
       briefDirty.current = false;
+      spendCeilingDirty.current = false;
       setSavedAt(Date.now());
       // Re-seed the engine select from the refetched trigger row.
       xEngineSeeded.current = false;
@@ -781,7 +793,10 @@ function SetupPage() {
                 step="0.01"
                 placeholder="unlimited"
                 value={dailySpendCeiling}
-                onChange={(e) => setDailySpendCeiling(e.target.value)}
+                onChange={(e) => {
+                  setDailySpendCeiling(e.target.value);
+                  spendCeilingDirty.current = true;
+                }}
               />
             </Field>
           </div>

@@ -3146,6 +3146,26 @@ export class Ledger {
   }
 
   /**
+   * Release a trigger's in-flight claim WITHOUT stamping `last_polled_at`
+   * (issue #481 review finding). Used only when the finder never actually
+   * ran — currently the daily spend ceiling refusal branches in
+   * `registry.ts`. `updateTriggerLastPoll` would treat the refusal as a
+   * completed poll and push `dueAt` a full interval into the future, so a
+   * trigger blocked by the ceiling would sit unpolled long after headroom
+   * (or a new day) opens back up. `last_run_summary` still records the
+   * refusal reason so the dashboard/doctor surface it, same as before.
+   */
+  clearTriggerClaim(input: { name: string; summary: unknown }): void {
+    this.db
+      .prepare(
+        `UPDATE triggers
+         SET last_run_summary = ?, running_started_at = NULL
+         WHERE name = ?`,
+      )
+      .run(JSON.stringify(input.summary), input.name);
+  }
+
+  /**
    * Atomic claim: marks a trigger in-flight only if not already running — the
    * conditional UPDATE closes the TOCTOU race where two fireTriggerNow calls
    * both fire and double-spend. `staleCutoffIso` also lets the claim succeed

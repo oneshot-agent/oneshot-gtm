@@ -560,7 +560,11 @@ function dailySpendCeilingCheck(): CheckResult | null {
     severity: status.ceilingReached ? "warn" : "ok",
     message: status.ceilingReached
       ? spendCeilingReason(status)
-      : `$${status.effectiveUsd.toFixed(2)}/$${status.ceilingUsd.toFixed(2)} spent today (resets at local midnight)`,
+      : // effectiveUsd = spentUsd (posted receipts) + reservedUsd (calls
+        // currently in flight) — the same total the ceiling is compared
+        // against. Labeling it "spent" alone would understate it whenever a
+        // concurrent automated call is holding a reservation.
+        `$${status.effectiveUsd.toFixed(2)}/$${status.ceilingUsd.toFixed(2)} spent or reserved today (resets at local midnight)`,
     ...(status.ceilingReached
       ? { hint: "automated finder runs + drains are halted; manual /queue sends still work" }
       : {}),

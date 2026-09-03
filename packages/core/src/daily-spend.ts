@@ -105,7 +105,14 @@ export function dailySpendStatus(now = new Date()): DailySpendStatus {
 
 /** The named reason string surfaced on trigger cards, in `doctor`, and in drain output. */
 export function spendCeilingReason(status: DailySpendStatus): string {
-  return `daily spend ceiling reached ($${status.spentUsd.toFixed(2)}/$${(status.ceilingUsd ?? 0).toFixed(2)} spent today)`;
+  // effectiveUsd (posted + reserved) is what ceilingReached and the
+  // reservation refusal actually compare against the ceiling — quoting
+  // spentUsd here would understate the number that triggered the halt
+  // whenever another in-flight call is holding a reservation (e.g. ceiling
+  // $10, posted $1, a concurrent run holding a $9.50 reservation: refusing
+  // at effectiveUsd=$10.50 while reporting "$1.00/$10.00 spent" reads as
+  // the ceiling being reached with $9 of headroom still open).
+  return `daily spend ceiling reached ($${status.effectiveUsd.toFixed(2)}/$${(status.ceilingUsd ?? 0).toFixed(2)} spent or reserved today)`;
 }
 
 export type SpendReservationOutcome =

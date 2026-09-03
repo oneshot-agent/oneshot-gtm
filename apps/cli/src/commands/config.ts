@@ -162,7 +162,11 @@ export async function configSpendCeiling(amountArg?: string): Promise<void> {
     return;
   }
 
-  const amount = Number.parseFloat(amountArg);
+  // Number(), not Number.parseFloat(): parseFloat parses a numeric PREFIX
+  // and ignores trailing garbage (e.g. "2usd" -> 2), silently persisting a
+  // ceiling the user didn't type. Number() requires the whole string to be
+  // numeric, so "2usd" -> NaN and falls into the rejection below.
+  const amount = Number(amountArg);
   if (!Number.isFinite(amount) || amount <= 0) {
     throw new Error(`invalid amount '${amountArg}' — pass a positive number of USD, or 'off'`);
   }
