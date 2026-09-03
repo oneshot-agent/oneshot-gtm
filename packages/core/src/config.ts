@@ -161,6 +161,7 @@ export const ENV_ONLY_SECRET_KEYS = [
   "X_ACCESS_TOKEN",
   "X_ACCESS_SECRET",
   "TWITTERAPI_IO_KEY",
+  "SAM_GOV_API_KEY",
 ] as const;
 export type EnvOnlySecretKey = (typeof ENV_ONLY_SECRET_KEYS)[number];
 
