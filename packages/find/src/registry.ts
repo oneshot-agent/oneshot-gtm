@@ -1,8 +1,12 @@
 import {
+  DEFAULT_SPEND_RESERVATION_USD,
+  dailySpendStatus,
   getLedger,
   logEvent,
   safeParseJsonRecord,
+  spendCeilingReason,
   startRun,
+  tryReserveDailySpend,
   type TriggerRow,
 } from "@oneshot-gtm/core";
 import { type CohortEntry, runAcceleratorBatchFinder } from "./accelerator-batch.ts";
@@ -12,6 +16,7 @@ import { type RepoWatch, runGitHubStarsFinder } from "./github-stars.ts";
 import { runGitHubTopicsFinder } from "./github-topics.ts";
 import { runHiringSignalFinder } from "./hiring-signal.ts";
 import { runJobChangeFinder } from "./job-change.ts";
+import { runLocalBusinessFinder } from "./local-business.ts";
 import { runLumaFinder } from "./luma.ts";
 import { runLocalRegistryFinder } from "./local-registry.ts";
 import type { SocrataInspectionPortalConfig, SocrataPortalConfig } from "./_registry-sources.ts";
@@ -69,6 +74,23 @@ export async function runFinderWithProductResearch(
 }
 
 export type Readiness = { ready: true } | { ready: false; reason: string };
+
+/**
+ * Worst-case spend estimate for reserving against the daily ceiling before a
+ * trigger fires. Reads `maxCostUsd` (every finder's SDK/LLM cap) plus, for
+ * x-reposters, `maxSpendPerRun` (its separate X-read meter) — the two are
+ * independent budgets on that one finder, so both must be held. Falls back
+ * to `DEFAULT_SPEND_RESERVATION_USD` for a finder with neither configured
+ * (e.g. `breakup-revive`, which is ledger-only and spends nothing) so a
+ * free finder can't starve the day's reservation slot for a paid one.
+ */
+export function estimatedTriggerSpendUsd(config: Record<string, unknown>): number {
+  const maxCostUsd = typeof config["maxCostUsd"] === "number" ? config["maxCostUsd"] : 0;
+  const maxSpendPerRun =
+    typeof config["maxSpendPerRun"] === "number" ? config["maxSpendPerRun"] : 0;
+  const total = maxCostUsd + maxSpendPerRun;
+  return total > 0 ? total : DEFAULT_SPEND_RESERVATION_USD;
+}
 
 /** Evaluate a spec's readiness fn (defaulting to ready when absent). */
 export function checkReadiness(spec: TriggerSpec, config: Record<string, unknown>): Readiness {
@@ -664,6 +686,59 @@ export const TRIGGERS: TriggerSpec[] = [
     },
   },
   {
+    name: "local-business",
+    defaultIntervalMs: 24 * ONE_HOUR,
+    enabledByDefault: false,
+    defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
+      jobTitles: [] as string[],
+      industries: [] as string[],
+      locations: [] as string[],
+      employeeRange: "",
+      keywords: [] as string[],
+      yourEdge: "",
+      limit: 25,
+      maxCostUsd: 5,
+    },
+    configBrief:
+      "Reaches businesses with no GitHub repo, no Show HN post, no funding round and no accelerator batch — the local-business/main-street population the other ten finders can't touch. One `peopleSearch` call ($0.01 flat) returns up to 500 people matching `jobTitles` × `industries` × `locations` × `employeeRange`, many already carrying a `best_work_email` — those skip findEmail/verifyEmail entirely and go straight to the person-level ICP gate, so a run where every result has an email costs about one search call, not one per candidate. Config: `jobTitles` (roles that make the buying decision — e.g. 'Owner', 'Office Manager', 'Practice Manager'), `industries` (e.g. 'Dental Practices', 'HVAC Contractors', 'Independent Restaurants'), `locations` (metro/city/state filters), `employeeRange` (company-size band, e.g. '1-10', '11-50'), `keywords` (free-text refinement), `yourEdge` (the free-pilot pitch — what you set up for them free and what it saves them, REQUIRED, fed to the `free-pilot` play), `limit`, `maxCostUsd`. When `industries` is set and `jobTitles` is empty, the search is business-shaped: a `companySearch` pass resolves matching company domains first, then `peopleSearch` is scoped to those domains instead of searching on industry directly. STRATEGIST DUTY: propose `jobTitles` AND `industries` proactively from the founder's ICP — a pre-PMF founder selling to dental practices or HVAC companies shouldn't have to enumerate either by hand.",
+    readiness: (cfg) => {
+      const jobTitles = Array.isArray(cfg["jobTitles"])
+        ? (cfg["jobTitles"] as unknown[]).filter((t) => typeof t === "string" && t.trim())
+        : [];
+      const industries = Array.isArray(cfg["industries"])
+        ? (cfg["industries"] as unknown[]).filter((t) => typeof t === "string" && t.trim())
+        : [];
+      if (jobTitles.length === 0 && industries.length === 0) {
+        return { ready: false, reason: "set `jobTitles` or `industries` (at least one)" };
+      }
+      const edge = cfg["yourEdge"];
+      if (typeof edge !== "string" || edge.trim().length === 0) {
+        return { ready: false, reason: "set `yourEdge` — your one-line free-pilot pitch" };
+      }
+      return { ready: true };
+    },
+    run: (cfg) => {
+      const strArray = (key: string): string[] =>
+        Array.isArray(cfg[key])
+          ? (cfg[key] as unknown[]).filter((t): t is string => typeof t === "string")
+          : [];
+      return runLocalBusinessFinder({
+        dryRun: false,
+        jobTitles: strArray("jobTitles"),
+        industries: strArray("industries"),
+        locations: strArray("locations"),
+        keywords: strArray("keywords"),
+        ...(typeof cfg["employeeRange"] === "string" && cfg["employeeRange"].trim().length > 0
+          ? { employeeRange: (cfg["employeeRange"] as string).trim() }
+          : {}),
+        yourEdge: typeof cfg["yourEdge"] === "string" ? cfg["yourEdge"] : "",
+        limit: (cfg["limit"] as number) ?? 25,
+        maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
+      });
+    },
+  },
+  {
     name: "x-reposters",
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
@@ -938,6 +1013,16 @@ export function fireTriggerNow(name: string): void {
   if (!readiness.ready) {
     throw new Error(`not ready: ${readiness.reason}`);
   }
+  // Daily spend ceiling gate (issue #481): a manual "run now" click is still
+  // an AUTOMATED paid call (as opposed to a human-reviewed /queue send), so it
+  // is bound by the same install-wide ceiling as scheduled runs. This is an
+  // early read-only check for a fast 409 — runTriggerNow re-checks
+  // atomically via tryReserveDailySpend right before firing, which is what
+  // actually closes the race between two concurrent automated calls.
+  const status = dailySpendStatus();
+  if (status.ceilingReached) {
+    throw new Error(`not ready: ${spendCeilingReason(status)}`);
+  }
   // Bootstrap the row if it doesn't exist yet — markTriggerRunning is an
   // UPDATE that no-ops on a missing row, so we'd silently lose state.
   if (!stored) {
@@ -1017,6 +1102,26 @@ export async function runTriggerNow(
       return { name, fired: false, error: message, nextDueInMs: intervalMs };
     }
   }
+  // Install-wide daily spend ceiling (issue #481): reserve this run's
+  // worst-case cost against the day's budget BEFORE firing the finder. A
+  // refusal here still clears the claim taken above (updateTriggerLastPoll
+  // resets running_started_at), so a later run-now click isn't stuck behind
+  // a phantom in-flight marker.
+  const reservation = tryReserveDailySpend(estimatedTriggerSpendUsd(config));
+  if (!reservation.granted) {
+    // clearTriggerClaim, not updateTriggerLastPoll: the finder never ran, so
+    // stamping last_polled_at would push this trigger's next-due a full
+    // interval out even though it was refused with $0 spent — the ceiling
+    // resetting (or headroom opening from a released reservation) wouldn't
+    // un-stick it until the next scheduled poll, which could be hours away
+    // (issue #481 review finding).
+    ledger.clearTriggerClaim({
+      name,
+      summary: { error: reservation.reason, at: new Date().toISOString() },
+    });
+    logEvent("trigger.run.skipped", { name, source: "ad_hoc", reason: reservation.reason });
+    return { name, fired: false, error: reservation.reason, nextDueInMs: intervalMs };
+  }
   const startedAt = Date.now();
   logEvent("trigger.run.start", { name, source: "ad_hoc" });
   try {
@@ -1051,6 +1156,8 @@ export async function runTriggerNow(
       "error",
     );
     return { name, fired: true, error: message, nextDueInMs: intervalMs };
+  } finally {
+    reservation.release();
   }
 }
 
@@ -1147,6 +1254,34 @@ export async function runDueTriggers(
       continue;
     }
 
+    // Install-wide daily spend ceiling (issue #481): reserve this run's
+    // worst-case cost before firing. Refused calls clear the claim taken
+    // above (via updateTriggerLastPoll) so the trigger isn't stuck
+    // "running" for the rest of the day.
+    const reservation = tryReserveDailySpend(estimatedTriggerSpendUsd(config));
+    if (!reservation.granted) {
+      // clearTriggerClaim, not updateTriggerLastPoll (issue #481 review
+      // finding) — see fireTriggerNow's matching comment: stamping
+      // last_polled_at on a refusal would delay the NEXT scheduled attempt
+      // by a full interval even though this one never actually ran.
+      ledger.clearTriggerClaim({
+        name: spec.name,
+        summary: { error: reservation.reason, at: new Date().toISOString() },
+      });
+      outcomes.push({
+        name: spec.name,
+        fired: false,
+        nextDueInMs: intervalMs,
+        skippedReason: reservation.reason,
+      });
+      logEvent("trigger.run.skipped", {
+        name: spec.name,
+        source: "watch",
+        reason: reservation.reason,
+      });
+      continue;
+    }
+
     const startedAt = Date.now();
     logEvent("trigger.run.start", { name: spec.name, source: "watch" });
     try {
@@ -1195,6 +1330,8 @@ export async function runDueTriggers(
         duration_ms: durationMs,
         nextDueInMs: intervalMs,
       });
+    } finally {
+      reservation.release();
     }
   }
   logEvent("watch.tick.done", { fired: outcomes.filter((o) => o.fired).length });

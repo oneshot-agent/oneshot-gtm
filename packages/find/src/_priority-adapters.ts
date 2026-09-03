@@ -219,24 +219,6 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
     ...contact(p),
   }),
 
-  "free-pilot": (p) => ({
-    title: str(p["title"]),
-    companyKnown: str(p["company"]) !== null,
-    accountSignals: [
-      {
-        kind: "registry-match",
-        strength: 55,
-        reason: `${str(p["sourceLabel"]) ?? "public registry"} match`,
-      },
-    ],
-    intentSignals: [
-      { kind: "free-pilot-fit", strength: 50, reason: "main-street pilot candidate" },
-    ],
-    // See new-business above — same registry payload shape, same missing
-    // freshness signal.
-    eventAt: str(p["matchedDateIso"]),
-    ...contact(p),
-  }),
 
   // v2, label-mined (65 approved / 69 rejected individually-judged rows):
   // exec titles 35% approval vs 55% title-missing → title prior inverted;
@@ -319,6 +301,24 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
       },
     ],
     ageDays: num(p["daysCold"]),
+    ...contact(p),
+  }),
+
+  // local-business (find:local-business), routed to the free-pilot play.
+  // Reuses the exec-title inversion mined for luma/repo-interest: an
+  // owner-operator main-street buyer is the opposite population of a startup
+  // founder, and title data here is thin/absent for most rows anyway.
+  "free-pilot": (p) => ({
+    personSignals: minedTitleSignals(str(p["title"])),
+    companyKnown: str(p["company"]) !== null,
+    intentSignals: [
+      {
+        kind: "business-match",
+        strength: 55,
+        reason: `matched ${str(p["businessType"]) ?? "local business"} search`,
+      },
+    ],
+    hasEvidenceText: str(p["businessType"]) !== null,
     ...contact(p),
   }),
 

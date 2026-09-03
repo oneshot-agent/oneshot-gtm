@@ -25,11 +25,11 @@ const SCORED_PLAYS = [
   "competitor-switch",
   "repo-interest",
   "breakup-revive",
+  "free-pilot",
   "x-repost-intro",
   "x-amplify",
   "x-amplify-dm",
   "new-business",
-  "free-pilot",
 ] as const;
 
 /** Manual/legacy producers that intentionally stay unscored (null path). */
@@ -139,6 +139,14 @@ const FIXTURES: Record<(typeof SCORED_PLAYS)[number], Record<string, unknown>> =
     daysCold: 14,
     lastEventAt: "2026-08-18T00:00:00Z",
   },
+  "free-pilot": {
+    name: "Dana",
+    email: "dana@riverahvac.com",
+    company: "Rivera HVAC",
+    businessType: "HVAC contractor",
+    yourEdge: "free scheduling setup",
+    title: "Owner",
+  },
   "x-repost-intro": {
     name: "Ken",
     email: "ken@acme.dev",
@@ -190,15 +198,6 @@ const FIXTURES: Record<(typeof SCORED_PLAYS)[number], Record<string, unknown>> =
     matchedDateIso: "2026-08-25T00:00:00Z",
     yourEdge: "we set it up free, you keep it if it works",
     title: "Owner",
-  },
-  "free-pilot": {
-    name: "Sam's Plumbing",
-    email: "sam@samsplumbing.com",
-    company: "Sam's Plumbing",
-    source: "socrata-license",
-    sourceLabel: "NYC business licenses",
-    matchedDateIso: "2026-06-01T00:00:00Z",
-    yourEdge: "we set it up free, you keep it if it works",
   },
 };
 
@@ -407,31 +406,11 @@ describe("new-business / free-pilot — matchedDateIso feeds timing freshness", 
     expect(old.components.timingFreshness).toBe(25);
   });
 
-  it("free-pilot: a fresh matchedDateIso scores timingFreshness high, not neutral", () => {
-    const fresh = safeScorePriority(
-      "free-pilot",
-      {
-        ...FIXTURES["free-pilot"],
-        matchedDateIso: new Date(NOW.getTime() - 86_400_000).toISOString(),
-      },
-      NOW,
-    )!;
-    expect(fresh.components.timingFreshness).toBe(90);
-  });
-
-  it("free-pilot: a missing matchedDateIso still degrades to neutral, no throw", () => {
-    const missing = safeScorePriority(
-      "free-pilot",
-      { ...FIXTURES["free-pilot"], matchedDateIso: undefined },
-      NOW,
-    )!;
-    expect(missing.components.timingFreshness).toBe(50);
-  });
 });
 
-describe("free-pilot — sourceLabel is registry metadata, not evidence text", () => {
+describe("new-business — sourceLabel is registry metadata, not evidence text", () => {
   it("does not overstate signalConfidence off sourceLabel alone", () => {
-    const p = safeScorePriority("free-pilot", FIXTURES["free-pilot"], NOW)!;
+    const p = safeScorePriority("new-business", FIXTURES["new-business"], NOW)!;
     // sourceLabel is always present on a real registry payload, so this
     // pins the pre-fix regression: hasEvidenceText must NOT be derived from
     // it (finding PRRT_kwDOSKzrBs6exPH9). Neutral == no evidenceUrlCount and

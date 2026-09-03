@@ -200,6 +200,22 @@ export async function runInit(): Promise<void> {
   );
 }
 
+/**
+ * Merge a wizard answer for an optional text field onto the existing config
+ * value. An omitted key (the field wasn't part of this wizard run) falls
+ * back to whatever was already stored. An explicitly supplied empty string
+ * (the user cleared the field) normalizes to null rather than persisting
+ * "" — downstream fallbacks like `cfg.icpOneLiner ?? "(not set)"` only work
+ * against null, not an empty string.
+ */
+function normalizeOptionalAnswer(
+  answer: string | undefined,
+  existing: string | null,
+): string | null {
+  if (answer === undefined) return existing ?? null;
+  return answer === "" ? null : answer;
+}
+
 export function mergeInitConfig(
   cfg: OneShotConfig,
   answers: Record<string, unknown>,
@@ -211,20 +227,43 @@ export function mergeInitConfig(
     llmProvider: provider,
     llmModel: (answers["llmModel"] as string | undefined) ?? cfg.llmModel,
     telemetryEnabled: (answers["telemetryEnabled"] as boolean | undefined) ?? cfg.telemetryEnabled,
-    founderName: (answers["founderName"] as string | undefined) ?? cfg.founderName ?? null,
-    founderEmail: (answers["founderEmail"] as string | undefined) ?? cfg.founderEmail ?? null,
-    productOneLiner:
-      (answers["productOneLiner"] as string | undefined) ?? cfg.productOneLiner ?? null,
-    productDomain: (answers["productDomain"] as string | undefined) ?? cfg.productDomain ?? null,
-    sendingDomain: (answers["sendingDomain"] as string | undefined) ?? cfg.sendingDomain ?? null,
-    icpOneLiner: (answers["icpOneLiner"] as string | undefined) ?? cfg.icpOneLiner ?? null,
-    founderCredentials:
-      (answers["founderCredentials"] as string | undefined) ?? cfg.founderCredentials ?? null,
-    productPortfolio:
-      (answers["productPortfolio"] as string | undefined) ?? cfg.productPortfolio ?? null,
-    partners: (answers["partners"] as string | undefined) ?? cfg.partners ?? null,
-    founderAdmission:
-      (answers["founderAdmission"] as string | undefined) ?? cfg.founderAdmission ?? null,
+    founderName: normalizeOptionalAnswer(
+      answers["founderName"] as string | undefined,
+      cfg.founderName,
+    ),
+    founderEmail: normalizeOptionalAnswer(
+      answers["founderEmail"] as string | undefined,
+      cfg.founderEmail,
+    ),
+    productOneLiner: normalizeOptionalAnswer(
+      answers["productOneLiner"] as string | undefined,
+      cfg.productOneLiner,
+    ),
+    productDomain: normalizeOptionalAnswer(
+      answers["productDomain"] as string | undefined,
+      cfg.productDomain,
+    ),
+    sendingDomain: normalizeOptionalAnswer(
+      answers["sendingDomain"] as string | undefined,
+      cfg.sendingDomain,
+    ),
+    icpOneLiner: normalizeOptionalAnswer(
+      answers["icpOneLiner"] as string | undefined,
+      cfg.icpOneLiner,
+    ),
+    founderCredentials: normalizeOptionalAnswer(
+      answers["founderCredentials"] as string | undefined,
+      cfg.founderCredentials,
+    ),
+    productPortfolio: normalizeOptionalAnswer(
+      answers["productPortfolio"] as string | undefined,
+      cfg.productPortfolio,
+    ),
+    partners: normalizeOptionalAnswer(answers["partners"] as string | undefined, cfg.partners),
+    founderAdmission: normalizeOptionalAnswer(
+      answers["founderAdmission"] as string | undefined,
+      cfg.founderAdmission,
+    ),
   };
 }
 

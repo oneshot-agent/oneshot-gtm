@@ -20,6 +20,8 @@ import type {
   LastDraft,
   OutcomeByPlay,
   OutcomeRequest,
+  PackApplyResult,
+  PackView,
   PlayDescriptor,
   WorkspaceInfo,
   DomainActionResult,
@@ -199,6 +201,7 @@ export const api = {
         founderAdmission: string | null;
         productBrief: string | null;
         mobileSignature: boolean;
+        dailySpendCeilingUsd: number | null;
         llmProvider: "openrouter" | "openai" | "anthropic";
         llmModel: string;
         telemetryEnabled: boolean;
@@ -261,4 +264,7 @@ export const api = {
     postJson<{ ok: boolean }>(`/triggers/${encodeURIComponent(name)}/config`, { config }),
   runTrigger: (name: string) =>
     postJson<RunTriggerResult>(`/triggers/${encodeURIComponent(name)}/run`, {}),
+  packs: () => getJson<{ packs: PackView[] }>("/packs"),
+  applyPack: (id: string) =>
+    postJson<PackApplyResult>(`/packs/${encodeURIComponent(id)}/apply`, {}),
 };

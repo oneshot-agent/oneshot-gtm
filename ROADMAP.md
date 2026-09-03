@@ -38,7 +38,7 @@ The verify gate has holes an agent can close without touching product behaviour.
 
 ## Reliability
 
-- [ ] **Install-wide daily spend ceiling** · M — spend caps are per trigger run (`maxCostUsd`, `maxSpendPerRun` in `packages/find/src/registry.ts`). Eleven finders on their own intervals, plus drains and cadence steps, have no shared daily bound and no kill switch.
+- [x] **Install-wide daily spend ceiling** · M — spend caps are per trigger run (`maxCostUsd`, `maxSpendPerRun` in `packages/find/src/registry.ts`). Eleven finders on their own intervals, plus drains and cadence steps, have no shared daily bound and no kill switch.
       _Done when:_ a configurable daily USD ceiling is checked before any paid call; crossing it halts finders and auto-drains with a named reason surfaced on the trigger cards and in `doctor`; manual sends from `/queue` still go through; the counter resets at local midnight and is covered by tests around the boundary.
       _Done when:_ `--once` exits 1 if any due trigger errored, 0 otherwise; the daemon loop keeps its current behaviour; both covered.
 
@@ -65,6 +65,7 @@ The ICP filter currently judges each candidate cold — `icpFilter` in `packages
 
 - [ ] **Split `packages/core/src/ledger.ts`** · L — 2967 lines covering receipts, prospects, queue, cadence, inbox, bounces, canaries and caches behind one class, with `migrate()` at 400 lines of inline DDL.
       _Done when:_ the file is split by domain with the exported class surface and every call site unchanged, `migrate()` still produces a byte-identical schema for a fresh install, and `packages/core/__tests__/ledger.test.ts` passes untouched.
+      _Progress (#452):_ fresh-install schema construction + inline migrations extracted to `packages/core/src/ledger-schema.ts`; `Ledger.migrate()` now delegates to it. Byte-identical fresh-install schema verified (sqlite_master + schema_version snapshot in `ledger.test.ts`); domain methods (receipts, prospects, queue, cadence, inbox, bounces, canaries, caches) remain in `ledger.ts` for a follow-up slice.
 
 ## Launch assets
 

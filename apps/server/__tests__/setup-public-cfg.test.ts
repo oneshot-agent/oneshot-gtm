@@ -34,6 +34,7 @@ const FULL_CFG: OneShotConfig = {
   mobileSignature: false,
   timezone: "Europe/Vienna",
   clientId: "11111111-2222-3333-4444-555555555555",
+  dailySpendCeilingUsd: null,
 };
 
 describe("publicCfg — privacy boundary", () => {
@@ -78,5 +79,64 @@ describe("setup config writer", () => {
     expect(next.queueReviewOrder).toBe("ranked");
     expect(next.timezone).toBe("Europe/Vienna");
     expect(next.cadenceOverrides).toEqual({ "show-hn": [2, 5] });
+  });
+
+  // Round-1 review finding: the CLI path (configSpendCeiling) validates the
+  // ceiling must be a finite positive number, but this API path accepted
+  // body.dailySpendCeilingUsd verbatim. A ceiling of 0 makes
+  // effectiveUsd (0) >= ceilingUsd (0) true immediately, silently halting
+  // every automated finder/drain install-wide.
+  describe("dailySpendCeilingUsd validation", () => {
+    it("undefined leaves the existing ceiling untouched", () => {
+      const next = mergeSetupConfig(
+        { ...FULL_CFG, dailySpendCeilingUsd: 25 },
+        {},
+        FULL_CFG.emailIdentities,
+      );
+      expect(next.dailySpendCeilingUsd).toBe(25);
+    });
+
+    it("null clears the ceiling back to unlimited", () => {
+      const next = mergeSetupConfig(
+        { ...FULL_CFG, dailySpendCeilingUsd: 25 },
+        { dailySpendCeilingUsd: null },
+        FULL_CFG.emailIdentities,
+      );
+      expect(next.dailySpendCeilingUsd).toBeNull();
+    });
+
+    it("accepts a positive finite number", () => {
+      const next = mergeSetupConfig(
+        FULL_CFG,
+        { dailySpendCeilingUsd: 12.5 },
+        FULL_CFG.emailIdentities,
+      );
+      expect(next.dailySpendCeilingUsd).toBe(12.5);
+    });
+
+    it("rejects 0 — would halt every automated path immediately", () => {
+      expect(() =>
+        mergeSetupConfig(FULL_CFG, { dailySpendCeilingUsd: 0 }, FULL_CFG.emailIdentities),
+      ).toThrow(/invalid dailySpendCeilingUsd/);
+    });
+
+    it("rejects a negative number", () => {
+      expect(() =>
+        mergeSetupConfig(FULL_CFG, { dailySpendCeilingUsd: -5 }, FULL_CFG.emailIdentities),
+      ).toThrow(/invalid dailySpendCeilingUsd/);
+    });
+
+    it("rejects NaN and Infinity (a raw JSON body can smuggle these via JSON.parse edge cases)", () => {
+      expect(() =>
+        mergeSetupConfig(FULL_CFG, { dailySpendCeilingUsd: Number.NaN }, FULL_CFG.emailIdentities),
+      ).toThrow(/invalid dailySpendCeilingUsd/);
+      expect(() =>
+        mergeSetupConfig(
+          FULL_CFG,
+          { dailySpendCeilingUsd: Number.POSITIVE_INFINITY },
+          FULL_CFG.emailIdentities,
+        ),
+      ).toThrow(/invalid dailySpendCeilingUsd/);
+    });
   });
 });

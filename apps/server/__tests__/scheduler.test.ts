@@ -4,11 +4,17 @@ import type { TriggerRunOutcome } from "@oneshot-gtm/find";
 let nextOutcomes: TriggerRunOutcome[] = [];
 let nextSleepValue = 60_000;
 let throwOnNextRun: Error | null = null;
+// When set, runDueTriggers awaits this before resolving/throwing, so a test
+// can suspend a tick mid-flight and control exactly when it resumes.
+let runDueTriggersGate: Promise<void> | null = null;
 const calls = { runDueTriggers: 0, nextSleepMs: 0, eventKinds: [] as string[] };
 
 vi.mock("@oneshot-gtm/find", () => ({
   runDueTriggers: async () => {
     calls.runDueTriggers++;
+    if (runDueTriggersGate) {
+      await runDueTriggersGate;
+    }
     if (throwOnNextRun) {
       const err = throwOnNextRun;
       throwOnNextRun = null;
@@ -44,6 +50,7 @@ beforeEach(() => {
   nextOutcomes = [];
   nextSleepValue = 60_000;
   throwOnNextRun = null;
+  runDueTriggersGate = null;
   demoModeValue = false;
 });
 
@@ -125,42 +132,32 @@ describe("startScheduler", () => {
   });
 
   it("stop() called while runDueTriggers is in flight does NOT reschedule", async () => {
-    // Simulate a slow finder by returning a promise that resolves after a
-    // controlled delay. The scheduler awaits it; we stop() during the await.
-    let resolveSlow: (() => void) | null = null;
-    const slowPromise = new Promise<void>((res) => {
-      resolveSlow = res;
+    // Suspend runDueTriggers on a controllable gate so the tick genuinely
+    // stays in flight (awaiting a real, unresolved promise) while we call
+    // stop() — this is what "in flight" has to mean for the test to prove
+    // anything about in-flight cancellation.
+    let resolveGate: (() => void) | null = null;
+    runDueTriggersGate = new Promise<void>((res) => {
+      resolveGate = res;
     });
     nextOutcomes = [];
     nextSleepValue = 1_000;
 
-    // Hijack the mock for one tick to insert the slow promise.
-    let inFlight = false;
-    const original = (await import("@oneshot-gtm/find")).runDueTriggers;
-    void original; // not used; we already mocked it
-
-    // The simplest trick: make our existing mock await a controllable promise.
-    // We do this by piggy-backing on `throwOnNextRun` mechanics — instead,
-    // wrap the mock's body to wait on slowPromise the first time it's called.
     const handle = startScheduler();
-    // Replace the mock's behavior on the fly is brittle, so simulate by:
-    // 1) advance to first tick start
-    // 2) before it completes, advance time to "schedule the await suspend"
-    // The vi.useFakeTimers makes Promise.resolve still microtask, so the
-    // simplest approach: have the tick await a real (non-faked) microtask.
-    void inFlight;
-    void slowPromise;
-    void resolveSlow;
-
-    // Direct test: stop AFTER a tick completes but BEFORE the next setTimeout
-    // fires. The cancelled check at the top of tick (the `if (cancelled) return`
-    // before runDueTriggers) handles the "fires anyway" case.
-    await vi.advanceTimersByTimeAsync(5_000); // tick 1 done
-    expect(calls.runDueTriggers).toBe(1);
-    handle.stop();
-    // Even if the timer was already scheduled by tick 1's success path,
-    // the next tick's first line `if (cancelled) return` aborts it.
+    // Fire the first tick; runDueTriggers is called and suspends on the gate.
     await vi.advanceTimersByTimeAsync(5_000);
+    expect(calls.runDueTriggers).toBe(1);
+
+    // Stop while runDueTriggers has genuinely not resolved yet.
+    handle.stop();
+    // Let the in-flight tick resume and run to completion (post-processing,
+    // then the `if (cancelled) return` guard before scheduling the next tick).
+    resolveGate!();
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The tick must not have rescheduled itself: advancing well past
+    // nextSleepValue produces no further calls.
+    await vi.advanceTimersByTimeAsync(60_000);
     expect(calls.runDueTriggers).toBe(1);
   });
 

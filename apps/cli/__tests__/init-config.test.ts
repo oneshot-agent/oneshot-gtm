@@ -25,6 +25,7 @@ const current = {
   mobileSignature: true,
   timezone: "Europe/Vienna",
   clientId: "client-1",
+  dailySpendCeilingUsd: null,
 } satisfies OneShotConfig;
 
 describe("init config writer", () => {
@@ -41,5 +42,22 @@ describe("init config writer", () => {
       timezone: "Europe/Vienna",
       clientId: "client-1",
     });
+  });
+
+  it("normalizes an explicitly cleared optional field to null, not an empty string", () => {
+    const withIcp = { ...current, icpOneLiner: "Series A infra founders" } satisfies OneShotConfig;
+
+    const next = mergeInitConfig(withIcp, { icpOneLiner: "" });
+
+    expect(next.icpOneLiner).toBeNull();
+    expect(next.icpOneLiner).not.toBe("");
+  });
+
+  it("leaves an optional field untouched when the wizard answer key is omitted entirely", () => {
+    const withIcp = { ...current, icpOneLiner: "Series A infra founders" } satisfies OneShotConfig;
+
+    const next = mergeInitConfig(withIcp, { founderName: "New Name" });
+
+    expect(next.icpOneLiner).toBe("Series A infra founders");
   });
 });

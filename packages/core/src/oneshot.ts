@@ -1,6 +1,7 @@
 import {
   OneShot,
   type BrowserResult,
+  type CompanySearchResult,
   type DeepResearchPersonResult,
   type DomainPoolEntry,
   type DomainPoolStatusResult,
@@ -10,6 +11,7 @@ import {
   type FindEmailResult,
   type InboxEmail,
   type InboxListResult,
+  type PeopleSearchResult,
   type ResearchResult,
   type SmsSendResult,
   type VerifyEmailResult,
@@ -45,8 +47,14 @@ import type { EmailIdentity } from "./types.ts";
 /** Re-exported so callers don't reach into the SDK for the domain-pool shape. */
 export type { DomainPoolEntry, DomainPoolStatusResult } from "@oneshot-agent/sdk";
 
-/** Re-exported so callers don't reach into the SDK for the company-enrich result shape. */
-export type { CompanyResult, EnrichCompanyResult } from "@oneshot-agent/sdk";
+/** Re-exported so callers don't reach into the SDK for the prospecting result shapes. */
+export type {
+  CompanyResult,
+  CompanySearchResult,
+  EnrichCompanyResult,
+  PeopleSearchResult,
+  PersonResult,
+} from "@oneshot-agent/sdk";
 
 export interface SendEmailInput {
   to: string;
@@ -738,6 +746,98 @@ export async function verifyEmail(input: VerifyEmailInput, ctx: CallContext) {
   return { result, receiptId };
 }
 
+export interface PeopleSearchInput {
+  jobTitles?: string[];
+  keywords?: string[];
+  companies?: string[];
+  companyDomains?: string[];
+  location?: string[];
+  skills?: string[];
+  seniority?: string[];
+  industry?: string[];
+  companySize?: string;
+  /** SDK default is 100; server caps at 500. */
+  limit?: number;
+}
+
+/**
+ * B2B-database-backed person search — $0.01 flat per call, up to 500 results
+ * (server cap; SDK default 100). Unlike `findEmail`/`enrichProfile`, this
+ * doesn't resolve ONE known candidate: it discovers a whole slate up front,
+ * each already carrying `best_work_email`/`phone`/`title`/`company_domain`
+ * where the database has them — a finder can qualify against this list
+ * directly instead of paying per-candidate through
+ * `resolveVerifyEnrichQualify`.
+ */
+export async function peopleSearch(input: PeopleSearchInput, ctx: CallContext) {
+  const agent = await getAgent();
+  const opts: Parameters<OneShot["peopleSearch"]>[0] = {
+    ...buildAuditOpts(ctx, "research.people"),
+  };
+  if (input.jobTitles) opts.job_titles = input.jobTitles;
+  if (input.keywords) opts.keywords = input.keywords;
+  if (input.companies) opts.companies = input.companies;
+  if (input.companyDomains) opts.company_domains = input.companyDomains;
+  if (input.location) opts.location = input.location;
+  if (input.skills) opts.skills = input.skills;
+  if (input.seniority) opts.seniority = input.seniority;
+  if (input.industry) opts.industry = input.industry;
+  if (input.companySize) opts.company_size = input.companySize;
+  if (input.limit) opts.limit = input.limit;
+
+  const result: PeopleSearchResult = await agent.peopleSearch(opts);
+  const receiptId = recordCallReceipt({
+    ctx,
+    callType: "research.people",
+    signedReceipt: result,
+    costUsd: result.cost,
+    oneshotRequestId: result.request_id,
+  });
+  return { result, receiptId };
+}
+
+export interface CompanySearchInput {
+  name?: string;
+  domain?: string;
+  industry?: string[];
+  location?: string[];
+  size?: string;
+  minEmployeeCount?: number;
+  maxEmployeeCount?: number;
+  fundingStage?: string;
+  tags?: string[];
+  /** SDK/server default cap is 100. */
+  limit?: number;
+}
+
+/** Company-database search — $0.01 flat per call, up to 100 results. All filters optional (an empty call is valid per the SDK signature). */
+export async function companySearch(input: CompanySearchInput, ctx: CallContext) {
+  const agent = await getAgent();
+  const opts: Parameters<OneShot["companySearch"]>[0] = {
+    ...buildAuditOpts(ctx, "research.company"),
+  };
+  if (input.name) opts.name = input.name;
+  if (input.domain) opts.domain = input.domain;
+  if (input.industry) opts.industry = input.industry;
+  if (input.location) opts.location = input.location;
+  if (input.size) opts.size = input.size;
+  if (input.minEmployeeCount !== undefined) opts.min_employee_count = input.minEmployeeCount;
+  if (input.maxEmployeeCount !== undefined) opts.max_employee_count = input.maxEmployeeCount;
+  if (input.fundingStage) opts.funding_stage = input.fundingStage;
+  if (input.tags) opts.tags = input.tags;
+  if (input.limit) opts.limit = input.limit;
+
+  const result: CompanySearchResult = await agent.companySearch(opts);
+  const receiptId = recordCallReceipt({
+    ctx,
+    callType: "research.company",
+    signedReceipt: result,
+    costUsd: result.cost,
+    oneshotRequestId: result.request_id,
+  });
+  return { result, receiptId };
+}
+
 export interface EnrichCompanyInput {
   domain?: string;
   name?: string;
@@ -745,12 +845,7 @@ export interface EnrichCompanyInput {
   ticker?: string;
 }
 
-/**
- * Company enrichment from a domain, name, LinkedIn URL or stock ticker —
- * $0.005 per call. Used by `local-registry` (issue #459) to resolve a domain
- * for open-registry records that carry a business name/address but no email,
- * before falling through to the normal `resolveVerifyEnrichQualify` spine.
- */
+/** Company enrichment from a domain, name, LinkedIn URL or stock ticker — $0.005 per call. */
 export async function enrichCompany(input: EnrichCompanyInput, ctx: CallContext) {
   const agent = await getAgent();
   const opts: Parameters<OneShot["enrichCompany"]>[0] = {

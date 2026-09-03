@@ -20,6 +20,12 @@ const EXPECTED = [
   "x-repost-intro",
   "x-amplify",
   "x-amplify-dm",
+  "discovery-interview",
+  "free-pilot",
+  "sources-sought",
+  "civic-pilot",
+  "design-partner-loi",
+  "new-business",
 ];
 
 describe("play registry", () => {

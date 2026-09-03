@@ -82,6 +82,38 @@ export const xAmplifyMetadata = (t: object): Record<string, unknown> => ({
   launchDate: str(t, "launchDate"),
 });
 
+export const discoveryInterviewMetadata = (t: object): Record<string, unknown> => ({
+  businessType: str(t, "businessType"),
+  topic: str(t, "topic"),
+});
+
+export const freePilotMetadata = (t: object): Record<string, unknown> => ({
+  businessType: str(t, "businessType"),
+});
+
+export const sourcesSoughtMetadata = (t: object): Record<string, unknown> => ({
+  agency: str(t, "agency"),
+  noticeNumber: str(t, "noticeNumber"),
+  noticeType: str(t, "noticeType"),
+});
+
+export const civicPilotMetadata = (t: object): Record<string, unknown> => ({
+  city: str(t, "city"),
+  agendaItemTitle: str(t, "agendaItemTitle"),
+  meetingDate: str(t, "meetingDate"),
+});
+
+export const designPartnerLoiMetadata = (t: object): Record<string, unknown> => ({
+  buyerType: str(t, "buyerType"),
+  company: str(t, "company"),
+});
+
+export const newBusinessMetadata = (t: object): Record<string, unknown> => ({
+  businessType: str(t, "businessType"),
+  licenseType: str(t, "licenseType"),
+  issuedAgo: str(t, "issuedAgo"),
+});
+
 const REGISTRY: Record<string, (t: object) => Record<string, unknown>> = {
   "repo-interest": repoInterestMetadata,
   "luma-events": lumaEventsMetadata,
@@ -96,6 +128,12 @@ const REGISTRY: Record<string, (t: object) => Record<string, unknown>> = {
   "x-repost-intro": xRepostIntroMetadata,
   "x-amplify": xAmplifyMetadata,
   "x-amplify-dm": xAmplifyMetadata,
+  "discovery-interview": discoveryInterviewMetadata,
+  "free-pilot": freePilotMetadata,
+  "sources-sought": sourcesSoughtMetadata,
+  "civic-pilot": civicPilotMetadata,
+  "design-partner-loi": designPartnerLoiMetadata,
+  "new-business": newBusinessMetadata,
 };
 
 /**

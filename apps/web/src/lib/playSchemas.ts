@@ -27,6 +27,23 @@ export interface PlaySchema {
   extras?: FieldSpec[];
 }
 
+/**
+ * Required fields left blank on a target row, by label — used to block
+ * dispatch before `/api/run` instead of relying on native `required`
+ * validation, which never fires here: /run's rows render outside a `<form>`
+ * (submit is a plain button onClick, not a form submit event), so the
+ * `required` attribute on each `<Input>`/`<Textarea>` is decorative only.
+ * `submit()` strips blank fields before POSTing, so an unenforced required
+ * field reaches the play as `undefined` — e.g. sources-sought dispatching
+ * with a blank `agency` or `yourEdge` produces a malformed institutional
+ * outreach email.
+ */
+export function missingRequiredFields(schema: PlaySchema, row: Record<string, string>): string[] {
+  return schema.fields
+    .filter((f) => f.required && (row[f.key] ?? "").trim().length === 0)
+    .map((f) => f.label);
+}
+
 export const PLAY_SCHEMAS: Record<string, PlaySchema> = {
   "show-hn": {
     description:
@@ -406,6 +423,241 @@ export const PLAY_SCHEMAS: Record<string, PlaySchema> = {
       eventDate: "",
       eventCity: "",
       eventUrl: "",
+      yourEdge: "",
+      linkedinUrl: "",
+    },
+  },
+  "sources-sought": {
+    description:
+      "Cites a specific SAM.gov Sources Sought / Presolicitation notice and asks the published point of contact for a capability conversation before the requirement is written. Procedural register, not founder-to-founder.",
+    fields: [
+      { key: "name", label: "Point of contact name", type: "text", required: true },
+      { key: "email", label: "Point of contact email", type: "email", required: true },
+      { key: "agency", label: "Agency", type: "text", required: true },
+      {
+        key: "noticeNumber",
+        label: "Notice number",
+        type: "text",
+        required: true,
+        placeholder: "e.g. W912DY-26-R-0042",
+      },
+      {
+        key: "noticeType",
+        label: "Notice type",
+        type: "text",
+        required: true,
+        placeholder: "Sources Sought / Presolicitation",
+      },
+      { key: "noticeTitle", label: "Notice title", type: "text", required: true },
+      {
+        key: "requirementSummary",
+        label: "Requirement summary (optional)",
+        type: "textarea",
+      },
+      {
+        key: "yourEdge",
+        label: "Your edge (one sentence)",
+        type: "textarea",
+        required: true,
+        hint: "One concrete capability fact relevant to the requirement.",
+      },
+      { key: "noticeUrl", label: "Notice URL (optional)", type: "url" },
+    ],
+    defaultRow: {
+      name: "",
+      email: "",
+      agency: "",
+      noticeNumber: "",
+      noticeType: "",
+      noticeTitle: "",
+      requirementSummary: "",
+      yourEdge: "",
+      noticeUrl: "",
+    },
+  },
+  "civic-pilot": {
+    description:
+      "Cites a specific council/county agenda item and its meeting date, and proposes a pilot sized under the micro-purchase threshold or bought off a cooperative purchasing vehicle (Sourcewell, NASPO ValuePoint, OMNIA). Procedural register.",
+    fields: [
+      { key: "name", label: "Official name", type: "text", required: true },
+      { key: "email", label: "Official email", type: "email", required: true },
+      { key: "city", label: "City / county", type: "text", required: true },
+      { key: "agendaItemTitle", label: "Agenda item title", type: "text", required: true },
+      {
+        key: "meetingDate",
+        label: "Meeting date (ISO)",
+        type: "text",
+        required: true,
+        placeholder: "2026-06-10",
+      },
+      {
+        key: "purchasingVehicle",
+        label: "Purchasing vehicle",
+        type: "text",
+        required: true,
+        placeholder: "e.g. Sourcewell / NASPO ValuePoint / OMNIA",
+      },
+      {
+        key: "yourEdge",
+        label: "Your edge (one sentence)",
+        type: "textarea",
+        required: true,
+        hint: "How your product fits the agenda item's stated need.",
+      },
+      { key: "agendaUrl", label: "Agenda URL (optional)", type: "url" },
+    ],
+    defaultRow: {
+      name: "",
+      email: "",
+      city: "",
+      agendaItemTitle: "",
+      meetingDate: "",
+      purchasingVehicle: "",
+      yourEdge: "",
+      agendaUrl: "",
+    },
+  },
+  "design-partner-loi": {
+    description:
+      "An ask-ladder pitch to an enterprise, government or hardware buyer: a scoped design-partner conversation first, stepping up to a pilot slot then a non-binding LOI on later touches. Never for an owner-operator buyer — see free-pilot/discovery-interview instead.",
+    fields: [
+      { key: "name", label: "Prospect name", type: "text", required: true },
+      { key: "email", label: "Prospect email", type: "email", required: true },
+      { key: "company", label: "Company", type: "text", required: true },
+      {
+        key: "buyerType",
+        label: "Buyer type",
+        type: "text",
+        required: true,
+        placeholder: "enterprise / government / hardware",
+        hint: "Never 'owner-operator' or a main-street label — the play refuses to draft for those.",
+      },
+      {
+        key: "yourEdge",
+        label: "Your edge (one sentence)",
+        type: "textarea",
+        required: true,
+        hint: "One fact about how your product fits this buyer's evaluation criteria.",
+      },
+      { key: "linkedinUrl", label: "LinkedIn URL (optional)", type: "url" },
+    ],
+    defaultRow: {
+      name: "",
+      email: "",
+      company: "",
+      buyerType: "",
+      yourEdge: "",
+      linkedinUrl: "",
+    },
+  },
+  "discovery-interview": {
+    description:
+      "Asks a main-street owner-operator for ten minutes to learn how they handle one specific thing today. No pitch, no product link, no calendar link, no price — the email exists to earn a reply, not a meeting.",
+    fields: [
+      { key: "name", label: "Owner name", type: "text", required: true },
+      { key: "email", label: "Owner email", type: "email", required: true },
+      { key: "company", label: "Business name", type: "text", required: true },
+      {
+        key: "businessType",
+        label: "Business type",
+        type: "text",
+        required: true,
+        placeholder: "e.g. family-owned taqueria · HVAC contractor · two-chair dental practice",
+      },
+      {
+        key: "topic",
+        label: "What you want to learn (one sentence)",
+        type: "textarea",
+        required: true,
+        placeholder: "e.g. how they schedule appointments today",
+      },
+      { key: "linkedinUrl", label: "LinkedIn URL (optional)", type: "url" },
+    ],
+    defaultRow: {
+      name: "",
+      email: "",
+      company: "",
+      businessType: "",
+      topic: "",
+      linkedinUrl: "",
+    },
+  },
+  "free-pilot": {
+    description:
+      'The main-street close: set it up for them free, they keep it if it works. Plain language — no "design partner", "pilot program", or "LOI".',
+    fields: [
+      { key: "name", label: "Owner name", type: "text", required: true },
+      { key: "email", label: "Owner email", type: "email", required: true },
+      { key: "company", label: "Business name", type: "text", required: true },
+      {
+        key: "businessType",
+        label: "Business type",
+        type: "text",
+        required: true,
+        placeholder: "e.g. family-owned taqueria · HVAC contractor · two-chair dental practice",
+      },
+      {
+        key: "yourEdge",
+        label: "Your edge (one sentence)",
+        type: "textarea",
+        required: true,
+        hint: "The concrete thing you set up for them free, in hours or dollars terms. e.g. 'saves about 5 hours a week of phone tag on scheduling'.",
+      },
+      { key: "linkedinUrl", label: "LinkedIn URL (optional)", type: "url" },
+    ],
+    defaultRow: {
+      name: "",
+      email: "",
+      company: "",
+      businessType: "",
+      yourEdge: "",
+      linkedinUrl: "",
+    },
+  },
+  "new-business": {
+    description:
+      "Greenfield outreach to a business whose licence or authority was issued in the last few weeks — nothing to rip out, the ask is to be the tool they start on.",
+    fields: [
+      { key: "name", label: "Owner name", type: "text", required: true },
+      { key: "email", label: "Owner email", type: "email", required: true },
+      { key: "company", label: "Business name", type: "text", required: true },
+      {
+        key: "businessType",
+        label: "Business type",
+        type: "text",
+        required: true,
+        placeholder: "e.g. family-owned taqueria · HVAC contractor · two-chair dental practice",
+      },
+      {
+        key: "licenseType",
+        label: "Licence / authority type",
+        type: "text",
+        required: true,
+        placeholder: "e.g. food service permit · contractor licence · motor carrier authority",
+      },
+      {
+        key: "issuedAgo",
+        label: "Issued (plain words)",
+        type: "text",
+        required: true,
+        placeholder: "e.g. 3 weeks ago · this month",
+      },
+      {
+        key: "yourEdge",
+        label: "Your edge (one sentence)",
+        type: "textarea",
+        required: true,
+        hint: "The concrete thing that helps a business at this exact starting point.",
+      },
+      { key: "linkedinUrl", label: "LinkedIn URL (optional)", type: "url" },
+    ],
+    defaultRow: {
+      name: "",
+      email: "",
+      company: "",
+      businessType: "",
+      licenseType: "",
+      issuedAgo: "",
       yourEdge: "",
       linkedinUrl: "",
     },

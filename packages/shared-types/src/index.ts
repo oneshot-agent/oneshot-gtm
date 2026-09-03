@@ -325,6 +325,11 @@ export interface SetupRequest {
   productBrief?: string;
   /** When true, signature appends a literal "Sent from my iPhone" line. */
   mobileSignature?: boolean;
+  /**
+   * Install-wide daily USD spend ceiling (issue #481). `undefined` = leave
+   * unchanged; `null` = clear it (unlimited); a positive number = set it.
+   */
+  dailySpendCeilingUsd?: number | null;
   llmProvider?: LlmProvider;
   llmModel?: string;
   telemetryEnabled?: boolean;
@@ -608,6 +613,12 @@ export const RUNNABLE_PLAYS: readonly string[] = [
   "stack-consolidation",
   "repo-interest",
   "luma-events",
+  "sources-sought",
+  "civic-pilot",
+  "design-partner-loi",
+  "discovery-interview",
+  "free-pilot",
+  "new-business",
 ];
 
 /**
@@ -866,6 +877,8 @@ export interface DrainResult {
   drained: number;
   sent: number;
   errors: Array<{ id: number; message: string }>;
+  /** Named reason the daily spend ceiling (issue #481) blocked this drain, if it did. */
+  haltedReason?: string;
 }
 
 export interface TriggerView {
@@ -898,6 +911,34 @@ export interface TriggerView {
   approvalRateWindowDays: number;
   deprioritized: boolean;
   deprioritizedReason: string | null;
+}
+
+export interface PackView {
+  id: string;
+  label: string;
+  buyerBrief: string;
+  icpOneLiner: string;
+  /** Trigger names this pack touches. */
+  triggers: string[];
+  /** Founder-voice keys left blank by the pack (e.g. `yourEdge`, `yourClaim`). */
+  requires: string[];
+}
+
+export interface PackApplyTriggerResult {
+  name: string;
+  enabled: boolean;
+  ready: boolean;
+  /** Human-readable reason when `ready === false`; null otherwise. */
+  notReadyReason: string | null;
+}
+
+export interface PackApplyResult {
+  id: string;
+  applied: PackApplyTriggerResult[];
+  /** Trigger names in the pack that aren't in the registry — patch skipped, apply still succeeds. */
+  skipped: Array<{ name: string; reason: string }>;
+  /** The pack's proposed icpOneLiner — never written to config.json; the founder accepts it separately. */
+  proposedIcpOneLiner: string;
 }
 
 export interface DeriveIcpResult {

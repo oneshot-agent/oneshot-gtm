@@ -268,11 +268,34 @@ export function lintOpenerFrequency(
   return overusedOpeners(recentBodies, opts).includes(stem) ? ["opener-overused"] : [];
 }
 
+/**
+ * A run of 2+ consecutive uppercase letters normally reads as shouting
+ * (the humanizer's own rule: "lowercase the whole subject line ... acronyms
+ * (`api` not `API`)"). But a token shaped like a SAM.gov notice number —
+ * hyphen-separated alphanumeric segments such as `W912DY-26-R-0042` — is an
+ * identifier the play is REQUIRED to reproduce verbatim
+ * (packages/prompts/sources-sought-email.md line 11/20), not a shouted word
+ * choice. Exempt only that hyphenated identifier shape so a compliant
+ * sources-sought subject doesn't get flagged and held from the guarded send
+ * path (finding PRRT_kwDOSKzrBs6ewQdB), without also exempting ordinary
+ * shouty-but-alphanumeric tokens like "URGENT2" or "SAVE20NOW" (finding
+ * PRRT_kwDOSKzrBs6ewQdB round 2: the digit+letter test alone was too broad).
+ */
+const SOLICITATION_NUMBER_RE = /^[A-Za-z0-9]+(-[A-Za-z0-9]+){2,}$/;
+
+function subjectShouty(subject: string): boolean {
+  return subject.split(/\s+/).some((token) => {
+    const isSolicitationNumber =
+      SOLICITATION_NUMBER_RE.test(token) && /\d/.test(token) && /[A-Za-z]/.test(token);
+    return !isSolicitationNumber && /[A-Z]{2,}/.test(token);
+  });
+}
+
 export function lintEmail(subject: string, body: string, maxBodyWords = 110): string[] {
   const flags: string[] = [];
   if (subject.length === 0) flags.push("empty-subject");
   if (subject.length > 60) flags.push("subject-too-long");
-  if (/[A-Z]{2,}/.test(subject)) flags.push("subject-shouty");
+  if (subjectShouty(subject)) flags.push("subject-shouty");
   if (body.length === 0) flags.push("empty-body");
   if (bodyWordsForLint(body) > maxBodyWords) flags.push("body-too-long");
   if (body.includes("—")) flags.push("em-dash");
