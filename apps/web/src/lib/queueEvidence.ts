@@ -122,6 +122,14 @@ export function queueEvidence(playName: string, payload: unknown): string | null
       return cohort ? `cohort ${cohort}` : null;
     }
 
+    case "new-business":
+    case "free-pilot": {
+      const label = str(p, "sourceLabel");
+      const matched = str(p, "matchedDateIso");
+      if (!label) return null;
+      return matched ? `${label} — matched ${matched.slice(0, 10)}` : label;
+    }
+
     default:
       return null;
   }
