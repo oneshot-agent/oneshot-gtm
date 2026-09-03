@@ -261,9 +261,11 @@ esac
 
 ### The plays
 
-Eighteen of them. Ten have a **Run** page in the dashboard and drain from the queue:
+Twenty-one of them. Thirteen have a **Run** page in the dashboard and drain from the queue:
 
-`show-hn` · `job-change` · `post-funding` · `accelerator-batch` · `hiring-signal` · `podcast-guest` · `competitor-switch` · `stack-consolidation` · `repo-interest` · `luma-events`
+`show-hn` · `job-change` · `post-funding` · `accelerator-batch` · `hiring-signal` · `podcast-guest` · `competitor-switch` · `stack-consolidation` · `repo-interest` · `luma-events` · `sources-sought` · `civic-pilot` · `design-partner-loi`
+
+The last three are the institutional counterparts to the founder-to-founder register above: `sources-sought` cites a specific SAM.gov Sources Sought / Presolicitation notice number and agency, `civic-pilot` cites a council/county agenda item, meeting date, and a cooperative purchasing vehicle (Sourcewell, NASPO ValuePoint, OMNIA), and `design-partner-loi` walks an ask ladder — conversation, then a scoped pilot, then a non-binding LOI — for enterprise, government and hardware buyers. `design-partner-loi` refuses to draft (before any paid call) when its target's `buyerType` names an owner-operator; that guard is asserted in code rather than left to finder-config convention, since a future pack could route the wrong lane at it.
 
 Six more drain from the queue without a Run form — `profile-intro` (what Add Prospect enqueues), `breakup-revive`, `free-pilot` (fed by the `local-business` finder), and the three the `x-reposters` finder feeds: `x-repost-intro` (founder-lane email + cadence), `x-amplify` (one-touch launch-day repost ask), and `x-amplify-dm` — the one play that never auto-sends: it drafts X DM/reply text you copy and send by hand from the X app, then **Mark sent** records it as a channel-`x` touch. The last two, `concierge` and `demo-no-show`, are CLI-only because they open with a voice call and an SMS respectively.
 
@@ -361,7 +363,7 @@ apps/
 packages/
   core/       SDK wrapper, SQLite ledger, config + secrets, Gmail transport, JSONL events
   intel/      LLM client, advise, personalize, triage, weekly-review
-  plays/      18 outreach plays + handoff/icp/pmf modules + cadence engine
+  plays/      21 outreach plays + handoff/icp/pmf modules + cadence engine
   find/       12 finders + shared pipeline (manifest scan, dedupe, ICP filter, drain, registry)
   prompts/    Markdown prompts — humanizer canon, per-play, per-extract
   doctor/     Wallet, ledger, key and deliverability health checks

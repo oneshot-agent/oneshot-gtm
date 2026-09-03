@@ -44,6 +44,7 @@ import {
   setTriggerConfigRoute,
   setTriggerEnabledRoute,
 } from "./api/triggers.ts";
+import { applyPackRoute, listPacksRoute } from "./api/packs.ts";
 import { addProspectRoute } from "./api/prospects.ts";
 import { calNoShowWebhookRoute, signupWebhookRoute } from "./api/webhook-triggers.ts";
 import { linkedinReplyWebhookRoute, markLinkedInReplyRoute } from "./api/linkedin-replies.ts";
@@ -129,6 +130,8 @@ const routes: RouteEntry[] = [
   route("POST", "/api/triggers/:name/enabled", setTriggerEnabledRoute),
   route("POST", "/api/triggers/:name/config", setTriggerConfigRoute),
   route("POST", "/api/triggers/:name/run", runTriggerRoute),
+  route("GET", "/api/packs", listPacksRoute),
+  route("POST", "/api/packs/:id/apply", applyPackRoute),
 ];
 
 function findRoute(req: Request): { handler: RouteHandler; params: Record<string, string> } | null {

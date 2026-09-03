@@ -194,9 +194,20 @@ function ActionChip({ action }: { action: ParsedStrategistAction }) {
         await api.setTriggerConfig(action.trigger, action.config);
         setDone(`config saved · ${action.trigger}`);
         toast.success(`config saved · ${action.trigger}`);
+      } else if (action.kind === "apply-pack") {
+        const result = await api.applyPack(action.trigger);
+        const readyCount = result.applied.filter((t) => t.ready).length;
+        const notReadyCount = result.applied.length - readyCount;
+        const label =
+          notReadyCount > 0
+            ? `pack applied · ${result.applied.length} triggers · ${notReadyCount} need config`
+            : `pack applied · ${result.applied.length} triggers`;
+        setDone(label);
+        toast.success(label);
       }
       void qc.invalidateQueries({ queryKey: ["triggers"] });
       void qc.invalidateQueries({ queryKey: ["queue"] });
+      void qc.invalidateQueries({ queryKey: ["packs"] });
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -217,7 +228,9 @@ function ActionChip({ action }: { action: ParsedStrategistAction }) {
       ? `Enable ${action.trigger}`
       : action.kind === "disable"
         ? `Disable ${action.trigger}`
-        : `Apply config to ${action.trigger}`;
+        : action.kind === "apply-pack"
+          ? `Apply pack: ${action.trigger}`
+          : `Apply config to ${action.trigger}`;
 
   return (
     <div className="mt-2 flex items-center gap-2">
