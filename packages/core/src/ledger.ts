@@ -3919,6 +3919,16 @@ export class Ledger {
   clearWebhookReplays(): void {
     this.db.exec("DELETE FROM webhook_replays");
   }
+
+  /**
+   * Release a previously-consumed replay key. Used when a webhook was
+   * verified but downstream processing (ICP filtering, enqueueing) failed
+   * before a success response was sent, so the provider's retry of the same
+   * signed payload isn't rejected as a replay.
+   */
+  releaseWebhookReplay(replayKey: string): void {
+    this.db.prepare("DELETE FROM webhook_replays WHERE replay_key = ?").run(replayKey);
+  }
 }
 
 let singleton: Ledger | null = null;
