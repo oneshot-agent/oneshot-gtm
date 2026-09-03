@@ -194,10 +194,13 @@ function formatGmailApiError(raw: string): string {
 async function gmailJson<T>(path: string, init?: RequestInit, account?: GmailAccount): Promise<T> {
   const res = await gmailFetch(path, init, account);
   if (!res.ok) {
-    const raw = await res.text();
+    // Check 401 before reading the body: a stuck/slow/unclosed body on an
+    // auth-rejected response must not delay the auth error the caller needs
+    // to act on (re-auth), and there's nothing in that body worth parsing.
     if (res.status === 401) {
       throw new Error(`Gmail auth rejected (401) — ${GMAIL_AUTH_HINT}`);
     }
+    const raw = await res.text();
     throw new Error(
       `Gmail API ${path.split("?")[0]} failed (${res.status}): ${formatGmailApiError(raw)}`,
     );

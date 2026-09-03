@@ -208,6 +208,17 @@ describe("gmailJson error formatting", () => {
     stubFetchWith(QUOTA_BODY, 401);
     await expect(getGmailProfile()).rejects.toThrow(/^Gmail auth rejected \(401\) —/);
   });
+
+  it("does not read the response body on a 401 (auth errors must not wait on a slow body)", async () => {
+    const textSpy = vi.fn().mockResolvedValue(QUOTA_BODY);
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      if (String(url).startsWith("https://oauth2.googleapis.com/")) return tokenResponse();
+      return { ok: false, status: 401, text: textSpy } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(getGmailProfile()).rejects.toThrow(/^Gmail auth rejected \(401\) —/);
+    expect(textSpy).not.toHaveBeenCalled();
+  });
 });
 
 describe("missingGmailSecrets", () => {
