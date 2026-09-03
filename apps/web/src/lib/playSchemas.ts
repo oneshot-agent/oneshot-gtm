@@ -27,6 +27,23 @@ export interface PlaySchema {
   extras?: FieldSpec[];
 }
 
+/**
+ * Required fields left blank on a target row, by label — used to block
+ * dispatch before `/api/run` instead of relying on native `required`
+ * validation, which never fires here: /run's rows render outside a `<form>`
+ * (submit is a plain button onClick, not a form submit event), so the
+ * `required` attribute on each `<Input>`/`<Textarea>` is decorative only.
+ * `submit()` strips blank fields before POSTing, so an unenforced required
+ * field reaches the play as `undefined` — e.g. sources-sought dispatching
+ * with a blank `agency` or `yourEdge` produces a malformed institutional
+ * outreach email.
+ */
+export function missingRequiredFields(schema: PlaySchema, row: Record<string, string>): string[] {
+  return schema.fields
+    .filter((f) => f.required && (row[f.key] ?? "").trim().length === 0)
+    .map((f) => f.label);
+}
+
 export const PLAY_SCHEMAS: Record<string, PlaySchema> = {
   "show-hn": {
     description:
