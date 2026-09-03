@@ -2149,6 +2149,83 @@ export class Ledger {
     return (this.db.query(sql).get(...(args as never[])) as { total: number } | null)?.total ?? 0;
   }
 
+  // ── spend_reservations (issue #481: install-wide daily USD spend ceiling) ──
+
+  /**
+   * Hold `amountUsd` against the daily ceiling for the duration of an
+   * automated call. Returns the reservation id — callers MUST release it
+   * (on success or failure) via `releaseSpendReservation`, else it counts
+   * against the ceiling until `sweepStaleSpendReservations` reclaims it.
+   */
+  reserveSpend(amountUsd: number): number {
+    const result = this.db
+      .prepare(`INSERT INTO spend_reservations(amount_usd) VALUES(?)`)
+      .run(amountUsd);
+    return Number(result.lastInsertRowid);
+  }
+
+  /** Release a reservation once the caller's actual spend has posted (or the call was skipped/failed). */
+  releaseSpendReservation(id: number): void {
+    this.db.prepare(`DELETE FROM spend_reservations WHERE id = ?`).run(id);
+  }
+
+  /** Sum of currently-held reservations since `sinceIso` (the local-midnight boundary). */
+  reservedSpendUsd(sinceIso: string): number {
+    const row = this.db
+      .query(
+        `SELECT COALESCE(SUM(amount_usd), 0) AS total FROM spend_reservations WHERE created_at >= ?`,
+      )
+      .get(sinceIso) as { total: number } | null;
+    return row?.total ?? 0;
+  }
+
+  /**
+   * Atomic check-then-reserve against the daily ceiling (issue #481
+   * round-1 review finding). The read (posted spend + held reservations
+   * since `sinceIso`) and the write (INSERT into `spend_reservations`)
+   * happen inside ONE transaction on this connection — the same
+   * `BEGIN IMMEDIATE` pattern `dequeueApproved` uses to close its own
+   * cross-process claim race. IMMEDIATE takes SQLite's RESERVED write lock
+   * at the START of the transaction (not the default DEFERRED, which only
+   * locks on the first write), so in WAL mode two separate OS processes —
+   * e.g. a `find watch --once` cron run and the server's in-process
+   * scheduler firing the same tick — cannot both read the pre-reservation
+   * total and both pass the check before either commits: the second
+   * caller's transaction blocks until the first one's reservation is
+   * already reflected in the sum it reads. Returns the new reservation id
+   * when granted, or null when posted+reserved+`amountUsd` would meet or
+   * exceed `ceilingUsd`.
+   */
+  reserveSpendIfUnderCeiling(opts: {
+    sinceIso: string;
+    ceilingUsd: number;
+    amountUsd: number;
+  }): number | null {
+    const txn = this.db.transaction((): number | null => {
+      const effectiveUsd =
+        this.totalSpendUsd({ sinceIso: opts.sinceIso }) + this.reservedSpendUsd(opts.sinceIso);
+      if (effectiveUsd + opts.amountUsd >= opts.ceilingUsd) return null;
+      return this.reserveSpend(opts.amountUsd);
+    });
+    return txn.immediate();
+  }
+
+  /**
+   * Sweep reservations older than `maxAgeMs` — a crashed process (kill -9
+   * between reserve and release) must not hold spend against the ceiling for
+   * the rest of the day. Returns the number of rows swept.
+   */
+  sweepStaleSpendReservations(maxAgeMs: number, now = new Date()): number {
+    const cutoffIso = new Date(now.getTime() - maxAgeMs)
+      .toISOString()
+      .slice(0, 19)
+      .replace("T", " ");
+    const result = this.db
+      .prepare(`DELETE FROM spend_reservations WHERE created_at < ?`)
+      .run(cutoffIso);
+    return Number(result.changes);
+  }
+
   // ── target_queue ────────────────────────────────────────────────────────────
 
   /** Recent reviewed rows for few-shot ICP classification. */
@@ -3066,6 +3143,26 @@ export class Ledger {
          WHERE name = ?`,
       )
       .run(new Date().toISOString(), JSON.stringify(input.summary), input.name);
+  }
+
+  /**
+   * Release a trigger's in-flight claim WITHOUT stamping `last_polled_at`
+   * (issue #481 review finding). Used only when the finder never actually
+   * ran — currently the daily spend ceiling refusal branches in
+   * `registry.ts`. `updateTriggerLastPoll` would treat the refusal as a
+   * completed poll and push `dueAt` a full interval into the future, so a
+   * trigger blocked by the ceiling would sit unpolled long after headroom
+   * (or a new day) opens back up. `last_run_summary` still records the
+   * refusal reason so the dashboard/doctor surface it, same as before.
+   */
+  clearTriggerClaim(input: { name: string; summary: unknown }): void {
+    this.db
+      .prepare(
+        `UPDATE triggers
+         SET last_run_summary = ?, running_started_at = NULL
+         WHERE name = ?`,
+      )
+      .run(JSON.stringify(input.summary), input.name);
   }
 
   /**

@@ -56,6 +56,7 @@ function makeCtx(overrides: Partial<ProspectRecord> = {}): CadenceContext {
       timezone: null,
       slackWebhookUrl: null,
       clientId: null,
+      dailySpendCeilingUsd: null,
     },
     metadata: {},
   };

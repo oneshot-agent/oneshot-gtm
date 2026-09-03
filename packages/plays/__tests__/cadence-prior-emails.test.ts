@@ -30,6 +30,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       timezone: null,
       slackWebhookUrl: null,
       clientId: null,
+      dailySpendCeilingUsd: null,
     }),
     getLedger: () => ({
       // Opener-frequency cap: no send history in these fakes, so nothing is worn out.
@@ -108,6 +109,7 @@ function ctx(prospectId = 42) {
       timezone: null,
       slackWebhookUrl: null,
       clientId: null,
+      dailySpendCeilingUsd: null,
     },
     metadata: {},
   };

@@ -53,6 +53,7 @@ const DEFAULTS: OneShotConfig = {
   timezone: null,
   slackWebhookUrl: null,
   clientId: null,
+  dailySpendCeilingUsd: null,
 };
 
 export function configDir(): string {

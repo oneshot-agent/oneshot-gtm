@@ -26,6 +26,7 @@ const current = {
   timezone: "Europe/Vienna",
   slackWebhookUrl: null,
   clientId: "client-1",
+  dailySpendCeilingUsd: null,
 } satisfies OneShotConfig;
 
 describe("init config writer", () => {

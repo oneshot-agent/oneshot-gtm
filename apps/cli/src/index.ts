@@ -14,6 +14,7 @@ import {
   configFounder,
   configKeys,
   configLlm,
+  configSpendCeiling,
   configTelemetry,
   configXEngine,
 } from "./commands/config.ts";
@@ -234,6 +235,12 @@ config
     "Show or switch the x-reposters data provider (xapi = first-party X API, twitterapiio = ~55x cheaper third-party)",
   )
   .action(runOrFail((engine?: string) => configXEngine(engine)));
+config
+  .command("spend-ceiling [amount]")
+  .description(
+    "Show or set the install-wide daily USD spend ceiling (halts automated finder/drain runs once reached; 'off' clears it)",
+  )
+  .action(runOrFail((amount?: string) => configSpendCeiling(amount)));
 
 // Gmail send path: OAuth consent flow for the alternate (non-OneShot) provider.
 const gmail = program

@@ -310,6 +310,17 @@ export interface OneShotConfig {
    * pre-launch installs aren't attribution-orphaned later.
    */
   clientId: string | null;
+  /**
+   * Install-wide daily USD spend ceiling (issue #481). Per-run caps
+   * (`maxCostUsd`/`maxSpendPerRun`) bound one finder or drain call; this
+   * bounds the SUM across every automated paid call — every finder trigger
+   * plus every automatic drain — over the local calendar day. Null =
+   * unlimited (the historical behavior). Checked before each automated call
+   * via a reservation against `receipts.cost_usd` summed since local
+   * midnight; manual `/queue` sends (approve/reject/mark-sent/send-draft)
+   * never consult it. Set from `config spend-ceiling <amount>` or `/setup`.
+   */
+  dailySpendCeilingUsd: number | null;
 }
 
 export type QueueStatus = "pending" | "approved" | "rejected" | "sent" | "expired";

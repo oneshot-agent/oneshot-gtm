@@ -47,6 +47,7 @@ const BASE: OneShotConfig = {
   timezone: null,
   slackWebhookUrl: null,
   clientId: null,
+  dailySpendCeilingUsd: null,
 };
 
 beforeEach(() => {
