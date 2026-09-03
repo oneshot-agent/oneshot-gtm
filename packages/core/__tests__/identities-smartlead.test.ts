@@ -42,6 +42,7 @@ const BASE: OneShotConfig = {
   mobileSignature: false,
   timezone: null,
   clientId: null,
+  dailySpendCeilingUsd: null,
 };
 
 beforeEach(() => {

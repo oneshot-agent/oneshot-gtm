@@ -63,6 +63,25 @@ const SECRET_LABELS: Record<string, string> = {
 
 const X_OAUTH_KEYS = ["X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_SECRET"] as const;
 
+/**
+ * Blank = unlimited (null). Otherwise must parse to a positive finite
+ * number — matches the CLI path's validation (`configSpendCeiling`) and
+ * the server's own re-check (`mergeSetupConfig` → `validateSpendCeiling`).
+ * A submitted 0/negative/NaN throws here instead of silently reaching the
+ * API, where a ceiling of 0 would halt every automated finder and drain
+ * install-wide immediately.
+ */
+function parseDailySpendCeiling(raw: string): number | null {
+  if (raw.trim() === "") return null;
+  const n = Number.parseFloat(raw);
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error(
+      `invalid daily spend ceiling '${raw}' — enter a positive number of USD, or leave blank`,
+    );
+  }
+  return n;
+}
+
 function SetupPage() {
   const qc = useQueryClient();
   const status = useQuery({ queryKey: ["setup"], queryFn: api.setupStatus });
@@ -117,6 +136,14 @@ function SetupPage() {
   const [briefSources, setBriefSources] = useState("");
   const [briefDeriveInfo, setBriefDeriveInfo] = useState<string | null>(null);
   const [mobileSignature, setMobileSignature] = useState(false);
+  // "" = unlimited (no ceiling). A positive-number string is the ceiling in
+  // USD; kept as a string so the field can be temporarily empty while typing.
+  // Same dirty-flag pattern as briefDirty: a pause/resume action invalidates
+  // ["setup"] mid-edit, and without this the hydrate effect below would
+  // silently overwrite whatever the founder just typed with the persisted
+  // value.
+  const [dailySpendCeiling, setDailySpendCeiling] = useState("");
+  const spendCeilingDirty = useRef(false);
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
@@ -179,6 +206,13 @@ function SetupPage() {
     if (!briefDirty.current) setProductBrief(c.productBrief ?? "");
     setBriefSources((prev) => prev || (c.productDomain ? `https://${c.productDomain}` : ""));
     setMobileSignature(c.mobileSignature ?? false);
+    setDailySpendCeiling((prev) =>
+      spendCeilingDirty.current
+        ? prev
+        : c.dailySpendCeilingUsd != null
+          ? String(c.dailySpendCeilingUsd)
+          : "",
+    );
     setLlmProvider(c.llmProvider);
     setLlmModel(c.llmModel || LLM_DEFAULTS[c.llmProvider] || "");
     setTelemetryEnabled(c.telemetryEnabled);
@@ -301,6 +335,7 @@ function SetupPage() {
         founderAdmission,
         productBrief,
         mobileSignature,
+        dailySpendCeilingUsd: parseDailySpendCeiling(dailySpendCeiling),
         llmProvider,
         llmModel,
         telemetryEnabled,
@@ -328,6 +363,7 @@ function SetupPage() {
       setAddMailbox("");
       setAddCap("");
       briefDirty.current = false;
+      spendCeilingDirty.current = false;
       setSavedAt(Date.now());
       // Re-seed the engine select from the refetched trigger row.
       xEngineSeeded.current = false;
@@ -795,6 +831,23 @@ function SetupPage() {
                 />
               </Field>
             )}
+            <Field
+              label="Daily spend ceiling (USD)"
+              className="md:col-span-2"
+              hint="Install-wide cap across every automated finder run and drain — blank = unlimited. Once reached, scheduled/run-now finders and drains halt with a named reason (visible here and in doctor) until local midnight; manual /queue sends are never blocked."
+            >
+              <Input
+                type="number"
+                min="0.01"
+                step="0.01"
+                placeholder="unlimited"
+                value={dailySpendCeiling}
+                onChange={(e) => {
+                  setDailySpendCeiling(e.target.value);
+                  spendCeilingDirty.current = true;
+                }}
+              />
+            </Field>
           </div>
         </LedgerSection>
 

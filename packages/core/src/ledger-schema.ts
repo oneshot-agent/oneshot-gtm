@@ -455,6 +455,25 @@ export function migrateLedgerSchema(db: Database): void {
       CREATE INDEX IF NOT EXISTS idx_webhook_replays_expiry
         ON webhook_replays(expires_at);
     `);
+  // v28 (issue #481): install-wide daily USD spend ceiling — reservations
+  // held for the duration of an automated call (finder trigger run,
+  // automatic drain) so two concurrent automated paths across processes
+  // can't both slip under the ceiling before either one's spend has
+  // posted to `receipts`. `created_at` uses the same SQLite UTC format
+  // (and the same local-midnight boundary, via `todayStartSqliteUtc`) as
+  // `receipts.created_at`, so the spend ceiling and the per-identity send
+  // caps agree about when a new day starts. A row is deleted (not
+  // soft-released) once the caller finishes; a crashed process's orphaned
+  // reservation is swept by age (`SPEND_RESERVATION_STALE_MS`) so it can't
+  // haunt the rest of the day.
+  db.exec(`
+      CREATE TABLE IF NOT EXISTS spend_reservations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        amount_usd REAL NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_spend_reservations_created ON spend_reservations(created_at);
+    `);
 }
 
 /**

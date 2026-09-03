@@ -80,12 +80,12 @@ bun run cli -- find drain podcast-guest --dry-run  # preview approved /queue row
 bun run cli -- cadence advance                     # daily tick: poll inbox, fire follow-ups
 ```
 
-55 commands — fourteen groups, plus `init`, `doctor` and `ui` at the top level. `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
+56 commands — fourteen groups, plus `init`, `doctor` and `ui` at the top level. `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
 
 | Group                    | Commands                                                                                                                                                                                                                                                                                            |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `init` · `doctor` · `ui` | setup wizard · health check · open the dashboard                                                                                                                                                                                                                                                    |
-| `config`                 | `llm` · `founder` · `keys` · `telemetry on\|off` · `x-engine [engine]`                                                                                                                                                                                                                              |
+| `config`                 | `llm` · `founder` · `keys` · `telemetry on\|off` · `x-engine [engine]` · `spend-ceiling [amount\|off]`                                                                                                                                                                                              |
 | `gmail`                  | `auth` (OAuth a sending account) · `placement` (inbox-placement canary)                                                                                                                                                                                                                             |
 | `identities`             | `list` · `add` · `remove <id>` — the sender pool                                                                                                                                                                                                                                                    |
 | `smartlead`              | `connect` — API key + pick Smartlead mailboxes into the pool (send-only)                                                                                                                                                                                                                            |
@@ -187,6 +187,8 @@ Twelve **finders** discover prospects, ICP-filter them, and enqueue into `/queue
 | `local-business`    | main-street businesses via `peopleSearch`/`companySearch` (job title × industry × location × company size) — routed to the `free-pilot` play; a candidate carrying `best_work_email` skips `findEmail`/`verifyEmail` entirely, but `qualifyPostEnrich` may still perform paid `enrichProfile` lookups when `fillGaps` is enabled  |
 
 Only `show-hn` and `post-funding-auto` are on by default; enable the rest from `/queue`. A trigger missing required config reads as **not ready** — the toggle and Run button disable with the reason, and the API returns `409`, so scripted callers can't bypass the gate either.
+
+Per-run caps (`maxCostUsd` on a finder, `maxSpendPerRun` on x-reposters) bound one call; they don't stop eleven independently-scheduled finders and automatic drains from collectively overspending across a day. `config spend-ceiling <amount>` (or the Wallet card on `/setup`) sets an install-wide daily USD ceiling, checked before every automated finder run and drain — a reservation held for the call's duration closes the race between two concurrent automated paths, so they can't both slip under the ceiling before either one's spend has posted. Once reached, scheduled/run-now finders and drains halt with a named reason (`daily spend ceiling reached ($X.XX/$Y.YY spent today)`) visible on the trigger cards and in `doctor`; manual `/queue` sends (approve, reject, mark-sent, send-draft) are never gated by it — a founder reviewing and sending one email by hand is a deliberate decision the ceiling should never block. The counter resets at local midnight, same boundary the per-identity send caps use. Unset (the default) is unlimited, matching the historical behavior.
 
 Qualified first-touch rows receive a product dossier before the trigger completes: up to two known first-party pages plus quick external research covering the product, ecosystem, architecture, and business model. Set `productResearch: false` on a trigger to disable it. Research counts toward that trigger's `maxCostUsd`; a failure or exhausted cap leaves the row reviewable with an explicit warning. `find research-products` backfills the same context onto active/replied prospects and pending queue rows (`--dry-run`, `--limit`, and `--refresh` are supported). Use `--first-party-only` for a resilient bulk backfill when the external research provider is unavailable.
 
@@ -355,7 +357,7 @@ Successful responses include `duplicate`, `prospectId`, `cadencesStopped`, and `
 
 ```
 apps/
-  cli/        55-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
+  cli/        56-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
   server/     Bun.serve + SSE; tsdown bundle published as `oneshot-gtm-server`
   web/        Vite + React 19 + TanStack + Base UI — 9 pages, run form, strategist dock, privacy mode
 packages/
