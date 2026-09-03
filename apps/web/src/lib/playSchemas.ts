@@ -662,5 +662,4 @@ export const PLAY_SCHEMAS: Record<string, PlaySchema> = {
       linkedinUrl: "",
     },
   },
-
 };
