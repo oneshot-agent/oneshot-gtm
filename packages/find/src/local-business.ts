@@ -208,7 +208,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
     const filter = await icpFilter({
       icp,
       candidate: {
-        title: fullName,
+        title: title || businessType,
         url: person.linkedin_url ?? undefined,
         summary: [company, title, businessType].filter(Boolean).join(" · "),
       },
