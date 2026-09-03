@@ -122,16 +122,40 @@ export function queueEvidence(playName: string, payload: unknown): string | null
       return cohort ? `cohort ${cohort}` : null;
     }
 
-    case "new-business": {
+    case "new-business":
+    case "free-pilot": {
+      // local-business (#457) enqueues `businessType`; local-registry (#459)
+      // enqueues `sourceLabel`/`matchedDateIso`/`subjectType` — both route
+      // through this same play, so branch on whichever shape is present.
+      const businessType = str(p, "businessType");
+      if (businessType) return `matched ${businessType}`;
       const label = str(p, "sourceLabel");
       const matched = str(p, "matchedDateIso");
-      if (!label) return null;
-      return matched ? `${label} — matched ${matched.slice(0, 10)}` : label;
+      const subjectType = str(p, "subjectType");
+      // nppes-only: NPI-1 (individual) vs NPI-2 (organization) — tells a
+      // reviewer why a "company" row shows a person's name instead of
+      // leaving them to assume a mapping bug (see RegistryRecord's doc).
+      const subject = subjectType ? `${subjectType} record` : null;
+      if (!label) return subject;
+      const labelled = matched ? `${label} — matched ${matched.slice(0, 10)}` : label;
+      return subject ? `${labelled} (${subject})` : labelled;
     }
 
-    case "free-pilot": {
-      const businessType = str(p, "businessType");
-      return businessType ? `matched ${businessType}` : null;
+    // gov-solicitation's two routes share the same evidence shape: the
+    // notice title, plus the agency when known.
+    case "sources-sought":
+    case "design-partner-loi": {
+      const title = str(p, "title");
+      if (!title) return null;
+      const agency = str(p, "agency");
+      return agency ? `${title} — ${agency}` : title;
+    }
+
+    case "civic-pilot": {
+      const title = str(p, "agendaItemTitle");
+      if (!title) return null;
+      const city = str(p, "city");
+      return city ? `${title} — ${city}` : title;
     }
 
     // gov-solicitation's two routes share the same evidence shape: the

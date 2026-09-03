@@ -1375,6 +1375,7 @@ function PackRow({
   result: PackApplyResult | null;
   disabled: boolean;
 }) {
+  const navigate = useNavigate();
   // After apply: the fields still needed, spelled out per-trigger so the
   // founder knows exactly what to fill in next (via the strategist or the
   // trigger's own JSON editor below).
@@ -1416,14 +1417,18 @@ function PackRow({
               explicitly accept it from /setup. */}
           <div className="mt-1.5 flex items-center gap-2 text-ink-muted">
             <span>proposed ICP · {result.proposedIcpOneLiner}</span>
-            <Link
-              to="/setup"
-              search={{ proposedIcp: result.proposedIcpOneLiner, packLabel: pack.label }}
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() =>
+                navigate({
+                  to: "/setup",
+                  search: { proposedIcp: result.proposedIcpOneLiner, packLabel: pack.label },
+                })
+              }
             >
-              <Button variant="secondary" size="sm">
-                Accept in Setup
-              </Button>
-            </Link>
+              Accept in Setup
+            </Button>
           </div>
         </div>
       )}

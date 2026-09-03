@@ -130,6 +130,16 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       { playName: PLAY_NAME },
     );
     result.costUsd += companyRes.result.cost ?? 0;
+    // `status === "error"` means safeCompanySearch caught a throw (backend
+    // outage/transport failure) — the sentinel's `results: []` is not a
+    // genuine "no companies for this industry" answer. Treating it as one
+    // reported misleading targeting guidance for what was really a platform
+    // failure (finding PRRT_kwDOSKzrBs6fCBdS).
+    if (companyRes.result.status === "error") {
+      result.halted = "companySearch failed (platform error) — see logs";
+      logEvent("finder.done", { name: PLAY_NAME, candidates: 0, halted: result.halted });
+      return result;
+    }
     const seenDomains = new Set<string>();
     for (const c of companyRes.result.results as CompanyResult[]) {
       const domain = c.domain?.trim().toLowerCase();
@@ -172,6 +182,14 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
   const candidates = peopleRes.result.results as PersonResult[];
   result.candidates = candidates.length;
 
+  if (peopleRes.result.status === "error") {
+    // Same distinction as companySearch above: an empty `results` from a
+    // caught throw is a platform failure, not "no matches" (finding
+    // PRRT_kwDOSKzrBs6fCBdS).
+    result.halted = "peopleSearch failed (platform error) — see logs";
+    logEvent("finder.done", { name: PLAY_NAME, candidates: 0, halted: result.halted });
+    return result;
+  }
   if (candidates.length === 0) {
     result.halted = businessShaped
       ? "peopleSearch returned no matches for the resolved company domains"

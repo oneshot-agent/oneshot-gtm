@@ -129,6 +129,52 @@ describe("socrataLicenseSource.fetch — per-portal isolation", () => {
     expect(out.records).toHaveLength(0);
     expect(out.perSource[0]?.error).toBeTruthy();
   });
+
+  it("paginates past the first 200 rows and finds a fresh record living on page 2 — the exact review finding", async () => {
+    // Page 1 (offset=0): 200 rows, all OLD — simulates the "arbitrary 200
+    // rows" the old unordered $limit=200 call used to settle for, none of
+    // which are fresh. Page 2 (offset=200): 1 row, RECENT. Without
+    // pagination this recent row is invisible; with $order+$where+$offset
+    // it must surface.
+    const page1 = Array.from({ length: 200 }, (_, i) => ({
+      business_name: `Old Co ${i}`,
+      city: "Brooklyn",
+      state: "NY",
+      license_creation_date: OLD_ISO,
+    }));
+    const page2 = [
+      {
+        business_name: "Fresh Taqueria",
+        city: "Brooklyn",
+        state: "NY",
+        license_creation_date: RECENT_ISO,
+      },
+    ];
+    let sawOrder = false;
+    let sawWhere = false;
+    stubFetch(async (url) => {
+      const u = new URL(url);
+      if (u.searchParams.get("$limit") === "1") {
+        // schema-probe request
+        return [page1[0]];
+      }
+      if (u.searchParams.get("$order")) sawOrder = true;
+      if (u.searchParams.get("$where")) sawWhere = true;
+      const offset = Number(u.searchParams.get("$offset") ?? "0");
+      if (offset === 0) return page1;
+      if (offset === 200) return page2;
+      return [];
+    });
+    const out = await socrataLicenseSource.fetch({
+      sinceDays: 60,
+      limit: 500,
+      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
+    });
+    expect(sawOrder).toBe(true);
+    expect(sawWhere).toBe(true);
+    const fresh = out.records.find((r) => r.name === "Fresh Taqueria");
+    expect(fresh).toBeTruthy();
+  });
 });
 
 describe("mapNppesResults — canned payload", () => {
@@ -171,6 +217,14 @@ describe("mapNppesResults — canned payload", () => {
     const out = mapNppesResults(results, "NPPES Dentist (NY)", "NY", 500);
     const names = out.map((r) => r.name).toSorted();
     expect(names).toEqual(["Pat Lee", "Rae's Dental PLLC"]);
+  });
+
+  it("labels subjectType organization vs individual so a person's name isn't mistaken for a company", () => {
+    const out = mapNppesResults(results, "NPPES Dentist (NY)", "NY", 500);
+    const org = out.find((r) => r.name === "Rae's Dental PLLC");
+    const individual = out.find((r) => r.name === "Pat Lee");
+    expect(org?.subjectType).toBe("organization");
+    expect(individual?.subjectType).toBe("individual");
   });
 });
 
@@ -228,6 +282,56 @@ describe("nppesSource.fetch — per taxonomy×state isolation", () => {
     });
     expect(out.records).toHaveLength(0);
     expect(out.perSource).toHaveLength(0);
+  });
+
+  it("pages past 200 providers (skip) and finds a newly-enumerated one on page 2 — the exact review finding", async () => {
+    // Page 1 (skip=0): 200 providers, all OLD — the "arbitrary first 200"
+    // the old single-request adapter used to settle for. Page 2 (skip=200):
+    // 1 provider, RECENT. Without walking skip, this newly-enumerated
+    // provider is invisible and the pair would wrongly report "no providers
+    // in the freshness window".
+    const page1 = {
+      result_count: 200,
+      results: Array.from({ length: 200 }, (_, i) => ({
+        number: String(1000000000 + i),
+        basic: { organization_name: `Old Dental ${i}`, enumeration_date: OLD_ISO },
+        addresses: [{ address_purpose: "LOCATION", city: "Buffalo", state: "NY" }],
+      })),
+    };
+    const page2 = {
+      result_count: 1,
+      results: [
+        {
+          number: "9999999999",
+          basic: { organization_name: "New Dental Group", enumeration_date: RECENT_ISO },
+          addresses: [{ address_purpose: "LOCATION", city: "Buffalo", state: "NY" }],
+        },
+      ],
+    };
+    let sawSkip200 = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        const u = new URL(url);
+        const skip = Number(u.searchParams.get("skip") ?? "0");
+        if (skip === 200) sawSkip200 = true;
+        return {
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          json: async () => (skip === 0 ? page1 : skip === 200 ? page2 : { results: [] }),
+        };
+      }),
+    );
+    const out = await nppesSource.fetch({
+      sinceDays: 60,
+      limit: 500,
+      taxonomies: ["Dentist"],
+      states: ["NY"],
+    });
+    expect(sawSkip200).toBe(true);
+    const fresh = out.records.find((r) => r.name === "New Dental Group");
+    expect(fresh).toBeTruthy();
   });
 });
 
@@ -469,7 +573,6 @@ describe("mapInspectionRows — canned payload, violation-free by construction",
     const json = JSON.stringify(out);
     expect(json).not.toMatch(/violation/i);
     expect(json.toLowerCase()).not.toContain("critical");
-    expect(json).not.toContain("35");
     expect(json).not.toMatch(/cited/i);
     // Only the declared RegistryRecord keys are present.
     for (const rec of out) {
@@ -485,6 +588,13 @@ describe("mapInspectionRows — canned payload, violation-free by construction",
           "state",
         ].toSorted(),
       );
+      // The raw row's score ("35") must not survive onto any mapped field.
+      // Checked per-value with strict equality rather than as a substring of
+      // the whole JSON blob: RECENT_ISO/OLD_ISO are real wall-clock
+      // timestamps, and any two-digit ISO component (month/day/hour/minute/
+      // second/ms) can legitimately read "35", which would make a substring
+      // check flaky against the run-time clock.
+      expect(Object.values(rec as unknown as Record<string, unknown>)).not.toContain("35");
     }
   });
 });

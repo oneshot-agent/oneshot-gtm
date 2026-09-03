@@ -1,8 +1,8 @@
 import { type AcceleratorBatchTarget, runAcceleratorBatch } from "./accelerator-batch.ts";
 import { type BreakupReviveTarget, runBreakupRevive } from "./breakup-revive.ts";
 import { type CompetitorSwitchTarget, runCompetitorSwitch } from "./competitor-switch.ts";
-import { type DiscoveryInterviewTarget, runDiscoveryInterview } from "./discovery-interview.ts";
 import { type FreePilotTarget, runFreePilot } from "./free-pilot.ts";
+import { type DiscoveryInterviewTarget, runDiscoveryInterview } from "./discovery-interview.ts";
 import { type SourcesSoughtTarget, runSourcesSought } from "./sources-sought.ts";
 import { type CivicPilotTarget, runCivicPilot } from "./civic-pilot.ts";
 import { type DesignPartnerLoiTarget, runDesignPartnerLoi } from "./design-partner-loi.ts";

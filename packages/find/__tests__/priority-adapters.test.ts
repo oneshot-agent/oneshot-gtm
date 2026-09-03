@@ -458,4 +458,13 @@ describe("new-business — sourceLabel is registry metadata, not evidence text",
     // no genuine quoted-evidence signal.
     expect(p.components.signalConfidence).toBe(50);
   });
+
+  it("does not overstate signalConfidence off businessType alone (local-business shape)", () => {
+    // The local-business payload shape (`businessType`, no evidence-text
+    // field at all) previously hardcoded hasEvidenceText: true, inflating
+    // signalConfidence for every local-business row regardless of whether
+    // any real quoted evidence existed (finding PRRT_kwDOSKzrBs6fCBdJ).
+    const p = safeScorePriority("free-pilot", FIXTURES["free-pilot"], NOW)!;
+    expect(p.components.signalConfidence).toBe(50);
+  });
 });

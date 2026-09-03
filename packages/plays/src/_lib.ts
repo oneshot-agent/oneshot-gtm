@@ -339,7 +339,11 @@ export function citesPublicRecordLeverage(body: string): boolean {
       body,
     ) ||
     /\b(?:licen[sc]e|permit|registration)\s+(?:lapsed|expired|revoked|suspended)\b/i.test(body) ||
-    /\blapsed\s+(?:licen[sc]e|permit|registration)\b/i.test(body)
+    // Adjective-first phrasing ("expired permit", "revoked license") reused
+    // the SAME state alternation the noun-first check above uses, instead of
+    // matching only `lapsed` — the other three states passed the guardrail
+    // reversed (finding PRRT_kwDOSKzrBs6fCBd-).
+    /\b(?:lapsed|expired|revoked|suspended)\s+(?:licen[sc]e|permit|registration)\b/i.test(body)
   );
 }
 

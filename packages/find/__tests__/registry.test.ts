@@ -125,6 +125,8 @@ describe("TRIGGERS registry", () => {
       "gov-solicitation",
       "civic-agenda",
       "local-registry",
+      "gov-solicitation",
+      "civic-agenda",
     ];
     for (const name of optIn) {
       const spec = TRIGGERS.find((t) => t.name === name);
@@ -355,6 +357,8 @@ describe("checkReadiness", () => {
       "gov-solicitation",
       "civic-agenda",
       "local-registry",
+      "gov-solicitation",
+      "civic-agenda",
     ]);
     for (const spec of TRIGGERS) {
       if (intentionallyUnreadyByDefault.has(spec.name)) continue;

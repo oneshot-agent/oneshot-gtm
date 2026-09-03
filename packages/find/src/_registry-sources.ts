@@ -25,6 +25,15 @@ export interface RegistryRecord {
   /** Human label for the specific portal/taxonomy this record came from — carried onto the queue row. */
   sourceLabel: string;
   /**
+   * nppes only. NPPES enumerates two distinct subject types under one API:
+   * NPI-1 (individual — `name` is a person's first+last) vs NPI-2
+   * (organization — `name` is the business/org name). Both get billed
+   * downstream to `enrichCompany` as if `name` were a company name, so this
+   * flag lets a reviewer of `/queue` rows tell why a "company" row shows a
+   * person's name instead of assuming a mapping bug.
+   */
+  subjectType?: "individual" | "organization";
+  /**
    * The record's own on-file email (fmcsa only) — carries a published email,
    * so the caller skips `findEmail`/`verifyEmail` entirely for this
    * candidate rather than paying to re-derive what the record already
@@ -145,6 +154,23 @@ function pickField(record: Record<string, unknown>, candidates: string[]): strin
   return null;
 }
 
+/**
+ * Which of the known date-column spellings this specific portal's schema
+ * actually uses — needed so pagination can `$order`/`$where` on a real
+ * SoQL column name. Returns the ACTUAL key (not the value), unlike
+ * `pickField`, and doesn't require the value to be present on this one row.
+ */
+function findDateFieldKey(record: Record<string, unknown>, candidates: string[]): string | null {
+  for (const key of candidates) {
+    if (key in record) return key;
+  }
+  const lowerMap = new Map(Object.keys(record).map((k) => [k.toLowerCase(), k]));
+  for (const key of candidates) {
+    const actual = lowerMap.get(key.toLowerCase());
+    if (actual) return actual;
+  }
+  return null;
+}
 function pickDateIso(record: Record<string, unknown>, candidates: string[]): string | null {
   const raw = pickField(record, candidates);
   if (!raw) return null;
@@ -208,46 +234,148 @@ export function mapSocrataRows(
   return out;
 }
 
+const SOCRATA_PAGE_SIZE = 200;
+/**
+ * Cap on pages fetched per portal per run (1,000 rows @ 200/page). Recency
+ * ordering + a server-side date predicate mean this ceiling is now about
+ * bounding request volume/cost, not about correctness — unlike the old
+ * unordered single page, every row considered here is guaranteed to be
+ * within the freshness window and returned newest-first.
+ */
+const SOCRATA_MAX_PAGES = 5;
+
+/**
+ * Resolve this portal's date column from the dataset's own column metadata
+ * (Socrata's `/api/views/{4x4}.json`), which lists every column by name
+ * regardless of whether any single row happens to have a value in it. A
+ * one-row `$limit=1` probe can omit the date field entirely on a
+ * sparsely-populated dataset (or just an unlucky row) and wrongly report "no
+ * date column" even though the column exists and is populated on the vast
+ * majority of rows. Returns null (never throws) so the caller can fall back.
+ */
+async function resolveSocrataDateFieldFromMetadata(
+  portal: SocrataPortalConfig,
+): Promise<string | null> {
+  try {
+    const metaUrl = `https://${portal.host}/api/views/${portal.dataset}.json`;
+    const res = await fetch(metaUrl);
+    if (!res.ok) return null;
+    const meta = (await res.json()) as { columns?: Array<{ fieldName?: unknown }> };
+    const fieldNames = (meta.columns ?? [])
+      .map((c) => c.fieldName)
+      .filter((f): f is string => typeof f === "string" && f.length > 0);
+    if (fieldNames.length === 0) return null;
+    const lowerMap = new Map(fieldNames.map((f) => [f.toLowerCase(), f]));
+    for (const candidate of SOCRATA_DATE_FIELDS) {
+      const actual = lowerMap.get(candidate.toLowerCase());
+      if (actual) return actual;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 async function fetchSocrataPortal(
   portal: SocrataPortalConfig,
   cfg: RegistryQuery,
 ): Promise<{ records: RegistryRecord[]; diagnostic: string | null }> {
-  const params = new URLSearchParams();
-  params.set("$limit", "200");
   const q = buildSocrataSearchTerm(cfg.naics, cfg.licenseTypes);
-  if (q) params.set("$q", q);
-  const url = `https://${portal.host}/resource/${portal.dataset}.json?${params.toString()}`;
 
-  let res: Response;
-  try {
-    res = await fetch(url);
-  } catch (err) {
-    return {
-      records: [],
-      diagnostic: `${portal.host} fetch failed: ${(err as Error).message ?? "network error"}`,
-    };
+  // Business-license schemas vary portal to portal (see SOCRATA_DATE_FIELDS).
+  // Prefer the dataset's own column metadata — it names every column
+  // regardless of row-level nulls — and fall back to a single cheap probe
+  // row only when the metadata call itself is unavailable. Either way, the
+  // resolved column is required for both `$order` (recency-first) and
+  // `$where` (server-side freshness predicate) below.
+  let dateField: string | null = await resolveSocrataDateFieldFromMetadata(portal);
+  if (!dateField) {
+    const probeParams = new URLSearchParams();
+    probeParams.set("$limit", "1");
+    if (q) probeParams.set("$q", q);
+    const probeUrl = `https://${portal.host}/resource/${portal.dataset}.json?${probeParams.toString()}`;
+    try {
+      const probeRes = await fetch(probeUrl);
+      if (probeRes.ok) {
+        const probeRows = await probeRes.json();
+        const probeRow =
+          Array.isArray(probeRows) && probeRows.length > 0 && typeof probeRows[0] === "object"
+            ? (probeRows[0] as Record<string, unknown>)
+            : null;
+        if (probeRow) dateField = findDateFieldKey(probeRow, SOCRATA_DATE_FIELDS);
+      }
+    } catch {
+      // Schema probe is best-effort: fall through without ordering rather than
+      // failing the whole portal — the main fetch below still runs.
+    }
   }
-  if (!res.ok) {
-    return { records: [], diagnostic: `${portal.host} returned ${res.status} ${res.statusText}` };
+  const sinceIso = new Date(Date.now() - cfg.sinceDays * 86_400_000).toISOString().split(".")[0];
+
+  const rows: unknown[] = [];
+  for (let page = 0; page < SOCRATA_MAX_PAGES; page++) {
+    const params = new URLSearchParams();
+    params.set("$limit", String(SOCRATA_PAGE_SIZE));
+    params.set("$offset", String(page * SOCRATA_PAGE_SIZE));
+    if (q) params.set("$q", q);
+    if (dateField) {
+      // Recency-first ordering + a server-side freshness predicate — without
+      // this, `$limit=200` with no `$order` returns an arbitrary page of a
+      // dataset that can be millions of rows, silently missing every
+      // qualifying recent row that lands outside that arbitrary page.
+      params.set("$order", `${dateField} DESC`);
+      params.set("$where", `${dateField} >= '${sinceIso}'`);
+    }
+    const url = `https://${portal.host}/resource/${portal.dataset}.json?${params.toString()}`;
+
+    let res: Response;
+    try {
+      res = await fetch(url);
+    } catch (err) {
+      if (page === 0) {
+        return {
+          records: [],
+          diagnostic: `${portal.host} fetch failed: ${(err as Error).message ?? "network error"}`,
+        };
+      }
+      break;
+    }
+    if (!res.ok) {
+      if (page === 0) {
+        return {
+          records: [],
+          diagnostic: `${portal.host} returned ${res.status} ${res.statusText}`,
+        };
+      }
+      break;
+    }
+    let parsed: unknown;
+    try {
+      parsed = await res.json();
+    } catch {
+      if (page === 0) {
+        return { records: [], diagnostic: `${portal.host} response was not valid JSON` };
+      }
+      break;
+    }
+    if (!Array.isArray(parsed)) {
+      if (page === 0) {
+        return { records: [], diagnostic: `${portal.host} response was not an array` };
+      }
+      break;
+    }
+    if (parsed.length === 0) break;
+    rows.push(...parsed);
+    if (parsed.length < SOCRATA_PAGE_SIZE) break; // last page
   }
-  let parsed: unknown;
-  try {
-    parsed = await res.json();
-  } catch {
-    return { records: [], diagnostic: `${portal.host} response was not valid JSON` };
-  }
-  if (!Array.isArray(parsed)) {
-    return { records: [], diagnostic: `${portal.host} response was not an array` };
-  }
-  if (parsed.length === 0) {
+
+  if (rows.length === 0) {
     return { records: [], diagnostic: `${portal.host}/${portal.dataset} returned 0 rows` };
   }
 
-  const records = mapSocrataRows(parsed, portal.label, cfg.sinceDays);
+  const records = mapSocrataRows(rows, portal.label, cfg.sinceDays);
   if (records.length === 0) {
     return {
       records: [],
-      diagnostic: `${portal.label}: ${parsed.length} rows fetched, none within ${cfg.sinceDays}d window`,
+      diagnostic: `${portal.label}: ${rows.length} rows fetched, none within ${cfg.sinceDays}d window`,
     };
   }
   return { records, diagnostic: null };
@@ -326,6 +454,10 @@ function nppesDisplayName(basic: NppesBasic | undefined): string | null {
   return parts.length > 0 ? parts.join(" ") : null;
 }
 
+/** NPI-2 (organization) has `organization_name` set; NPI-1 (individual) does not. */
+function nppesSubjectType(basic: NppesBasic | undefined): "individual" | "organization" {
+  return basic?.organization_name?.trim() ? "organization" : "individual";
+}
 /** Map + freshness-filter one taxonomy×state pair's raw NPPES results. Exported for the unit test. */
 export function mapNppesResults(
   results: NppesResult[],
@@ -353,44 +485,75 @@ export function mapNppesResults(
       matchedDateIso: new Date(t).toISOString(),
       source: "nppes",
       sourceLabel: label,
+      subjectType: nppesSubjectType(r.basic),
     });
   }
   return out;
 }
 
+const NPPES_PAGE_SIZE = 200;
+/** NPPES's own documented ceiling: skip caps at 1000, so 6 pages of 200 (1200 records) is the max obtainable for any one query — matches the ropensci npi_search client's documented limit. */
+const NPPES_MAX_PAGES = 6;
 async function fetchNppesPair(
   taxonomy: string,
   state: string,
   cfg: RegistryQuery,
 ): Promise<{ records: RegistryRecord[]; diagnostic: string | null }> {
-  const params = new URLSearchParams({
-    version: "2.1",
-    taxonomy_description: taxonomy,
-    state,
-    limit: "200",
-  });
-  const url = `https://npiregistry.cms.hhs.gov/api/?${params.toString()}`;
   const label = `NPPES ${taxonomy} (${state})`;
+  const results: NppesResult[] = [];
 
-  let res: Response;
-  try {
-    res = await fetch(url);
-  } catch (err) {
-    return {
-      records: [],
-      diagnostic: `fetch failed: ${(err as Error).message ?? "network error"}`,
-    };
+  for (let page = 0; page < NPPES_MAX_PAGES; page++) {
+    const params = new URLSearchParams({
+      version: "2.1",
+      taxonomy_description: taxonomy,
+      state,
+      limit: String(NPPES_PAGE_SIZE),
+      skip: String(page * NPPES_PAGE_SIZE),
+    });
+    const url = `https://npiregistry.cms.hhs.gov/api/?${params.toString()}`;
+
+    let res: Response;
+    try {
+      res = await fetch(url);
+    } catch (err) {
+      if (page === 0) {
+        return {
+          records: [],
+          diagnostic: `fetch failed: ${(err as Error).message ?? "network error"}`,
+        };
+      }
+      break;
+    }
+    if (!res.ok) {
+      if (page === 0) {
+        return { records: [], diagnostic: `nppes returned ${res.status} ${res.statusText}` };
+      }
+      break;
+    }
+    let parsed: NppesResponse;
+    try {
+      parsed = (await res.json()) as NppesResponse;
+    } catch {
+      if (page === 0) {
+        return { records: [], diagnostic: "nppes response was not valid JSON" };
+      }
+      break;
+    }
+    const pageResults = parsed.results ?? [];
+    if (pageResults.length === 0) break;
+    // NPPES has no `$order`-equivalent sort param (confirmed against the
+    // API's own field reference: only `limit`/`skip`), so walking every
+    // page up to the 1,200-record ceiling closes the gap ONLY when a
+    // taxonomy×state pair's total result count is <=1200. A pair that
+    // exceeds that (e.g. Dentist in a populous state like CA/TX/NY) can
+    // still leave a newly-enumerated provider past page 6 invisible —
+    // there is no ordering guarantee to bring it forward, unlike the
+    // Socrata fix's server-side $order+$where. See STATUS.md's known
+    // limitations for the honest statement of what this does and doesn't
+    // cover.
+    results.push(...pageResults);
+    if (pageResults.length < NPPES_PAGE_SIZE) break; // last page
   }
-  if (!res.ok) {
-    return { records: [], diagnostic: `nppes returned ${res.status} ${res.statusText}` };
-  }
-  let parsed: NppesResponse;
-  try {
-    parsed = (await res.json()) as NppesResponse;
-  } catch {
-    return { records: [], diagnostic: "nppes response was not valid JSON" };
-  }
-  const results = parsed.results ?? [];
   if (results.length === 0) {
     return { records: [], diagnostic: `nppes has no ${taxonomy} providers in ${state}` };
   }

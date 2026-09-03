@@ -23,6 +23,8 @@ Reply detection was verified on 2026-08-23 against the real mailboxes: a sliced 
 
 Shadow priority score (#410): heuristic-v2 measured 2026-09-01 on 794 clean human labels — luma-events AUC 0.59-0.63 (up from v1's inverted 0.36), mean gap +1. Under the Phase 2 acceptance bar (gap ≥ +5, AUC ≥ 0.60), so the ranked review order shipped config-gated with `queueReviewOrder` defaulting to `newest` (a toggle on /queue; scores drive nothing else until richer features clear the bar).
 
+Industry packs (#458, #464): `GET /api/packs` + `POST /api/packs/:id/apply` hand a founder a working starting config for their vertical in one confirmation instead of a per-trigger `apply-config` conversation — a pack merges its patches over each trigger's stored config (hand-tuned keys survive) and enables every trigger it touches; a trigger left enabled-but-not-ready (missing a `requires` key the pack deliberately left blank) is the intended end state, named in the response. Ships eight packs: the `devtools-early-adopters` placeholder plus seven real verticals (restaurants-food-service, home-services-trades, healthcare-practices, auto-services, professional-services-smb, trucking-freight, civic-gov), each wired to `local-business` and/or `local-registry`/`gov-solicitation`/`civic-agenda` per the #456 coverage spike (restaurants and home-services measured BEST-covered by `peopleSearch`, dental WORST — the opposite of the card's working hypothesis, so `restaurants-food-service` leans primarily on `local-business`, not `local-registry`). Never writes `icpOneLiner` or any founder-voice field (`yourEdge`/`yourClaim`) — those ride back in the response / stay in `pack.requires` for the founder to fill in.
+
 Updated by hand after each dogfood run.
 
 ---
@@ -63,3 +65,11 @@ Both GitHub finders need `GITHUB_TOKEN`. Unauthenticated, GitHub allows 60 reque
 ## GitHub stargazer discovery is degraded by upstream
 
 GitHub restricted `/stargazers` to repo admins in July 2026. `github-stars` falls back to the public `/events` feed, which only exposes `WatchEvent`s within roughly a 90-day, 300-event window. Stars outside that window are invisible — not a bug in the finder.
+
+## NPPES recency pagination has a hard ceiling on busy taxonomy×state pairs
+
+`local-registry`'s nppes adapter (`fetchNppesPair` in `packages/find/src/_registry-sources.ts`) pages through NPPES's `skip`/`limit` API up to its own documented ceiling — 6 pages of 200, 1,200 records per taxonomy×state pair per run. The NPPES API has no `$order`-equivalent sort parameter, so this closes the "invisible past page 1" gap only when a pair's total result count is at or under 1,200. A busy pair that exceeds it (e.g. Dentist in a populous state like CA/TX/NY) can still leave a newly-enumerated provider past page 6 unseen, with no ordering guarantee to surface it sooner — unlike the Socrata adapter, which closes the equivalent gap for real via server-side `$order`+`$where`. Narrowing `states[]`/`taxonomies[]` to smaller pairs sidesteps it; there is no client-side fix for a pair NPPES itself won't sort.
+
+## civic-agenda covers a curated city list, not every Legistar deployment
+
+Legistar/Granicus covers 80%+ of US municipalities, but each deployment's client slug is an arbitrary string with no discovery API — `packages/find/src/_civic-legistar.ts` ships a curated `CITY_SLUGS` map (NYC, Chicago, Philadelphia, Oakland, San Francisco). An unmapped city is skipped with a logged reason rather than guessed at; extend the map as founders name more cities.

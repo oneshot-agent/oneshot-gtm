@@ -18,7 +18,7 @@ describe("dedupeKeyFor", () => {
     expect(dedupeKeyFor(a)).toBe(dedupeKeyFor(b));
   });
 
-  it("differs by source even for the same name/state", () => {
+  it("is the SAME across sources for the same name/state/city — cross-source dedup is the point (a business licensed AND NPI-enumerated must collapse to one candidate)", () => {
     const base: RegistryRecord = {
       name: "Rae's Dental",
       address: null,
@@ -29,7 +29,40 @@ describe("dedupeKeyFor", () => {
       source: "socrata-license",
       sourceLabel: "x",
     };
-    expect(dedupeKeyFor(base)).not.toBe(dedupeKeyFor({ ...base, source: "nppes" }));
+    expect(dedupeKeyFor(base)).toBe(dedupeKeyFor({ ...base, source: "nppes" }));
+  });
+
+  it("preserves non-ASCII business names instead of stripping them to an empty slug (finding PRRT_kwDOSKzrBs6ewn0O)", () => {
+    const a: RegistryRecord = {
+      name: "北京饭店",
+      address: null,
+      city: "Flushing",
+      state: "NY",
+      phone: null,
+      matchedDateIso: "2026-06-01T00:00:00Z",
+      source: "socrata-license",
+      sourceLabel: "x",
+    };
+    const b: RegistryRecord = { ...a, name: "上海小吃" };
+    // Distinct non-ASCII names must produce distinct keys — the old
+    // `[^a-z0-9-]` slug stripped every character of both names to "",
+    // colliding them into one dedupe key.
+    expect(dedupeKeyFor(a)).not.toBe(dedupeKeyFor(b));
+  });
+
+  it("distinguishes same-name businesses in different cities when state is absent (finding PRRT_kwDOSKzrBs6ewn0O)", () => {
+    const a: RegistryRecord = {
+      name: "Main Street Cafe",
+      address: null,
+      city: "Springfield",
+      state: null,
+      phone: null,
+      matchedDateIso: "2026-06-01T00:00:00Z",
+      source: "socrata-license",
+      sourceLabel: "x",
+    };
+    const b: RegistryRecord = { ...a, city: "Riverside" };
+    expect(dedupeKeyFor(a)).not.toBe(dedupeKeyFor(b));
   });
 });
 
@@ -45,8 +78,20 @@ describe("routePlayFor", () => {
   });
 
   it("treats the boundary (exactly freshnessDays old) as still fresh", () => {
-    const boundary = new Date(Date.now() - 21 * 86_400_000).toISOString();
-    expect(routePlayFor(boundary, 21)).toBe("new-business");
+    // Freeze the clock so `boundary` and routePlayFor's own `Date.now()` read
+    // the identical millisecond — otherwise a 1ms advance between the two
+    // reads pushes cutoffMs past Date.parse(boundary) and the `>=` comparison
+    // in local-registry.ts routes this record to free-pilot instead,
+    // flaking the assertion (finding PRRT_kwDOSKzrBs6fCBc-).
+    vi.useFakeTimers();
+    try {
+      const now = Date.now();
+      vi.setSystemTime(now);
+      const boundary = new Date(now - 21 * 86_400_000).toISOString();
+      expect(routePlayFor(boundary, 21)).toBe("new-business");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -73,6 +118,8 @@ let socrataShouldThrow = false;
 let nppesShouldThrow = false;
 let fmcsaShouldThrow = false;
 let inspectionShouldThrow = false;
+/** dedupeKeys that isQueueDuplicate reports as already queued. */
+let duplicateDedupeKeys: Set<string> = new Set();
 
 const RECENT_ISO = new Date(Date.now() - 3 * 86_400_000).toISOString();
 const OLD_ISO = new Date(Date.now() - 90 * 86_400_000).toISOString();
@@ -225,7 +272,8 @@ vi.mock("@oneshot-gtm/core", async () => {
       return { result: { deliverable: true, cost: 0.005 }, receiptId: 1 };
     },
     getLedger: () => ({
-      isQueueDuplicate: () => false,
+      isQueueDuplicate: (_playName: string, dedupeKey: string) =>
+        duplicateDedupeKeys.has(dedupeKey),
       enqueueTarget: (row: EnqueuedRow) => {
         enqueued.push(row);
         return enqueued.length;
@@ -261,6 +309,7 @@ beforeEach(() => {
   nppesShouldThrow = false;
   fmcsaShouldThrow = false;
   inspectionShouldThrow = false;
+  duplicateDedupeKeys = new Set();
   nextEnrichCompanyDomain = "acme.dev";
   enrichCompanyCalls = 0;
   findEmailCalls = 0;
@@ -355,21 +404,146 @@ describe("runLocalRegistryFinder — routing + isolation", () => {
     expect(enqueued).toHaveLength(0);
   });
 
-  it("dedupes a record surfaced by both sources within the same run", async () => {
-    const dup = makeRecord({ name: "Rae's Dental", source: "nppes", sourceLabel: "NPPES Dentist" });
+  it("dedupes a record surfaced by both sources within the same run, even with genuinely different source tags (socrata-license vs nppes)", async () => {
     nextSocrataRecords = [
+      makeRecord({ name: "Rae's Dental", source: "socrata-license", sourceLabel: "NYC licenses" }),
+    ];
+    nextNppesRecords = [
       makeRecord({ name: "Rae's Dental", source: "nppes", sourceLabel: "NPPES Dentist" }),
     ];
-    nextNppesRecords = [dup];
+    const out = await runLocalRegistryFinder({
+      dryRun: false,
+      yourEdge: "x",
+      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
+      taxonomies: ["Dentist"],
+      states: ["NY"],
+    });
+    // Cross-source dedup is the stated intent: a business licensed AND
+    // NPI-enumerated must collapse to one candidate, not be double-enriched
+    // and potentially double-queued to different plays.
+    expect(out.candidates).toBe(1);
+    expect(out.enqueued).toBe(1);
+  });
+
+  it("keeps the NEWER cross-source duplicate's matchedDateIso so routing isn't decided by source fetch order (finding PRRT_kwDOSKzrBs6ewn0H)", async () => {
+    // socrata (fetched first, per REGISTRY_SOURCES order) reports an OLD
+    // license; nppes (fetched second) reports a RECENT enumeration for the
+    // same business. Keeping "the first one seen" would keep the old date
+    // and wrongly route this business to free-pilot instead of new-business.
+    nextSocrataRecords = [
+      makeRecord({
+        name: "Rae's Dental",
+        source: "socrata-license",
+        sourceLabel: "NYC licenses",
+        matchedDateIso: OLD_ISO,
+      }),
+    ];
+    nextNppesRecords = [
+      makeRecord({
+        name: "Rae's Dental",
+        source: "nppes",
+        sourceLabel: "NPPES Dentist",
+        matchedDateIso: RECENT_ISO,
+      }),
+    ];
+    const out = await runLocalRegistryFinder({
+      dryRun: false,
+      yourEdge: "x",
+      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
+      taxonomies: ["Dentist"],
+      states: ["NY"],
+    });
+    expect(out.candidates).toBe(1);
+    expect(out.enqueued).toBe(1);
+    expect(enqueued[0]?.playName).toBe("new-business");
+    expect(enqueued[0]?.payload["matchedDateIso"]).toBe(RECENT_ISO);
+  });
+
+  it("never enqueues more than `limit` even at concurrency > 1 (finding PRRT_kwDOSKzrBs6ewnz7)", async () => {
+    // Five distinct fresh candidates, concurrency 3, limit 1 — the exact
+    // review-cited repro shape. A check against `result.enqueued` (mutated
+    // only after each candidate's async pipeline fully resolves) lets every
+    // in-flight worker see 0 < 1 and proceed; a slot reserved synchronously
+    // before the pipeline starts must cap this at exactly 1.
+    nextSocrataRecords = Array.from({ length: 5 }, (_, i) =>
+      makeRecord({ name: `Candidate ${i}`, matchedDateIso: RECENT_ISO }),
+    );
+    const out = await runLocalRegistryFinder({
+      dryRun: false,
+      yourEdge: "x",
+      limit: 1,
+      concurrency: 3,
+      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
+    });
+    expect(out.enqueued).toBe(1);
+    expect(enqueued).toHaveLength(1);
+  });
+
+  it("releases the reserved slot on a queue-duplicate drop so it doesn't starve fresh candidates behind it (finding PRRT_kwDOSKzrBs6fCBdz)", async () => {
+    // A tick with `limit: 1`: the first record is already queued from a
+    // prior run (isQueueDuplicate hits, no paid call runs), the second is
+    // fresh. Pre-fix, `reserved` stayed at 1 forever after the duplicate and
+    // the fresh candidate never got a turn — the run halted having enqueued
+    // nothing, even though the whole point of the tick was the fresh one.
+    const dup = makeRecord({ name: "Already Queued LLC", matchedDateIso: RECENT_ISO });
+    const fresh = makeRecord({ name: "Brand New Co", matchedDateIso: RECENT_ISO });
+    duplicateDedupeKeys = new Set([dedupeKeyFor(dup)]);
+    nextSocrataRecords = [dup, fresh];
+    const out = await runLocalRegistryFinder({
+      dryRun: false,
+      yourEdge: "x",
+      limit: 1,
+      concurrency: 1,
+      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
+    });
+    expect(out.droppedDuplicate).toBe(1);
+    expect(out.enqueued).toBe(1);
+    expect(enqueued).toHaveLength(1);
+    expect(enqueued[0]?.dedupeKey).toBe(dedupeKeyFor(fresh));
+  });
+
+  it("sets result.halted (not just the local flag) when the reserved-slot limit is reached", async () => {
+    nextSocrataRecords = Array.from({ length: 3 }, (_, i) =>
+      makeRecord({ name: `Candidate ${i}`, matchedDateIso: RECENT_ISO }),
+    );
+    const out = await runLocalRegistryFinder({
+      dryRun: false,
+      yourEdge: "x",
+      limit: 1,
+      concurrency: 1,
+      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
+    });
+    expect(out.halted).toMatch(/limit \(1\) reached/);
+  });
+
+  it("carries subjectType through to the queued LocalRegistryTarget payload so a /queue reviewer can see it", async () => {
+    nextNppesRecords = [
+      makeRecord({
+        name: "Dr. Rae Kim",
+        source: "nppes",
+        sourceLabel: "NPPES Dentist",
+        subjectType: "individual",
+      }),
+    ];
     const out = await runLocalRegistryFinder({
       dryRun: false,
       yourEdge: "x",
       taxonomies: ["Dentist"],
       states: ["NY"],
     });
-    // Both fetch adapters returned the same (source, name, state) record —
-    // the finder's within-run dedupe collapses it to one candidate.
-    expect(out.candidates).toBe(1);
+    expect(out.enqueued).toBe(1);
+    expect(enqueued[0]?.payload["subjectType"]).toBe("individual");
+  });
+
+  it("omits subjectType from the queued payload when the source doesn't set it (socrata records)", async () => {
+    nextSocrataRecords = [makeRecord()];
+    const out = await runLocalRegistryFinder({
+      dryRun: false,
+      yourEdge: "x",
+      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
+    });
+    expect(out.enqueued).toBe(1);
+    expect(enqueued[0]?.payload["subjectType"]).toBeUndefined();
   });
 });
 

@@ -145,6 +145,18 @@ describe("lintEmail — humanizer canon", () => {
     );
   });
 
+  it("flags adjective-first license/permit/registration phrasing for every state, not just lapsed (finding PRRT_kwDOSKzrBs6fCBd-)", () => {
+    expect(lintEmail("hi", "Saw your expired permit come up. Sam")).toContain(
+      "public-record-leverage",
+    );
+    expect(lintEmail("hi", "Noticed your revoked license. Sam")).toContain(
+      "public-record-leverage",
+    );
+    expect(lintEmail("hi", "Saw a suspended registration on file. Sam")).toContain(
+      "public-record-leverage",
+    );
+    expect(lintEmail("hi", "Your lapsed license came up. Sam")).toContain("public-record-leverage");
+  });
   it("flags emojis and curly quotes", () => {
     expect(lintEmail("hi", "Awesome work 🚀. Sam")).toContain("emoji");
     expect(lintEmail("hi", "He said “hi” to me. Sam")).toContain("curly-quotes");
