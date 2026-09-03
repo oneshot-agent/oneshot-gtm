@@ -131,6 +131,25 @@ type DescriptionOutcome = { ok: true; text: string | null } | { ok: false; trans
  * forever on a link that will never resolve.
  */
 async function fetchDescription(url: string, apiKey: string): Promise<DescriptionOutcome> {
+  // Guard the credentialed request: `url` is SAM.gov's own `description` field
+  // on the search response, but it's still external data. Require https +
+  // the exact SAM.gov API host before attaching SAM_GOV_API_KEY, so a
+  // malformed/hijacked response can't exfiltrate the key to another host.
+  // Not a fetch failure — same "proceed without it" contract as a 404 below.
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { ok: true, text: null };
+  }
+  if (parsed.protocol !== "https:" || parsed.hostname !== "api.sam.gov") {
+    logEvent(
+      "error.swallowed",
+      { kind: "gov-solicitation.description_url_rejected", host: parsed.hostname },
+      "warn",
+    );
+    return { ok: true, text: null };
+  }
   const withKey = url.includes("?")
     ? `${url}&api_key=${encodeURIComponent(apiKey)}`
     : `${url}?api_key=${encodeURIComponent(apiKey)}`;
@@ -139,6 +158,9 @@ async function fetchDescription(url: string, apiKey: string): Promise<Descriptio
       method: "GET",
       headers: { Accept: "application/json" },
       signal: AbortSignal.timeout(DESCRIPTION_TIMEOUT_MS),
+      // The credentialed request must not be replayed against a redirect
+      // target — same host-pinning intent as the check above.
+      redirect: "error",
     });
     if (res.status === 404) return { ok: true, text: null };
     if (!res.ok) return { ok: false, transient: res.status >= 500 || res.status === 429 };
@@ -156,9 +178,13 @@ async function fetchDescription(url: string, apiKey: string): Promise<Descriptio
   }
 }
 
+/** Description bodies past this are truncated before stripping — the caller only keeps 800 chars, so nothing past this cap can ever surface. Also closes the CodeQL polynomial-regex alert on the tag-strip below: capping input length before the regex runs bounds the O(n²) worst case on a body full of unmatched `<`. */
+const MAX_DESCRIPTION_CHARS = 20_000;
+
 /** Strip the HTML SAM.gov description bodies are often wrapped in, cheaply. */
 export function stripHtml(html: string): string {
   return html
+    .slice(0, MAX_DESCRIPTION_CHARS)
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/g, " ")
     .replace(/\s+/g, " ")
