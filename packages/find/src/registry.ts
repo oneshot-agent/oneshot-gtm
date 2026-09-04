@@ -902,19 +902,21 @@ export const TRIGGERS: TriggerSpec[] = [
       }
       return { ready: true };
     },
-    run: (cfg) =>
-      runGovSolicitationFinder({
+    run: (cfg) => {
+      const configuredNoticeTypes = (
+        Array.isArray(cfg["noticeTypes"]) ? cfg["noticeTypes"] : []
+      ).filter((t): t is string => typeof t === "string" && t.trim().length > 0);
+      return runGovSolicitationFinder({
         dryRun: false,
         ...(Array.isArray(cfg["naics"])
           ? { naics: (cfg["naics"] as unknown[]).filter((n): n is string => typeof n === "string") }
           : {}),
-        ...(Array.isArray(cfg["noticeTypes"])
-          ? {
-              noticeTypes: (cfg["noticeTypes"] as unknown[]).filter(
-                (t): t is string => typeof t === "string",
-              ),
-            }
-          : {}),
+        // Omit noticeTypes entirely (rather than passing an empty array
+        // through) when the stored config has no usable entries, so the
+        // finder's own default (["r","p"]) applies instead of halting on
+        // "set `noticeTypes`" — the config endpoint persists an empty array
+        // without normalizing it to the default.
+        ...(configuredNoticeTypes.length > 0 ? { noticeTypes: configuredNoticeTypes } : {}),
         ...(Array.isArray(cfg["agencies"])
           ? {
               agencies: (cfg["agencies"] as unknown[]).filter(
@@ -926,7 +928,8 @@ export const TRIGGERS: TriggerSpec[] = [
         sinceDays: (cfg["sinceDays"] as number) ?? 30,
         limit: (cfg["limit"] as number) ?? 25,
         maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
-      }),
+      });
+    },
   },
   {
     // Legistar/Granicus council agendas: keyword-gate agenda item titles free,
