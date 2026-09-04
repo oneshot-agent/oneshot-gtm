@@ -175,6 +175,13 @@ const lumaEventsDef: EmailPlayDef<LumaEventsTarget> = {
       playName: PLAY_NAME,
       enrichInput: {
         ...(t.email ? { email: t.email } : {}),
+        // The finder already resolved a LinkedIn profile for this attendee and
+        // `enrichProfile` keys on one — passing it was simply missed. It
+        // matters most for exactly the people this play finds: an event
+        // attendee's address is routinely personal or academic (the prospect
+        // this was traced from used a university alumni forwarder), and
+        // email + name alone is the weakest possible key.
+        ...(t.linkedinUrl ? { linkedinUrl: t.linkedinUrl } : {}),
         name: t.name,
         companyDomain: t.companyDomain ?? emailDomain(t.email),
       },
@@ -205,6 +212,13 @@ const lumaEventsDef: EmailPlayDef<LumaEventsTarget> = {
       `FOUNDER: ${cfg.founderName}`,
       `PRODUCT: ${cfg.productOneLiner}`,
       `PROSPECT: ${t.name}${t.company ? ` at ${t.company}` : ""}`,
+      // Both, because they come from different places and either can be empty.
+      // `attendeeBio` is Luma's self-written headline — absent on 168 of 432
+      // rows. `title` is what the person-level ICP gate resolved via a PAID
+      // enrichProfile, and it was persisted to prospects.title and then never
+      // shown to the model: the one hard fact about what this person does was
+      // bought and thrown away at the prompt boundary.
+      `TITLE: ${t.title ?? "(unknown)"}`,
       `ATTENDEE BIO/ROLE: ${t.attendeeBio ?? "(none)"}`,
       // "Host" = they RUN the event — never write as if they're merely going.
       `RELATIONSHIP TO EVENT: ${t.role ?? "(unknown — assume attendee)"}`,
