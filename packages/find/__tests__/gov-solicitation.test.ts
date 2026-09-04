@@ -205,7 +205,7 @@ describe("runGovSolicitationFinder — happy path", () => {
     expect(enqueued[0]!.dedupeKey).toBe("good-poc");
   });
 
-  it("drops a notice with non-string email/fullName in an otherwise valid POC entry instead of throwing", async () => {
+  it("drops a notice with a non-string email in an otherwise valid POC entry instead of throwing", async () => {
     // The declared `SamPointOfContact` field types aren't contractually
     // guaranteed at runtime — a single POC object can carry a non-string
     // `email` or `fullName` (e.g. a number). `.trim()` on a non-string
@@ -223,6 +223,27 @@ describe("runGovSolicitationFinder — happy path", () => {
     expect(out.droppedEnrichment).toBe(1);
     expect(enqueued).toHaveLength(1);
     expect(enqueued[0]!.dedupeKey).toBe("good-poc-2");
+  });
+
+  it("drops a notice with a non-string fullName in an otherwise valid POC entry instead of throwing", async () => {
+    // Mirror of the non-string-email case above, but for `fullName` — a
+    // regression that removed the `typeof p.fullName === "string"` guard in
+    // pickPoc (while keeping the email guard) would still pass the email-only
+    // fixture above, so this case must exercise the fullName guard directly.
+    searchResponses["541511"] = [
+      samOpportunity({
+        noticeId: "bad-poc-fullname-type",
+        pointOfContact: [
+          { email: "numeric-name@gsa.gov", fullName: 12345 },
+        ] as unknown as unknown[],
+      }),
+      samOpportunity({ noticeId: "good-poc-3" }),
+    ];
+    const out = await runGovSolicitationFinder(baseConfig);
+    expect(out.enqueued).toBe(1);
+    expect(out.droppedEnrichment).toBe(1);
+    expect(enqueued).toHaveLength(1);
+    expect(enqueued[0]!.dedupeKey).toBe("good-poc-3");
   });
 
   it("filters by agencies (case-insensitive substring) before any fetch", async () => {
