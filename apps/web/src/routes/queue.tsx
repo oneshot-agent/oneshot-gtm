@@ -1600,6 +1600,8 @@ function PackPicker() {
                 navigate({
                   to: "/setup",
                   search: { proposedIcp: result.proposedIcpOneLiner, packLabel: selected.label },
+                  // Land on the ICP section — the seeded field is the point.
+                  hash: "icp",
                 })
               }
             >

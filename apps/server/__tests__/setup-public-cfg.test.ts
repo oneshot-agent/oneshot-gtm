@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { OneShotConfig } from "@oneshot-gtm/core";
-import { mergeSetupConfig, publicCfg } from "../src/api/setup.ts";
+import { mergeSetupConfig, publicCfg, SetupValidationError } from "../src/api/setup.ts";
 
 const FULL_CFG: OneShotConfig = {
   walletMode: "cdp",
@@ -137,6 +137,74 @@ describe("setup config writer", () => {
           FULL_CFG.emailIdentities,
         ),
       ).toThrow(/invalid dailySpendCeilingUsd/);
+    });
+
+    it("throws the typed SetupValidationError so the route can answer 400", () => {
+      expect(() =>
+        mergeSetupConfig(FULL_CFG, { dailySpendCeilingUsd: 0 }, FULL_CFG.emailIdentities),
+      ).toThrow(SetupValidationError);
+    });
+  });
+
+  // Issue #451 surfaced these two keys: real config, no UI, no CLI. The
+  // sectioned /setup now writes them through the same sparse body.
+  describe("queueReviewOrder", () => {
+    it("undefined keeps the stored order", () => {
+      const next = mergeSetupConfig(FULL_CFG, {}, FULL_CFG.emailIdentities);
+      expect(next.queueReviewOrder).toBe("ranked");
+    });
+
+    it("accepts both literals", () => {
+      expect(
+        mergeSetupConfig(FULL_CFG, { queueReviewOrder: "newest" }, FULL_CFG.emailIdentities)
+          .queueReviewOrder,
+      ).toBe("newest");
+      expect(
+        mergeSetupConfig(
+          { ...FULL_CFG, queueReviewOrder: "newest" },
+          { queueReviewOrder: "ranked" },
+          FULL_CFG.emailIdentities,
+        ).queueReviewOrder,
+      ).toBe("ranked");
+    });
+
+    it("ignores an unknown value instead of persisting it", () => {
+      const next = mergeSetupConfig(
+        FULL_CFG,
+        { queueReviewOrder: "sideways" as never },
+        FULL_CFG.emailIdentities,
+      );
+      expect(next.queueReviewOrder).toBe("ranked");
+    });
+  });
+
+  describe("timezone", () => {
+    it("undefined keeps the stored zone", () => {
+      expect(mergeSetupConfig(FULL_CFG, {}, FULL_CFG.emailIdentities).timezone).toBe(
+        "Europe/Vienna",
+      );
+    });
+
+    it("null and blank clear it (runtime zone applies)", () => {
+      expect(
+        mergeSetupConfig(FULL_CFG, { timezone: null }, FULL_CFG.emailIdentities).timezone,
+      ).toBeNull();
+      expect(
+        mergeSetupConfig(FULL_CFG, { timezone: "   " }, FULL_CFG.emailIdentities).timezone,
+      ).toBeNull();
+    });
+
+    it("trims and stores a valid IANA zone", () => {
+      expect(
+        mergeSetupConfig(FULL_CFG, { timezone: " America/New_York " }, FULL_CFG.emailIdentities)
+          .timezone,
+      ).toBe("America/New_York");
+    });
+
+    it("rejects a zone Intl doesn't know", () => {
+      expect(() =>
+        mergeSetupConfig(FULL_CFG, { timezone: "Mars/Olympus" }, FULL_CFG.emailIdentities),
+      ).toThrow(SetupValidationError);
     });
   });
 });

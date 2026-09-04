@@ -340,6 +340,17 @@ export interface SetupRequest {
   llmModel?: string;
   telemetryEnabled?: boolean;
   walletMode?: WalletMode;
+  /**
+   * Default /queue review order. `undefined` = leave unchanged. Anything but
+   * the two literals is ignored (keeps the current value).
+   */
+  queueReviewOrder?: "ranked" | "newest";
+  /**
+   * Install-wide IANA time zone (issue #451 surfaced it — no other writer
+   * exists). `undefined` = leave unchanged; `null` or blank = clear back to the
+   * runtime zone; otherwise must be a valid IANA name or the request is 400.
+   */
+  timezone?: string | null;
   secrets?: Partial<
     Record<
       | "OPENROUTER_API_KEY"

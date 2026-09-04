@@ -1,19 +1,24 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
-import { Mail, Save, Wand2 } from "lucide-react";
-import { useEffect, useState, type ReactNode, useRef } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { createFileRoute, useBlocker } from "@tanstack/react-router";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
-import {
-  withXEngine,
-  type SetupRequest,
-  type SmartleadAccountView,
-  type XEngine,
-} from "@oneshot-gtm/shared-types";
+import type { TriggerView } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
-import { Badge } from "../components/primitives/Badge.tsx";
-import { Button } from "../components/primitives/Button.tsx";
-import { Checkbox, Field, Input, Select, Textarea } from "../components/primitives/Field.tsx";
-import { readOnly } from "../lib/readOnly.ts";
+import { Skeleton } from "../components/primitives/Skeleton.tsx";
+import { CredentialsSection } from "../components/setup/CredentialsSection.tsx";
+import { EmailTransportSection } from "../components/setup/EmailTransportSection.tsx";
+import { FounderSection } from "../components/setup/FounderSection.tsx";
+import { IcpSection } from "../components/setup/IcpSection.tsx";
+import { LlmSection } from "../components/setup/LlmSection.tsx";
+import { ProductBriefSection } from "../components/setup/ProductBriefSection.tsx";
+import { ReviewQueueSection } from "../components/setup/ReviewQueueSection.tsx";
+import { SectionNav, jumpToSection } from "../components/setup/SectionNav.tsx";
+import { SocialProofSection } from "../components/setup/SocialProofSection.tsx";
+import { TelemetrySection } from "../components/setup/TelemetrySection.tsx";
+import { WalletSection } from "../components/setup/WalletSection.tsx";
+import { storedXEngine, XSection } from "../components/setup/XSection.tsx";
+import { SECTIONS, type SectionId } from "../components/setup/constants.ts";
+import type { DirtyReporter, SetupStatus } from "../components/setup/types.ts";
 
 interface SetupSearch {
   /**
@@ -34,363 +39,38 @@ export const Route = createFileRoute("/setup")({
   component: SetupPage,
 });
 
-const LLM_DEFAULTS: Record<string, string> = {
-  openrouter: "anthropic/claude-sonnet-4.6",
-  openai: "gpt-4o-mini",
-  anthropic: "claude-sonnet-4-6",
-};
-
-const SECRET_LABELS: Record<string, string> = {
-  OPENROUTER_API_KEY: "OpenRouter API key",
-  OPENAI_API_KEY: "OpenAI API key",
-  ANTHROPIC_API_KEY: "Anthropic API key",
-  CDP_API_KEY_ID: "CDP_API_KEY_ID",
-  CDP_API_KEY_SECRET: "CDP_API_KEY_SECRET",
-  CDP_WALLET_SECRET: "CDP_WALLET_SECRET",
-  AGENT_PRIVATE_KEY: "AGENT_PRIVATE_KEY",
-  GMAIL_CLIENT_ID: "GMAIL_CLIENT_ID",
-  GMAIL_CLIENT_SECRET: "GMAIL_CLIENT_SECRET",
-  GMAIL_REFRESH_TOKEN: "GMAIL_REFRESH_TOKEN",
-  SMARTLEAD_API_KEY: "Smartlead API key",
-  X_API_KEY: "X_API_KEY",
-  X_API_SECRET: "X_API_SECRET",
-  X_ACCESS_TOKEN: "X_ACCESS_TOKEN",
-  X_ACCESS_SECRET: "X_ACCESS_SECRET",
-  TWITTERAPI_IO_KEY: "twitterapi.io API key",
-  GITHUB_TOKEN: "GitHub token",
-  LUMA_SESSION_COOKIE: "Luma session cookie",
-};
-
-const X_OAUTH_KEYS = ["X_API_KEY", "X_API_SECRET", "X_ACCESS_TOKEN", "X_ACCESS_SECRET"] as const;
+const SECTION_IDS = new Set<string>(SECTIONS.map((s) => s.id));
 
 /**
- * Blank = unlimited (null). Otherwise must parse to a positive finite
- * number — matches the CLI path's validation (`configSpendCeiling`) and
- * the server's own re-check (`mergeSetupConfig` → `validateSpendCeiling`).
- * A submitted 0/negative/NaN throws here instead of silently reaching the
- * API, where a ceiling of 0 would halt every automated finder and drain
- * install-wide immediately.
+ * /setup (issue #451): eleven sections, each with its own draft, validation
+ * and Save. The page owns only what spans sections — the query, the dirty
+ * registry behind the rail dots and the leave guard, the Smartlead-key epoch,
+ * and the two URL round-trips (Gmail OAuth outcome, #section deep links).
  */
-function parseDailySpendCeiling(raw: string): number | null {
-  if (raw.trim() === "") return null;
-  const n = Number.parseFloat(raw);
-  if (!Number.isFinite(n) || n <= 0) {
-    throw new Error(
-      `invalid daily spend ceiling '${raw}' — enter a positive number of USD, or leave blank`,
-    );
-  }
-  return n;
-}
-
 function SetupPage() {
   const qc = useQueryClient();
   const status = useQuery({ queryKey: ["setup"], queryFn: api.setupStatus });
   const triggers = useQuery({ queryKey: ["triggers"], queryFn: api.triggers });
   const { proposedIcp, packLabel } = Route.useSearch();
 
-  const [founderName, setFounderName] = useState("");
-  const [founderEmail, setFounderEmail] = useState("");
-  const [productOneLiner, setProductOneLiner] = useState("");
-  const [productDomain, setProductDomain] = useState("");
-  const [sendingDomain, setSendingDomain] = useState("");
-  const [icpOneLiner, setIcpOneLiner] = useState("");
-  const [icpDomain, setIcpDomain] = useState("");
-  const [icpDeriveError, setIcpDeriveError] = useState<string | null>(null);
-  const [icpDeriveSource, setIcpDeriveSource] = useState<{ url: string; cost: number } | null>(
-    null,
-  );
-  const [llmProvider, setLlmProvider] = useState<"openrouter" | "openai" | "anthropic">(
-    "openrouter",
-  );
-  const [llmModel, setLlmModel] = useState("");
-  const [telemetryEnabled, setTelemetryEnabled] = useState(true);
-  const [walletMode, setWalletMode] = useState<"cdp" | "private-key">("cdp");
-  const [emailProvider, setEmailProvider] = useState<"oneshot" | "gmail">("oneshot");
-  // Sender-rotation pool edits, applied on Save: per-identity cap inputs
-  // (string so the field can be temporarily empty) + pending removals.
-  const [capEdits, setCapEdits] = useState<Record<string, string>>({});
-  const [removedIdentityIds, setRemovedIdentityIds] = useState<string[]>([]);
-  // Pending OneShot sender identities to add on Save. Each is a wallet-owned
-  // domain + mailbox local-part; cap blank = cold-start warm-up ramp.
-  const [pendingAdds, setPendingAdds] = useState<
-    Array<{ sendingDomain: string; mailbox: string; maxPerDay: string }>
-  >([]);
-  // Pending Smartlead mailboxes to add on Save (picked from the loaded account
-  // list; providerMessagePerDay clamps the default warm-up ceiling server-side).
-  const [pendingSmartleadAdds, setPendingSmartleadAdds] = useState<
-    Array<{ address: string; label: string; providerMessagePerDay: number | null }>
-  >([]);
-  const [addDomain, setAddDomain] = useState("");
-  const [addMailbox, setAddMailbox] = useState("");
-  const [addCap, setAddCap] = useState("");
-  const [founderCredentials, setFounderCredentials] = useState("");
-  const [productPortfolio, setProductPortfolio] = useState("");
-  const [partners, setPartners] = useState("");
-  const [founderAdmission, setFounderAdmission] = useState("");
-  const [productBrief, setProductBrief] = useState("");
-  // Unsaved edits/derives must survive ["setup"] refetches (pause/resume and
-  // save all invalidate it) — the hydrate effect only overwrites a clean field.
-  // A ref, not state: the hydrate effect must read the CURRENT flag without
-  // re-running when it flips.
-  const briefDirty = useRef(false);
-  const [briefSources, setBriefSources] = useState("");
-  const [briefDeriveInfo, setBriefDeriveInfo] = useState<string | null>(null);
-  const [mobileSignature, setMobileSignature] = useState(false);
-  // "" = unlimited (no ceiling). A positive-number string is the ceiling in
-  // USD; kept as a string so the field can be temporarily empty while typing.
-  // Same dirty-flag pattern as briefDirty: a pause/resume action invalidates
-  // ["setup"] mid-edit, and without this the hydrate effect below would
-  // silently overwrite whatever the founder just typed with the persisted
-  // value.
-  const [dailySpendCeiling, setDailySpendCeiling] = useState("");
-  const spendCeilingDirty = useRef(false);
-  const [secrets, setSecrets] = useState<Record<string, string>>({});
-  const [savedAt, setSavedAt] = useState<number | null>(null);
-
-  // A pack's proposed ICP arrives via ?proposedIcp= from /queue's "Accept in
-  // Setup" action (PackRow). Seed it into the field once on arrival — same
-  // one-shot-then-hands-off-to-the-founder pattern as briefDirty above — so a
-  // background ["setup"] refetch doesn't clobber the founder's edits after.
-  // Clear proposedIcp/packLabel from the URL once consumed (same pattern as
-  // the gmailAuth outcome below) so a later reload of /setup doesn't reset
-  // icpFromPack and silently re-seed — and re-save — the stale pack proposal
-  // over the founder's own edits.
-  const icpFromPack = useRef(false);
-  useEffect(() => {
-    if (!proposedIcp || icpFromPack.current) return;
-    icpFromPack.current = true;
-    setIcpOneLiner(proposedIcp);
-    const params = new URLSearchParams(window.location.search);
-    params.delete("proposedIcp");
-    params.delete("packLabel");
-    const qs = params.toString();
-    // Preserve window.history.state (TanStack Router's __TSR_index/__TSR_key
-    // live there) — replacing it with {} desyncs the router's history index
-    // and turns the next back/forward into a generic GO instead of BACK/FORWARD.
-    window.history.replaceState(
-      window.history.state,
-      "",
-      `${window.location.pathname}${qs ? `?${qs}` : ""}`,
-    );
-  }, [proposedIcp]);
-
-  // X channel: engine choice lives in the x-reposters trigger config, not in
-  // config.json. Seed local state once from the stored trigger; after that the
-  // select is the founder's — a background refetch must not clobber it.
-  const [xEngine, setXEngine] = useState<XEngine>("xapi");
-  const xEngineSeeded = useRef(false);
-  const xTrigger = triggers.data?.triggers.find((t) => t.name === "x-reposters");
-  const storedXEngine: XEngine =
-    (xTrigger?.config?.["engine"] as XEngine | undefined) ??
-    (xTrigger?.defaultConfig?.["engine"] as XEngine | undefined) ??
-    "xapi";
-  useEffect(() => {
-    if (!xTrigger || xEngineSeeded.current) return;
-    xEngineSeeded.current = true;
-    setXEngine(storedXEngine);
-  }, [xTrigger, storedXEngine]);
-
-  useEffect(() => {
-    if (!status.data?.cfg) return;
-    const c = status.data.cfg;
-    setFounderName(c.founderName ?? "");
-    setFounderEmail(c.founderEmail ?? "");
-    setProductOneLiner(c.productOneLiner ?? "");
-    setProductDomain(c.productDomain ?? "");
-    setSendingDomain(c.sendingDomain ?? "");
-    setIcpOneLiner((prev) => (icpFromPack.current ? prev : (c.icpOneLiner ?? "")));
-    setFounderCredentials(c.founderCredentials ?? "");
-    setProductPortfolio(c.productPortfolio ?? "");
-    setPartners(c.partners ?? "");
-    setFounderAdmission(c.founderAdmission ?? "");
-    if (!briefDirty.current) setProductBrief(c.productBrief ?? "");
-    setBriefSources((prev) => prev || (c.productDomain ? `https://${c.productDomain}` : ""));
-    setMobileSignature(c.mobileSignature ?? false);
-    setDailySpendCeiling((prev) =>
-      spendCeilingDirty.current
-        ? prev
-        : c.dailySpendCeilingUsd != null
-          ? String(c.dailySpendCeilingUsd)
-          : "",
-    );
-    setLlmProvider(c.llmProvider);
-    setLlmModel(c.llmModel || LLM_DEFAULTS[c.llmProvider] || "");
-    setTelemetryEnabled(c.telemetryEnabled);
-    setWalletMode(c.walletMode);
-    setEmailProvider(c.emailProvider);
-  }, [status.data?.cfg]);
-
-  // Load the Smartlead workspace's connected mailboxes. Uses the just-typed
-  // key when present (browse before saving), else the server falls back to the
-  // stored SMARTLEAD_API_KEY. The key rides the POST body, never a URL.
-  const [smartleadAccounts, setSmartleadAccounts] = useState<SmartleadAccountView[] | null>(null);
-  const loadSmartlead = useMutation({
-    mutationFn: () => api.smartleadAccounts(secrets["SMARTLEAD_API_KEY"]),
-    onSuccess: (res) => setSmartleadAccounts(res.accounts),
-    onError: (err: Error) => toast.error(`Smartlead: ${err.message}`),
+  // Which sections have unsaved edits — reported by each section, read by
+  // the rail and the leave guard. A ref mirrors it for the blocker callbacks.
+  const [dirty, setDirty] = useState<Partial<Record<SectionId, boolean>>>({});
+  const anyDirty = Object.values(dirty).some(Boolean);
+  const anyDirtyRef = useRef(false);
+  anyDirtyRef.current = anyDirty;
+  const onDirtyChange = useCallback<DirtyReporter>((id, flag) => {
+    setDirty((d) => (Boolean(d[id]) === flag ? d : { ...d, [id]: flag }));
+  }, []);
+  useBlocker({
+    shouldBlockFn: () =>
+      anyDirtyRef.current && !window.confirm("Unsaved changes on this page — leave anyway?"),
+    enableBeforeUnload: () => anyDirtyRef.current,
   });
 
-  const deriveIcp = useMutation({
-    mutationFn: (domain: string) => api.deriveIcp(domain),
-    onSuccess: (res) => {
-      setIcpOneLiner(res.proposedIcp);
-      setIcpDeriveSource({ url: res.sourceUrl, cost: res.costUsd });
-      setIcpDeriveError(null);
-    },
-    onError: (err: Error) => {
-      setIcpDeriveError(err.message);
-      setIcpDeriveSource(null);
-    },
-  });
-
-  // Resume / pause a provisioned sending domain in the OneShot pool. Refetches
-  // the setup status (and doctor) so the status badge + warning update. Errors
-  // surface verbatim — incl. the OneShot HTTP status during a platform outage.
-  const domainAction = useMutation({
-    mutationFn: (vars: { domain: string; action: "resume" | "pause" }) =>
-      vars.action === "resume" ? api.resumeDomain(vars.domain) : api.pauseDomain(vars.domain),
-    onSuccess: (res) => {
-      void qc.invalidateQueries({ queryKey: ["setup"] });
-      void qc.invalidateQueries({ queryKey: ["doctor"] });
-      toast.success(`${res.domain} → ${res.poolStatus}`);
-    },
-    onError: (err: Error) => toast.error(err.message),
-  });
-
-  // Elapsed counter so the ~30–60s derive feels alive instead of frozen.
-  // Server doesn't stream progress; we cycle a phase label by elapsed time.
-  const [deriveElapsed, setDeriveElapsed] = useState(0);
-  useEffect(() => {
-    if (!deriveIcp.isPending) {
-      setDeriveElapsed(0);
-      return;
-    }
-    const started = Date.now();
-    const t = setInterval(() => {
-      setDeriveElapsed(Math.floor((Date.now() - started) / 1000));
-    }, 250);
-    return () => clearInterval(t);
-  }, [deriveIcp.isPending]);
-  const derivePhase =
-    deriveElapsed < 15
-      ? `Reading the page · ${deriveElapsed}s`
-      : deriveElapsed < 35
-        ? `Still reading — slow pages take a moment · ${deriveElapsed}s`
-        : `Asking the LLM to extract an ICP · ${deriveElapsed}s`;
-
-  const deriveBrief = useMutation({
-    mutationFn: (urls: string[]) => api.deriveBrief(urls),
-    onSuccess: (res) => {
-      setProductBrief(res.proposedBrief);
-      briefDirty.current = true;
-      const skipped = res.skipped.length > 0 ? ` · ${res.skipped.length} source(s) unreadable` : "";
-      setBriefDeriveInfo(
-        `derived from ${res.sourceUrls.length} source(s) · $${res.costUsd.toFixed(2)}${skipped} — edit before saving`,
-      );
-    },
-    onError: (err) => toast.error((err as Error).message),
-  });
-
-  const save = useMutation({
-    mutationFn: async () => {
-      const filteredSecrets: Record<string, string> = {};
-      for (const [k, v] of Object.entries(secrets)) {
-        if (v.trim().length > 0) filteredSecrets[k] = v.trim();
-      }
-      const identityUpdates = Object.entries(capEdits).map(([id, raw]) => {
-        const n = Number.parseInt(raw, 10);
-        return { id, maxPerDay: Number.isFinite(n) && n >= 0 ? n : null };
-      });
-      const addIdentities: NonNullable<SetupRequest["addIdentities"]> = pendingAdds.map((a) => {
-        const n = Number.parseInt(a.maxPerDay, 10);
-        return {
-          provider: "oneshot" as const,
-          sendingDomain: a.sendingDomain,
-          ...(a.mailbox.trim() ? { mailbox: a.mailbox.trim() } : {}),
-          // Blank cap = omit → cold-start ramp; a number = explicit cap.
-          ...(a.maxPerDay.trim() && Number.isFinite(n) && n >= 0 ? { maxPerDay: n } : {}),
-        };
-      });
-      for (const a of pendingSmartleadAdds) {
-        addIdentities.push({
-          provider: "smartlead" as const,
-          address: a.address,
-          ...(a.label.trim() ? { label: a.label.trim() } : {}),
-          providerMessagePerDay: a.providerMessagePerDay,
-        });
-      }
-      await api.setup({
-        ...(identityUpdates.length > 0 ? { identityUpdates } : {}),
-        ...(addIdentities.length > 0 ? { addIdentities } : {}),
-        ...(removedIdentityIds.length > 0 ? { removeIdentityIds: removedIdentityIds } : {}),
-        founderName,
-        founderEmail,
-        productOneLiner,
-        productDomain,
-        sendingDomain,
-        icpOneLiner,
-        founderCredentials,
-        productPortfolio,
-        partners,
-        founderAdmission,
-        productBrief,
-        mobileSignature,
-        dailySpendCeilingUsd: parseDailySpendCeiling(dailySpendCeiling),
-        llmProvider,
-        llmModel,
-        telemetryEnabled,
-        walletMode,
-        emailProvider,
-        secrets: filteredSecrets as never,
-      });
-      // Engine choice rides the x-reposters trigger config (not config.json).
-      // withXEngine drops the maxSpendPerRun/knobs overrides on an actual
-      // flip so the per-engine defaults re-apply.
-      if (xTrigger && xEngine !== storedXEngine) {
-        await api.setTriggerConfig(
-          "x-reposters",
-          withXEngine(xTrigger.config ?? xTrigger.defaultConfig, xEngine),
-        );
-      }
-    },
-    onSuccess: () => {
-      setSecrets({});
-      setCapEdits({});
-      setRemovedIdentityIds([]);
-      setPendingAdds([]);
-      setPendingSmartleadAdds([]);
-      setAddDomain("");
-      setAddMailbox("");
-      setAddCap("");
-      briefDirty.current = false;
-      spendCeilingDirty.current = false;
-      setSavedAt(Date.now());
-      // Re-seed the engine select from the refetched trigger row.
-      xEngineSeeded.current = false;
-      void qc.invalidateQueries({ queryKey: ["setup"] });
-      void qc.invalidateQueries({ queryKey: ["doctor"] });
-      void qc.invalidateQueries({ queryKey: ["home"] });
-      void qc.invalidateQueries({ queryKey: ["triggers"] });
-    },
-  });
-
-  const sources = status.data?.sources ?? {};
-  // Workspace-aware: the server already reports the real secrets path.
-  const homeDir = status.data?.secretsPath?.replace(/\/\.env$/, "") ?? "~/.oneshot-gtm";
-  const provisionedDomains = status.data?.provisionedDomains ?? [];
-  // Default mailbox shown as a placeholder — founder's first name, normalized.
-  const founderLocalpart =
-    (founderName.trim().split(/\s+/)[0] ?? "").toLowerCase().replace(/[^a-z0-9]/g, "") || "";
-  // Legacy single-identity mode = the pool is auto-derived from emailProvider.
-  // Once a real pool exists, the provider select / manual Gmail secrets are
-  // inert (routing is pool-driven) — hide them instead of misleading.
-  const isLegacyPool = status.data?.identities?.[0]?.legacy ?? true;
-  // The Connect button needs the shared OAuth-app creds saved first.
-  const gmailCredsReady = Boolean(sources["GMAIL_CLIENT_ID"] && sources["GMAIL_CLIENT_SECRET"]);
-  // Smartlead can be browsed with a just-typed key before it's ever saved.
-  const smartleadKeyReady = Boolean(
-    sources["SMARTLEAD_API_KEY"] || (secrets["SMARTLEAD_API_KEY"] ?? "").trim(),
-  );
+  // Credentials saved a new Smartlead key → the email section's loaded
+  // account list (and staged picks) belong to the old workspace.
+  const [smartleadKeyEpoch, bumpSmartleadKey] = useReducer((n: number) => n + 1, 0);
 
   // Round-trip result from the browser OAuth flow (/api/gmail/auth/callback
   // redirects back here with ?gmailAuth=ok:<address> | error:<reason>).
@@ -405,24 +85,60 @@ function SetupPage() {
     }
     params.delete("gmailAuth");
     const qs = params.toString();
-    window.history.replaceState({}, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`);
+    // Preserve history.state — TanStack Router keeps its index/key there.
+    window.history.replaceState(
+      window.history.state,
+      "",
+      `${window.location.pathname}${qs ? `?${qs}` : ""}${window.location.hash}`,
+    );
     void qc.invalidateQueries({ queryKey: ["setup"] });
     void qc.invalidateQueries({ queryKey: ["doctor"] });
   }, [qc]);
-  const llmSecretKey =
-    llmProvider === "openrouter"
-      ? "OPENROUTER_API_KEY"
-      : llmProvider === "openai"
-        ? "OPENAI_API_KEY"
-        : "ANTHROPIC_API_KEY";
 
-  const setSecret = (key: string, value: string): void => {
-    setSecrets((s) => ({ ...s, [key]: value }));
-  };
-
+  // #section deep link. The router's own hash scroll runs when the route
+  // resolves — before ["setup"] has data, so the target doesn't exist yet —
+  // and the root layout then resets <main> to the top. Jump once the
+  // sections have rendered.
+  const hashJumped = useRef(false);
+  const loaded = Boolean(status.data);
   useEffect(() => {
-    if (save.isError) toast.error(`couldn't save · ${save.error.message}`);
-  }, [save.isError, save.error]);
+    if (!loaded || hashJumped.current) return;
+    hashJumped.current = true;
+    const id = window.location.hash.slice(1);
+    if (!SECTION_IDS.has(id)) return;
+    const raf = requestAnimationFrame(() => jumpToSection(id as SectionId, "auto"));
+    return () => cancelAnimationFrame(raf);
+  }, [loaded]);
+
+  // Active rail item: the first section (in page order) currently on screen.
+  const [visible, setVisible] = useState<Set<SectionId>>(() => new Set());
+  useEffect(() => {
+    if (!loaded) return;
+    const els = SECTIONS.map((s) => document.getElementById(s.id)).filter(
+      (el): el is HTMLElement => el != null,
+    );
+    const io = new IntersectionObserver(
+      (entries) => {
+        setVisible((prev) => {
+          const next = new Set(prev);
+          for (const e of entries) {
+            const id = e.target.id as SectionId;
+            if (e.isIntersecting) next.add(id);
+            else next.delete(id);
+          }
+          return next;
+        });
+      },
+      { rootMargin: "-10% 0px -60% 0px" },
+    );
+    for (const el of els) io.observe(el);
+    return () => io.disconnect();
+  }, [loaded]);
+  const active = SECTIONS.find((s) => visible.has(s.id))?.id ?? null;
+
+  // Workspace-aware: the server already reports the real secrets path.
+  const homeDir = status.data?.secretsPath?.replace(/\/\.env$/, "") ?? "~/.oneshot-gtm";
+  const xTrigger = triggers.data?.triggers.find((t) => t.name === "x-reposters");
 
   return (
     <div className="-mx-6 -my-6 flex flex-col">
@@ -444,998 +160,88 @@ function SetupPage() {
         </div>
         <span className="text-[11px] text-ink-faint ln-mono">
           saved to <span className="text-ink-muted">{homeDir}/config.json</span> ·{" "}
-          <span className="text-ink-muted">.env</span> · chmod 600
+          <span className="text-ink-muted">.env</span> · chmod 600 · each section saves on its own
         </span>
       </section>
 
-      <form
-        onSubmit={(e) => {
-          e.preventDefault();
-          save.mutate();
-        }}
-        className="flex flex-col"
-      >
-        <LedgerSection
-          eyebrow="01 · Founder profile"
-          lede="How prospects see you on the other side of the inbox."
-        >
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <Field label="Name">
-              <Input
-                value={founderName}
-                onChange={(e) => setFounderName(e.target.value)}
-                placeholder="Jane Doe"
-              />
-            </Field>
-            <Field
-              label="Your email"
-              hint="Lead capture on pages this tool generates (e.g. the PMF survey). NOT a reply address — replies land in the inbox of whichever sending identity sent the mail."
-            >
-              <Input
-                type="email"
-                value={founderEmail}
-                onChange={(e) => setFounderEmail(e.target.value)}
-                placeholder="jane@yourcompany.com"
-              />
-            </Field>
-            <Field
-              label="Signature domain"
-              hint="Bare domain shown under your name in every email signature, e.g. yourcompany.com. Leave blank for no domain line."
-            >
-              <Input
-                value={productDomain}
-                onChange={(e) => setProductDomain(e.target.value)}
-                placeholder="yourcompany.com"
-              />
-            </Field>
-            <Field
-              label="Sending domain"
-              hint="The domain your wallet OWNS. Emails send from <your-first-name>@thisdomain. Must be wallet-owned or the SDK rejects the send. Leave blank to use the SDK default."
-            >
-              <Input
-                value={sendingDomain}
-                onChange={(e) => setSendingDomain(e.target.value)}
-                placeholder="yourcompany-mail.com"
-              />
-            </Field>
-            <Field
-              label="Product one-liner"
-              hint="What you're building, in one sentence."
-              className="md:col-span-2"
-            >
-              <Textarea
-                value={productOneLiner}
-                onChange={(e) => setProductOneLiner(e.target.value)}
-                placeholder={
-                  'e.g. "Stripe for freight" · "AI bookkeeping for restaurants" · "scheduling for dog groomers"'
-                }
-                rows={2}
-              />
-            </Field>
-          </div>
-        </LedgerSection>
-
-        <LedgerSection
-          eyebrow="02 · Ideal customer profile"
-          lede="A free-text classifier. The find layer uses this to drop candidates that don't match."
-        >
-          <div className="flex flex-col gap-4">
-            {proposedIcp && icpFromPack.current && (
-              <div className="border-l-2 border-[color:var(--ink-receipt)] bg-[color:var(--ink-receipt)]/10 px-3 py-2 font-mono text-[11.5px] text-ink-cream-2">
-                Proposed by {packLabel ?? "an industry pack"} — never written until you Save below.
-                Edit or clear it first if it's not right.
-              </div>
-            )}
-            <Field
-              label="Derive from a website"
-              hint="Paste a domain (or full URL) of a company whose customers look like yours. We'll read the page and propose an ICP — you can edit before saving. Spends ~$0.02–0.05 (one webRead + one LLM call)."
-            >
-              <div className="flex gap-2">
-                <Input
-                  value={icpDomain}
-                  onChange={(e) => setIcpDomain(e.target.value)}
-                  placeholder="acme.com  ·  https://yourcompany.com/customers"
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !deriveIcp.isPending && icpDomain.trim().length > 0) {
-                      e.preventDefault();
-                      deriveIcp.mutate(icpDomain.trim());
-                    }
-                  }}
-                />
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="shrink-0 whitespace-nowrap"
-                  disabled={deriveIcp.isPending || icpDomain.trim().length === 0}
-                  onClick={() => deriveIcp.mutate(icpDomain.trim())}
-                  {...readOnly}
-                >
-                  <Wand2 size={12} className={deriveIcp.isPending ? "animate-pulse" : undefined} />
-                  {deriveIcp.isPending ? `Working · ${deriveElapsed}s` : "Derive ICP"}
-                </Button>
-              </div>
-            </Field>
-
-            {deriveIcp.isPending && (
-              <div className="flex items-center gap-2 font-mono text-[11px] text-ink-muted">
-                <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-ink-cream-2" />
-                {derivePhase}
-              </div>
-            )}
-
-            {icpDeriveError && (
-              <div className="border-l-2 border-[color:var(--ink-blocked)] bg-[color:var(--ink-blocked)]/10 px-3 py-2 font-mono text-[11.5px] text-[color:var(--ink-blocked-2)]">
-                {icpDeriveError}
-              </div>
-            )}
-            {icpDeriveSource && !icpDeriveError && (
-              <div className="font-mono text-[11px] text-ink-muted">
-                drafted from{" "}
-                <a
-                  href={icpDeriveSource.url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-ink-cream-2 underline decoration-ink-faint decoration-1 underline-offset-2 hover:decoration-ink-cream"
-                >
-                  {icpDeriveSource.url}
-                </a>{" "}
-                · spent ${icpDeriveSource.cost.toFixed(3)} · edit below before saving.
-              </div>
-            )}
-
-            <Field
-              label="ICP one-liner"
-              hint="Leave blank to disable filtering (every candidate passes through)."
-            >
-              <Textarea
-                value={icpOneLiner}
-                onChange={(e) => setIcpOneLiner(e.target.value)}
-                placeholder={
-                  'e.g. "CFOs at Series-B SaaS" · "Shopify stores doing $1M+/yr" · "indie iOS devs"'
-                }
-                rows={3}
-              />
-            </Field>
-          </div>
-        </LedgerSection>
-
-        <LedgerSection
-          eyebrow="03 · Social proof"
-          lede="All optional. Each maps to a different play type. Used by the LLM when drafting the second sentence of a first-touch email — never more than one beat per email."
-        >
-          <div className="grid grid-cols-1 gap-4">
-            <Field
-              label="Founder background"
-              hint="Prior companies, named past roles, anything that lets a stranger trust you. Used by job-change / podcast-guest / post-funding / breakup-revive."
-            >
-              <Textarea
-                value={founderCredentials}
-                onChange={(e) => setFounderCredentials(e.target.value)}
-                placeholder={
-                  'e.g. "ex-Stripe eng" · "VP Sales at Salesforce" · "ran a $2M Shopify store"'
-                }
-                rows={2}
-              />
-            </Field>
-            <Field
-              label="Products you've shipped"
-              hint="Used in peer-founder outreach to show you've actually built things. Stack-consolidation / competitor-switch / show-hn / hiring-signal."
-            >
-              <Textarea
-                value={productPortfolio}
-                onChange={(e) => setProductPortfolio(e.target.value)}
-                placeholder="Comma-separated list of products or projects you've shipped."
-                rows={2}
-              />
-            </Field>
-            <Field
-              label="Notable partners / customers"
-              hint="Brand names that open doors. Helps when the prospect doesn't know you yet. Accelerator-batch / demo-no-show."
-            >
-              <Textarea
-                value={partners}
-                onChange={(e) => setPartners(e.target.value)}
-                placeholder="Comma-separated brand-name integrations or customers."
-                rows={2}
-              />
-            </Field>
-            <Field
-              label="One true concession"
-              hint="The thing you'd rather not say but is true. Used in roughly 1 in 3 first touches as a damaging admission (two of us, no logos yet, but…), which makes the rest of the email more believable. Leave blank and the beat is skipped, never invented."
-            >
-              <Textarea
-                value={founderAdmission}
-                onChange={(e) => setFounderAdmission(e.target.value)}
-                placeholder="e.g. two people, no enterprise logos yet"
-                rows={2}
-              />
-            </Field>
-            <Checkbox
-              checked={mobileSignature}
-              onChange={(e) => setMobileSignature(e.target.checked)}
-              label={'Append "Sent from my iPhone" to every email signature'}
-            />
-          </div>
-        </LedgerSection>
-
-        <LedgerSection
-          eyebrow="03.5 · Product brief"
-          lede="What your replies are allowed to know and cite. Facts, architecture, pricing model, canonical links. A link that isn't in this brief is never sent."
-        >
-          <div className="flex flex-col gap-4">
-            <Field
-              label="Derive from sources"
-              hint="One URL per line — your site, the GitHub repo, docs pages (max 5). Each is one webRead (~$0.01); you edit the proposal before saving."
-            >
-              <div className="flex gap-2">
-                <Textarea
-                  value={briefSources}
-                  onChange={(e) => setBriefSources(e.target.value)}
-                  placeholder={
-                    "yourproduct.com\ngithub.com/you/your-repo\ndocs.yourproduct.com/pricing"
-                  }
-                  rows={3}
-                />
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="shrink-0 self-start whitespace-nowrap"
-                  disabled={deriveBrief.isPending || briefSources.trim().length === 0}
-                  onClick={() =>
-                    deriveBrief.mutate(
-                      briefSources
-                        .split("\n")
-                        .map((u) => u.trim())
-                        .filter((u) => u.length > 0)
-                        .slice(0, 5),
-                    )
-                  }
-                  {...readOnly}
-                >
-                  <Wand2
-                    size={12}
-                    className={deriveBrief.isPending ? "animate-pulse" : undefined}
-                  />
-                  {deriveBrief.isPending ? "Reading sources…" : "Derive brief"}
-                </Button>
-              </div>
-            </Field>
-            {briefDeriveInfo && (
-              <div className="font-mono text-[11px] text-ink-faint">{briefDeriveInfo}</div>
-            )}
-            <Field
-              label="Product brief"
-              hint="Used by /inbox reply drafting to answer substantive questions with substance. Keep links verbatim."
-            >
-              <Textarea
-                value={productBrief}
-                onChange={(e) => {
-                  setProductBrief(e.target.value);
-                  briefDirty.current = true;
-                }}
-                placeholder="How it works: … settled per call in USDC on Base …\nPricing: …\nLinks:\nhttps://docs.yourproduct.com/payments"
-                rows={8}
-              />
-            </Field>
-          </div>
-        </LedgerSection>
-
-        <LedgerSection
-          eyebrow="04 · LLM provider"
-          lede="Bring your own key. Swap providers freely; nothing is locked in."
-        >
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <Field label="Provider">
-              <Select
-                value={llmProvider}
-                onChange={(e) => {
-                  const v = e.target.value as typeof llmProvider;
-                  setLlmProvider(v);
-                  if (!llmModel) setLlmModel(LLM_DEFAULTS[v] ?? "");
-                }}
-              >
-                <option value="openrouter">OpenRouter (recommended)</option>
-                <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic</option>
-              </Select>
-            </Field>
-            <Field label="Model">
-              <Input
-                value={llmModel}
-                onChange={(e) => setLlmModel(e.target.value)}
-                placeholder={LLM_DEFAULTS[llmProvider]}
-              />
-            </Field>
-            <Field
-              label={SECRET_LABELS[llmSecretKey] ?? llmSecretKey}
-              hint={
-                sources[llmSecretKey] === "env"
-                  ? "Currently from shell env. Leaving blank keeps the env value."
-                  : sources[llmSecretKey] === "file"
-                    ? "Currently from this workspace's .env. Leave blank to keep."
-                    : "Not set. Paste it here to save (chmod 600)."
-              }
-              className="md:col-span-2"
-            >
-              <Input
-                type="password"
-                placeholder={sources[llmSecretKey] ? "(unchanged)" : "sk-..."}
-                value={secrets[llmSecretKey] ?? ""}
-                onChange={(e) => setSecret(llmSecretKey, e.target.value)}
-                autoComplete="new-password"
-              />
-            </Field>
-          </div>
-        </LedgerSection>
-
-        <LedgerSection
-          eyebrow="05 · Wallet"
-          lede={`Keys live only in ${homeDir}/.env chmod 600. Nothing leaves your machine.`}
-        >
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <Field label="Wallet mode" className="md:col-span-2">
-              <Select
-                value={walletMode}
-                onChange={(e) => setWalletMode(e.target.value as typeof walletMode)}
-              >
-                <option value="cdp">Coinbase CDP server wallet</option>
-                <option value="private-key">Raw private key</option>
-              </Select>
-            </Field>
-            {walletMode === "cdp" ? (
-              <>
-                <Field label="CDP_API_KEY_ID" hint={hintFor(sources["CDP_API_KEY_ID"])}>
-                  <Input
-                    type="password"
-                    placeholder={sources["CDP_API_KEY_ID"] ? "(unchanged)" : ""}
-                    value={secrets["CDP_API_KEY_ID"] ?? ""}
-                    onChange={(e) => setSecret("CDP_API_KEY_ID", e.target.value)}
-                    autoComplete="new-password"
-                  />
-                </Field>
-                <Field label="CDP_API_KEY_SECRET" hint={hintFor(sources["CDP_API_KEY_SECRET"])}>
-                  <Input
-                    type="password"
-                    placeholder={sources["CDP_API_KEY_SECRET"] ? "(unchanged)" : ""}
-                    value={secrets["CDP_API_KEY_SECRET"] ?? ""}
-                    onChange={(e) => setSecret("CDP_API_KEY_SECRET", e.target.value)}
-                    autoComplete="new-password"
-                  />
-                </Field>
-                <Field
-                  label="CDP_WALLET_SECRET"
-                  hint={hintFor(sources["CDP_WALLET_SECRET"])}
-                  className="md:col-span-2"
-                >
-                  <Input
-                    type="password"
-                    placeholder={sources["CDP_WALLET_SECRET"] ? "(unchanged)" : ""}
-                    value={secrets["CDP_WALLET_SECRET"] ?? ""}
-                    onChange={(e) => setSecret("CDP_WALLET_SECRET", e.target.value)}
-                    autoComplete="new-password"
-                  />
-                </Field>
-              </>
-            ) : (
-              <Field
-                label="AGENT_PRIVATE_KEY"
-                hint={hintFor(sources["AGENT_PRIVATE_KEY"])}
-                className="md:col-span-2"
-              >
-                <Input
-                  type="password"
-                  placeholder={sources["AGENT_PRIVATE_KEY"] ? "(unchanged)" : "0x..."}
-                  value={secrets["AGENT_PRIVATE_KEY"] ?? ""}
-                  onChange={(e) => setSecret("AGENT_PRIVATE_KEY", e.target.value)}
-                  autoComplete="new-password"
-                />
-              </Field>
-            )}
-            <Field
-              label="Daily spend ceiling (USD)"
-              className="md:col-span-2"
-              hint="Install-wide cap across every automated finder run and drain — blank = unlimited. Once reached, scheduled/run-now finders and drains halt with a named reason (visible here and in doctor) until local midnight; manual /queue sends are never blocked."
-            >
-              <Input
-                type="number"
-                min="0.01"
-                step="0.01"
-                placeholder="unlimited"
-                value={dailySpendCeiling}
-                onChange={(e) => {
-                  setDailySpendCeiling(e.target.value);
-                  spendCeilingDirty.current = true;
-                }}
-              />
-            </Field>
-          </div>
-        </LedgerSection>
-
-        <LedgerSection
-          eyebrow="05.5 · X / Twitter"
-          lede="Credentials and data provider for the x-reposters finder. Keys land in the same .env (chmod 600); the engine choice lives on the trigger."
-        >
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            <Field
-              label="Data provider"
-              className="md:col-span-2"
-              hint="Both bill per record returned. Switching resets the trigger's spend ceiling and harvest knobs to the new engine's defaults; fine-tune in the /queue trigger editor."
-            >
-              <Select value={xEngine} onChange={(e) => setXEngine(e.target.value as XEngine)}>
-                <option value="twitterapiio">
-                  twitterapi.io — ~$0.25/run, third-party scraper
-                </option>
-                <option value="xapi">X API (first-party) — ~$5/run, licensed, OAuth1</option>
-              </Select>
-            </Field>
-            {xEngine === "xapi" ? (
-              X_OAUTH_KEYS.map((k) => (
-                <Field key={k} label={k} hint={hintFor(sources[k])}>
-                  <Input
-                    type="password"
-                    placeholder={sources[k] ? "(unchanged)" : ""}
-                    value={secrets[k] ?? ""}
-                    onChange={(e) => setSecret(k, e.target.value)}
-                    autoComplete="new-password"
-                  />
-                </Field>
-              ))
-            ) : (
-              <Field
-                label="TWITTERAPI_IO_KEY"
-                hint={hintFor(sources["TWITTERAPI_IO_KEY"])}
-                className="md:col-span-2"
-              >
-                <Input
-                  type="password"
-                  placeholder={sources["TWITTERAPI_IO_KEY"] ? "(unchanged)" : ""}
-                  value={secrets["TWITTERAPI_IO_KEY"] ?? ""}
-                  onChange={(e) => setSecret("TWITTERAPI_IO_KEY", e.target.value)}
-                  autoComplete="new-password"
-                />
-              </Field>
-            )}
-            {xTrigger && (
-              <p className="md:col-span-2 font-mono text-[11px] text-ink-muted">
-                x-reposters: {xTrigger.enabled ? "enabled" : "disabled"} ·{" "}
-                {xTrigger.ready ? (
-                  <span className="text-ink-cream-2">ready</span>
-                ) : (
-                  <span>not ready — {xTrigger.notReadyReason}</span>
-                )}
-                {xEngine !== storedXEngine && " · engine change applies on Save"}
-              </p>
-            )}
-          </div>
-        </LedgerSection>
-
-        <LedgerSection
-          eyebrow="05.6 · LinkedIn replies"
-          lede="Let LinkedIn automation tools report a real prospect reply so OneShot stops every live email cadence. Connection acceptance alone does nothing."
-        >
-          <Field
-            label="LINKEDIN_REPLY_WEBHOOK_SECRET"
-            hint={`${hintFor(sources["LINKEDIN_REPLY_WEBHOOK_SECRET"])} Use a random 32+ character bearer secret.`}
-          >
-            <Input
-              type="password"
-              placeholder={sources["LINKEDIN_REPLY_WEBHOOK_SECRET"] ? "(unchanged)" : ""}
-              value={secrets["LINKEDIN_REPLY_WEBHOOK_SECRET"] ?? ""}
-              onChange={(e) => setSecret("LINKEDIN_REPLY_WEBHOOK_SECRET", e.target.value)}
-              autoComplete="new-password"
-            />
-          </Field>
-        </LedgerSection>
-
-        <LedgerSection
-          eyebrow="05.75 · Finder access"
-          lede="Optional credentials for richer GitHub and Luma discovery. They are stored in the same local .env."
-        >
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            {(["GITHUB_TOKEN", "LUMA_SESSION_COOKIE"] as const).map((key) => (
-              <Field key={key} label={SECRET_LABELS[key] ?? key} hint={hintFor(sources[key])}>
-                <Input
-                  type="password"
-                  placeholder={sources[key] ? "(unchanged)" : ""}
-                  value={secrets[key] ?? ""}
-                  onChange={(e) => setSecret(key, e.target.value)}
-                  autoComplete="new-password"
-                />
-              </Field>
-            ))}
-          </div>
-        </LedgerSection>
-
-        <LedgerSection
-          eyebrow="06 · Email transport"
-          lede="The sender rotation pool. Each prospect sticks to the identity that first emailed them; new prospects go to the identity with the most capacity left today."
-        >
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-            {(status.data?.identities?.length ?? 0) > 0 && (
-              <div className="md:col-span-2 flex flex-col gap-2">
-                <span className="ln-eyebrow">Sender identities</span>
-                {status
-                  .data!.identities.filter((i) => !removedIdentityIds.includes(i.id))
-                  .map((i) => (
-                    <div
-                      key={i.id}
-                      className="flex items-center gap-3 border border-ink-rule rounded-[var(--radius-sm)] px-3 py-2"
-                    >
-                      <Badge
-                        tone={
-                          i.provider === "gmail"
-                            ? "signal"
-                            : i.provider === "smartlead"
-                              ? "spend"
-                              : "receipt"
-                        }
-                      >
-                        {i.provider}
-                      </Badge>
-                      <div className="flex min-w-0 flex-col">
-                        <span className="truncate text-[13px] text-ink-cream">
-                          {i.mailbox && i.sendingDomain
-                            ? `${i.mailbox}@${i.sendingDomain}`
-                            : (i.address ?? i.sendingDomain ?? i.label ?? i.id)}
-                        </span>
-                        <span className="ln-mono text-[11px] text-ink-muted">
-                          {i.domainSentToday !== i.sentToday
-                            ? `today ${i.sentToday} · domain ${i.domainSentToday}/${i.capToday ?? "∞"} shared`
-                            : `today ${i.sentToday}/${i.capToday ?? "∞"}`}
-                          {i.warmup
-                            ? ` · warm-up ${i.warmup.startPerDay}+${i.warmup.incrementPerWeek}/wk`
-                            : ""}
-                          {i.legacy ? " · legacy (auto-derived)" : ""}
-                        </span>
-                      </div>
-                      <div className="ml-auto flex items-center gap-2">
-                        <Input
-                          className="h-7 w-20 text-[12px]"
-                          placeholder={i.maxPerDay == null ? "∞" : String(i.maxPerDay)}
-                          value={capEdits[i.id] ?? ""}
-                          onChange={(e) => setCapEdits((m) => ({ ...m, [i.id]: e.target.value }))}
-                          aria-label={`max sends per day for ${i.id}`}
-                        />
-                        <span className="ln-mono text-[10.5px] text-ink-faint">max/day</span>
-                        {!i.legacy && (
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            className="h-7 px-2 text-[11px]"
-                            onClick={() => setRemovedIdentityIds((ids) => [...ids, i.id])}
-                          >
-                            Remove
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                <div className="mt-1 flex flex-wrap items-center gap-3">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    disabled={!gmailCredsReady}
-                    onClick={() => {
-                      window.location.href = "/api/gmail/auth/start";
-                    }}
-                  >
-                    <Mail size={12} />
-                    Connect Gmail account
-                  </Button>
-                  <span className="text-[12px] text-ink-faint">
-                    {gmailCredsReady
-                      ? "Opens Google consent — sign in as the account you want to send from."
-                      : "Save GMAIL_CLIENT_ID + GMAIL_CLIENT_SECRET below first (Google Cloud OAuth client, Desktop type, Gmail API enabled)."}
-                  </span>
-                </div>
-                <span className="text-[12px] text-ink-faint">
-                  CLI alternative:{" "}
-                  <code className="ln-mono text-[11.5px] text-ink-cream-2">
-                    bun run cli -- gmail auth
-                  </code>
-                  . Cap and removal changes apply on Save. Removing an identity blocks sends to
-                  prospects pinned to it until it's restored.
-                </span>
-
-                {/* Provisioned OneShot domains — a paused domain sends nothing until resumed. */}
-                {provisionedDomains.length > 0 && (
-                  <div className="mt-3 flex flex-col gap-2 border-t border-ink-rule pt-3">
-                    <span className="ln-eyebrow">Provisioned domains</span>
-                    {provisionedDomains.map((d) => {
-                      const paused = d.poolStatus === "paused" || d.poolStatus === "removed";
-                      const tone =
-                        d.poolStatus === "active"
-                          ? "receipt"
-                          : d.poolStatus === "warming"
-                            ? "spend"
-                            : "blocked";
-                      const busy =
-                        domainAction.isPending && domainAction.variables?.domain === d.domain;
-                      return (
-                        <div
-                          key={d.domain}
-                          className="flex items-center gap-3 border border-ink-rule rounded-[var(--radius-sm)] px-3 py-2"
-                        >
-                          <Badge tone={tone}>{d.poolStatus}</Badge>
-                          <span className="truncate text-[13px] text-ink-cream">{d.domain}</span>
-                          <span className="ln-mono text-[11px] text-ink-muted">
-                            sent {d.dailySentCount}/{d.dailySendLimit}/day
-                            {d.warmupScore != null ? ` · warmth ${d.warmupScore}` : ""}
-                          </span>
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            disabled={busy}
-                            className="ml-auto h-7 px-2 text-[11px]"
-                            onClick={() =>
-                              domainAction.mutate({
-                                domain: d.domain,
-                                action: paused ? "resume" : "pause",
-                              })
-                            }
-                            {...readOnly}
-                          >
-                            {busy ? "…" : paused ? "Resume" : "Pause"}
-                          </Button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* Add OneShot sender — domain + mailbox join the rotation pool on Save. */}
-                <div className="mt-3 flex flex-col gap-2 border-t border-ink-rule pt-3">
-                  <span className="ln-eyebrow">Add OneShot sender</span>
-                  {pendingAdds.length > 0 && (
-                    <div className="flex flex-col gap-1.5">
-                      {pendingAdds.map((a) => (
-                        <div
-                          key={`${a.mailbox || "agent"}@${a.sendingDomain}`}
-                          className="flex items-center gap-3 border border-dashed border-ink-rule rounded-[var(--radius-sm)] px-3 py-1.5"
-                        >
-                          <Badge tone="receipt">oneshot</Badge>
-                          <span className="truncate text-[13px] text-ink-cream">
-                            {a.mailbox.trim() || "agent"}@{a.sendingDomain}
-                          </span>
-                          <span className="ln-mono text-[11px] text-ink-muted">
-                            {a.maxPerDay.trim() ? `cap ${a.maxPerDay.trim()}/day` : "warm-up ramp"}
-                          </span>
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            className="ml-auto h-7 px-2 text-[11px]"
-                            onClick={() => setPendingAdds((p) => p.filter((x) => x !== a))}
-                          >
-                            Remove
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  <div className="flex flex-wrap items-end gap-2">
-                    <Field label="Domain" className="min-w-[200px]">
-                      {/* Pick a warmed domain or type a new one (auto-provisions on first send). */}
-                      <Input
-                        list="oneshot-domains"
-                        placeholder="acme.com"
-                        value={addDomain}
-                        onChange={(e) => setAddDomain(e.target.value)}
-                        aria-label="sending domain"
-                      />
-                      <datalist id="oneshot-domains">
-                        {provisionedDomains.map((d) => (
-                          <option key={d.domain} value={d.domain}>
-                            {d.poolStatus !== "active" ? d.poolStatus : ""}
-                            {d.warmupScore != null ? ` warmth ${d.warmupScore}` : ""}
-                          </option>
-                        ))}
-                      </datalist>
-                    </Field>
-                    <Field label="Mailbox" className="w-32">
-                      <Input
-                        placeholder={founderLocalpart || "agent"}
-                        value={addMailbox}
-                        onChange={(e) => setAddMailbox(e.target.value)}
-                        aria-label="mailbox local-part"
-                      />
-                    </Field>
-                    <Field label="Max/day" className="w-24">
-                      <Input
-                        placeholder="ramp"
-                        value={addCap}
-                        onChange={(e) => setAddCap(e.target.value)}
-                        aria-label="max sends per day"
-                      />
-                    </Field>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      className="mb-[2px]"
-                      disabled={!addDomain.trim()}
-                      onClick={() => {
-                        const d = addDomain.trim().toLowerCase();
-                        if (!d) return;
-                        setPendingAdds((p) => [
-                          ...p,
-                          { sendingDomain: d, mailbox: addMailbox, maxPerDay: addCap },
-                        ]);
-                        setAddDomain("");
-                        setAddMailbox("");
-                        setAddCap("");
-                      }}
-                    >
-                      Add
-                    </Button>
-                  </div>
-                  {/* A domain outside the warmed pool goes out cold — pinned sends bypass warm-up. */}
-                  {addDomain.trim() &&
-                    provisionedDomains.length > 0 &&
-                    !provisionedDomains.some(
-                      (d) => d.domain.toLowerCase() === addDomain.trim().toLowerCase(),
-                    ) && (
-                      <span className="text-[12px] text-ink-blocked">
-                        {addDomain.trim()} isn't in your warmed pool — it auto-provisions on first
-                        send and goes out cold (server warm-up is bypassed for chosen domains). The
-                        client ramp below is your only throttle.
-                      </span>
-                    )}
-                  {/* Reputation + send limits are per-domain, not per-mailbox. */}
-                  {addDomain.trim() &&
-                    (status.data?.identities ?? []).some(
-                      (i) => i.sendingDomain?.toLowerCase() === addDomain.trim().toLowerCase(),
-                    ) && (
-                      <span className="text-[12px] text-ink-faint">
-                        Heads up: {addDomain.trim()} already sends in your pool. Reputation and the
-                        platform daily limit are per-domain — extra mailboxes share them, and their
-                        client caps stack on the same domain.
-                      </span>
-                    )}
-                  <span className="text-[12px] text-ink-faint">
-                    Blank mailbox defaults to your first name; blank cap uses the cold-start warm-up
-                    ramp (10/day, +10/week, max 50). Domains you send from are pinned, so the client
-                    ramp — not the server — paces warm-up. New senders join the pool on Save.
-                  </span>
-                </div>
-              </div>
-            )}
-            {/* Smartlead lives OUTSIDE the identities guard — connecting it is how an
-                empty pool gets rebuilt. */}
-            <div className="md:col-span-2 flex flex-col gap-2">
-              {/* Smartlead accounts — send-only; replies live in Smartlead's own UI. */}
-              <div className="mt-3 flex flex-col gap-2">
-                <span className="ln-eyebrow">Smartlead accounts</span>
-                <Field
-                  label="SMARTLEAD_API_KEY"
-                  hint={hintFor(sources["SMARTLEAD_API_KEY"])}
-                  className="max-w-md"
-                >
-                  <Input
-                    type="password"
-                    placeholder={sources["SMARTLEAD_API_KEY"] ? "(unchanged)" : ""}
-                    value={secrets["SMARTLEAD_API_KEY"] ?? ""}
-                    onChange={(e) => {
-                      setSecret("SMARTLEAD_API_KEY", e.target.value);
-                      // A different key = a different Smartlead workspace: the
-                      // loaded list and any staged picks belong to the OLD key
-                      // and would register mailboxes the new key can't send as.
-                      setSmartleadAccounts(null);
-                      setPendingSmartleadAdds([]);
-                    }}
-                    autoComplete="new-password"
-                  />
-                </Field>
-                <div className="flex flex-wrap items-center gap-3">
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    disabled={!smartleadKeyReady || loadSmartlead.isPending}
-                    onClick={() => loadSmartlead.mutate()}
-                    {...readOnly}
-                  >
-                    {loadSmartlead.isPending ? "Loading…" : "Load Smartlead accounts"}
-                  </Button>
-                  <span className="text-[12px] text-ink-faint">
-                    {smartleadKeyReady
-                      ? "Lists the mailboxes connected to your Smartlead workspace — Smartlead does the warmup, this pool does the sending."
-                      : "Paste your Smartlead API key first (Smartlead → Settings → API)."}
-                  </span>
-                </div>
-                {smartleadAccounts && smartleadAccounts.length === 0 && (
-                  <span className="text-[12px] text-ink-faint">
-                    No email accounts connected in Smartlead yet.
-                  </span>
-                )}
-                {smartleadAccounts?.map((a) => {
-                  const staged = pendingSmartleadAdds.some((p) => p.address === a.fromEmail);
-                  const blocked = !a.isSmtpSuccess;
-                  return (
-                    <div
-                      key={a.id}
-                      className="flex items-center gap-3 border border-ink-rule rounded-[var(--radius-sm)] px-3 py-2"
-                    >
-                      <div className="flex min-w-0 flex-col">
-                        <span className="truncate text-[13px] text-ink-cream">{a.fromEmail}</span>
-                        <span className="ln-mono text-[11px] text-ink-muted">
-                          {a.messagePerDay != null ? `${a.messagePerDay}/day` : "no cap"}
-                          {a.warmupStatus
-                            ? ` · warmup ${a.warmupStatus.toLowerCase()}${a.warmupReputation ? ` (${a.warmupReputation})` : ""}`
-                            : ""}
-                          {blocked ? " · SMTP broken — reconnect in Smartlead" : ""}
-                        </span>
-                      </div>
-                      <div className="ml-auto">
-                        {a.alreadyRegistered ? (
-                          <span className="ln-mono text-[11px] text-ink-faint">in pool</span>
-                        ) : staged ? (
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            className="h-7 px-2 text-[11px]"
-                            onClick={() =>
-                              setPendingSmartleadAdds((p) =>
-                                p.filter((x) => x.address !== a.fromEmail),
-                              )
-                            }
-                          >
-                            Undo
-                          </Button>
-                        ) : (
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            className="h-7 px-2 text-[11px]"
-                            disabled={blocked}
-                            onClick={() =>
-                              setPendingSmartleadAdds((p) => [
-                                ...p,
-                                {
-                                  address: a.fromEmail,
-                                  label: a.fromName ?? "",
-                                  providerMessagePerDay: a.messagePerDay,
-                                },
-                              ])
-                            }
-                          >
-                            Add
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-                {pendingSmartleadAdds.length > 0 && (
-                  <span className="text-[12px] text-ink-faint">
-                    {pendingSmartleadAdds.length} Smartlead mailbox
-                    {pendingSmartleadAdds.length === 1 ? "" : "es"} staged — applied on Save with
-                    the cold-start warm-up ramp (capped at Smartlead's own per-mailbox limit).
-                  </span>
-                )}
-              </div>
-            </div>
-            {!gmailCredsReady && (
-              <>
-                <Field label="GMAIL_CLIENT_ID" hint={hintFor(sources["GMAIL_CLIENT_ID"])}>
-                  <Input
-                    type="password"
-                    placeholder={sources["GMAIL_CLIENT_ID"] ? "(unchanged)" : ""}
-                    value={secrets["GMAIL_CLIENT_ID"] ?? ""}
-                    onChange={(e) => setSecret("GMAIL_CLIENT_ID", e.target.value)}
-                    autoComplete="new-password"
-                  />
-                </Field>
-                <Field label="GMAIL_CLIENT_SECRET" hint={hintFor(sources["GMAIL_CLIENT_SECRET"])}>
-                  <Input
-                    type="password"
-                    placeholder={sources["GMAIL_CLIENT_SECRET"] ? "(unchanged)" : ""}
-                    value={secrets["GMAIL_CLIENT_SECRET"] ?? ""}
-                    onChange={(e) => setSecret("GMAIL_CLIENT_SECRET", e.target.value)}
-                    autoComplete="new-password"
-                  />
-                </Field>
-              </>
-            )}
-            {isLegacyPool && (
-              <Field label="Provider" className="md:col-span-2">
-                <Select
-                  value={emailProvider}
-                  onChange={(e) => setEmailProvider(e.target.value as typeof emailProvider)}
-                >
-                  <option value="oneshot">OneShot SDK (wallet-owned sending domain)</option>
-                  <option value="gmail">Gmail / Google Workspace (your own account)</option>
-                </Select>
-              </Field>
-            )}
-            {isLegacyPool && emailProvider === "gmail" && (
-              <>
-                <div className="ln-note text-[12px] text-ink-muted md:col-span-2">
-                  Emails send from your authenticated Gmail address — the sending domain above is
-                  ignored. Easiest path: run{" "}
-                  <code className="ln-mono text-[11.5px] text-ink-cream-2">
-                    bun run cli -- gmail auth
-                  </code>{" "}
-                  to authorize in the browser and fill all three values automatically.
-                </div>
-                <Field
-                  label="GMAIL_REFRESH_TOKEN"
-                  hint={hintFor(sources["GMAIL_REFRESH_TOKEN"])}
-                  className="md:col-span-2"
-                >
-                  <Input
-                    type="password"
-                    placeholder={sources["GMAIL_REFRESH_TOKEN"] ? "(unchanged)" : ""}
-                    value={secrets["GMAIL_REFRESH_TOKEN"] ?? ""}
-                    onChange={(e) => setSecret("GMAIL_REFRESH_TOKEN", e.target.value)}
-                    autoComplete="new-password"
-                  />
-                </Field>
-              </>
-            )}
-          </div>
-        </LedgerSection>
-
-        <LedgerSection
-          eyebrow="07 · Telemetry"
-          lede="Off by default for your data, on by default for command-run counts. Opt out at will."
-        >
-          <Checkbox
-            label="Send anonymous opt-out telemetry (commands run, no data, no PII — see TELEMETRY.md)"
-            checked={telemetryEnabled}
-            onChange={(e) => setTelemetryEnabled(e.target.checked)}
-          />
-        </LedgerSection>
-
-        <div
-          className="sticky bottom-0 z-10 flex items-center justify-between gap-4 border-b border-t border-ink-rule bg-ink-bg/90 px-6 py-3 backdrop-blur-[2px]"
-          data-foot-bar
-        >
-          <div className="font-mono text-[11px] text-ink-muted">
-            {save.isSuccess && savedAt != null ? (
-              <span className="text-[color:var(--ink-receipt-2)]">
-                · saved to <span className="text-ink-cream-2">.env</span>
-              </span>
-            ) : (
-              <span className="text-ink-faint">changes apply on save</span>
-            )}
-          </div>
-          <Button
-            type="submit"
-            disabled={save.isPending || deriveBrief.isPending}
-            {...readOnly}
-            title={
-              deriveBrief.isPending ? "wait for the brief derive to finish, then save" : undefined
-            }
-          >
-            <Save size={14} />
-            {save.isPending ? "Saving…" : "Save changes"}
-          </Button>
+      <div className="grid grid-cols-1 lg:grid-cols-[200px_1fr]">
+        <div className="lg:sticky lg:top-0 lg:self-start">
+          <SectionNav dirty={dirty} active={active} />
         </div>
-      </form>
+        <div className="min-w-0">
+          {status.data ? (
+            <Sections
+              status={status.data}
+              xTrigger={xTrigger}
+              homeDir={homeDir}
+              proposedIcp={proposedIcp}
+              packLabel={packLabel}
+              smartleadKeyEpoch={smartleadKeyEpoch}
+              onSmartleadKeySaved={bumpSmartleadKey}
+              onDirtyChange={onDirtyChange}
+            />
+          ) : status.error ? (
+            <div className="px-6 py-8 font-mono text-[12px] text-[color:var(--ink-blocked-2)]">
+              couldn't load setup · {status.error.message}
+            </div>
+          ) : (
+            <div className="flex flex-col gap-8 px-6 py-8">
+              {SECTIONS.slice(0, 4).map((s) => (
+                <Skeleton key={s.id} lines={3} />
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
 
-function LedgerSection({
-  eyebrow,
-  lede,
-  children,
+function Sections({
+  status,
+  xTrigger,
+  homeDir,
+  proposedIcp,
+  packLabel,
+  smartleadKeyEpoch,
+  onSmartleadKeySaved,
+  onDirtyChange,
 }: {
-  eyebrow: string;
-  lede?: string;
-  children: ReactNode;
+  status: SetupStatus;
+  xTrigger: TriggerView | undefined;
+  homeDir: string;
+  proposedIcp?: string;
+  packLabel?: string;
+  smartleadKeyEpoch: number;
+  onSmartleadKeySaved: () => void;
+  onDirtyChange: DirtyReporter;
 }) {
+  const { cfg, sources } = status;
+  const common = { cfg, sources, onDirtyChange };
+  const isLegacyPool = status.identities?.[0]?.legacy ?? true;
   return (
-    <section className="grid grid-cols-1 gap-6 border-b border-ink-rule px-6 py-6 lg:grid-cols-[220px_1fr]">
-      <div>
-        <div className="ln-eyebrow">{eyebrow}</div>
-        {lede && <p className="ln-note mt-2 max-w-[32ch] text-[13px] text-ink-cream-2">{lede}</p>}
-      </div>
-      <div>{children}</div>
-    </section>
+    <>
+      <FounderSection {...common} />
+      <IcpSection {...common} proposedIcp={proposedIcp} packLabel={packLabel} />
+      <SocialProofSection {...common} />
+      <ProductBriefSection {...common} />
+      <LlmSection {...common} />
+      <WalletSection {...common} homeDir={homeDir} />
+      <XSection sources={sources} xTrigger={xTrigger} onDirtyChange={onDirtyChange} />
+      <EmailTransportSection
+        status={status}
+        smartleadKeyEpoch={smartleadKeyEpoch}
+        onDirtyChange={onDirtyChange}
+      />
+      <ReviewQueueSection {...common} />
+      <TelemetrySection {...common} />
+      <CredentialsSection
+        {...common}
+        homeDir={homeDir}
+        isLegacyPool={isLegacyPool}
+        xEngine={storedXEngine(xTrigger)}
+        onSmartleadKeySaved={onSmartleadKeySaved}
+      />
+    </>
   );
-}
-
-function hintFor(source: "env" | "file" | null | undefined): string {
-  if (source === "env") return "Currently from shell env. Leave blank to keep.";
-  if (source === "file") return "Currently from this workspace's .env. Leave blank to keep.";
-  return "Not set yet.";
 }

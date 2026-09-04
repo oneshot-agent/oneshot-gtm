@@ -15,7 +15,8 @@ export function Field({
   children,
   className,
 }: {
-  label: string;
+  /** Usually a string; a node lets a caller append a Badge ("in use"). */
+  label: React.ReactNode;
   hint?: string;
   error?: string | null;
   children: React.ReactNode;
