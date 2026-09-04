@@ -2,7 +2,7 @@
 
 **Assume green.** The 51 CLI commands, 23 plays, 13 finders, nine dashboard pages plus the run form, and the server's REST + SSE routes are all covered by the test suite — and verified end to end against the live OneShot API: every paid call type has made the live round trip, including the voice and SMS legs (`motion concierge` / `motion demo-no-show`), the PMF survey pair, reply triage, bounce harvesting, and `gmail placement`.
 
-Last verified **2026-09-03** · Bun 1.3.13 · OneShot SDK 0.22.0 · **2740 tests / 213 files** · typecheck + oxlint + oxfmt clean.
+Last verified **2026-09-04** · Bun 1.3.13 · OneShot SDK 0.22.0 · **2919 tests / 218 files** · typecheck + oxlint + oxfmt clean.
 
 **What the gate covers.** `apps/web` is now inside `bun run typecheck` — the dashboard source is
 type-checked in CI, and a deliberate error under `apps/web/src` fails the root script. As of
@@ -24,6 +24,43 @@ Reply detection was verified on 2026-08-23 against the real mailboxes: a sliced 
 Shadow priority score (#410): heuristic-v2 measured 2026-09-01 on 794 clean human labels — luma-events AUC 0.59-0.63 (up from v1's inverted 0.36), mean gap +1. Under the Phase 2 acceptance bar (gap ≥ +5, AUC ≥ 0.60), so the ranked review order shipped config-gated with `queueReviewOrder` defaulting to `newest` (a toggle on /queue; scores drive nothing else until richer features clear the bar).
 
 Industry packs (#458, #464): `GET /api/packs` + `POST /api/packs/:id/apply` hand a founder a working starting config for their vertical in one confirmation instead of a per-trigger `apply-config` conversation — a pack merges its patches over each trigger's stored config (hand-tuned keys survive) and enables every trigger it touches; a trigger left enabled-but-not-ready (missing a `requires` key the pack deliberately left blank) is the intended end state, named in the response. Ships eight packs: the `devtools-early-adopters` placeholder plus seven real verticals (restaurants-food-service, home-services-trades, healthcare-practices, auto-services, professional-services-smb, trucking-freight, civic-gov), each wired to `local-business` and/or `local-registry`/`gov-solicitation`/`civic-agenda` per the #456 coverage spike (restaurants and home-services measured BEST-covered by `peopleSearch`, dental WORST — the opposite of the card's working hypothesis, so `restaurants-food-service` leans primarily on `local-business`, not `local-registry`). Never writes `icpOneLiner` or any founder-voice field (`yourEdge`/`yourClaim`) — those ride back in the response / stay in `pack.requires` for the founder to fill in.
+
+Grounding pipeline (2026-09-04). `listProspectsForResearch` filtered on `dossier_json IS NULL OR
+TRIM(...) = ''`, which silently emptied the research backlog once `research-products` began writing
+a `{person, product}` wrapper onto every row: 531 of 684 prospects held a product half and a null
+person half, read as done, and the default backlog was **5 rows**. It now filters on
+`hasPersonSignal` — the same gate `_run-play.ts` / `_reply-research.ts` / `research-prospects.ts`
+already used — and reports **536**. Four related fixes ship with it: `researchUrl` prefers a
+researchable profile (LinkedIn/X/GitHub) over a `luma.com/user/…` page that says "Nothing Here,
+Yet" (68 rows had one); `research-prospects` merges through `mergePersonDossier` instead of
+replacing the column and destroying the product half; `hasDossierSignal` no longer counts a
+profile page's own empty-state text as a sourced excerpt; and `ops/audit-icp.ts`'s `dossierRole()`
+reads `$.person`, which it had been blind to since the wrapper landed.
+
+Person-level ICP verdicts are now written by the send path, not only by `ops/audit-icp.ts --write`.
+`QualifiedContact` carries the gate's verdict out of `_contact.ts` (it was collapsed to
+`ok/reject/platform-error` and discarded), nine finders stamp it via `icpFields`, and
+`sendDraftedEmail` both persists it and **gates step 0 on it** — that check existed only for
+follow-ups, so 65 `reject`-verdict prospects had been emailed while just 3 cadences ever went
+`off-icp`. `null` and `unclear` still fail open, per the contract at `ledger.ts:1470`.
+
+luma-events: the event relevance gate ran on the event NAME before any fetch, to avoid paying to
+read city-page noise — but `fetchEventDetails` is free and returns the description, so the gate was
+blind for no saving ("AI Infra Kebab", the Vercel/Neon event, was rejected three days running as "a
+generic event title", then accepted on the fourth on identical input). It now gates on title +
+description after the free structured fetch, falling back to title-only before the paid `webRead`.
+Stage-A role text used `bio ?? role`, which yields `""` for Luma's empty `bio_short` rather than
+falling through. `companyDomain` is carried to the play, and `_product-research.ts` no longer seeds
+a company website from an academic/alumni email domain.
+
+LinkedIn replies: `channel_events` gained a `body` column, so a recorded reply can feed the
+composer. The manual mark keyed `externalEventId` on `randomUUID()`, so `UNIQUE(source,
+external_event_id)` never fired once — it is now a hash of `(prospectId, body)`, deliberately not
+of the clock (the two real duplicates sit at 20:51:13 and 20:52:00, either side of a minute
+boundary). The affordance moved onto `/queue`: it had lived only on `/cadences`, a join on
+`cadence_state`, so all 127 emailed luma-events prospects — a one-touch play that never enrols —
+were unreachable. `/api/run`'s `persistDraftsToQueue` now links `target_queue.prospect_id`, which
+only `drain.ts` had been doing: 680 of 681 sent rows carried a NULL link.
 
 Updated by hand after each dogfood run.
 

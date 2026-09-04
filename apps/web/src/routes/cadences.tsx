@@ -125,6 +125,15 @@ function CadencesPage() {
   const [linkedinReplyModal, setLinkedinReplyModal] = useState<LinkedInReplyModalState | null>(
     null,
   );
+  const [linkedinReplyBody, setLinkedinReplyBody] = useState("");
+  // Every close path must clear the body. Cancel used to bypass the onClose
+  // cleanup, so reopening the modal for a DIFFERENT prospect showed the
+  // previous one's text — one stray click from filing person A's message
+  // against person B.
+  const closeLinkedinReplyModal = (): void => {
+    setLinkedinReplyModal(null);
+    setLinkedinReplyBody("");
+  };
   const [stopReason, setStopReason] = useState<CadenceStopReason>("bad_timing");
   const [stopNote, setStopNote] = useState("");
 
@@ -159,10 +168,12 @@ function CadencesPage() {
   });
 
   const markLinkedInReply = useMutation({
-    mutationFn: (prospectId: number) => api.markLinkedInReply(prospectId),
+    mutationFn: (vars: { prospectId: number; body?: string }) =>
+      api.markLinkedInReply(vars.prospectId, vars.body),
     onSuccess: (data) => {
       void qc.invalidateQueries({ queryKey: ["cadences"] });
       setLinkedinReplyModal(null);
+      setLinkedinReplyBody("");
       const warning = data.inFlightSends > 0 ? " · an in-flight email may still complete" : "";
       toast.success(
         `LinkedIn reply recorded · ${data.cadencesStopped} cadence(s) stopped${warning}`,
@@ -1109,16 +1120,21 @@ function CadencesPage() {
 
       <Modal
         open={linkedinReplyModal != null}
-        onClose={() => setLinkedinReplyModal(null)}
+        onClose={closeLinkedinReplyModal}
         title={`Mark LinkedIn reply${linkedinReplyModal?.prospectName ? ` — ${mask("name", linkedinReplyModal.prospectName)}` : ""}`}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setLinkedinReplyModal(null)}>
+            <Button variant="ghost" onClick={closeLinkedinReplyModal}>
               Cancel
             </Button>
             <Button
               onClick={() => {
-                if (linkedinReplyModal) markLinkedInReply.mutate(linkedinReplyModal.prospectId);
+                if (linkedinReplyModal) {
+                  markLinkedInReply.mutate({
+                    prospectId: linkedinReplyModal.prospectId,
+                    body: linkedinReplyBody,
+                  });
+                }
               }}
               disabled={markLinkedInReply.isPending}
               {...readOnly}
@@ -1128,9 +1144,21 @@ function CadencesPage() {
           </>
         }
       >
-        <div className="text-[12px] text-ink-muted">
-          This records a LinkedIn reply and stops every active or paused email cadence for this
-          prospect. An email already in flight cannot be recalled and may still complete.
+        <div className="flex flex-col gap-2">
+          <div className="text-[12px] text-ink-muted">
+            This records a LinkedIn reply and stops every active or paused email cadence for this
+            prospect. An email already in flight cannot be recalled and may still complete.
+          </div>
+          <label className="text-[12px] text-ink-muted" htmlFor="linkedin-reply-body">
+            What they said (optional) — stored so a reply can be drafted from it later.
+          </label>
+          <textarea
+            id="linkedin-reply-body"
+            className="min-h-[96px] w-full rounded border border-line bg-surface p-2 text-[12px]"
+            value={linkedinReplyBody}
+            onChange={(e) => setLinkedinReplyBody(e.currentTarget.value)}
+            placeholder="Paste their message…"
+          />
         </div>
       </Modal>
 

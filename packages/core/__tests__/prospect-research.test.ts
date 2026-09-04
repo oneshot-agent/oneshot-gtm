@@ -150,3 +150,58 @@ describe("listProspectsForResearch", () => {
     expect(ledger.listProspectsForResearch({ scopes: ["unjudged"], limit: 2 })).toHaveLength(2);
   });
 });
+
+// `research-prospects` owns the `person` half and `research-products` owns
+// `product`. Both used to read the column, merge in memory, and write back —
+// with the read outside any transaction and minutes of latency in between.
+// The later write silently reverted the earlier one. This happened for real
+// during the feature's own dogfood run.
+describe("mergeProspectDossierHalf", () => {
+  it("writes one half without clobbering the other", () => {
+    const id = ledger.upsertProspect({ name: "Raunaq Bose", email: "r@example.dev" });
+
+    ledger.mergeProspectDossierHalf(id, "product", {
+      version: 1,
+      status: "partial",
+      researchedAt: "2026-09-01T22:51:05.891Z",
+      subject: { company: "Taxheaven" },
+      sources: [{ url: "https://x.dev", kind: "website", excerpt: "real text" }],
+    });
+    ledger.mergeProspectDossierHalf(id, "person", { title: "Co-Founder & CTO", company: "xevall" });
+
+    const stored = JSON.parse(ledger.getProspectById(id)!.dossier_json!) as {
+      person: { company: string };
+      product: { subject: { company: string } };
+    };
+    expect(stored.person.company).toBe("xevall");
+    expect(stored.product.subject.company).toBe("Taxheaven");
+  });
+
+  it("re-reads inside the transaction rather than trusting a stale value", () => {
+    const id = ledger.upsertProspect({ name: "A", email: "a@example.dev" });
+
+    // Simulate the race: a caller selected the row (dossier empty), then
+    // another writer landed the product half before the caller's merge ran.
+    ledger.mergeProspectDossierHalf(id, "product", {
+      version: 1,
+      status: "complete",
+      researchedAt: "2026-09-04T00:00:00.000Z",
+      subject: { company: "Acme" },
+      sources: [],
+    });
+    // The caller now merges its person half. If it used the value it read at
+    // selection time (null), the product half would be gone.
+    ledger.mergeProspectDossierHalf(id, "person", { title: "CTO" });
+
+    const stored = JSON.parse(ledger.getProspectById(id)!.dossier_json!) as {
+      person: { title: string };
+      product: { status: string } | null;
+    };
+    expect(stored.person.title).toBe("CTO");
+    expect(stored.product?.status).toBe("complete");
+  });
+
+  it("is a no-op for a prospect that does not exist", () => {
+    expect(() => ledger.mergeProspectDossierHalf(9999, "person", { title: "x" })).not.toThrow();
+  });
+});

@@ -32,6 +32,8 @@ vi.mock("@oneshot-gtm/core", async () => {
       recordSequenceEvent: () => 1,
       hasSentSequenceEvent: () => false,
       findProspectByEmail: () => null,
+      // sendDraftedEmail reads the stored ICP verdict before a first touch.
+      getProspectById: () => null,
       getCachedEnrichment: () => null,
       setCachedEnrichment: () => {},
       enrollCadence: () => {

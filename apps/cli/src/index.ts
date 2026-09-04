@@ -491,6 +491,12 @@ find
   )
   .option("--concurrency <n>", "parallel research calls (default 3)", (v) => Number.parseInt(v, 10))
   .option("--refresh", "re-research prospects that already have a dossier", false)
+  .option("--id <n>", "research one prospect by id, ignoring scope and dossier state", (v) =>
+    Number.parseInt(v, 10),
+  )
+  .option("--max-cost-usd <n>", "stop once this much has been billed this run", (v) =>
+    Number.parseFloat(v),
+  )
   .option("--dry-run", "list candidates and estimated cost; research nothing", false)
   .description("Backfill research dossiers onto existing prospects (~$0.05 each)")
   .action(
@@ -500,6 +506,8 @@ find
         scope?: string;
         concurrency?: number;
         refresh: boolean;
+        id?: number;
+        maxCostUsd?: number;
         dryRun: boolean;
       }) => {
         await commandResearchProspects({
@@ -508,6 +516,8 @@ find
           ...(opts.limit ? { limit: opts.limit } : {}),
           ...(opts.scope ? { scope: opts.scope } : {}),
           ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
+          ...(Number.isFinite(opts.id) ? { id: opts.id as number } : {}),
+          ...(Number.isFinite(opts.maxCostUsd) ? { maxCostUsd: opts.maxCostUsd as number } : {}),
         });
       },
     ),

@@ -1,5 +1,5 @@
 import { getLedger, logEvent } from "@oneshot-gtm/core";
-import { resolveVerifyEnrichQualify } from "./_contact.ts";
+import { resolveVerifyEnrichQualify, icpFields } from "./_contact.ts";
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { persistRoleRejection } from "./_qualify.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
@@ -437,6 +437,7 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
       ...(contact.linkedinUrl ? { linkedinUrl: contact.linkedinUrl } : {}),
       ...(phone ? { phone } : {}),
       ...(contact.title ? { title: contact.title } : {}),
+      ...icpFields(contact),
     };
     const id = enqueueScoredTarget(ledger, {
       playName,

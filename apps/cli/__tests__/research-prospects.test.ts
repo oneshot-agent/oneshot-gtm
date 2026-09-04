@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  bounded,
   hasSignal,
   parseScopes,
   researchUrl,
@@ -41,7 +42,7 @@ describe("resolveCap", () => {
 });
 
 describe("researchUrl", () => {
-  it("prefers source_profile_url — it is never repurposed", () => {
+  it("prefers source_profile_url when it is a researchable profile", () => {
     expect(
       researchUrl({
         source_profile_url: "https://github.com/rishibanota",
@@ -50,12 +51,55 @@ describe("researchUrl", () => {
     ).toBe("https://github.com/rishibanota");
   });
 
+  it("skips a non-profile source_profile_url in favour of LinkedIn", () => {
+    // The bug this fixes: luma-events stamps a `luma.com/user/<handle>` page as
+    // source_profile_url. For someone who hosts no events its whole content is
+    // "Nothing Here, Yet", so deepResearchPerson burned a call and returned
+    // nothing while a perfectly good LinkedIn URL sat in the next column.
+    // 68 prospects were in exactly this state.
+    expect(
+      researchUrl({
+        source_profile_url: "https://luma.com/user/rnq",
+        linkedin_url: "https://www.linkedin.com/in/raunaqbose",
+      }),
+    ).toBe("https://www.linkedin.com/in/raunaqbose");
+  });
+
+  it("still returns a non-profile URL when there is nothing better", () => {
+    // Worse than a social profile, but strictly more than an email alone.
+    expect(
+      researchUrl({ source_profile_url: "https://luma.com/user/rnq", linkedin_url: null }),
+    ).toBe("https://luma.com/user/rnq");
+  });
+
+  it("treats x.com and twitter.com as researchable too", () => {
+    expect(
+      researchUrl({ source_profile_url: "https://x.com/rnq", linkedin_url: "https://li.com/in/x" }),
+    ).toBe("https://x.com/rnq");
+  });
+
   it("falls back to linkedin_url, else null", () => {
     expect(researchUrl({ source_profile_url: null, linkedin_url: "https://li.com/in/x" })).toBe(
       "https://li.com/in/x",
     );
     expect(researchUrl({ source_profile_url: "  ", linkedin_url: null })).toBeNull();
     expect(researchUrl({ source_profile_url: null, linkedin_url: null })).toBeNull();
+  });
+});
+
+describe("bounded — the person half must stay mergeable", () => {
+  it("passes a normal payload through untouched", () => {
+    const payload = { title: "CTO", company: "xevall" };
+    expect(bounded(payload)).toBe(payload);
+  });
+
+  it("degrades an oversized payload to sliced text, which still reads as signal", () => {
+    const huge = { summary: "x".repeat(20_000) };
+    const result = bounded(huge);
+    expect(typeof result).toBe("string");
+    // Slicing the MERGED wrapper would have produced invalid JSON and taken the
+    // product half down with it; slicing the person half keeps it parseable.
+    expect(hasSignal(result)).toBe(true);
   });
 });
 

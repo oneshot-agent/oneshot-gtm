@@ -1,5 +1,5 @@
 import { getLedger, logEvent, webRead } from "@oneshot-gtm/core";
-import { resolveVerifyEnrichQualify } from "./_contact.ts";
+import { resolveVerifyEnrichQualify, icpFields } from "./_contact.ts";
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { persistRoleRejection } from "./_qualify.ts";
 import { complete, loadPrompt } from "@oneshot-gtm/intel";
@@ -443,6 +443,7 @@ export async function runAcceleratorBatchFinder(
       ...(linkedinUrl ? { linkedinUrl } : {}),
       ...(phone ? { phone } : {}),
       ...(contact.title ? { title: contact.title } : {}),
+      ...icpFields(contact),
       // Stamp the sender's own cohort (+ offer) onto the row so the play can
       // draft inline without a run-level senderCohort — mirrors yourEdge.
       ...(opts.senderCohort ? { senderCohort: opts.senderCohort } : {}),

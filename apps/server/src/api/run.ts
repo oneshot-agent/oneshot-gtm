@@ -9,6 +9,7 @@ import {
   type TelemetryOutcome,
 } from "@oneshot-gtm/core";
 import { verifyAndFilterTargets } from "@oneshot-gtm/plays";
+import { backfillProspectId } from "@oneshot-gtm/find";
 import {
   isRunnablePlay,
   type CancelRunResponse,
@@ -546,6 +547,17 @@ function persistDraftsToQueue(input: {
       // same row forever. Held drafts and dry-runs intentionally stay approved.
       if (draft.sent && !input.dryRun) {
         ledger.setQueueStatus({ id: row.id, status: "sent" });
+        // Link the row to the prospect the send just created. `drain.ts` has
+        // always done this; this path never did, which is why almost every
+        // sent row in the ledger has a NULL prospect_id.
+        const prospectId = backfillProspectId(row);
+        if (prospectId != null) {
+          try {
+            ledger.setQueueProspectId(row.id, prospectId);
+          } catch {
+            // Best-effort link — the send is already recorded either way.
+          }
+        }
       }
     } catch (err) {
       logEvent(

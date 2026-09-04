@@ -267,7 +267,7 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
         channel           TEXT NOT NULL,
         event_type        TEXT NOT NULL,
         occurred_at       TEXT NOT NULL,
-        created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+        created_at        TEXT NOT NULL DEFAULT (datetime('now')), body TEXT,
         UNIQUE(source, external_event_id),
         FOREIGN KEY(prospect_id) REFERENCES prospects(id)
       )",

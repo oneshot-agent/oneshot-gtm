@@ -108,8 +108,11 @@ export const api = {
       `/cadences/${id}/stop?play=${encodeURIComponent(playName)}`,
       input,
     ),
-  markLinkedInReply: (id: number) =>
-    postJson<LinkedInReplyResult>(`/prospects/${id}/linkedin-reply`, {}),
+  markLinkedInReply: (id: number, body?: string) =>
+    postJson<LinkedInReplyResult>(
+      `/prospects/${id}/linkedin-reply`,
+      body?.trim() ? { body: body.trim() } : {},
+    ),
   previewCadenceNext: (id: number, playName: string) =>
     postJson<{
       subject: string;

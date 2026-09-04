@@ -943,6 +943,7 @@ export function QueueRow({
                 draftedAt={row.lastDraftedAt}
                 generating={generating}
                 isSending={row.isSending}
+                prospectId={row.prospectId}
               />
               <details className="text-ink-faint">
                 <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.14em] hover:text-ink-cream-2">
@@ -978,6 +979,7 @@ function DraftSection({
   draftedAt,
   generating,
   isSending,
+  prospectId,
 }: {
   id: number;
   playName: string;
@@ -986,6 +988,8 @@ function DraftSection({
   draft: QueueRowView["lastDraft"];
   draftedAt: string | null;
   generating: boolean;
+  /** Set once the send has created a prospect row; null before that. */
+  prospectId: number | null;
   /**
    * True when the server's `target_queue.send_started_at` marker is set —
    * survives nav-away-and-back AND `bun --watch` reloads, unlike the
@@ -1080,6 +1084,73 @@ function DraftSection({
       toast.error(`couldn't record · ${err.message}`);
     },
   });
+  // Recording a LinkedIn reply used to live only on /cadences, which is a join
+  // on `cadence_state` — so it was unreachable for every one-touch play. All
+  // 130 luma-events prospects were in that hole: emailed, never enrolled in a
+  // cadence, and therefore impossible to mark when they replied on LinkedIn.
+  // The queue row is where every sent prospect is visible, so it belongs here.
+  const [linkedinBody, setLinkedinBody] = useState("");
+  const [linkedinOpen, setLinkedinOpen] = useState(false);
+  const markLinkedIn = useMutation({
+    mutationFn: () => api.markLinkedInReply(prospectId as number, linkedinBody),
+    onSuccess: (data) => {
+      void qc.invalidateQueries({ queryKey: ["queue"] });
+      void qc.invalidateQueries({ queryKey: ["cadences"] });
+      setLinkedinOpen(false);
+      setLinkedinBody("");
+      const warning = data.inFlightSends > 0 ? " · an in-flight email may still complete" : "";
+      toast.success(
+        `LinkedIn reply recorded · ${data.cadencesStopped} cadence(s) stopped${warning}`,
+      );
+    },
+    onError: (err) => toast.error(`couldn't record · ${err.message}`),
+  });
+  const linkedinReplyBlock =
+    status === "sent" && prospectId != null ? (
+      <div className="mt-2 border-t border-ink-rule pt-2">
+        {linkedinOpen ? (
+          <div className="flex flex-col gap-2">
+            <label
+              className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint"
+              htmlFor={`li-reply-${id}`}
+            >
+              they replied on linkedin — paste what they said
+            </label>
+            <textarea
+              id={`li-reply-${id}`}
+              className="min-h-[72px] w-full rounded border border-ink-rule bg-transparent p-2 text-[11px]"
+              value={linkedinBody}
+              onChange={(e) => setLinkedinBody(e.currentTarget.value)}
+              placeholder="Optional, but it is what a reply gets drafted from later."
+            />
+            <div className="flex items-center gap-2">
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={markLinkedIn.isPending}
+                onClick={() => markLinkedIn.mutate()}
+                {...readOnly}
+              >
+                {markLinkedIn.isPending ? "recording…" : "record reply"}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setLinkedinOpen(false)}>
+                cancel
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setLinkedinOpen(true)}
+            title="Record a LinkedIn reply and stop any email cadence for this prospect"
+          >
+            mark linkedin reply
+          </Button>
+        )}
+      </div>
+    ) : null;
+
   const p = (payload ?? {}) as Record<string, unknown>;
   const pstr = (k: string): string | null => (typeof p[k] === "string" ? (p[k] as string) : null);
   const dmOpen = p["dmOpen"] === true;
@@ -1246,6 +1317,7 @@ function DraftSection({
         <pre className="mt-2 max-h-[360px] overflow-auto whitespace-pre-wrap font-mono text-[11.5px] leading-[1.55] text-ink-cream-2">
           {draft.body}
         </pre>
+        {linkedinReplyBlock}
       </div>
     </div>
   );

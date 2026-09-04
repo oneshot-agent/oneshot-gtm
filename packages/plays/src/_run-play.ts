@@ -209,6 +209,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         const flags = [
           ...lintEmail(draft.subject, draft.body, def.maxBodyWords),
           ...(def.extraFlags?.(target) ?? []),
+          ...lintGrounding(target, prep),
         ];
         // Cross-workspace hold, applied centrally so EVERY play gets it: a
         // soft flag (overridable on manual send) that keeps drain from auto-
@@ -245,6 +246,10 @@ export async function runEmailPlay<T, X = Record<string, never>>(
               : {}),
           },
           ...(def.metadata ? { metadata: def.metadata(target) } : {}),
+          // Same generic read as `title` above: any finder stamping the ICP
+          // gate's verdict on its payload gets it enforced at step 0 and
+          // persisted, without every play def naming the field.
+          ...icpFromTarget(target),
           dryRun: opts.dryRun,
         });
 
@@ -326,4 +331,60 @@ export async function standardEnrich(opts: {
   }
 
   return { receiptIds, dossier, ...(enrichmentFailed ? { enrichmentFailed: true } : {}) };
+}
+
+/**
+ * Read the person-level ICP verdict a finder stamped on its target payload.
+ *
+ * Finders spread `icpFields(contact)` (see `find/_contact.ts`) alongside
+ * `title`; this is the reader on the send side. Unknown or missing values
+ * yield `{}` so a play whose finder has no person gate is unaffected.
+ */
+function icpFromTarget(target: unknown): {
+  icp?: { verdict: "pass" | "reject" | "unclear"; reason?: string | null };
+} {
+  const row = target as { icpVerdict?: unknown; icpVerdictReason?: unknown };
+  const verdict = row?.icpVerdict;
+  if (verdict !== "pass" && verdict !== "reject" && verdict !== "unclear") return {};
+  return {
+    icp: {
+      verdict,
+      reason: typeof row.icpVerdictReason === "string" ? row.icpVerdictReason : null,
+    },
+  };
+}
+
+/**
+ * Flag a draft the system already knows is ungrounded.
+ *
+ * `standardEnrich` serializes whatever `safeEnrich` returned straight into the
+ * prompt's DOSSIER block — including the failure sentinel. So when the enrich
+ * fails the model is handed, verbatim:
+ *
+ *     DOSSIER:
+ *     { "status": "failed", "profile": null, "cost": 0 }
+ *
+ * and drafts anyway. `prep.enrichmentFailed` was already set, already carried
+ * to the queue UI as a badge, and already ignored by the send: `sendDraftedEmail`
+ * only holds a draft when `flags` is non-empty, and nothing ever pushed one.
+ *
+ * That is how prospect 679 was emailed "did the vendor proxy babysitting bite
+ * you at taxheaven too?" — the company string was the only prospect-specific
+ * noun in the whole prompt, so the model welded it onto the stock `yourEdge`.
+ *
+ * The flag fires only when there is nothing ELSE to write from. A failed
+ * enrich on a target that still carries a real title or bio is fine: the draft
+ * has something true to say. Every sent row in this ledger was drafted AFTER
+ * its human approval (681 of 681), so a flag here is the only checkpoint that
+ * sees the draft at all.
+ */
+export function lintGrounding(target: unknown, prep: { enrichmentFailed?: boolean }): string[] {
+  if (!prep.enrichmentFailed) return [];
+  const row = target as { title?: unknown; attendeeBio?: unknown; role?: unknown };
+  const hasOwnGrounding = nonBlank(row?.title) || nonBlank(row?.attendeeBio);
+  return hasOwnGrounding ? [] : ["ungrounded"];
+}
+
+function nonBlank(value: unknown): boolean {
+  return typeof value === "string" && value.trim().length > 0;
 }

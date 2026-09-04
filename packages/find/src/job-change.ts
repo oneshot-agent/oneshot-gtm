@@ -1,5 +1,5 @@
 import { getLedger, logEvent, webSearch } from "@oneshot-gtm/core";
-import { resolveVerifyEnrichQualify } from "./_contact.ts";
+import { resolveVerifyEnrichQualify, icpFields } from "./_contact.ts";
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { persistRoleRejection, qualifyPreSpend } from "./_qualify.ts";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
@@ -266,6 +266,7 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
       ...(linkedinUrl ? { linkedinUrl } : {}),
       ...(phone ? { phone } : {}),
       ...(contact.title ? { title: contact.title } : {}),
+      ...icpFields(contact),
     };
     const id = enqueueScoredTarget(ledger, {
       playName: PLAY_NAME,
