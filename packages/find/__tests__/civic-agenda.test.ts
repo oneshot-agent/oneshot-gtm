@@ -35,6 +35,7 @@ const pendingPersisted: Array<{
 let icpMatch: boolean | null = true;
 let icpCalls = 0;
 let icpResolved: string | null = "icp";
+let queueDuplicate = false;
 let eventsBySlug: Record<string, Array<Record<string, unknown>>> = {};
 let itemsByEventId: Record<number, Array<Record<string, unknown>>> = {};
 /** dedupeKeys (`${slug}:${eventId}:${eventItemId}`) that isQueueDuplicate should report as duplicates. */
@@ -58,8 +59,9 @@ vi.mock("../src/_pending.ts", () => ({
 
 vi.mock("../src/_filter.ts", () => ({
   resolveIcp: () => icpResolved,
-  icpFilter: async (input: { candidate: { title: string } }) => {
+  icpFilter: async (input: { icp: string | null; candidate: { title: string } }) => {
     icpCalls++;
+    if (!input.icp) return { match: true, reason: "no ICP set; pass-through" };
     return { match: icpMatch, reason: icpMatch ? `fits: ${input.candidate.title}` : "nope" };
   },
 }));
@@ -85,7 +87,12 @@ vi.mock("@oneshot-gtm/core", async () => {
     ...actual,
     logEvent: () => {},
     getLedger: () => ({
-      isQueueDuplicate: (_playName: string, dedupeKey: string) => queueDuplicateKeys.has(dedupeKey),
+      // Two knobs on purpose:  marks EVERY candidate a
+      // duplicate (the "a cap must not halt when nothing spends" case),
+      //  marks specific dedupeKeys (the "drop the
+      // duplicate, then halt on the next real candidate" case). Honour both.
+      isQueueDuplicate: (_play: string, key: string) =>
+        queueDuplicate || queueDuplicateKeys.has(key),
       isPendingResolution: () => false,
       findProspectByEmail: () => null,
       isEmailPendingInQueue: (email: string) =>
@@ -106,6 +113,7 @@ beforeEach(() => {
   icpMatch = true;
   icpCalls = 0;
   icpResolved = "icp";
+  queueDuplicate = false;
   officeRecordsBehavior = "contact";
   queueDuplicateKeys = new Set();
   eventsBySlug = {
@@ -303,6 +311,26 @@ describe("runCivicAgendaFinder — happy path", () => {
     expect(capped.halted).toMatch(/max-cost cap/);
   });
 
+  it("a duplicate does not trip maxCostUsd — it never reaches the paid call", async () => {
+    // The cost guard sits BELOW the duplicate check. A duplicate returns before
+    // icpFilter, so its prospective cost is zero and a cap must not halt on it.
+    // With the guard above the duplicate check, a cap under one classifier
+    // estimate (0.0005 < 0.001) halted the whole run on the first candidate —
+    // one that was never going to spend anything.
+    queueDuplicate = true;
+    itemsByEventId = {
+      1: [
+        { eventItemId: 100, title: "Resolution on AI use in permitting", matterFile: "R-1" },
+        { eventItemId: 102, title: "AI automation budget amendment", matterFile: null },
+      ],
+    };
+    const out = await runCivicAgendaFinder({ ...baseConfig, maxCostUsd: 0.0005 });
+    expect(out.halted).toBeUndefined();
+    expect(icpCalls).toBe(0);
+    expect(out.costUsd).toBe(0);
+    expect(out.droppedDuplicate).toBe(2);
+  });
+
   it("does not charge icpFilter spend when no ICP is configured (pass-through)", async () => {
     // resolveIcp() returning null is a normal, documented state (see
     // _filter.ts's tri-state contract) — icpFilter() is then a free
@@ -317,7 +345,11 @@ describe("runCivicAgendaFinder — happy path", () => {
         { eventItemId: 102, title: "AI automation budget amendment", matterFile: null },
       ],
     };
-    const out = await runCivicAgendaFinder(baseConfig);
+    // maxCostUsd is set DELIBERATELY, and low enough that a single wrongly
+    // charged call would breach it. Without a cap configured,
+    // is undefined no matter what costUsd does, and the assertion below
+    // proves nothing about pass-through charging.
+    const out = await runCivicAgendaFinder({ ...baseConfig, maxCostUsd: 0.001 });
     expect(icpCalls).toBe(2);
     expect(out.costUsd).toBe(0);
     expect(out.halted).toBeUndefined();
