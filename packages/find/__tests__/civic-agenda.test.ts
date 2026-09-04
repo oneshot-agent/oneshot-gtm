@@ -314,7 +314,7 @@ describe("runCivicAgendaFinder — happy path", () => {
         { eventItemId: 102, title: "AI automation budget amendment", matterFile: null },
       ],
     };
-    const out = await runCivicAgendaFinder(baseConfig);
+    const out = await runCivicAgendaFinder({ ...baseConfig, maxCostUsd: 0.001 });
     expect(icpCalls).toBe(2);
     expect(out.costUsd).toBe(0);
     expect(out.halted).toBeUndefined();
