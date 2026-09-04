@@ -112,12 +112,18 @@ export interface LocalRegistryTarget {
  * spelling difference must not be treated as a new business.
  */
 function slugify(s: string): string {
-  return s
-    .toLowerCase()
-    .trim()
-    .replace(/['’`]/g, "")
-    .replace(/[^\p{L}\p{N}]+/gu, "-")
-    .replace(/^-+|-+$/g, "");
+  return (
+    s
+      .toLowerCase()
+      .trim()
+      .replace(/['’`]/g, "")
+      .replace(/[^\p{L}\p{N}]+/gu, "-")
+      // Single `-`, not `-+`: the collapse above already guarantees no run of
+      // dashes survives, so the quantifier can never match more than one — and
+      // `-+$` is a polynomial-ReDoS shape on a long dash string (CodeQL
+      // js/polynomial-redos, flagged on this PR). Same output, no backtracking.
+      .replace(/^-|-$/g, "")
+  );
 }
 
 /** Stable within-run + cross-run dedupe key: name slug + state + city, source-agnostic.
