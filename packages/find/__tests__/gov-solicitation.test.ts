@@ -418,8 +418,19 @@ describe("runGovSolicitationFinder — description-fetch SSRF guard", () => {
     expect(out.enqueued).toBe(1);
     expect(enqueued[0]!.payload["descriptionSnippet"]).toBeUndefined();
     // Only the search call should have hit fetch — never the malicious host.
-    const calledUrls = fetchSpy.mock.calls.map((c) => String(c[0]));
-    expect(calledUrls.some((u) => u.includes("evil.example.com"))).toBe(false);
+    // Parse each called URL's hostname rather than substring-matching the
+    // raw string: a naive `.includes("evil.example.com")` would also pass
+    // (i.e. fail to catch a real bug) for an attacker-controlled URL that
+    // merely embeds the string elsewhere, e.g. as a path segment or query
+    // value on a different host (CodeQL js/incomplete-url-substring-sanitization).
+    const calledHostnames = fetchSpy.mock.calls.map((c) => {
+      try {
+        return new URL(String(c[0])).hostname;
+      } catch {
+        return String(c[0]);
+      }
+    });
+    expect(calledHostnames).not.toContain("evil.example.com");
   });
 
   it("passes `redirect: error` on the description fetch so a 3xx never auto-follows with the api_key attached", async () => {
