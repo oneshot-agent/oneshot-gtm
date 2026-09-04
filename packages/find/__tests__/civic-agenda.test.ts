@@ -37,6 +37,8 @@ let icpCalls = 0;
 let icpResolved: string | null = "icp";
 let eventsBySlug: Record<string, Array<Record<string, unknown>>> = {};
 let itemsByEventId: Record<number, Array<Record<string, unknown>>> = {};
+/** dedupeKeys (`${slug}:${eventId}:${eventItemId}`) that isQueueDuplicate should report as duplicates. */
+let queueDuplicateKeys: Set<string> = new Set();
 
 /** Controls what the stubbed global `fetch` returns for the OfficeRecords call. */
 type OfficeRecordsBehavior = "contact" | "no-email" | "throw" | "5xx";
@@ -83,7 +85,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     ...actual,
     logEvent: () => {},
     getLedger: () => ({
-      isQueueDuplicate: () => false,
+      isQueueDuplicate: (_playName: string, dedupeKey: string) => queueDuplicateKeys.has(dedupeKey),
       isPendingResolution: () => false,
       findProspectByEmail: () => null,
       isEmailPendingInQueue: (email: string) =>
@@ -105,6 +107,7 @@ beforeEach(() => {
   icpCalls = 0;
   icpResolved = "icp";
   officeRecordsBehavior = "contact";
+  queueDuplicateKeys = new Set();
   eventsBySlug = {
     nyc: [
       {
@@ -337,6 +340,36 @@ describe("runCivicAgendaFinder — max-cost cap", () => {
     expect(icpCalls).toBe(1);
     expect(out.enqueued).toBe(1);
     expect(out.halted).toBeUndefined();
+  });
+
+  it("does not let a duplicate's zero prospective cost halt the run before a later non-duplicate candidate", async () => {
+    // Regression for finding PRRT_kwDOSKzrBs6fG5vp: the cost guard used to
+    // run BEFORE the duplicate check. A duplicate never reaches icpFilter,
+    // so its prospective cost is always 0 — with 0 < maxCostUsd <
+    // ICP_FILTER_COST_ESTIMATE_USD, that 0 cost passed the guard and then
+    // the duplicate `continue` skipped straight past the halt, but a later
+    // NON-duplicate candidate would then find `result.halted` never got
+    // set even though its own prospective cost exceeds the cap — worse,
+    // in the actual bug the duplicate's continue meant the halt check was
+    // simply skipped for it, silently letting the loop under-halt. Moving
+    // the duplicate check first ensures duplicates are dropped as
+    // duplicates (not misreported as cost halts) and the very next
+    // non-duplicate candidate is what the cap is evaluated against.
+    itemsByEventId = {
+      1: [
+        { eventItemId: 100, title: "Resolution on AI use in permitting", matterFile: "R-1" },
+        { eventItemId: 102, title: "AI automation budget amendment", matterFile: null },
+      ],
+    };
+    queueDuplicateKeys = new Set(["nyc:1:100"]);
+    const out = await runCivicAgendaFinder({ ...baseConfig, maxCostUsd: 0.0001 });
+    expect(out.droppedDuplicate).toBe(1);
+    // The first candidate is dropped as a duplicate without ever reaching
+    // the cost guard. The second (non-duplicate) candidate's prospective
+    // cost then exceeds the cap and halts the run before its icpFilter call.
+    expect(icpCalls).toBe(0);
+    expect(out.enqueued).toBe(0);
+    expect(out.halted).toMatch(/max-cost cap/);
   });
 });
 
