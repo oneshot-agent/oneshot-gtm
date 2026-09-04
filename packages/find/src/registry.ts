@@ -436,8 +436,17 @@ export const TRIGGERS: TriggerSpec[] = [
         ? (cfg["states"] as unknown[]).filter((s) => typeof s === "string" && s.trim())
         : [];
       const hasNppes = taxonomies.length > 0 && states.length > 0;
+      // Same allowlist `run` applies below (validEntityTypes) — an invalid
+      // entityTypes value (e.g. "trucking" instead of "carrier") must not
+      // pass readiness only to have `run` normalize it away and start with
+      // no configured fmcsa source, which reports the unhelpful "every
+      // configured source returned 0 records" instead of pointing at the
+      // bad value.
+      const validEntityTypes = new Set(["carrier", "broker", "freight-forwarder"]);
       const entityTypes = Array.isArray(cfg["entityTypes"])
-        ? (cfg["entityTypes"] as unknown[]).filter((t) => typeof t === "string" && t.trim())
+        ? (cfg["entityTypes"] as unknown[]).filter(
+            (t) => typeof t === "string" && validEntityTypes.has(t.trim()),
+          )
         : [];
       const hasFmcsa =
         entityTypes.length > 0 ||
@@ -455,11 +464,25 @@ export const TRIGGERS: TriggerSpec[] = [
           typeof (p as Record<string, unknown>)["dataset"] === "string" &&
           ((p as Record<string, unknown>)["dataset"] as string).trim().length > 0,
       );
-      if (validPortals.length === 0 && !hasNppes && !hasFmcsa && !hasInspection) {
+      // socrata-inspection is a recency/operating-status CONFIRMATION joined
+      // to the licence lane (local-registry.ts's licenseMatchKeys join),
+      // never a standalone source — every socrata-inspection record with no
+      // same-run non-inspection match is dropped before it can be enqueued.
+      // An inspectionPortals-only config can therefore never produce a
+      // candidate, so it must not pass readiness on its own.
+      const hasNonInspectionSource = validPortals.length > 0 || hasNppes || hasFmcsa;
+      if (!hasNonInspectionSource && !hasInspection) {
         return {
           ready: false,
           reason:
             "set `portals[]` ({host, dataset, label}), `taxonomies[]` + `states[]`, `entityTypes[]`/`minPowerUnits`/`maxPowerUnits` (fmcsa), or `inspectionPortals[]`",
+        };
+      }
+      if (!hasNonInspectionSource && hasInspection) {
+        return {
+          ready: false,
+          reason:
+            "`inspectionPortals[]` alone can never enqueue anything — it only confirms a match from `portals[]`, `taxonomies[]`+`states[]`, or `entityTypes[]`/`minPowerUnits`/`maxPowerUnits`; configure one of those too",
         };
       }
       const edge = cfg["yourEdge"];

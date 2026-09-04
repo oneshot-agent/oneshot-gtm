@@ -339,8 +339,10 @@ export function lintEmail(subject: string, body: string, maxBodyWords = 110): st
  */
 export function citesPublicRecordLeverage(body: string): boolean {
   return (
-    /\b(?:failed|flunked)\s+(?:your\s+|the\s+|a\s+|an\s+)?(?:health\s+)?inspection\b/i.test(body) ||
-    /\b(?:inspection|health)\s+(?:score|grade)\b/i.test(body) ||
+    /\b(?:failed|flunked)\s+(?:your\s+|the\s+|a\s+|an\s+)?(?:health\s+)?inspections?\b/i.test(
+      body,
+    ) ||
+    /\b(?:inspection|health)\s+(?:scores?|grades?)\b/i.test(body) ||
     // Bare `/\bviolation\b/` also flagged legitimate non-leverage copy like
     // "we help teams avoid compliance violations" (finding
     // PRRT_kwDOSKzrBs6exPH6) — a violation only reads as public-record
@@ -352,12 +354,16 @@ export function citesPublicRecordLeverage(body: string): boolean {
     /\bviolation(?:s)?\b[\s\S]{0,60}\b(?:cit(?:e|es|ed|ation)|report(?:ed)?|flagged|found|noted)\b/i.test(
       body,
     ) ||
-    /\b(?:licen[sc]e|permit|registration)\s+(?:lapsed|expired|revoked|suspended)\b/i.test(body) ||
+    /\b(?:licen[sc]e|permit|registration)s?\s+(?:lapsed|expired|revoked|suspended)\b/i.test(body) ||
     // Adjective-first phrasing ("expired permit", "revoked license") reused
     // the SAME state alternation the noun-first check above uses, instead of
     // matching only `lapsed` — the other three states passed the guardrail
-    // reversed (finding PRRT_kwDOSKzrBs6fCBd-).
-    /\b(?:lapsed|expired|revoked|suspended)\s+(?:licen[sc]e|permit|registration)\b/i.test(body)
+    // reversed (finding PRRT_kwDOSKzrBs6fCBd-). Plural nouns ("licenses",
+    // "permits", "registrations") added alongside plural inspections/scores
+    // above — the singular-only regexes missed "failed inspections",
+    // "inspection scores", and "expired licenses" (shipped-regression
+    // finding on PR #473).
+    /\b(?:lapsed|expired|revoked|suspended)\s+(?:licen[sc]e|permit|registration)s?\b/i.test(body)
   );
 }
 

@@ -181,6 +181,30 @@ describe("lintEmail — humanizer canon", () => {
     );
     expect(lintEmail("hi", "Your lapsed license came up. Sam")).toContain("public-record-leverage");
   });
+
+  it("flags plural inspection/score/license forms the singular-only regex missed", () => {
+    // shipped-regression finding on PR #473: "failed inspections",
+    // "inspection scores", and "expired licenses" all slipped past the
+    // singular-only patterns, in both noun-first and adjective-first order.
+    expect(lintEmail("hi", "Saw your place failed health inspections. Sam")).toContain(
+      "public-record-leverage",
+    );
+    expect(lintEmail("hi", "Your inspection scores dropped last cycle. Sam")).toContain(
+      "public-record-leverage",
+    );
+    expect(lintEmail("hi", "Noticed your licenses expired last month. Sam")).toContain(
+      "public-record-leverage",
+    );
+    expect(lintEmail("hi", "Noticed your expired licenses last month. Sam")).toContain(
+      "public-record-leverage",
+    );
+    expect(lintEmail("hi", "Noticed your revoked permits last month. Sam")).toContain(
+      "public-record-leverage",
+    );
+    expect(lintEmail("hi", "Noticed your suspended registrations last month. Sam")).toContain(
+      "public-record-leverage",
+    );
+  });
   it("flags emojis and curly quotes", () => {
     expect(lintEmail("hi", "Awesome work 🚀. Sam")).toContain("emoji");
     expect(lintEmail("hi", "He said “hi” to me. Sam")).toContain("curly-quotes");
