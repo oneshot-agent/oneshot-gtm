@@ -721,10 +721,15 @@ export const fmcsaSource: RegistrySource = {
     // queries the full nationwide ~2.2M-row trucking dataset. A trigger
     // configured for socrata-license/socrata-inspection/nppes only — never
     // touching fmcsa's own config keys — must not silently fire this query
-    // and enqueue unrelated trucking carriers.
+    // and enqueue unrelated trucking carriers. `states` is deliberately
+    // EXCLUDED here: it's shared with nppes (crossed with taxonomies), so an
+    // NPPES-only config (taxonomies + states, no fmcsa-specific key) must not
+    // enable fmcsa just because `states` is also set — matches registry.ts's
+    // `readiness` hasFmcsa check, which already excludes it for the same
+    // reason. `states` still NARROWS the fmcsa query below once one of these
+    // FMCSA-specific keys enables it.
     const hasFmcsaFilter =
       (cfg.entityTypes?.length ?? 0) > 0 ||
-      (cfg.states?.length ?? 0) > 0 ||
       typeof cfg.minPowerUnits === "number" ||
       typeof cfg.maxPowerUnits === "number";
     if (!hasFmcsaFilter) {

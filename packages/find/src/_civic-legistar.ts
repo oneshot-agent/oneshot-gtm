@@ -320,14 +320,11 @@ export function pickOfficeContact(records: LegistarContact[]): LegistarContact |
 }
 
 function parseOfficeRecord(raw: RawOfficeRecord): LegistarContact | null {
-  // Mirrors parseEvent/parseEventItem's guard: an `OfficeRecords` response can
-  // likewise contain a null/malformed element alongside good ones. Without
-  // this, dereferencing `.OfficeRecordFullName` off a null `raw` throws
-  // inside fetchBodyContact's `.map`, the outer catch turns that into a full
-  // `{ ok: false, transient: true }` fetch failure, and every valid contact
-  // in the same response is discarded — plus civic-agenda.ts maps
-  // `platform-error` to `persistPending`, so the item is retried forever even
-  // though the payload will never change.
+  // Mirrors parseEvent/parseEventItem: an OfficeRecords response can carry a
+  // null/malformed element alongside good ones. Without this guard, reading
+  // .OfficeRecordFullName off a null raw throws inside fetchBodyContact's
+  // .map, the outer catch misclassifies it as a retryable platform error,
+  // and every valid contact in the same response is discarded too.
   if (!raw || typeof raw !== "object") return null;
   const fullName =
     typeof raw.OfficeRecordFullName === "string" ? raw.OfficeRecordFullName.trim() : "";

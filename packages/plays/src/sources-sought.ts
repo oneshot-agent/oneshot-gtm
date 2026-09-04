@@ -1,7 +1,7 @@
 import { emailDomain } from "./_lib.ts";
 import { type EmailPlayDef, runEmailPlay, standardEnrich } from "./_run-play.ts";
 import { sourcesSoughtMetadata } from "./_metadata.ts";
-import { buildFollowUpEmail, registerSequence } from "./_cadence.ts";
+import { buildFollowUpEmail, getStep0MetadataField, registerSequence } from "./_cadence.ts";
 
 const PLAY_NAME = "sources-sought";
 
@@ -23,6 +23,13 @@ export interface SourcesSoughtTarget {
   phone?: string;
   /** Job title from the published POC — persisted to prospects.title. */
   title?: string;
+  /**
+   * The notice's response-window close date (ISO). Optional (not every
+   * finder captures it), but when present the day-5 follow-up (issue #463 /
+   * finding PRRT_kwDOSKzrBs6ewQdC) skips sending once it has passed instead
+   * of chasing a capability conversation the notice can no longer act on.
+   */
+  responseDeadline?: string;
 }
 
 export interface SourcesSoughtRunOptions {
@@ -77,6 +84,7 @@ const sourcesSoughtDef: EmailPlayDef<SourcesSoughtTarget> = {
       `NOTICE TYPE: ${t.noticeType}`,
       `NOTICE TITLE: ${t.noticeTitle}`,
       `REQUIREMENT SUMMARY: ${t.requirementSummary ?? "(not captured in the notice extract)"}`,
+      `RESPONSE DEADLINE: ${t.responseDeadline ?? "(not captured in the notice extract)"}`,
       `YOUR EDGE: ${t.yourEdge}`,
       `DOSSIER:\n${prep.dossier || "(dry-run)"}`,
     ].join("\n"),
@@ -107,13 +115,41 @@ registerSequence({
       channel: "email",
       breakOnReply: true,
       label: "follow-up",
-      builder: buildFollowUpEmail({
-        playName: PLAY_NAME,
-        promptName: "sources-sought-followup",
-        contextLines: [
-          `PLAY: sources-sought. Day-5 follow-up before the notice's response window closes.`,
-        ],
-      }),
+      builder: async (ctx) => {
+        // finding PRRT_kwDOSKzrBs6ewQdC / issue #463: the follow-up asks for
+        // a pre-solicitation conversation that's no longer actionable once
+        // the notice's response window has closed. `responseDeadline` is
+        // optional (not every finder captures it) — an unknown deadline is
+        // NOT treated as expired, only a deadline that has actually passed
+        // skips the send.
+        //
+        // round-2 correction (finding PRRT_kwDOSKzrBs6ewQdC, round 2):
+        // `responseDeadline` is a date-only ISO string (e.g. "2026-07-01"),
+        // and `Date.parse` on a date-only string resolves to midnight UTC of
+        // that date, not end-of-day. Comparing that instant against
+        // `Date.now()` treated the entire deadline day (and, in US
+        // timezones, part of the day before) as already expired, suppressing
+        // a legitimate day-5 follow-up up to a day early. A calendar date
+        // deadline means "actionable through the end of that day" — compare
+        // against the end of the deadline's UTC day instead of its start.
+        const deadline = getStep0MetadataField(ctx.prospect.id, PLAY_NAME, "responseDeadline");
+        if (deadline) {
+          const deadlineMs = Date.parse(deadline);
+          if (Number.isFinite(deadlineMs)) {
+            const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(deadline.trim());
+            const expiresAtMs = isDateOnly ? deadlineMs + 24 * 60 * 60 * 1000 - 1 : deadlineMs;
+            if (expiresAtMs < Date.now()) return null;
+          }
+        }
+        return buildFollowUpEmail({
+          playName: PLAY_NAME,
+          promptName: "sources-sought-followup",
+          contextLines: [
+            `PLAY: sources-sought. Day-5 follow-up before the notice's response window closes.`,
+            ...(deadline ? [`RESPONSE DEADLINE: ${deadline}`] : []),
+          ],
+        })(ctx);
+      },
     },
   ],
 });

@@ -461,7 +461,22 @@ describe("fmcsaSource.fetch", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("still queries when only states is configured (no entityTypes/power-unit filters)", async () => {
+  it("does NOT query on states alone — shared with nppes, not an fmcsa-specific filter", async () => {
+    // finding: an NPPES-only config (taxonomies + states) also enabled
+    // fmcsa because states alone satisfied hasFmcsaFilter, so a dentist
+    // search in CA silently enqueued CA trucking carriers too. states
+    // narrows an already-enabled fmcsa query but must not enable one by
+    // itself — mirrors registry.ts's readiness hasFmcsa check.
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const out = await fmcsaSource.fetch({ sinceDays: 30, limit: 25, states: ["NE"] });
+    expect(out.records).toHaveLength(0);
+    expect(out.perSource).toHaveLength(0);
+    expect(out.costUsd).toBe(0);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("still queries when states is paired with an fmcsa-specific filter", async () => {
     const fetchSpy = vi.fn(async () => ({
       ok: true,
       status: 200,
@@ -469,7 +484,12 @@ describe("fmcsaSource.fetch", () => {
       json: async () => [],
     }));
     vi.stubGlobal("fetch", fetchSpy);
-    await fmcsaSource.fetch({ sinceDays: 30, limit: 25, states: ["NE"] });
+    await fmcsaSource.fetch({
+      sinceDays: 30,
+      limit: 25,
+      entityTypes: ["carrier"],
+      states: ["NE"],
+    });
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -492,7 +512,12 @@ describe("fmcsaSource.fetch", () => {
         throw new Error("ECONNREFUSED");
       }),
     );
-    const out = await fmcsaSource.fetch({ sinceDays: 30, limit: 25, states: ["NE"] });
+    const out = await fmcsaSource.fetch({
+      sinceDays: 30,
+      limit: 25,
+      entityTypes: ["carrier"],
+      states: ["NE"],
+    });
     expect(out.records).toHaveLength(0);
     expect(out.perSource[0]?.error).toBeTruthy();
   });

@@ -131,30 +131,26 @@ type DescriptionOutcome = { ok: true; text: string | null } | { ok: false; trans
  * candidate still enqueues with an empty description rather than looping
  * forever on a link that will never resolve.
  */
-const SAM_GOV_DESCRIPTION_HOST = "api.sam.gov";
-
-/**
- * True when `raw` parses as an `https://api.sam.gov/...` URL — the only host
- * this credentialed request is ever allowed to hit. SAM.gov's own
- * `description` field is server-controlled today, but treating it as trusted
- * input would let a future compromised/spoofed response redirect the
- * `SAM_GOV_API_KEY` query param to an attacker-controlled origin.
- */
-function isSamGovDescriptionUrl(raw: string): boolean {
-  try {
-    const parsed = new URL(raw);
-    return parsed.protocol === "https:" && parsed.hostname === SAM_GOV_DESCRIPTION_HOST;
-  } catch {
-    return false;
-  }
-}
-
 async function fetchDescription(url: string, apiKey: string): Promise<DescriptionOutcome> {
-  // Reject anything that isn't exactly https://api.sam.gov/... BEFORE
-  // attaching the API key — never let a credentialed request leave for an
-  // unexpected host.
-  if (!isSamGovDescriptionUrl(url)) {
-    return { ok: false, transient: false };
+  // Guard the credentialed request: `url` is SAM.gov's own `description`
+  // field on the search response, but it's still external, response-shaped
+  // data. Require https + the exact SAM.gov API host before attaching
+  // SAM_GOV_API_KEY, so a malformed or hijacked description URL can't
+  // exfiltrate the key to another host. Not a fetch failure — same "proceed
+  // without it" contract as a 404 below.
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { ok: true, text: null };
+  }
+  if (parsed.protocol !== "https:" || parsed.hostname !== "api.sam.gov") {
+    logEvent(
+      "error.swallowed",
+      { kind: "gov-solicitation.description_url_rejected", host: parsed.hostname },
+      "warn",
+    );
+    return { ok: true, text: null };
   }
   const withKey = url.includes("?")
     ? `${url}&api_key=${encodeURIComponent(apiKey)}`
@@ -164,10 +160,9 @@ async function fetchDescription(url: string, apiKey: string): Promise<Descriptio
       method: "GET",
       headers: { Accept: "application/json" },
       signal: AbortSignal.timeout(DESCRIPTION_TIMEOUT_MS),
-      // Never let a 3xx forward the api_key query param to a different
-      // origin — treat any redirect as a platform anomaly instead of
-      // following it.
-      redirect: "manual",
+      // The credentialed request must not be replayed against a redirect
+      // target — same host-pinning intent as the check above.
+      redirect: "error",
     });
     if (res.status === 404) return { ok: true, text: null };
     if (!res.ok) return { ok: false, transient: res.status >= 500 || res.status === 429 };
@@ -427,13 +422,11 @@ export async function runGovSolicitationFinder(
     anyFetchSucceeded = true;
     for (const o of opportunities) {
       // A search response can carry a null/malformed element, or one with no
-      // noticeId, alongside good ones. Dereferencing `o.noticeId` here (or in
-      // toCandidate below) throws outside any try/catch, failing the whole
-      // run and losing every already-fetched notice; a bare missing-noticeId
-      // element that DID survive would otherwise produce `undefined` as the
-      // dedupe key and a `https://sam.gov/opp/undefined/view` notice URL.
-      // `_civic-legistar.ts` guards this exact case in `parseEvent` — same
-      // fix here.
+      // noticeId, alongside good ones. Drop only that element — dereferencing
+      // it here throws outside any catch and fails the whole run; an element
+      // with a missing noticeId would otherwise pass through as an
+      // `undefined` dedupe key and a "https://sam.gov/opp/undefined/view"
+      // notice URL.
       if (!o || typeof o !== "object") continue;
       if (typeof o.noticeId !== "string" || o.noticeId.trim().length === 0) continue;
       if (seenNoticeIds.has(o.noticeId)) continue;

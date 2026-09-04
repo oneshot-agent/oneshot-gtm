@@ -384,7 +384,7 @@ describe("runGovSolicitationFinder — description-fetch SSRF guard", () => {
     expect(calledUrls.some((u) => u.includes("evil.example.com"))).toBe(false);
   });
 
-  it("passes `redirect: manual` on the description fetch so a 3xx never auto-follows with the api_key attached", async () => {
+  it("passes `redirect: error` on the description fetch so a 3xx never auto-follows with the api_key attached", async () => {
     let capturedInit: RequestInit | undefined;
     vi.stubGlobal(
       "fetch",
@@ -405,6 +405,6 @@ describe("runGovSolicitationFinder — description-fetch SSRF guard", () => {
     );
     const out = await runGovSolicitationFinder(baseConfig);
     expect(out.enqueued).toBe(1);
-    expect(capturedInit?.redirect).toBe("manual");
+    expect(capturedInit?.redirect).toBe("error");
   });
 });

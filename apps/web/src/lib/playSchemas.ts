@@ -19,12 +19,28 @@ export interface FieldSpec {
   hint?: string;
 }
 
+/**
+ * A group where at least one of the listed target-row field keys must be
+ * non-blank — an OR constraint the per-field `required` flag can't express.
+ * e.g. civic-pilot's ask is "a pilot sized under the micro-purchase
+ * threshold OR bought off a cooperative purchasing vehicle" (issue #463):
+ * either field alone answers the requirement, so neither can be a bare
+ * `required: true` without blocking the other's route.
+ */
+export interface RequireOneOfGroup {
+  keys: string[];
+  /** Shown in the missing-fields error when NONE of `keys` are filled. */
+  label: string;
+}
+
 export interface PlaySchema {
   fields: FieldSpec[];
   defaultRow: Record<string, string>;
   description: string;
   /** Extra non-target options surfaced as form fields above the rows. */
   extras?: FieldSpec[];
+  /** OR-constraint groups checked in addition to per-field `required`. */
+  requireOneOf?: RequireOneOfGroup[];
 }
 
 /**
@@ -37,10 +53,36 @@ export interface PlaySchema {
  * field reaches the play as `undefined` — e.g. sources-sought dispatching
  * with a blank `agency` or `yourEdge` produces a malformed institutional
  * outreach email.
+ *
+ * Only checks `schema.fields` (the per-row target). Required `schema.extras`
+ * — a single value shared across every row, not addressable by `row[key]` —
+ * are validated separately by `missingRequiredExtras`.
  */
 export function missingRequiredFields(schema: PlaySchema, row: Record<string, string>): string[] {
-  return schema.fields
+  const missing = schema.fields
     .filter((f) => f.required && (row[f.key] ?? "").trim().length === 0)
+    .map((f) => f.label);
+  for (const group of schema.requireOneOf ?? []) {
+    if (!group.keys.some((k) => (row[k] ?? "").trim().length > 0)) missing.push(group.label);
+  }
+  return missing;
+}
+
+/**
+ * Required EXTRA fields (`schema.extras`) left blank, by label. finding
+ * PRRT_kwDOSKzrBs6ewsAf: `missingRequiredFields` only ever filtered
+ * `schema.fields`, so a required extra (e.g. accelerator-batch's
+ * `senderCohort`) passed validation blank and reached `/api/run` omitted —
+ * a paid, malformed draft. Extras are a single `Record<string,string>`
+ * shared across every row (not per-row like `schema.fields`), so they need
+ * their own check against that separate value instead of `row[key]`.
+ */
+export function missingRequiredExtras(
+  schema: PlaySchema,
+  extras: Record<string, string>,
+): string[] {
+  return (schema.extras ?? [])
+    .filter((f) => f.required && (extras[f.key] ?? "").trim().length === 0)
     .map((f) => f.label);
 }
 
@@ -462,6 +504,13 @@ export const PLAY_SCHEMAS: Record<string, PlaySchema> = {
         hint: "One concrete capability fact relevant to the requirement.",
       },
       { key: "noticeUrl", label: "Notice URL (optional)", type: "url" },
+      {
+        key: "responseDeadline",
+        label: "Response deadline (ISO, optional)",
+        type: "text",
+        placeholder: "2026-06-24",
+        hint: "The notice's response-window close date. The day-5 follow-up skips sending once this has passed.",
+      },
     ],
     defaultRow: {
       name: "",
@@ -473,6 +522,7 @@ export const PLAY_SCHEMAS: Record<string, PlaySchema> = {
       requirementSummary: "",
       yourEdge: "",
       noticeUrl: "",
+      responseDeadline: "",
     },
   },
   "civic-pilot": {
@@ -494,8 +544,15 @@ export const PLAY_SCHEMAS: Record<string, PlaySchema> = {
         key: "purchasingVehicle",
         label: "Purchasing vehicle",
         type: "text",
-        required: true,
         placeholder: "e.g. Sourcewell / NASPO ValuePoint / OMNIA",
+        hint: "Required unless a micro-purchase threshold is given below — the pilot must go through one route or the other.",
+      },
+      {
+        key: "microPurchaseThreshold",
+        label: "Micro-purchase threshold (optional)",
+        type: "text",
+        placeholder: "e.g. $10,000",
+        hint: "The dollar ceiling under which this buyer can approve a purchase without a full procurement process. Required unless a purchasing vehicle is given above.",
       },
       {
         key: "yourEdge",
@@ -513,9 +570,20 @@ export const PLAY_SCHEMAS: Record<string, PlaySchema> = {
       agendaItemTitle: "",
       meetingDate: "",
       purchasingVehicle: "",
+      microPurchaseThreshold: "",
       yourEdge: "",
       agendaUrl: "",
     },
+    // finding PRRT_kwDOSKzrBs6fD-hc / issue #463: the civic-pilot ask is a
+    // pilot under the micro-purchase threshold OR bought off a cooperative
+    // purchasing vehicle — either route satisfies it, so this can't be a
+    // bare per-field `required` without blocking the other route.
+    requireOneOf: [
+      {
+        keys: ["purchasingVehicle", "microPurchaseThreshold"],
+        label: "Purchasing vehicle or micro-purchase threshold",
+      },
+    ],
   },
   "design-partner-loi": {
     description:
