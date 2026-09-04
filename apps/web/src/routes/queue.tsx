@@ -381,6 +381,7 @@ function QueuePage() {
               onClick={() => {
                 setStatusFilter(s);
                 setShowAllRows(false);
+                setExpanded(null);
               }}
             >
               {s}
@@ -443,6 +444,7 @@ function QueuePage() {
             onClick={() => {
               setPlayFilter("all");
               setShowAllRows(false);
+              setExpanded(null);
             }}
           >
             all
@@ -455,6 +457,7 @@ function QueuePage() {
               onClick={() => {
                 setPlayFilter(p);
                 setShowAllRows(false);
+                setExpanded(null);
               }}
             >
               {p}
@@ -1506,12 +1509,21 @@ function PackPicker() {
         <select
           value={selectedId}
           aria-label="industry pack"
+          /*
+           * Locked while an apply is in flight. The onChange below clears
+           * `lastResult` so one pack's outcome never reads as another's — but
+           * switching mid-apply meant the result landed against a pack that was
+           * no longer selected and rendered nowhere, so the founder saw a
+           * success toast and never the list of triggers that still need
+           * config. The write has already happened; the report has to survive.
+           */
+          disabled={applyPack.isPending}
           onChange={(e) => {
             setSelectedId(e.currentTarget.value);
             // The previous pack's result must not read as this one's.
             setLastResult(null);
           }}
-          className="h-7 rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg px-2 text-[12px] text-ink-cream"
+          className="h-7 rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg px-2 text-[12px] text-ink-cream disabled:opacity-60"
         >
           <option value="">select a vertical…</option>
           {packs.map((pack) => (
@@ -1535,8 +1547,11 @@ function PackPicker() {
       {selected && (
         <div className="mt-2">
           {/* `summary` is the founder-facing line; `buyerBrief` is the
-              provenance behind it and reads like the engineering note it is. */}
-          <div className="text-[12px] text-ink-cream-2">
+              provenance behind it and reads like the engineering note it is.
+              `summary` is optional, so the fallback is clamped — without it a
+              pack that omits one renders the whole paragraph inline, the exact
+              thing this picker exists to avoid. */}
+          <div className={cn("text-[12px] text-ink-cream-2", !selected.summary && "line-clamp-2")}>
             {selected.summary ?? selected.buyerBrief}
           </div>
           <div className="mt-1.5 font-mono text-[11px] text-ink-faint">
@@ -1545,16 +1560,16 @@ function PackPicker() {
           <div className="mt-1 font-mono text-[11px] text-ink-muted">
             ICP · <span className="text-ink-cream-2">{selected.icpOneLiner}</span>
           </div>
-          {selected.summary && (
-            <details className="mt-1.5">
-              <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint hover:text-ink-cream-2">
-                why these channels
-              </summary>
-              <div className="mt-1.5 text-[11.5px] leading-[1.55] text-ink-muted">
-                {selected.buyerBrief}
-              </div>
-            </details>
-          )}
+          {/* Always available, including on the no-summary path — otherwise the
+              clamp above would make the rest of the reasoning unreachable. */}
+          <details className="mt-1.5">
+            <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint hover:text-ink-cream-2">
+              why these channels
+            </summary>
+            <div className="mt-1.5 text-[11.5px] leading-[1.55] text-ink-muted">
+              {selected.buyerBrief}
+            </div>
+          </details>
         </div>
       )}
 
