@@ -543,10 +543,12 @@ export const TRIGGERS: TriggerSpec[] = [
         : [];
       const validEntityTypes = new Set(["carrier", "broker", "freight-forwarder"]);
       const entityTypes = Array.isArray(cfg["entityTypes"])
-        ? (cfg["entityTypes"] as unknown[]).filter(
-            (t): t is "carrier" | "broker" | "freight-forwarder" =>
-              typeof t === "string" && validEntityTypes.has(t),
-          )
+        ? (cfg["entityTypes"] as unknown[])
+            .map((t) => (typeof t === "string" ? t.trim() : t))
+            .filter(
+              (t): t is "carrier" | "broker" | "freight-forwarder" =>
+                typeof t === "string" && validEntityTypes.has(t),
+            )
         : [];
       return runLocalRegistryFinder({
         dryRun: false,
