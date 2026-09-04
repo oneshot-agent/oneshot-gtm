@@ -223,7 +223,15 @@ interface GovSolicitationCandidate {
 
 /** First POC entry carrying BOTH a name and an email — the only usable kind. */
 function pickPoc(pocs: SamPointOfContact[] | null | undefined): SamPointOfContact | null {
-  for (const p of pocs ?? []) {
+  // SAM.gov's response shape isn't contractually guaranteed per-element: a
+  // malformed opportunity can carry a non-array `pointOfContact` (e.g. a
+  // single object instead of a list). `for...of` on a non-iterable throws a
+  // TypeError outside any try/catch here, which aborts the whole enqueue
+  // loop in runGovSolicitationFinder and drops every later opportunity in
+  // the batch — treat anything that isn't an array as "no usable POC".
+  if (!Array.isArray(pocs)) return null;
+  for (const p of pocs) {
+    if (!p || typeof p !== "object") continue;
     if (p.email && p.email.trim().length > 0 && p.fullName && p.fullName.trim().length > 0) {
       return p;
     }

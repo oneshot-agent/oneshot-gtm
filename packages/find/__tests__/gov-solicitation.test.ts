@@ -187,6 +187,24 @@ describe("runGovSolicitationFinder — happy path", () => {
     expect(out.droppedEnrichment).toBe(1);
   });
 
+  it("drops a notice with a malformed (non-array) pointOfContact instead of throwing", async () => {
+    // SAM.gov's per-element shape isn't contractually guaranteed — a single
+    // object (or any other non-array value) in place of the expected list
+    // must not crash the `for...of` in pickPoc and abort the whole batch.
+    searchResponses["541511"] = [
+      samOpportunity({
+        noticeId: "bad-poc",
+        pointOfContact: { email: "solo@gsa.gov", fullName: "Solo Object" } as unknown as unknown[],
+      }),
+      samOpportunity({ noticeId: "good-poc" }),
+    ];
+    const out = await runGovSolicitationFinder(baseConfig);
+    expect(out.enqueued).toBe(1);
+    expect(out.droppedEnrichment).toBe(1);
+    expect(enqueued).toHaveLength(1);
+    expect(enqueued[0]!.dedupeKey).toBe("good-poc");
+  });
+
   it("filters by agencies (case-insensitive substring) before any fetch", async () => {
     const out = await runGovSolicitationFinder({
       ...baseConfig,
