@@ -3,13 +3,37 @@ import type { XEngine } from "@oneshot-gtm/shared-types";
 import { api } from "../../api/client.ts";
 import { Badge } from "../primitives/Badge.tsx";
 import { Field, Input } from "../primitives/Field.tsx";
-import { hintFor, LLM_KEY, SECRET_LABELS, X_OAUTH_KEYS, type SecretKey } from "./constants.ts";
+import {
+  CDP_KEYS,
+  hintFor,
+  LLM_KEY,
+  SECRET_LABELS,
+  walletKeysInUse,
+  X_OAUTH_KEYS,
+  type SecretKey,
+} from "./constants.ts";
 import { SectionShell } from "./SectionShell.tsx";
 import { useSectionDraft } from "./useSectionDraft.ts";
 import { useSectionSave } from "./useSectionSave.ts";
 import { useReportDirty, type SectionProps } from "./types.ts";
 
 type Secrets = Record<SecretKey, string>;
+
+/**
+ * The badge next to a key. "in use" means the runtime reads THIS key today
+ * (selected by the saved preferences AND present). A selected key that is
+ * missing is "needed" when core can't run without it, "optional" otherwise —
+ * never "in use", which read as a contradiction next to an empty field.
+ */
+function keyState(
+  g: Pick<Group, "inUse" | "optional">,
+  k: SecretKey,
+  isSet: boolean,
+): { label: string; tone: "receipt" | "spend" | "neutral" } {
+  if (!g.inUse(k)) return { label: isSet ? "set · not in use" : "not in use", tone: "neutral" };
+  if (isSet) return { label: "in use", tone: "receipt" };
+  return g.optional ? { label: "optional", tone: "neutral" } : { label: "needed", tone: "spend" };
+}
 
 /** Every secret starts blank on screen — the server never echoes a value. */
 const EMPTY: Secrets = Object.fromEntries(
@@ -20,8 +44,13 @@ interface Group {
   title: string;
   caption?: string;
   keys: readonly SecretKey[];
-  /** Keys the saved preferences currently route through, for the "in use" badge. */
+  /** Keys the runtime routes through given the saved preferences (and what is set). */
   inUse: (k: SecretKey) => boolean;
+  /**
+   * Nothing core needs stops working without these (a finder, a channel, an
+   * integration). A missing key is "optional", not "needed".
+   */
+  optional?: boolean;
   /** Extra hint for one key (e.g. the legacy-only refresh token). */
   keyHint?: Partial<Record<SecretKey, string>>;
   placeholder?: Partial<Record<SecretKey, string>>;
@@ -81,9 +110,9 @@ export function CredentialsSection({
       },
       {
         title: "Wallet",
-        caption: `Keys live only in ${homeDir}/.env chmod 600. Nothing leaves your machine.`,
-        keys: ["CDP_API_KEY_ID", "CDP_API_KEY_SECRET", "CDP_WALLET_SECRET", "AGENT_PRIVATE_KEY"],
-        inUse: (k) => (cfg.walletMode === "cdp") === (k !== "AGENT_PRIVATE_KEY"),
+        caption: `Keys live only in ${homeDir}/.env chmod 600. Nothing leaves your machine. The runtime uses AGENT_PRIVATE_KEY whenever it is set, otherwise the three CDP keys — the saved wallet mode only decides which ones the CLI wizard asks for.`,
+        keys: [...CDP_KEYS, "AGENT_PRIVATE_KEY"],
+        inUse: (k) => walletKeysInUse(sources).includes(k),
         placeholder: { AGENT_PRIVATE_KEY: "0x..." },
       },
       {
@@ -93,6 +122,7 @@ export function CredentialsSection({
         keys: ["GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN"],
         inUse: (k) =>
           k === "GMAIL_REFRESH_TOKEN" ? isLegacyPool && cfg.emailProvider === "gmail" : true,
+        optional: true,
         keyHint: {
           GMAIL_REFRESH_TOKEN:
             "Legacy single-identity Gmail mode only. With a rotation pool, Connect Gmail account stores tokens per identity instead.",
@@ -103,12 +133,14 @@ export function CredentialsSection({
         caption: "Smartlead → Settings → API. Then load and pick mailboxes in Email transport.",
         keys: ["SMARTLEAD_API_KEY"],
         inUse: () => true,
+        optional: true,
       },
       {
         title: "X / Twitter",
         caption: `Which set is used follows the engine saved on the x-reposters trigger (${xEngine === "xapi" ? "X API" : "twitterapi.io"}).`,
         keys: [...X_OAUTH_KEYS, "TWITTERAPI_IO_KEY"],
         inUse: (k) => (xEngine === "xapi") === (k !== "TWITTERAPI_IO_KEY"),
+        optional: true,
       },
       {
         title: "LinkedIn replies",
@@ -116,6 +148,7 @@ export function CredentialsSection({
           "Lets LinkedIn automation tools report a real prospect reply so OneShot stops every live email cadence. Connection acceptance alone does nothing.",
         keys: ["LINKEDIN_REPLY_WEBHOOK_SECRET"],
         inUse: () => true,
+        optional: true,
         keyHint: { LINKEDIN_REPLY_WEBHOOK_SECRET: "Use a random 32+ character bearer secret." },
       },
       {
@@ -123,9 +156,10 @@ export function CredentialsSection({
         caption: "Optional credentials for richer GitHub and Luma discovery.",
         keys: ["GITHUB_TOKEN", "LUMA_SESSION_COOKIE"],
         inUse: () => true,
+        optional: true,
       },
     ],
-    [cfg.llmProvider, cfg.walletMode, cfg.emailProvider, homeDir, isLegacyPool, xEngine],
+    [cfg.llmProvider, cfg.emailProvider, sources, homeDir, isLegacyPool, xEngine],
   );
 
   return (
@@ -145,7 +179,7 @@ export function CredentialsSection({
             {g.caption && <p className="clear-both text-[12px] text-ink-faint">{g.caption}</p>}
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               {g.keys.map((k) => {
-                const inUse = g.inUse(k);
+                const state = keyState(g, k, Boolean(sources[k]));
                 const extra = g.keyHint?.[k];
                 return (
                   <Field
@@ -153,15 +187,9 @@ export function CredentialsSection({
                     label={
                       <>
                         {SECRET_LABELS[k]}
-                        {inUse ? (
-                          <Badge tone="receipt" className="ml-2 align-middle">
-                            in use
-                          </Badge>
-                        ) : (
-                          <Badge tone="neutral" className="ml-2 align-middle">
-                            not in use
-                          </Badge>
-                        )}
+                        <Badge tone={state.tone} className="ml-2 align-middle">
+                          {state.label}
+                        </Badge>
                       </>
                     }
                     hint={extra ? `${hintFor(sources[k])} ${extra}` : hintFor(sources[k])}

@@ -3,11 +3,10 @@ import type { WalletMode } from "@oneshot-gtm/shared-types";
 import { Field, Input, Select } from "../primitives/Field.tsx";
 import { parseSpendCeiling } from "../../lib/setupValidation.ts";
 import { KeyStatusLine } from "./KeyStatusLine.tsx";
+import { walletKeysInUse } from "./constants.ts";
 import { SectionShell } from "./SectionShell.tsx";
 import { useConfigSection } from "./useConfigSection.ts";
 import type { SectionProps } from "./types.ts";
-
-const CDP_KEYS = ["CDP_API_KEY_ID", "CDP_API_KEY_SECRET", "CDP_WALLET_SECRET"] as const;
 
 export function WalletSection({
   cfg,
@@ -38,13 +37,22 @@ export function WalletSection({
     onDirtyChange,
   });
 
+  // What the runtime will actually pick up (core ignores walletMode).
+  const inUse = walletKeysInUse(sources);
+  const modeMatchesRuntime =
+    (server.walletMode === "private-key") === (inUse[0] === "AGENT_PRIVATE_KEY");
+
   return (
     <SectionShell
       {...s.shell}
       lede={`Keys live only in ${homeDir}/.env chmod 600. Nothing leaves your machine.`}
     >
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-        <Field label="Wallet mode" className="md:col-span-2">
+        <Field
+          label="Wallet mode"
+          className="md:col-span-2"
+          hint="Decides which keys `init` and `config keys` ask for. At runtime AGENT_PRIVATE_KEY is used whenever it is set, otherwise the three CDP keys — regardless of this setting."
+        >
           <Select
             value={s.values.walletMode}
             onChange={(e) => s.set("walletMode", e.target.value as WalletMode)}
@@ -55,12 +63,12 @@ export function WalletSection({
         </Field>
         <KeyStatusLine
           className="md:col-span-2"
-          keys={server.walletMode === "cdp" ? CDP_KEYS : ["AGENT_PRIVATE_KEY"]}
+          keys={inUse}
           sources={sources}
           note={
-            s.values.walletMode !== server.walletMode
-              ? "after saving, add the keys for this mode in Credentials"
-              : undefined
+            modeMatchesRuntime
+              ? undefined
+              : `the runtime is on ${inUse.length === 1 ? "the private key" : "CDP"} because of what is set in Credentials`
           }
         />
         <Field

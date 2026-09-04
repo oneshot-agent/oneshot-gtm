@@ -44,6 +44,18 @@ export const X_OAUTH_KEYS = [
   "X_ACCESS_SECRET",
 ] as const;
 
+export const CDP_KEYS = ["CDP_API_KEY_ID", "CDP_API_KEY_SECRET", "CDP_WALLET_SECRET"] as const;
+
+/**
+ * Which wallet keys the runtime actually uses. Core's initAgent ignores the
+ * saved `walletMode`: AGENT_PRIVATE_KEY wins whenever it is set, else the CDP
+ * trio. The mode only decides which keys the CLI wizards prompt for, so any
+ * "in use" marker must be derived from what is set, not from the mode.
+ */
+export function walletKeysInUse(sources: Record<string, KeySource>): readonly SecretKey[] {
+  return sources["AGENT_PRIVATE_KEY"] ? ["AGENT_PRIVATE_KEY"] : CDP_KEYS;
+}
+
 export function hintFor(source: KeySource): string {
   if (source === "env") return "Currently from shell env. Leave blank to keep.";
   if (source === "file") return "Currently from this workspace's .env. Leave blank to keep.";
