@@ -232,7 +232,18 @@ function pickPoc(pocs: SamPointOfContact[] | null | undefined): SamPointOfContac
   if (!Array.isArray(pocs)) return null;
   for (const p of pocs) {
     if (!p || typeof p !== "object") continue;
-    if (p.email && p.email.trim().length > 0 && p.fullName && p.fullName.trim().length > 0) {
+    // The declared `string | null` type isn't contractually guaranteed at
+    // runtime — SAM.gov can hand back a non-string email/fullName (e.g. a
+    // number). `.trim()` on a non-string throws a TypeError outside any
+    // try/catch here, which aborts the whole enqueue loop in
+    // runGovSolicitationFinder and drops every later opportunity in the
+    // batch, so require both fields to actually be strings before trimming.
+    if (
+      typeof p.email === "string" &&
+      p.email.trim().length > 0 &&
+      typeof p.fullName === "string" &&
+      p.fullName.trim().length > 0
+    ) {
       return p;
     }
   }
