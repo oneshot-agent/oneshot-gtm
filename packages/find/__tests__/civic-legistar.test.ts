@@ -302,4 +302,37 @@ describe("fetchBodyContact", () => {
     expect(await fetchBodyContact("", 10)).toEqual({ ok: true, contact: null });
     expect(f).not.toHaveBeenCalled();
   });
+
+  it("drops a null/malformed OfficeRecords element without discarding the rest — mirrors fetchEventItems' guard", async () => {
+    stubFetch(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => [
+        // A null/non-object element (malformed upstream payload) must not
+        // throw inside parseOfficeRecord — that would trip fetchBodyContact's
+        // outer catch and turn a partial payload into a full `{ ok: false,
+        // transient: true }` failure, discarding every valid contact in the
+        // same response and retrying forever via civic-agenda.ts's
+        // persistPending path even though the payload never changes.
+        null,
+        "unexpected-string",
+        {
+          OfficeRecordFullName: "Jamie Ruiz",
+          OfficeRecordEmail: "jamie.ruiz@city.gov",
+          OfficeRecordPhone: "555-0100",
+          OfficeRecordTitle: "Committee Chair",
+        },
+      ],
+    }));
+    const outcome = await fetchBodyContact("nyc", 10);
+    expect(outcome).toEqual({
+      ok: true,
+      contact: {
+        fullName: "Jamie Ruiz",
+        email: "jamie.ruiz@city.gov",
+        phone: "555-0100",
+        title: "Committee Chair",
+      },
+    });
+  });
 });

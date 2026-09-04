@@ -369,3 +369,80 @@ describe("runGovSolicitationFinder — dry run", () => {
     expect(enqueued).toHaveLength(0);
   });
 });
+
+describe("runGovSolicitationFinder — malformed search-response elements", () => {
+  it("drops a null/malformed opportunity element without failing the whole run", async () => {
+    // Regression: a search response can carry a null/malformed element
+    // alongside good ones. Dereferencing `o.noticeId` on it used to throw
+    // outside any try/catch, failing the whole run and losing every
+    // already-fetched notice.
+    searchResponses["541511"] = [
+      null as unknown as Record<string, unknown>,
+      "unexpected-string" as unknown as Record<string, unknown>,
+      samOpportunity({ noticeId: "good-1" }),
+    ];
+    const out = await runGovSolicitationFinder(baseConfig);
+    expect(out.candidates).toBe(1);
+    expect(out.enqueued).toBe(1);
+    expect(enqueued[0]!.dedupeKey).toBe("good-1");
+  });
+
+  it("drops an opportunity with a missing/blank noticeId rather than producing an `undefined` dedupe key", async () => {
+    searchResponses["541511"] = [
+      samOpportunity({ noticeId: undefined as unknown as string }),
+      samOpportunity({ noticeId: "" }),
+      samOpportunity({ noticeId: "good-2" }),
+    ];
+    const out = await runGovSolicitationFinder(baseConfig);
+    expect(out.candidates).toBe(1);
+    expect(out.enqueued).toBe(1);
+    expect(enqueued[0]!.dedupeKey).toBe("good-2");
+  });
+});
+
+describe("runGovSolicitationFinder — description-fetch SSRF guard", () => {
+  it("skips the description fetch (and enqueues without it) when descriptionUrl isn't an https://api.sam.gov/... URL", async () => {
+    // Regression: `description` is a URL SAM.gov controls today, but the
+    // fetch code must not trust it blindly — it carries the SAM_GOV_API_KEY
+    // as a query param. A response pointing anywhere else must never see
+    // the key attached.
+    const fetchSpy = vi.fn(globalThis.fetch as unknown as (...args: unknown[]) => Promise<unknown>);
+    vi.stubGlobal("fetch", fetchSpy);
+    searchResponses["541511"] = [
+      samOpportunity({
+        noticeId: "evil-host",
+        description: "https://evil.example.com/noticedesc?noticeid=evil-host",
+      }),
+    ];
+    const out = await runGovSolicitationFinder(baseConfig);
+    expect(out.enqueued).toBe(1);
+    expect(enqueued[0]!.payload["descriptionSnippet"]).toBeUndefined();
+    // Only the search call should have hit fetch — never the malicious host.
+    const calledUrls = fetchSpy.mock.calls.map((c) => String(c[0]));
+    expect(calledUrls.some((u) => u.includes("evil.example.com"))).toBe(false);
+  });
+
+  it("passes `redirect: error` on the description fetch so a 3xx never auto-follows with the api_key attached", async () => {
+    let capturedInit: RequestInit | undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (typeof url === "string" && url.includes("noticedesc")) {
+          capturedInit = init;
+          return { ok: true, status: 200, json: async () => ({ description: "text" }) };
+        }
+        const naicsMatch = /ncode=([^&]+)/.exec(url);
+        const naics = naicsMatch ? decodeURIComponent(naicsMatch[1]!) : "";
+        const opportunitiesData = (searchResponses[naics] as unknown[]) ?? [];
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ totalRecords: opportunitiesData.length, opportunitiesData }),
+        };
+      }),
+    );
+    const out = await runGovSolicitationFinder(baseConfig);
+    expect(out.enqueued).toBe(1);
+    expect(capturedInit?.redirect).toBe("error");
+  });
+});

@@ -214,21 +214,6 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
   // how small `limit` is.
   for (const candidate of gated.slice(0, Math.max(0, limit))) {
     if (result.enqueued >= limit) break;
-    // Compare the PROSPECTIVE cost (current spend + this candidate's paid
-    // icpFilter call, if one will actually happen) against the cap — not
-    // just the spend accrued so far. icpFilter is the only cost source in
-    // this finder, and it's free (no LLM call) when `icp` is null, so the
-    // estimate is 0 in that case. Checking post-hoc spend alone would let a
-    // single call through whenever `0 < maxCostUsd < ICP_FILTER_COST_ESTIMATE_USD`,
-    // since costUsd is still 0 right up until this call runs.
-    if (
-      opts.maxCostUsd != null &&
-      result.costUsd + (icp ? ICP_FILTER_COST_ESTIMATE_USD : 0) > opts.maxCostUsd
-    ) {
-      result.halted = `max-cost cap (${opts.maxCostUsd})`;
-      break;
-    }
-
     const dedupeKey = dedupeKeyFor(candidate);
     if (
       ledger.isQueueDuplicate("civic-pilot", dedupeKey) ||
@@ -236,6 +221,25 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
     ) {
       result.droppedDuplicate++;
       continue;
+    }
+
+    // Compare the PROSPECTIVE cost (current spend + this candidate's paid
+    // icpFilter call, if one will actually happen) against the cap — not
+    // just the spend accrued so far. icpFilter is the only cost source in
+    // this finder, and it's free (no LLM call) when `icp` is null, so the
+    // estimate is 0 in that case. Checking post-hoc spend alone would let a
+    // single call through whenever `0 < maxCostUsd < ICP_FILTER_COST_ESTIMATE_USD`,
+    // since costUsd is still 0 right up until this call runs.
+    //
+    // BELOW the duplicate check on purpose: a duplicate never reaches
+    // icpFilter, so its prospective cost is zero. Guarding above it halted
+    // the whole run on a candidate that would not have spent anything.
+    if (
+      opts.maxCostUsd != null &&
+      result.costUsd + (icp ? ICP_FILTER_COST_ESTIMATE_USD : 0) > opts.maxCostUsd
+    ) {
+      result.halted = `max-cost cap (${opts.maxCostUsd})`;
+      break;
     }
 
     const filter = await icpFilter({
