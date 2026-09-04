@@ -303,7 +303,15 @@ function QueuePage() {
   });
 
   // Selection derived state — stable across renders even if rows refetch.
-  const { someSelected, allSelected } = queueSelectionState(rows, selected);
+  /*
+   * Selection state is computed against the rows actually on screen, not the
+   * whole fetched set. With the row cap in place `rows` can hold 200 while 50
+   * are rendered, and the header checkbox is named for what it does —
+   * `selectVisibleQueueRows`. Passing `rows` would tick one box and silently
+   * select 150 rows the reader cannot see, which the bulk approve/reject bar
+   * would then act on.
+   */
+  const { someSelected, allSelected } = queueSelectionState(visibleRows, selected);
 
   return (
     <div className="-mx-6 -my-6 flex flex-col">
@@ -473,7 +481,7 @@ function QueuePage() {
                         if (el) el.indeterminate = someSelected && !allSelected;
                       }}
                       onChange={(e) =>
-                        setSelected(new Set(selectVisibleQueueRows(rows, e.target.checked)))
+                        setSelected(new Set(selectVisibleQueueRows(visibleRows, e.target.checked)))
                       }
                       aria-label={allSelected ? "deselect all" : "select all"}
                     />

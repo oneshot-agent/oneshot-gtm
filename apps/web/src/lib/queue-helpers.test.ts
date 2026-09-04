@@ -56,6 +56,25 @@ describe("queue selection and bulk approval", () => {
     expect(selected).toEqual(new Set([9]));
   });
 
+  it("select-all covers only the CAPPED rows, never the ones held back", () => {
+    // The page renders `rows.slice(0, ROW_CAP)` behind a "show all" disclosure,
+    // so "visible" and "fetched" diverge. Handing the full set to these two is
+    // how one click on the header checkbox silently selects rows the reader
+    // cannot see — and the bulk approve/reject bar then acts on them.
+    const fetched = Array.from({ length: 200 }, (_, i) => ({ id: i + 1 }));
+    const visible = fetched.slice(0, 50);
+
+    const picked = selectVisibleQueueRows(visible, true);
+    expect(picked.size).toBe(50);
+    expect(picked.has(50)).toBe(true);
+    expect(picked.has(51)).toBe(false);
+
+    // And the header checkbox must read "all" once every visible row is ticked,
+    // rather than sitting indeterminate against a count it never shows.
+    expect(queueSelectionState(visible, picked).allSelected).toBe(true);
+    expect(queueSelectionState(fetched, picked).allSelected).toBe(false);
+  });
+
   it("bulk-approves selected ids only, including locked or sent selections", () => {
     // Status and send-lock validation remains server-owned; preserving every
     // selected id keeps the extraction from changing the requests made today.
