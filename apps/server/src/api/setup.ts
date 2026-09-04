@@ -1,6 +1,7 @@
 import {
   deleteGmailToken,
   identityCapacities,
+  isValidTimeZone,
   listSendingDomains,
   loadConfig,
   registerOneShotIdentity,
@@ -121,8 +122,49 @@ export async function getSetupStatus(req: Request): Promise<Response> {
   );
 }
 
+/**
+ * Thrown for a body the caller can fix (bad cap, bad ceiling, unknown time
+ * zone). The handler maps it to a 400 so the /setup form can show the message
+ * inline; anything else still surfaces as the generic 500.
+ */
+export class SetupValidationError extends Error {
+  override readonly name = "SetupValidationError";
+}
+
+/**
+ * Per-identity daily cap as submitted by the web form or a raw API client:
+ * `null` = uncapped, a finite number >= 0 = that cap (floored). Anything else
+ * — a string, NaN, a negative — is rejected instead of being coerced to
+ * "uncapped": the old fail-open coercion turned a typo in the cap box into
+ * unlimited sends for that identity.
+ */
+export function validateIdentityCap(value: unknown, where: string): number | null {
+  if (value === null) return null;
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) return Math.floor(value);
+  throw new SetupValidationError(
+    `invalid maxPerDay ${JSON.stringify(value)} for ${where} — must be a whole number of sends per day (0 or more), or null for no cap`,
+  );
+}
+
 export async function setup(req: Request): Promise<Response> {
   const body = (await req.json()) as SetupRequest;
+  try {
+    applySetup(body);
+  } catch (err) {
+    if (err instanceof SetupValidationError) {
+      return jsonResponse({ error: err.message }, 400, req);
+    }
+    throw err;
+  }
+  return jsonResponse({ ok: true }, 200, req);
+}
+
+/**
+ * Validate everything first, then write. A SetupValidationError thrown from
+ * any check below leaves config.json, the identity pool and .env exactly as
+ * they were — a partial write behind a 400 would make the 400 a lie.
+ */
+function applySetup(body: SetupRequest): void {
   const current = loadConfig();
   const llmProvider: LlmProvider = body.llmProvider ?? current.llmProvider;
   const walletMode: WalletMode = body.walletMode ?? current.walletMode;
@@ -137,32 +179,26 @@ export async function setup(req: Request): Promise<Response> {
   // client-side warm-up ramp is the only throttle — hence new identities
   // default to it.
   const adds = body.addIdentities ?? [];
+  for (const add of adds) {
+    if ("maxPerDay" in add && add.maxPerDay !== undefined) {
+      const where = add.provider === "smartlead" ? add.address : add.sendingDomain;
+      validateIdentityCap(add.maxPerDay, `new ${add.provider} sender ${where}`);
+    }
+  }
 
   // Identity-pool edits (cap changes / removals). The first edit materializes
   // the pool from legacy config so the change has somewhere to persist.
   let emailIdentities = current.emailIdentities;
   const hasIdentityEdits =
     (body.identityUpdates?.length ?? 0) > 0 || (body.removeIdentityIds?.length ?? 0) > 0;
+  const remove = new Set(body.removeIdentityIds ?? []);
   if (hasIdentityEdits) {
     let pool: EmailIdentity[] = current.emailIdentities ?? resolveIdentities(current);
     for (const upd of body.identityUpdates ?? []) {
-      const cap =
-        typeof upd.maxPerDay === "number" && Number.isFinite(upd.maxPerDay) && upd.maxPerDay >= 0
-          ? Math.floor(upd.maxPerDay)
-          : null;
+      const cap = validateIdentityCap(upd.maxPerDay, upd.id);
       pool = pool.map((i) => (i.id === upd.id ? { ...i, maxPerDay: cap } : i));
     }
-    const remove = new Set(body.removeIdentityIds ?? []);
-    if (remove.size > 0) {
-      pool = pool.filter((i) => !remove.has(i.id));
-      for (const id of remove) {
-        try {
-          deleteGmailToken(id);
-        } catch {
-          // token-store cleanup is best-effort; the identity is gone either way.
-        }
-      }
-    }
+    if (remove.size > 0) pool = pool.filter((i) => !remove.has(i.id));
     emailIdentities = pool;
   }
 
@@ -170,7 +206,18 @@ export async function setup(req: Request): Promise<Response> {
   // ignored so a malicious or accidental web POST can't rotate the anonymous
   // install id. saveConfig writes the entire cfg, so omitting clientId here
   // would silently drop it from disk.
-  saveConfig(mergeSetupConfig(current, body, emailIdentities, llmProvider, walletMode));
+  // mergeSetupConfig is the last validator (ceiling, time zone): nothing
+  // below this line runs if it throws.
+  const merged = mergeSetupConfig(current, body, emailIdentities, llmProvider, walletMode);
+  saveConfig(merged);
+
+  for (const id of remove) {
+    try {
+      deleteGmailToken(id);
+    } catch {
+      // token-store cleanup is best-effort; the identity is gone either way.
+    }
+  }
 
   // Adds run AFTER the main saveConfig: registerOneShotIdentity reloads the
   // freshly-persisted config (so it sees the cap/removal edits above and any
@@ -198,8 +245,6 @@ export async function setup(req: Request): Promise<Response> {
   if (body.secrets && Object.keys(body.secrets).length > 0) {
     saveSecrets(body.secrets);
   }
-
-  return jsonResponse({ ok: true }, 200, req);
 }
 
 export function mergeSetupConfig(
@@ -232,6 +277,11 @@ export function mergeSetupConfig(
     founderAdmission: mergeString(body.founderAdmission, current.founderAdmission),
     productBrief: mergeString(body.productBrief, current.productBrief),
     mobileSignature: body.mobileSignature ?? current.mobileSignature,
+    queueReviewOrder:
+      body.queueReviewOrder === "ranked" || body.queueReviewOrder === "newest"
+        ? body.queueReviewOrder
+        : current.queueReviewOrder,
+    timezone: mergeTimeZone(body.timezone, current.timezone),
     dailySpendCeilingUsd:
       body.dailySpendCeilingUsd === undefined
         ? current.dailySpendCeilingUsd
@@ -265,9 +315,27 @@ function mergeString(incoming: string | undefined, current: string | null): stri
 function validateSpendCeiling(value: number | null): number | null {
   if (value === null) return null;
   if (!Number.isFinite(value) || value <= 0) {
-    throw new Error(
+    throw new SetupValidationError(
       `invalid dailySpendCeilingUsd '${value}' — must be a positive number of USD, or null to clear`,
     );
   }
   return value;
+}
+
+/**
+ * Time zone merge: undefined keeps the stored zone, null/blank clears it back
+ * to the runtime default (installTimeZone in core), anything else must be an
+ * IANA name Intl recognises — "Mars/Olympus" is a 400, not a saved string that
+ * later makes every Luma slot resolve to UTC.
+ */
+function mergeTimeZone(incoming: string | null | undefined, current: string | null): string | null {
+  if (incoming === undefined) return current;
+  if (incoming === null || incoming.trim().length === 0) return null;
+  const zone = incoming.trim();
+  if (!isValidTimeZone(zone)) {
+    throw new SetupValidationError(
+      `invalid timezone '${zone}' — must be an IANA zone such as Europe/Vienna, or blank to use this machine's zone`,
+    );
+  }
+  return zone;
 }

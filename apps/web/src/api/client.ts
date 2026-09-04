@@ -53,23 +53,30 @@ const BASE = "/api";
  * the 36 mutation sites behind it and all nine routes stay untouched. That is
  * why the seam is worth keeping narrow.
  */
+/**
+ * Error message for a non-2xx response: the server's `{ error }` string when
+ * the body carries one (every 4xx we emit does — e.g. the /setup 400s that a
+ * section form shows inline), else `status statusText: fallback`.
+ */
+async function errorMessage(res: Response, fallback: string): Promise<string> {
+  let message = `${res.status} ${res.statusText}: ${fallback}`;
+  try {
+    const text = await res.text();
+    if (text) {
+      const body = JSON.parse(text) as { error?: unknown };
+      if (typeof body.error === "string" && body.error) message = body.error;
+      else message = `${res.status} ${res.statusText}: ${text.slice(0, 200)}`;
+    }
+  } catch {
+    // body absent, empty, or not JSON — keep the fallback message
+  }
+  return message;
+}
+
 async function getJson<T>(path: string): Promise<T> {
   if (IS_DEMO) return demoGet<T>(path);
   const res = await fetch(BASE + path);
-  if (!res.ok) {
-    const fallback = `${res.status} ${res.statusText}: ${path}`;
-    let message = fallback;
-    try {
-      const text = await res.text();
-      if (text) {
-        const body = JSON.parse(text) as { error?: unknown };
-        if (typeof body.error === "string" && body.error) message = body.error;
-      }
-    } catch {
-      // body absent, empty, or not JSON — keep the fallback message
-    }
-    throw new Error(message);
-  }
+  if (!res.ok) throw new Error(await errorMessage(res, path));
   return (await res.json()) as T;
 }
 
@@ -80,10 +87,7 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`${res.status} ${res.statusText}: ${text.slice(0, 200)}`);
-  }
+  if (!res.ok) throw new Error(await errorMessage(res, path));
   return (await res.json()) as T;
 }
 
@@ -209,6 +213,10 @@ export const api = {
         llmModel: string;
         telemetryEnabled: boolean;
         walletMode: "cdp" | "private-key";
+        // Optional: older servers / the demo fixture may omit them; the
+        // server has always returned them (publicCfg spreads the whole cfg).
+        queueReviewOrder?: "ranked" | "newest";
+        timezone?: string | null;
       };
       secretsPath: string;
       sources: Record<string, "env" | "file" | null>;
