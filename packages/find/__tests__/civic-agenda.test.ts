@@ -57,8 +57,9 @@ vi.mock("../src/_pending.ts", () => ({
 
 vi.mock("../src/_filter.ts", () => ({
   resolveIcp: () => icpResolved,
-  icpFilter: async (input: { candidate: { title: string } }) => {
+  icpFilter: async (input: { icp: string | null; candidate: { title: string } }) => {
     icpCalls++;
+    if (!input.icp) return { match: true, reason: "no ICP set; pass-through" };
     return { match: icpMatch, reason: icpMatch ? `fits: ${input.candidate.title}` : "nope" };
   },
 }));
