@@ -126,6 +126,14 @@ function CadencesPage() {
     null,
   );
   const [linkedinReplyBody, setLinkedinReplyBody] = useState("");
+  // Every close path must clear the body. Cancel used to bypass the onClose
+  // cleanup, so reopening the modal for a DIFFERENT prospect showed the
+  // previous one's text — one stray click from filing person A's message
+  // against person B.
+  const closeLinkedinReplyModal = (): void => {
+    setLinkedinReplyModal(null);
+    setLinkedinReplyBody("");
+  };
   const [stopReason, setStopReason] = useState<CadenceStopReason>("bad_timing");
   const [stopNote, setStopNote] = useState("");
 
@@ -1112,14 +1120,11 @@ function CadencesPage() {
 
       <Modal
         open={linkedinReplyModal != null}
-        onClose={() => {
-          setLinkedinReplyModal(null);
-          setLinkedinReplyBody("");
-        }}
+        onClose={closeLinkedinReplyModal}
         title={`Mark LinkedIn reply${linkedinReplyModal?.prospectName ? ` — ${mask("name", linkedinReplyModal.prospectName)}` : ""}`}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setLinkedinReplyModal(null)}>
+            <Button variant="ghost" onClick={closeLinkedinReplyModal}>
               Cancel
             </Button>
             <Button

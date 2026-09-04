@@ -1,4 +1,4 @@
-import { getLedger, hasDossierSignal, mergePersonDossier, parallelMap } from "@oneshot-gtm/core";
+import { getLedger, hasDossierSignal, parallelMap } from "@oneshot-gtm/core";
 import { isCircuitOpen, safeDeepResearchPerson } from "@oneshot-gtm/find";
 import { c, header, note, ok, warn } from "../output.ts";
 
@@ -249,10 +249,15 @@ export async function commandResearchProspects(opts: ResearchProspectsOpts): Pro
     // same column and the two commands run independently. A bare
     // JSON.stringify(payload) here used to discard whatever it had written.
     //
-    // Bound the PERSON half before merging rather than slicing the merged
-    // string — slicing the wrapper would truncate it into invalid JSON and take
+    // The merge re-reads inside a write transaction rather than reusing
+    // `row.dossier_json`, which was read when the backlog was selected —
+    // minutes earlier, since each research call takes 2-5 of them. The
+    // workspace server can (and did) write the same column in that window.
+    //
+    // The PERSON half is bounded before merging rather than the merged string
+    // being sliced: truncating the wrapper would make it invalid JSON and take
     // the product half down with it.
-    ledger.setProspectDossier(row.id, mergePersonDossier(row.dossier_json, bounded(payload)));
+    ledger.mergeProspectDossierHalf(row.id, "person", bounded(payload));
     written++;
     process.stdout.write(
       `  ${c.green("→")} ${(row.name ?? "").slice(0, 26).padEnd(28)} ${c.dim(url ?? email ?? "")}\n`,

@@ -1,4 +1,4 @@
-import { getLedger, mergeProductDossier, parallelMap } from "@oneshot-gtm/core";
+import { getLedger, parallelMap } from "@oneshot-gtm/core";
 import { researchQueueRowProduct } from "@oneshot-gtm/find";
 import { c, header, note, ok } from "../output.ts";
 import { parseScopes, resolveCap } from "./research-prospects.ts";
@@ -115,8 +115,10 @@ export async function commandResearchProducts(opts: ResearchProductsOpts): Promi
         return;
       }
       if (researched.dossier.status === "unavailable") unavailable++;
-      const latestDossier = ledger.getProspectById(row.id)?.dossier_json ?? row.dossier_json;
-      ledger.setProspectDossier(row.id, mergeProductDossier(latestDossier, researched.dossier));
+      // Atomic re-read + merge: `research-prospects` owns the `person` half of
+      // this same column and runs independently, so a read-modify-write on a
+      // value fetched earlier can silently revert it.
+      ledger.mergeProspectDossierHalf(row.id, "product", researched.dossier);
       written++;
       return;
     }

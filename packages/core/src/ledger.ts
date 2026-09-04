@@ -2,7 +2,12 @@ import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { configDir } from "./config.ts";
-import { hasPersonSignal } from "./dossier.ts";
+import {
+  hasPersonSignal,
+  mergePersonDossier,
+  mergeProductDossier,
+  type ProductResearchDossier,
+} from "./dossier.ts";
 import { humanDecisionWhereSql } from "./labels.ts";
 import { migrateLedgerSchema } from "./ledger-schema.ts";
 import { getSharedDb } from "./shared-db.ts";
@@ -1499,6 +1504,43 @@ export class Ledger {
    */
   setProspectDossier(id: number, dossier: string | null): void {
     this.db.prepare("UPDATE prospects SET dossier_json = ? WHERE id = ?").run(dossier, id);
+  }
+
+  /**
+   * Write ONE half of a prospect's dossier without clobbering the other.
+   *
+   * `research-prospects` owns the `person` half and `research-products` owns
+   * `product`, and each was doing read → merge → write with the read outside
+   * any transaction. Two writers, one column, a wide window between them: the
+   * later write silently reverts the earlier one.
+   *
+   * Not theoretical — it happened during this feature's own dogfood run. The
+   * workspace server researched a prospect while a script held a merge in
+   * flight, and the curated person half vanished under an API one. The reads
+   * were seconds apart.
+   *
+   * BEGIN IMMEDIATE via `db.transaction` takes the write lock before the
+   * re-read, so the merge sees the current value and no one can interleave
+   * between the two statements.
+   */
+  mergeProspectDossierHalf(
+    id: number,
+    half: "person" | "product",
+    value: unknown,
+    slice?: number,
+  ): void {
+    this.db.transaction(() => {
+      const row = this.db.query("SELECT dossier_json FROM prospects WHERE id = ?").get(id) as
+        | { dossier_json: string | null }
+        | undefined;
+      if (!row) return;
+      const merged =
+        half === "person"
+          ? mergePersonDossier(row.dossier_json, value)
+          : mergeProductDossier(row.dossier_json, value as ProductResearchDossier);
+      const bounded = slice != null && merged.length > slice ? merged.slice(0, slice) : merged;
+      this.db.prepare("UPDATE prospects SET dossier_json = ? WHERE id = ?").run(bounded, id);
+    })();
   }
 
   /**

@@ -872,7 +872,7 @@ async function resolveAndEnqueueLumaAttendee(
       person: {
         name: work.attendee.name,
         company: resolvedCompany,
-        roleText: work.attendee.bio ?? work.attendee.role ?? null,
+        roleText: firstNonBlank(work.attendee.bio, work.attendee.role),
         evidence: `attended ${work.event.title}`,
       },
       // Free title from the LinkedIn-keyed enrichProfile above.
@@ -924,8 +924,11 @@ async function resolveAndEnqueueLumaAttendee(
       email,
       ...(resolvedCompany ? { company: resolvedCompany } : {}),
       ...(companyDomain ? { companyDomain } : {}),
-      ...(work.attendee.bio || work.attendee.role
-        ? { attendeeBio: work.attendee.bio ?? work.attendee.role ?? "" }
+      // Same `??`-on-empty-string trap: an attendee with `bio: ""` and a real
+      // `role` persisted `attendeeBio: ""`, which is what the draft prompt
+      // reads. Fall back on blankness, not just null.
+      ...(firstNonBlank(work.attendee.bio, work.attendee.role)
+        ? { attendeeBio: firstNonBlank(work.attendee.bio, work.attendee.role) as string }
         : {}),
       ...(work.attendee.role ? { role: work.attendee.role } : {}),
       eventTitle: work.event.title,
