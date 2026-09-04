@@ -8,7 +8,6 @@ import {
   Copy,
   ExternalLink,
   Loader2,
-  Package,
   Pencil,
   Play,
   RotateCw,
@@ -22,7 +21,6 @@ import {
   blockingFlags,
   isRunnablePlay,
   type PackApplyResult,
-  type PackView,
   type QueueRowView,
   type QueueStatusView,
   type TriggerView,
@@ -79,6 +77,13 @@ export const Route = createFileRoute("/queue")({
 
 /** Stable empty page — see `fetchedRows` below. */
 const EMPTY_ROWS: QueueRowView[] = [];
+
+/**
+ * Rows rendered before the "show all" disclosure. The API hands back up to 200
+ * (`queue-helpers.ts`), which at ~70px each is ~14,000px of uninterrupted
+ * table — and `rejected` alone holds thousands.
+ */
+const ROW_CAP = 50;
 
 const STATUSES: Array<QueueStatusView | "all"> = [
   "all",
@@ -251,6 +256,14 @@ function QueuePage() {
   // every render, which would re-fire the rowMeta effect on each one.
   const fetchedRows = queueQuery.data?.rows;
   const rows = fetchedRows ?? EMPTY_ROWS;
+  /*
+   * Rows render capped, with a "show all" row at the end. Deliberately NOT
+   * persisted: lifting the cap for one look at the 7,600 rejected rows should
+   * not follow you back here tomorrow. Reset whenever the filters change, so
+   * "show all" never silently carries across a filter switch.
+   */
+  const [showAllRows, setShowAllRows] = useState(false);
+  const visibleRows = showAllRows ? rows : rows.slice(0, ROW_CAP);
   // Whole-queue approved counts per play — NOT scoped to the current filters,
   // so the drain button works from the default `pending` view too.
   const approvedByPlay = queueQuery.data?.approvedByPlay ?? {};
@@ -324,8 +337,6 @@ function QueuePage() {
 
       <IcpBanner />
 
-      <PacksCard />
-
       <TriggersCard queueEmpty={queueQuery.isLoading ? null : rows.length === 0} />
 
       {/* Target Queue. The play filter is inline because it narrows this table only. */}
@@ -359,7 +370,10 @@ function QueuePage() {
               key={s}
               variant={statusFilter === s ? "secondary" : "ghost"}
               size="sm"
-              onClick={() => setStatusFilter(s)}
+              onClick={() => {
+                setStatusFilter(s);
+                setShowAllRows(false);
+              }}
             >
               {s}
             </Button>
@@ -418,7 +432,10 @@ function QueuePage() {
           <Button
             variant={playFilter === "all" ? "secondary" : "ghost"}
             size="sm"
-            onClick={() => setPlayFilter("all")}
+            onClick={() => {
+              setPlayFilter("all");
+              setShowAllRows(false);
+            }}
           >
             all
           </Button>
@@ -427,7 +444,10 @@ function QueuePage() {
               key={p}
               variant={playFilter === p ? "secondary" : "ghost"}
               size="sm"
-              onClick={() => setPlayFilter(p)}
+              onClick={() => {
+                setPlayFilter(p);
+                setShowAllRows(false);
+              }}
             >
               {p}
             </Button>
@@ -467,7 +487,7 @@ function QueuePage() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((row, i) => (
+              {visibleRows.map((row, i) => (
                 <QueueRow
                   key={row.id}
                   row={row}
@@ -488,6 +508,25 @@ function QueuePage() {
                   busy={approve.isPending || reject.isPending}
                 />
               ))}
+              {/* The fetch returns up to 200 rows (queue-helpers.ts `limit`)
+                  and every one used to render into this tbody — ~14,000px of
+                  table. Same one-quiet-row disclosure the inactive finders use
+                  in the Triggers panel, colSpan trick included so the shared
+                  column widths hold. */}
+              {rows.length > visibleRows.length && (
+                <tr className="border-b border-ink-rule/60">
+                  <td colSpan={7} className="px-6 py-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowAllRows(true)}
+                      className="flex items-center gap-1.5 font-mono text-[11px] text-ink-faint transition-colors hover:text-ink-cream-2"
+                    >
+                      <ChevronDown size={11} />
+                      {rows.length - visibleRows.length} more · show all {rows.length}
+                    </button>
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         )}
@@ -744,7 +783,29 @@ export function QueueRow({
           <div className="text-ink-cream">{name ? <Pii kind="name">{name}</Pii> : "(unknown)"}</div>
           <div className="font-mono text-[11px] text-ink-faint">
             {email ? <Pii kind="email">{email}</Pii> : "—"}
-            {title ? <span className="text-ink-cream-2">{` · ${title}`}</span> : null}
+            {/*
+              Clamped, because `title` is a LinkedIn headline and some are
+              paragraphs: "Crypto Visionary & AI Strategist ⚡ | Revolutionizing
+              Retail Investing with AI-Driven Insights 🚀 | Empowering Web3
+              Success 🌍 | Non-Financial Advice ⚠️" rendered three lines and
+              made one row twice the height of its neighbours.
+
+              Only the title is clamped, not the whole line. Email, company and
+              the [in] link are short and are what tell two rows apart, so they
+              have to survive; the first few words of a headline carry the job
+              and the rest is self-promotion. Same treatment the evidence line
+              below already gets.
+            */}
+            {title ? (
+              <>
+                {/* Separator outside the clamp: `inline-block` + `truncate`
+                    (overflow-hidden) swallows the span's own leading space. */}
+                {" · "}
+                <span className="inline-block max-w-[38ch] truncate align-bottom text-ink-cream-2">
+                  {title}
+                </span>
+              </>
+            ) : null}
             {company ? (
               <>
                 {" · "}
@@ -1105,49 +1166,52 @@ function DraftSection({
     },
     onError: (err) => toast.error(`couldn't record · ${err.message}`),
   });
-  const linkedinReplyBlock =
-    status === "sent" && prospectId != null ? (
-      <div className="mt-2 border-t border-ink-rule pt-2">
-        {linkedinOpen ? (
-          <div className="flex flex-col gap-2">
-            <label
-              className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint"
-              htmlFor={`li-reply-${id}`}
-            >
-              they replied on linkedin — paste what they said
-            </label>
-            <textarea
-              id={`li-reply-${id}`}
-              className="min-h-[72px] w-full rounded border border-ink-rule bg-transparent p-2 text-[11px]"
-              value={linkedinBody}
-              onChange={(e) => setLinkedinBody(e.currentTarget.value)}
-              placeholder="Optional, but it is what a reply gets drafted from later."
-            />
-            <div className="flex items-center gap-2">
-              <Button
-                variant="secondary"
-                size="sm"
-                disabled={markLinkedIn.isPending}
-                onClick={() => markLinkedIn.mutate()}
-                {...readOnly}
-              >
-                {markLinkedIn.isPending ? "recording…" : "record reply"}
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => setLinkedinOpen(false)}>
-                cancel
-              </Button>
-            </div>
-          </div>
-        ) : (
+  // Split in two so the trigger sits with the other row actions in the draft
+  // card's header strip — beside the receipt links, where every other
+  // row-level action already lives — while the textarea stays below the body,
+  // which is the only part that earns full width.
+  const canMarkLinkedIn = status === "sent" && prospectId != null;
+  const linkedinReplyButton =
+    canMarkLinkedIn && !linkedinOpen ? (
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => setLinkedinOpen(true)}
+        title="Record a LinkedIn reply and stop any email cadence for this prospect"
+      >
+        mark linkedin reply
+      </Button>
+    ) : null;
+  const linkedinReplyEditor =
+    canMarkLinkedIn && linkedinOpen ? (
+      <div className="mt-2 flex flex-col gap-2 border-t border-ink-rule pt-2">
+        <label
+          className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint"
+          htmlFor={`li-reply-${id}`}
+        >
+          they replied on linkedin — paste what they said
+        </label>
+        <textarea
+          id={`li-reply-${id}`}
+          className="min-h-[72px] w-full rounded border border-ink-rule bg-transparent p-2 text-[11px]"
+          value={linkedinBody}
+          onChange={(e) => setLinkedinBody(e.currentTarget.value)}
+          placeholder="Optional, but it is what a reply gets drafted from later."
+        />
+        <div className="flex items-center gap-2">
           <Button
-            variant="ghost"
+            variant="secondary"
             size="sm"
-            onClick={() => setLinkedinOpen(true)}
-            title="Record a LinkedIn reply and stop any email cadence for this prospect"
+            disabled={markLinkedIn.isPending}
+            onClick={() => markLinkedIn.mutate()}
+            {...readOnly}
           >
-            mark linkedin reply
+            {markLinkedIn.isPending ? "recording…" : "record reply"}
           </Button>
-        )}
+          <Button variant="ghost" size="sm" onClick={() => setLinkedinOpen(false)}>
+            cancel
+          </Button>
+        </div>
       </div>
     ) : null;
 
@@ -1245,15 +1309,22 @@ function DraftSection({
 
   if (!draft) {
     return (
-      <div className="flex items-center justify-between gap-2 rounded-[var(--radius-sm)] border border-dashed border-ink-rule bg-ink-bg-deep px-3 py-2.5">
-        <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
-          no draft yet
-        </span>
-        <span className="flex items-center gap-2">
-          {manualButtons}
-          {sendButton}
-          {draftButton}
-        </span>
+      <div className="rounded-[var(--radius-sm)] border border-dashed border-ink-rule bg-ink-bg-deep px-3 py-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+            no draft yet
+          </span>
+          <span className="flex items-center gap-2">
+            {/* A sent row whose draft was never persisted used to return here
+                before the LinkedIn control rendered — so exactly the rows most
+                likely to have been replied to by hand could not record one. */}
+            {linkedinReplyButton}
+            {manualButtons}
+            {sendButton}
+            {draftButton}
+          </span>
+        </div>
+        {linkedinReplyEditor}
       </div>
     );
   }
@@ -1307,6 +1378,7 @@ function DraftSection({
               receipt #{rid}
             </Link>
           ))}
+          {linkedinReplyButton}
           {manualButtons}
           {sendButton}
           {draftButton}
@@ -1317,7 +1389,7 @@ function DraftSection({
         <pre className="mt-2 max-h-[360px] overflow-auto whitespace-pre-wrap font-mono text-[11.5px] leading-[1.55] text-ink-cream-2">
           {draft.body}
         </pre>
-        {linkedinReplyBlock}
+        {linkedinReplyEditor}
       </div>
     </div>
   );
@@ -1371,17 +1443,27 @@ function SignalStrip({ rows, ranked = false }: { rows: QueueRowView[]; ranked?: 
 const TRIGGERS_OPEN_KEY = "oneshot-gtm:queue-triggers-open";
 
 /**
- * Industry pack cards: a working starting config for a founder's vertical,
- * applied to several triggers at once instead of one `apply-config` per
- * trigger. Sits above the Triggers panel it feeds — applying a pack is what
- * populates the trigger rows below with real config.
+ * Industry pack picker — one selector, not eight cards.
+ *
+ * A pack IS trigger config: `POST /packs/:id/apply` merges each patch over the
+ * trigger's stored config and enables it. So it belongs inside the Triggers
+ * panel, which is already collapsed by default and already auto-opens on the
+ * two occasions a pack is what you came for — nothing configured yet, or an
+ * empty queue.
+ *
+ * It used to be eight always-expanded cards sitting above the candidates on a
+ * page titled "Candidates, for review.", costing ~900px — more than a whole
+ * viewport — for a once-per-vertical action. Every founder paid that on every
+ * visit, and seven of the eight are verticals any given founder will never
+ * pick.
  */
-function PacksCard() {
+function PackPicker() {
   const qc = useQueryClient();
-  const packsQuery = useQuery({
-    queryKey: ["packs"],
-    queryFn: () => api.packs(),
-  });
+  const navigate = useNavigate();
+  const packsQuery = useQuery({ queryKey: ["packs"], queryFn: () => api.packs() });
+  const [selectedId, setSelectedId] = useState<string>("");
+  const [lastResult, setLastResult] = useState<PackApplyResult | null>(null);
+
   const applyPack = useMutation({
     mutationFn: (id: string) => api.applyPack(id),
     onSuccess: (result: PackApplyResult) => {
@@ -1401,75 +1483,74 @@ function PacksCard() {
     },
     onError: (err: Error) => toast.error(err.message),
   });
-  const [lastResult, setLastResult] = useState<PackApplyResult | null>(null);
 
   const packs = packsQuery.data?.packs ?? [];
-  if (!packsQuery.isLoading && packs.length === 0) return null;
+  if (packsQuery.isLoading || packs.length === 0) return null;
+
+  const selected = packs.find((p) => p.id === selectedId) ?? null;
+  const result = lastResult && selected && lastResult.id === selected.id ? lastResult : null;
+  const stillNeeded = result?.applied.filter((t) => !t.ready) ?? [];
 
   return (
-    <section className="border-b border-ink-rule px-6 py-5">
-      <div className="mb-3 flex items-center gap-2">
-        <Package size={12} className="text-ink-faint" />
-        <div className="ln-eyebrow">
-          Industry packs <span className="text-ink-faint">· {packs.length}</span>
-        </div>
-      </div>
-      {packsQuery.isLoading ? (
-        <SkeletonRow />
-      ) : (
-        <div className="space-y-3">
+    <div className="border-b border-ink-rule/60 px-6 py-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="ln-eyebrow">Start from a pack</div>
+        <select
+          value={selectedId}
+          aria-label="industry pack"
+          onChange={(e) => {
+            setSelectedId(e.currentTarget.value);
+            // The previous pack's result must not read as this one's.
+            setLastResult(null);
+          }}
+          className="h-7 rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg px-2 text-[12px] text-ink-cream"
+        >
+          <option value="">select a vertical…</option>
           {packs.map((pack) => (
-            <PackRow
-              key={pack.id}
-              pack={pack}
-              applying={applyPack.isPending && applyPack.variables === pack.id}
-              onApply={() => applyPack.mutate(pack.id)}
-              result={lastResult?.id === pack.id ? lastResult : null}
-              disabled={READ_ONLY}
-            />
+            <option key={pack.id} value={pack.id}>
+              {pack.label}
+            </option>
           ))}
+        </select>
+        {selected && (
+          <Button
+            size="sm"
+            disabled={applyPack.isPending || READ_ONLY}
+            onClick={() => applyPack.mutate(selected.id)}
+            {...readOnly}
+          >
+            {applyPack.isPending ? "Applying…" : "Apply"}
+          </Button>
+        )}
+      </div>
+
+      {selected && (
+        <div className="mt-2">
+          {/* `summary` is the founder-facing line; `buyerBrief` is the
+              provenance behind it and reads like the engineering note it is. */}
+          <div className="text-[12px] text-ink-cream-2">
+            {selected.summary ?? selected.buyerBrief}
+          </div>
+          <div className="mt-1.5 font-mono text-[11px] text-ink-faint">
+            triggers · {selected.triggers.join(", ")}
+          </div>
+          <div className="mt-1 font-mono text-[11px] text-ink-muted">
+            ICP · <span className="text-ink-cream-2">{selected.icpOneLiner}</span>
+          </div>
+          {selected.summary && (
+            <details className="mt-1.5">
+              <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint hover:text-ink-cream-2">
+                why these channels
+              </summary>
+              <div className="mt-1.5 text-[11.5px] leading-[1.55] text-ink-muted">
+                {selected.buyerBrief}
+              </div>
+            </details>
+          )}
         </div>
       )}
-    </section>
-  );
-}
 
-function PackRow({
-  pack,
-  applying,
-  onApply,
-  result,
-  disabled,
-}: {
-  pack: PackView;
-  applying: boolean;
-  onApply: () => void;
-  result: PackApplyResult | null;
-  disabled: boolean;
-}) {
-  const navigate = useNavigate();
-  // After apply: the fields still needed, spelled out per-trigger so the
-  // founder knows exactly what to fill in next (via the strategist or the
-  // trigger's own JSON editor below).
-  const stillNeeded = result?.applied.filter((t) => !t.ready) ?? [];
-  return (
-    <div className="rounded-[var(--radius-sm)] border border-ink-rule px-4 py-3">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0 flex-1">
-          <div className="text-[13px] font-medium text-ink-cream">{pack.label}</div>
-          <div className="mt-0.5 text-[12px] text-ink-cream-2">{pack.buyerBrief}</div>
-          <div className="mt-1.5 font-mono text-[11px] text-ink-faint">
-            triggers · {pack.triggers.join(", ")}
-          </div>
-          <div className="mt-1.5 font-mono text-[11px] text-ink-muted">
-            ICP · <span className="text-ink-cream-2">{pack.icpOneLiner}</span>
-          </div>
-        </div>
-        <Button size="sm" disabled={applying || disabled} onClick={onApply}>
-          {applying ? "Applying…" : "Apply"}
-        </Button>
-      </div>
-      {result && (
+      {result && selected && (
         <div className="mt-2.5 border-t border-ink-rule/60 pt-2.5 font-mono text-[11px]">
           <div className="text-ink-receipt-2">
             ✓ applied · {result.applied.map((t) => t.name).join(", ")}
@@ -1487,7 +1568,7 @@ function PackRow({
           {/* Apply never touches icpOneLiner in config.json (see packs.ts) —
               the proposed ICP only reaches the founder's config if they
               explicitly accept it from /setup. */}
-          <div className="mt-1.5 flex items-center gap-2 text-ink-muted">
+          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-ink-muted">
             <span>proposed ICP · {result.proposedIcpOneLiner}</span>
             <Button
               variant="secondary"
@@ -1495,7 +1576,7 @@ function PackRow({
               onClick={() =>
                 navigate({
                   to: "/setup",
-                  search: { proposedIcp: result.proposedIcpOneLiner, packLabel: pack.label },
+                  search: { proposedIcp: result.proposedIcpOneLiner, packLabel: selected.label },
                 })
               }
             >
@@ -1805,6 +1886,10 @@ function TriggersCard({ queueEmpty }: { queueEmpty: boolean | null }) {
         </button>
         <div className="font-mono text-[11px] text-ink-faint">refresh · 30s</div>
       </div>
+      {/* Packs configure the triggers below, so the picker rides inside this
+          panel and inherits its collapse — including the autoOpen rule, which
+          fires on exactly the occasions a pack is the thing you came for. */}
+      {expanded && <PackPicker />}
       {!expanded ? null : triggersQuery.isLoading ? (
         Array.from({ length: 3 }, (_, i) => <SkeletonRow key={i} />)
       ) : triggers.length === 0 ? (

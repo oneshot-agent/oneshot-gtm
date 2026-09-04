@@ -922,6 +922,9 @@ export interface TriggerView {
 export interface PackView {
   id: string;
   label: string;
+  /** One-line buyer summary for the picker. Absent on packs written before this existed. */
+  summary?: string;
+  /** Full reasoning, including why these channels. Shown behind a disclosure. */
   buyerBrief: string;
   icpOneLiner: string;
   /** Trigger names this pack touches. */

@@ -7,6 +7,7 @@ function toPackView(pack: (typeof PACKS)[number]): PackView {
   return {
     id: pack.id,
     label: pack.label,
+    ...(pack.summary ? { summary: pack.summary } : {}),
     buyerBrief: pack.buyerBrief,
     icpOneLiner: pack.icpOneLiner,
     triggers: Object.keys(pack.triggers),
