@@ -223,7 +223,11 @@ interface GovSolicitationCandidate {
 
 /** First POC entry carrying BOTH a name and an email — the only usable kind. */
 function pickPoc(pocs: SamPointOfContact[] | null | undefined): SamPointOfContact | null {
-  for (const p of pocs ?? []) {
+  // Array.isArray, not `?? []`: SAM.gov is an external feed, and a
+  // non-iterable pointOfContact (object, string) survives the nullish
+  // coalesce and makes for...of throw, aborting the finder before it
+  // reaches any later opportunity.
+  for (const p of Array.isArray(pocs) ? pocs : []) {
     if (p.email && p.email.trim().length > 0 && p.fullName && p.fullName.trim().length > 0) {
       return p;
     }

@@ -542,13 +542,16 @@ export const TRIGGERS: TriggerSpec[] = [
         ? (cfg["states"] as unknown[]).filter((s): s is string => typeof s === "string")
         : [];
       const validEntityTypes = new Set(["carrier", "broker", "freight-forwarder"]);
+      // Trim before validating AND keep the trimmed value: readiness above
+      // accepts " carrier " because it tests t.trim(), so without the same
+      // normalization here a config reports ready and then starts with no
+      // FMCSA source. Filtering on the trimmed form while passing the raw
+      // one downstream would be the same bug wearing a hat.
       const entityTypes = Array.isArray(cfg["entityTypes"])
         ? (cfg["entityTypes"] as unknown[])
-            .map((t) => (typeof t === "string" ? t.trim() : t))
-            .filter(
-              (t): t is "carrier" | "broker" | "freight-forwarder" =>
-                typeof t === "string" && validEntityTypes.has(t),
-            )
+            .filter((t): t is string => typeof t === "string")
+            .map((t) => t.trim())
+            .filter((t): t is "carrier" | "broker" | "freight-forwarder" => validEntityTypes.has(t))
         : [];
       return runLocalRegistryFinder({
         dryRun: false,
