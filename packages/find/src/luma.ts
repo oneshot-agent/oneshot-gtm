@@ -11,7 +11,7 @@ import {
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { LumaEventsTarget } from "@oneshot-gtm/plays";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
-import { resolveVerifyEnrichQualify } from "./_contact.ts";
+import { resolveVerifyEnrichQualify, icpFields } from "./_contact.ts";
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { roundRobin } from "./_rank.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
@@ -31,6 +31,13 @@ const PLAY_NAME = "luma-events";
 const SOURCE = "find:luma-events";
 /** Cap per-event LLM extract input — Luma event pages are usually under 8k chars. */
 const READ_MARKDOWN_SLICE = 12000;
+/**
+ * How much event description the relevance gate sees. Enough for the opening
+ * lines that say what an event actually is — the "agentic after-hours, lightning
+ * panel with …" sentence that a punning title hides — without paying to classify
+ * a full agenda.
+ */
+const GATE_SUMMARY_SLICE = 600;
 /** Sane upper bound — no event we care about has >30 public attendees. */
 const MAX_ATTENDEES_PER_EVENT = 30;
 
@@ -331,11 +338,9 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
     "info",
   );
 
-  // Event-level relevance criterion: one LLM call (below) weighs the founder's
-  // ICP AND topics, on the event NAME, BEFORE any webRead — so we never pay to
-  // read the dance-cardio / wine-tasting noise that city pages surface. This
-  // replaces the old per-attendee ICP filter, which rejected even on-topic
-  // attendees because Luma's public attendee data is too thin to judge.
+  // Event-level relevance criterion: one LLM call weighs the founder's ICP AND
+  // topics. This replaces the old per-attendee ICP filter, which rejected even
+  // on-topic attendees because Luma's public attendee data is too thin to judge.
   const relevanceCriteria = [
     icp,
     topics.length > 0 ? `Event must relate to: ${topics.join(", ")}` : null,
@@ -343,19 +348,38 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
     .filter(Boolean)
     .join(". ");
 
-  // Phase 2: topic/ICP gate → webRead + LLM extract per event, parallelized.
-  // Each surviving event yields 0..N attendees; flatten into one work list.
+  // Phase 2: free structured fetch → topic/ICP gate → paid webRead only on
+  // fallback, parallelized. Each surviving event yields 0..N attendees.
   const concurrency = 3;
   const eventExtracts: Array<{ hit: CitySearchHit; extract: LumaEventExtract } | null> =
     await parallelMap(hits.slice(0, limit * 2), concurrency, async (hit) => {
       if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) return null;
-      // Event-level relevance gate (topic + ICP in one call), on the name only.
-      if (relevanceCriteria) {
+
+      // Gate ordering matters, and it used to be wrong. The gate ran on the
+      // event NAME alone, before any fetch, to avoid paying to read the
+      // dance-cardio noise city pages surface. But `fetchEventDetails` is a
+      // FREE anonymous JSON call, and it returns the description — so the gate
+      // was blind for no saving, and titles that are puns got dropped.
+      //
+      // "AI Infra Kebab" (Vercel/Neon, panel of Malte Ubl, Nikita Shamgunov,
+      // Max Stoiber) was rejected three days running as "a generic event title
+      // with no evidence of technical leadership", then accepted on the fourth
+      // on identical input. Its description says exactly what it is.
+      //
+      // So: fetch free details first, gate on title + description when we have
+      // them, and fall back to the old title-only gate ONLY when the structured
+      // fetch missed — because there the next step is a paid webRead and the
+      // original reasoning still holds.
+      const gate = async (description: string | null): Promise<boolean> => {
+        if (!relevanceCriteria) return true;
+        const summary = description?.trim()
+          ? description.trim().slice(0, GATE_SUMMARY_SLICE)
+          : null;
         const ev = await icpFilter({
           icp: relevanceCriteria,
-          candidate: { title: hit.title, url: hit.url },
+          candidate: { title: hit.title, url: hit.url, summary },
         });
-        if (ev.match === null) return null; // transient classifier failure → drop, no persist
+        if (ev.match === null) return false; // transient classifier failure → drop, no persist
         if (!ev.match) {
           result.droppedIcp++;
           logEvent(
@@ -364,13 +388,15 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
               name: PLAY_NAME,
               url: hit.url,
               title: hit.title,
+              grounded: description != null,
               reason_120: ev.reason.slice(0, 120),
             },
             "info",
           );
-          return null;
+          return false;
         }
-      }
+        return true;
+      };
 
       try {
         // Structured-first: the anonymous `api.lu.ma/url` JSON carries the
@@ -383,6 +409,8 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
         const eventSlug = lumaEventSlug(hit.url);
         const details = eventSlug ? await fetchEventDetails(eventSlug) : null;
         if (details && details.eventTitle && details.attendees.length > 0) {
+          // Gate on the description we just got for free.
+          if (!(await gate(details.eventDescription ?? hit.description ?? null))) return null;
           extract = {
             eventTitle: details.eventTitle,
             eventDateIso: details.eventDateIso,
@@ -403,6 +431,11 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
             "info",
           );
         } else {
+          // Structured fetch missed. The next call is PAID, so gate first — on
+          // the city-page description when the hub gave us one, otherwise on
+          // the title alone, which is the pre-existing behaviour and the reason
+          // this ordering exists at all.
+          if (!(await gate(hit.description ?? null))) return null;
           const read = await webRead(
             { url: hit.url },
             {
@@ -632,7 +665,12 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
       icp,
       person: {
         name: work.attendee.name,
-        roleText: work.attendee.bio ?? work.attendee.role ?? null,
+        // `??` only falls through on null/undefined, and Luma returns an EMPTY
+        // STRING for an attendee with no bio_short — so `bio ?? role` yielded
+        // "" and the gate saw no role text at all, silently deferring every
+        // such candidate to a stage B that this finder never reaches. Take the
+        // first value with actual characters in it.
+        roleText: firstNonBlank(work.attendee.bio, work.attendee.role),
         evidence: `attended ${work.event.title}`,
       },
     });
@@ -885,6 +923,7 @@ async function resolveAndEnqueueLumaAttendee(
       name: work.attendee.name,
       email,
       ...(resolvedCompany ? { company: resolvedCompany } : {}),
+      ...(companyDomain ? { companyDomain } : {}),
       ...(work.attendee.bio || work.attendee.role
         ? { attendeeBio: work.attendee.bio ?? work.attendee.role ?? "" }
         : {}),
@@ -900,6 +939,7 @@ async function resolveAndEnqueueLumaAttendee(
       ...(linkedinUrl ? { linkedinUrl } : {}),
       ...(phone ? { phone } : {}),
       ...(contact.title ? { title: contact.title } : {}),
+      ...icpFields(contact),
       ...(work.attendee.profileUrl ? { sourceProfileUrl: work.attendee.profileUrl } : {}),
     };
     // Synchronous cap re-check right before enqueue — no await between here and
@@ -972,3 +1012,11 @@ registerPendingRetry(PLAY_NAME, async (raw) => {
       ? "platform-error"
       : "dropped";
 });
+
+/** First value with non-whitespace content, or null. */
+function firstNonBlank(...values: Array<string | null | undefined>): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim() !== "") return value;
+  }
+  return null;
+}

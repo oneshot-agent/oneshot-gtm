@@ -443,6 +443,10 @@ export function migrateLedgerSchema(db: Database): void {
   addColumnIfMissing(db, "target_queue", "decision", "TEXT"); // 'approve'|'reject'|'auto_reject'
   addColumnIfMissing(db, "target_queue", "decided_at", "TEXT");
   addColumnIfMissing(db, "target_queue", "decided_by", "TEXT"); // 'human'|'human_bulk'|'machine'
+  // The text of an off-email message, when the channel gives us one. Without
+  // it a recorded LinkedIn reply could stop a cadence but never feed the reply
+  // composer, which needs a body to draft against.
+  addColumnIfMissing(db, "channel_events", "body", "TEXT");
   backfillDecisionProvenance(db);
   // v27: signed webhook replay keys. Keeping these in the ledger makes replay
   // protection survive server restarts; expired rows are pruned when a new

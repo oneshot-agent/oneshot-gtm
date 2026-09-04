@@ -77,6 +77,8 @@ export interface ChannelEventRecord {
   channel: "linkedin";
   event_type: "reply";
   occurred_at: string;
+  /** Message text when the channel supplied one; null for older rows. */
+  body: string | null;
   created_at: string;
 }
 

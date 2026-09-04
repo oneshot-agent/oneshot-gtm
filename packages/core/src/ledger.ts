@@ -2,6 +2,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { configDir } from "./config.ts";
+import { hasPersonSignal } from "./dossier.ts";
 import { humanDecisionWhereSql } from "./labels.ts";
 import { migrateLedgerSchema } from "./ledger-schema.ts";
 import { getSharedDb } from "./shared-db.ts";
@@ -790,6 +791,8 @@ export class Ledger {
     source: string;
     externalEventId: string;
     occurredAt: string;
+    /** The message text, when the channel supplies one. Feeds the composer. */
+    body?: string | null;
   }): {
     duplicate: boolean;
     prospectId: number;
@@ -823,10 +826,16 @@ export class Ledger {
       this.db
         .prepare(
           `INSERT INTO channel_events
-             (source, external_event_id, prospect_id, channel, event_type, occurred_at)
-           VALUES (?, ?, ?, 'linkedin', 'reply', ?)`,
+             (source, external_event_id, prospect_id, channel, event_type, occurred_at, body)
+           VALUES (?, ?, ?, 'linkedin', 'reply', ?, ?)`,
         )
-        .run(input.source, input.externalEventId, input.prospectId, input.occurredAt);
+        .run(
+          input.source,
+          input.externalEventId,
+          input.prospectId,
+          input.occurredAt,
+          input.body?.trim() || null,
+        );
       this.db
         .prepare(
           `UPDATE cadence_state
@@ -1581,23 +1590,20 @@ export class Ledger {
     if (any.length === 0) return [];
 
     const where = [`(${any.join(" OR ")})`];
-    if (!opts.includeResearched)
-      where.push("(p.dossier_json IS NULL OR TRIM(p.dossier_json) = '')");
     // Something for deepResearchPerson to key on.
     where.push(
       "(COALESCE(NULLIF(TRIM(p.source_profile_url), ''), NULLIF(TRIM(p.linkedin_url), '')) IS NOT NULL OR (p.email IS NOT NULL AND TRIM(p.email) != ''))",
     );
 
-    return this.db
+    const rows = this.db
       .query(
         `SELECT p.id, p.name, p.company, p.email, p.source, p.source_profile_url, p.linkedin_url,
                 p.dossier_json
            FROM prospects p
           WHERE ${where.join(" AND ")}
-          ORDER BY p.id DESC
-          LIMIT ?`,
+          ORDER BY p.id DESC`,
       )
-      .all(opts.limit ?? 100_000) as Array<{
+      .all() as Array<{
       id: number;
       name: string | null;
       company: string | null;
@@ -1607,6 +1613,24 @@ export class Ledger {
       linkedin_url: string | null;
       dossier_json: string | null;
     }>;
+
+    // The "already researched" filter runs here, not in SQL. It used to be
+    // `dossier_json IS NULL OR TRIM(...) = ''`, which silently emptied the
+    // backlog the moment `research-products` began writing a
+    // `{person, product}` wrapper onto every row: 531 of 684 prospects held a
+    // product half and a null person half, looked researched to that test, and
+    // became permanently unreachable. `hasPersonSignal` asks the question the
+    // caller actually means — is there PERSON research here — and matches the
+    // gate every other consumer of this column already uses.
+    //
+    // `limit` is applied AFTER the filter so it keeps meaning "return N rows to
+    // research", not "consider N rows". The prospects table is small enough
+    // that scanning it whole costs nothing.
+    const eligible = opts.includeResearched
+      ? rows
+      : rows.filter((row) => !hasPersonSignal(row.dossier_json));
+    const limit = opts.limit ?? 100_000;
+    return eligible.length > limit ? eligible.slice(0, limit) : eligible;
   }
 
   recordOutcome(input: {

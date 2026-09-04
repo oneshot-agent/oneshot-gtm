@@ -43,10 +43,22 @@ function str(body: JsonRecord, ...keys: string[]): string | null {
   return null;
 }
 
+/**
+ * Academic and alumni domains. A university address says where someone studied,
+ * not where they work — and `https://<that domain>` is a university homepage,
+ * or (for an alumni forwarder like `network.rca.ac.uk`) not a website at all.
+ *
+ * This is the shape that produced a dossier whose only source was a Luma
+ * profile: the read of the alumni domain threw, and the profile page was all
+ * that was left. Excluding these sends `seedFor` to the company instead.
+ */
+const ACADEMIC_DOMAIN = /(^|\.)(edu|ac\.[a-z]{2}|edu\.[a-z]{2})$/i;
+
 function emailDomain(email: string | null): string | null {
   if (!email) return null;
   const domain = email.split("@")[1]?.trim().toLowerCase() ?? "";
-  return domain && !DUD_DOMAINS.has(domain) ? domain : null;
+  if (!domain || DUD_DOMAINS.has(domain) || ACADEMIC_DOMAIN.test(domain)) return null;
+  return domain;
 }
 
 function normalizeUrl(value: string | null): string | null {
@@ -105,7 +117,12 @@ function seedFor(
 
 function sourceKind(url: string): ProductResearchSource["kind"] {
   if (/github\.com\/[^/]+\/[^/]+/i.test(url)) return "repository";
-  if (/github\.com|linkedin\.com|x\.com|twitter\.com/i.test(url)) return "profile";
+  // `luma.com/user/<handle>` is a person's event profile. Classified as a
+  // website it masqueraded as company research, and its "Nothing Here, Yet"
+  // body counted as a sourced excerpt.
+  if (/github\.com|linkedin\.com|x\.com|twitter\.com|luma\.com\/user\//i.test(url)) {
+    return "profile";
+  }
   return "website";
 }
 

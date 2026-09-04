@@ -80,6 +80,13 @@ export interface LumaEventsTarget {
   name: string;
   email: string;
   company?: string;
+  /**
+   * Company domain from enrichment, when it resolved one. Preferred over the
+   * email's domain everywhere: an attendee's address is routinely a personal or
+   * university one, which points enrichment and product research at the wrong
+   * site (or nothing at all).
+   */
+  companyDomain?: string;
   /** One-line bio / role pulled from the prospect's Luma profile (e.g. "Founder @ AcmeAI"). */
   attendeeBio?: string;
   /**
@@ -169,7 +176,7 @@ const lumaEventsDef: EmailPlayDef<LumaEventsTarget> = {
       enrichInput: {
         ...(t.email ? { email: t.email } : {}),
         name: t.name,
-        companyDomain: emailDomain(t.email),
+        companyDomain: t.companyDomain ?? emailDomain(t.email),
       },
       enrichSlice: 3500,
     }),

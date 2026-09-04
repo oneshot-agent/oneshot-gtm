@@ -116,6 +116,12 @@ export interface LinkedInReplyWebhookRequest {
   occurredAt: string;
   linkedinUrl?: string;
   email?: string;
+  /**
+   * The message text, when the provider sends it. Optional — recording the
+   * reply (and stopping the cadence) never depends on it — but without a body
+   * the reply composer has nothing to draft against.
+   */
+  body?: string;
 }
 
 export interface LinkedInReplyResult {

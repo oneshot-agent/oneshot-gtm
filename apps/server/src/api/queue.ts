@@ -519,6 +519,19 @@ export async function sendDraftRoute(
         // Stamped on the payload by the person-level ICP gate in the finders.
         title: str("title"),
       },
+      // The verdict from that same gate. Read generically, like `title`, so
+      // approving a row on /queue enforces and records it exactly as an
+      // unattended play run does.
+      ...(str("icpVerdict") === "pass" ||
+      str("icpVerdict") === "reject" ||
+      str("icpVerdict") === "unclear"
+        ? {
+            icp: {
+              verdict: str("icpVerdict") as "pass" | "reject" | "unclear",
+              reason: str("icpVerdictReason"),
+            },
+          }
+        : {}),
       // The play's evidence metadata (`repo`, `eventTitle`, `vendorStack`, …)
       // MUST be included — step-0 rows without their evidence key silently
       // break everything downstream that reads it.

@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { hasDossierSignal, mergeProductDossier } from "../src/dossier.ts";
+import {
+  hasDossierSignal,
+  hasPersonSignal,
+  mergePersonDossier,
+  mergeProductDossier,
+} from "../src/dossier.ts";
 
 // The gate that decides whether a dossier is worth writing to
 // prospects.dossier_json. It is load-bearing: _reply-research.ts treats any
@@ -115,5 +120,119 @@ describe("mergeProductDossier", () => {
     expect(merged["person"]?.["title"]).toBe("Founder");
     expect(merged["product"]?.["status"]).toBe("complete");
     expect(hasDossierSignal(merged)).toBe(true);
+  });
+});
+
+// The dossier that shipped an ungrounded email to prospect 679. Its product
+// half read a Luma user profile for someone who hosts no events: the fetch
+// succeeded, the excerpt is a few hundred characters, and every one of them is
+// page chrome. It counted as signal, so the paid research tiers stayed
+// suppressed and the person half stayed null forever.
+const LUMA_EMPTY_PROFILE = {
+  person: null,
+  product: {
+    version: 1,
+    status: "partial",
+    researchedAt: "2026-09-01T22:51:05.891Z",
+    subject: { name: "Raunaq Bose", company: "Taxheaven" },
+    sources: [
+      {
+        url: "https://luma.com/user/rnq",
+        kind: "website",
+        excerpt:
+          "# Raunaq Bose\n\n@rnq\n\nJoined March 2026\n\n0Hosted\n\n29Attended\n\n" +
+          "### Nothing Here, Yet\n\nRaunaq Bose has no public events at this time.",
+      },
+    ],
+  },
+};
+
+describe("hasDossierSignal — an excerpt must be informative, not merely non-empty", () => {
+  it("rejects a profile page whose body is its own 'nothing here' message", () => {
+    expect(hasDossierSignal(LUMA_EMPTY_PROFILE)).toBe(false);
+  });
+
+  it("still accepts a product source that says something", () => {
+    expect(
+      hasDossierSignal({
+        sources: [
+          {
+            url: "https://www.xevall.com/",
+            kind: "website",
+            excerpt: "The independent evals and self-improvement layer for human-AI interaction.",
+          },
+        ],
+      }),
+    ).toBe(true);
+  });
+});
+
+describe("hasPersonSignal — is there PERSON research, specifically", () => {
+  it("is false for the wrapper research-products writes over an unresearched row", () => {
+    // The whole bug in one assertion: 531 of 684 prospects were in this state,
+    // and the old backlog query (dossier_json IS NULL OR TRIM = '') read every
+    // one of them as done.
+    expect(hasPersonSignal(JSON.stringify(LUMA_EMPTY_PROFILE))).toBe(false);
+  });
+
+  it("is false for a null/empty column", () => {
+    expect(hasPersonSignal(null)).toBe(false);
+    expect(hasPersonSignal("   ")).toBe(false);
+  });
+
+  it("is true once the person half carries research", () => {
+    expect(
+      hasPersonSignal(
+        JSON.stringify({
+          person: { title: "Co-Founder & CTO", company: "xevall", summary: "Building evals." },
+          product: LUMA_EMPTY_PROFILE.product,
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("is false when the person half is a failed-enrich envelope", () => {
+    expect(
+      hasPersonSignal(
+        JSON.stringify({ person: { status: "failed", profile: null }, product: null }),
+      ),
+    ).toBe(false);
+  });
+
+  it("reads a pre-wrapper row, where the person payload IS the whole column", () => {
+    expect(hasPersonSignal(JSON.stringify({ title: "CTO", company: "Acme" }))).toBe(true);
+  });
+});
+
+describe("mergePersonDossier — must not clobber the product half", () => {
+  it("keeps existing product research when writing the person half", () => {
+    const merged = mergePersonDossier(JSON.stringify(LUMA_EMPTY_PROFILE), {
+      title: "Co-Founder & CTO",
+      company: "xevall",
+    });
+    const parsed = JSON.parse(merged) as { person: unknown; product: { subject: unknown } };
+    expect(parsed.product).toEqual(LUMA_EMPTY_PROFILE.product);
+    expect(parsed.person).toEqual({ title: "Co-Founder & CTO", company: "xevall" });
+  });
+
+  it("round-trips with mergeProductDossier without either half losing the other", () => {
+    const withPerson = mergePersonDossier(null, { title: "CTO" });
+    const withBoth = mergeProductDossier(withPerson, {
+      version: 1,
+      status: "complete",
+      researchedAt: "2026-09-04T00:00:00.000Z",
+      subject: { company: "xevall" },
+      sources: [],
+    });
+    const parsed = JSON.parse(withBoth) as {
+      person: { title: string };
+      product: { status: string };
+    };
+    expect(parsed.person.title).toBe("CTO");
+    expect(parsed.product.status).toBe("complete");
+  });
+
+  it("produces valid JSON from a null column", () => {
+    expect(() => JSON.parse(mergePersonDossier(null, { title: "CTO" }))).not.toThrow();
   });
 });

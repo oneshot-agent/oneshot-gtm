@@ -36,6 +36,29 @@ const SIGNAL_FIELDS = [
 /** The provider's placeholder summary for a shared inbox — not role text. */
 const ROLE_MAILBOX = /is a role based email address/i;
 
+/**
+ * Scraped profile pages that rendered fine but say nothing about the person.
+ * A Luma user page for someone who hosts no events is the common case: the
+ * read succeeds, the excerpt is a few hundred non-empty characters, and every
+ * one of them is chrome. Left unchecked it satisfies the `excerpt` test below,
+ * marks the dossier as signal, and suppresses the paid reply-research tiers —
+ * the exact failure this file exists to prevent.
+ *
+ * Kept deliberately narrow: only phrases a page shows INSTEAD of content.
+ */
+const EMPTY_PROFILE = [
+  /nothing here,? yet/i,
+  /has no public events/i,
+  /this user has no/i,
+  /no results? found/i,
+  /page not found/i,
+] as const;
+
+/** True when an excerpt is a page's own "there is nothing here" message. */
+function isEmptyProfileExcerpt(text: string): boolean {
+  return EMPTY_PROFILE.some((pattern) => pattern.test(text));
+}
+
 /** Nested places the payload shapes put the same keys. */
 const NESTED_KEYS = ["enrichment", "profile", "result", "person", "product"] as const;
 
@@ -76,6 +99,59 @@ export function mergeProductDossier(
     }
   }
   return JSON.stringify({ person, product }, null, 2);
+}
+
+/**
+ * The mirror of `mergeProductDossier`: write the person half without
+ * discarding product research.
+ *
+ * `research-prospects` used to `setProspectDossier(JSON.stringify(payload))`,
+ * which replaced the whole column and destroyed the `{person, product}`
+ * wrapper `research-products` had written. The two commands run independently
+ * and neither should clobber the other.
+ */
+export function mergePersonDossier(current: string | null | undefined, person: unknown): string {
+  let product: unknown = null;
+  if (current?.trim()) {
+    try {
+      const parsed = JSON.parse(current) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        product = (parsed as Record<string, unknown>)["product"] ?? null;
+      }
+    } catch {
+      // A legacy non-JSON dossier is person prose; there is no product half to
+      // keep, and the new person payload supersedes it.
+      product = null;
+    }
+  }
+  return JSON.stringify({ person, product }, null, 2);
+}
+
+/**
+ * Does the PERSON half of a stored dossier carry research?
+ *
+ * `hasDossierSignal` answers "is this column worth keeping", which a product
+ * dossier alone satisfies. That is the wrong question for the research
+ * backlog: a row whose `person` is null still needs `deepResearchPerson`, and
+ * for 531 of 684 prospects the product half alone was enough to make them look
+ * done. Callers selecting research candidates want this, not the broad gate.
+ */
+export function hasPersonSignal(stored: string | null | undefined): boolean {
+  if (!stored?.trim()) return false;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stored);
+  } catch {
+    // Prose a play assembled — genuine person context (see hasDossierSignal).
+    return true;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return hasDossierSignal(parsed);
+  }
+  const record = parsed as Record<string, unknown>;
+  // Pre-wrapper rows are a bare person payload; wrapped rows nest it.
+  const person = "person" in record ? record["person"] : record;
+  return hasDossierSignal(person);
 }
 
 function substantive(scope: unknown): boolean {
@@ -121,13 +197,15 @@ export function hasDossierSignal(value: unknown): boolean {
   if (typeof body.status === "string" && body.status.toLowerCase() === "failed") return false;
   if (Array.isArray(body.articles) && body.articles.length > 0) return true;
   if (Array.isArray(body.sources)) {
-    const hasExcerpt = body.sources.some(
-      (source) =>
-        source !== null &&
-        typeof source === "object" &&
-        typeof (source as Record<string, unknown>)["excerpt"] === "string" &&
-        ((source as Record<string, unknown>)["excerpt"] as string).trim() !== "",
-    );
+    const hasExcerpt = body.sources.some((source) => {
+      if (source === null || typeof source !== "object") return false;
+      const excerpt = (source as Record<string, unknown>)["excerpt"];
+      if (typeof excerpt !== "string") return false;
+      const trimmed = excerpt.trim();
+      // Non-empty is not the same as informative — a profile page's own
+      // "Nothing Here, Yet" is chrome, and counting it suppresses paid research.
+      return trimmed !== "" && !isEmptyProfileExcerpt(trimmed);
+    });
     // Product dossiers carry a subject for identification, but a company/name
     // alone is not researched context. Only sourced text or an external result
     // should suppress the reply research fallback.

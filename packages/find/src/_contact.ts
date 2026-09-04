@@ -4,7 +4,7 @@ import { isCircuitOpen, recordResolutionOutcome } from "./_breaker.ts";
 import { shouldSkipFindEmail } from "./_findemail-prescreen.ts";
 import { safeFindEmail, safeVerifyEmail } from "./_sdk-safe.ts";
 import { enrichVerifiedContact } from "./_enrich.ts";
-import type { PersonCandidate } from "./_filter.ts";
+import type { PersonCandidate, PersonVerdict } from "./_filter.ts";
 import { qualifyPostEnrich } from "./_qualify.ts";
 
 /**
@@ -152,6 +152,21 @@ export type QualifiedContact =
       linkedinUrl: string | null;
       /** Job title the gate judged on — persist it so the next run is free. */
       title: string | null;
+      /**
+       * What the person-level ICP gate decided. Carried out of here so the
+       * enqueue/send path can persist it onto `prospects.icp_verdict`.
+       *
+       * It used to be collapsed to `ok: true` and dropped, which meant the
+       * only production writer of that column was the manual `ops/audit-icp.ts`
+       * — so a verdict the gate had already paid to compute was recomputed by
+       * hand later, or never. `unclear` is a real value here and must be
+       * persisted as such: the cadence gate tests `=== "reject"`, so `unclear`
+       * fails open exactly as NULL does, but recording it stops the audit
+       * re-judging a row it has already settled.
+       */
+      verdict: Exclude<PersonVerdict, "transient">;
+      /** One-sentence reason from the classifier, for `icp_verdict_reason`. */
+      verdictReason: string;
       costUsd: number;
     }
   | {
@@ -266,6 +281,29 @@ export async function resolveVerifyEnrichQualify(args: {
     phone: enr.phone,
     linkedinUrl: enr.linkedinUrl,
     title: gate.roleText ?? enr.title,
+    // `reject` and `transient` returned above, so what reaches here is a
+    // settled pass or an unresolved unclear — both worth persisting.
+    verdict: gate.verdict === "transient" ? "unclear" : gate.verdict,
+    verdictReason: gate.reason,
     costUsd,
+  };
+}
+
+/**
+ * The ICP fields to spread onto a finder's target payload, next to `title`.
+ *
+ * Finders stamp `...(contact.title ? { title: contact.title } : {})`; this is
+ * the sibling for the verdict, so `_run-play.ts` and the /queue send route can
+ * persist it onto the prospect row the same generic way they already persist
+ * `title`. Spread-safe: returns an empty object when there is nothing to say.
+ */
+export function icpFields(contact: Extract<QualifiedContact, { ok: true }>): {
+  icpVerdict?: string;
+  icpVerdictReason?: string;
+} {
+  if (!contact.verdict) return {};
+  return {
+    icpVerdict: contact.verdict,
+    ...(contact.verdictReason ? { icpVerdictReason: contact.verdictReason } : {}),
   };
 }

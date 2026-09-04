@@ -609,6 +609,13 @@ export interface SendDraftedOpts {
     dossier_json?: string | null;
   };
   metadata?: Record<string, unknown>;
+  /**
+   * Person-level ICP verdict from the finder that produced this target, when
+   * it ran one. `reject` blocks the send; every verdict is persisted onto the
+   * prospect row so the audit and the cadence gate agree without a manual
+   * `ops/audit-icp.ts` pass. Absent for plays whose finder has no person gate.
+   */
+  icp?: { verdict: "pass" | "reject" | "unclear"; reason?: string | null };
   dryRun: boolean;
   /**
    * Allow a first-touch even if another play already touched the prospect.
@@ -650,6 +657,28 @@ export async function sendDraftedEmail(opts: SendDraftedOpts): Promise<SendDraft
         return { receiptIds: [], sent: false };
       }
     }
+    // Person-level ICP gate on the FIRST touch. The identical check has always
+    // existed for follow-ups (`_cadence.ts`, "off-icp"), but step 0 had none —
+    // so 65 prospects carrying a `reject` verdict were emailed while only 3
+    // cadences ever stopped for it. A verdict arrives either from the finder
+    // that just judged this candidate (`opts.icp`) or from a prior audit on the
+    // stored row; both are honoured, the fresh one first.
+    //
+    // Only `reject` blocks. `unclear` and NULL fail open, exactly as the
+    // cadence gate documents — this gate must not become a silent narrowing of
+    // the funnel on the strength of an undecided classifier.
+    const stored = existing ? ledger.getProspectById(existing.id) : null;
+    const icpVerdict = opts.icp?.verdict ?? stored?.icp_verdict ?? null;
+    if (icpVerdict === "reject") {
+      const why = opts.icp?.reason ?? stored?.icp_verdict_reason ?? "role does not fit";
+      opts.flags.push("off-icp");
+      logEvent(
+        "play.skipped_off_icp",
+        { play: opts.playName, to: opts.to, reason_120: why.slice(0, 120) },
+        "info",
+      );
+      return { receiptIds: [], sent: false };
+    }
     // Track as in-flight for the WHOLE send-and-record span (SDK call →
     // sequence_events row), so a graceful shutdown drains it before exiting and
     // never leaves a sent-but-unrecorded email the dedup can't see.
@@ -675,6 +704,13 @@ export async function sendDraftedEmail(opts: SendDraftedOpts): Promise<SendDraft
         },
       );
       const prospectId = ledger.upsertProspect(opts.prospectMeta);
+      // Persist the verdict the finder's gate already paid to compute. Without
+      // this the only production writer of the column was `ops/audit-icp.ts`,
+      // run by hand — which is why 23 rows created after its last run had no
+      // verdict at all. `transient` never reaches here (it is not a verdict).
+      if (opts.icp?.verdict) {
+        ledger.setProspectIcpVerdict(prospectId, opts.icp.verdict, opts.icp.reason ?? null);
+      }
       ledger.recordSequenceEvent({
         prospectId,
         playName: opts.playName,

@@ -1,6 +1,6 @@
 import { getLedger, logEvent, parallelMap } from "@oneshot-gtm/core";
 import type { CompetitorSwitchTarget, RepoInterestTarget } from "@oneshot-gtm/plays";
-import { resolveVerifyEnrichQualify } from "./_contact.ts";
+import { resolveVerifyEnrichQualify, icpFields } from "./_contact.ts";
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { persistRoleRejection } from "./_qualify.ts";
 import { isDuplicate } from "./_dedupe.ts";
@@ -268,6 +268,7 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
       ...(linkedinUrl ? { linkedinUrl } : {}),
       ...(enr.phone ? { phone: enr.phone } : {}),
       ...(contact.title ? { title: contact.title } : {}),
+      ...icpFields(contact),
       sourceProfileUrl: profileUrl,
     };
 
