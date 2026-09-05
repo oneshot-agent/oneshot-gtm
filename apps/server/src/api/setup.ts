@@ -98,11 +98,14 @@ const DOMAIN_CACHE_FRESH_MS = 60_000;
  */
 let domainCache: { views: DomainPoolView[]; at: number } | null = null;
 let domainInflight: Promise<DomainPoolView[]> | null = null;
+/** When the platform last answered empty (or failed) — "unknown", not cached, but not re-asked on every page load either. */
+let lastEmptyAt = 0;
 
 /** Test seam: forget the cached pool between cases. */
 export function resetDomainCacheForTests(): void {
   domainCache = null;
   domainInflight = null;
+  lastEmptyAt = 0;
 }
 
 function refreshDomainViews(): Promise<DomainPoolView[]> {
@@ -111,7 +114,12 @@ function refreshDomainViews(): Promise<DomainPoolView[]> {
     .then((entries) => {
       const views = domainViews(entries);
       if (views.length > 0) domainCache = { views, at: Date.now() };
+      else lastEmptyAt = Date.now();
       return views;
+    })
+    .catch((err: unknown) => {
+      lastEmptyAt = Date.now();
+      throw err;
     })
     .finally(() => {
       if (domainInflight === p) domainInflight = null;
@@ -136,7 +144,11 @@ async function provisionedDomainViews(deadlineMs: number): Promise<DomainPoolVie
 
 /**
  * What the status call carries: a cached pool is served at once (and
- * refreshed in the background when stale); only a cold cache waits, briefly.
+ * refreshed in the background when stale). With a cold cache, only the FIRST
+ * call waits, briefly: while that fetch is still in flight, or after it came
+ * back empty within the last minute, later calls answer at once with `[]`
+ * rather than each paying the deadline again — that was the live pattern
+ * after #540 (platform answers empty after ~70s, so every load waited 2.5s).
  */
 async function cachedDomainViews(): Promise<DomainPoolView[]> {
   if (domainCache) {
@@ -147,6 +159,8 @@ async function cachedDomainViews(): Promise<DomainPoolView[]> {
     }
     return domainCache.views;
   }
+  if (domainInflight) return [];
+  if (Date.now() - lastEmptyAt < DOMAIN_CACHE_FRESH_MS) return [];
   return provisionedDomainViews(SETUP_STATUS_DOMAINS_DEADLINE_MS);
 }
 

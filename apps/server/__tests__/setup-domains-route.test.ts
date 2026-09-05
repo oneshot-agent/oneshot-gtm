@@ -72,12 +72,12 @@ describe("GET /api/setup — provisioned domains are best-effort", () => {
   });
 });
 
-describe("domain pool cache", () => {
-  async function domainsOf(res: Response): Promise<string[]> {
-    const body = (await res.json()) as { provisionedDomains: Array<{ domain: string }> };
-    return body.provisionedDomains.map((d) => d.domain);
-  }
+async function domainsOf(res: Response): Promise<string[]> {
+  const body = (await res.json()) as { provisionedDomains: Array<{ domain: string }> };
+  return body.provisionedDomains.map((d) => d.domain);
+}
 
+describe("domain pool cache", () => {
   it("a status call that gave up still fills the cache when the platform finally answers", async () => {
     let resolve!: (v: DomainPoolEntry[]) => void;
     let calls = 0;
@@ -127,14 +127,46 @@ describe("domain pool cache", () => {
     expect(calls).toBe(2);
   });
 
-  it("never caches an empty answer — it means unknown, not no domains", async () => {
+  it("never caches an empty answer, but doesn't re-ask on every load either", async () => {
     let calls = 0;
     listImpl = () => {
       calls += 1;
       return Promise.resolve(calls === 1 ? [] : [ENTRY]);
     };
     expect(await domainsOf(await getSetupStatus(req("/api/setup")))).toEqual([]);
+    // Within a minute of an empty answer the status call answers at once
+    // with [] — the picker route is the one that retries.
+    expect(await domainsOf(await getSetupStatus(req("/api/setup")))).toEqual([]);
+    expect(calls).toBe(1);
+    await vi.advanceTimersByTimeAsync(61_000);
     expect(await domainsOf(await getSetupStatus(req("/api/setup")))).toEqual(["mail.acme.dev"]);
+    expect(calls).toBe(2);
+  });
+
+  it("only the first cold call waits; later calls answer at once while it is in flight", async () => {
+    listImpl = () => new Promise(() => {}); // the ~70s platform
+    const first = getSetupStatus(req("/api/setup"));
+    await vi.advanceTimersByTimeAsync(100);
+    const startedAt = Date.now();
+    const second = await getSetupStatus(req("/api/setup")); // must not wait its own 2.5s
+    expect(Date.now() - startedAt).toBe(0);
+    expect(await domainsOf(second)).toEqual([]);
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(await domainsOf(await first)).toEqual([]);
+  });
+
+  it("a failed answer counts as empty: no re-ask for a minute, and the picker route still tries", async () => {
+    let calls = 0;
+    listImpl = () => {
+      calls += 1;
+      return calls === 1 ? Promise.reject(new Error("401 unauthorized")) : Promise.resolve([ENTRY]);
+    };
+    expect(await domainsOf(await getSetupStatus(req("/api/setup")))).toEqual([]);
+    expect(await domainsOf(await getSetupStatus(req("/api/setup")))).toEqual([]);
+    expect(calls).toBe(1);
+    expect(await domainsOf(await getSetupDomains(req("/api/setup/domains")))).toEqual([
+      "mail.acme.dev",
+    ]);
     expect(calls).toBe(2);
   });
 });
