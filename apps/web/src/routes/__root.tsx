@@ -1,17 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Outlet, createRootRouteWithContext, Link, useRouterState } from "@tanstack/react-router";
 import type { QueryClient } from "@tanstack/react-query";
-import {
-  Activity,
-  BarChart3,
-  Feather,
-  Inbox,
-  Layers,
-  Mail,
-  Receipt,
-  Settings,
-  UserPlus,
-} from "lucide-react";
+import { Activity, BarChart3, Feather, Inbox, Layers, Mail, Receipt, Settings } from "lucide-react";
 import { useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { Toaster } from "sonner";
 import { api } from "../api/client.ts";
@@ -35,16 +25,7 @@ export const Route = createRootRouteWithContext<RootContext>()({
 });
 
 interface NavItem {
-  to:
-    | "/"
-    | "/add-prospect"
-    | "/queue"
-    | "/inbox"
-    | "/cadences"
-    | "/receipts"
-    | "/measure"
-    | "/plays"
-    | "/setup";
+  to: "/" | "/queue" | "/inbox" | "/cadences" | "/receipts" | "/measure" | "/plays" | "/setup";
   label: string;
   icon: ComponentType<{ size?: number; className?: string }>;
   /** Which alert-data key, if any, lights a dot next to this nav item. */
@@ -53,7 +34,6 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { to: "/", label: "Today", icon: Activity },
-  { to: "/add-prospect", label: "Add Prospect", icon: UserPlus },
   { to: "/queue", label: "Queue", icon: Inbox, alert: "queue-pending" },
   { to: "/inbox", label: "Replies", icon: Mail },
   { to: "/cadences", label: "Cadences", icon: Layers },
