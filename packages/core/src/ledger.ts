@@ -227,25 +227,27 @@ export class Ledger {
     return row ? JSON.parse(row.data) : null;
   }
   saveDirectMail(draft: DirectMailDraft): void {
-    this.db.transaction(() => {
-      const previous = this.getDirectMail(draft.id);
-      if (previous && previous.revision !== draft.revision)
-        throw new Error("Mailpiece changed; refresh before retrying");
-      const next = { ...draft, revision: (draft.revision ?? 0) + 1 };
-      this.db
-        .query(
-          "INSERT INTO direct_mail_drafts(id,prospect_id,play_name,enrollment,step_index,data) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
-        )
-        .run(
-          next.id,
-          next.prospectId,
-          next.playName,
-          next.enrollment,
-          next.stepIndex,
-          JSON.stringify(next),
-        );
-      draft.revision = next.revision;
-    })();
+    this.db
+      .transaction(() => {
+        const previous = this.getDirectMail(draft.id);
+        if (previous && previous.revision !== draft.revision)
+          throw new Error("Mailpiece changed; refresh before retrying");
+        const next = { ...draft, revision: (draft.revision ?? 0) + 1 };
+        this.db
+          .query(
+            "INSERT INTO direct_mail_drafts(id,prospect_id,play_name,enrollment,step_index,data) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
+          )
+          .run(
+            next.id,
+            next.prospectId,
+            next.playName,
+            next.enrollment,
+            next.stepIndex,
+            JSON.stringify(next),
+          );
+        draft.revision = next.revision;
+      })
+      .immediate();
   }
   deleteDirectMail(id: string): void {
     this.db
@@ -258,10 +260,12 @@ export class Ledger {
     const put = this.db.query(
       "INSERT INTO direct_mail_addresses(key,address) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET address=excluded.address",
     );
-    this.db.transaction(() => {
-      put.run(`prospect:${prospect}`, JSON.stringify(to));
-      put.run("return", JSON.stringify(from));
-    })();
+    this.db
+      .transaction(() => {
+        put.run(`prospect:${prospect}`, JSON.stringify(to));
+        put.run("return", JSON.stringify(from));
+      })
+      .immediate();
   }
   getMailAddress(key: string): PostalAddress | null {
     const row = this.db.query("SELECT address FROM direct_mail_addresses WHERE key=?").get(key) as {
@@ -270,23 +274,25 @@ export class Ledger {
     return row ? JSON.parse(row.address) : null;
   }
   recordMailReceipt(receipt: string, input: Parameters<Ledger["recordReceipt"]>[0]): number {
-    return this.db.transaction(() => {
-      const previous = this.db
-        .query("SELECT local_id FROM direct_mail_receipts WHERE receipt_id=?")
-        .get(receipt) as { local_id: number } | null;
-      if (previous) {
-        if (input.signedReceipt)
-          this.db
-            .query("UPDATE receipts SET signed_receipt=? WHERE id=?")
-            .run(JSON.stringify(input.signedReceipt), previous.local_id);
-        return previous.local_id;
-      }
-      const id = this.recordReceipt(input);
-      this.db
-        .query("INSERT INTO direct_mail_receipts(receipt_id,local_id) VALUES (?,?)")
-        .run(receipt, id);
-      return id;
-    })();
+    return this.db
+      .transaction(() => {
+        const previous = this.db
+          .query("SELECT local_id FROM direct_mail_receipts WHERE receipt_id=?")
+          .get(receipt) as { local_id: number } | null;
+        if (previous) {
+          if (input.signedReceipt)
+            this.db
+              .query("UPDATE receipts SET signed_receipt=? WHERE id=?")
+              .run(JSON.stringify(input.signedReceipt), previous.local_id);
+          return previous.local_id;
+        }
+        const id = this.recordReceipt(input);
+        this.db
+          .query("INSERT INTO direct_mail_receipts(receipt_id,local_id) VALUES (?,?)")
+          .run(receipt, id);
+        return id;
+      })
+      .immediate();
   }
 
   private migrate(): void {

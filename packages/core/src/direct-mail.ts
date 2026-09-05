@@ -219,6 +219,8 @@ export async function cancelDirectMail(id: string) {
 
 /** Non-spending scheduler sweep. Fulfillment never creates another paid receipt. */
 export async function refreshPendingDirectMail() {
+  // Canceled/failed paid orders can still await an asynchronous refund; keep refreshing
+  // until refunded_at confirms it so the local financial status cannot become stale.
   const drafts = getLedger()
     .listDirectMail()
     .filter(

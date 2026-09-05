@@ -19,8 +19,13 @@ vi.mock("../src/ledger.ts", async () => {
   const actual = await vi.importActual<typeof import("../src/ledger.ts")>("../src/ledger.ts");
   return { ...actual, getLedger: () => ledger };
 });
-const { sendDirectMail, approveDirectMail, refreshDirectMail, cancelDirectMail } =
-  await import("../src/direct-mail.ts");
+const {
+  sendDirectMail,
+  approveDirectMail,
+  refreshDirectMail,
+  cancelDirectMail,
+  refreshPendingDirectMail,
+} = await import("../src/direct-mail.ts");
 const input = {
   to: {
     name: "A",
@@ -177,4 +182,23 @@ it("persists cancellation intent while acceptance is unknown and cancels on late
   expect(calls.cancel).toHaveBeenCalledWith("recovered");
   expect(result.order!.order_status).toBe("canceled");
   expect(calls.send).toHaveBeenCalledTimes(1);
+});
+
+it("continues refreshing a canceled paid order until its refund is recorded", async () => {
+  const d = ledger.getDirectMail("draft")!;
+  d.started = true;
+  d.order = {
+    order_id: "o",
+    receipt_id: "r",
+    payment_status: "settled",
+    order_status: "canceled",
+    total_usdc: "1.05",
+    events: [],
+  } as any;
+  ledger.saveDirectMail(d);
+  calls.getOrder.mockResolvedValue({ ...d.order, refunded_at: "2026-09-05T00:00:00Z" });
+  expect(await refreshPendingDirectMail()).toEqual({ refreshed: 1, failed: 0 });
+  expect(ledger.getDirectMail("draft")!.order!.refunded_at).toBeTruthy();
+  expect(await refreshPendingDirectMail()).toEqual({ refreshed: 0, failed: 0 });
+  expect(calls.getOrder).toHaveBeenCalledTimes(1);
 });

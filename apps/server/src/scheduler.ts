@@ -88,10 +88,18 @@ export function startScheduler(): SchedulerHandle {
           "warn",
         );
       }
+      let mailRefreshed = 0,
+        mailRefreshFailed = 0;
       try {
-        await refreshPendingDirectMail();
-      } catch {
-        logEvent("scheduler.direct_mail_refresh.failed", {}, "warn");
+        const mail = await refreshPendingDirectMail();
+        mailRefreshed = mail.refreshed;
+        mailRefreshFailed = mail.failed;
+      } catch (err) {
+        logEvent(
+          "scheduler.direct_mail_refresh.failed",
+          { message_120: String(err instanceof Error ? err.message : err).slice(0, 120) },
+          "warn",
+        );
       }
       // Bounce detection, isolated like the reply poll; non-spending.
       let bouncesRecorded = 0;
@@ -126,6 +134,8 @@ export function startScheduler(): SchedulerHandle {
         repliesDetected,
         autoRepliesSkipped,
         bouncesRecorded,
+        mailRefreshed,
+        mailRefreshFailed,
         source: "server",
       });
       if (cancelled) return;

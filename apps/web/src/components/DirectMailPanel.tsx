@@ -243,7 +243,9 @@ export function DirectMailPanel() {
                     )
                   }
                 >
-                  Approve this proof and {d.quote.total_usdc} USDC
+                  {d.quote.total_usdc
+                    ? `Approve this proof and ${d.quote.total_usdc} USDC`
+                    : "Awaiting proof and price"}
                 </Button>
               )}
               {d.approvalId && (

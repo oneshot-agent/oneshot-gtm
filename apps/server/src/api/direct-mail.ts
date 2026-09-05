@@ -7,6 +7,7 @@ import {
   cancelDirectMail,
 } from "@oneshot-gtm/core";
 import { sendDirectMailCadenceStep, getSequence } from "@oneshot-gtm/plays";
+import { readMailArtwork } from "./mail-artwork.ts";
 import { jsonResponse } from "../server.ts";
 export async function directMailRoute(req: Request): Promise<Response> {
   try {
@@ -28,9 +29,7 @@ export async function directMailRoute(req: Request): Promise<Response> {
         | "image/jpeg";
       if (!["application/pdf", "image/png", "image/jpeg"].includes(mime))
         return jsonResponse({ error: "Unsupported artwork format" }, 400, req);
-      const bytes = new Uint8Array(await req.arrayBuffer());
-      if (bytes.length > 20 * 1024 * 1024)
-        return jsonResponse({ error: "Artwork exceeds 20 MB" }, 400, req);
+      const bytes = await readMailArtwork(req);
       return jsonResponse(await uploadMailArtwork(bytes, mime), 200, req);
     }
     const body = (await req.json()) as any;
