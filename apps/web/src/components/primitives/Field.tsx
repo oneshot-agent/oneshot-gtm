@@ -1,5 +1,8 @@
 import { ChevronDown } from "lucide-react";
 import type { InputHTMLAttributes, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
+import { Children, cloneElement, isValidElement, useId, type ReactNode } from "react";
+import type { ConceptId } from "../../lib/concepts.ts";
+import { Explain } from "./Explain.tsx";
 import { cn } from "../../lib/cn.ts";
 import { Toggle } from "./Toggle.tsx";
 
@@ -14,6 +17,7 @@ export function Field({
   error,
   children,
   className,
+  explain,
 }: {
   /** Usually a string; a node lets a caller append a Badge ("in use"). */
   label: React.ReactNode;
@@ -21,17 +25,71 @@ export function Field({
   error?: string | null;
   children: React.ReactNode;
   className?: string;
+  explain?: ConceptId;
 }) {
+  const fieldId = useId();
+  const hintId = `${fieldId}-hint`;
+  const errorId = `${fieldId}-error`;
+  let controlId = fieldId;
+  let bound = false;
+  // Bind the first actual control, including an Input beside a helper button.
+  // Keep interactive help outside the label and retain explicit control ids.
+  function bind(nodes: ReactNode): ReactNode {
+    return Children.map(nodes, (child) => {
+      if (
+        !isValidElement<{
+          id?: string;
+          children?: ReactNode;
+          "aria-describedby"?: string;
+          "aria-invalid"?: boolean | "true" | "false" | "grammar" | "spelling";
+        }>(child)
+      )
+        return child;
+      const control =
+        child.type === Input ||
+        child.type === Select ||
+        child.type === Textarea ||
+        child.type === "input" ||
+        child.type === "select" ||
+        child.type === "textarea";
+      if (control && !bound) {
+        bound = true;
+        controlId = child.props.id ?? fieldId;
+        return cloneElement(child, {
+          id: controlId,
+          "aria-describedby":
+            [child.props["aria-describedby"], hint && hintId, error && errorId]
+              .filter(Boolean)
+              .join(" ") || undefined,
+          "aria-invalid": error ? true : child.props["aria-invalid"],
+        });
+      }
+      return child.props.children && child.type !== Field
+        ? cloneElement(child, { children: bind(child.props.children) })
+        : child;
+    });
+  }
+  const controls = bind(children);
   return (
-    <label className={cn("flex flex-col gap-1.5", className)}>
-      <span className="ln-eyebrow">{label}</span>
-      {children}
-      {error ? (
-        <span className="font-mono text-[11.5px] text-[color:var(--ink-blocked-2)]">{error}</span>
-      ) : hint ? (
-        <span className="text-[12px] text-ink-faint">{hint}</span>
-      ) : null}
-    </label>
+    <div className={cn("flex flex-col gap-1.5", className)}>
+      <div className="flex items-center gap-1">
+        <label htmlFor={controlId} className="ln-eyebrow">
+          {label}
+        </label>
+        {explain && <Explain concept={explain} />}
+      </div>
+      {controls}
+      {error && (
+        <span id={errorId} className="font-mono text-[11.5px] text-[color:var(--ink-blocked-2)]">
+          {error}
+        </span>
+      )}
+      {hint && (
+        <span id={hintId} className="text-[12px] text-ink-faint">
+          {hint}
+        </span>
+      )}
+    </div>
   );
 }
 

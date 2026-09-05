@@ -167,6 +167,8 @@ describe("seedDemoHome", { timeout: SEED_TIMEOUT_MS }, () => {
     expect(Number(orphan[0]?.["n"])).toBe(0);
   });
 
+  // Both tests below seed two disk-backed ledgers. CI takes ~6s for two seeds,
+  // above Vitest's default 5s; leave room for runner I/O without changing assertions.
   it("is deterministic — the same anchor reproduces the same ledger", () => {
     const a = seedDemoHome({ home, anchor: ANCHOR });
     const db1 = open(home);
@@ -180,7 +182,7 @@ describe("seedDemoHome", { timeout: SEED_TIMEOUT_MS }, () => {
 
     expect(after).toBe(before);
     expect(b.counts).toEqual(a.counts);
-  });
+  }, 15_000);
 
   it("re-seeds in place without stacking duplicate rows", () => {
     const first = seedDemoHome({ home, anchor: ANCHOR });
@@ -191,7 +193,7 @@ describe("seedDemoHome", { timeout: SEED_TIMEOUT_MS }, () => {
     const n = rows(db, "SELECT COUNT(*) n FROM prospects");
     db.close();
     expect(Number(n[0]?.["n"])).toBe(first.counts["prospects"]);
-  });
+  }, 15_000);
 
   it("refuses to seed into the real install", () => {
     const real = join(homedir(), ".oneshot-gtm");

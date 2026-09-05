@@ -1,3 +1,4 @@
+import { Explain } from "../components/primitives/Explain.tsx";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, CheckCircle2, Loader2, Play, Plus, RefreshCw, Trash2, X } from "lucide-react";
@@ -496,6 +497,7 @@ function RunPage() {
             {runRecord.targetCount} drafted before the kill. Click <em>Run again</em> below to
             re-fire the remaining targets — already-sent emails won't fire twice (per-prospect
             step-0 dedupe).
+            <Explain concept="dedupe" />
           </div>
         )}
         {mode === "cancelled" && runRecord && (

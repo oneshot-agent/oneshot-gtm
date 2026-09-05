@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowRight } from "lucide-react";
+import { Explain } from "../primitives/Explain.tsx";
 import { api } from "../../api/client.ts";
 import { Button } from "../primitives/Button.tsx";
 import { useLocalStorage } from "../../lib/useLocalStorage.ts";
@@ -91,6 +92,9 @@ export function NextStep() {
             }}
           >
             {step.title}
+            {step.id !== "strategy" && (
+              <Explain concept={step.id === "send" ? "drain" : "icpGate"} />
+            )}
           </h2>
           <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-ink-cream-2">{step.lede}</p>
         </div>
