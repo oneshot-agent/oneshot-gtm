@@ -45,6 +45,7 @@ const BASE: OneShotConfig = {
   productBrief: null,
   mobileSignature: false,
   timezone: null,
+  slackWebhookUrl: null,
   clientId: null,
   dailySpendCeilingUsd: null,
 };

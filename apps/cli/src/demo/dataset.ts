@@ -1613,6 +1613,7 @@ function buildConfig(): Record<string, unknown> {
       "https://tracepoint.dev/docs/pricing",
     ].join("\n"),
     mobileSignature: false,
+    slackWebhookUrl: null,
     clientId: "demo-00000000-0000-4000-8000-000000000000",
   };
 }

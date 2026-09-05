@@ -19,6 +19,7 @@ import {
   type ProspectRecord,
   describeTouch,
   recentTouchElsewhere,
+  notifySlackBounceRecorded,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import {
@@ -501,6 +502,13 @@ export async function pollInboxBounces(): Promise<BouncePollResult> {
     // and event log from repeating forever.
     if (!isNew) continue;
     out.recorded++;
+
+    // Slack notification: fire-and-forget, never blocks the poll.
+    void notifySlackBounceRecorded({
+      recipient: b.recipient,
+      kind: b.kind,
+      status_code: b.statusCode ?? null,
+    });
 
     // Soft = transient (mailbox full, greylisted). Stored for context, but it
     // says nothing durable about the address or our reputation.
