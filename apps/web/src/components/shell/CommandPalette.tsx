@@ -15,6 +15,7 @@ import {
   Play,
   Receipt,
   Settings,
+  UserPlus,
 } from "lucide-react";
 import { useEffect } from "react";
 import { toast } from "sonner";
@@ -23,7 +24,15 @@ import { openWorkspace } from "../../lib/openWorkspace.ts";
 import { usePrivacy } from "../../lib/privacy.tsx";
 import { READ_ONLY } from "../../lib/readOnly.ts";
 
-type NavTarget = "/" | "/queue" | "/cadences" | "/receipts" | "/measure" | "/plays" | "/setup";
+type NavTarget =
+  | "/"
+  | "/queue"
+  | "/cadences"
+  | "/receipts"
+  | "/measure"
+  | "/plays"
+  | "/add-prospect"
+  | "/setup";
 
 /**
  * ⌘K palette — bottom-docked. cmdk handles fuzzy search + keyboard nav;
@@ -127,6 +136,9 @@ export function CommandPalette({
           </Command.Item>
           <Command.Item value="plays catalogue motion" onSelect={go("/plays")}>
             <Feather size={14} /> Plays <kbd className="ml-auto">g p</kbd>
+          </Command.Item>
+          <Command.Item value="add prospect profile url linkedin" onSelect={go("/add-prospect")}>
+            <UserPlus size={14} /> Add prospect
           </Command.Item>
           <Command.Item value="setup config founder profile" onSelect={go("/setup")}>
             <Settings size={14} /> Setup <kbd className="ml-auto">g s</kbd>

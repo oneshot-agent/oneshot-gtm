@@ -13,6 +13,7 @@ import {
   RotateCw,
   Send,
   Target,
+  UserPlus,
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -31,6 +32,7 @@ import { Button } from "../components/primitives/Button.tsx";
 import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
 import { Field, Input, Textarea } from "../components/primitives/Field.tsx";
 import { Modal } from "../components/primitives/Modal.tsx";
+import { AddProspectForm } from "../components/queue/AddProspectForm.tsx";
 import { Pii } from "../components/primitives/Pii.tsx";
 import { useMask, usePrivacy } from "../lib/privacy.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
@@ -150,6 +152,7 @@ function QueuePage() {
   const [rejectModal, setRejectModal] = useState<RejectModalState | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [drainModal, setDrainModal] = useState<DrainModalState | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
   const [drainLimit, setDrainLimit] = useState(10);
   const [drainSenderCohort, setDrainSenderCohort] = useState("");
   const [drainOffer, setDrainOffer] = useState("");
@@ -370,7 +373,15 @@ function QueuePage() {
             </div>
             {rows.length > 0 && <SignalStrip rows={rows} ranked={effectiveOrder === "ranked"} />}
           </div>
-          <div className="font-mono text-[11px] text-ink-faint">refresh · 20s</div>
+          <div className="flex items-center gap-3">
+            {/* The one manual way a row gets here, next to the rows it makes.
+                It used to be the second item in the sidebar, which gave an
+                occasional act more prominence than the daily review. */}
+            <Button variant="ghost" size="sm" onClick={() => setAddOpen(true)} {...readOnly}>
+              <UserPlus size={13} /> Add prospect
+            </Button>
+            <div className="font-mono text-[11px] text-ink-faint">refresh · 20s</div>
+          </div>
         </div>
 
         {/*
@@ -609,6 +620,15 @@ function QueuePage() {
           </div>
         </div>
       )}
+
+      <Modal
+        open={addOpen}
+        title="Add a prospect"
+        subtitle="Paste a profile. We research the person, pick the angle against your ICP, and draft an intro for review here."
+        onClose={() => setAddOpen(false)}
+      >
+        <AddProspectForm onQueued={() => setAddOpen(false)} />
+      </Modal>
 
       <Modal
         open={rejectModal != null}
@@ -2281,7 +2301,7 @@ function EmptyQueueHelp({ filterActive }: { filterActive: boolean }) {
   return (
     <div className="p-5">
       <EmptyNote
-        note="No targets yet. Pick a finder from the Triggers panel and run it — candidates land here for review before any send."
+        note="No targets yet. Run a finder from the Triggers panel above, or add one prospect by hand — either way candidates land here for review before any send."
         cli="oneshot-gtm find watch"
       />
     </div>
