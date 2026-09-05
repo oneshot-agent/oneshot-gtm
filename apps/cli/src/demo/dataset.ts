@@ -925,6 +925,45 @@ const GEN_PLAYS: Array<{
   },
 ];
 
+/**
+ * How the finders actually distribute, rather than evenly.
+ *
+ * Picking a play with `i % GEN_PLAYS.length` gives all eight identical volume,
+ * and Measure then prints eight rows carrying the same spend to the cent, which
+ * reads as a fixture the moment anyone looks down the column. Only two finders
+ * run out of the box, so those two dominate; the rest trail off by how much
+ * config they need before they will fire at all.
+ *
+ * Twenty-three entries because it is prime: the day of first touch is drawn
+ * with `i % 27` and the step count with `i / 27`, and a weight table sharing a
+ * factor with either would tie a play to a day or to a cadence length.
+ */
+const PLAY_WEIGHTS: number[] = [
+  0,
+  0,
+  0,
+  0,
+  0,
+  0, // show-hn
+  1,
+  1,
+  1,
+  1,
+  1, // post-funding
+  2,
+  2,
+  2, // hiring-signal
+  6,
+  6,
+  6, // repo-interest
+  3,
+  3, // job-change
+  7,
+  7, // luma-events
+  5, // podcast-guest
+  4, // competitor-switch
+];
+
 /** How many prospects the install has found in total, hand-written cast included. */
 const PROSPECT_TOTAL = 15_000;
 
@@ -997,15 +1036,31 @@ function generatedOutcome(i: number, company: string, daysAgo: number): DemoPers
   return undefined;
 }
 
-/** Index → a distinct (company, first, last) triple. Injective while i < C×F×L. */
+/**
+ * Index → a distinct (first, last, company) triple.
+ *
+ * Plain mixed radix is injective but reads terribly: whichever field lands on
+ * the slowest digit changes only every FIRST × LAST rows, so the Receipts page
+ * shows nine thousand consecutive people sharing a surname. Multiplying by a
+ * stride coprime with the radix is still a bijection over the whole space —
+ * every index maps to its own triple — but it scatters consecutive rows across
+ * that space, so adjacent receipts differ in all three fields.
+ *
+ * 774,400 = 80 × 80 × 121 = 2^8 · 5^2 · 11^2. 7919 is prime and none of 2, 5
+ * or 11 divides it, so it is coprime to the modulus and the map is one-to-one.
+ */
+const NAME_SPACE = FIRST_NAMES.length * LAST_NAMES.length * COMPANIES.length;
+const NAME_STRIDE = 7919;
+
 function generatedIdentity(i: number): {
   first: string;
   last: string;
   company: { name: string; domain: string };
 } {
-  const c = i % COMPANIES.length;
-  const f = Math.floor(i / COMPANIES.length) % FIRST_NAMES.length;
-  const l = Math.floor(i / (COMPANIES.length * FIRST_NAMES.length)) % LAST_NAMES.length;
+  const j = (i * NAME_STRIDE) % NAME_SPACE;
+  const f = j % FIRST_NAMES.length;
+  const l = Math.floor(j / FIRST_NAMES.length) % LAST_NAMES.length;
+  const c = Math.floor(j / (FIRST_NAMES.length * LAST_NAMES.length)) % COMPANIES.length;
   return {
     first: FIRST_NAMES[f] as string,
     last: LAST_NAMES[l] as string,
@@ -1025,7 +1080,9 @@ function buildGeneratedPeople(count: number): DemoPerson[] {
   const out: DemoPerson[] = [];
   for (let i = 0; i < count; i++) {
     const { first, last, company } = generatedIdentity(i);
-    const spec = GEN_PLAYS[i % GEN_PLAYS.length] as (typeof GEN_PLAYS)[number];
+    const spec = GEN_PLAYS[
+      PLAY_WEIGHTS[i % PLAY_WEIGHTS.length] ?? 0
+    ] as (typeof GEN_PLAYS)[number];
     const sequenced = i < SEQUENCED_TOTAL;
     // Spread across the window, newest first, so the hand-written cast keeps
     // the top of every list and the generated rows fill the depth behind it.
@@ -1375,7 +1432,17 @@ export function buildDemoDataset(anchor: Date): DemoDataset {
         valueTag,
         valueTaggedAt,
         goalId,
-        createdAt: sqlAt(anchor, p.daysAgo, 8, jitter(i * 4 + k)),
+        // Spread across the working day rather than stacked on one hour. Prep
+        // landed at 08:00 and every send at 09:00, so within a day the sends
+        // sorted above all of it and the Receipts page opened on a wall of
+        // identical $0.0040 rows — the cheapest call in the table standing in
+        // for the whole ledger.
+        //
+        // The stride has to be coprime with the number of hours or the call
+        // types stay stacked: `i * 4 + k` against 14 shares a factor of two, so
+        // each hour drew from only some of the five prep calls and the top of
+        // the list was still eighty per cent two call types.
+        createdAt: sqlAt(anchor, p.daysAgo, 6 + ((i * 5 + k * 3) % 14), jitter(i * 4 + k)),
       });
     });
 
@@ -1408,7 +1475,7 @@ export function buildDemoDataset(anchor: Date): DemoDataset {
         valueTag,
         valueTaggedAt,
         goalId,
-        createdAt: sqlAt(anchor, stepDaysAgo, 9, jitter(i * 3 + step)),
+        createdAt: sqlAt(anchor, stepDaysAgo, 6 + ((i * 5 + step * 3) % 14), jitter(i * 3 + step)),
       });
 
       sequenceEvents.push({
@@ -1428,7 +1495,7 @@ export function buildDemoDataset(anchor: Date): DemoDataset {
           senderIdentity: p.identity,
         }),
         receiptId: sendReceiptId,
-        createdAt: sqlAt(anchor, stepDaysAgo, 9, jitter(i * 3 + step)),
+        createdAt: sqlAt(anchor, stepDaysAgo, 6 + ((i * 5 + step * 3) % 14), jitter(i * 3 + step)),
       });
     }
 
@@ -1499,7 +1566,10 @@ export function buildDemoDataset(anchor: Date): DemoDataset {
       "inbox.json": buildInboxFixture(anchor),
       "rocs-by-goal.json": buildRocsFixture(receipts, anchor),
       "domains.json": buildDomainsFixture(anchor),
-      "balance.json": { balance: "41.86 USDC", raw: "41.86 USDC" },
+      // What is left of a $3,000 top-up after this ledger's spend. A wallet
+      // holding $41.86 could not have paid for $2,002.27 of calls, and the
+      // Today page prints both.
+      "balance.json": { balance: "997.73 USDC", raw: "997.73 USDC" },
     },
   };
 }
