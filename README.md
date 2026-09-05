@@ -236,14 +236,17 @@ On a headless box, also run `loginctl enable-linger $USER` once so the user unit
 **Windows (Task Scheduler).** There's no user-service template; schedule the cron-style `find watch --once` instead, which runs all due triggers and exits:
 
 ```powershell
-schtasks /Create /TN "oneshot-gtm find watch" /SC MINUTE /MO 15 `
-  /TR "\"C:\Users\you\.bun\bin\bun.exe\" \"C:\path\to\oneshot-gtm\apps\cli\src\main.ts\" find watch --once --quiet"
+$watchAction = New-ScheduledTaskAction -Execute 'C:\Users\you\.bun\bin\bun.exe' `
+  -Argument '"C:\path\to\oneshot-gtm\apps\cli\src\main.ts" find watch --once --quiet'
+$watchTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
+  -RepetitionInterval (New-TimeSpan -Minutes 15)
+Register-ScheduledTask -TaskName 'oneshot-gtm find watch' -Action $watchAction -Trigger $watchTrigger
 
 # uninstall
-schtasks /Delete /TN "oneshot-gtm find watch" /F
+Unregister-ScheduledTask -TaskName 'oneshot-gtm find watch' -Confirm:$false
 ```
 
-The classic cron route works the same way on any platform: `*/15 * * * * ONESHOT_GTM_HOME=$HOME/.oneshot-gtm /path/to/bun /path/to/apps/cli/src/main.ts find watch --once --quiet`.
+The classic cron route works on POSIX hosts; Windows users should use Task Scheduler: `*/15 * * * * ONESHOT_GTM_HOME=$HOME/.oneshot-gtm /path/to/bun /path/to/apps/cli/src/main.ts find watch --once --quiet`.
 
 **Exit codes for scheduled runs.** `find watch --once` exits `1` when a due trigger errored. Add `--fail-on-empty` and a run that worked but produced nothing exits `2` instead of `0`, with one line on stderr naming the triggers and the zero count — enough for a cron wrapper to tell a dry run from a productive one without reading the ledger. `find drain <play>` takes the same flag. Both are opt-in: without it, exit codes are exactly what they were.
 
