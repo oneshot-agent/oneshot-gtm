@@ -1,3 +1,4 @@
+import { directMailRoute } from "./api/direct-mail.ts";
 import { existsSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -80,6 +81,8 @@ function route(method: string, pattern: string, handler: RouteHandler): RouteEnt
 }
 
 const routes: RouteEntry[] = [
+  route("GET", "/api/direct-mail", directMailRoute),
+  route("POST", "/api/direct-mail/:action", directMailRoute),
   route("GET", "/api/health", health),
   route("GET", "/api/home", homeMetrics),
   route("GET", "/api/cadences", listCadences),

@@ -460,6 +460,12 @@ describe("identities list --json", () => {
   ]);
 
   const ACTIVE_DOMAIN: DomainPoolEntry = {
+    default_from: "agent@example.com",
+    addresses: [],
+    mailbox_mode: "relay",
+    warmup_state: "warming",
+    pause_reason: null,
+    warmup_score_updated_at: null,
     domain: "tracepoint.email",
     pool_status: "active",
     provisioning_status: "provisioned",
@@ -471,8 +477,14 @@ describe("identities list --json", () => {
     last_used_at: "2026-08-29T09:12:00.000Z",
   };
   const WARMING_DOMAIN: DomainPoolEntry = {
+    default_from: "agent@example.com",
+    addresses: [],
+    mailbox_mode: "relay",
+    warmup_state: "warming",
+    pause_reason: null,
+    warmup_score_updated_at: null,
     domain: "trace-mail.dev",
-    pool_status: "warming",
+    pool_status: "active",
     provisioning_status: "provisioned",
     warmup_score: null,
     warmup_started_at: null,
@@ -569,7 +581,7 @@ describe("identities list --json", () => {
     });
     expect(parsed.domains[1]).toMatchObject({
       domain: "trace-mail.dev",
-      poolStatus: "warming",
+      poolStatus: "active",
       warmupScore: null,
       dailySent: 2,
       dailyLimit: 20,
@@ -579,6 +591,12 @@ describe("identities list --json", () => {
 
 describe("domains list --json", () => {
   const ACTIVE_DOMAIN: DomainPoolEntry = {
+    default_from: "agent@example.com",
+    addresses: [],
+    mailbox_mode: "relay",
+    warmup_state: "warming",
+    pause_reason: null,
+    warmup_score_updated_at: null,
     domain: "tracepoint.email",
     pool_status: "active",
     provisioning_status: "provisioned",
@@ -590,6 +608,12 @@ describe("domains list --json", () => {
     last_used_at: "2026-08-29T09:12:00.000Z",
   };
   const PAUSED_DOMAIN: DomainPoolEntry = {
+    default_from: "agent@example.com",
+    addresses: [],
+    mailbox_mode: "relay",
+    warmup_state: "warming",
+    pause_reason: null,
+    warmup_score_updated_at: null,
     domain: "trace-mail.dev",
     pool_status: "paused",
     provisioning_status: "provisioned",

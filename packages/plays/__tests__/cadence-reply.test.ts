@@ -71,6 +71,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       };
     },
     getLedger: () => ({
+      findDirectMail: () => null,
       listAllCadences: () => rows,
       listActiveCadences: ({ dueByIso }: { dueByIso: string }) =>
         rows.filter(

@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { registerDirectMailCommand } from "./commands/direct-mail.ts";
 import { Command } from "commander";
 import {
   readPackageVersion,
@@ -89,6 +90,7 @@ import {
 const CLI_VERSION = readPackageVersion(import.meta.url);
 
 const program = new Command();
+registerDirectMailCommand(program);
 program
   .name("oneshot-gtm")
   .description(

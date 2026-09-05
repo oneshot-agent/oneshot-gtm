@@ -82,18 +82,19 @@ bun run cli -- find drain podcast-guest --dry-run  # preview approved /queue row
 bun run cli -- cadence advance                     # daily tick: poll inbox, fire follow-ups
 ```
 
-58 commands — fourteen groups, plus `init`, `doctor` and `ui` at the top level. `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
+65 commands — fifteen groups, plus `init`, `doctor` and `ui` at the top level. `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
 
 | Group                    | Commands                                                                                                                                                                                                                                                                                            |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `init` · `doctor` · `ui` | setup wizard · health check · open the dashboard                                                                                                                                                                                                                                                    |
+| `direct-mail`            | `list` · `upload` · `preview` · `refresh` · `approve` · `send` · `cancel` — individual physical-mail approvals                                                                                                                                                                                      |
 | `config`                 | `llm` · `founder` · `keys` · `telemetry on\|off` · `x-engine [engine]` · `spend-ceiling [amount\|off]`                                                                                                                                                                                              |
 | `gmail`                  | `auth` (OAuth a sending account) · `placement` (inbox-placement canary)                                                                                                                                                                                                                             |
 | `identities`             | `list` · `add` · `remove <id>` — the sender pool                                                                                                                                                                                                                                                    |
 | `smartlead`              | `connect` — API key + pick Smartlead mailboxes into the pool (send-only)                                                                                                                                                                                                                            |
 | `domains`                | `list` · `pause <domain>` · `resume <domain>` — provisioned OneShot domains                                                                                                                                                                                                                         |
 | `find`                   | `watch` · `drain <play>` · `import --csv <file> --play <name>` · `enrich-linkedin` · `research-prospects` · `research-products` · `score-prospects` · `calibrate` — `--fail-on-empty` makes `watch --once` and `drain` [exit 2 on a run that produced nothing](#background-monitoring-as-a-service) |
-| `motion`                 | `post-funding` `concierge` `demo-no-show` `competitor-switch` `hiring-signal` `podcast-guest` — each takes `--target <file>`; `breakup-revive` reads the ledger                                                                                                                                     |
+| `motion`                 | `post-funding` `concierge` `demo-no-show` `competitor-switch` `hiring-signal` `podcast-guest` `discovery-interview` `free-pilot` — each takes `--target <file>`; `breakup-revive` reads the ledger                                                                                                  |
 | `cadence`                | `advance` — poll inbound, fire due steps                                                                                                                                                                                                                                                            |
 | `discover`               | `icp interview-prep` · `icp synthesize` · `pmf classify` · `pmf survey` · `pmf survey-collect`                                                                                                                                                                                                      |
 | `measure`                | `benchmark` — compare this install's command activity with the opt-in telemetry cohort; supports `--json`                                                                                                                                                                                           |
@@ -207,14 +208,14 @@ The dashboard server runs an in-process scheduler, so enabling a trigger is enou
 
 Enrichment, verification and local lookups resolve through OneShot, which maintains a vendor landscape of 50 data sources across six categories. Which source answers a given lookup is chosen per call, so what follows is coverage rather than a list of integrations — a map of who operates in each space, not a claim about what is wired up today.
 
-| Category                      | Sources | Examples                                    |
-| ----------------------------- | ------- | ------------------------------------------- |
-| Contact enrichment            | 13      | Apollo, Clay, Hunter, People Data Labs      |
-| Company & firmographic data   | 7       | Diffbot, Coresignal, PredictLeads           |
-| Email verification            | 6       | ZeroBounce, NeverBounce, Kickbox            |
-| Maps, places & local data     | 6       | Serper, Foursquare, Outscraper              |
-| Browser automation & scraping | 10      | Browserbase, Apify, Bright Data             |
-| Social distribution & data    | 8       | Unipile, TwitterAPI.io, Lix                 |
+| Category                      | Sources | Examples                               |
+| ----------------------------- | ------- | -------------------------------------- |
+| Contact enrichment            | 13      | Apollo, Clay, Hunter, People Data Labs |
+| Company & firmographic data   | 7       | Diffbot, Coresignal, PredictLeads      |
+| Email verification            | 6       | ZeroBounce, NeverBounce, Kickbox       |
+| Maps, places & local data     | 6       | Serper, Foursquare, Outscraper         |
+| Browser automation & scraping | 10      | Browserbase, Apify, Bright Data        |
+| Social distribution & data    | 8       | Unipile, TwitterAPI.io, Lix            |
 
 The other eight categories in the catalogue are things an agent does rather than knows — voice, speech, media, e-signature, mail, shipping, domains, deliverability — and account for the remaining 66 vendors. [The full catalogue](https://docs.oneshotagent.com/vendors).
 
@@ -380,7 +381,7 @@ Successful responses include `duplicate`, `prospectId`, `cadencesStopped`, and `
 
 ```
 apps/
-  cli/        58-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
+  cli/        65-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
   server/     Bun.serve + SSE; tsdown bundle published as `oneshot-gtm-server`
   web/        Vite + React 19 + TanStack + Base UI — 9 pages, run form, strategist dock, privacy mode
 packages/
@@ -471,3 +472,9 @@ Read every prompt. Fork every play. We expect you to.
 
 Built by [free.butter](https://freebutter.com) — the lead infrastructure behind this
 is the same pipeline that runs there.
+
+### Direct mail
+
+Cadences → **Direct mail** supports individually approved U.S. letters and 4×6 postcards. Upload print-ready artwork, enter recipient and workspace return addresses, review the proof and price, then approve and send. Each draft replaces one prospect's next cadence step; batch sending cannot bypass individual approval. The dashboard and `direct-mail` CLI support recovery, postal status and cancellation. Payment, fulfillment and reimbursement remain separate, and delivery never proves readership. Lob credentials and verified webhooks are managed by the OneShot server.
+
+For this integration branch, both core and the server use the SDK archive in `vendor/`; see its README for the coordinated SDK/GTM release step.

@@ -32,6 +32,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       dailySpendCeilingUsd: null,
     }),
     getLedger: () => ({
+      findDirectMail: () => null,
       // Opener-frequency cap: no send history in these fakes, so nothing is worn out.
       recentSentEmailBodies: () => [],
       getCadence: () => ({ current_step: 0, status: "active" }),

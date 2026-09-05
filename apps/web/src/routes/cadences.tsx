@@ -1,3 +1,4 @@
+import { DirectMailPanel } from "../components/DirectMailPanel.tsx";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import {
@@ -361,6 +362,7 @@ function CadencesPage() {
 
   return (
     <div className="-mx-6 -my-6 flex flex-col">
+      <DirectMailPanel />
       <section className="flex items-end justify-between gap-4 border-b border-ink-rule px-6 pb-5 pt-6">
         <div>
           <div className="ln-eyebrow">The Ledger · Cadences</div>

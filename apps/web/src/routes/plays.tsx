@@ -19,6 +19,7 @@ export const Route = createFileRoute("/plays")({
 
 const CHANNEL_ICON = {
   email: Mail,
+  direct_mail: Mail,
   sms: MessageSquare,
   voice: Phone,
   linkedin: MessageSquare,

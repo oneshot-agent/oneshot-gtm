@@ -169,7 +169,7 @@ async function initAgent(): Promise<OneShot> {
   return await OneShot.create({ cdp: true });
 }
 
-async function getAgent(): Promise<OneShot> {
+export async function getAgent(): Promise<OneShot> {
   if (!agentSingleton) agentSingleton = await initAgent();
   return agentSingleton;
 }
