@@ -203,6 +203,21 @@ Two ICP gates run per candidate, not one. The **topic gate** judges the source �
 
 The dashboard server runs an in-process scheduler, so enabling a trigger is enough — no separate daemon. `find watch` stays useful for cron and headless boxes. Approved rows ship via the **Drain** button or `find drain <play>`.
 
+### The data underneath
+
+Enrichment, verification and local lookups resolve through OneShot, which maintains a vendor landscape of 50 data sources across six categories. Which source answers a given lookup is chosen per call, so what follows is coverage rather than a list of integrations — a map of who operates in each space, not a claim about what is wired up today.
+
+| Category                      | Sources | Examples                                    |
+| ----------------------------- | ------- | ------------------------------------------- |
+| Contact enrichment            | 13      | Apollo, Clay, Hunter, People Data Labs      |
+| Company & firmographic data   | 7       | Diffbot, Coresignal, PredictLeads           |
+| Email verification            | 6       | ZeroBounce, NeverBounce, Kickbox            |
+| Maps, places & local data     | 6       | Serper, Foursquare, Outscraper              |
+| Browser automation & scraping | 10      | Browserbase, Apify, Bright Data             |
+| Social distribution & data    | 8       | Unipile, TwitterAPI.io, Lix                 |
+
+The other eight categories in the catalogue are things an agent does rather than knows — voice, speech, media, e-signature, mail, shipping, domains, deliverability — and account for the remaining 66 vendors. [The full catalogue](https://docs.oneshotagent.com/vendors).
+
 ### Background monitoring as a service
 
 `find watch --install-service` generates a service file that keeps the watch daemon running in the background — a launchd user agent on macOS, a systemd user unit on Linux. It prints to stdout (redirect-friendly); add `--write` to drop it at the platform-conventional path. Every path is embedded absolute at generation time — the bun binary, the CLI entry, and the active `ONESHOT_GTM_HOME` (so `--workspace acme find watch --install-service` pins the service to that workspace) — because service managers don't source your shell profile. Regenerate with `--write` after moving bun or the checkout.
