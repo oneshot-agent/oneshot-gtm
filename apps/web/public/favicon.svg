@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="oneshot-gtm">
+  <title>oneshot-gtm</title>
+  <!-- Tab icon. Full-bleed and coarser than icon.svg: a 16px render cannot spare the margin, and finer teeth vanish. Hex, not oklch: librsvg renders oklch() as black. -->
+  <rect x="0" y="0" width="512" height="512" rx="114.2" fill="#120f0c"/>
+  <g transform="translate(0 92)">
+    <path fill="#f5f1ea" d="M128,20 A20,20 0 0 1 148,0 H364 A20,20 0 0 1 384,20 V267 L341.333,329 L298.667,267 L256,329 L213.333,267 L170.667,329 L128,267 Z"/>
+    <rect x="161" y="57" width="171" height="38" rx="19" fill="#2e241f"/>
+    <rect x="161" y="127" width="114" height="38" rx="19" fill="#8d847d"/>
+    <rect x="161" y="197" width="84" height="38" rx="19" fill="#47b777"/>
+  </g>
+</svg>

@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { configDir, demoMode, scrubDemoPaths } from "@oneshot-gtm/core";
@@ -174,21 +174,46 @@ function getStaticDir(): string | null {
   return null;
 }
 
-async function serveStatic(staticDir: string, pathname: string): Promise<Response | null> {
+const notFound = (): Response =>
+  new Response("not found", { status: 404, headers: { "content-type": "text/plain" } });
+
+/**
+ * Vite content-hashes everything under assets/, so those are immutable. Nothing
+ * else is: index.html must never be cached, or a `bunx oneshot-gtm-server`
+ * upgrade serves a stale document pointing at deleted chunks — a white screen
+ * that a reload does not fix. The brand files in public/ are unhashed too, so
+ * they land in the same revalidate bucket, which is what we want the first time
+ * an icon changes.
+ */
+function cacheHeaders(rel: string): Record<string, string> {
+  return rel.startsWith("assets/")
+    ? { "cache-control": "public, max-age=31536000, immutable" }
+    : { "cache-control": "no-cache" };
+}
+
+/** Exported for tests — CI never runs the web build, so this is the only cover it gets. */
+export async function serveStatic(staticDir: string, pathname: string): Promise<Response> {
   const root = resolve(staticDir);
   const rel = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
   const candidate = resolve(root, rel);
   // Reject anything that escapes the static dir. `resolve` collapses `..`
   // segments so the prefix check catches both raw `..` and encoded variants.
-  if (candidate !== root && !candidate.startsWith(`${root}/`)) return null;
-  if (existsSync(candidate)) {
-    return new Response(Bun.file(candidate));
+  if (candidate !== root && !candidate.startsWith(`${root}/`)) return notFound();
+  // isFile, not exists: a directory passes existsSync and then Bun.file() fails
+  // mid-stream with EISDIR instead of returning a status.
+  if (statSync(candidate, { throwIfNoEntry: false })?.isFile()) {
+    return new Response(Bun.file(candidate), { headers: cacheHeaders(rel) });
   }
   // SPA fallback: serve index.html for non-asset paths (paths without a dot).
   if (!rel.includes(".")) {
-    return new Response(Bun.file(join(root, "index.html")));
+    return new Response(Bun.file(join(root, "index.html")), {
+      headers: cacheHeaders("index.html"),
+    });
   }
-  return null;
+  // A missing asset used to fall through to the 200 text/plain "server running"
+  // body below, which the browser then tried to decode AS the asset — a missing
+  // icon looked like a corrupt one, with no status to explain it.
+  return notFound();
 }
 
 export function buildFetchHandler(): (req: Request) => Promise<Response> | Response {
@@ -245,11 +270,10 @@ export function buildFetchHandler(): (req: Request) => Promise<Response> | Respo
       return Response.redirect(`${viteDevUrl}${url.pathname}${url.search}`, 302);
     }
 
-    // Static / SPA serving (production / built dashboard).
-    if (staticDir) {
-      const r = await serveStatic(staticDir, url.pathname);
-      if (r) return r;
-    }
+    // Static / SPA serving (production / built dashboard). getStaticDir only
+    // returns a dir that contains index.html, so the message below stays
+    // reachable for its one real case: no build on disk at all.
+    if (staticDir) return await serveStatic(staticDir, url.pathname);
 
     return new Response(
       "oneshot-gtm server running. Build the web app to see the dashboard, or set VITE_DEV_SERVER_URL.",

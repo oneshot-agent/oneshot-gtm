@@ -1,0 +1,4 @@
+# The brand rasters are the repo's only binaries. Git detects that on its own,
+# but saying so keeps review tools from trying to diff them.
+*.png binary
+*.png -diff

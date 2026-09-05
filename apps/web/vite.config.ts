@@ -2,6 +2,7 @@ import { TanStackRouterVite } from "@tanstack/router-plugin/vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig, type Plugin } from "vite";
+import { NOSCRIPT_HTML, transformDemoHead } from "./vite-plugins/demo-head.ts";
 
 /**
  * `--mode demo` builds the vendored copy that oneshot-gtm.com serves at /demo.
@@ -68,62 +69,23 @@ export default defineConfig(({ mode }) => {
 });
 
 /**
- * The head for the vendored build.
+ * Vite wrapper around apps/web/vite-plugins/demo-head.ts.
  *
- * index.html is the only thing a crawler or a link unfurler ever sees at
- * /demo, since everything below it is rendered client side. `noindex` is
- * deliberate: the demo has no crawlable content and would otherwise compete
- * with the pages that do.
+ * The head block is swapped by marker, and the noscript block goes in through
+ * vite's tags API — so nothing here anchors on a literal <title> or
+ * <div id="root"></div> that a casual edit to index.html would silently break.
  */
 function demoHead(): Plugin {
-  const TITLE = "The dashboard, clickable — oneshot-gtm";
-  const DESCRIPTION =
-    "Click through the real oneshot-gtm dashboard over a seeded ledger: signed receipts, CAC per play, and the gates that refuse to scale a broken motion.";
-
   return {
     name: "oneshot-gtm-demo-head",
     transformIndexHtml(html) {
-      return html
-        .replace(
-          '<div id="root"></div>',
-          // The demo is a client-rendered app, so with scripting off there is
-          // nothing to render and nothing to fix. Say so, and point back at
-          // the page, which needs no JavaScript to be read.
-          [
-            '<div id="root"></div>',
-            "<noscript>",
-            '  <div style="font-family:system-ui,sans-serif;color:#e8e3d9;background:#14120f;',
-            "              min-height:100vh;display:flex;flex-direction:column;justify-content:center;",
-            '              gap:16px;padding:32px;max-width:44rem;margin:0 auto">',
-            '    <h1 style="font-size:1.6rem;margin:0">The demo needs JavaScript.</h1>',
-            '    <p style="margin:0;line-height:1.55;color:#b9b2a5">',
-            "      It is the dashboard itself, rendered in the browser. The page that explains it reads",
-            "      fine without scripting.",
-            "    </p>",
-            '    <p style="margin:0"><a href="https://oneshot-gtm.com" style="color:#e8e3d9">',
-            "      Back to oneshot-gtm.com</a></p>",
-            '    <p style="margin:0;font-family:ui-monospace,monospace;color:#b9b2a5">',
-            "      Or run it yourself: bunx oneshot-gtm-server</p>",
-            "  </div>",
-            "</noscript>",
-          ].join("\n    "),
-        )
-        .replace(
-          "<title>oneshot-gtm</title>",
-          [
-            `<title>${TITLE}</title>`,
-            // The site's own mark. Without it the browser asks the origin for
-            // /favicon.ico, which oneshot-gtm.com does not serve.
-            `<link rel="icon" href="/icon.svg" type="image/svg+xml" />`,
-            `<meta name="description" content="${DESCRIPTION}" />`,
-            `<meta name="robots" content="noindex" />`,
-            `<meta property="og:type" content="website" />`,
-            `<meta property="og:title" content="${TITLE}" />`,
-            `<meta property="og:description" content="${DESCRIPTION}" />`,
-            `<meta property="og:url" content="https://oneshot-gtm.com/demo" />`,
-            `<meta name="twitter:card" content="summary_large_image" />`,
-          ].join("\n    "),
-        );
+      return {
+        html: transformDemoHead(html),
+        // The demo is a client-rendered app, so with scripting off there is
+        // nothing to render and nothing to fix. Say so, and point back at the
+        // page, which needs no JavaScript to be read.
+        tags: [{ tag: "noscript", children: NOSCRIPT_HTML, injectTo: "body" }],
+      };
     },
   };
 }

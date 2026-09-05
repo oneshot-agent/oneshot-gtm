@@ -10,6 +10,7 @@ import { Field, Input } from "../components/primitives/Field.tsx";
 import { readOnly } from "../lib/readOnly.ts";
 
 export const Route = createFileRoute("/add-prospect")({
+  staticData: { title: "Add Prospect" },
   component: AddProspectPage,
 });
 

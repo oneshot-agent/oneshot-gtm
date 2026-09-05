@@ -79,6 +79,7 @@ import {
 } from "../lib/triggerRunState.ts";
 
 export const Route = createFileRoute("/queue")({
+  staticData: { title: "Queue" },
   component: QueuePage,
 });
 

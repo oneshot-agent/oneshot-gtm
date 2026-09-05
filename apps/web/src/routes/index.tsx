@@ -9,6 +9,7 @@ import { SignalFeed } from "../components/home/SignalFeed.tsx";
 import { cn, formatCount, formatSendsToday, formatUsd } from "../lib/cn.ts";
 
 export const Route = createFileRoute("/")({
+  staticData: { title: "Today" },
   component: HomePage,
 });
 
