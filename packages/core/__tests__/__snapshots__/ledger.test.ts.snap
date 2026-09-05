@@ -290,6 +290,28 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
       "type": "table",
     },
     {
+      "name": "direct_mail_addresses",
+      "sql": "CREATE TABLE direct_mail_addresses (key TEXT PRIMARY KEY, address TEXT NOT NULL)",
+      "tbl_name": "direct_mail_addresses",
+      "type": "table",
+    },
+    {
+      "name": "direct_mail_drafts",
+      "sql": "CREATE TABLE direct_mail_drafts (
+    id TEXT PRIMARY KEY, prospect_id INTEGER NOT NULL, play_name TEXT NOT NULL,
+    enrollment TEXT NOT NULL, step_index INTEGER NOT NULL, data TEXT NOT NULL,
+    UNIQUE(prospect_id,play_name,enrollment,step_index)
+  )",
+      "tbl_name": "direct_mail_drafts",
+      "type": "table",
+    },
+    {
+      "name": "direct_mail_receipts",
+      "sql": "CREATE TABLE direct_mail_receipts (receipt_id TEXT PRIMARY KEY, local_id INTEGER NOT NULL)",
+      "tbl_name": "direct_mail_receipts",
+      "type": "table",
+    },
+    {
       "name": "enrichment_cache",
       "sql": "CREATE TABLE enrichment_cache (
         email TEXT PRIMARY KEY,

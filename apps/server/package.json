@@ -41,7 +41,7 @@
     "prepublishOnly": "bun run --cwd ../web build && bun run build"
   },
   "dependencies": {
-    "@oneshot-agent/sdk": "0.22.0",
+    "@oneshot-agent/sdk": "file:../../vendor/oneshot-agent-sdk-0.32.0.tgz",
     "open": "^11.0.0"
   },
   "devDependencies": {

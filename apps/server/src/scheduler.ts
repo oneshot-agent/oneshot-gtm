@@ -1,4 +1,9 @@
-import { demoMode, logEvent, type TelemetryOutcome } from "@oneshot-gtm/core";
+import {
+  refreshPendingDirectMail,
+  demoMode,
+  logEvent,
+  type TelemetryOutcome,
+} from "@oneshot-gtm/core";
 import {
   nextSleepMs,
   runDueTriggers,
@@ -82,6 +87,11 @@ export function startScheduler(): SchedulerHandle {
           { message_120: ((err as Error).message ?? "").slice(0, 120) },
           "warn",
         );
+      }
+      try {
+        await refreshPendingDirectMail();
+      } catch {
+        logEvent("scheduler.direct_mail_refresh.failed", {}, "warn");
       }
       // Bounce detection, isolated like the reply poll; non-spending.
       let bouncesRecorded = 0;

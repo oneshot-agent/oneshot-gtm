@@ -1,3 +1,4 @@
+import type { DirectMailDraft, PostalAddress } from "./direct-mail.ts";
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -197,6 +198,95 @@ export class Ledger {
     // / "no such table" mid-migration.
     this.db.exec("PRAGMA busy_timeout = 5000");
     this.migrate();
+  }
+
+  getDirectMail(id: string): DirectMailDraft | null {
+    const row = this.db.query("SELECT data FROM direct_mail_drafts WHERE id=?").get(id) as {
+      data: string;
+    } | null;
+    return row ? JSON.parse(row.data) : null;
+  }
+  listDirectMail(): DirectMailDraft[] {
+    return (
+      this.db.query("SELECT data FROM direct_mail_drafts ORDER BY rowid DESC").all() as {
+        data: string;
+      }[]
+    ).map((r) => JSON.parse(r.data));
+  }
+  findDirectMail(
+    prospect: number,
+    play: string,
+    enrollment: string,
+    step: number,
+  ): DirectMailDraft | null {
+    const row = this.db
+      .query(
+        "SELECT data FROM direct_mail_drafts WHERE prospect_id=? AND play_name=? AND enrollment=? AND step_index=?",
+      )
+      .get(prospect, play, enrollment, step) as { data: string } | null;
+    return row ? JSON.parse(row.data) : null;
+  }
+  saveDirectMail(draft: DirectMailDraft): void {
+    this.db.transaction(() => {
+      const previous = this.getDirectMail(draft.id);
+      if (previous && previous.revision !== draft.revision)
+        throw new Error("Mailpiece changed; refresh before retrying");
+      const next = { ...draft, revision: (draft.revision ?? 0) + 1 };
+      this.db
+        .query(
+          "INSERT INTO direct_mail_drafts(id,prospect_id,play_name,enrollment,step_index,data) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
+        )
+        .run(
+          next.id,
+          next.prospectId,
+          next.playName,
+          next.enrollment,
+          next.stepIndex,
+          JSON.stringify(next),
+        );
+      draft.revision = next.revision;
+    })();
+  }
+  deleteDirectMail(id: string): void {
+    this.db
+      .query(
+        "DELETE FROM direct_mail_drafts WHERE id=? AND coalesce(json_extract(data,'$.started'),0)=0",
+      )
+      .run(id);
+  }
+  setMailAddresses(prospect: number, to: PostalAddress, from: PostalAddress): void {
+    const put = this.db.query(
+      "INSERT INTO direct_mail_addresses(key,address) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET address=excluded.address",
+    );
+    this.db.transaction(() => {
+      put.run(`prospect:${prospect}`, JSON.stringify(to));
+      put.run("return", JSON.stringify(from));
+    })();
+  }
+  getMailAddress(key: string): PostalAddress | null {
+    const row = this.db.query("SELECT address FROM direct_mail_addresses WHERE key=?").get(key) as {
+      address: string;
+    } | null;
+    return row ? JSON.parse(row.address) : null;
+  }
+  recordMailReceipt(receipt: string, input: Parameters<Ledger["recordReceipt"]>[0]): number {
+    return this.db.transaction(() => {
+      const previous = this.db
+        .query("SELECT local_id FROM direct_mail_receipts WHERE receipt_id=?")
+        .get(receipt) as { local_id: number } | null;
+      if (previous) {
+        if (input.signedReceipt)
+          this.db
+            .query("UPDATE receipts SET signed_receipt=? WHERE id=?")
+            .run(JSON.stringify(input.signedReceipt), previous.local_id);
+        return previous.local_id;
+      }
+      const id = this.recordReceipt(input);
+      this.db
+        .query("INSERT INTO direct_mail_receipts(receipt_id,local_id) VALUES (?,?)")
+        .run(receipt, id);
+      return id;
+    })();
   }
 
   private migrate(): void {

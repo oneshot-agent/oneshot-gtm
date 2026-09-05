@@ -1,5 +1,6 @@
 import {
   classifyReply,
+  sendDirectMail,
   getLedger,
   hasAnySendCapacity,
   isSendDeferred,
@@ -38,6 +39,7 @@ export interface CadenceContext {
 }
 
 export type StepPayload =
+  | { kind: "direct_mail"; draftId: string }
   | { kind: "email"; subject: string; body: string }
   | { kind: "sms"; message: string; toPhone?: string }
   | {
@@ -51,7 +53,7 @@ export type StepPayload =
 interface SequenceStep {
   /** Days after enrollment (step 0 was the original send). step 1 is the first follow-up. */
   dayOffset: number;
-  channel: "email" | "sms" | "voice";
+  channel: "email" | "sms" | "voice" | "direct_mail";
   /** When true, an inbound reply at any time stops the cadence. */
   breakOnReply: boolean;
   /** Builder returns null to skip this step gracefully. */
@@ -901,9 +903,17 @@ export async function runCadenceStepForProspect(
     return { action: "skipped", payload: null, receiptIds: [], note: "prospect not found" };
   }
 
-  const built: StepPayload | null = opts.persistedPayload
-    ? opts.persistedPayload
-    : await step.builder({ prospect, cfg, metadata: {} });
+  const mailDraft = ledger.findDirectMail(
+    opts.prospectId,
+    opts.playName,
+    cadence.enrolled_at,
+    nextIndex,
+  );
+  const built: StepPayload | null = mailDraft
+    ? { kind: "direct_mail", draftId: mailDraft.id }
+    : opts.persistedPayload
+      ? opts.persistedPayload
+      : await step.builder({ prospect, cfg, metadata: {} });
 
   if (!built) {
     const next = seq.steps[stepEntryIndex + 1];
@@ -1051,7 +1061,15 @@ export async function previewCadenceStep(input: {
   if (!step) throw new Error("step undefined");
   const prospect = loadProspect(input.prospectId);
   if (!prospect) throw new Error("prospect not found");
-  const built = await step.builder({ prospect, cfg, metadata: {} });
+  const mailDraft = ledger.findDirectMail(
+    input.prospectId,
+    input.playName,
+    cadence.enrolled_at,
+    nextIndex,
+  );
+  const built: StepPayload | null = mailDraft
+    ? { kind: "direct_mail", draftId: mailDraft.id }
+    : await step.builder({ prospect, cfg, metadata: {} });
   if (!built) throw new Error("builder returned null — nothing to preview");
 
   const subject = built.kind === "email" ? built.subject : "(non-email step)";
@@ -1121,6 +1139,32 @@ export async function sendCadenceStep(input: {
     dryRun: false,
     persistedPayload: draft.payload as StepPayload,
   });
+}
+
+/** Recover or send only the cadence step bound to this reviewed mailpiece. */
+export async function sendDirectMailCadenceStep(id: string): Promise<RunCadenceStepResult> {
+  const ledger = getLedger();
+  const mail = ledger.getDirectMail(id);
+  if (!mail) throw new Error("Mailpiece not found");
+  const input = { prospectId: mail.prospectId, playName: mail.playName };
+  const cadence = ledger.getCadence(mail.prospectId, mail.playName);
+  if (
+    !cadence ||
+    cadence.status !== "active" ||
+    cadence.enrolled_at !== mail.enrollment ||
+    cadence.current_step + 1 !== mail.stepIndex
+  ) {
+    return {
+      action: "skipped",
+      payload: null,
+      receiptIds: [],
+      note: "Mailpiece is no longer the current cadence step",
+    };
+  }
+  const payload = ledger.getCadenceDraft(input)?.payload as StepPayload | undefined;
+  if (payload?.kind !== "direct_mail" || payload.draftId !== id)
+    throw new Error("Current preview does not match this mailpiece; preview it again");
+  return sendCadenceStep(input);
 }
 
 export interface BatchItem {
@@ -1251,6 +1295,29 @@ async function dispatchStepImpl(input: {
   };
   const labelTail = input.label ? ` ${input.label}` : "";
 
+  if (input.payload.kind === "direct_mail") {
+    const draft = await sendDirectMail(input.payload.draftId);
+    if (draft.order?.order_status !== "accepted")
+      return {
+        receiptIds,
+        skipReason: `Physical mail ${draft.order?.order_status ?? "awaiting approval"}`,
+      };
+    if (draft.receiptId) receiptIds.push(draft.receiptId);
+    if (!ledger.hasSentSequenceEvent(input.prospectId, input.playName, input.stepIndex))
+      ledger.recordSequenceEvent({
+        prospectId: input.prospectId,
+        playName: input.playName,
+        stepIndex: input.stepIndex,
+        channel: "direct_mail",
+        status: "sent",
+        receiptId: draft.receiptId,
+        metadata: {
+          orderId: draft.order.order_id,
+          meaning: "order accepted; delivery does not prove readership",
+        },
+      });
+    return { receiptIds };
+  }
   if (input.payload.kind === "email") {
     if (!input.prospectEmail) return { receiptIds, skipReason: "prospect has no email" };
     const send = await sendEmail(

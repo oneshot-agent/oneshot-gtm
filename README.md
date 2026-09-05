@@ -82,11 +82,12 @@ bun run cli -- find drain podcast-guest --dry-run  # preview approved /queue row
 bun run cli -- cadence advance                     # daily tick: poll inbox, fire follow-ups
 ```
 
-58 commands — fourteen groups, plus `init`, `doctor` and `ui` at the top level. `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
+65 commands — fifteen groups, plus `init`, `doctor` and `ui` at the top level. `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
 
 | Group                    | Commands                                                                                                                                                                                                                                                                                            |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `init` · `doctor` · `ui` | setup wizard · health check · open the dashboard                                                                                                                                                                                                                                                    |
+| `direct-mail` | `list` · `upload` · `preview` · `refresh` · `approve` · `send` · `cancel` — individual physical-mail approvals |
 | `config`                 | `llm` · `founder` · `keys` · `telemetry on\|off` · `x-engine [engine]` · `spend-ceiling [amount\|off]`                                                                                                                                                                                              |
 | `gmail`                  | `auth` (OAuth a sending account) · `placement` (inbox-placement canary)                                                                                                                                                                                                                             |
 | `identities`             | `list` · `add` · `remove <id>` — the sender pool                                                                                                                                                                                                                                                    |
@@ -380,7 +381,7 @@ Successful responses include `duplicate`, `prospectId`, `cadencesStopped`, and `
 
 ```
 apps/
-  cli/        58-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
+  cli/        65-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
   server/     Bun.serve + SSE; tsdown bundle published as `oneshot-gtm-server`
   web/        Vite + React 19 + TanStack + Base UI — 9 pages, run form, strategist dock, privacy mode
 packages/
@@ -471,3 +472,9 @@ Read every prompt. Fork every play. We expect you to.
 
 Built by [free.butter](https://freebutter.com) — the lead infrastructure behind this
 is the same pipeline that runs there.
+
+### Direct mail
+
+Cadences → **Direct mail** supports individually approved U.S. letters and 4×6 postcards. Upload print-ready artwork, enter recipient and workspace return addresses, review the proof and price, then approve and send. Each draft replaces one prospect's next cadence step; batch sending cannot bypass individual approval. The dashboard and `direct-mail` CLI support recovery, postal status and cancellation. Payment, fulfillment and reimbursement remain separate, and delivery never proves readership. Lob credentials and verified webhooks are managed by the OneShot server.
+
+For this integration branch, both core and the server use the SDK archive in `vendor/`; see its README for the coordinated SDK/GTM release step.

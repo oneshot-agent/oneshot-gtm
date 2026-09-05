@@ -185,7 +185,7 @@ export async function commandDomainsList(opts: { json?: boolean } = {}): Promise
   } else {
     for (const d of domains) {
       const tone =
-        d.pool_status === "active" ? c.green : d.pool_status === "warming" ? c.cyan : c.red;
+        d.pool_status === "active" ? c.green : d.warmup_state === "warming" ? c.cyan : c.red;
       note(
         `${d.domain}  ${tone(d.pool_status)}` +
           (d.warmup_score != null ? `  warmth ${d.warmup_score}` : "") +
