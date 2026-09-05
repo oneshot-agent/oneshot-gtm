@@ -102,7 +102,11 @@ export function runHiringSignal(
         `PROSPECT: ${t.name} at ${t.company}`,
         `JOB TITLE: ${t.jobTitle}`,
         `JOB POST HOOK (real phrase from the post): ${prep.extra?.jobPostHook ?? NO_HOOK}`,
-        `YOUR CLAIM: ${t.yourClaim}`,
+        // Labelled YOUR EDGE, not YOUR CLAIM: hiring-signal-email.md lists its
+        // input as "YOUR EDGE", and _humanizer.md scopes the `//` multi-angle
+        // rule to that name. The config key stays `yourClaim` — renaming it
+        // would strand every existing trigger config.
+        `YOUR EDGE: ${t.yourClaim}`,
       ].join("\n"),
     prospectMeta: (t) => ({
       name: t.name,
