@@ -539,11 +539,553 @@ const PEOPLE: DemoPerson[] = [
   },
 ];
 
+// Generated cast
+
+/**
+ * The hand-written PEOPLE above are the install's legible surface — the rows a
+ * visitor can actually reach, since /receipts caps at 500 newest-first and
+ * /queue at 200. Behind them sits the volume a thirty-day install accumulates,
+ * and that volume is what makes the spend total real rather than a fixture.
+ *
+ * Almost all of it is discovery only: found, resolved, verified, enriched, and
+ * never written to. That is the install this product argues for. Sends are
+ * capped at fifty a day, so the twenty-seven days this ledger spans cannot hold
+ * more than about thirteen hundred of them however many prospects the finders
+ * surface — which means the spend has to come from the finding, not from the
+ * sending. SEQUENCED_TOTAL is set from that ceiling backwards, not chosen: at
+ * roughly two steps a head it is what keeps every single day under the cap.
+ *
+ * Composed, not random. Every field is derived from the row index in mixed
+ * radix, so the same anchor yields the same rows in the same order, and the
+ * (company, first, last) triple is injective for FIRST × LAST × COMPANIES rows,
+ * far past what we build. That matters: prospects.email carries a UNIQUE index,
+ * and a collision would fail the seed rather than quietly drop a row.
+ *
+ * None of these names reaches a receipt memo as prose. A discovery row's four
+ * memos are all of the form "<play> — resolve contact for <name>"; the `hook`
+ * only reaches copy through a send, and these do not send.
+ */
+
+const FIRST_NAMES = [
+  "Ada",
+  "Nils",
+  "Priya",
+  "Tomas",
+  "Yara",
+  "Ken",
+  "Sofia",
+  "Emeka",
+  "Lena",
+  "Raj",
+  "Mira",
+  "Otto",
+  "Hana",
+  "Diego",
+  "Nora",
+  "Sami",
+  "Vera",
+  "Luca",
+  "Ines",
+  "Kofi",
+  "Elsa",
+  "Bruno",
+  "Ayla",
+  "Mats",
+  "Rina",
+  "Pavel",
+  "Zoe",
+  "Idris",
+  "Clara",
+  "Hugo",
+  "Suri",
+  "Lars",
+  "Noor",
+  "Felix",
+  "Anja",
+  "Tariq",
+  "Iris",
+  "Kwame",
+  "Dagny",
+  "Milo",
+  "Freya",
+  "Omar",
+  "Sana",
+  "Nico",
+  "Leah",
+  "Bo",
+  "Marta",
+  "Ravi",
+  "Elin",
+  "Jonas",
+  "Yuki",
+  "Aziz",
+  "Greta",
+  "Piotr",
+  "Amara",
+  "Sven",
+  "Rosa",
+  "Dmitri",
+  "Nadia",
+  "Theo",
+  "Solveig",
+  "Farid",
+  "Kira",
+  "Anton",
+  "Maya",
+  "Joran",
+  "Talia",
+  "Rune",
+  "Ceyda",
+  "Paavo",
+  "Liv",
+  "Casper",
+  "Nina",
+  "Arjun",
+  "Signe",
+  "Malik",
+  "Petra",
+  "Enzo",
+  "Adia",
+  "Wren",
+];
+
+const LAST_NAMES = [
+  "Okafor",
+  "Lindqvist",
+  "Raman",
+  "Bianchi",
+  "Haddad",
+  "Tanaka",
+  "Moreau",
+  "Mensah",
+  "Berg",
+  "Iyer",
+  "Vance",
+  "Keller",
+  "Sato",
+  "Alvarez",
+  "Dahl",
+  "Nasser",
+  "Novak",
+  "Ferrari",
+  "Dubois",
+  "Asante",
+  "Holm",
+  "Costa",
+  "Demir",
+  "Ek",
+  "Sharma",
+  "Volkov",
+  "Papadopoulos",
+  "Rahman",
+  "Bertrand",
+  "Silva",
+  "Menon",
+  "Nilsson",
+  "Farouk",
+  "Braun",
+  "Sorensen",
+  "Aziz",
+  "Kelly",
+  "Boateng",
+  "Ruud",
+  "Rossi",
+  "Aalto",
+  "Khalil",
+  "Gupta",
+  "Marchetti",
+  "Cohen",
+  "Lin",
+  "Kowalski",
+  "Nair",
+  "Ostrom",
+  "Bakker",
+  "Mori",
+  "Rahimi",
+  "Sandberg",
+  "Wozniak",
+  "Diallo",
+  "Eklund",
+  "Herrera",
+  "Sokolov",
+  "Aslan",
+  "Frank",
+  "Bergstrom",
+  "Mansour",
+  "Petrov",
+  "Kraus",
+  "Chandra",
+  "Visser",
+  "Gold",
+  "Tveit",
+  "Yilmaz",
+  "Virtanen",
+  "Storm",
+  "Jensen",
+  "Falk",
+  "Desai",
+  "Lund",
+  "Traore",
+  "Novotny",
+  "Greco",
+  "Owusu",
+  "Ashby",
+];
+
+const COMPANIES: Array<{ name: string; domain: string }> = [
+  { name: "Northwind Labs", domain: "northwind.dev" },
+  { name: "Quayside", domain: "quayside.io" },
+  { name: "Ferrite", domain: "ferrite.sh" },
+  { name: "Halyard", domain: "halyard.dev" },
+  { name: "Tessellate", domain: "tessellate.ai" },
+  { name: "Brightwater", domain: "brightwater.io" },
+  { name: "Ropewalk", domain: "ropewalk.dev" },
+  { name: "Cadence Systems", domain: "cadencesys.com" },
+  { name: "Ironvale", domain: "ironvale.io" },
+  { name: "Sablefish", domain: "sablefish.dev" },
+  { name: "Cobalt Run", domain: "cobaltrun.io" },
+  { name: "Meridian Stack", domain: "meridianstack.com" },
+  { name: "Thistle", domain: "thistle.sh" },
+  { name: "Longshore", domain: "longshore.dev" },
+  { name: "Auric", domain: "auric.io" },
+  { name: "Pinehold", domain: "pinehold.dev" },
+  { name: "Vantage Loop", domain: "vantageloop.com" },
+  { name: "Slateworks", domain: "slateworks.io" },
+  { name: "Kingfisher", domain: "kingfisher.dev" },
+  { name: "Ambergris", domain: "ambergris.ai" },
+  { name: "Redshift Labs", domain: "redshiftlabs.io" },
+  { name: "Wickerby", domain: "wickerby.com" },
+  { name: "Foundry Nine", domain: "foundrynine.dev" },
+  { name: "Saltmarsh", domain: "saltmarsh.io" },
+  { name: "Junction Bay", domain: "junctionbay.dev" },
+  { name: "Orrery", domain: "orrery.sh" },
+  { name: "Bellweather", domain: "bellweather.io" },
+  { name: "Copperline", domain: "copperline.dev" },
+  { name: "Tidemark", domain: "tidemark.ai" },
+  { name: "Gantry", domain: "gantry.sh" },
+  { name: "Ashgrove", domain: "ashgrove.io" },
+  { name: "Peregrine Data", domain: "peregrinedata.com" },
+  { name: "Millrace", domain: "millrace.dev" },
+  { name: "Cinderpath", domain: "cinderpath.io" },
+  { name: "Harborview", domain: "harborview.dev" },
+  { name: "Silverline", domain: "silverline.sh" },
+  { name: "Broadwell", domain: "broadwell.io" },
+  { name: "Anvil Park", domain: "anvilpark.dev" },
+  { name: "Yardarm", domain: "yardarm.io" },
+  { name: "Fernwood", domain: "fernwood.ai" },
+  { name: "Stonecrop", domain: "stonecrop.dev" },
+  { name: "Larkspur", domain: "larkspur.io" },
+  { name: "Havelock", domain: "havelock.sh" },
+  { name: "Nettleford", domain: "nettleford.dev" },
+  { name: "Oxbow", domain: "oxbow.io" },
+  { name: "Pallisade", domain: "pallisade.dev" },
+  { name: "Quicksilver", domain: "quicksilver.ai" },
+  { name: "Ravelin Works", domain: "ravelinworks.com" },
+  { name: "Sandpiper", domain: "sandpiper.io" },
+  { name: "Trellis", domain: "trellis.dev" },
+  { name: "Umbra Stack", domain: "umbrastack.io" },
+  { name: "Vellum", domain: "vellum.sh" },
+  { name: "Waybridge", domain: "waybridge.dev" },
+  { name: "Xenolith", domain: "xenolith.io" },
+  { name: "Yellowfin", domain: "yellowfin.dev" },
+  { name: "Zephyr Ops", domain: "zephyrops.com" },
+  { name: "Alderway", domain: "alderway.io" },
+  { name: "Bracken", domain: "bracken.dev" },
+  { name: "Chandlery", domain: "chandlery.sh" },
+  { name: "Dovetail Labs", domain: "dovetaillabs.io" },
+  { name: "Elmgate", domain: "elmgate.dev" },
+  { name: "Foxglove", domain: "foxglove.ai" },
+  { name: "Granary", domain: "granary.io" },
+  { name: "Hollowcast", domain: "hollowcast.dev" },
+  { name: "Inkwell", domain: "inkwell.sh" },
+  { name: "Jetstream", domain: "jetstream.io" },
+  { name: "Kilnwork", domain: "kilnwork.dev" },
+  { name: "Lodestar", domain: "lodestar.ai" },
+  { name: "Marlinspike", domain: "marlinspike.io" },
+  { name: "Nightjar", domain: "nightjar.dev" },
+  { name: "Overlook", domain: "overlook.sh" },
+  { name: "Portage", domain: "portage.io" },
+  { name: "Quarrystone", domain: "quarrystone.dev" },
+  { name: "Rookery", domain: "rookery.ai" },
+  { name: "Stavanger", domain: "stavanger.io" },
+  { name: "Thornbury", domain: "thornbury.dev" },
+  { name: "Underhill", domain: "underhill.sh" },
+  { name: "Verdigris", domain: "verdigris.io" },
+  { name: "Wrenfield", domain: "wrenfield.dev" },
+  { name: "Yarrow", domain: "yarrow.ai" },
+  { name: "Zinnia", domain: "zinnia.io" },
+  { name: "Ashlar", domain: "ashlar.dev" },
+  { name: "Blackthorn", domain: "blackthorn.sh" },
+  { name: "Cordwain", domain: "cordwain.io" },
+  { name: "Drayton", domain: "drayton.dev" },
+  { name: "Everglade", domain: "everglade.ai" },
+  { name: "Fathom Works", domain: "fathomworks.io" },
+  { name: "Glasshouse", domain: "glasshouse.dev" },
+  { name: "Hearthstone", domain: "hearthstone.sh" },
+  { name: "Ironbark", domain: "ironbark.io" },
+  { name: "Juniper Row", domain: "juniperrow.dev" },
+  { name: "Kestrel", domain: "kestrel.ai" },
+  { name: "Limekiln", domain: "limekiln.io" },
+  { name: "Mossbank", domain: "mossbank.dev" },
+  { name: "Northgate", domain: "northgate.sh" },
+  { name: "Orchard Six", domain: "orchardsix.io" },
+  { name: "Pitchfork Data", domain: "pitchforkdata.com" },
+  { name: "Quillon", domain: "quillon.dev" },
+  { name: "Redoubt", domain: "redoubt.io" },
+  { name: "Saltram", domain: "saltram.ai" },
+  { name: "Tanglewood", domain: "tanglewood.dev" },
+  { name: "Ullswater", domain: "ullswater.io" },
+  { name: "Vireo", domain: "vireo.sh" },
+  { name: "Whitlock", domain: "whitlock.dev" },
+  { name: "Xanthe", domain: "xanthe.io" },
+  { name: "Yewtree", domain: "yewtree.ai" },
+  { name: "Zealand Works", domain: "zealandworks.com" },
+  { name: "Amberline", domain: "amberline.dev" },
+  { name: "Barrowfield", domain: "barrowfield.io" },
+  { name: "Clearwater Ops", domain: "clearwaterops.dev" },
+  { name: "Dunmore", domain: "dunmore.sh" },
+  { name: "Eastvault", domain: "eastvault.io" },
+  { name: "Flintlock", domain: "flintlock.dev" },
+  { name: "Greyfriars", domain: "greyfriars.ai" },
+  { name: "Hallmark Data", domain: "hallmarkdata.io" },
+  { name: "Ivyhouse", domain: "ivyhouse.dev" },
+  { name: "Jackstay", domain: "jackstay.sh" },
+  { name: "Kelvinside", domain: "kelvinside.io" },
+  { name: "Lampwick", domain: "lampwick.dev" },
+  { name: "Marrowbone", domain: "marrowbone.ai" },
+  { name: "Netherby", domain: "netherby.io" },
+];
+
+const TITLES = [
+  "Founding Engineer",
+  "Staff Engineer",
+  "Head of Platform",
+  "Principal Engineer",
+  "VP Engineering",
+  "Head of Infrastructure",
+  "Staff SRE",
+  "Engineering Manager, Platform",
+  "CTO",
+  "Lead Backend Engineer",
+  "Director of Engineering",
+  "Platform Tech Lead",
+];
+
+/**
+ * The eight plays the generated rows are drawn from, each with the shape its
+ * evidence actually takes. A hook here is not invented prose — it is the same
+ * structured signal the finder returns, rendered the way the finder renders it.
+ */
+const GEN_PLAYS: Array<{
+  play: string;
+  source: string;
+  hook: (company: string, n: number) => string;
+}> = [
+  {
+    play: "show-hn",
+    source: "show-hn",
+    hook: (c, n) => `Show HN: ${c} — ${120 + (n % 340)} points, ${18 + (n % 90)} comments`,
+  },
+  {
+    play: "post-funding",
+    source: "post-funding-auto",
+    hook: (c, n) => `${c} announced a $${3 + (n % 18)}M Series A ${2 + (n % 20)} days ago`,
+  },
+  {
+    play: "hiring-signal",
+    source: "hiring-signal",
+    hook: (c, n) =>
+      `${c} is hiring ${1 + (n % 4)} platform engineers, job queue named in the posting`,
+  },
+  {
+    play: "job-change",
+    source: "job-change",
+    hook: (c, n) => `Started at ${c} ${9 + (n % 40)} days ago, moved from a Sidekiq shop`,
+  },
+  {
+    play: "competitor-switch",
+    source: "competitor-switch",
+    hook: (c, n) =>
+      `${c} asked publicly about moving off their current tracing vendor, ${n % 14} replies`,
+  },
+  {
+    play: "podcast-guest",
+    source: "podcast-guest",
+    hook: (c, n) => `Talked through ${c}'s retry storms on a podcast ${4 + (n % 30)} days ago`,
+  },
+  {
+    play: "repo-interest",
+    source: "github-topics",
+    hook: (c, n) => `${c} starred three background-job repos in ${2 + (n % 10)} days`,
+  },
+  {
+    play: "luma-events",
+    source: "luma-events",
+    hook: (c, n) => `Registered for a distributed-systems meetup ${3 + (n % 25)} days out, ${c}`,
+  },
+];
+
+/** How many prospects the install has found in total, hand-written cast included. */
+const PROSPECT_TOTAL = 15_000;
+
+/**
+ * How many of them are actually in a cadence. Fifty sends a day is the ceiling
+ * the identities declare, so thirty days of sending is about fifteen hundred
+ * emails; at roughly two steps a head that is seven hundred people. The other
+ * fourteen thousand were found and never written to, which is the point.
+ */
+const SEQUENCED_TOTAL = 560;
+
+/**
+ * Deep person-research calls. The count is chosen, not emergent: it is the one
+ * lever that sets the spend total, because at $0.12 it is ten times the price of
+ * anything else the agent does.
+ */
+const RESEARCH_TOTAL = 5_400;
+
+/**
+ * Outcomes on the generated cadences, by row index.
+ *
+ * Eight closed deals across the whole install — six here, two in the
+ * hand-written cast — totalling $48,000 against roughly $2,000 of spend. That
+ * ratio is the number worth printing: it divides every dollar the agent spent,
+ * including the fourteen thousand prospects that went nowhere, rather than one
+ * winner's own cadence cost.
+ *
+ * Index 3 is deliberate. Its receipts are four days old and its close is one,
+ * so the seven-day chip on Measure has a return in it. Every other window had
+ * one already; 7d read spend against zero value, which looked like a bug
+ * because it was one.
+ */
+const GEN_WON: Array<[index: number, amountUsd: number]> = [
+  [3, 7200],
+  [17, 6600],
+  [41, 6000],
+  [88, 6000],
+  [140, 5400],
+  [219, 4800],
+];
+const GEN_MEETINGS = new Set([5, 9, 14, 22, 27, 33, 38, 45, 52, 60, 67, 74, 81, 95, 103, 112, 127]);
+const GEN_SQLS = new Set([7, 19, 29, 43, 57, 71, 89, 109]);
+
+function generatedOutcome(i: number, company: string, daysAgo: number): DemoPerson["outcome"] {
+  // Recorded after the first touch, never before it.
+  const recorded = Math.max(1, daysAgo - 2);
+  const won = GEN_WON.find(([idx]) => idx === i);
+  if (won) {
+    return {
+      kind: "deal_won",
+      amountUsd: won[1],
+      daysAgo: recorded,
+      notes: `Closed ${company} on annual invoicing.`,
+    };
+  }
+  if (GEN_MEETINGS.has(i)) {
+    return {
+      kind: "meeting_booked",
+      daysAgo: recorded,
+      notes: `Thirty minutes booked with ${company}.`,
+    };
+  }
+  if (GEN_SQLS.has(i)) {
+    return {
+      kind: "sql_qualified",
+      daysAgo: recorded,
+      notes: `${company} has the queue and the budget.`,
+    };
+  }
+  return undefined;
+}
+
+/** Index → a distinct (company, first, last) triple. Injective while i < C×F×L. */
+function generatedIdentity(i: number): {
+  first: string;
+  last: string;
+  company: { name: string; domain: string };
+} {
+  const c = i % COMPANIES.length;
+  const f = Math.floor(i / COMPANIES.length) % FIRST_NAMES.length;
+  const l = Math.floor(i / (COMPANIES.length * FIRST_NAMES.length)) % LAST_NAMES.length;
+  return {
+    first: FIRST_NAMES[f] as string,
+    last: LAST_NAMES[l] as string,
+    company: COMPANIES[c] as { name: string; domain: string },
+  };
+}
+
+/**
+ * The rest of the cast, behind the hand-written rows.
+ *
+ * `steps: 0` is the load-bearing value: it means found but never sent to, and
+ * the builder reads it as "prep receipts only, no sequence event, no cadence
+ * row". Everything about a discovery row is a call that was paid for and a
+ * person who never heard from us.
+ */
+function buildGeneratedPeople(count: number): DemoPerson[] {
+  const out: DemoPerson[] = [];
+  for (let i = 0; i < count; i++) {
+    const { first, last, company } = generatedIdentity(i);
+    const spec = GEN_PLAYS[i % GEN_PLAYS.length] as (typeof GEN_PLAYS)[number];
+    const sequenced = i < SEQUENCED_TOTAL;
+    // Spread across the window, newest first, so the hand-written cast keeps
+    // the top of every list and the generated rows fill the depth behind it.
+    const daysAgo = 1 + (i % 27);
+    /*
+     * A cadence cannot have sent a follow-up that has not come due yet.
+     * STEP_OFFSETS puts step 2 three days after the intro and step 3 seven days
+     * after, and the send date is `daysAgo - offset`, so a row first touched
+     * two days ago with three steps would write receipts dated five days into
+     * the future. Cap the steps by how long the cadence has actually been
+     * running.
+     */
+    const maxSteps = daysAgo >= 8 ? 3 : daysAgo >= 4 ? 2 : 1;
+    /*
+     * The step count must not be drawn with a modulus that shares a factor with
+     * the one picking the day. `i % 3` against `i % 27` gives every cohort a
+     * single step count, which stacks all of a day's follow-ups onto the same
+     * two later days and puts a visible four-day beat in the send volume — with
+     * peaks over the daily cap. Dividing instead of taking the remainder varies
+     * the step count *within* each day's cohort.
+     */
+    const steps = sequenced ? Math.min(maxSteps, 1 + (Math.floor(i / 27) % 3)) : 0;
+    const status: CadenceStatus = !sequenced
+      ? "completed"
+      : i % 11 === 0
+        ? "replied"
+        : i % 23 === 0
+          ? "bounced"
+          : i % 3 === 0
+            ? "breakup"
+            : "active";
+    out.push({
+      name: `${first} ${last}`,
+      email: `${first}.${last}@${company.domain}`.toLowerCase(),
+      company: company.name,
+      title: TITLES[i % TITLES.length] as string,
+      play: spec.play,
+      source: spec.source,
+      linkedin: `https://www.linkedin.com/in/${first}-${last}-${100 + (i % 900)}`.toLowerCase(),
+      hook: spec.hook(company.name, i),
+      daysAgo,
+      steps,
+      status,
+      identity: IDENTITIES[i % IDENTITIES.length]?.id ?? IDENTITY_PRIMARY,
+      ...(sequenced ? { outcome: generatedOutcome(i, company.name, daysAgo) } : {}),
+    });
+  }
+  return out;
+}
+
 // Cost model
 
 // Plausible per-call USD, in the same order of magnitude as real OneShot calls.
-// The whole 30-day install lands around $6 of spend, which is the point of the
-// Measure page: CAC in single-digit dollars, attested per call.
+// These run higher than OneShot's published prices on purpose: they are
+// illustrative, and a demo that under-quotes is worse than one that over-quotes.
+//
+// The whole 30-day install lands near $2,000 of spend, almost all of it
+// discovery and research rather than sending. That is what makes the Measure
+// page's return figure divisible: $48,000 closed over $2,000 spent is a number
+// a reader can weigh, where $48,000 over $2.94 is only a tell.
 const COST: Record<string, number> = {
   "web.search": 0.012,
   "email.find": 0.02,
@@ -731,7 +1273,29 @@ export function buildDemoDataset(anchor: Date): DemoDataset {
 
   let receiptId = 0;
 
-  PEOPLE.forEach((p, i) => {
+  /*
+   * Hand-written rows first, so they hold the top of every list: /receipts caps
+   * at 500 newest-first and /queue at 200, and PEOPLE is where the bespoke
+   * hooks, the replies and the inbox threads live.
+   */
+  const CAST: DemoPerson[] = [...PEOPLE, ...buildGeneratedPeople(PROSPECT_TOTAL - PEOPLE.length)];
+
+  /*
+   * The research budget, spent deliberately rather than emergently.
+   *
+   * Everyone we actually write to gets a deep person-research call first —
+   * that is the gate doing its job. The remainder is spread evenly across the
+   * discovery rows by a stride, so about a third of the prospects the finders
+   * surface are researched before the gate declines them. At $0.12 it is ten
+   * times the price of anything else the agent does, which makes this the one
+   * lever that sets the spend total.
+   */
+  const sequencedCount = CAST.reduce((n, p) => n + (p.steps > 0 ? 1 : 0), 0);
+  const discoveryCount = CAST.length - sequencedCount;
+  const discoveryResearch = Math.max(0, RESEARCH_TOTAL - sequencedCount);
+  let discoverySeen = 0;
+
+  CAST.forEach((p, i) => {
     const prospectId = i + 1;
     const goalId = cadenceGoalId(p.play, p.email);
     const valueTag = p.outcome ? outcomeValueTag(p.outcome) : null;
@@ -755,11 +1319,16 @@ export function buildDemoDataset(anchor: Date): DemoDataset {
       createdAt: sqlAt(anchor, p.daysAgo, 8, jitter(i)),
     });
 
-    senderAssignments.push({
-      email: p.email,
-      identityId: p.identity,
-      assignedAt: sqlAt(anchor, p.daysAgo, 8, jitter(i)),
-    });
+    // Only rows we actually write to get a sending identity. A prospect the
+    // gate declined was never assigned a mailbox, and inventing one would put
+    // fifteen thousand rows in a table that tracks sending capacity.
+    if (p.steps > 0) {
+      senderAssignments.push({
+        email: p.email,
+        identityId: p.identity,
+        assignedAt: sqlAt(anchor, p.daysAgo, 8, jitter(i)),
+      });
+    }
 
     // Discovery + contact resolution, all on the day the finder surfaced them.
     const prep: Array<{ callType: string; memo: string }> = [
@@ -768,10 +1337,17 @@ export function buildDemoDataset(anchor: Date): DemoDataset {
       { callType: "email.verify", memo: `${p.play} — verify ${p.email} before sending` },
       { callType: "enrich.profile", memo: `${p.play} — enrich ${p.name} for the draft` },
     ];
-    // A deep person-research call on the higher-intent plays only, which is how
-    // the spend actually distributes: you don't pay $0.12 to research a Show HN
-    // poster whose whole pitch is in the thread.
-    if (p.play === "competitor-switch" || p.play === "podcast-guest") {
+    // Sequenced rows are always researched; discovery rows take an even share
+    // of what is left of the budget. The stride is exact rather than modular so
+    // the count lands on RESEARCH_TOTAL whatever the cast size is.
+    let researched = p.steps > 0;
+    if (!researched && discoveryCount > 0) {
+      const before = Math.floor((discoverySeen * discoveryResearch) / discoveryCount);
+      const after = Math.floor(((discoverySeen + 1) * discoveryResearch) / discoveryCount);
+      discoverySeen += 1;
+      researched = after > before;
+    }
+    if (researched) {
       prep.push({ callType: "research.person", memo: `${p.play} — dossier for ${p.name}` });
     }
 
@@ -792,6 +1368,9 @@ export function buildDemoDataset(anchor: Date): DemoDataset {
           goalId,
           source: p.source,
           company: p.company,
+          // goalLabels() reads this to label a cadence "play → person". Without
+          // it every row in the RoCS-by-cadence table renders a bare play name.
+          prospectEmail: p.email,
         },
         valueTag,
         valueTaggedAt,
@@ -824,6 +1403,7 @@ export function buildDemoDataset(anchor: Date): DemoDataset {
           goalId,
           stepIndex: step,
           senderIdentity: p.identity,
+          prospectEmail: p.email,
         },
         valueTag,
         valueTaggedAt,
@@ -852,35 +1432,39 @@ export function buildDemoDataset(anchor: Date): DemoDataset {
       });
     }
 
-    cadences.push({
-      prospectId,
-      playName: p.play,
-      currentStep: p.steps - 1,
-      status: p.status,
-      enrolledAt: sqlAt(anchor, p.daysAgo, 9, jitter(i)),
-      // Only a live cadence has a next step pending; everything else is settled.
-      // Due dates fan out from two days overdue to four days out rather than
-      // deriving from the last send, which would put nearly every active row in
-      // the overdue column and make the founder look like they'd abandoned the
-      // thing. A couple of overdue rows is the honest picture: that's the
-      // founder's to-do list, and the demo scheduler won't clear it.
-      nextDueAt: p.status === "active" ? isoAt(anchor, 2 - (i % 7), 9, jitter(i)) : null,
-      nextStepDraftJson:
-        p.status === "active" && p.steps > 1
-          ? JSON.stringify({
-              subject: subjectFor(p, p.steps),
-              body: bodyFor(p, p.steps),
-              // What the real linter says about this exact text, so a demo
-              // draft can never claim a flag its body does not earn — nor hide
-              // one it does.
-              flags: lintEmail(subjectFor(p, p.steps), bodyFor(p, p.steps)),
-              payload: { name: p.name, company: p.company, hook: p.hook },
-              draftedAt: isoAt(anchor, 1, 7, jitter(i)),
-            })
-          : null,
-      nextStepDraftedAt:
-        p.status === "active" && p.steps > 1 ? isoAt(anchor, 1, 7, jitter(i)) : null,
-    });
+    // steps === 0 is the discovery row: found, resolved, enriched, never written
+    // to. It has no cadence to be in, and currentStep would be -1.
+    if (p.steps > 0) {
+      cadences.push({
+        prospectId,
+        playName: p.play,
+        currentStep: p.steps - 1,
+        status: p.status,
+        enrolledAt: sqlAt(anchor, p.daysAgo, 9, jitter(i)),
+        // Only a live cadence has a next step pending; everything else is settled.
+        // Due dates fan out from two days overdue to four days out rather than
+        // deriving from the last send, which would put nearly every active row in
+        // the overdue column and make the founder look like they'd abandoned the
+        // thing. A couple of overdue rows is the honest picture: that's the
+        // founder's to-do list, and the demo scheduler won't clear it.
+        nextDueAt: p.status === "active" ? isoAt(anchor, 2 - (i % 7), 9, jitter(i)) : null,
+        nextStepDraftJson:
+          p.status === "active" && p.steps > 1
+            ? JSON.stringify({
+                subject: subjectFor(p, p.steps),
+                body: bodyFor(p, p.steps),
+                // What the real linter says about this exact text, so a demo
+                // draft can never claim a flag its body does not earn — nor hide
+                // one it does.
+                flags: lintEmail(subjectFor(p, p.steps), bodyFor(p, p.steps)),
+                payload: { name: p.name, company: p.company, hook: p.hook },
+                draftedAt: isoAt(anchor, 1, 7, jitter(i)),
+              })
+            : null,
+        nextStepDraftedAt:
+          p.status === "active" && p.steps > 1 ? isoAt(anchor, 1, 7, jitter(i)) : null,
+      });
+    }
 
     if (p.outcome) {
       outcomes.push({
@@ -902,7 +1486,7 @@ export function buildDemoDataset(anchor: Date): DemoDataset {
     sequenceEvents,
     cadences,
     outcomes,
-    queue: buildQueue(anchor),
+    queue: buildQueue(anchor, prospects),
     triggers: buildTriggers(anchor),
     runs: buildRuns(anchor, receipts),
     bounces: buildBounces(anchor, prospects),
@@ -1049,7 +1633,8 @@ function outcomeValueTag(outcome: NonNullable<DemoPerson["outcome"]>): unknown {
 
 // Queue
 
-function buildQueue(anchor: Date): DemoDataset["queue"] {
+function buildQueue(anchor: Date, prospects: DemoProspectRow[]): DemoDataset["queue"] {
+  const idByEmail = new Map(prospects.map((p) => [p.email, p.id]));
   // Rows the finders surfaced but that haven't shipped yet — the founder's
   // actual inbox of work. A mix of statuses so every filter chip has something
   // behind it, and drafts on the approved rows so the preview expands.
@@ -1255,13 +1840,15 @@ function buildQueue(anchor: Date): DemoDataset["queue"] {
     lastDraftedAt: null,
   });
 
-  // Two already shipped, matching prospects that exist above.
+  // Two already shipped, matching prospects that exist above. The prospect id
+  // is looked up from the email rather than written down: ids are assigned by
+  // position in the cast, so a literal here silently repoints at whoever ends
+  // up at that index the next time someone inserts a row above them.
   const sentRows: Array<{
     play: string;
     source: string;
     email: string;
     name: string;
-    prospectId: number;
     daysAgo: number;
   }> = [
     {
@@ -1269,7 +1856,6 @@ function buildQueue(anchor: Date): DemoDataset["queue"] {
       source: "show-hn",
       email: "elin@northport.works",
       name: "Elin Dahl",
-      prospectId: 19,
       daysAgo: 1,
     },
     {
@@ -1277,7 +1863,6 @@ function buildQueue(anchor: Date): DemoDataset["queue"] {
       source: "post-funding-auto",
       email: "ravi@stanchion.dev",
       name: "Ravi Menon",
-      prospectId: 18,
       daysAgo: 2,
     },
   ];
@@ -1292,7 +1877,7 @@ function buildQueue(anchor: Date): DemoDataset["queue"] {
       reviewedAt: isoAt(anchor, r.daysAgo, 8, jitter(i)),
       sentAt: isoAt(anchor, r.daysAgo, 9, jitter(i)),
       notes: null,
-      prospectId: r.prospectId,
+      prospectId: idByEmail.get(r.email) ?? null,
       lastDraftJson: null,
       lastDraftedAt: null,
     });
