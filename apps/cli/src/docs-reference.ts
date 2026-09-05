@@ -84,7 +84,7 @@ export function renderCliReference(program: Command, revision: string): string {
     for (const child of cmd.commands) visit(child, [...ancestors, cmd]);
   }
   visit(program, []);
-  return lines.join("\n") + "\n";
+  return lines.join("\n").trimEnd() + "\n";
 }
 
 /** Ignore provenance only: unrelated source commits must not make content stale. */
