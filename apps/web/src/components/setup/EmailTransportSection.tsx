@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Mail } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -44,7 +44,18 @@ export function EmailTransportSection({
   const qc = useQueryClient();
   const { cfg, sources } = status;
   const identities = status.identities ?? [];
-  const provisionedDomains = status.provisionedDomains ?? [];
+  // The status call carries only a quick best-effort copy of the domain pool
+  // (the platform's listDomains can take a minute); the dedicated route waits
+  // longer and refines the picker once it lands. Either way the form renders.
+  const domains = useQuery({
+    queryKey: ["setup", "domains"],
+    queryFn: api.setupDomains,
+    staleTime: 60_000,
+  });
+  const provisionedDomains =
+    domains.data?.provisionedDomains && domains.data.provisionedDomains.length > 0
+      ? domains.data.provisionedDomains
+      : (status.provisionedDomains ?? []);
   // Legacy single-identity mode = the pool is auto-derived from emailProvider.
   // Once a real pool exists, the provider select is inert (routing is
   // pool-driven) — hide it instead of misleading.
