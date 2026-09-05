@@ -13,6 +13,8 @@ const PLAY_NAME = "job-change";
 const SOURCE = "find:job-change";
 
 export interface JobChangeFinderOpts extends RunOpts {
+  /** The pitch angle, stamped onto every enqueued row so it drafts inline. */
+  yourEdge?: string;
   /**
    * Target personas to search for (e.g. "VP Engineering", "Head of Growth").
    * Each persona gets one webSearch query combined with sinceDays.
@@ -267,6 +269,7 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
       ...(phone ? { phone } : {}),
       ...(contact.title ? { title: contact.title } : {}),
       ...icpFields(contact),
+      yourEdge: opts.yourEdge ?? "",
     };
     const id = enqueueScoredTarget(ledger, {
       playName: PLAY_NAME,

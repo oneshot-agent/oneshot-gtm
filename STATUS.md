@@ -72,11 +72,12 @@ Only **`show-hn`** and **`post-funding-auto`** fire out of the box. The other th
 
 `accelerator-batch` · `job-change` · `hiring-signal` · `podcast-guest` · `luma-events` · `github-topics` · `github-stars` · `breakup-revive` · `x-reposters` · `local-business` · `local-registry` · `gov-solicitation` · `civic-agenda`
 
-Ten of those also stay **not ready** until you give them required config, and refuse to fire until you do (the API returns `409`):
+Eleven of those also stay **not ready** until you give them required config, and refuse to fire until you do (the API returns `409`):
 
 | Finder              | Needs                                                                                                                                                                            |
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `accelerator-batch` | `cohorts[]` + `yourEdge`                                                                                                                                                         |
+| `job-change`        | `yourEdge`                                                                                                                                                                       |
 | `hiring-signal`     | `yourClaim`                                                                                                                                                                      |
 | `github-topics`     | `topics[]` + `vendors[]` + `yourEdge`                                                                                                                                            |
 | `github-stars`      | `repos[]` + `yourEdge`                                                                                                                                                           |

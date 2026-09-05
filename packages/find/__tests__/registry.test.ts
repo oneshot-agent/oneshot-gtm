@@ -347,6 +347,10 @@ describe("checkReadiness", () => {
     // require founder-supplied config (topics, etc.) ship unready by design
     // and are excluded here.
     const intentionallyUnreadyByDefault = new Set([
+      // job-change joined this list once yourEdge reached the email: its
+      // trigger carried the field for months while the play never read it,
+      // so the Offer beat had only the product one-liner to improvise from.
+      "job-change",
       "github-topics",
       "github-stars",
       "hiring-signal",

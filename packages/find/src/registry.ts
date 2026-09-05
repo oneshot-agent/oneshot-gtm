@@ -260,17 +260,25 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultConfig: {
       ...PRODUCT_RESEARCH_DEFAULT,
       personas: ["VP Engineering", "Head of Growth", "Director of Product", "Chief of Staff"],
+      yourEdge: "",
       sinceDays: 14,
       limit: 25,
       maxCostUsd: 5,
     },
     configBrief:
-      "Searches for 'joined X as Y' job-change announcements, ICP-filters, enriches the new email. Config: `personas` (the roles whose JOB CHANGE represents a buying moment for THIS product — not generic 'VP Eng' unless that's actually who buys; e.g. 'Head of AI', 'Founding Engineer' for AI-tooling ICPs), `companies` (optional whitelist of companies to bias toward), `sinceDays` (lookback, default 14), `limit`, `maxCostUsd`. Strong personas matter more than long lists.",
+      "Searches for 'joined X as Y' job-change announcements, ICP-filters, enriches the new email. Config: `personas` (the roles whose JOB CHANGE represents a buying moment for THIS product — not generic 'VP Eng' unless that's actually who buys; e.g. 'Head of AI', 'Founding Engineer' for AI-tooling ICPs), `companies` (optional whitelist of companies to bias toward), `yourEdge` (what this specific move makes newly relevant to them, REQUIRED — the Offer beat draws from it and nothing else; may hold several `//`-separated angles, and the email picks the one that fits the move), `sinceDays` (lookback, default 14), `limit`, `maxCostUsd`. Strong personas matter more than long lists.",
+    readiness: (cfg) => {
+      const edge = cfg["yourEdge"];
+      return typeof edge === "string" && edge.trim().length > 0
+        ? { ready: true }
+        : { ready: false, reason: "set `yourEdge` — what the move makes newly relevant" };
+    },
     run: (cfg) =>
       runJobChangeFinder({
         dryRun: false,
         ...(Array.isArray(cfg["personas"]) ? { personas: cfg["personas"] as string[] } : {}),
         ...(Array.isArray(cfg["companies"]) ? { companies: cfg["companies"] as string[] } : {}),
+        ...(typeof cfg["yourEdge"] === "string" ? { yourEdge: cfg["yourEdge"] as string } : {}),
         sinceDays: (cfg["sinceDays"] as number) ?? 14,
         limit: (cfg["limit"] as number) ?? 25,
         maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,

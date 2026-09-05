@@ -9,6 +9,10 @@ export interface JobChangeTarget {
   newCompany: string;
   previousRole?: string;
   previousCompany?: string;
+  /** The pitch angle, stamped onto finder rows from the trigger config. The
+   *  Offer beat draws from this and nothing else — without it the prompt has
+   *  only the product one-liner to improvise from. */
+  yourEdge: string;
   linkedinUrl?: string;
   phone?: string;
   /** Job title from the person-level ICP gate — persisted to prospects.title. */
@@ -71,6 +75,7 @@ const jobChangeDef: EmailPlayDef<JobChangeTarget> = {
       `PROSPECT: ${t.name}`,
       `NEW ROLE: ${t.newRole} at ${t.newCompany}`,
       `PREVIOUS: ${t.previousRole ?? "unknown"} at ${t.previousCompany ?? "unknown"}`,
+      `YOUR EDGE: ${t.yourEdge}`,
       `DOSSIER:\n${prep.dossier || "(dry-run; rely on the trigger only)"}`,
     ].join("\n"),
   prospectMeta: (t) => ({
