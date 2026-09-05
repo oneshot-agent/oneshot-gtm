@@ -9,11 +9,13 @@
     "build:demo": "vite build --mode demo && cp -R fixtures dist-demo/fixtures",
     "capture": "bun run scripts/capture-fixtures.ts",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "brand": "bun run scripts/build-brand.ts"
   },
   "dependencies": {
     "@assistant-ui/react": "^0.12.25",
     "@base-ui/react": "^1.2.0",
+    "@fontsource-variable/host-grotesk": "^5.2.8",
     "@fontsource/ibm-plex-mono": "^5.2.7",
     "@fontsource/ibm-plex-sans": "^5.2.8",
     "@oneshot-gtm/shared-types": "workspace:*",

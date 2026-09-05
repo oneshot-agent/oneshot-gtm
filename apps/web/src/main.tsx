@@ -5,6 +5,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { toast } from "sonner";
 import { IS_DEMO, isDemoReadOnly } from "./api/demo.ts";
+import type { RouteTitle } from "./lib/documentTitle.ts";
 import { routeTree } from "./routeTree.gen.ts";
 
 /*
@@ -59,6 +60,10 @@ const router = createRouter({
 declare module "@tanstack/react-router" {
   interface Register {
     router: typeof router;
+  }
+  // Every route declares its tab title here; useDocumentTitle composes the rest.
+  interface StaticDataRouteOption {
+    title?: RouteTitle;
   }
 }
 

@@ -11,6 +11,7 @@ import { cn, formatCount, formatUsd } from "../lib/cn.ts";
 import { Pii } from "../components/primitives/Pii.tsx";
 
 export const Route = createFileRoute("/measure")({
+  staticData: { title: "Measure" },
   component: MeasurePage,
 });
 

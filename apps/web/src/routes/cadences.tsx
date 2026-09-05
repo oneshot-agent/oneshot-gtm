@@ -40,6 +40,7 @@ const TILE_GRID_COLS: Record<number, string> = {
 };
 
 export const Route = createFileRoute("/cadences")({
+  staticData: { title: "Cadences" },
   // ?sinceRun=N deep-link from /run/<play>?runId=N done-mode — filters the
   // listing to cadences whose prospect email is in the run's prospect_emails
   // set. The page shows a clear banner with a [clear filter] CTA.

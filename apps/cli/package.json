@@ -2,6 +2,22 @@
   "name": "oneshot-gtm",
   "version": "0.7.0",
   "description": "Open-source GTM agent for technical founders. Pay-per-result, signed receipts.",
+  "keywords": [
+    "ai-agent",
+    "bun",
+    "cli",
+    "cold-email",
+    "go-to-market",
+    "gtm",
+    "lead-generation",
+    "outreach",
+    "prospecting",
+    "sales-automation",
+    "signed-receipts",
+    "sqlite",
+    "usdc",
+    "x402"
+  ],
   "homepage": "https://oneshot-gtm.com",
   "license": "MIT",
   "repository": {
