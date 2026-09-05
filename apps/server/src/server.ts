@@ -1,5 +1,5 @@
 import { existsSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { configDir, demoMode, scrubDemoPaths } from "@oneshot-gtm/core";
 import { health } from "./api/health.ts";
@@ -196,14 +196,20 @@ export async function serveStatic(staticDir: string, pathname: string): Promise<
   const root = resolve(staticDir);
   const rel = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
   const candidate = resolve(root, rel);
-  // Reject anything that escapes the static dir. `resolve` collapses `..`
-  // segments so the prefix check catches both raw `..` and encoded variants.
-  if (candidate !== root && !candidate.startsWith(`${root}/`)) return notFound();
+  // Reject anything that escapes the static dir. `relative` rather than a
+  // string prefix: on Windows `resolve` returns backslash-separated paths, so
+  // a `${root}/` comparison rejects every legitimate asset there.
+  const within = relative(root, candidate);
+  if (within.startsWith("..") || isAbsolute(within)) return notFound();
+  const stat = statSync(candidate, { throwIfNoEntry: false });
   // isFile, not exists: a directory passes existsSync and then Bun.file() fails
   // mid-stream with EISDIR instead of returning a status.
-  if (statSync(candidate, { throwIfNoEntry: false })?.isFile()) {
+  if (stat?.isFile()) {
     return new Response(Bun.file(candidate), { headers: cacheHeaders(rel) });
   }
+  // An existing non-file — /assets, say — is not a client route, so it must not
+  // be handed the SPA shell just for having no dot in it.
+  if (stat) return notFound();
   // SPA fallback: serve index.html for non-asset paths (paths without a dot).
   if (!rel.includes(".")) {
     return new Response(Bun.file(join(root, "index.html")), {

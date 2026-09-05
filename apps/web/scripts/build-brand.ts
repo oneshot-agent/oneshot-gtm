@@ -39,6 +39,18 @@ const FONT = join(
   "node_modules/@fontsource-variable/host-grotesk/files/host-grotesk-latin-wght-normal.woff2",
 );
 
+/**
+ * Every scratch dir this run makes, removed in main's finally. Chrome profiles
+ * are the reason: without this, each `brand` run leaves several tens of MB of
+ * them behind in the system temp dir.
+ */
+const SCRATCH: string[] = [];
+function scratchDir(prefix: string): string {
+  const d = mkdtempSync(join(tmpdir(), prefix));
+  SCRATCH.push(d);
+  return d;
+}
+
 const BG = "#120f0c";
 const CREAM = "#f5f1ea";
 const MUTED = "#8d847d";
@@ -103,7 +115,7 @@ const sha = (path: string): string =>
  * parsed — which is exactly what happens if an oklch() or a var() gets back in.
  */
 async function assertColorsParsed(size: number): Promise<void> {
-  const dir = mkdtempSync(join(tmpdir(), "brand-probe-"));
+  const dir = scratchDir("brand-probe-");
   const flat = join(dir, "flat.svg");
   const out = join(dir, "flat.png");
   writeFileSync(flat, readFileSync(MASTER, "utf8").replace(/fill="#[0-9a-f]{6}"/gi, ""));
@@ -168,7 +180,7 @@ ${
 </div>`;
 
   const shot = async (html: string, out: string): Promise<void> => {
-    const dir = mkdtempSync(join(tmpdir(), "brand-og-"));
+    const dir = scratchDir("brand-og-");
     const src = join(dir, "og.html");
     writeFileSync(src, html);
     await runUntilFile(
@@ -177,7 +189,7 @@ ${
         "--headless",
         // A fresh profile: the daily one contributes zoom, fonts and extensions,
         // or trips the singleton lock outright.
-        `--user-data-dir=${mkdtempSync(join(tmpdir(), "brand-chrome-"))}`,
+        `--user-data-dir=${scratchDir("brand-chrome-")}`,
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-extensions",
@@ -198,7 +210,7 @@ ${
   };
 
   const og = join(PUBLIC, "og.png");
-  const probe = join(mkdtempSync(join(tmpdir(), "brand-probe-")), "nofont.png");
+  const probe = join(scratchDir("brand-probe-"), "nofont.png");
   await shot(page(true), og);
   await shot(page(false), probe);
   if (sha(og) === sha(probe)) {
@@ -210,4 +222,11 @@ ${
   console.log(`  og.png                 ${OG_W}×${OG_H}  (font verified)`);
 }
 
-await main();
+try {
+  await main();
+} finally {
+  // The browser is killed in runUntilFile's finally; give it a moment to let
+  // go of its profile before the directory goes.
+  await Bun.sleep(300);
+  for (const d of SCRATCH) rmSync(d, { recursive: true, force: true });
+}

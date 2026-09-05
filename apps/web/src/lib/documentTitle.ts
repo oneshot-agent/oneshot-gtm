@@ -20,12 +20,13 @@ export const SUFFIX = "oneshot·gtm";
  * unmarked case rather than colouring it.
  */
 export function composeTitle(page: string | null, workspace: string | null): string {
-  const parts = [page?.trim(), workspace?.trim(), SUFFIX].filter(
-    (p): p is string => !!p && p !== "default",
+  // Only the suffix is de-duped. A workspace genuinely named "Queue" still has
+  // to appear beside the Queue page — collapsing them hides exactly the
+  // identity this segment exists to carry.
+  const parts = [page?.trim(), workspace?.trim()].filter(
+    (p): p is string => !!p && p !== "default" && p !== SUFFIX,
   );
-  // De-dupe so a page that is already the suffix ("oneshot·gtm") does not
-  // render twice.
-  return [...new Set(parts)].join(" · ");
+  return [...parts, SUFFIX].join(" · ");
 }
 
 /**

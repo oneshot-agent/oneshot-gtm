@@ -45,19 +45,46 @@ export function tintSvg(svg: string, hue: number): string {
 }
 
 /**
+ * The href index.html shipped, captured before the first swap.
+ *
+ * Every call has to re-read the original: once link.href is a tinted data URL
+ * its SVG no longer contains ACCENT_HEX, so a later fetch of it would find
+ * nothing to replace and silently leave the previous workspace's colour up.
+ */
+let canonicalHref: string | null = null;
+/** Which call is newest — a slower earlier fetch must not overwrite it. */
+let generation = 0;
+
+/** Test seam: module state would otherwise leak between cases. */
+export function resetFaviconState(): void {
+  canonicalHref = null;
+  generation = 0;
+}
+
+/**
  * Swap the tab icon for a tinted copy. Silent no-op on any failure — a missing
  * or unreadable icon is not worth an error boundary, and the untinted mark is
  * already correct.
  */
 export async function applyWorkspaceFavicon(workspace: string | null): Promise<void> {
   const link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
-  // "default" is the unmarked case, same as the sidebar dot.
-  if (!link || !workspace || workspace === "default") return;
+  if (!link) return;
+  canonicalHref ??= link.href;
+  const mine = ++generation;
+
+  // "default" is the unmarked case, same as the sidebar dot — and it has to
+  // actively restore the plain mark, not just decline to tint.
+  if (!workspace || workspace === "default") {
+    link.href = canonicalHref;
+    return;
+  }
   try {
-    const res = await fetch(link.href);
+    const res = await fetch(canonicalHref);
     if (!res.ok) return;
     const svg = await res.text();
     if (!svg.includes(ACCENT_HEX)) return;
+    // A newer workspace won the race while this fetch was in flight.
+    if (mine !== generation) return;
     link.href = `data:image/svg+xml,${encodeURIComponent(tintSvg(svg, workspaceHue(workspace)))}`;
   } catch {
     return;

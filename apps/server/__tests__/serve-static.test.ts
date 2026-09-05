@@ -49,6 +49,13 @@ describe("serveStatic", () => {
     expect((await serveStatic(dir, "/nested.dir")).status).toBe(404);
   });
 
+  it("404s an extension-less directory instead of handing back the SPA shell", async () => {
+    // /assets exists and has no dot, so it used to fall into the SPA fallback
+    // and answer a directory request with index.html and a 200.
+    const r = await serveStatic(dir, "/assets");
+    expect(r.status).toBe(404);
+  });
+
   it("refuses to escape the static dir", async () => {
     expect((await serveStatic(dir, "/../../etc/passwd")).status).toBe(404);
   });

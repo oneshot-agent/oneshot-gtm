@@ -19,6 +19,11 @@ describe("composeTitle", () => {
     expect(composeTitle(SUFFIX, null)).toBe(SUFFIX);
   });
 
+  it("keeps a workspace whose name matches the page", () => {
+    // De-duping these would hide the identity the segment exists to carry.
+    expect(composeTitle("Queue", "Queue")).toBe(`Queue · Queue · ${SUFFIX}`);
+  });
+
   it("ignores whitespace-only segments", () => {
     expect(composeTitle("  ", "  ")).toBe(SUFFIX);
   });
