@@ -88,8 +88,18 @@ export function runAcceleratorBatch(
             }
           : {}),
       }),
-    buildInputBlock: (t, prep, cfg) =>
-      [
+    buildInputBlock: (t, prep, cfg) => {
+      // Rows enqueued before yourEdge existed carry none, and the Offer beat
+      // has no other material — an unguarded template literal would spend a
+      // paid LLM call on the string "undefined". runEmailPlay catches this per
+      // target and turns the row into an errorDraft, so it surfaces in /queue
+      // instead of shipping a hollow email.
+      if (!t.yourEdge?.trim()) {
+        throw new Error(
+          "accelerator-batch: this row carries no yourEdge — re-run the finder, or set it on the row, before drafting",
+        );
+      }
+      return [
         `FOUNDER: ${cfg.founderName}`,
         `PRODUCT: ${cfg.productOneLiner}`,
         `YOUR EDGE: ${t.yourEdge}`,
@@ -101,7 +111,8 @@ export function runAcceleratorBatch(
         `PROSPECT PRODUCT: ${t.productOneLiner ?? "(unknown)"}`,
         `LAUNCH URL: ${t.launchUrl ?? "(none)"}`,
         `DOSSIER:\n${prep.dossier || "(dry-run; rely on the public cohort record only)"}`,
-      ].join("\n"),
+      ].join("\n");
+    },
     prospectMeta: (t) => ({
       name: t.name,
       email: t.email,
