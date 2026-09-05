@@ -86,26 +86,79 @@ const SETUP_STATUS_DOMAINS_DEADLINE_MS = 2_500;
 /** The dedicated domain-list route can wait longer; it's off the page's critical path. */
 const SETUP_DOMAINS_DEADLINE_MS = 45_000;
 
+/** A pool this old is served immediately but refreshed in the background. */
+const DOMAIN_CACHE_FRESH_MS = 60_000;
+
+/**
+ * The last pool the platform returned, shared by both routes. `[]` is never
+ * cached — it means "unknown", and a later real answer must replace it. One
+ * underlying `listSendingDomains()` is shared between concurrent callers, and
+ * it keeps running after a caller's deadline fires, so a status call that
+ * gave up at 2.5s still fills the cache for the next load.
+ */
+let domainCache: { views: DomainPoolView[]; at: number } | null = null;
+let domainInflight: Promise<DomainPoolView[]> | null = null;
+
+/** Test seam: forget the cached pool between cases. */
+export function resetDomainCacheForTests(): void {
+  domainCache = null;
+  domainInflight = null;
+}
+
+function refreshDomainViews(): Promise<DomainPoolView[]> {
+  if (domainInflight) return domainInflight;
+  const p = listSendingDomains()
+    .then((entries) => {
+      const views = domainViews(entries);
+      if (views.length > 0) domainCache = { views, at: Date.now() };
+      return views;
+    })
+    .finally(() => {
+      if (domainInflight === p) domainInflight = null;
+    });
+  domainInflight = p;
+  return p;
+}
+
 /**
  * Best-effort provisioned-domain pool for the setup UI. Swallows every failure
- * (transient, auth, OR the deadline) to `[]` so the setup page always renders —
- * a missing domain list degrades the picker, it shouldn't 500 or stall the
- * status call. `[]` means "unknown", not "no domains owned".
+ * (transient, auth, OR the deadline) to the last good pool, or `[]` when there
+ * is none, so the setup page always renders — a missing domain list degrades
+ * the picker, it shouldn't 500 or stall the status call.
  */
 async function provisionedDomainViews(deadlineMs: number): Promise<DomainPoolView[]> {
   try {
-    return domainViews(
-      await withDeadline(listSendingDomains(), deadlineMs, "provisioned domain list"),
-    );
+    return await withDeadline(refreshDomainViews(), deadlineMs, "provisioned domain list");
   } catch {
-    return [];
+    return domainCache?.views ?? [];
   }
+}
+
+/**
+ * What the status call carries: a cached pool is served at once (and
+ * refreshed in the background when stale); only a cold cache waits, briefly.
+ */
+async function cachedDomainViews(): Promise<DomainPoolView[]> {
+  if (domainCache) {
+    if (Date.now() - domainCache.at > DOMAIN_CACHE_FRESH_MS) {
+      refreshDomainViews().catch(() => {
+        // background refresh; the stale pool stays until a real answer lands
+      });
+    }
+    return domainCache.views;
+  }
+  return provisionedDomainViews(SETUP_STATUS_DOMAINS_DEADLINE_MS);
 }
 
 /** GET /api/setup/domains — the provisioned pool alone, for the sender picker. */
 export async function getSetupDomains(req: Request): Promise<Response> {
+  const fresh = domainCache && Date.now() - domainCache.at <= DOMAIN_CACHE_FRESH_MS;
   return jsonResponse(
-    { provisionedDomains: await provisionedDomainViews(SETUP_DOMAINS_DEADLINE_MS) },
+    {
+      provisionedDomains: fresh
+        ? domainCache!.views
+        : await provisionedDomainViews(SETUP_DOMAINS_DEADLINE_MS),
+    },
     200,
     req,
   );
@@ -117,7 +170,7 @@ export async function getSetupStatus(req: Request): Promise<Response> {
     {
       cfg: publicCfg(cfg),
       identities: identityViews(cfg),
-      provisionedDomains: await provisionedDomainViews(SETUP_STATUS_DOMAINS_DEADLINE_MS),
+      provisionedDomains: await cachedDomainViews(),
       secretsPath: secretsPath(),
       sources: {
         OPENROUTER_API_KEY: secretSource("OPENROUTER_API_KEY"),
