@@ -143,7 +143,7 @@ export function EmailTransportSection({
   return (
     <SectionShell
       id="email"
-      lede="The sender rotation pool. Each prospect sticks to the identity that first emailed them; new prospects go to the identity with the most capacity left today."
+      lede="The sender rotation pool. A prospect stays with the identity that first emailed them."
       dirtyCount={dirtyCount}
       errorCount={errorCount}
       savedAt={save.savedAt}
@@ -183,22 +183,16 @@ export function EmailTransportSection({
             </Button>
             <span className="text-[12px] text-ink-faint">
               {gmailCredsReady ? (
-                "Opens Google consent — sign in as the account you want to send from."
+                "Opens Google consent. Sign in as the sending account."
               ) : (
                 <>
-                  Save GMAIL_CLIENT_ID + GMAIL_CLIENT_SECRET in <CredentialsLink /> first (Google
-                  Cloud OAuth client, Desktop type, Gmail API enabled).
+                  Needs GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET in <CredentialsLink />.
                 </>
               )}
             </span>
           </div>
           <span className="text-[12px] text-ink-faint">
-            CLI alternative:{" "}
-            <code className="ln-mono text-[11.5px] text-ink-cream-2">
-              bun run cli -- gmail auth
-            </code>
-            . Cap and removal changes apply on Save. Removing an identity blocks sends to prospects
-            pinned to it until it's restored.
+            Removing an identity blocks sends to prospects pinned to it until it's restored.
           </span>
 
           <ProvisionedDomains
@@ -235,11 +229,10 @@ export function EmailTransportSection({
           </Button>
           <span className="text-[12px] text-ink-faint">
             {smartleadKeyReady ? (
-              "Lists the mailboxes connected to your Smartlead workspace — Smartlead does the warmup, this pool does the sending."
+              "Mailboxes connected to your Smartlead workspace. Smartlead warms them; this pool sends."
             ) : (
               <>
-                Save your Smartlead API key in <CredentialsLink /> first (Smartlead → Settings →
-                API).
+                Needs a Smartlead API key in <CredentialsLink />.
               </>
             )}
           </span>
@@ -303,8 +296,8 @@ export function EmailTransportSection({
         {staging.pendingSmartleadAdds.length > 0 && (
           <span className="text-[12px] text-ink-faint">
             {staging.pendingSmartleadAdds.length} Smartlead mailbox
-            {staging.pendingSmartleadAdds.length === 1 ? "" : "es"} staged — applied on Save with
-            the cold-start warm-up ramp (capped at Smartlead's own per-mailbox limit).
+            {staging.pendingSmartleadAdds.length === 1 ? "" : "es"} staged. They join on Save with
+            the warm-up ramp, capped at Smartlead's own limit.
           </span>
         )}
       </div>
@@ -322,11 +315,9 @@ export function EmailTransportSection({
       )}
       {isLegacyPool && draft.values.emailProvider === "gmail" && (
         <div className="ln-note text-[12px] text-ink-muted">
-          Emails send from your authenticated Gmail address — the sending domain in Founder profile
-          is ignored. Easiest path: run{" "}
+          Sends from your authenticated Gmail address; the sending domain is ignored. Run{" "}
           <code className="ln-mono text-[11.5px] text-ink-cream-2">bun run cli -- gmail auth</code>{" "}
-          to authorize in the browser and fill all three Gmail values in <CredentialsLink />{" "}
-          automatically.
+          to fill the Gmail keys in <CredentialsLink />.
         </div>
       )}
     </SectionShell>
@@ -565,22 +556,19 @@ function AddOneShotSender({
         provisionedDomains.length > 0 &&
         !provisionedDomains.some((d) => d.domain.toLowerCase() === domain) && (
           <span className="text-[12px] text-ink-blocked">
-            {domain} isn't in your warmed pool — it auto-provisions on first send and goes out cold
-            (server warm-up is bypassed for chosen domains). The client ramp below is your only
-            throttle.
+            {domain} isn't in your warmed pool. It provisions on first send and starts cold; the
+            ramp is its only throttle.
           </span>
         )}
       {/* Reputation + send limits are per-domain, not per-mailbox. */}
       {domain && identities.some((i) => i.sendingDomain?.toLowerCase() === domain) && (
         <span className="text-[12px] text-ink-faint">
-          Heads up: {domain} already sends in your pool. Reputation and the platform daily limit are
-          per-domain — extra mailboxes share them, and their client caps stack on the same domain.
+          {domain} already sends in your pool. Reputation and the daily limit are per domain, so its
+          mailboxes share them.
         </span>
       )}
       <span className="text-[12px] text-ink-faint">
-        Blank mailbox defaults to your first name; blank cap uses the cold-start warm-up ramp
-        (10/day, +10/week, max 50). Domains you send from are pinned, so the client ramp — not the
-        server — paces warm-up. New senders join the pool on Save.
+        Blank mailbox = your first name. Blank cap = warm-up ramp: 10/day, +10 a week, max 50.
       </span>
     </div>
   );

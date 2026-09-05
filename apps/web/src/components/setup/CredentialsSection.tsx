@@ -99,7 +99,7 @@ export function CredentialsSection({
     () => [
       {
         title: "LLM",
-        caption: `The key for your saved provider (${cfg.llmProvider}) is the one in use.`,
+        caption: `Only the saved provider's key (${cfg.llmProvider}) is read.`,
         keys: ["OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"],
         inUse: (k) => k === LLM_KEY[cfg.llmProvider],
         placeholder: {
@@ -110,7 +110,8 @@ export function CredentialsSection({
       },
       {
         title: "Wallet",
-        caption: `Keys live only in ${homeDir}/.env chmod 600. Nothing leaves your machine. The runtime uses AGENT_PRIVATE_KEY whenever it is set, otherwise the three CDP keys — the saved wallet mode only decides which ones the CLI wizard asks for.`,
+        caption:
+          "AGENT_PRIVATE_KEY wins when set, otherwise the three CDP keys. The wallet mode only drives the CLI wizard.",
         keys: [...CDP_KEYS, "AGENT_PRIVATE_KEY"],
         inUse: (k) => walletKeysInUse(sources).includes(k),
         placeholder: { AGENT_PRIVATE_KEY: "0x..." },
@@ -118,26 +119,26 @@ export function CredentialsSection({
       {
         title: "Gmail",
         caption:
-          "Google Cloud OAuth client (Desktop type, Gmail API enabled). Needed before Connect Gmail account in Email transport.",
+          "Google Cloud OAuth client, Desktop type, Gmail API on. Needed for Connect Gmail account.",
         keys: ["GMAIL_CLIENT_ID", "GMAIL_CLIENT_SECRET", "GMAIL_REFRESH_TOKEN"],
         inUse: (k) =>
           k === "GMAIL_REFRESH_TOKEN" ? isLegacyPool && cfg.emailProvider === "gmail" : true,
         optional: true,
         keyHint: {
           GMAIL_REFRESH_TOKEN:
-            "Legacy single-identity Gmail mode only. With a rotation pool, Connect Gmail account stores tokens per identity instead.",
+            "Legacy single-identity mode only; a pool stores tokens per identity.",
         },
       },
       {
         title: "Smartlead",
-        caption: "Smartlead → Settings → API. Then load and pick mailboxes in Email transport.",
+        caption: "Smartlead → Settings → API.",
         keys: ["SMARTLEAD_API_KEY"],
         inUse: () => true,
         optional: true,
       },
       {
         title: "X / Twitter",
-        caption: `Which set is used follows the engine saved on the x-reposters trigger (${xEngine === "xapi" ? "X API" : "twitterapi.io"}).`,
+        caption: `Follows the engine saved on the x-reposters trigger: ${xEngine === "xapi" ? "X API" : "twitterapi.io"}.`,
         keys: [...X_OAUTH_KEYS, "TWITTERAPI_IO_KEY"],
         inUse: (k) => (xEngine === "xapi") === (k !== "TWITTERAPI_IO_KEY"),
         optional: true,
@@ -145,15 +146,15 @@ export function CredentialsSection({
       {
         title: "LinkedIn replies",
         caption:
-          "Lets LinkedIn automation tools report a real prospect reply so OneShot stops every live email cadence. Connection acceptance alone does nothing.",
+          "Lets a LinkedIn tool report a real reply so email cadences stop. Connection acceptance alone does nothing.",
         keys: ["LINKEDIN_REPLY_WEBHOOK_SECRET"],
         inUse: () => true,
         optional: true,
-        keyHint: { LINKEDIN_REPLY_WEBHOOK_SECRET: "Use a random 32+ character bearer secret." },
+        keyHint: { LINKEDIN_REPLY_WEBHOOK_SECRET: "Random, 32+ characters." },
       },
       {
         title: "Finder access",
-        caption: "Optional credentials for richer GitHub and Luma discovery.",
+        caption: "Richer GitHub and Luma discovery.",
         keys: ["GITHUB_TOKEN", "LUMA_SESSION_COOKIE"],
         inUse: () => true,
         optional: true,
@@ -165,7 +166,7 @@ export function CredentialsSection({
   return (
     <SectionShell
       id="credentials"
-      lede={`Every key and token, apart from the preferences that choose between them. Saved to ${homeDir}/.env (chmod 600); a blank field keeps the stored value.`}
+      lede={`Every key and token. Saved to ${homeDir}/.env, chmod 600. Nothing leaves your machine; a blank field keeps the stored value.`}
       dirtyCount={draft.dirtyKeys.length}
       savedAt={save.savedAt}
       saving={save.isPending}
