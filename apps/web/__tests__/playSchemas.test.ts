@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { RUNNABLE_PLAYS } from "@oneshot-gtm/shared-types";
-import { missingRequiredExtras, missingRequiredFields, PLAY_SCHEMAS } from "../src/lib/playSchemas";
+import {
+  missingRequiredExtras,
+  missingRequiredFields,
+  PLAY_SCHEMAS,
+  type PlaySchema,
+} from "../src/lib/playSchemas";
 
 // The list and the schemas are edited in different files by different features,
 // and they drifted twice before this test existed: /queue's drain list lost
@@ -70,28 +75,56 @@ describe("missingRequiredFields", () => {
 });
 
 // finding PRRT_kwDOSKzrBs6ewsAf: missingRequiredFields only ever filtered
-// schema.fields — a required EXTRA (accelerator-batch's senderCohort) passed
-// validation blank and reached /api/run omitted, a paid malformed draft.
+// schema.fields — a required EXTRA passed validation blank and reached
+// /api/run omitted, a paid malformed draft. No shipped play declares extras
+// now (accelerator-batch, the last one, moved its angle onto the row and its
+// sender cohort into config), so the guard is exercised against a synthetic
+// schema — it has to keep working for the next play that wants one.
 describe("missingRequiredExtras", () => {
-  const schema = PLAY_SCHEMAS["accelerator-batch"]!;
+  const schema: PlaySchema = {
+    description: "synthetic",
+    fields: [{ key: "name", label: "Name", type: "text", required: true }],
+    defaultRow: { name: "" },
+    extras: [
+      { key: "sharedRequired", label: "Shared required", type: "text", required: true },
+      { key: "sharedOptional", label: "Shared optional", type: "text" },
+    ],
+  };
 
-  it("flags a blank required extra (senderCohort)", () => {
-    expect(missingRequiredExtras(schema, {})).toContain("Your cohort tag (sender)");
+  it("flags a blank required extra", () => {
+    expect(missingRequiredExtras(schema, {})).toContain("Shared required");
   });
 
   it("treats whitespace-only extras as blank", () => {
-    expect(missingRequiredExtras(schema, { senderCohort: "   " })).toContain(
-      "Your cohort tag (sender)",
-    );
+    expect(missingRequiredExtras(schema, { sharedRequired: "   " })).toContain("Shared required");
   });
 
   it("passes once the required extra is filled, ignoring the optional one", () => {
-    expect(missingRequiredExtras(schema, { senderCohort: "yc-w23" })).toEqual([]);
+    expect(missingRequiredExtras(schema, { sharedRequired: "x" })).toEqual([]);
   });
 
   it("returns [] for a schema with no extras", () => {
     const noExtras = PLAY_SCHEMAS["show-hn"]!;
     expect(missingRequiredExtras(noExtras, {})).toEqual([]);
+  });
+});
+
+// The play that carried the fabricated-affiliation bug: its own batch tag must
+// never be a form field again, and the discount that violated _humanizer.md
+// must not come back as one either.
+describe("accelerator-batch schema", () => {
+  const schema = PLAY_SCHEMAS["accelerator-batch"]!;
+
+  it("asks for nothing about the sender's own cohort", () => {
+    const keys = [...schema.fields, ...(schema.extras ?? [])].map((f) => f.key);
+    expect(keys).not.toContain("senderCohort");
+    expect(keys).not.toContain("freeForCohortOffer");
+  });
+
+  it("requires yourEdge on the row, like every other evidence-led play", () => {
+    const edge = schema.fields.find((f) => f.key === "yourEdge");
+    expect(edge?.required).toBe(true);
+    expect(schema.defaultRow["yourEdge"]).toBe("");
   });
 });
 

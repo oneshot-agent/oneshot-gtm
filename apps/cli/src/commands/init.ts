@@ -81,6 +81,13 @@ export async function runInit(): Promise<void> {
       },
       {
         type: "text",
+        name: "founderCohort",
+        message:
+          "Your own accelerator batch, e.g. yc-w23 — ONLY if you actually did one; blank is the right answer for most founders (optional)",
+        initial: cfg.founderCohort ?? "",
+      },
+      {
+        type: "text",
         name: "founderAdmission",
         message:
           "One true concession — what you'd rather not say but is true, e.g. 'two people, no enterprise logos yet' (optional)",
@@ -260,6 +267,10 @@ export function mergeInitConfig(
       cfg.productPortfolio,
     ),
     partners: normalizeOptionalAnswer(answers["partners"] as string | undefined, cfg.partners),
+    founderCohort: normalizeOptionalAnswer(
+      answers["founderCohort"] as string | undefined,
+      cfg.founderCohort ?? null,
+    ),
     founderAdmission: normalizeOptionalAnswer(
       answers["founderAdmission"] as string | undefined,
       cfg.founderAdmission,

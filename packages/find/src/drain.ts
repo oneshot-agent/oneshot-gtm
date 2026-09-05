@@ -12,9 +12,6 @@ export interface DrainOpts {
   playName: string;
   limit?: number;
   dryRun: boolean;
-  /** Required for accelerator-batch. */
-  senderCohort?: string;
-  freeForCohortOffer?: string;
 }
 
 export interface DrainOutcome {
@@ -69,9 +66,9 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
   // but before checking whether rows are empty, so an unknown play adds an error
   // to the outcome (exit 1 when the CLI sees it) instead of returning an empty
   // outcome (exit 2 under --fail-on-empty), regardless of queue state.
-  // accelerator-batch no longer needs a drain-level senderCohort — finder rows
-  // carry their own (stamped from trigger config), and the play falls back to
-  // the run-level option.
+  // No per-play drain-level options: every finder row is self-contained
+  // (the angle is stamped on at enqueue time), and anything about the SENDER
+  // is read from config by the play itself.
   if (!isSupportedPlay(opts.playName)) {
     outcome.errors.push({ id: -1, message: `drain: unsupported play '${opts.playName}'` });
     return outcome;
@@ -190,8 +187,6 @@ async function dispatchOneTarget(opts: DrainOpts, row: QueueRow): Promise<Drafte
   const result = await play.run({
     dryRun: opts.dryRun,
     targets: [target],
-    ...(opts.senderCohort ? { senderCohort: opts.senderCohort } : {}),
-    ...(opts.freeForCohortOffer ? { freeForCohortOffer: opts.freeForCohortOffer } : {}),
   });
   return firstDraft(result.drafted);
 }

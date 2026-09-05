@@ -76,7 +76,7 @@ Ten of those also stay **not ready** until you give them required config, and re
 
 | Finder              | Needs                                                                                                                                                                            |
 | ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `accelerator-batch` | `cohorts[]` + `senderCohort`                                                                                                                                                     |
+| `accelerator-batch` | `cohorts[]` + `yourEdge`                                                                                                                                                         |
 | `hiring-signal`     | `yourClaim`                                                                                                                                                                      |
 | `github-topics`     | `topics[]` + `vendors[]` + `yourEdge`                                                                                                                                            |
 | `github-stars`      | `repos[]` + `yourEdge`                                                                                                                                                           |

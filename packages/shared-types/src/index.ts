@@ -340,6 +340,8 @@ export interface SetupRequest {
   productPortfolio?: string;
   /** Notable partners / customers (free text, brand names). Brand-recognition proof. */
   partners?: string;
+  /** Your OWN accelerator batch tag ("yc-w23"), only if you actually did one. Blank = accelerator-batch writes as an outsider. */
+  founderCohort?: string;
   /** One true concession ("two people, no enterprise logos yet") for the optional damaging-admission beat. */
   founderAdmission?: string;
   /** Product facts + canonical links replies may cite. Links absent from this brief are never sent. */
@@ -900,9 +902,6 @@ export interface DrainRequest {
   playName: string;
   limit: number;
   dryRun: boolean;
-  /** For accelerator-batch: required cohort tag. */
-  senderCohort?: string;
-  freeForCohortOffer?: string;
 }
 
 export interface DrainResult {
@@ -1051,9 +1050,6 @@ export interface RunPlayRequest {
    * /queue is the authoritative archive only for queue-originated runs.
    */
   dedupeKeys?: (string | null)[];
-  /** For accelerator-batch: sender cohort + free offer text. */
-  senderCohort?: string;
-  freeForCohortOffer?: string;
 }
 
 /** Server-Sent Events frame contract for /api/run/$playName. */

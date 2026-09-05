@@ -378,24 +378,28 @@ describe("checkReadiness", () => {
     if (!out.ready) expect(out.reason).toMatch(/cohort/);
   });
 
-  it("accelerator-batch is not ready until senderCohort is set (even with cohorts)", () => {
+  it("accelerator-batch is not ready until yourEdge is set (even with cohorts)", () => {
     const spec = TRIGGERS.find((t) => t.name === "accelerator-batch")!;
     const out = checkReadiness(spec, spec.defaultConfig);
     expect(out.ready).toBe(false);
-    if (!out.ready) expect(out.reason).toMatch(/senderCohort/);
+    if (!out.ready) expect(out.reason).toMatch(/yourEdge/);
   });
 
-  it("accelerator-batch is ready with curated cohorts + a senderCohort", () => {
+  // The gate that USED to stand here demanded the sender's own cohort, so an
+  // install with no accelerator behind it had to invent one to run the finder
+  // at all — and the email then claimed a batch the founder was never in.
+  // Affiliation is optional now and lives in config, never in trigger config.
+  it("accelerator-batch never gates on the sender's own cohort", () => {
     const spec = TRIGGERS.find((t) => t.name === "accelerator-batch")!;
-    expect(checkReadiness(spec, { ...spec.defaultConfig, senderCohort: "yc-w23" })).toEqual({
+    expect(checkReadiness(spec, { ...spec.defaultConfig, yourEdge: "one true thing" })).toEqual({
       ready: true,
     });
   });
 
-  it("accelerator-batch is still ready with the legacy single-cohort shape + senderCohort", () => {
+  it("accelerator-batch is still ready with the legacy single-cohort shape", () => {
     const spec = TRIGGERS.find((t) => t.name === "accelerator-batch")!;
     expect(
-      checkReadiness(spec, { cohort: "yc-w26", cohortLabel: "YC W26", senderCohort: "yc-w23" }),
+      checkReadiness(spec, { cohort: "yc-w26", cohortLabel: "YC W26", yourEdge: "one true thing" }),
     ).toEqual({ ready: true });
   });
 

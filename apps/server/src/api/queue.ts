@@ -207,8 +207,6 @@ export async function drainQueueRoute(req: Request): Promise<Response> {
       playName: body.playName,
       limit: body.limit ?? 10,
       dryRun: !!body.dryRun,
-      ...(body.senderCohort ? { senderCohort: body.senderCohort } : {}),
-      ...(body.freeForCohortOffer ? { freeForCohortOffer: body.freeForCohortOffer } : {}),
     });
     const view: DrainResult = {
       drained: result.drained,
@@ -258,21 +256,12 @@ export async function regenerateDraftRoute(
     return jsonResponse({ error: "row payload is not valid JSON" }, 400, req);
   }
 
-  // Carry through per-play extras the payload happens to hold; a missing
-  // required one makes dispatchPlay throw, surfaced here as a 400.
-  const payloadObj = (target && typeof target === "object" ? target : {}) as Record<
-    string,
-    unknown
-  >;
+  // Every finder row is self-contained (its pitch angle is stamped on at
+  // enqueue time), so the payload IS the target and there are no run-level
+  // extras to carry through.
   const body: RunPlayRequest = {
     dryRun: true,
     targets: [target],
-    ...(typeof payloadObj["senderCohort"] === "string"
-      ? { senderCohort: payloadObj["senderCohort"] }
-      : {}),
-    ...(typeof payloadObj["freeForCohortOffer"] === "string"
-      ? { freeForCohortOffer: payloadObj["freeForCohortOffer"] }
-      : {}),
   };
 
   let drafted: Awaited<ReturnType<typeof dispatchPlay>>;

@@ -61,8 +61,6 @@ export async function dispatchPlay(
   const result = await play.run({
     dryRun: body.dryRun,
     targets: body.targets,
-    ...(body.senderCohort ? { senderCohort: body.senderCohort } : {}),
-    ...(body.freeForCohortOffer ? { freeForCohortOffer: body.freeForCohortOffer } : {}),
     ...(signal ? { signal } : {}),
     ...(onProgress
       ? {

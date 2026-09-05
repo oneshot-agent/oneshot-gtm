@@ -66,8 +66,10 @@ export const competitorSwitchMetadata = (t: object): Record<string, unknown> => 
   evidenceUrl: str(t, "evidenceUrl"),
 });
 
+// No senderCohort here on purpose: the sender's own cohort is founder truth
+// read from config at draft time, and a stale one may still sit on an old
+// queue payload. The play stamps the config value onto the metadata itself.
 export const acceleratorBatchMetadata = (t: object): Record<string, unknown> => ({
-  senderCohort: str(t, "senderCohort"),
   prospectCohort: str(t, "cohort"),
 });
 

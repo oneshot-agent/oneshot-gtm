@@ -103,6 +103,13 @@ export async function configFounder(): Promise<void> {
       },
       {
         type: "text",
+        name: "founderCohort",
+        message:
+          "Your own accelerator batch, e.g. yc-w23 — ONLY if you actually did one; blank is the right answer for most founders (optional)",
+        initial: cfg.founderCohort ?? "",
+      },
+      {
+        type: "text",
         name: "founderAdmission",
         message:
           "One true concession — what you'd rather not say but is true, e.g. 'two people, no enterprise logos yet' (optional)",
@@ -122,6 +129,7 @@ export async function configFounder(): Promise<void> {
     founderCredentials: (answers["founderCredentials"] ?? cfg.founderCredentials) || null,
     productPortfolio: (answers["productPortfolio"] ?? cfg.productPortfolio) || null,
     partners: (answers["partners"] ?? cfg.partners) || null,
+    founderCohort: (answers["founderCohort"] ?? cfg.founderCohort) || null,
     founderAdmission: (answers["founderAdmission"] ?? cfg.founderAdmission) || null,
   });
   ok("Saved.");

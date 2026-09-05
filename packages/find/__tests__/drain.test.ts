@@ -253,8 +253,8 @@ describe("drainQueue per-target dispatch + persistence", () => {
   });
 
   it("an unsupported play fails the drain up-front (the only global precondition left)", async () => {
-    // accelerator-batch no longer needs a drain-level senderCohort — it rides on
-    // the row now — so the only up-front failure is an unknown play.
+    // No play needs drain-level options any more — every finder row is
+    // self-contained — so the only up-front failure is an unknown play.
     ledgerStub.dequeueApproved.mockReturnValue([row(10)]);
     const out = await drainQueue({ playName: "no-such-play", dryRun: false });
     expect(out.errors[0]?.id).toBe(-1);

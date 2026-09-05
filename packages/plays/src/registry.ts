@@ -39,9 +39,6 @@ export interface DraftedRow {
 export interface PlayRunInput {
   dryRun: boolean;
   targets: unknown[];
-  /** Required by accelerator-batch. */
-  senderCohort?: string;
-  freeForCohortOffer?: string;
   /**
    * Optional per-target progress callback. Fires AFTER each target's full
    * prepare → draft → lint → send chain resolves (in completion order, not
@@ -117,9 +114,6 @@ export const PLAYS: Record<string, PlayDispatch> = {
       runAcceleratorBatch({
         dryRun: o.dryRun,
         targets: o.targets as AcceleratorBatchTarget[],
-        // Run-level fallback for manual /run targets; finder rows carry their own.
-        ...(o.senderCohort ? { senderCohort: o.senderCohort } : {}),
-        ...(o.freeForCohortOffer ? { freeForCohortOffer: o.freeForCohortOffer } : {}),
         ...progressOpt(o),
         ...signalOpt(o),
       }),

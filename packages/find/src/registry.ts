@@ -158,11 +158,12 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultConfig: {
       ...PRODUCT_RESEARCH_DEFAULT,
       cohorts: DEFAULT_COHORTS,
+      yourEdge: "",
       limit: 25,
       maxCostUsd: 15,
     },
     configBrief:
-      "Sweeps every known incubator (YC, Techstars, Antler, 500 Global, AI Grant, SPC, Neo) at its latest + previous-latest cohorts in one run. Config: `cohorts` (array of `{cohort, cohortLabel}` — defaults to the 14-entry curated list; edit to add/remove batches as new cohorts announce), optional `cohort` + `cohortLabel` (legacy single-cohort shape; still accepted), optional `adapter` (`yc-oss` | `websearch`; auto-picked per cohort — yc-* tags use the free yc-oss/api directory, everything else falls back to web search), `senderCohort` (YOUR own cohort tag, e.g. `yc-w23` — the peer angle the email is built on; REQUIRED, stamped onto every enqueued row so rows draft inline), `freeForCohortOffer` (optional time-bound offer, also stamped onto rows), `limit` (global enqueue cap across all cohorts), `maxCostUsd`. Per-cohort failures (spotty incubator, network blip) log and continue; the run only halts when EVERY cohort returns 0 candidates. ROTATION: the default list goes stale within ~3 months — edit when YC announces W27, Techstars rolls Fall 2026, etc. STRATEGIST DUTY: when the founder's ICP overlaps strongly with one incubator population, narrow the cohorts list rather than sweeping all seven — e.g. AI/infra startups → keep yc-* + ai-grant-*, drop the rest.",
+      'Sweeps every known incubator (YC, Techstars, Antler, 500 Global, AI Grant, SPC, Neo) at its latest + previous-latest cohorts in one run. Config: `cohorts` (array of `{cohort, cohortLabel}` — defaults to the 14-entry curated list; edit to add/remove batches as new cohorts announce), optional `cohort` + `cohortLabel` (legacy single-cohort shape; still accepted), optional `adapter` (`yc-oss` | `websearch`; auto-picked per cohort — yc-* tags use the free yc-oss/api directory, everything else falls back to web search), `yourEdge` (the one concrete thing worth telling a founder at this stage — REQUIRED, stamped onto every enqueued row so rows draft inline; may hold several `//`-separated angles, and the email picks the ONE that fits what the company is shipping), `limit` (global enqueue cap across all cohorts), `maxCostUsd`. Per-cohort failures (spotty incubator, network blip) log and continue; the run only halts when EVERY cohort returns 0 candidates. ROTATION: the default list goes stale within ~3 months — edit when YC announces W27, Techstars rolls Fall 2026, etc. AFFILIATION: the batch is a TIMING signal about the prospect (fresh money, demo-day clock, no distribution) and the honest answer to "how did you find me" — it is NOT a relationship the sender has. There is no sender-cohort setting here on purpose; if the founder genuinely did an accelerator, `founderCohort` in config (Setup → social proof) turns on the peer angle, and blank — the default — writes as the outsider the sender is. STRATEGIST DUTY: when the founder\'s ICP overlaps strongly with one incubator population, narrow the cohorts list rather than sweeping all seven — e.g. AI/infra startups → keep yc-* + ai-grant-*, drop the rest.',
     readiness: (cfg) => {
       const cohorts = Array.isArray(cfg["cohorts"]) ? cfg["cohorts"] : null;
       const legacyCohort =
@@ -173,12 +174,15 @@ export const TRIGGERS: TriggerSpec[] = [
           reason: "set `cohorts[]` (or legacy `cohort`)",
         };
       }
-      const senderCohort =
-        typeof cfg["senderCohort"] === "string" ? (cfg["senderCohort"] as string).trim() : "";
-      if (senderCohort.length === 0) {
+      // Deliberately NOT gated on a sender cohort. That gate is what made
+      // installs invent one to get the finder running, and the email then
+      // claimed a batch the founder was never in. Affiliation is optional and
+      // lives in config; what the email actually needs is something true to say.
+      const edge = cfg["yourEdge"];
+      if (typeof edge !== "string" || edge.trim().length === 0) {
         return {
           ready: false,
-          reason: "set `senderCohort` (your own cohort tag, e.g. yc-w23)",
+          reason: "set `yourEdge` — what you'd tell a founder fresh out of a batch",
         };
       }
       return { ready: true };
@@ -214,15 +218,9 @@ export const TRIGGERS: TriggerSpec[] = [
         ...(cfg["adapter"] === "yc-oss" || cfg["adapter"] === "websearch"
           ? { adapter: cfg["adapter"] as "yc-oss" | "websearch" }
           : {}),
-        // Sender cohort (+ offer) stamped onto every enqueued row so the play
-        // drafts inline without a run-level value. Readiness gates senderCohort.
-        ...(typeof cfg["senderCohort"] === "string" && cfg["senderCohort"].trim().length > 0
-          ? { senderCohort: (cfg["senderCohort"] as string).trim() }
-          : {}),
-        ...(typeof cfg["freeForCohortOffer"] === "string" &&
-        cfg["freeForCohortOffer"].trim().length > 0
-          ? { freeForCohortOffer: (cfg["freeForCohortOffer"] as string).trim() }
-          : {}),
+        // Stamped onto every enqueued row so the play drafts inline without a
+        // run-level value — same shape as github-topics. Readiness gates it.
+        ...(typeof cfg["yourEdge"] === "string" ? { yourEdge: cfg["yourEdge"] as string } : {}),
         limit: (cfg["limit"] as number) ?? 25,
         maxCostUsd: (cfg["maxCostUsd"] as number) ?? 15,
       });

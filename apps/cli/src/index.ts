@@ -404,8 +404,6 @@ find
 find
   .command("drain <play>")
   .option("--limit <n>", "max approved rows to drain (default 10)", (v) => Number.parseInt(v, 10))
-  .option("--sender-cohort <tag>", "REQUIRED for accelerator-batch (your cohort tag)")
-  .option("--offer <text>", "free-for-cohort offer text (accelerator-batch only)")
   .option("--dry-run", "preview drain; don't actually send", false)
   .option(
     "--fail-on-empty",
@@ -420,8 +418,6 @@ find
         play: string,
         opts: {
           limit?: number;
-          senderCohort?: string;
-          offer?: string;
           dryRun: boolean;
           failOnEmpty: boolean;
           json?: boolean;
@@ -432,8 +428,6 @@ find
           dryRun: opts.dryRun,
           failOnEmpty: opts.failOnEmpty,
           ...(opts.limit ? { limit: opts.limit } : {}),
-          ...(opts.senderCohort ? { senderCohort: opts.senderCohort } : {}),
-          ...(opts.offer ? { offer: opts.offer } : {}),
           ...(opts.json ? { json: opts.json } : {}),
         });
       },

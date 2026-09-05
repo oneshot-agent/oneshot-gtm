@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { Checkbox, Field, Textarea } from "../primitives/Field.tsx";
+import { Checkbox, Field, Input, Textarea } from "../primitives/Field.tsx";
 import { SectionShell } from "./SectionShell.tsx";
 import { useConfigSection } from "./useConfigSection.ts";
 import type { SectionProps } from "./types.ts";
@@ -10,6 +10,7 @@ export function SocialProofSection({ cfg, onDirtyChange }: SectionProps) {
       founderCredentials: cfg.founderCredentials ?? "",
       productPortfolio: cfg.productPortfolio ?? "",
       partners: cfg.partners ?? "",
+      founderCohort: cfg.founderCohort ?? "",
       founderAdmission: cfg.founderAdmission ?? "",
       mobileSignature: cfg.mobileSignature,
     }),
@@ -58,6 +59,16 @@ export function SocialProofSection({ cfg, onDirtyChange }: SectionProps) {
             onChange={(e) => s.set("partners", e.target.value)}
             placeholder="Comma-separated brand-name integrations or customers."
             rows={2}
+          />
+        </Field>
+        <Field
+          label="Your accelerator batch"
+          hint="Only if you actually did one. Blank — the right answer for most founders — makes accelerator-batch outreach write as an outsider, which is what it is. Claiming a batch you weren't in is the fastest way to burn the email."
+        >
+          <Input
+            value={s.values.founderCohort}
+            onChange={(e) => s.set("founderCohort", e.target.value)}
+            placeholder="e.g. yc-w23 · spc-2025-1 · (leave blank)"
           />
         </Field>
         <Field

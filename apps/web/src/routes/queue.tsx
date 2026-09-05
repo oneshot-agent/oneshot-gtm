@@ -154,8 +154,6 @@ function QueuePage() {
   const [drainModal, setDrainModal] = useState<DrainModalState | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [drainLimit, setDrainLimit] = useState(10);
-  const [drainSenderCohort, setDrainSenderCohort] = useState("");
-  const [drainOffer, setDrainOffer] = useState("");
   const [drainDryRun, setDrainDryRun] = useState(true);
   // null = follow the configured default; the server echoes what it used.
   const [orderOverride, setOrderOverride] = useState<"ranked" | "newest" | null>(null);
@@ -247,8 +245,6 @@ function QueuePage() {
       dryRun: drainDryRun ? "1" : "0",
     };
     if (drainModal.ids) search["ids"] = drainModal.ids.join(",");
-    if (drainSenderCohort.trim()) search["senderCohort"] = drainSenderCohort.trim();
-    if (drainOffer.trim()) search["freeForCohortOffer"] = drainOffer.trim();
     void navigate({
       to: "/run/$playName",
       params: { playName: drainModal.playName },
@@ -704,27 +700,6 @@ function QueuePage() {
               />
             </Field>
           )}
-          {drainModal?.playName === "accelerator-batch" && (
-            <>
-              <Field
-                label="Sender cohort (optional)"
-                hint="Overrides the cohort stamped on each row. Leave blank to use the row's own (set on the trigger)."
-              >
-                <Input
-                  value={drainSenderCohort}
-                  onChange={(e) => setDrainSenderCohort(e.target.value)}
-                  placeholder="e.g. yc-w23 · od-2 · (leave blank)"
-                />
-              </Field>
-              <Field label="Free-for-cohort offer (optional)">
-                <Input
-                  value={drainOffer}
-                  onChange={(e) => setDrainOffer(e.target.value)}
-                  placeholder="e.g. Free for your batch through demo day — reply with your cohort."
-                />
-              </Field>
-            </>
-          )}
           <label className="inline-flex cursor-pointer items-center gap-2.5 text-[13px] text-ink-cream-2 hover:text-ink-cream">
             <Toggle checked={drainDryRun} onChange={setDrainDryRun} label="dry run" />
             <span>Dry run — preview drafts only, no send (a one-time enrich lookup may apply)</span>
@@ -1068,8 +1043,8 @@ export function QueueRow({
  * action; when none exists yet, shows a thin "no draft" bar with a generate
  * action. Both actions hit the same preview-only endpoint (dry-run, never
  * sends). Hidden for already-sent drafts (re-rolling would only overwrite the
- * preview). All plays are self-contained now — accelerator-batch rows carry
- * their senderCohort (stamped from trigger config), so they generate inline too.
+ * preview). All plays are self-contained now — every finder stamps its pitch
+ * angle onto the row it enqueues, so any row generates inline.
  */
 function DraftSection({
   id,

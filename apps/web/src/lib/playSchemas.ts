@@ -71,9 +71,9 @@ export function missingRequiredFields(schema: PlaySchema, row: Record<string, st
 /**
  * Required EXTRA fields (`schema.extras`) left blank, by label. finding
  * PRRT_kwDOSKzrBs6ewsAf: `missingRequiredFields` only ever filtered
- * `schema.fields`, so a required extra (e.g. accelerator-batch's
- * `senderCohort`) passed validation blank and reached `/api/run` omitted —
- * a paid, malformed draft. Extras are a single `Record<string,string>`
+ * `schema.fields`, so a required extra passed validation blank and reached
+ * `/api/run` omitted — a paid, malformed draft. No play declares extras
+ * today; the guard stays so the next one that does can't reintroduce it. Extras are a single `Record<string,string>`
  * shared across every row (not per-row like `schema.fields`), so they need
  * their own check against that separate value instead of `row[key]`.
  */
@@ -140,7 +140,7 @@ export const PLAY_SCHEMAS: Record<string, PlaySchema> = {
   },
   "accelerator-batch": {
     description:
-      "Founder-to-founder outreach within or across accelerator batches (YC, On Deck, SPC, Antler, Techstars).",
+      "Founder-to-founder outreach to a company fresh out of an accelerator batch (YC, On Deck, SPC, Antler, Techstars) — the batch is a timing signal and how you found them, not a claimed shared membership. Set your own batch under Setup → social proof if you really did one.",
     fields: [
       { key: "name", label: "Prospect name", type: "text", required: true },
       { key: "email", label: "Prospect email", type: "email", required: true },
@@ -152,6 +152,13 @@ export const PLAY_SCHEMAS: Record<string, PlaySchema> = {
         required: true,
         placeholder: "e.g. yc-w26 · tx-s26 · antler-ldn-12",
       },
+      {
+        key: "yourEdge",
+        label: "Your edge (one sentence)",
+        type: "textarea",
+        required: true,
+        hint: "The one concrete thing worth telling a founder at this stage. Not a discount and not a feature list — a cold sweetener is banned in a first touch.",
+      },
       { key: "launchUrl", label: "Launch URL (optional)", type: "url" },
       { key: "productOneLiner", label: "Their product one-liner", type: "text" },
       { key: "linkedinUrl", label: "LinkedIn URL (optional)", type: "url" },
@@ -161,25 +168,11 @@ export const PLAY_SCHEMAS: Record<string, PlaySchema> = {
       email: "",
       company: "",
       cohort: "",
+      yourEdge: "",
       launchUrl: "",
       productOneLiner: "",
       linkedinUrl: "",
     },
-    extras: [
-      {
-        key: "senderCohort",
-        label: "Your cohort tag (sender)",
-        type: "text",
-        required: true,
-        placeholder: "e.g. yc-w23 · od-2 · (leave blank)",
-      },
-      {
-        key: "freeForCohortOffer",
-        label: "Free-for-cohort offer (optional)",
-        type: "text",
-        placeholder: "e.g. Free for your batch through demo day — reply with your cohort.",
-      },
-    ],
   },
   "post-funding": {
     description:

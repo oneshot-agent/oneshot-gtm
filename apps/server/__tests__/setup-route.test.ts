@@ -75,6 +75,7 @@ const BASE: OneShotConfig = {
   cadenceOverrides: {},
   queueReviewOrder: "newest",
   founderCredentials: null,
+  founderCohort: null,
   productPortfolio: null,
   partners: null,
   founderAdmission: null,

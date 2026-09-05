@@ -28,8 +28,6 @@ interface RunSearch {
   fromQueue?: "1";
   limit?: number;
   dryRun?: "0" | "1";
-  senderCohort?: string;
-  freeForCohortOffer?: string;
   /**
    * Explicit queue-row ids ("drain selected"). When present, hydration loads
    * exactly these rows instead of the play's newest `limit` approved ones.
@@ -59,10 +57,6 @@ export const Route = createFileRoute("/run/$playName")({
     const ids = parseQueueIds(typeof search["ids"] === "string" ? search["ids"] : null);
     if (ids) out.ids = ids;
     if (search["dryRun"] === "0" || search["dryRun"] === "1") out.dryRun = search["dryRun"];
-    if (typeof search["senderCohort"] === "string") out.senderCohort = search["senderCohort"];
-    if (typeof search["freeForCohortOffer"] === "string") {
-      out.freeForCohortOffer = search["freeForCohortOffer"];
-    }
     if (typeof search["runId"] === "number") out.runId = search["runId"];
     else if (typeof search["runId"] === "string" && /^\d+$/.test(search["runId"])) {
       out.runId = Number.parseInt(search["runId"], 10);
@@ -185,25 +179,6 @@ function RunPage() {
         setHydrationEmpty(false);
         setRows(targets);
         setDedupeKeys(pairs.map((p) => p.dedupeKey));
-        // Reflect any per-row extras the finder stamped (e.g. accelerator-batch's
-        // senderCohort) in the form's extras, so the field shows the value that
-        // will actually be used instead of sitting empty. prev wins, so a value
-        // the founder typed (or the drain modal passed) is never clobbered.
-        const stampedString = (key: string): string | undefined => {
-          for (const { payload } of pairs) {
-            const v = payload[key];
-            if (typeof v === "string" && v.trim().length > 0) return v;
-          }
-          return undefined;
-        };
-        const stamped: Record<string, string> = {};
-        for (const key of ["senderCohort", "freeForCohortOffer"]) {
-          const v = stampedString(key);
-          if (v) stamped[key] = v;
-        }
-        if (Object.keys(stamped).length > 0) {
-          setExtras((prev) => ({ ...stamped, ...prev }));
-        }
       } catch (err) {
         if (cancelledRef?.cancelled) return;
         setError(`failed to load approved targets from queue: ${(err as Error).message}`);
@@ -217,13 +192,6 @@ function RunPage() {
     const ref = { cancelled: false };
     void (async () => {
       await hydrateFromQueue(ref);
-      if (ref.cancelled) return;
-      // Round-trip the modal's per-play extras (accelerator-batch only
-      // today) so the founder doesn't have to retype senderCohort/offer.
-      const ex: Record<string, string> = {};
-      if (search.senderCohort) ex["senderCohort"] = search.senderCohort;
-      if (search.freeForCohortOffer) ex["freeForCohortOffer"] = search.freeForCohortOffer;
-      if (Object.keys(ex).length > 0) setExtras((prev) => ({ ...prev, ...ex }));
     })();
     return () => {
       ref.cancelled = true;
@@ -353,8 +321,8 @@ function RunPage() {
     // malformed, paid draft.
     //
     // finding PRRT_kwDOSKzrBs6ewsAf / PRRT_kwDOSKzrBs6fD-hj: this only ever
-    // checked target-row fields (`schema.fields`). Required EXTRAS (e.g.
-    // accelerator-batch's `senderCohort`) bypassed the guard entirely and
+    // checked target-row fields (`schema.fields`). Required EXTRAS
+    // bypassed the guard entirely and
     // `submit` below omits a blank extra from the request despite its schema
     // contract — validate both collections before dispatching.
     const rowIssues = rows
@@ -392,8 +360,6 @@ function RunPage() {
       dryRun,
       targets,
       ...(hasAnyDedupeKey ? { dedupeKeys } : {}),
-      ...(extras["senderCohort"] ? { senderCohort: extras["senderCohort"] } : {}),
-      ...(extras["freeForCohortOffer"] ? { freeForCohortOffer: extras["freeForCohortOffer"] } : {}),
     };
 
     // Local mirror of the SSE event stream — avoids reading React state in

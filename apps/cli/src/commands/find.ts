@@ -62,8 +62,6 @@ export async function commandFindDrain(opts: {
   play: string;
   limit?: number;
   dryRun: boolean;
-  senderCohort?: string;
-  offer?: string;
   failOnEmpty?: boolean;
   json?: boolean;
 }): Promise<void> {
@@ -75,8 +73,6 @@ export async function commandFindDrain(opts: {
       playName: opts.play,
       limit: opts.limit ?? 10,
       dryRun: opts.dryRun,
-      ...(opts.senderCohort ? { senderCohort: opts.senderCohort } : {}),
-      ...(opts.offer ? { freeForCohortOffer: opts.offer } : {}),
     });
   } catch (err: unknown) {
     if (opts.json) {

@@ -365,6 +365,7 @@ export function mergeSetupConfig(
     founderCredentials: mergeString(body.founderCredentials, current.founderCredentials),
     productPortfolio: mergeString(body.productPortfolio, current.productPortfolio),
     partners: mergeString(body.partners, current.partners),
+    founderCohort: mergeString(body.founderCohort, current.founderCohort ?? null),
     founderAdmission: mergeString(body.founderAdmission, current.founderAdmission),
     productBrief: mergeString(body.productBrief, current.productBrief),
     mobileSignature: body.mobileSignature ?? current.mobileSignature,

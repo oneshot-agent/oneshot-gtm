@@ -269,6 +269,19 @@ export interface OneShotConfig {
   /** Notable partners / customers — the brand-recognition social-proof beat. */
   partners: string | null;
   /**
+   * The founder's OWN accelerator batch tag ("yc-w23", "spc-2025-1"), and only
+   * when it is true. Null — the default, and the honest value for most founders
+   * — makes `accelerator-batch` draft as an outsider writing to a company whose
+   * batch is a public timing signal, never as a batchmate. It lives here rather
+   * than in trigger config on purpose: a per-trigger field that a readiness gate
+   * demanded is what produced fabricated "fellow YC" claims in the first place,
+   * and one config value is also read at draft time, so a stale cohort stamped
+   * into an old queue row can't resurrect the claim. Optional (like
+   * `queueReviewOrder`) so pre-existing config literals and older config files
+   * stay valid; readers treat absent exactly like null.
+   */
+  founderCohort?: string | null;
+  /**
    * One true concession about the founder/product ("two people, no enterprise
    * logos yet") — the prompt's optional damaging-admission beat. It is the ONLY
    * material the model may draw an admission from; null means the beat is

@@ -4,6 +4,7 @@
     "email": "sam@beacon.run",
     "company": "Beacon",
     "cohort": "yc-w26",
+    "yourEdge": "the retry semantics hold right up to the point a job outlives its lease, and that boundary is where at-least-once quietly becomes at-most-once",
     "launchUrl": "https://www.ycombinator.com/launches/example-beacon",
     "productOneLiner": "Distributed cron with at-least-once semantics for AI workflows.",
     "linkedinUrl": "https://linkedin.com/in/sam-builder-fake"
@@ -13,6 +14,7 @@
     "email": "rae@stellar.dev",
     "company": "Stellar",
     "cohort": "yc-s26",
+    "yourEdge": "cold-start cost lands on the first request, not the deploy, so the p99 a serverless GPU runtime reports is almost never the one users feel",
     "launchUrl": "https://www.ycombinator.com/launches/example-stellar",
     "productOneLiner": "Open-source serverless GPU runtime for ML inference."
   }
