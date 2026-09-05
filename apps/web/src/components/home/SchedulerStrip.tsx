@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowRight, ChevronDown, ChevronRight } from "lucide-react";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import type { TriggerView } from "@oneshot-gtm/shared-types";
 import { api } from "../../api/client.ts";
 import { cn, timeAgo } from "../../lib/cn.ts";
@@ -79,14 +79,8 @@ export function SchedulerStrip(): React.ReactElement {
     nextDueMs,
   } = summarizeTriggers(triggers, now);
 
-  // Collapsed by default — the table duplicates /queue's trigger panel. Seed
-  // open ONCE when something is overdue; refetches never slam a manual toggle.
+  // Warnings stay visible in the summary; only the reader opens the table.
   const [expanded, setExpanded] = useState(false);
-  const seeded = useRef(false);
-  if (!seeded.current && triggersQuery.data) {
-    seeded.current = true;
-    if (overdueCount > 0) setExpanded(true);
-  }
 
   return (
     <section className="flex flex-col border-b border-ink-rule">

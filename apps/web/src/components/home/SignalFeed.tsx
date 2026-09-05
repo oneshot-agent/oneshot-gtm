@@ -1,6 +1,7 @@
 import { Link } from "@tanstack/react-router";
-import { ArrowRight, Inbox, Receipt } from "lucide-react";
+import { ArrowRight, ChevronDown, ChevronUp, Inbox, Receipt } from "lucide-react";
 import type { QueueRowView, ReceiptView } from "@oneshot-gtm/shared-types";
+import { useId, useState } from "react";
 import { cn, timeAgo } from "../../lib/cn.ts";
 import { applyMask } from "../../lib/mask.ts";
 import { usePrivacy } from "../../lib/privacy.tsx";
@@ -30,47 +31,68 @@ export function SignalFeed({
   receipts,
   queue,
   loading,
+  error = false,
   limit = 10,
 }: {
   receipts: ReceiptView[];
   queue: QueueRowView[];
   loading: boolean;
+  error?: boolean;
   limit?: number;
 }) {
   const { masked } = usePrivacy();
   const events = merge(receipts, queue, limit, masked);
+  const [expanded, setExpanded] = useState(false);
+  const feedId = useId();
+  const visible = expanded ? events : events.slice(0, 3);
 
   return (
     <section className="flex flex-col border-b border-ink-rule">
-      <div className="flex items-baseline justify-between px-6 pb-2 pt-5">
-        <div className="ln-eyebrow">Signal feed</div>
-        <div className="flex items-baseline gap-4">
-          <div className="hidden font-mono text-[11px] text-ink-faint sm:block">
-            newest first · refresh · 30s
-          </div>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-6 pb-3 pt-4">
+        <h2 className="ln-eyebrow">Recent activity</h2>
+        <div className="flex items-center gap-4 font-mono text-[11px] text-ink-muted">
           <Link
             to="/receipts"
-            className="flex items-center gap-1 font-mono text-[11px] text-ink-muted transition-colors hover:text-ink-cream"
+            className="inline-flex min-h-8 items-center gap-1 hover:text-ink-cream"
           >
-            all <ArrowRight size={10} />
+            Receipts <ArrowRight size={10} />
+          </Link>
+          <Link to="/queue" className="inline-flex min-h-8 items-center gap-1 hover:text-ink-cream">
+            Review queue <ArrowRight size={10} />
           </Link>
         </div>
       </div>
+      {error && (
+        <p role="status" className="px-6 pb-3 text-[12px] text-ink-spend-2">
+          Some activity couldn’t be refreshed. Showing available items; retrying automatically.
+        </p>
+      )}
       {loading ? (
         <div className="px-6 pb-5 font-mono text-[11.5px] text-ink-faint">…</div>
-      ) : events.length === 0 ? (
+      ) : events.length === 0 && !error ? (
         <div className="px-6 pb-5">
           <p className="ln-note max-w-[56ch] text-[13.5px] text-ink-cream-2">
-            Nothing on the wire yet. Send a play or run a trigger — events stream in here as they
-            happen.
+            No activity yet. Run a play to find your first prospects.
           </p>
         </div>
       ) : (
-        <ol className="flex flex-col">
-          {events.map((e) => (
+        <ol id={feedId} className="flex flex-col">
+          {visible.map((e) => (
             <FeedLine key={e.id} event={e} />
           ))}
         </ol>
+      )}
+      {!loading && events.length > 3 && (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-controls={feedId}
+          onClick={() => setExpanded((value) => !value)}
+          className="flex min-h-11 items-center gap-2 border-t border-ink-rule/60 px-6 py-3 text-left font-mono text-[11px] text-ink-muted hover:bg-ink-surface/60 hover:text-ink-cream focus-visible:outline-2 focus-visible:outline-ink-receipt"
+        >
+          {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+          {expanded ? "Show less" : `Show more · ${events.length - 3} more`}
+        </button>
       )}
     </section>
   );
@@ -94,9 +116,11 @@ function FeedLine({ event }: { event: FeedEvent }) {
       >
         <Icon size={10} />
       </span>
-      <span className="flex min-w-0 flex-1 items-baseline gap-2">
-        <span className="truncate text-ink-cream">{event.headline}</span>
-        <span className="truncate font-mono text-[11.5px] text-ink-faint">· {event.meta}</span>
+      <span className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-2">
+        <span className="max-w-full truncate text-[13px] text-ink-cream">{event.headline}</span>
+        <span className="max-w-full truncate font-mono text-[11px] text-ink-muted">
+          · {event.meta}
+        </span>
       </span>
       <time className="shrink-0 font-mono text-[11.5px] text-ink-muted" dateTime={event.at}>
         {timeAgo(event.at)}
