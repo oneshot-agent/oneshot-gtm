@@ -292,7 +292,7 @@
 
     "@noble/hashes": ["@noble/hashes@1.3.2", "", {}, "sha512-MVC8EAQp7MvEcm30KWENFjgR+Mkmf+D189XJTkFIlwohU5hcBbn1ZkKq7KVTi2Hme3PMGF390DaL52beVrIihQ=="],
 
-    "@oneshot-agent/sdk": ["@oneshot-agent/sdk@../../vendor/oneshot-agent-sdk-0.32.0.tgz", { "dependencies": { "ethers": "6.16.0" }, "peerDependencies": { "@coinbase/cdp-sdk": ">=1.0.0", "typescript": ">=5.0.0" }, "optionalPeers": ["@coinbase/cdp-sdk", "typescript"] }, "sha512-xakDlw1ttH2Fny3yYqMz1QhpGPPIetw3JuXP3D4rk1Q29Er6gASYgC5LxqJs6juts9H2PuvCE2QV0yq8qf+dJg=="],
+    "@oneshot-agent/sdk": ["@oneshot-agent/sdk@../../vendor/oneshot-agent-sdk-0.32.0.tgz", { "dependencies": { "ethers": "6.16.0" }, "peerDependencies": { "@coinbase/cdp-sdk": ">=1.0.0", "typescript": ">=5.0.0" }, "optionalPeers": ["@coinbase/cdp-sdk", "typescript"] }, "sha512-BNEeRyLz8AciOwHHkWjKIIhesx6lofOnGQuNm2LE0tePdQ/+bS7bCWyn+pywK+9M5DSqxA9z8arZ8880rZXT4Q=="],
 
     "@oneshot-gtm/core": ["@oneshot-gtm/core@workspace:packages/core"],
 
