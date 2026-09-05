@@ -1,3 +1,4 @@
+import { Explain } from "../components/primitives/Explain.tsx";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
@@ -235,7 +236,9 @@ function MeasurePage() {
 
       <section className="border-b border-ink-rule">
         <div className="flex items-baseline justify-between px-6 pb-2 pt-5">
-          <div className="ln-eyebrow">RoCS · return on cognitive spend</div>
+          <div className="ln-eyebrow">
+            RoCS · return on cognitive spend <Explain concept="rocs" />
+          </div>
           <div className="font-mono text-[11px] text-ink-faint">{rangeLabel(sinceDays)}</div>
         </div>
         {rocs.isLoading ? (
@@ -252,10 +255,16 @@ function MeasurePage() {
                 <th className="py-2 text-left font-medium">spend · {sparkDays}d</th>
                 <th className="py-2 text-right font-medium">spend</th>
                 <th className="py-2 text-right font-medium">meetings</th>
-                <th className="py-2 text-right font-medium">SQLs</th>
+                <th className="py-2 text-right font-medium">
+                  SQLs <Explain concept="sql" />
+                </th>
                 <th className="py-2 text-right font-medium">won</th>
-                <th className="py-2 text-right font-medium">$/meeting</th>
-                <th className="px-6 py-2 text-right font-medium">$/won</th>
+                <th className="py-2 text-right font-medium">
+                  $/meeting <Explain concept="costMeeting" />
+                </th>
+                <th className="px-6 py-2 text-right font-medium">
+                  $/won <Explain concept="costWon" />
+                </th>
               </tr>
             </thead>
             <tbody>

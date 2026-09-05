@@ -1,3 +1,4 @@
+import { Explain } from "../primitives/Explain.tsx";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Mail } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -193,6 +194,7 @@ export function EmailTransportSection({
           </div>
           <span className="text-[12px] text-ink-faint">
             Removing an identity blocks sends to prospects pinned to it until it's restored.
+            <Explain concept="pinnedRouting" />
           </span>
 
           <ProvisionedDomains
@@ -357,10 +359,17 @@ function IdentityRow({
             : `today ${i.sentToday}/${i.capToday ?? "∞"}`}
           {i.warmup ? ` · warm-up ${i.warmup.startPerDay}+${i.warmup.incrementPerWeek}/wk` : ""}
           {i.legacy ? " · legacy (auto-derived)" : ""}
+          {i.provider === "oneshot" && <Explain concept="domainCaps" />}
+          {i.warmup && <Explain concept="warmup" />}
         </span>
       </div>
       <div className="ml-auto flex items-start gap-2">
-        <Field label="max/day" error={capError} className="w-28 gap-0.5">
+        <Field
+          label="max/day"
+          explain={i.warmup ? "warmup" : undefined}
+          error={capError}
+          className="w-28 gap-0.5"
+        >
           <Input
             className="h-7 text-[12px]"
             placeholder="∞ (no cap)"
@@ -480,6 +489,7 @@ function AddOneShotSender({
                 <span className="truncate text-[13px] text-ink-cream">{key}</span>
                 <span className="ln-mono text-[11px] text-ink-muted">
                   {a.maxPerDay.trim() ? `cap ${a.maxPerDay.trim()}/day` : "warm-up ramp"}
+                  <Explain concept="warmup" />
                 </span>
                 {pendingErrors[key] && (
                   <span className="font-mono text-[11px] text-[color:var(--ink-blocked-2)]">
@@ -526,7 +536,7 @@ function AddOneShotSender({
             aria-label="mailbox local-part"
           />
         </Field>
-        <Field label="Max/day" className="w-28" error={capError}>
+        <Field label="Max/day" explain="warmup" className="w-28" error={capError}>
           <Input
             placeholder="ramp"
             inputMode="numeric"

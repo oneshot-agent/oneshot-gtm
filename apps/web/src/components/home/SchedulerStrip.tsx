@@ -9,6 +9,7 @@ import { humanInterval } from "../../lib/humanInterval.ts";
 import { summarizeRun } from "../../lib/summarizeRun.ts";
 import { dueInMs, summarizeTriggers } from "../../lib/triggerSummary.ts";
 import { Badge } from "../primitives/Badge.tsx";
+import { Explain } from "../primitives/Explain.tsx";
 import { EmptyNote } from "../primitives/EmptyNote.tsx";
 import { SkeletonRow } from "../primitives/Skeleton.tsx";
 
@@ -202,6 +203,7 @@ function SchedulerRow({ row, zebra }: { row: Row; zebra: boolean }): React.React
       </td>
       <td className="py-2 font-mono text-[11.5px] text-ink-muted">
         {summarizeRun(trigger.lastRunSummary)}
+        {trigger.lastRunSummary != null && <Explain concept="icpGate" />}
       </td>
       <td className="py-2 text-right font-mono text-[11.5px] text-ink-faint">
         {trigger.lastPolledAt ? timeAgo(trigger.lastPolledAt) : "never"}

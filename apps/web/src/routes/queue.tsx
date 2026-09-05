@@ -1,3 +1,5 @@
+import { Explain } from "../components/primitives/Explain.tsx";
+import { PRIORITY_CONCEPTS } from "../lib/concepts.ts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
@@ -682,6 +684,9 @@ function QueuePage() {
       >
         <div className="flex flex-col gap-3">
           {/* A selection IS the limit — never show a second, contradictory number. */}
+          <p className="text-[13px] text-ink-muted">
+            Drain approved rows <Explain concept="drain" />
+          </p>
           {drainModal?.ids ? (
             <p className="text-[13px] text-ink-cream-2">
               Draining the {drainModal.ids.length} approved{" "}
@@ -893,9 +898,13 @@ export function QueueRow({
               </Badge>
             )}
             {prio && (
-              <Badge tone={prio.tone} title={prio.title}>
-                {prio.label}
-              </Badge>
+              <span className="inline-flex items-center">
+                <Badge tone={prio.tone}>{prio.label}</Badge>
+                <Explain
+                  concept="shadowScore"
+                  detail={`${ranked ? "Ranked review uses priority to order candidates; it does not approve or send them." : "Experimental · shadow. Does not affect ordering or sending."} ${prio.title}`}
+                />
+              </span>
             )}
             {eventDate && (
               <span
@@ -948,9 +957,14 @@ export function QueueRow({
                 <div className="rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep">
                   <div className="flex items-center gap-2 border-b border-ink-rule/60 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
                     <span>priority {row.priority.total}</span>
-                    <Badge tone="neutral">experimental · shadow</Badge>
+                    <Badge tone="neutral">
+                      {ranked ? "ranked review" : "experimental · shadow"}
+                    </Badge>
+                    <Explain concept="shadowScore" />
                     <span className="normal-case tracking-normal">
-                      does not affect ordering or sending
+                      {ranked
+                        ? "affects review order, never approval or sending"
+                        : "does not affect ordering or sending"}
                     </span>
                   </div>
                   <div className="px-3 py-2.5">
@@ -959,6 +973,7 @@ export function QueueRow({
                         <span key={b.component}>
                           {b.component} <span className="text-ink-cream">{b.score}</span>
                           <span className="text-ink-faint"> ·{b.weightPct}%</span>
+                          <Explain concept={PRIORITY_CONCEPTS[b.component] ?? "shadowScore"} />
                         </span>
                       ))}
                     </div>
@@ -1371,10 +1386,21 @@ function DraftSection({
         <span>{headerLabel}</span>
         {draftedAt ? <span className="text-ink-muted">· {timeAgo(draftedAt)}</span> : null}
         <Badge tone={tone}>{stateLabel}</Badge>
+        {softHold && (
+          <Explain
+            concept="softHold"
+            detail={
+              draft.flags.includes("contacted-elsewhere")
+                ? "Held — another workspace emailed this person in the last 7 days. Send the reviewed draft as-is to override."
+                : "Held for review (event has passed) — send the reviewed draft above, as-is"
+            }
+          />
+        )}
         {isStalePostSend && <Badge tone="blocked">post-send regenerate · not sent</Badge>}
         {draft.enrichmentFailed && (
-          <span title="enrichment failed — drafted from payload context only; retries automatically after ~3 days">
+          <span className="inline-flex items-center">
             <Badge tone="spend">no enrichment</Badge>
+            <Explain concept="enrichment" />
           </span>
         )}
         {draft.flags.length > 0 &&
