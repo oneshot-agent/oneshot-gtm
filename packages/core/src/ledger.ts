@@ -1728,6 +1728,7 @@ export class Ledger {
     won: number;
     lost: number;
     ghosted: number;
+    won_value_usd: number;
   }> {
     const where: string[] = [];
     const args: unknown[] = [];
@@ -1742,7 +1743,12 @@ export class Ledger {
         SUM(CASE WHEN outcome = 'sql_qualified' THEN 1 ELSE 0 END) AS sqls,
         SUM(CASE WHEN outcome = 'deal_won' THEN 1 ELSE 0 END) AS won,
         SUM(CASE WHEN outcome = 'deal_lost' THEN 1 ELSE 0 END) AS lost,
-        SUM(CASE WHEN outcome = 'ghosted' THEN 1 ELSE 0 END) AS ghosted
+        SUM(CASE WHEN outcome = 'ghosted' THEN 1 ELSE 0 END) AS ghosted,
+        -- The return side. amount_usd has been written since v16 and read by
+        -- nothing; without it the only figure putting dollars over dollars is
+        -- the platform's per-goal RoCS, which divides one winner's cadence cost
+        -- into its own deal and so ignores every prospect that went nowhere.
+        COALESCE(SUM(CASE WHEN outcome = 'deal_won' THEN amount_usd ELSE 0 END), 0) AS won_value_usd
       FROM deal_outcomes
       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
       GROUP BY play_name
@@ -2198,6 +2204,54 @@ export class Ledger {
       replied: number;
       bounced: number;
     }>;
+  }
+
+  /**
+   * How many receipts fall in the window.
+   *
+   * Callers wanting a count must not list the rows and measure the array: the
+   * Today page did exactly that behind a `limit: 1000`, so any install busy
+   * enough to exceed it reported precisely 1000 calls a week, for ever, with
+   * nothing in the response to say it had been truncated.
+   */
+  countReceipts(opts: { sinceIso?: string; playName?: string } = {}): number {
+    const where: string[] = [];
+    const args: unknown[] = [];
+    if (opts.playName) {
+      where.push("play_name = ?");
+      args.push(opts.playName);
+    }
+    if (opts.sinceIso) {
+      where.push("created_at >= ?");
+      args.push(opts.sinceIso);
+    }
+    const sql = `SELECT COUNT(*) AS n FROM receipts${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`;
+    return (this.db.query(sql).get(...(args as never[])) as { n: number } | null)?.n ?? 0;
+  }
+
+  /**
+   * Daily signed spend per play, for the trend sparklines on Measure.
+   *
+   * Bucketed in SQL rather than by listing receipts and grouping in the
+   * browser. The page used to pull 500 rows and bucket them client-side, which
+   * silently became a five-hour window once an install carried tens of
+   * thousands of receipts; and `new Date("YYYY-MM-DD HH:MM:SS")` parses as
+   * local time, so the buckets drifted by the viewer's UTC offset. `date()`
+   * here has neither problem.
+   */
+  spendSeriesByPlay(opts: { days: number }): Array<{
+    play_name: string;
+    day: string;
+    total_usd: number;
+  }> {
+    const sql = `
+      SELECT play_name, date(created_at) AS day, COALESCE(SUM(cost_usd), 0) AS total_usd
+      FROM receipts
+      WHERE cost_usd IS NOT NULL AND date(created_at) >= date('now', ?)
+      GROUP BY play_name, day
+      ORDER BY day ASC
+    `;
+    return this.db.query(sql).all(`-${Math.max(1, Math.floor(opts.days))} days` as never) as never;
   }
 
   totalSpendUsd(opts: { sinceIso?: string; playName?: string } = {}): number {

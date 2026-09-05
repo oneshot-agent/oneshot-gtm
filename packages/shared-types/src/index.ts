@@ -179,6 +179,8 @@ export interface OutcomeByPlay {
   won: number;
   lost: number;
   ghosted: number;
+  /** Closed-won dollars for this play in the window. Pipeline is never valued. */
+  wonValueUsd: number;
 }
 
 /**
@@ -186,6 +188,19 @@ export interface OutcomeByPlay {
  * confirmed outcome value, `pendingValue` self-reported but unconfirmed; `rocs`
  * is value ÷ spend.
  */
+/** Daily signed spend for one play, oldest bucket first. See `SpendSeries`. */
+export interface SpendSeriesPlay {
+  playName: string;
+  /** One entry per day in the window, oldest first. Days with no spend are 0. */
+  spend: number[];
+}
+
+export interface SpendSeries {
+  /** How many daily buckets each `spend` array carries. */
+  days: number;
+  series: SpendSeriesPlay[];
+}
+
 export interface RocsGoalView {
   goalId: string;
   playName: string | null;

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 const listRunsMock = vi.fn();
-const listReceiptsMock = vi.fn();
+const countReceiptsMock = vi.fn();
 const eventsByPlayMock = vi.fn();
 const listActiveCadencesMock = vi.fn();
 const totalSpendUsdMock = vi.fn();
@@ -12,7 +12,7 @@ vi.mock("@oneshot-gtm/core", async () => {
   return {
     ...actual,
     getLedger: () => ({
-      listReceipts: listReceiptsMock,
+      countReceipts: countReceiptsMock,
       eventsByPlay: eventsByPlayMock,
       listActiveCadences: listActiveCadencesMock,
       totalSpendUsd: totalSpendUsdMock,
@@ -34,7 +34,7 @@ function req(): Request {
 
 describe("homeMetrics — currentRuns surfacing", () => {
   it("includes currentRuns from listRuns({status:'running', limit:5})", async () => {
-    listReceiptsMock.mockReturnValue([{}, {}, {}]);
+    countReceiptsMock.mockReturnValue(3);
     eventsByPlayMock.mockReturnValue([
       { sent: 5, replied: 1 },
       { sent: 3, replied: 0 },
@@ -74,10 +74,13 @@ describe("homeMetrics — currentRuns surfacing", () => {
       status: "running",
     });
     expect(listRunsMock).toHaveBeenCalledWith({ status: "running", limit: 5 });
+    // A COUNT, not the length of a capped page: the old form read a `limit:
+    // 1000` listing and so reported exactly 1000 on any busy install.
+    expect(body.callsLast7d).toBe(3);
   });
 
   it("returns currentRuns as an empty array when no runs are in flight", async () => {
-    listReceiptsMock.mockReturnValue([]);
+    countReceiptsMock.mockReturnValue(0);
     eventsByPlayMock.mockReturnValue([]);
     listActiveCadencesMock.mockReturnValue([]);
     totalSpendUsdMock.mockReturnValue(0);

@@ -39,6 +39,7 @@ import type {
   SetupRequest,
   SmartleadAccountView,
   SpendByPlay,
+  SpendSeries,
   TriggerView,
 } from "@oneshot-gtm/shared-types";
 import { demoGet, demoWrite, IS_DEMO } from "./demo.ts";
@@ -174,6 +175,10 @@ export const api = {
   rocsByGoal: (sinceDays?: number) =>
     getJson<{ goals: RocsGoalView[] }>(
       `/measure/rocs-by-goal${sinceDays != null ? `?sinceDays=${sinceDays}` : ""}`,
+    ),
+  measureSpendSeries: (sinceDays?: number) =>
+    getJson<SpendSeries>(
+      `/measure/spend-series${sinceDays != null ? `?sinceDays=${sinceDays}` : ""}`,
     ),
   recordOutcome: (req: OutcomeRequest) => postJson<{ id: number }>("/measure/outcome", req),
   doctor: () => getJson<{ checks: DoctorCheck[] }>("/doctor"),
