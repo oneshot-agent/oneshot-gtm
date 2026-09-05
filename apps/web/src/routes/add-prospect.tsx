@@ -9,6 +9,7 @@ import { AddProspectForm } from "../components/queue/AddProspectForm.tsx";
  * The route stays for bookmarks, for ⌘K, and for the Queue's empty state.
  */
 export const Route = createFileRoute("/add-prospect")({
+  staticData: { title: "Add Prospect" },
   component: AddProspectPage,
 });
 

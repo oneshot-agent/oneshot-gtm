@@ -13,6 +13,7 @@ import { cn, formatCount } from "../lib/cn.ts";
 import { readOnly } from "../lib/readOnly.ts";
 
 export const Route = createFileRoute("/plays")({
+  staticData: { title: "Plays" },
   component: PlaysPage,
 });
 

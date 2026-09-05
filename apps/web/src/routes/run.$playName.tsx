@@ -44,6 +44,7 @@ interface RunSearch {
 }
 
 export const Route = createFileRoute("/run/$playName")({
+  staticData: { title: (p: Record<string, string>) => `Run ${p["playName"] ?? ""}`.trim() },
   component: RunPage,
   validateSearch: (search: Record<string, unknown>): RunSearch => {
     const out: RunSearch = {};

@@ -12,6 +12,7 @@ import { maskDeep } from "../lib/mask.ts";
 import { usePrivacy } from "../lib/privacy.tsx";
 
 export const Route = createFileRoute("/receipts")({
+  staticData: { title: "Receipts" },
   component: ReceiptsPage,
 });
 

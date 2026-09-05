@@ -14,6 +14,8 @@ import { WorkspaceSwitcher } from "../components/shell/WorkspaceSwitcher.tsx";
 import { StrategistDock } from "../components/shell/StrategistDock.tsx";
 import { useKeyboard } from "../components/shell/useKeyboard.ts";
 import { cn } from "../lib/cn.ts";
+import { useDocumentTitle } from "../lib/documentTitle.ts";
+import { applyWorkspaceFavicon } from "../lib/favicon.ts";
 import { PrivacyProvider } from "../lib/privacy.tsx";
 
 interface RootContext {
@@ -85,6 +87,13 @@ function RootLayout() {
     refetchInterval: 60_000,
   });
   const workspace = workspaceQuery.data?.current ?? null;
+
+  // Several workspaces run at once, each its own server on its own port. Name
+  // the tab and tint its icon, or they are indistinguishable in the tab strip.
+  useDocumentTitle(workspace?.name ?? null);
+  useEffect(() => {
+    void applyWorkspaceFavicon(workspace?.name ?? null);
+  }, [workspace?.name]);
 
   const alerts: Record<NonNullable<NavItem["alert"]>, boolean> = {
     "queue-pending": (queueQuery.data?.counts.pending ?? 0) > 0,

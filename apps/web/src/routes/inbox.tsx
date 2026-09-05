@@ -24,6 +24,7 @@ const MATCH_FILTERS: Array<{ key: ReplyMatchFilter; label: string }> = [
 ];
 
 export const Route = createFileRoute("/inbox")({
+  staticData: { title: "Replies" },
   component: InboxPage,
 });
 

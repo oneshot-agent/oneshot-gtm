@@ -1,3 +1,5 @@
+<img src="apps/web/public/icon-192.png" alt="" width="72" height="72" align="left" />
+
 # oneshot-gtm
 
 > Open-source GTM agent for technical founders. Pay-per-result, signed receipts, founder-led discipline encoded. Terminal CLI + local web dashboard over one SQLite ledger.

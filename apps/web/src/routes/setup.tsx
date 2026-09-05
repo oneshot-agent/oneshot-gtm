@@ -32,6 +32,7 @@ interface SetupSearch {
 }
 
 export const Route = createFileRoute("/setup")({
+  staticData: { title: "Setup" },
   validateSearch: (search: Record<string, unknown>): SetupSearch => ({
     proposedIcp: typeof search["proposedIcp"] === "string" ? search["proposedIcp"] : undefined,
     packLabel: typeof search["packLabel"] === "string" ? search["packLabel"] : undefined,

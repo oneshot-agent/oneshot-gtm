@@ -2,6 +2,19 @@
   "name": "oneshot-gtm-server",
   "version": "0.7.0",
   "description": "Local dashboard server for oneshot-gtm. Boots Bun.serve, opens the browser to your GTM operating state.",
+  "keywords": [
+    "ai-agent",
+    "bun",
+    "dashboard",
+    "go-to-market",
+    "gtm",
+    "local-first",
+    "outreach",
+    "prospecting",
+    "sales-automation",
+    "signed-receipts",
+    "sqlite"
+  ],
   "homepage": "https://oneshot-gtm.com",
   "license": "MIT",
   "repository": {
