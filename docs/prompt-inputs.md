@@ -49,9 +49,20 @@ That is deliberate — a cold email carries one insight, a reply has to be
 factually right and link to real pages — but it has a consequence worth
 planning around: **`productOneLiner` is the only founder-authored field
 present on all three surfaces.** Anything that must appear in every message
-has to live there.
+has to at least live there.
 
-Which also makes it the wrong place for a paragraph. It lands in the Identity
+It is not enough on its own, though. Config is _source material_, never a
+delivery mechanism: every prompt paraphrases and compresses what it is given,
+and no config value can force a sentence into an email. Measured on 2026-09-05
+against a positioning line placed at the very front of a 31-word
+`productOneLiner` — it survived into none of the three surfaces. The first
+touch compressed it to the product name and spent the Identity beat on a
+credential; the breakup step is capped at two sentences and has no Identity
+beat to spend; the reply prompt is told to answer the sender, not to
+re-introduce the product. If a specific claim must appear every time, that is
+a change to the _prompt_ that owns the beat, not to a config field.
+
+The field is also the wrong place for a paragraph. It lands in the Identity
 beat, which is one sentence, so the model compresses it and the tail is what
 gets cut. A positioning line placed at the end of a long one-liner will not
 survive into the email. Everything else has a field with better placement:
