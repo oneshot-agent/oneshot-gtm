@@ -11,6 +11,7 @@ import {
   saveSecrets,
   secretSource,
   secretsPath,
+  withDeadline,
   type DomainPoolEntry,
   type EmailIdentity,
   type OneShotConfig,
@@ -75,16 +76,39 @@ function domainViews(entries: DomainPoolEntry[]): DomainPoolView[] {
 }
 
 /**
- * Best-effort provisioned-domain pool for the setup UI. Swallows every failure
- * (transient OR auth) to `[]` so the setup page always renders — a missing
- * domain list degrades the picker, it shouldn't 500 the whole status call.
+ * How long GET /api/setup waits for the platform's domain list before
+ * answering without it. The sectioned /setup page (issue #451) renders
+ * nothing until this call returns, and `listDomains` has been observed
+ * taking 60–80s — so the status call carries only a quick best-effort copy
+ * and the picker fetches the full list separately via /api/setup/domains.
  */
-async function provisionedDomainViews(): Promise<DomainPoolView[]> {
+const SETUP_STATUS_DOMAINS_DEADLINE_MS = 2_500;
+/** The dedicated domain-list route can wait longer; it's off the page's critical path. */
+const SETUP_DOMAINS_DEADLINE_MS = 45_000;
+
+/**
+ * Best-effort provisioned-domain pool for the setup UI. Swallows every failure
+ * (transient, auth, OR the deadline) to `[]` so the setup page always renders —
+ * a missing domain list degrades the picker, it shouldn't 500 or stall the
+ * status call. `[]` means "unknown", not "no domains owned".
+ */
+async function provisionedDomainViews(deadlineMs: number): Promise<DomainPoolView[]> {
   try {
-    return domainViews(await listSendingDomains());
+    return domainViews(
+      await withDeadline(listSendingDomains(), deadlineMs, "provisioned domain list"),
+    );
   } catch {
     return [];
   }
+}
+
+/** GET /api/setup/domains — the provisioned pool alone, for the sender picker. */
+export async function getSetupDomains(req: Request): Promise<Response> {
+  return jsonResponse(
+    { provisionedDomains: await provisionedDomainViews(SETUP_DOMAINS_DEADLINE_MS) },
+    200,
+    req,
+  );
 }
 
 export async function getSetupStatus(req: Request): Promise<Response> {
@@ -93,7 +117,7 @@ export async function getSetupStatus(req: Request): Promise<Response> {
     {
       cfg: publicCfg(cfg),
       identities: identityViews(cfg),
-      provisionedDomains: await provisionedDomainViews(),
+      provisionedDomains: await provisionedDomainViews(SETUP_STATUS_DOMAINS_DEADLINE_MS),
       secretsPath: secretsPath(),
       sources: {
         OPENROUTER_API_KEY: secretSource("OPENROUTER_API_KEY"),

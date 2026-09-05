@@ -221,6 +221,13 @@ export const api = {
       secretsPath: string;
       sources: Record<string, "env" | "file" | null>;
     }>("/setup"),
+  /**
+   * The provisioned OneShot domain pool alone. Off the /setup critical path:
+   * the platform's listDomains has been seen taking 60–80s, so the status
+   * call above carries only a ~2.5s best-effort copy and the sender picker
+   * refines it from this route.
+   */
+  setupDomains: () => getJson<{ provisionedDomains: DomainPoolView[] }>("/setup/domains"),
   setup: (req: SetupRequest) => postJson<{ ok: boolean }>("/setup", req),
   deriveIcp: (domain: string) => postJson<DeriveIcpResult>("/setup/derive-icp", { domain }),
   deriveBrief: (urls: string[]) => postJson<DeriveBriefResult>("/setup/derive-brief", { urls }),

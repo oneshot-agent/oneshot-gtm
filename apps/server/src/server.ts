@@ -17,7 +17,7 @@ import { listReceipts, getReceipt } from "./api/receipts.ts";
 import { draftReplyRoute, listInboxRoute, saveDraftRoute, sendReplyRoute } from "./api/inbox.ts";
 import { listPlays, setCadenceRoute } from "./api/plays.ts";
 import { measureCac, measureRocs, measureRocsByGoal, recordOutcome } from "./api/measure.ts";
-import { setup, getSetupStatus } from "./api/setup.ts";
+import { setup, getSetupDomains, getSetupStatus } from "./api/setup.ts";
 import { gmailAuthCallbackRoute, startGmailAuthRoute } from "./api/gmail-auth.ts";
 import { smartleadAccountsRoute } from "./api/smartlead.ts";
 import { deriveBriefRoute } from "./api/derive-brief.ts";
@@ -97,6 +97,7 @@ const routes: RouteEntry[] = [
   route("GET", "/api/measure/rocs-by-goal", measureRocsByGoal),
   route("POST", "/api/measure/outcome", recordOutcome),
   route("GET", "/api/setup", getSetupStatus),
+  route("GET", "/api/setup/domains", getSetupDomains),
   route("POST", "/api/setup", setup),
   route("POST", "/api/domains/resume", resumeDomainRoute),
   route("POST", "/api/domains/pause", pauseDomainRoute),
