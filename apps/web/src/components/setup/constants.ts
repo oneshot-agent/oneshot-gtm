@@ -57,9 +57,9 @@ export function walletKeysInUse(sources: Record<string, KeySource>): readonly Se
 }
 
 export function hintFor(source: KeySource): string {
-  if (source === "env") return "Currently from shell env. Leave blank to keep.";
-  if (source === "file") return "Currently from this workspace's .env. Leave blank to keep.";
-  return "Not set yet.";
+  if (source === "env") return "From shell env. Blank keeps it.";
+  if (source === "file") return "From this workspace's .env. Blank keeps it.";
+  return "Not set.";
 }
 
 /** Human status of one secret for the preference sections' key line. */

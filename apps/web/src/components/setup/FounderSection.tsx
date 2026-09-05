@@ -41,7 +41,7 @@ export function FounderSection({ cfg, onDirtyChange }: SectionProps) {
         <Field
           label="Your email"
           error={s.errors.founderEmail}
-          hint="Lead capture on pages this tool generates (e.g. the PMF survey). NOT a reply address — replies land in the inbox of whichever sending identity sent the mail."
+          hint="For lead-capture pages this tool generates. Replies go to the sending identity, not here."
         >
           <Input
             type="email"
@@ -53,7 +53,7 @@ export function FounderSection({ cfg, onDirtyChange }: SectionProps) {
         <Field
           label="Signature domain"
           error={s.errors.productDomain}
-          hint="Bare domain shown under your name in every email signature, e.g. yourcompany.com. Leave blank for no domain line."
+          hint="Shown under your name in every signature. Blank = no domain line."
         >
           <Input
             value={s.values.productDomain}
@@ -64,7 +64,7 @@ export function FounderSection({ cfg, onDirtyChange }: SectionProps) {
         <Field
           label="Sending domain"
           error={s.errors.sendingDomain}
-          hint="The domain your wallet OWNS. Emails send from <your-first-name>@thisdomain. Must be wallet-owned or the SDK rejects the send. Leave blank to use the SDK default."
+          hint="Wallet-owned domain mail goes out from, as <first-name>@domain. Blank = SDK default."
         >
           <Input
             value={s.values.sendingDomain}

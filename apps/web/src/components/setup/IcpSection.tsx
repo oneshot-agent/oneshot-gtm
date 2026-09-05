@@ -51,7 +51,10 @@ export function IcpSection({
   }, []);
   const showPackBanner = Boolean(proposedIcp) && s.dirtyKeys.includes("icpOneLiner");
 
-  const [icpDomain, setIcpDomain] = useState("");
+  // The derive prompt reads "a company's marketing site" and writes who THEY
+  // sell to — so the founder's own site is the default input, not a peer's.
+  // Seeded once; the section mounts only after ["setup"] has data.
+  const [icpDomain, setIcpDomain] = useState(() => cfg.productDomain ?? "");
   const [deriveError, setDeriveError] = useState<string | null>(null);
   const [deriveSource, setDeriveSource] = useState<{ url: string; cost: number } | null>(null);
   const deriveIcp = useMutation({
@@ -91,7 +94,7 @@ export function IcpSection({
   return (
     <SectionShell
       {...s.shell}
-      lede="A free-text classifier. The find layer uses this to drop candidates that don't match."
+      lede="Who the finders keep. Candidates that don't match this sentence are dropped."
     >
       {showPackBanner && (
         <div className="border-l-2 border-[color:var(--ink-receipt)] bg-[color:var(--ink-receipt)]/10 px-3 py-2 font-mono text-[11.5px] text-ink-cream-2">
@@ -101,13 +104,13 @@ export function IcpSection({
       )}
       <Field
         label="Derive from a website"
-        hint="Paste a domain (or full URL) of a company whose customers look like yours. We'll read the page and propose an ICP — you can edit before saving. Spends ~$0.02–0.05 (one webRead + one LLM call)."
+        hint="Your own site is prefilled; a competitor's customers page works too. Reads one page and drafts the sentence for you to edit. ~$0.03."
       >
         <div className="flex gap-2">
           <Input
             value={icpDomain}
             onChange={(e) => setIcpDomain(e.target.value)}
-            placeholder="acme.com  ·  https://yourcompany.com/customers"
+            placeholder="yourcompany.com  ·  competitor.com/customers"
             onKeyDown={(e) => {
               if (e.key === "Enter" && !deriveIcp.isPending && icpDomain.trim().length > 0) {
                 e.preventDefault();
@@ -155,10 +158,7 @@ export function IcpSection({
         </div>
       )}
 
-      <Field
-        label="ICP one-liner"
-        hint="Leave blank to disable filtering (every candidate passes through)."
-      >
+      <Field label="ICP one-liner" hint="Blank = no filtering.">
         <Textarea
           value={s.values.icpOneLiner}
           onChange={(e) => s.set("icpOneLiner", e.target.value)}

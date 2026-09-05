@@ -13,10 +13,7 @@ export function TelemetrySection({ cfg, onDirtyChange }: SectionProps) {
     onDirtyChange,
   });
   return (
-    <SectionShell
-      {...s.shell}
-      lede="Off by default for your data, on by default for command-run counts. Opt out at will."
-    >
+    <SectionShell {...s.shell} lede="Anonymous command counts only. Never your data.">
       <Checkbox
         label="Send anonymous opt-out telemetry (commands run, no data, no PII — see TELEMETRY.md)"
         checked={s.values.telemetryEnabled}

@@ -25,13 +25,10 @@ export function SocialProofSection({ cfg, onDirtyChange }: SectionProps) {
   return (
     <SectionShell
       {...s.shell}
-      lede="All optional. Each maps to a different play type. Used by the LLM when drafting the second sentence of a first-touch email — never more than one beat per email."
+      lede="All optional. At most one of these lands in a first-touch email, as its second sentence."
     >
       <div className="grid grid-cols-1 gap-4">
-        <Field
-          label="Founder background"
-          hint="Prior companies, named past roles, anything that lets a stranger trust you. Used by job-change / podcast-guest / post-funding / breakup-revive."
-        >
+        <Field label="Founder background" hint="Prior companies and roles a stranger would trust.">
           <Textarea
             value={s.values.founderCredentials}
             onChange={(e) => s.set("founderCredentials", e.target.value)}
@@ -43,7 +40,7 @@ export function SocialProofSection({ cfg, onDirtyChange }: SectionProps) {
         </Field>
         <Field
           label="Products you've shipped"
-          hint="Used in peer-founder outreach to show you've actually built things. Stack-consolidation / competitor-switch / show-hn / hiring-signal."
+          hint="Proof you've built things, for peer-founder outreach."
         >
           <Textarea
             value={s.values.productPortfolio}
@@ -54,7 +51,7 @@ export function SocialProofSection({ cfg, onDirtyChange }: SectionProps) {
         </Field>
         <Field
           label="Notable partners / customers"
-          hint="Brand names that open doors. Helps when the prospect doesn't know you yet. Accelerator-batch / demo-no-show."
+          hint="Brand names that open doors when the prospect doesn't know you."
         >
           <Textarea
             value={s.values.partners}
@@ -65,7 +62,7 @@ export function SocialProofSection({ cfg, onDirtyChange }: SectionProps) {
         </Field>
         <Field
           label="One true concession"
-          hint="The thing you'd rather not say but is true. Used in roughly 1 in 3 first touches as a damaging admission (two of us, no logos yet, but…), which makes the rest of the email more believable. Leave blank and the beat is skipped, never invented."
+          hint="The true thing you'd rather not say. Used in about 1 in 3 first touches; it makes the rest believable. Blank = skipped, never invented."
         >
           <Textarea
             value={s.values.founderAdmission}

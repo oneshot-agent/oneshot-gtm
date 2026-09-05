@@ -47,7 +47,7 @@ export function XSection({
   return (
     <SectionShell
       id="x"
-      lede="Data provider for the x-reposters finder. The engine choice lives on the trigger; the keys are in Credentials."
+      lede="Data provider for the x-reposters finder. Its keys are in Credentials."
       dirtyCount={draft.dirtyKeys.length}
       savedAt={save.savedAt}
       saving={save.isPending}
@@ -59,7 +59,7 @@ export function XSection({
       <div className="grid grid-cols-1 gap-4">
         <Field
           label="Data provider"
-          hint="Both bill per record returned. Switching resets the trigger's spend ceiling and harvest knobs to the new engine's defaults; fine-tune in the /queue trigger editor."
+          hint="Both bill per record. Switching resets the trigger's spend ceiling and knobs to that engine's defaults."
         >
           <Select
             value={draft.values.engine}

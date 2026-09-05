@@ -38,12 +38,12 @@ export function ReviewQueueSection({ cfg, onDirtyChange }: SectionProps) {
   return (
     <SectionShell
       {...s.shell}
-      lede="How /queue orders what you review, and which clock event-relative copy uses."
+      lede="The default order on /queue, and the clock for event-relative copy."
     >
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <Field
           label="Review order"
-          hint="ranked: highest priority score first, so the drafts most worth a look surface before the rest. newest: arrival order. /queue can override per visit; this is the default."
+          hint="Ranked = highest priority score first. /queue can override per visit."
         >
           <Select
             value={s.values.queueReviewOrder}
@@ -56,7 +56,7 @@ export function ReviewQueueSection({ cfg, onDirtyChange }: SectionProps) {
         <Field
           label="Time zone"
           error={s.errors.timezone}
-          hint={`IANA name, e.g. Europe/Vienna. Last resort when an event has no explicit zone and its city can't be placed. Blank = this machine's zone (${RUNTIME_ZONE}).`}
+          hint={`IANA name. Used when an event has no zone and its city can't be placed. Blank = ${RUNTIME_ZONE}.`}
         >
           <Input
             value={s.values.timezone}

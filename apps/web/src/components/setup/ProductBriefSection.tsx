@@ -40,7 +40,7 @@ export function ProductBriefSection({ cfg, onDirtyChange }: SectionProps) {
   return (
     <SectionShell
       {...s.shell}
-      lede="What your replies are allowed to know and cite. Facts, architecture, pricing model, canonical links. A link that isn't in this brief is never sent."
+      lede="What replies may know and cite. A link that isn't in here is never sent."
       saveDisabled={deriveBrief.isPending}
       saveTitle={
         deriveBrief.isPending ? "wait for the brief derive to finish, then save" : undefined
@@ -48,7 +48,7 @@ export function ProductBriefSection({ cfg, onDirtyChange }: SectionProps) {
     >
       <Field
         label="Derive from sources"
-        hint="One URL per line — your site, the GitHub repo, docs pages (max 5). Each is one webRead (~$0.01); you edit the proposal before saving."
+        hint="One URL per line, up to 5. About $0.01 each. Edit the draft before saving."
       >
         <div className="flex gap-2">
           <Textarea
@@ -79,10 +79,7 @@ export function ProductBriefSection({ cfg, onDirtyChange }: SectionProps) {
         </div>
       </Field>
       {deriveInfo && <div className="font-mono text-[11px] text-ink-faint">{deriveInfo}</div>}
-      <Field
-        label="Product brief"
-        hint="Used by /inbox reply drafting to answer substantive questions with substance. Keep links verbatim."
-      >
+      <Field label="Product brief" hint="Grounds /inbox reply drafts. Keep links verbatim.">
         <Textarea
           value={s.values.productBrief}
           onChange={(e) => s.set("productBrief", e.target.value)}
