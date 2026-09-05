@@ -9,7 +9,7 @@ import { Button } from "../components/primitives/Button.tsx";
 import { Input } from "../components/primitives/Field.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { CadenceTimeline, type CadenceStep } from "../components/plays/CadenceTimeline.tsx";
-import { cn } from "../lib/cn.ts";
+import { cn, formatCount } from "../lib/cn.ts";
 import { readOnly } from "../lib/readOnly.ts";
 
 export const Route = createFileRoute("/plays")({
@@ -229,7 +229,10 @@ function PlaysPage() {
                     <div className="font-mono text-[11px] text-ink-faint">
                       {count > 0 ? (
                         <span>
-                          <span className="text-[color:var(--ink-receipt-2)]">{count}</span> receipt
+                          <span className="text-[color:var(--ink-receipt-2)]">
+                            {formatCount(count)}
+                          </span>{" "}
+                          receipt
                           {count === 1 ? "" : "s"} signed
                         </span>
                       ) : (

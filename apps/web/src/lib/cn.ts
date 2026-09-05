@@ -10,6 +10,18 @@ export function formatSendsToday(s: { sent: number; cap: number | null }): strin
   return `${s.sent}/${s.cap ?? "∞"}`;
 }
 
+/**
+ * A count, grouped at the thousand.
+ *
+ * Beside formatUsd's "$2,002.27", a bare "1044" in the next tile reads as a
+ * different kind of number, and at five figures it stops being readable at a
+ * glance at all. Under a thousand this returns the digits unchanged, so it is
+ * safe on any count without checking the magnitude first.
+ */
+export function formatCount(n: number): string {
+  return new Intl.NumberFormat("en-US").format(n);
+}
+
 export function formatUsd(n: number): string {
   const digits = n === 0 ? 2 : n < 0.01 ? 4 : 2;
   return new Intl.NumberFormat("en-US", {

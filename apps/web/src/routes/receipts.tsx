@@ -7,7 +7,7 @@ import { Button } from "../components/primitives/Button.tsx";
 import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
 import { Modal } from "../components/primitives/Modal.tsx";
 import { Skeleton, SkeletonRow } from "../components/primitives/Skeleton.tsx";
-import { cn, formatUsd, timeAgo } from "../lib/cn.ts";
+import { cn, formatCount, formatUsd, timeAgo } from "../lib/cn.ts";
 import { maskDeep } from "../lib/mask.ts";
 import { usePrivacy } from "../lib/privacy.tsx";
 
@@ -116,7 +116,7 @@ function ReceiptsPage() {
           {receipts.data ? (
             <>
               <div>
-                <span className="text-ink-cream-2">{visible.length}</span>{" "}
+                <span className="text-ink-cream-2">{formatCount(visible.length)}</span>{" "}
                 <span className="text-ink-muted">shown</span>
               </div>
               <div className="mt-0.5">

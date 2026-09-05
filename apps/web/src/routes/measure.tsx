@@ -7,7 +7,7 @@ import { Button } from "../components/primitives/Button.tsx";
 import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { Sparkline } from "../components/primitives/Sparkline.tsx";
-import { cn, formatUsd } from "../lib/cn.ts";
+import { cn, formatCount, formatUsd } from "../lib/cn.ts";
 import { Pii } from "../components/primitives/Pii.tsx";
 
 export const Route = createFileRoute("/measure")({
@@ -110,12 +110,12 @@ function MeasurePage() {
         />
         <Summary
           label="Sent"
-          value={cac.data ? String(totalSent) : undefined}
+          value={cac.data ? formatCount(totalSent) : undefined}
           caption={cac.data ? `all plays, ${rangeLabel(sinceDays)}` : undefined}
         />
         <Summary
           label="Replied"
-          value={cac.data ? String(totalReplied) : undefined}
+          value={cac.data ? formatCount(totalReplied) : undefined}
           caption={
             cac.data && totalSent > 0
               ? `${((totalReplied / totalSent) * 100).toFixed(1)}% reply rate`
@@ -125,7 +125,7 @@ function MeasurePage() {
         />
         <Summary
           label="Won"
-          value={rocs.data ? String(totalWon) : undefined}
+          value={rocs.data ? formatCount(totalWon) : undefined}
           caption={rocs.data ? `${formatUsd(totalWonValue)} closed` : undefined}
         />
         <Summary
@@ -201,9 +201,15 @@ function MeasurePage() {
                     <td className="py-2 text-right font-mono text-ink-cream">
                       {formatUsd(s.totalUsd)}
                     </td>
-                    <td className="py-2 text-right font-mono text-ink-muted">{s.calls}</td>
-                    <td className="py-2 text-right font-mono text-ink-muted">{sent}</td>
-                    <td className="py-2 text-right font-mono text-ink-muted">{replied}</td>
+                    <td className="py-2 text-right font-mono text-ink-muted">
+                      {formatCount(s.calls)}
+                    </td>
+                    <td className="py-2 text-right font-mono text-ink-muted">
+                      {formatCount(sent)}
+                    </td>
+                    <td className="py-2 text-right font-mono text-ink-muted">
+                      {formatCount(replied)}
+                    </td>
                     <td className="py-2 text-right font-mono text-ink-cream-2">
                       {sent > 0 ? (
                         formatUsd(s.totalUsd / sent)
@@ -283,10 +289,12 @@ function MeasurePage() {
                     <td className="py-2 text-right font-mono text-ink-cream">
                       {formatUsd(s.totalUsd)}
                     </td>
-                    <td className="py-2 text-right font-mono text-ink-muted">{meet}</td>
-                    <td className="py-2 text-right font-mono text-ink-muted">{sql}</td>
+                    <td className="py-2 text-right font-mono text-ink-muted">
+                      {formatCount(meet)}
+                    </td>
+                    <td className="py-2 text-right font-mono text-ink-muted">{formatCount(sql)}</td>
                     <td className="py-2 text-right font-mono text-[color:var(--ink-receipt-2)]">
-                      {won}
+                      {formatCount(won)}
                     </td>
                     <td className="py-2 text-right font-mono text-ink-cream-2">
                       {meet > 0 ? (
@@ -366,7 +374,9 @@ function MeasurePage() {
                         <span className="text-ink-faint">—</span>
                       )}
                     </td>
-                    <td className="py-2 text-right font-mono text-ink-muted">{g.receiptCount}</td>
+                    <td className="py-2 text-right font-mono text-ink-muted">
+                      {formatCount(g.receiptCount)}
+                    </td>
                     <td className="px-6 py-2 text-right font-mono text-[color:var(--ink-receipt-2)]">
                       {g.spend > 0 && g.rocs > 0 ? (
                         `${g.rocs.toFixed(1)}×`

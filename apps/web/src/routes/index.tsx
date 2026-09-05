@@ -6,7 +6,7 @@ import { HealthCard } from "../components/home/HealthCard.tsx";
 import { NextStep } from "../components/home/NextStep.tsx";
 import { SchedulerStrip } from "../components/home/SchedulerStrip.tsx";
 import { SignalFeed } from "../components/home/SignalFeed.tsx";
-import { cn, formatSendsToday, formatUsd } from "../lib/cn.ts";
+import { cn, formatCount, formatSendsToday, formatUsd } from "../lib/cn.ts";
 
 export const Route = createFileRoute("/")({
   component: HomePage,
@@ -78,13 +78,13 @@ function HomePage() {
       >
         <LedgerNumber
           label="Replied · 7d"
-          value={d ? String(d.repliedLast7d) : undefined}
-          caption="reply · the only metric that matters"
+          value={d ? formatCount(d.repliedLast7d) : undefined}
+          caption="the only metric that matters"
           tone="receipt"
         />
         <LedgerNumber
           label="Sent · 7d"
-          value={d ? String(d.sentLast7d) : undefined}
+          value={d ? formatCount(d.sentLast7d) : undefined}
           caption="drafts, linted, stamped"
         />
         {d?.sendsToday && (
@@ -102,12 +102,14 @@ function HomePage() {
         <LedgerNumber
           label="Spend · 7d"
           value={d ? formatUsd(d.spendUsd7d) : undefined}
-          caption={d ? `${d.callsLast7d} agent calls · ${formatUsd(d.spendUsd30d)} 30d` : undefined}
+          caption={
+            d ? `${formatCount(d.callsLast7d)} calls · ${formatUsd(d.spendUsd30d)} 30d` : undefined
+          }
           tone="spend"
         />
         <LedgerNumber
           label="Active cadences"
-          value={d ? String(d.activeCadences) : undefined}
+          value={d ? formatCount(d.activeCadences) : undefined}
           caption="in flight, awaiting reply"
         />
       </section>

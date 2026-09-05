@@ -35,7 +35,14 @@ import { Pii } from "../components/primitives/Pii.tsx";
 import { useMask, usePrivacy } from "../lib/privacy.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { Toggle } from "../components/primitives/Toggle.tsx";
-import { cn, eventIsPast, formatSendsToday, humanizeEventDate, timeAgo } from "../lib/cn.ts";
+import {
+  cn,
+  eventIsPast,
+  formatCount,
+  formatSendsToday,
+  humanizeEventDate,
+  timeAgo,
+} from "../lib/cn.ts";
 import {
   bulkApprovalIds,
   drainButtonState,
@@ -533,7 +540,8 @@ function QueuePage() {
                       className="flex items-center gap-1.5 font-mono text-[11px] text-ink-faint transition-colors hover:text-ink-cream-2"
                     >
                       <ChevronDown size={11} />
-                      {rows.length - visibleRows.length} more · show all {rows.length}
+                      {formatCount(rows.length - visibleRows.length)} more · show all{" "}
+                      {formatCount(rows.length)}
                     </button>
                   </td>
                 </tr>
@@ -1441,7 +1449,7 @@ function SignalStrip({ rows, ranked = false }: { rows: QueueRowView[]; ranked?: 
         })}
       </div>
       <div className="font-mono text-[11px] text-ink-muted">
-        {total} enqueued
+        {formatCount(total)} enqueued
         <span className="ml-2 text-ink-faint">
           · <span className="text-ink-cream-2">{days[days.length - 1]?.count ?? 0}</span> today
         </span>
