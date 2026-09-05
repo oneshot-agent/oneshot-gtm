@@ -87,7 +87,7 @@ bun run cli -- cadence advance                     # daily tick: poll inbox, fir
 | Group                    | Commands                                                                                                                                                                                                                                                                                            |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `init` · `doctor` · `ui` | setup wizard · health check · open the dashboard                                                                                                                                                                                                                                                    |
-| `direct-mail` | `list` · `upload` · `preview` · `refresh` · `approve` · `send` · `cancel` — individual physical-mail approvals |
+| `direct-mail`            | `list` · `upload` · `preview` · `refresh` · `approve` · `send` · `cancel` — individual physical-mail approvals                                                                                                                                                                                      |
 | `config`                 | `llm` · `founder` · `keys` · `telemetry on\|off` · `x-engine [engine]` · `spend-ceiling [amount\|off]`                                                                                                                                                                                              |
 | `gmail`                  | `auth` (OAuth a sending account) · `placement` (inbox-placement canary)                                                                                                                                                                                                                             |
 | `identities`             | `list` · `add` · `remove <id>` — the sender pool                                                                                                                                                                                                                                                    |
@@ -208,14 +208,14 @@ The dashboard server runs an in-process scheduler, so enabling a trigger is enou
 
 Enrichment, verification and local lookups resolve through OneShot, which maintains a vendor landscape of 50 data sources across six categories. Which source answers a given lookup is chosen per call, so what follows is coverage rather than a list of integrations — a map of who operates in each space, not a claim about what is wired up today.
 
-| Category                      | Sources | Examples                                    |
-| ----------------------------- | ------- | ------------------------------------------- |
-| Contact enrichment            | 13      | Apollo, Clay, Hunter, People Data Labs      |
-| Company & firmographic data   | 7       | Diffbot, Coresignal, PredictLeads           |
-| Email verification            | 6       | ZeroBounce, NeverBounce, Kickbox            |
-| Maps, places & local data     | 6       | Serper, Foursquare, Outscraper              |
-| Browser automation & scraping | 10      | Browserbase, Apify, Bright Data             |
-| Social distribution & data    | 8       | Unipile, TwitterAPI.io, Lix                 |
+| Category                      | Sources | Examples                               |
+| ----------------------------- | ------- | -------------------------------------- |
+| Contact enrichment            | 13      | Apollo, Clay, Hunter, People Data Labs |
+| Company & firmographic data   | 7       | Diffbot, Coresignal, PredictLeads      |
+| Email verification            | 6       | ZeroBounce, NeverBounce, Kickbox       |
+| Maps, places & local data     | 6       | Serper, Foursquare, Outscraper         |
+| Browser automation & scraping | 10      | Browserbase, Apify, Bright Data        |
+| Social distribution & data    | 8       | Unipile, TwitterAPI.io, Lix            |
 
 The other eight categories in the catalogue are things an agent does rather than knows — voice, speech, media, e-signature, mail, shipping, domains, deliverability — and account for the remaining 66 vendors. [The full catalogue](https://docs.oneshotagent.com/vendors).
 
