@@ -470,7 +470,9 @@ function MotionMailEditor({ play }: { play: PlayDescriptor }) {
           onChange={(e) => setMode(e.target.value as typeof mode)}
           disabled={readOnly.disabled || save.isPending}
         >
-          <option value="automatic">Automatic — suitable prospects</option>
+          {play.mailAutomaticSupported && (
+            <option value="automatic">Automatic — suitable prospects</option>
+          )}
           <option value="always">Always include</option>
           <option value="off">Off</option>
         </Select>

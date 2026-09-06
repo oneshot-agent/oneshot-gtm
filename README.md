@@ -477,12 +477,12 @@ is the same pipeline that runs there.
 
 **Plays → Direct mail** chooses suitable prospects automatically for selected motions. Founders can choose **Automatic**, **Always include**, or **Off**, and edit the mail step’s position and delay. Each letter still requires individual proof review and approval.
 
-| Motion | Automatic selection | Default placement |
-| --- | --- | --- |
-| New business, free pilot | Named prospect, company, and complete U.S. business address | Step 2, three days after the first email |
-| Design-partner LOI | Same address requirements; enterprise or hardware buyer | Step 2, three days after the first email |
+| Motion                                         | Automatic selection                                                     | Default placement                            |
+| ---------------------------------------------- | ----------------------------------------------------------------------- | -------------------------------------------- |
+| New business, free pilot                       | Named prospect, company, and complete U.S. business address             | Step 2, three days after the first email     |
+| Design-partner LOI                             | Same address requirements; enterprise or hardware buyer                 | Step 2, three days after the first email     |
 | Post-funding, hiring-signal, competitor-switch | Same address requirements; confirmed ICP match and decision-maker title | Step 3, three days after the first follow-up |
-| Other motions | Off by default; founder can choose Always include | Founder-selected |
+| Other motions                                  | Off by default; founder can choose Always include                       | Founder-selected                             |
 
 These are explainable starting rules, not predictions of conversion or account value. Sources labeled as registered-agent, registered-office or residential addresses are excluded from automatic selection. An address still needs review: complete postal fields do not establish that a person works there. Research can add mail to an eligible active cadence when its insertion point is still ahead; completed touches and existing mailpieces retain their plans. Explicit Off overrides survive future default changes.
 

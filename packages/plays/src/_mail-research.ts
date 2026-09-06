@@ -1,5 +1,7 @@
 import {
   getLedger,
+  enrichCompany,
+  extractSdkBusinessAddress,
   motionMailPolicy,
   loadConfig,
   extractBusinessAddress,
@@ -53,11 +55,15 @@ export async function researchBusinessAddress(
     };
   let domain = companyDomain(payload);
   const email = payload.email ?? payload.founderEmail;
-  if (!domain && typeof email === "string") {
+  if (typeof email === "string") {
     try {
       const cachedProfile = getLedger().getCachedEnrichment(email.trim().toLowerCase());
-      const profile = cachedProfile ? JSON.parse(cachedProfile.result_json).profile : null;
-      domain = companyDomain({ companyDomain: profile?.company_domain });
+      const cachedResult = cachedProfile ? JSON.parse(cachedProfile.result_json) : null;
+      const cachedAddress = extractSdkBusinessAddress(cachedResult, name);
+      if (cachedAddress)
+        return { address: cachedAddress, source: "sdk:enrich.profile (cached)", costUsd: 0 };
+      const profile = cachedResult?.profile;
+      domain ??= companyDomain({ companyDomain: profile?.company_domain });
     } catch {
       /* Missing/corrupt enrichment is not a usable company source. */
     }
@@ -79,6 +85,28 @@ export async function researchBusinessAddress(
   ledger.setMailAddressMetadata(key, { ...meta, attemptedAt: new Date().toISOString() });
   let costUsd = 0;
   try {
+    try {
+      const enriched = await enrichCompany(
+        { domain },
+        {
+          playName,
+          memo: "Collect business mailing address via SDK",
+          decisionContext: { source: "direct_mail.address", companyDomain: domain },
+        },
+      );
+      costUsd += enriched.result.cost ?? 0;
+      const address = extractSdkBusinessAddress(enriched.result, name);
+      if (address) {
+        ledger.setMailAddress(key, address, "sdk:enrich.company");
+        return { address, source: "sdk:enrich.company", costUsd };
+      }
+    } catch (error) {
+      logEvent(
+        "mail.address.sdk.failed",
+        { domain, message: error instanceof Error ? error.message : String(error) },
+        "warn",
+      );
+    }
     for (const path of ["/", "/contact"]) {
       if (costUsd >= remainingUsd) break;
       const url = `https://${domain}${path}`;

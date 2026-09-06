@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Ledger } from "../../core/src/ledger.ts";
 let ledger: Ledger;
-const read = vi.fn(),
+const enrich = vi.fn(),
+  read = vi.fn(),
   llm = vi.fn(),
   release = vi.fn();
 let allowed = true;
@@ -11,6 +12,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     ...actual,
     getLedger: () => ledger,
     loadConfig: () => ({ directMailMotions: { motion: { position: 2, delayDays: 3 } } }),
+    enrichCompany: (...args: unknown[]) => enrich(...args),
     webRead: (...args: unknown[]) => read(...args),
     tryReserveDailySpend: () => (allowed ? { granted: true, release } : { granted: false }),
   };
@@ -32,6 +34,7 @@ beforeEach(() => {
   ledger = new Ledger(":memory:");
   vi.clearAllMocks();
   allowed = true;
+  enrich.mockResolvedValue({ result: { company: {}, cost: 0 } });
   read.mockResolvedValue({
     result: { markdown: "Acme headquarters: 10 Main St, Boston, MA 02110, USA", cost: 0.01 },
   });
@@ -39,6 +42,17 @@ beforeEach(() => {
 });
 afterEach(() => ledger.close());
 describe("automatic business address collection", () => {
+  it("captures a complete business address returned by SDK company enrichment", async () => {
+    enrich.mockResolvedValue({ result: { company: { address }, cost: 0.005 } });
+    const result = await researchBusinessAddress(
+      { name: "Jane", email: "jane@acme.test" },
+      "motion",
+    );
+    expect(result.address).toMatchObject({ ...address, name: "Jane" });
+    expect(result.source).toBe("sdk:enrich.company");
+    expect(ledger.getMailAddress("company:acme.test")).toMatchObject(address);
+    expect(read).not.toHaveBeenCalled();
+  });
   it("stores source evidence and reuses the address for another contact at that business", async () => {
     const first = await researchBusinessAddress(
       { name: "Jane", email: "jane@acme.test" },

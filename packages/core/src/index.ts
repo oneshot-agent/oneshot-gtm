@@ -32,3 +32,5 @@ export * from "./mail-address.ts";
 export * from "./mail-pdf.ts";
 
 export * from "./mail-policy.ts";
+
+export * from "./mail-enrichment.ts";

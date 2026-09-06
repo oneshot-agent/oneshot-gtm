@@ -159,6 +159,7 @@ export function listPlays(req: Request): Response {
       defaultDays: cumulativeDays(defaultSequence(p.name)),
       directMail: motionMailPolicy(loadConfig(), p.name).settings,
       mailRecommendation: motionMailPolicy(loadConfig(), p.name).reason,
+      mailAutomaticSupported: motionMailPolicy(loadConfig(), p.name).recommended,
       mailEligible: !!defaultSequence(p.name),
       baseSteps: (() => {
         const base = defaultSequence(p.name);
@@ -223,7 +224,8 @@ export async function setCadenceRoute(
         !Number.isInteger(mail.delayDays) ||
         mail.delayDays < 1 ||
         mail.delayDays > 120 ||
-        (mail.mode !== undefined && !["automatic", "always"].includes(mail.mode)))
+        (mail.mode !== undefined && !["automatic", "always"].includes(mail.mode)) ||
+        (mail.mode === "automatic" && !motionMailPolicy(cfg, name).recommended))
     )
       return jsonResponse(
         { error: "Choose a valid mail position and a delay of 1–120 days" },
