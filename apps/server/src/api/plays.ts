@@ -1,4 +1,9 @@
-import { loadConfig, saveConfig } from "@oneshot-gtm/core";
+import {
+  loadConfig,
+  saveConfig,
+  motionMailPolicy,
+  type MotionMailSettings,
+} from "@oneshot-gtm/core";
 import {
   defaultSequence,
   captureCadencePlans,
@@ -152,7 +157,8 @@ export function listPlays(req: Request): Response {
       cliInvocation: p.cli,
       steps,
       defaultDays: cumulativeDays(defaultSequence(p.name)),
-      directMail: loadConfig().directMailMotions?.[p.name] ?? null,
+      directMail: motionMailPolicy(loadConfig(), p.name).settings,
+      mailRecommendation: motionMailPolicy(loadConfig(), p.name).reason,
       mailEligible: !!defaultSequence(p.name),
       baseSteps: (() => {
         const base = defaultSequence(p.name);
@@ -188,7 +194,7 @@ export async function setCadenceRoute(
     return jsonResponse({ error: `play '${name}' has no editable cadence` }, 400, req);
   }
 
-  let body: { days?: number[] | null; directMail?: { position: number; delayDays: number } | null };
+  let body: { days?: number[] | null; directMail?: MotionMailSettings | null };
   try {
     body = (await req.json()) as { days?: number[] | null };
   } catch {
@@ -216,7 +222,8 @@ export async function setCadenceRoute(
         mail.position > def.steps.length + 2 ||
         !Number.isInteger(mail.delayDays) ||
         mail.delayDays < 1 ||
-        mail.delayDays > 120)
+        mail.delayDays > 120 ||
+        (mail.mode !== undefined && !["automatic", "always"].includes(mail.mode)))
     )
       return jsonResponse(
         { error: "Choose a valid mail position and a delay of 1–120 days" },
@@ -225,7 +232,7 @@ export async function setCadenceRoute(
       );
     const motions = { ...cfg.directMailMotions };
     if (mail) motions[name] = mail;
-    else delete motions[name];
+    else motions[name] = null;
     saveConfig({ ...cfg, directMailMotions: motions });
     applyCadencePlans(name, previous);
     return jsonResponse({ ok: true }, 200, req);

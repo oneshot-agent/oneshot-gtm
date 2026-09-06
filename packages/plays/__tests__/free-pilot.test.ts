@@ -57,7 +57,7 @@ vi.mock("@oneshot-gtm/intel", async () => {
 });
 
 const { runFreePilot } = await import("../src/free-pilot.ts");
-const { getSequence } = await import("../src/_cadence.ts");
+const { defaultSequence: getSequence } = await import("../src/_cadence.ts");
 
 const base = {
   name: "Dave",

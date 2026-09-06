@@ -1,5 +1,6 @@
 import {
   getLedger,
+  motionMailPolicy,
   loadConfig,
   extractBusinessAddress,
   webRead,
@@ -9,7 +10,7 @@ import {
   type PostalAddress,
 } from "@oneshot-gtm/core";
 import { complete, tryParseJsonObject } from "@oneshot-gtm/intel";
-import { getSequence } from "./_cadence.ts";
+import { getSequence, captureCadencePlans, applyCadencePlans } from "./_cadence.ts";
 
 const DAY = 86400000;
 const personalDomains = new Set([
@@ -142,7 +143,7 @@ export async function collectQueueBusinessAddress(
   if (!row || !["pending", "approved"].includes(row.status) || row.send_started_at) return 0;
   const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
   const known = extractBusinessAddress(payload, String(payload.name ?? payload.founderName ?? ""));
-  if (!known && !loadConfig().directMailMotions?.[row.play_name]) return 0;
+  if (!known && !motionMailPolicy(loadConfig(), row.play_name).settings) return 0;
   const result = known
     ? {
         address: known,
@@ -184,6 +185,7 @@ export async function backfillMailAddresses(): Promise<void> {
   for (const c of ledger.listActiveCadences()) {
     if (attempted >= 5) break;
     if (
+      !motionMailPolicy(loadConfig(), c.play_name).settings &&
       !getSequence(c.play_name, c.prospect_id)
         ?.steps.slice(c.current_step)
         .some((s) => s.channel === "direct_mail")
@@ -204,7 +206,7 @@ export async function backfillMailAddresses(): Promise<void> {
   for (const row of ledger.listQueue({ limit: 500 }).toReversed()) {
     if (attempted >= 5) break;
     if (
-      !loadConfig().directMailMotions?.[row.play_name] ||
+      !motionMailPolicy(loadConfig(), row.play_name).settings ||
       !["pending", "approved"].includes(row.status)
     )
       continue;
@@ -216,5 +218,13 @@ export async function backfillMailAddresses(): Promise<void> {
     attempted++;
     ledger.setMailAddressMetadata(key, { attemptedAt: new Date().toISOString() });
     await collectQueueBusinessAddress(row.id);
+  }
+  // Reconcile eligible active enrollments after address collection; completed prefixes stay pinned.
+  for (const playName of new Set(ledger.listActiveCadences().map((c) => c.play_name))) {
+    if (
+      motionMailPolicy(loadConfig(), playName).settings?.mode === "automatic" &&
+      getSequence(playName)
+    )
+      applyCadencePlans(playName, captureCadencePlans(playName));
   }
 }
