@@ -117,9 +117,9 @@ Nine pages plus a run form:
 - **Queue** — triggers table (enable, edit config, fire) plus the target queue with bulk approve and per-play **Drain**; the pending review list can be ordered `newest` or `ranked` (finder-interleaved priority score with exploration slots — a toggle on the page, defaulted by `queueReviewOrder` in config)
 - **Add Prospect** — paste a LinkedIn / X / GitHub URL; `deepResearchPerson` builds a dossier, the LLM picks an angle against your ICP and drafts an intro, and the row lands in the queue
 - **Replies** — every reply matched to its prospect, play and cadence status across all sender identities; answer in place, by hand or LLM-drafted. Drafting is research-grounded: known prospects reuse their stored dossier, unknown senders get enriched + their site read (~$0.06, cached 30 days, receipted under `inbox-reply`), and replies may cite links from your product brief — never invented ones
-- **Cadences** — stop, log outcome, preview the next step, batch send
+- **Cadences** — stop, log outcome, preview the next step, batch send email, and [review/send direct mail](#direct-mail) per prospect
 - **Receipts** — paginated, with the memo and value chip per call; click through to the signed payload
-- **Plays** — cards with channel badges, a Run button, and Copy CLI
+- **Plays** — cards with channel badges, a Run button, Copy CLI, and optional [direct-mail steps](#direct-mail) with editable position and delay
 - **Measure** — CAC and RoCS by time range, plus per-cadence spend vs tagged value grouped by goal
 - **Setup** — founder profile, ICP, product brief (facts + the only links replies may cite, derivable from your site/repo/docs), LLM provider, wallet keys, sender identities, telemetry toggle
 - **Run a play** (`/run/$playName`) — editable target rows, dry-run toggle, drafts streamed back over SSE with lint flags and receipt links
@@ -127,6 +127,14 @@ Nine pages plus a run form:
 A floating strategist dock sits on every page: it reads your ICP and product one-liner and proposes trigger configs as confirmation chips (`POST /api/strategist/stream`, SSE).
 
 Next to it is a **privacy toggle**. Flip it on and names, emails, companies and phone numbers render partially masked everywhere — enough to screenshot a receipt or a cadence without exposing a real contact. Costs, receipt IDs and every other figure stay untouched, since the numbers are the reason to show a receipt in the first place. Off by default, remembered per browser. It's readable obfuscation for screenshots, not secure redaction.
+
+### Direct mail
+
+In **Plays**, enable **Include direct mail** only for the motions that need it, and choose its position and delay. Mail adds a touch; it does not replace an email. Eligible active prospects receive the new step, while completed cadences and prospects already past its position keep their existing sequence.
+
+Save your return address once under **Setup → Founder → Direct mail return address**. Business addresses are collected from prospect inputs, CSV/registry data, and company research for mail-enabled motions. Missing addresses hold the mail step until you correct them or explicitly skip mail.
+
+On **Cadences**, click a prospect’s **Review mail** button. Both saved addresses are filled automatically. Generate/edit a personalized letter or upload a **PDF/JPEG for that prospect**, review the print proof and price, then **Approve and send**. Replacing content or changing an address requires a fresh proof. The dashboard sends U.S. letters; existing postcard orders and the artwork CLI remain supported. Mail history provides postal status, recovery, and cancellation. Bulk actions never send mailpieces. An accepted order advances the cadence once; postal delivery does not prove readership.
 
 ### Demo mode
 
@@ -472,13 +480,3 @@ Read every prompt. Fork every play. We expect you to.
 
 Built by [free.butter](https://freebutter.com) — the lead infrastructure behind this
 is the same pipeline that runs there.
-
-### Direct mail
-
-In **Plays**, enable **Include direct mail** only for the motions that need it, and choose its position and delay. Mail adds a touch; it does not replace an email. Eligible active prospects receive the new step, while completed cadences and prospects already past its position keep their existing sequence.
-
-Save your return address once under **Setup → Founder → Direct mail return address**. Business addresses are collected from prospect inputs, CSV/registry data, and company research for mail-enabled motions. Missing addresses hold the mail step until you correct them or explicitly skip mail.
-
-On **Cadences**, click a prospect’s **Review mail** button. Both saved addresses are filled automatically. Generate/edit a personalized letter or upload a **PDF/JPEG for that prospect**, review the print proof and price, then **Approve and send**. Replacing content or changing an address requires a fresh proof. The dashboard sends U.S. letters; existing postcard orders and the artwork CLI remain supported. Mail history provides postal status, recovery, and cancellation. Bulk actions never send mailpieces. An accepted order advances the cadence once; postal delivery does not prove readership.
-
-For this integration branch, both core and the server use the SDK archive in `vendor/`; see its README for the coordinated SDK/GTM release step.
