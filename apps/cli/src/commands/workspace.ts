@@ -81,7 +81,7 @@ export async function commandWorkspaceCurrent(): Promise<void> {
 }
 
 export async function commandWorkspacePath(name: string): Promise<void> {
-  // Bare path on stdout, for scripts: ONESHOT_GTM_HOME=$(oneshot-gtm workspace path gtm) …
+  // Bare path on stdout, for scripts: ONESHOT_GTM_HOME=$(oneshot-gtm workspace path <name>) …
   process.stdout.write(`${guarded(() => resolveWorkspaceHome(name))}\n`);
 }
 
