@@ -17,7 +17,7 @@ while `reports.test.ts` covers `triageEmails`, `synthesizeInterviews`, `adviseOn
 **Dependency pins.** The root `package.json` carries `overrides` for `seroval`, `seroval-plugins`
 (CVE-2026-59940) and `ws`. Forks inherit these.
 
-The person-level ICP gate (#45) was calibrated against 84 real LinkedIn titles (all 13 known off-ICP prospects caught, zero false rejects among 44 builders) and the history audit ran live `enrichProfile` for 111 titles. The workspace switcher's auto-start was live-verified in both directions (default ↔ gtm).
+The person-level ICP gate (#45) was calibrated against 84 real LinkedIn titles (all 13 known off-ICP prospects caught, zero false rejects among 44 builders) and the history audit ran live `enrichProfile` for 111 titles. The workspace switcher's auto-start was live-verified in both directions (default ↔ a named workspace).
 
 Reply detection was verified on 2026-08-23 against the real mailboxes: a sliced sweep of all four inboxes from the first send onward (4,833 inbound, every slice fully covered) found exactly the replies the live poll then recorded on restart. Since 2026-08-28 every inbound is also classified (#63) — out-of-office autoresponders, dead-mailbox notices and unsubscribes are recorded for the conversation history but never count as replies, and the latter two durably suppress the address at the send funnel.
 
