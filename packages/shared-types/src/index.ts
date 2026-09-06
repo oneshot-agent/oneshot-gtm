@@ -38,7 +38,20 @@ export interface CadenceSentStep {
 }
 export type StepChannel = "email" | "sms" | "voice" | "linkedin" | "x" | "direct_mail";
 
+export interface BusinessMailAddress {
+  name: string;
+  address_line1: string;
+  address_line2?: string;
+  address_city: string;
+  address_state: string;
+  address_zip: string;
+  address_country?: "US";
+}
+
 export interface CadenceView {
+  nextStepChannel?: StepChannel | null;
+  businessAddress?: BusinessMailAddress | null;
+  mailDraftId?: string | null;
   prospectId: number;
   prospectEmail: string | null;
   prospectName: string | null;
@@ -259,6 +272,9 @@ export interface HomeMetrics {
 }
 
 export interface PlayDescriptor {
+  directMail?: { position: number; delayDays: number } | null;
+  mailEligible?: boolean;
+  baseSteps?: { day: number; label: string; channel: StepChannel; isBreakup: boolean }[];
   name: string;
   channels: StepChannel[];
   followupCount: number;
@@ -566,6 +582,7 @@ export interface QueueRowView {
  * Queue under the `profile-intro` play.
  */
 export interface AddProspectRequest {
+  businessAddress?: BusinessMailAddress;
   /** A LinkedIn, X/Twitter, or GitHub profile URL. */
   url: string;
   /** Optional email to use when research can't find one. */

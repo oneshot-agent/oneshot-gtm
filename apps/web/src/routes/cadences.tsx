@@ -1,4 +1,4 @@
-import { DirectMailPanel } from "../components/DirectMailPanel.tsx";
+import { DirectMailPanel, DirectMailHistory } from "../components/DirectMailPanel.tsx";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import {
@@ -117,6 +117,7 @@ const STOP_REASON_LABELS: Record<CadenceStopReason, string> = {
 const rowKey = (c: CadenceView): string => `${c.prospectId}|${c.playName}`;
 
 function CadencesPage() {
+  const [mailKey, setMailKey] = useState<string | null>(null);
   const qc = useQueryClient();
   const [showAll, setShowAll] = useState(false);
   const [outcomeModal, setOutcomeModal] = useState<OutcomeModalState | null>(null);
@@ -298,6 +299,10 @@ function CadencesPage() {
   // render because of the `?? []` fallback, which would thrash useMemo's
   // cache.
   const list = useMemo(() => cadences.data?.cadences ?? [], [cadences.data]);
+  const mailProspect = useMemo(
+    () => list.find((c) => rowKey(c) === mailKey) ?? null,
+    [list, mailKey],
+  );
   // Tiles read the server's full-status counts (scoped only by sinceRun), NOT
   // the table rows — so REPLIED/BREAKUP/COMPLETED stay accurate even while the
   // table is filtered to active.
@@ -306,13 +311,20 @@ function CadencesPage() {
   const nowIso = new Date().toISOString();
 
   // Bulk-action derived state.
-  const selectableActive = useMemo(() => list.filter((c) => c.status === "active"), [list]);
+  const selectableActive = useMemo(
+    () => list.filter((c) => c.status === "active" && c.nextStepChannel !== "direct_mail"),
+    [list],
+  );
   const allActiveSelected =
     selectableActive.length > 0 && selectableActive.every((c) => selected.has(rowKey(c)));
   const someActiveSelected =
     selectableActive.some((c) => selected.has(rowKey(c))) && !allActiveSelected;
   const selectedRows = useMemo(
-    () => list.filter((c) => selected.has(rowKey(c)) && c.status === "active"),
+    () =>
+      list.filter(
+        (c) =>
+          selected.has(rowKey(c)) && c.status === "active" && c.nextStepChannel !== "direct_mail",
+      ),
     [list, selected],
   );
   // Sendable = selected + has clean persisted draft + not already in flight.
@@ -362,7 +374,14 @@ function CadencesPage() {
 
   return (
     <div className="-mx-6 -my-6 flex flex-col">
-      <DirectMailPanel />
+      <DirectMailHistory />
+      {mailProspect && (
+        <DirectMailPanel
+          key={`${mailProspect.prospectId}|${mailProspect.playName}`}
+          prospect={mailProspect}
+          onClose={() => setMailKey(null)}
+        />
+      )}
       <section className="flex items-end justify-between gap-4 border-b border-ink-rule px-6 pb-5 pt-6">
         <div>
           <div className="ln-eyebrow">The Ledger · Cadences</div>
@@ -637,7 +656,7 @@ function CadencesPage() {
                               ? `select for batch preview / send`
                               : `only active cadences can be selected (status: ${c.status})`
                           }
-                          disabled={c.status !== "active"}
+                          disabled={c.status !== "active" || c.nextStepChannel === "direct_mail"}
                           checked={selected.has(rowKey(c))}
                           onChange={() => toggleSelected(rowKey(c))}
                           className="cursor-pointer disabled:cursor-not-allowed disabled:opacity-30"
@@ -760,6 +779,43 @@ function CadencesPage() {
                           {c.status === "active" &&
                             (() => {
                               const key = `${c.prospectId}|${c.playName}`;
+                              if (c.nextStepChannel === "direct_mail")
+                                return (
+                                  <>
+                                    <Button
+                                      size="sm"
+                                      disabled={c.isSending}
+                                      onClick={() => setMailKey(rowKey(c))}
+                                    >
+                                      {c.businessAddress ? "Review mail" : "Add business address"}
+                                    </Button>
+                                    {c.priorSteps.length > 0 && (
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        title="View cadence history"
+                                        onClick={() => toggleExpanded(key)}
+                                      >
+                                        <ChevronDown size={12} />
+                                      </Button>
+                                    )}
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      title="Stop cadence"
+                                      disabled={stop.isPending || c.isSending}
+                                      onClick={() =>
+                                        setStopModal({
+                                          prospectId: c.prospectId,
+                                          prospectName: c.prospectName,
+                                          playName: c.playName,
+                                        })
+                                      }
+                                    >
+                                      <CircleStop size={12} />
+                                    </Button>
+                                  </>
+                                );
                               const draft = c.nextStepDraft;
                               const sendDisabled =
                                 !draft ||

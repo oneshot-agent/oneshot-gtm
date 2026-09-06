@@ -1,3 +1,4 @@
+import { extractBusinessAddress } from "@oneshot-gtm/core";
 import {
   deepResearch,
   getLedger,
@@ -227,6 +228,9 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           flags,
           prospectMeta: {
             ...def.prospectMeta(target),
+            businessAddress: extractBusinessAddress(target),
+            businessAddressSource: (target as { businessAddressSource?: string })
+              .businessAddressSource,
             // Read generically (mirrors the /queue route's prospectMeta): any
             // finder that stamps `title` on its target payload gets it
             // persisted without each play def naming the field.
@@ -253,7 +257,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           dryRun: opts.dryRun,
         });
 
-        if (send.sent && def.enrollCadence) {
+        if (send.sent && (def.enrollCadence || cfg.directMailMotions?.[def.playName])) {
           const prospect = getLedger().findProspectByEmail(def.toEmail(target));
           if (prospect) enrollInCadence({ prospectId: prospect.id, playName: def.playName });
         }

@@ -1,5 +1,6 @@
 import type {
   AddProspectResult,
+  BusinessMailAddress,
   CadencesResult,
   CadenceStopReason,
   CadenceView,
@@ -162,6 +163,8 @@ export const api = {
   receipt: (id: number) => getJson<{ receipt: ReceiptDetail }>(`/receipts/${id}`),
   plays: () => getJson<{ plays: PlayDescriptor[] }>("/plays"),
   // Timing only (cumulative days from send); null resets to code defaults. Step structure is fixed.
+  setDirectMail: (name: string, directMail: { position: number; delayDays: number } | null) =>
+    postJson<{ ok: boolean }>(`/plays/${name}/cadence`, { directMail }),
   setCadence: (name: string, days: number[] | null) =>
     postJson<{ ok: boolean }>(`/plays/${name}/cadence`, { days }),
   measureCac: (sinceDays?: number) =>
@@ -239,8 +242,12 @@ export const api = {
   deriveBrief: (urls: string[]) => postJson<DeriveBriefResult>("/setup/derive-brief", { urls }),
   // Manual add-prospect from a LinkedIn/X URL. Returns 202 immediately; the
   // researched + drafted row appears on /queue when the background job finishes.
-  addProspect: (url: string, email?: string) =>
-    postJson<AddProspectResult>("/prospects/add", { url, ...(email ? { email } : {}) }),
+  addProspect: (url: string, email?: string, businessAddress?: BusinessMailAddress) =>
+    postJson<AddProspectResult>("/prospects/add", {
+      url,
+      ...(email ? { email } : {}),
+      ...(businessAddress ? { businessAddress } : {}),
+    }),
   queue: (opts?: {
     play?: string;
     status?: QueueStatusView;

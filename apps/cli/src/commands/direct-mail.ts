@@ -30,7 +30,7 @@ export function registerDirectMailCommand(program: Command) {
   cmd
     .command("preview <prospect-id> <play> <input-json>")
     .description(
-      "Replace the next cadence step with a mailpiece; JSON contains to, from, artwork asset IDs",
+      "Prepare a configured direct-mail cadence step; JSON contains to, from, artwork asset IDs",
     )
     .action(async (prospect, play, path) => {
       console.log(

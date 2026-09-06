@@ -31,43 +31,9 @@ import { reportServerExecution } from "../telemetry.ts";
  */
 const MAX_SEND_AGE_MS = 5 * 60 * 1000;
 
-/**
- * Per-play info computed once per unique play_name — avoids re-walking the
- * sequence registry + re-reading config from disk per row.
- */
-interface PlayInfo {
-  nextLabelByStep: Map<number, { label: string | null; isBreakup: boolean }>;
-  followupCount: number;
-}
-
-function buildPlayInfoMap(
-  rows: ReadonlyArray<{ play_name: string; current_step: number }>,
-): Map<string, PlayInfo> {
-  const map = new Map<string, PlayInfo>();
-  for (const row of rows) {
-    let info = map.get(row.play_name);
-    if (!info) {
-      info = {
-        nextLabelByStep: new Map(),
-        followupCount: playFollowupCount(row.play_name),
-      };
-      map.set(row.play_name, info);
-    }
-    if (!info.nextLabelByStep.has(row.current_step)) {
-      const next = nextStepInfo(row.play_name, row.current_step);
-      info.nextLabelByStep.set(row.current_step, {
-        label: next?.label ?? null,
-        isBreakup: next?.isBreakup ?? false,
-      });
-    }
-  }
-  return map;
-}
-
 function toView(
   row: ReturnType<ReturnType<typeof getLedger>["listAllCadences"]>[number],
   priorByKey: Map<string, PriorStepRow[]>,
-  playInfo: Map<string, PlayInfo>,
 ): CadenceView {
   let nextStepDraft: CadenceNextStepDraft | null = null;
   if (row.next_step_draft_json) {
@@ -86,9 +52,8 @@ function toView(
       nextStepDraft = null;
     }
   }
-  const info = playInfo.get(row.play_name);
-  const next = info?.nextLabelByStep.get(row.current_step) ?? null;
-  const followupCount = info?.followupCount ?? 0;
+  const next = nextStepInfo(row.play_name, row.current_step, row.prospect_id);
+  const followupCount = playFollowupCount(row.play_name, row.prospect_id);
   const priorSteps = (priorByKey.get(`${row.prospect_id}|${row.play_name}`) ?? []).map((s) => ({
     stepIndex: s.stepIndex,
     label: s.label,
@@ -97,6 +62,22 @@ function toView(
     sentAt: s.sentAt,
   }));
   return {
+    nextStepChannel: getLedger().findDirectMail(
+      row.prospect_id,
+      row.play_name,
+      row.enrolled_at,
+      row.current_step + 1,
+    )
+      ? "direct_mail"
+      : (next?.channel ?? null),
+    businessAddress: getLedger().getMailAddress(`prospect:${row.prospect_id}`),
+    mailDraftId:
+      getLedger().findDirectMail(
+        row.prospect_id,
+        row.play_name,
+        row.enrolled_at,
+        row.current_step + 1,
+      )?.id ?? null,
     prospectId: row.prospect_id,
     prospectEmail: row.prospect_email,
     prospectName: row.prospect_name,
@@ -134,8 +115,7 @@ function viewsForRows(
   // Single SQL fetch for ALL (prospect_id, play_name) pairs — avoids N+1.
   const pairs = rows.map((r) => ({ prospectId: r.prospect_id, playName: r.play_name }));
   const priorByKey = getPriorStepsBulk(pairs);
-  const playInfo = buildPlayInfoMap(rows);
-  return rows.map((r) => toView(r, priorByKey, playInfo));
+  return rows.map((r) => toView(r, priorByKey));
 }
 
 export function listCadences(req: Request): Response {

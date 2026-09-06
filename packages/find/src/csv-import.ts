@@ -2,7 +2,18 @@ import { getLedger } from "@oneshot-gtm/core";
 import { isDuplicate } from "./_dedupe.ts";
 import { qualifyPerson, resolveIcp } from "./_filter.ts";
 
-export const CSV_IMPORT_FIELDS = ["email", "name", "company", "title"] as const;
+export const CSV_IMPORT_FIELDS = [
+  "email",
+  "name",
+  "company",
+  "title",
+  "address_line1",
+  "address_line2",
+  "address_city",
+  "address_state",
+  "address_zip",
+  "address_country",
+] as const;
 export type CsvImportField = (typeof CSV_IMPORT_FIELDS)[number];
 export type CsvColumnMapping = Partial<Record<CsvImportField, string>>;
 
@@ -28,6 +39,12 @@ const HEADER_ALIASES: Record<CsvImportField, string[]> = {
   name: ["name", "fullname", "contactname", "personname", "foundername"],
   company: ["company", "companyname", "organization", "organisation", "employer"],
   title: ["title", "jobtitle", "role", "position", "headline"],
+  address_line1: ["address", "addressline1", "street", "streetaddress", "businessaddress"],
+  address_line2: ["addressline2", "suite", "unit"],
+  address_city: ["city", "addresscity"],
+  address_state: ["state", "addressstate", "region"],
+  address_zip: ["zip", "zipcode", "postalcode", "addresszip"],
+  address_country: ["country", "addresscountry"],
 };
 
 const normalizeHeader = (value: string): string =>
@@ -90,7 +107,7 @@ export function parseMapOverrides(values: string[]): Record<string, CsvImportFie
       .trim()
       .toLowerCase();
     if (eq < 1 || !CSV_IMPORT_FIELDS.includes(field as CsvImportField)) {
-      throw new Error(`invalid --map '${value}'; expected column=email|name|company|title`);
+      throw new Error(`invalid --map '${value}'; expected column=${CSV_IMPORT_FIELDS.join("|")}`);
     }
     overrides[column] = field as CsvImportField;
   }

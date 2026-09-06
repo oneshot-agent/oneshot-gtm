@@ -596,6 +596,8 @@ export interface SendDraftedOpts {
   draft: DraftedEmail;
   flags: string[];
   prospectMeta: {
+    businessAddressSource?: string;
+    businessAddress?: import("@oneshot-gtm/core").PostalAddress | null;
     name?: string | null;
     email?: string | null;
     company?: string | null;

@@ -202,3 +202,28 @@ it("continues refreshing a canceled paid order until its refund is recorded", as
   expect(await refreshPendingDirectMail()).toEqual({ refreshed: 0, failed: 0 });
   expect(calls.getOrder).toHaveBeenCalledTimes(1);
 });
+
+describe("mail proof freshness", () => {
+  it("does not send a proof after the founder changes the return address", async () => {
+    const d = ledger.getDirectMail("draft")!;
+    d.addressInputs = { to: input.to, from: input.from };
+    ledger.setMailAddress("prospect:1", input.to);
+    ledger.setMailAddress("return", { ...input.from, address_line1: "A new office" });
+    d.approvalId = "approved";
+    ledger.saveDirectMail(d);
+    await expect(sendDirectMail("draft")).rejects.toThrow("Addresses changed");
+    expect(calls.send).not.toHaveBeenCalled();
+  });
+  it("refuses expired proofs before approval or submission", async () => {
+    const d = ledger.getDirectMail("draft")!;
+    d.quote.expires_at = "2000-01-01";
+    d.approvalId = "approved";
+    ledger.saveDirectMail(d);
+    await expect(
+      approveDirectMail("draft", { input_hash: "hash", total_usdc: "1.05", approved: true }),
+    ).rejects.toThrow("fresh print proof");
+    await expect(sendDirectMail("draft")).rejects.toThrow("expired");
+    expect(calls.approve).not.toHaveBeenCalled();
+    expect(calls.send).not.toHaveBeenCalled();
+  });
+});

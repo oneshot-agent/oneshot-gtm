@@ -1,3 +1,4 @@
+import { registerSequence } from "./_cadence.ts";
 import { type EmailPlayDef, runEmailPlay, standardEnrich } from "./_run-play.ts";
 import { showHnMetadata } from "./_metadata.ts";
 export { receiptUrls } from "./_lib.ts";
@@ -88,3 +89,6 @@ function extractCompany(title: string): string | null {
   const m = title.match(/Show HN:\s*([^\s—–:|-]+)/i);
   return m ? (m[1] ?? null) : null;
 }
+
+// One-touch by default; an explicitly enabled mail step can extend this motion.
+registerSequence({ playName: PLAY_NAME, steps: [] });

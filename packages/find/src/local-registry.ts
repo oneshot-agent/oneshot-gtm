@@ -431,6 +431,7 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
       matchedDateIso: record.matchedDateIso,
       yourEdge: opts.yourEdge,
       ...(record.subjectType ? { subjectType: record.subjectType } : {}),
+      ...(record.postalCode ? { postalCode: record.postalCode } : {}),
       ...(record.address ? { address: record.address } : {}),
       ...(record.city ? { city: record.city } : {}),
       ...(record.state ? { state: record.state } : {}),

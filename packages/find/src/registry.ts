@@ -29,6 +29,7 @@ import { runXRepostersFinder } from "./x-reposters.ts";
 import type { XSeed } from "./_x-types.ts";
 import type { HarvestKnobs } from "./_x-engine.ts";
 import type { FinderResult } from "./_types.ts";
+import { collectQueueBusinessAddress } from "@oneshot-gtm/plays";
 import { researchNewQueueRows } from "./_product-research.ts";
 
 export interface TriggerSpec {
@@ -72,6 +73,16 @@ export async function runFinderWithProductResearch(
       ? { maxCostUsd: config["maxCostUsd"] as number }
       : {}),
   });
+  let mailCost = 0;
+  for (const row of ledger.listPendingQueueAfterId(afterId)) {
+    const remaining =
+      typeof config["maxCostUsd"] === "number"
+        ? Math.max(0, config["maxCostUsd"] - (result.sdkCostUsd ?? result.costUsd) - mailCost)
+        : 1;
+    mailCost += await collectQueueBusinessAddress(row.id, remaining);
+  }
+  result.costUsd += mailCost;
+  if (result.sdkCostUsd !== undefined) result.sdkCostUsd += mailCost;
   return result;
 }
 

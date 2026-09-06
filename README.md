@@ -475,6 +475,10 @@ is the same pipeline that runs there.
 
 ### Direct mail
 
-Cadences → **Direct mail** supports individually approved U.S. letters and 4×6 postcards. Upload print-ready artwork, enter recipient and workspace return addresses, review the proof and price, then approve and send. Each draft replaces one prospect's next cadence step; batch sending cannot bypass individual approval. The dashboard and `direct-mail` CLI support recovery, postal status and cancellation. Payment, fulfillment and reimbursement remain separate, and delivery never proves readership. Lob credentials and verified webhooks are managed by the OneShot server.
+In **Plays**, enable **Include direct mail** only for the motions that need it, and choose its position and delay. Mail adds a touch; it does not replace an email. Eligible active prospects receive the new step, while completed cadences and prospects already past its position keep their existing sequence.
+
+Save your return address once under **Setup → Founder → Direct mail return address**. Business addresses are collected from prospect inputs, CSV/registry data, and company research for mail-enabled motions. Missing addresses hold the mail step until you correct them or explicitly skip mail.
+
+On **Cadences**, click a prospect’s **Review mail** button. Both saved addresses are filled automatically. Generate/edit a personalized letter or upload a **PDF/JPEG for that prospect**, review the print proof and price, then **Approve and send**. Replacing content or changing an address requires a fresh proof. The dashboard sends U.S. letters; existing postcard orders and the artwork CLI remain supported. Mail history provides postal status, recovery, and cancellation. Bulk actions never send mailpieces. An accepted order advances the cadence once; postal delivery does not prove readership.
 
 For this integration branch, both core and the server use the SDK archive in `vendor/`; see its README for the coordinated SDK/GTM release step.
