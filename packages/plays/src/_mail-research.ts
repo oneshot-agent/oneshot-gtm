@@ -120,7 +120,12 @@ export async function researchBusinessAddress(
           },
         );
         costUsd += read.result.cost ?? 0;
-        const text = (read.result.markdown ?? "").slice(0, 18000);
+        const markdown = read.result.markdown ?? "";
+        // Company addresses often live in the footer of a long landing page.
+        const text =
+          markdown.length > 18000
+            ? `${markdown.slice(0, 9000)}\n${markdown.slice(-9000)}`
+            : markdown;
         if (!text) continue;
         const result = await complete({
           messages: [

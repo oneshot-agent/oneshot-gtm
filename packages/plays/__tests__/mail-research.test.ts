@@ -53,6 +53,18 @@ describe("automatic business address collection", () => {
     expect(ledger.getMailAddress("company:acme.test")).toMatchObject(address);
     expect(read).not.toHaveBeenCalled();
   });
+  it("retains company-page footers when limiting extraction context", async () => {
+    read.mockResolvedValue({
+      result: {
+        markdown: "Intro ".repeat(4000) + "Acme headquarters: 10 Main St, Boston, MA 02110, USA",
+        cost: 0.002,
+      },
+    });
+    expect(
+      (await researchBusinessAddress({ name: "Jane", email: "jane@acme.test" }, "motion")).address,
+    ).toMatchObject(address);
+    expect(llm.mock.calls[0]![0].messages[1].content).toContain("10 Main St");
+  });
   it("stores source evidence and reuses the address for another contact at that business", async () => {
     const first = await researchBusinessAddress(
       { name: "Jane", email: "jane@acme.test" },
