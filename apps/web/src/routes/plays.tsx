@@ -427,19 +427,28 @@ function CadenceEditor({ play: descriptor }: { play: PlayDescriptor }) {
 
 function MotionMailEditor({ play }: { play: PlayDescriptor }) {
   const qc = useQueryClient();
-  const [enabled, setEnabled] = useState(!!play.directMail);
+  const [mode, setMode] = useState<"automatic" | "always" | "off">(
+    play.directMail ? (play.directMail.mode ?? "always") : "off",
+  );
+  const enabled = mode !== "off";
   const [position, setPosition] = useState(play.directMail?.position ?? 2);
   const [delayDays, setDelayDays] = useState(play.directMail?.delayDays ?? 3);
-  const savedEnabled = !!play.directMail,
+  const savedMode = play.directMail ? (play.directMail.mode ?? "always") : "off",
     savedPosition = play.directMail?.position ?? 2,
     savedDelay = play.directMail?.delayDays ?? 3;
   useEffect(() => {
-    setEnabled(savedEnabled);
+    setMode(savedMode);
     setPosition(savedPosition);
     setDelayDays(savedDelay);
-  }, [savedEnabled, savedPosition, savedDelay]);
+  }, [savedMode, savedPosition, savedDelay]);
   const save = useMutation({
-    mutationFn: () => api.setDirectMail(play.name, enabled ? { position, delayDays } : null),
+    mutationFn: () =>
+      api.setDirectMail(
+        play.name,
+        enabled
+          ? { position, delayDays, mode: mode === "automatic" ? "automatic" : "always" }
+          : null,
+      ),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["plays"] });
       void qc.invalidateQueries({ queryKey: ["cadences"] });
@@ -448,20 +457,35 @@ function MotionMailEditor({ play }: { play: PlayDescriptor }) {
     onError: (e) => toast.error(e.message),
   });
   const dirty =
-    enabled !== !!play.directMail ||
+    mode !== savedMode ||
     (enabled &&
       (position !== play.directMail?.position || delayDays !== play.directMail?.delayDays));
   return (
     <div className="flex flex-wrap items-center gap-3 text-xs">
       <label className="flex items-center gap-2">
-        <input
-          type="checkbox"
-          checked={enabled}
-          onChange={(e) => setEnabled(e.target.checked)}
+        Direct mail
+        <Select
+          aria-label="Direct mail policy"
+          value={mode}
+          onChange={(e) => setMode(e.target.value as typeof mode)}
           disabled={readOnly.disabled || save.isPending}
-        />
-        Include direct mail
+        >
+          {play.mailAutomaticSupported && (
+            <option value="automatic">Automatic — suitable prospects</option>
+          )}
+          <option value="always">Always include</option>
+          <option value="off">Off</option>
+        </Select>
       </label>
+      <p className="w-full text-ink-faint">
+        {mode === "automatic"
+          ? play.mailRecommendation
+          : mode === "off"
+            ? "Direct mail is off for this motion."
+            : "Every eligible active prospect gets a mail step; missing addresses pause it."}{" "}
+        Each letter still requires individual approval. Follow-ups allow at least eight business
+        days for printing and transit, plus two days to read.
+      </p>
       {enabled && (
         <>
           <label>

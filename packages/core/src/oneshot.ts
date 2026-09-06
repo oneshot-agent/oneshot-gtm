@@ -1,3 +1,4 @@
+import { captureSdkBusinessAddress } from "./mail-enrichment.ts";
 import {
   OneShot,
   ValidationError,
@@ -657,6 +658,12 @@ export async function enrichProfile(input: EnrichInput, ctx: CallContext) {
     costUsd: result.cost,
     oneshotRequestId: result.request_id,
   });
+  captureSdkBusinessAddress(result, {
+    email: input.email,
+    name: input.name,
+    companyDomain: input.companyDomain ?? (result.profile?.company_domain as string | undefined),
+    source: "sdk:enrich.profile",
+  });
   return { result, receiptId };
 }
 
@@ -887,6 +894,11 @@ export async function enrichCompany(input: EnrichCompanyInput, ctx: CallContext)
     signedReceipt: result,
     costUsd: result.cost,
     oneshotRequestId: result.request_id,
+  });
+  captureSdkBusinessAddress(result, {
+    name: result.company?.name,
+    companyDomain: input.domain ?? result.company?.domain,
+    source: "sdk:enrich.company",
   });
   return { result, receiptId };
 }

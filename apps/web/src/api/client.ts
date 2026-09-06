@@ -163,8 +163,10 @@ export const api = {
   receipt: (id: number) => getJson<{ receipt: ReceiptDetail }>(`/receipts/${id}`),
   plays: () => getJson<{ plays: PlayDescriptor[] }>("/plays"),
   // Timing only (cumulative days from send); null resets to code defaults. Step structure is fixed.
-  setDirectMail: (name: string, directMail: { position: number; delayDays: number } | null) =>
-    postJson<{ ok: boolean }>(`/plays/${name}/cadence`, { directMail }),
+  setDirectMail: (
+    name: string,
+    directMail: { position: number; delayDays: number; mode?: "automatic" | "always" } | null,
+  ) => postJson<{ ok: boolean }>(`/plays/${name}/cadence`, { directMail }),
   setCadence: (name: string, days: number[] | null) =>
     postJson<{ ok: boolean }>(`/plays/${name}/cadence`, { days }),
   measureCac: (sinceDays?: number) =>

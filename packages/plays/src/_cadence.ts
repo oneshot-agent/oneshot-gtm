@@ -1,5 +1,8 @@
 import {
   classifyReply,
+  motionMailPolicy,
+  automaticMailEligible,
+  mailFollowupDueAt,
   sendDirectMail,
   getLedger,
   hasAnySendCapacity,
@@ -170,16 +173,17 @@ export function sequencePlan(seq: Sequence): CadencePlanStep[] {
   }));
 }
 
-export function effectiveSequence(playName: string, prospectId?: number): Sequence | undefined {
+export function effectiveSequence(
+  playName: string,
+  prospectId?: number,
+  rebuild = false,
+): Sequence | undefined {
   const base = playSequences.get(playName);
   if (!base) return undefined;
   const cfg = loadConfig();
   const override = cfg.cadenceOverrides?.[playName];
-  if (
-    prospectId === undefined &&
-    !cfg.directMailMotions?.[playName] &&
-    (!override || override.length !== base.steps.length)
-  )
+  const mail = motionMailPolicy(cfg, playName).settings;
+  if (prospectId === undefined && !mail && (!override || override.length !== base.steps.length))
     return base;
   const steps: SequenceStep[] = base.steps.map((step, i) => ({
     id: `base:${i + 1}`,
@@ -193,7 +197,7 @@ export function effectiveSequence(playName: string, prospectId?: number): Sequen
     const ledger = getLedger();
     const cadence = ledger.getCadence(prospectId, playName);
     const saved = cadence && ledger.getCadencePlan(prospectId, playName, cadence.enrolled_at);
-    if (saved)
+    if (saved && !rebuild)
       return {
         playName,
         steps: saved.map((entry) => {
@@ -211,10 +215,22 @@ export function effectiveSequence(playName: string, prospectId?: number): Sequen
         }),
       };
     // Existing enrollments without a snapshot predate configured mail. Reads never mutate them.
-    if (cadence) return { playName, steps };
+    if (cadence && !rebuild) return { playName, steps };
   }
-  const mail = cfg.directMailMotions?.[playName];
-  if (mail) steps.splice(mail.position - 2, 0, mailStep(mail.delayDays));
+  const prospect =
+    prospectId === undefined || mail?.mode !== "automatic"
+      ? null
+      : getLedger().getProspectById(prospectId);
+  const eligible =
+    !mail ||
+    mail.mode !== "automatic" ||
+    prospectId === undefined ||
+    automaticMailEligible(playName, {
+      ...prospect,
+      buyerType: getStep0MetadataField(prospectId, playName, "buyerType"),
+    });
+  if (mail && eligible)
+    steps.splice(Math.min(mail.position - 2, steps.length), 0, mailStep(mail.delayDays));
   return { playName, steps };
 }
 
@@ -234,9 +250,9 @@ export function applyCadencePlans(
   previous: ReturnType<typeof captureCadencePlans>,
 ): void {
   const ledger = getLedger();
-  const desired = sequencePlan(effectiveSequence(playName)!);
   const drafts = ledger.listDirectMail();
   for (const { cadence: c, steps: old } of previous) {
+    const desired = sequencePlan(effectiveSequence(playName, c.prospect_id, true)!);
     let steps = old;
     const pinned =
       ledger.hasSentSequenceEvent(c.prospect_id, playName, c.current_step + 1) ||
@@ -309,7 +325,7 @@ export function skipDirectMailStep(input: { prospectId: number; playName: string
 }
 
 export function enrollInCadence(input: { prospectId: number; playName: string }): void {
-  const seq = effectiveSequence(input.playName);
+  const seq = effectiveSequence(input.playName, input.prospectId);
   if (!seq || seq.steps.length === 0) return;
   const next = seq.steps[0];
   if (!next) return;
@@ -1041,7 +1057,9 @@ export async function runCadenceStepForProspect(
       playName: opts.playName,
       newStep: nextIndex,
       nextDueAt: next
-        ? new Date(Date.now() + next.dayOffset * 24 * 3600 * 1000).toISOString()
+        ? step.channel === "direct_mail"
+          ? mailFollowupDueAt(next.dayOffset)
+          : new Date(Date.now() + next.dayOffset * 24 * 3600 * 1000).toISOString()
         : null,
     });
     if (!next) {
@@ -1188,7 +1206,11 @@ export async function runCadenceStepForProspect(
     prospectId: opts.prospectId,
     playName: opts.playName,
     newStep: nextIndex,
-    nextDueAt: next ? new Date(Date.now() + next.dayOffset * 24 * 3600 * 1000).toISOString() : null,
+    nextDueAt: next
+      ? step.channel === "direct_mail"
+        ? mailFollowupDueAt(next.dayOffset)
+        : new Date(Date.now() + next.dayOffset * 24 * 3600 * 1000).toISOString()
+      : null,
   });
   if (!next) {
     ledger.setCadenceStatus({

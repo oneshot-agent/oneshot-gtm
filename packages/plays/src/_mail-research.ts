@@ -1,5 +1,8 @@
 import {
   getLedger,
+  enrichCompany,
+  extractSdkBusinessAddress,
+  motionMailPolicy,
   loadConfig,
   extractBusinessAddress,
   webRead,
@@ -9,7 +12,7 @@ import {
   type PostalAddress,
 } from "@oneshot-gtm/core";
 import { complete, tryParseJsonObject } from "@oneshot-gtm/intel";
-import { getSequence } from "./_cadence.ts";
+import { getSequence, captureCadencePlans, applyCadencePlans } from "./_cadence.ts";
 
 const DAY = 86400000;
 const personalDomains = new Set([
@@ -52,11 +55,15 @@ export async function researchBusinessAddress(
     };
   let domain = companyDomain(payload);
   const email = payload.email ?? payload.founderEmail;
-  if (!domain && typeof email === "string") {
+  if (typeof email === "string") {
     try {
       const cachedProfile = getLedger().getCachedEnrichment(email.trim().toLowerCase());
-      const profile = cachedProfile ? JSON.parse(cachedProfile.result_json).profile : null;
-      domain = companyDomain({ companyDomain: profile?.company_domain });
+      const cachedResult = cachedProfile ? JSON.parse(cachedProfile.result_json) : null;
+      const cachedAddress = extractSdkBusinessAddress(cachedResult, name);
+      if (cachedAddress)
+        return { address: cachedAddress, source: "sdk:enrich.profile (cached)", costUsd: 0 };
+      const profile = cachedResult?.profile;
+      domain ??= companyDomain({ companyDomain: profile?.company_domain });
     } catch {
       /* Missing/corrupt enrichment is not a usable company source. */
     }
@@ -78,6 +85,28 @@ export async function researchBusinessAddress(
   ledger.setMailAddressMetadata(key, { ...meta, attemptedAt: new Date().toISOString() });
   let costUsd = 0;
   try {
+    try {
+      const enriched = await enrichCompany(
+        { domain },
+        {
+          playName,
+          memo: "Collect business mailing address via SDK",
+          decisionContext: { source: "direct_mail.address", companyDomain: domain },
+        },
+      );
+      costUsd += enriched.result.cost ?? 0;
+      const address = extractSdkBusinessAddress(enriched.result, name);
+      if (address) {
+        ledger.setMailAddress(key, address, "sdk:enrich.company");
+        return { address, source: "sdk:enrich.company", costUsd };
+      }
+    } catch (error) {
+      logEvent(
+        "mail.address.sdk.failed",
+        { domain, message: error instanceof Error ? error.message : String(error) },
+        "warn",
+      );
+    }
     for (const path of ["/", "/contact"]) {
       if (costUsd >= remainingUsd) break;
       const url = `https://${domain}${path}`;
@@ -91,7 +120,12 @@ export async function researchBusinessAddress(
           },
         );
         costUsd += read.result.cost ?? 0;
-        const text = (read.result.markdown ?? "").slice(0, 18000);
+        const markdown = read.result.markdown ?? "";
+        // Company addresses often live in the footer of a long landing page.
+        const text =
+          markdown.length > 18000
+            ? `${markdown.slice(0, 9000)}\n${markdown.slice(-9000)}`
+            : markdown;
         if (!text) continue;
         const result = await complete({
           messages: [
@@ -142,7 +176,7 @@ export async function collectQueueBusinessAddress(
   if (!row || !["pending", "approved"].includes(row.status) || row.send_started_at) return 0;
   const payload = JSON.parse(row.payload_json) as Record<string, unknown>;
   const known = extractBusinessAddress(payload, String(payload.name ?? payload.founderName ?? ""));
-  if (!known && !loadConfig().directMailMotions?.[row.play_name]) return 0;
+  if (!known && !motionMailPolicy(loadConfig(), row.play_name).settings) return 0;
   const result = known
     ? {
         address: known,
@@ -184,6 +218,7 @@ export async function backfillMailAddresses(): Promise<void> {
   for (const c of ledger.listActiveCadences()) {
     if (attempted >= 5) break;
     if (
+      !motionMailPolicy(loadConfig(), c.play_name).settings &&
       !getSequence(c.play_name, c.prospect_id)
         ?.steps.slice(c.current_step)
         .some((s) => s.channel === "direct_mail")
@@ -204,7 +239,7 @@ export async function backfillMailAddresses(): Promise<void> {
   for (const row of ledger.listQueue({ limit: 500 }).toReversed()) {
     if (attempted >= 5) break;
     if (
-      !loadConfig().directMailMotions?.[row.play_name] ||
+      !motionMailPolicy(loadConfig(), row.play_name).settings ||
       !["pending", "approved"].includes(row.status)
     )
       continue;
@@ -216,5 +251,13 @@ export async function backfillMailAddresses(): Promise<void> {
     attempted++;
     ledger.setMailAddressMetadata(key, { attemptedAt: new Date().toISOString() });
     await collectQueueBusinessAddress(row.id);
+  }
+  // Reconcile eligible active enrollments after address collection; completed prefixes stay pinned.
+  for (const playName of new Set(ledger.listActiveCadences().map((c) => c.play_name))) {
+    if (
+      motionMailPolicy(loadConfig(), playName).settings?.mode === "automatic" &&
+      getSequence(playName)
+    )
+      applyCadencePlans(playName, captureCadencePlans(playName));
   }
 }

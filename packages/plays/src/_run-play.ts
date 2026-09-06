@@ -24,7 +24,7 @@ import {
   socialProofBlock,
   type SendDraftedOpts,
 } from "./_lib.ts";
-import { enrollInCadence } from "./_cadence.ts";
+import { enrollInCadence, getSequence } from "./_cadence.ts";
 
 type AppConfig = ReturnType<typeof loadConfig>;
 
@@ -257,7 +257,11 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           dryRun: opts.dryRun,
         });
 
-        if (send.sent && (def.enrollCadence || cfg.directMailMotions?.[def.playName])) {
+        if (
+          send.sent &&
+          (def.enrollCadence ||
+            getSequence(def.playName)?.steps.some((s) => s.channel === "direct_mail"))
+        ) {
           const prospect = getLedger().findProspectByEmail(def.toEmail(target));
           if (prospect) enrollInCadence({ prospectId: prospect.id, playName: def.playName });
         }

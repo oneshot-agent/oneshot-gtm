@@ -261,7 +261,7 @@ export interface OneShotConfig {
    * breakup position) is NOT overridable — timing only.
    */
   cadenceOverrides: Record<string, number[]> | null;
-  directMailMotions?: Record<string, { position: number; delayDays: number }> | null;
+  directMailMotions?: Record<string, import("./mail-policy.ts").MotionMailSettings | null> | null;
   /**
    * Default order of the /queue pending review list. "ranked" interleaves
    * finders with score-within-finder + exploration slots (see find/_rank.ts);
