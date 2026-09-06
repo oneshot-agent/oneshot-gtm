@@ -58,7 +58,7 @@ vi.mock("@oneshot-gtm/intel", async () => {
 });
 
 const { runNewBusiness } = await import("../src/new-business.ts");
-const { getSequence } = await import("../src/_cadence.ts");
+const { defaultSequence: getSequence } = await import("../src/_cadence.ts");
 
 const base = {
   name: "Priya",

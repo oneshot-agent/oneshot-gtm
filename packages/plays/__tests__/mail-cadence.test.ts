@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Ledger } from "../../core/src/ledger.ts";
 let ledger: Ledger;
-let mailConfig: Record<string, { position: number; delayDays: number }> = {};
+let mailConfig: Record<
+  string,
+  { position: number; delayDays: number; mode?: "automatic" | "always" } | null
+> = {};
 const sendMail = vi.fn();
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -55,6 +58,39 @@ function step(id: number) {
   return nextStepInfo(PLAY, ledger.getCadence(id, PLAY)!.current_step, id);
 }
 describe("optional motion mail steps", () => {
+  it("automatically includes mail only for reachable prospects and honors an off override", () => {
+    registerSequence({
+      playName: "new-business",
+      steps: [{ channel: "email", dayOffset: 5, breakOnReply: true, builder: async () => null }],
+    });
+    const address = {
+      name: "Jane",
+      address_line1: "1 Main St",
+      address_city: "Boston",
+      address_state: "MA",
+      address_zip: "02110",
+      address_country: "US" as const,
+    };
+    const reachable = ledger.upsertProspect({
+      name: "Jane",
+      company: "Acme",
+      businessAddress: address,
+    });
+    const missing = ledger.upsertProspect({ name: "Missing", company: "Acme" });
+    enrollInCadence({ prospectId: reachable, playName: "new-business" });
+    enrollInCadence({ prospectId: missing, playName: "new-business" });
+    expect(effectiveSequence("new-business", reachable)?.steps[0]?.channel).toBe("direct_mail");
+    expect(effectiveSequence("new-business", missing)?.steps[0]?.channel).toBe("email");
+    // Address collection can add mail to an existing cadence whose first step is still ahead.
+    ledger.setMailAddress(`prospect:${missing}`, { ...address, name: "Missing" });
+    applyCadencePlans("new-business", captureCadencePlans("new-business"));
+    expect(effectiveSequence("new-business", missing)?.steps[0]?.channel).toBe("direct_mail");
+    const before = captureCadencePlans("new-business");
+    mailConfig["new-business"] = null;
+    applyCadencePlans("new-business", before);
+    expect(effectiveSequence("new-business", reachable)?.steps[0]?.channel).toBe("email");
+    expect(effectiveSequence("new-business")?.steps).toHaveLength(1);
+  });
   it("moves letter preparation without leaving stale content at the previous index", () => {
     configure(2);
     const id = enroll();
@@ -168,6 +204,9 @@ describe("optional motion mail steps", () => {
     sendMail.mockResolvedValue(draft);
     expect((await sendDirectMailCadenceStep("mail")).action).toBe("step-sent");
     expect(step(id)?.label).toBe("touch 1");
+    expect(Date.parse(ledger.getCadence(id, PLAY)!.next_due_at!) - Date.now()).toBeGreaterThan(
+      10 * 86400000,
+    );
     await sendDirectMailCadenceStep("mail");
     expect(sendMail).toHaveBeenCalledTimes(1);
     expect(

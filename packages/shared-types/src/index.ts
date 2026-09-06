@@ -272,7 +272,9 @@ export interface HomeMetrics {
 }
 
 export interface PlayDescriptor {
-  directMail?: { position: number; delayDays: number } | null;
+  directMail?: { position: number; delayDays: number; mode?: "automatic" | "always" } | null;
+  mailRecommendation?: string;
+  mailAutomaticSupported?: boolean;
   mailEligible?: boolean;
   baseSteps?: { day: number; label: string; channel: StepChannel; isBreakup: boolean }[];
   name: string;
