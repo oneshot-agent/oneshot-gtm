@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowRight, UserPlus } from "lucide-react";
+import { MailAddressForm, blankMailAddress } from "../MailAddressForm.tsx";
 import { useState } from "react";
 import { toast } from "sonner";
 import type { AddProspectResult } from "@oneshot-gtm/shared-types";
@@ -23,13 +24,18 @@ import { readOnly } from "../../lib/readOnly.ts";
  */
 export function AddProspectForm({ onQueued }: { onQueued?: () => void }) {
   const [url, setUrl] = useState("");
+  const [address, setAddress] = useState({ ...blankMailAddress });
   const [email, setEmail] = useState("");
   const [last, setLast] = useState<{ kind: "queued" | "duplicate" } | null>(null);
   const queryClient = useQueryClient();
 
   const add = useMutation({
     mutationFn: (): Promise<AddProspectResult> =>
-      api.addProspect(url.trim(), email.trim() || undefined),
+      api.addProspect(
+        url.trim(),
+        email.trim() || undefined,
+        address.address_line1 ? address : undefined,
+      ),
     onSuccess: (res) => {
       if (res.duplicate) {
         setLast({ kind: "duplicate" });
@@ -39,6 +45,7 @@ export function AddProspectForm({ onQueued }: { onQueued?: () => void }) {
       setLast({ kind: "queued" });
       setUrl("");
       setEmail("");
+      setAddress({ ...blankMailAddress });
       toast.success("researching profile — it'll appear in the Queue with a draft shortly");
       // Research is asynchronous, so the row is not here yet; refetch anyway so
       // a queue open behind the modal is not left showing a stale count.
@@ -85,6 +92,14 @@ export function AddProspectForm({ onQueued }: { onQueued?: () => void }) {
           />
         </Field>
 
+        <details>
+          <summary className="cursor-pointer text-sm">Business address (optional)</summary>
+          <MailAddressForm
+            label="Business mailing address · U.S."
+            value={address}
+            onChange={setAddress}
+          />
+        </details>
         <div className="flex items-center gap-3 pt-1">
           <Button type="submit" variant="primary" size="md" disabled={!canSubmit} {...readOnly}>
             <UserPlus size={14} />

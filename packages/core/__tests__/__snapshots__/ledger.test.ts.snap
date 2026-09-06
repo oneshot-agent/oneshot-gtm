@@ -223,6 +223,15 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
       "type": "table",
     },
     {
+      "name": "cadence_plans",
+      "sql": "CREATE TABLE cadence_plans (
+    prospect_id INTEGER NOT NULL, play_name TEXT NOT NULL, enrollment TEXT NOT NULL, steps TEXT NOT NULL,
+    PRIMARY KEY(prospect_id, play_name, enrollment)
+  )",
+      "tbl_name": "cadence_plans",
+      "type": "table",
+    },
+    {
       "name": "cadence_state",
       "sql": "CREATE TABLE cadence_state (
         prospect_id INTEGER NOT NULL,
@@ -391,6 +400,21 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
         fetched_at TEXT NOT NULL
       )",
       "tbl_name": "linkedin_lookup_cache",
+      "type": "table",
+    },
+    {
+      "name": "mail_address_metadata",
+      "sql": "CREATE TABLE mail_address_metadata (key TEXT PRIMARY KEY, data TEXT NOT NULL)",
+      "tbl_name": "mail_address_metadata",
+      "type": "table",
+    },
+    {
+      "name": "mail_preparations",
+      "sql": "CREATE TABLE mail_preparations (
+    prospect_id INTEGER NOT NULL, play_name TEXT NOT NULL, enrollment TEXT NOT NULL, step_index INTEGER NOT NULL, data TEXT NOT NULL,
+    PRIMARY KEY(prospect_id,play_name,enrollment,step_index)
+  )",
+      "tbl_name": "mail_preparations",
       "type": "table",
     },
     {

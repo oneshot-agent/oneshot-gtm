@@ -1,3 +1,4 @@
+import { ReturnAddressSection } from "./ReturnAddressSection.tsx";
 import { useMemo } from "react";
 import { Field, Input, Textarea } from "../primitives/Field.tsx";
 import { validateBareDomain, validateEmail } from "../../lib/setupValidation.ts";
@@ -87,6 +88,7 @@ export function FounderSection({ cfg, onDirtyChange }: SectionProps) {
           />
         </Field>
       </div>
+      <ReturnAddressSection founderName={s.values.founderName} />
     </SectionShell>
   );
 }

@@ -82,7 +82,16 @@ export interface ChannelEventRecord {
   created_at: string;
 }
 
+export interface CadencePlanStep {
+  id: string;
+  dayOffset: number;
+  channel: "email" | "sms" | "voice" | "direct_mail";
+  label?: string;
+}
+
 export interface ProspectRecord {
+  businessAddressSource?: string;
+  businessAddress?: import("./direct-mail.ts").PostalAddress | null;
   id: number;
   name: string | null;
   email: string | null;
@@ -252,6 +261,7 @@ export interface OneShotConfig {
    * breakup position) is NOT overridable — timing only.
    */
   cadenceOverrides: Record<string, number[]> | null;
+  directMailMotions?: Record<string, { position: number; delayDays: number }> | null;
   /**
    * Default order of the /queue pending review list. "ranked" interleaves
    * finders with score-within-finder + exploration slots (see find/_rank.ts);

@@ -1,3 +1,4 @@
+import { registerSequence } from "./_cadence.ts";
 import { xAmplifyMetadata } from "./_metadata.ts";
 import { type EmailPlayDef, type Prepared, runEmailPlay } from "./_run-play.ts";
 
@@ -96,3 +97,6 @@ const xAmplifyDef: EmailPlayDef<XAmplifyTarget> = {
 export function runXAmplify(opts: XAmplifyRunOptions): Promise<{ drafted: XAmplifyDraft[] }> {
   return runEmailPlay(xAmplifyDef, opts);
 }
+
+// One-touch by default; an explicitly enabled mail step can extend this motion.
+registerSequence({ playName: PLAY_NAME, steps: [] });

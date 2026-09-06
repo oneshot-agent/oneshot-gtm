@@ -10,7 +10,7 @@ import {
   runPendingRetries,
   type TriggerRunOutcome,
 } from "@oneshot-gtm/find";
-import { pollInboxBounces, pollInboxReplies } from "@oneshot-gtm/plays";
+import { backfillMailAddresses, pollInboxBounces, pollInboxReplies } from "@oneshot-gtm/plays";
 import { reportServerExecution } from "./telemetry.ts";
 
 /**
@@ -58,10 +58,19 @@ export function startScheduler(): SchedulerHandle {
   let timer: ReturnType<typeof setTimeout> | null = null;
   // 0 = never polled, so the first tick always sweeps.
   let lastBouncePollAt = 0;
+  let mailBackfillRunning = false;
 
   const tick = async (): Promise<void> => {
     if (cancelled) return;
     try {
+      if (!mailBackfillRunning) {
+        mailBackfillRunning = true;
+        void backfillMailAddresses()
+          .catch((e) => logEvent("mail.backfill.failed", { message: String(e) }, "warn"))
+          .finally(() => {
+            mailBackfillRunning = false;
+          });
+      }
       const outcomes = await runDueTriggers();
       const fired = outcomes.filter((o) => o.fired).length;
       // Telemetry per fired trigger — detached, must not delay the tick.

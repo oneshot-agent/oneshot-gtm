@@ -50,6 +50,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     },
     listInbox: async () => ({ emails: [], has_more: false }),
     getLedger: () => ({
+      getCadencePlan: () => null,
       findDirectMail: () => null,
       // Opener-frequency cap: no send history in these fakes, so nothing is worn out.
       recentSentEmailBodies: () => [],

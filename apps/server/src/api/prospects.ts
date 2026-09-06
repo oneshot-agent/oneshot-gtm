@@ -1,3 +1,4 @@
+import { requireMailAddress } from "@oneshot-gtm/core";
 import { createProspectResearchJob, runProspectResearch } from "@oneshot-gtm/plays";
 import type { AddProspectRequest, AddProspectResult } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
@@ -25,7 +26,13 @@ export async function addProspectRoute(req: Request): Promise<Response> {
 
   let job: ReturnType<typeof createProspectResearchJob>;
   try {
-    job = createProspectResearchJob({ url: body.url, ...(email ? { emailOverride: email } : {}) });
+    job = createProspectResearchJob({
+      ...(body.businessAddress
+        ? { businessAddress: requireMailAddress(body.businessAddress) }
+        : {}),
+      url: body.url,
+      ...(email ? { emailOverride: email } : {}),
+    });
   } catch (err) {
     // parseProfileUrl throws a clear message on bad / unsupported URLs.
     return jsonResponse({ error: (err as Error).message }, 400, req);

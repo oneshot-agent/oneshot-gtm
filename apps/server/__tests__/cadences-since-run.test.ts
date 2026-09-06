@@ -14,6 +14,8 @@ vi.mock("@oneshot-gtm/core", async () => {
   return {
     ...actual,
     getLedger: () => ({
+      findDirectMail: () => null,
+      getMailAddress: () => null,
       getRun: getRunMock,
       listActiveCadences: listActiveCadencesMock,
       listAllCadences: listAllCadencesMock,

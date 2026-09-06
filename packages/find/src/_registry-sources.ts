@@ -12,6 +12,7 @@ import { logEvent } from "@oneshot-gtm/core";
 export interface RegistryRecord {
   name: string;
   address: string | null;
+  postalCode?: string | null;
   city: string | null;
   state: string | null;
   phone: string | null;
@@ -223,6 +224,7 @@ export function mapSocrataRows(
     out.push({
       name,
       address: pickAddress(rec),
+      postalCode: pickField(rec, ["zip", "zipcode", "zip_code", "postal_code", "business_zip"]),
       city: pickField(rec, SOCRATA_CITY_FIELDS),
       state: pickField(rec, SOCRATA_STATE_FIELDS),
       phone: pickField(rec, SOCRATA_PHONE_FIELDS),
@@ -424,6 +426,7 @@ export const socrataLicenseSource: RegistrySource = {
 interface NppesAddress {
   address_purpose?: string;
   address_1?: string;
+  postal_code?: string;
   city?: string;
   state?: string;
   telephone_number?: string;
@@ -479,6 +482,7 @@ export function mapNppesResults(
     out.push({
       name,
       address: loc?.address_1 ?? null,
+      postalCode: loc?.postal_code ?? null,
       city: loc?.city ?? null,
       state: loc?.state ?? fallbackState,
       phone: loc?.telephone_number ?? null,
@@ -700,6 +704,7 @@ export function mapFmcsaRows(rows: unknown[], sinceDays: number): RegistryRecord
     out.push({
       name,
       address: street && street.length > 0 ? street : null,
+      postalCode: pickField(rec, ["phy_zip", "phy_zip_code"]),
       city: city && city.length > 0 ? city : null,
       state: state && state.length > 0 ? state : null,
       phone: phone && phone.length > 0 ? phone : null,
@@ -871,6 +876,7 @@ export function mapInspectionRows(
     out.push({
       name,
       address: pickField(rec, INSPECTION_ADDRESS_FIELDS),
+      postalCode: pickField(rec, ["zip", "zipcode", "zip_code", "postal_code"]),
       city: pickField(rec, INSPECTION_CITY_FIELDS),
       state,
       phone: pickField(rec, INSPECTION_PHONE_FIELDS),

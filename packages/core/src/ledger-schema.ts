@@ -13,7 +13,16 @@ import type { Database } from "bun:sqlite";
  * and setting its PRAGMAs.
  */
 export function migrateLedgerSchema(db: Database): void {
-  db.exec(`CREATE TABLE IF NOT EXISTS direct_mail_drafts (
+  db.exec(`CREATE TABLE IF NOT EXISTS cadence_plans (
+    prospect_id INTEGER NOT NULL, play_name TEXT NOT NULL, enrollment TEXT NOT NULL, steps TEXT NOT NULL,
+    PRIMARY KEY(prospect_id, play_name, enrollment)
+  );
+  CREATE TABLE IF NOT EXISTS mail_address_metadata (key TEXT PRIMARY KEY, data TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS mail_preparations (
+    prospect_id INTEGER NOT NULL, play_name TEXT NOT NULL, enrollment TEXT NOT NULL, step_index INTEGER NOT NULL, data TEXT NOT NULL,
+    PRIMARY KEY(prospect_id,play_name,enrollment,step_index)
+  );
+  CREATE TABLE IF NOT EXISTS direct_mail_drafts (
     id TEXT PRIMARY KEY, prospect_id INTEGER NOT NULL, play_name TEXT NOT NULL,
     enrollment TEXT NOT NULL, step_index INTEGER NOT NULL, data TEXT NOT NULL,
     UNIQUE(prospect_id,play_name,enrollment,step_index)

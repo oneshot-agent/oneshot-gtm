@@ -1,3 +1,4 @@
+import { extractBusinessAddress } from "./mail-address.ts";
 import type { DirectMailDraft, PostalAddress } from "./direct-mail.ts";
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
@@ -255,6 +256,79 @@ export class Ledger {
         "DELETE FROM direct_mail_drafts WHERE id=? AND coalesce(json_extract(data,'$.started'),0)=0",
       )
       .run(id);
+  }
+  getCadencePlan(
+    prospectId: number,
+    playName: string,
+    enrollment: string,
+  ): import("./types.ts").CadencePlanStep[] | null {
+    const row = this.db
+      .query("SELECT steps FROM cadence_plans WHERE prospect_id=? AND play_name=? AND enrollment=?")
+      .get(prospectId, playName, enrollment) as { steps: string } | null;
+    return row ? JSON.parse(row.steps) : null;
+  }
+  saveCadencePlan(
+    prospectId: number,
+    playName: string,
+    enrollment: string,
+    steps: import("./types.ts").CadencePlanStep[],
+  ): void {
+    this.db
+      .query(
+        "INSERT INTO cadence_plans VALUES(?,?,?,?) ON CONFLICT(prospect_id,play_name,enrollment) DO UPDATE SET steps=excluded.steps",
+      )
+      .run(prospectId, playName, enrollment, JSON.stringify(steps));
+  }
+  setMailAddress(key: string, address: PostalAddress, source = "manual"): void {
+    this.db
+      .transaction(() => {
+        this.db
+          .query(
+            "INSERT INTO direct_mail_addresses VALUES (?,?) ON CONFLICT(key) DO UPDATE SET address=excluded.address",
+          )
+          .run(key, JSON.stringify(address));
+        this.setMailAddressMetadata(key, { source, collectedAt: new Date().toISOString() });
+      })
+      .immediate();
+  }
+  setMailAddressMetadata(key: string, data: Record<string, unknown>): void {
+    this.db
+      .query(
+        "INSERT INTO mail_address_metadata VALUES (?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
+      )
+      .run(key, JSON.stringify(data));
+  }
+  getMailAddressMetadata(key: string): Record<string, unknown> | null {
+    const row = this.db.query("SELECT data FROM mail_address_metadata WHERE key=?").get(key) as {
+      data: string;
+    } | null;
+    return row ? JSON.parse(row.data) : null;
+  }
+  getMailPreparation(
+    prospectId: number,
+    playName: string,
+    enrollment: string,
+    stepIndex: number,
+  ): import("./direct-mail.ts").MailPreparation | null {
+    const row = this.db
+      .query(
+        "SELECT data FROM mail_preparations WHERE prospect_id=? AND play_name=? AND enrollment=? AND step_index=?",
+      )
+      .get(prospectId, playName, enrollment, stepIndex) as { data: string } | null;
+    return row ? JSON.parse(row.data) : null;
+  }
+  saveMailPreparation(
+    prospectId: number,
+    playName: string,
+    enrollment: string,
+    stepIndex: number,
+    data: import("./direct-mail.ts").MailPreparation,
+  ): void {
+    this.db
+      .query(
+        "INSERT INTO mail_preparations VALUES(?,?,?,?,?) ON CONFLICT(prospect_id,play_name,enrollment,step_index) DO UPDATE SET data=excluded.data",
+      )
+      .run(prospectId, playName, enrollment, stepIndex, JSON.stringify(data));
   }
   setMailAddresses(prospect: number, to: PostalAddress, from: PostalAddress): void {
     const put = this.db.query(
@@ -1054,9 +1128,23 @@ export class Ledger {
 
   /** Full prospect record by id (PK seek). Avoids loading every prospect to find one. */
   getProspectById(id: number): ProspectRecord | null {
-    return (
-      (this.db.query("SELECT * FROM prospects WHERE id = ?").get(id) as ProspectRecord) ?? null
-    );
+    const prospect = this.db
+      .query("SELECT * FROM prospects WHERE id = ?")
+      .get(id) as ProspectRecord | null;
+    const address = prospect && this.getMailAddress(`prospect:${id}`);
+    return prospect
+      ? {
+          ...prospect,
+          ...(address
+            ? {
+                businessAddress: address,
+                businessAddressSource: String(
+                  this.getMailAddressMetadata(`prospect:${id}`)?.source ?? "saved address",
+                ),
+              }
+            : {}),
+        }
+      : null;
   }
 
   /**
@@ -1502,7 +1590,15 @@ export class Ledger {
       const existing = this.db.query("SELECT id FROM prospects WHERE email = ?").get(email) as
         | { id: number }
         | undefined;
-      if (existing) return existing.id;
+      if (existing) {
+        if (input.businessAddress && !this.getMailAddress(`prospect:${existing.id}`))
+          this.setMailAddress(
+            `prospect:${existing.id}`,
+            input.businessAddress,
+            input.businessAddressSource ?? "prospect input",
+          );
+        return existing.id;
+      }
     }
     const stmt = this.db.prepare(`
       INSERT INTO prospects(name, email, phone, company, linkedin_url, dossier_json, source,
@@ -1520,7 +1616,14 @@ export class Ledger {
       input.source_profile_url ?? null,
       input.title ?? null,
     );
-    return Number(result.lastInsertRowid);
+    const id = Number(result.lastInsertRowid);
+    if (input.businessAddress)
+      this.setMailAddress(
+        `prospect:${id}`,
+        input.businessAddress,
+        input.businessAddressSource ?? "prospect input",
+      );
+    return id;
   }
 
   /**
@@ -2517,7 +2620,16 @@ export class Ledger {
         )
         .run(
           input.playName,
-          JSON.stringify(input.payload),
+          JSON.stringify(
+            input.payload && typeof input.payload === "object"
+              ? {
+                  ...input.payload,
+                  ...(extractBusinessAddress(input.payload)
+                    ? { businessAddress: extractBusinessAddress(input.payload) }
+                    : {}),
+                }
+              : input.payload,
+          ),
           input.dedupeKey,
           input.source,
           status,
@@ -3490,6 +3602,17 @@ export class Ledger {
    */
   setQueueProspectId(id: number, prospectId: number): void {
     this.db.prepare(`UPDATE target_queue SET prospect_id = ? WHERE id = ?`).run(prospectId, id);
+    const row = this.getQueueRow(id);
+    if (row && !this.getMailAddress(`prospect:${prospectId}`)) {
+      const payload = JSON.parse(row.payload_json);
+      const address = extractBusinessAddress(payload, this.getProspectById(prospectId)?.name ?? "");
+      if (address)
+        this.setMailAddress(
+          `prospect:${prospectId}`,
+          address,
+          payload.businessAddressSource ?? row.source,
+        );
+    }
   }
 
   /**

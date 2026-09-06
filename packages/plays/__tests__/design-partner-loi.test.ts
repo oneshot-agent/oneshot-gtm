@@ -27,6 +27,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     enrichProfile: async () => ({ result: { profile: {} }, receiptId: 1 }),
     sendEmail: async () => ({ receiptId: 3 }),
     getLedger: () => ({
+      getCadence: () => null,
       upsertProspect: () => 1,
       recordSequenceEvent: () => 1,
       hasSentSequenceEvent: () => false,

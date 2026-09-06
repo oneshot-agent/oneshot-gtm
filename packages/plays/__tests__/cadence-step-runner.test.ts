@@ -99,6 +99,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       return mailDraft;
     },
     getLedger: () => ({
+      getCadencePlan: () => null,
       getDirectMail: () => mailDraft,
       findDirectMail: () => null,
       // Opener-frequency cap: no send history in these fakes, so nothing is worn out.

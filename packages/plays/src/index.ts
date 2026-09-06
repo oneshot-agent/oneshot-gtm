@@ -33,3 +33,5 @@ export * from "./sources-sought.ts";
 export * from "./civic-pilot.ts";
 export * from "./design-partner-loi.ts";
 export * from "./new-business.ts";
+export * from "./_mail-research.ts";
+export * from "./_mail-letter.ts";

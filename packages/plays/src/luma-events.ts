@@ -1,3 +1,4 @@
+import { registerSequence } from "./_cadence.ts";
 import {
   formatLocalDay,
   formatLocalEventTime,
@@ -258,3 +259,6 @@ const lumaEventsDef: EmailPlayDef<LumaEventsTarget> = {
 export function runLumaEvents(opts: LumaEventsRunOptions): Promise<{ drafted: LumaEventsDraft[] }> {
   return runEmailPlay(lumaEventsDef, opts);
 }
+
+// One-touch by default; an explicitly enabled mail step can extend this motion.
+registerSequence({ playName: PLAY_NAME, steps: [] });

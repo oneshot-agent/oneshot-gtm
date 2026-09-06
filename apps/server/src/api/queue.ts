@@ -1,3 +1,4 @@
+import { extractBusinessAddress } from "@oneshot-gtm/core";
 import {
   getLedger,
   isDraining,
@@ -495,6 +496,8 @@ export async function sendDraftRoute(
       draft: { subject, body },
       flags: sendFlags,
       prospectMeta: {
+        businessAddress: extractBusinessAddress(payload),
+        businessAddressSource: str("businessAddressSource") ?? row.source,
         name: str("name") ?? str("founderName"),
         email,
         company: str("company"),

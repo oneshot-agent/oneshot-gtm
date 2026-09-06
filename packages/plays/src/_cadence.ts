@@ -18,6 +18,7 @@ import {
   voiceCall,
   type BounceKind,
   type ProspectRecord,
+  type CadencePlanStep,
   describeTouch,
   recentTouchElsewhere,
 } from "@oneshot-gtm/core";
@@ -51,6 +52,7 @@ export type StepPayload =
     };
 
 interface SequenceStep {
+  id?: string;
   /** Days after enrollment (step 0 was the original send). step 1 is the first follow-up. */
   dayOffset: number;
   channel: "email" | "sms" | "voice" | "direct_mail";
@@ -96,6 +98,7 @@ export interface NextStepInfo {
   isBreakup: boolean;
   /** 1-based index of the next step within the follow-up steps array. */
   nextStepNumber: number;
+  channel: SequenceStep["channel"];
 }
 
 /**
@@ -103,16 +106,20 @@ export interface NextStepInfo {
  * Always the registered total regardless of current_step, so the UI's dot
  * count stays stable for completed cadences.
  */
-export function playFollowupCount(playName: string): number {
-  return effectiveSequence(playName)?.steps.length ?? 0;
+export function playFollowupCount(playName: string, prospectId?: number): number {
+  return effectiveSequence(playName, prospectId)?.steps.length ?? 0;
 }
 
 /**
  * Describe the NEXT step scheduled to fire, or null at/past the last step.
  * Source of truth for both the server's CadenceView and the /cadences UI.
  */
-export function nextStepInfo(playName: string, currentStep: number): NextStepInfo | null {
-  const seq = effectiveSequence(playName);
+export function nextStepInfo(
+  playName: string,
+  currentStep: number,
+  prospectId?: number,
+): NextStepInfo | null {
+  const seq = effectiveSequence(playName, prospectId);
   if (!seq) return null;
   const nextIndex = currentStep + 1;
   const stepEntryIndex = nextIndex - 1;
@@ -122,11 +129,12 @@ export function nextStepInfo(playName: string, currentStep: number): NextStepInf
     label: step?.label ?? null,
     isBreakup: isBreakupStepAt(seq, stepEntryIndex),
     nextStepNumber: nextIndex,
+    channel: step!.channel,
   };
 }
 
-export function getSequence(playName: string): Sequence | undefined {
-  return effectiveSequence(playName);
+export function getSequence(playName: string, prospectId?: number): Sequence | undefined {
+  return effectiveSequence(playName, prospectId);
 }
 
 /** The registered (code) sequence, ignoring any founder override. For "reset". */
@@ -140,21 +148,163 @@ export function defaultSequence(playName: string): Sequence | undefined {
  * replaces each RELATIVE dayOffset. A length mismatch is ignored — code wins,
  * never throws. Read fresh each call so a /plays edit applies without restart.
  */
-export function effectiveSequence(playName: string): Sequence | undefined {
+function mailStep(dayOffset: number): SequenceStep {
+  return {
+    id: "direct_mail",
+    dayOffset,
+    channel: "direct_mail",
+    breakOnReply: true,
+    label: "Direct mail",
+    builder: async () => {
+      throw new Error("Review this prospect’s direct mail step first");
+    },
+  };
+}
+
+export function sequencePlan(seq: Sequence): CadencePlanStep[] {
+  return seq.steps.map((s, i) => ({
+    id: s.id ?? `base:${i + 1}`,
+    dayOffset: s.dayOffset,
+    channel: s.channel,
+    label: s.label,
+  }));
+}
+
+export function effectiveSequence(playName: string, prospectId?: number): Sequence | undefined {
   const base = playSequences.get(playName);
   if (!base) return undefined;
-  const override = loadConfig().cadenceOverrides?.[playName];
-  if (!Array.isArray(override) || override.length !== base.steps.length) return base;
-  return {
-    playName: base.playName,
-    steps: base.steps.map((step, i) => ({
-      dayOffset: override[i] as number,
-      channel: step.channel,
-      breakOnReply: step.breakOnReply,
-      label: step.label,
-      builder: step.builder,
-    })),
-  };
+  const cfg = loadConfig();
+  const override = cfg.cadenceOverrides?.[playName];
+  if (
+    prospectId === undefined &&
+    !cfg.directMailMotions?.[playName] &&
+    (!override || override.length !== base.steps.length)
+  )
+    return base;
+  const steps: SequenceStep[] = base.steps.map((step, i) => ({
+    id: `base:${i + 1}`,
+    channel: step.channel,
+    label: step.label,
+    builder: step.builder,
+    breakOnReply: step.breakOnReply,
+    dayOffset: override?.length === base.steps.length ? override[i]! : step.dayOffset,
+  }));
+  if (prospectId !== undefined) {
+    const ledger = getLedger();
+    const cadence = ledger.getCadence(prospectId, playName);
+    const saved = cadence && ledger.getCadencePlan(prospectId, playName, cadence.enrolled_at);
+    if (saved)
+      return {
+        playName,
+        steps: saved.map((entry) => {
+          if (entry.channel === "direct_mail") return mailStep(entry.dayOffset);
+          const step = steps.find((s) => s.id === entry.id);
+          if (!step) throw new Error(`Saved cadence step ${entry.id} is no longer registered`);
+          return {
+            id: entry.id,
+            dayOffset: entry.dayOffset,
+            channel: entry.channel,
+            label: entry.label,
+            builder: step.builder,
+            breakOnReply: step.breakOnReply,
+          };
+        }),
+      };
+    // Existing enrollments without a snapshot predate configured mail. Reads never mutate them.
+    if (cadence) return { playName, steps };
+  }
+  const mail = cfg.directMailMotions?.[playName];
+  if (mail) steps.splice(mail.position - 2, 0, mailStep(mail.delayDays));
+  return { playName, steps };
+}
+
+/** Capture before a configuration write; preserve completed prefixes and any existing mailpiece. */
+export function captureCadencePlans(playName: string) {
+  const ledger = getLedger();
+  return ledger
+    .listAllCadences()
+    .filter((c) => c.play_name === playName)
+    .map((c) => ({
+      cadence: c,
+      steps: sequencePlan(effectiveSequence(playName, c.prospect_id)!),
+    }));
+}
+export function applyCadencePlans(
+  playName: string,
+  previous: ReturnType<typeof captureCadencePlans>,
+): void {
+  const ledger = getLedger();
+  const desired = sequencePlan(effectiveSequence(playName)!);
+  for (const { cadence: c, steps: old } of previous) {
+    let steps = old;
+    const pinned =
+      ledger.hasSentSequenceEvent(c.prospect_id, playName, c.current_step + 1) ||
+      ledger
+        .listDirectMail()
+        .some(
+          (d) =>
+            d.prospectId === c.prospect_id &&
+            d.playName === playName &&
+            d.enrollment === c.enrolled_at &&
+            !d.canceled,
+        );
+    const prefixMatches = old.slice(0, c.current_step).every((s, i) => desired[i]?.id === s.id);
+    if (c.status === "active" && !c.sending_started_at && !pinned && prefixMatches) {
+      steps = [...old.slice(0, c.current_step), ...desired.slice(c.current_step)];
+      if (JSON.stringify(old[c.current_step]) !== JSON.stringify(steps[c.current_step])) {
+        const next = steps[c.current_step];
+        ledger.advanceCadence({
+          prospectId: c.prospect_id,
+          playName,
+          newStep: c.current_step,
+          nextDueAt: next ? new Date(Date.now() + next.dayOffset * 86400000).toISOString() : null,
+        });
+        if (!next)
+          ledger.setCadenceStatus({ prospectId: c.prospect_id, playName, status: "completed" });
+      }
+    }
+    const oldMail = old.findIndex((s) => s.channel === "direct_mail"),
+      newMail = steps.findIndex((s) => s.channel === "direct_mail");
+    if (oldMail >= 0 && newMail >= 0 && oldMail !== newMail) {
+      const prep = ledger.getMailPreparation(c.prospect_id, playName, c.enrolled_at, oldMail + 1);
+      if (prep)
+        ledger.saveMailPreparation(c.prospect_id, playName, c.enrolled_at, newMail + 1, prep);
+    }
+    ledger.saveCadencePlan(c.prospect_id, playName, c.enrolled_at, steps);
+  }
+}
+
+export function skipDirectMailStep(input: { prospectId: number; playName: string }): void {
+  const ledger = getLedger();
+  const c = ledger.getCadence(input.prospectId, input.playName);
+  const seq = effectiveSequence(input.playName, input.prospectId);
+  if (
+    !c ||
+    c.status !== "active" ||
+    c.sending_started_at ||
+    seq?.steps[c.current_step]?.channel !== "direct_mail"
+  )
+    throw new Error("No pending mail step to skip");
+  const draft = ledger.findDirectMail(
+    input.prospectId,
+    input.playName,
+    c.enrolled_at,
+    c.current_step + 1,
+  );
+  if (draft?.started) throw new Error("Recover the submitted mailpiece before continuing");
+  if (draft) {
+    draft.canceled = true;
+    draft.approvalId = undefined;
+    ledger.saveDirectMail(draft);
+  }
+  const next = seq.steps[c.current_step + 1];
+  ledger.advanceCadence({
+    ...input,
+    newStep: c.current_step + 1,
+    nextDueAt: next ? new Date(Date.now() + next.dayOffset * 86400000).toISOString() : null,
+  });
+  if (!next) ledger.setCadenceStatus({ ...input, status: "completed" });
+  logEvent("cadence.mail.skipped", input);
 }
 
 export function enrollInCadence(input: { prospectId: number; playName: string }): void {
@@ -168,6 +318,14 @@ export function enrollInCadence(input: { prospectId: number; playName: string })
     playName: input.playName,
     nextDueAt: dueAt,
   });
+  const cadence = getLedger().getCadence(input.prospectId, input.playName);
+  if (cadence && !getLedger().getCadencePlan(input.prospectId, input.playName, cadence.enrolled_at))
+    getLedger().saveCadencePlan(
+      input.prospectId,
+      input.playName,
+      cadence.enrolled_at,
+      sequencePlan(seq),
+    );
 }
 
 export interface AdvanceResult {
@@ -728,6 +886,8 @@ export interface RunCadenceStepOptions {
   /** Skip the step's builder and send this verbatim (mirrors /queue's
       send-this-one — used by the /cadences UI after a Preview round-trip). */
   persistedPayload?: StepPayload;
+  /** Only the individual reviewed mail action may dispatch physical mail. */
+  directMailId?: string;
 }
 
 export interface RunCadenceStepResult {
@@ -831,7 +991,7 @@ export async function runCadenceStepForProspect(
       };
     }
   }
-  const seq = effectiveSequence(opts.playName);
+  const seq = effectiveSequence(opts.playName, opts.prospectId);
   if (!seq) {
     return { action: "skipped", payload: null, receiptIds: [], note: "no registered sequence" };
   }
@@ -909,12 +1069,36 @@ export async function runCadenceStepForProspect(
     cadence.enrolled_at,
     nextIndex,
   );
+  if ((step.channel === "direct_mail" || mailDraft) && opts.directMailId !== mailDraft?.id) {
+    return {
+      action: "skipped",
+      payload: null,
+      receiptIds: [],
+      note: "Direct mail awaits individual review",
+    };
+  }
+  if (step.channel === "direct_mail" && !mailDraft) {
+    return {
+      action: "skipped",
+      payload: null,
+      receiptIds: [],
+      note: "Direct mail awaits individual review",
+    };
+  }
   const built: StepPayload | null = mailDraft
     ? { kind: "direct_mail", draftId: mailDraft.id }
     : opts.persistedPayload
       ? opts.persistedPayload
       : await step.builder({ prospect, cfg, metadata: {} });
 
+  if (built?.kind === "direct_mail" && opts.directMailId !== built.draftId) {
+    return {
+      action: "skipped",
+      payload: null,
+      receiptIds: [],
+      note: "Direct mail awaits individual review",
+    };
+  }
   if (!built) {
     const next = seq.steps[stepEntryIndex + 1];
     ledger.advanceCadence({
@@ -1050,7 +1234,7 @@ export async function previewCadenceStep(input: {
   if (cadence.status !== "active") {
     throw new Error(`cadence is ${cadence.status}, can only preview an active cadence`);
   }
-  const seq = effectiveSequence(input.playName);
+  const seq = effectiveSequence(input.playName, input.prospectId);
   if (!seq) throw new Error(`no registered sequence for play '${input.playName}'`);
   const nextIndex = cadence.current_step + 1;
   const stepEntryIndex = nextIndex - 1;
@@ -1164,7 +1348,12 @@ export async function sendDirectMailCadenceStep(id: string): Promise<RunCadenceS
   const payload = ledger.getCadenceDraft(input)?.payload as StepPayload | undefined;
   if (payload?.kind !== "direct_mail" || payload.draftId !== id)
     throw new Error("Current preview does not match this mailpiece; preview it again");
-  return sendCadenceStep(input);
+  return runCadenceStepForProspect({
+    ...input,
+    dryRun: false,
+    persistedPayload: payload,
+    directMailId: id,
+  });
 }
 
 export interface BatchItem {

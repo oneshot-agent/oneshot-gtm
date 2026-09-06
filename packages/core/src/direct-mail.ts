@@ -1,3 +1,4 @@
+import { mailAddressKey } from "./mail-address.ts";
 import { randomUUID } from "node:crypto";
 import type {
   MailPreviewInput,
@@ -15,9 +16,16 @@ export type {
   PostalAddress,
   MailSendInput,
 } from "@oneshot-agent/sdk";
+export interface MailPreparation {
+  mode: "generated" | "upload";
+  body?: string;
+  assetId?: string;
+  filename?: string;
+}
 export interface DirectMailDraft {
   id: string;
   revision?: number;
+  addressInputs?: { to: PostalAddress; from: PostalAddress };
   prospectId: number;
   playName: string;
   enrollment: string;
@@ -53,6 +61,9 @@ export async function previewDirectMail(
   const ledger = getLedger();
   const cadence = ledger.getCadence(prospectId, playName);
   if (!cadence || cadence.status !== "active") throw new Error("An active cadence is required");
+  const plan = ledger.getCadencePlan(prospectId, playName, cadence.enrolled_at);
+  if (plan?.[cadence.current_step]?.channel !== "direct_mail")
+    throw new Error("The next cadence step is not direct mail");
   const previous = ledger.findDirectMail(
     prospectId,
     playName,
@@ -62,6 +73,16 @@ export async function previewDirectMail(
   if (previous?.started)
     throw new Error("Recover the existing order before changing this mailpiece");
   const quote = await (await getAgent()).physicalMail.preview(input);
+  const current = ledger.getCadence(prospectId, playName);
+  if (
+    !current ||
+    current.status !== "active" ||
+    current.enrolled_at !== cadence.enrolled_at ||
+    current.current_step !== cadence.current_step ||
+    ledger.getCadencePlan(prospectId, playName, current.enrolled_at)?.[current.current_step]
+      ?.channel !== "direct_mail"
+  )
+    throw new Error("Cadence changed while preparing mail; reopen the current step");
   const draft: DirectMailDraft = {
     id: previous?.id ?? randomUUID(),
     prospectId,
@@ -70,6 +91,7 @@ export async function previewDirectMail(
     enrollment: cadence.enrolled_at,
     stepIndex: cadence.current_step + 1,
     input: quote.input,
+    addressInputs: { to: quote.input.to, from: input.from },
     quote,
     sendKey: randomUUID(),
   };
@@ -84,7 +106,13 @@ export async function previewDirectMail(
       payload: { kind: "direct_mail", draftId: draft.id },
     },
   });
-  ledger.setMailAddresses(prospectId, quote.input.to, quote.input.from);
+  ledger.setMailAddress(
+    `prospect:${prospectId}`,
+    quote.input.to,
+    String(
+      ledger.getMailAddressMetadata(`prospect:${prospectId}`)?.source ?? "reviewed mail address",
+    ),
+  );
   return draft;
 }
 export async function refreshDirectMail(id: string) {
@@ -112,6 +140,12 @@ export async function approveDirectMail(
   approval: { input_hash: string; total_usdc: string; approved: true },
 ) {
   const draft = activeDraft(id);
+  if (
+    draft.quote.status !== "ready" ||
+    !draft.quote.preview.url ||
+    !(Date.parse(draft.quote.expires_at) > Date.now())
+  )
+    throw new Error("Prepare a fresh print proof and price before approving");
   if (draft.started || draft.canceled || draft.cancelRequested)
     throw new Error("Mailpiece already submitted or canceled");
   if (
@@ -171,6 +205,16 @@ export async function sendDirectMail(id: string) {
     throw new Error("Cadence stopped, replied, or recipient suppressed");
   if (draft.canceled || draft.cancelRequested)
     throw new Error("Mailpiece canceled or cancellation requested");
+  if (
+    !draft.started &&
+    draft.addressInputs &&
+    (mailAddressKey(ledger.getMailAddress(`prospect:${draft.prospectId}`)) !==
+      mailAddressKey(draft.addressInputs.to) ||
+      mailAddressKey(ledger.getMailAddress("return")) !== mailAddressKey(draft.addressInputs.from))
+  )
+    throw new Error("Addresses changed; prepare a fresh print proof and price");
+  if (!draft.started && !(Date.parse(draft.quote.expires_at) > Date.now()))
+    throw new Error("Print proof expired; prepare a fresh proof and price");
   if (!draft.approvalId || !draft.quote.total_usdc)
     throw new Error("Individual mailpiece approval required");
   // Freeze the entire SDK payload, including audit context, before the first network attempt.
