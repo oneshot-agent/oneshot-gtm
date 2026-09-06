@@ -144,7 +144,14 @@ export async function collectQueueBusinessAddress(
   const known = extractBusinessAddress(payload, String(payload.name ?? payload.founderName ?? ""));
   if (!known && !loadConfig().directMailMotions?.[row.play_name]) return 0;
   const result = known
-    ? { address: known, source: row.source, costUsd: 0 }
+    ? {
+        address: known,
+        source:
+          typeof payload.businessAddressSource === "string" && payload.businessAddressSource.trim()
+            ? payload.businessAddressSource
+            : row.source,
+        costUsd: 0,
+      }
     : await researchBusinessAddress(payload, row.play_name, remainingUsd);
   const fresh = ledger.getQueueRow(queueId);
   if (

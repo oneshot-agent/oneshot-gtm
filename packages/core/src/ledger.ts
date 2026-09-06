@@ -330,6 +330,18 @@ export class Ledger {
       )
       .run(prospectId, playName, enrollment, stepIndex, JSON.stringify(data));
   }
+  deleteMailPreparation(
+    prospectId: number,
+    playName: string,
+    enrollment: string,
+    stepIndex: number,
+  ): void {
+    this.db
+      .query(
+        "DELETE FROM mail_preparations WHERE prospect_id=? AND play_name=? AND enrollment=? AND step_index=?",
+      )
+      .run(prospectId, playName, enrollment, stepIndex);
+  }
   setMailAddresses(prospect: number, to: PostalAddress, from: PostalAddress): void {
     const put = this.db.query(
       "INSERT INTO direct_mail_addresses(key,address) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET address=excluded.address",

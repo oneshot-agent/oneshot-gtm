@@ -107,7 +107,7 @@ export function parseMapOverrides(values: string[]): Record<string, CsvImportFie
       .trim()
       .toLowerCase();
     if (eq < 1 || !CSV_IMPORT_FIELDS.includes(field as CsvImportField)) {
-      throw new Error(`invalid --map '${value}'; expected column=email|name|company|title`);
+      throw new Error(`invalid --map '${value}'; expected column=${CSV_IMPORT_FIELDS.join("|")}`);
     }
     overrides[column] = field as CsvImportField;
   }

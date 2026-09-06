@@ -62,10 +62,9 @@ function invalidate(input: ReturnType<typeof identity>) {
   if (draft) getLedger().deleteDirectMail(draft.id);
   getLedger().clearCadenceDraft(input);
 }
-function savePreparation(
+function assertCurrentPreparation(
   input: ReturnType<typeof identity>,
   original: ReturnType<typeof context>,
-  preparation: MailPreparation,
 ) {
   const current = context(input, true);
   if (
@@ -73,6 +72,15 @@ function savePreparation(
     current.cadence.current_step !== original.cadence.current_step
   )
     throw new Error("Cadence changed; reopen this prospect’s mail step");
+  return current;
+}
+function savePreparation(
+  input: ReturnType<typeof identity>,
+  original: ReturnType<typeof context>,
+  preparation: MailPreparation,
+) {
+  const current = assertCurrentPreparation(input, original);
+  if (JSON.stringify(current.preparation) === JSON.stringify(preparation)) return preparation;
   invalidate(input);
   getLedger().saveMailPreparation(
     input.prospectId,
@@ -219,7 +227,7 @@ export async function directMailRoute(req: Request): Promise<Response> {
           : (await uploadMailArtwork(await renderMailLetter(prep.body ?? ""), "application/pdf"))
               .asset_id;
       if (!file) throw new Error("Upload a PDF/JPEG or generate a letter first");
-      savePreparation(input, original, prep);
+      assertCurrentPreparation(input, original);
       const draft = await previewDirectMail(input.prospectId, input.playName, {
         to,
         from,

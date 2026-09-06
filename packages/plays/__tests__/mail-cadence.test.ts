@@ -55,6 +55,18 @@ function step(id: number) {
   return nextStepInfo(PLAY, ledger.getCadence(id, PLAY)!.current_step, id);
 }
 describe("optional motion mail steps", () => {
+  it("moves letter preparation without leaving stale content at the previous index", () => {
+    configure(2);
+    const id = enroll();
+    const c = ledger.getCadence(id, PLAY)!;
+    ledger.saveMailPreparation(id, PLAY, c.enrolled_at, 1, { mode: "generated", body: "Original" });
+    configure(3);
+    expect(ledger.getMailPreparation(id, PLAY, c.enrolled_at, 1)).toBeNull();
+    ledger.saveMailPreparation(id, PLAY, c.enrolled_at, 2, { mode: "generated", body: "Revised" });
+    configure(2);
+    expect(ledger.getMailPreparation(id, PLAY, c.enrolled_at, 1)?.body).toBe("Revised");
+    expect(ledger.getMailPreparation(id, PLAY, c.enrolled_at, 2)).toBeNull();
+  });
   it("lets one-touch email motions opt into mail as step two", () => {
     registerSequence({ playName: PLAY, steps: [] });
     const untouched = ledger.upsertProspect({ name: "One touch" });

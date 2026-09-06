@@ -29,13 +29,25 @@ export function AddProspectForm({ onQueued }: { onQueued?: () => void }) {
   const [last, setLast] = useState<{ kind: "queued" | "duplicate" } | null>(null);
   const queryClient = useQueryClient();
 
+  const hasAddress = Object.entries(address).some(
+    ([key, value]) => key !== "address_country" && value?.trim(),
+  );
+  const missingAddressFields = hasAddress
+    ? (
+        [
+          ["name", "name"],
+          ["address_line1", "street address"],
+          ["address_city", "city"],
+          ["address_state", "state"],
+          ["address_zip", "ZIP"],
+        ] as const
+      )
+        .filter(([key]) => !address[key]?.trim())
+        .map(([, label]) => label)
+    : [];
   const add = useMutation({
     mutationFn: (): Promise<AddProspectResult> =>
-      api.addProspect(
-        url.trim(),
-        email.trim() || undefined,
-        address.address_line1 ? address : undefined,
-      ),
+      api.addProspect(url.trim(), email.trim() || undefined, hasAddress ? address : undefined),
     onSuccess: (res) => {
       if (res.duplicate) {
         setLast({ kind: "duplicate" });
@@ -55,7 +67,7 @@ export function AddProspectForm({ onQueued }: { onQueued?: () => void }) {
     onError: (err) => toast.error(`couldn't add: ${err.message}`),
   });
 
-  const canSubmit = url.trim() !== "" && !add.isPending;
+  const canSubmit = url.trim() !== "" && !add.isPending && missingAddressFields.length === 0;
 
   return (
     <>
@@ -100,6 +112,11 @@ export function AddProspectForm({ onQueued }: { onQueued?: () => void }) {
             onChange={setAddress}
           />
         </details>
+        {missingAddressFields.length > 0 && (
+          <p role="status" className="text-sm text-ink-faint">
+            Complete the business address: {missingAddressFields.join(", ")}.
+          </p>
+        )}
         <div className="flex items-center gap-3 pt-1">
           <Button type="submit" variant="primary" size="md" disabled={!canSubmit} {...readOnly}>
             <UserPlus size={14} />

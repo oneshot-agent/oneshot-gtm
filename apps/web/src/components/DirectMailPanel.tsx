@@ -65,6 +65,10 @@ export function DirectMailPanel({
   prospect: CadenceView;
   onClose: () => void;
 }) {
+  const [openedStep] = useState({
+    enrollment: prospect.enrolledAt,
+    index: prospect.currentStep + 1,
+  });
   const cache = useQueryClient();
   const identity = { prospectId: prospect.prospectId, playName: prospect.playName };
   const queryKey = ["direct-mail", prospect.prospectId, prospect.playName];
@@ -123,7 +127,7 @@ export function DirectMailPanel({
   const draft =
     data?.draft ??
     data?.drafts.find(
-      (d) => d.enrollment === prospect.enrolledAt && d.stepIndex === prospect.currentStep + 1,
+      (d) => d.enrollment === openedStep.enrollment && d.stepIndex === openedStep.index,
     );
   const renderingDraftId =
     draft?.quote.status === "rendering" && !draft.started ? draft.id : undefined;

@@ -132,6 +132,30 @@ describe("per-prospect direct mail API", () => {
       artwork: { kind: "letter", file: "new-file" },
     });
   });
+  it("keeps the existing draft available when previewing saved artwork", async () => {
+    oldDraft();
+    const c = ledger.getCadence(id, "motion")!;
+    ledger.saveMailPreparation(id, "motion", c.enrolled_at, 1, {
+      mode: "upload",
+      assetId: "saved-file",
+    });
+    preview.mockImplementationOnce(async () => {
+      expect(ledger.getDirectMail(`old-${id}`)?.approvalId).toBe("old-approval");
+      return { id: `old-${id}` };
+    });
+    expect((await post("preview")).status).toBe(200);
+    expect(preview).toHaveBeenCalledTimes(1);
+  });
+  it("does not discard a proof when the editor saves unchanged letter text", async () => {
+    oldDraft();
+    const c = ledger.getCadence(id, "motion")!;
+    ledger.saveMailPreparation(id, "motion", c.enrolled_at, 1, {
+      mode: "generated",
+      body: "Same letter",
+    });
+    expect((await post("save-letter", { body: "Same letter" })).status).toBe(200);
+    expect(ledger.getDirectMail(`old-${id}`)?.approvalId).toBe("old-approval");
+  });
   it("persists generated edits and invalidates the old proof", async () => {
     oldDraft();
     expect((await post("save-letter", { body: "My revised letter" })).status).toBe(200);

@@ -125,6 +125,23 @@ describe("automatic business address collection", () => {
       businessAddressSource: "manual",
     });
   });
+  it("preserves supplied address provenance when collecting an existing address", async () => {
+    const id = ledger.enqueueTarget({
+      playName: "motion",
+      dedupeKey: "known",
+      source: "CSV",
+      payload: {
+        name: "Jane",
+        businessAddress: address,
+        businessAddressSource: "manual correction",
+      },
+    })!;
+    await collectQueueBusinessAddress(id);
+    expect(JSON.parse(ledger.getQueueRow(id)!.payload_json).businessAddressSource).toBe(
+      "manual correction",
+    );
+    expect(read).not.toHaveBeenCalled();
+  });
   it("does not research when the run budget or daily ceiling is exhausted", async () => {
     await researchBusinessAddress({ email: "jane@acme.test" }, "motion", 0);
     allowed = false;

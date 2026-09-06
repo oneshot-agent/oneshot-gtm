@@ -235,19 +235,18 @@ export function applyCadencePlans(
 ): void {
   const ledger = getLedger();
   const desired = sequencePlan(effectiveSequence(playName)!);
+  const drafts = ledger.listDirectMail();
   for (const { cadence: c, steps: old } of previous) {
     let steps = old;
     const pinned =
       ledger.hasSentSequenceEvent(c.prospect_id, playName, c.current_step + 1) ||
-      ledger
-        .listDirectMail()
-        .some(
-          (d) =>
-            d.prospectId === c.prospect_id &&
-            d.playName === playName &&
-            d.enrollment === c.enrolled_at &&
-            !d.canceled,
-        );
+      drafts.some(
+        (d) =>
+          d.prospectId === c.prospect_id &&
+          d.playName === playName &&
+          d.enrollment === c.enrolled_at &&
+          !d.canceled,
+      );
     const prefixMatches = old.slice(0, c.current_step).every((s, i) => desired[i]?.id === s.id);
     if (c.status === "active" && !c.sending_started_at && !pinned && prefixMatches) {
       steps = [...old.slice(0, c.current_step), ...desired.slice(c.current_step)];
@@ -267,8 +266,10 @@ export function applyCadencePlans(
       newMail = steps.findIndex((s) => s.channel === "direct_mail");
     if (oldMail >= 0 && newMail >= 0 && oldMail !== newMail) {
       const prep = ledger.getMailPreparation(c.prospect_id, playName, c.enrolled_at, oldMail + 1);
-      if (prep)
+      if (prep) {
         ledger.saveMailPreparation(c.prospect_id, playName, c.enrolled_at, newMail + 1, prep);
+        ledger.deleteMailPreparation(c.prospect_id, playName, c.enrolled_at, oldMail + 1);
+      }
     }
     ledger.saveCadencePlan(c.prospect_id, playName, c.enrolled_at, steps);
   }

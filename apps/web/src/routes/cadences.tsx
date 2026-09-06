@@ -117,7 +117,7 @@ const STOP_REASON_LABELS: Record<CadenceStopReason, string> = {
 const rowKey = (c: CadenceView): string => `${c.prospectId}|${c.playName}`;
 
 function CadencesPage() {
-  const [mailProspect, setMailProspect] = useState<CadenceView | null>(null);
+  const [mailKey, setMailKey] = useState<string | null>(null);
   const qc = useQueryClient();
   const [showAll, setShowAll] = useState(false);
   const [outcomeModal, setOutcomeModal] = useState<OutcomeModalState | null>(null);
@@ -299,6 +299,10 @@ function CadencesPage() {
   // render because of the `?? []` fallback, which would thrash useMemo's
   // cache.
   const list = useMemo(() => cadences.data?.cadences ?? [], [cadences.data]);
+  const mailProspect = useMemo(
+    () => list.find((c) => rowKey(c) === mailKey) ?? null,
+    [list, mailKey],
+  );
   // Tiles read the server's full-status counts (scoped only by sinceRun), NOT
   // the table rows — so REPLIED/BREAKUP/COMPLETED stay accurate even while the
   // table is filtered to active.
@@ -375,7 +379,7 @@ function CadencesPage() {
         <DirectMailPanel
           key={`${mailProspect.prospectId}|${mailProspect.playName}`}
           prospect={mailProspect}
-          onClose={() => setMailProspect(null)}
+          onClose={() => setMailKey(null)}
         />
       )}
       <section className="flex items-end justify-between gap-4 border-b border-ink-rule px-6 pb-5 pt-6">
@@ -781,7 +785,7 @@ function CadencesPage() {
                                     <Button
                                       size="sm"
                                       disabled={c.isSending}
-                                      onClick={() => setMailProspect(c)}
+                                      onClick={() => setMailKey(rowKey(c))}
                                     >
                                       {c.businessAddress ? "Review mail" : "Add business address"}
                                     </Button>
