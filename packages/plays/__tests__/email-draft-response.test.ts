@@ -25,6 +25,8 @@ describe("email draft response validation", () => {
     "[]",
     "{}",
     '{"subject":123,"body":"text"}',
+    '{"subject":"😀","body":"text"}',
+    '{"subject":"hello","body":"😀"}',
     '{"subject":"hello","body":"  "}',
   ])("retries invalid response %s once", async (content) => {
     completeMock

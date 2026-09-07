@@ -610,7 +610,10 @@ export async function draftEmailFromPrompt(opts: {
       maxTokens: opts.maxTokens ?? 500,
     });
     const draft = parseSubjectBody(res.content);
-    if (draft) return humanizeDraft(draft);
+    if (draft) {
+      const humanized = humanizeDraft(draft);
+      if (humanized.subject.trim() && humanized.body.trim()) return humanized;
+    }
     logEvent("email.draft.invalid_response", { promptName: opts.promptName, attempt: attempt + 1 });
     if (attempt === 0) {
       messages.push(
