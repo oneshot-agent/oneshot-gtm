@@ -90,7 +90,12 @@ export async function resolveAndVerifyContact(args: {
   if (args.knownEmail) {
     email = args.knownEmail;
   } else {
-    if (!args.companyDomain) return { ok: false, reason: "no-domain", costUsd };
+    if (!args.companyDomain) {
+      // Logged like a prescreen skip: a silent drop here made a whole b2b
+      // lane's misses invisible (100 candidates, 3 tried, nothing to say why).
+      logEvent("finder.skipped_findemail", { name: args.playName, reason: "no-domain" }, "info");
+      return { ok: false, reason: "no-domain", costUsd };
+    }
     const skip = shouldSkipFindEmail({
       fullName: args.fullName,
       companyDomain: args.companyDomain,
