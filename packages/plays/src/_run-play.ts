@@ -182,7 +182,15 @@ export async function runEmailPlay<T, X = Record<string, never>>(
   // the find→cache→/run cache-hit path warm, the residual draft+send time is
   // small enough that 6 workers comfortably halve wall-clock without tripping
   // SDK rate limits in observed runs.
-  const emails = opts.targets.map((t) => def.toEmail(t).trim().toLowerCase());
+  // toEmail may hand back a non-string (undefined/blank) for a malformed
+  // target — that's Guard #0's job to catch, inside the per-target try/catch
+  // below. Normalizing here must not throw ahead of that guard, so only
+  // string emails get trimmed/lowercased; anything else passes through
+  // as-is for the dupe check.
+  const emails = opts.targets.map((t) => {
+    const email = def.toEmail(t);
+    return typeof email === "string" ? email.trim().toLowerCase() : email;
+  });
   const hasDupeEmails = new Set(emails).size !== emails.length;
   const concurrency = hasDupeEmails ? 1 : 6;
 
