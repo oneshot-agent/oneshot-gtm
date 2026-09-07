@@ -111,12 +111,21 @@ export async function safeVerifyEmail(
  * peopleSearch that never throws — a failure resolves to an empty result set
  * (no candidates found) instead of aborting the whole finder run.
  */
+/**
+ * Hard ceiling on one peopleSearch. The SDK polls a job with no end-to-end
+ * deadline of its own; a wedged job otherwise blocks the finder forever
+ * (measured 2026-09-07: a sequential run sat 10+ minutes on one domain
+ * lookup with no receipt and no error). Past the deadline the call is a
+ * platform error — deferred, breaker-fed — not a stall.
+ */
+const PEOPLE_SEARCH_DEADLINE_MS = 120_000;
+
 export async function safePeopleSearch(
   input: PeopleSearchInput,
   ctx: CallContext,
 ): Promise<Awaited<ReturnType<typeof peopleSearch>>> {
   try {
-    return await peopleSearch(input, ctx);
+    return await withDeadline(peopleSearch(input, ctx), PEOPLE_SEARCH_DEADLINE_MS, "peopleSearch");
   } catch (err) {
     swallow(ctx, "people_search", err);
     return { result: { status: "error", results: [], total_found: 0, cost: 0 }, receiptId: 0 };
