@@ -224,6 +224,7 @@ const {
   sendCadenceStep,
   sendDirectMailCadenceStep,
   runCadenceStepForProspect,
+  registerSequence,
 } = await import("../src/_cadence.ts");
 // Ensure stack-consolidation's sequence is registered.
 await import("../src/stack-consolidation.ts");

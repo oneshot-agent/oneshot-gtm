@@ -47,11 +47,22 @@ export interface DiscoveryInterviewDraft {
 const discoveryInterviewDef: EmailPlayDef<DiscoveryInterviewTarget> = {
   playName: PLAY_NAME,
   promptName: "discovery-interview-email",
-  maxBodyWords: 150,
+  maxBodyWords: 89, // prompt caps the body under 90 words; 89 is the actual enforced ceiling
+  // discovery-interview-email.md's "Hard bans (binding, no exceptions)"
+  // section forbids a product link, a price, and any discount/trial framing
+  // (finding: discovery-interview-email.md:9) — lintEmail() alone has no
+  // check for those, only the literal string "calendly", so an offending
+  // completion could reach sendDraftedEmail with an empty flags array and
+  // autosend. hardBans wires hardBanFlags() into the pre-send flag set.
+  hardBans: true,
   // Two-touch: one soft nudge, no breakup. An owner-operator who ignored a
   // ten-minute ask does not want a chase — mirrors repo-interest, not the
   // four-touch founder sequences.
   enrollCadence: true,
+  // Server-side mirror of playSchemas.ts's required fields for this play
+  // (finding: apps/web/src/lib/playSchemas.ts:417 — the client-only check
+  // can be bypassed by a direct API call or a hand-edited queue row).
+  requiredFields: ["name", "email", "company", "businessType", "topic"],
   toEmail: (t) => t.email,
   // Enrich on preview + send (cached by email). No deepResearch — this play
   // asks to learn, it doesn't pitch, so there's nothing to research for.
@@ -103,6 +114,10 @@ registerSequence({
       channel: "email",
       breakOnReply: true,
       label: "one more ask",
+      // Prompt caps this at ≤ 30 words (discovery-interview-followup.md) —
+      // enforced here, not the cadence-wide default of 100 (finding:
+      // discovery-interview-followup.md:18).
+      maxBodyWords: 30,
       builder: buildFollowUpEmail({
         playName: PLAY_NAME,
         promptName: "discovery-interview-followup",

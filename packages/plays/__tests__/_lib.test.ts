@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { lintEmail, lintOpenerFrequency, openerStem, overusedOpeners } from "../src/_lib.ts";
+import {
+  hardBanFlags,
+  lintEmail,
+  lintOpenerFrequency,
+  openerStem,
+  overusedOpeners,
+} from "../src/_lib.ts";
 
 describe("lintEmail — humanizer canon", () => {
   it("returns no flags for a clean founder-to-founder email", () => {
@@ -223,6 +229,34 @@ describe("lintEmail — humanizer canon", () => {
   it("flags body over the maxBodyWords cap", () => {
     const body = Array.from({ length: 150 }, () => "word").join(" ");
     expect(lintEmail("hi", body, 100)).toContain("body-too-long");
+  });
+});
+
+describe("hardBanFlags — opt-in link/price/discount check", () => {
+  it("flags a bare URL", () => {
+    expect(hardBanFlags("Check out https://example.com for details. Sam")).toContain(
+      "hard-ban:link",
+    );
+    expect(hardBanFlags("Visit www.example.com today. Sam")).toContain("hard-ban:link");
+  });
+
+  it("flags a dollar figure or cost mention", () => {
+    expect(hardBanFlags("It costs $50 a month. Sam")).toContain("hard-ban:price");
+    expect(hardBanFlags("That runs about 20 dollars. Sam")).toContain("hard-ban:price");
+  });
+
+  it("flags discount/trial/free-for-you framing", () => {
+    expect(hardBanFlags("Try our free trial today. Sam")).toContain("hard-ban:discount-offer");
+    expect(hardBanFlags("This is free for you. Sam")).toContain("hard-ban:discount-offer");
+    expect(hardBanFlags("Ask about our discount. Sam")).toContain("hard-ban:discount-offer");
+  });
+
+  it("leaves a clean, hard-ban-compliant body unflagged", () => {
+    expect(hardBanFlags("Would you be up for ten minutes this week? Sam")).toEqual([]);
+  });
+
+  it("does not flag the plain signature domain line (no scheme, no www)", () => {
+    expect(hardBanFlags("Sam\nacme.dev")).toEqual([]);
   });
 });
 

@@ -52,10 +52,22 @@ export interface NewBusinessDraft {
 const newBusinessDef: EmailPlayDef<NewBusinessTarget> = {
   playName: PLAY_NAME,
   promptName: "new-business-email",
-  maxBodyWords: 150,
+  maxBodyWords: 89, // prompt caps the body under 90 words (finding: new-business.ts:55 — 150 let a 90-150 word draft through)
   // One touch + one follow-up that doubles as the breakup — mirrors
   // accelerator-batch's shape and free-pilot's, above.
   enrollCadence: true,
+  // Server-side mirror of playSchemas.ts's required fields for this play
+  // (finding: apps/web/src/lib/playSchemas.ts:417 — the client-only check
+  // can be bypassed by a direct API call or a hand-edited queue row).
+  requiredFields: [
+    "name",
+    "email",
+    "company",
+    "businessType",
+    "licenseType",
+    "issuedAgo",
+    "yourEdge",
+  ],
   toEmail: (t) => t.email,
   prepare: (t) =>
     standardEnrich({
@@ -105,6 +117,11 @@ registerSequence({
       channel: "email",
       breakOnReply: true,
       label: "single follow-up + breakup",
+      // Prompt caps this at ≤ 45 words (new-business-followup.md) — enforced
+      // here, not the cadence-wide default of 100 (finding:
+      // discovery-interview-email.md:31, listing new-business-followup.md:14
+      // as one of the affected plays).
+      maxBodyWords: 45,
       builder: buildFollowUpEmail({
         playName: PLAY_NAME,
         promptName: "new-business-followup",
