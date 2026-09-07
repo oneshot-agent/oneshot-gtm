@@ -114,6 +114,24 @@ describe("runDiscoveryInterview", () => {
     expect(calls.llmInputBlocks).toHaveLength(0);
   });
 
+  // finding PR #552: runEmailPlay's dupe-detection pass called
+  // `def.toEmail(t).trim()` on every target BEFORE the per-target try/catch,
+  // so one target with a missing/non-string email threw a TypeError that
+  // rejected the whole batch instead of landing as that one target's
+  // errorDraft. A good target queued alongside a bad one must still draft.
+  it("doesn't let a target with a missing email crash the rest of the batch", async () => {
+    const { email: _drop, ...withoutEmail } = base;
+    const out = await runDiscoveryInterview({
+      dryRun: true,
+      targets: [withoutEmail as unknown as typeof base, base],
+    });
+    expect(out.drafted).toHaveLength(2);
+    const [bad, good] = out.drafted;
+    expect(bad?.sent).toBe(false);
+    expect(bad?.flags.some((f) => f.startsWith("error:"))).toBe(true);
+    expect(good?.flags.some((f) => f.startsWith("error:"))).toBe(false);
+  });
+
   // finding discovery-interview-email.md:9: lintEmail() alone never checked
   // for a product link/price/discount, so a completion violating the
   // prompt's hard bans could reach sendDraftedEmail with an empty flags
