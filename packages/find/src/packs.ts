@@ -112,7 +112,7 @@ export const PACKS: IndustryPack[] = [
     summary:
       "Owner-operators and office managers at HVAC, plumbing, electrical, and roofing firms.",
     buyerBrief:
-      "Owner-operator / office manager at HVAC, plumbing, electrical, roofing, landscaping and pest-control businesses. Both channels lean on here: state contractor licence boards (`local-registry`) reach the long tail of one-truck operators who never show up in a B2B people database, while `local-business` reaches the 20+ staff shops with an office manager and an actual buying process. The spike's home-services proxy (two-truck plumbers) measured 70% `peopleSearch` coverage — solid but not restaurant-tier — consistent with keeping both channels rather than picking one.",
+      "Owner-operator / office manager at HVAC, plumbing, electrical, roofing, landscaping and pest-control businesses. Both channels lean on here: state contractor licence boards (`local-registry`) reach the long tail of one-truck operators who never show up in a B2B people database, while `local-business` on the SDK's places index (`engine: local`) reaches the shops with a website and a phone number. The B2B people database was measured 2026-09-07 returning zero matches for these trades in Austin with and without a location, so `local` is the engine here; the places index found dozens per category.",
     icpOneLiner: "Owner-operators and office managers at home-service and trade businesses",
     triggers: {
       "local-business": {
@@ -126,6 +126,7 @@ export const PACKS: IndustryPack[] = [
           "Pest Control Companies",
         ],
         employeeRange: "11-50",
+        engine: "local",
       },
       "local-registry": {
         portals: [
@@ -145,12 +146,17 @@ export const PACKS: IndustryPack[] = [
     label: "Healthcare Practices",
     summary: "Practice owners and office managers at dental, optometry, and small medical clinics.",
     buyerBrief:
-      "Practice owner / office manager at dental, veterinary, optometry, chiropractic and small primary-care practices. `local-registry`'s NPPES adapter is the most completely covered vertical of the seven — 9M+ providers, free, weekly refresh, filterable by taxonomy — and the coverage spike (#456) measured dental practices at only 64% `peopleSearch` hit rate, the WORST of the three tested verticals, confirming a B2B people database is the wrong primary channel here. `local-business` is deliberately left off this pack.",
+      "Practice owner / office manager at dental, veterinary, optometry, chiropractic and small primary-care practices. `local-registry`'s NPPES adapter is the most completely covered vertical of the seven — 9M+ providers, free, weekly refresh, filterable by taxonomy — and the coverage spike (#456) measured dental practices at only 64% `peopleSearch` hit rate, the WORST of the three tested verticals, confirming a B2B people database is the wrong primary channel here. `local-business` on the B2B database is deliberately left off; `local-business` on the SDK's places index (`engine: local`) is on — measured 2026-09-07 it turned Austin dental clinics into verified, named contacts at a few cents each, and NPPES rows go through the same `localResolve` + person lookup.",
     icpOneLiner: "Owners and office managers at dental, veterinary, and small medical practices",
     triggers: {
       "local-registry": {
         taxonomies: ["Dentist", "Veterinarian", "Optometrist", "Chiropractor", "Family Medicine"],
         states: ["NY", "CA", "TX", "FL", "IL"],
+      },
+      "local-business": {
+        jobTitles: ["Owner", "Office Manager", "Practice Manager"],
+        industries: ["dental practice", "veterinary clinic", "optometrist", "chiropractor"],
+        engine: "local",
       },
     },
     requires: ["yourEdge"],
@@ -161,15 +167,13 @@ export const PACKS: IndustryPack[] = [
     summary:
       "Owners and service managers at independent repair shops, tyre, and collision centres.",
     buyerBrief:
-      "Shop owner / service manager at independent auto-repair shops, tire shops and body shops. Not part of the #456 coverage spike, so this follows the card's original reasoning unchanged: business licences filtered to NAICS 8111 (automotive repair and maintenance) are the primary channel — an independent single-bay shop is exactly the kind of business a B2B people database under-indexes on.",
+      "Shop owner / service manager at independent auto-repair shops, tire shops and body shops. Not part of the #456 coverage spike, so this follows the card's original reasoning unchanged: the SDK's places index (`local-business`, `engine: local`) is the channel: it lists exactly the single-bay shops a B2B people database under-indexes. The `local-registry` block that used to point at NYC's DCWP licence dataset (w7w3-xahh) is gone — that dataset's only automotive category is 'Secondhand Dealer - Auto' (measured 2026-09-07 with a Socrata group-by), so it could never have enqueued a repair shop.",
     icpOneLiner: "Owners and service managers at independent auto-repair, tire, and body shops",
     triggers: {
-      "local-registry": {
-        portals: [
-          { host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC business licenses" },
-        ],
-        naics: ["8111"],
-        licenseTypes: ["Auto Repair", "Tire Dealer", "Body Shop", "Automotive Repair Shop"],
+      "local-business": {
+        jobTitles: ["Owner", "Service Manager"],
+        industries: ["auto repair shop", "tire shop", "auto body shop"],
+        engine: "local",
       },
     },
     requires: ["yourEdge"],
@@ -179,7 +183,7 @@ export const PACKS: IndustryPack[] = [
     label: "Professional Services (SMB)",
     summary: "Managing partners at small law, accounting, bookkeeping, and insurance firms.",
     buyerBrief:
-      "Managing partner / principal at small law firms, bookkeeping practices, insurance agencies and property managers. Not part of the #456 coverage spike. These are well covered in B2B data (partners and principals at small professional firms are exactly the population `peopleSearch`/`companySearch` index well), so `local-business` is the primary — and only — channel; `local-registry`'s public-registry sources exist for businesses invisible to B2B databases, which does not describe this vertical.",
+      "Managing partner / principal at small law firms, bookkeeping practices, insurance agencies and property managers. Not part of the #456 coverage spike. `local-business` is the primary — and only — channel, on the SDK's places index (`engine: local`): measured 2026-09-07, the B2B people database returned zero matches for these titles × industries in Austin with and without a location, while the places index found the firms and the domain-scoped person lookup named their principals; `local-registry`'s public-registry sources exist for businesses invisible to B2B databases, which does not describe this vertical.",
     icpOneLiner: "Managing partners and principals at small law, accounting, and insurance firms",
     triggers: {
       "local-business": {
@@ -191,6 +195,7 @@ export const PACKS: IndustryPack[] = [
           "Property Management Companies",
         ],
         employeeRange: "1-10",
+        engine: "local",
       },
     },
     requires: ["yourEdge"],
