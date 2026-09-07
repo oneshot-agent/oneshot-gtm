@@ -140,6 +140,16 @@ const COMMITS_TERMS_PATTERNS: CommitPattern[] = [
 const NEGATION_CUE = /\b(?:not|no|never|nobody|nothing|unable|cannot)\b|n['’]t\b/i;
 
 /**
+ * Trailing hedge idioms that use the word "no" without negating anything —
+ * "no problem" / "no worries" acknowledge a commitment just made, they don't
+ * retract it. Stripped before the negation check so `bodyCommitsTerms` can
+ * check the whole sentence for real negations (round-2 correction, #558)
+ * instead of a hand-rolled clause boundary that both let this idiom through
+ * AND cut off genuine refusals elsewhere in the same sentence (see below).
+ */
+const TRAILING_HEDGE = /,?\s*no (?:problem|worries|issue|big deal)\b[.!?]?/gi;
+
+/**
  * A sentence that affirmatively offers or agrees to something. Includes
  * "plan(ning) to" / "aim to" (round-2 correction, #480) so a founder stating a
  * roadmap intent ("we're planning to ship SSO by Q1") still counts as a
@@ -170,32 +180,33 @@ function splitSentences(text: string): string[] {
 
 /**
  * True when the body makes (or looks like it's making) a commitment the
- * founder never authorised. `NEGATION_CUE` is checked only against the
- * sentence text UP TO AND INCLUDING the clause carrying the matched keyword
- * — from the sentence start through the next comma after the match — not a
- * trailing fragment, so a trailing hedge AFTER the commitment's clause
- * (round-3 correction, #480/#558: "Sure, I can do a 20% discount, no
- * problem." was cleared by the unrelated "no" in ", no problem" and returned
- * false) can't mask an actual commitment made earlier in the sentence. A
- * negation that genuinely applies to the commitment still lands in this
- * leading span and is still caught — including when it sits in an earlier
- * comma-delimited fragment of the SAME sentence, separated from the match
- * only by a parenthetical aside (round-4 correction, #558: "We will not,
- * under any circumstances, offer a discount." — the clause-scoped version
- * anchored its start to the nearest PRECEDING comma, so "not" and "discount"
- * ended up in different fragments and this returned true; main correctly
- * returns false).
+ * founder never authorised. `NEGATION_CUE` is checked against the WHOLE
+ * sentence — matching main's original behaviour — after stripping
+ * `TRAILING_HEDGE` idioms ("no problem"/"no worries"/etc), which use "no"
+ * without negating anything.
+ *
+ * Round-3 correction (#480/#558) tried to fix "Sure, I can do a 20%
+ * discount, no problem." (should stay `true`) by scoping the negation check
+ * to the leading clause up to the next comma. Round-4 correction (#558) then
+ * had to special-case the clause boundary again for a parenthetical aside
+ * ("We will not, under any circumstances, offer a discount." — the
+ * comma-delimited clause split "not" from "discount" and flipped this to
+ * `true`). Round-2 correction (#558, THIS round): the clause-scoping
+ * approach itself is unsound — ANY clause boundary drawn on commas cuts off
+ * a genuine refusal that legitimately follows a comma in the same sentence
+ * ("We can review pricing, but cannot offer a discount." regressed to
+ * `true` against main's `false`). Stripping the specific hedge idiom instead
+ * of truncating the sentence fixes the "no problem" false-negative without
+ * narrowing the negation check's scope at all, so it can go back to
+ * matching main: the whole sentence, no clause games.
  */
 export function bodyCommitsTerms(body: string): boolean {
   const sentences = splitSentences(body);
   return COMMITS_TERMS_PATTERNS.some(({ regex, requireAffirmative }) =>
     sentences.some((sentence) => {
-      const match = regex.exec(sentence);
-      if (!match) return false;
-      const nextComma = sentence.indexOf(",", match.index + match[0].length);
-      const clauseEnd = nextComma === -1 ? sentence.length : nextComma;
-      const clause = sentence.slice(0, clauseEnd);
-      if (NEGATION_CUE.test(clause)) return false;
+      if (!regex.test(sentence)) return false;
+      const negationCheckText = sentence.replace(TRAILING_HEDGE, "");
+      if (NEGATION_CUE.test(negationCheckText)) return false;
       if (requireAffirmative && (QUESTION_CUE.test(sentence) || !AFFIRMATIVE_CUE.test(sentence))) {
         return false;
       }

@@ -236,6 +236,42 @@ describe("inbox_replies.intent (issue #480)", () => {
     expect(ledger.listInboxRepliesForProspect(1)[0]!.intent).toBe("not_now");
   });
 
+  // Round-2 correction (#558, this round): every other claim-marker in
+  // ledger.ts pairs its atomic claim with a sweepStale* recovery so a crash
+  // between the claim and the release doesn't strand the marker forever.
+  // claimInboxReplyForTriage had none — a process death mid-triage left
+  // '__triage_pending__' on the row permanently (unclaimable, unclassified,
+  // and visible to every intent reader). sweepStaleInboxReplyTriage is the
+  // cold-boot recovery, called once from apps/server/src/bin.ts like the
+  // other sweeps.
+  describe("sweepStaleInboxReplyTriage", () => {
+    it("resets a stranded __triage_pending__ claim back to NULL", () => {
+      record({ kind: "human" });
+      expect(ledger.claimInboxReplyForTriage("msg-1")).toBe(true);
+      expect(ledger.listInboxRepliesForProspect(1)[0]!.intent).toBe("__triage_pending__");
+      // Simulate a crash: nobody calls setInboxReplyIntent to release it.
+      expect(ledger.sweepStaleInboxReplyTriage()).toBe(1);
+      expect(ledger.listInboxRepliesForProspect(1)[0]!.intent).toBeNull();
+      // The row is claimable again after the sweep.
+      expect(ledger.claimInboxReplyForTriage("msg-1")).toBe(true);
+    });
+
+    it("never touches rows with a real classification or no claim at all", () => {
+      record({ kind: "human" });
+      record({ id: "msg-2", kind: "human" });
+      ledger.setInboxReplyIntent("msg-1", "interested", "r");
+      // msg-2 is left with intent NULL (no claim in flight).
+      expect(ledger.sweepStaleInboxReplyTriage()).toBe(0);
+      const rows = ledger.listInboxRepliesForProspect(1);
+      expect(rows.find((r) => r.id === "msg-1")!.intent).toBe("interested");
+      expect(rows.find((r) => r.id === "msg-2")!.intent).toBeNull();
+    });
+
+    it("is a no-op on an empty table", () => {
+      expect(ledger.sweepStaleInboxReplyTriage()).toBe(0);
+    });
+  });
+
   it("listUntriagedHumanReplies finds human replies with no intent yet, oldest first", () => {
     record({ id: "msg-1", kind: "human", receivedAt: "2026-08-20T00:00:00.000Z" });
     record({ id: "msg-2", kind: "human", receivedAt: "2026-08-25T00:00:00.000Z" });

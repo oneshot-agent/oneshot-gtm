@@ -1216,6 +1216,33 @@ export class Ledger {
   }
 
   /**
+   * Cold-boot recovery for `claimInboxReplyForTriage` (round-2 correction,
+   * #558): every other claim-marker in this file
+   * (claimCadenceSendingMarker/sweepStaleCadenceSends,
+   * claimQueueSendingMarker/sweepStaleQueueSends,
+   * claimRunningTrigger/sweepStaleRunningTriggers) has a paired sweep so a
+   * crash between the claim UPDATE and the try/catch's release doesn't
+   * strand the marker forever. This one didn't: a process death mid-triage
+   * left `intent = '__triage_pending__'` permanently on the row — it could
+   * never be re-claimed (the claim UPDATE only matches `intent IS NULL`) or
+   * classified again, and the non-`ReplyIntent` sentinel was exposed to
+   * every reader of `intent` (`listInboxReplyIntents`, the /inbox route).
+   * Unlike the other markers, the claim here has no `started_at` column to
+   * age against — it's held only for the duration of one in-process `await
+   * triageEmails(...)`, which cannot survive past that process's death — so
+   * there's no `maxAgeMs`: cold boot (called once, like the other sweeps,
+   * from apps/server/src/bin.ts) is the only moment a stranded claim can be
+   * told apart from one a live process still holds. Returns the number of
+   * rows reset so the caller can log it.
+   */
+  sweepStaleInboxReplyTriage(): number {
+    const res = this.db
+      .prepare(`UPDATE inbox_replies SET intent = NULL WHERE intent = ?`)
+      .run(INBOX_REPLY_TRIAGE_PENDING);
+    return res.changes;
+  }
+
+  /**
    * Bulk intent lookup for a set of provider email ids — the /inbox route's
    * badge needs the persisted (LLM-classified) intent per visible reply
    * without an N+1 query. Empty input short-circuits (SQLite's `IN ()` is

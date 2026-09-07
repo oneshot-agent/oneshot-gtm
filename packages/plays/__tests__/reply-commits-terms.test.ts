@@ -118,6 +118,18 @@ describe("bodyCommitsTerms (issue #480)", () => {
   it("does not fire when a negation is separated from the commitment by a parenthetical aside", () => {
     expect(bodyCommitsTerms("We will not, under any circumstances, offer a discount.")).toBe(false);
   });
+
+  // Round-2 correction (#558, this round): the round-1 fix scoped
+  // NEGATION_CUE to the leading clause (start of sentence through the next
+  // comma after the matched keyword), which incidentally fixed the
+  // parenthetical-aside case above but broke this one — a genuine refusal
+  // that legitimately follows the comma landed outside the checked clause
+  // and this returned true against main's correct false. Fixed by stripping
+  // only the specific "no problem"/"no worries" hedge idiom and checking
+  // NEGATION_CUE against the whole sentence again, like main.
+  it("still catches a refusal that follows a comma in the same sentence", () => {
+    expect(bodyCommitsTerms("We can review pricing, but cannot offer a discount.")).toBe(false);
+  });
 });
 
 describe("intentDirectiveBlock (issue #480)", () => {
