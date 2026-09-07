@@ -33,7 +33,6 @@ import {
   lintOpenerFrequency,
   overusedOpeners,
   signatureDirective,
-  socialProofBlock,
 } from "./_lib.ts";
 
 export interface CadenceContext {
@@ -1704,9 +1703,8 @@ export function buildFollowUpEmail(opts: {
   contextLines: string[];
 }): SequenceStep["builder"] {
   return async (ctx: CadenceContext) => {
-    const system = loadPrompt(opts.promptName) + signatureDirective();
+    const system = loadPrompt(opts.promptName, { humanizer: "followup" }) + signatureDirective();
     const priorBlock = buildPriorEmailsBlock(ctx.prospect.id, opts.playName);
-    const proofBlock = socialProofBlock();
     // Optional first-name field: prompt rule lets the LLM occasionally open
     // with "Hey {firstName},". Absent when name is null / (unknown) / handle.
     const firstName = firstNameFrom(ctx.prospect.name);
@@ -1722,7 +1720,6 @@ export function buildFollowUpEmail(opts: {
       `COMPANY: ${ctx.prospect.company ?? "(unknown)"}`,
       ...opts.contextLines,
       ...(priorBlock ? ["", priorBlock] : []),
-      ...(proofBlock ? ["", proofBlock] : []),
       ...(firstName ? ["", `PROSPECT_FIRST_NAME: ${firstName}`] : []),
       ...(avoidBlock ? ["", avoidBlock] : []),
     ].join("\n");

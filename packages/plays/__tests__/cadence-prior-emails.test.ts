@@ -21,7 +21,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       emailIdentities: null,
       icpOneLiner: null,
       cadenceOverrides: null,
-      founderCredentials: null,
+      founderCredentials: "Previously built a million-user app",
       productPortfolio: null,
       partners: null,
       founderAdmission: null,
@@ -157,6 +157,8 @@ describe("buildFollowUpEmail — PRIOR EMAILS injection", () => {
     expect(llmCalls).toHaveLength(1);
     const userMsg = llmCalls[0]!.user;
     expect(userMsg).toContain("PRIOR EMAILS");
+    expect(userMsg).not.toContain("SOCIAL PROOF");
+    expect(userMsg).not.toContain("Previously built a million-user app");
     const firstIdx = userMsg.indexOf("step 1");
     const zeroIdx = userMsg.indexOf("step 0");
     expect(firstIdx).toBeGreaterThan(-1);

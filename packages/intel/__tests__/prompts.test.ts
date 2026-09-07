@@ -115,3 +115,18 @@ describe("loadPrompt — per-prompt memoization", () => {
     expect(second).toMatch(/Anti-AI-slop rules/);
   });
 });
+
+describe("follow-up prompt isolation", () => {
+  it("keeps first-touch guidance out of follow-ups regardless of cache order", () => {
+    _resetPromptCache();
+    const initial = loadPrompt("repo-interest-followup");
+    const followup = loadPrompt("repo-interest-followup", { humanizer: "followup" });
+    expect(initial).toContain("## The 4-step shape");
+    expect(followup).not.toContain("## The 4-step shape");
+    expect(followup).toContain("≤ 30 words");
+    expect(followup).toContain("Never transfer a prior claim");
+    expect(followup.match(/# Anti-AI-slop rules/g)).toHaveLength(1);
+    expect(loadPrompt("repo-interest-followup")).toBe(initial);
+    expect(loadPrompt("repo-interest-followup", { humanizer: "followup" })).toBe(followup);
+  });
+});

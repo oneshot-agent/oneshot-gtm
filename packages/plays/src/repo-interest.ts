@@ -140,6 +140,7 @@ registerSequence({
       channel: "email",
       breakOnReply: true,
       label: "value follow-up",
+      maxBodyWords: 30,
       builder: buildFollowUpEmail({
         playName: PLAY_NAME,
         promptName: "repo-interest-followup",
