@@ -80,7 +80,7 @@ bun run cli -- find drain podcast-guest --dry-run  # preview approved /queue row
 bun run cli -- cadence advance                     # daily tick: poll inbox, fire follow-ups
 ```
 
-65 commands — `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
+66 commands — `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
 
 | Group                    | Commands                                                                                                                                                                                                                                                                                            |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -96,7 +96,7 @@ bun run cli -- cadence advance                     # daily tick: poll inbox, fir
 | `direct-mail`            | `list` · `upload` · `preview` · `refresh` · `approve` · `send` · `cancel` — individual physical-mail approvals                                                                                                                                                                                      |
 | `discover`               | `icp interview-prep` · `icp synthesize` · `pmf classify` · `pmf survey` · `pmf survey-collect`                                                                                                                                                                                                      |
 | `measure`                | `benchmark` — compare this install's command activity with the opt-in telemetry cohort; supports `--json`                                                                                                                                                                                           |
-| `intel`                  | `advise` · `personalize` · `triage-replies` · `weekly-review`                                                                                                                                                                                                                                       |
+| `intel`                  | `advise` · `personalize` · `triage-replies` · `backfill-intent` · `weekly-review`                                                                                                                                                                                                                   |
 | `handoff`                | `readiness` · `templatize` · `first-ae`                                                                                                                                                                                                                                                             |
 | `demo`                   | `seed` · `ui` · `reset` — a fictional install for screenshots and video                                                                                                                                                                                                                             |
 | `workspace`              | `list` · `create <name>` · `use <name>` · `current` · `path <name>` · `remove <name>` — one isolated install per product; `--workspace <name>` on any command                                                                                                                                       |
@@ -223,7 +223,7 @@ Workspaces share one thing: `~/.oneshot-gtm-shared/shared.sqlite`, holding the p
 
 ```
 apps/
-  cli/        the 65-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
+  cli/        the 66-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
   server/     Bun.serve + SSE; tsdown bundle published as `oneshot-gtm-server`
   web/        Vite + React 19 + TanStack + Base UI — 9 pages, run form, strategist dock, privacy mode
 packages/
@@ -262,7 +262,7 @@ bun run --cwd apps/web build       # → apps/web/dist/
 bun run --cwd apps/server build    # → apps/server/dist/bin.mjs + dist/web/
 ```
 
-The suite is 3175 cases across 244 files (STATUS.md carries the current totals). Tests set `ONESHOT_GTM_HOME` to a temp dir, so they never touch your real ledger. CI runs `bun --bun run test` — the flag matters, since `bun:sqlite` doesn't exist under Node. Core and server install the SDK from the archive in `vendor/`; its README has the coordinated release step.
+The suite is 3237 cases across 246 files (STATUS.md carries the current totals). Tests set `ONESHOT_GTM_HOME` to a temp dir, so they never touch your real ledger. CI runs `bun --bun run test` — the flag matters, since `bun:sqlite` doesn't exist under Node. Core and server install the SDK from the archive in `vendor/`; its README has the coordinated release step.
 
 ### Watching what's happening
 

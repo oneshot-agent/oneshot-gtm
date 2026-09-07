@@ -4,7 +4,9 @@ import { getPriorStepsForProspect, type PriorStepRow } from "./_cadence.ts";
 import {
   bodyWordsForLint,
   firstNameFrom,
+  founderSteerBlock,
   humanizeDraft,
+  intentDirectiveBlock,
   lintEmail,
   signatureDirective,
 } from "./_lib.ts";
@@ -70,12 +72,125 @@ export function repeatsPriorText(body: string, priorTexts: readonly string[]): b
 }
 
 /**
+ * A commitment pattern paired with how strictly it must be gated. Each entry
+ * names one commitment shape; ANY match is one `commits-terms` flag, not one
+ * per pattern — `replyPenalty` counts flags, and a draft that trips three of
+ * these is not three times worse than one that trips one.
+ *
+ * `requireAffirmative`: some keywords (pricing, discount) show up just as
+ * often in a neutral or declining sentence ("Our pricing is public, check
+ * the website.") as in an actual commitment ("Sure, I can do a 20% discount
+ * for the first year."). For those, a bare keyword match is not enough —
+ * the sentence must also carry an affirmative commitment cue (can/could/
+ * will/would/I'll/we'll/happy to/etc).
+ */
+interface CommitPattern {
+  regex: RegExp;
+  requireAffirmative?: boolean;
+}
+
+const COMMITS_TERMS_PATTERNS: CommitPattern[] = [
+  // Pricing, discounts, free tiers. Bare mentions ("our pricing is public")
+  // are common in ordinary, harmless replies — only count it when the same
+  // sentence also affirmatively offers something.
+  {
+    regex: /\b(?:pric(?:e|es|ing)|discount(?:s|ed)?|% off|free tier|for free)\b/i,
+    requireAffirmative: true,
+  },
+  // Distribution / traffic promises ("point our builders toward X", "route users to Y").
+  // Round-2 correction (#480): a bare mention ("we read about your distribution
+  // model") is as common as an actual promise — same affirmative-cue gate as pricing.
+  {
+    regex:
+      /\bdistribution\b|\btraffic\b|\bpoint\b[^.]{0,60}\btoward\b|\brout(?:e|ing)\b[^.]{0,40}\b(?:users|traffic|customers|people)\b/i,
+    requireAffirmative: true,
+  },
+  // Partnership / exclusivity language. Round-2 correction (#480): "thanks for
+  // explaining the partnership, that makes sense" is not a commitment.
+  { regex: /\bpartner(?:ship)?\b|\bexclusiv(?:e|ity)\b/i, requireAffirmative: true },
+  // Roadmap dates. Round-2 correction (#480): "could you clarify your roadmap?"
+  // is a question, not a commitment — gated the same way (QUESTION_CUE below
+  // also strips the "could you"/"can you" phrasing the bare cue list would miss).
+  {
+    regex: /\broadmap\b|\bby (?:Q[1-4]\s?\d{0,4}|\d{4})\b|\bnext (?:quarter|month)\b/i,
+    requireAffirmative: true,
+  },
+  // Headcount / hiring commitments. Round-2 correction (#480): "how is your
+  // hiring going this quarter?" is small talk, not a commitment.
+  { regex: /\bheadcount\b|\bhir(?:e|ing)\b/i, requireAffirmative: true },
+  // Documentation placement ("adding X to our documentation").
+  {
+    regex: /\b(?:add(?:ing)?|list(?:ing)?)\b[^.]{0,60}\b(?:documentation|docs)\b/i,
+    requireAffirmative: true,
+  },
+  // "Recommended / preferred partner" (or environment/integration/provider) designations.
+  {
+    regex:
+      /\b(?:recommended|preferred)\b[^.]{0,40}\b(?:partner|environment|integration|provider|option|vendor|choice)\b/i,
+    requireAffirmative: true,
+  },
+  // Featuring the sender in a reference implementation / case study / website.
+  {
+    regex:
+      /\bfeatur(?:e|ing)\b[^.]{0,60}\b(?:reference implementation|case study|website|repo|documentation)\b/i,
+  },
+];
+
+/** A sentence that declines, refuses, or is otherwise negative about its topic is not a commitment. */
+const NEGATION_CUE = /\b(?:not|no|never|nobody|nothing|unable|cannot)\b|n['’]t\b/i;
+
+/**
+ * A sentence that affirmatively offers or agrees to something. Includes
+ * "plan(ning) to" / "aim to" (round-2 correction, #480) so a founder stating a
+ * roadmap intent ("we're planning to ship SSO by Q1") still counts as a
+ * commitment — only the *question* form ("could you clarify your roadmap?")
+ * is meant to fall through, and that's excluded separately by QUESTION_CUE.
+ */
+const AFFIRMATIVE_CUE =
+  /\b(?:can|could|will|would|able to|happy to|glad to|going to|planning to|plan to|aim to|let's|sure)\b|['’]ll\b/i;
+
+/**
+ * A modal cue addressed AT the recipient ("could you", "can you", "would
+ * you", "will you") — a question, never a commitment, even though it shares
+ * the same modal verbs AFFIRMATIVE_CUE looks for ("we could hire someone" is
+ * a commitment; "could you clarify your roadmap?" is not). Round-2
+ * correction (#480): without this, "Could you clarify your roadmap?" still
+ * tripped the roadmap pattern's affirmative-cue guard on the bare "could".
+ */
+const QUESTION_CUE = /\b(?:could|can|would|will)\s+you\b/i;
+
+/** Body split into sentence-ish chunks — the unit `bodyCommitsTerms` reasons about, so a
+ *  commitment made in one sentence can't be masked by a negation two sentences away. */
+function splitSentences(text: string): string[] {
+  return text
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** True when the body makes (or looks like it's making) a commitment the founder never authorised. */
+export function bodyCommitsTerms(body: string): boolean {
+  const sentences = splitSentences(body);
+  return COMMITS_TERMS_PATTERNS.some(({ regex, requireAffirmative }) =>
+    sentences.some((sentence) => {
+      if (!regex.test(sentence)) return false;
+      if (NEGATION_CUE.test(sentence)) return false;
+      if (requireAffirmative && (QUESTION_CUE.test(sentence) || !AFFIRMATIVE_CUE.test(sentence))) {
+        return false;
+      }
+      return true;
+    }),
+  );
+}
+
+/**
  * Body-only lint: a reply keeps the inbound "Re: …", so subject flags are not
  * ours to raise — lintEmail gets a dummy subject and they're dropped.
  */
 function lintReply(body: string, maxWords: number, priorTexts: readonly string[]): string[] {
   const flags = lintEmail("x", body, maxWords).filter((f) => !f.startsWith("subject-"));
   if (repeatsPriorText(body, priorTexts)) flags.push("repeats-prior-email");
+  if (bodyCommitsTerms(body)) flags.push("commits-terms");
   return flags;
 }
 
@@ -109,6 +224,31 @@ function bodyFrom(raw: string): string {
   return body ? humanizeDraft({ subject: "x", body }).body : "";
 }
 
+/**
+ * Sentences the founder already asked in this thread ("does that work for
+ * you?", "what's the actual proposal here?") — extracted from every reply
+ * already sent, so `draftInboxReply` can tell the model never to restate an
+ * outstanding ask (issue #480, the Aladdin Aug 26/27 exchange: three
+ * discovery questions in a row with no named purpose). A crude sentence
+ * split on `.`/`?`/`!` is enough — this feeds a "don't repeat" instruction,
+ * not a structured parse.
+ */
+export function priorAsks(threadSent: readonly { body: string }[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const t of threadSent) {
+    for (const raw of t.body.split(/(?<=[.?!])\s+/)) {
+      const s = raw.trim();
+      if (!s.endsWith("?")) continue;
+      const key = s.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(s);
+    }
+  }
+  return out;
+}
+
 export interface DraftInboxReplyInput {
   /** Normalized sender address of the inbound email. */
   fromEmail: string;
@@ -133,16 +273,27 @@ export interface DraftInboxReplyInput {
   threadSent?: Array<{ body: string; sentAt: string }>;
   /** The prospect's earlier inbound messages (oldest first) — the other half of the exchange. */
   priorInbound?: Array<{ body: string; subject: string | null; receivedAt: string }>;
+  /** Sentiment classification of the inbound being answered (issue #480) — selects the intent directive block. */
+  intent?: string | null;
+  /** Founder's standing redraft instruction for this thread (issue #480) — binding on this draft. */
+  steer?: string | null;
+}
+
+export interface DraftInboxReplyResult {
+  body: string;
+  /** Lint flags that survived the repair pass. Currently the only one the send gate cares about is `commits-terms`. */
+  flags: string[];
 }
 
 /**
  * Draft a reply to an inbound prospect email, in the founder's voice. Same
  * scaffolding as cadence follow-ups (signature directive, social proof, prior
  * touches, humanizer autofixes) but answering THEIR message rather than
- * continuing a sequence. Returns the body only — the subject stays "Re: …".
- * Throws on LLM/provider errors; the route maps that to a 4xx message.
+ * continuing a sequence. Returns the body plus any lint flags that survived
+ * the repair pass — the subject stays "Re: …". Throws on LLM/provider
+ * errors; the route maps that to a 4xx message.
  */
-export async function draftInboxReply(input: DraftInboxReplyInput): Promise<{ body: string }> {
+export async function draftInboxReply(input: DraftInboxReplyInput): Promise<DraftInboxReplyResult> {
   const cfg = loadConfig();
   const system = loadPrompt("reply-email") + signatureDirective();
 
@@ -174,6 +325,18 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<{ bo
         ].join("\n")
       : null;
 
+  // ASKS ALREADY MADE (issue #480): outstanding questions from your own prior
+  // replies. An ask you've already made must be answered or waited on, never
+  // restated — this is the "circling" half of the Aladdin failure.
+  const asks = input.threadSent ? priorAsks(input.threadSent) : [];
+  const asksBlock =
+    asks.length > 0
+      ? [
+          "ASKS ALREADY MADE (from your own earlier replies in this thread — an outstanding ask is never restated; answer it yourself if they didn't, or wait, do not ask it again):",
+          ...asks.map((a) => `- ${a}`),
+        ].join("\n")
+      : null;
+
   // The other half of the exchange: what THEY said before this message, so the
   // draft carries the conversation instead of treating each email as the first.
   const priorInboundBlock =
@@ -191,6 +354,13 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<{ bo
             ]),
         ].join("\n")
       : null;
+
+  // Structured intent directive (issue #480) — code-gated per classified
+  // sentiment, the same way admissionBlock/socialProofBlock are code-gated
+  // rather than left to the model to infer "are they interested?" from prose.
+  const intentBlock = intentDirectiveBlock(input.intent);
+  // Founder steer (issue #480) — a binding redraft instruction from /inbox.
+  const steerBlock = founderSteerBlock(input.steer);
 
   // No SOCIAL PROOF block here, deliberately. It is an instruction ("pick the
   // ONE beat that best fits this play"), and in a reply it contradicts the
@@ -215,6 +385,9 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<{ bo
     ...(priorBlock ? ["", priorBlock] : []),
     ...(priorInboundBlock ? ["", priorInboundBlock] : []),
     ...(threadBlock ? ["", threadBlock] : []),
+    ...(asksBlock ? ["", asksBlock] : []),
+    ...(intentBlock ? ["", intentBlock] : []),
+    ...(steerBlock ? ["", steerBlock] : []),
     "",
     "INBOUND EMAIL (the message you are answering):",
     `Subject: ${input.subject}`,
@@ -231,12 +404,12 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<{ bo
   if (!body) throw new Error("the model returned an empty reply draft — try again");
 
   // The outbound plays lint their drafts and let sendDraftedEmail block on the
-  // flags. A reply has no send gate (the founder reviews it in the composer),
-  // so the gate is a single repair pass instead: cheaper than shipping a
-  // three-paragraph pitch at a one-line question.
+  // flags. A reply has no send gate for most flags (the founder reviews it in
+  // the composer), so the gate is a single repair pass — except `commits-terms`
+  // (issue #480), which DOES get a send gate: see the route's needsDecision.
   const priorTexts = [...prior.map((r) => r.body!), ...(input.threadSent ?? []).map((t) => t.body)];
   const budget = replyWordBudget(input.body);
-  const flags = lintReply(body, budget, priorTexts);
+  let flags = lintReply(body, budget, priorTexts);
   if (flags.length > 0) {
     const repaired = await repairReply({ messages, first: res.content, flags, budget, input });
     // Keep the rewrite only when it is strictly better — fewer flags, or the
@@ -247,9 +420,10 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<{ bo
       better(replyPenalty(repaired, budget, priorTexts), replyPenalty(body, budget, priorTexts))
     ) {
       body = repaired;
+      flags = lintReply(body, budget, priorTexts);
     }
   }
-  return { body };
+  return { body, flags };
 }
 
 /** One corrective turn, naming the flags the draft tripped. Returns "" when the
@@ -273,7 +447,9 @@ async function repairReply(opts: {
             `That draft failed the reply gate: ${opts.flags.join(", ")}.`,
             `They wrote ${inboundWords} words; yours must come in under ${opts.budget}, signature excluded.`,
             "Rewrite it. Answer only what they actually said, and cut every sentence that pitches,",
-            "re-introduces you or the product, or repeats wording from an email already in this thread.",
+            "re-introduces you or the product, repeats wording from an email already in this thread,",
+            "or commits the founder to pricing, discounts, partnership terms, distribution, documentation",
+            "placement, exclusivity, roadmap dates, or headcount that were never authorised.",
             "Same JSON shape.",
           ].join(" "),
         },

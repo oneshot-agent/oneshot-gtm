@@ -150,6 +150,23 @@ vi.mock("@oneshot-gtm/core", async () => {
   };
 });
 
+// Round-1 correction (#480): recordInboxReply's return value (new-row vs.
+// already-seen) gates the paid triageEmails call — mocked here so the dedupe
+// test below can assert call counts/args without hitting a real LLM.
+const triageEmailsMock = vi.fn(async (emails: Array<{ id: string }>) =>
+  emails.map((e) => ({
+    id: e.id,
+    from: "x",
+    subject: "x",
+    category: "interested" as const,
+    reasoning: "r",
+  })),
+);
+vi.mock("@oneshot-gtm/intel", async () => {
+  const actual = await vi.importActual<typeof import("@oneshot-gtm/intel")>("@oneshot-gtm/intel");
+  return { ...actual, triageEmails: triageEmailsMock };
+});
+
 const { advanceCadence, pollInboxReplies } = await import("../src/_cadence.ts");
 
 const PAST = "2000-01-01T00:00:00.000Z"; // always due
@@ -161,6 +178,7 @@ beforeEach(() => {
   repliedSteps = [];
   persistedReplies = [];
   seqEvents = [];
+  triageEmailsMock.mockClear();
   // The fixture cadence is also the latest play that emailed the prospect.
   latestSentPlay = "stack-consolidation";
   pollState = {};
@@ -310,6 +328,24 @@ describe("pollInboxReplies — standalone background detection (no sends)", () =
     expect((await pollInboxReplies()).repliesDetected).toBe(1);
     expect((await pollInboxReplies()).repliesDetected).toBe(0);
     expect(repliedSteps).toHaveLength(1);
+  });
+
+  // Round-1 correction (#480): the overlap window and backlog drain
+  // deliberately re-walk mail the ledger already has, so a `human` reply
+  // already recorded (and triaged) by a prior poll must not be re-sent to
+  // the paid triageEmails call every time it's re-examined.
+  it("does not re-triage a human reply already recorded by a prior poll", async () => {
+    inboxEmails = [{ id: "m1", from: "sophia@agenticarchitect.ai", subject: "re: stack" }];
+
+    await pollInboxReplies();
+    expect(triageEmailsMock).toHaveBeenCalledTimes(1);
+    expect(triageEmailsMock.mock.calls[0]![0]).toMatchObject([{ id: "m1" }]);
+
+    // Same watermark-overlap re-examination sees the identical email again —
+    // recordInboxReply reports it as not-new (INSERT OR IGNORE no-op), so the
+    // triage call must be skipped this time.
+    await pollInboxReplies();
+    expect(triageEmailsMock).toHaveBeenCalledTimes(1);
   });
 });
 

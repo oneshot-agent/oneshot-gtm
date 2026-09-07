@@ -18,6 +18,8 @@ import type {
   InboxSaveDraftResult,
   InboxSendReplyRequest,
   InboxSendReplyResult,
+  InboxSteerRequest,
+  InboxSteerResult,
   LastDraft,
   OutcomeByPlay,
   OutcomeRequest,
@@ -160,6 +162,7 @@ export const api = {
     postJson<InboxSaveDraftResult>("/inbox/draft", req),
   sendInboxReply: (req: InboxSendReplyRequest) =>
     postJson<InboxSendReplyResult>("/inbox/reply", req),
+  steerInboxReply: (req: InboxSteerRequest) => postJson<InboxSteerResult>("/inbox/steer", req),
   receipt: (id: number) => getJson<{ receipt: ReceiptDetail }>(`/receipts/${id}`),
   plays: () => getJson<{ plays: PlayDescriptor[] }>("/plays"),
   // Timing only (cumulative days from send); null resets to code defaults. Step structure is fixed.

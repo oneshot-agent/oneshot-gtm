@@ -109,4 +109,46 @@ describe("draftInboxReply context assembly", () => {
     await draftInboxReply({ ...BASE, threadSent: [] });
     expect(lastUserBlock()).not.toContain("THREAD — REPLIES YOU ALREADY SENT");
   });
+
+  it("injects the intent directive when intent is classified (issue #480)", async () => {
+    await draftInboxReply({ ...BASE, intent: "interested" });
+    const block = lastUserBlock();
+    expect(block).toContain("INTENT DIRECTIVE");
+    expect(block).toContain("interested");
+  });
+
+  it("omits the intent directive when intent is null or unhandled", async () => {
+    await draftInboxReply({ ...BASE, intent: null });
+    expect(lastUserBlock()).not.toContain("INTENT DIRECTIVE");
+    await draftInboxReply({ ...BASE, intent: "auto_reply" });
+    expect(lastUserBlock()).not.toContain("INTENT DIRECTIVE");
+  });
+
+  it("injects the founder steer as a binding block when set (issue #480)", async () => {
+    await draftInboxReply({ ...BASE, steer: "docs listing only, no exclusivity" });
+    const block = lastUserBlock();
+    expect(block).toContain("FOUNDER STEER");
+    expect(block).toContain("docs listing only, no exclusivity");
+  });
+
+  it("omits the steer block when unset", async () => {
+    await draftInboxReply({ ...BASE, steer: null });
+    expect(lastUserBlock()).not.toContain("FOUNDER STEER");
+  });
+
+  it("derives an ASKS ALREADY MADE block from prior sent replies and excludes it when none", async () => {
+    await draftInboxReply({
+      ...BASE,
+      threadSent: [{ body: "Does later this week work for a quick call?", sentAt: "2026-08-26" }],
+    });
+    const block = lastUserBlock();
+    expect(block).toContain("ASKS ALREADY MADE");
+    expect(block).toContain("Does later this week work for a quick call?");
+
+    await draftInboxReply({
+      ...BASE,
+      threadSent: [{ body: "Sounds good, no rush.", sentAt: "2026-08-26" }],
+    });
+    expect(lastUserBlock()).not.toContain("ASKS ALREADY MADE");
+  });
 });

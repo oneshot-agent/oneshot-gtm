@@ -1,11 +1,12 @@
 import {
   adviseOnce,
   generateFirstLine,
+  triageEmails,
   triageInbox,
   weeklyReview,
   type LlmMessage,
 } from "@oneshot-gtm/intel";
-import { loadConfig } from "@oneshot-gtm/core";
+import { getLedger, loadConfig } from "@oneshot-gtm/core";
 import { writeFileSync } from "node:fs";
 import prompts from "prompts";
 import { bail, box, c, header, note, ok, warn } from "../output.ts";
@@ -116,6 +117,57 @@ export async function commandIntelTriage(opts: {
   }
   process.stdout.write("\n");
   ok(`${triaged.length} replies triaged.`);
+}
+
+/**
+ * Backfill sentiment intent onto persisted human replies that predate the
+ * classifier (issue #480) — the ten replies the workspace had before this
+ * shipped, and anyone else's pre-existing history. Best-effort per row: a
+ * triage failure on one batch is logged and skipped, never aborts the run.
+ */
+export async function commandIntelBackfillIntent(opts: { limit?: number } = {}): Promise<void> {
+  header("intel backfill-intent");
+  const ledger = getLedger();
+  const rows = ledger.listUntriagedHumanReplies(opts.limit ?? 200);
+  if (rows.length === 0) {
+    note("Nothing to backfill — every human reply already has an intent.");
+    return;
+  }
+  note(`${rows.length} untriaged human repl${rows.length === 1 ? "y" : "ies"} found.`);
+
+  const BATCH = 25;
+  let done = 0;
+  let failed = 0;
+  for (let i = 0; i < rows.length; i += BATCH) {
+    const batch = rows.slice(i, i + BATCH);
+    try {
+      const triaged = await triageEmails(
+        batch.map((r) => ({
+          id: r.id,
+          from: r.from_email,
+          subject: r.subject ?? "",
+          received_at: r.received_at,
+          body: r.body,
+        })),
+      );
+      const byId = new Map(triaged.map((t) => [t.id, t]));
+      for (const r of batch) {
+        const t = byId.get(r.id);
+        if (!t) {
+          failed++;
+          continue;
+        }
+        ledger.setInboxReplyIntent(r.id, t.category, t.reasoning || null);
+        done++;
+      }
+    } catch (err) {
+      failed += batch.length;
+      warn(`batch starting at row ${i} failed: ${(err as Error)?.message ?? "unknown error"}`);
+    }
+  }
+  ok(
+    `backfilled ${done} repl${done === 1 ? "y" : "ies"}${failed > 0 ? `, ${failed} failed` : ""}.`,
+  );
 }
 
 export async function commandIntelPersonalize(opts: {

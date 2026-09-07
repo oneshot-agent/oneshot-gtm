@@ -22,6 +22,7 @@ function raw(overrides: Partial<SentOutcomeRawRow> = {}): SentOutcomeRawRow {
     joined_prospect_id: 7,
     payload_email: "ada@acme.dev",
     first_email_reply_at: null,
+    first_email_reply_intent: null,
     first_channel_reply_at: null,
     deal_rank: null,
     ...overrides,
@@ -82,6 +83,71 @@ describe("labelSentRow", () => {
     expect(b).toEqual(a);
     expect(a.daysSinceSend).toBeGreaterThan(31);
     expect(a.daysSinceSend).toBeLessThan(33);
+  });
+});
+
+describe("labelSentRow — intent-based positive evidence (issue #480)", () => {
+  it("a classified decline (not_now) is NOT positive evidence, even though it's a reply", () => {
+    const row = labelSentRow(
+      raw({
+        sent_at: NOW.toISOString(),
+        first_email_reply_at: "x",
+        first_email_reply_intent: "not_now",
+      }),
+      "none",
+      NOW,
+    );
+    expect(row.outcome).toBe("none");
+  });
+
+  it("an explicit unsubscribe intent on a human-kind row is NOT positive evidence", () => {
+    const row = labelSentRow(
+      raw({
+        sent_at: NOW.toISOString(),
+        first_email_reply_at: "x",
+        first_email_reply_intent: "unsubscribe",
+      }),
+      "none",
+      NOW,
+    );
+    expect(row.outcome).toBe("none");
+  });
+
+  it("interested / question / objection ARE positive evidence", () => {
+    for (const intent of ["interested", "question", "objection"]) {
+      const row = labelSentRow(
+        raw({
+          sent_at: NOW.toISOString(),
+          first_email_reply_at: "x",
+          first_email_reply_intent: intent,
+        }),
+        "none",
+        NOW,
+      );
+      expect(row.outcome).toBe("reply");
+    }
+  });
+
+  it("untriaged (NULL intent) still counts positive — a triage outage never manufactures a negative", () => {
+    const row = labelSentRow(
+      raw({
+        sent_at: NOW.toISOString(),
+        first_email_reply_at: "x",
+        first_email_reply_intent: null,
+      }),
+      "none",
+      NOW,
+    );
+    expect(row.outcome).toBe("reply");
+  });
+
+  it("a LinkedIn channel reply is always positive — it is never machine-classified", () => {
+    const row = labelSentRow(
+      raw({ sent_at: NOW.toISOString(), first_channel_reply_at: "x" }),
+      "none",
+      NOW,
+    );
+    expect(row.outcome).toBe("reply");
   });
 });
 

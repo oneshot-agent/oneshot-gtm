@@ -6,6 +6,8 @@ function reply(matched: InboxReplyView["matched"]): InboxReplyView {
   return {
     id: "1",
     kind: "human",
+    intent: null,
+    intentReason: null,
     fromEmail: "a@x.com",
     fromRaw: "a@x.com",
     subject: "s",

@@ -717,6 +717,13 @@ export class Ledger {
    * Backs the /inbox composer's debounced auto-save so a refresh or navigation
    * away no longer discards the draft. Keyed by thread_key (see `inboxThreadKey`
    * in shared-types) — Gmail thread_id, else the email id.
+   *
+   * `status` is recomputed by the CALLER on every save from the body's own
+   * lint state (issue #480's `commits-terms` flag) — never trust a
+   * client-sent value, so the caller passes the freshly-computed verdict.
+   * `steer` is deliberately NOT part of this statement: an ordinary autosave
+   * must never clobber a standing founder instruction. Use
+   * `setInboxDraftSteer` for that.
    */
   upsertInboxDraft(input: {
     threadKey: string;
@@ -725,17 +732,19 @@ export class Ledger {
     subject: string;
     identityId: string | null;
     body: string;
+    status?: "needs_decision" | null;
   }): void {
     this.db
       .prepare(
-        `INSERT INTO inbox_drafts(thread_key, inbound_email_id, to_email, subject, identity_id, body, updated_at)
-         VALUES(?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO inbox_drafts(thread_key, inbound_email_id, to_email, subject, identity_id, body, status, updated_at)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(thread_key) DO UPDATE SET
            inbound_email_id = excluded.inbound_email_id,
            to_email = excluded.to_email,
            subject = excluded.subject,
            identity_id = excluded.identity_id,
            body = excluded.body,
+           status = excluded.status,
            updated_at = excluded.updated_at`,
       )
       .run(
@@ -745,8 +754,35 @@ export class Ledger {
         input.subject,
         input.identityId,
         input.body,
+        input.status ?? null,
         new Date().toISOString(),
       );
+  }
+
+  /**
+   * Persist the founder's standing redraft instruction for a thread (issue
+   * #480's steer box) — a no-op if the thread has no draft row yet (the
+   * steer route always upserts a draft first, so this is only ever called
+   * after that succeeds).
+   */
+  setInboxDraftSteer(threadKey: string, steer: string | null): void {
+    this.db.prepare(`UPDATE inbox_drafts SET steer = ? WHERE thread_key = ?`).run(steer, threadKey);
+  }
+
+  /**
+   * Persist a server-generated draft body (round-1 correction, #480's steer
+   * flow): `steerRoute` computes a redraft and returned it to the client
+   * without ever writing it back to `inbox_drafts`, so the debounced
+   * autosave (which only fires on a body DIFF) never saw a change and the
+   * redraft was lost on refresh/collapse. Mirrors `saveDraftRoute`'s body
+   * write but leaves `steer` and every other column untouched — the standing
+   * steer instruction is set separately via `setInboxDraftSteer` and must
+   * survive this call.
+   */
+  setInboxDraftBody(threadKey: string, body: string, status: "needs_decision" | null): void {
+    this.db
+      .prepare(`UPDATE inbox_drafts SET body = ?, status = ?, updated_at = ? WHERE thread_key = ?`)
+      .run(body, status, new Date().toISOString(), threadKey);
   }
 
   clearInboxDraft(threadKey: string): void {
@@ -792,24 +828,39 @@ export class Ledger {
    */
   getInboxThreads(): Map<
     string,
-    { draftBody: string | null; sent: { body: string; sentAt: string }[] }
+    {
+      draftBody: string | null;
+      sent: { body: string; sentAt: string }[];
+      steer: string | null;
+      status: "needs_decision" | null;
+    }
   > {
     const map = new Map<
       string,
-      { draftBody: string | null; sent: { body: string; sentAt: string }[] }
+      {
+        draftBody: string | null;
+        sent: { body: string; sentAt: string }[];
+        steer: string | null;
+        status: "needs_decision" | null;
+      }
     >();
     const ensure = (key: string) => {
       let entry = map.get(key);
       if (!entry) {
-        entry = { draftBody: null, sent: [] };
+        entry = { draftBody: null, sent: [], steer: null, status: null };
         map.set(key, entry);
       }
       return entry;
     };
     const drafts = this.db
-      .query(`SELECT thread_key AS k, body AS b FROM inbox_drafts`)
-      .all() as Array<{ k: string; b: string }>;
-    for (const d of drafts) ensure(d.k).draftBody = d.b;
+      .query(`SELECT thread_key AS k, body AS b, steer AS s, status AS st FROM inbox_drafts`)
+      .all() as Array<{ k: string; b: string; s: string | null; st: string | null }>;
+    for (const d of drafts) {
+      const entry = ensure(d.k);
+      entry.draftBody = d.b;
+      entry.steer = d.s;
+      entry.status = d.st === "needs_decision" ? "needs_decision" : null;
+    }
     const sent = this.db
       .query(`SELECT thread_key AS k, body AS b, sent_at AS t FROM inbox_sent ORDER BY sent_at ASC`)
       .all() as Array<{ k: string; b: string; t: string }>;
@@ -1114,6 +1165,39 @@ export class Ledger {
     return res.changes > 0;
   }
 
+  /**
+   * Set the sentiment/intent classification on an already-persisted reply
+   * (issue #480) — the triage call runs AFTER recordInboxReply so a triage
+   * failure never loses the reply itself. `id IS` a no-op UPDATE if the row
+   * somehow isn't there (e.g. a race), which is the correct behaviour: never
+   * throw out of a best-effort classification path.
+   */
+  setInboxReplyIntent(id: string, intent: string | null, intentReason: string | null): void {
+    this.db
+      .prepare(`UPDATE inbox_replies SET intent = ?, intent_reason = ? WHERE id = ?`)
+      .run(intent, intentReason, id);
+  }
+
+  /**
+   * Bulk intent lookup for a set of provider email ids — the /inbox route's
+   * badge needs the persisted (LLM-classified) intent per visible reply
+   * without an N+1 query. Empty input short-circuits (SQLite's `IN ()` is
+   * invalid syntax, not just slow).
+   */
+  listInboxReplyIntents(
+    ids: string[],
+  ): Map<string, { intent: string | null; intentReason: string | null }> {
+    if (ids.length === 0) return new Map();
+    const placeholders = ids.map(() => "?").join(",");
+    const rows = this.db
+      .query(
+        `SELECT id, intent, intent_reason AS intentReason FROM inbox_replies
+         WHERE id IN (${placeholders})`,
+      )
+      .all(...ids) as Array<{ id: string; intent: string | null; intentReason: string | null }>;
+    return new Map(rows.map((r) => [r.id, { intent: r.intent, intentReason: r.intentReason }]));
+  }
+
   /** All persisted inbound replies for one prospect, oldest first. */
   listInboxRepliesForProspect(prospectId: number): InboxReplyRecord[] {
     return this.db
@@ -1125,6 +1209,24 @@ export class Ledger {
   listInboxReplyIds(): Set<string> {
     const rows = this.db.query(`SELECT id FROM inbox_replies`).all() as Array<{ id: string }>;
     return new Set(rows.map((r) => r.id));
+  }
+
+  /**
+   * Every persisted HUMAN reply with no intent classification yet (issue
+   * #480) — the backfill target for `oneshot-gtm intel backfill-intent` and
+   * for any pre-#480 install's existing history. `COALESCE(kind,'human')`
+   * mirrors the same predicate `listSentOutcomeRows` uses: pre-v23 rows with
+   * a NULL kind read as human everywhere.
+   */
+  listUntriagedHumanReplies(limit = 200): InboxReplyRecord[] {
+    return this.db
+      .query(
+        `SELECT * FROM inbox_replies
+         WHERE COALESCE(kind, 'human') = 'human' AND intent IS NULL
+         ORDER BY received_at ASC
+         LIMIT ?`,
+      )
+      .all(limit) as InboxReplyRecord[];
   }
 
   /** Prospects that have at least one persisted reply, most recent activity first. */
@@ -1905,6 +2007,16 @@ export class Ledger {
       input.notes ?? null,
     );
     return Number(result.lastInsertRowid);
+  }
+
+  /** Latest outcome timestamp per prospect, bulk-read to acknowledge earlier positive replies. */
+  listLatestOutcomeRecordedAtByProspect(): Map<number, string> {
+    const rows = this.db
+      .query(
+        `SELECT prospect_id, MAX(recorded_at) AS recorded_at FROM deal_outcomes GROUP BY prospect_id`,
+      )
+      .all() as Array<{ prospect_id: number; recorded_at: string }>;
+    return new Map(rows.map((r) => [r.prospect_id, r.recorded_at]));
   }
 
   countOutcomes(
@@ -3776,6 +3888,10 @@ export class Ledger {
                 (SELECT MIN(ir.received_at) FROM inbox_replies ir
                   WHERE ir.prospect_id = COALESCE(q.prospect_id, p.id)
                     AND COALESCE(ir.kind, 'human') = 'human') AS first_email_reply_at,
+                (SELECT ir.intent FROM inbox_replies ir
+                  WHERE ir.prospect_id = COALESCE(q.prospect_id, p.id)
+                    AND COALESCE(ir.kind, 'human') = 'human'
+                  ORDER BY ir.received_at ASC, ir.id ASC LIMIT 1) AS first_email_reply_intent,
                 (SELECT MIN(ce.occurred_at) FROM channel_events ce
                   WHERE ce.prospect_id = COALESCE(q.prospect_id, p.id)
                     AND ce.event_type = 'reply') AS first_channel_reply_at,

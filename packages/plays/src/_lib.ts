@@ -592,6 +592,61 @@ export function admissionSlot(prospectEmail: string): boolean {
   return h % 3 === 0;
 }
 
+/**
+ * Code-gated directive per classified reply intent (issue #480) — the
+ * structured input `draftInboxReply` acts on, instead of the model guessing
+ * "are they interested?" from prose on every draft. `intent` is the
+ * TriageCategory persisted on `inbox_replies.intent`; unclassified (null) or
+ * a category with no special handling (unsubscribe/auto_reply/other — those
+ * never reach the drafter in practice) returns null and the prompt's default
+ * rules apply unmodified.
+ */
+export function intentDirectiveBlock(intent: string | null | undefined): string | null {
+  switch (intent) {
+    case "interested":
+      return [
+        "INTENT DIRECTIVE (classified: interested — follow this, do not re-derive intent from prose):",
+        "They want to move forward. Switch out of pitch mode into logistics/discovery mode: do NOT re-explain the product, and do NOT commit to anything on their behalf — no pricing, discounts, partnership terms, distribution, documentation placement, or exclusivity, even if they asked for one directly.",
+        "If they proposed specific terms, do not accept, reject, or negotiate them here — say the founder will follow up on the specifics directly, and ask the one concrete logistics question that moves this forward (a call, an access grant, a scoping detail).",
+      ].join("\n");
+    case "not_now":
+      return [
+        "INTENT DIRECTIVE (classified: not_now — follow this, do not re-derive intent from prose):",
+        "Accept the timing without a counter-pitch. At most one low-pressure door open, nothing else. Do not propose a specific follow-up date unless they named one.",
+      ].join("\n");
+    case "wrong_person":
+      return [
+        "INTENT DIRECTIVE (classified: wrong_person — follow this, do not re-derive intent from prose):",
+        "Thank them and ask for the intro or the right contact if one wasn't already given. Do not re-pitch the product.",
+      ].join("\n");
+    case "objection":
+      return [
+        "INTENT DIRECTIVE (classified: objection — follow this, do not re-derive intent from prose):",
+        "Address the SPECIFIC objection with a real, factual answer — not a deflection. Do not make a new commitment (pricing, terms, scope, timeline) to overcome it.",
+      ].join("\n");
+    case "question":
+      return [
+        "INTENT DIRECTIVE (classified: question — follow this, do not re-derive intent from prose):",
+        "Answer directly, then stop. Do not pivot into a pitch or introduce a new ask.",
+      ].join("\n");
+    default:
+      return null;
+  }
+}
+
+/**
+ * FOUNDER STEER block (issue #480) — a short standing instruction the founder
+ * typed on `/inbox` ("docs listing only, no exclusivity, no traffic
+ * promise"), persisted on the thread's draft row and passed back in on every
+ * redraft. Binding: it overrides the prompt's default framing, not just a
+ * suggestion alongside it.
+ */
+export function founderSteerBlock(steer: string | null | undefined): string | null {
+  const trimmed = steer?.trim();
+  if (!trimmed) return null;
+  return `FOUNDER STEER (binding instruction for this redraft — follow it exactly, it overrides any default framing above): ${trimmed}`;
+}
+
 export async function draftEmailFromPrompt(opts: {
   promptName: string;
   inputBlock: string;

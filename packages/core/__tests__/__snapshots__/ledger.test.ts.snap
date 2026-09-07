@@ -340,7 +340,7 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
         identity_id      TEXT,
         body             TEXT NOT NULL,
         updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
-      )",
+      , steer TEXT, status TEXT)",
       "tbl_name": "inbox_drafts",
       "type": "table",
     },
@@ -359,7 +359,7 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
         thread_id          TEXT,
         message_id         TEXT,
         created_at         TEXT NOT NULL DEFAULT (datetime('now'))
-      , kind TEXT)",
+      , kind TEXT, intent TEXT, intent_reason TEXT)",
       "tbl_name": "inbox_replies",
       "type": "table",
     },

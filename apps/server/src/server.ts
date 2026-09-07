@@ -15,7 +15,13 @@ import {
   sendCadenceBatchRoute,
 } from "./api/cadences.ts";
 import { listReceipts, getReceipt } from "./api/receipts.ts";
-import { draftReplyRoute, listInboxRoute, saveDraftRoute, sendReplyRoute } from "./api/inbox.ts";
+import {
+  draftReplyRoute,
+  listInboxRoute,
+  saveDraftRoute,
+  sendReplyRoute,
+  steerRoute,
+} from "./api/inbox.ts";
 import { listPlays, setCadenceRoute } from "./api/plays.ts";
 import {
   measureCac,
@@ -99,6 +105,7 @@ const routes: RouteEntry[] = [
   route("POST", "/api/inbox/draft-reply", draftReplyRoute),
   route("POST", "/api/inbox/draft", saveDraftRoute),
   route("POST", "/api/inbox/reply", sendReplyRoute),
+  route("POST", "/api/inbox/steer", steerRoute),
   route("GET", "/api/plays", listPlays),
   route("POST", "/api/plays/:name/cadence", setCadenceRoute),
   route("GET", "/api/measure/cac", measureCac),

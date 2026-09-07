@@ -999,6 +999,30 @@ describe("Ledger runs", () => {
 });
 
 describe("Ledger outcomes + cold prospects", () => {
+  it("bulk-reads the latest outcome timestamp per prospect", () => {
+    const first = ledger.upsertProspect({ name: "A", email: "a@x.com", source: "t" });
+    const second = ledger.upsertProspect({ name: "B", email: "b@x.com", source: "t" });
+    ledger.upsertProspect({ name: "C", email: "c@x.com", source: "t" });
+    expect(ledger.listLatestOutcomeRecordedAtByProspect()).toEqual(new Map());
+    const db = new Database(dbPath);
+    try {
+      const insert = db.prepare(
+        "INSERT INTO deal_outcomes(prospect_id, outcome, recorded_at) VALUES (?, 'meeting_booked', ?)",
+      );
+      insert.run(first, "2026-09-07 10:00:00");
+      insert.run(first, "2026-09-06 10:00:00");
+      insert.run(second, "2026-09-05 10:00:00");
+    } finally {
+      db.close();
+    }
+    expect(ledger.listLatestOutcomeRecordedAtByProspect()).toEqual(
+      new Map([
+        [first, "2026-09-07 10:00:00"],
+        [second, "2026-09-05 10:00:00"],
+      ]),
+    );
+  });
+
   it("recordOutcome + outcomesByPlay", () => {
     const pid = ledger.upsertProspect({ name: "C", email: "c@x.com", source: "t" });
     ledger.recordOutcome({ prospectId: pid, playName: "show-hn", outcome: "meeting_booked" });
@@ -1373,6 +1397,22 @@ describe("Ledger inbox drafts + sent replies", () => {
     const sent = ledger.getInboxThreads().get("thread-1")?.sent ?? [];
     expect(sent.map((s) => s.body)).toEqual(["first reply", "second reply"]);
     expect(sent.every((s) => typeof s.sentAt === "string" && s.sentAt.length > 0)).toBe(true);
+  });
+
+  it("persists the commits-terms status on the draft (issue #480)", () => {
+    ledger.upsertInboxDraft({ ...draft, status: "needs_decision" });
+    expect(ledger.getInboxThreads().get("thread-1")?.status).toBe("needs_decision");
+    ledger.upsertInboxDraft({ ...draft, status: null });
+    expect(ledger.getInboxThreads().get("thread-1")?.status).toBeNull();
+  });
+
+  it("setInboxDraftSteer persists a founder redraft instruction (issue #480)", () => {
+    ledger.upsertInboxDraft(draft);
+    expect(ledger.getInboxThreads().get("thread-1")?.steer).toBeNull();
+    ledger.setInboxDraftSteer("thread-1", "docs listing only, no exclusivity");
+    expect(ledger.getInboxThreads().get("thread-1")?.steer).toBe(
+      "docs listing only, no exclusivity",
+    );
   });
 });
 
