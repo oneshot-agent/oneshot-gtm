@@ -1,6 +1,6 @@
 # Status
 
-**Assume green.** The 51 CLI commands, 23 plays, 15 finders, nine dashboard pages plus the run form, and the server's REST + SSE routes are all covered by the test suite — and verified end to end against the live OneShot API: every paid call type has made the live round trip, including the voice and SMS legs (`motion concierge` / `motion demo-no-show`), the PMF survey pair, reply triage, bounce harvesting, and `gmail placement`.
+**Assume green.** The 65 CLI commands, 23 plays, 15 finders, nine dashboard pages plus the run form, and the server's REST + SSE routes are all covered by the test suite — and verified end to end against the live OneShot API: every paid call type has made the live round trip, including the voice and SMS legs (`motion concierge` / `motion demo-no-show`), the PMF survey pair, reply triage, bounce harvesting, and `gmail placement`.
 
 Last verified **2026-09-05** · Bun 1.3.13 · OneShot SDK 0.32.0 · **3170 tests / 244 files** · typecheck + oxlint + oxfmt clean.
 
