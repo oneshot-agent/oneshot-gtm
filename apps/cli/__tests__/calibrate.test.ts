@@ -108,7 +108,12 @@ describe("readiness gate", () => {
   });
 });
 
-describe("--fit on a ready finder", () => {
+// A fit is a real logistic regression over 180 seeded rows with a holdout,
+// on a fresh SQLite file: 6-11s on the CI runner (two runs measured), so it
+// clears vitest's 5s default there and nowhere else. Same shape as #545's
+// demo-seed group.
+const FIT_TIMEOUT_MS = 30_000;
+describe("--fit on a ready finder", { timeout: FIT_TIMEOUT_MS }, () => {
   function seedReady(): void {
     // 60 replied high-scorers, 120 silent low-scorers — separable by design.
     for (let i = 0; i < 60; i++) seedSent(i, { replied: true, total: 80 });
