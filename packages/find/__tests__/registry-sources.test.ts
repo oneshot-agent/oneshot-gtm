@@ -6,6 +6,8 @@ const {
   socrataLicenseSource,
   nppesSource,
   fmcsaSource,
+  looksLikeLicenceDateColumn,
+  resolveDateColumn,
   mapSocrataRows,
   mapNppesResults,
   mapFmcsaRows,
@@ -518,5 +520,147 @@ describe("fmcsaSource.fetch", () => {
     });
     expect(out.records).toHaveLength(0);
     expect(out.perSource[0]?.error).toBeTruthy();
+  });
+});
+
+describe("Socrata date-column detection — portals never agree on the name", () => {
+  it("recognises effective/issue/creation-shaped names and refuses expiry/renewal/update ones", () => {
+    for (const yes of [
+      "licenseeffectivedate",
+      "license_creation_date",
+      "issue_date",
+      "DateIssued",
+      "start_date",
+      "registration_date",
+    ]) {
+      expect(looksLikeLicenceDateColumn(yes), yes).toBe(true);
+    }
+    for (const no of [
+      "licenseexpirationdate",
+      "lic_expir_dd",
+      "renewal_date",
+      "updated_date",
+      "last_modified_date",
+      "business_name",
+      "inspection_date",
+    ]) {
+      expect(looksLikeLicenceDateColumn(no), no).toBe(false);
+    }
+  });
+
+  it("prefers the exact list over the heuristic when both would match", () => {
+    expect(resolveDateColumn(["licenseeffectivedate", "issue_date"], ["issue_date"])).toBe(
+      "issue_date",
+    );
+    expect(
+      resolveDateColumn(["licenseexpirationdate", "licenseeffectivedate"], ["issue_date"]),
+    ).toBe("licenseeffectivedate");
+    expect(
+      resolveDateColumn(["licenseexpirationdate", "business_name"], ["issue_date"]),
+    ).toBeNull();
+  });
+
+  it("maps a WA L&I-shaped row (licenseeffectivedate) and drops a row that only carries an expiry", () => {
+    const out = mapSocrataRows(
+      [
+        {
+          businessname: "Rae's HVAC LLC",
+          address1: "1 Main St",
+          city: "Spokane",
+          state: "WA",
+          zip: "99201",
+          licenseeffectivedate: RECENT_ISO,
+          licenseexpirationdate: "2030-01-01T00:00:00.000",
+        },
+        {
+          businessname: "Old Expiring Co",
+          city: "Spokane",
+          state: "WA",
+          licenseexpirationdate: RECENT_ISO,
+        },
+      ],
+      "WA L&I contractor licenses",
+      60,
+    );
+    // Exactly WA's spelling — no separators, no `business_name` alias to
+    // lean on. That is the row the old exact-name lists dropped as nameless.
+    expect(out.map((r) => r.name)).toEqual(["Rae's HVAC LLC"]);
+    expect(out[0]?.matchedDateIso).toBe(new Date(RECENT_ISO).toISOString());
+    expect(out[0]?.address).toBe("1 Main St");
+    expect(out[0]?.postalCode).toBe("99201");
+  });
+
+  it("sends one $q request per licence type instead of one request that ANDs them all", async () => {
+    const seen: string[] = [];
+    stubFetch(async (url) => {
+      seen.push(url);
+      if (url.includes("/api/views/"))
+        return { columns: [{ fieldName: "businessname" }, { fieldName: "licenseeffectivedate" }] };
+      const q = new URL(url).searchParams.get("$q");
+      return q === "HVAC"
+        ? [
+            {
+              businessname: "Rae's HVAC LLC",
+              city: "Spokane",
+              state: "WA",
+              licenseeffectivedate: RECENT_ISO,
+            },
+          ]
+        : q === "Plumbing"
+          ? [
+              {
+                businessname: "Sam's Plumbing",
+                city: "Tacoma",
+                state: "WA",
+                licenseeffectivedate: RECENT_ISO,
+              },
+            ]
+          : [];
+    });
+    const out = await socrataLicenseSource.fetch({
+      sinceDays: 60,
+      limit: 25,
+      portals: [{ host: "data.wa.gov", dataset: "m8qx-ubtq", label: "WA L&I contractor licenses" }],
+      licenseTypes: ["HVAC", "Plumbing"],
+    });
+    const qs = seen
+      .filter((u) => u.includes("/resource/"))
+      .map((u) => new URL(u).searchParams.get("$q"));
+    expect(qs).toContain("HVAC");
+    expect(qs).toContain("Plumbing");
+    expect(qs).not.toContain("HVAC Plumbing");
+    expect(out.records.map((r) => r.name).toSorted()).toEqual(["Rae's HVAC LLC", "Sam's Plumbing"]);
+  });
+
+  it("drives $order and $where off the resolved column when the portal's date column is only found by the heuristic", async () => {
+    const seen: string[] = [];
+    stubFetch(async (url) => {
+      seen.push(url);
+      if (url.includes("/api/views/"))
+        return {
+          columns: [
+            { fieldName: "businessname" },
+            { fieldName: "licenseeffectivedate" },
+            { fieldName: "licenseexpirationdate" },
+          ],
+        };
+      return [
+        {
+          business_name: "Rae's HVAC LLC",
+          city: "Spokane",
+          state: "WA",
+          licenseeffectivedate: RECENT_ISO,
+        },
+      ];
+    });
+    const out = await socrataLicenseSource.fetch({
+      sinceDays: 60,
+      limit: 25,
+      portals: [{ host: "data.wa.gov", dataset: "m8qx-ubtq", label: "WA L&I contractor licenses" }],
+    });
+    expect(out.records).toHaveLength(1);
+    const resource = seen.find((u) => u.includes("/resource/"))!;
+    expect(resource).toContain("%24order=licenseeffectivedate+DESC");
+    expect(resource).toContain("%24where=licenseeffectivedate+%3E%3D");
   });
 });

@@ -101,7 +101,14 @@ const SOCRATA_NAME_FIELDS = [
   "entity_name",
   "name",
 ];
-const SOCRATA_ADDRESS_FIELDS = ["address", "address_line_1", "premise_address", "business_address"];
+const SOCRATA_ADDRESS_FIELDS = [
+  "address",
+  "address_1",
+  "address_line_1",
+  "premise_address",
+  "business_address",
+  "street_address",
+];
 const SOCRATA_CITY_FIELDS = ["city", "business_city", "city_name", "address_city"];
 const SOCRATA_STATE_FIELDS = ["state", "business_state", "state_code", "address_state"];
 const SOCRATA_PHONE_FIELDS = ["phone", "contact_phone", "business_phone", "telephone_number"];
@@ -116,7 +123,14 @@ const SOCRATA_DATE_FIELDS = [
   "created_date",
 ];
 
-/** Case-sensitive then case-insensitive lookup across candidate field names. */
+/**
+ * Exact, then case-insensitive, then separator-insensitive lookup across
+ * candidate field names. The last tier is what makes a portal that spells
+ * its columns `businessname` / `address1` (WA L&I) resolve against a list
+ * written as `business_name` / `address_1`: both sides are compared with
+ * everything but letters and digits stripped. Measured 2026-09-07: WA's
+ * 1,000 freshest contractor rows were all dropped as nameless before this.
+ */
 function pickField(record: Record<string, unknown>, candidates: string[]): string | null {
   for (const key of candidates) {
     const v = record[key];
@@ -129,7 +143,18 @@ function pickField(record: Record<string, unknown>, candidates: string[]): strin
     const v = record[actual];
     if (typeof v === "string" && v.trim().length > 0) return v.trim();
   }
+  const squashMap = new Map(Object.keys(record).map((k) => [squashKey(k), k]));
+  for (const key of candidates) {
+    const actual = squashMap.get(squashKey(key));
+    if (!actual) continue;
+    const v = record[actual];
+    if (typeof v === "string" && v.trim().length > 0) return v.trim();
+  }
   return null;
+}
+
+function squashKey(k: string): string {
+  return k.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
 /**
@@ -138,20 +163,39 @@ function pickField(record: Record<string, unknown>, candidates: string[]): strin
  * SoQL column name. Returns the ACTUAL key (not the value), unlike
  * `pickField`, and doesn't require the value to be present on this one row.
  */
-function findDateFieldKey(record: Record<string, unknown>, candidates: string[]): string | null {
-  for (const key of candidates) {
-    if (key in record) return key;
-  }
-  const lowerMap = new Map(Object.keys(record).map((k) => [k.toLowerCase(), k]));
+/**
+ * Does a column name read as "the date this licence started"? Portal schemas
+ * never agree on a name — NYC says `license_creation_date`, WA L&I says
+ * `licenseeffectivedate` with no separators — so the exact-name list above
+ * is tried first and this is the fallback. Deliberately excludes the
+ * expiry/renewal/update columns every licence dataset also carries: keying
+ * freshness off an expiry date would surface businesses whose licence is
+ * about to lapse, the opposite of newly opened.
+ */
+export function looksLikeLicenceDateColumn(name: string): boolean {
+  const n = name.toLowerCase();
+  if (!n.includes("date")) return false;
+  if (/expir|renew|end|cancel|revok|updat|modif|inspect/.test(n)) return false;
+  return /effective|issue|creat|start|licen|approv|grant|regist|add/.test(n);
+}
+
+/** Resolve the date column across a list of column names: exact list first, then the name heuristic. */
+export function resolveDateColumn(fieldNames: string[], candidates: string[]): string | null {
+  const lowerMap = new Map(fieldNames.map((k) => [k.toLowerCase(), k]));
   for (const key of candidates) {
     const actual = lowerMap.get(key.toLowerCase());
     if (actual) return actual;
   }
-  return null;
+  return fieldNames.find(looksLikeLicenceDateColumn) ?? null;
+}
+
+function findDateFieldKey(record: Record<string, unknown>, candidates: string[]): string | null {
+  return resolveDateColumn(Object.keys(record), candidates);
 }
 function pickDateIso(record: Record<string, unknown>, candidates: string[]): string | null {
-  const raw = pickField(record, candidates);
-  if (!raw) return null;
+  const key = resolveDateColumn(Object.keys(record), candidates);
+  const raw = key ? record[key] : null;
+  if (typeof raw !== "string" || raw.trim().length === 0) return null;
   const t = Date.parse(raw);
   if (!Number.isFinite(t)) return null;
   return new Date(t).toISOString();
@@ -172,14 +216,28 @@ function pickAddress(record: Record<string, unknown>): string | null {
   return street ?? null;
 }
 
-/** Build the Socrata full-text `$q` term from naics/licenseTypes filters, or null when unfiltered. */
+/**
+ * The Socrata full-text `$q` terms for the naics/licenseTypes filters — ONE
+ * request per term, never joined. Socrata ANDs the words of a single `$q`,
+ * so a joined "HVAC Plumbing Electrical Roofing" asked for rows matching all
+ * four at once: measured 2026-09-07 on WA L&I, `HVAC` alone is 288 rows,
+ * `HVAC Plumbing` is 6, all six pack types together is 0. Every multi-type
+ * pack filter was matching nothing. Returns `[]` when unfiltered.
+ */
+export function buildSocrataSearchTerms(
+  naics: string[] | undefined,
+  licenseTypes: string[] | undefined,
+): string[] {
+  return [...(naics ?? []), ...(licenseTypes ?? [])].map((t) => t.trim()).filter(Boolean);
+}
+
+/** @deprecated kept for the unit test's back-compat check — the fetch uses `buildSocrataSearchTerms`. */
 export function buildSocrataSearchTerm(
   naics: string[] | undefined,
   licenseTypes: string[] | undefined,
 ): string | null {
-  const terms = [...(naics ?? []), ...(licenseTypes ?? [])].map((t) => t.trim()).filter(Boolean);
-  if (terms.length === 0) return null;
-  return terms.join(" ");
+  const terms = buildSocrataSearchTerms(naics, licenseTypes);
+  return terms.length === 0 ? null : terms.join(" ");
 }
 
 /** Map + freshness-filter one portal's raw rows. Exported for the unit test's canned-payload check. */
@@ -187,15 +245,18 @@ export function mapSocrataRows(
   rows: unknown[],
   portalLabel: string,
   sinceDays: number,
+  /** The column the fetch already resolved for this portal — tried before the generic list. */
+  dateField?: string | null,
 ): RegistryRecord[] {
   const sinceMs = Date.now() - sinceDays * 86_400_000;
+  const candidates = dateField ? [dateField, ...SOCRATA_DATE_FIELDS] : SOCRATA_DATE_FIELDS;
   const out: RegistryRecord[] = [];
   for (const raw of rows) {
     if (!raw || typeof raw !== "object") continue;
     const rec = raw as Record<string, unknown>;
     const name = pickField(rec, SOCRATA_NAME_FIELDS);
     if (!name) continue;
-    const matchedDateIso = pickDateIso(rec, SOCRATA_DATE_FIELDS);
+    const matchedDateIso = pickDateIso(rec, candidates);
     if (!matchedDateIso) continue;
     if (Date.parse(matchedDateIso) < sinceMs) continue;
     out.push({
@@ -244,12 +305,7 @@ async function resolveSocrataDateFieldFromMetadata(
       .map((c) => c.fieldName)
       .filter((f): f is string => typeof f === "string" && f.length > 0);
     if (fieldNames.length === 0) return null;
-    const lowerMap = new Map(fieldNames.map((f) => [f.toLowerCase(), f]));
-    for (const candidate of SOCRATA_DATE_FIELDS) {
-      const actual = lowerMap.get(candidate.toLowerCase());
-      if (actual) return actual;
-    }
-    return null;
+    return resolveDateColumn(fieldNames, SOCRATA_DATE_FIELDS);
   } catch {
     return null;
   }
@@ -258,7 +314,9 @@ async function fetchSocrataPortal(
   portal: SocrataPortalConfig,
   cfg: RegistryQuery,
 ): Promise<{ records: RegistryRecord[]; diagnostic: string | null }> {
-  const q = buildSocrataSearchTerm(cfg.naics, cfg.licenseTypes);
+  const terms = buildSocrataSearchTerms(cfg.naics, cfg.licenseTypes);
+  // Unfiltered = one pass with no `$q`; filtered = one pass per term.
+  const passes: Array<string | null> = terms.length === 0 ? [null] : terms;
 
   // Business-license schemas vary portal to portal (see SOCRATA_DATE_FIELDS).
   // Prefer the dataset's own column metadata — it names every column
@@ -270,7 +328,8 @@ async function fetchSocrataPortal(
   if (!dateField) {
     const probeParams = new URLSearchParams();
     probeParams.set("$limit", "1");
-    if (q) probeParams.set("$q", q);
+    const probeQ = passes[0];
+    if (probeQ) probeParams.set("$q", probeQ);
     const probeUrl = `https://${portal.host}/resource/${portal.dataset}.json?${probeParams.toString()}`;
     try {
       const probeRes = await fetch(probeUrl);
@@ -290,67 +349,68 @@ async function fetchSocrataPortal(
   const sinceIso = new Date(Date.now() - cfg.sinceDays * 86_400_000).toISOString().split(".")[0];
 
   const rows: unknown[] = [];
-  for (let page = 0; page < SOCRATA_MAX_PAGES; page++) {
-    const params = new URLSearchParams();
-    params.set("$limit", String(SOCRATA_PAGE_SIZE));
-    params.set("$offset", String(page * SOCRATA_PAGE_SIZE));
-    if (q) params.set("$q", q);
-    if (dateField) {
-      // Recency-first ordering + a server-side freshness predicate — without
-      // this, `$limit=200` with no `$order` returns an arbitrary page of a
-      // dataset that can be millions of rows, silently missing every
-      // qualifying recent row that lands outside that arbitrary page.
-      params.set("$order", `${dateField} DESC`);
-      params.set("$where", `${dateField} >= '${sinceIso}'`);
-    }
-    const url = `https://${portal.host}/resource/${portal.dataset}.json?${params.toString()}`;
+  for (const q of passes)
+    for (let page = 0; page < SOCRATA_MAX_PAGES; page++) {
+      const params = new URLSearchParams();
+      params.set("$limit", String(SOCRATA_PAGE_SIZE));
+      params.set("$offset", String(page * SOCRATA_PAGE_SIZE));
+      if (q) params.set("$q", q);
+      if (dateField) {
+        // Recency-first ordering + a server-side freshness predicate — without
+        // this, `$limit=200` with no `$order` returns an arbitrary page of a
+        // dataset that can be millions of rows, silently missing every
+        // qualifying recent row that lands outside that arbitrary page.
+        params.set("$order", `${dateField} DESC`);
+        params.set("$where", `${dateField} >= '${sinceIso}'`);
+      }
+      const url = `https://${portal.host}/resource/${portal.dataset}.json?${params.toString()}`;
 
-    let res: Response;
-    try {
-      res = await fetch(url);
-    } catch (err) {
-      if (page === 0) {
-        return {
-          records: [],
-          diagnostic: `${portal.host} fetch failed: ${(err as Error).message ?? "network error"}`,
-        };
+      let res: Response;
+      try {
+        res = await fetch(url);
+      } catch (err) {
+        if (page === 0) {
+          return {
+            records: [],
+            diagnostic: `${portal.host} fetch failed: ${(err as Error).message ?? "network error"}`,
+          };
+        }
+        break;
       }
-      break;
-    }
-    if (!res.ok) {
-      if (page === 0) {
-        return {
-          records: [],
-          diagnostic: `${portal.host} returned ${res.status} ${res.statusText}`,
-        };
+      if (!res.ok) {
+        if (page === 0) {
+          return {
+            records: [],
+            diagnostic: `${portal.host} returned ${res.status} ${res.statusText}`,
+          };
+        }
+        break;
       }
-      break;
-    }
-    let parsed: unknown;
-    try {
-      parsed = await res.json();
-    } catch {
-      if (page === 0) {
-        return { records: [], diagnostic: `${portal.host} response was not valid JSON` };
+      let parsed: unknown;
+      try {
+        parsed = await res.json();
+      } catch {
+        if (page === 0) {
+          return { records: [], diagnostic: `${portal.host} response was not valid JSON` };
+        }
+        break;
       }
-      break;
-    }
-    if (!Array.isArray(parsed)) {
-      if (page === 0) {
-        return { records: [], diagnostic: `${portal.host} response was not an array` };
+      if (!Array.isArray(parsed)) {
+        if (page === 0) {
+          return { records: [], diagnostic: `${portal.host} response was not an array` };
+        }
+        break;
       }
-      break;
+      if (parsed.length === 0) break;
+      rows.push(...parsed);
+      if (parsed.length < SOCRATA_PAGE_SIZE) break; // last page
     }
-    if (parsed.length === 0) break;
-    rows.push(...parsed);
-    if (parsed.length < SOCRATA_PAGE_SIZE) break; // last page
-  }
 
   if (rows.length === 0) {
     return { records: [], diagnostic: `${portal.host}/${portal.dataset} returned 0 rows` };
   }
 
-  const records = mapSocrataRows(rows, portal.label, cfg.sinceDays);
+  const records = mapSocrataRows(rows, portal.label, cfg.sinceDays, dateField);
   if (records.length === 0) {
     return {
       records: [],
