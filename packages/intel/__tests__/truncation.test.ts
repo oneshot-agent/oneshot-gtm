@@ -242,3 +242,33 @@ describe("complete() truncation — anthropic", () => {
     expect(res.inputTokens).toBe(30);
   });
 });
+
+describe("outbound prompt assembly", () => {
+  it.each(["openrouter", "anthropic"] as const)(
+    "does not duplicate the selected humanizer for %s",
+    async (provider) => {
+      cfg.provider = provider;
+      const { loadPrompt } = await import("../src/prompts.ts");
+      const system = loadPrompt("repo-interest-followup", { humanizer: "followup" });
+      const fetchMock = respondWith(
+        provider === "anthropic"
+          ? { content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" }
+          : { choices: [{ message: { content: "ok" }, finish_reason: "stop" }] },
+      );
+      await complete({
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: "Prior email context" },
+        ],
+      });
+      const body = requestOf(fetchMock).body;
+      const sent =
+        provider === "anthropic"
+          ? body.system
+          : (body.messages as Array<{ role: string; content: string }>)[0]!.content;
+      expect(sent).toBe(system);
+      expect(String(sent).match(/# Anti-AI-slop rules/g)).toHaveLength(1);
+      expect(sent).not.toContain("## The 4-step shape");
+    },
+  );
+});

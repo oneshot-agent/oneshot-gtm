@@ -41,11 +41,12 @@ function loadHumanizer(): string {
   return humanizerCache;
 }
 
-export function loadPrompt(name: string): string {
+export function loadPrompt(name: string, options: { humanizer?: "followup" } = {}): string {
   if (!/^[A-Za-z0-9_-]+$/.test(name)) {
     throw new Error(`invalid prompt name: ${JSON.stringify(name)}`);
   }
-  const cached = promptCache.get(name);
+  const cacheKey = `${name}:${options.humanizer ?? "default"}`;
+  const cached = promptCache.get(cacheKey);
   if (cached != null) return cached;
   const raw = readPromptFile(name);
   if (raw == null) {
@@ -55,8 +56,9 @@ export function loadPrompt(name: string): string {
   // false promise: the LLM read "see X" but the content was never attached.
   // Inline it here so every prompt that opts in (by including the reference)
   // actually receives the humanizer rules.
-  const final = HUMANIZER_REF_RE.test(raw) ? raw.replace(HUMANIZER_REF_RE, loadHumanizer()) : raw;
-  promptCache.set(name, final);
+  const humanizer = options.humanizer === "followup" ? loadPrompt("_humanizer-followup") : null;
+  const final = raw.replace(HUMANIZER_REF_RE, () => humanizer ?? loadHumanizer());
+  promptCache.set(cacheKey, final);
   return final;
 }
 

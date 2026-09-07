@@ -187,7 +187,9 @@ function injectHumanizer(messages: LlmMessage[]): LlmMessage[] {
   }
   const sys = messages[sysIdx];
   if (!sys) return messages;
-  if (sys.content.includes("_humanizer.md") || sys.content.includes("Anti-AI-slop rules")) {
+  // loadPrompt already expands the selected humanizer; never prepend it again.
+  if (sys.content.includes("Anti-AI-slop rules")) return messages;
+  if (sys.content.includes("_humanizer.md")) {
     const out: LlmMessage[] = messages.slice();
     out[sysIdx] = { role: "system", content: `${prologue}\n\n---\n\n${sys.content}` };
     return out;
