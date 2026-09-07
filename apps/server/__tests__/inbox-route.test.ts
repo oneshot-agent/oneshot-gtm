@@ -16,7 +16,7 @@ const listSequenceEventsForProspectMock = vi.fn((): unknown[] => []);
 const recordInboxReplyMock = vi.fn(() => true);
 const getProspectByIdMock = vi.fn((): unknown => null);
 const listInboxReplyIntentsMock = vi.fn(() => new Map());
-const listProspectIdsWithOutcomesMock = vi.fn((): Set<number> => new Set());
+const listLatestOutcomeRecordedAtByProspectMock = vi.fn((): Map<number, string> => new Map());
 let knownProspect: { id: number } | null = null;
 
 const ledger = {
@@ -41,7 +41,7 @@ const ledger = {
   setInboxDraftSteer: setInboxDraftSteerMock,
   setInboxDraftBody: setInboxDraftBodyMock,
   // round-2 correction (#480): the nav-dot ack signal — empty by default.
-  listProspectIdsWithOutcomes: listProspectIdsWithOutcomesMock,
+  listLatestOutcomeRecordedAtByProspect: listLatestOutcomeRecordedAtByProspectMock,
 };
 
 vi.mock("@oneshot-gtm/core", async () => {
@@ -187,6 +187,42 @@ describe("inbox route — persisted drafts & sent replies", () => {
     expect(conv.items[0]!.body).toBe("outreach body");
     expect(conv.items[1]!.body).toBe("It's sdk maintenance");
     expect(conv.items[2]!.body).toBe("my answer");
+  });
+
+  it.each([
+    [undefined, true],
+    ["2026-09-06 10:00:00", true],
+    ["2026-09-07 10:00:01", false],
+    ["2026-09-07 10:00:00", true],
+  ])("awaitingReply with outcome %s is %s", async (recordedAt, awaitingReply) => {
+    listInboxMock.mockResolvedValue({ emails: [] });
+    getInboxThreadsMock.mockReturnValue(new Map());
+    listProspectIdsWithRepliesMock.mockReturnValueOnce([7]);
+    getProspectByIdMock.mockReturnValueOnce({
+      id: 7,
+      name: "Coder",
+      email: "coder@x.example",
+      company: "OGs",
+      source: "show-hn",
+    });
+    listInboxRepliesForProspectMock.mockReturnValueOnce([
+      {
+        id: "m1",
+        thread_key: "t1",
+        prospect_id: 7,
+        received_at: "2026-09-07T10:00:00.000Z",
+        intent: "interested",
+      },
+    ]);
+    listLatestOutcomeRecordedAtByProspectMock.mockReturnValueOnce(
+      new Map(recordedAt == null ? [] : [[7, recordedAt]]),
+    );
+
+    const res = await listInboxRoute(new Request("http://localhost/api/inbox"));
+    const out = await res.json();
+    expect(out.conversations).toHaveLength(1);
+    expect(out.conversations[0].awaitingReply).toBe(awaitingReply);
+    expect(listLatestOutcomeRecordedAtByProspectMock).toHaveBeenCalledTimes(1);
   });
 
   it("saveDraftRoute persists the draft via upsertInboxDraft", async () => {

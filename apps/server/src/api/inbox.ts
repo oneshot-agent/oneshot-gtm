@@ -124,7 +124,7 @@ export async function listInboxRoute(req: Request): Promise<Response> {
         ledger,
         cadenceIndex(ledger),
         ledger.getInboxThreads(),
-        ledger.listProspectIdsWithOutcomes(),
+        ledger.listLatestOutcomeRecordedAtByProspect(),
       );
     } catch {
       // degraded twice over — return the error state alone.
@@ -256,7 +256,7 @@ export async function listInboxRoute(req: Request): Promise<Response> {
       ledger,
       byEmail,
       threads,
-      ledger.listProspectIdsWithOutcomes(),
+      ledger.listLatestOutcomeRecordedAtByProspect(),
     );
   } catch (err) {
     logEvent(
@@ -306,7 +306,7 @@ function buildConversations(
     { name: string | null; company: string | null; playName: string; status: string }
   >,
   threads: ReturnType<ReturnType<typeof getLedger>["getInboxThreads"]>,
-  outcomeProspectIds: Set<number>,
+  outcomeRecordedAtByProspect: Map<number, string>,
 ): ConversationView[] {
   const out: ConversationView[] = [];
   for (const prospectId of ledger.listProspectIdsWithReplies()) {
@@ -365,7 +365,7 @@ function buildConversations(
     const newestInbound = inbound.at(-1)!;
     // Round-2 correction (#480): a positive-intent inbound stays "awaiting
     // reply" until the founder answers it (any sent item on the thread after
-    // it arrived) or records a deal outcome for this prospect — otherwise
+    // it arrived) or records a deal outcome for this prospect after it arrived — otherwise
     // the nav dot lit by POSITIVE_REPLY_INTENTS never turns off.
     const positiveIntent =
       newestInbound.intent != null &&
@@ -373,7 +373,11 @@ function buildConversations(
     const repliedSince = (newestThread?.sent ?? []).some(
       (s) => s.sentAt > newestInbound.received_at,
     );
-    const awaitingReply = positiveIntent && !repliedSince && !outcomeProspectIds.has(prospectId);
+    const outcomeRecordedAt = outcomeRecordedAtByProspect.get(prospectId);
+    const outcomeSince =
+      outcomeRecordedAt != null &&
+      Date.parse(sqliteToIso(outcomeRecordedAt)) > Date.parse(newestInbound.received_at);
+    const awaitingReply = positiveIntent && !repliedSince && !outcomeSince;
     out.push({
       prospectId,
       name: prospect.name,
@@ -395,7 +399,7 @@ function buildConversations(
 }
 
 /**
- * sequence_events.created_at is SQLite datetime('now') format ("YYYY-MM-DD
+ * sequence_events.created_at and deal_outcomes.recorded_at use SQLite datetime('now') format ("YYYY-MM-DD
  * HH:MM:SS", UTC, no 'T'/'Z'); inbox timestamps are ISO. Normalize so the
  * merged timeline's string sort is chronological.
  */

@@ -866,7 +866,8 @@ export interface ConversationView {
   /**
    * True when a positive-intent inbound is still unacknowledged (round-2
    * correction, #480): the founder has neither replied to it nor recorded a
-   * deal outcome for this prospect since it arrived. False once either
+   * deal outcome for this prospect strictly after it arrived. Historical outcomes
+   * do not acknowledge newer inbound replies. False once either
    * happens, even though `intent` itself is never cleared — `intent` is a
    * historical classification, this is the "does it still need the nav dot"
    * signal derived from it.

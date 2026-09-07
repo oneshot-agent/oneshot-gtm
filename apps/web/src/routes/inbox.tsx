@@ -4,7 +4,7 @@ import { ChevronDown, ChevronRight, Loader2, RefreshCw, Send, Sparkles } from "l
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import type { ConversationView, InboxReplyView, OutcomeRequest } from "@oneshot-gtm/shared-types";
-import { inboxThreadKey, POSITIVE_REPLY_INTENTS } from "@oneshot-gtm/shared-types";
+import { inboxThreadKey } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
 import { Pii } from "../components/primitives/Pii.tsx";
@@ -73,9 +73,7 @@ function InboxPage() {
   const visible = replies.filter((r) => matchesReplyFilter(r, matchFilter));
   const showConversations = matchFilter === "matched";
   const needsDecisionCount = conversations.filter(
-    (c) =>
-      c.status === "needs_decision" ||
-      (c.intent != null && POSITIVE_REPLY_INTENTS.includes(c.intent)),
+    (c) => c.status === "needs_decision" || c.awaitingReply,
   ).length;
 
   return (
