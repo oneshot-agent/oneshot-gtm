@@ -168,13 +168,29 @@ function splitSentences(text: string): string[] {
     .filter(Boolean);
 }
 
-/** True when the body makes (or looks like it's making) a commitment the founder never authorised. */
+/**
+ * True when the body makes (or looks like it's making) a commitment the
+ * founder never authorised. `NEGATION_CUE` is checked only against the
+ * comma-delimited clause carrying the matched keyword — not the whole
+ * sentence — so a trailing hedge elsewhere in the same sentence (round-3
+ * correction, #480/#558: "Sure, I can do a 20% discount, no problem." was
+ * cleared by the unrelated "no" in ", no problem" and returned false) can't
+ * mask an actual commitment made earlier in the sentence. A negation that
+ * genuinely applies to the commitment (e.g. "We don't offer discounts right
+ * now, sorry.") still lands in the SAME clause as the match and is still
+ * caught.
+ */
 export function bodyCommitsTerms(body: string): boolean {
   const sentences = splitSentences(body);
   return COMMITS_TERMS_PATTERNS.some(({ regex, requireAffirmative }) =>
     sentences.some((sentence) => {
-      if (!regex.test(sentence)) return false;
-      if (NEGATION_CUE.test(sentence)) return false;
+      const match = regex.exec(sentence);
+      if (!match) return false;
+      const clauseStart = sentence.lastIndexOf(",", match.index) + 1;
+      const nextComma = sentence.indexOf(",", match.index + match[0].length);
+      const clauseEnd = nextComma === -1 ? sentence.length : nextComma;
+      const clause = sentence.slice(clauseStart, clauseEnd);
+      if (NEGATION_CUE.test(clause)) return false;
       if (requireAffirmative && (QUESTION_CUE.test(sentence) || !AFFIRMATIVE_CUE.test(sentence))) {
         return false;
       }

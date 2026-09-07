@@ -638,6 +638,7 @@ function ReplyComposer({
     },
     onSuccess: () => {
       setOutcomeOpen(false);
+      void queryClient.invalidateQueries({ queryKey: ["inbox"] });
       toast.success("outcome recorded");
     },
     onError: (err) => toast.error(`couldn't record outcome · ${err.message}`),

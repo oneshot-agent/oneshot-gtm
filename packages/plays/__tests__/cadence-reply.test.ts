@@ -25,6 +25,10 @@ let latestSentPlay: string | null = null;
 let persistedReplies: Array<{ id: string; kind?: string | null }> = [];
 // Audit-trail sequence events recorded outside recordProspectReply (bounced/unsubscribed).
 let seqEvents: Array<{ prospectId: number; playName: string; status: string }> = [];
+// Persisted intent classifications (issue #558): keyed by reply id, mirrors
+// the real ledger's inbox_replies.intent column that setInboxReplyIntent
+// writes and listInboxReplyIntents reads back.
+let intents: Map<string, { intent: string | null; intentReason: string | null }> = new Map();
 // Persisted poll_state rows (watermark + backlog), as the real ledger holds them.
 let pollState: Record<string, string> = {};
 const watermarkOf = () => pollState["inbox_replies"] ?? null;
@@ -146,6 +150,19 @@ vi.mock("@oneshot-gtm/core", async () => {
       setPollWatermark: (key: string, value: string) => {
         pollState[key] = value;
       },
+      // issue #558: `alreadyTriaged` in _cadence.ts reads this back to decide
+      // whether a re-examined-but-not-`isNewReply` row still needs triage.
+      listInboxReplyIntents: (ids: string[]) => {
+        const out = new Map<string, { intent: string | null; intentReason: string | null }>();
+        for (const id of ids) {
+          const v = intents.get(id);
+          if (v) out.set(id, v);
+        }
+        return out;
+      },
+      setInboxReplyIntent: (id: string, intent: string | null, intentReason: string | null) => {
+        intents.set(id, { intent, intentReason });
+      },
     }),
   };
 });
@@ -178,6 +195,7 @@ beforeEach(() => {
   repliedSteps = [];
   persistedReplies = [];
   seqEvents = [];
+  intents = new Map();
   triageEmailsMock.mockClear();
   // The fixture cadence is also the latest play that emailed the prospect.
   latestSentPlay = "stack-consolidation";

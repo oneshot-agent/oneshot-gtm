@@ -533,12 +533,15 @@ async function walkInboxWindow(
       // sentiment). Best-effort and non-blocking, like the neighbouring
       // tagOutcomeValue call below: a triage failure logs and leaves
       // `intent` NULL, it never loses the reply itself (already persisted
-      // above). Skipped when this row was already recorded by a prior poll
-      // (`isNewReply` false) — the 1h overlap window and the backlog drain
-      // both deliberately re-walk mail the ledger has already seen, and
-      // re-triaging it would re-bill the paid LLM call and clobber an
-      // already-set intent for no reason.
-      if (isNewReply) {
+      // above). `isNewReply` alone used to gate this and skipped rows the
+      // /inbox route's opportunistic capture had already inserted (issue
+      // #558) — those are real new replies from this poll's perspective but
+      // arrive here with isNewReply === false, so they were silently never
+      // triaged. Check the persisted intent directly instead: skip only when
+      // this row already carries a classification, re-triage otherwise.
+      const alreadyTriaged =
+        !isNewReply && ledger.listInboxReplyIntents([e.id]).get(e.id)?.intent != null;
+      if (!alreadyTriaged) {
         try {
           const [triaged] = await triageEmails([e]);
           if (triaged) {

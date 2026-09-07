@@ -912,8 +912,16 @@ intel
   .action(runOrFail(commandIntelTriage));
 intel
   .command("backfill-intent")
-  .option("-l, --limit <n>", "max untriaged human replies to process (default 200)", (v) =>
-    Number.parseInt(v, 10),
+  .option(
+    "-l, --limit <n>",
+    "max untriaged human replies to process (default 200)",
+    (v: string) => {
+      const limit = Number(v);
+      if (!Number.isSafeInteger(limit) || limit < 0) {
+        throw new Error("--limit must be a non-negative integer");
+      }
+      return limit;
+    },
   )
   .description("Classify sentiment intent onto persisted human replies that predate the classifier")
   .action(

@@ -98,6 +98,17 @@ describe("bodyCommitsTerms (issue #480)", () => {
   it("does not fire on small talk about hiring", () => {
     expect(bodyCommitsTerms("How is your hiring going this quarter?")).toBe(false);
   });
+
+  // Round-3 correction (#480/#558): NEGATION_CUE matched anywhere in the
+  // sentence, so a trailing hedge unrelated to the commitment cleared the
+  // gate — reviewer-reproduced false negative from PR #556.
+  it("still fires when an unrelated negation trails the commitment in the same sentence", () => {
+    expect(bodyCommitsTerms("Sure, I can do a 20% discount, no problem.")).toBe(true);
+  });
+
+  it("does not fire when the negation applies to the same clause as the commitment", () => {
+    expect(bodyCommitsTerms("We don't offer discounts right now, sorry.")).toBe(false);
+  });
 });
 
 describe("intentDirectiveBlock (issue #480)", () => {
