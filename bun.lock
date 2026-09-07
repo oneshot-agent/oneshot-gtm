@@ -18,7 +18,7 @@
     },
     "apps/cli": {
       "name": "oneshot-gtm",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "bin": {
         "oneshot-gtm": "./src/main.ts",
       },
@@ -39,13 +39,14 @@
     },
     "apps/server": {
       "name": "oneshot-gtm-server",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "bin": {
         "oneshot-gtm-server": "./dist/bin.mjs",
       },
       "dependencies": {
-        "@oneshot-agent/sdk": "file:../../vendor/oneshot-agent-sdk-0.32.0.tgz",
+        "@oneshot-agent/sdk": "0.32.0",
         "open": "^11.0.0",
+        "pdf-lib": "^1.17.1",
       },
       "devDependencies": {
         "@oneshot-gtm/core": "workspace:*",
@@ -59,7 +60,7 @@
     },
     "apps/web": {
       "name": "@oneshot-gtm/web",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "dependencies": {
         "@assistant-ui/react": "^0.12.25",
         "@base-ui/react": "^1.2.0",
@@ -92,7 +93,7 @@
     },
     "packages/core": {
       "name": "@oneshot-gtm/core",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "dependencies": {
         "@oneshot-agent/sdk": "file:../../vendor/oneshot-agent-sdk-0.32.0.tgz",
         "pdf-lib": "^1.17.1",
@@ -100,7 +101,7 @@
     },
     "packages/doctor": {
       "name": "@oneshot-gtm/doctor",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "dependencies": {
         "@oneshot-gtm/core": "workspace:*",
         "@oneshot-gtm/find": "workspace:*",
@@ -108,7 +109,7 @@
     },
     "packages/find": {
       "name": "@oneshot-gtm/find",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "dependencies": {
         "@oneshot-gtm/core": "workspace:*",
         "@oneshot-gtm/intel": "workspace:*",
@@ -118,14 +119,14 @@
     },
     "packages/intel": {
       "name": "@oneshot-gtm/intel",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "dependencies": {
         "@oneshot-gtm/core": "workspace:*",
       },
     },
     "packages/plays": {
       "name": "@oneshot-gtm/plays",
-      "version": "0.7.0",
+      "version": "0.8.0",
       "dependencies": {
         "@oneshot-gtm/core": "workspace:*",
         "@oneshot-gtm/intel": "workspace:*",
@@ -133,11 +134,11 @@
     },
     "packages/prompts": {
       "name": "@oneshot-gtm/prompts",
-      "version": "0.7.0",
+      "version": "0.8.0",
     },
     "packages/shared-types": {
       "name": "@oneshot-gtm/shared-types",
-      "version": "0.7.0",
+      "version": "0.8.0",
     },
   },
   "overrides": {
@@ -1178,6 +1179,8 @@
     "framer-motion/tslib": ["tslib@2.8.1", "", {}, "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w=="],
 
     "motion/tslib": ["tslib@2.8.1", "", {}, "sha512-oJFu94HQb+KVduSUQL7wnpmqnfmLsOA/nAh6b6EH0wCEoK0/mPeXU6c3wKDV83MkOuHPRHtSXKKU99IBazS/2w=="],
+
+    "oneshot-gtm-server/@oneshot-agent/sdk": ["@oneshot-agent/sdk@0.32.0", "", { "dependencies": { "ethers": "6.16.0" }, "peerDependencies": { "@coinbase/cdp-sdk": ">=1.0.0", "typescript": ">=5.0.0" }, "optionalPeers": ["@coinbase/cdp-sdk", "typescript"] }, "sha512-FpF7ALp5yxCva5VHY8x235fykor7JxIg+N+Ss//iWiYE54mPHzZdtclwHWs9nXEqOQhPahx+3FGybJRZvNREvA=="],
 
     "postcss/nanoid": ["nanoid@3.3.11", "", { "bin": { "nanoid": "bin/nanoid.cjs" } }, "sha512-N8SpfPUnUp1bK+PMYW8qSWdl9U+wwNWI4QKxOYDy9JAro3WMX7p2OeVRF9v+347pnakNevPmiHhNmZ2HbFA76w=="],
 
