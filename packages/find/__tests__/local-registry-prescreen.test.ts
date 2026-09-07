@@ -110,6 +110,15 @@ vi.mock("@oneshot-gtm/core", async () => {
       },
       receiptId: 2,
     }),
+    peopleSearch: async () => ({
+      result: {
+        status: "ok",
+        results: [{ full_name: "Rae Owner", title: "Owner" }],
+        total_found: 1,
+        cost: 0.01,
+      },
+      receiptId: 5,
+    }),
     findEmail: async () => {
       findEmailCalls++;
       return {

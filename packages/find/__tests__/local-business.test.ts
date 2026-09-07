@@ -375,8 +375,9 @@ describe("runLocalBusinessFinder — `local` engine (SDK localSearch)", () => {
     expect(peopleSearchCalls).toHaveLength(1);
   });
 
-  it("searches category × location with contactable, non-chain, open businesses and never touches peopleSearch", async () => {
+  it("searches category × location with contactable, non-chain, open businesses; peopleSearch is only ever the domain-scoped person lookup, never discovery", async () => {
     nextLocalSearchResults = [baseBiz];
+    nextPeopleSearchResults = [{ full_name: "Dana Rivera", title: "Owner" }];
     const out = await runLocalBusinessFinder({
       dryRun: false,
       engine: "local",
@@ -392,13 +393,21 @@ describe("runLocalBusinessFinder — `local` engine (SDK localSearch)", () => {
       isChain: false,
       operatingStatus: "open",
     });
-    expect(peopleSearchCalls).toHaveLength(0);
+    // Every peopleSearch the local engine causes is the spine's lookup of a
+    // person at one business's domain — never a jobTitles/industry search.
+    for (const call of peopleSearchCalls) {
+      expect(call).toMatchObject({ companyDomains: ["riverafamilydental.com"] });
+      expect(call).not.toHaveProperty("jobTitles");
+      expect(call).not.toHaveProperty("industry");
+    }
     expect(companySearchCalls).toHaveLength(0);
     expect(out.enqueued).toBe(1);
   });
 
   it("walks a business through the domain-only spine and enqueues the free-pilot businessType shape", async () => {
     nextLocalSearchResults = [baseBiz];
+    // SDK 0.32 findEmail needs a person: the spine looks one up at the domain.
+    nextPeopleSearchResults = [{ full_name: "Dana Rivera", title: "Owner" }];
     await runLocalBusinessFinder({
       dryRun: false,
       engine: "local",
@@ -406,7 +415,9 @@ describe("runLocalBusinessFinder — `local` engine (SDK localSearch)", () => {
       locations: ["Austin, TX"],
       yourEdge: "we set up online booking free",
     });
-    // No owner name on a places result: findEmail runs off the domain alone.
+    // No owner name on a places result: the spine found one at the domain,
+    // then findEmail ran against it.
+    expect(peopleSearchCalls[0]).toMatchObject({ companyDomains: ["riverafamilydental.com"] });
     expect(findEmailCalls).toEqual(["riverafamilydental.com"]);
     const row = enqueued[0]!;
     expect(row.playName).toBe("free-pilot");

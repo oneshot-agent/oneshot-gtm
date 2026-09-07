@@ -64,8 +64,23 @@ export async function safeFindEmail(
   } catch (err) {
     swallow(ctx, "find_email", err);
     // cost 0 / receiptId 0 mirror the cache-miss sentinels in _enrich.ts.
-    return { result: { status: "error", email: null, found: false, cost: 0 }, receiptId: 0 };
+    // A ValidationError is the SDK refusing the CALL (nothing was sent, nothing
+    // billed) — SDK 0.32 rejects findEmail without a person name. That is a
+    // verdict about our input, not a backend outage: reported as "invalid" so
+    // the spine drops the candidate instead of feeding the circuit breaker
+    // five times and blacking out contact resolution for every finder.
+    const status = isValidationError(err) ? "invalid" : "error";
+    return { result: { status, email: null, found: false, cost: 0 }, receiptId: 0 };
   }
+}
+
+function isValidationError(err: unknown): boolean {
+  return (
+    !!err &&
+    typeof err === "object" &&
+    ((err as { name?: unknown }).name === "ValidationError" ||
+      /\brequired\b/i.test(String((err as { message?: unknown }).message ?? "")))
+  );
 }
 
 /** verifyEmail that never throws — a failure resolves to `deliverable: false` (drop). */

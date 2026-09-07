@@ -129,10 +129,10 @@ export function looksLikeUserHandle(name: string | null | undefined): boolean {
  *
  * `allowMissingFullName` is an explicit per-caller opt-in for genuine
  * company-level lookups (no owner/operator name exists on the source record
- * at all, e.g. `local-registry`'s socrata-license/nppes
- * candidates) — the underlying `findEmail` SDK call accepts `companyDomain`
- * alone (see `FindEmailInput` in `packages/core/src/oneshot.ts`, where every
- * name field is optional). Without opting in, a missing name still blocks
+ * at all, e.g. `local-registry`'s socrata-license/nppes candidates). SDK
+ * 0.32's `findEmail` refuses a domain-only call, so the spine first looks a
+ * person up at the domain (`resolveAndVerifyContact`) and only then resolves
+ * an email. Without opting in, a missing name still blocks
  * the call (the default for every person-targeting finder, where a missing
  * name usually means the extraction failed rather than "no name exists").
  * A *provided* name that looks like a handle is rejected either way — the

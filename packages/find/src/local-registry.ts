@@ -1,4 +1,4 @@
-import { getLedger, logEvent } from "@oneshot-gtm/core";
+import { getLedger, logEvent, type LocalResult } from "@oneshot-gtm/core";
 import { resolveVerifyEnrichQualify, icpFields } from "./_contact.ts";
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { persistRoleRejection } from "./_qualify.ts";
@@ -82,6 +82,11 @@ export interface LocalRegistryTarget {
    * person's name — see `_registry-sources.ts`'s `RegistryRecord` doc.
    */
   subjectType?: "individual" | "organization";
+  /**
+   * The registry's own name when `company` was replaced by the trade name
+   * `localResolve` matched at the same address (see `pickResolvedBusiness`).
+   */
+  registryName?: string;
   address?: string;
   city?: string;
   state?: string;
@@ -138,6 +143,49 @@ export function dedupeKeyFor(record: RegistryRecord): string {
   const state = (record.state ?? "").toLowerCase().trim();
   const city = (record.city ?? "").toLowerCase().trim();
   return `${slugify(record.name)}:${state}:${city}`;
+}
+
+/**
+ * Pick the business `localResolve` matched, or null. The SDK's own `found`
+ * clears on a name-weighted threshold, and registry names are the wrong
+ * kind of name for that: NPPES carries the LEGAL entity ("A PROFESSIONAL
+ * DENTAL ORGANIZATION") or, for an NPI-1, the dentist's own name, while the
+ * places index carries the TRADE name on the door ("Smiles at Telfair Family
+ * and Cosmetic Dentistry"). Measured on real rows 2026-09-07: every miss came
+ * back at 0.37–0.59 with a `closest_match` at the identical street number
+ * and postal code. The address is the registry's own ground truth, so a
+ * below-threshold candidate is accepted when the street number AND the
+ * 5-digit postal code both agree — nothing looser, since a same-street
+ * neighbour is exactly the wrong business to email.
+ */
+export function pickResolvedBusiness(
+  record: Pick<RegistryRecord, "address" | "postalCode">,
+  resolved: {
+    found: boolean;
+    result: LocalResult | null;
+    closest_match?: LocalResult | undefined;
+  },
+): LocalResult | null {
+  if (resolved.found && resolved.result) return resolved.result;
+  const candidate = resolved.closest_match;
+  if (!candidate?.address) return null;
+  const streetNo = leadingStreetNumber(record.address);
+  const zip5 = postalCode5(record.postalCode);
+  if (!streetNo || !zip5) return null;
+  return leadingStreetNumber(candidate.address) === streetNo && candidate.address.includes(zip5)
+    ? candidate
+    : null;
+}
+
+function leadingStreetNumber(address: string | null | undefined): string | null {
+  const m = /^\s*(\d+[A-Za-z]?)\b/.exec(address ?? "");
+  return m ? m[1]!.toUpperCase() : null;
+}
+
+/** NPPES publishes ZIP+4 without the hyphen ("774794629"); the index prints ZIP5. */
+function postalCode5(postalCode: string | null | undefined): string | null {
+  const digits = (postalCode ?? "").replace(/\D/g, "");
+  return digits.length >= 5 ? digits.slice(0, 5) : null;
 }
 
 /** Recent-issue routing: fresh (within `freshnessDays`) → new-business, else → free-pilot. */
@@ -328,6 +376,7 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
     // never needed is exactly the spend to skip.
     let domain: string | null = null;
     let resolvedPhone: string | null = null;
+    let tradeName: string | null = null;
     if (!record.knownEmail) {
       const resolved = await safeLocalResolve(
         {
@@ -341,7 +390,7 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
         { playName },
       );
       result.costUsd += resolved.result.cost ?? 0;
-      const match = resolved.result.found ? resolved.result.result : null;
+      const match = pickResolvedBusiness(record, resolved.result);
       if (!match?.domain) {
         result.droppedEnrichment++;
         return;
@@ -353,6 +402,11 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
       }
       domain = match.domain;
       resolvedPhone = match.phone ?? null;
+      // The name on the door is the one to write to; the registry's legal
+      // or individual name stays on the row as provenance.
+      if (match.name && match.name.trim() && match.name.trim() !== record.name) {
+        tradeName = match.name.trim();
+      }
     }
 
     // Recheck the cap after localResolve's paid call and before
@@ -393,7 +447,7 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
       icp,
       person: {
         name: null,
-        company: record.name,
+        company: tradeName ?? record.name,
         evidence: `${record.sourceLabel}, matched ${record.matchedDateIso.slice(0, 10)}`,
       },
       fillGaps: opts.qualifyFillGaps ?? true,
@@ -428,9 +482,10 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
 
     const phone = contact.phone ?? resolvedPhone ?? record.phone ?? null;
     const target: LocalRegistryTarget = {
-      name: contact.fullName ?? record.name,
+      name: contact.fullName ?? tradeName ?? record.name,
       email: contact.email,
-      company: record.name,
+      company: tradeName ?? record.name,
+      ...(tradeName ? { registryName: record.name } : {}),
       source: record.source,
       sourceLabel: record.sourceLabel,
       matchedDateIso: record.matchedDateIso,

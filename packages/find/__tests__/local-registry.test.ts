@@ -266,6 +266,7 @@ vi.mock("../src/_findemail-prescreen.ts", () => ({ shouldSkipFindEmail: () => ({
 let nextResolvedDomain: string | null = "acme.dev";
 let nextResolvedStatus: "open" | "closed" = "open";
 let localResolveCalls: Array<Record<string, unknown>> = [];
+let nextClosestMatch: { name: string; domain: string; address: string } | null = null;
 let findEmailCalls = 0;
 let verifyEmailCalls = 0;
 
@@ -301,11 +302,40 @@ vi.mock("@oneshot-gtm/core", async () => {
               }
             : null,
           candidates_considered: 1,
+          ...(nextClosestMatch
+            ? {
+                closest_match: {
+                  id: "loc_c",
+                  name: nextClosestMatch.name,
+                  domain: nextClosestMatch.domain,
+                  website: `https://${nextClosestMatch.domain}`,
+                  phone: null,
+                  operating_status: "open",
+                  category: null,
+                  is_chain: null,
+                  address: nextClosestMatch.address,
+                  socials: {},
+                  review_count: null,
+                  rating: null,
+                  latitude: null,
+                  longitude: null,
+                },
+              }
+            : {}),
           cost: 0.005,
         },
         receiptId: 2,
       };
     },
+    peopleSearch: async () => ({
+      result: {
+        status: "ok",
+        results: [{ full_name: "Rae Owner", title: "Owner" }],
+        total_found: 1,
+        cost: 0.01,
+      },
+      receiptId: 5,
+    }),
     findEmail: async () => {
       findEmailCalls++;
       return {
@@ -328,7 +358,7 @@ vi.mock("@oneshot-gtm/core", async () => {
   };
 });
 
-const { runLocalRegistryFinder } = await import("../src/local-registry.ts");
+const { runLocalRegistryFinder, pickResolvedBusiness } = await import("../src/local-registry.ts");
 
 function makeRecord(overrides: Partial<RegistryRecord> = {}): RegistryRecord {
   return {
@@ -357,6 +387,7 @@ beforeEach(() => {
   nextResolvedDomain = "acme.dev";
   nextResolvedStatus = "open";
   localResolveCalls = [];
+  nextClosestMatch = null;
   findEmailCalls = 0;
   verifyEmailCalls = 0;
 });
@@ -635,8 +666,9 @@ describe("runLocalRegistryFinder — fmcsa knownEmail skip", () => {
       entityTypes: ["carrier"],
       states: ["NE"],
     });
-    // localResolve (0.005), findEmail (0.01), and now verifyEmail (0.005)
-    // are all skipped for a trusted fmcsa knownEmail candidate.
+    // localResolve (0.005), the domain person lookup (0.01), findEmail
+    // (0.01) and verifyEmail (0.005) are all skipped for a trusted fmcsa
+    // knownEmail candidate.
     expect(out.costUsd).toBe(0);
   });
 
@@ -709,5 +741,100 @@ describe("runLocalRegistryFinder — mid-turn max-cost recheck", () => {
     expect(findEmailCalls).toBe(0);
     expect(out.enqueued).toBe(0);
     expect(out.halted).toContain("max-cost cap");
+  });
+});
+
+describe("pickResolvedBusiness — address-confirmed matches below the SDK's name threshold", () => {
+  const closest = {
+    id: "loc_x",
+    name: "Smiles at Telfair Family and Cosmetic Dentistry",
+    domain: "smilesattelfair.com",
+    website: "https://smilesattelfair.com",
+    phone: "+1 832 555 0100",
+    operating_status: "open" as const,
+    category: "dental practice",
+    is_chain: null,
+    address: "1227 Museum Square Dr Ste D, Sugar Land, TX 77479",
+    socials: {},
+    review_count: null,
+    rating: null,
+    latitude: null,
+    longitude: null,
+  };
+
+  it("returns the SDK's own match when it cleared the threshold", () => {
+    const out = pickResolvedBusiness(
+      { address: "1 Elsewhere Rd", postalCode: "00000" },
+      { found: true, result: closest },
+    );
+    expect(out?.domain).toBe("smilesattelfair.com");
+  });
+
+  it("accepts closest_match when the street number and 5-digit postal code both agree — the legal-name vs trade-name gap", () => {
+    const out = pickResolvedBusiness(
+      // NPPES: individual dentist's name, ZIP+4 with no hyphen.
+      { address: "1227 MUSEUM SQUARE DR", postalCode: "774794629" },
+      { found: false, result: null, closest_match: closest },
+    );
+    expect(out?.domain).toBe("smilesattelfair.com");
+  });
+
+  it("rejects closest_match on a different street number — a same-street neighbour is the wrong business to email", () => {
+    const out = pickResolvedBusiness(
+      { address: "1229 MUSEUM SQUARE DR", postalCode: "774794629" },
+      { found: false, result: null, closest_match: closest },
+    );
+    expect(out).toBeNull();
+  });
+
+  it("rejects closest_match when the postal code disagrees, even with the same street number", () => {
+    const out = pickResolvedBusiness(
+      { address: "1227 MUSEUM SQUARE DR", postalCode: "770010000" },
+      { found: false, result: null, closest_match: closest },
+    );
+    expect(out).toBeNull();
+  });
+
+  it("returns null when the registry row has no usable address or postal code to confirm on", () => {
+    expect(
+      pickResolvedBusiness(
+        { address: null, postalCode: "774794629" },
+        { found: false, result: null, closest_match: closest },
+      ),
+    ).toBeNull();
+    expect(
+      pickResolvedBusiness(
+        { address: "1227 MUSEUM SQUARE DR", postalCode: null },
+        { found: false, result: null, closest_match: closest },
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("runLocalRegistryFinder — trade name from an address-confirmed match", () => {
+  it("writes to the name on the door and keeps the registry's legal name as provenance", async () => {
+    nextResolvedDomain = null; // SDK threshold misses …
+    nextClosestMatch = {
+      name: "Smiles at Telfair Family and Cosmetic Dentistry",
+      domain: "smilesattelfair.com",
+      address: "1227 Museum Square Dr Ste D, Sugar Land, TX 77479",
+    };
+    nextSocrataRecords = [
+      makeRecord({
+        name: "A PROFESSIONAL DENTAL ORGANIZATION",
+        address: "1227 MUSEUM SQUARE DR",
+        postalCode: "774794629",
+        city: "Sugar Land",
+        state: "TX",
+      }),
+    ];
+    const out = await runLocalRegistryFinder({
+      dryRun: false,
+      yourEdge: "x",
+      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
+    });
+    expect(out.enqueued).toBe(1);
+    expect(enqueued[0]?.payload["company"]).toBe("Smiles at Telfair Family and Cosmetic Dentistry");
+    expect(enqueued[0]?.payload["registryName"]).toBe("A PROFESSIONAL DENTAL ORGANIZATION");
   });
 });
