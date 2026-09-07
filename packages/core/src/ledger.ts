@@ -183,6 +183,19 @@ function normalizeSubject(subject: string | null | undefined): string | null {
   return s.length > 0 ? s : null;
 }
 
+/**
+ * Sentinel written into `inbox_replies.intent` by `claimInboxReplyForTriage`
+ * to atomically mark "a caller is triaging this row right now" without
+ * committing to a real category yet. Never a valid `TriageCategory` /
+ * `ReplyIntent` value, and never read back as a classification: every reader
+ * of `intent` (`listInboxReplyIntents`, the /inbox route, `POSITIVE_REPLY_INTENTS`
+ * checks) only sees it during the brief window between the claim and the
+ * winner's `setInboxReplyIntent` call overwriting it with the real result (or
+ * NULL on failure) — same transaction-scoped visibility any other in-flight
+ * write has.
+ */
+const INBOX_REPLY_TRIAGE_PENDING = "__triage_pending__";
+
 export class Ledger {
   private db: Database;
   private path: string;
@@ -1176,6 +1189,30 @@ export class Ledger {
     this.db
       .prepare(`UPDATE inbox_replies SET intent = ?, intent_reason = ? WHERE id = ?`)
       .run(intent, intentReason, id);
+  }
+
+  /**
+   * Atomically claim a persisted reply for triage (issue #558 round-1
+   * correction). Two overlapping `pollInboxReplies()` calls (realistically:
+   * the server's background scheduler tick and a manually-run `cadence
+   * advance` CLI invocation) can both observe the same freshly-inserted row
+   * with `intent` still NULL while the first call's `triageEmails()` await is
+   * in flight — a bare re-check of the nullable `intent` column can't tell
+   * "nobody has started triaging this yet" from "I already looked a moment
+   * ago", so both callers would re-trigger the paid triage call and race on
+   * the write-back. This flips `intent` from NULL to `INBOX_REPLY_TRIAGE_PENDING`
+   * in the SAME statement that checks it's still NULL — SQLite serializes
+   * writers, so only one caller's UPDATE can match a given row, and its
+   * `changes` count is the claim. The winner must call `setInboxReplyIntent`
+   * (real result) or release the claim (`setInboxReplyIntent(id, null, null)`
+   * on failure) so a later poll can retry; the loser must skip triage
+   * entirely for this row this poll.
+   */
+  claimInboxReplyForTriage(id: string): boolean {
+    const res = this.db
+      .prepare(`UPDATE inbox_replies SET intent = ? WHERE id = ? AND intent IS NULL`)
+      .run(INBOX_REPLY_TRIAGE_PENDING, id);
+    return res.changes > 0;
   }
 
   /**

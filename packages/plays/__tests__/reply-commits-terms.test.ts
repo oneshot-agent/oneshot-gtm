@@ -109,6 +109,15 @@ describe("bodyCommitsTerms (issue #480)", () => {
   it("does not fire when the negation applies to the same clause as the commitment", () => {
     expect(bodyCommitsTerms("We don't offer discounts right now, sorry.")).toBe(false);
   });
+
+  // Round-4 correction (#558): the round-3 fix anchored the clause's start at
+  // the nearest PRECEDING comma, so a negation separated from the matched
+  // keyword by a parenthetical aside (its own comma-delimited fragment)
+  // landed outside the checked span and this returned true — a real
+  // regression on a legitimate, explicit refusal main correctly clears.
+  it("does not fire when a negation is separated from the commitment by a parenthetical aside", () => {
+    expect(bodyCommitsTerms("We will not, under any circumstances, offer a discount.")).toBe(false);
+  });
 });
 
 describe("intentDirectiveBlock (issue #480)", () => {

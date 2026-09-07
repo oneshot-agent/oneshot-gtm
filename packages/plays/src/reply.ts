@@ -171,14 +171,20 @@ function splitSentences(text: string): string[] {
 /**
  * True when the body makes (or looks like it's making) a commitment the
  * founder never authorised. `NEGATION_CUE` is checked only against the
- * comma-delimited clause carrying the matched keyword — not the whole
- * sentence — so a trailing hedge elsewhere in the same sentence (round-3
- * correction, #480/#558: "Sure, I can do a 20% discount, no problem." was
- * cleared by the unrelated "no" in ", no problem" and returned false) can't
- * mask an actual commitment made earlier in the sentence. A negation that
- * genuinely applies to the commitment (e.g. "We don't offer discounts right
- * now, sorry.") still lands in the SAME clause as the match and is still
- * caught.
+ * sentence text UP TO AND INCLUDING the clause carrying the matched keyword
+ * — from the sentence start through the next comma after the match — not a
+ * trailing fragment, so a trailing hedge AFTER the commitment's clause
+ * (round-3 correction, #480/#558: "Sure, I can do a 20% discount, no
+ * problem." was cleared by the unrelated "no" in ", no problem" and returned
+ * false) can't mask an actual commitment made earlier in the sentence. A
+ * negation that genuinely applies to the commitment still lands in this
+ * leading span and is still caught — including when it sits in an earlier
+ * comma-delimited fragment of the SAME sentence, separated from the match
+ * only by a parenthetical aside (round-4 correction, #558: "We will not,
+ * under any circumstances, offer a discount." — the clause-scoped version
+ * anchored its start to the nearest PRECEDING comma, so "not" and "discount"
+ * ended up in different fragments and this returned true; main correctly
+ * returns false).
  */
 export function bodyCommitsTerms(body: string): boolean {
   const sentences = splitSentences(body);
@@ -186,10 +192,9 @@ export function bodyCommitsTerms(body: string): boolean {
     sentences.some((sentence) => {
       const match = regex.exec(sentence);
       if (!match) return false;
-      const clauseStart = sentence.lastIndexOf(",", match.index) + 1;
       const nextComma = sentence.indexOf(",", match.index + match[0].length);
       const clauseEnd = nextComma === -1 ? sentence.length : nextComma;
-      const clause = sentence.slice(clauseStart, clauseEnd);
+      const clause = sentence.slice(0, clauseEnd);
       if (NEGATION_CUE.test(clause)) return false;
       if (requireAffirmative && (QUESTION_CUE.test(sentence) || !AFFIRMATIVE_CUE.test(sentence))) {
         return false;
