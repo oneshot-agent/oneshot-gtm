@@ -203,7 +203,7 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
     intentSignals: [
       { kind: "greenfield", strength: 80, reason: "newly licensed — nothing to rip out" },
     ],
-    // matchedDateIso is the license/enumeration/registration/inspection date
+    // matchedDateIso is the license/enumeration/registration date
     // this record matched on — the same freshness evidence routePlayFor used
     // to route it to new-business vs free-pilot in the first place. Without
     // it every registry row scores a neutral timingFreshness component,

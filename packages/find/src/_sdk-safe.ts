@@ -7,6 +7,12 @@ import {
   enrichCompany,
   findEmail,
   getLedger,
+  type GovSolicitationsInput,
+  govSolicitations,
+  type LocalResolveInput,
+  localResolve,
+  type LocalSearchInput,
+  localSearch,
   isTransientToolError,
   logEvent,
   peopleSearch,
@@ -131,6 +137,83 @@ export async function safeEnrichCompany(
   } catch (err) {
     swallow(ctx, "enrich_company", err);
     return { result: { status: "error", company: {}, cost: 0 }, receiptId: 0 };
+  }
+}
+
+/**
+ * govSolicitations that never throws — a failure resolves to an empty,
+ * `status: "error"` result so the finder halts with a named platform
+ * error instead of reading "no notices for these NAICS codes".
+ */
+export async function safeGovSolicitations(
+  input: GovSolicitationsInput,
+  ctx: CallContext,
+): Promise<Awaited<ReturnType<typeof govSolicitations>>> {
+  try {
+    return await govSolicitations(input, ctx);
+  } catch (err) {
+    swallow(ctx, "gov_solicitations", err);
+    return {
+      result: {
+        status: "error",
+        results: [],
+        total_found: 0,
+        truncated: false,
+        description_fetches: 0,
+        vendor_calls: 0,
+        cost: 0,
+      },
+      receiptId: 0,
+    };
+  }
+}
+
+/** localSearch that never throws — same `status: "error"` sentinel as safeCompanySearch. */
+export async function safeLocalSearch(
+  input: LocalSearchInput,
+  ctx: CallContext,
+): Promise<Awaited<ReturnType<typeof localSearch>>> {
+  try {
+    return await localSearch(input, ctx);
+  } catch (err) {
+    swallow(ctx, "local_search", err);
+    return {
+      result: {
+        status: "error",
+        results: [],
+        total_found: 0,
+        truncated: false,
+        vendor_calls: 0,
+        cost: 0,
+      },
+      receiptId: 0,
+    };
+  }
+}
+
+/**
+ * localResolve that never throws — a failure resolves to `found: false`
+ * (drop), the same shape a genuine miss already has.
+ */
+export async function safeLocalResolve(
+  input: LocalResolveInput,
+  ctx: CallContext,
+): Promise<Awaited<ReturnType<typeof localResolve>>> {
+  try {
+    return await localResolve(input, ctx);
+  } catch (err) {
+    swallow(ctx, "local_resolve", err);
+    return {
+      result: {
+        status: "error",
+        found: false,
+        confidence: 0,
+        result: null,
+        candidates_considered: 0,
+        cost: 0,
+      },
+      receiptId: 0,
+    };
   }
 }
 

@@ -18,11 +18,10 @@ export interface RegistryRecord {
   phone: string | null;
   /**
    * ISO date the record matched on: license issue date (socrata-license),
-   * NPI enumeration date (nppes), USDOT registration date (fmcsa), or
-   * inspection date (socrata-inspection).
+   * NPI enumeration date (nppes), or USDOT registration date (fmcsa).
    */
   matchedDateIso: string;
-  source: "socrata-license" | "nppes" | "fmcsa" | "socrata-inspection";
+  source: "socrata-license" | "nppes" | "fmcsa";
   /** Human label for the specific portal/taxonomy this record came from — carried onto the queue row. */
   sourceLabel: string;
   /**
@@ -53,28 +52,8 @@ export interface SocrataPortalConfig {
   label: string;
 }
 
-/** One Socrata health-inspection portal + dataset — issue #460's `socrata-inspection` config shape. */
-export interface SocrataInspectionPortalConfig {
-  /** Socrata host, e.g. "data.cityofnewyork.us". No scheme. */
-  host: string;
-  /** Dataset 4x4 id, e.g. "43nn-pn8j" (NYC restaurant inspections). */
-  dataset: string;
-  /** Human label shown in queue notes + perSource outcomes. */
-  label: string;
-  /**
-   * Column this portal's inspection date lives under — matches one of
-   * INSPECTION_DATE_FIELDS ("inspection_date" | "date" | "activity_date").
-   * Defaults to "inspection_date". The mapper already falls back across all
-   * three names locally, but the Socrata `$order` clause sent on the wire
-   * has to name one column that actually exists on the portal or the API
-   * 400s before any row comes back — so a portal using an alternate schema
-   * must declare it here.
-   */
-  dateField?: string;
-}
-
 export interface RegistryQuery {
-  /** Freshness window against the issue/enumeration/registration/inspection date. */
+  /** Freshness window against the issue/enumeration/registration date. */
   sinceDays: number;
   /** Max records this source should return, across all its portals/taxonomies. */
   limit: number;
@@ -90,8 +69,6 @@ export interface RegistryQuery {
   /** fmcsa only. Fleet-size floor/ceiling on `power_units` — the 10-100 band is who actually buys software. */
   minPowerUnits?: number;
   maxPowerUnits?: number;
-  /** socrata-inspection only. */
-  inspectionPortals?: SocrataInspectionPortalConfig[];
 }
 
 export interface RegistryFetchOutcome {
@@ -102,7 +79,7 @@ export interface RegistryFetchOutcome {
 }
 
 export interface RegistrySource {
-  id: "socrata-license" | "nppes" | "fmcsa" | "socrata-inspection";
+  id: "socrata-license" | "nppes" | "fmcsa";
   fetch: (cfg: RegistryQuery) => Promise<RegistryFetchOutcome>;
 }
 
@@ -724,7 +701,7 @@ export const fmcsaSource: RegistrySource = {
     // least one FMCSA-specific filter, buildFmcsaWhere still yields a valid
     // non-empty $where (active status + published email + freshness) that
     // queries the full nationwide ~2.2M-row trucking dataset. A trigger
-    // configured for socrata-license/socrata-inspection/nppes only — never
+    // configured for socrata-license/nppes only — never
     // touching fmcsa's own config keys — must not silently fire this query
     // and enqueue unrelated trucking carriers. `states` is deliberately
     // EXCLUDED here: it's shared with nppes (crossed with taxonomies), so an
@@ -814,164 +791,4 @@ export const fmcsaSource: RegistrySource = {
   },
 };
 
-// ---------------------------------------------------------------------------
-// socrata-inspection — city health-inspection open-data portals
-// ---------------------------------------------------------------------------
-
-// Health-inspection schemas vary portal to portal like license schemas do;
-// same common-field-name fallback strategy as SOCRATA_*_FIELDS above.
-const INSPECTION_NAME_FIELDS = [
-  "dba",
-  "business_name",
-  "establishment_name",
-  "name",
-  "facility_name",
-];
-const INSPECTION_ADDRESS_FIELDS = ["street", "business_address", "address", "address_line_1"];
-const INSPECTION_CITY_FIELDS = ["city", "business_city"];
-const INSPECTION_STATE_FIELDS = ["state", "business_state"];
-const INSPECTION_PHONE_FIELDS = ["phone", "business_phone"];
-const INSPECTION_DATE_FIELDS = ["inspection_date", "date", "activity_date"];
-
-/**
- * Map + freshness-filter one portal's raw inspection rows. Exported for the
- * unit test's canned-payload check.
- *
- * DELIBERATELY drops every violation/score/grade field — `violation_code`,
- * `violation_description`, `critical_flag`, `score`, `grade`, `action` never
- * reach the mapped `RegistryRecord`, so no downstream caller (local-registry,
- * the priority adapter, the draft prompt) can ever see them. The card's copy
- * guardrail forbids the email citing a failed inspection or a score; the
- * cheapest way to enforce "never cites it" is "never carries it" — the
- * record only proves the establishment is currently operating + when it was
- * last inspected, never how it scored.
- */
-export function mapInspectionRows(
-  rows: unknown[],
-  portalLabel: string,
-  sinceDays: number,
-): RegistryRecord[] {
-  const sinceMs = Date.now() - sinceDays * 86_400_000;
-  const seen = new Set<string>();
-  const out: RegistryRecord[] = [];
-  for (const raw of rows) {
-    if (!raw || typeof raw !== "object") continue;
-    const rec = raw as Record<string, unknown>;
-    const name = pickField(rec, INSPECTION_NAME_FIELDS);
-    if (!name) continue;
-    const matchedDateIso = pickDateIso(rec, INSPECTION_DATE_FIELDS);
-    if (!matchedDateIso) continue;
-    if (Date.parse(matchedDateIso) < sinceMs) continue;
-    const state = pickField(rec, INSPECTION_STATE_FIELDS);
-    // Same establishment shows multiple rows (one per violation cited on an
-    // inspection, or one per repeat inspection) — keep only the most recent
-    // per (name, address, city, state) within this portal so the finder
-    // sees one candidate per restaurant, not one per citation. name+state
-    // alone collapsed distinct establishments that share a chain name in
-    // the same state (e.g. two different "Subway" locations statewide) —
-    // address+city narrow the key to one physical location.
-    const dedupeKey = `${name.toLowerCase()}:${(pickField(rec, INSPECTION_ADDRESS_FIELDS) ?? "").toLowerCase()}:${(pickField(rec, INSPECTION_CITY_FIELDS) ?? "").toLowerCase()}:${(state ?? "").toLowerCase()}`;
-    if (seen.has(dedupeKey)) continue;
-    seen.add(dedupeKey);
-    out.push({
-      name,
-      address: pickField(rec, INSPECTION_ADDRESS_FIELDS),
-      postalCode: pickField(rec, ["zip", "zipcode", "zip_code", "postal_code"]),
-      city: pickField(rec, INSPECTION_CITY_FIELDS),
-      state,
-      phone: pickField(rec, INSPECTION_PHONE_FIELDS),
-      matchedDateIso,
-      source: "socrata-inspection",
-      sourceLabel: portalLabel,
-    });
-  }
-  return out;
-}
-
-async function fetchInspectionPortal(
-  portal: SocrataInspectionPortalConfig,
-  cfg: RegistryQuery,
-): Promise<{ records: RegistryRecord[]; diagnostic: string | null }> {
-  const dateField = portal.dateField?.trim() || "inspection_date";
-  const params = new URLSearchParams();
-  params.set("$limit", "500");
-  params.set("$order", `${dateField} DESC`);
-  const url = `https://${portal.host}/resource/${portal.dataset}.json?${params.toString()}`;
-
-  let res: Response;
-  try {
-    res = await fetch(url);
-  } catch (err) {
-    return {
-      records: [],
-      diagnostic: `${portal.host} fetch failed: ${(err as Error).message ?? "network error"}`,
-    };
-  }
-  if (!res.ok) {
-    return { records: [], diagnostic: `${portal.host} returned ${res.status} ${res.statusText}` };
-  }
-  let parsed: unknown;
-  try {
-    parsed = await res.json();
-  } catch {
-    return { records: [], diagnostic: `${portal.host} response was not valid JSON` };
-  }
-  if (!Array.isArray(parsed)) {
-    return { records: [], diagnostic: `${portal.host} response was not an array` };
-  }
-  if (parsed.length === 0) {
-    return { records: [], diagnostic: `${portal.host}/${portal.dataset} returned 0 rows` };
-  }
-
-  const records = mapInspectionRows(parsed, portal.label, cfg.sinceDays);
-  if (records.length === 0) {
-    return {
-      records: [],
-      diagnostic: `${portal.label}: ${parsed.length} rows fetched, none within ${cfg.sinceDays}d window`,
-    };
-  }
-  return { records, diagnostic: null };
-}
-
-export const socrataInspectionSource: RegistrySource = {
-  id: "socrata-inspection",
-  async fetch(cfg) {
-    const portals = cfg.inspectionPortals ?? [];
-    const perSource: RegistryFetchOutcome["perSource"] = [];
-    const records: RegistryRecord[] = [];
-    for (const portal of portals) {
-      if (records.length >= cfg.limit) break;
-      const tag = `${portal.host}/${portal.dataset}`;
-      try {
-        const outcome = await fetchInspectionPortal(portal, cfg);
-        if (outcome.records.length === 0) {
-          perSource.push({
-            source: tag,
-            label: portal.label,
-            records: 0,
-            error: outcome.diagnostic ?? "no records",
-          });
-          continue;
-        }
-        records.push(...outcome.records);
-        perSource.push({ source: tag, label: portal.label, records: outcome.records.length });
-      } catch (err) {
-        const message = ((err as Error).message ?? "").slice(0, 120);
-        logEvent(
-          "error.swallowed",
-          { kind: "local-registry.inspection_portal", portal: portal.host, message_120: message },
-          "warn",
-        );
-        perSource.push({ source: tag, label: portal.label, records: 0, error: message });
-      }
-    }
-    return { records: records.slice(0, cfg.limit), costUsd: 0, perSource };
-  },
-};
-
-export const REGISTRY_SOURCES: RegistrySource[] = [
-  socrataLicenseSource,
-  nppesSource,
-  fmcsaSource,
-  socrataInspectionSource,
-];
+export const REGISTRY_SOURCES: RegistrySource[] = [socrataLicenseSource, nppesSource, fmcsaSource];

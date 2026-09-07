@@ -21,7 +21,7 @@ import { runJobChangeFinder } from "./job-change.ts";
 import { runLocalBusinessFinder } from "./local-business.ts";
 import { runLumaFinder } from "./luma.ts";
 import { runLocalRegistryFinder } from "./local-registry.ts";
-import type { SocrataInspectionPortalConfig, SocrataPortalConfig } from "./_registry-sources.ts";
+import type { SocrataPortalConfig } from "./_registry-sources.ts";
 import { runPodcastGuestFinder } from "./podcast-guest.ts";
 import { runPostFundingFinder } from "./post-funding.ts";
 import { runShowHnFinder } from "./show-hn.ts";
@@ -408,9 +408,9 @@ export const TRIGGERS: TriggerSpec[] = [
   {
     // Local-registry finder over free, keyless public-registry APIs
     // (Socrata business-license open data + NPPES NPI + FMCSA Company
-    // Census + Socrata city health-inspection open data). Recent-issue lane
+    // Census). Recent-issue lane
     // routes to new-business, the rest to free-pilot. Ships empty (no
-    // portals/taxonomies/entityTypes/inspectionPortals configured) so
+    // portals/taxonomies/entityTypes configured) so
     // nothing fires until the founder or an industry pack (#458/#464) sets
     // a source.
     name: "local-registry",
@@ -426,7 +426,6 @@ export const TRIGGERS: TriggerSpec[] = [
       entityTypes: [] as string[],
       minPowerUnits: null as number | null,
       maxPowerUnits: null as number | null,
-      inspectionPortals: [] as SocrataInspectionPortalConfig[],
       sinceDays: 60,
       freshnessDays: 21,
       yourEdge: "",
@@ -434,7 +433,7 @@ export const TRIGGERS: TriggerSpec[] = [
       maxCostUsd: 5,
     },
     configBrief:
-      "Discovers newly-licensed or newly-enumerated main-street businesses over free, keyless public registries. Four sources, any combination may be configured: `portals` (array of {host, dataset, label} - a Socrata open-data business-license portal) filtered by `naics`/`licenseTypes`; `taxonomies` + `states` (NPPES NPI registry - taxonomy description like 'Dentist', 'Veterinarian', 'Chiropractor' crossed with 2-letter state codes); `entityTypes` (carrier/broker/freight-forwarder) + `states` + `minPowerUnits`/`maxPowerUnits` (FMCSA Company Census - the whole trucking/freight/3PL vertical, ~2.2M active entities; carries a published email on the record so there is no findEmail/verifyEmail spend at all, and the 10-100 power-unit fleet-size band is the segment that actually buys software); and `inspectionPortals` (array of {host, dataset, label} - a Socrata city health-inspection portal, e.g. NYC's 43nn-pn8j - the only cheap public proof a restaurant is CURRENTLY OPERATING rather than a stale license row; used as a recency/operating-status confirmation joined to the license lane, never violation/score content, which the adapter strips before the record ever reaches a draft). `sinceDays` (discovery window against the issue/enumeration/registration/inspection date, default 60) and `freshnessDays` (records inside this window route to the new-business play - nothing to rip out, the main-street equivalent of post-funding; everything else routes to free-pilot - clamped to sinceDays, default 21). `yourEdge` (the pitch angle for an owner-operator, REQUIRED - short and concrete, no founder jargon; may reference why a shop is relevant, e.g. new to the neighborhood - NEVER a violation, a score, or a lapsed license, which the copy lint holds regardless). A dead portal or an empty taxonomy state pair logs and continues; the run only halts when EVERY configured source returns 0 records. socrata-license/nppes/socrata-inspection carry a business name + address but no email - each such candidate resolves a domain via enrichCompany before falling through to the normal contact-resolution spine; fmcsa skips that entirely. STRATEGIST DUTY: propose taxonomies+states for healthcare verticals, portals+naics/licenseTypes for general main-street, and entityTypes+states+minPowerUnits/maxPowerUnits for trucking/freight/logistics ICPs.",
+      "Discovers newly-licensed or newly-enumerated main-street businesses over free, keyless public registries. Three sources, any combination may be configured: `portals` (array of {host, dataset, label} - a Socrata open-data business-license portal) filtered by `naics`/`licenseTypes`; `taxonomies` + `states` (NPPES NPI registry - taxonomy description like 'Dentist', 'Veterinarian', 'Chiropractor' crossed with 2-letter state codes); `entityTypes` (carrier/broker/freight-forwarder) + `states` + `minPowerUnits`/`maxPowerUnits` (FMCSA Company Census - the whole trucking/freight/3PL vertical, ~2.2M active entities; carries a published email on the record so there is no findEmail/verifyEmail spend at all, and the 10-100 power-unit fleet-size band is the segment that actually buys software). `sinceDays` (discovery window against the issue/enumeration/registration date, default 60) and `freshnessDays` (records inside this window route to the new-business play - nothing to rip out, the main-street equivalent of post-funding; everything else routes to free-pilot - clamped to sinceDays, default 21). `yourEdge` (the pitch angle for an owner-operator, REQUIRED - short and concrete, no founder jargon; may reference why a shop is relevant, e.g. new to the neighborhood - NEVER a violation, a score, or a lapsed license, which the copy lint holds regardless). A dead portal or an empty taxonomy state pair logs and continues; the run only halts when EVERY configured source returns 0 records. socrata-license/nppes carry a business name + address but no email - each such candidate resolves a domain, phone and operating status via the SDK's `localResolve` (name + address) before falling through to the normal contact-resolution spine, and a business the index says has closed is dropped; fmcsa skips that entirely. STRATEGIST DUTY: propose taxonomies+states for healthcare verticals, portals+naics/licenseTypes for general main-street, and entityTypes+states+minPowerUnits/maxPowerUnits for trucking/freight/logistics ICPs.",
     readiness: (cfg) => {
       const portals = Array.isArray(cfg["portals"]) ? cfg["portals"] : [];
       const validPortals = portals.filter(
@@ -469,37 +468,11 @@ export const TRIGGERS: TriggerSpec[] = [
         entityTypes.length > 0 ||
         typeof cfg["minPowerUnits"] === "number" ||
         typeof cfg["maxPowerUnits"] === "number";
-      const inspectionPortals = Array.isArray(cfg["inspectionPortals"])
-        ? cfg["inspectionPortals"]
-        : [];
-      const hasInspection = inspectionPortals.some(
-        (p) =>
-          p &&
-          typeof p === "object" &&
-          typeof (p as Record<string, unknown>)["host"] === "string" &&
-          ((p as Record<string, unknown>)["host"] as string).trim().length > 0 &&
-          typeof (p as Record<string, unknown>)["dataset"] === "string" &&
-          ((p as Record<string, unknown>)["dataset"] as string).trim().length > 0,
-      );
-      // socrata-inspection is a recency/operating-status CONFIRMATION joined
-      // to the licence lane (local-registry.ts's licenseMatchKeys join),
-      // never a standalone source — every socrata-inspection record with no
-      // same-run non-inspection match is dropped before it can be enqueued.
-      // An inspectionPortals-only config can therefore never produce a
-      // candidate, so it must not pass readiness on its own.
-      const hasNonInspectionSource = validPortals.length > 0 || hasNppes || hasFmcsa;
-      if (!hasNonInspectionSource && !hasInspection) {
+      if (validPortals.length === 0 && !hasNppes && !hasFmcsa) {
         return {
           ready: false,
           reason:
-            "set `portals[]` ({host, dataset, label}), `taxonomies[]` + `states[]`, `entityTypes[]`/`minPowerUnits`/`maxPowerUnits` (fmcsa), or `inspectionPortals[]`",
-        };
-      }
-      if (!hasNonInspectionSource && hasInspection) {
-        return {
-          ready: false,
-          reason:
-            "`inspectionPortals[]` alone can never enqueue anything — it only confirms a match from `portals[]`, `taxonomies[]`+`states[]`, or `entityTypes[]`/`minPowerUnits`/`maxPowerUnits`; configure one of those too",
+            "set `portals[]` ({host, dataset, label}), `taxonomies[]` + `states[]`, or `entityTypes[]`/`minPowerUnits`/`maxPowerUnits` (fmcsa)",
         };
       }
       const edge = cfg["yourEdge"];
@@ -526,26 +499,6 @@ export const TRIGGERS: TriggerSpec[] = [
           return { host, dataset, label };
         })
         .filter((p): p is SocrataPortalConfig => p !== null);
-      const inspectionPortals: SocrataInspectionPortalConfig[] = (
-        Array.isArray(cfg["inspectionPortals"]) ? (cfg["inspectionPortals"] as unknown[]) : []
-      )
-        .map((p): SocrataInspectionPortalConfig | null => {
-          if (!p || typeof p !== "object") return null;
-          const e = p as Record<string, unknown>;
-          const host = typeof e["host"] === "string" ? e["host"].trim() : "";
-          const dataset = typeof e["dataset"] === "string" ? e["dataset"].trim() : "";
-          if (host.length === 0 || dataset.length === 0) return null;
-          const label =
-            typeof e["label"] === "string" && e["label"].trim() ? e["label"].trim() : host;
-          const result: SocrataInspectionPortalConfig = { host, dataset, label };
-          const dateField =
-            typeof e["dateField"] === "string" && e["dateField"].trim()
-              ? e["dateField"].trim()
-              : undefined;
-          if (dateField) result.dateField = dateField;
-          return result;
-        })
-        .filter((p): p is SocrataInspectionPortalConfig => p !== null);
       const naics = Array.isArray(cfg["naics"])
         ? (cfg["naics"] as unknown[]).filter((t): t is string => typeof t === "string")
         : [];
@@ -584,7 +537,6 @@ export const TRIGGERS: TriggerSpec[] = [
         ...(typeof cfg["maxPowerUnits"] === "number"
           ? { maxPowerUnits: cfg["maxPowerUnits"] as number }
           : {}),
-        ...(inspectionPortals.length > 0 ? { inspectionPortals } : {}),
         sinceDays: (cfg["sinceDays"] as number) ?? 60,
         freshnessDays: (cfg["freshnessDays"] as number) ?? 21,
         yourEdge: typeof cfg["yourEdge"] === "string" ? cfg["yourEdge"] : "",
@@ -743,12 +695,13 @@ export const TRIGGERS: TriggerSpec[] = [
       locations: [] as string[],
       employeeRange: "",
       keywords: [] as string[],
+      engine: "b2b",
       yourEdge: "",
       limit: 25,
       maxCostUsd: 5,
     },
     configBrief:
-      "Reaches businesses with no GitHub repo, no Show HN post, no funding round and no accelerator batch — the local-business/main-street population the other ten finders can't touch. One `peopleSearch` call ($0.01 flat) returns up to 500 people matching `jobTitles` × `industries` × `locations` × `employeeRange`, many already carrying a `best_work_email` — those skip findEmail/verifyEmail entirely and go straight to the person-level ICP gate, so a run where every result has an email costs about one search call, not one per candidate. Config: `jobTitles` (roles that make the buying decision — e.g. 'Owner', 'Office Manager', 'Practice Manager'), `industries` (e.g. 'Dental Practices', 'HVAC Contractors', 'Independent Restaurants'), `locations` (metro/city/state filters), `employeeRange` (company-size band, e.g. '1-10', '11-50'), `keywords` (free-text refinement), `yourEdge` (the free-pilot pitch — what you set up for them free and what it saves them, REQUIRED, fed to the `free-pilot` play), `limit`, `maxCostUsd`. When `industries` is set and `jobTitles` is empty, the search is business-shaped: a `companySearch` pass resolves matching company domains first, then `peopleSearch` is scoped to those domains instead of searching on industry directly. STRATEGIST DUTY: propose `jobTitles` AND `industries` proactively from the founder's ICP — a pre-PMF founder selling to dental practices or HVAC companies shouldn't have to enumerate either by hand.",
+      "Reaches businesses with no GitHub repo, no Show HN post, no funding round and no accelerator batch — the local-business/main-street population the other ten finders can't touch. One `peopleSearch` call ($0.01 flat) returns up to 500 people matching `jobTitles` × `industries` × `locations` × `employeeRange`, many already carrying a `best_work_email` — those skip findEmail/verifyEmail entirely and go straight to the person-level ICP gate, so a run where every result has an email costs about one search call, not one per candidate. Config: `jobTitles` (roles that make the buying decision — e.g. 'Owner', 'Office Manager', 'Practice Manager'), `industries` (e.g. 'Dental Practices', 'HVAC Contractors', 'Independent Restaurants'), `locations` (metro/city/state filters), `employeeRange` (company-size band, e.g. '1-10', '11-50'), `keywords` (free-text refinement), `yourEdge` (the free-pilot pitch — what you set up for them free and what it saves them, REQUIRED, fed to the `free-pilot` play), `limit`, `maxCostUsd`. When `industries` is set and `jobTitles` is empty, the search is business-shaped: a `companySearch` pass resolves matching company domains first, then `peopleSearch` is scoped to those domains instead of searching on industry directly. `engine` (`b2b`, the default, or `local`): `local` swaps the B2B people database for the SDK's `localSearch` — the places index, `industries` as the category × `locations` as the city — and walks each business through the domain-only contact spine. Pick `local` for main-street verticals the B2B database indexes poorly (independent restaurants, single-location practices, one-truck trades); it is one flat-priced search per run plus the normal per-candidate contact spend. STRATEGIST DUTY: propose `jobTitles` AND `industries` proactively from the founder's ICP — a pre-PMF founder selling to dental practices or HVAC companies shouldn't have to enumerate either by hand.",
     readiness: (cfg) => {
       const jobTitles = Array.isArray(cfg["jobTitles"])
         ? (cfg["jobTitles"] as unknown[]).filter((t) => typeof t === "string" && t.trim())
@@ -780,6 +733,7 @@ export const TRIGGERS: TriggerSpec[] = [
           ? { employeeRange: (cfg["employeeRange"] as string).trim() }
           : {}),
         yourEdge: typeof cfg["yourEdge"] === "string" ? cfg["yourEdge"] : "",
+        ...(cfg["engine"] === "local" ? { engine: "local" as const } : {}),
         limit: (cfg["limit"] as number) ?? 25,
         maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
       });
@@ -892,9 +846,10 @@ export const TRIGGERS: TriggerSpec[] = [
       }),
   },
   {
-    // SAM.gov Get Opportunities: every notice publishes a full pointOfContact
-    // (name, title, email, phone), so this finder needs no findEmail/verifyEmail
-    // at all — near-zero SDK spend per candidate.
+    // One SDK govSolicitations search per run: every notice comes back with
+    // its contracting officer's contact (name, title, email, phone) and the
+    // description inline, so this finder needs no findEmail/verifyEmail and
+    // no second fetch — the search is the whole spend.
     name: "gov-solicitation",
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
@@ -909,14 +864,11 @@ export const TRIGGERS: TriggerSpec[] = [
       maxCostUsd: 5,
     },
     configBrief:
-      "Polls SAM.gov's Get Opportunities API for federal notices matching your NAICS codes, and pitches the notice's own published point of contact — no findEmail/verifyEmail spend, since the notice already carries a name, title, email and phone. Config: `naics` (one or more 6-digit NAICS codes describing what you sell — REQUIRED), `noticeTypes` (SAM.gov `ptype` codes, default `['r','p']`), `agencies` (optional case-insensitive substring allowlist to narrow to agencies you actually want to sell to), `sinceDays` (lookback window for `postedFrom`, default 30, capped at 365 — SAM.gov's own one-year max range), `yourEdge` (your one-line pitch, REQUIRED), `limit`, `maxCostUsd`. Needs `SAM_GOV_API_KEY` in .env (free registration on sam.gov). STRATEGIST NOTE: `noticeTypes` is a MOTION choice, not a filter — `r` (Sources Sought) and `p` (Presolicitation) reach the agency WHILE the requirement is still being written, the one window where a startup with no past-performance record can shape it; `o` (Solicitation) reaches it AFTER the requirement is fixed, when a competitor with an incumbent relationship has usually already shaped it. Default to r/p unless the founder explicitly wants to bid on finished RFPs. `r`/`p` notices route to `sources-sought`; everything else routes to `design-partner-loi`.",
+      "Pulls federal notices matching your NAICS codes through the SDK's `govSolicitations` and pitches the notice's own published contracting officer — no findEmail/verifyEmail spend, since the notice already carries a name, title, email and phone. Config: `naics` (one or more 6-digit NAICS codes describing what you sell — REQUIRED), `noticeTypes` (SAM.gov `ptype` codes, default `['r','p']`), `agencies` (optional case-insensitive substring allowlist to narrow to agencies you actually want to sell to), `sinceDays` (lookback window for `postedFrom`, default 30, capped at 365 — SAM.gov's own one-year max range), `yourEdge` (your one-line pitch, REQUIRED), `limit`, `maxCostUsd`. No key: this is one flat-priced SDK search per run (all NAICS codes in one call, contact and description inline), counted against `maxCostUsd`. STRATEGIST NOTE: `noticeTypes` is a MOTION choice, not a filter — `r` (Sources Sought) and `p` (Presolicitation) reach the agency WHILE the requirement is still being written, the one window where a startup with no past-performance record can shape it; `o` (Solicitation) reaches it AFTER the requirement is fixed, when a competitor with an incumbent relationship has usually already shaped it. Default to r/p unless the founder explicitly wants to bid on finished RFPs. `r`/`p` notices route to `sources-sought`; everything else routes to `design-partner-loi`.",
     readiness: (cfg) => {
       const naics = Array.isArray(cfg["naics"]) ? cfg["naics"] : null;
       if (!naics || naics.filter((n) => typeof n === "string" && n.trim()).length === 0) {
         return { ready: false, reason: "set `naics` (one or more 6-digit NAICS codes)" };
-      }
-      if (!process.env["SAM_GOV_API_KEY"]) {
-        return { ready: false, reason: "set SAM_GOV_API_KEY in .env" };
       }
       const edge = cfg["yourEdge"];
       if (typeof edge !== "string" || edge.trim().length === 0) {

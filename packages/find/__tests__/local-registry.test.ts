@@ -164,11 +164,9 @@ let icpMatch: boolean | null = true;
 let nextSocrataRecords: RegistryRecord[] = [];
 let nextNppesRecords: RegistryRecord[] = [];
 let nextFmcsaRecords: RegistryRecord[] = [];
-let nextInspectionRecords: RegistryRecord[] = [];
 let socrataShouldThrow = false;
 let nppesShouldThrow = false;
 let fmcsaShouldThrow = false;
-let inspectionShouldThrow = false;
 /** dedupeKeys that isQueueDuplicate reports as already queued. */
 let duplicateDedupeKeys: Set<string> = new Set();
 
@@ -233,31 +231,6 @@ vi.mock("../src/_registry-sources.ts", async () => {
           };
         },
       },
-      {
-        id: "socrata-inspection",
-        fetch: async () => {
-          if (inspectionShouldThrow) throw new Error("inspection boom");
-          return {
-            records: nextInspectionRecords,
-            costUsd: 0,
-            perSource:
-              nextInspectionRecords.length > 0
-                ? nextInspectionRecords.map((r) => ({
-                    source: r.sourceLabel,
-                    label: r.sourceLabel,
-                    records: 1,
-                  }))
-                : [
-                    {
-                      source: "socrata-inspection",
-                      label: "socrata-inspection",
-                      records: 0,
-                      error: "no records",
-                    },
-                  ],
-          };
-        },
-      },
     ],
   };
 });
@@ -290,8 +263,9 @@ vi.mock("../src/_dedupe.ts", () => ({
 
 vi.mock("../src/_findemail-prescreen.ts", () => ({ shouldSkipFindEmail: () => ({ ok: true }) }));
 
-let nextEnrichCompanyDomain: string | null = "acme.dev";
-let enrichCompanyCalls = 0;
+let nextResolvedDomain: string | null = "acme.dev";
+let nextResolvedStatus: "open" | "closed" = "open";
+let localResolveCalls: Array<Record<string, unknown>> = [];
 let findEmailCalls = 0;
 let verifyEmailCalls = 0;
 
@@ -300,12 +274,33 @@ vi.mock("@oneshot-gtm/core", async () => {
   return {
     ...actual,
     logEvent: () => {},
-    enrichCompany: async () => {
-      enrichCompanyCalls++;
+    localResolve: async (input: Record<string, unknown>) => {
+      localResolveCalls.push(input);
+      const found = nextResolvedDomain !== null;
       return {
         result: {
           status: "ok",
-          company: nextEnrichCompanyDomain ? { domain: nextEnrichCompanyDomain } : {},
+          found,
+          confidence: found ? 0.9 : 0,
+          result: found
+            ? {
+                id: "loc_1",
+                name: String(input["name"]),
+                domain: nextResolvedDomain,
+                website: `https://${nextResolvedDomain}`,
+                phone: "+1 555 0100",
+                operating_status: nextResolvedStatus,
+                category: null,
+                is_chain: null,
+                address: null,
+                socials: {},
+                review_count: null,
+                rating: null,
+                latitude: null,
+                longitude: null,
+              }
+            : null,
+          candidates_considered: 1,
           cost: 0.005,
         },
         receiptId: 2,
@@ -355,14 +350,13 @@ beforeEach(() => {
   nextSocrataRecords = [];
   nextNppesRecords = [];
   nextFmcsaRecords = [];
-  nextInspectionRecords = [];
   socrataShouldThrow = false;
   nppesShouldThrow = false;
   fmcsaShouldThrow = false;
-  inspectionShouldThrow = false;
   duplicateDedupeKeys = new Set();
-  nextEnrichCompanyDomain = "acme.dev";
-  enrichCompanyCalls = 0;
+  nextResolvedDomain = "acme.dev";
+  nextResolvedStatus = "open";
+  localResolveCalls = [];
   findEmailCalls = 0;
   verifyEmailCalls = 0;
 });
@@ -442,8 +436,8 @@ describe("runLocalRegistryFinder — routing + isolation", () => {
     expect(out.droppedEnrichment).toBe(1);
   });
 
-  it("drops the candidate when enrichCompany resolves no domain", async () => {
-    nextEnrichCompanyDomain = null;
+  it("drops the candidate when localResolve finds no match", async () => {
+    nextResolvedDomain = null;
     nextSocrataRecords = [makeRecord()];
     const out = await runLocalRegistryFinder({
       dryRun: false,
@@ -599,7 +593,7 @@ describe("runLocalRegistryFinder — routing + isolation", () => {
 });
 
 describe("runLocalRegistryFinder — fmcsa knownEmail skip", () => {
-  it("enqueues an fmcsa record without calling enrichCompany or findEmail", async () => {
+  it("enqueues an fmcsa record without calling localResolve or findEmail", async () => {
     nextFmcsaRecords = [
       makeRecord({
         name: "Slack Truck Line Inc",
@@ -615,7 +609,7 @@ describe("runLocalRegistryFinder — fmcsa knownEmail skip", () => {
       states: ["NE"],
     });
     expect(out.enqueued).toBe(1);
-    expect(enrichCompanyCalls).toBe(0);
+    expect(localResolveCalls).toHaveLength(0);
     expect(findEmailCalls).toBe(0);
     // fmcsa's knownEmail is USDOT's own on-file contact address — trusted
     // enough to skip verifyEmail too (finding PRRT_kwDOSKzrBs6exPH2), unlike
@@ -626,7 +620,7 @@ describe("runLocalRegistryFinder — fmcsa knownEmail skip", () => {
     expect(enqueued[0]?.payload["source"]).toBe("fmcsa");
   });
 
-  it("fmcsa per-candidate cost is zero (no enrichCompany/findEmail/verifyEmail spend)", async () => {
+  it("fmcsa per-candidate cost is zero (no localResolve/findEmail/verifyEmail spend)", async () => {
     nextFmcsaRecords = [
       makeRecord({
         name: "Slack Truck Line Inc",
@@ -641,32 +635,65 @@ describe("runLocalRegistryFinder — fmcsa knownEmail skip", () => {
       entityTypes: ["carrier"],
       states: ["NE"],
     });
-    // enrichCompany (0.005), findEmail (0.01), and now verifyEmail (0.005)
+    // localResolve (0.005), findEmail (0.01), and now verifyEmail (0.005)
     // are all skipped for a trusted fmcsa knownEmail candidate.
     expect(out.costUsd).toBe(0);
   });
 
-  it("a socrata-license record (no knownEmail) still goes through enrichCompany + findEmail", async () => {
-    nextSocrataRecords = [makeRecord()];
+  it("a socrata-license record (no knownEmail) goes through localResolve + findEmail, forwarding the address the registry gave us", async () => {
+    nextSocrataRecords = [makeRecord({ phone: "+1 718 555 0199", postalCode: "11201" })];
     const out = await runLocalRegistryFinder({
       dryRun: false,
       yourEdge: "x",
       portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
     });
     expect(out.enqueued).toBe(1);
-    expect(enrichCompanyCalls).toBe(1);
+    expect(localResolveCalls).toHaveLength(1);
+    // The whole point over the old name-only enrichCompany guess: the
+    // locating fields the record already carries go on the call.
+    expect(localResolveCalls[0]).toMatchObject({
+      name: "Rae's Taqueria",
+      address: "123 Main St",
+      city: "Brooklyn",
+      region: "NY",
+      postalCode: "11201",
+      phone: "+1 718 555 0199",
+    });
     expect(findEmailCalls).toBe(1);
+  });
+
+  it("drops a record the index says has closed — a licence row for a shut business is not a prospect", async () => {
+    nextResolvedStatus = "closed";
+    nextSocrataRecords = [makeRecord()];
+    const out = await runLocalRegistryFinder({
+      dryRun: false,
+      yourEdge: "x",
+      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
+    });
+    expect(out.enqueued).toBe(0);
+    expect(out.droppedEnrichment).toBe(1);
+    expect(findEmailCalls).toBe(0);
+  });
+
+  it("prefers the resolved phone over the registry's when the contact spine returns none", async () => {
+    nextSocrataRecords = [makeRecord({ phone: "+1 718 555 0199" })];
+    await runLocalRegistryFinder({
+      dryRun: false,
+      yourEdge: "x",
+      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
+    });
+    expect(enqueued[0]?.payload["phone"]).toBe("+1 555 0100");
   });
 });
 
 describe("runLocalRegistryFinder — mid-turn max-cost recheck", () => {
-  it("halts before findEmail when enrichCompany's own spend already crossed the cap", async () => {
+  it("halts before findEmail when localResolve's own spend already crossed the cap", async () => {
     // finding PRRT_kwDOSKzrBs6exPH4: the top-of-turn cap check ran before
-    // enrichCompany's paid call, so a single candidate could push spend past
-    // maxCostUsd (enrichCompany 0.005) and still enter
-    // resolveVerifyEnrichQualify's own paid calls. A cap of exactly
-    // enrichCompany's cost pins the fix: the SAME candidate's findEmail must
-    // never fire once the recheck sees costUsd >= maxCostUsd.
+    // the resolution call, so a single candidate could push spend past
+    // maxCostUsd (localResolve 0.005) and still enter
+    // resolveVerifyEnrichQualify's own paid calls. A cap of exactly the
+    // resolve cost pins the fix: the SAME candidate's findEmail must never
+    // fire once the recheck sees costUsd >= maxCostUsd.
     nextSocrataRecords = [
       makeRecord({ name: "Rae's Taqueria" }),
       makeRecord({ name: "Sam's Diner" }),
@@ -678,131 +705,9 @@ describe("runLocalRegistryFinder — mid-turn max-cost recheck", () => {
       maxCostUsd: 0.005,
       portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
     });
-    expect(enrichCompanyCalls).toBe(1);
+    expect(localResolveCalls).toHaveLength(1);
     expect(findEmailCalls).toBe(0);
     expect(out.enqueued).toBe(0);
     expect(out.halted).toContain("max-cost cap");
-  });
-});
-
-describe("runLocalRegistryFinder — socrata-inspection joins the licence lane", () => {
-  it("enqueues an inspection-sourced row carrying the establishment + recency but no violation text anywhere in its payload, when a matching license record confirms it", async () => {
-    // finding: inspection records were processed as independent outreach
-    // candidates regardless of whether a licence match existed. This test
-    // sets up BOTH a socrata-license record and a socrata-inspection record
-    // for the same establishment (name + state + city) to prove the join
-    // path still enqueues a confirmed match.
-    nextSocrataRecords = [
-      makeRecord({
-        name: "3M Bar & Grill",
-        city: "Queens",
-        source: "socrata-license",
-        sourceLabel: "NYC licenses",
-        matchedDateIso: OLD_ISO,
-      }),
-    ];
-    nextInspectionRecords = [
-      makeRecord({
-        name: "3M Bar & Grill",
-        city: "Queens",
-        source: "socrata-inspection",
-        sourceLabel: "NYC restaurant inspections",
-        matchedDateIso: RECENT_ISO,
-      }),
-    ];
-    const out = await runLocalRegistryFinder({
-      dryRun: false,
-      yourEdge: "we help restaurants run tighter ops",
-      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
-      inspectionPortals: [
-        {
-          host: "data.cityofnewyork.us",
-          dataset: "43nn-pn8j",
-          label: "NYC restaurant inspections",
-        },
-      ],
-    });
-    // Both records share the same (name, state, city) dedupeKey, so the
-    // run-level dedupe collapses them to ONE candidate — the one with the
-    // more recent matchedDateIso (the inspection row) wins.
-    expect(out.candidates).toBe(1);
-    expect(out.enqueued).toBe(1);
-    const payload = enqueued[0]?.payload;
-    expect(payload?.["company"]).toBe("3M Bar & Grill");
-    expect(payload?.["matchedDateIso"]).toBe(RECENT_ISO);
-    expect(payload?.["source"]).toBe("socrata-inspection");
-    const json = JSON.stringify(payload);
-    expect(json).not.toMatch(/violation/i);
-    expect(json).not.toMatch(/score/i);
-    expect(json).not.toMatch(/lapsed/i);
-  });
-
-  it("drops an inspection record with no matching license/nppes/fmcsa record in the same run (never used standalone)", async () => {
-    // finding PRRT_kwDOSKzrBs6fE-2U / duplicate at _registry-sources.ts:759:
-    // an inspection-only config (or one paired with an UNRELATED license
-    // portal) enqueued health-inspection establishments as independent
-    // outreach candidates. An inspection record with no same-run
-    // non-inspection match for the same (name, state, city) must be
-    // dropped entirely, not enqueued and not counted as a candidate.
-    nextInspectionRecords = [
-      makeRecord({
-        name: "3M Bar & Grill",
-        source: "socrata-inspection",
-        sourceLabel: "NYC restaurant inspections",
-        matchedDateIso: RECENT_ISO,
-      }),
-    ];
-    const out = await runLocalRegistryFinder({
-      dryRun: false,
-      yourEdge: "we help restaurants run tighter ops",
-      inspectionPortals: [
-        {
-          host: "data.cityofnewyork.us",
-          dataset: "43nn-pn8j",
-          label: "NYC restaurant inspections",
-        },
-      ],
-    });
-    expect(out.candidates).toBe(0);
-    expect(out.enqueued).toBe(0);
-    expect(enqueued).toHaveLength(0);
-  });
-
-  it("drops an inspection record when only an UNRELATED license portal is configured (different establishment)", async () => {
-    nextSocrataRecords = [
-      makeRecord({
-        name: "Old Plumbing Co",
-        city: "Manhattan",
-        source: "socrata-license",
-        sourceLabel: "NYC licenses",
-        matchedDateIso: OLD_ISO,
-      }),
-    ];
-    nextInspectionRecords = [
-      makeRecord({
-        name: "3M Bar & Grill",
-        city: "Queens",
-        source: "socrata-inspection",
-        sourceLabel: "NYC restaurant inspections",
-        matchedDateIso: RECENT_ISO,
-      }),
-    ];
-    const out = await runLocalRegistryFinder({
-      dryRun: false,
-      yourEdge: "we help restaurants run tighter ops",
-      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
-      inspectionPortals: [
-        {
-          host: "data.cityofnewyork.us",
-          dataset: "43nn-pn8j",
-          label: "NYC restaurant inspections",
-        },
-      ],
-    });
-    // Only the unrelated license row survives; the inspection row for a
-    // different establishment is dropped, not enqueued standalone.
-    expect(out.candidates).toBe(1);
-    expect(out.enqueued).toBe(1);
-    expect(enqueued[0]?.payload["company"]).toBe("Old Plumbing Co");
   });
 });

@@ -1,10 +1,16 @@
-import { getLedger, logEvent, type CompanyResult, type PersonResult } from "@oneshot-gtm/core";
+import {
+  getLedger,
+  logEvent,
+  type CompanyResult,
+  type LocalResult,
+  type PersonResult,
+} from "@oneshot-gtm/core";
 import { resolveVerifyEnrichQualify } from "./_contact.ts";
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { persistRoleRejection, qualifyPostEnrich } from "./_qualify.ts";
 import { isDuplicate } from "./_dedupe.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
-import { safeCompanySearch, safePeopleSearch } from "./_sdk-safe.ts";
+import { safeCompanySearch, safeLocalSearch, safePeopleSearch } from "./_sdk-safe.ts";
 import type { FinderResult, RunOpts } from "./_types.ts";
 
 const PLAY_NAME = "free-pilot";
@@ -17,6 +23,17 @@ const SOURCE = "find:local-business";
 const PEOPLE_SEARCH_LIMIT = 500;
 /** Server cap on `research/company`. */
 const COMPANY_SEARCH_LIMIT = 100;
+/** Server cap on `local/search` — flat price per search, so always ask for the max. */
+const LOCAL_SEARCH_LIMIT = 500;
+
+/**
+ * Which SDK tool discovers candidates. `b2b` (default, the original finder) is
+ * `peopleSearch`/`companySearch` against the B2B people database; `local` is
+ * the SDK's `localSearch` — category × location over the places index, which
+ * is where a main-street business with no LinkedIn footprint actually lives.
+ * Opt-in: no existing trigger or pack changes engine by itself.
+ */
+export type LocalBusinessEngine = "b2b" | "local";
 
 export interface LocalBusinessFinderOpts extends RunOpts {
   /** Roles to search for (e.g. "Owner", "Office Manager"). */
@@ -31,6 +48,8 @@ export interface LocalBusinessFinderOpts extends RunOpts {
   keywords?: string[];
   /** The free-pilot pitch: what you set up for them free. REQUIRED via readiness. */
   yourEdge: string;
+  /** Discovery engine. Default `b2b`. See `LocalBusinessEngine`. */
+  engine?: LocalBusinessEngine;
 }
 
 function nonEmptyStrings(vals: string[] | undefined): string[] {
@@ -81,6 +100,7 @@ function readPhone(person: PersonResult): string | null {
  * this finder over the per-candidate spine every other finder uses.
  */
 export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Promise<FinderResult> {
+  if (opts.engine === "local") return runLocalEngine(opts);
   const limit = opts.limit ?? 25;
   const icp = resolveIcp(opts.icpOverride);
   const ledger = getLedger();
@@ -374,6 +394,215 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
 
   logEvent("finder.done", {
     name: PLAY_NAME,
+    candidates: result.candidates,
+    enqueued: result.enqueued,
+    dropped_icp: result.droppedIcp,
+    dropped_dup: result.droppedDuplicate,
+    dropped_enrich: result.droppedEnrichment,
+    dropped_role: result.droppedRole,
+    cost_usd: result.costUsd,
+    halted: result.halted ?? null,
+  });
+  return result;
+}
+
+/**
+ * The `local` engine: one flat-priced `localSearch` (category × location),
+ * then the domain-only contact spine per business — the same path
+ * local-registry walks for a licence row, because a places result is the
+ * same shape: a business with a domain and no owner name. Rows enqueue with
+ * the `businessType` payload the free-pilot play, the ranking adapter and
+ * the queue evidence renderer already branch on, so a local-engine row is
+ * indistinguishable downstream from a B2B one.
+ */
+async function runLocalEngine(opts: LocalBusinessFinderOpts): Promise<FinderResult> {
+  const limit = opts.limit ?? 25;
+  const icp = resolveIcp(opts.icpOverride);
+  const ledger = getLedger();
+  const industries = nonEmptyStrings(opts.industries);
+  const locations = nonEmptyStrings(opts.locations);
+  const yourEdge = (opts.yourEdge ?? "").trim();
+
+  const result: FinderResult = {
+    source: SOURCE,
+    candidates: 0,
+    droppedIcp: 0,
+    droppedDuplicate: 0,
+    droppedEnrichment: 0,
+    droppedRole: 0,
+    enqueued: 0,
+    costUsd: 0,
+  };
+
+  if (industries.length === 0 || locations.length === 0) {
+    result.halted =
+      'engine `local` needs `industries` (the category) and `locations` (city or "City, ST")';
+    return result;
+  }
+  if (opts.maxCostUsd != null && opts.maxCostUsd <= 0) {
+    result.halted = `max-cost cap (${opts.maxCostUsd})`;
+    return result;
+  }
+
+  logEvent("finder.start", {
+    name: PLAY_NAME,
+    engine: "local",
+    industries: industries.length,
+    locations: locations.length,
+    limit,
+  });
+
+  const search = await safeLocalSearch(
+    {
+      category: industries,
+      location: locations,
+      // A row has to be contactable to be worth a candidate slot, and a chain
+      // is never an owner-operator buying a free pilot.
+      hasDomain: true,
+      isChain: false,
+      operatingStatus: "open",
+      limit: LOCAL_SEARCH_LIMIT,
+    },
+    { playName: PLAY_NAME },
+  );
+  result.costUsd += search.result.cost ?? 0;
+  if (search.result.status === "error") {
+    result.halted = "localSearch failed (platform error) — see logs";
+    logEvent("finder.done", { name: PLAY_NAME, candidates: 0, halted: result.halted });
+    return result;
+  }
+  const businesses = search.result.results as LocalResult[];
+  result.candidates = businesses.length;
+  if (businesses.length === 0) {
+    result.halted = "localSearch returned no businesses — widen locations or try another category";
+    logEvent("finder.done", { name: PLAY_NAME, candidates: 0, halted: result.halted });
+    return result;
+  }
+
+  const fallbackBusinessType = industries.join(" / ");
+  for (const biz of businesses) {
+    if (result.enqueued >= limit) break;
+    if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
+      result.halted = `max-cost cap (${opts.maxCostUsd})`;
+      break;
+    }
+    if (!biz || typeof biz !== "object") continue;
+    const name = typeof biz.name === "string" ? biz.name.trim() : "";
+    const domain = typeof biz.domain === "string" ? biz.domain.trim().toLowerCase() : "";
+    if (!name || !domain) {
+      result.droppedEnrichment++;
+      continue;
+    }
+    // The SDK's `id` is a stable hash of normalized name + address — the
+    // dedupe key it documents for exactly this cross-run purpose.
+    const dedupeKey =
+      typeof biz.id === "string" && biz.id
+        ? `${PLAY_NAME}:local:${biz.id}`
+        : `${PLAY_NAME}:local:${domain}`;
+    const businessType = biz.category?.trim() || fallbackBusinessType;
+    const city = locations[0] ?? null;
+
+    if (ledger.isQueueDuplicate(PLAY_NAME, dedupeKey)) {
+      result.droppedDuplicate++;
+      continue;
+    }
+
+    // ICP gate BEFORE any per-candidate paid call, as every finder does; the
+    // search above was one flat call per run, so it isn't gated here.
+    const filter = await icpFilter({
+      icp,
+      candidate: {
+        title: businessType,
+        url: biz.website ?? undefined,
+        summary: [name, businessType, biz.address].filter(Boolean).join(" · "),
+      },
+    });
+    if (filter.match === null) {
+      result.droppedEnrichment++;
+      continue;
+    }
+    if (!filter.match) {
+      result.droppedIcp++;
+      if (!opts.dryRun) {
+        ledger.enqueueTarget({
+          playName: PLAY_NAME,
+          payload: { name, company: name, title: null, businessType },
+          dedupeKey,
+          source: SOURCE,
+          initialStatus: "rejected",
+          notes: `auto: ICP — ${filter.reason}`,
+        });
+      }
+      continue;
+    }
+
+    if (opts.dryRun) {
+      result.enqueued++;
+      continue;
+    }
+
+    // No owner name on a places result — findEmail resolves a company-level
+    // address off the domain alone, the same opt-in local-registry uses.
+    const contact = await resolveVerifyEnrichQualify({
+      playName: PLAY_NAME,
+      fullName: null,
+      allowMissingFullName: true,
+      companyDomain: domain,
+      isDuplicate: (candEmail) =>
+        isDuplicate({ playName: PLAY_NAME, dedupeKey, prospectEmail: candEmail }),
+      icp,
+      person: {
+        name: null,
+        company: name,
+        evidence: `localSearch ${businessType}${city ? `, ${city}` : ""}`,
+      },
+      fillGaps: opts.qualifyFillGaps ?? true,
+      errKindPrefix: PLAY_NAME,
+    });
+    result.costUsd += contact.costUsd;
+    if (!contact.ok) {
+      if (contact.reason === "duplicate") result.droppedDuplicate++;
+      else if (contact.reason === "role") {
+        result.droppedRole = (result.droppedRole ?? 0) + 1;
+        persistRoleRejection({
+          playName: PLAY_NAME,
+          dedupeKey,
+          payload: { name, company: name, title: null, businessType },
+          source: SOURCE,
+          reason: contact.detail ?? "off-ICP role",
+          dryRun: opts.dryRun,
+        });
+      } else result.droppedEnrichment++;
+      continue;
+    }
+
+    const phone = contact.phone ?? biz.phone ?? null;
+    const target = {
+      name: contact.fullName ?? name,
+      email: contact.email,
+      company: name,
+      businessType,
+      yourEdge,
+      ...(biz.address ? { address: biz.address } : {}),
+      ...(city ? { city } : {}),
+      ...(contact.linkedinUrl ? { linkedinUrl: contact.linkedinUrl } : {}),
+      ...(phone ? { phone } : {}),
+      ...(contact.title ? { title: contact.title } : {}),
+    };
+    const id = enqueueScoredTarget(ledger, {
+      playName: PLAY_NAME,
+      payload: target,
+      dedupeKey,
+      source: SOURCE,
+      notes: filter.reason,
+    });
+    if (id != null) result.enqueued++;
+    else result.droppedDuplicate++;
+  }
+
+  logEvent("finder.done", {
+    name: PLAY_NAME,
+    engine: "local",
     candidates: result.candidates,
     enqueued: result.enqueued,
     dropped_icp: result.droppedIcp,

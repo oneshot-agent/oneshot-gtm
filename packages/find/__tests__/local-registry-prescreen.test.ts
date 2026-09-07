@@ -49,10 +49,6 @@ vi.mock("../src/_registry-sources.ts", async () => {
       },
       { id: "nppes", fetch: async () => ({ records: [], costUsd: 0, perSource: [] }) },
       { id: "fmcsa", fetch: async () => ({ records: [], costUsd: 0, perSource: [] }) },
-      {
-        id: "socrata-inspection",
-        fetch: async () => ({ records: [], costUsd: 0, perSource: [] }),
-      },
     ],
   };
 });
@@ -88,8 +84,30 @@ vi.mock("@oneshot-gtm/core", async () => {
   return {
     ...actual,
     logEvent: () => {},
-    enrichCompany: async () => ({
-      result: { status: "ok", company: { domain: "realrestaurant.com" }, cost: 0.005 },
+    localResolve: async () => ({
+      result: {
+        status: "ok",
+        found: true,
+        confidence: 0.9,
+        result: {
+          id: "loc_1",
+          name: "Real Restaurant",
+          domain: "realrestaurant.com",
+          website: "https://realrestaurant.com",
+          phone: null,
+          operating_status: "open",
+          category: null,
+          is_chain: null,
+          address: null,
+          socials: {},
+          review_count: null,
+          rating: null,
+          latitude: null,
+          longitude: null,
+        },
+        candidates_considered: 1,
+        cost: 0.005,
+      },
       receiptId: 2,
     }),
     findEmail: async () => {

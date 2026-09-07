@@ -11,6 +11,10 @@ import {
   type EnrichCompanyResult,
   type EnrichProfileResult,
   type FindEmailResult,
+  type GovNoticeTypeCode,
+  type GovSolicitationsResult,
+  type LocalResolveResult,
+  type LocalSearchResult,
   type InboxEmail,
   type InboxListResult,
   type PeopleSearchResult,
@@ -900,6 +904,173 @@ export async function enrichCompany(input: EnrichCompanyInput, ctx: CallContext)
     companyDomain: input.domain ?? result.company?.domain,
     source: "sdk:enrich.company",
   });
+  return { result, receiptId };
+}
+
+export type {
+  GovContact,
+  GovNoticeType,
+  GovNoticeTypeCode,
+  GovSolicitationsResult,
+  LocalResolveResult,
+  LocalResult,
+  LocalSearchResult,
+  Solicitation,
+} from "@oneshot-agent/sdk";
+
+export interface GovSolicitationsInput {
+  /** 6-digit NAICS codes, 1-20 per call. */
+  naics: string[];
+  /** SAM.gov notice-type codes; the SDK defaults to ["r", "p"]. */
+  noticeTypes?: GovNoticeTypeCode[];
+  /** Look-back on posted date, 1-365 (SDK default 30). */
+  sinceDays?: number;
+  /** Case-insensitive agency-name substrings to keep. */
+  agencies?: string[];
+  keywords?: string[];
+  /** Place-of-performance state code. */
+  state?: string;
+  setAside?: string;
+  /** SDK default true: drops archived notices and past response deadlines. */
+  activeOnly?: boolean;
+  /** Only notices whose point of contact has both a name and an email. */
+  hasContact?: boolean;
+  /** SDK default true: description bodies come back inline (capped per search). */
+  includeDescription?: boolean;
+  /** 1-500, SDK default 100. */
+  limit?: number;
+}
+
+/**
+ * Federal Sources Sought / Presolicitation notices by NAICS, with the
+ * contracting officer's published contact and the description inline — one
+ * flat-priced search per call. Replaces the two raw SAM.gov fetches (search +
+ * per-notice description) gov-solicitation used to make itself, and with them
+ * the SAM_GOV_API_KEY those needed.
+ */
+export async function govSolicitations(input: GovSolicitationsInput, ctx: CallContext) {
+  const agent = await getAgent();
+  const opts: Parameters<OneShot["govSolicitations"]>[0] = {
+    naics: input.naics,
+    ...buildAuditOpts(ctx, "gov.solicitations"),
+  };
+  if (input.noticeTypes) opts.notice_types = input.noticeTypes;
+  if (input.sinceDays !== undefined) opts.since_days = input.sinceDays;
+  if (input.agencies) opts.agencies = input.agencies;
+  if (input.keywords) opts.keywords = input.keywords;
+  if (input.state) opts.state = input.state;
+  if (input.setAside) opts.set_aside = input.setAside;
+  if (input.activeOnly !== undefined) opts.active_only = input.activeOnly;
+  if (input.hasContact !== undefined) opts.has_contact = input.hasContact;
+  if (input.includeDescription !== undefined) opts.include_description = input.includeDescription;
+  if (input.limit) opts.limit = input.limit;
+
+  const result: GovSolicitationsResult = await agent.govSolicitations(opts);
+  const receiptId = recordCallReceipt({
+    ctx,
+    callType: "gov.solicitations",
+    signedReceipt: result,
+    costUsd: result.cost,
+    oneshotRequestId: result.request_id,
+  });
+  return { result, receiptId };
+}
+
+export interface LocalSearchInput {
+  /** Business categories, e.g. ["hvac contractor"]. `category` or `keywords` required. */
+  category?: string[];
+  keywords?: string[];
+  /** Cities, neighborhoods, or "City, ST" strings. Required. */
+  location: string[];
+  minRating?: number;
+  minReviewCount?: number;
+  /** true = only chains, false = exclude detected chains (undetected rows survive). */
+  isChain?: boolean;
+  /** SDK default "open". */
+  operatingStatus?: "open" | "any";
+  /** true = only rows with a resolvable website domain. */
+  hasDomain?: boolean;
+  /** 1-500, SDK default 100. */
+  limit?: number;
+}
+
+/**
+ * Local businesses (restaurants, contractors, practices) by category ×
+ * location — flat price per search, not per row. The main-street discovery
+ * tool the B2B people database never was.
+ */
+export async function localSearch(input: LocalSearchInput, ctx: CallContext) {
+  const agent = await getAgent();
+  const opts: Parameters<OneShot["localSearch"]>[0] = {
+    location: input.location,
+    ...buildAuditOpts(ctx, "local.search"),
+  };
+  if (input.category) opts.category = input.category;
+  if (input.keywords) opts.keywords = input.keywords;
+  if (input.minRating !== undefined) opts.min_rating = input.minRating;
+  if (input.minReviewCount !== undefined) opts.min_review_count = input.minReviewCount;
+  if (input.isChain !== undefined) opts.is_chain = input.isChain;
+  if (input.operatingStatus) opts.operating_status = input.operatingStatus;
+  if (input.hasDomain !== undefined) opts.has_domain = input.hasDomain;
+  if (input.limit) opts.limit = input.limit;
+
+  const result: LocalSearchResult = await agent.localSearch(opts);
+  const receiptId = recordCallReceipt({
+    ctx,
+    callType: "local.search",
+    signedReceipt: result,
+    costUsd: result.cost,
+    oneshotRequestId: result.request_id,
+  });
+  return { result, receiptId };
+}
+
+export interface LocalResolveInput {
+  name: string;
+  address?: string;
+  city?: string;
+  /** State / province. */
+  region?: string;
+  postalCode?: string;
+  /** Strongest single match signal after the name. */
+  phone?: string;
+}
+
+/**
+ * Business name + one locating field → website domain, phone, category and
+ * operating status, with a confidence. A miss is `found: false` (a completed
+ * job), never a rejection — the same contract as findEmail. What
+ * local-registry uses to turn a licence row into a contactable domain,
+ * using the address the registry already gave us instead of guessing from
+ * the name alone.
+ */
+export async function localResolve(input: LocalResolveInput, ctx: CallContext) {
+  const agent = await getAgent();
+  const opts: Parameters<OneShot["localResolve"]>[0] = {
+    name: input.name,
+    ...buildAuditOpts(ctx, "local.resolve"),
+  };
+  if (input.address) opts.address = input.address;
+  if (input.city) opts.city = input.city;
+  if (input.region) opts.region = input.region;
+  if (input.postalCode) opts.postal_code = input.postalCode;
+  if (input.phone) opts.phone = input.phone;
+
+  const result: LocalResolveResult = await agent.localResolve(opts);
+  const receiptId = recordCallReceipt({
+    ctx,
+    callType: "local.resolve",
+    signedReceipt: result,
+    costUsd: result.cost,
+    oneshotRequestId: result.request_id,
+  });
+  if (result.found && result.result) {
+    captureSdkBusinessAddress(result.result, {
+      name: result.result.name,
+      ...(result.result.domain ? { companyDomain: result.result.domain } : {}),
+      source: "sdk:local.resolve",
+    });
+  }
   return { result, receiptId };
 }
 

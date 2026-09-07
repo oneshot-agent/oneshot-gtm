@@ -37,10 +37,23 @@ interface StubCompany {
   industry?: string;
 }
 
+interface StubLocal {
+  id?: string;
+  name?: string;
+  domain?: string | null;
+  website?: string | null;
+  phone?: string | null;
+  category?: string | null;
+  address?: string | null;
+}
+
 let nextPeopleSearchResults: StubPerson[] = [];
 let nextCompanySearchResults: StubCompany[] = [];
+let nextLocalSearchResults: StubLocal[] = [];
+let localSearchStatus: "ok" | "error" = "ok";
 const peopleSearchCalls: Array<Record<string, unknown>> = [];
 const companySearchCalls: Array<Record<string, unknown>> = [];
+const localSearchCalls: Array<Record<string, unknown>> = [];
 const findEmailCalls: string[] = [];
 const verifyEmailCalls: string[] = [];
 
@@ -67,6 +80,20 @@ vi.mock("../src/_sdk-safe.ts", () => ({
         cost: 0.01,
       },
       receiptId: 1,
+    };
+  },
+  safeLocalSearch: async (input: Record<string, unknown>) => {
+    localSearchCalls.push(input);
+    return {
+      result: {
+        status: localSearchStatus,
+        results: localSearchStatus === "ok" ? nextLocalSearchResults : [],
+        total_found: nextLocalSearchResults.length,
+        truncated: false,
+        vendor_calls: 1,
+        cost: localSearchStatus === "ok" ? 0.02 : 0,
+      },
+      receiptId: 9,
     };
   },
   safeFindEmail: async (input: { companyDomain?: string | null }) => {
@@ -133,8 +160,11 @@ beforeEach(() => {
   personVerdict = "pass";
   nextPeopleSearchResults = [];
   nextCompanySearchResults = [];
+  nextLocalSearchResults = [];
+  localSearchStatus = "ok";
   peopleSearchCalls.length = 0;
   companySearchCalls.length = 0;
+  localSearchCalls.length = 0;
   findEmailCalls.length = 0;
   verifyEmailCalls.length = 0;
 });
@@ -324,5 +354,122 @@ describe("runLocalBusinessFinder — ICP gate and limits", () => {
     expect(out.droppedRole).toBe(1);
     expect(enqueued).toHaveLength(1);
     expect(enqueued[0]?.initialStatus).toBe("rejected");
+  });
+});
+
+describe("runLocalBusinessFinder — `local` engine (SDK localSearch)", () => {
+  const baseBiz: StubLocal = {
+    id: "loc_abc",
+    name: "Rivera Family Dental",
+    domain: "riverafamilydental.com",
+    website: "https://riverafamilydental.com",
+    phone: "+1 512 555 0142",
+    category: "dental practice",
+    address: "100 Congress Ave, Austin, TX",
+  };
+
+  it("never calls localSearch when engine is absent — the B2B path is unchanged by default", async () => {
+    nextPeopleSearchResults = [{ ...basePerson, best_work_email: "dana@riverahvac.com" }];
+    await runLocalBusinessFinder({ dryRun: false, jobTitles: ["Owner"], yourEdge: "x" });
+    expect(localSearchCalls).toHaveLength(0);
+    expect(peopleSearchCalls).toHaveLength(1);
+  });
+
+  it("searches category × location with contactable, non-chain, open businesses and never touches peopleSearch", async () => {
+    nextLocalSearchResults = [baseBiz];
+    const out = await runLocalBusinessFinder({
+      dryRun: false,
+      engine: "local",
+      industries: ["dental practice"],
+      locations: ["Austin, TX"],
+      yourEdge: "we set up online booking free",
+    });
+    expect(localSearchCalls).toHaveLength(1);
+    expect(localSearchCalls[0]).toMatchObject({
+      category: ["dental practice"],
+      location: ["Austin, TX"],
+      hasDomain: true,
+      isChain: false,
+      operatingStatus: "open",
+    });
+    expect(peopleSearchCalls).toHaveLength(0);
+    expect(companySearchCalls).toHaveLength(0);
+    expect(out.enqueued).toBe(1);
+  });
+
+  it("walks a business through the domain-only spine and enqueues the free-pilot businessType shape", async () => {
+    nextLocalSearchResults = [baseBiz];
+    await runLocalBusinessFinder({
+      dryRun: false,
+      engine: "local",
+      industries: ["dental practice"],
+      locations: ["Austin, TX"],
+      yourEdge: "we set up online booking free",
+    });
+    // No owner name on a places result: findEmail runs off the domain alone.
+    expect(findEmailCalls).toEqual(["riverafamilydental.com"]);
+    const row = enqueued[0]!;
+    expect(row.playName).toBe("free-pilot");
+    expect(row.dedupeKey).toBe("free-pilot:local:loc_abc");
+    expect(row.payload).toMatchObject({
+      company: "Rivera Family Dental",
+      businessType: "dental practice",
+      email: "resolved@acme.dev",
+      address: "100 Congress Ave, Austin, TX",
+      city: "Austin, TX",
+      yourEdge: "we set up online booking free",
+    });
+  });
+
+  it("halts with a named reason when industries or locations are missing, before any search", async () => {
+    const out = await runLocalBusinessFinder({
+      dryRun: false,
+      engine: "local",
+      industries: ["dental practice"],
+      yourEdge: "x",
+    });
+    expect(out.halted).toMatch(/locations/);
+    expect(localSearchCalls).toHaveLength(0);
+  });
+
+  it("halts on a platform error rather than reporting no businesses", async () => {
+    localSearchStatus = "error";
+    const out = await runLocalBusinessFinder({
+      dryRun: false,
+      engine: "local",
+      industries: ["dental practice"],
+      locations: ["Austin, TX"],
+      yourEdge: "x",
+    });
+    expect(out.halted).toMatch(/platform error/);
+    expect(out.enqueued).toBe(0);
+  });
+
+  it("drops a result with no domain and counts the search's cost", async () => {
+    nextLocalSearchResults = [{ ...baseBiz, id: "nodomain", domain: null }];
+    const out = await runLocalBusinessFinder({
+      dryRun: false,
+      engine: "local",
+      industries: ["dental practice"],
+      locations: ["Austin, TX"],
+      yourEdge: "x",
+    });
+    expect(out.droppedEnrichment).toBe(1);
+    expect(out.enqueued).toBe(0);
+    expect(out.costUsd).toBe(0.02);
+  });
+
+  it("dry-run counts without enqueuing or resolving contacts", async () => {
+    nextLocalSearchResults = [baseBiz, { ...baseBiz, id: "loc_2", name: "Second Dental" }];
+    const out = await runLocalBusinessFinder({
+      dryRun: true,
+      engine: "local",
+      industries: ["dental practice"],
+      locations: ["Austin, TX"],
+      yourEdge: "x",
+    });
+    expect(out.enqueued).toBe(2);
+    expect(enqueued).toHaveLength(0);
+    expect(findEmailCalls).toHaveLength(0);
   });
 });

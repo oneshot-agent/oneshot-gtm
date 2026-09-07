@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { checkReadiness, TRIGGERS } from "../src/registry.ts";
 import { getPack, PACKS } from "../src/packs.ts";
 
@@ -66,19 +66,6 @@ describe("PACKS — no pack writes a founder-voice field", () => {
 
 describe.each(REAL_PACK_IDS)("pack: %s", (id) => {
   const pack = getPack(id)!;
-  const ORIGINAL_SAM_KEY = process.env["SAM_GOV_API_KEY"];
-
-  beforeEach(() => {
-    // gov-solicitation's readiness also gates on SAM_GOV_API_KEY, which is
-    // an env secret, not a pack-suppliable or founder-voice field — set it
-    // here so the civic-gov pack's "ready once founder-voice supplied"
-    // assertion isolates the thing this pack actually controls.
-    process.env["SAM_GOV_API_KEY"] = "test-key";
-  });
-  afterEach(() => {
-    if (ORIGINAL_SAM_KEY === undefined) delete process.env["SAM_GOV_API_KEY"];
-    else process.env["SAM_GOV_API_KEY"] = ORIGINAL_SAM_KEY;
-  });
 
   it("exists and has a non-empty buyerBrief, icpOneLiner, and at least one trigger", () => {
     expect(pack).toBeDefined();

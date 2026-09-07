@@ -32,7 +32,6 @@ Approved rows ship via the **Drain** button or `find drain <play>`. Both respect
 
 - `GITHUB_TOKEN` — without it the two GitHub finders share GitHub's unauthenticated ceiling of 60 requests/hour per IP and halt on a `403`. A classic token with **no scopes** is enough. `doctor` warns when it's missing and a GitHub finder is on.
 - `x-reposters` — four OAuth1 values for the first-party X API, or `TWITTERAPI_IO_KEY` for the ~55x cheaper third-party engine. Pick the provider on `/setup` or with `config x-engine`.
-- `SAM_GOV_API_KEY` — `gov-solicitation`.
 - `LUMA_SESSION_COOKIE` — optional; only buys authed Luma guest lists.
 
 All of these are env-only: `init` never asks, but `/setup` and `config keys` store them in the workspace's `.env`.

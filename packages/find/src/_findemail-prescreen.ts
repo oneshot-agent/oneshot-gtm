@@ -129,7 +129,7 @@ export function looksLikeUserHandle(name: string | null | undefined): boolean {
  *
  * `allowMissingFullName` is an explicit per-caller opt-in for genuine
  * company-level lookups (no owner/operator name exists on the source record
- * at all, e.g. `local-registry`'s socrata-license/nppes/socrata-inspection
+ * at all, e.g. `local-registry`'s socrata-license/nppes
  * candidates) — the underlying `findEmail` SDK call accepts `companyDomain`
  * alone (see `FindEmailInput` in `packages/core/src/oneshot.ts`, where every
  * name field is optional). Without opting in, a missing name still blocks

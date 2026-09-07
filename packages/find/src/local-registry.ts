@@ -5,31 +5,32 @@ import { persistRoleRejection } from "./_qualify.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { isDuplicate } from "./_dedupe.ts";
 import { parallelMap } from "./_parallel.ts";
-import { safeEnrichCompany } from "./_sdk-safe.ts";
+import { safeLocalResolve } from "./_sdk-safe.ts";
 import {
   REGISTRY_SOURCES,
   type FmcsaEntityType,
   type RegistryQuery,
   type RegistryRecord,
-  type SocrataInspectionPortalConfig,
   type SocrataPortalConfig,
 } from "./_registry-sources.ts";
 import type { FinderResult, RunOpts } from "./_types.ts";
 
 /**
  * Local-business finder over free, keyless public registries: open-data
- * business licenses (Socrata), the NPPES NPI registry, the FMCSA Company
- * Census (trucking/freight), and city health-inspection open data (Socrata).
- * socrata-license/nppes give a business name + address but no email — every
- * such candidate resolves its domain via `enrichCompany` before falling
- * through to the normal `resolveVerifyEnrichQualify` spine, exactly like
- * `accelerator-batch`'s yc-oss records resolve a founder name before
- * `findEmail`. fmcsa carries an email ON the record — like `gov-solicitation`
- * carries a verified SAM.gov contact address, this skips `findEmail`/
- * `verifyEmail` entirely rather than paying to re-derive what the record
- * already answers (`RegistryRecord.knownEmail`). socrata-inspection records
- * carry no contact info at all and are consumed as a recency/operating-status
- * confirmation joined to the licence lane, not standalone.
+ * business licenses (Socrata), the NPPES NPI registry, and the FMCSA Company
+ * Census (trucking/freight). The registries are the DISCOVERY step and stay
+ * free: they are the only sources that carry a licence / enumeration /
+ * registration date, which is what routes a row to `new-business` rather
+ * than `free-pilot`. socrata-license/nppes give a business name + address but
+ * no email — every such candidate resolves its domain via the SDK's
+ * `localResolve` (name + the address the registry already handed us →
+ * domain, phone, operating status) before falling through to the normal
+ * `resolveVerifyEnrichQualify` spine, exactly like `accelerator-batch`'s
+ * yc-oss records resolve a founder name before `findEmail`. fmcsa carries an
+ * email ON the record — like `gov-solicitation` carries a published contact,
+ * this skips resolution and `findEmail`/`verifyEmail` entirely rather than
+ * paying to re-derive what the record already answers
+ * (`RegistryRecord.knownEmail`).
  *
  * Recent-issue routing: a record inside `freshnessDays` of "now" is the
  * main-street equivalent of `post-funding` — nothing to rip out — and goes
@@ -54,9 +55,7 @@ export interface LocalRegistryFinderOpts extends RunOpts {
   /** fmcsa source config. Fleet-size band — the 10-100 power-unit band is who actually buys software. */
   minPowerUnits?: number;
   maxPowerUnits?: number;
-  /** socrata-inspection source config. Named distinctly from `portals` (socrata-license's own list) since both adapters share this one trigger config. */
-  inspectionPortals?: SocrataInspectionPortalConfig[];
-  /** Discovery window against the issue/enumeration/registration/inspection date. Default 60. */
+  /** Discovery window against the issue/enumeration/registration date. Default 60. */
   sinceDays?: number;
   /** Records matched inside this window route to new-business; older ones to free-pilot. Default 21, clamped to sinceDays. */
   freshnessDays?: number;
@@ -71,9 +70,9 @@ export interface LocalRegistryTarget {
   name: string;
   email: string;
   company: string;
-  source: "socrata-license" | "nppes" | "fmcsa" | "socrata-inspection";
+  source: "socrata-license" | "nppes" | "fmcsa";
   sourceLabel: string;
-  /** ISO issue/enumeration/registration/inspection date this record matched on — the trigger evidence. */
+  /** ISO issue/enumeration/registration date this record matched on — the trigger evidence. */
   matchedDateIso: string;
   yourEdge: string;
   /**
@@ -176,14 +175,13 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
     ...(opts.entityTypes ? { entityTypes: opts.entityTypes } : {}),
     ...(opts.minPowerUnits != null ? { minPowerUnits: opts.minPowerUnits } : {}),
     ...(opts.maxPowerUnits != null ? { maxPowerUnits: opts.maxPowerUnits } : {}),
-    ...(opts.inspectionPortals ? { inspectionPortals: opts.inspectionPortals } : {}),
   };
 
   // Step 1: fetch every configured source. Per-portal / per-taxonomy×state
   // isolation lives INSIDE each RegistrySource's own fetch (mirrors
   // accelerator-batch's per-cohort isolation) — a dead portal or an empty
   // taxonomy×state pair logs and continues; this run only halts when EVERY
-  // configured source across BOTH adapters returns 0.
+  // configured source across every adapter returns 0.
   const sourceResults = await Promise.all(
     REGISTRY_SOURCES.map(async (src) => {
       try {
@@ -213,18 +211,6 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
   }
   result.perSource = perSource;
 
-  // socrata-inspection is an operating-status/recency CONFIRMATION joined to
-  // the licence lane (issue #460's own design), never a standalone source —
-  // an inspection-only trigger (or one paired with an unrelated license
-  // portal) must not enqueue inspection rows as independent outreach
-  // candidates on health-inspection data alone. Compute which (name, state,
-  // city) keys have a non-inspection match BEFORE the merge/dedupe step
-  // below, from the full unfiltered `allRecords`, so REGISTRY_SOURCES fetch
-  // order can't decide the outcome.
-  const licenseMatchKeys = new Set(
-    allRecords.filter((r) => r.source !== "socrata-inspection").map((r) => dedupeKeyFor(r)),
-  );
-
   // Dedupe across sources within this run before touching the queue —
   // NY state + NYC-city portals commonly double-publish the same license.
   // Keep the record with the LATEST matchedDateIso, not just the first one
@@ -235,7 +221,6 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
   const seen = new Map<string, number>();
   const deduped: RegistryRecord[] = [];
   for (const r of allRecords) {
-    if (r.source === "socrata-inspection" && !licenseMatchKeys.has(dedupeKeyFor(r))) continue;
     const key = dedupeKeyFor(r);
     const priorIndex = seen.get(key);
     if (priorIndex !== undefined) {
@@ -333,24 +318,44 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
       return;
     }
 
-    // Resolve a domain from the business name — the registries carry a name
-    // and address, never a website. #456's enrichCompany ($0.005) is the
-    // cheapest resolver in the toolbox for that. fmcsa is the one source
-    // that already carries a published email on the record (like
-    // gov-solicitation's SAM.gov contact) — paying to re-derive a domain the
-    // record never needed is exactly the spend this card says to skip.
+    // Resolve a domain — the registries carry a name and address, never a
+    // website. `localResolve` is built for exactly that pair: name plus the
+    // locating fields the record already has → domain, phone and whether the
+    // place is still operating (which is also what the health-inspection
+    // lane used to exist to confirm). fmcsa is the one source that already
+    // carries a published email on the record (like gov-solicitation's
+    // contracting-officer contact) — paying to re-derive a domain the record
+    // never needed is exactly the spend to skip.
     let domain: string | null = null;
+    let resolvedPhone: string | null = null;
     if (!record.knownEmail) {
-      const enriched = await safeEnrichCompany({ name: record.name }, { playName });
-      result.costUsd += enriched.result.cost ?? 0;
-      domain = enriched.result.company?.domain ?? null;
-      if (!domain) {
+      const resolved = await safeLocalResolve(
+        {
+          name: record.name,
+          ...(record.address ? { address: record.address } : {}),
+          ...(record.city ? { city: record.city } : {}),
+          ...(record.state ? { region: record.state } : {}),
+          ...(record.postalCode ? { postalCode: record.postalCode } : {}),
+          ...(record.phone ? { phone: record.phone } : {}),
+        },
+        { playName },
+      );
+      result.costUsd += resolved.result.cost ?? 0;
+      const match = resolved.result.found ? resolved.result.result : null;
+      if (!match?.domain) {
         result.droppedEnrichment++;
         return;
       }
+      if (match.operating_status === "closed") {
+        // A licence row for a place that has since shut is not a prospect.
+        result.droppedEnrichment++;
+        return;
+      }
+      domain = match.domain;
+      resolvedPhone = match.phone ?? null;
     }
 
-    // Recheck the cap after enrichCompany's paid call and before
+    // Recheck the cap after localResolve's paid call and before
     // resolveVerifyEnrichQualify's own paid calls (findEmail/verifyEmail/
     // enrich/qualify — up to 4 more). The top-of-turn check above only
     // guards entry to a candidate's turn; concurrent workers can each pass
@@ -380,7 +385,7 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
       // to re-verify what the record already asserts is exactly the spend
       // this card says to skip (mirrors knownEmail already skipping
       // findEmail above). Has no effect for socrata-license/nppes/
-      // socrata-inspection records, which never carry knownEmail and always
+      // socrata-license/nppes records, which never carry knownEmail and always
       // go through the normal companyDomain + verify path.
       skipVerify: record.source === "fmcsa",
       isDuplicate: (email) => isDuplicate({ playName, dedupeKey, prospectEmail: email }),
@@ -421,7 +426,7 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
       return;
     }
 
-    const phone = contact.phone ?? record.phone ?? null;
+    const phone = contact.phone ?? resolvedPhone ?? record.phone ?? null;
     const target: LocalRegistryTarget = {
       name: contact.fullName ?? record.name,
       email: contact.email,

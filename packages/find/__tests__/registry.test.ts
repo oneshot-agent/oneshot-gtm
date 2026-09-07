@@ -479,36 +479,6 @@ describe("checkReadiness", () => {
     expect(out.ready).toBe(false);
   });
 
-  it("local-registry stays not ready with inspectionPortals configured alone (no license/nppes/fmcsa source)", () => {
-    // finding: local-registry.ts's join drops every socrata-inspection
-    // record with no same-run non-inspection match, which is guaranteed
-    // for an inspection-only config — readiness must not report ready:true
-    // for a configuration that can never enqueue anything.
-    const spec = TRIGGERS.find((t) => t.name === "local-registry")!;
-    const out = checkReadiness(spec, {
-      ...spec.defaultConfig,
-      inspectionPortals: [
-        { host: "data.cityofnewyork.us", dataset: "43nn-pn8j", label: "NYC inspections" },
-      ],
-      yourEdge: "we set it up for free, you keep it if it works",
-    });
-    expect(out.ready).toBe(false);
-    if (!out.ready) expect(out.reason).toMatch(/inspectionPortals/);
-  });
-
-  it("local-registry becomes ready with inspectionPortals alongside a socrata portal (join can succeed)", () => {
-    const spec = TRIGGERS.find((t) => t.name === "local-registry")!;
-    const out = checkReadiness(spec, {
-      ...spec.defaultConfig,
-      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
-      inspectionPortals: [
-        { host: "data.cityofnewyork.us", dataset: "43nn-pn8j", label: "NYC inspections" },
-      ],
-      yourEdge: "we set it up for free, you keep it if it works",
-    });
-    expect(out).toEqual({ ready: true });
-  });
-
   it("local-registry stays not ready when entityTypes carries only an invalid value (matches run's allowlist)", () => {
     // finding: readiness accepted any non-empty string in entityTypes, but
     // `run` filters the same array against validEntityTypes — a config with
@@ -537,15 +507,6 @@ describe("checkReadiness", () => {
 });
 
 describe("gov-solicitation readiness", () => {
-  const ORIGINAL_KEY = process.env["SAM_GOV_API_KEY"];
-  beforeEach(() => {
-    process.env["SAM_GOV_API_KEY"] = "test-key";
-  });
-  afterEach(() => {
-    if (ORIGINAL_KEY === undefined) delete process.env["SAM_GOV_API_KEY"];
-    else process.env["SAM_GOV_API_KEY"] = ORIGINAL_KEY;
-  });
-
   it("is not ready with its default config (naics missing)", () => {
     const spec = TRIGGERS.find((t) => t.name === "gov-solicitation")!;
     expect(spec.readiness).toBeDefined();
@@ -554,26 +515,17 @@ describe("gov-solicitation readiness", () => {
     if (!out.ready) expect(out.reason).toMatch(/naics/);
   });
 
-  it("is not ready without SAM_GOV_API_KEY even with naics + yourEdge set", () => {
-    delete process.env["SAM_GOV_API_KEY"];
-    const spec = TRIGGERS.find((t) => t.name === "gov-solicitation")!;
-    const out = checkReadiness(spec, {
-      ...spec.defaultConfig,
-      naics: ["541511"],
-      yourEdge: "we cut integration time",
-    });
-    expect(out.ready).toBe(false);
-    if (!out.ready) expect(out.reason).toMatch(/SAM_GOV_API_KEY/);
-  });
-
-  it("is not ready without yourEdge even with naics + key set", () => {
+  it("is not ready without yourEdge even with naics set", () => {
     const spec = TRIGGERS.find((t) => t.name === "gov-solicitation")!;
     const out = checkReadiness(spec, { ...spec.defaultConfig, naics: ["541511"] });
     expect(out.ready).toBe(false);
     if (!out.ready) expect(out.reason).toMatch(/yourEdge/);
   });
 
-  it("becomes ready with naics + yourEdge + the API key", () => {
+  it("becomes ready with naics + yourEdge — no SAM.gov key is involved any more", () => {
+    // The SDK's govSolicitations carries the SAM.gov side; a stale
+    // SAM_GOV_API_KEY in someone's .env must neither help nor hurt.
+    delete process.env["SAM_GOV_API_KEY"];
     const spec = TRIGGERS.find((t) => t.name === "gov-solicitation")!;
     const out = checkReadiness(spec, {
       ...spec.defaultConfig,

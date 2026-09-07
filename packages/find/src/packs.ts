@@ -90,7 +90,7 @@ export const PACKS: IndustryPack[] = [
     label: "Restaurants & Food Service",
     summary: "Owners and GMs at independent restaurants, franchisees, and ghost kitchens.",
     buyerBrief:
-      "Owner / GM / franchisee at independent restaurants, multi-unit franchisees, and ghost kitchens. The coverage spike (#456) measured `peopleSearch` at 80% best_work_email hit rate for independent restaurants in Austin, TX — the BEST of the three verticals tested, the opposite of the working hypothesis that single-location restaurants would be the weakest B2B-database population. `local-business` is therefore the primary channel here; `local-registry`'s city license/inspection data still adds the earliest-possible new-opening signal (a fresh Health Dept permit predates most restaurants having any web presence at all), so it stays on as a secondary channel.",
+      "Owner / GM / franchisee at independent restaurants, multi-unit franchisees, and ghost kitchens. The coverage spike (#456) measured `peopleSearch` at 80% best_work_email hit rate for independent restaurants in Austin, TX — the BEST of the three verticals tested, the opposite of the working hypothesis that single-location restaurants would be the weakest B2B-database population. `local-business` is therefore the primary channel here; `local-registry`'s city licence data still adds the earliest-possible new-opening signal (a fresh permit predates most restaurants having any web presence at all), so it stays on as a secondary channel.",
     icpOneLiner: "Owners and GMs of independent restaurants, franchisees, and ghost kitchens",
     triggers: {
       "local-business": {
@@ -108,13 +108,6 @@ export const PACKS: IndustryPack[] = [
           { host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC business licenses" },
         ],
         licenseTypes: ["Restaurant", "Food Service Establishment", "Food Vendor"],
-        inspectionPortals: [
-          {
-            host: "data.cityofnewyork.us",
-            dataset: "43nn-pn8j",
-            label: "NYC restaurant inspections",
-          },
-        ],
       },
     },
     requires: ["yourEdge"],
