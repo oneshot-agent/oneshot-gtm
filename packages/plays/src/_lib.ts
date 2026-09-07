@@ -654,23 +654,45 @@ export async function draftEmailFromPrompt(opts: {
   maxTokens?: number;
 }): Promise<DraftedEmail> {
   const system = loadPrompt(opts.promptName) + signatureDirective();
-  const res = await complete({
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: opts.inputBlock },
-    ],
-    temperature: opts.temperature ?? 0.65,
-    maxTokens: opts.maxTokens ?? 500,
-  });
-  return humanizeDraft(parseSubjectBody(res.content));
+  const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+    { role: "system", content: system },
+    { role: "user", content: opts.inputBlock },
+  ];
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await complete({
+      messages,
+      temperature: opts.temperature ?? 0.65,
+      maxTokens: opts.maxTokens ?? 500,
+    });
+    const draft = parseSubjectBody(res.content);
+    if (draft) {
+      const humanized = humanizeDraft(draft);
+      if (humanized.subject.trim() && humanized.body.trim()) return humanized;
+    }
+    logEvent("email.draft.invalid_response", { promptName: opts.promptName, attempt: attempt + 1 });
+    if (attempt === 0) {
+      messages.push(
+        { role: "assistant", content: res.content },
+        {
+          role: "user",
+          content:
+            'The response could not be read as an email draft. Return only one valid JSON object with non-empty string fields "subject" and "body". Escape newlines inside strings. Do not include commentary or other fields. Keep the original email instructions and facts.',
+        },
+      );
+    }
+  }
+  throw new Error(
+    "Draft generation failed: the model returned invalid or empty subject/body twice. Try regenerating.",
+  );
 }
 
-function parseSubjectBody(raw: string): DraftedEmail {
-  const parsed = tryParseJsonObject<{ subject?: string; body?: string }>(raw, {});
-  return {
-    subject: (parsed.subject ?? "").trim(),
-    body: (parsed.body ?? "").trim(),
-  };
+function parseSubjectBody(raw: string): DraftedEmail | null {
+  const parsed = tryParseJsonObject<unknown>(raw, null);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const { subject, body } = parsed as Record<string, unknown>;
+  if (typeof subject !== "string" || typeof body !== "string") return null;
+  if (!subject.trim() || !body.trim()) return null;
+  return { subject: subject.trim(), body: body.trim() };
 }
 
 export interface SendDraftedOpts {
