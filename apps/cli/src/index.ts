@@ -68,6 +68,7 @@ import {
 import { commandEnrichLinkedIn } from "./commands/enrich-linkedin.ts";
 import { commandResearchProspects } from "./commands/research-prospects.ts";
 import { commandResearchProducts } from "./commands/research-products.ts";
+import { commandSynthesizeAngles } from "./commands/synthesize-angles.ts";
 import { commandScoreProspects } from "./commands/score-prospects.ts";
 import { commandCalibrate } from "./commands/calibrate.ts";
 import { commandFindDrain, commandFindImport, commandFindWatch } from "./commands/find.ts";
@@ -569,6 +570,66 @@ find
           ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
           ...(opts.scope ? { scope: opts.scope } : {}),
           ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
+        });
+      },
+    ),
+  );
+
+find
+  .command("synthesize-angles")
+  .option(
+    "--limit <n>",
+    "max prospects to synthesize an angle for (default 250)",
+    (v) => Number.parseInt(v, 10),
+    250,
+  )
+  .option(
+    "--scope <list>",
+    "comma-separated: active,replied,unjudged,all (default active,replied,unjudged)",
+  )
+  .option("--concurrency <n>", "parallel synthesis calls (default 3)", (v) =>
+    Number.parseInt(v, 10),
+  )
+  .option("--refresh", "re-synthesize prospects that already have an angle", false)
+  .option(
+    "--cheap",
+    "free evidence tiers only — skip a fresh deepResearchPerson/webRead call",
+    false,
+  )
+  .option("--max-cost-usd <n>", "stop once this much has been billed this run", (v) =>
+    Number.parseFloat(v),
+  )
+  .option("--dry-run", "list candidates and estimated cost; synthesize nothing", false)
+  .description(
+    "Backfill per-prospect angles (dossier + live GitHub + reply history → evidence-cited synthesis)",
+  )
+  .action(
+    runOrFail(
+      async (opts: {
+        limit?: number;
+        scope?: string;
+        concurrency?: number;
+        refresh: boolean;
+        cheap: boolean;
+        maxCostUsd?: number;
+        dryRun: boolean;
+      }) => {
+        await commandSynthesizeAngles({
+          dryRun: opts.dryRun,
+          refresh: opts.refresh,
+          cheap: opts.cheap,
+          // Always forward limit — it carries a commander default (250), so
+          // it's never actually undefined, and resolveCap (this command's
+          // synthesize-angles handler → research-prospects.ts) is what
+          // decides what an explicit 0 or a NaN (bad --limit input) means.
+          // Gating this behind `opts.limit ?` treated both as "omit the
+          // field", which resolveCap reads as "no cap" — so a mistyped
+          // `--limit 0` on this paid backfill silently ran the entire
+          // backlog instead of stopping.
+          limit: opts.limit,
+          ...(opts.scope ? { scope: opts.scope } : {}),
+          ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
+          ...(Number.isFinite(opts.maxCostUsd) ? { maxCostUsd: opts.maxCostUsd as number } : {}),
         });
       },
     ),
