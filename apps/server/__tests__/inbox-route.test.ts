@@ -17,6 +17,10 @@ const recordInboxReplyMock = vi.fn(() => true);
 const getProspectByIdMock = vi.fn((): unknown => null);
 const listInboxReplyIntentsMock = vi.fn(() => new Map());
 const listLatestOutcomeRecordedAtByProspectMock = vi.fn((): Map<number, string> => new Map());
+// null by default (unmatched sender); tests override with mockReturnValueOnce
+// to exercise the matched-prospect path (angle preservation, cadence rank).
+const getProspectByEmailMock = vi.fn((): unknown => null);
+const listCadencesForProspectMock = vi.fn((): unknown[] => []);
 let knownProspect: { id: number } | null = null;
 
 const ledger = {
@@ -33,7 +37,8 @@ const ledger = {
   listSequenceEventsForProspect: listSequenceEventsForProspectMock,
   recordInboxReply: recordInboxReplyMock,
   getProspectById: getProspectByIdMock,
-  getProspectByEmail: () => null,
+  getProspectByEmail: getProspectByEmailMock,
+  listCadencesForProspect: listCadencesForProspectMock,
   findProspectByEmail: () => knownProspect,
   recordProspectReply: recordProspectReplyMock,
   // issue #480: sentiment/intent, bulk-read for the list route's badge.
@@ -447,6 +452,25 @@ describe("inbox route — research-grounded drafting", () => {
       expect.objectContaining({ dossier: null, threadSent: [] }),
     );
   });
+
+  it("preserves the matched prospect's angle_json when research throws (finding PRRT_kwDOSKzrBs6gZ7Qs)", async () => {
+    getProspectByEmailMock.mockReturnValueOnce({
+      id: 9,
+      name: "Ada",
+      company: "Acme",
+      source: "cold",
+      angle_json: '{"hook":"already synthesized"}',
+    });
+    listCadencesForProspectMock.mockReturnValueOnce([]);
+    gatherReplyContextMock.mockRejectedValue(new Error("research exploded"));
+    const res = await draftReplyRoute(
+      post("/api/inbox/draft-reply", { fromEmail: "ada@acme.com", subject: "s", body: "hi" }),
+    );
+    expect(res.status).toBe(200);
+    expect(draftInboxReplyMock).toHaveBeenCalledWith(
+      expect.objectContaining({ dossier: null, angleJson: '{"hook":"already synthesized"}' }),
+    );
+  });
 });
 
 describe("steerRoute — persists the generated redraft (round-1 correction, #480)", () => {
@@ -500,6 +524,33 @@ describe("steerRoute — persists the generated redraft (round-1 correction, #48
       "t1",
       "20% discount, deal",
       "needs_decision",
+    );
+  });
+
+  it("preserves the matched prospect's angle_json when research throws (finding PRRT_kwDOSKzrBs6gZ7Qs)", async () => {
+    getProspectByEmailMock.mockReturnValueOnce({
+      id: 10,
+      name: "Ada",
+      company: "Acme",
+      source: "cold",
+      angle_json: '{"hook":"steer path angle"}',
+    });
+    listCadencesForProspectMock.mockReturnValueOnce([]);
+    gatherReplyContextMock.mockRejectedValue(new Error("research exploded"));
+    draftInboxReplyMock.mockResolvedValue({ body: "the redraft", flags: [] });
+    const res = await steerRoute(
+      post("/api/inbox/steer", {
+        fromEmail: "ada@acme.com",
+        subject: "Re: hi",
+        body: "their message",
+        id: "e1",
+        threadKey: "t1",
+        steer: "mention pricing is public",
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(draftInboxReplyMock).toHaveBeenCalledWith(
+      expect.objectContaining({ dossier: null, angleJson: '{"hook":"steer path angle"}' }),
     );
   });
 });
