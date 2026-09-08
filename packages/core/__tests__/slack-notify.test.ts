@@ -95,6 +95,32 @@ describe("slack-notify", () => {
       expect(payload.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     });
 
+    it("escapes Slack mrkdwn special characters in text to prevent @channel/@here/mention injection via untrusted subject/from_email", async () => {
+      vi.spyOn(config, "loadConfigCached").mockReturnValue({
+        slackWebhookUrl: "https://hooks.slack.com/test",
+      } as any);
+      fetchMock.mockResolvedValue({ ok: true } as Response);
+
+      await notifySlackReplyReceived({
+        from_email: "attacker@evil.com",
+        subject: "<!channel> urgent <@U12345> & <#C123|general>",
+        play_name: "cold-outreach",
+        kind: "human",
+      });
+
+      const payload = JSON.parse(fetchMock.mock.calls![0]![1]!.body) as SlackNotification;
+      // The raw structured data is untouched — only the rendered `text` is escaped.
+      expect(payload.data).toMatchObject({
+        subject: "<!channel> urgent <@U12345> & <#C123|general>",
+      });
+      expect(payload.text).not.toContain("<!channel>");
+      expect(payload.text).not.toContain("<@U12345>");
+      expect(payload.text).not.toContain("<#C123|general>");
+      expect(payload.text).toContain("&lt;!channel&gt;");
+      expect(payload.text).toContain("&lt;@U12345&gt;");
+      expect(payload.text).toContain("&amp;");
+    });
+
     it("does not throw on fetch failure", async () => {
       vi.spyOn(config, "loadConfigCached").mockReturnValue({
         slackWebhookUrl: "https://hooks.slack.com/test",
@@ -161,6 +187,23 @@ describe("slack-notify", () => {
       expect(payload.text).toContain("hard");
       expect(payload.text).toContain("5.1.1");
       expect(payload.text).toContain("invalid@example.com");
+    });
+
+    it("escapes Slack mrkdwn special characters in bounce recipient/kind", async () => {
+      vi.spyOn(config, "loadConfigCached").mockReturnValue({
+        slackWebhookUrl: "https://hooks.slack.com/test",
+      } as any);
+      fetchMock.mockResolvedValue({ ok: true } as Response);
+
+      await notifySlackBounceRecorded({
+        recipient: "<!here> attacker@evil.com",
+        kind: "hard",
+        status_code: "5.1.1",
+      });
+
+      const payload = JSON.parse(fetchMock.mock.calls![0]![1]!.body) as SlackNotification;
+      expect(payload.text).not.toContain("<!here>");
+      expect(payload.text).toContain("&lt;!here&gt;");
     });
 
     it("does not throw on timeout", async () => {

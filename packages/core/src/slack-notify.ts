@@ -57,6 +57,20 @@ export interface SlackNotification {
 
 const SLACK_TIMEOUT_MS = 5_000;
 
+/**
+ * Escape a string for safe interpolation into a Slack mrkdwn `text` field.
+ * Per Slack's formatting spec, `&`, `<`, `>` are the only characters that
+ * need escaping — but that's exactly what neutralizes the dangerous cases:
+ * `<!channel>`, `<!here>`, `<!everyone>`, `<@U123>` (user mention), and
+ * `<#C123>` (channel link) all require literal angle brackets to be parsed
+ * as special syntax. Escaping `<`/`>` to `&lt;`/`&gt;` renders any of those
+ * sequences appearing in untrusted data (e.g. a prospect's reply subject or
+ * from-address) as inert plain text instead of triggering a mention/link.
+ */
+function escapeSlackText(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
 /** Resolve the configured webhook URL; "" = feature off. */
 export function slackWebhookUrl(
   cfg: Pick<OneShotConfig, "slackWebhookUrl"> = loadConfigCached(),
@@ -127,18 +141,24 @@ async function notify(
 }
 
 export async function notifySlackReplyReceived(data: SlackReplyReceivedData): Promise<void> {
+  const fromEmail = escapeSlackText(data.from_email);
+  const subject = data.subject ? escapeSlackText(data.subject) : null;
+  const playName = data.play_name ? escapeSlackText(data.play_name) : null;
   await notify(
     "reply_received",
     data,
-    `Reply from ${data.from_email}${data.subject ? ` — "${data.subject}"` : ""}${data.play_name ? ` (${data.play_name})` : ""}`,
+    `Reply from ${fromEmail}${subject ? ` — "${subject}"` : ""}${playName ? ` (${playName})` : ""}`,
   );
 }
 
 export async function notifySlackBounceRecorded(data: SlackBounceRecordedData): Promise<void> {
+  const recipient = escapeSlackText(data.recipient);
+  const kind = escapeSlackText(data.kind);
+  const statusCode = data.status_code ? escapeSlackText(data.status_code) : null;
   await notify(
     "bounce_recorded",
     data,
-    `Bounce (${data.kind}${data.status_code ? ` ${data.status_code}` : ""}) for ${data.recipient}`,
+    `Bounce (${kind}${statusCode ? ` ${statusCode}` : ""}) for ${recipient}`,
   );
 }
 
