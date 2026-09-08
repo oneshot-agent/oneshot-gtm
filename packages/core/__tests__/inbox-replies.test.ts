@@ -203,6 +203,79 @@ describe("inbox_replies.intent (issue #480)", () => {
     expect(ledger.listInboxRepliesForProspect(1)[0]!.intent).toBeNull();
   });
 
+  // Round-1 correction (#558): claimInboxReplyForTriage replaces a bare
+  // re-check of `intent` with an atomic UPDATE ... WHERE intent IS NULL, so
+  // two overlapping pollInboxReplies() calls (background scheduler tick +
+  // manual `cadence advance`) racing the same freshly-inserted row can't both
+  // trigger a paid triageEmails() call.
+  it("claimInboxReplyForTriage: only one of two concurrent callers wins the claim", () => {
+    record({ kind: "human" });
+    expect(ledger.claimInboxReplyForTriage("msg-1")).toBe(true);
+    // A second caller observing the same still-in-flight row must lose.
+    expect(ledger.claimInboxReplyForTriage("msg-1")).toBe(false);
+    // The pending marker is bookkeeping, not a category: readers see NULL
+    // (#559), while the row stays unclaimable and out of the backfill set.
+    expect(ledger.listInboxRepliesForProspect(1)[0]!.intent).toBeNull();
+    expect(ledger.listInboxReplyIntents(["msg-1"]).get("msg-1")?.intent).toBeNull();
+    expect(ledger.listUntriagedHumanReplies()).toEqual([]);
+  });
+
+  it("claimInboxReplyForTriage: a failed triage releases the claim so a later poll can retry", () => {
+    record({ kind: "human" });
+    expect(ledger.claimInboxReplyForTriage("msg-1")).toBe(true);
+    // Winner's triage call fails — it releases the claim back to NULL.
+    ledger.setInboxReplyIntent("msg-1", null, null);
+    expect(ledger.listInboxRepliesForProspect(1)[0]!.intent).toBeNull();
+    // A later poll can now claim and succeed.
+    expect(ledger.claimInboxReplyForTriage("msg-1")).toBe(true);
+    ledger.setInboxReplyIntent("msg-1", "interested", "r");
+    expect(ledger.listInboxRepliesForProspect(1)[0]!.intent).toBe("interested");
+  });
+
+  it("claimInboxReplyForTriage: never re-claims a row that already has a real classification", () => {
+    record({ kind: "human" });
+    ledger.setInboxReplyIntent("msg-1", "not_now", "declined");
+    expect(ledger.claimInboxReplyForTriage("msg-1")).toBe(false);
+    expect(ledger.listInboxRepliesForProspect(1)[0]!.intent).toBe("not_now");
+  });
+
+  // Round-2 correction (#558, this round): every other claim-marker in
+  // ledger.ts pairs its atomic claim with a sweepStale* recovery so a crash
+  // between the claim and the release doesn't strand the marker forever.
+  // claimInboxReplyForTriage had none — a process death mid-triage left
+  // '__triage_pending__' on the row permanently (unclaimable, unclassified,
+  // and visible to every intent reader). sweepStaleInboxReplyTriage is the
+  // cold-boot recovery, called once from apps/server/src/bin.ts like the
+  // other sweeps.
+  describe("sweepStaleInboxReplyTriage", () => {
+    it("resets a stranded __triage_pending__ claim back to NULL", () => {
+      record({ kind: "human" });
+      expect(ledger.claimInboxReplyForTriage("msg-1")).toBe(true);
+      // Still claimed (a second claim loses) even though readers report NULL.
+      expect(ledger.claimInboxReplyForTriage("msg-1")).toBe(false);
+      // Simulate a crash: nobody calls setInboxReplyIntent to release it.
+      expect(ledger.sweepStaleInboxReplyTriage()).toBe(1);
+      expect(ledger.listInboxRepliesForProspect(1)[0]!.intent).toBeNull();
+      // The row is claimable again after the sweep.
+      expect(ledger.claimInboxReplyForTriage("msg-1")).toBe(true);
+    });
+
+    it("never touches rows with a real classification or no claim at all", () => {
+      record({ kind: "human" });
+      record({ id: "msg-2", kind: "human" });
+      ledger.setInboxReplyIntent("msg-1", "interested", "r");
+      // msg-2 is left with intent NULL (no claim in flight).
+      expect(ledger.sweepStaleInboxReplyTriage()).toBe(0);
+      const rows = ledger.listInboxRepliesForProspect(1);
+      expect(rows.find((r) => r.id === "msg-1")!.intent).toBe("interested");
+      expect(rows.find((r) => r.id === "msg-2")!.intent).toBeNull();
+    });
+
+    it("is a no-op on an empty table", () => {
+      expect(ledger.sweepStaleInboxReplyTriage()).toBe(0);
+    });
+  });
+
   it("listUntriagedHumanReplies finds human replies with no intent yet, oldest first", () => {
     record({ id: "msg-1", kind: "human", receivedAt: "2026-08-20T00:00:00.000Z" });
     record({ id: "msg-2", kind: "human", receivedAt: "2026-08-25T00:00:00.000Z" });

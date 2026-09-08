@@ -257,6 +257,28 @@ function normalizeSubject(subject: string | null | undefined): string | null {
   return s.length > 0 ? s : null;
 }
 
+/**
+ * Sentinel written into `inbox_replies.intent` by `claimInboxReplyForTriage`
+ * to atomically mark "a caller is triaging this row right now" without
+ * committing to a real category yet. Never a valid `TriageCategory` /
+ * `ReplyIntent` value, and never read back as a classification: every reader
+ * of `intent` (`listInboxReplyIntents`, the /inbox route, `POSITIVE_REPLY_INTENTS`
+ * checks) only sees it during the brief window between the claim and the
+ * winner's `setInboxReplyIntent` call overwriting it with the real result (or
+ * NULL on failure) — same transaction-scoped visibility any other in-flight
+ * write has.
+ */
+const INBOX_REPLY_TRIAGE_PENDING = "__triage_pending__";
+
+/**
+ * The claim sentinel is bookkeeping, not a classification: every reader of
+ * `intent` gets NULL back for it (#559), so the column's `ReplyIntent | null`
+ * contract holds even during the window a triage call is in flight.
+ */
+function publicIntent(intent: string | null): string | null {
+  return intent === INBOX_REPLY_TRIAGE_PENDING ? null : intent;
+}
+
 export class Ledger {
   private db: Database;
   private path: string;
@@ -1253,6 +1275,64 @@ export class Ledger {
   }
 
   /**
+   * Atomically claim a persisted reply for triage (issue #558 round-1
+   * correction). Two overlapping `pollInboxReplies()` calls (realistically:
+   * the server's background scheduler tick and a manually-run `cadence
+   * advance` CLI invocation) can both observe the same freshly-inserted row
+   * with `intent` still NULL while the first call's `triageEmails()` await is
+   * in flight — a bare re-check of the nullable `intent` column can't tell
+   * "nobody has started triaging this yet" from "I already looked a moment
+   * ago", so both callers would re-trigger the paid triage call and race on
+   * the write-back. This flips `intent` from NULL to `INBOX_REPLY_TRIAGE_PENDING`
+   * in the SAME statement that checks it's still NULL — SQLite serializes
+   * writers, so only one caller's UPDATE can match a given row, and its
+   * `changes` count is the claim. The winner must call `setInboxReplyIntent`
+   * (real result) or release the claim (`setInboxReplyIntent(id, null, null)`
+   * on failure) so a later poll can retry; the loser must skip triage
+   * entirely for this row this poll.
+   */
+  claimInboxReplyForTriage(id: string): boolean {
+    const res = this.db
+      .prepare(`UPDATE inbox_replies SET intent = ? WHERE id = ? AND intent IS NULL`)
+      .run(INBOX_REPLY_TRIAGE_PENDING, id);
+    return res.changes > 0;
+  }
+
+  /**
+   * Cold-boot recovery for `claimInboxReplyForTriage` (round-2 correction,
+   * #558): every other claim-marker in this file
+   * (claimCadenceSendingMarker/sweepStaleCadenceSends,
+   * claimQueueSendingMarker/sweepStaleQueueSends,
+   * claimRunningTrigger/sweepStaleRunningTriggers) has a paired sweep so a
+   * crash between the claim UPDATE and the try/catch's release doesn't
+   * strand the marker forever. This one didn't: a process death mid-triage
+   * left `intent = '__triage_pending__'` permanently on the row — it could
+   * never be re-claimed (the claim UPDATE only matches `intent IS NULL`) or
+   * classified again, and the non-`ReplyIntent` sentinel was exposed to
+   * every reader of `intent` (`listInboxReplyIntents`, the /inbox route).
+   * Unlike the other markers, the claim here has no `started_at` column to
+   * age against — it's held only for the duration of one in-process `await
+   * triageEmails(...)`, which cannot survive past that process's death — so
+   * there's no `maxAgeMs`: cold boot (called once, like the other sweeps,
+   * from apps/server/src/bin.ts) is the only moment a stranded claim can be
+   * told apart from one a live process still holds. Returns the number of
+   * rows reset so the caller can log it.
+   *
+   * Known trade-off: a claim held by a live `intel backfill-intent` CLI
+   * process at the instant the server boots is cleared too, and the next
+   * poll may re-claim that row. The cost is one duplicated triage call
+   * (cents) whose result is the same category — last writer wins, no data
+   * is lost. Telling the two apart would need a claim timestamp column and
+   * an age-gated sweep; not worth a schema change for that window.
+   */
+  sweepStaleInboxReplyTriage(): number {
+    const res = this.db
+      .prepare(`UPDATE inbox_replies SET intent = NULL WHERE intent = ?`)
+      .run(INBOX_REPLY_TRIAGE_PENDING);
+    return res.changes;
+  }
+
+  /**
    * Bulk intent lookup for a set of provider email ids — the /inbox route's
    * badge needs the persisted (LLM-classified) intent per visible reply
    * without an N+1 query. Empty input short-circuits (SQLite's `IN ()` is
@@ -1269,14 +1349,18 @@ export class Ledger {
          WHERE id IN (${placeholders})`,
       )
       .all(...ids) as Array<{ id: string; intent: string | null; intentReason: string | null }>;
-    return new Map(rows.map((r) => [r.id, { intent: r.intent, intentReason: r.intentReason }]));
+    return new Map(
+      rows.map((r) => [r.id, { intent: publicIntent(r.intent), intentReason: r.intentReason }]),
+    );
   }
 
   /** All persisted inbound replies for one prospect, oldest first. */
   listInboxRepliesForProspect(prospectId: number): InboxReplyRecord[] {
-    return this.db
+    const rows = this.db
       .query(`SELECT * FROM inbox_replies WHERE prospect_id = ? ORDER BY received_at ASC, id ASC`)
       .all(prospectId) as InboxReplyRecord[];
+    for (const r of rows) if (r.intent === INBOX_REPLY_TRIAGE_PENDING) r.intent = null;
+    return rows;
   }
 
   /** Provider ids of every persisted reply — dedupe set for capture passes. */

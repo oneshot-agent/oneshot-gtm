@@ -138,10 +138,23 @@ export async function commandIntelBackfillIntent(opts: { limit?: number } = {}):
   const BATCH = 25;
   let done = 0;
   let failed = 0;
+  let skipped = 0;
   for (let i = 0; i < rows.length; i += BATCH) {
-    const batch = rows.slice(i, i + BATCH);
+    // Same atomic claim the background poll takes (#558/#559): this command
+    // runs while the server's scheduler is live, and a row both of them see
+    // untriaged must be paid for once. A lost claim means the poll has it.
+    const batch = rows.slice(i, i + BATCH).filter((r) => {
+      if (ledger.claimInboxReplyForTriage(r.id)) return true;
+      skipped++;
+      return false;
+    });
+    if (batch.length === 0) continue;
+    // Only the paid call is inside the try: a failure there releases every
+    // claim in the batch. The write-back below runs outside it, so a partial
+    // write-back can never be "undone" by releasing rows already classified.
+    let triaged: Awaited<ReturnType<typeof triageEmails>>;
     try {
-      const triaged = await triageEmails(
+      triaged = await triageEmails(
         batch.map((r) => ({
           id: r.id,
           from: r.from_email,
@@ -150,23 +163,27 @@ export async function commandIntelBackfillIntent(opts: { limit?: number } = {}):
           body: r.body,
         })),
       );
-      const byId = new Map(triaged.map((t) => [t.id, t]));
-      for (const r of batch) {
-        const t = byId.get(r.id);
-        if (!t) {
-          failed++;
-          continue;
-        }
-        ledger.setInboxReplyIntent(r.id, t.category, t.reasoning || null);
-        done++;
-      }
     } catch (err) {
+      for (const r of batch) ledger.setInboxReplyIntent(r.id, null, null);
       failed += batch.length;
       warn(`batch starting at row ${i} failed: ${(err as Error)?.message ?? "unknown error"}`);
+      continue;
+    }
+    const byId = new Map(triaged.map((t) => [t.id, t]));
+    for (const r of batch) {
+      const t = byId.get(r.id);
+      if (!t) {
+        // Release the claim so a later poll (or re-run) can retry.
+        ledger.setInboxReplyIntent(r.id, null, null);
+        failed++;
+        continue;
+      }
+      ledger.setInboxReplyIntent(r.id, t.category, t.reasoning || null);
+      done++;
     }
   }
   ok(
-    `backfilled ${done} repl${done === 1 ? "y" : "ies"}${failed > 0 ? `, ${failed} failed` : ""}.`,
+    `backfilled ${done} repl${done === 1 ? "y" : "ies"}${failed > 0 ? `, ${failed} failed` : ""}${skipped > 0 ? `, ${skipped} already being triaged` : ""}.`,
   );
 }
 

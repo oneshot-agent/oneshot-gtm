@@ -85,6 +85,34 @@ describe("commandIntelBackfillIntent (issue #480)", () => {
     expect(ledger.listUntriagedHumanReplies()).toHaveLength(0);
   });
 
+  it("skips a row the background poll has already claimed, and never bills it twice (#559)", async () => {
+    ledger.upsertProspect({ email: "p@prospect.example" });
+    record("r1", "human");
+    record("r2", "human");
+    // The scheduler's poll is mid-triage on r2: it holds the atomic claim.
+    expect(ledger.claimInboxReplyForTriage("r2")).toBe(true);
+
+    triageEmailsMock.mockImplementation(async (emails: Array<{ id: string }>) =>
+      emails.map((e) => ({
+        id: e.id,
+        from: "x",
+        subject: "x",
+        category: "not_now",
+        nextStep: "wait",
+        draftedReply: "",
+        reasoning: "later",
+      })),
+    );
+    await commandIntelBackfillIntent();
+
+    // r1 was triaged here; r2 was left to the poll that claimed it.
+    const sentIds = (triageEmailsMock.mock.calls[0]![0] as Array<{ id: string }>).map((e) => e.id);
+    expect(sentIds).toEqual(["r1"]);
+    expect(ledger.listInboxReplyIntents(["r1", "r2"]).get("r1")?.intent).toBe("not_now");
+    // Still the poll's claim — a second claimant loses.
+    expect(ledger.claimInboxReplyForTriage("r2")).toBe(false);
+  });
+
   it("is a no-op when nothing is untriaged", async () => {
     await commandIntelBackfillIntent();
     expect(triageEmailsMock).not.toHaveBeenCalled();

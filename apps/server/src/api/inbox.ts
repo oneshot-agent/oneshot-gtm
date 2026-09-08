@@ -219,7 +219,10 @@ export async function listInboxRoute(req: Request): Promise<Response> {
   // Opportunistic capture: any matched live mail not yet persisted goes into
   // inbox_replies now (INSERT OR IGNORE — re-sees are no-ops). This is also
   // how pre-v21 history backfills itself: the targeted known-replier fetch
-  // above flows through here on first load. Best-effort.
+  // above flows through here on first load. Best-effort. Classification
+  // (issue #480/#558) is intentionally NOT done here — pollInboxReplies is
+  // the one choke point that also classifies rows this capture inserted but
+  // didn't triage (see _cadence.ts's isNewReply-or-untriaged check).
   try {
     for (const r of visible) {
       if (!r.matched) continue;
@@ -608,7 +611,9 @@ export async function steerRoute(req: Request): Promise<Response> {
   // row; if none exists yet, seed it with the inbound context and an empty
   // body so setInboxDraftSteer's UPDATE has something to land on.
   const existing = ledger.getInboxThreads().get(threadKey);
-  if (existing == null) {
+  // A thread with only sent history still yields an entry (draftBody null),
+  // so test the draft row itself — otherwise both UPDATEs below hit no rows.
+  if (existing?.draftBody == null && existing?.steer == null) {
     ledger.upsertInboxDraft({
       threadKey,
       inboundEmailId: typeof body.id === "string" ? body.id : threadKey,
