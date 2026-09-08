@@ -149,8 +149,12 @@ export async function commandIntelBackfillIntent(opts: { limit?: number } = {}):
       return false;
     });
     if (batch.length === 0) continue;
+    // Only the paid call is inside the try: a failure there releases every
+    // claim in the batch. The write-back below runs outside it, so a partial
+    // write-back can never be "undone" by releasing rows already classified.
+    let triaged: Awaited<ReturnType<typeof triageEmails>>;
     try {
-      const triaged = await triageEmails(
+      triaged = await triageEmails(
         batch.map((r) => ({
           id: r.id,
           from: r.from_email,
@@ -159,22 +163,23 @@ export async function commandIntelBackfillIntent(opts: { limit?: number } = {}):
           body: r.body,
         })),
       );
-      const byId = new Map(triaged.map((t) => [t.id, t]));
-      for (const r of batch) {
-        const t = byId.get(r.id);
-        if (!t) {
-          // Release the claim so a later poll (or re-run) can retry.
-          ledger.setInboxReplyIntent(r.id, null, null);
-          failed++;
-          continue;
-        }
-        ledger.setInboxReplyIntent(r.id, t.category, t.reasoning || null);
-        done++;
-      }
     } catch (err) {
       for (const r of batch) ledger.setInboxReplyIntent(r.id, null, null);
       failed += batch.length;
       warn(`batch starting at row ${i} failed: ${(err as Error)?.message ?? "unknown error"}`);
+      continue;
+    }
+    const byId = new Map(triaged.map((t) => [t.id, t]));
+    for (const r of batch) {
+      const t = byId.get(r.id);
+      if (!t) {
+        // Release the claim so a later poll (or re-run) can retry.
+        ledger.setInboxReplyIntent(r.id, null, null);
+        failed++;
+        continue;
+      }
+      ledger.setInboxReplyIntent(r.id, t.category, t.reasoning || null);
+      done++;
     }
   }
   ok(

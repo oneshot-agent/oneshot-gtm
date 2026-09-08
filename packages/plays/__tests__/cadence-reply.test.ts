@@ -154,7 +154,8 @@ vi.mock("@oneshot-gtm/core", async () => {
         const out = new Map<string, { intent: string | null; intentReason: string | null }>();
         for (const id of ids) {
           const v = intents.get(id);
-          if (v) out.set(id, v);
+          // Same contract as the real reader: the pending claim reads as NULL.
+          if (v) out.set(id, v.intent === "__triage_pending__" ? { ...v, intent: null } : v);
         }
         return out;
       },

@@ -1317,6 +1317,13 @@ export class Ledger {
    * from apps/server/src/bin.ts) is the only moment a stranded claim can be
    * told apart from one a live process still holds. Returns the number of
    * rows reset so the caller can log it.
+   *
+   * Known trade-off: a claim held by a live `intel backfill-intent` CLI
+   * process at the instant the server boots is cleared too, and the next
+   * poll may re-claim that row. The cost is one duplicated triage call
+   * (cents) whose result is the same category — last writer wins, no data
+   * is lost. Telling the two apart would need a claim timestamp column and
+   * an age-gated sweep; not worth a schema change for that window.
    */
   sweepStaleInboxReplyTriage(): number {
     const res = this.db
