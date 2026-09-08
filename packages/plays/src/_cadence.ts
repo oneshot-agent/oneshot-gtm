@@ -508,11 +508,15 @@ async function walkInboxWindow(
         messageId: e.message_id ?? null,
         kind,
       });
-      // Slack notification: fire-and-forget on first sight only. This is the
-      // primary reply-detection path (scheduler -> pollInboxReplies), unlike
-      // the opportunistic capture in apps/server/src/api/inbox.ts which only
-      // covers the UI-poll route.
-      if (isNewReply) {
+      // Slack notification: fire-and-forget on first sight only, and only for
+      // real human replies. This is the primary reply-detection path
+      // (scheduler -> pollInboxReplies), unlike the opportunistic capture in
+      // apps/server/src/api/inbox.ts which only covers the UI-poll route.
+      // Gated on `kind === "human"` (not just `isNewReply`): autoresponders
+      // (OOO, dead mailbox) and unsubscribe requests are NOT replies by this
+      // codebase's own definition (see the classifyReply comment above) and
+      // must not raise a false "Reply from ..." alert.
+      if (isNewReply && kind === "human") {
         void notifySlackReplyReceived({
           from_email: from,
           subject: e.subject,

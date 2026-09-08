@@ -17,6 +17,8 @@ const recordInboxReplyMock = vi.fn(() => true);
 const getProspectByIdMock = vi.fn((): unknown => null);
 const listInboxReplyIntentsMock = vi.fn(() => new Map());
 const listLatestOutcomeRecordedAtByProspectMock = vi.fn((): Map<number, string> => new Map());
+const getProspectByEmailMock = vi.fn((): unknown => null);
+const notifySlackReplyReceivedMock = vi.fn(async () => {});
 let knownProspect: { id: number } | null = null;
 
 const ledger = {
@@ -33,7 +35,7 @@ const ledger = {
   listSequenceEventsForProspect: listSequenceEventsForProspectMock,
   recordInboxReply: recordInboxReplyMock,
   getProspectById: getProspectByIdMock,
-  getProspectByEmail: () => null,
+  getProspectByEmail: getProspectByEmailMock,
   findProspectByEmail: () => knownProspect,
   recordProspectReply: recordProspectReplyMock,
   // issue #480: sentiment/intent, bulk-read for the list route's badge.
@@ -57,6 +59,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     // trackSend just runs the thunk and wraps its result the way the route expects.
     trackSend: async (fn: () => Promise<unknown>) => ({ result: await fn() }),
     replyEmail: replyEmailMock,
+    notifySlackReplyReceived: notifySlackReplyReceivedMock,
   };
 });
 
@@ -122,6 +125,52 @@ describe("inbox route — persisted drafts & sent replies", () => {
     expect(out.replies).toHaveLength(1);
     expect(out.replies[0]!.thread?.draftBody).toBe("saved draft");
     expect(out.replies[0]!.thread?.sent.map((s) => s.body)).toEqual(["sent1"]);
+  });
+
+  it("opportunistic capture notifies Slack for a new human reply, not an autoresponder", async () => {
+    getInboxThreadsMock.mockReturnValue(new Map());
+    knownProspect = { id: 42 };
+    getProspectByEmailMock.mockReturnValue({
+      id: 42,
+      name: "Jane",
+      company: "Acme",
+      source: "cold",
+    });
+    listInboxMock.mockResolvedValue({
+      emails: [
+        {
+          id: "human-1",
+          from: "jane@acme.com",
+          subject: "Re: hi",
+          received_at: "2026-06-10T01:00:00Z",
+          body: "sounds good, let's talk",
+        },
+        {
+          id: "auto-1",
+          from: "jane@acme.com",
+          subject: "Automatic reply: out of office",
+          received_at: "2026-06-10T02:00:00Z",
+          body: "I am out of office until Monday.",
+        },
+      ],
+    });
+
+    try {
+      const res = await listInboxRoute(new Request("http://localhost/api/inbox"));
+      expect(res.status).toBe(200);
+      // Both emails are recorded (opportunistic capture persists everything
+      // matched), but the Slack alert only fires for the human one — an
+      // autoresponder is not a reply by classifyReply's own contract and must
+      // not raise a false "Reply from ..." alert (round-1 correction, #71).
+      expect(recordInboxReplyMock).toHaveBeenCalledTimes(2);
+      expect(notifySlackReplyReceivedMock).toHaveBeenCalledTimes(1);
+      expect(notifySlackReplyReceivedMock).toHaveBeenCalledWith(
+        expect.objectContaining({ from_email: "jane@acme.com", kind: "human" }),
+      );
+    } finally {
+      knownProspect = null;
+      getProspectByEmailMock.mockReturnValue(null);
+    }
   });
 
   it("assembles conversations: outreach + inbound replies + manual sends, in time order", async () => {

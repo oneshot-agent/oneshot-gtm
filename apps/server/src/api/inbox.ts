@@ -243,8 +243,11 @@ export async function listInboxRoute(req: Request): Promise<Response> {
         messageId: r.messageId,
         kind: r.kind,
       });
-      // Slack notification: fire-and-forget on first sight only.
-      if (isNew) {
+      // Slack notification: fire-and-forget on first sight only, and only for
+      // real human replies — same `kind === "human"` gate as the primary
+      // detection path in _cadence.ts (autoresponders/unsubscribes are not
+      // replies by this codebase's own definition and must not alert).
+      if (isNew && r.kind === "human") {
         void notifySlackReplyReceived({
           from_email: r.fromEmail,
           subject: r.subject,

@@ -591,6 +591,9 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
     expect(repliedSteps).toHaveLength(0); // no sequence_events flip → metric untouched
     expect(persistedReplies).toHaveLength(1); // conversation history stays complete
     expect(persistedReplies[0]?.kind).toBe("auto");
+    // Autoresponders are not replies by classifyReply's own contract — must
+    // not raise a false "Reply from ..." Slack alert (round-1 correction).
+    expect(notifySlackReplyReceivedMock).not.toHaveBeenCalled();
   });
 
   it("a dead-mailbox autoresponder stops the cadence as bounced, not replied", async () => {
@@ -615,6 +618,7 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
       { prospectId: 1, playName: "stack-consolidation", status: "bounced" },
     ]);
     expect(persistedReplies[0]?.kind).toBe("auto_permanent");
+    expect(notifySlackReplyReceivedMock).not.toHaveBeenCalled();
   });
 
   it("an unsubscribe request stops the cadence as unsubscribed", async () => {
@@ -636,6 +640,7 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
       { prospectId: 1, playName: "stack-consolidation", status: "unsubscribed" },
     ]);
     expect(persistedReplies[0]?.kind).toBe("unsubscribe");
+    expect(notifySlackReplyReceivedMock).not.toHaveBeenCalled();
   });
 
   it("a terminal cadence is not resurrected or re-stopped by a dead-mailbox notice", async () => {
