@@ -205,3 +205,124 @@ describe("mergeProspectDossierHalf", () => {
     expect(() => ledger.mergeProspectDossierHalf(9999, "person", { title: "x" })).not.toThrow();
   });
 });
+
+// The per-prospect angle artifact (issue #355). `setProspectAngle` mirrors
+// `setProspectDossier`'s plain-UPDATE shape deliberately — NOT
+// `upsertProspect`, which would silently skip existing rows and no-op every
+// backfill call.
+describe("setProspectAngle", () => {
+  it("writes angle_json and stamps angle_synthesized_at together", () => {
+    const id = add("angle-a@x.dev");
+    expect(ledger.getProspectById(id)?.angle_json).toBeNull();
+    expect(ledger.getProspectById(id)?.angle_synthesized_at).toBeNull();
+    ledger.setProspectAngle(id, JSON.stringify({ hook: "shipped v2" }));
+    const row = ledger.getProspectById(id);
+    expect(row?.angle_json).toBe(JSON.stringify({ hook: "shipped v2" }));
+    expect(typeof row?.angle_synthesized_at).toBe("string");
+  });
+
+  it("OVERWRITES an existing angle, like setProspectDossier", () => {
+    const id = add("angle-b@x.dev", { angle_json: "stale" });
+    ledger.setProspectAngle(id, "fresh");
+    expect(ledger.getProspectById(id)?.angle_json).toBe("fresh");
+  });
+
+  it("clears BOTH columns together with null — never leaves a timestamp with no angle", () => {
+    const id = add("angle-c@x.dev");
+    ledger.setProspectAngle(id, "something");
+    expect(ledger.getProspectById(id)?.angle_synthesized_at).not.toBeNull();
+    ledger.setProspectAngle(id, null);
+    const row = ledger.getProspectById(id);
+    expect(row?.angle_json).toBeNull();
+    expect(row?.angle_synthesized_at).toBeNull();
+  });
+});
+
+describe("listProspectsForAngle", () => {
+  it("selects unjudged rows with a profile URL, mirroring listProspectsForResearch's scope", () => {
+    const withUrl = add("angle-d@x.dev", { source_profile_url: "https://github.com/d" });
+    const noUrl = add("angle-e@x.dev"); // unjudged but no URL
+    const ids = ledger.listProspectsForAngle({ scopes: ["unjudged"] }).map((r) => r.id);
+    expect(ids).toContain(withUrl);
+    expect(ids).not.toContain(noUrl);
+  });
+
+  it("selects a replied prospect even with NO profile URL or email signal", () => {
+    // Unlike listProspectsForResearch, angle synthesis has reply history as a
+    // standalone evidence input — a social URL is not required.
+    const id = ledger.upsertProspect({ name: "No URL", email: null, source: "reply" });
+    ledger.recordInboxReply({
+      id: "msg-1",
+      threadKey: "t1",
+      prospectId: id,
+      fromEmail: "someone@x.dev",
+      subject: "re: hi",
+      body: "not sure what you mean",
+      receivedAt: new Date().toISOString(),
+    });
+    expect(ledger.listProspectsForAngle({ scopes: ["replied"] }).map((r) => r.id)).toEqual([id]);
+  });
+
+  it("unions scopes rather than intersecting them", () => {
+    const unjudged = add("angle-f@x.dev", { source_profile_url: "https://github.com/f" });
+    const active = add("angle-g@x.dev", { source_profile_url: "https://github.com/g" });
+    ledger.setProspectIcpVerdict(active, "pass");
+    ledger.enrollCadence({
+      prospectId: active,
+      playName: "repo-interest",
+      nextDueAt: new Date().toISOString(),
+    });
+    const ids = ledger.listProspectsForAngle({ scopes: ["active", "unjudged"] }).map((r) => r.id);
+    expect(ids.toSorted()).toEqual([unjudged, active].toSorted());
+  });
+
+  it("excludes rows that already hold an angle unless includeSynthesized", () => {
+    const done = add("angle-h@x.dev", { source_profile_url: "https://github.com/h" });
+    ledger.setProspectAngle(done, JSON.stringify({ hook: "already synthesized" }));
+    expect(ledger.listProspectsForAngle({ scopes: ["unjudged"] }).map((r) => r.id)).toEqual([]);
+    expect(
+      ledger
+        .listProspectsForAngle({ scopes: ["unjudged"], includeSynthesized: true })
+        .map((r) => r.id),
+    ).toEqual([done]);
+  });
+
+  it("honours the limit", () => {
+    for (const e of ["angle-i@x.dev", "angle-j@x.dev", "angle-k@x.dev"]) {
+      add(e, { source_profile_url: `https://github.com/${e}` });
+    }
+    expect(ledger.listProspectsForAngle({ scopes: ["unjudged"], limit: 2 })).toHaveLength(2);
+  });
+
+  it("falls back to the default scopes when none are given", () => {
+    const id = add("angle-l@x.dev", { source_profile_url: "https://github.com/l" });
+    expect(ledger.listProspectsForAngle({ scopes: [] as never }).map((r) => r.id)).toEqual([id]);
+    expect(ledger.listProspectsForAngle().map((r) => r.id)).toEqual([id]);
+  });
+});
+
+describe("getQueueRowForProspect", () => {
+  it("returns the most recent queue row linked to a prospect", () => {
+    const id = add("angle-m@x.dev");
+    const older = ledger.enqueueTarget({
+      playName: "repo-interest",
+      payload: { email: "angle-m@x.dev" },
+      dedupeKey: "older",
+      source: "t",
+    });
+    ledger.setQueueProspectId(older!, id);
+    const newer = ledger.enqueueTarget({
+      playName: "repo-interest",
+      payload: { email: "angle-m@x.dev" },
+      dedupeKey: "newer",
+      source: "t",
+    });
+    ledger.setQueueProspectId(newer!, id);
+    expect(ledger.getQueueRowForProspect(id)?.id).toBe(newer);
+  });
+
+  it("returns null for a prospect with no linked queue row", () => {
+    const id = add("angle-n@x.dev");
+    expect(ledger.getQueueRowForProspect(id)).toBeNull();
+  });
+});

@@ -8,6 +8,17 @@ export interface GitHubUserInfo {
   /** Bare hostname extracted from the user's blog URL. */
   blogDomain: string | null;
   company: string | null;
+  /**
+   * Account-maturity signal (issue #355 refinement): a `created_at` within
+   * the last few months plus a low `publicRepos`/`followers` count is what
+   * separates a student/hobby account from an established one — the same
+   * repo list reads very differently behind each. `null` on a field GitHub
+   * didn't return (never observed in practice for `created_at`, but kept
+   * optional-safe like every other field here).
+   */
+  createdAt: string | null;
+  publicRepos: number;
+  followers: number;
 }
 
 /** Lowercase-keyed cache; `null` = "tried, got 404/429/network error". */
@@ -65,6 +76,9 @@ export async function fetchGitHubUser(login: string): Promise<GitHubUserInfo | n
         typeof json["company"] === "string" && json["company"] !== ""
           ? (json["company"] as string)
           : null,
+      createdAt: typeof json["created_at"] === "string" ? (json["created_at"] as string) : null,
+      publicRepos: typeof json["public_repos"] === "number" ? (json["public_repos"] as number) : 0,
+      followers: typeof json["followers"] === "number" ? (json["followers"] as number) : 0,
     };
     cache.set(key, info);
     logEvent("github.user.fetch", {
@@ -182,6 +196,227 @@ export async function fetchTopRepos(login: string): Promise<TopRepo[] | null> {
         ok: false,
         message_120: ((err as Error).message ?? "").slice(0, 120),
       },
+      "warn",
+    );
+    return null;
+  }
+}
+
+/**
+ * One of the candidate's GitHub organizations — company/collective signal
+ * that a bare repo list can't distinguish (a student-led "lab" org reads the
+ * same as a funded company until you check WHO'S behind it). Company/blog
+ * dropped: `fetchGitHubOrgProfile` below fetches those for the org itself, on
+ * demand, rather than the user-orgs endpoint's summary line.
+ */
+export interface GitHubOrgRef {
+  login: string;
+  description: string | null;
+}
+
+/** `null` = "we tried and got 404/429/network error, don't retry within the run." */
+const orgsCache = new Map<string, GitHubOrgRef[] | null>();
+
+/** Test-only: drop the in-memory orgs cache between cases. */
+export function _resetGitHubOrgsCache(): void {
+  orgsCache.clear();
+}
+
+/**
+ * Fetch the orgs a GitHub user publicly belongs to. Same null/[]/error-shape
+ * contract as `fetchTopRepos`: `null` = couldn't ask, `[]` = asked, no orgs.
+ */
+export async function fetchGitHubOrgs(login: string): Promise<GitHubOrgRef[] | null> {
+  const key = login.toLowerCase();
+  if (orgsCache.has(key)) return orgsCache.get(key) ?? null;
+  try {
+    const url = `https://api.github.com/users/${encodeURIComponent(login)}/orgs`;
+    const res = await fetch(url, { headers: githubHeaders() });
+    if (res.status === 404) {
+      orgsCache.set(key, null);
+      logEvent("github.orgs.fetch", { login, ok: false, status: 404 });
+      return null;
+    }
+    if (res.status === 429 || res.status === 403) {
+      orgsCache.set(key, null);
+      logEvent("github.orgs.fetch", { login, ok: false, status: res.status, rate_limited: true });
+      return null;
+    }
+    if (!res.ok) {
+      orgsCache.set(key, null);
+      logEvent("github.orgs.fetch", { login, ok: false, status: res.status });
+      return null;
+    }
+    const json = (await res.json()) as Array<Record<string, unknown>>;
+    if (!Array.isArray(json)) {
+      orgsCache.set(key, null);
+      logEvent("github.orgs.fetch", { login, ok: false, status: res.status, malformed: true });
+      return null;
+    }
+    const orgs: GitHubOrgRef[] = json
+      .filter(
+        (o): o is Record<string, unknown> & { login: string } => typeof o["login"] === "string",
+      )
+      .map((o) => ({
+        login: o.login,
+        description:
+          typeof o["description"] === "string" && o["description"] !== ""
+            ? (o["description"] as string)
+            : null,
+      }));
+    orgsCache.set(key, orgs);
+    logEvent("github.orgs.fetch", { login, ok: true, count: orgs.length });
+    return orgs;
+  } catch (err) {
+    orgsCache.set(key, null);
+    logEvent(
+      "github.orgs.fetch",
+      { login, ok: false, message_120: ((err as Error).message ?? "").slice(0, 120) },
+      "warn",
+    );
+    return null;
+  }
+}
+
+/**
+ * Fetch an org's own profile — bio + public repo count. This is what
+ * distinguishes "AxiomNode" the one-month-old student lab from a funded
+ * company of the same shape: `fetchGitHubOrgs` only returns the name.
+ * `null` on any failure; the caller treats a missing org profile as "unknown",
+ * never as a negative signal.
+ */
+export interface GitHubOrgProfile {
+  login: string;
+  name: string | null;
+  description: string | null;
+  publicRepos: number;
+  createdAt: string | null;
+}
+
+/** `null` = "we tried and got 404/429/network error, don't retry within the run." */
+const orgProfileCache = new Map<string, GitHubOrgProfile | null>();
+
+/** Test-only: drop the in-memory org-profile cache between cases. */
+export function _resetGitHubOrgProfileCache(): void {
+  orgProfileCache.clear();
+}
+
+export async function fetchGitHubOrgProfile(login: string): Promise<GitHubOrgProfile | null> {
+  const key = login.toLowerCase();
+  if (orgProfileCache.has(key)) return orgProfileCache.get(key) ?? null;
+  try {
+    const res = await fetch(`https://api.github.com/orgs/${encodeURIComponent(login)}`, {
+      headers: githubHeaders(),
+    });
+    if (!res.ok) {
+      orgProfileCache.set(key, null);
+      logEvent("github.org_profile.fetch", { login, ok: false, status: res.status });
+      return null;
+    }
+    const json = (await res.json()) as Record<string, unknown>;
+    const profile: GitHubOrgProfile = {
+      login: typeof json["login"] === "string" ? (json["login"] as string) : login,
+      name:
+        typeof json["name"] === "string" && json["name"] !== "" ? (json["name"] as string) : null,
+      description:
+        typeof json["description"] === "string" && json["description"] !== ""
+          ? (json["description"] as string)
+          : null,
+      publicRepos: typeof json["public_repos"] === "number" ? (json["public_repos"] as number) : 0,
+      createdAt: typeof json["created_at"] === "string" ? (json["created_at"] as string) : null,
+    };
+    orgProfileCache.set(key, profile);
+    logEvent("github.org_profile.fetch", { login, ok: true });
+    return profile;
+  } catch (err) {
+    orgProfileCache.set(key, null);
+    logEvent(
+      "github.org_profile.fetch",
+      { login, ok: false, message_120: ((err as Error).message ?? "").slice(0, 120) },
+      "warn",
+    );
+    return null;
+  }
+}
+
+/** A bare login reference from GitHub's paginated following/followers lists. */
+export interface GitHubFollowRef {
+  login: string;
+}
+
+/** Following + followers, each capped — the network signal is "who's in their
+ *  orbit", not a full graph; the caller looks for a handful of names it
+ *  already recognizes (a colleague, a known builder), not a directory. */
+export interface GitHubFollowNetwork {
+  following: GitHubFollowRef[];
+  followers: GitHubFollowRef[];
+}
+
+const FOLLOW_PAGE_SIZE = 30;
+
+/** `null` = "we tried and got 404/429/network error, don't retry within the run." */
+const followCache = new Map<string, GitHubFollowNetwork | null>();
+
+/** Test-only: drop the in-memory follow-network cache between cases. */
+export function _resetGitHubFollowCache(): void {
+  followCache.clear();
+}
+
+async function fetchLoginList(url: string): Promise<GitHubFollowRef[] | null> {
+  const res = await fetch(url, { headers: githubHeaders() });
+  if (!res.ok) return null;
+  const json = (await res.json()) as unknown;
+  if (!Array.isArray(json)) return null;
+  return json
+    .filter(
+      (u): u is Record<string, unknown> & { login: string } =>
+        typeof (u as Record<string, unknown>)["login"] === "string",
+    )
+    .map((u) => ({ login: u.login }));
+}
+
+/**
+ * Fetch a capped page of who this candidate follows and who follows them.
+ * Both lists fetched in parallel — this is one logical "network" lookup, not
+ * two independent calls a caller should have to sequence. `null` on total
+ * failure (both lists unreachable); a partial failure degrades that one side
+ * to an empty list rather than discarding the side that did succeed.
+ */
+export async function fetchFollowNetwork(login: string): Promise<GitHubFollowNetwork | null> {
+  const key = login.toLowerCase();
+  if (followCache.has(key)) return followCache.get(key) ?? null;
+  const encoded = encodeURIComponent(login);
+  try {
+    const [following, followers] = await Promise.all([
+      fetchLoginList(
+        `https://api.github.com/users/${encoded}/following?per_page=${FOLLOW_PAGE_SIZE}`,
+      ),
+      fetchLoginList(
+        `https://api.github.com/users/${encoded}/followers?per_page=${FOLLOW_PAGE_SIZE}`,
+      ),
+    ]);
+    if (following === null && followers === null) {
+      followCache.set(key, null);
+      logEvent("github.follow_network.fetch", { login, ok: false });
+      return null;
+    }
+    const network: GitHubFollowNetwork = {
+      following: following ?? [],
+      followers: followers ?? [],
+    };
+    followCache.set(key, network);
+    logEvent("github.follow_network.fetch", {
+      login,
+      ok: true,
+      following_count: network.following.length,
+      followers_count: network.followers.length,
+    });
+    return network;
+  } catch (err) {
+    followCache.set(key, null);
+    logEvent(
+      "github.follow_network.fetch",
+      { login, ok: false, message_120: ((err as Error).message ?? "").slice(0, 120) },
       "warn",
     );
     return null;

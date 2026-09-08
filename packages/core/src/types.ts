@@ -134,6 +134,16 @@ export interface ProspectRecord {
   icp_verdict: string | null;
   /** Classifier's one-line reason for the verdict. */
   icp_verdict_reason: string | null;
+  /**
+   * LLM synthesis of dossier + live public work + reply history (issue #355):
+   * a prose brief + hook plus a fixed evidence/relationship/valueMode schema.
+   * Distinct from `dossier_json` (raw research input) and from `yourEdge`
+   * (founder config, identical across every target in a run). NULL = never
+   * synthesized. See `packages/plays/src/angle.ts` for the shape.
+   */
+  angle_json: string | null;
+  /** ISO timestamp of the last `angle_json` write. NULL alongside it. */
+  angle_synthesized_at: string | null;
   created_at: string;
 }
 

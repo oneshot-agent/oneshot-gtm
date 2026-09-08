@@ -1,8 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  _resetGitHubFollowCache,
+  _resetGitHubOrgProfileCache,
+  _resetGitHubOrgsCache,
   _resetGitHubUserCache,
   _resetTopReposCache,
   extractBlogDomain,
+  fetchFollowNetwork,
+  fetchGitHubOrgProfile,
+  fetchGitHubOrgs,
   fetchGitHubUser,
   fetchTopRepos,
   ownerFromRepoUrl,
@@ -47,6 +53,9 @@ function mockFetchThrows(message: string) {
 beforeEach(() => {
   _resetGitHubUserCache();
   _resetTopReposCache();
+  _resetGitHubOrgsCache();
+  _resetGitHubOrgProfileCache();
+  _resetGitHubFollowCache();
 });
 
 afterEach(() => {
@@ -113,6 +122,9 @@ describe("fetchGitHubUser", () => {
       email: "ada@acme.dev",
       blogDomain: "acme.dev",
       company: "@acme",
+      createdAt: null,
+      publicRepos: 0,
+      followers: 0,
     });
   });
 
@@ -311,5 +323,144 @@ describe("fetchTopRepos", () => {
       expect.stringContaining("/users/weird%20name/repos"),
       expect.any(Object),
     );
+  });
+});
+
+describe("fetchGitHubOrgs", () => {
+  it("returns login + description for each org", async () => {
+    mockFetchOnceJson(200, [
+      { login: "axiomnode", description: "one-month-old student lab" },
+      { login: "no-desc" },
+    ]);
+    expect(await fetchGitHubOrgs("ada")).toEqual([
+      { login: "axiomnode", description: "one-month-old student lab" },
+      { login: "no-desc", description: null },
+    ]);
+  });
+
+  it("treats an empty array as a real value (no orgs != couldn't ask)", async () => {
+    mockFetchOnceJson(200, []);
+    expect(await fetchGitHubOrgs("ada")).toEqual([]);
+  });
+
+  it("returns null on 404 / 429 / 403 / non-array body / network throw", async () => {
+    mockFetchOnceJson(404, {});
+    expect(await fetchGitHubOrgs("ada")).toBeNull();
+    _resetGitHubOrgsCache();
+    mockFetchOnceJson(429, "");
+    expect(await fetchGitHubOrgs("ada")).toBeNull();
+    _resetGitHubOrgsCache();
+    mockFetchOnceJson(200, { not: "an array" });
+    expect(await fetchGitHubOrgs("ada")).toBeNull();
+    _resetGitHubOrgsCache();
+    mockFetchThrows("ECONNRESET");
+    expect(await fetchGitHubOrgs("ada")).toBeNull();
+  });
+
+  it("caches positive and negative results across casing", async () => {
+    const fn = mockFetchOnceJson(200, [{ login: "acme" }]);
+    await fetchGitHubOrgs("Ada");
+    await fetchGitHubOrgs("ada");
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("fetchGitHubOrgProfile", () => {
+  it("parses bio + repo count + created_at", async () => {
+    mockFetchOnceJson(200, {
+      login: "axiomnode",
+      name: "AxiomNode",
+      description: "student-run research collective",
+      public_repos: 2,
+      created_at: "2026-08-01T00:00:00Z",
+    });
+    expect(await fetchGitHubOrgProfile("axiomnode")).toEqual({
+      login: "axiomnode",
+      name: "AxiomNode",
+      description: "student-run research collective",
+      publicRepos: 2,
+      createdAt: "2026-08-01T00:00:00Z",
+    });
+  });
+
+  it("defaults publicRepos to 0 and blank strings to null", async () => {
+    mockFetchOnceJson(200, { login: "acme", name: "", description: "", public_repos: null });
+    const out = await fetchGitHubOrgProfile("acme");
+    expect(out?.name).toBeNull();
+    expect(out?.description).toBeNull();
+    expect(out?.publicRepos).toBe(0);
+  });
+
+  it("returns null on 404 / network throw", async () => {
+    mockFetchOnceJson(404, {});
+    expect(await fetchGitHubOrgProfile("acme")).toBeNull();
+    _resetGitHubOrgProfileCache();
+    mockFetchThrows("ECONNRESET");
+    expect(await fetchGitHubOrgProfile("acme")).toBeNull();
+  });
+
+  it("caches across calls", async () => {
+    const fn = mockFetchOnceJson(200, { login: "acme", public_repos: 1 });
+    await fetchGitHubOrgProfile("acme");
+    await fetchGitHubOrgProfile("ACME");
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("fetchFollowNetwork", () => {
+  function mockFollowSequence(following: unknown, followers: unknown) {
+    let call = 0;
+    const fn = vi.fn(async (url: string) => {
+      call++;
+      const body = url.includes("/following") ? following : followers;
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    globalThis.fetch = fn as unknown as typeof fetch;
+    return { fn, callCount: () => call };
+  }
+
+  it("fetches following + followers in parallel and returns both lists", async () => {
+    mockFollowSequence([{ login: "colleague1" }, { login: "colleague2" }], [{ login: "fan1" }]);
+    const out = await fetchFollowNetwork("ada");
+    expect(out).toEqual({
+      following: [{ login: "colleague1" }, { login: "colleague2" }],
+      followers: [{ login: "fan1" }],
+    });
+  });
+
+  it("degrades a partial failure to an empty list on that side, keeping the successful side", async () => {
+    const fn = vi.fn(async (url: string) => {
+      if (url.includes("/following")) {
+        return new Response("", { status: 500 });
+      }
+      return new Response(JSON.stringify([{ login: "fan1" }]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    globalThis.fetch = fn as unknown as typeof fetch;
+    const out = await fetchFollowNetwork("ada");
+    expect(out).toEqual({ following: [], followers: [{ login: "fan1" }] });
+  });
+
+  it("returns null when BOTH sides fail", async () => {
+    mockFetchOnceJson(500, {});
+    expect(await fetchFollowNetwork("ada")).toBeNull();
+  });
+
+  it("returns null on network throw", async () => {
+    mockFetchThrows("ECONNRESET");
+    expect(await fetchFollowNetwork("ada")).toBeNull();
+  });
+
+  it("caches across calls", async () => {
+    const { fn, callCount } = mockFollowSequence([], []);
+    await fetchFollowNetwork("ada");
+    await fetchFollowNetwork("ADA");
+    expect(fn).toHaveBeenCalled();
+    expect(callCount()).toBe(2); // one following + one followers call, cached on the SECOND fetchFollowNetwork call
   });
 });

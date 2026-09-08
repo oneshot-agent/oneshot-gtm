@@ -1978,6 +1978,19 @@ export class Ledger {
   }
 
   /**
+   * Persist a synthesized per-prospect angle (issue #355) onto an existing
+   * prospect. Plain UPDATE, mirroring `setProspectDossier` — NOT
+   * `upsertProspect`, which skips existing rows and would silently no-op
+   * every backfill call. Pass null to clear both columns together, so
+   * `angle_synthesized_at` can never point at a row with no `angle_json`.
+   */
+  setProspectAngle(id: number, angle: string | null): void {
+    this.db
+      .prepare("UPDATE prospects SET angle_json = ?, angle_synthesized_at = ? WHERE id = ?")
+      .run(angle, angle == null ? null : new Date().toISOString(), id);
+  }
+
+  /**
    * Write ONE half of a prospect's dossier without clobbering the other.
    *
    * `research-prospects` owns the `person` half and `research-products` owns
@@ -2142,6 +2155,89 @@ export class Ledger {
     const eligible = opts.includeResearched
       ? rows
       : rows.filter((row) => !hasPersonSignal(row.dossier_json));
+    const limit = opts.limit ?? 100_000;
+    return eligible.length > limit ? eligible.slice(0, limit) : eligible;
+  }
+
+  /**
+   * Prospects worth synthesizing a per-prospect angle for (issue #355), by
+   * scope. Mirrors `listProspectsForResearch`'s scope semantics exactly:
+   *
+   * - `active`   — a cadence is still running, so a sharper angle changes what
+   *                gets sent once drafting reads it (#356)
+   * - `replied`  — a live conversation; the reply history is itself an input
+   *                to the synthesis (corrections, "not what I meant", etc.)
+   * - `unjudged` — no ICP verdict yet, so the angle's `relationship` /
+   *                `valueMode` read can inform the gate
+   * - `all`      — every prospect
+   *
+   * Scopes union, not intersect. Unlike `listProspectsForResearch`, this does
+   * NOT require a social URL or email — reply history alone is enough input
+   * for a synthesis, and gatherAngleEvidence degrades gracefully when GitHub
+   * lookups have nothing to chase. Rows that already hold an angle are
+   * excluded unless `includeSynthesized`, so an interrupted backfill resumes
+   * instead of re-synthesizing (and re-billing) rows already done.
+   */
+  listProspectsForAngle(
+    opts: {
+      scopes?: ReadonlyArray<"active" | "replied" | "unjudged" | "all">;
+      includeSynthesized?: boolean;
+      limit?: number;
+    } = {},
+  ): Array<{
+    id: number;
+    name: string | null;
+    company: string | null;
+    email: string | null;
+    source: string | null;
+    source_profile_url: string | null;
+    linkedin_url: string | null;
+    dossier_json: string | null;
+    angle_json: string | null;
+  }> {
+    const scopes = opts.scopes?.length ? opts.scopes : (["active", "replied", "unjudged"] as const);
+    const any: string[] = [];
+    if (scopes.includes("all")) {
+      any.push("1 = 1");
+    } else {
+      if (scopes.includes("active")) {
+        any.push(
+          "EXISTS(SELECT 1 FROM cadence_state cs WHERE cs.prospect_id = p.id AND cs.status = 'active')",
+        );
+      }
+      if (scopes.includes("replied")) {
+        any.push("EXISTS(SELECT 1 FROM inbox_replies ir WHERE ir.prospect_id = p.id)");
+      }
+      if (scopes.includes("unjudged")) {
+        any.push(
+          "(p.icp_verdict IS NULL AND COALESCE(NULLIF(TRIM(p.source_profile_url), ''), NULLIF(TRIM(p.linkedin_url), '')) IS NOT NULL)",
+        );
+      }
+    }
+    if (any.length === 0) return [];
+
+    const where = [`(${any.join(" OR ")})`];
+    const rows = this.db
+      .query(
+        `SELECT p.id, p.name, p.company, p.email, p.source, p.source_profile_url, p.linkedin_url,
+                p.dossier_json, p.angle_json
+           FROM prospects p
+          WHERE ${where.join(" AND ")}
+          ORDER BY p.id DESC`,
+      )
+      .all() as Array<{
+      id: number;
+      name: string | null;
+      company: string | null;
+      email: string | null;
+      source: string | null;
+      source_profile_url: string | null;
+      linkedin_url: string | null;
+      dossier_json: string | null;
+      angle_json: string | null;
+    }>;
+
+    const eligible = opts.includeSynthesized ? rows : rows.filter((row) => !row.angle_json?.trim());
     const limit = opts.limit ?? 100_000;
     return eligible.length > limit ? eligible.slice(0, limit) : eligible;
   }
@@ -3138,6 +3234,27 @@ export class Ledger {
 
   getQueueRow(id: number): QueueRow | null {
     return (this.db.query("SELECT * FROM target_queue WHERE id = ?").get(id) as QueueRow) ?? null;
+  }
+
+  /**
+   * Most recent queue row linked to a prospect — the finder's original signal
+   * that queued them, used as evidence input to angle synthesis (issue #355).
+   * Not every prospect has one: manually added prospects, or rows whose queue
+   * entry was never linked via `setQueueProspectId`, return null.
+   *
+   * Tiebreak on `id DESC` after `found_at DESC`: `found_at` is
+   * second-granularity (`datetime('now')`), so two rows queued within the
+   * same second — routine in a fast backfill or a test — would otherwise tie
+   * and return whichever SQLite happens to prefer.
+   */
+  getQueueRowForProspect(prospectId: number): QueueRow | null {
+    return (
+      (this.db
+        .query(
+          "SELECT * FROM target_queue WHERE prospect_id = ? ORDER BY found_at DESC, id DESC LIMIT 1",
+        )
+        .get(prospectId) as QueueRow) ?? null
+    );
   }
 
   /**
