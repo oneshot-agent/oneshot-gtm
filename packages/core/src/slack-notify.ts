@@ -208,6 +208,7 @@ export async function postDailySendSummaryIfDue(now: Date = new Date()): Promise
     const rows = ledger.eventsByPlay({
       sinceIso: `${day} 00:00:00`,
       untilIso: `${nextDay} 00:00:00`,
+      occurrenceWindow: true,
     });
     const sent = rows.reduce((a, r) => a + r.sent, 0);
     const replied = rows.reduce((a, r) => a + r.replied, 0);

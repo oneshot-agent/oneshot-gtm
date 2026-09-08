@@ -371,11 +371,14 @@ describe("Ledger receipts + prospects + spend rollups", () => {
     expect(unbounded?.sent).toBe(2);
   });
 
-  it("eventsByPlay windows a reply by its OWN occurrence day, not the day it was sent", () => {
+  it("eventsByPlay windows a reply by its OWN occurrence day, not the day it was sent, when occurrenceWindow is requested", () => {
     // markLatestStepReplied flips the sent row in place, so created_at stays
     // pinned to the send date. A date-windowed rollup (the Slack daily
-    // summary) must not drop the reply just because it landed after the send
-    // day's window — it should show up on the day it actually happened.
+    // summary) opts into occurrenceWindow so it must not drop the reply just
+    // because it landed after the send day's window — it should show up on
+    // the day it actually happened. Without occurrenceWindow (the default,
+    // relied on by home.ts/measure.ts/weekly-review.ts), the reply stays
+    // windowed on created_at like everything else, preserving replied<=sent.
     const id = ledger.upsertProspect({ name: "RW", email: "rw@x.com", source: "t" });
     ledger.recordSequenceEvent({
       prospectId: id,
@@ -399,28 +402,51 @@ describe("Ledger receipts + prospects + spend rollups", () => {
     ).run(id);
 
     // A window covering only the REPLY day, nowhere near the send day.
+    // occurrenceWindow: true credits the reply here — but that also means
+    // `sent` for this window is 0 (the send row's created_at doesn't fall
+    // inside it), which is the intentional, documented replied>sent tradeoff
+    // of this mode; asserting it here pins that tradeoff so a future change
+    // can't silently widen occurrenceWindow's blast radius without a test
+    // noticing.
     const windowed = ledger
-      .eventsByPlay({ sinceIso: "2026-08-28 00:00:00", untilIso: "2026-08-29 00:00:00" })
+      .eventsByPlay({
+        sinceIso: "2026-08-28 00:00:00",
+        untilIso: "2026-08-29 00:00:00",
+        occurrenceWindow: true,
+      })
       .find((r) => r.play_name === "repo-interest");
     expect(windowed?.replied).toBe(1);
+    expect(windowed?.sent ?? 0).toBe(0);
+
+    // The default (no occurrenceWindow) call windows replied on created_at
+    // like every other column, so the reply-day window sees nothing at all —
+    // this is the behaviour home.ts/measure.ts/weekly-review.ts depend on.
+    const defaultWindowed = ledger
+      .eventsByPlay({ sinceIso: "2026-08-28 00:00:00", untilIso: "2026-08-29 00:00:00" })
+      .find((r) => r.play_name === "repo-interest");
+    expect(defaultWindowed).toBeUndefined();
 
     // A window covering only the SEND day must NOT double-count the reply —
     // the old created_at-only windowing would have credited it here instead.
     const sendDayWindow = ledger
-      .eventsByPlay({ sinceIso: "2026-08-20 00:00:00", untilIso: "2026-08-21 00:00:00" })
+      .eventsByPlay({
+        sinceIso: "2026-08-20 00:00:00",
+        untilIso: "2026-08-21 00:00:00",
+        occurrenceWindow: true,
+      })
       .find((r) => r.play_name === "repo-interest");
     expect(sendDayWindow?.sent).toBe(1);
     expect(sendDayWindow?.replied ?? 0).toBe(0);
   });
 
-  it("eventsByPlay windows a bounce by its OWN occurrence day, not the poll/detection day", () => {
+  it("eventsByPlay windows a bounce by its OWN occurrence day, not the poll/detection day, when occurrenceWindow is requested", () => {
     // recordSequenceEvent always inserts a FRESH row for a bounce (unlike the
     // reply flip-in-place), so created_at looks like occurrence time — but
     // it's actually the time pollInboxBounces detected the DSN, which can lag
     // the provider's own bounce timestamp (bounced_at) by however long the
     // mailbox went unpolled. A date-windowed rollup (the Slack daily summary)
-    // must not attribute the bounce to the detection day instead of the day
-    // it actually happened.
+    // opts into occurrenceWindow so it must not attribute the bounce to the
+    // detection day instead of the day it actually happened.
     const id = ledger.upsertProspect({ name: "BW", email: "bw@x.com", source: "t" });
     ledger.recordSequenceEvent({
       prospectId: id,
@@ -443,14 +469,29 @@ describe("Ledger receipts + prospects + spend rollups", () => {
 
     // A window covering only the real BOUNCE day, nowhere near the poll day.
     const windowed = ledger
-      .eventsByPlay({ sinceIso: "2026-08-20 00:00:00", untilIso: "2026-08-21 00:00:00" })
+      .eventsByPlay({
+        sinceIso: "2026-08-20 00:00:00",
+        untilIso: "2026-08-21 00:00:00",
+        occurrenceWindow: true,
+      })
       .find((r) => r.play_name === "post-funding");
     expect(windowed?.bounced).toBe(1);
+
+    // The default (no occurrenceWindow) call windows bounced on created_at
+    // like every other column, so the bounce-day window sees nothing at all.
+    const defaultWindowed = ledger
+      .eventsByPlay({ sinceIso: "2026-08-20 00:00:00", untilIso: "2026-08-21 00:00:00" })
+      .find((r) => r.play_name === "post-funding");
+    expect(defaultWindowed).toBeUndefined();
 
     // A window covering only the POLL day must NOT count the bounce there —
     // the old created_at-only windowing would have credited it here instead.
     const pollDayWindow = ledger
-      .eventsByPlay({ sinceIso: "2026-08-28 00:00:00", untilIso: "2026-08-29 00:00:00" })
+      .eventsByPlay({
+        sinceIso: "2026-08-28 00:00:00",
+        untilIso: "2026-08-29 00:00:00",
+        occurrenceWindow: true,
+      })
       .find((r) => r.play_name === "post-funding");
     expect(pollDayWindow?.bounced ?? 0).toBe(0);
   });

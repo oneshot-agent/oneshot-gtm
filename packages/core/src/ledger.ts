@@ -2797,10 +2797,19 @@ export class Ledger {
 
   /**
    * Per-play rollup of sequence_events, windowed by `sinceIso`/`untilIso`.
-   * sent/delivered are windowed on `created_at` (the row's own timestamp,
-   * always the occurrence time for those statuses). `replied` and `bounced`
-   * each window on their own occurrence column instead, COALESCEd onto
-   * `created_at` for older rows that predate it:
+   *
+   * By default every column windows on `created_at` alone — byte-for-byte the
+   * pre-existing behaviour every current caller (home.ts's sentLast7d/
+   * repliedLast7d, measure.ts's reply-rate %, weekly-review.ts) depends on,
+   * which guarantees `replied <= sent` for any window: a reply can only be
+   * counted once its originating send's `created_at` already falls inside
+   * the same window.
+   *
+   * Pass `occurrenceWindow: true` to window `replied`/`bounced` on their OWN
+   * occurrence column instead (COALESCEd onto `created_at` for older rows
+   * that predate it), which the Slack daily summary needs so a reply or
+   * bounce landing the day AFTER it was sent still shows up on the day it
+   * actually happened rather than vanishing from every completed-day rollup:
    *   - `replied`: `COALESCE(replied_at, created_at)` — `markLatestStepReplied`
    *     flips the ORIGINAL sent row in place rather than inserting a new one,
    *     so that row's `created_at` stays pinned to the SEND time.
@@ -2808,14 +2817,15 @@ export class Ledger {
    *     fresh row, but `created_at` is stamped at POLL/detection time, not the
    *     provider's own bounce time; a poll resuming after downtime (or a
    *     delayed DSN) would otherwise misattribute the bounce to the wrong day.
-   * Windowing either on created_at alone would silently drop occurrences that
-   * land after the send day's window (the common case) from every
-   * completed-day rollup, including the Slack daily summary. `replied_at` /
-   * `bounced_at` are NULL on rows predating those columns; COALESCE falls
-   * back to created_at for those so they still count somewhere rather than
-   * vanish.
+   * This mode intentionally breaks the `replied <= sent` invariant for a
+   * window whose reply/bounce occurrence lands inside it but whose send
+   * predates it — that's why it's opt-in, scoped to the one caller that reads
+   * `sent`/`replied`/`bounced` as independent daily counts rather than a
+   * cohort funnel.
    */
-  eventsByPlay(opts: { sinceIso?: string; untilIso?: string } = {}): Array<{
+  eventsByPlay(
+    opts: { sinceIso?: string; untilIso?: string; occurrenceWindow?: boolean } = {},
+  ): Array<{
     play_name: string;
     sent: number;
     delivered: number;
@@ -2825,15 +2835,17 @@ export class Ledger {
     const createdClause: string[] = [];
     const repliedClause: string[] = [];
     const bouncedClause: string[] = [];
+    const repliedCol = opts.occurrenceWindow ? "COALESCE(replied_at, created_at)" : "created_at";
+    const bouncedCol = opts.occurrenceWindow ? "COALESCE(bounced_at, created_at)" : "created_at";
     if (opts.sinceIso) {
       createdClause.push("created_at >= $sinceIso");
-      repliedClause.push("COALESCE(replied_at, created_at) >= $sinceIso");
-      bouncedClause.push("COALESCE(bounced_at, created_at) >= $sinceIso");
+      repliedClause.push(`${repliedCol} >= $sinceIso`);
+      bouncedClause.push(`${bouncedCol} >= $sinceIso`);
     }
     if (opts.untilIso) {
       createdClause.push("created_at < $untilIso");
-      repliedClause.push("COALESCE(replied_at, created_at) < $untilIso");
-      bouncedClause.push("COALESCE(bounced_at, created_at) < $untilIso");
+      repliedClause.push(`${repliedCol} < $untilIso`);
+      bouncedClause.push(`${bouncedCol} < $untilIso`);
     }
     const createdWindow = createdClause.length ? `(${createdClause.join(" AND ")})` : "1";
     const repliedWindow = repliedClause.length ? `(${repliedClause.join(" AND ")})` : "1";
