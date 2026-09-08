@@ -227,6 +227,22 @@ describe("gatherAngleEvidence", () => {
     expect(out?.sources).toContain("webread");
   });
 
+  // Round-1 correction (issue #357): an outcome-triggered refresh threads
+  // the value tag through the evidence bundle so the synthesis prompt can
+  // actually reflect it, instead of re-running an unchanged gather.
+  it("threads an outcome through onto the evidence bundle when passed", async () => {
+    const out = await gatherAngleEvidence(1, {
+      allowPaidResearch: false,
+      outcome: { type: "meeting", label: "meeting booked" },
+    });
+    expect(out?.outcome).toEqual({ type: "meeting", label: "meeting booked" });
+  });
+
+  it("defaults the evidence bundle's outcome to null when none is given", async () => {
+    const out = await gatherAngleEvidence(1, { allowPaidResearch: false });
+    expect(out?.outcome).toBeNull();
+  });
+
   it("counts a billed webRead's cost even when the markdown comes back empty", async () => {
     prospect!.source_profile_url = "https://x.com/pat";
     // Isolate the webRead cost being asserted below: a cache-hit dossier
@@ -360,6 +376,31 @@ describe("synthesizePersonAngle", () => {
       { claim: "shipped agent-loop", source: "https://github.com/ada/agent-loop" },
     ]);
     expect(costUsd).toBe(0);
+  });
+
+  // Round-1 correction (issue #357): the outcome-triggered refresh's value
+  // tag must actually reach the LLM prompt, not just ride along on the
+  // bundle unused.
+  it("renders the outcome into the synthesis prompt when the evidence carries one", async () => {
+    llmResponse = JSON.stringify({ brief: "x", hook: "y" });
+    llmCalls.length = 0;
+    await synthesizePersonAngle({
+      prospect: { id: 1, name: "Pat", company: "Acme", email: "pat@acme.dev" },
+      evidence: {
+        dossierText: null,
+        dossierResearched: false,
+        queueSignal: null,
+        github: null,
+        webReadText: null,
+        webReadResearched: false,
+        replies: [],
+        costUsd: 0,
+        sources: [],
+        outcome: { type: "revenue", amount: 5000, label: "deal won" },
+      },
+    });
+    expect(llmCalls.at(-1)?.user).toContain("OUTCOME JUST RECORDED: revenue");
+    expect(llmCalls.at(-1)?.user).toContain("deal won");
   });
 
   it("returns a null angle (not a throw) on an LLM failure", async () => {

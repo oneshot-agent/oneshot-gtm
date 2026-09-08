@@ -1,4 +1,5 @@
 import {
+  type AngleRefreshContext,
   demoMode,
   getLedger,
   hasDossierSignal,
@@ -80,6 +81,13 @@ export interface AngleEvidenceBundle {
   costUsd: number;
   /** Which tiers actually contributed evidence, e.g. ["dossier", "github:live", "replies:3"]. */
   sources: string[];
+  /**
+   * The value-tag outcome that triggered this refresh, if any (round-1
+   * correction, issue #357) — e.g. a meeting booked or a deal's amount.
+   * Optional/absent for reply-triggered and CLI-backfill gathers, which have
+   * no outcome to report.
+   */
+  outcome?: AngleRefreshContext["outcome"] | null;
 }
 
 /**
@@ -109,6 +117,14 @@ export interface GatherAngleEvidenceOpts {
    * backfill spends nothing.
    */
   allowPaidResearch?: boolean;
+  /**
+   * The value-tag outcome that triggered this gather, if any (round-1
+   * correction, issue #357) — threaded straight onto the returned bundle so
+   * `renderEvidenceForPrompt` can put it in front of the LLM instead of the
+   * outcome-triggered path paying for a synthesis call that can't reflect
+   * the outcome it was fired for.
+   */
+  outcome?: AngleRefreshContext["outcome"];
 }
 
 /**
@@ -247,6 +263,7 @@ export async function gatherAngleEvidence(
     replies,
     costUsd,
     sources,
+    outcome: opts.outcome ?? null,
   };
 }
 
@@ -307,6 +324,15 @@ function renderGitHubEvidence(gh: AngleGitHubEvidence): string {
 
 function renderEvidenceForPrompt(evidence: AngleEvidenceBundle): string {
   const blocks: string[] = [];
+  if (evidence.outcome) {
+    const o = evidence.outcome;
+    blocks.push(
+      `OUTCOME JUST RECORDED: ${o.type}` +
+        `${o.amount != null ? ` ($${o.amount})` : ""}` +
+        `${o.label ? ` — ${o.label}` : ""}` +
+        ` — this just happened; the angle should reflect it.`,
+    );
+  }
   if (evidence.dossierText) blocks.push(`DOSSIER:\n${evidence.dossierText}`);
   if (evidence.queueSignal)
     blocks.push(`FINDER SIGNAL (why they were queued):\n${evidence.queueSignal}`);
@@ -405,7 +431,10 @@ export async function synthesizePersonAngle(
  * same contract `runProspectResearch` (`packages/plays/src/add-prospect.ts`)
  * follows for its own `void`-called background research.
  */
-async function refreshProspectAngle(prospectId: number): Promise<void> {
+async function refreshProspectAngle(
+  prospectId: number,
+  context?: AngleRefreshContext,
+): Promise<void> {
   // Demo mode is read-only by design (packages/core/src/demo.ts) — a stray
   // reply/outcome on a seeded demo install must not synthesize for real.
   if (demoMode()) return;
@@ -414,7 +443,7 @@ async function refreshProspectAngle(prospectId: number): Promise<void> {
   // skip a paid gather rather than add to the pile-up.
   if (isCircuitOpen()) return;
   try {
-    const evidence = await gatherAngleEvidence(prospectId);
+    const evidence = await gatherAngleEvidence(prospectId, { outcome: context?.outcome });
     if (!evidence) return;
     const ledger = getLedger();
     const prospect = ledger.getProspectById(prospectId);
@@ -444,6 +473,6 @@ async function refreshProspectAngle(prospectId: number): Promise<void> {
 // in pollInboxReplies, tagOutcomeValue) can trigger a refresh without
 // importing this package back — see registerAngleRefreshTrigger's doc in
 // packages/core/src/angle.ts for why the wiring runs this direction.
-registerAngleRefreshTrigger((prospectId: number) => {
-  void refreshProspectAngle(prospectId);
+registerAngleRefreshTrigger((prospectId: number, context?: AngleRefreshContext) => {
+  return refreshProspectAngle(prospectId, context);
 });

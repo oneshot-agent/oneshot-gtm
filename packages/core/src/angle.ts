@@ -222,8 +222,22 @@ export function parseProspectAngle(
  * never touches `@oneshot-gtm/find` — the trigger is a no-op, the same
  * degrade-gracefully rule every other best-effort call in this codebase
  * follows.
+ *
+ * `AngleRefreshContext` (round-1 correction, issue #357) lets a caller hand
+ * extra signal alongside the prospect id: an outcome tag carries data (deal
+ * value, meeting booked, ...) that reply-triggered refreshes never have, and
+ * without it the outcome-triggered path re-runs the identical
+ * gather+synthesize pipeline against unchanged evidence — an LLM call that
+ * can't reflect the outcome it was fired for.
  */
-export type AngleRefreshTrigger = (prospectId: number) => void;
+export interface AngleRefreshContext {
+  outcome?: { type: string; amount?: number; label?: string };
+}
+
+export type AngleRefreshTrigger = (
+  prospectId: number,
+  context?: AngleRefreshContext,
+) => void | Promise<void>;
 let angleRefreshTrigger: AngleRefreshTrigger | null = null;
 
 export function registerAngleRefreshTrigger(fn: AngleRefreshTrigger): void {
@@ -242,14 +256,32 @@ export function registerAngleRefreshTrigger(fn: AngleRefreshTrigger): void {
 export const ANGLE_REFRESH_STALE_HOURS = 6;
 
 /**
+ * In-flight guard (round-1 correction, issue #357): the timestamp-based
+ * debounce above only protects once a prior refresh has already finished and
+ * stamped `angle_synthesized_at` — two triggers for the same prospect that
+ * land before that write (two replies in one `pollInboxReplies()` page, or a
+ * reply immediately followed by an outcome tag) both read the same
+ * stale/missing timestamp and would both launch a full paid gather+synthesize
+ * concurrently, with the later completion silently overwriting the earlier
+ * one's `angle_json`. Tracking in-flight prospect ids in memory closes that
+ * window without touching the persisted debounce: a second trigger for a
+ * prospect already being refreshed is dropped outright (the in-flight
+ * refresh will itself read fresh evidence), and the id is released once the
+ * registered trigger's returned promise settles either way.
+ */
+const inFlightRefreshes = new Set<number>();
+
+/**
  * Best-effort, fire-and-forget: never throws. No-ops until a trigger is
- * registered (find's module hasn't loaded), and no-ops when the angle was
+ * registered (find's module hasn't loaded), no-ops when the angle was
  * synthesized more recently than `ANGLE_REFRESH_STALE_HOURS` ago — the
  * debounce that keeps a reply burst or a reply-then-outcome pair from paying
- * for synthesis twice.
+ * for synthesis twice — and no-ops when a refresh for this prospect is
+ * already in flight (see `inFlightRefreshes` above).
  */
-export function triggerAngleRefresh(prospectId: number): void {
+export function triggerAngleRefresh(prospectId: number, context?: AngleRefreshContext): void {
   if (!angleRefreshTrigger) return;
+  if (inFlightRefreshes.has(prospectId)) return;
   try {
     const prospect = getLedger().getProspectById(prospectId);
     if (!prospect) return;
@@ -257,14 +289,27 @@ export function triggerAngleRefresh(prospectId: number): void {
       const ageMs = Date.now() - Date.parse(prospect.angle_synthesized_at);
       if (Number.isFinite(ageMs) && ageMs < ANGLE_REFRESH_STALE_HOURS * 3600_000) return;
     }
-    angleRefreshTrigger(prospectId);
+    inFlightRefreshes.add(prospectId);
+    Promise.resolve(angleRefreshTrigger(prospectId, context))
+      .catch(() => {
+        // Best-effort — see the top-level try/catch below: a rejected
+        // refresh must never surface as an unhandled rejection in a
+        // caller's hot path (reply recording, outcome tagging).
+      })
+      .finally(() => {
+        inFlightRefreshes.delete(prospectId);
+      });
   } catch {
-    // Best-effort — a ledger read failure must never propagate into a
-    // caller's hot path (reply recording, outcome tagging).
+    // Best-effort — a ledger read failure (or a trigger that throws
+    // synchronously) must never propagate into a caller's hot path (reply
+    // recording, outcome tagging). Release the in-flight slot in case it was
+    // claimed before the throw.
+    inFlightRefreshes.delete(prospectId);
   }
 }
 
-/** Test-only: reset the registered hook between cases. */
+/** Test-only: reset the registered hook (and any in-flight tracking) between cases. */
 export function _resetAngleRefreshTrigger(): void {
   angleRefreshTrigger = null;
+  inFlightRefreshes.clear();
 }

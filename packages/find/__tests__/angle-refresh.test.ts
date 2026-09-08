@@ -51,7 +51,9 @@ vi.mock("@oneshot-gtm/core", async () => {
     logEvent: () => {},
     // Captured instead of delegated to the real module-scoped state, so the
     // test drives the registered callback directly.
-    registerAngleRefreshTrigger: (fn: (prospectId: number) => void) => {
+    registerAngleRefreshTrigger: (
+      fn: (prospectId: number, context?: { outcome?: { type: string } }) => void,
+    ) => {
       registeredTrigger = fn;
     },
   };

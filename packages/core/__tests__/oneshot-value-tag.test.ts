@@ -122,8 +122,10 @@ describe("tagOutcomeValue (goal-level)", () => {
   it("refreshes the prospect's angle when the tag actually applies", async () => {
     const { registerAngleRefreshTrigger, _resetAngleRefreshTrigger } =
       await import("../src/angle.ts");
-    const calls: number[] = [];
-    registerAngleRefreshTrigger((id) => calls.push(id));
+    const calls: Array<{ id: number; context?: { outcome?: unknown } }> = [];
+    registerAngleRefreshTrigger((id, context) => {
+      calls.push({ id, context });
+    });
     try {
       const { prospectId } = seedCadence("show-hn", "angle@x.dev");
 
@@ -133,7 +135,12 @@ describe("tagOutcomeValue (goal-level)", () => {
         valueTag: { type: "meeting", label: "meeting booked" },
       });
 
-      expect(calls).toEqual([prospectId]);
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.id).toBe(prospectId);
+      // Round-1 correction (issue #357): the value tag itself must reach the
+      // refresh pipeline as outcome context, not just a bare prospect id —
+      // otherwise the outcome-triggered synthesis can't reflect the outcome.
+      expect(calls[0]?.context?.outcome).toEqual({ type: "meeting", label: "meeting booked" });
     } finally {
       _resetAngleRefreshTrigger();
     }
@@ -143,7 +150,9 @@ describe("tagOutcomeValue (goal-level)", () => {
     const { registerAngleRefreshTrigger, _resetAngleRefreshTrigger } =
       await import("../src/angle.ts");
     const calls: number[] = [];
-    registerAngleRefreshTrigger((id) => calls.push(id));
+    registerAngleRefreshTrigger((id) => {
+      calls.push(id);
+    });
     try {
       const prospectId = h.ledger.upsertProspect({ email: "no-receipt@x.dev" });
 

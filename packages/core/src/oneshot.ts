@@ -1719,7 +1719,10 @@ export async function tagOutcomeValue(input: {
   // prospect. Keyed by prospect_id per the issue, fires once the value tag
   // is actually applied (not on a no-op/downgraded re-tag above), and is
   // itself debounced on `angle_synthesized_at` — never blocks this call.
-  triggerAngleRefresh(input.prospectId);
+  // The value tag itself is threaded through as refresh context (round-1
+  // correction) so the resynthesis prompt can actually reflect the outcome
+  // instead of re-running an unchanged evidence gather.
+  triggerAngleRefresh(input.prospectId, { outcome: input.valueTag });
 
   let agent: OneShot | null = null;
   try {

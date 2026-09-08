@@ -57,7 +57,9 @@ describe("triggerAngleRefresh", () => {
 
   it("calls the registered trigger for a prospect with no angle yet", () => {
     const calls: number[] = [];
-    registerAngleRefreshTrigger((id) => calls.push(id));
+    registerAngleRefreshTrigger((id) => {
+      calls.push(id);
+    });
     const id = h.ledger.upsertProspect({ email: "b@x.dev" });
 
     triggerAngleRefresh(id);
@@ -67,7 +69,9 @@ describe("triggerAngleRefresh", () => {
 
   it("no-ops for a prospect id that does not exist", () => {
     const calls: number[] = [];
-    registerAngleRefreshTrigger((id) => calls.push(id));
+    registerAngleRefreshTrigger((id) => {
+      calls.push(id);
+    });
 
     triggerAngleRefresh(999999);
 
@@ -76,7 +80,9 @@ describe("triggerAngleRefresh", () => {
 
   it("debounces — does not re-trigger while the angle is fresher than the stale window", () => {
     const calls: number[] = [];
-    registerAngleRefreshTrigger((id) => calls.push(id));
+    registerAngleRefreshTrigger((id) => {
+      calls.push(id);
+    });
     const id = h.ledger.upsertProspect({ email: "c@x.dev" });
     h.ledger.setProspectAngle(id, JSON.stringify({ hook: "fresh" })); // stamps angle_synthesized_at = now
 
@@ -87,7 +93,9 @@ describe("triggerAngleRefresh", () => {
 
   it("fires again once the existing angle is older than the stale window", () => {
     const calls: number[] = [];
-    registerAngleRefreshTrigger((id) => calls.push(id));
+    registerAngleRefreshTrigger((id) => {
+      calls.push(id);
+    });
     const id = h.ledger.upsertProspect({ email: "d@x.dev" });
     h.ledger.setProspectAngle(id, JSON.stringify({ hook: "old" }));
     // Backdate the stamp past the debounce window directly in the DB — the
@@ -111,5 +119,81 @@ describe("triggerAngleRefresh", () => {
     const id = h.ledger.upsertProspect({ email: "e@x.dev" });
 
     expect(() => triggerAngleRefresh(id)).not.toThrow();
+  });
+
+  // Round-1 correction (issue #357): the timestamp debounce alone only
+  // protects once a PRIOR refresh has finished and stamped
+  // angle_synthesized_at. Two triggers landing before that write — e.g. two
+  // replies in one pollInboxReplies() page — must not both launch the paid
+  // pipeline concurrently.
+  it("drops a second trigger for the same prospect while the first is still in flight", async () => {
+    const calls: number[] = [];
+    let resolveFirst: (() => void) | null = null;
+    registerAngleRefreshTrigger(
+      (id) =>
+        new Promise<void>((resolve) => {
+          calls.push(id);
+          resolveFirst = resolve;
+        }),
+    );
+    const id = h.ledger.upsertProspect({ email: "f@x.dev" });
+
+    triggerAngleRefresh(id); // launches, never resolves yet
+    triggerAngleRefresh(id); // same prospect, still in flight — must be dropped
+    triggerAngleRefresh(id); // a third burst member — also dropped
+
+    expect(calls).toEqual([id]); // only one actual invocation
+
+    resolveFirst!();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Once the in-flight refresh has settled, a fresh trigger is allowed
+    // again (the in-flight guard doesn't leak past completion) — gated only
+    // by the timestamp debounce, which this test's ledger row never set, so
+    // it still fires.
+    triggerAngleRefresh(id);
+    expect(calls).toEqual([id, id]);
+  });
+
+  it("still allows a DIFFERENT prospect's refresh while one prospect is in flight", () => {
+    const calls: number[] = [];
+    registerAngleRefreshTrigger(
+      (id) =>
+        new Promise<void>(() => {
+          calls.push(id);
+        }),
+    );
+    const idA = h.ledger.upsertProspect({ email: "g@x.dev" });
+    const idB = h.ledger.upsertProspect({ email: "h@x.dev" });
+
+    triggerAngleRefresh(idA);
+    triggerAngleRefresh(idB);
+
+    expect(calls).toEqual([idA, idB]);
+  });
+
+  it("releases the in-flight slot even when the trigger's promise rejects", async () => {
+    const calls: number[] = [];
+    let rejectFirst: ((err: Error) => void) | null = null;
+    registerAngleRefreshTrigger(
+      (id) =>
+        new Promise<void>((_resolve, reject) => {
+          calls.push(id);
+          rejectFirst = reject;
+        }),
+    );
+    const id = h.ledger.upsertProspect({ email: "i@x.dev" });
+
+    triggerAngleRefresh(id);
+    triggerAngleRefresh(id); // dropped — still in flight
+
+    rejectFirst!(new Error("synthesis failed"));
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    triggerAngleRefresh(id); // in-flight slot released — allowed again
+    expect(calls).toEqual([id, id]);
   });
 });
