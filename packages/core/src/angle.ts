@@ -39,6 +39,23 @@ export interface ProspectAngleEvidence {
   source: string;
 }
 
+/**
+ * What `parseProspectAngle` checks each `evidence[].source` against so a
+ * citation must be traceable to evidence the LLM was actually handed, not
+ * merely non-blank.
+ */
+export interface ProspectAngleGroundingContext {
+  /** The exact evidence text rendered into the synthesis prompt — a URL
+   *  citation is grounded only when it appears literally in here (the URLs
+   *  that show up in the GITHUB/DOSSIER/PROFILE PAGE blocks). */
+  evidenceText: string;
+  /** The evidence tiers actually gathered for this prospect, e.g.
+   *  `["dossier", "github:live", "replies:3"]` — a named citation like
+   *  "dossier" or "replies:2" is grounded only when the matching tier is
+   *  in here, i.e. it was really gathered rather than invented. */
+  sourceTags: string[];
+}
+
 export interface ProspectAngle {
   /** 3-4 paragraph prose: who they are / what they build / why they fit. */
   brief: string;
@@ -97,14 +114,32 @@ function strArray(v: unknown): string[] {
     .map((x) => x.trim());
 }
 
+const URL_SOURCE: RegExp = /^https?:\/\//i;
+
+/**
+ * True when `source` is traceable to evidence the LLM was actually handed —
+ * not merely a non-blank string. A URL-shaped source must appear literally in
+ * the rendered evidence text (the GITHUB/DOSSIER/PROFILE PAGE blocks); a
+ * named-tier source (`"dossier"`, `"replies:2"`, `"github:live"`) must match
+ * one of the tiers `gatherAngleEvidence` actually recorded. Anything else —
+ * a hallucinated URL, an invented tier name, "trust me" — is NOT grounded.
+ */
+function isGroundedSource(source: string, grounding: ProspectAngleGroundingContext): boolean {
+  if (URL_SOURCE.test(source)) return grounding.evidenceText.includes(source);
+  return grounding.sourceTags.includes(source);
+}
+
 /**
  * Validate + sanitize the LLM's raw angle JSON into a `ProspectAngle`, or
  * null when there is nothing worth storing.
  *
- * Every `evidence` entry without BOTH a claim and a real source is DROPPED,
- * never kept with a blank source — an uncited claim in a "grounded" artifact
- * is worse than no claim, because it reads as sourced when it isn't. This is
- * the anti-fabrication gate issue #355 exists to enforce.
+ * Every `evidence` entry without a claim, a non-blank source, AND a source
+ * that actually traces to `grounding` (a URL literally present in the
+ * rendered evidence, or a source tier that was really gathered) is DROPPED,
+ * never kept on the strength of a non-empty string alone — an uncited or
+ * fabricated claim in a "grounded" artifact is worse than no claim, because
+ * it reads as sourced when it isn't. This is the anti-fabrication gate issue
+ * #355 exists to enforce.
  *
  * `relationship` / `valueMode` / `buyerStage` outside the known enum collapse
  * to `"unknown"` rather than rejecting the whole synthesis — a slightly-off
@@ -117,6 +152,7 @@ function strArray(v: unknown): string[] {
 export function parseProspectAngle(
   raw: unknown,
   meta: { model: string; synthesizedAt?: string },
+  grounding: ProspectAngleGroundingContext,
 ): ProspectAngle | null {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
   const r = raw as Record<string, unknown>;
@@ -132,6 +168,7 @@ export function parseProspectAngle(
       const claim = str((e as Record<string, unknown>)["claim"]);
       const source = str((e as Record<string, unknown>)["source"]);
       if (!claim || !source) return null;
+      if (!isGroundedSource(source, grounding)) return null;
       return { claim, source };
     })
     .filter((e): e is ProspectAngleEvidence => e !== null);

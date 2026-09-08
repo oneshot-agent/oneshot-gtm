@@ -22,6 +22,7 @@ import {
   type TopRepo,
 } from "./_github-user.ts";
 import { safeDeepResearchPerson } from "./_sdk-safe.ts";
+import { researchUrl } from "./_profile-url.ts";
 
 /**
  * Evidence gathering + LLM synthesis for the per-prospect angle (issue #355).
@@ -98,14 +99,6 @@ async function gatherGitHubEvidence(login: string): Promise<AngleGitHubEvidence>
   return { login, profile, topRepos, orgs, linkedOrg, network };
 }
 
-/** The profile URL to chase for live evidence, preferring the un-repurposed source column. */
-function profileUrlFor(row: {
-  source_profile_url: string | null;
-  linkedin_url: string | null;
-}): string | null {
-  return row.source_profile_url?.trim() || row.linkedin_url?.trim() || null;
-}
-
 export interface GatherAngleEvidenceOpts {
   /**
    * Allow a paid `deepResearchPerson` / `webRead` call when nothing free is
@@ -141,7 +134,7 @@ export async function gatherAngleEvidence(
     dossierText = stored.slice(0, DOSSIER_SLICE);
     sources.push("dossier");
   } else if (allowPaidResearch) {
-    const url = profileUrlFor(prospect);
+    const url = researchUrl(prospect);
     const email = prospect.email?.trim();
     if (url || email) {
       const res = await safeDeepResearchPerson(
@@ -179,7 +172,7 @@ export async function gatherAngleEvidence(
   let github: AngleGitHubEvidence | null = null;
   let webReadText: string | null = null;
   let webReadResearched = false;
-  const profileUrl = profileUrlFor(prospect);
+  const profileUrl = researchUrl(prospect);
   const githubOwner = profileUrl ? ownerFromRepoUrl(profileUrl) : null;
   if (githubOwner) {
     github = await gatherGitHubEvidence(githubOwner);
@@ -194,11 +187,17 @@ export async function gatherAngleEvidence(
           decisionContext: { source: "angle.gather", prospectId, url: profileUrl },
         },
       );
+      // Cost is billed the moment the call completes (a receipt is recorded
+      // for it), independent of whether the markdown it returned was usable —
+      // mirrors the dossier tier above, which adds `billed` cost before
+      // checking `hasDossierSignal`. Gating this on `text` truthiness let a
+      // billed-but-empty webRead run silently uncounted against
+      // `--max-cost-usd`.
+      costUsd += (read.result as unknown as { cost?: number }).cost ?? 0;
       const text = (read.result.markdown ?? "").trim().slice(0, WEBREAD_SLICE);
       if (text) {
         webReadText = text;
         webReadResearched = true;
-        costUsd += (read.result as unknown as { cost?: number }).cost ?? 0;
         sources.push("webread");
       }
     } catch (err) {
@@ -317,6 +316,7 @@ export async function synthesizePersonAngle(
   input: SynthesizePersonAngleInput,
 ): Promise<SynthesizePersonAngleResult> {
   const cfg = loadConfig();
+  const evidenceText = renderEvidenceForPrompt(input.evidence);
   const userMessage = [
     `FOUNDER: ${cfg.founderName ?? "(unknown)"}`,
     `PRODUCT: ${cfg.productOneLiner ?? "(not set)"}`,
@@ -329,7 +329,7 @@ export async function synthesizePersonAngle(
       `${input.prospect.company ? ` @ ${input.prospect.company}` : ""}` +
       `${input.prospect.email ? ` <${input.prospect.email}>` : ""}`,
     "",
-    renderEvidenceForPrompt(input.evidence),
+    evidenceText,
   ].join("\n");
 
   let res: Awaited<ReturnType<typeof complete>>;
@@ -352,6 +352,13 @@ export async function synthesizePersonAngle(
   }
 
   const raw = tryParseJsonObject<Record<string, unknown>>(res.content, {});
-  const angle = parseProspectAngle(raw, { model: `${res.provider}/${res.model}` });
+  const angle = parseProspectAngle(
+    raw,
+    { model: `${res.provider}/${res.model}` },
+    {
+      evidenceText,
+      sourceTags: input.evidence.sources,
+    },
+  );
   return { angle, costUsd: 0 };
 }

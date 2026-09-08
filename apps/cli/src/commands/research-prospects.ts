@@ -1,6 +1,17 @@
 import { getLedger, hasDossierSignal, parallelMap } from "@oneshot-gtm/core";
-import { isCircuitOpen, safeDeepResearchPerson } from "@oneshot-gtm/find";
+import {
+  isCircuitOpen,
+  isResearchableUrl,
+  researchUrl,
+  safeDeepResearchPerson,
+} from "@oneshot-gtm/find";
 import { c, header, note, ok, warn } from "../output.ts";
+
+// Re-exported for existing test/call-site imports; the real implementation
+// now lives in packages/find/src/_profile-url.ts so packages/find/src/angle.ts
+// (issue #355 evidence gather) can reuse the same profile-preference logic
+// instead of re-deriving it and reintroducing the luma.com-over-LinkedIn bug.
+export { isResearchableUrl, researchUrl };
 
 /**
  * Backfill research dossiers onto existing prospects.
@@ -62,45 +73,6 @@ export function resolveCap(limit: number | undefined): number | undefined {
   if (limit === undefined) return undefined;
   if (!Number.isFinite(limit)) return 0;
   return Math.max(0, Math.floor(limit));
-}
-
-/**
- * Profile hosts `deepResearchPerson` can actually build a person from. It
- * chases a social profile; anything else is a page that happens to have a
- * person's name on it.
- */
-const RESEARCHABLE_HOST =
-  /^https?:\/\/([a-z0-9-]+\.)*(linkedin\.com|x\.com|twitter\.com|github\.com)\//i;
-
-/** True when a URL is a profile worth handing to deepResearchPerson. */
-export function isResearchableUrl(url: string | null | undefined): boolean {
-  const trimmed = url?.trim();
-  return trimmed ? RESEARCHABLE_HOST.test(trimmed) : false;
-}
-
-/**
- * The social URL deepResearchPerson should chase, if any.
- *
- * `source_profile_url` used to win unconditionally, which sent the research at
- * whatever page the finder happened to surface. For luma-events that is a
- * `luma.com/user/<handle>` page — for someone who hosts no events its entire
- * content is "Nothing Here, Yet", so the call burned a slot and returned
- * nothing while a perfectly good `linkedin_url` sat unused in the next column.
- * 68 prospects were in exactly that state.
- *
- * So: prefer whichever column holds a researchable profile, `source_profile_url`
- * first when both qualify. Fall back to a non-researchable `source_profile_url`
- * only when there is nothing better — it is still more than an email alone.
- */
-export function researchUrl(row: {
-  source_profile_url: string | null;
-  linkedin_url: string | null;
-}): string | null {
-  const source = row.source_profile_url?.trim() || null;
-  const linkedin = row.linkedin_url?.trim() || null;
-  if (isResearchableUrl(source)) return source;
-  if (isResearchableUrl(linkedin)) return linkedin;
-  return source ?? linkedin;
 }
 
 /**

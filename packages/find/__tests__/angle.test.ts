@@ -219,6 +219,15 @@ describe("gatherAngleEvidence", () => {
     expect(out?.sources).toContain("webread");
   });
 
+  it("counts a billed webRead's cost even when the markdown comes back empty", async () => {
+    prospect!.source_profile_url = "https://x.com/pat";
+    webReadResult = { markdown: "   ", cost: 0.01 };
+    const out = await gatherAngleEvidence(1);
+    expect(out?.webReadText).toBeNull();
+    expect(out?.sources).not.toContain("webread");
+    expect(out?.costUsd).toBe(0.01);
+  });
+
   it("skips webRead entirely under --cheap for a non-github URL", async () => {
     prospect!.source_profile_url = "https://x.com/pat";
     const out = await gatherAngleEvidence(1, { allowPaidResearch: false });
@@ -258,6 +267,17 @@ describe("gatherAngleEvidence", () => {
     expect(out?.dossierText).toBeNull();
     expect(out?.github).toBeNull();
   });
+
+  it("prefers a researchable linkedin_url over a non-researchable source_profile_url", async () => {
+    // Reuses research-prospects.ts's researchUrl: a luma.com/user/<handle> page
+    // has no content ("Nothing Here, Yet") while linkedin_url is a real profile.
+    prospect!.source_profile_url = "https://luma.com/user/rnq";
+    prospect!.linkedin_url = "https://www.linkedin.com/in/raunaqbose";
+    webReadResult = { markdown: "LinkedIn bio content", cost: 0.01 };
+    const out = await gatherAngleEvidence(1);
+    expect(webReadCalls).toEqual(["https://www.linkedin.com/in/raunaqbose"]);
+    expect(out?.webReadText).toContain("LinkedIn bio content");
+  });
 });
 
 describe("synthesizePersonAngle", () => {
@@ -274,7 +294,7 @@ describe("synthesizePersonAngle", () => {
     const { angle, costUsd } = await synthesizePersonAngle({
       prospect: { id: 1, name: "Pat", company: "Acme", email: "pat@acme.dev" },
       evidence: {
-        dossierText: null,
+        dossierText: "Recently shipped https://github.com/ada/agent-loop",
         dossierResearched: false,
         queueSignal: null,
         github: null,
@@ -282,11 +302,16 @@ describe("synthesizePersonAngle", () => {
         webReadResearched: false,
         replies: [],
         costUsd: 0,
-        sources: [],
+        sources: ["dossier"],
       },
     });
     expect(angle?.hook).toBe("Shipped agent-loop yesterday.");
     expect(angle?.model).toBe("test/test-model");
+    // The cited URL appears literally in dossierText, so the anti-fabrication
+    // gate (packages/core/src/angle.ts) keeps it grounded rather than dropping it.
+    expect(angle?.evidence).toEqual([
+      { claim: "shipped agent-loop", source: "https://github.com/ada/agent-loop" },
+    ]);
     expect(costUsd).toBe(0);
   });
 
@@ -359,5 +384,34 @@ describe("synthesizePersonAngle", () => {
     expect(llmCalls[0]!.user).toContain("FOUNDER: Founder");
     expect(llmCalls[0]!.user).toContain("PRODUCT: TestProduct");
     expect(llmCalls[0]!.user).toContain("some dossier text");
+  });
+
+  it("drops an evidence entry whose source is a hallucinated citation, end to end", async () => {
+    // The URL cited here never appears anywhere in the rendered evidence, and
+    // "replies:2" is never in `sources` — both must be dropped by the
+    // anti-fabrication gate even though both are non-blank strings.
+    llmResponse = JSON.stringify({
+      brief: "Builds agent infra.",
+      hook: "Shipped agent-loop yesterday.",
+      evidence: [
+        { claim: "made this up", source: "https://not-real.example/nowhere" },
+        { claim: "also made up", source: "replies:2" },
+      ],
+    });
+    const { angle } = await synthesizePersonAngle({
+      prospect: { id: 1, name: "Pat", company: "Acme", email: "pat@acme.dev" },
+      evidence: {
+        dossierText: "some real dossier text",
+        dossierResearched: false,
+        queueSignal: null,
+        github: null,
+        webReadText: null,
+        webReadResearched: false,
+        replies: [],
+        costUsd: 0,
+        sources: ["dossier"],
+      },
+    });
+    expect(angle?.evidence).toEqual([]);
   });
 });
