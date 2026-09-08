@@ -196,4 +196,88 @@ describe("triggerAngleRefresh", () => {
     triggerAngleRefresh(id); // in-flight slot released — allowed again
     expect(calls).toEqual([id, id]);
   });
+
+  // Round-2 correction, issue #357: an outcome dropped by the in-flight
+  // guard while a reply-triggered refresh is running must not be lost —
+  // the completed write can't reflect an outcome it never saw, and the
+  // freshness debounce would then block a retry for
+  // ANGLE_REFRESH_STALE_HOURS.
+  it("queues a dropped outcome trigger and fires it once the in-flight refresh settles", async () => {
+    const calls: Array<{ id: number; context?: { outcome?: { type: string } } }> = [];
+    let resolveFirst: (() => void) | null = null;
+    registerAngleRefreshTrigger(
+      (id, context) =>
+        new Promise<void>((resolve) => {
+          calls.push({ id, context });
+          resolveFirst = resolve;
+        }),
+    );
+    const id = h.ledger.upsertProspect({ email: "j@x.dev" });
+
+    triggerAngleRefresh(id); // reply-triggered, launches and never resolves yet
+    triggerAngleRefresh(id, { outcome: { type: "meeting" } }); // dropped but queued
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.context).toBeUndefined();
+
+    resolveFirst!();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // The queued outcome fires as a follow-up once the first settles, even
+    // though angle_synthesized_at is still unset (bypasses the freshness
+    // debounce for this deliberate catch-up).
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.id).toBe(id);
+    expect(calls[1]?.context).toEqual({ outcome: { type: "meeting" } });
+  });
+
+  it("does not queue a dropped REPLY trigger (no outcome) while one is in flight", async () => {
+    const calls: number[] = [];
+    let resolveFirst: (() => void) | null = null;
+    registerAngleRefreshTrigger(
+      (id) =>
+        new Promise<void>((resolve) => {
+          calls.push(id);
+          resolveFirst = resolve;
+        }),
+    );
+    const id = h.ledger.upsertProspect({ email: "k@x.dev" });
+
+    triggerAngleRefresh(id);
+    triggerAngleRefresh(id); // dropped, no outcome — not queued
+
+    resolveFirst!();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(calls).toEqual([id]); // no follow-up fired
+  });
+
+  it("keeps only the LAST queued outcome when several land while one is in flight", async () => {
+    const calls: Array<{ outcome?: { type: string } }> = [];
+    let resolveFirst: (() => void) | null = null;
+    registerAngleRefreshTrigger(
+      (id, context) =>
+        new Promise<void>((resolve) => {
+          calls.push({ outcome: context?.outcome });
+          resolveFirst = resolve;
+        }),
+    );
+    const id = h.ledger.upsertProspect({ email: "l@x.dev" });
+
+    triggerAngleRefresh(id);
+    triggerAngleRefresh(id, { outcome: { type: "meeting" } });
+    triggerAngleRefresh(id, { outcome: { type: "revenue", amount: 5000 } });
+
+    resolveFirst!();
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.outcome).toEqual({ type: "revenue", amount: 5000 });
+  });
 });

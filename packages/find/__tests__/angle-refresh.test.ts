@@ -22,6 +22,13 @@ let prospect: ProspectStub | null = null;
 let setAngleCalls: Array<{ id: number; angle: string | null }> = [];
 let registeredTrigger: ((prospectId: number) => void) | null = null;
 let demoModeValue = false;
+// Round-2 correction, issue #357: refreshProspectAngle must gate its paid
+// gather behind the install-wide daily spend ceiling, same as every other
+// automated paid path. Default granted so the existing tests below (which
+// don't care about spend) keep passing unmodified.
+let reservationGranted = true;
+const reserveCalls: number[] = [];
+let releaseCalls = 0;
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -49,6 +56,13 @@ vi.mock("@oneshot-gtm/core", async () => {
     }),
     webRead: async () => ({ result: { markdown: "", cost: 0 } }),
     logEvent: () => {},
+    tryReserveDailySpend: (amountUsd: number) => {
+      reserveCalls.push(amountUsd);
+      if (!reservationGranted) {
+        return { granted: false, reason: "daily spend ceiling reached", status: {} };
+      }
+      return { granted: true, status: {}, release: () => releaseCalls++ };
+    },
     // Captured instead of delegated to the real module-scoped state, so the
     // test drives the registered callback directly.
     registerAngleRefreshTrigger: (
@@ -59,11 +73,15 @@ vi.mock("@oneshot-gtm/core", async () => {
   };
 });
 
+let deepResearchInputs: unknown[] = [];
 vi.mock("../src/_sdk-safe.ts", () => ({
-  safeDeepResearchPerson: async () => ({
-    result: { status: "completed", result: {}, cost: 0 },
-    receiptId: 0,
-  }),
+  safeDeepResearchPerson: async (input: unknown) => {
+    deepResearchInputs.push(input);
+    return {
+      result: { status: "completed", result: {}, cost: 0 },
+      receiptId: 0,
+    };
+  },
 }));
 
 vi.mock("../src/_github-user.ts", () => ({
@@ -108,6 +126,10 @@ beforeEach(() => {
   demoModeValue = false;
   isCircuitOpenValue = false;
   llmResponse = "{}";
+  reservationGranted = true;
+  reserveCalls.length = 0;
+  releaseCalls = 0;
+  deepResearchInputs = [];
 });
 
 afterEach(() => vi.clearAllMocks());
@@ -173,5 +195,38 @@ describe("registerAngleRefreshTrigger wiring (issue #357)", () => {
     await new Promise((r) => setTimeout(r, 0));
 
     expect(setAngleCalls).toHaveLength(0);
+  });
+
+  // Round-2 correction, issue #357: refreshProspectAngle must reserve
+  // against the install-wide daily spend ceiling before allowing
+  // gatherAngleEvidence to run its paid deepResearchPerson/webRead calls —
+  // the same gate every other automated paid path (trigger runs, drains,
+  // mail-research's address lookup) already enforces.
+  it("reserves against the daily spend ceiling before gathering paid evidence", async () => {
+    llmResponse = JSON.stringify({ brief: "x", hook: "y" });
+
+    registeredTrigger!(1);
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(reserveCalls.length).toBeGreaterThan(0);
+    // A prospect with no dossier and a real email is eligible for paid
+    // research when the reservation is granted.
+    expect(deepResearchInputs).toHaveLength(1);
+    expect(releaseCalls).toBe(1);
+  });
+
+  it("skips paid research (allowPaidResearch: false) when the spend ceiling refuses the reservation", async () => {
+    reservationGranted = false;
+    llmResponse = JSON.stringify({ brief: "x", hook: "y" });
+
+    registeredTrigger!(1);
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(reserveCalls.length).toBeGreaterThan(0);
+    expect(deepResearchInputs).toHaveLength(0);
+    // Refused reservations are never released (nothing was held).
+    expect(releaseCalls).toBe(0);
   });
 });

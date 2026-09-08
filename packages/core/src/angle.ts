@@ -272,16 +272,68 @@ export const ANGLE_REFRESH_STALE_HOURS = 6;
 const inFlightRefreshes = new Set<number>();
 
 /**
+ * Outcome context dropped by the in-flight guard while a same-prospect
+ * refresh is already running (round-2 correction, issue #357): the guard
+ * above still drops the SECOND trigger outright (the in-flight refresh
+ * can't be redirected mid-flight), but an outcome carries data — deal
+ * value, meeting booked — a plain reply trigger never has, so silently
+ * losing it means the completed write can't reflect it and the freshness
+ * debounce then blocks a retry for `ANGLE_REFRESH_STALE_HOURS`. Queuing it
+ * here (last one wins) lets `launchAngleRefresh`'s completion hook fire a
+ * follow-up refresh carrying this context the moment the in-flight one
+ * settles, bypassing the freshness check since that check exists to guard
+ * against a plain re-trigger, not this deliberate catch-up. A dropped
+ * REPLY trigger (no `context.outcome`) is never queued — the in-flight
+ * refresh already reads replies fresh from the ledger, so nothing is lost.
+ */
+const pendingOutcomeRefreshes = new Map<number, AngleRefreshContext>();
+
+/**
+ * Add the in-flight marker and launch the registered trigger, draining any
+ * outcome queued for this prospect (see `pendingOutcomeRefreshes` above)
+ * once this run settles. Self-contained try/catch so a synchronous throw
+ * from `angleRefreshTrigger` — on the initial call or a queued follow-up —
+ * never escapes as an unhandled exception.
+ */
+function launchAngleRefresh(prospectId: number, context?: AngleRefreshContext): void {
+  try {
+    inFlightRefreshes.add(prospectId);
+    Promise.resolve(angleRefreshTrigger!(prospectId, context))
+      .catch(() => {
+        // Best-effort — a rejected refresh must never surface as an
+        // unhandled rejection in a caller's hot path (reply recording,
+        // outcome tagging).
+      })
+      .finally(() => {
+        inFlightRefreshes.delete(prospectId);
+        const pendingContext = pendingOutcomeRefreshes.get(prospectId);
+        if (pendingContext) {
+          pendingOutcomeRefreshes.delete(prospectId);
+          launchAngleRefresh(prospectId, pendingContext);
+        }
+      });
+  } catch {
+    // A trigger that throws synchronously must never propagate into a
+    // caller's hot path — release the in-flight slot it claimed above.
+    inFlightRefreshes.delete(prospectId);
+  }
+}
+
+/**
  * Best-effort, fire-and-forget: never throws. No-ops until a trigger is
  * registered (find's module hasn't loaded), no-ops when the angle was
  * synthesized more recently than `ANGLE_REFRESH_STALE_HOURS` ago — the
  * debounce that keeps a reply burst or a reply-then-outcome pair from paying
  * for synthesis twice — and no-ops when a refresh for this prospect is
- * already in flight (see `inFlightRefreshes` above).
+ * already in flight (see `inFlightRefreshes` above), queuing the outcome
+ * context instead when the dropped trigger carries one.
  */
 export function triggerAngleRefresh(prospectId: number, context?: AngleRefreshContext): void {
   if (!angleRefreshTrigger) return;
-  if (inFlightRefreshes.has(prospectId)) return;
+  if (inFlightRefreshes.has(prospectId)) {
+    if (context?.outcome) pendingOutcomeRefreshes.set(prospectId, context);
+    return;
+  }
   try {
     const prospect = getLedger().getProspectById(prospectId);
     if (!prospect) return;
@@ -289,21 +341,10 @@ export function triggerAngleRefresh(prospectId: number, context?: AngleRefreshCo
       const ageMs = Date.now() - Date.parse(prospect.angle_synthesized_at);
       if (Number.isFinite(ageMs) && ageMs < ANGLE_REFRESH_STALE_HOURS * 3600_000) return;
     }
-    inFlightRefreshes.add(prospectId);
-    Promise.resolve(angleRefreshTrigger(prospectId, context))
-      .catch(() => {
-        // Best-effort — see the top-level try/catch below: a rejected
-        // refresh must never surface as an unhandled rejection in a
-        // caller's hot path (reply recording, outcome tagging).
-      })
-      .finally(() => {
-        inFlightRefreshes.delete(prospectId);
-      });
+    launchAngleRefresh(prospectId, context);
   } catch {
-    // Best-effort — a ledger read failure (or a trigger that throws
-    // synchronously) must never propagate into a caller's hot path (reply
-    // recording, outcome tagging). Release the in-flight slot in case it was
-    // claimed before the throw.
+    // Best-effort — a ledger read failure must never propagate into a
+    // caller's hot path (reply recording, outcome tagging).
     inFlightRefreshes.delete(prospectId);
   }
 }
@@ -312,4 +353,5 @@ export function triggerAngleRefresh(prospectId: number, context?: AngleRefreshCo
 export function _resetAngleRefreshTrigger(): void {
   angleRefreshTrigger = null;
   inFlightRefreshes.clear();
+  pendingOutcomeRefreshes.clear();
 }

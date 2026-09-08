@@ -1,5 +1,6 @@
 import {
   type AngleRefreshContext,
+  DEFAULT_SPEND_RESERVATION_USD,
   demoMode,
   getLedger,
   hasDossierSignal,
@@ -8,6 +9,7 @@ import {
   parseProspectAngle,
   registerAngleRefreshTrigger,
   type ProspectAngle,
+  tryReserveDailySpend,
   webRead,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
@@ -442,8 +444,29 @@ async function refreshProspectAngle(
   // breaker means the backend is failing, so this is exactly the moment to
   // skip a paid gather rather than add to the pile-up.
   if (isCircuitOpen()) return;
+  // Install-wide daily spend ceiling (issue #481, round-2 correction to
+  // #357): this fire-and-forget refresh has no cap of its own, and
+  // `gatherAngleEvidence` defaults `allowPaidResearch` to true — the same
+  // deepResearchPerson/webRead calls every OTHER automated paid path
+  // (trigger runs, drains, mail-research's address lookup) gates behind
+  // `tryReserveDailySpend` first. A reply or outcome tag can fire this on
+  // every prospect with no cached dossier signal, so it must be gated the
+  // same way rather than spending unbounded against the founder's
+  // configured `dailySpendCeilingUsd`. Reserved at the same worst-case
+  // bound `researchBusinessAddress` (packages/plays/src/_mail-research.ts)
+  // uses for its own uncapped automated research, and released the moment
+  // the gather returns regardless of whether it actually spent — the
+  // reservation only needs to close the race against other concurrently
+  // starting automated calls.
+  const reservation = tryReserveDailySpend(DEFAULT_SPEND_RESERVATION_USD);
+  if (!reservation.granted) {
+    logEvent("angle.refresh.spend_capped", { prospectId, reason: reservation.reason }, "warn");
+  }
   try {
-    const evidence = await gatherAngleEvidence(prospectId, { outcome: context?.outcome });
+    const evidence = await gatherAngleEvidence(prospectId, {
+      outcome: context?.outcome,
+      allowPaidResearch: reservation.granted,
+    });
     if (!evidence) return;
     const ledger = getLedger();
     const prospect = ledger.getProspectById(prospectId);
@@ -466,6 +489,8 @@ async function refreshProspectAngle(
       { prospectId, message_120: ((err as Error).message ?? "").slice(0, 120) },
       "warn",
     );
+  } finally {
+    if (reservation.granted) reservation.release();
   }
 }
 
