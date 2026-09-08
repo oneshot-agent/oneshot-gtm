@@ -279,6 +279,32 @@ describe("Ledger receipts + prospects + spend rollups", () => {
     expect(show?.sent).toBe(2);
     expect(show?.replied).toBe(1);
   });
+
+  it("eventsByPlay respects an untilIso upper bound", () => {
+    const id = ledger.upsertProspect({ name: "UB", email: "ub@x.com", source: "t" });
+    const db = (
+      ledger as unknown as {
+        db: { query(s: string): { run(...a: unknown[]): unknown } };
+      }
+    ).db;
+    db.query(
+      `INSERT INTO sequence_events (prospect_id, play_name, step_index, channel, status, created_at)
+       VALUES (?, ?, 0, 'email', 'sent', '2026-08-27 12:00:00')`,
+    ).run(id, "show-hn");
+    db.query(
+      `INSERT INTO sequence_events (prospect_id, play_name, step_index, channel, status, created_at)
+       VALUES (?, ?, 0, 'email', 'sent', '2026-08-28 12:00:00')`,
+    ).run(id, "show-hn");
+    const bounded = ledger
+      .eventsByPlay({ sinceIso: "2026-08-27 00:00:00", untilIso: "2026-08-28 00:00:00" })
+      .find((r) => r.play_name === "show-hn");
+    expect(bounded?.sent).toBe(1);
+
+    const unbounded = ledger
+      .eventsByPlay({ sinceIso: "2026-08-27 00:00:00" })
+      .find((r) => r.play_name === "show-hn");
+    expect(unbounded?.sent).toBe(2);
+  });
 });
 
 describe("Ledger cadence state", () => {

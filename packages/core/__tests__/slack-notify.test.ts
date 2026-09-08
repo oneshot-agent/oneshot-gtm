@@ -282,6 +282,39 @@ describe("slack-notify", () => {
         "warn",
       );
     });
+
+    it("excludes events from the in-progress day (upper-bounded to the completed day)", async () => {
+      vi.spyOn(config, "loadConfigCached").mockReturnValue({
+        slackWebhookUrl: "https://hooks.slack.com/test",
+      } as any);
+      fetchMock.mockResolvedValue({ ok: true } as Response);
+
+      const ledger = getLedger();
+      ledger.setPollWatermark(SLACK_DAILY_SUMMARY_WATERMARK, "");
+      const pid = ledger.upsertProspect({ name: "D", email: "d@x.com", source: "t" });
+      const db = (
+        ledger as unknown as {
+          db: { query(s: string): { run(...a: unknown[]): unknown } };
+        }
+      ).db;
+      // Completed day (2026-08-28): the summary target.
+      db.query(
+        `INSERT INTO sequence_events (prospect_id, play_name, step_index, channel, status, created_at)
+         VALUES (?, 'show-hn', 0, 'email', 'sent', '2026-08-28 12:00:00')`,
+      ).run(pid);
+      // Same-instant as `now` (2026-08-29, still in progress): must NOT be counted,
+      // or a retry mid-day would double-count events that land after this call.
+      db.query(
+        `INSERT INTO sequence_events (prospect_id, play_name, step_index, channel, status, created_at)
+         VALUES (?, 'show-hn', 1, 'email', 'sent', '2026-08-29 09:00:00')`,
+      ).run(pid);
+
+      const posted = await postDailySendSummaryIfDue(new Date("2026-08-29T10:00:00Z"));
+
+      expect(posted).toBe(true);
+      const payload = JSON.parse(fetchMock.mock.calls![0]![1]!.body) as SlackNotification;
+      expect(payload.data).toMatchObject({ date: "2026-08-28", sent: 1 });
+    });
   });
 
   describe("non-blocking behavior", () => {

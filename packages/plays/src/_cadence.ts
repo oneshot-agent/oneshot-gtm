@@ -20,6 +20,7 @@ import {
   describeTouch,
   recentTouchElsewhere,
   notifySlackBounceRecorded,
+  notifySlackReplyReceived,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import {
@@ -293,11 +294,12 @@ async function walkInboxWindow(
       // is the reply store. Every matched email, not just the first reply per
       // (prospect, play): later replies on a live thread must be kept too.
       // Same thread key convention as inboxThreadKey (thread_id, else id).
-      ledger.recordInboxReply({
+      const playName = ledger.latestSentPlayForProspect(prospect.id, e.subject);
+      const isNewReply = ledger.recordInboxReply({
         id: e.id,
         threadKey: e.thread_id ?? e.id,
         prospectId: prospect.id,
-        playName: ledger.latestSentPlayForProspect(prospect.id, e.subject),
+        playName,
         fromEmail: from,
         subject: e.subject,
         body: e.body ?? "",
@@ -307,6 +309,18 @@ async function walkInboxWindow(
         messageId: e.message_id ?? null,
         kind,
       });
+      // Slack notification: fire-and-forget on first sight only. This is the
+      // primary reply-detection path (scheduler -> pollInboxReplies), unlike
+      // the opportunistic capture in apps/server/src/api/inbox.ts which only
+      // covers the UI-poll route.
+      if (isNewReply) {
+        void notifySlackReplyReceived({
+          from_email: from,
+          subject: e.subject,
+          play_name: playName,
+          kind,
+        });
+      }
       if (kind !== "human") {
         out.autoRepliesSkipped++;
         // A dead mailbox ("retired", "no longer at company") is a human-layer

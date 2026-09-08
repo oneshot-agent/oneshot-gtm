@@ -2061,7 +2061,7 @@ export class Ledger {
     }>;
   }
 
-  eventsByPlay(opts: { sinceIso?: string } = {}): Array<{
+  eventsByPlay(opts: { sinceIso?: string; untilIso?: string } = {}): Array<{
     play_name: string;
     sent: number;
     delivered: number;
@@ -2073,6 +2073,10 @@ export class Ledger {
     if (opts.sinceIso) {
       where.push("created_at >= ?");
       args.push(opts.sinceIso);
+    }
+    if (opts.untilIso) {
+      where.push("created_at < ?");
+      args.push(opts.untilIso);
     }
     const sql = `
       SELECT

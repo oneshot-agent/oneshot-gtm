@@ -178,8 +178,13 @@ export async function postDailySendSummaryIfDue(now: Date = new Date()): Promise
     ledger.setPollWatermark(SLACK_DAILY_SUMMARY_WATERMARK, day);
     // sqlite-format bounds ("YYYY-MM-DD HH:MM:SS") so the string comparison
     // matches sequence_events.created_at, which is datetime('now')-stamped.
+    // Upper-bounded (exclusive) at the next day's start (= utcDay(now), since
+    // `day` is utcDay(now - 24h)) so a day already summarized doesn't keep
+    // absorbing today's in-flight events on retries.
+    const nextDay = utcDay(now);
     const rows = ledger.eventsByPlay({
       sinceIso: `${day} 00:00:00`,
+      untilIso: `${nextDay} 00:00:00`,
     });
     const sent = rows.reduce((a, r) => a + r.sent, 0);
     const replied = rows.reduce((a, r) => a + r.replied, 0);

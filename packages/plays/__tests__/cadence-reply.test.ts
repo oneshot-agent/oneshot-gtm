@@ -43,11 +43,14 @@ let rows: Row[] = [];
 // lowercase is found from any-cased inbound address.
 const STORED_EMAIL = "sophia@agenticarchitect.ai";
 
+const notifySlackReplyReceivedMock = vi.fn(async () => {});
+
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
   return {
     ...actual,
     loadConfig: () => ({ founderName: "J", productOneLiner: "thing" }),
+    notifySlackReplyReceived: notifySlackReplyReceivedMock,
     sendEmail: async () => {
       calls.sendEmail++;
       return { receiptId: 1 };
@@ -160,6 +163,7 @@ beforeEach(() => {
   repliedSteps = [];
   persistedReplies = [];
   seqEvents = [];
+  notifySlackReplyReceivedMock.mockClear();
   // The fixture cadence is also the latest play that emailed the prospect.
   latestSentPlay = "stack-consolidation";
   pollState = {};
@@ -260,6 +264,25 @@ describe("pollInboxReplies — standalone background detection (no sends)", () =
     ];
     await pollInboxReplies();
     expect(persistedReplies.map((r) => r.id)).toEqual(["m1", "m3"]);
+  });
+
+  it("fires a Slack reply-received notification on first sight only (background poll path)", async () => {
+    inboxEmails = [{ id: "m1", from: "Sophia <sophia@agenticarchitect.ai>", subject: "re: stack" }];
+
+    await pollInboxReplies();
+
+    expect(notifySlackReplyReceivedMock).toHaveBeenCalledTimes(1);
+    expect(notifySlackReplyReceivedMock).toHaveBeenCalledWith({
+      from_email: STORED_EMAIL,
+      subject: "re: stack",
+      play_name: "stack-consolidation",
+      kind: "human",
+    });
+
+    // Re-polling the same window re-sees the same message id but must not
+    // notify again — recordInboxReply's INSERT OR IGNORE already dedupes it.
+    await pollInboxReplies();
+    expect(notifySlackReplyReceivedMock).toHaveBeenCalledTimes(1);
   });
 
   it("backfills the reply event for an already-replied cadence; no cadence is stopped", async () => {
