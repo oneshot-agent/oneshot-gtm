@@ -25,6 +25,10 @@ let latestSentPlay: string | null = null;
 let persistedReplies: Array<{ id: string; kind?: string | null }> = [];
 // Audit-trail sequence events recorded outside recordProspectReply (bounced/unsubscribed).
 let seqEvents: Array<{ prospectId: number; playName: string; status: string }> = [];
+// Persisted intent classifications (issue #558): keyed by reply id, mirrors
+// the real ledger's inbox_replies.intent column that setInboxReplyIntent
+// writes and listInboxReplyIntents reads back.
+let intents: Map<string, { intent: string | null; intentReason: string | null }> = new Map();
 // Persisted poll_state rows (watermark + backlog), as the real ledger holds them.
 let pollState: Record<string, string> = {};
 const watermarkOf = () => pollState["inbox_replies"] ?? null;
@@ -146,13 +150,38 @@ vi.mock("@oneshot-gtm/core", async () => {
       setPollWatermark: (key: string, value: string) => {
         pollState[key] = value;
       },
+      listInboxReplyIntents: (ids: string[]) => {
+        const out = new Map<string, { intent: string | null; intentReason: string | null }>();
+        for (const id of ids) {
+          const v = intents.get(id);
+          if (v) out.set(id, v);
+        }
+        return out;
+      },
+      setInboxReplyIntent: (id: string, intent: string | null, intentReason: string | null) => {
+        intents.set(id, { intent, intentReason });
+      },
+      // issue #558 round-1 correction: mirrors the real ledger's
+      // `UPDATE ... WHERE intent IS NULL` atomic claim — check-and-mark in
+      // one step so an overlapping poll racing the same row can't also
+      // claim it. Returns true (claim won) only when intent isn't already
+      // set (NULL or unset); the mock doesn't need real concurrency since a
+      // single test only ever calls this synchronously in sequence, but the
+      // semantics (claim fails once intent is non-null) must match.
+      claimInboxReplyForTriage: (id: string) => {
+        const cur = intents.get(id);
+        if (cur && cur.intent != null) return false;
+        intents.set(id, { intent: "__triage_pending__", intentReason: cur?.intentReason ?? null });
+        return true;
+      },
     }),
   };
 });
 
-// Round-1 correction (#480): recordInboxReply's return value (new-row vs.
-// already-seen) gates the paid triageEmails call — mocked here so the dedupe
-// test below can assert call counts/args without hitting a real LLM.
+// Round-1 correction (#558): claimInboxReplyForTriage's atomic
+// check-and-mark on `intent` gates the paid triageEmails call — mocked here
+// so the dedupe test below can assert call counts/args without hitting a
+// real LLM.
 const triageEmailsMock = vi.fn(async (emails: Array<{ id: string }>) =>
   emails.map((e) => ({
     id: e.id,
@@ -178,6 +207,7 @@ beforeEach(() => {
   repliedSteps = [];
   persistedReplies = [];
   seqEvents = [];
+  intents = new Map();
   triageEmailsMock.mockClear();
   // The fixture cadence is also the latest play that emailed the prospect.
   latestSentPlay = "stack-consolidation";
@@ -345,6 +375,47 @@ describe("pollInboxReplies — standalone background detection (no sends)", () =
     // recordInboxReply reports it as not-new (INSERT OR IGNORE no-op), so the
     // triage call must be skipped this time.
     await pollInboxReplies();
+    expect(triageEmailsMock).toHaveBeenCalledTimes(1);
+  });
+
+  // Round-1 correction (#558): two overlapping pollInboxReplies() calls
+  // (realistically: the server's background scheduler tick and a manually-run
+  // `cadence advance` CLI invocation) both observe the same freshly-inserted
+  // row with intent still NULL while the first call's triageEmails() await is
+  // in flight. The atomic claim (claimInboxReplyForTriage) must let only one
+  // of them actually call the paid triageEmails — a bare re-check of `intent`
+  // would let both through since neither has written back yet.
+  it("does not double-triage the same reply across two overlapping polls", async () => {
+    inboxEmails = [{ id: "m1", from: "sophia@agenticarchitect.ai", subject: "re: stack" }];
+    // Simulate the first poll's triage call being slow (still in flight)
+    // when the second, overlapping poll starts.
+    let resolveFirst: (() => void) | null = null;
+    triageEmailsMock.mockImplementationOnce(
+      (emails: Array<{ id: string }>) =>
+        new Promise((resolve) => {
+          resolveFirst = (): void =>
+            resolve(
+              emails.map((e) => ({
+                id: e.id,
+                from: "x",
+                subject: "x",
+                category: "interested" as const,
+                reasoning: "r",
+              })),
+            );
+        }),
+    );
+
+    const firstPoll = pollInboxReplies();
+    // Give the first poll's synchronous prelude (recordInboxReply, the claim)
+    // a turn to run before starting the second, overlapping poll.
+    await Promise.resolve();
+    await Promise.resolve();
+    const secondPoll = pollInboxReplies();
+
+    (resolveFirst as (() => void) | null)?.();
+    await Promise.all([firstPoll, secondPoll]);
+
     expect(triageEmailsMock).toHaveBeenCalledTimes(1);
   });
 });

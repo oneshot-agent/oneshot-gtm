@@ -98,6 +98,38 @@ describe("bodyCommitsTerms (issue #480)", () => {
   it("does not fire on small talk about hiring", () => {
     expect(bodyCommitsTerms("How is your hiring going this quarter?")).toBe(false);
   });
+
+  // Round-3 correction (#480/#558): NEGATION_CUE matched anywhere in the
+  // sentence, so a trailing hedge unrelated to the commitment cleared the
+  // gate — reviewer-reproduced false negative from PR #556.
+  it("still fires when an unrelated negation trails the commitment in the same sentence", () => {
+    expect(bodyCommitsTerms("Sure, I can do a 20% discount, no problem.")).toBe(true);
+  });
+
+  it("does not fire when the negation applies to the same clause as the commitment", () => {
+    expect(bodyCommitsTerms("We don't offer discounts right now, sorry.")).toBe(false);
+  });
+
+  // Round-4 correction (#558): the round-3 fix anchored the clause's start at
+  // the nearest PRECEDING comma, so a negation separated from the matched
+  // keyword by a parenthetical aside (its own comma-delimited fragment)
+  // landed outside the checked span and this returned true — a real
+  // regression on a legitimate, explicit refusal main correctly clears.
+  it("does not fire when a negation is separated from the commitment by a parenthetical aside", () => {
+    expect(bodyCommitsTerms("We will not, under any circumstances, offer a discount.")).toBe(false);
+  });
+
+  // Round-2 correction (#558, this round): the round-1 fix scoped
+  // NEGATION_CUE to the leading clause (start of sentence through the next
+  // comma after the matched keyword), which incidentally fixed the
+  // parenthetical-aside case above but broke this one — a genuine refusal
+  // that legitimately follows the comma landed outside the checked clause
+  // and this returned true against main's correct false. Fixed by stripping
+  // only the specific "no problem"/"no worries" hedge idiom and checking
+  // NEGATION_CUE against the whole sentence again, like main.
+  it("still catches a refusal that follows a comma in the same sentence", () => {
+    expect(bodyCommitsTerms("We can review pricing, but cannot offer a discount.")).toBe(false);
+  });
 });
 
 describe("intentDirectiveBlock (issue #480)", () => {

@@ -485,12 +485,12 @@ async function walkInboxWindow(
       // is the reply store. Every matched email, not just the first reply per
       // (prospect, play): later replies on a live thread must be kept too.
       // Same thread key convention as inboxThreadKey (thread_id, else id).
-      // recordInboxReply is INSERT OR IGNORE and reports whether THIS call
-      // inserted a new row — false means the overlap/backlog re-examination
-      // is looking at a row a prior poll already recorded (and, for `human`
-      // mail, already triaged), so the paid triageEmails call below must be
-      // skipped for it rather than re-billed and re-classified every poll.
-      const isNewReply = ledger.recordInboxReply({
+      // recordInboxReply is INSERT OR IGNORE — an idempotent re-sweep is a
+      // no-op on a row a prior poll already recorded. Whether THIS call
+      // inserted a new row no longer gates triage (round-1 correction,
+      // #558): see claimInboxReplyForTriage below for why the atomic claim
+      // on `intent` replaced it.
+      ledger.recordInboxReply({
         id: e.id,
         threadKey: e.thread_id ?? e.id,
         prospectId: prospect.id,
@@ -533,18 +533,35 @@ async function walkInboxWindow(
       // sentiment). Best-effort and non-blocking, like the neighbouring
       // tagOutcomeValue call below: a triage failure logs and leaves
       // `intent` NULL, it never loses the reply itself (already persisted
-      // above). Skipped when this row was already recorded by a prior poll
-      // (`isNewReply` false) — the 1h overlap window and the backlog drain
-      // both deliberately re-walk mail the ledger has already seen, and
-      // re-triaging it would re-bill the paid LLM call and clobber an
-      // already-set intent for no reason.
-      if (isNewReply) {
+      // above). `isNewReply` alone used to gate this and skipped rows the
+      // /inbox route's opportunistic capture had already inserted (issue
+      // #558) — those are real new replies from this poll's perspective but
+      // arrive here with isNewReply === false, so they were silently never
+      // triaged.
+      //
+      // Round-1 correction (#558): a bare re-check of the persisted `intent`
+      // column ("skip only when this row already carries a classification")
+      // is not atomic — two overlapping pollInboxReplies() calls (the
+      // server's background scheduler tick and a manually-run `cadence
+      // advance` CLI invocation both call it) can both observe the same
+      // freshly-inserted row with intent still NULL while the first call's
+      // triageEmails() await is in flight, so the second call re-triggers
+      // the paid triage call and races the write-back. claimInboxReplyForTriage
+      // does the check-and-mark in one UPDATE ... WHERE intent IS NULL
+      // statement, so only one caller's claim can succeed for a given row;
+      // the loser skips triage entirely this poll. The winner releases the
+      // claim (resets intent back to NULL) on any failure so a later poll
+      // can retry — the pending marker itself is never a real category.
+      if (ledger.claimInboxReplyForTriage(e.id)) {
         try {
           const [triaged] = await triageEmails([e]);
           if (triaged) {
             ledger.setInboxReplyIntent(e.id, triaged.category, triaged.reasoning || null);
+          } else {
+            ledger.setInboxReplyIntent(e.id, null, null);
           }
         } catch (err) {
+          ledger.setInboxReplyIntent(e.id, null, null);
           logEvent(
             "inbox.reply.triage_failed",
             { message_120: ((err as Error)?.message ?? "").slice(0, 120) },
