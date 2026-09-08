@@ -16,6 +16,7 @@ import {
   Receipt,
   Settings,
   UserPlus,
+  Users,
 } from "lucide-react";
 import { useEffect } from "react";
 import { toast } from "sonner";
@@ -27,6 +28,7 @@ import { READ_ONLY } from "../../lib/readOnly.ts";
 type NavTarget =
   | "/"
   | "/queue"
+  | "/prospects"
   | "/cadences"
   | "/receipts"
   | "/measure"
@@ -124,6 +126,9 @@ export function CommandPalette({
           </Command.Item>
           <Command.Item value="queue review" onSelect={go("/queue")}>
             <Inbox size={14} /> Queue <kbd className="ml-auto">g q</kbd>
+          </Command.Item>
+          <Command.Item value="prospects browse search rejected" onSelect={go("/prospects")}>
+            <Users size={14} /> Prospects
           </Command.Item>
           <Command.Item value="cadences sequences" onSelect={go("/cadences")}>
             <Layers size={14} /> Cadences <kbd className="ml-auto">g c</kbd>

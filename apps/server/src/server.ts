@@ -47,8 +47,10 @@ import {
   drainQueueRoute,
   listQueueRoute,
   markSentRoute,
+  queueRowDetailRoute,
   regenerateDraftRoute,
   rejectQueueRoute,
+  searchQueueRoute,
   sendDraftRoute,
 } from "./api/queue.ts";
 import {
@@ -134,6 +136,9 @@ const routes: RouteEntry[] = [
   route("GET", "/api/runs/:id", getRunRoute),
   route("POST", "/api/prospects/add", addProspectRoute),
   route("GET", "/api/queue", listQueueRoute),
+  // Literal before param: `:id` matches [^/]+ and would otherwise swallow "search".
+  route("GET", "/api/queue/search", searchQueueRoute),
+  route("GET", "/api/queue/:id", queueRowDetailRoute),
   route("POST", "/api/queue/approve-all", approveAllRoute),
   route("POST", "/api/queue/drain", drainQueueRoute),
   route("POST", "/api/queue/:id/approve", approveQueueRoute),

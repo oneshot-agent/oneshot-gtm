@@ -19,6 +19,9 @@ function row(foundAt: string): QueueRowView {
     lastDraftedAt: null,
     isSending: false,
     priority: null,
+    decision: null,
+    decidedBy: null,
+    decidedAt: null,
   };
 }
 

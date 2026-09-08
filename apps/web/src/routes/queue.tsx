@@ -63,6 +63,15 @@ import {
 import { humanInterval } from "../lib/humanInterval.ts";
 import { priorityBreakdown, priorityChip } from "../lib/priorityChip.ts";
 import { queueEvidence } from "../lib/queueEvidence.ts";
+import {
+  companyFor,
+  emailFor,
+  linkedinUrlFor,
+  nameFor,
+  phoneFor,
+  sourceDetail,
+  titleFor,
+} from "../lib/payloadIdentity.ts";
 import { INTERVAL_PRESETS_MS, withIntervalOverride } from "../lib/triggerInterval.ts";
 import { summarizeTriggers } from "../lib/triggerSummary.ts";
 import { useLocalStorage } from "../lib/useLocalStorage.ts";
@@ -2307,81 +2316,6 @@ function EmptyQueueHelp({ filterActive }: { filterActive: boolean }) {
       />
     </div>
   );
-}
-
-function emailFor(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object") return null;
-  const p = payload as Record<string, unknown>;
-  if (typeof p["email"] === "string") return p["email"] as string;
-  if (typeof p["founderEmail"] === "string") return p["founderEmail"] as string;
-  return null;
-}
-
-function nameFor(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object") return null;
-  const p = payload as Record<string, unknown>;
-  if (typeof p["name"] === "string") return p["name"] as string;
-  if (typeof p["founderName"] === "string") return p["founderName"] as string;
-  // Pre-enrichment rejected rows only carry a source URL — derive a handle.
-  const repoUrl = typeof p["repoUrl"] === "string" ? (p["repoUrl"] as string) : null;
-  if (repoUrl) {
-    const m = repoUrl.match(/github\.com\/([^/]+)\/([^/?#]+)/);
-    if (m) return `${m[1]}/${m[2]}`;
-  }
-  const postUrl = typeof p["postUrl"] === "string" ? (p["postUrl"] as string) : null;
-  if (postUrl) {
-    try {
-      const host = new URL(postUrl).hostname.replace(/^www\./, "");
-      if (host) return host;
-    } catch {
-      // fall through
-    }
-  }
-  return null;
-}
-
-/**
- * The finder-specific tail of `source` ("find:github-stars:vercel/eve" ->
- * "vercel/eve") — which repo / cohort matched. Empty when source is just the
- * finder name (fully redundant with the play column).
- */
-function sourceDetail(source: string | null | undefined): string {
-  if (!source) return "";
-  return source.split(":").slice(2).join(":");
-}
-
-function companyFor(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object") return null;
-  const p = payload as Record<string, unknown>;
-  if (typeof p["company"] === "string") return p["company"] as string;
-  return null;
-}
-
-// Stamped on the payload by the person-level ICP gate; absent on rows queued
-// before the gate existed.
-function titleFor(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object") return null;
-  const p = payload as Record<string, unknown>;
-  const v = p["title"];
-  return typeof v === "string" && v.trim().length > 0 ? v.trim() : null;
-}
-
-function linkedinUrlFor(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object") return null;
-  const p = payload as Record<string, unknown>;
-  const v = p["linkedinUrl"];
-  if (typeof v !== "string" || v.length === 0) return null;
-  // Defense in depth — payload comes from sqlite but a stale/garbage row should
-  // never render as a clickable javascript:// or data:// link.
-  return /^https?:\/\/(?:[a-z0-9-]+\.)*linkedin\.com\/in\//i.test(v) ? v : null;
-}
-
-function phoneFor(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object") return null;
-  const p = payload as Record<string, unknown>;
-  const v = p["phone"];
-  if (typeof v === "string" && v.length > 0) return v;
-  return null;
 }
 
 // Event metadata — present only on luma-events payloads (the persisted

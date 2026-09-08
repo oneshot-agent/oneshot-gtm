@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as SetupRouteImport } from './routes/setup'
 import { Route as ReceiptsRouteImport } from './routes/receipts'
 import { Route as QueueRouteImport } from './routes/queue'
+import { Route as ProspectsRouteImport } from './routes/prospects'
 import { Route as PlaysRouteImport } from './routes/plays'
 import { Route as MeasureRouteImport } from './routes/measure'
 import { Route as InboxRouteImport } from './routes/inbox'
@@ -33,6 +34,11 @@ const ReceiptsRoute = ReceiptsRouteImport.update({
 const QueueRoute = QueueRouteImport.update({
   id: '/queue',
   path: '/queue',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProspectsRoute = ProspectsRouteImport.update({
+  id: '/prospects',
+  path: '/prospects',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PlaysRoute = PlaysRouteImport.update({
@@ -78,6 +84,7 @@ export interface FileRoutesByFullPath {
   '/inbox': typeof InboxRoute
   '/measure': typeof MeasureRoute
   '/plays': typeof PlaysRoute
+  '/prospects': typeof ProspectsRoute
   '/queue': typeof QueueRoute
   '/receipts': typeof ReceiptsRoute
   '/setup': typeof SetupRoute
@@ -90,6 +97,7 @@ export interface FileRoutesByTo {
   '/inbox': typeof InboxRoute
   '/measure': typeof MeasureRoute
   '/plays': typeof PlaysRoute
+  '/prospects': typeof ProspectsRoute
   '/queue': typeof QueueRoute
   '/receipts': typeof ReceiptsRoute
   '/setup': typeof SetupRoute
@@ -103,6 +111,7 @@ export interface FileRoutesById {
   '/inbox': typeof InboxRoute
   '/measure': typeof MeasureRoute
   '/plays': typeof PlaysRoute
+  '/prospects': typeof ProspectsRoute
   '/queue': typeof QueueRoute
   '/receipts': typeof ReceiptsRoute
   '/setup': typeof SetupRoute
@@ -117,6 +126,7 @@ export interface FileRouteTypes {
     | '/inbox'
     | '/measure'
     | '/plays'
+    | '/prospects'
     | '/queue'
     | '/receipts'
     | '/setup'
@@ -129,6 +139,7 @@ export interface FileRouteTypes {
     | '/inbox'
     | '/measure'
     | '/plays'
+    | '/prospects'
     | '/queue'
     | '/receipts'
     | '/setup'
@@ -141,6 +152,7 @@ export interface FileRouteTypes {
     | '/inbox'
     | '/measure'
     | '/plays'
+    | '/prospects'
     | '/queue'
     | '/receipts'
     | '/setup'
@@ -154,6 +166,7 @@ export interface RootRouteChildren {
   InboxRoute: typeof InboxRoute
   MeasureRoute: typeof MeasureRoute
   PlaysRoute: typeof PlaysRoute
+  ProspectsRoute: typeof ProspectsRoute
   QueueRoute: typeof QueueRoute
   ReceiptsRoute: typeof ReceiptsRoute
   SetupRoute: typeof SetupRoute
@@ -181,6 +194,13 @@ declare module '@tanstack/react-router' {
       path: '/queue'
       fullPath: '/queue'
       preLoaderRoute: typeof QueueRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/prospects': {
+      id: '/prospects'
+      path: '/prospects'
+      fullPath: '/prospects'
+      preLoaderRoute: typeof ProspectsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/plays': {
@@ -242,6 +262,7 @@ const rootRouteChildren: RootRouteChildren = {
   InboxRoute: InboxRoute,
   MeasureRoute: MeasureRoute,
   PlaysRoute: PlaysRoute,
+  ProspectsRoute: ProspectsRoute,
   QueueRoute: QueueRoute,
   ReceiptsRoute: ReceiptsRoute,
   SetupRoute: SetupRoute,
