@@ -8,6 +8,7 @@ export interface DraftedView {
   receiptIds: number[];
   sent: boolean;
   enrichmentFailed?: boolean;
+  originalTargetIndex?: number;
 }
 
 export function toDraftedView(d: {
@@ -17,6 +18,7 @@ export function toDraftedView(d: {
   receiptIds: number[];
   sent: boolean;
   enrichmentFailed?: boolean;
+  originalTargetIndex?: number;
 }): DraftedView {
   return {
     subject: d.subject,
@@ -25,6 +27,7 @@ export function toDraftedView(d: {
     receiptIds: d.receiptIds,
     sent: d.sent,
     ...(d.enrichmentFailed ? { enrichmentFailed: true } : {}),
+    ...(d.originalTargetIndex !== undefined ? { originalTargetIndex: d.originalTargetIndex } : {}),
   };
 }
 
@@ -38,11 +41,17 @@ export function toDraftedView(d: {
  * happen instead of batching at the end. The PlayDraft → DraftedView
  * projection is applied inside the wrapper so the callback gets the same
  * shape downstream code expects.
+ *
+ * `signal`: the run's cancellation signal, forwarded to the play so it can
+ * bail at its paid-call boundaries. When it fires mid-run this call rejects
+ * with a `RunCancelledError` (see `isRunCancelled`) instead of resolving with
+ * a partial batch — the drafts already finished were reported via `onProgress`.
  */
 export async function dispatchPlay(
   playName: string,
   body: RunPlayRequest,
   onProgress?: (index: number, view: DraftedView) => void,
+  signal?: AbortSignal,
 ): Promise<DraftedView[]> {
   const play = PLAYS[playName];
   if (!play) {
@@ -52,8 +61,7 @@ export async function dispatchPlay(
   const result = await play.run({
     dryRun: body.dryRun,
     targets: body.targets,
-    ...(body.senderCohort ? { senderCohort: body.senderCohort } : {}),
-    ...(body.freeForCohortOffer ? { freeForCohortOffer: body.freeForCohortOffer } : {}),
+    ...(signal ? { signal } : {}),
     ...(onProgress
       ? {
           onProgress: (index: number, draft: Parameters<typeof toDraftedView>[0]) =>

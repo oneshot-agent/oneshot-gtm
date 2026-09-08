@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="oneshot-gtm">
+  <title>oneshot-gtm</title>
+  <!-- Master mark. Every raster derives from this file alone. 9.8% margin so the macOS dock's full-bleed render sits like a native icon. Hex, not oklch: librsvg renders oklch() as black. -->
+  <rect x="50" y="50" width="412" height="412" rx="91.9" fill="#120f0c"/>
+  <rect x="51.5" y="51.5" width="409" height="409" rx="90.4" fill="none" stroke="#2e241f" stroke-width="3"/>
+  <g transform="translate(0 132)">
+    <path fill="#f5f1ea" d="M156,12 A12,12 0 0 1 168,0 H344 A12,12 0 0 1 356,12 V222 L336,248 L316,222 L296,248 L276,222 L256,248 L236,222 L216,248 L196,222 L176,248 L156,222 Z"/>
+    <rect x="182" y="36" width="148" height="24" rx="12" fill="#2e241f"/>
+    <rect x="182" y="82" width="89" height="24" rx="12" fill="#2e241f"/>
+    <rect x="182" y="128" width="121" height="24" rx="12" fill="#8d847d"/>
+    <rect x="182" y="174" width="65" height="24" rx="12" fill="#47b777"/>
+  </g>
+</svg>

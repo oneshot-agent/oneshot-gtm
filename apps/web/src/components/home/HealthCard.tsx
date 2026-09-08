@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import { api } from "../../api/client.ts";
 import { cn } from "../../lib/cn.ts";
 import { summarizeDoctor, type DoctorTone } from "../../lib/doctorSummary.ts";
@@ -15,19 +15,18 @@ const TONE_CLASS: Record<DoctorTone, string> = {
 /**
  * One-line install health on Today, expanding to the full grouped DoctorPanel.
  * Reads the SAME ["doctor"] query the nav dot and StatusBar already poll at
- * 60s, so this card costs zero extra requests. Auto-opens once when anything
- * is failing or warning (seed-once ref — background refetches must not slam a
- * toggle the founder set).
+ * 60s, so this card costs zero extra requests.
+ *
+ * It does not open itself. Auto-expanding put a wall of install checks at the
+ * top of Today whenever anything was warning, which on a working install is
+ * most days, and it buried the signal feed that is the page's subject. The
+ * summary line already carries the finding in the tone colour — "2 warnings"
+ * in amber is the signal, and opening it is the reader's call.
  */
 export function HealthCard() {
   const doctor = useQuery({ queryKey: ["doctor"], queryFn: api.doctor, staleTime: 30_000 });
   const [open, setOpen] = useState(false);
-  const seeded = useRef(false);
   const summary = summarizeDoctor(doctor.data?.checks);
-  if (!seeded.current && doctor.data) {
-    seeded.current = true;
-    if (summary.failing + summary.warnings > 0) setOpen(true);
-  }
 
   return (
     <section className="border-b border-ink-rule">
@@ -35,7 +34,6 @@ export function HealthCard() {
         type="button"
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        aria-label={open ? "Collapse health detail" : "Expand health detail"}
         className={cn(
           "flex w-full items-center gap-2 px-6 py-2.5 text-left",
           "transition-colors duration-[var(--dur-stamp)] hover:bg-ink-surface/60",

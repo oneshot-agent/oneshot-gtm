@@ -52,6 +52,7 @@ export function parseProfileUrl(raw: string): ParsedProfileUrl {
 }
 
 interface PlaceholderPayload {
+  businessAddress?: import("@oneshot-gtm/core").PostalAddress;
   url: string;
   platform: Platform;
   emailOverride?: string;
@@ -67,12 +68,14 @@ export type CreateJobResult = { queueId: number } | { duplicate: true };
  * profile is already queued for this play.
  */
 export function createProspectResearchJob(input: {
+  businessAddress?: import("@oneshot-gtm/core").PostalAddress;
   url: string;
   emailOverride?: string;
 }): CreateJobResult {
   const parsed = parseProfileUrl(input.url);
   const ledger = getLedger();
   const payload: PlaceholderPayload = {
+    businessAddress: input.businessAddress,
     url: parsed.url,
     platform: parsed.platform,
     ...(input.emailOverride ? { emailOverride: input.emailOverride } : {}),
@@ -246,7 +249,15 @@ export async function runProspectResearch(queueId: number): Promise<void> {
     ) {
       return;
     }
-    ledger.updateQueuePayload({ id: queueId, payload: target });
+    ledger.updateQueuePayload({
+      id: queueId,
+      payload: {
+        ...target,
+        ...(JSON.parse(fresh.payload_json).businessAddress
+          ? { businessAddress: JSON.parse(fresh.payload_json).businessAddress }
+          : {}),
+      },
+    });
     ledger.setQueueDraft({
       id: queueId,
       draft: {

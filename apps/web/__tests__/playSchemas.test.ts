@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { RUNNABLE_PLAYS } from "@oneshot-gtm/shared-types";
-import { PLAY_SCHEMAS } from "../src/lib/playSchemas";
+import {
+  missingRequiredExtras,
+  missingRequiredFields,
+  PLAY_SCHEMAS,
+  type PlaySchema,
+} from "../src/lib/playSchemas";
 
 // The list and the schemas are edited in different files by different features,
 // and they drifted twice before this test existed: /queue's drain list lost
@@ -22,5 +27,141 @@ describe("PLAY_SCHEMAS vs RUNNABLE_PLAYS", () => {
         expect(schema.defaultRow, `${name}.${f.key} missing from defaultRow`).toHaveProperty(f.key);
       }
     }
+  });
+});
+
+// finding PRRT_kwDOSKzrBs6ewQc8: /run's rows render outside a <form>, so the
+// `required` attribute on each field is decorative — this pure helper is
+// what actually blocks dispatch (wired into run.$playName.tsx's submit()).
+describe("missingRequiredFields", () => {
+  const schema = PLAY_SCHEMAS["sources-sought"]!;
+
+  it("lists the labels of blank required fields", () => {
+    const row = { ...schema.defaultRow, name: "Jane Doe", email: "jane@agency.gov" };
+    const missing = missingRequiredFields(schema, row);
+    expect(missing).toContain("Agency");
+    expect(missing).toContain("Notice number");
+    expect(missing).toContain("Notice type");
+    expect(missing).toContain("Notice title");
+    expect(missing).toContain("Your edge (one sentence)");
+  });
+
+  it("treats whitespace-only values as blank", () => {
+    const row = {
+      ...schema.defaultRow,
+      name: "Jane Doe",
+      email: "jane@agency.gov",
+      agency: "   ",
+    };
+    expect(missingRequiredFields(schema, row)).toContain("Agency");
+  });
+
+  it("returns no missing fields when every required key is filled", () => {
+    const row: Record<string, string> = { ...schema.defaultRow };
+    for (const f of schema.fields) {
+      if (f.required) row[f.key] = "x";
+    }
+    expect(missingRequiredFields(schema, row)).toEqual([]);
+  });
+
+  it("ignores optional fields left blank", () => {
+    const row: Record<string, string> = { ...schema.defaultRow };
+    for (const f of schema.fields) {
+      if (f.required) row[f.key] = "x";
+    }
+    expect(row["requirementSummary"]).toBe("");
+    expect(missingRequiredFields(schema, row)).toEqual([]);
+  });
+});
+
+// finding PRRT_kwDOSKzrBs6ewsAf: missingRequiredFields only ever filtered
+// schema.fields — a required EXTRA passed validation blank and reached
+// /api/run omitted, a paid malformed draft. No shipped play declares extras
+// now (accelerator-batch, the last one, moved its angle onto the row and its
+// sender cohort into config), so the guard is exercised against a synthetic
+// schema — it has to keep working for the next play that wants one.
+describe("missingRequiredExtras", () => {
+  const schema: PlaySchema = {
+    description: "synthetic",
+    fields: [{ key: "name", label: "Name", type: "text", required: true }],
+    defaultRow: { name: "" },
+    extras: [
+      { key: "sharedRequired", label: "Shared required", type: "text", required: true },
+      { key: "sharedOptional", label: "Shared optional", type: "text" },
+    ],
+  };
+
+  it("flags a blank required extra", () => {
+    expect(missingRequiredExtras(schema, {})).toContain("Shared required");
+  });
+
+  it("treats whitespace-only extras as blank", () => {
+    expect(missingRequiredExtras(schema, { sharedRequired: "   " })).toContain("Shared required");
+  });
+
+  it("passes once the required extra is filled, ignoring the optional one", () => {
+    expect(missingRequiredExtras(schema, { sharedRequired: "x" })).toEqual([]);
+  });
+
+  it("returns [] for a schema with no extras", () => {
+    const noExtras = PLAY_SCHEMAS["show-hn"]!;
+    expect(missingRequiredExtras(noExtras, {})).toEqual([]);
+  });
+});
+
+// The play that carried the fabricated-affiliation bug: its own batch tag must
+// never be a form field again, and the discount that violated _humanizer.md
+// must not come back as one either.
+describe("accelerator-batch schema", () => {
+  const schema = PLAY_SCHEMAS["accelerator-batch"]!;
+
+  it("asks for nothing about the sender's own cohort", () => {
+    const keys = [...schema.fields, ...(schema.extras ?? [])].map((f) => f.key);
+    expect(keys).not.toContain("senderCohort");
+    expect(keys).not.toContain("freeForCohortOffer");
+  });
+
+  it("requires yourEdge on the row, like every other evidence-led play", () => {
+    const edge = schema.fields.find((f) => f.key === "yourEdge");
+    expect(edge?.required).toBe(true);
+    expect(schema.defaultRow["yourEdge"]).toBe("");
+  });
+});
+
+// finding PRRT_kwDOSKzrBs6fD-hS/hc / issue #463: civic-pilot's pilot must be
+// sized under the micro-purchase threshold OR bought off a cooperative
+// purchasing vehicle — a bare per-field `required` on purchasingVehicle would
+// force fabricating a vehicle for a threshold-only target.
+describe("missingRequiredFields — requireOneOf (civic-pilot purchasing route)", () => {
+  const schema = PLAY_SCHEMAS["civic-pilot"]!;
+
+  it("flags the OR-group when neither route is filled", () => {
+    const row = { ...schema.defaultRow };
+    expect(missingRequiredFields(schema, row)).toContain(
+      "Purchasing vehicle or micro-purchase threshold",
+    );
+  });
+
+  it("passes when only purchasingVehicle is filled", () => {
+    const row: Record<string, string> = { ...schema.defaultRow, purchasingVehicle: "Sourcewell" };
+    for (const f of schema.fields) {
+      if (f.required) row[f.key] = row[f.key] || "x";
+    }
+    expect(missingRequiredFields(schema, row)).not.toContain(
+      "Purchasing vehicle or micro-purchase threshold",
+    );
+  });
+
+  it("passes when only microPurchaseThreshold is filled", () => {
+    const row: Record<string, string> = {
+      ...schema.defaultRow,
+      microPurchaseThreshold: "$10,000",
+    };
+    for (const f of schema.fields) {
+      if (f.required) row[f.key] = row[f.key] || "x";
+    }
+    expect(missingRequiredFields(schema, row)).not.toContain(
+      "Purchasing vehicle or micro-purchase threshold",
+    );
   });
 });

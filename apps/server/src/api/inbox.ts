@@ -9,11 +9,12 @@ import {
   logEvent,
   replyEmail,
   resolveIdentities,
+  sqliteToIso,
   trackSend,
   type ReplyKind,
   notifySlackReplyReceived,
 } from "@oneshot-gtm/core";
-import { draftInboxReply } from "@oneshot-gtm/plays";
+import { bodyCommitsTerms, draftInboxReply } from "@oneshot-gtm/plays";
 import {
   type ConversationItem,
   type ConversationView,
@@ -25,7 +26,11 @@ import {
   type InboxSaveDraftResult,
   type InboxSendReplyRequest,
   type InboxSendReplyResult,
+  type InboxSteerRequest,
+  type InboxSteerResult,
+  type ReplyIntent,
   inboxThreadKey,
+  POSITIVE_REPLY_INTENTS,
 } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 import { gatherReplyContext } from "./_reply-research.ts";
@@ -117,7 +122,12 @@ export async function listInboxRoute(req: Request): Promise<Response> {
     // render so a mailbox outage never empties the matched view.
     let conversations: ConversationView[] = [];
     try {
-      conversations = buildConversations(ledger, cadenceIndex(ledger), ledger.getInboxThreads());
+      conversations = buildConversations(
+        ledger,
+        cadenceIndex(ledger),
+        ledger.getInboxThreads(),
+        ledger.listLatestOutcomeRecordedAtByProspect(),
+      );
     } catch {
       // degraded twice over — return the error state alone.
     }
@@ -139,6 +149,10 @@ export async function listInboxRoute(req: Request): Promise<Response> {
 
   // Persisted reply activity (saved draft + sent history), indexed by thread_key.
   const threads = ledger.getInboxThreads();
+  // Sentiment/intent per persisted reply id (issue #480) — set by the
+  // background poll's triage call, read here for the badge. Absent/null =
+  // not yet triaged.
+  const intents = ledger.listInboxReplyIntents(emails.map((e) => e.id));
 
   const replies: InboxReplyView[] = emails.map((e) => {
     const fromEmail = normalizeFrom(e.from);
@@ -159,6 +173,7 @@ export async function listInboxRoute(req: Request): Promise<Response> {
       }
     }
     const threadId = e.thread_id ?? null;
+    const intent = intents.get(e.id);
     return {
       id: e.id,
       fromEmail,
@@ -167,6 +182,8 @@ export async function listInboxRoute(req: Request): Promise<Response> {
       receivedAt: e.received_at,
       body: e.body ?? "",
       kind: classifyReply({ subject: e.subject, body: e.body, autoSubmitted: e.auto_submitted }),
+      intent: (intent?.intent as ReplyIntent | null | undefined) ?? null,
+      intentReason: intent?.intentReason ?? null,
       sourceIdentityId: e.source_identity_id ?? null,
       sourceProvider: e.source_identity_id
         ? (providerById.get(e.source_identity_id) ?? null)
@@ -203,7 +220,10 @@ export async function listInboxRoute(req: Request): Promise<Response> {
   // Opportunistic capture: any matched live mail not yet persisted goes into
   // inbox_replies now (INSERT OR IGNORE — re-sees are no-ops). This is also
   // how pre-v21 history backfills itself: the targeted known-replier fetch
-  // above flows through here on first load. Best-effort.
+  // above flows through here on first load. Best-effort. Classification
+  // (issue #480/#558) is intentionally NOT done here — pollInboxReplies is
+  // the one choke point that also classifies rows this capture inserted but
+  // didn't triage (see _cadence.ts's isNewReply-or-untriaged check).
   try {
     for (const r of visible) {
       if (!r.matched) continue;
@@ -246,7 +266,12 @@ export async function listInboxRoute(req: Request): Promise<Response> {
   // sent from /inbox, merged per prospect and sorted oldest-first.
   let conversations: ConversationView[] = [];
   try {
-    conversations = buildConversations(ledger, byEmail, threads);
+    conversations = buildConversations(
+      ledger,
+      byEmail,
+      threads,
+      ledger.listLatestOutcomeRecordedAtByProspect(),
+    );
   } catch (err) {
     logEvent(
       "inbox.conversations_failed",
@@ -295,6 +320,7 @@ function buildConversations(
     { name: string | null; company: string | null; playName: string; status: string }
   >,
   threads: ReturnType<ReturnType<typeof getLedger>["getInboxThreads"]>,
+  outcomeRecordedAtByProspect: Map<number, string>,
 ): ConversationView[] {
   const out: ConversationView[] = [];
   for (const prospectId of ledger.listProspectIdsWithReplies()) {
@@ -338,6 +364,7 @@ function buildConversations(
         threadId: r.thread_id,
         messageId: r.message_id,
         replyKind: (r.kind as ReplyKind | null) ?? "human",
+        intent: (r.intent as ReplyIntent | null) ?? null,
       });
     }
     for (const key of threadKeys) {
@@ -348,6 +375,23 @@ function buildConversations(
     items.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
 
     const cadence = byEmail.get(prospect.email.trim().toLowerCase());
+    const newestThread = threads.get(inbound.at(-1)!.thread_key) ?? null;
+    const newestInbound = inbound.at(-1)!;
+    // Round-2 correction (#480): a positive-intent inbound stays "awaiting
+    // reply" until the founder answers it (any sent item on the thread after
+    // it arrived) or records a deal outcome for this prospect after it arrived — otherwise
+    // the nav dot lit by POSITIVE_REPLY_INTENTS never turns off.
+    const positiveIntent =
+      newestInbound.intent != null &&
+      POSITIVE_REPLY_INTENTS.includes(newestInbound.intent as ReplyIntent);
+    const repliedSince = (newestThread?.sent ?? []).some(
+      (s) => s.sentAt > newestInbound.received_at,
+    );
+    const outcomeRecordedAt = outcomeRecordedAtByProspect.get(prospectId);
+    const outcomeSince =
+      outcomeRecordedAt != null &&
+      Date.parse(sqliteToIso(outcomeRecordedAt)) > Date.parse(newestInbound.received_at);
+    const awaitingReply = positiveIntent && !repliedSince && !outcomeSince;
     out.push({
       prospectId,
       name: prospect.name,
@@ -356,21 +400,16 @@ function buildConversations(
       playName: cadence?.playName ?? inbound.at(-1)?.play_name ?? prospect.source,
       cadenceStatus: cadence?.status ?? null,
       lastActivityAt: items.at(-1)?.at ?? inbound.at(-1)!.received_at,
-      draftBody: threads.get(inbound.at(-1)!.thread_key)?.draftBody ?? null,
+      draftBody: newestThread?.draftBody ?? null,
+      steer: newestThread?.steer ?? null,
+      status: newestThread?.status ?? null,
+      intent: (inbound.at(-1)?.intent as ReplyIntent | null) ?? null,
+      awaitingReply,
       items,
     });
   }
   // Most recent activity first — the row order of the matched tab.
   return out.toSorted((a, b) => (a.lastActivityAt < b.lastActivityAt ? 1 : -1));
-}
-
-/**
- * sequence_events.created_at is SQLite datetime('now') format ("YYYY-MM-DD
- * HH:MM:SS", UTC, no 'T'/'Z'); inbox timestamps are ISO. Normalize so the
- * merged timeline's string sort is chronological.
- */
-function sqliteToIso(ts: string): string {
-  return ts.includes("T") ? ts : `${ts.replace(" ", "T")}Z`;
 }
 
 /**
@@ -449,6 +488,21 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
   }
 
   try {
+    // Intent (issue #480) — persisted classification of the inbound being
+    // answered, read the same way inboundReplyKind reads `kind`: prefer the
+    // stored row (it's what the background poll actually classified), fall
+    // back to null (unclassified) rather than re-triaging inline — triage is
+    // an LLM call and the draft button is already paying for one.
+    const intent =
+      matched?.prospectId != null && typeof body.id === "string"
+        ? (ledger.listInboxRepliesForProspect(matched.prospectId).find((r) => r.id === body.id)
+            ?.intent ?? null)
+        : null;
+    const threadKey =
+      typeof body.id === "string" && body.id.length > 0
+        ? inboxThreadKey({ threadId: body.threadId ?? null, id: body.id })
+        : null;
+    const steer = threadKey ? (ledger.getInboxThreads().get(threadKey)?.steer ?? null) : null;
     const draft = await draftInboxReply({
       fromEmail,
       subject,
@@ -457,11 +511,15 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
       dossier: context.dossier,
       threadSent: context.threadSent,
       priorInbound: context.priorInbound,
+      intent,
+      steer,
     });
     const out: InboxDraftReplyResult = {
       body: draft.body,
       costUsd: context.costUsd,
       researched: context.researched,
+      flags: draft.flags,
+      needsDecision: draft.flags.includes("commits-terms"),
     };
     return jsonResponse(out, 200, req);
   } catch (err) {
@@ -473,7 +531,10 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
 
 /**
  * Persist the in-progress reply draft for a thread (debounced auto-save).
- * Upsert-by-thread-key so typing overwrites.
+ * Upsert-by-thread-key so typing overwrites. `status` is recomputed here
+ * from the body's own text (issue #480's `commits-terms` lint) — never
+ * trusted from the client, so a founder can't accidentally (or a hostile
+ * client can't deliberately) unlock Send by lying about it.
  */
 export async function saveDraftRoute(req: Request): Promise<Response> {
   let body: Partial<InboxSaveDraftRequest>;
@@ -490,21 +551,153 @@ export async function saveDraftRoute(req: Request): Promise<Response> {
   }
 
   const ledger = getLedger();
+  const draftBody = body.body ?? "";
+  let status: "needs_decision" | null = null;
   // An emptied composer clears the draft so a refresh can't resurrect it.
-  if ((body.body ?? "").trim() === "") {
+  if (draftBody.trim() === "") {
     ledger.clearInboxDraft(threadKey);
   } else {
+    status = bodyCommitsTerms(draftBody) ? "needs_decision" : null;
     ledger.upsertInboxDraft({
       threadKey,
       inboundEmailId,
       toEmail,
       subject: (body.subject ?? "").trim(),
       identityId: body.identityId ?? null,
-      body: body.body ?? "",
+      body: draftBody,
+      status,
     });
   }
-  const out: InboxSaveDraftResult = { saved: true };
+  const out: InboxSaveDraftResult = { saved: true, status };
   return jsonResponse(out, 200, req);
+}
+
+/**
+ * Persist a founder redraft instruction on a thread and generate a fresh
+ * draft grounded in it (issue #480's steer box). Upserts the draft row first
+ * (steer can arrive before any draft exists — e.g. the founder writes a
+ * steer note before ever hitting "generate") so `setInboxDraftSteer`'s
+ * UPDATE always has a row to land on.
+ */
+export async function steerRoute(req: Request): Promise<Response> {
+  let body: Partial<InboxSteerRequest>;
+  try {
+    body = (await req.json()) as Partial<InboxSteerRequest>;
+  } catch {
+    return jsonResponse({ error: "invalid JSON body" }, 400, req);
+  }
+  const fromEmail = (body.fromEmail ?? "").trim().toLowerCase();
+  const subject = (body.subject ?? "").trim();
+  const inboundBody = (body.body ?? "").trim();
+  const threadKey = (body.threadKey ?? "").trim();
+  const steer = (body.steer ?? "").trim();
+  if (!fromEmail || !threadKey || !steer) {
+    return jsonResponse({ error: "fromEmail, threadKey and steer are required" }, 400, req);
+  }
+  if (!inboundBody) {
+    return jsonResponse({ error: "this email has no body to draft a reply from" }, 400, req);
+  }
+
+  const ledger = getLedger();
+  const prospect = ledger.getProspectByEmail(fromEmail);
+  let matched: Parameters<typeof draftInboxReply>[0]["matched"] = null;
+  if (prospect) {
+    const cadences = ledger.listCadencesForProspect(prospect.id);
+    const best = cadences.reduce<(typeof cadences)[number] | undefined>(
+      (acc, c) => (!acc || cadenceRank(c.status) > cadenceRank(acc.status) ? c : acc),
+      undefined,
+    );
+    matched = {
+      prospectId: prospect.id,
+      name: prospect.name,
+      company: prospect.company,
+      playName: best?.play_name ?? prospect.source,
+    };
+  }
+
+  // Persist the steer FIRST (issue #480: it's a standing instruction, not a
+  // one-shot prompt — it must survive even if the redraft below fails).
+  // upsertInboxDraft needs an inboundEmailId/toEmail/subject/body to write a
+  // row; if none exists yet, seed it with the inbound context and an empty
+  // body so setInboxDraftSteer's UPDATE has something to land on.
+  const existing = ledger.getInboxThreads().get(threadKey);
+  // A thread with only sent history still yields an entry (draftBody null),
+  // so test the draft row itself — otherwise both UPDATEs below hit no rows.
+  if (existing?.draftBody == null && existing?.steer == null) {
+    ledger.upsertInboxDraft({
+      threadKey,
+      inboundEmailId: typeof body.id === "string" ? body.id : threadKey,
+      toEmail: fromEmail,
+      subject,
+      identityId: null,
+      body: "",
+    });
+  }
+  ledger.setInboxDraftSteer(threadKey, steer);
+
+  let context: Awaited<ReturnType<typeof gatherReplyContext>> = {
+    dossier: null,
+    threadSent: [],
+    priorInbound: [],
+    costUsd: 0,
+    researched: false,
+  };
+  try {
+    context = await gatherReplyContext({
+      fromEmail,
+      prospectId: matched?.prospectId ?? null,
+      threadKey,
+      excludeId: typeof body.id === "string" ? body.id : null,
+      skipPaid:
+        inboundReplyKind(ledger, matched?.prospectId ?? null, body, subject, inboundBody) !==
+        "human",
+    });
+  } catch (err) {
+    logEvent(
+      "inbox.reply.research_failed",
+      { message_120: ((err as Error).message ?? "").slice(0, 120) },
+      "warn",
+    );
+  }
+
+  try {
+    const intent =
+      matched?.prospectId != null && typeof body.id === "string"
+        ? (ledger.listInboxRepliesForProspect(matched.prospectId).find((r) => r.id === body.id)
+            ?.intent ?? null)
+        : null;
+    const draft = await draftInboxReply({
+      fromEmail,
+      subject,
+      body: inboundBody,
+      matched,
+      dossier: context.dossier,
+      threadSent: context.threadSent,
+      priorInbound: context.priorInbound,
+      intent,
+      steer,
+    });
+    const needsDecision = draft.flags.includes("commits-terms");
+    // Round-1 correction (#480): persist the generated body itself, not just
+    // the steer instruction — the client's autosave effects only fire on a
+    // body DIFF from the last SAVED value, and `onSuccess` sets that value
+    // directly from this response without ever calling the save API, so
+    // without this write the redraft displayed in the composer was never
+    // durably stored and a refresh/collapse reverted to the prior draft.
+    ledger.setInboxDraftBody(threadKey, draft.body, needsDecision ? "needs_decision" : null);
+    const out: InboxSteerResult = {
+      body: draft.body,
+      costUsd: context.costUsd,
+      researched: context.researched,
+      flags: draft.flags,
+      needsDecision,
+    };
+    return jsonResponse(out, 200, req);
+  } catch (err) {
+    const message = (err as Error)?.message ?? "draft failed";
+    logEvent("inbox.reply.steer_draft_failed", { message_120: message.slice(0, 120) }, "warn");
+    return jsonResponse({ error: message }, 400, req);
+  }
 }
 
 /**
@@ -531,6 +724,21 @@ export async function sendReplyRoute(req: Request): Promise<Response> {
     return jsonResponse(
       { error: "to, subject, body, identityId and threadKey are required" },
       400,
+      req,
+    );
+  }
+  // Send gate (issue #480): `commits-terms` is the one lint flag that blocks
+  // Send outright — checked on the TEXT BEING SENT, not a possibly-stale
+  // persisted `status` (the debounced autosave can lag a fast edit-then-send).
+  // The founder can still get past it: edit the commitment out, or steer a
+  // redraft that doesn't carry it.
+  if (bodyCommitsTerms(replyBody)) {
+    return jsonResponse(
+      {
+        error:
+          "this reply commits to something unauthorised (pricing, distribution, partnership terms, documentation placement, or similar) — edit it out or steer a redraft before sending",
+      },
+      409,
       req,
     );
   }

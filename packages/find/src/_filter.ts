@@ -1,4 +1,4 @@
-import { loadConfig, logEvent } from "@oneshot-gtm/core";
+import { getLedger, loadConfig, logEvent } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 
 export interface IcpFilterResult {
@@ -43,9 +43,36 @@ export async function icpFilter(input: {
     return { match: true, reason: "no ICP set; pass-through" };
   }
   const system = loadPrompt("icp-filter");
+  let examples: ReturnType<ReturnType<typeof getLedger>["recentIcpDecisions"]> = [];
+  try {
+    // Keep this boundary defensive even if a custom/older core returns full
+    // queue payloads: those may contain contact details added by enrichment.
+    examples = getLedger()
+      .recentIcpDecisions(20)
+      .map((example) => ({
+        candidate: publicCandidateContext(example.candidate),
+        decision: example.decision,
+        // Review notes are free-form and routinely include prospect names,
+        // job changes, and other identifying context. The decision itself is
+        // sufficient few-shot feedback; never forward those notes to the LLM.
+        reason: null,
+      }));
+  } catch (err) {
+    // Learning context is optional: a damaged/locked ledger must not turn a
+    // usable classifier into a finder-wide failure.
+    logEvent(
+      "error.swallowed",
+      {
+        kind: "icp-filter-examples",
+        message_120: ((err as Error).message ?? "").slice(0, 120),
+      },
+      "warn",
+    );
+  }
   const user = JSON.stringify({
     icp: input.icp,
     candidate: input.candidate,
+    examples,
   });
   let decision: IcpFilterResult;
   try {
@@ -82,6 +109,34 @@ export async function icpFilter(input: {
     candidate_title: input.candidate.title.slice(0, 120),
   });
   return decision;
+}
+
+const PUBLIC_CANDIDATE_FIELDS = [
+  "title",
+  "url",
+  "summary",
+  "author",
+  "description",
+  "postTitle",
+  "postUrl",
+  "repo",
+  "repoUrl",
+  "eventName",
+  "eventUrl",
+  "company",
+] as const;
+
+function publicCandidateContext(candidate: unknown): Record<string, unknown> {
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return {};
+  const source = candidate as Record<string, unknown>;
+  return Object.fromEntries(
+    PUBLIC_CANDIDATE_FIELDS.flatMap((field) => {
+      const value = source[field];
+      return typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+        ? [[field, value] as const]
+        : [];
+    }),
+  );
 }
 
 function parseIcpJson(raw: string): IcpFilterResult {

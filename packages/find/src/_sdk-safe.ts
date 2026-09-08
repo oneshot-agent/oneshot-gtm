@@ -1,8 +1,36 @@
-import { findEmail, logEvent, verifyEmail } from "@oneshot-gtm/core";
-import type { CallContext, FindEmailInput, VerifyEmailInput } from "@oneshot-gtm/core";
+import {
+  type CompanySearchInput,
+  companySearch,
+  deepResearchPerson,
+  ENRICH_FAILURE_TTL_MS,
+  type EnrichCompanyInput,
+  enrichCompany,
+  findEmail,
+  getLedger,
+  type GovSolicitationsInput,
+  govSolicitations,
+  type LocalResolveInput,
+  localResolve,
+  type LocalSearchInput,
+  localSearch,
+  isTransientToolError,
+  logEvent,
+  peopleSearch,
+  type PeopleSearchInput,
+  RESEARCH_CACHE_TTL_MS,
+  RESEARCH_DEADLINE_MS,
+  verifyEmail,
+  withDeadline,
+} from "@oneshot-gtm/core";
+import type {
+  CallContext,
+  DeepResearchPersonInput,
+  FindEmailInput,
+  VerifyEmailInput,
+} from "@oneshot-gtm/core";
 
 /**
- * Per-candidate-safe wrappers for the two job-based contact-resolution SDK calls.
+ * Per-candidate-safe wrappers for the job-based contact-resolution SDK calls.
  *
  * Finders process candidates concurrently via `parallelMap` (errors propagate
  * through Promise.all) or in sequential loops. An unguarded throw from one
@@ -36,8 +64,23 @@ export async function safeFindEmail(
   } catch (err) {
     swallow(ctx, "find_email", err);
     // cost 0 / receiptId 0 mirror the cache-miss sentinels in _enrich.ts.
-    return { result: { status: "error", email: null, found: false, cost: 0 }, receiptId: 0 };
+    // A ValidationError is the SDK refusing the CALL (nothing was sent, nothing
+    // billed) — SDK 0.32 rejects findEmail without a person name. That is a
+    // verdict about our input, not a backend outage: reported as "invalid" so
+    // the spine drops the candidate instead of feeding the circuit breaker
+    // five times and blacking out contact resolution for every finder.
+    const status = isValidationError(err) ? "invalid" : "error";
+    return { result: { status, email: null, found: false, cost: 0 }, receiptId: 0 };
   }
+}
+
+function isValidationError(err: unknown): boolean {
+  return (
+    !!err &&
+    typeof err === "object" &&
+    ((err as { name?: unknown }).name === "ValidationError" ||
+      /\brequired\b/i.test(String((err as { message?: unknown }).message ?? "")))
+  );
 }
 
 /** verifyEmail that never throws — a failure resolves to `deliverable: false` (drop). */
@@ -61,5 +104,236 @@ export async function safeVerifyEmail(
       },
       receiptId: 0,
     };
+  }
+}
+
+/**
+ * peopleSearch that never throws — a failure resolves to an empty result set
+ * (no candidates found) instead of aborting the whole finder run.
+ */
+/**
+ * Hard ceiling on one peopleSearch. The SDK polls a job with no end-to-end
+ * deadline of its own; a wedged job otherwise blocks the finder forever
+ * (measured 2026-09-07: a sequential run sat 10+ minutes on one domain
+ * lookup with no receipt and no error). Past the deadline the call is a
+ * platform error — deferred, breaker-fed — not a stall.
+ */
+const PEOPLE_SEARCH_DEADLINE_MS = 120_000;
+
+export async function safePeopleSearch(
+  input: PeopleSearchInput,
+  ctx: CallContext,
+): Promise<Awaited<ReturnType<typeof peopleSearch>>> {
+  try {
+    return await withDeadline(peopleSearch(input, ctx), PEOPLE_SEARCH_DEADLINE_MS, "peopleSearch");
+  } catch (err) {
+    swallow(ctx, "people_search", err);
+    return { result: { status: "error", results: [], total_found: 0, cost: 0 }, receiptId: 0 };
+  }
+}
+
+/**
+ * companySearch that never throws — a failure resolves to an empty result
+ * set instead of aborting the whole finder run.
+ */
+export async function safeCompanySearch(
+  input: CompanySearchInput,
+  ctx: CallContext,
+): Promise<Awaited<ReturnType<typeof companySearch>>> {
+  try {
+    return await companySearch(input, ctx);
+  } catch (err) {
+    swallow(ctx, "company_search", err);
+    return { result: { status: "error", results: [], total_found: 0, cost: 0 }, receiptId: 0 };
+  }
+}
+
+/**
+ * enrichCompany that never throws — a failure resolves to an empty company
+ * record (drop) instead of aborting the whole finder run.
+ */
+export async function safeEnrichCompany(
+  input: EnrichCompanyInput,
+  ctx: CallContext,
+): Promise<Awaited<ReturnType<typeof enrichCompany>>> {
+  try {
+    return await enrichCompany(input, ctx);
+  } catch (err) {
+    swallow(ctx, "enrich_company", err);
+    return { result: { status: "error", company: {}, cost: 0 }, receiptId: 0 };
+  }
+}
+
+/**
+ * govSolicitations that never throws — a failure resolves to an empty,
+ * `status: "error"` result so the finder halts with a named platform
+ * error instead of reading "no notices for these NAICS codes".
+ */
+export async function safeGovSolicitations(
+  input: GovSolicitationsInput,
+  ctx: CallContext,
+): Promise<Awaited<ReturnType<typeof govSolicitations>>> {
+  try {
+    return await govSolicitations(input, ctx);
+  } catch (err) {
+    swallow(ctx, "gov_solicitations", err);
+    return {
+      result: {
+        status: "error",
+        results: [],
+        total_found: 0,
+        truncated: false,
+        description_fetches: 0,
+        vendor_calls: 0,
+        cost: 0,
+      },
+      receiptId: 0,
+    };
+  }
+}
+
+/** localSearch that never throws — same `status: "error"` sentinel as safeCompanySearch. */
+export async function safeLocalSearch(
+  input: LocalSearchInput,
+  ctx: CallContext,
+): Promise<Awaited<ReturnType<typeof localSearch>>> {
+  try {
+    return await localSearch(input, ctx);
+  } catch (err) {
+    swallow(ctx, "local_search", err);
+    return {
+      result: {
+        status: "error",
+        results: [],
+        total_found: 0,
+        truncated: false,
+        vendor_calls: 0,
+        cost: 0,
+      },
+      receiptId: 0,
+    };
+  }
+}
+
+/**
+ * localResolve that never throws — a failure resolves to `found: false`
+ * (drop), the same shape a genuine miss already has.
+ */
+export async function safeLocalResolve(
+  input: LocalResolveInput,
+  ctx: CallContext,
+): Promise<Awaited<ReturnType<typeof localResolve>>> {
+  try {
+    return await localResolve(input, ctx);
+  } catch (err) {
+    swallow(ctx, "local_resolve", err);
+    return {
+      result: {
+        status: "error",
+        found: false,
+        confidence: 0,
+        result: null,
+        candidates_considered: 0,
+        cost: 0,
+      },
+      receiptId: 0,
+    };
+  }
+}
+
+/**
+ * Cache key for a person dossier. Namespaced like `webread:<label>` so it can
+ * share the enrichment_cache table (which lives in the cross-workspace SHARED
+ * db — the whole point being that a person researched for one product is never
+ * re-bought for another). The social URL identifies a person more precisely
+ * than an email, so it wins when both are present.
+ */
+export function personCacheKey(input: DeepResearchPersonInput): string | null {
+  const url = input.socialMediaUrl?.trim().toLowerCase();
+  if (url) return `person:${url}`;
+  const email = input.email?.trim().toLowerCase();
+  return email ? `person:${email}` : null;
+}
+
+/** Graceful sentinel — same `receiptId: 0` / `cost: 0` shape as the cache-miss
+ *  sentinels in _enrich.ts, so callers spend nothing and drop just this row. */
+const FAILED_RESEARCH = {
+  status: "failed",
+  result: { enrichment: {} },
+  request_id: "",
+  cost: 0,
+} as unknown as Awaited<ReturnType<typeof deepResearchPerson>>["result"];
+
+/**
+ * deepResearchPerson that never throws, caches, and cannot hang forever.
+ *
+ * Modelled on `safeEnrich` (packages/plays/src/_lib.ts) rather than
+ * safeFindEmail, because this call is both the most expensive (~$0.05, 10x
+ * enrich) and the slowest (2-5 min by its own doc comment) in the toolbox —
+ * it needs caching and a deadline, not just a try/catch. Before this wrapper
+ * existed all three call sites hand-rolled a catch and none cached, so the
+ * same person could be researched repeatedly at full price.
+ */
+export async function safeDeepResearchPerson(
+  input: DeepResearchPersonInput,
+  ctx: CallContext,
+): Promise<Awaited<ReturnType<typeof deepResearchPerson>>> {
+  const ledger = getLedger();
+  const key = personCacheKey(input);
+
+  if (key) {
+    let cached: ReturnType<typeof ledger.getCachedEnrichment> = null;
+    try {
+      cached = ledger.getCachedEnrichment(key);
+    } catch {
+      // cache-READ failure = cache miss, never a research failure
+    }
+    if (cached) {
+      const ageMs = Date.now() - new Date(cached.fetched_at).getTime();
+      if (cached.status === "failed") {
+        // Negative entry: a recent genuine failure. Don't re-buy until it expires.
+        if (ageMs < ENRICH_FAILURE_TTL_MS) return { result: FAILED_RESEARCH, receiptId: 0 };
+      } else if (ageMs < RESEARCH_CACHE_TTL_MS) {
+        try {
+          return { result: JSON.parse(cached.result_json), receiptId: 0 };
+        } catch {
+          // corrupt cache row — fall through and refetch
+        }
+      }
+    }
+  }
+
+  try {
+    const live = deepResearchPerson(input, ctx);
+    // Cache writes ride the LIVE promise, not the deadline race: a call that
+    // outlives the deadline was still PAID for and must reach the cache.
+    live.then(
+      (out) => {
+        if (!key) return;
+        try {
+          ledger.setCachedEnrichment(key, JSON.stringify(out.result));
+        } catch {
+          // cache write is best-effort
+        }
+      },
+      () => {
+        // Handled by the catch below; this only silences the unhandled
+        // rejection from the promise the deadline race abandons.
+      },
+    );
+    return await withDeadline(live, RESEARCH_DEADLINE_MS, "deepResearchPerson");
+  } catch (err) {
+    swallow(ctx, "deep_research_person", err);
+    // Only negative-cache a GENUINE failure. Caching a transient platform error
+    // would make this person un-researchable for the whole failure TTL after
+    // the platform recovers.
+    if (key && !isTransientToolError(err)) {
+      try {
+        ledger.setCachedEnrichmentFailure(key, (err as Error).message ?? "research failed");
+      } catch {
+        // cache write is best-effort
+      }
+    }
+    return { result: FAILED_RESEARCH, receiptId: 0 };
   }
 }

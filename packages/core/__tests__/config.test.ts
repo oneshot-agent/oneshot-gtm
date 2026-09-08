@@ -95,7 +95,9 @@ describe("bootstrapClientId", () => {
     productBrief: null,
     mobileSignature: false,
     slackWebhookUrl: null,
+    timezone: null,
     clientId: null,
+    dailySpendCeilingUsd: null,
   };
 
   it("mints a UUID-shaped clientId when none is stored", () => {

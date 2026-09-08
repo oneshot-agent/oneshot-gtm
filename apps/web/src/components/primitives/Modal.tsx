@@ -37,6 +37,9 @@ export function Modal({
   if (!open) return null;
   return (
     <div
+      // Fixed, so out of flow: without this the open modal would count as the
+      // page's last block and take the foot gutter off the list behind it.
+      data-overlay
       className={cn(
         "fixed inset-0 z-50 grid place-items-center p-4",
         "bg-[color:var(--ink-bg)]/80",

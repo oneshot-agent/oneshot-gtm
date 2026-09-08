@@ -1,7 +1,8 @@
 import type { TriggerRow } from "@oneshot-gtm/core";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   checkReadiness,
+  evaluateFinderApprovalHealth,
   effectiveIntervalMs,
   freshRunningStartedAtMs,
   MAX_RUN_AGE_MS,
@@ -11,6 +12,45 @@ import {
   type TriggerRunOutcome,
   type TriggerSpec,
 } from "../src/registry.ts";
+
+describe("finder approval health", () => {
+  it("defaults to a 10% threshold after 100 reviewed prospects", () => {
+    const insufficient = evaluateFinderApprovalHealth({ approved: 0, reviewed: 99 });
+    expect(insufficient.sufficientData).toBe(false);
+    expect(insufficient.deprioritized).toBe(false);
+
+    expect(evaluateFinderApprovalHealth({ approved: 10, reviewed: 100 }).deprioritized).toBe(false);
+    expect(evaluateFinderApprovalHealth({ approved: 9, reviewed: 100 }).deprioritized).toBe(true);
+  });
+
+  it("does not deprioritize at the threshold boundary, only below it", () => {
+    expect(
+      evaluateFinderApprovalHealth({ approved: 2, reviewed: 10, threshold: 0.2, minSamples: 10 })
+        .deprioritized,
+    ).toBe(false);
+    const below = evaluateFinderApprovalHealth({
+      approved: 1,
+      reviewed: 10,
+      threshold: 0.2,
+      minSamples: 10,
+    });
+    expect(below.deprioritized).toBe(true);
+    expect(below.reason).toBe("low-approval-rate");
+  });
+
+  it("applies no penalty when reviewed data is insufficient", () => {
+    const health = evaluateFinderApprovalHealth({
+      approved: 0,
+      reviewed: 9,
+      threshold: 0.2,
+      minSamples: 10,
+    });
+    expect(health.rate).toBe(0);
+    expect(health.sufficientData).toBe(false);
+    expect(health.deprioritized).toBe(false);
+    expect(health.reason).toBeNull();
+  });
+});
 
 describe("nextSleepMs", () => {
   it("defaults to 1h when there are no outcomes", () => {
@@ -48,10 +88,14 @@ describe("TRIGGERS registry", () => {
     expect(names).toEqual([
       "accelerator-batch",
       "breakup-revive",
+      "civic-agenda",
       "github-stars",
       "github-topics",
+      "gov-solicitation",
       "hiring-signal",
       "job-change",
+      "local-business",
+      "local-registry",
       "luma-events",
       "podcast-guest",
       "post-funding-auto",
@@ -78,6 +122,11 @@ describe("TRIGGERS registry", () => {
       "github-stars",
       "accelerator-batch",
       "luma-events",
+      "gov-solicitation",
+      "civic-agenda",
+      "local-registry",
+      "gov-solicitation",
+      "civic-agenda",
     ];
     for (const name of optIn) {
       const spec = TRIGGERS.find((t) => t.name === name);
@@ -298,12 +347,22 @@ describe("checkReadiness", () => {
     // require founder-supplied config (topics, etc.) ship unready by design
     // and are excluded here.
     const intentionallyUnreadyByDefault = new Set([
+      // job-change joined this list once yourEdge reached the email: its
+      // trigger carried the field for months while the play never read it,
+      // so the Offer beat had only the product one-liner to improvise from.
+      "job-change",
       "github-topics",
       "github-stars",
       "hiring-signal",
       "accelerator-batch",
       "luma-events",
+      "local-business",
       "x-reposters",
+      "gov-solicitation",
+      "civic-agenda",
+      "local-registry",
+      "gov-solicitation",
+      "civic-agenda",
     ]);
     for (const spec of TRIGGERS) {
       if (intentionallyUnreadyByDefault.has(spec.name)) continue;
@@ -323,24 +382,28 @@ describe("checkReadiness", () => {
     if (!out.ready) expect(out.reason).toMatch(/cohort/);
   });
 
-  it("accelerator-batch is not ready until senderCohort is set (even with cohorts)", () => {
+  it("accelerator-batch is not ready until yourEdge is set (even with cohorts)", () => {
     const spec = TRIGGERS.find((t) => t.name === "accelerator-batch")!;
     const out = checkReadiness(spec, spec.defaultConfig);
     expect(out.ready).toBe(false);
-    if (!out.ready) expect(out.reason).toMatch(/senderCohort/);
+    if (!out.ready) expect(out.reason).toMatch(/yourEdge/);
   });
 
-  it("accelerator-batch is ready with curated cohorts + a senderCohort", () => {
+  // The gate that USED to stand here demanded the sender's own cohort, so an
+  // install with no accelerator behind it had to invent one to run the finder
+  // at all — and the email then claimed a batch the founder was never in.
+  // Affiliation is optional now and lives in config, never in trigger config.
+  it("accelerator-batch never gates on the sender's own cohort", () => {
     const spec = TRIGGERS.find((t) => t.name === "accelerator-batch")!;
-    expect(checkReadiness(spec, { ...spec.defaultConfig, senderCohort: "yc-w23" })).toEqual({
+    expect(checkReadiness(spec, { ...spec.defaultConfig, yourEdge: "one true thing" })).toEqual({
       ready: true,
     });
   });
 
-  it("accelerator-batch is still ready with the legacy single-cohort shape + senderCohort", () => {
+  it("accelerator-batch is still ready with the legacy single-cohort shape", () => {
     const spec = TRIGGERS.find((t) => t.name === "accelerator-batch")!;
     expect(
-      checkReadiness(spec, { cohort: "yc-w26", cohortLabel: "YC W26", senderCohort: "yc-w23" }),
+      checkReadiness(spec, { cohort: "yc-w26", cohortLabel: "YC W26", yourEdge: "one true thing" }),
     ).toEqual({ ready: true });
   });
 
@@ -364,6 +427,161 @@ describe("checkReadiness", () => {
     const ycCount = cohorts.filter((c) => /^yc-/i.test(c.cohort)).length;
     expect(ycCount).toBeGreaterThan(0);
     expect(cohorts.length - ycCount).toBeGreaterThan(0);
+  });
+
+  it("local-registry is not ready with its empty default config (no sources)", () => {
+    const spec = TRIGGERS.find((t) => t.name === "local-registry")!;
+    expect(spec.readiness).toBeDefined();
+    const out = checkReadiness(spec, spec.defaultConfig);
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/portals|taxonomies/);
+  });
+
+  it("local-registry is not ready with a socrata portal configured but no yourEdge", () => {
+    const spec = TRIGGERS.find((t) => t.name === "local-registry")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
+    });
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/yourEdge/);
+  });
+
+  it("local-registry becomes ready with a valid socrata portal + yourEdge", () => {
+    const spec = TRIGGERS.find((t) => t.name === "local-registry")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
+      yourEdge: "we set it up for free, you keep it if it works",
+    });
+    expect(out).toEqual({ ready: true });
+  });
+
+  it("local-registry becomes ready with taxonomies + states + yourEdge alone (no portals)", () => {
+    const spec = TRIGGERS.find((t) => t.name === "local-registry")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      taxonomies: ["Dentist"],
+      states: ["NY"],
+      yourEdge: "we set it up for free, you keep it if it works",
+    });
+    expect(out).toEqual({ ready: true });
+  });
+
+  it("local-registry stays not ready when taxonomies is set but states is empty", () => {
+    const spec = TRIGGERS.find((t) => t.name === "local-registry")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      taxonomies: ["Dentist"],
+      states: [],
+      yourEdge: "we set it up for free, you keep it if it works",
+    });
+    expect(out.ready).toBe(false);
+  });
+
+  it("local-registry stays not ready when entityTypes carries only an invalid value (matches run's allowlist)", () => {
+    // finding: readiness accepted any non-empty string in entityTypes, but
+    // `run` filters the same array against validEntityTypes — a config with
+    // entityTypes: ["trucking"] (not a valid carrier/broker/freight-forwarder
+    // value) and no other fmcsa key passed readiness, then normalized to an
+    // empty array and reported the generic "every configured source
+    // returned 0 records" instead of pointing at the invalid value.
+    const spec = TRIGGERS.find((t) => t.name === "local-registry")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      entityTypes: ["trucking"],
+      yourEdge: "we set it up for free, you keep it if it works",
+    });
+    expect(out.ready).toBe(false);
+  });
+
+  it("local-registry becomes ready with a valid entityTypes value", () => {
+    const spec = TRIGGERS.find((t) => t.name === "local-registry")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      entityTypes: ["carrier"],
+      yourEdge: "we set it up for free, you keep it if it works",
+    });
+    expect(out).toEqual({ ready: true });
+  });
+});
+
+describe("gov-solicitation readiness", () => {
+  it("is not ready with its default config (naics missing)", () => {
+    const spec = TRIGGERS.find((t) => t.name === "gov-solicitation")!;
+    expect(spec.readiness).toBeDefined();
+    const out = checkReadiness(spec, spec.defaultConfig);
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/naics/);
+  });
+
+  it("is not ready without yourEdge even with naics set", () => {
+    const spec = TRIGGERS.find((t) => t.name === "gov-solicitation")!;
+    const out = checkReadiness(spec, { ...spec.defaultConfig, naics: ["541511"] });
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/yourEdge/);
+  });
+
+  it("becomes ready with naics + yourEdge — no SAM.gov key is involved any more", () => {
+    // The SDK's govSolicitations carries the SAM.gov side; a stale
+    // SAM_GOV_API_KEY in someone's .env must neither help nor hurt.
+    delete process.env["SAM_GOV_API_KEY"];
+    const spec = TRIGGERS.find((t) => t.name === "gov-solicitation")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      naics: ["541511"],
+      yourEdge: "we cut integration time",
+    });
+    expect(out).toEqual({ ready: true });
+  });
+
+  it("defaults noticeTypes to sources-sought + presolicitation", () => {
+    const spec = TRIGGERS.find((t) => t.name === "gov-solicitation")!;
+    expect(spec.defaultConfig["noticeTypes"]).toEqual(["r", "p"]);
+  });
+});
+
+describe("civic-agenda readiness", () => {
+  it("is not ready with its default config (cities missing)", () => {
+    const spec = TRIGGERS.find((t) => t.name === "civic-agenda")!;
+    expect(spec.readiness).toBeDefined();
+    const out = checkReadiness(spec, spec.defaultConfig);
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/cities/);
+  });
+
+  it("is not ready when keywords is empty even with cities set", () => {
+    const spec = TRIGGERS.find((t) => t.name === "civic-agenda")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      cities: ["New York"],
+      keywords: [],
+      yourEdge: "a free pilot",
+    });
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/keywords/);
+  });
+
+  it("is not ready without yourEdge even with cities + keywords set", () => {
+    const spec = TRIGGERS.find((t) => t.name === "civic-agenda")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      cities: ["New York"],
+      keywords: ["AI"],
+    });
+    expect(out.ready).toBe(false);
+    if (!out.ready) expect(out.reason).toMatch(/yourEdge/);
+  });
+
+  it("becomes ready with cities + keywords + yourEdge", () => {
+    const spec = TRIGGERS.find((t) => t.name === "civic-agenda")!;
+    const out = checkReadiness(spec, {
+      ...spec.defaultConfig,
+      cities: ["New York"],
+      keywords: ["AI"],
+      yourEdge: "a free pilot",
+    });
+    expect(out).toEqual({ ready: true });
   });
 });
 

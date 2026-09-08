@@ -25,6 +25,13 @@ describe("parseStrategistAction — kind + trigger", () => {
       trigger: "github-topics",
     });
   });
+
+  it("parses an apply-pack marker", () => {
+    expect(parseStrategistAction("<!--ACTION:apply-pack:devtools-early-adopters-->")).toEqual({
+      kind: "apply-pack",
+      trigger: "devtools-early-adopters",
+    });
+  });
 });
 
 describe("parseStrategistAction — apply-config JSON", () => {

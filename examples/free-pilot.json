@@ -1,0 +1,16 @@
+[
+  {
+    "name": "Maria Gutierrez",
+    "email": "maria@lacocinasf.example",
+    "company": "La Cocina Taqueria",
+    "businessType": "family-owned taqueria",
+    "yourEdge": "sets up online ordering so orders stop getting missed during the lunch rush"
+  },
+  {
+    "name": "Dave Kowalski",
+    "email": "dave@kowalskiplumbing.example",
+    "company": "Kowalski Plumbing",
+    "businessType": "two-truck plumbing company",
+    "yourEdge": "text reminders that cut no-show appointments, saving about half a day of driving a week"
+  }
+]

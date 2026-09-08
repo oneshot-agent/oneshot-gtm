@@ -21,6 +21,8 @@ export interface FinderResult {
   enqueued: number;
   /** Approximate USD spent on OneShot calls during this run. */
   costUsd: number;
+  /** SDK/LLM portion when costUsd also includes a separate source meter (for example X). */
+  sdkCostUsd?: number;
   /** Reason the run halted early, if any (e.g. "max-cost cap"). */
   halted?: string;
   /**
@@ -30,6 +32,13 @@ export interface FinderResult {
    * Only set by `accelerator-batch`; other finders leave it unset.
    */
   perCohort?: Array<{ cohort: string; records: number; error?: string }>;
+  /**
+   * Per-source fetch outcomes for `local-registry` (one entry per configured
+   * Socrata portal or nppes taxonomy×state pair). Same isolation contract as
+   * `perCohort`: a dead portal logs and continues, the run only halts when
+   * every source returns 0. Only set by `local-registry`.
+   */
+  perSource?: Array<{ source: string; label: string; records: number; error?: string }>;
 }
 
 export interface ShowHnHit {
@@ -151,6 +160,12 @@ export interface LumaPublicAttendee {
 export interface LumaEventExtract {
   eventTitle: string | null;
   eventDateIso: string | null;
+  /**
+   * IANA zone the event page states (e.g. "America/Los_Angeles" for "7:30 PM
+   * PDT"). First choice when rendering the date for a draft — see
+   * `resolveEventZone` in `@oneshot-gtm/core`. Null when the page doesn't say.
+   */
+  eventTimezone: string | null;
   eventCity: string | null;
   /** Short summary of what the event is about — grounds the draft's topic. Null when the page has none. */
   eventDescription: string | null;

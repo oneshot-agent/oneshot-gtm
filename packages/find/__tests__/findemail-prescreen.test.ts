@@ -202,4 +202,34 @@ describe("shouldSkipFindEmail", () => {
     expect(out.ok).toBe(false);
     if (!out.ok) expect(out.reason).toMatch(/^dud-domain/);
   });
+
+  it("allowMissingFullName:true waives no-fullname for a real domain", () => {
+    expect(
+      shouldSkipFindEmail({
+        fullName: null,
+        companyDomain: "acme.dev",
+        allowMissingFullName: true,
+      }),
+    ).toEqual({ ok: true });
+  });
+
+  it("allowMissingFullName:true still rejects a dud domain (domain check dominates)", () => {
+    const out = shouldSkipFindEmail({
+      fullName: null,
+      companyDomain: "foo.vercel.app",
+      allowMissingFullName: true,
+    });
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.reason).toMatch(/^dud-domain/);
+  });
+
+  it("allowMissingFullName:true still rejects a handle-looking PROVIDED name", () => {
+    const out = shouldSkipFindEmail({
+      fullName: "samaralihussain",
+      companyDomain: "acme.dev",
+      allowMissingFullName: true,
+    });
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.reason).toMatch(/^handle-not-name/);
+  });
 });

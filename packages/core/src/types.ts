@@ -65,10 +65,50 @@ export interface InboxReplyRecord {
   message_id: string | null;
   /** Reply classification (reply-classify.ts). NULL = pre-classifier row, read as 'human'. */
   kind: string | null;
+  /** Sentiment/intent classification (intel/triage.ts TriageCategory). NULL = not yet triaged. */
+  intent: string | null;
+  /** One-sentence justification for `intent`, from the triage LLM call. */
+  intent_reason: string | null;
   created_at: string;
 }
 
+/** Provider-neutral inbound engagement event. V1 records LinkedIn replies only. */
+export interface ChannelEventRecord {
+  id: number;
+  source: string;
+  external_event_id: string;
+  prospect_id: number;
+  channel: "linkedin";
+  event_type: "reply";
+  occurred_at: string;
+  /** Message text when the channel supplied one; null for older rows. */
+  body: string | null;
+  created_at: string;
+}
+
+/** One `deal_outcomes` row — column-shaped. Positives-only by construction
+ *  (the cadences modal offers only the three positive states), so a missing
+ *  row is never evidence of failure. */
+export interface DealOutcomeRecord {
+  id: number;
+  prospect_id: number;
+  play_name: string | null;
+  outcome: string;
+  amount_usd: number | null;
+  notes: string | null;
+  recorded_at: string;
+}
+
+export interface CadencePlanStep {
+  id: string;
+  dayOffset: number;
+  channel: "email" | "sms" | "voice" | "direct_mail";
+  label?: string;
+}
+
 export interface ProspectRecord {
+  businessAddressSource?: string;
+  businessAddress?: import("./direct-mail.ts").PostalAddress | null;
   id: number;
   name: string | null;
   email: string | null;
@@ -86,7 +126,11 @@ export interface ProspectRecord {
   /** Job title at contact time, from the person-level ICP gate. NULL on rows
    *  contacted before the gate existed (pre 2026-08). */
   title: string | null;
-  /** Person-level ICP verdict: 'pass' | 'reject'. NULL = never judged. */
+  /** Person-level ICP verdict: 'pass' | 'reject' | 'unclear'. NULL = never
+   *  judged. 'unclear' means the gate looked and had nothing to judge on —
+   *  distinct from NULL, and PROVISIONAL: a re-audit re-judges unclear rows
+   *  (so role text arriving later is used) while leaving pass/reject alone.
+   *  Only 'reject' suppresses sending (packages/plays/src/_cadence.ts). */
   icp_verdict: string | null;
   /** Classifier's one-line reason for the verdict. */
   icp_verdict_reason: string | null;
@@ -98,7 +142,7 @@ export interface SequenceEventRecord {
   prospect_id: number;
   play_name: string;
   step_index: number;
-  channel: "email" | "sms" | "voice" | "linkedin" | "x";
+  channel: "email" | "sms" | "voice" | "linkedin" | "x" | "direct_mail";
   status: "queued" | "sent" | "delivered" | "replied" | "bounced" | "failed" | "unsubscribed";
   metadata_json: string | null;
   created_at: string;
@@ -242,12 +286,36 @@ export interface OneShotConfig {
    * breakup position) is NOT overridable — timing only.
    */
   cadenceOverrides: Record<string, number[]> | null;
+  directMailMotions?: Record<string, import("./mail-policy.ts").MotionMailSettings | null> | null;
+  /**
+   * Default order of the /queue pending review list. "ranked" interleaves
+   * finders with score-within-finder + exploration slots (see find/_rank.ts);
+   * "newest" is the classic found_at DESC. Defaults to "newest": the
+   * 2026-09-01 heuristic-v2 measurement (luma AUC 0.59-0.63, gap +1) is under
+   * the Phase 2 acceptance bar for ranked-by-default. Per-request override:
+   * GET /api/queue?order=. Optional so pre-existing config literals and older
+   * config files stay valid; readers treat absent as "newest".
+   */
+  queueReviewOrder?: "ranked" | "newest";
   /** Founder's résumé / credentials — the founder-trust social-proof beat. */
   founderCredentials: string | null;
   /** Products you've shipped — the peer-founder social-proof beat. */
   productPortfolio: string | null;
   /** Notable partners / customers — the brand-recognition social-proof beat. */
   partners: string | null;
+  /**
+   * The founder's OWN accelerator batch tag ("yc-w23", "spc-2025-1"), and only
+   * when it is true. Null — the default, and the honest value for most founders
+   * — makes `accelerator-batch` draft as an outsider writing to a company whose
+   * batch is a public timing signal, never as a batchmate. It lives here rather
+   * than in trigger config on purpose: a per-trigger field that a readiness gate
+   * demanded is what produced fabricated "fellow YC" claims in the first place,
+   * and one config value is also read at draft time, so a stale cohort stamped
+   * into an old queue row can't resurrect the claim. Optional (like
+   * `queueReviewOrder`) so pre-existing config literals and older config files
+   * stay valid; readers treat absent exactly like null.
+   */
+  founderCohort?: string | null;
   /**
    * One true concession about the founder/product ("two people, no enterprise
    * logos yet") — the prompt's optional damaging-admission beat. It is the ONLY
@@ -278,15 +346,77 @@ export interface OneShotConfig {
    */
   slackWebhookUrl: string | null;
   /**
+   * IANA zone (e.g. "America/Los_Angeles") this install's dates are rendered in
+   * when nothing more specific is known. It is the LAST resort in the event
+   * date/time chain (explicit zone on the event → the event's city → this);
+   * null means fall back to `Intl.DateTimeFormat().resolvedOptions().timeZone`.
+   * See `timezone.ts`.
+   */
+  timezone: string | null;
+  /**
    * Anonymous per-install UUID. Generated by loadConfig() on first sight; never
    * exposed to the web layer or transmitted off-device today. Reserved for
    * opt-in distribution telemetry once that lands — having it now means
    * pre-launch installs aren't attribution-orphaned later.
    */
   clientId: string | null;
+  /**
+   * Install-wide daily USD spend ceiling (issue #481). Per-run caps
+   * (`maxCostUsd`/`maxSpendPerRun`) bound one finder or drain call; this
+   * bounds the SUM across every automated paid call — every finder trigger
+   * plus every automatic drain — over the local calendar day. Null =
+   * unlimited (the historical behavior). Checked before each automated call
+   * via a reservation against `receipts.cost_usd` summed since local
+   * midnight; manual `/queue` sends (approve/reject/mark-sent/send-draft)
+   * never consult it. Set from `config spend-ceiling <amount>` or `/setup`.
+   */
+  dailySpendCeilingUsd: number | null;
 }
 
 export type QueueStatus = "pending" | "approved" | "rejected" | "sent" | "expired";
+
+/** Per-component sub-scores of a `ProspectPriority`. Each is a clamped integer 0..100. */
+export interface ProspectPriorityComponents {
+  personFit: number;
+  accountFit: number;
+  intentStrength: number;
+  timingFreshness: number;
+  signalConfidence: number;
+  contactability: number;
+}
+
+/**
+ * Versioned, explainable priority artifact computed at enqueue time from the
+ * evidence already in the payload (issue #410, Phase 1). Shadow-mode only: it
+ * is persisted and displayed but never drives ordering, approval, drain, or
+ * send behavior. Missing evidence scores neutral, not zero; rows enqueued by
+ * legacy/manual producers carry null. Hard gates (ICP, role, dedupe,
+ * deliverability) are never rescued by a score.
+ */
+export interface ProspectPriority {
+  /**
+   * Mirrored union of shared-types' `PriorityVersion` (core can't import it —
+   * web depends on shared-types alone; the find version-sync test guards the
+   * two lists against drift).
+   */
+  version: "heuristic-v1" | "heuristic-v2";
+  /** Weighted total, clamped integer 0..100. */
+  total: number;
+  components: ProspectPriorityComponents;
+  /** Concise evidence strings, fixed order, no model chain-of-thought. */
+  reasons: string[];
+  /** The play/finder name the adapter scored under. */
+  finder: string;
+  /** ISO timestamp of scoring (injected clock — deterministic in tests). */
+  scoredAt: string;
+}
+
+/** A reviewed queue row, projected into an ICP classifier example. */
+export interface IcpDecisionExample {
+  candidate: unknown;
+  decision: boolean;
+  reason: string | null;
+}
 
 export interface QueueRow {
   id: number;
@@ -317,6 +447,94 @@ export interface QueueRow {
    * on failure or stale by the cold-boot `sweepStaleQueueSends` sweep.
    */
   send_started_at: string | null;
+  /**
+   * Serialized `ProspectPriority` (shadow-mode score, v25) or null on rows
+   * from manual/legacy producers, auto-rejections, and pre-v25 rows.
+   */
+  priority_json: string | null;
+  /**
+   * Decision provenance (v26): the decision itself, durable against expiry
+   * and re-open — `status` alone is lossy history. NULL on undecided and
+   * pre-v26-unbackfillable rows. See core/labels.ts.
+   */
+  decision: "approve" | "reject" | "auto_reject" | null;
+  decided_at: string | null;
+  /** 'human' (per-row click) | 'human_bulk' (approve-all batch) | 'machine'. */
+  decided_by: "human" | "human_bulk" | "machine" | null;
+}
+
+/** Who decided a queue row: `human` groups per-row and bulk clicks; `none` = undecided. */
+export type QueueSearchDecidedBy = "human" | "machine" | "none";
+export type QueueSearchSort = "found_at" | "decided_at" | "name";
+
+/** Filters for `Ledger.searchQueue` — the /prospects browse view. */
+export interface QueueSearchOpts {
+  /** Free text; whitespace-split terms are AND-ed, each a case-insensitive substring. */
+  q?: string;
+  /** Empty or absent = every status. */
+  statuses?: QueueStatus[];
+  playName?: string;
+  decidedBy?: QueueSearchDecidedBy;
+  sort?: QueueSearchSort;
+  dir?: "asc" | "desc";
+  limit: number;
+  offset: number;
+  /**
+   * Skip the COUNT(*) pass and return `total: null`. The /prospects route
+   * already runs the per-status facet query under the same filters, and the
+   * total is the sum of the selected statuses' counts — a third scan of the
+   * haystack buys nothing.
+   */
+  withTotal?: boolean;
+}
+
+/**
+ * A queue row joined to the prospect it resolved to — by `prospect_id`, else
+ * by the payload's email. `p_*` columns are null when no prospect exists (the
+ * common case: `prospects` only holds people who were actually emailed).
+ */
+export interface QueueSearchRow extends QueueRow {
+  p_id: number | null;
+  p_name: string | null;
+  p_email: string | null;
+  p_company: string | null;
+  p_title: string | null;
+  p_icp_verdict: string | null;
+  p_icp_verdict_reason: string | null;
+  p_has_dossier: 0 | 1;
+  /** 1 when the link came from the email fallback rather than `prospect_id`. */
+  p_linked_by_email: 0 | 1;
+}
+
+/**
+ * One sent queue row joined to its outcome evidence (Phase 3 of #410).
+ * Produced by `Ledger.listSentOutcomeRows`; labeled by find/_outcomes.ts.
+ */
+export interface SentOutcomeRawRow {
+  id: number;
+  play_name: string;
+  dedupe_key: string;
+  priority_json: string | null;
+  sent_at: string;
+  decision: QueueRow["decision"];
+  decided_by: QueueRow["decided_by"];
+  /** prospect_id, falling back to an email join; NULL = unjoinable. */
+  joined_prospect_id: number | null;
+  payload_email: string | null;
+  /** Earliest human-classified email reply (COALESCE(kind,'human')). */
+  first_email_reply_at: string | null;
+  /**
+   * Sentiment intent of that earliest human email reply (issue #480) —
+   * `interested` / `not_now` / `wrong_person` / `objection` / `question` /
+   * `unsubscribe` / `auto_reply` / `other`, or NULL when not yet triaged (or
+   * there was no email reply at all). `_outcomes.ts` uses this to stop
+   * labeling a decline (`not_now`) the same `positive` as an interested lead.
+   */
+  first_email_reply_intent: string | null;
+  /** Earliest LinkedIn reply (channel_events, never machine-classified). */
+  first_channel_reply_at: string | null;
+  /** Max deal_outcomes rank: 4 won / 3 qualified / 2 meeting; NULL = none. */
+  deal_rank: number | null;
 }
 
 export interface TriggerRow {

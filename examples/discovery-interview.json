@@ -1,0 +1,16 @@
+[
+  {
+    "name": "Maria Gutierrez",
+    "email": "maria@lacocinasf.example",
+    "company": "La Cocina Taqueria",
+    "businessType": "family-owned taqueria",
+    "topic": "how they schedule staff shifts week to week"
+  },
+  {
+    "name": "Dave Kowalski",
+    "email": "dave@kowalskiplumbing.example",
+    "company": "Kowalski Plumbing",
+    "businessType": "two-truck plumbing company",
+    "topic": "how they keep track of which jobs are done and which are still open"
+  }
+]

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../../api/client.ts";
 import { openWorkspace } from "../../lib/openWorkspace.ts";
 import { cn } from "../../lib/cn.ts";
+import { workspaceHue } from "../../lib/workspaceHue.ts";
 
 /**
  * Workspace identity chip + switcher.
@@ -16,13 +17,6 @@ import { cn } from "../../lib/cn.ts";
  * isn't running (the launch endpoint spawns it detached; see
  * apps/server/src/api/workspace.ts for the no-supervision trade-off).
  */
-
-/** Deterministic hue per workspace name so `gtm` always looks like `gtm`. */
-function workspaceHue(name: string): number {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
-  return h;
-}
 
 function WorkspaceDot({ name, isDefault }: { name: string; isDefault: boolean }) {
   if (isDefault || name === "default") {

@@ -1,6 +1,6 @@
 {
   "name": "@oneshot-gtm/core",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "homepage": "https://oneshot-gtm.com",
   "repository": {
     "type": "git",
@@ -11,9 +11,11 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./workspaces": "./src/workspaces.ts"
+    "./workspaces": "./src/workspaces.ts",
+    "./time": "./src/time.ts"
   },
   "dependencies": {
-    "@oneshot-agent/sdk": "0.22.0"
+    "@oneshot-agent/sdk": "file:../../vendor/oneshot-agent-sdk-0.32.0.tgz",
+    "pdf-lib": "^1.17.1"
   }
 }

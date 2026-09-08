@@ -1,4 +1,11 @@
-import { getLedger, loadConfig, saveConfig, saveSecrets, secretsPath } from "@oneshot-gtm/core";
+import {
+  getLedger,
+  dailySpendStatus,
+  loadConfig,
+  saveConfig,
+  saveSecrets,
+  secretsPath,
+} from "@oneshot-gtm/core";
 import { TRIGGERS, checkReadiness } from "@oneshot-gtm/find";
 import { withXEngine, type XEngine } from "@oneshot-gtm/shared-types";
 import prompts from "prompts";
@@ -96,6 +103,13 @@ export async function configFounder(): Promise<void> {
       },
       {
         type: "text",
+        name: "founderCohort",
+        message:
+          "Your own accelerator batch, e.g. yc-w23 — ONLY if you actually did one; blank is the right answer for most founders (optional)",
+        initial: cfg.founderCohort ?? "",
+      },
+      {
+        type: "text",
         name: "founderAdmission",
         message:
           "One true concession — what you'd rather not say but is true, e.g. 'two people, no enterprise logos yet' (optional)",
@@ -115,6 +129,7 @@ export async function configFounder(): Promise<void> {
     founderCredentials: (answers["founderCredentials"] ?? cfg.founderCredentials) || null,
     productPortfolio: (answers["productPortfolio"] ?? cfg.productPortfolio) || null,
     partners: (answers["partners"] ?? cfg.partners) || null,
+    founderCohort: (answers["founderCohort"] ?? cfg.founderCohort) || null,
     founderAdmission: (answers["founderAdmission"] ?? cfg.founderAdmission) || null,
   });
   ok("Saved.");
@@ -151,6 +166,47 @@ export async function configSlackWebhook(url?: string): Promise<void> {
       ? `webhook saved: ${c.cyan(trimmed)}`
       : "webhook cleared — notifications off",
   );
+}
+
+/**
+ * Show or set the install-wide daily USD spend ceiling (issue #481). No
+ * argument prints the current ceiling + today's spend; `off` clears it back
+ * to unlimited (the historical default); any other value must parse as a
+ * positive number.
+ */
+export async function configSpendCeiling(amountArg?: string): Promise<void> {
+  header("Daily spend ceiling");
+  const cfg = loadConfig();
+
+  if (amountArg === undefined) {
+    const status = dailySpendStatus();
+    if (cfg.dailySpendCeilingUsd == null) {
+      note("unlimited (no ceiling set)");
+    } else {
+      note(
+        `$${status.effectiveUsd.toFixed(2)} / $${cfg.dailySpendCeilingUsd.toFixed(2)} spent today${status.ceilingReached ? c.dim(" — ceiling reached, automated paths halted") : ""}`,
+      );
+    }
+    note(c.dim(`set with: oneshot-gtm config spend-ceiling <amount|off>`));
+    return;
+  }
+
+  if (amountArg === "off") {
+    saveConfig({ ...cfg, dailySpendCeilingUsd: null });
+    ok("daily spend ceiling cleared — unlimited");
+    return;
+  }
+
+  // Number(), not Number.parseFloat(): parseFloat parses a numeric PREFIX
+  // and ignores trailing garbage (e.g. "2usd" -> 2), silently persisting a
+  // ceiling the user didn't type. Number() requires the whole string to be
+  // numeric, so "2usd" -> NaN and falls into the rejection below.
+  const amount = Number(amountArg);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new Error(`invalid amount '${amountArg}' — pass a positive number of USD, or 'off'`);
+  }
+  saveConfig({ ...cfg, dailySpendCeilingUsd: amount });
+  ok(`daily spend ceiling set to $${amount.toFixed(2)}`);
 }
 
 const X_TRIGGER = "x-reposters";
@@ -294,6 +350,16 @@ export async function configKeys(): Promise<void> {
         name: "twitterApiIoKey",
         message: "TWITTERAPI_IO_KEY",
       },
+      {
+        type: "password",
+        name: "githubToken",
+        message: "GITHUB_TOKEN (GitHub finders; classic token needs no scopes)",
+      },
+      {
+        type: "password",
+        name: "lumaSessionCookie",
+        message: "LUMA_SESSION_COOKIE (optional; hosted-event guest lists)",
+      },
     ],
     { onCancel: () => process.exit(0) },
   );
@@ -310,6 +376,9 @@ export async function configKeys(): Promise<void> {
   if (answers["xAccessSecret"]) updates["X_ACCESS_SECRET"] = answers["xAccessSecret"] as string;
   if (answers["twitterApiIoKey"])
     updates["TWITTERAPI_IO_KEY"] = answers["twitterApiIoKey"] as string;
+  if (answers["githubToken"]) updates["GITHUB_TOKEN"] = answers["githubToken"] as string;
+  if (answers["lumaSessionCookie"])
+    updates["LUMA_SESSION_COOKIE"] = answers["lumaSessionCookie"] as string;
 
   if (Object.keys(updates).length === 0) {
     note("No changes.");

@@ -1,0 +1,178 @@
+import { getLedger } from "@oneshot-gtm/core";
+import { icpFilter, resolveIcp } from "@oneshot-gtm/find";
+import type { ConciergeTarget, DemoNoShowTarget } from "@oneshot-gtm/plays";
+import { jsonResponse } from "../server.ts";
+import { releaseWebhookReplay, verifyWebhook } from "./webhook-verifier.ts";
+
+type WebhookKind = "cal-no-show" | "signup";
+
+export async function calNoShowWebhookRoute(req: Request): Promise<Response> {
+  return intakeWebhook(req, "cal-no-show");
+}
+
+export async function signupWebhookRoute(req: Request): Promise<Response> {
+  return intakeWebhook(req, "signup");
+}
+
+/**
+ * Best-effort replay-key release: this performs its own ledger write, which
+ * can itself throw under the same failure condition (DB unavailable) that
+ * triggered the cleanup in the first place. Never let that mask the
+ * original error that's about to be re-thrown by the caller.
+ */
+function releaseReplayBestEffort(replayKey: string | null): void {
+  try {
+    releaseWebhookReplay(replayKey);
+  } catch {
+    // Swallow: the original error takes priority and is re-thrown by the
+    // caller. Worst case here is the replay key stays consumed until it
+    // expires, which is safe (just delays a retry) — unlike masking the
+    // original error, which is not.
+  }
+}
+
+async function intakeWebhook(req: Request, kind: WebhookKind): Promise<Response> {
+  if (!isJsonRequest(req)) {
+    return jsonResponse({ error: "content-type must be application/json" }, 400, req);
+  }
+
+  let body: string;
+  try {
+    body = await req.text();
+  } catch {
+    return jsonResponse({ error: "invalid JSON body" }, 400, req);
+  }
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(body);
+  } catch {
+    return jsonResponse({ error: "invalid JSON body" }, 400, req);
+  }
+
+  const verification = verifyWebhook(
+    req.headers.get("x-webhook-signature"),
+    body,
+    process.env["WEBHOOK_SECRET"],
+  );
+  if (!verification.ok) return jsonResponse({ error: verification.error }, 401, req);
+  const { replayKey } = verification;
+
+  let payload: ConciergeTarget | DemoNoShowTarget;
+  let company: string | null;
+  let context: string;
+  let eventIdentity: string;
+  if (kind === "signup") {
+    const parsed = parseSignup(raw);
+    if (!parsed.ok) return jsonResponse({ error: parsed.error }, 400, req);
+    payload = parsed.value;
+    company = null;
+    context = payload.signupContext ?? "new signup";
+    eventIdentity = payload.email;
+  } else {
+    const parsed = parseCalNoShow(raw);
+    if (!parsed.ok) return jsonResponse({ error: parsed.error }, 400, req);
+    payload = parsed.value;
+    company = payload.company;
+    context = payload.whatTheyWanted ?? `missed demo at ${payload.missedAt}`;
+    eventIdentity = `${payload.email}:${payload.missedAt}`;
+  }
+
+  let filter: Awaited<ReturnType<typeof icpFilter>>;
+  try {
+    filter = await icpFilter({
+      icp: await resolveIcp(),
+      candidate: {
+        title: company ? `${payload.name} at ${company}` : payload.name,
+        summary: context,
+        author: payload.name,
+        url: payload.linkedinUrl ?? null,
+      },
+    });
+  } catch (err) {
+    // Downstream failure after a successful verification: release the
+    // replay key so the provider's retry of this same signed payload isn't
+    // rejected as replayed. Only a successful 2xx response should
+    // permanently consume the key.
+    releaseReplayBestEffort(replayKey);
+    throw err;
+  }
+
+  if (filter.match !== true) {
+    return jsonResponse({ accepted: false, reason: filter.reason }, 200, req);
+  }
+
+  const playName = kind === "signup" ? "concierge" : "demo-no-show";
+  let id: number | null;
+  try {
+    id = getLedger().enqueueTarget({
+      playName,
+      payload,
+      dedupeKey: `webhook:${kind}:${eventIdentity.toLowerCase()}`,
+      source: `webhook:${kind}`,
+    });
+  } catch (err) {
+    releaseReplayBestEffort(replayKey);
+    throw err;
+  }
+  return jsonResponse({ accepted: true, queued: id !== null, id }, 202, req);
+}
+
+type ParseResult<T> = { ok: true; value: T } | { ok: false; error: string };
+
+function parseSignup(raw: unknown): ParseResult<ConciergeTarget> {
+  if (!isRecord(raw)) return badPayload();
+  const required = requireStrings(raw, ["name", "email", "phone"]);
+  if (required) return { ok: false, error: required };
+  if (!validEmail(raw["email"] as string)) return { ok: false, error: "email must be valid" };
+  const optional = optionalStrings(raw, ["signupContext", "callWindow", "linkedinUrl"]);
+  if (optional) return { ok: false, error: optional };
+  return { ok: true, value: raw as unknown as ConciergeTarget };
+}
+
+function parseCalNoShow(raw: unknown): ParseResult<DemoNoShowTarget> {
+  if (!isRecord(raw)) return badPayload();
+  const required = requireStrings(raw, ["name", "email", "company", "missedAt", "rescheduleLink"]);
+  if (required) return { ok: false, error: required };
+  if (!validEmail(raw["email"] as string)) return { ok: false, error: "email must be valid" };
+  const optional = optionalStrings(raw, ["phone", "whatTheyWanted", "linkedinUrl"]);
+  if (optional) return { ok: false, error: optional };
+  return { ok: true, value: raw as unknown as DemoNoShowTarget };
+}
+
+function isJsonRequest(req: Request): boolean {
+  return (
+    (req.headers.get("content-type") ?? "").toLowerCase().split(";", 1)[0]?.trim() ===
+    "application/json"
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function requireStrings(value: Record<string, unknown>, fields: string[]): string | null {
+  for (const field of fields) {
+    if (typeof value[field] !== "string" || value[field].trim().length === 0) {
+      return `${field} (non-empty string) required`;
+    }
+  }
+  return null;
+}
+
+function optionalStrings(value: Record<string, unknown>, fields: string[]): string | null {
+  for (const field of fields) {
+    if (value[field] !== undefined && typeof value[field] !== "string") {
+      return `${field} must be a string`;
+    }
+  }
+  return null;
+}
+
+function validEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function badPayload<T>(): ParseResult<T> {
+  return { ok: false, error: "payload must be a JSON object" };
+}

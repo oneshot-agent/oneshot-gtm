@@ -31,8 +31,11 @@ vi.mock("@oneshot-gtm/core", async () => {
     ...actual,
     listBounces: async () => bounces,
     getLedger: () => ({
+      findDirectMail: () => null,
       findProspectByEmail: (email: string) =>
         email.trim().toLowerCase() === PROSPECT_EMAIL ? { id: 1 } : null,
+      // sendDraftedEmail reads the stored ICP verdict before a first touch.
+      getProspectById: () => null,
       recordBounce: (input: {
         messageId: string;
         recipient: string;

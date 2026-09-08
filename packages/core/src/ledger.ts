@@ -1,7 +1,17 @@
+import { extractBusinessAddress } from "./mail-address.ts";
+import type { DirectMailDraft, PostalAddress } from "./direct-mail.ts";
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { configDir } from "./config.ts";
+import {
+  hasPersonSignal,
+  mergePersonDossier,
+  mergeProductDossier,
+  type ProductResearchDossier,
+} from "./dossier.ts";
+import { humanDecisionWhereSql } from "./labels.ts";
+import { migrateLedgerSchema } from "./ledger-schema.ts";
 import { getSharedDb } from "./shared-db.ts";
 import type { ReplyKind } from "./reply-classify.ts";
 import type {
@@ -9,16 +19,52 @@ import type {
   BounceKind,
   BounceRecord,
   CanaryResultRecord,
+  ChannelEventRecord,
+  DealOutcomeRecord,
   GmailPlacement,
   InboxReplyRecord,
+  IcpDecisionExample,
   InterviewRecord,
+  ProspectPriority,
   ProspectRecord,
+  SentOutcomeRawRow,
   QueueRow,
+  QueueSearchOpts,
+  QueueSearchRow,
   QueueStatus,
   ReceiptRecord,
   SequenceEventRecord,
   TriggerRow,
 } from "./types.ts";
+
+const ICP_EXAMPLE_FIELDS = [
+  "title",
+  "url",
+  "summary",
+  "author",
+  "description",
+  "postTitle",
+  "postUrl",
+  "repo",
+  "repoUrl",
+  "eventName",
+  "eventUrl",
+  "company",
+] as const;
+
+/** Keep classifier examples useful without returning enriched contact data. */
+function icpExampleCandidate(payload: unknown): Record<string, unknown> {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
+  const source = payload as Record<string, unknown>;
+  return Object.fromEntries(
+    ICP_EXAMPLE_FIELDS.flatMap((field) => {
+      const value = source[field];
+      return typeof value === "string" || typeof value === "number" || typeof value === "boolean"
+        ? [[field, value] as const]
+        : [];
+    }),
+  );
+}
 
 const DEFAULT_DB_PATH = join(configDir(), "ledger.sqlite");
 
@@ -33,6 +79,19 @@ export const ENRICH_FAILURE_TTL_MS = 3 * 24 * 3600 * 1000;
  */
 export const ENRICH_DEADLINE_MS = 120_000;
 
+/**
+ * How long a SUCCESSFUL person dossier (deepResearchPerson) is reused. Longer
+ * than the enrich TTL: a person's org history and profiles change slowly, and
+ * the call costs 10x as much (~$0.05 vs ~$0.005).
+ */
+export const RESEARCH_CACHE_TTL_MS = 90 * 24 * 3600 * 1000;
+/**
+ * Hard ceiling on one deepResearchPerson call. Its own doc comment puts it at
+ * 2-5 minutes, so this sits above that rather than at the enrich ceiling — the
+ * call is legitimately slow, and racing it at 120s would abandon work we paid for.
+ */
+export const RESEARCH_DEADLINE_MS = 360_000;
+
 /** How long a FOUND LinkedIn URL is reused. Profile URLs effectively never change. */
 export const LINKEDIN_CACHE_TTL_MS = 30 * 24 * 3600 * 1000;
 /**
@@ -44,6 +103,77 @@ export const LINKEDIN_CACHE_TTL_MS = 30 * 24 * 3600 * 1000;
  */
 export const LINKEDIN_MISS_TTL_MS = 14 * 24 * 3600 * 1000;
 
+const QUEUE_STATUSES: readonly QueueStatus[] = [
+  "pending",
+  "approved",
+  "rejected",
+  "sent",
+  "expired",
+];
+
+/** USD as integer cents, so money comparisons are exact. */
+function cents(usd: number): number {
+  return Math.round(usd * 100);
+}
+
+/** Escape a user term for `LIKE ? ESCAPE '\'` so `%` and `_` match literally. */
+function escapeLike(term: string): string {
+  return term.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
+/**
+ * The searchable text of a queue row for `searchQueue`: every identity key a
+ * finder writes into `payload_json` (the same keys the /queue row reads —
+ * `name`/`founderName`, `email`/`founderEmail`, company, title, the show-hn
+ * post, the repo/post URLs a pre-enrichment reject only carries, LinkedIn),
+ * plus the reviewer's notes, the play, and the joined prospect record. Built
+ * once as a string so each term binds against the same expression.
+ *
+ * No LOWER(): bun's SQLite has no ICU, so LOWER() and LIKE fold ASCII only.
+ * Case-insensitivity for non-ASCII letters comes from binding each term
+ * twice (see `likePatternsFor`) rather than from a wrapper that would leave
+ * "Émile" unfindable by "émile".
+ */
+const QUEUE_SEARCH_HAYSTACK = `(${[
+  "name",
+  "founderName",
+  "email",
+  "founderEmail",
+  "company",
+  "title",
+  "postTitle",
+  "repoUrl",
+  "postUrl",
+  "linkedinUrl",
+]
+  .map((key) => `COALESCE(json_extract(b.payload_json, '$.${key}'), '')`)
+  .concat([
+    "COALESCE(b.notes, '')",
+    "b.play_name",
+    "COALESCE(p.name, '')",
+    "COALESCE(p.email, '')",
+    "COALESCE(p.company, '')",
+    "COALESCE(p.title, '')",
+  ])
+  .join(" || ' ' || ")})`;
+
+/**
+ * Bind patterns for one search term. LIKE already folds ASCII case, so an
+ * ASCII term needs one pattern; a term with non-ASCII letters is bound in
+ * lower and upper case, which together also catch title case ("Émile"
+ * matches the upper pattern because every ASCII letter after É folds).
+ */
+function likePatternsFor(term: string): string[] {
+  const lower = term.toLowerCase();
+  const upper = term.toUpperCase();
+  // eslint-disable-next-line no-control-regex
+  if (lower === upper || !/[^\x00-\x7f]/.test(term)) return [`%${escapeLike(lower)}%`];
+  return [`%${escapeLike(lower)}%`, `%${escapeLike(upper)}%`];
+}
+
+/** Best display name for a queue row: the prospect record, then the payload. */
+const QUEUE_SEARCH_NAME_EXPR = `COALESCE(NULLIF(p.name, ''), NULLIF(json_extract(b.payload_json, '$.name'), ''), NULLIF(json_extract(b.payload_json, '$.founderName'), ''))`;
+
 /**
  * Canonical form for matching prospect emails — trim + lowercase. Inbound reply
  * addresses (cadence inbox poll) are normalized the same way, so a prospect
@@ -52,6 +182,20 @@ export const LINKEDIN_MISS_TTL_MS = 14 * 24 * 3600 * 1000;
  */
 function canonEmail(email: string): string {
   return email.trim().toLowerCase();
+}
+
+/** Stable LinkedIn profile key across www/mobile hosts, schemes, query strings and trailing slashes. */
+export function canonicalLinkedInProfileKey(value: string): string | null {
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+    if (!/(^|\.)linkedin\.com$/i.test(url.hostname)) return null;
+    const match = /^\/in\/([^/]+)\/?$/i.exec(url.pathname);
+    if (!match?.[1]) return null;
+    return `linkedin.com/in/${decodeURIComponent(match[1]).toLowerCase()}`;
+  } catch {
+    return null;
+  }
 }
 
 function safeParseJsonArray(raw: string): unknown[] {
@@ -63,7 +207,7 @@ function safeParseJsonArray(raw: string): unknown[] {
   }
 }
 
-/** A `cadence_state` row joined with its prospect's email/name/company. */
+/** A `cadence_state` row joined with the prospect details needed by cadence surfaces. */
 export interface CadenceWithProspect {
   prospect_id: number;
   play_name: string;
@@ -72,6 +216,9 @@ export interface CadenceWithProspect {
   enrolled_at: string;
   next_due_at: string | null;
   last_polled_at: string | null;
+  stop_reason: string | null;
+  stop_note: string | null;
+  stopped_at: string | null;
   next_step_draft_json: string | null;
   next_step_drafted_at: string | null;
   /**
@@ -89,6 +236,10 @@ export interface CadenceWithProspect {
   prospect_email: string | null;
   prospect_name: string | null;
   prospect_company: string | null;
+  prospect_title: string | null;
+  prospect_linkedin_url: string | null;
+  reply_channel: "email" | "linkedin" | null;
+  replied_at: string | null;
 }
 
 /**
@@ -106,9 +257,31 @@ function normalizeSubject(subject: string | null | undefined): string | null {
   return s.length > 0 ? s : null;
 }
 
+/**
+ * Sentinel written into `inbox_replies.intent` by `claimInboxReplyForTriage`
+ * to atomically mark "a caller is triaging this row right now" without
+ * committing to a real category yet. Never a valid `TriageCategory` /
+ * `ReplyIntent` value, and never read back as a classification: every reader
+ * of `intent` (`listInboxReplyIntents`, the /inbox route, `POSITIVE_REPLY_INTENTS`
+ * checks) only sees it during the brief window between the claim and the
+ * winner's `setInboxReplyIntent` call overwriting it with the real result (or
+ * NULL on failure) — same transaction-scoped visibility any other in-flight
+ * write has.
+ */
+const INBOX_REPLY_TRIAGE_PENDING = "__triage_pending__";
+
+/**
+ * The claim sentinel is bookkeeping, not a classification: every reader of
+ * `intent` gets NULL back for it (#559), so the column's `ReplyIntent | null`
+ * contract holds even during the window a triage call is in flight.
+ */
+function publicIntent(intent: string | null): string | null {
+  return intent === INBOX_REPLY_TRIAGE_PENDING ? null : intent;
+}
+
 export class Ledger {
   private db: Database;
-  private readonly path: string;
+  private path: string;
 
   constructor(path: string = DEFAULT_DB_PATH) {
     this.path = path;
@@ -124,398 +297,192 @@ export class Ledger {
     this.migrate();
   }
 
-  private migrate(): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS receipts (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        play_name TEXT NOT NULL,
-        call_type TEXT NOT NULL,
-        cost_usd REAL,
-        signed_receipt TEXT,
-        oneshot_request_id TEXT,
-        created_at TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-      CREATE INDEX IF NOT EXISTS idx_receipts_play ON receipts(play_name);
-      CREATE INDEX IF NOT EXISTS idx_receipts_created ON receipts(created_at);
-      -- listReceipts / spend rollups filter (play_name, created_at) together and
-      -- sort by created_at; the composite serves both without a separate sort scan.
-      CREATE INDEX IF NOT EXISTS idx_receipts_play_created ON receipts(play_name, created_at);
-      -- Backs recordReceipt's dedup-by-job-id lookup. Partial (non-null only):
-      -- many receipts have no request_id and must NOT collapse together.
-      CREATE INDEX IF NOT EXISTS idx_receipts_request ON receipts(oneshot_request_id)
-        WHERE oneshot_request_id IS NOT NULL;
-
-      CREATE TABLE IF NOT EXISTS prospects (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        email TEXT,
-        phone TEXT,
-        company TEXT,
-        linkedin_url TEXT,
-        dossier_json TEXT,
-        source TEXT,
-        created_at TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_prospects_email ON prospects(email) WHERE email IS NOT NULL;
-
-      CREATE TABLE IF NOT EXISTS sequence_events (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        prospect_id INTEGER NOT NULL,
-        play_name TEXT NOT NULL,
-        step_index INTEGER NOT NULL,
-        channel TEXT NOT NULL,
-        status TEXT NOT NULL,
-        metadata_json TEXT,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        FOREIGN KEY(prospect_id) REFERENCES prospects(id)
-      );
-      -- sequence_events is read by listColdProspects (MAX(created_at) per
-      -- prospect), per-play send counts, and cadence scans — all by
-      -- prospect_id and/or created_at. Without this it's a full table scan.
-      CREATE INDEX IF NOT EXISTS idx_sequence_events_prospect_created ON sequence_events(prospect_id, created_at);
-      -- listSequenceEventsForProspectPlay (per-row in /api/cadences toView)
-      -- and listSequenceEventsForCadences (bulk variant) both filter on
-      -- (prospect_id, play_name) and ORDER BY step_index — composite index
-      -- serves both the seek and the sort, no temp B-tree.
-      CREATE INDEX IF NOT EXISTS idx_sequence_events_prospect_play ON sequence_events(prospect_id, play_name, step_index);
-
-      CREATE TABLE IF NOT EXISTS interviews (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        person TEXT NOT NULL,
-        transcript_path TEXT,
-        jtbd TEXT,
-        pain_quotes_json TEXT,
-        created_at TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-
-      CREATE TABLE IF NOT EXISTS cadence_state (
-        prospect_id INTEGER NOT NULL,
-        play_name TEXT NOT NULL,
-        current_step INTEGER NOT NULL DEFAULT 0,
-        status TEXT NOT NULL DEFAULT 'active',
-        enrolled_at TEXT NOT NULL DEFAULT (datetime('now')),
-        next_due_at TEXT,
-        last_polled_at TEXT,
-        PRIMARY KEY (prospect_id, play_name)
-      );
-      CREATE INDEX IF NOT EXISTS idx_cadence_status ON cadence_state(status);
-      CREATE INDEX IF NOT EXISTS idx_cadence_next_due ON cadence_state(next_due_at);
-
-      CREATE TABLE IF NOT EXISTS deal_outcomes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        prospect_id INTEGER NOT NULL,
-        play_name TEXT,
-        outcome TEXT NOT NULL,
-        amount_usd REAL,
-        notes TEXT,
-        recorded_at TEXT NOT NULL DEFAULT (datetime('now')),
-        FOREIGN KEY(prospect_id) REFERENCES prospects(id)
-      );
-      CREATE INDEX IF NOT EXISTS idx_outcomes_prospect ON deal_outcomes(prospect_id);
-      CREATE INDEX IF NOT EXISTS idx_outcomes_outcome ON deal_outcomes(outcome);
-      CREATE INDEX IF NOT EXISTS idx_outcomes_play ON deal_outcomes(play_name);
-
-      CREATE TABLE IF NOT EXISTS target_queue (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        play_name TEXT NOT NULL,
-        payload_json TEXT NOT NULL,
-        dedupe_key TEXT NOT NULL,
-        source TEXT NOT NULL,
-        status TEXT NOT NULL DEFAULT 'pending',
-        found_at TEXT NOT NULL DEFAULT (datetime('now')),
-        reviewed_at TEXT,
-        sent_at TEXT,
-        notes TEXT,
-        prospect_id INTEGER,
-        last_draft_json TEXT,
-        last_drafted_at TEXT,
-        FOREIGN KEY(prospect_id) REFERENCES prospects(id)
-      );
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_queue_dedupe ON target_queue(play_name, dedupe_key);
-      CREATE INDEX IF NOT EXISTS idx_queue_status ON target_queue(status);
-      CREATE INDEX IF NOT EXISTS idx_queue_play ON target_queue(play_name);
-      -- The /queue page filters by (status, play) together; the composite
-      -- serves that pair without falling back to a single-column scan.
-      CREATE INDEX IF NOT EXISTS idx_queue_status_play ON target_queue(status, play_name);
-
-      CREATE TABLE IF NOT EXISTS triggers (
-        name TEXT PRIMARY KEY,
-        last_polled_at TEXT,
-        last_run_summary TEXT,
-        enabled INTEGER NOT NULL DEFAULT 1,
-        config_json TEXT,
-        running_started_at TEXT
-      );
-
-      CREATE TABLE IF NOT EXISTS enrichment_cache (
-        email TEXT PRIMARY KEY,
-        result_json TEXT NOT NULL,
-        fetched_at TEXT NOT NULL
-      );
-
-      -- v17 (2026-08): persistent LinkedIn-lookup cache. findLinkedInUrl used a
-      -- per-process Map, so every scheduler restart re-paid ~$0.01/webSearch for
-      -- the same misses. Keyed by the normalized (fullName, disambiguators)
-      -- query. A NULL url with status 'miss' = searched and genuinely not found;
-      -- transient failures are NEVER cached (see the isTransientToolError guard
-      -- at the call site) or an outage would suppress lookups for weeks.
-      CREATE TABLE IF NOT EXISTS linkedin_lookup_cache (
-        query_key  TEXT PRIMARY KEY,
-        url        TEXT,
-        status     TEXT NOT NULL,
-        fetched_at TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS runs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        play_name TEXT NOT NULL,
-        dry_run INTEGER NOT NULL,
-        status TEXT NOT NULL CHECK(status IN ('running','done','interrupted')),
-        started_at TEXT NOT NULL,
-        completed_at TEXT,
-        target_count INTEGER NOT NULL,
-        drafted_count INTEGER NOT NULL DEFAULT 0,
-        sent_count INTEGER NOT NULL DEFAULT 0,
-        error_count INTEGER NOT NULL DEFAULT 0,
-        targets_json TEXT NOT NULL,
-        events_json TEXT NOT NULL DEFAULT '[]',
-        prospect_emails_json TEXT NOT NULL DEFAULT '[]'
-      );
-      CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(started_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
-
-      CREATE TABLE IF NOT EXISTS schema_version (
-        version INTEGER PRIMARY KEY
-      );
-      INSERT OR IGNORE INTO schema_version(version) VALUES(6);
-    `);
-
-    // Lightweight migrations for installs that pre-date a column.
-    this.addColumnIfMissing("prospects", "phone", "TEXT");
-    // v17: source profile URL (GitHub / X / Luma) as a re-enrichment key —
-    // `linkedin_url` is polymorphic and can't serve that role.
-    this.addColumnIfMissing("prospects", "source_profile_url", "TEXT");
-    // v18: job title at contact time (person-level ICP gate, _qualify.ts).
-    // NULL on rows contacted before the gate existed.
-    this.addColumnIfMissing("prospects", "title", "TEXT");
-    // v18: person-level ICP verdict ('pass' | 'reject', NULL = unjudged) +
-    // reason. The cadence step runner refuses follow-ups to 'reject' rows —
-    // the gate must be code-level, not prompt-level.
-    this.addColumnIfMissing("prospects", "icp_verdict", "TEXT");
-    this.addColumnIfMissing("prospects", "icp_verdict_reason", "TEXT");
-    // v5: trigger run-state, so a restart doesn't strand fire-and-forget runs.
-    // See sweepStaleRunningTriggers + fireTriggerNow.
-    this.addColumnIfMissing("triggers", "running_started_at", "TEXT");
-    // v6: persisted per-row drafts (the /run SSE stream is ephemeral).
-    this.addColumnIfMissing("target_queue", "last_draft_json", "TEXT");
-    this.addColumnIfMissing("target_queue", "last_drafted_at", "TEXT");
-    // v7: lease column — dequeueApproved flips it in a transaction so
-    // concurrent drains claim disjoint slices; 15-min lease self-heals a
-    // crashed drain.
-    this.addColumnIfMissing("target_queue", "drain_claimed_at", "TEXT");
-    // v8: per-cadence next-step draft preview; cleared on cadence advance.
-    this.addColumnIfMissing("cadence_state", "next_step_draft_json", "TEXT");
-    this.addColumnIfMissing("cadence_state", "next_step_drafted_at", "TEXT");
-    // v9: send-in-flight marker so a fire-and-forget cadence send survives a
-    // restart. CAS-claimed (claimCadenceSendingMarker); cleared on success and
-    // failure; sweepStaleCadenceSends treats cold-boot markers as stranded.
-    this.addColumnIfMissing("cadence_state", "sending_started_at", "TEXT");
-    // v10: mirror of v9 for the queue Send-draft path (claimQueueSendingMarker
-    // + sweepStaleQueueSends; cleared by setQueueStatus on terminal states).
-    this.addColumnIfMissing("target_queue", "send_started_at", "TEXT");
-    // v11: sender rotation. sender_identity feeds the per-identity daily
-    // counter + warm-up date; sender_assignments pins each prospect to their
-    // first-touch identity so follow-ups never switch From address mid-thread.
-    // Keyed by email, NOT prospect_id — some sends predate the prospect row.
-    this.addColumnIfMissing("receipts", "sender_identity", "TEXT");
-    // v12: negative enrichment caching. NULL/"ok" = success, "failed" = skip
-    // retries within ENRICH_FAILURE_TTL_MS instead of re-paying ~70s timeouts.
-    this.addColumnIfMissing("enrichment_cache", "status", "TEXT");
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS sender_assignments (
-        email TEXT PRIMARY KEY,
-        identity_id TEXT NOT NULL,
-        assigned_at TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-      CREATE INDEX IF NOT EXISTS idx_receipts_calltype_sender
-        ON receipts(call_type, sender_identity, created_at);
-    `);
-    // v13: inbox reply persistence. thread_key = Gmail thread_id (else email
-    // id). inbox_drafts = single mutable draft per thread (cleared on send);
-    // inbox_sent = append-only history of replies actually sent.
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS inbox_drafts (
-        thread_key       TEXT PRIMARY KEY,
-        inbound_email_id TEXT NOT NULL,
-        to_email         TEXT NOT NULL,
-        subject          TEXT,
-        identity_id      TEXT,
-        body             TEXT NOT NULL,
-        updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-      CREATE TABLE IF NOT EXISTS inbox_sent (
-        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-        thread_key  TEXT NOT NULL,
-        to_email    TEXT NOT NULL,
-        subject     TEXT,
-        body        TEXT NOT NULL,
-        identity_id TEXT,
-        request_id  TEXT,
-        sent_at     TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-      CREATE INDEX IF NOT EXISTS idx_inbox_sent_thread
-        ON inbox_sent(thread_key, sent_at);
-    `);
-    // v14: last cadence send FAILURE, so /cadences can distinguish "blocked
-    // upstream" from "waiting on the founder". Set by recordCadenceSendError;
-    // cleared on any forward progress.
-    this.addColumnIfMissing("cadence_state", "last_send_error", "TEXT");
-    this.addColumnIfMissing("cadence_state", "last_send_error_at", "TEXT");
-    // v15: candidates whose contact-resolution failed on a TRANSIENT platform
-    // error. Time-windowed finders (luma, show-hn) can't re-discover an expired
-    // source, so the scheduler retry pass drains this; the (play_name,
-    // dedupe_key) PK doubles as the de-dup key against re-scan.
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS pending_resolution (
-        play_name       TEXT NOT NULL,
-        dedupe_key      TEXT NOT NULL,
-        source          TEXT NOT NULL,
-        raw_json        TEXT NOT NULL,
-        first_seen_at   TEXT NOT NULL DEFAULT (datetime('now')),
-        last_attempt_at TEXT,
-        attempts        INTEGER NOT NULL DEFAULT 0,
-        PRIMARY KEY (play_name, dedupe_key)
-      );
-      CREATE INDEX IF NOT EXISTS idx_pending_resolution_seen
-        ON pending_resolution(first_seen_at);
-    `);
-    // v16: receipt annotation. memo + decision_context mirror the audit fields
-    // sent to OneShot at call time; value_tag(_at) hold the outcome value set
-    // by tagOutcomeValue. sequence_events.receipt_id links a sent step to its
-    // send receipt so outcomes know which receipts to tag (resolved upstream
-    // via request_id — no platform receipt-id backfill needed).
-    this.addColumnIfMissing("receipts", "memo", "TEXT");
-    this.addColumnIfMissing("receipts", "decision_context", "TEXT");
-    this.addColumnIfMissing("receipts", "value_tag", "TEXT");
-    this.addColumnIfMissing("receipts", "value_tagged_at", "TEXT");
-    this.addColumnIfMissing("sequence_events", "receipt_id", "INTEGER");
-    this.db.exec(`
-      -- value-tag filter on the /receipts page; partial (tagged rows only).
-      CREATE INDEX IF NOT EXISTS idx_receipts_value_tag
-        ON receipts(value_tag, created_at) WHERE value_tag IS NOT NULL;
-    `);
-    // v17: goal-level value attribution — goal_id mirrors decisionContext.goalId
-    // so an outcome tags every receipt in the cadence at once.
-    this.addColumnIfMissing("receipts", "goal_id", "TEXT");
-    this.db.exec(`
-      CREATE INDEX IF NOT EXISTS idx_receipts_goal
-        ON receipts(goal_id) WHERE goal_id IS NOT NULL;
-    `);
-    // v18: delivery failures parsed from DSNs. PK (message_id, recipient):
-    // the provider's message id makes the every-tick re-sweep idempotent, and
-    // recipient keeps multi-recipient reports from collapsing into one row.
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS bounces (
-        message_id  TEXT NOT NULL,
-        recipient   TEXT NOT NULL,
-        identity_id TEXT,
-        kind        TEXT NOT NULL,
-        status_code TEXT,
-        diagnostic  TEXT,
-        prospect_id INTEGER,
-        bounced_at  TEXT NOT NULL,
-        created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-        PRIMARY KEY (message_id, recipient)
-      );
-      -- doctor's per-identity rate over a trailing window.
-      CREATE INDEX IF NOT EXISTS idx_bounces_identity ON bounces(identity_id, bounced_at);
-      -- suppressionFor, on the send pre-flight path — must be an index seek.
-      CREATE INDEX IF NOT EXISTS idx_bounces_recipient ON bounces(recipient, kind);
-    `);
-    // v19: inbox-placement canary results — one row per manual A→B test.
-    // Append-only so the reputation trend stays visible.
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS canary_results (
-        id            INTEGER PRIMARY KEY AUTOINCREMENT,
-        from_identity TEXT NOT NULL,
-        to_identity   TEXT NOT NULL,
-        placement     TEXT NOT NULL,
-        labels_json   TEXT,
-        spf           TEXT NOT NULL,
-        dkim          TEXT NOT NULL,
-        dmarc         TEXT NOT NULL,
-        subject       TEXT,
-        source_play   TEXT,
-        same_domain   INTEGER NOT NULL DEFAULT 0,
-        latency_ms    INTEGER,
-        created_at    TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-      CREATE INDEX IF NOT EXISTS idx_canary_created ON canary_results(created_at DESC);
-    `);
-    // v20: reply-poll watermark — persisted high-water mark makes the inbox
-    // poll "everything since last success"; a failed tick leaves the mark in
-    // place so the next good poll re-covers the gap.
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS poll_state (
-        key        TEXT PRIMARY KEY,
-        value      TEXT NOT NULL,
-        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-    `);
-    // v21: inbound replies persisted at detection (body included) — the ledger,
-    // not the mailbox, is the store; a reply must never depend on a live fetch
-    // window. PK is the provider email id so the poll's overlap re-sweeps and
-    // the /inbox route's opportunistic captures are idempotent (mirrors
-    // bounces). Only prospect-matched mail is stored.
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS inbox_replies (
-        id                 TEXT PRIMARY KEY,
-        thread_key         TEXT NOT NULL,
-        prospect_id        INTEGER NOT NULL,
-        play_name          TEXT,
-        from_email         TEXT NOT NULL,
-        subject            TEXT,
-        body               TEXT NOT NULL,
-        received_at        TEXT NOT NULL,
-        source_identity_id TEXT,
-        thread_id          TEXT,
-        message_id         TEXT,
-        created_at         TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-      CREATE INDEX IF NOT EXISTS idx_inbox_replies_prospect
-        ON inbox_replies(prospect_id, received_at);
-      CREATE INDEX IF NOT EXISTS idx_inbox_replies_thread
-        ON inbox_replies(thread_key, received_at);
-    `);
-    // v23: reply classification ('human' | 'auto' | 'auto_permanent' |
-    // 'unsubscribe', see reply-classify.ts). NULL = row predates the
-    // classifier and reads as 'human' everywhere (coalesce). Must run after
-    // the CREATE TABLE above — ALTER on a fresh install needs the table.
-    this.addColumnIfMissing("inbox_replies", "kind", "TEXT");
-    // contactSuppressionFor, on the send pre-flight path — must be an index seek.
-    this.db.exec(
-      `CREATE INDEX IF NOT EXISTS idx_inbox_replies_from_kind ON inbox_replies(from_email, kind)`,
+  getDirectMail(id: string): DirectMailDraft | null {
+    const row = this.db.query("SELECT data FROM direct_mail_drafts WHERE id=?").get(id) as {
+      data: string;
+    } | null;
+    return row ? JSON.parse(row.data) : null;
+  }
+  listDirectMail(): DirectMailDraft[] {
+    return (
+      this.db.query("SELECT data FROM direct_mail_drafts ORDER BY rowid DESC").all() as {
+        data: string;
+      }[]
+    ).map((r) => JSON.parse(r.data));
+  }
+  findDirectMail(
+    prospect: number,
+    play: string,
+    enrollment: string,
+    step: number,
+  ): DirectMailDraft | null {
+    const row = this.db
+      .query(
+        "SELECT data FROM direct_mail_drafts WHERE prospect_id=? AND play_name=? AND enrollment=? AND step_index=?",
+      )
+      .get(prospect, play, enrollment, step) as { data: string } | null;
+    return row ? JSON.parse(row.data) : null;
+  }
+  saveDirectMail(draft: DirectMailDraft): void {
+    this.db
+      .transaction(() => {
+        const previous = this.getDirectMail(draft.id);
+        if (previous && previous.revision !== draft.revision)
+          throw new Error("Mailpiece changed; refresh before retrying");
+        const next = { ...draft, revision: (draft.revision ?? 0) + 1 };
+        this.db
+          .query(
+            "INSERT INTO direct_mail_drafts(id,prospect_id,play_name,enrollment,step_index,data) VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data",
+          )
+          .run(
+            next.id,
+            next.prospectId,
+            next.playName,
+            next.enrollment,
+            next.stepIndex,
+            JSON.stringify(next),
+          );
+        draft.revision = next.revision;
+      })
+      .immediate();
+  }
+  deleteDirectMail(id: string): void {
+    this.db
+      .query(
+        "DELETE FROM direct_mail_drafts WHERE id=? AND coalesce(json_extract(data,'$.started'),0)=0",
+      )
+      .run(id);
+  }
+  getCadencePlan(
+    prospectId: number,
+    playName: string,
+    enrollment: string,
+  ): import("./types.ts").CadencePlanStep[] | null {
+    const row = this.db
+      .query("SELECT steps FROM cadence_plans WHERE prospect_id=? AND play_name=? AND enrollment=?")
+      .get(prospectId, playName, enrollment) as { steps: string } | null;
+    return row ? JSON.parse(row.steps) : null;
+  }
+  saveCadencePlan(
+    prospectId: number,
+    playName: string,
+    enrollment: string,
+    steps: import("./types.ts").CadencePlanStep[],
+  ): void {
+    this.db
+      .query(
+        "INSERT INTO cadence_plans VALUES(?,?,?,?) ON CONFLICT(prospect_id,play_name,enrollment) DO UPDATE SET steps=excluded.steps",
+      )
+      .run(prospectId, playName, enrollment, JSON.stringify(steps));
+  }
+  setMailAddress(key: string, address: PostalAddress, source = "manual"): void {
+    this.db
+      .transaction(() => {
+        this.db
+          .query(
+            "INSERT INTO direct_mail_addresses VALUES (?,?) ON CONFLICT(key) DO UPDATE SET address=excluded.address",
+          )
+          .run(key, JSON.stringify(address));
+        this.setMailAddressMetadata(key, { source, collectedAt: new Date().toISOString() });
+      })
+      .immediate();
+  }
+  setMailAddressMetadata(key: string, data: Record<string, unknown>): void {
+    this.db
+      .query(
+        "INSERT INTO mail_address_metadata VALUES (?,?) ON CONFLICT(key) DO UPDATE SET data=excluded.data",
+      )
+      .run(key, JSON.stringify(data));
+  }
+  getMailAddressMetadata(key: string): Record<string, unknown> | null {
+    const row = this.db.query("SELECT data FROM mail_address_metadata WHERE key=?").get(key) as {
+      data: string;
+    } | null;
+    return row ? JSON.parse(row.data) : null;
+  }
+  getMailPreparation(
+    prospectId: number,
+    playName: string,
+    enrollment: string,
+    stepIndex: number,
+  ): import("./direct-mail.ts").MailPreparation | null {
+    const row = this.db
+      .query(
+        "SELECT data FROM mail_preparations WHERE prospect_id=? AND play_name=? AND enrollment=? AND step_index=?",
+      )
+      .get(prospectId, playName, enrollment, stepIndex) as { data: string } | null;
+    return row ? JSON.parse(row.data) : null;
+  }
+  saveMailPreparation(
+    prospectId: number,
+    playName: string,
+    enrollment: string,
+    stepIndex: number,
+    data: import("./direct-mail.ts").MailPreparation,
+  ): void {
+    this.db
+      .query(
+        "INSERT INTO mail_preparations VALUES(?,?,?,?,?) ON CONFLICT(prospect_id,play_name,enrollment,step_index) DO UPDATE SET data=excluded.data",
+      )
+      .run(prospectId, playName, enrollment, stepIndex, JSON.stringify(data));
+  }
+  deleteMailPreparation(
+    prospectId: number,
+    playName: string,
+    enrollment: string,
+    stepIndex: number,
+  ): void {
+    this.db
+      .query(
+        "DELETE FROM mail_preparations WHERE prospect_id=? AND play_name=? AND enrollment=? AND step_index=?",
+      )
+      .run(prospectId, playName, enrollment, stepIndex);
+  }
+  setMailAddresses(prospect: number, to: PostalAddress, from: PostalAddress): void {
+    const put = this.db.query(
+      "INSERT INTO direct_mail_addresses(key,address) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET address=excluded.address",
     );
-    // v22: tweets the x-reposters finder already paid to harvest. Both X data
-    // providers bill per resource RETURNED, and the finder's freshness window
-    // (48h) is wider than its daily cadence — without this ledger every fresh
-    // tweet would be re-bought on two consecutive runs.
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS x_harvested_tweets (
-        tweet_id     TEXT PRIMARY KEY,
-        harvested_at TEXT NOT NULL
-      );
-    `);
-    // v24: occurrence timestamp for a reply, separate from created_at.
-    // markLatestStepReplied flips the ORIGINAL sent row's status in place, so
-    // created_at stays pinned to the send time — eventsByPlay's sinceIso/
-    // untilIso window (used by the Slack daily-summary aggregate) was
-    // silently dropping any reply landing after the SENT step's created_at
-    // window instead of the reply's own occurrence day. replied_at is stamped
-    // at the moment of the flip and is what date-windowed rollups must filter
-    // on for replies (bounces are unaffected — recordSequenceEvent always
-    // inserts a fresh row, so created_at is already the occurrence time).
-    this.addColumnIfMissing("sequence_events", "replied_at", "TEXT");
+    this.db
+      .transaction(() => {
+        put.run(`prospect:${prospect}`, JSON.stringify(to));
+        put.run("return", JSON.stringify(from));
+      })
+      .immediate();
+  }
+  getMailAddress(key: string): PostalAddress | null {
+    const row = this.db.query("SELECT address FROM direct_mail_addresses WHERE key=?").get(key) as {
+      address: string;
+    } | null;
+    return row ? JSON.parse(row.address) : null;
+  }
+  recordMailReceipt(receipt: string, input: Parameters<Ledger["recordReceipt"]>[0]): number {
+    return this.db
+      .transaction(() => {
+        const previous = this.db
+          .query("SELECT local_id FROM direct_mail_receipts WHERE receipt_id=?")
+          .get(receipt) as { local_id: number } | null;
+        if (previous) {
+          if (input.signedReceipt)
+            this.db
+              .query("UPDATE receipts SET signed_receipt=? WHERE id=?")
+              .run(JSON.stringify(input.signedReceipt), previous.local_id);
+          return previous.local_id;
+        }
+        const id = this.recordReceipt(input);
+        this.db
+          .query("INSERT INTO direct_mail_receipts(receipt_id,local_id) VALUES (?,?)")
+          .run(receipt, id);
+        return id;
+      })
+      .immediate();
+  }
+
+  private migrate(): void {
+    // Fresh-install schema construction + inline column/table migrations
+    // live in ledger-schema.ts (see its doc comment) — extracted so the
+    // highest-risk inline DDL in this file can be tested and read in
+    // isolation from the domain methods below.
+    migrateLedgerSchema(this.db);
   }
 
   /**
@@ -572,28 +539,6 @@ export class Ledger {
     }
   }
 
-  private addColumnIfMissing(table: string, column: string, type: string): void {
-    // Defense-in-depth: SQLite has no parameter binding for table/column/type
-    // names, so we must validate. Whitelist to bare ASCII identifiers only.
-    const ident = /^[A-Za-z_][A-Za-z0-9_]*$/;
-    if (!ident.test(table) || !ident.test(column)) {
-      throw new Error(`unsafe identifier in addColumnIfMissing: ${table}.${column}`);
-    }
-    if (!/^[A-Z][A-Z0-9_ ]*$/.test(type)) {
-      throw new Error(`unsafe column type in addColumnIfMissing: ${type}`);
-    }
-    const cols = this.db.query(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
-    if (cols.some((c) => c.name === column)) return;
-    try {
-      this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
-    } catch (err) {
-      // Two connections can both see the column as missing (check-then-alter
-      // is unlocked); the loser's ALTER must not abort Ledger construction.
-      // Same tolerance as SharedDb.migrate.
-      if (!/duplicate column/i.test((err as Error).message ?? "")) throw err;
-    }
-  }
-
   enrollCadence(input: { prospectId: number; playName: string; nextDueAt: string }): void {
     this.db
       .prepare(
@@ -603,8 +548,12 @@ export class Ledger {
            status = 'active',
            next_due_at = excluded.next_due_at,
            last_polled_at = NULL,
+           stop_reason = NULL,
+           stop_note = NULL,
+           stopped_at = NULL,
            last_send_error = NULL,
-           last_send_error_at = NULL`,
+           last_send_error_at = NULL
+         WHERE cadence_state.status != 'stopped'`,
       )
       .run(input.prospectId, input.playName, input.nextDueAt);
   }
@@ -617,7 +566,18 @@ export class Ledger {
       args.push(opts.dueByIso);
     }
     const sql = `
-      SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company
+      SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company,
+             p.title AS prospect_title, p.linkedin_url AS prospect_linkedin_url,
+             (SELECT channel FROM (
+                SELECT 'email' AS channel, received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
+                UNION ALL
+                SELECT channel, occurred_at AS at FROM channel_events WHERE prospect_id = p.id AND event_type = 'reply'
+              ) ORDER BY at DESC LIMIT 1) AS reply_channel,
+             (SELECT at FROM (
+                SELECT received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
+                UNION ALL
+                SELECT occurred_at AS at FROM channel_events WHERE prospect_id = p.id AND event_type = 'reply'
+              ) ORDER BY at DESC LIMIT 1) AS replied_at
       FROM cadence_state c
       JOIN prospects p ON p.id = c.prospect_id
       WHERE ${where.join(" AND ")}
@@ -628,7 +588,16 @@ export class Ledger {
 
   listAllCadences(): CadenceWithProspect[] {
     const sql = `
-      SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company
+      SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company,
+             p.title AS prospect_title, p.linkedin_url AS prospect_linkedin_url,
+             (SELECT channel FROM (
+                SELECT 'email' AS channel, received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
+                UNION ALL SELECT channel, occurred_at AS at FROM channel_events WHERE prospect_id = p.id AND event_type = 'reply'
+              ) ORDER BY at DESC LIMIT 1) AS reply_channel,
+             (SELECT at FROM (
+                SELECT received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
+                UNION ALL SELECT occurred_at AS at FROM channel_events WHERE prospect_id = p.id AND event_type = 'reply'
+              ) ORDER BY at DESC LIMIT 1) AS replied_at
       FROM cadence_state c
       JOIN prospects p ON p.id = c.prospect_id
       ORDER BY c.status ASC, c.next_due_at ASC NULLS LAST
@@ -643,7 +612,16 @@ export class Ledger {
    */
   getCadence(prospectId: number, playName: string): CadenceWithProspect | null {
     const sql = `
-      SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company
+      SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company,
+             p.title AS prospect_title, p.linkedin_url AS prospect_linkedin_url,
+             (SELECT channel FROM (
+                SELECT 'email' AS channel, received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
+                UNION ALL SELECT channel, occurred_at AS at FROM channel_events WHERE prospect_id = p.id AND event_type = 'reply'
+              ) ORDER BY at DESC LIMIT 1) AS reply_channel,
+             (SELECT at FROM (
+                SELECT received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
+                UNION ALL SELECT occurred_at AS at FROM channel_events WHERE prospect_id = p.id AND event_type = 'reply'
+              ) ORDER BY at DESC LIMIT 1) AS replied_at
       FROM cadence_state c
       JOIN prospects p ON p.id = c.prospect_id
       WHERE c.prospect_id = ? AND c.play_name = ?
@@ -654,7 +632,16 @@ export class Ledger {
   /** All cadences for one prospect — index seek on cadence_state.prospect_id (PK prefix). */
   listCadencesForProspect(prospectId: number): CadenceWithProspect[] {
     const sql = `
-      SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company
+      SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company,
+             p.title AS prospect_title, p.linkedin_url AS prospect_linkedin_url,
+             (SELECT channel FROM (
+                SELECT 'email' AS channel, received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
+                UNION ALL SELECT channel, occurred_at AS at FROM channel_events WHERE prospect_id = p.id AND event_type = 'reply'
+              ) ORDER BY at DESC LIMIT 1) AS reply_channel,
+             (SELECT at FROM (
+                SELECT received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
+                UNION ALL SELECT occurred_at AS at FROM channel_events WHERE prospect_id = p.id AND event_type = 'reply'
+              ) ORDER BY at DESC LIMIT 1) AS replied_at
       FROM cadence_state c
       JOIN prospects p ON p.id = c.prospect_id
       WHERE c.prospect_id = ?
@@ -736,6 +723,33 @@ export class Ledger {
       );
   }
 
+  stopCadence(input: {
+    prospectId: number;
+    playName: string;
+    reason: "bad_timing" | "other" | "not_a_fit" | "do_not_contact";
+    note?: string;
+  }): boolean {
+    let changed = false;
+    this.db.transaction(() => {
+      const result = this.db
+        .prepare(
+          `UPDATE cadence_state
+           SET status = 'stopped', stop_reason = ?, stop_note = ?, stopped_at = datetime('now'),
+               next_due_at = NULL,
+               next_step_draft_json = NULL, next_step_drafted_at = NULL,
+               sending_started_at = NULL, last_send_error = NULL, last_send_error_at = NULL
+           WHERE prospect_id = ? AND play_name = ? AND status = 'active'
+             AND sending_started_at IS NULL`,
+        )
+        .run(input.reason, input.note?.trim() || null, input.prospectId, input.playName);
+      changed = result.changes > 0;
+      if (changed) {
+        this.expireBreakupReviveQueue(input.prospectId, "cadence stopped");
+      }
+    })();
+    return changed;
+  }
+
   setCadenceDraft(input: {
     prospectId: number;
     playName: string;
@@ -799,6 +813,13 @@ export class Ledger {
    * Backs the /inbox composer's debounced auto-save so a refresh or navigation
    * away no longer discards the draft. Keyed by thread_key (see `inboxThreadKey`
    * in shared-types) — Gmail thread_id, else the email id.
+   *
+   * `status` is recomputed by the CALLER on every save from the body's own
+   * lint state (issue #480's `commits-terms` flag) — never trust a
+   * client-sent value, so the caller passes the freshly-computed verdict.
+   * `steer` is deliberately NOT part of this statement: an ordinary autosave
+   * must never clobber a standing founder instruction. Use
+   * `setInboxDraftSteer` for that.
    */
   upsertInboxDraft(input: {
     threadKey: string;
@@ -807,17 +828,19 @@ export class Ledger {
     subject: string;
     identityId: string | null;
     body: string;
+    status?: "needs_decision" | null;
   }): void {
     this.db
       .prepare(
-        `INSERT INTO inbox_drafts(thread_key, inbound_email_id, to_email, subject, identity_id, body, updated_at)
-         VALUES(?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO inbox_drafts(thread_key, inbound_email_id, to_email, subject, identity_id, body, status, updated_at)
+         VALUES(?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(thread_key) DO UPDATE SET
            inbound_email_id = excluded.inbound_email_id,
            to_email = excluded.to_email,
            subject = excluded.subject,
            identity_id = excluded.identity_id,
            body = excluded.body,
+           status = excluded.status,
            updated_at = excluded.updated_at`,
       )
       .run(
@@ -827,8 +850,35 @@ export class Ledger {
         input.subject,
         input.identityId,
         input.body,
+        input.status ?? null,
         new Date().toISOString(),
       );
+  }
+
+  /**
+   * Persist the founder's standing redraft instruction for a thread (issue
+   * #480's steer box) — a no-op if the thread has no draft row yet (the
+   * steer route always upserts a draft first, so this is only ever called
+   * after that succeeds).
+   */
+  setInboxDraftSteer(threadKey: string, steer: string | null): void {
+    this.db.prepare(`UPDATE inbox_drafts SET steer = ? WHERE thread_key = ?`).run(steer, threadKey);
+  }
+
+  /**
+   * Persist a server-generated draft body (round-1 correction, #480's steer
+   * flow): `steerRoute` computes a redraft and returned it to the client
+   * without ever writing it back to `inbox_drafts`, so the debounced
+   * autosave (which only fires on a body DIFF) never saw a change and the
+   * redraft was lost on refresh/collapse. Mirrors `saveDraftRoute`'s body
+   * write but leaves `steer` and every other column untouched — the standing
+   * steer instruction is set separately via `setInboxDraftSteer` and must
+   * survive this call.
+   */
+  setInboxDraftBody(threadKey: string, body: string, status: "needs_decision" | null): void {
+    this.db
+      .prepare(`UPDATE inbox_drafts SET body = ?, status = ?, updated_at = ? WHERE thread_key = ?`)
+      .run(body, status, new Date().toISOString(), threadKey);
   }
 
   clearInboxDraft(threadKey: string): void {
@@ -874,24 +924,39 @@ export class Ledger {
    */
   getInboxThreads(): Map<
     string,
-    { draftBody: string | null; sent: { body: string; sentAt: string }[] }
+    {
+      draftBody: string | null;
+      sent: { body: string; sentAt: string }[];
+      steer: string | null;
+      status: "needs_decision" | null;
+    }
   > {
     const map = new Map<
       string,
-      { draftBody: string | null; sent: { body: string; sentAt: string }[] }
+      {
+        draftBody: string | null;
+        sent: { body: string; sentAt: string }[];
+        steer: string | null;
+        status: "needs_decision" | null;
+      }
     >();
     const ensure = (key: string) => {
       let entry = map.get(key);
       if (!entry) {
-        entry = { draftBody: null, sent: [] };
+        entry = { draftBody: null, sent: [], steer: null, status: null };
         map.set(key, entry);
       }
       return entry;
     };
     const drafts = this.db
-      .query(`SELECT thread_key AS k, body AS b FROM inbox_drafts`)
-      .all() as Array<{ k: string; b: string }>;
-    for (const d of drafts) ensure(d.k).draftBody = d.b;
+      .query(`SELECT thread_key AS k, body AS b, steer AS s, status AS st FROM inbox_drafts`)
+      .all() as Array<{ k: string; b: string; s: string | null; st: string | null }>;
+    for (const d of drafts) {
+      const entry = ensure(d.k);
+      entry.draftBody = d.b;
+      entry.steer = d.s;
+      entry.status = d.st === "needs_decision" ? "needs_decision" : null;
+    }
     const sent = this.db
       .query(`SELECT thread_key AS k, body AS b, sent_at AS t FROM inbox_sent ORDER BY sent_at ASC`)
       .all() as Array<{ k: string; b: string; t: string }>;
@@ -1017,6 +1082,127 @@ export class Ledger {
     );
   }
 
+  resolveProspectForLinkedInReply(input: {
+    email?: string;
+    linkedinUrl?: string;
+  }): { status: "matched"; prospectId: number } | { status: "unmatched" } | { status: "conflict" } {
+    const emailId = input.email ? (this.findProspectByEmail(input.email)?.id ?? null) : null;
+    let linkedinIds: number[] = [];
+    if (input.linkedinUrl) {
+      const key = canonicalLinkedInProfileKey(input.linkedinUrl);
+      if (key) {
+        const rows = this.db
+          .query(
+            `SELECT id, linkedin_url, source_profile_url FROM prospects
+             WHERE linkedin_url LIKE '%linkedin.com/in/%'
+                OR source_profile_url LIKE '%linkedin.com/in/%'`,
+          )
+          .all() as Array<{
+          id: number;
+          linkedin_url: string | null;
+          source_profile_url: string | null;
+        }>;
+        linkedinIds = rows
+          .filter(
+            (row) =>
+              (row.linkedin_url && canonicalLinkedInProfileKey(row.linkedin_url) === key) ||
+              (row.source_profile_url &&
+                canonicalLinkedInProfileKey(row.source_profile_url) === key),
+          )
+          .map((row) => row.id);
+      }
+    }
+    const uniqueLinkedIn = [...new Set(linkedinIds)];
+    if (uniqueLinkedIn.length > 1) return { status: "conflict" };
+    const linkedinId = uniqueLinkedIn[0] ?? null;
+    if (emailId && linkedinId && emailId !== linkedinId) return { status: "conflict" };
+    const prospectId = emailId ?? linkedinId;
+    return prospectId ? { status: "matched", prospectId } : { status: "unmatched" };
+  }
+
+  recordLinkedInReply(input: {
+    prospectId: number;
+    source: string;
+    externalEventId: string;
+    occurredAt: string;
+    /** The message text, when the channel supplies one. Feeds the composer. */
+    body?: string | null;
+  }): {
+    duplicate: boolean;
+    prospectId: number;
+    cadencesStopped: number;
+    inFlightSends: number;
+  } {
+    return this.db.transaction(() => {
+      const existing = this.db
+        .query(`SELECT * FROM channel_events WHERE source = ? AND external_event_id = ?`)
+        .get(input.source, input.externalEventId) as ChannelEventRecord | null;
+      if (existing) {
+        const inFlight = this.db
+          .query(
+            `SELECT COUNT(*) AS n FROM cadence_state
+             WHERE prospect_id = ? AND sending_started_at IS NOT NULL`,
+          )
+          .get(existing.prospect_id) as { n: number };
+        return {
+          duplicate: true,
+          prospectId: existing.prospect_id,
+          cadencesStopped: 0,
+          inFlightSends: inFlight.n,
+        };
+      }
+      const live = this.db
+        .query(
+          `SELECT sending_started_at FROM cadence_state
+           WHERE prospect_id = ? AND status IN ('active','paused')`,
+        )
+        .all(input.prospectId) as Array<{ sending_started_at: string | null }>;
+      this.db
+        .prepare(
+          `INSERT INTO channel_events
+             (source, external_event_id, prospect_id, channel, event_type, occurred_at, body)
+           VALUES (?, ?, ?, 'linkedin', 'reply', ?, ?)`,
+        )
+        .run(
+          input.source,
+          input.externalEventId,
+          input.prospectId,
+          input.occurredAt,
+          input.body?.trim() || null,
+        );
+      this.db
+        .prepare(
+          `UPDATE cadence_state
+           SET status = 'replied', next_due_at = NULL,
+               next_step_draft_json = NULL, next_step_drafted_at = NULL,
+               last_send_error = NULL, last_send_error_at = NULL
+           WHERE prospect_id = ? AND status IN ('active','paused')`,
+        )
+        .run(input.prospectId);
+      this.expireBreakupReviveQueue(input.prospectId, "prospect replied");
+      return {
+        duplicate: false,
+        prospectId: input.prospectId,
+        cadencesStopped: live.length,
+        inFlightSends: live.filter((row) => row.sending_started_at != null).length,
+      };
+    })();
+  }
+
+  private expireBreakupReviveQueue(prospectId: number, reason: string): void {
+    this.db
+      .prepare(
+        `UPDATE target_queue
+         SET status = 'expired',
+             notes = CASE WHEN notes IS NULL OR notes = '' THEN ?
+                          ELSE notes || ' · ' || ? END
+         WHERE (prospect_id = ? OR dedupe_key = ?)
+           AND play_name = 'breakup-revive'
+           AND status IN ('pending', 'approved')`,
+      )
+      .run(`expired: ${reason}`, `expired: ${reason}`, prospectId, `prospect:${prospectId}`);
+  }
+
   /**
    * Emails of every prospect with a recorded reply — the target list for the
    * inbox's known-replier fetch, so a reply is never lost to the live window.
@@ -1075,17 +1261,130 @@ export class Ledger {
     return res.changes > 0;
   }
 
+  /**
+   * Set the sentiment/intent classification on an already-persisted reply
+   * (issue #480) — the triage call runs AFTER recordInboxReply so a triage
+   * failure never loses the reply itself. `id IS` a no-op UPDATE if the row
+   * somehow isn't there (e.g. a race), which is the correct behaviour: never
+   * throw out of a best-effort classification path.
+   */
+  setInboxReplyIntent(id: string, intent: string | null, intentReason: string | null): void {
+    this.db
+      .prepare(`UPDATE inbox_replies SET intent = ?, intent_reason = ? WHERE id = ?`)
+      .run(intent, intentReason, id);
+  }
+
+  /**
+   * Atomically claim a persisted reply for triage (issue #558 round-1
+   * correction). Two overlapping `pollInboxReplies()` calls (realistically:
+   * the server's background scheduler tick and a manually-run `cadence
+   * advance` CLI invocation) can both observe the same freshly-inserted row
+   * with `intent` still NULL while the first call's `triageEmails()` await is
+   * in flight — a bare re-check of the nullable `intent` column can't tell
+   * "nobody has started triaging this yet" from "I already looked a moment
+   * ago", so both callers would re-trigger the paid triage call and race on
+   * the write-back. This flips `intent` from NULL to `INBOX_REPLY_TRIAGE_PENDING`
+   * in the SAME statement that checks it's still NULL — SQLite serializes
+   * writers, so only one caller's UPDATE can match a given row, and its
+   * `changes` count is the claim. The winner must call `setInboxReplyIntent`
+   * (real result) or release the claim (`setInboxReplyIntent(id, null, null)`
+   * on failure) so a later poll can retry; the loser must skip triage
+   * entirely for this row this poll.
+   */
+  claimInboxReplyForTriage(id: string): boolean {
+    const res = this.db
+      .prepare(`UPDATE inbox_replies SET intent = ? WHERE id = ? AND intent IS NULL`)
+      .run(INBOX_REPLY_TRIAGE_PENDING, id);
+    return res.changes > 0;
+  }
+
+  /**
+   * Cold-boot recovery for `claimInboxReplyForTriage` (round-2 correction,
+   * #558): every other claim-marker in this file
+   * (claimCadenceSendingMarker/sweepStaleCadenceSends,
+   * claimQueueSendingMarker/sweepStaleQueueSends,
+   * claimRunningTrigger/sweepStaleRunningTriggers) has a paired sweep so a
+   * crash between the claim UPDATE and the try/catch's release doesn't
+   * strand the marker forever. This one didn't: a process death mid-triage
+   * left `intent = '__triage_pending__'` permanently on the row — it could
+   * never be re-claimed (the claim UPDATE only matches `intent IS NULL`) or
+   * classified again, and the non-`ReplyIntent` sentinel was exposed to
+   * every reader of `intent` (`listInboxReplyIntents`, the /inbox route).
+   * Unlike the other markers, the claim here has no `started_at` column to
+   * age against — it's held only for the duration of one in-process `await
+   * triageEmails(...)`, which cannot survive past that process's death — so
+   * there's no `maxAgeMs`: cold boot (called once, like the other sweeps,
+   * from apps/server/src/bin.ts) is the only moment a stranded claim can be
+   * told apart from one a live process still holds. Returns the number of
+   * rows reset so the caller can log it.
+   *
+   * Known trade-off: a claim held by a live `intel backfill-intent` CLI
+   * process at the instant the server boots is cleared too, and the next
+   * poll may re-claim that row. The cost is one duplicated triage call
+   * (cents) whose result is the same category — last writer wins, no data
+   * is lost. Telling the two apart would need a claim timestamp column and
+   * an age-gated sweep; not worth a schema change for that window.
+   */
+  sweepStaleInboxReplyTriage(): number {
+    const res = this.db
+      .prepare(`UPDATE inbox_replies SET intent = NULL WHERE intent = ?`)
+      .run(INBOX_REPLY_TRIAGE_PENDING);
+    return res.changes;
+  }
+
+  /**
+   * Bulk intent lookup for a set of provider email ids — the /inbox route's
+   * badge needs the persisted (LLM-classified) intent per visible reply
+   * without an N+1 query. Empty input short-circuits (SQLite's `IN ()` is
+   * invalid syntax, not just slow).
+   */
+  listInboxReplyIntents(
+    ids: string[],
+  ): Map<string, { intent: string | null; intentReason: string | null }> {
+    if (ids.length === 0) return new Map();
+    const placeholders = ids.map(() => "?").join(",");
+    const rows = this.db
+      .query(
+        `SELECT id, intent, intent_reason AS intentReason FROM inbox_replies
+         WHERE id IN (${placeholders})`,
+      )
+      .all(...ids) as Array<{ id: string; intent: string | null; intentReason: string | null }>;
+    return new Map(
+      rows.map((r) => [r.id, { intent: publicIntent(r.intent), intentReason: r.intentReason }]),
+    );
+  }
+
   /** All persisted inbound replies for one prospect, oldest first. */
   listInboxRepliesForProspect(prospectId: number): InboxReplyRecord[] {
-    return this.db
+    const rows = this.db
       .query(`SELECT * FROM inbox_replies WHERE prospect_id = ? ORDER BY received_at ASC, id ASC`)
       .all(prospectId) as InboxReplyRecord[];
+    for (const r of rows) if (r.intent === INBOX_REPLY_TRIAGE_PENDING) r.intent = null;
+    return rows;
   }
 
   /** Provider ids of every persisted reply — dedupe set for capture passes. */
   listInboxReplyIds(): Set<string> {
     const rows = this.db.query(`SELECT id FROM inbox_replies`).all() as Array<{ id: string }>;
     return new Set(rows.map((r) => r.id));
+  }
+
+  /**
+   * Every persisted HUMAN reply with no intent classification yet (issue
+   * #480) — the backfill target for `oneshot-gtm intel backfill-intent` and
+   * for any pre-#480 install's existing history. `COALESCE(kind,'human')`
+   * mirrors the same predicate `listSentOutcomeRows` uses: pre-v23 rows with
+   * a NULL kind read as human everywhere.
+   */
+  listUntriagedHumanReplies(limit = 200): InboxReplyRecord[] {
+    return this.db
+      .query(
+        `SELECT * FROM inbox_replies
+         WHERE COALESCE(kind, 'human') = 'human' AND intent IS NULL
+         ORDER BY received_at ASC
+         LIMIT ?`,
+      )
+      .all(limit) as InboxReplyRecord[];
   }
 
   /** Prospects that have at least one persisted reply, most recent activity first. */
@@ -1101,9 +1400,23 @@ export class Ledger {
 
   /** Full prospect record by id (PK seek). Avoids loading every prospect to find one. */
   getProspectById(id: number): ProspectRecord | null {
-    return (
-      (this.db.query("SELECT * FROM prospects WHERE id = ?").get(id) as ProspectRecord) ?? null
-    );
+    const prospect = this.db
+      .query("SELECT * FROM prospects WHERE id = ?")
+      .get(id) as ProspectRecord | null;
+    const address = prospect && this.getMailAddress(`prospect:${id}`);
+    return prospect
+      ? {
+          ...prospect,
+          ...(address
+            ? {
+                businessAddress: address,
+                businessAddressSource: String(
+                  this.getMailAddressMetadata(`prospect:${id}`)?.source ?? "saved address",
+                ),
+              }
+            : {}),
+        }
+      : null;
   }
 
   /**
@@ -1344,6 +1657,24 @@ export class Ledger {
     );
   }
 
+  /** Permanent manual-stop hold used only by breakup-revive's final send backstop. */
+  breakupReviveHoldFor(email: string): { reason: string; stopped_at: string } | null {
+    const prospect = this.findProspectByEmail(email);
+    if (!prospect) return null;
+    return (
+      (this.db
+        .query(
+          `SELECT stop_reason AS reason, stopped_at
+           FROM cadence_state
+           WHERE prospect_id = ? AND status = 'stopped'
+             AND stop_reason IN ('not_a_fit', 'do_not_contact')
+           ORDER BY stopped_at DESC
+           LIMIT 1`,
+        )
+        .get(prospect.id) as { reason: string; stopped_at: string }) ?? null
+    );
+  }
+
   /** Bounce counts per sending identity since `sinceIso` — the doctor check's numerator. */
   bounceStatsByIdentity(opts: {
     sinceIso: string;
@@ -1465,6 +1796,42 @@ export class Ledger {
     return null;
   }
 
+  /**
+   * Bodies of the most recent email sends for one play + step, newest first.
+   * Feeds the opener-frequency lint: a follow-up step that keeps reaching for
+   * the same opening words is a fingerprint, and only the ledger knows what
+   * the last N sends actually opened with.
+   *
+   * Same status set as `latestSentEmailCopy` — 'sent' rows are UPDATEd in
+   * place to 'replied', so matching only 'sent' would silently drop every
+   * prospect who answered and skew the share.
+   */
+  recentSentEmailBodies(opts: { playName: string; stepIndex: number; limit?: number }): string[] {
+    const limit = Math.max(1, Math.min(opts.limit ?? 40, 200));
+    const rows = this.db
+      .query(
+        `SELECT metadata_json FROM sequence_events
+         WHERE play_name = ? AND step_index = ?
+           AND status IN ('sent', 'delivered', 'replied')
+           AND channel = 'email' AND metadata_json IS NOT NULL
+           AND json_valid(metadata_json)
+           AND trim(coalesce(json_extract(metadata_json, '$.body'), '')) != ''
+         ORDER BY created_at DESC, id DESC LIMIT ?`,
+      )
+      .all(opts.playName, opts.stepIndex, limit) as Array<{ metadata_json: string }>;
+    const out: string[] = [];
+    for (const row of rows) {
+      let body: unknown;
+      try {
+        body = (JSON.parse(row.metadata_json) as { body?: unknown }).body;
+      } catch {
+        continue;
+      }
+      if (typeof body === "string" && body.trim()) out.push(body);
+    }
+    return out;
+  }
+
   getReceipt(id: number): ReceiptRecord | null {
     return (this.db.query("SELECT * FROM receipts WHERE id = ?").get(id) as ReceiptRecord) ?? null;
   }
@@ -1495,7 +1862,15 @@ export class Ledger {
       const existing = this.db.query("SELECT id FROM prospects WHERE email = ?").get(email) as
         | { id: number }
         | undefined;
-      if (existing) return existing.id;
+      if (existing) {
+        if (input.businessAddress && !this.getMailAddress(`prospect:${existing.id}`))
+          this.setMailAddress(
+            `prospect:${existing.id}`,
+            input.businessAddress,
+            input.businessAddressSource ?? "prospect input",
+          );
+        return existing.id;
+      }
     }
     const stmt = this.db.prepare(`
       INSERT INTO prospects(name, email, phone, company, linkedin_url, dossier_json, source,
@@ -1513,7 +1888,14 @@ export class Ledger {
       input.source_profile_url ?? null,
       input.title ?? null,
     );
-    return Number(result.lastInsertRowid);
+    const id = Number(result.lastInsertRowid);
+    if (input.businessAddress)
+      this.setMailAddress(
+        `prospect:${id}`,
+        input.businessAddress,
+        input.businessAddressSource ?? "prospect input",
+      );
+    return id;
   }
 
   /**
@@ -1562,11 +1944,74 @@ export class Ledger {
    * Record the person-level ICP verdict for a prospect. Overwrites — a
    * re-audit with better data (a real title instead of a stale event bio)
    * must be able to flip an earlier call in either direction.
+   *
+   * `unclear` is a real, persisted verdict: qualifyPerson is 4-state, and
+   * writing its ambiguity as NULL made "we looked and couldn't tell"
+   * indistinguishable from "never judged". It is PROVISIONAL, not settled —
+   * _qualify.ts escalates `unclear` rather than dropping a candidate, so a
+   * re-audit re-judges those rows (picking up role text that arrived since)
+   * and skips only pass/reject. Suppression is unaffected — the cadence gate
+   * tests `=== "reject"`, so `unclear` fails open exactly as NULL did.
+   * `transient` is never persisted; it stays a retry signal.
    */
-  setProspectIcpVerdict(id: number, verdict: "pass" | "reject", reason?: string | null): void {
+  setProspectIcpVerdict(
+    id: number,
+    verdict: "pass" | "reject" | "unclear",
+    reason?: string | null,
+  ): void {
     this.db
       .prepare("UPDATE prospects SET icp_verdict = ?, icp_verdict_reason = ? WHERE id = ?")
       .run(verdict, reason ?? null, id);
+  }
+
+  /**
+   * Persist a research dossier onto an existing prospect.
+   *
+   * Deliberately NOT part of updateProspectIdentity: that method's column
+   * allowlist is write-once (COALESCE(NULLIF(col,''), ?)), which is right for
+   * identity fields but wrong here — re-researching a person must be able to
+   * refresh a stale dossier. Plain overwrite; callers decide whether to skip
+   * rows that already have one. Pass null to clear.
+   */
+  setProspectDossier(id: number, dossier: string | null): void {
+    this.db.prepare("UPDATE prospects SET dossier_json = ? WHERE id = ?").run(dossier, id);
+  }
+
+  /**
+   * Write ONE half of a prospect's dossier without clobbering the other.
+   *
+   * `research-prospects` owns the `person` half and `research-products` owns
+   * `product`, and each was doing read → merge → write with the read outside
+   * any transaction. Two writers, one column, a wide window between them: the
+   * later write silently reverts the earlier one.
+   *
+   * Not theoretical — it happened during this feature's own dogfood run. The
+   * workspace server researched a prospect while a script held a merge in
+   * flight, and the curated person half vanished under an API one. The reads
+   * were seconds apart.
+   *
+   * BEGIN IMMEDIATE via `db.transaction` takes the write lock before the
+   * re-read, so the merge sees the current value and no one can interleave
+   * between the two statements.
+   */
+  mergeProspectDossierHalf(
+    id: number,
+    half: "person" | "product",
+    value: unknown,
+    slice?: number,
+  ): void {
+    this.db.transaction(() => {
+      const row = this.db.query("SELECT dossier_json FROM prospects WHERE id = ?").get(id) as
+        | { dossier_json: string | null }
+        | undefined;
+      if (!row) return;
+      const merged =
+        half === "person"
+          ? mergePersonDossier(row.dossier_json, value)
+          : mergeProductDossier(row.dossier_json, value as ProductResearchDossier);
+      const bounded = slice != null && merged.length > slice ? merged.slice(0, slice) : merged;
+      this.db.prepare("UPDATE prospects SET dossier_json = ? WHERE id = ?").run(bounded, id);
+    })();
   }
 
   /**
@@ -1607,6 +2052,100 @@ export class Ledger {
     }>;
   }
 
+  /**
+   * Prospects worth buying a research dossier for, by scope:
+   *
+   * - `active`   — a cadence is still running, so a dossier changes what gets sent
+   * - `replied`  — a live conversation, where reply drafting reads the dossier
+   * - `unjudged` — no ICP verdict AND a profile URL to research, so the gate can judge
+   * - `all`      — every prospect
+   *
+   * Scopes union. Rows that already hold a dossier are excluded unless
+   * `includeResearched`, so an interrupted run resumes instead of re-buying.
+   * A row needs a social URL or an email — deepResearchPerson has nothing to
+   * chase otherwise.
+   */
+  listProspectsForResearch(
+    opts: {
+      scopes?: ReadonlyArray<"active" | "replied" | "unjudged" | "all">;
+      includeResearched?: boolean;
+      limit?: number;
+    } = {},
+  ): Array<{
+    id: number;
+    name: string | null;
+    company: string | null;
+    email: string | null;
+    source: string | null;
+    source_profile_url: string | null;
+    linkedin_url: string | null;
+    dossier_json: string | null;
+  }> {
+    const scopes = opts.scopes?.length ? opts.scopes : (["active", "replied", "unjudged"] as const);
+    const any: string[] = [];
+    if (scopes.includes("all")) {
+      any.push("1 = 1");
+    } else {
+      if (scopes.includes("active")) {
+        any.push(
+          "EXISTS(SELECT 1 FROM cadence_state cs WHERE cs.prospect_id = p.id AND cs.status = 'active')",
+        );
+      }
+      if (scopes.includes("replied")) {
+        any.push("EXISTS(SELECT 1 FROM inbox_replies ir WHERE ir.prospect_id = p.id)");
+      }
+      if (scopes.includes("unjudged")) {
+        any.push(
+          "(p.icp_verdict IS NULL AND COALESCE(NULLIF(TRIM(p.source_profile_url), ''), NULLIF(TRIM(p.linkedin_url), '')) IS NOT NULL)",
+        );
+      }
+    }
+    if (any.length === 0) return [];
+
+    const where = [`(${any.join(" OR ")})`];
+    // Something for deepResearchPerson to key on.
+    where.push(
+      "(COALESCE(NULLIF(TRIM(p.source_profile_url), ''), NULLIF(TRIM(p.linkedin_url), '')) IS NOT NULL OR (p.email IS NOT NULL AND TRIM(p.email) != ''))",
+    );
+
+    const rows = this.db
+      .query(
+        `SELECT p.id, p.name, p.company, p.email, p.source, p.source_profile_url, p.linkedin_url,
+                p.dossier_json
+           FROM prospects p
+          WHERE ${where.join(" AND ")}
+          ORDER BY p.id DESC`,
+      )
+      .all() as Array<{
+      id: number;
+      name: string | null;
+      company: string | null;
+      email: string | null;
+      source: string | null;
+      source_profile_url: string | null;
+      linkedin_url: string | null;
+      dossier_json: string | null;
+    }>;
+
+    // The "already researched" filter runs here, not in SQL. It used to be
+    // `dossier_json IS NULL OR TRIM(...) = ''`, which silently emptied the
+    // backlog the moment `research-products` began writing a
+    // `{person, product}` wrapper onto every row: 531 of 684 prospects held a
+    // product half and a null person half, looked researched to that test, and
+    // became permanently unreachable. `hasPersonSignal` asks the question the
+    // caller actually means — is there PERSON research here — and matches the
+    // gate every other consumer of this column already uses.
+    //
+    // `limit` is applied AFTER the filter so it keeps meaning "return N rows to
+    // research", not "consider N rows". The prospects table is small enough
+    // that scanning it whole costs nothing.
+    const eligible = opts.includeResearched
+      ? rows
+      : rows.filter((row) => !hasPersonSignal(row.dossier_json));
+    const limit = opts.limit ?? 100_000;
+    return eligible.length > limit ? eligible.slice(0, limit) : eligible;
+  }
+
   recordOutcome(input: {
     prospectId: number;
     playName?: string;
@@ -1626,6 +2165,16 @@ export class Ledger {
       input.notes ?? null,
     );
     return Number(result.lastInsertRowid);
+  }
+
+  /** Latest outcome timestamp per prospect, bulk-read to acknowledge earlier positive replies. */
+  listLatestOutcomeRecordedAtByProspect(): Map<number, string> {
+    const rows = this.db
+      .query(
+        `SELECT prospect_id, MAX(recorded_at) AS recorded_at FROM deal_outcomes GROUP BY prospect_id`,
+      )
+      .all() as Array<{ prospect_id: number; recorded_at: string }>;
+    return new Map(rows.map((r) => [r.prospect_id, r.recorded_at]));
   }
 
   countOutcomes(
@@ -1660,6 +2209,7 @@ export class Ledger {
     won: number;
     lost: number;
     ghosted: number;
+    won_value_usd: number;
   }> {
     const where: string[] = [];
     const args: unknown[] = [];
@@ -1674,7 +2224,12 @@ export class Ledger {
         SUM(CASE WHEN outcome = 'sql_qualified' THEN 1 ELSE 0 END) AS sqls,
         SUM(CASE WHEN outcome = 'deal_won' THEN 1 ELSE 0 END) AS won,
         SUM(CASE WHEN outcome = 'deal_lost' THEN 1 ELSE 0 END) AS lost,
-        SUM(CASE WHEN outcome = 'ghosted' THEN 1 ELSE 0 END) AS ghosted
+        SUM(CASE WHEN outcome = 'ghosted' THEN 1 ELSE 0 END) AS ghosted,
+        -- The return side. amount_usd has been written since v16 and read by
+        -- nothing; without it the only figure putting dollars over dollars is
+        -- the platform's per-goal RoCS, which divides one winner's cadence cost
+        -- into its own deal and so ignores every prospect that went nowhere.
+        COALESCE(SUM(CASE WHEN outcome = 'deal_won' THEN amount_usd ELSE 0 END), 0) AS won_value_usd
       FROM deal_outcomes
       ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
       GROUP BY play_name
@@ -1697,11 +2252,29 @@ export class Ledger {
     last_event_at: string | null;
   }> {
     const sql = `
-      SELECT p.id, p.name, p.email, p.company, p.linkedin_url, p.phone, MAX(s.created_at) AS last_event_at
+      SELECT p.id, p.name, p.email, p.company, p.linkedin_url, p.phone,
+             MAX(s.created_at) AS last_sequence_at,
+             MAX(CASE WHEN c.status = 'stopped' AND c.stop_reason IN ('bad_timing', 'other')
+                      THEN c.stopped_at END) AS last_revivable_stop_at,
+             MAX(
+               COALESCE(MAX(s.created_at), ''),
+               COALESCE(MAX(CASE WHEN c.status = 'stopped' AND c.stop_reason IN ('bad_timing', 'other')
+                                 THEN c.stopped_at END), ''),
+               COALESCE((SELECT MAX(ir.received_at) FROM inbox_replies ir
+                         WHERE ir.prospect_id = p.id AND coalesce(ir.kind,'human') = 'human'), ''),
+               COALESCE((SELECT MAX(ce.occurred_at) FROM channel_events ce
+                         WHERE ce.prospect_id = p.id AND ce.event_type = 'reply'), '')
+             ) AS last_event_at
       FROM prospects p
       LEFT JOIN sequence_events s ON s.prospect_id = p.id
+      LEFT JOIN cadence_state c ON c.prospect_id = p.id
+      WHERE NOT EXISTS (
+        SELECT 1 FROM cadence_state blocked
+        WHERE blocked.prospect_id = p.id AND blocked.status = 'stopped'
+          AND blocked.stop_reason IN ('not_a_fit', 'do_not_contact')
+      )
       GROUP BY p.id
-      HAVING last_event_at IS NOT NULL
+      HAVING last_event_at != ''
         AND julianday('now') - julianday(last_event_at) BETWEEN ? AND ?
       ORDER BY last_event_at ASC
       LIMIT ?
@@ -1893,11 +2466,7 @@ export class Ledger {
       const cad = this.getCadence(input.prospectId, input.playName);
       const newlyReplied = cad?.status === "active" || cad?.status === "paused";
       if (newlyReplied) {
-        this.setCadenceStatus({
-          prospectId: input.prospectId,
-          playName: input.playName,
-          status: "replied",
-        });
+        this.markCadenceReplied(input.prospectId, input.playName);
       }
       const eventRecorded = this.markLatestStepReplied({
         prospectId: input.prospectId,
@@ -1928,7 +2497,7 @@ export class Ledger {
       for (const cad of this.listCadencesForProspect(prospectId)) {
         const live = cad.status === "active" || cad.status === "paused";
         if (live) {
-          this.setCadenceStatus({ prospectId, playName: cad.play_name, status: "replied" });
+          this.markCadenceReplied(prospectId, cad.play_name);
         }
         out.set(cad.play_name, { newlyReplied: live, eventRecorded: false });
       }
@@ -1943,12 +2512,26 @@ export class Ledger {
           eventRecorded,
         });
       }
+      this.expireBreakupReviveQueue(prospectId, "prospect replied");
       return [...out].map(([playName, r]) => ({
         playName,
         newlyReplied: r.newlyReplied,
         eventRecorded: r.eventRecorded,
       }));
     })();
+  }
+
+  /** Stop future work on one live cadence without hiding a send already handed to a provider. */
+  private markCadenceReplied(prospectId: number, playName: string): void {
+    this.db
+      .prepare(
+        `UPDATE cadence_state
+         SET status = 'replied', next_due_at = NULL,
+             next_step_draft_json = NULL, next_step_drafted_at = NULL,
+             last_send_error = NULL, last_send_error_at = NULL
+         WHERE prospect_id = ? AND play_name = ? AND status IN ('active','paused')`,
+      )
+      .run(prospectId, playName);
   }
 
   /**
@@ -2160,6 +2743,54 @@ export class Ledger {
     }>;
   }
 
+  /**
+   * How many receipts fall in the window.
+   *
+   * Callers wanting a count must not list the rows and measure the array: the
+   * Today page did exactly that behind a `limit: 1000`, so any install busy
+   * enough to exceed it reported precisely 1000 calls a week, for ever, with
+   * nothing in the response to say it had been truncated.
+   */
+  countReceipts(opts: { sinceIso?: string; playName?: string } = {}): number {
+    const where: string[] = [];
+    const args: unknown[] = [];
+    if (opts.playName) {
+      where.push("play_name = ?");
+      args.push(opts.playName);
+    }
+    if (opts.sinceIso) {
+      where.push("created_at >= ?");
+      args.push(opts.sinceIso);
+    }
+    const sql = `SELECT COUNT(*) AS n FROM receipts${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`;
+    return (this.db.query(sql).get(...(args as never[])) as { n: number } | null)?.n ?? 0;
+  }
+
+  /**
+   * Daily signed spend per play, for the trend sparklines on Measure.
+   *
+   * Bucketed in SQL rather than by listing receipts and grouping in the
+   * browser. The page used to pull 500 rows and bucket them client-side, which
+   * silently became a five-hour window once an install carried tens of
+   * thousands of receipts; and `new Date("YYYY-MM-DD HH:MM:SS")` parses as
+   * local time, so the buckets drifted by the viewer's UTC offset. `date()`
+   * here has neither problem.
+   */
+  spendSeriesByPlay(opts: { days: number }): Array<{
+    play_name: string;
+    day: string;
+    total_usd: number;
+  }> {
+    const sql = `
+      SELECT play_name, date(created_at) AS day, COALESCE(SUM(cost_usd), 0) AS total_usd
+      FROM receipts
+      WHERE cost_usd IS NOT NULL AND date(created_at) >= date('now', ?)
+      GROUP BY play_name, day
+      ORDER BY day ASC
+    `;
+    return this.db.query(sql).all(`-${Math.max(1, Math.floor(opts.days))} days` as never) as never;
+  }
+
   totalSpendUsd(opts: { sinceIso?: string; playName?: string } = {}): number {
     const where: string[] = ["cost_usd IS NOT NULL"];
     const args: unknown[] = [];
@@ -2175,7 +2806,131 @@ export class Ledger {
     return (this.db.query(sql).get(...(args as never[])) as { total: number } | null)?.total ?? 0;
   }
 
+  // ── spend_reservations (issue #481: install-wide daily USD spend ceiling) ──
+
+  /**
+   * Hold `amountUsd` against the daily ceiling for the duration of an
+   * automated call. Returns the reservation id — callers MUST release it
+   * (on success or failure) via `releaseSpendReservation`, else it counts
+   * against the ceiling until `sweepStaleSpendReservations` reclaims it.
+   */
+  reserveSpend(amountUsd: number): number {
+    const result = this.db
+      .prepare(`INSERT INTO spend_reservations(amount_usd) VALUES(?)`)
+      .run(amountUsd);
+    return Number(result.lastInsertRowid);
+  }
+
+  /** Release a reservation once the caller's actual spend has posted (or the call was skipped/failed). */
+  releaseSpendReservation(id: number): void {
+    this.db.prepare(`DELETE FROM spend_reservations WHERE id = ?`).run(id);
+  }
+
+  /** Sum of currently-held reservations since `sinceIso` (the local-midnight boundary). */
+  reservedSpendUsd(sinceIso: string): number {
+    const row = this.db
+      .query(
+        `SELECT COALESCE(SUM(amount_usd), 0) AS total FROM spend_reservations WHERE created_at >= ?`,
+      )
+      .get(sinceIso) as { total: number } | null;
+    return row?.total ?? 0;
+  }
+
+  /**
+   * Atomic check-then-reserve against the daily ceiling (issue #481
+   * round-1 review finding). The read (posted spend + held reservations
+   * since `sinceIso`) and the write (INSERT into `spend_reservations`)
+   * happen inside ONE transaction on this connection — the same
+   * `BEGIN IMMEDIATE` pattern `dequeueApproved` uses to close its own
+   * cross-process claim race. IMMEDIATE takes SQLite's RESERVED write lock
+   * at the START of the transaction (not the default DEFERRED, which only
+   * locks on the first write), so in WAL mode two separate OS processes —
+   * e.g. a `find watch --once` cron run and the server's in-process
+   * scheduler firing the same tick — cannot both read the pre-reservation
+   * total and both pass the check before either commits: the second
+   * caller's transaction blocks until the first one's reservation is
+   * already reflected in the sum it reads. Returns the new reservation id
+   * when granted, or null when posted+reserved+`amountUsd` would EXCEED
+   * `ceilingUsd`. Landing exactly on the ceiling is allowed: the ceiling is
+   * "spend up to this", and a finder whose worst-case estimate equals the
+   * ceiling (`config spend-ceiling 5` against a `maxCostUsd: 5` finder) must
+   * still be able to fire once — with `>=` it never could, reporting
+   * "$0.00/$5.00 spent today" while refusing forever (#488).
+   */
+  reserveSpendIfUnderCeiling(opts: {
+    sinceIso: string;
+    ceilingUsd: number;
+    amountUsd: number;
+  }): number | null {
+    const txn = this.db.transaction((): number | null => {
+      const effectiveUsd =
+        this.totalSpendUsd({ sinceIso: opts.sinceIso }) + this.reservedSpendUsd(opts.sinceIso);
+      // Compare in integer cents: receipts are REALs and three $0.10 calls
+      // sum to 0.30000000000000004, which would read as over a $0.30 ceiling.
+      if (cents(effectiveUsd) + cents(opts.amountUsd) > cents(opts.ceilingUsd)) return null;
+      return this.reserveSpend(opts.amountUsd);
+    });
+    return txn.immediate();
+  }
+
+  /**
+   * Sweep reservations older than `maxAgeMs` — a crashed process (kill -9
+   * between reserve and release) must not hold spend against the ceiling for
+   * the rest of the day. Returns the number of rows swept.
+   */
+  sweepStaleSpendReservations(maxAgeMs: number, now = new Date()): number {
+    const cutoffIso = new Date(now.getTime() - maxAgeMs)
+      .toISOString()
+      .slice(0, 19)
+      .replace("T", " ");
+    const result = this.db
+      .prepare(`DELETE FROM spend_reservations WHERE created_at < ?`)
+      .run(cutoffIso);
+    return Number(result.changes);
+  }
+
   // ── target_queue ────────────────────────────────────────────────────────────
+
+  /** Recent reviewed rows for few-shot ICP classification. */
+  recentIcpDecisions(limit = 20): IcpDecisionExample[] {
+    const rows = this.db
+      .query(
+        `SELECT payload_json, status, notes
+         FROM target_queue
+         WHERE ${humanDecisionWhereSql()}
+           AND play_name IN (
+             'show-hn', 'post-funding', 'accelerator-batch', 'job-change',
+             'hiring-signal', 'podcast-guest', 'github-topics', 'github-stars',
+             'competitor-switch', 'stack-consolidation', 'repo-interest', 'luma-events'
+           )
+           AND json_valid(payload_json)
+         ORDER BY reviewed_at DESC, id DESC
+         LIMIT ?`,
+      )
+      .all(Math.max(1, Math.floor(limit))) as Array<{
+      payload_json: string;
+      status: "approved" | "rejected" | "sent";
+      notes: string | null;
+    }>;
+
+    return rows.flatMap((row) => {
+      try {
+        const payload = JSON.parse(row.payload_json) as unknown;
+        return [
+          {
+            // Queue payloads grow as a prospect is enriched and can contain
+            // email, phone and social-profile fields. Few-shot topic
+            // classification only needs the original public source context.
+            candidate: icpExampleCandidate(payload),
+            decision: row.status !== "rejected",
+            reason: row.notes,
+          },
+        ];
+      } catch {
+        return [];
+      }
+    });
+  }
 
   /**
    * Insert a row into target_queue. Returns the new id, or null if a row with
@@ -2193,23 +2948,44 @@ export class Ledger {
      * founder can see what was filtered out and override if needed.
      */
     initialStatus?: QueueStatus;
+    /**
+     * Shadow-mode priority artifact, persisted verbatim. Omit/null for
+     * producers that can't score (manual rows, legacy callers, auto-drops).
+     */
+    priority?: ProspectPriority | null;
   }): number | null {
     try {
       const status = input.initialStatus ?? "pending";
       const reviewedAt = status === "pending" ? null : new Date().toISOString();
       const result = this.db
         .prepare(
-          `INSERT INTO target_queue(play_name, payload_json, dedupe_key, source, status, reviewed_at, notes)
-           VALUES(?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO target_queue(play_name, payload_json, dedupe_key, source, status, reviewed_at, notes, priority_json, decision, decided_at, decided_by)
+           VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           input.playName,
-          JSON.stringify(input.payload),
+          JSON.stringify(
+            input.payload && typeof input.payload === "object"
+              ? {
+                  ...input.payload,
+                  ...(extractBusinessAddress(input.payload)
+                    ? { businessAddress: extractBusinessAddress(input.payload) }
+                    : {}),
+                }
+              : input.payload,
+          ),
           input.dedupeKey,
           input.source,
           status,
           reviewedAt,
           input.notes ?? null,
+          input.priority ? JSON.stringify(input.priority) : null,
+          // An insert-time rejection is a gate's verdict, never a human's —
+          // structural provenance replaces the `auto:` notes-sniffing (the
+          // notes convention stays for humans and pre-v26 fallback).
+          status === "rejected" ? "auto_reject" : null,
+          status === "rejected" ? reviewedAt : null,
+          status === "rejected" ? "machine" : null,
         );
       return Number(result.lastInsertRowid);
     } catch (err) {
@@ -2420,36 +3196,306 @@ export class Ledger {
     return (this.db.query("SELECT * FROM target_queue WHERE id = ?").get(id) as QueueRow) ?? null;
   }
 
-  setQueueStatus(input: { id: number; status: QueueStatus; notes?: string }): void {
+  /**
+   * FROM + WHERE shared by `searchQueue` (rows and total) and
+   * `searchQueueStatusCounts`. The prospect is resolved with a scalar
+   * subquery (`LIMIT 1`) rather than an OR-join so one queue row can never
+   * fan out into two — two prospects sharing an email would otherwise
+   * inflate `total` and shift every OFFSET. Filters that only need the queue
+   * row (status, play, decided_by) go inside the derived table so the
+   * existing status/play indexes still prune before the prospect lookup;
+   * the free-text terms need the joined prospect and stay outside.
+   */
+  private queueSearchParts(
+    opts: Pick<QueueSearchOpts, "q" | "statuses" | "playName" | "decidedBy">,
+    withStatus: boolean,
+  ): { sql: string; args: unknown[] } {
+    const inner: string[] = [];
+    const outer: string[] = [];
+    const args: unknown[] = [];
+    // De-duplicated: `?status=sent,sent,sent,sent,sent` is one status, not
+    // "all five" — the length guard below must see distinct values.
+    const statuses = [...new Set((opts.statuses ?? []).filter((s) => QUEUE_STATUSES.includes(s)))];
+    if (withStatus && statuses.length > 0 && statuses.length < QUEUE_STATUSES.length) {
+      inner.push(`q.status IN (${statuses.map(() => "?").join(",")})`);
+      args.push(...statuses);
+    }
+    if (opts.playName) {
+      inner.push("q.play_name = ?");
+      args.push(opts.playName);
+    }
+    switch (opts.decidedBy) {
+      case "human":
+        inner.push("q.decided_by IN ('human', 'human_bulk')");
+        break;
+      case "machine":
+        inner.push("q.decided_by = 'machine'");
+        break;
+      case "none":
+        inner.push("q.decided_by IS NULL");
+        break;
+      default:
+        break;
+    }
+    const terms = (opts.q ?? "")
+      .split(/\s+/)
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
+    for (const term of terms) {
+      const patterns = likePatternsFor(term);
+      outer.push(
+        `(${patterns.map(() => `${QUEUE_SEARCH_HAYSTACK} LIKE ? ESCAPE '\\'`).join(" OR ")})`,
+      );
+      args.push(...patterns);
+    }
+    const sql = `
+      FROM (
+        SELECT q.*, COALESCE(q.prospect_id, (
+            SELECT p2.id FROM prospects p2
+             WHERE p2.email = LOWER(TRIM(COALESCE(json_extract(q.payload_json, '$.email'),
+                                                  json_extract(q.payload_json, '$.founderEmail'))))
+             ORDER BY p2.id LIMIT 1)) AS joined_prospect_id
+          FROM target_queue q
+          ${inner.length ? `WHERE ${inner.join(" AND ")}` : ""}) b
+      LEFT JOIN prospects p ON p.id = b.joined_prospect_id
+      ${outer.length ? `WHERE ${outer.join(" AND ")}` : ""}`;
+    return { sql, args };
+  }
+
+  /**
+   * The /prospects browse view: every queue row, any status, searched, sorted
+   * and paged. `q` is a deliberate full scan (LIKE over json_extract can use
+   * no index) — measured at ~50 ms on 9k rows. Past ~100k rows an FTS5
+   * external-content table is the upgrade path; nothing here would change
+   * shape. Without `q` the derived table is pruned by the status/play
+   * indexes like `listQueue`.
+   */
+  searchQueue(opts: QueueSearchOpts): { rows: QueueSearchRow[]; total: number | null } {
+    const limit = Math.max(1, Math.min(200, Math.floor(opts.limit)));
+    const offset = Math.max(0, Math.floor(opts.offset));
+    const dir = opts.dir === "asc" ? "ASC" : "DESC";
+    let orderSql: string;
+    switch (opts.sort) {
+      case "decided_at":
+        // Undecided rows sink to the bottom in both directions.
+        orderSql = `(b.decided_at IS NULL) ASC, b.decided_at ${dir}, b.id ${dir}`;
+        break;
+      case "name":
+        // Named rows first; rows that only carry a source URL (pre-enrichment
+        // rejects) sort after them by that URL, then by dedupe key.
+        orderSql = `(${QUEUE_SEARCH_NAME_EXPR} IS NULL) ASC, LOWER(COALESCE(${QUEUE_SEARCH_NAME_EXPR}, json_extract(b.payload_json, '$.repoUrl'), json_extract(b.payload_json, '$.postUrl'), b.dedupe_key)) ${dir}, b.id ${dir}`;
+        break;
+      default:
+        orderSql = `b.found_at ${dir}, b.id ${dir}`;
+        break;
+    }
+    const { sql, args } = this.queueSearchParts(opts, true);
+    const rows = this.db
+      .query(
+        `SELECT b.*, p.id AS p_id, p.name AS p_name, p.email AS p_email, p.company AS p_company,
+                p.title AS p_title,
+                p.icp_verdict AS p_icp_verdict, p.icp_verdict_reason AS p_icp_verdict_reason,
+                (p.dossier_json IS NOT NULL AND TRIM(p.dossier_json) != '') AS p_has_dossier,
+                (b.prospect_id IS NULL AND p.id IS NOT NULL) AS p_linked_by_email
+         ${sql}
+         ORDER BY ${orderSql}
+         LIMIT ? OFFSET ?`,
+      )
+      .all(...(args as never[]), limit, offset) as QueueSearchRow[];
+    if (opts.withTotal === false) return { rows, total: null };
+    const total = (
+      this.db.query(`SELECT COUNT(*) AS n ${sql}`).get(...(args as never[])) as {
+        n: number;
+      }
+    ).n;
+    return { rows, total };
+  }
+
+  /**
+   * Per-status counts for the /prospects filter chips under the current
+   * search/play/decided filters — the status filter itself is left out so a
+   * chip can show how many rows it would reveal.
+   */
+  searchQueueStatusCounts(
+    opts: Pick<QueueSearchOpts, "q" | "playName" | "decidedBy">,
+  ): Record<QueueStatus, number> {
+    const { sql, args } = this.queueSearchParts(opts, false);
+    const rows = this.db
+      .query(`SELECT b.status AS status, COUNT(*) AS n ${sql} GROUP BY b.status`)
+      .all(...(args as never[])) as Array<{ status: QueueStatus; n: number }>;
+    const out: Record<QueueStatus, number> = {
+      pending: 0,
+      approved: 0,
+      rejected: 0,
+      sent: 0,
+      expired: 0,
+    };
+    for (const r of rows) if (r.status in out) out[r.status] = r.n;
+    return out;
+  }
+
+  /** Every play that has ever enqueued a row, for the /prospects play filter. */
+  listQueuePlayNames(): string[] {
+    return (
+      this.db
+        .query("SELECT DISTINCT play_name FROM target_queue ORDER BY play_name ASC")
+        .all() as Array<{ play_name: string }>
+    ).map((r) => r.play_name);
+  }
+
+  /**
+   * Every recorded step for a prospect across all plays — including bounced,
+   * failed and unsubscribed ones, which `listSequenceEventsForProspect`
+   * (the conversation view) filters out. `queued` rows are reservations,
+   * not history. Oldest first.
+   */
+  listAllSequenceEventsForProspect(prospectId: number): SequenceEventRecord[] {
+    return this.db
+      .query(
+        `SELECT * FROM sequence_events
+         WHERE prospect_id = ? AND status != 'queued'
+         ORDER BY created_at ASC, id ASC`,
+      )
+      .all(prospectId) as SequenceEventRecord[];
+  }
+
+  /** Inbound engagement on non-email channels (LinkedIn replies) for one prospect, oldest first. */
+  listChannelEventsForProspect(prospectId: number): ChannelEventRecord[] {
+    return this.db
+      .query(`SELECT * FROM channel_events WHERE prospect_id = ? ORDER BY occurred_at ASC, id ASC`)
+      .all(prospectId) as ChannelEventRecord[];
+  }
+
+  /** Recorded deal outcomes for one prospect, oldest first. */
+  listDealOutcomesForProspect(prospectId: number): DealOutcomeRecord[] {
+    return this.db
+      .query(`SELECT * FROM deal_outcomes WHERE prospect_id = ? ORDER BY recorded_at ASC, id ASC`)
+      .all(prospectId) as DealOutcomeRecord[];
+  }
+
+  /** Remove an unreviewed queue reservation, leaving reviewed rows untouched. */
+  removePendingQueueTarget(id: number): boolean {
+    const result = this.db
+      .prepare("DELETE FROM target_queue WHERE id = ? AND status = 'pending'")
+      .run(id);
+    return result.changes > 0;
+  }
+
+  removeExpiredQueueTarget(id: number): boolean {
+    const result = this.db
+      .prepare("DELETE FROM target_queue WHERE id = ? AND status = 'expired'")
+      .run(id);
+    return result.changes > 0;
+  }
+
+  setQueueStatus(input: {
+    id: number;
+    status: QueueStatus;
+    notes?: string;
+    /**
+     * Who made this transition. Defaults are per-status, chosen so every
+     * existing unannotated caller stays correctly classified:
+     * - approved → "human": approving IS the review act; no machine path
+     *   approves single rows today (bulk goes through approveAllPending).
+     * - rejected/sent → "machine": auto-reject gates and drain sends call
+     *   this unannotated, and an unannotated caller must never mint a human
+     *   REJECTION label (a mislabeled negative poisons any future fit) —
+     *   the per-row UI routes pass "human" explicitly.
+     */
+    decidedBy?: "human" | "machine";
+  }): void {
     const now = new Date().toISOString();
+    const decidedBy = input.decidedBy ?? (input.status === "approved" ? "human" : "machine");
     // Every status transition clears `send_started_at` — a deliberate status
     // change means the previous "sending" attempt (if any) is settled. Terminal
     // states (sent/rejected/expired) clear naturally. Approved → approved
     // doesn't need to preserve a marker (caller re-claims on the next send).
     if (input.status === "sent") {
+      // COALESCE on the decision columns: a drain/run send must never
+      // overwrite the human approve that put the row here; a send on a
+      // never-decided row records an honest machine disposition.
       this.db
         .prepare(
-          `UPDATE target_queue SET status = ?, sent_at = ?, reviewed_at = COALESCE(reviewed_at, ?), send_started_at = NULL ${input.notes ? ", notes = ?" : ""} WHERE id = ?`,
+          `UPDATE target_queue SET status = ?, sent_at = ?, reviewed_at = COALESCE(reviewed_at, ?), decision = COALESCE(decision, 'approve'), decided_at = COALESCE(decided_at, ?), decided_by = COALESCE(decided_by, ?), send_started_at = NULL ${input.notes ? ", notes = ?" : ""} WHERE id = ?`,
         )
         .run(
           ...(input.notes
-            ? [input.status, now, now, input.notes, input.id]
-            : [input.status, now, now, input.id]),
+            ? [input.status, now, now, now, decidedBy, input.notes, input.id]
+            : [input.status, now, now, now, decidedBy, input.id]),
         );
-    } else if (input.status === "approved" || input.status === "rejected") {
+    } else if (input.status === "approved" || input.status === "pending") {
+      // The ledger, not the routes, owns "never re-approve a sent row": drain
+      // picks up every `status = 'approved'` row, so moving a sent row back to
+      // pending/approved would re-email the person. queue.ts and
+      // add-prospect.ts keep their own pre-checks (they produce the
+      // user-facing 400/409 messages), but this is the guard that can't be
+      // forgotten by a future caller (#561).
+      //
+      // The guard is baked into the UPDATE's WHERE clause instead of a
+      // separate SELECT-then-UPDATE: a single statement is its own atomic
+      // check-and-set, so two processes racing this call in WAL mode can't
+      // both pass a "not sent yet" check before either holds the write lock
+      // — the same class of race dequeueApproved's BEGIN IMMEDIATE guards
+      // against a few lines below (~3449), just closed here by folding the
+      // check into one statement instead of wrapping a transaction.
+      const decision = input.status === "approved" ? "approve" : null;
+      const result =
+        input.status === "approved"
+          ? this.db
+              .prepare(
+                `UPDATE target_queue SET status = ?, reviewed_at = ?, decision = ?, decided_at = ?, decided_by = ?, send_started_at = NULL ${input.notes ? ", notes = ?" : ""} WHERE id = ? AND status != 'sent' AND sent_at IS NULL`,
+              )
+              .run(
+                ...(input.notes
+                  ? [input.status, now, decision, now, decidedBy, input.notes, input.id]
+                  : [input.status, now, decision, now, decidedBy, input.id]),
+              )
+          : this.db
+              .prepare(
+                `UPDATE target_queue SET status = ?, reviewed_at = NULL, send_started_at = NULL ${input.notes !== undefined ? ", notes = ?" : ""} WHERE id = ? AND status != 'sent' AND sent_at IS NULL`,
+              )
+              .run(
+                ...(input.notes !== undefined
+                  ? [input.status, input.notes, input.id]
+                  : [input.status, input.id]),
+              );
+      this.throwIfSentRowGuardBlocked(result.changes, input.id, input.status);
+    } else if (input.status === "rejected") {
+      // Always overwrites: the latest decision wins on a re-decide. Rejecting
+      // a sent row is allowed — it's a label, not a send, so no sent-row
+      // guard here.
+      const decision = decidedBy === "human" ? "reject" : "auto_reject";
       this.db
         .prepare(
-          `UPDATE target_queue SET status = ?, reviewed_at = ?, send_started_at = NULL ${input.notes ? ", notes = ?" : ""} WHERE id = ?`,
+          `UPDATE target_queue SET status = ?, reviewed_at = ?, decision = ?, decided_at = ?, decided_by = ?, send_started_at = NULL ${input.notes ? ", notes = ?" : ""} WHERE id = ?`,
         )
         .run(
           ...(input.notes
-            ? [input.status, now, input.notes, input.id]
-            : [input.status, now, input.id]),
+            ? [input.status, now, decision, now, decidedBy, input.notes, input.id]
+            : [input.status, now, decision, now, decidedBy, input.id]),
         );
     } else {
       this.db
         .prepare(`UPDATE target_queue SET status = ?, send_started_at = NULL WHERE id = ?`)
         .run(input.status, input.id);
+    }
+  }
+
+  /**
+   * Fired after a guarded approved/pending UPDATE affects 0 rows: the row
+   * may simply not exist (fine, matches the pre-#561 no-op behavior for an
+   * unknown id) or it may have been excluded by the sent-row guard in the
+   * WHERE clause. Only the latter throws.
+   */
+  private throwIfSentRowGuardBlocked(changes: number, id: number, status: QueueStatus): void {
+    if (changes > 0) return;
+    const current = this.db
+      .query("SELECT status, sent_at FROM target_queue WHERE id = ?")
+      .get(id) as { status: QueueStatus; sent_at: string | null } | undefined;
+    if (current && (current.status === "sent" || current.sent_at != null)) {
+      throw new Error(
+        `setQueueStatus: row #${id} was already sent — refusing to move it to '${status}' (would re-send on the next drain)`,
+      );
     }
   }
 
@@ -2465,14 +3511,22 @@ export class Ledger {
     startedAtIso: string;
     staleCutoffIso?: string;
   }): boolean {
-    return this.claimMarker({
-      table: "target_queue",
-      pkeyWhere: "id = ?",
-      column: "send_started_at",
-      pkeyValues: [input.id],
-      startedAtIso: input.startedAtIso,
-      ...(input.staleCutoffIso ? { staleCutoffIso: input.staleCutoffIso } : {}),
-    });
+    const markerWhere = input.staleCutoffIso
+      ? "(send_started_at IS NULL OR send_started_at < ?)"
+      : "send_started_at IS NULL";
+    const args: Array<string | number> = [input.startedAtIso, input.id];
+    if (input.staleCutoffIso) args.push(input.staleCutoffIso);
+    const result = this.db
+      .prepare(
+        // sent_at IS NULL is belt-and-braces alongside status = 'approved' —
+        // the same guard setQueueStatus and dequeueApproved apply, closed
+        // here too so a row desynced back to 'approved' with a stale
+        // sent_at can't be claimed and re-sent through this path (#561).
+        `UPDATE target_queue SET send_started_at = ?
+         WHERE id = ? AND status = 'approved' AND sent_at IS NULL AND ${markerWhere}`,
+      )
+      .run(...args);
+    return result.changes > 0;
   }
 
   clearQueueSendingMarker(id: number): void {
@@ -2526,17 +3580,24 @@ export class Ledger {
   }
 
   approveAllPending(opts: { playName?: string } = {}): number {
-    const where: string[] = ["status = 'pending'"];
+    // `sent_at IS NULL` is belt-and-braces alongside `status = 'pending'` —
+    // a pending row should never carry a sent_at, but the invariant lives
+    // here, not in the caller (#561).
+    const where: string[] = ["status = 'pending'", "sent_at IS NULL"];
     const args: unknown[] = [];
     if (opts.playName) {
       where.push("play_name = ?");
       args.push(opts.playName);
     }
+    // decided_by='human_bulk': a human sanctioned the batch, but no per-row
+    // judgment happened — evaluation code can include or exclude these
+    // explicitly instead of reverse-engineering shared timestamps.
+    const now = new Date().toISOString();
     const result = this.db
       .prepare(
-        `UPDATE target_queue SET status = 'approved', reviewed_at = ? WHERE ${where.join(" AND ")}`,
+        `UPDATE target_queue SET status = 'approved', reviewed_at = ?, decision = 'approve', decided_at = ?, decided_by = 'human_bulk' WHERE ${where.join(" AND ")}`,
       )
-      .run(...([new Date().toISOString(), ...args] as never[]));
+      .run(...([now, now, ...args] as never[]));
     return Number(result.changes);
   }
 
@@ -2554,7 +3615,7 @@ export class Ledger {
       const rows = this.db
         .query(
           `SELECT * FROM target_queue
-           WHERE play_name = ? AND status = 'approved'
+           WHERE play_name = ? AND status = 'approved' AND sent_at IS NULL
              AND (drain_claimed_at IS NULL OR drain_claimed_at < ?)
            ORDER BY found_at ASC
            LIMIT ?`,
@@ -2619,20 +3680,53 @@ export class Ledger {
     return out;
   }
 
+  /** Reviewed queue outcomes for one finder inside a trailing time window. */
+  finderApprovalStats(input: { finder: string; sinceIso: string }): {
+    approved: number;
+    reviewed: number;
+    rate: number | null;
+  } {
+    // post-funding-auto predates the registry name and writes find:post-funding.
+    const sourceName = input.finder === "post-funding-auto" ? "post-funding" : input.finder;
+    const source = `find:${sourceName}`;
+    const row = this.db
+      .query(
+        `SELECT
+           SUM(CASE WHEN status IN ('approved','sent') THEN 1 ELSE 0 END) AS approved,
+           COUNT(*) AS reviewed
+         FROM target_queue
+         WHERE (source = ? OR source LIKE ?)
+           AND ${humanDecisionWhereSql()}
+           AND reviewed_at >= ?`,
+      )
+      .get(source, `${source}:%`, input.sinceIso) as {
+      approved: number | null;
+      reviewed: number;
+    };
+    const approved = row.approved ?? 0;
+    const reviewed = row.reviewed ?? 0;
+    return { approved, reviewed, rate: reviewed > 0 ? approved / reviewed : null };
+  }
+
   // ── runs (per-/run-page dispatch records) ──────────────────────────────────
   // One row per /run Execute click; the SSE endpoint persists events/counters,
   // the UI rebuilds progress from the row, and the cold-boot sweep flips
   // stranded `running` rows to `interrupted`.
 
-  createRun(input: { playName: string; dryRun: boolean; targets: unknown[] }): {
+  createRun(input: {
+    playName: string;
+    dryRun: boolean;
+    targets: unknown[];
+    dedupeKeys?: Array<string | null>;
+  }): {
     runId: number;
     startedAt: string;
   } {
     const startedAt = new Date().toISOString();
     const result = this.db
       .prepare(
-        `INSERT INTO runs(play_name, dry_run, status, started_at, target_count, targets_json)
-         VALUES(?, ?, 'running', ?, ?, ?)`,
+        `INSERT INTO runs(play_name, dry_run, status, started_at, target_count, targets_json, dedupe_keys_json)
+         VALUES(?, ?, 'running', ?, ?, ?, ?)`,
       )
       .run(
         input.playName,
@@ -2640,6 +3734,7 @@ export class Ledger {
         startedAt,
         input.targets.length,
         JSON.stringify(input.targets),
+        JSON.stringify(input.dedupeKeys ?? []),
       );
     return { runId: Number(result.lastInsertRowid), startedAt };
   }
@@ -2691,6 +3786,11 @@ export class Ledger {
       .run(JSON.stringify(events), drafted, sent, errors, input.runId);
   }
 
+  /**
+   * Terminal write for a run that finished on its own. Cancellation goes
+   * through `cancelRun` instead — it is the only writer of 'cancelled', so a
+   * cancelled row can never exist without the reason that explains it.
+   */
   markRunComplete(input: {
     runId: number;
     status: "done" | "interrupted";
@@ -2706,11 +3806,58 @@ export class Ledger {
       .run(input.status, completedAt, JSON.stringify(input.sentEmails ?? []), input.runId);
   }
 
+  /**
+   * Overwrite the run's record of which prospects it actually emailed, in any
+   * status. Deliberately not CASed on 'running': a cancelled run's last sends
+   * land after the row went terminal (the play's workers finish one by one),
+   * and the /cadences?sinceRun deep-link needs them.
+   */
+  setRunSentEmails(input: { runId: number; sentEmails: string[] }): void {
+    this.db
+      .prepare(`UPDATE runs SET prospect_emails_json = ? WHERE id = ?`)
+      .run(JSON.stringify(input.sentEmails), input.runId);
+  }
+
+  /**
+   * Flip a still-'running' row to the terminal 'cancelled' state with the
+   * reason it ended. CAS on `status = 'running'` so this is a no-op — never an
+   * error — against a run that already finished, and so it races safely with
+   * the SSE handler's own completion write. `sentEmails` records what did go
+   * out before the abort, keeping the /cadences?sinceRun deep-link honest.
+   *
+   * Returns whether this call was the one that cancelled it, plus the row's
+   * status afterwards (null when there is no such run).
+   */
+  cancelRun(input: { runId: number; reason: string; sentEmails?: string[] }): {
+    cancelled: boolean;
+    status: "running" | "done" | "interrupted" | "cancelled" | null;
+  } {
+    // Sent-email bookkeeping is deliberately outside the CAS below: the cancel
+    // route may have flipped the row already by the time the SSE handler
+    // unwinds, and the emails it collected still belong on the record. Only
+    // that handler passes `sentEmails`, so the two callers can't clobber
+    // each other whichever order they land in.
+    if (input.sentEmails)
+      this.setRunSentEmails({ runId: input.runId, sentEmails: input.sentEmails });
+    const completedAt = new Date().toISOString();
+    const result = this.db
+      .prepare(
+        `UPDATE runs
+         SET status = 'cancelled', completed_at = ?, cancel_reason = ?
+         WHERE id = ? AND status = 'running'`,
+      )
+      .run(completedAt, input.reason, input.runId);
+    const row = this.db.query(`SELECT status FROM runs WHERE id = ?`).get(input.runId) as {
+      status: "running" | "done" | "interrupted" | "cancelled";
+    } | null;
+    return { cancelled: result.changes > 0, status: row?.status ?? null };
+  }
+
   getRun(runId: number): {
     id: number;
     playName: string;
     dryRun: boolean;
-    status: "running" | "done" | "interrupted";
+    status: "running" | "done" | "interrupted" | "cancelled";
     startedAt: string;
     completedAt: string | null;
     targetCount: number;
@@ -2718,14 +3865,16 @@ export class Ledger {
     sentCount: number;
     errorCount: number;
     targets: unknown[];
+    dedupeKeys: Array<string | null>;
     events: unknown[];
     prospectEmails: string[];
+    cancelReason: string | null;
   } | null {
     const row = this.db.query(`SELECT * FROM runs WHERE id = ?`).get(runId) as {
       id: number;
       play_name: string;
       dry_run: number;
-      status: "running" | "done" | "interrupted";
+      status: "running" | "done" | "interrupted" | "cancelled";
       started_at: string;
       completed_at: string | null;
       target_count: number;
@@ -2733,8 +3882,10 @@ export class Ledger {
       sent_count: number;
       error_count: number;
       targets_json: string;
+      dedupe_keys_json: string;
       events_json: string;
       prospect_emails_json: string;
+      cancel_reason: string | null;
     } | null;
     if (!row) return null;
     return {
@@ -2749,8 +3900,10 @@ export class Ledger {
       sentCount: row.sent_count,
       errorCount: row.error_count,
       targets: safeParseJsonArray(row.targets_json),
+      dedupeKeys: safeParseJsonArray(row.dedupe_keys_json) as Array<string | null>,
       events: safeParseJsonArray(row.events_json),
       prospectEmails: safeParseJsonArray(row.prospect_emails_json) as string[],
+      cancelReason: row.cancel_reason ?? null,
     };
   }
 
@@ -2761,10 +3914,12 @@ export class Ledger {
    * newest started_at first; capped at `limit` rows (default 5). When
    * `status` is set, filters via the existing `idx_runs_status` index.
    */
-  listRuns(opts: { status?: "running" | "done" | "interrupted"; limit?: number } = {}): Array<{
+  listRuns(
+    opts: { status?: "running" | "done" | "interrupted" | "cancelled"; limit?: number } = {},
+  ): Array<{
     id: number;
     playName: string;
-    status: "running" | "done" | "interrupted";
+    status: "running" | "done" | "interrupted" | "cancelled";
     startedAt: string;
     completedAt: string | null;
     targetCount: number;
@@ -2787,7 +3942,7 @@ export class Ledger {
       .all(...(args as never[])) as Array<{
       id: number;
       play_name: string;
-      status: "running" | "done" | "interrupted";
+      status: "running" | "done" | "interrupted" | "cancelled";
       started_at: string;
       completed_at: string | null;
       target_count: number;
@@ -2813,6 +3968,9 @@ export class Ledger {
    * (or any non-null when 0 — cold-boot semantics). Marks them as
    * 'interrupted' so the UI shows a truthful banner instead of an eternal
    * spinner. Returns the swept rows so the caller can log them.
+   *
+   * Terminal rows — including 'cancelled' — are never touched: a run the user
+   * cancelled must not be relabelled as a crash by the next cold boot.
    */
   sweepStaleRuns(input: { now: Date; maxAgeMs: number }): Array<{
     id: number;
@@ -2831,13 +3989,16 @@ export class Ledger {
       ageMs: number;
     }> = [];
     const update = this.db.prepare(
-      `UPDATE runs SET status = 'interrupted', completed_at = ? WHERE id = ?`,
+      // Re-check the status in the write: it closes the window between the
+      // SELECT above and here, where a concurrent cancel could land. A row
+      // that moved on under us reports 0 changes and stays out of `swept`.
+      `UPDATE runs SET status = 'interrupted', completed_at = ? WHERE id = ? AND status = 'running'`,
     );
     for (const row of rows) {
       const startedMs = new Date(row.started_at).getTime();
       if (Number.isFinite(startedMs) && startedMs > cutoffMs) continue;
       const ageMs = Number.isFinite(startedMs) ? input.now.getTime() - startedMs : -1;
-      update.run(input.now.toISOString(), row.id);
+      if (update.run(input.now.toISOString(), row.id).changes === 0) continue;
       swept.push({
         id: row.id,
         playName: row.play_name,
@@ -2884,6 +4045,26 @@ export class Ledger {
          WHERE name = ?`,
       )
       .run(new Date().toISOString(), JSON.stringify(input.summary), input.name);
+  }
+
+  /**
+   * Release a trigger's in-flight claim WITHOUT stamping `last_polled_at`
+   * (issue #481 review finding). Used only when the finder never actually
+   * ran — currently the daily spend ceiling refusal branches in
+   * `registry.ts`. `updateTriggerLastPoll` would treat the refusal as a
+   * completed poll and push `dueAt` a full interval into the future, so a
+   * trigger blocked by the ceiling would sit unpolled long after headroom
+   * (or a new day) opens back up. `last_run_summary` still records the
+   * refusal reason so the dashboard/doctor surface it, same as before.
+   */
+  clearTriggerClaim(input: { name: string; summary: unknown }): void {
+    this.db
+      .prepare(
+        `UPDATE triggers
+         SET last_run_summary = ?, running_started_at = NULL
+         WHERE name = ?`,
+      )
+      .run(JSON.stringify(input.summary), input.name);
   }
 
   /**
@@ -2964,6 +4145,30 @@ export class Ledger {
   }
 
   /**
+   * Apply a batch of trigger config writes atomically — insert a fresh
+   * enabled row for a trigger with no stored config, or update an existing
+   * row's config and enable it, for every entry in ONE transaction. Used by
+   * the packs apply route: `applyPackRoute` previously ran each trigger's
+   * upsert/update pair outside a transaction, so a later write throwing left
+   * earlier writes in the batch persisted and the route returned a 500 with
+   * a half-applied pack (finding PRRT_kwDOSKzrBs6fCBct). A throw here rolls
+   * back every write in the batch, not just the failing one.
+   */
+  applyTriggerConfigs(entries: Array<{ name: string; configJson: string }>): void {
+    const upsert = this.db.prepare(
+      `INSERT INTO triggers(name, enabled, config_json)
+       VALUES(?, 1, ?)
+       ON CONFLICT(name) DO UPDATE SET
+         enabled = 1,
+         config_json = excluded.config_json`,
+    );
+    const tx = this.db.transaction(() => {
+      for (const entry of entries) upsert.run(entry.name, entry.configJson);
+    });
+    tx();
+  }
+
+  /**
    * Associate a queued target with a known prospect (so the queue page can
    * link back to the prospect record). Best-effort — the caller is expected
    * to swallow failures since the link is a convenience, not a correctness
@@ -2971,6 +4176,17 @@ export class Ledger {
    */
   setQueueProspectId(id: number, prospectId: number): void {
     this.db.prepare(`UPDATE target_queue SET prospect_id = ? WHERE id = ?`).run(prospectId, id);
+    const row = this.getQueueRow(id);
+    if (row && !this.getMailAddress(`prospect:${prospectId}`)) {
+      const payload = JSON.parse(row.payload_json);
+      const address = extractBusinessAddress(payload, this.getProspectById(prospectId)?.name ?? "");
+      if (address)
+        this.setMailAddress(
+          `prospect:${prospectId}`,
+          address,
+          payload.businessAddressSource ?? row.source,
+        );
+    }
   }
 
   /**
@@ -3008,6 +4224,42 @@ export class Ledger {
       .run(JSON.stringify(input.payload), input.id);
   }
 
+  latestQueueId(): number {
+    const row = this.db.query("SELECT COALESCE(MAX(id), 0) AS id FROM target_queue").get() as {
+      id: number;
+    };
+    return row.id;
+  }
+
+  /** Newly-created pending rows, used by the post-finder product research stage. */
+  listPendingQueueAfterId(id: number): QueueRow[] {
+    return this.db
+      .query("SELECT * FROM target_queue WHERE id > ? AND status = 'pending' ORDER BY id ASC")
+      .all(id) as QueueRow[];
+  }
+
+  getProductResearchCache(cacheKey: string, maxAgeMs: number): string | null {
+    const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
+    const row = this.db
+      .query(
+        "SELECT dossier_json FROM product_research_cache WHERE cache_key = ? AND fetched_at >= ?",
+      )
+      .get(cacheKey, cutoff) as { dossier_json: string } | undefined;
+    return row?.dossier_json ?? null;
+  }
+
+  setProductResearchCache(cacheKey: string, dossierJson: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO product_research_cache(cache_key, dossier_json, fetched_at)
+         VALUES(?, ?, ?)
+         ON CONFLICT(cache_key) DO UPDATE SET
+           dossier_json = excluded.dossier_json,
+           fetched_at = excluded.fetched_at`,
+      )
+      .run(cacheKey, dossierJson, new Date().toISOString());
+  }
+
   /**
    * Set a queue row's `notes` without touching its status. Used by the manual
    * add-prospect flow to update the transient "researching profile…" note to
@@ -3020,8 +4272,137 @@ export class Ledger {
       .run(input.notes === "" ? null : input.notes, input.id);
   }
 
+  /**
+   * Overwrite a queue row's shadow priority (the `score-prospects` backfill
+   * writer). Pass null to clear.
+   */
+  setQueuePriority(id: number, priority: ProspectPriority | null): void {
+    this.db
+      .prepare(`UPDATE target_queue SET priority_json = ? WHERE id = ?`)
+      .run(priority ? JSON.stringify(priority) : null, id);
+  }
+
+  /**
+   * Rows the score-prospects backfill considers: pending + approved. Approved
+   * implies unsent — a dispatched row moves to status 'sent'. id-ascending so
+   * an interrupted run resumes deterministically.
+   */
+  listQueueRowsForScoring(
+    opts: { playName?: string; limit?: number; allStatuses?: boolean } = {},
+  ): QueueRow[] {
+    const args: unknown[] = [];
+    // Default scope is the live queue; `allStatuses` widens to full history so
+    // scores can be compared against dispositions already made (methodology
+    // evaluation) — it never changes what any consumer DOES with a score.
+    let where = opts.allStatuses ? `1=1` : `status IN ('pending','approved')`;
+    if (opts.playName) {
+      where += ` AND play_name = ?`;
+      args.push(opts.playName);
+    }
+    // Unbounded by default: the caller filters already-scored rows AFTER this
+    // read, so a default LIMIT would pin every run to the same prefix and rows
+    // past it could never be reached.
+    let limitSql = "";
+    if (opts.limit !== undefined) {
+      limitSql = ` LIMIT ?`;
+      args.push(opts.limit);
+    }
+    return this.db
+      .query(`SELECT * FROM target_queue WHERE ${where} ORDER BY id ASC${limitSql}`)
+      .all(...(args as never[])) as QueueRow[];
+  }
+
+  /**
+   * Every sent queue row joined to its outcome evidence (Phase 3 of #410).
+   * The prospect link is `prospect_id` when the post-send backfill caught it,
+   * else an email join (LOWER/TRIM defeats the index — acceptable, this is an
+   * offline report path over hundreds of rows). `COALESCE(kind,'human')` is
+   * mandatory: pre-v23 replies have NULL kind and read as human everywhere.
+   * `deal_lost`/`ghosted` map to no rank on purpose — deal_outcomes is
+   * positives-only by construction (the cadences modal offers only the three
+   * positive states), so its absence is never evidence of failure.
+   */
+  listSentOutcomeRows(opts: { playName?: string } = {}): SentOutcomeRawRow[] {
+    const args: unknown[] = [];
+    let where = `q.status = 'sent' AND q.sent_at IS NOT NULL`;
+    if (opts.playName) {
+      where += ` AND q.play_name = ?`;
+      args.push(opts.playName);
+    }
+    return this.db
+      .query(
+        `SELECT q.id, q.play_name, q.dedupe_key, q.priority_json, q.sent_at,
+                q.decision, q.decided_by,
+                COALESCE(q.prospect_id, p.id) AS joined_prospect_id,
+                json_extract(q.payload_json, '$.email') AS payload_email,
+                (SELECT MIN(ir.received_at) FROM inbox_replies ir
+                  WHERE ir.prospect_id = COALESCE(q.prospect_id, p.id)
+                    AND COALESCE(ir.kind, 'human') = 'human') AS first_email_reply_at,
+                (SELECT ir.intent FROM inbox_replies ir
+                  WHERE ir.prospect_id = COALESCE(q.prospect_id, p.id)
+                    AND COALESCE(ir.kind, 'human') = 'human'
+                  ORDER BY ir.received_at ASC, ir.id ASC LIMIT 1) AS first_email_reply_intent,
+                (SELECT MIN(ce.occurred_at) FROM channel_events ce
+                  WHERE ce.prospect_id = COALESCE(q.prospect_id, p.id)
+                    AND ce.event_type = 'reply') AS first_channel_reply_at,
+                (SELECT MAX(CASE d.outcome WHEN 'deal_won' THEN 4
+                                           WHEN 'sql_qualified' THEN 3
+                                           WHEN 'meeting_booked' THEN 2
+                                           ELSE NULL END)
+                   FROM deal_outcomes d
+                  WHERE d.prospect_id = COALESCE(q.prospect_id, p.id)) AS deal_rank
+         FROM target_queue q
+         LEFT JOIN prospects p
+           ON p.email = LOWER(TRIM(json_extract(q.payload_json, '$.email')))
+         WHERE ${where}
+         ORDER BY q.id ASC`,
+      )
+      .all(...(args as never[])) as SentOutcomeRawRow[];
+  }
+
+  /**
+   * The local funnel ladder: receipts value-tagged by outcome attribution
+   * (engagement < meeting < qualified < revenue). goal_id is a sha256 of
+   * (play, email) — not computable in SQLite, so the caller joins in JS via
+   * `cadenceGoalId`.
+   */
+  listValueTaggedReceipts(): Array<{ goal_id: string; value_tag: string }> {
+    return this.db
+      .query(
+        `SELECT goal_id, value_tag FROM receipts
+         WHERE value_tag IS NOT NULL AND goal_id IS NOT NULL`,
+      )
+      .all() as Array<{ goal_id: string; value_tag: string }>;
+  }
+
   close(): void {
     this.db.close();
+  }
+
+  /** Atomically consume a signed webhook replay key. */
+  consumeWebhookReplay(replayKey: string, expiresAt: number, now: number): boolean {
+    return this.db.transaction(() => {
+      this.db.prepare("DELETE FROM webhook_replays WHERE expires_at < ?").run(now);
+      const result = this.db
+        .prepare("INSERT OR IGNORE INTO webhook_replays(replay_key, expires_at) VALUES(?, ?)")
+        .run(replayKey, expiresAt);
+      return result.changes > 0;
+    })();
+  }
+
+  /** Test helper for isolating webhook verification cases. */
+  clearWebhookReplays(): void {
+    this.db.exec("DELETE FROM webhook_replays");
+  }
+
+  /**
+   * Release a previously-consumed replay key. Used when a webhook was
+   * verified but downstream processing (ICP filtering, enqueueing) failed
+   * before a success response was sent, so the provider's retry of the same
+   * signed payload isn't rejected as a replay.
+   */
+  releaseWebhookReplay(replayKey: string): void {
+    this.db.prepare("DELETE FROM webhook_replays WHERE replay_key = ?").run(replayKey);
   }
 }
 

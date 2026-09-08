@@ -7,6 +7,8 @@ const findProspectByEmailMock = vi.fn<(email: string) => { id: number } | null>(
 const listSequenceEventsForProspectPlayMock =
   vi.fn<(pid: number, play: string) => Array<{ step_index: number }>>();
 const prospectHasFirstTouchMock = vi.fn<(pid: number) => boolean>();
+const getProspectByIdMock = vi.fn<(pid: number) => Record<string, unknown> | null>();
+const setProspectIcpVerdictMock = vi.fn();
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -36,6 +38,9 @@ vi.mock("@oneshot-gtm/core", async () => {
       recordSequenceEvent: recordSequenceEventMock,
       hasSentSequenceEvent: () => false,
       findProspectByEmail: findProspectByEmailMock,
+      // sendDraftedEmail reads the stored ICP verdict before a first touch.
+      getProspectById: getProspectByIdMock,
+      setProspectIcpVerdict: setProspectIcpVerdictMock,
       listSequenceEventsForProspectPlay: listSequenceEventsForProspectPlayMock,
       prospectHasFirstTouch: prospectHasFirstTouchMock,
     }),
@@ -72,6 +77,8 @@ beforeEach(() => {
   findProspectByEmailMock.mockReset().mockReturnValue(null);
   listSequenceEventsForProspectPlayMock.mockReset().mockReturnValue([]);
   prospectHasFirstTouchMock.mockReset().mockReturnValue(false);
+  getProspectByIdMock.mockReset().mockReturnValue(null);
+  setProspectIcpVerdictMock.mockReset();
 });
 
 afterEach(() => {
@@ -198,5 +205,75 @@ describe("sendDraftedEmail cross-workspace override pass-through", () => {
     await sendDraftedEmail(baseOpts({ to: "other@acme.dev" }));
     const [lastInput] = sendEmailMock.mock.calls.at(-1) as [Record<string, unknown>];
     expect(lastInput).not.toHaveProperty("allowContactedElsewhere");
+  });
+});
+
+// The person-level ICP gate on the FIRST touch. This check has always existed
+// for follow-ups (_cadence.ts, status "off-icp"), but step 0 had none — so 65
+// prospects carrying a `reject` verdict were emailed while only 3 cadences ever
+// stopped for it.
+describe("sendDraftedEmail person-level ICP gate", () => {
+  it("blocks a send when the finder's fresh verdict is reject", async () => {
+    const opts = baseOpts({
+      icp: { verdict: "reject" as const, reason: "Account Executive — hands it to someone else" },
+    });
+    const out = await sendDraftedEmail(opts);
+    expect(sendEmailMock).not.toHaveBeenCalled();
+    expect(out).toEqual({ receiptIds: [], sent: false });
+    expect(opts.flags).toEqual(["off-icp"]);
+  });
+
+  it("blocks a send when a PRIOR audit stored a reject on the prospect", async () => {
+    findProspectByEmailMock.mockReturnValue({ id: 7 });
+    getProspectByIdMock.mockReturnValue({
+      id: 7,
+      icp_verdict: "reject",
+      icp_verdict_reason: "recruiter",
+    });
+    const opts = baseOpts();
+    const out = await sendDraftedEmail(opts);
+    expect(sendEmailMock).not.toHaveBeenCalled();
+    expect(out.sent).toBe(false);
+    expect(opts.flags).toEqual(["off-icp"]);
+  });
+
+  it("FAILS OPEN on unclear and on null — the documented contract", async () => {
+    // ledger.ts:1470 is explicit that the cadence gate tests === "reject", so
+    // `unclear` fails open exactly as NULL does. This gate must not quietly
+    // narrow the funnel on an undecided classifier.
+    for (const verdict of ["unclear", "pass"] as const) {
+      sendEmailMock.mockClear();
+      const out = await sendDraftedEmail(baseOpts({ icp: { verdict, reason: "n/a" } }));
+      expect(sendEmailMock).toHaveBeenCalledTimes(1);
+      expect(out.sent).toBe(true);
+    }
+    sendEmailMock.mockClear();
+    findProspectByEmailMock.mockReturnValue({ id: 7 });
+    getProspectByIdMock.mockReturnValue({ id: 7, icp_verdict: null, icp_verdict_reason: null });
+    expect((await sendDraftedEmail(baseOpts())).sent).toBe(true);
+    expect(sendEmailMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists the verdict the finder already paid to compute", async () => {
+    await sendDraftedEmail(baseOpts({ icp: { verdict: "pass" as const, reason: "founder/CTO" } }));
+    expect(setProspectIcpVerdictMock).toHaveBeenCalledWith(99, "pass", "founder/CTO");
+  });
+
+  it("writes nothing when the play carries no verdict", async () => {
+    await sendDraftedEmail(baseOpts());
+    expect(setProspectIcpVerdictMock).not.toHaveBeenCalled();
+  });
+
+  it("prefers the fresh verdict over a stale stored one", async () => {
+    findProspectByEmailMock.mockReturnValue({ id: 7 });
+    getProspectByIdMock.mockReturnValue({
+      id: 7,
+      icp_verdict: "reject",
+      icp_verdict_reason: "judged off a bare event role",
+    });
+    const out = await sendDraftedEmail(
+      baseOpts({ icp: { verdict: "pass" as const, reason: "enriched title says Co-Founder" } }),
+    );
+    expect(out.sent).toBe(true);
   });
 });

@@ -1,6 +1,6 @@
 import { loadConfig, logEvent, startRun, webSearch } from "@oneshot-gtm/core";
 import { complete, loadPrompt } from "@oneshot-gtm/intel";
-import { effectiveIntervalMs, TRIGGERS } from "@oneshot-gtm/find";
+import { effectiveIntervalMs, PACKS, TRIGGERS } from "@oneshot-gtm/find";
 import type { StrategistFrame, StrategistRequest } from "@oneshot-gtm/shared-types";
 import { getLedger } from "@oneshot-gtm/core";
 import { jsonResponse } from "../server.ts";
@@ -211,10 +211,12 @@ function composeSystemPrompt(args: {
 }): string {
   const template = loadPrompt("strategist-trigger");
   const triggerCatalog = buildTriggerCatalog();
+  const packCatalog = buildPackCatalog();
   return template
     .replace("{{productOneLiner}}", args.productOneLiner)
     .replace("{{icpOneLiner}}", args.icpOneLiner)
     .replace("{{triggerCatalog}}", triggerCatalog)
+    .replace("{{packCatalog}}", packCatalog)
     .replace("{{webContext}}", args.webContext);
 }
 
@@ -294,6 +296,21 @@ function buildTriggerCatalog(): string {
         `\n- interval: ${humanInterval(intervalMs)}` +
         `\n- current config: ${config}` +
         `\n- brief: ${spec.configBrief ?? "(no brief — defaults are sane)"}`,
+    );
+  }
+  return lines.join("\n\n");
+}
+
+function buildPackCatalog(): string {
+  if (PACKS.length === 0) return "(no packs available)";
+  const lines: string[] = [];
+  for (const pack of PACKS) {
+    lines.push(
+      `### ${pack.id} — ${pack.label}` +
+        `\n- buyer: ${pack.buyerBrief}` +
+        `\n- proposed icpOneLiner: ${pack.icpOneLiner}` +
+        `\n- triggers touched: ${Object.keys(pack.triggers).join(", ")}` +
+        `\n- still needs (founder-voice, fill in after apply): ${pack.requires.length > 0 ? pack.requires.join(", ") : "(none)"}`,
     );
   }
   return lines.join("\n\n");

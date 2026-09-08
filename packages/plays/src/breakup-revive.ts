@@ -1,4 +1,10 @@
-import { getLedger, isSendDeferred, loadConfig } from "@oneshot-gtm/core";
+import {
+  getLedger,
+  isRunCancelled,
+  isSendDeferred,
+  loadConfig,
+  throwIfCancelled,
+} from "@oneshot-gtm/core";
 import {
   draftEmailFromPrompt,
   errorDraft,
@@ -35,9 +41,13 @@ export interface BreakupReviveOptions {
   limit?: number;
   /** Optional value drop to lead with (a new feature, a benchmark, a case study you can offer). */
   valueDrop?: string;
+  /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
+  signal?: AbortSignal;
+  /** Called after each target completes, with the target's original index. */
+  onProgress?: (index: number, draft: BreakupReviveDraft) => void;
 }
 
-interface BreakupReviveDraft {
+export interface BreakupReviveDraft {
   prospectEmail: string | null;
   prospectName: string | null;
   daysCold: number;
@@ -46,6 +56,7 @@ interface BreakupReviveDraft {
   receiptIds: number[];
   sent: boolean;
   flags: string[];
+  originalTargetIndex?: number;
 }
 
 export async function runBreakupRevive(
@@ -59,9 +70,12 @@ export async function runBreakupRevive(
   const targets = opts.targets ?? ledgerScanTargets(opts);
   const drafted: BreakupReviveDraft[] = [];
 
-  for (const t of targets) {
+  for (const [index, t] of targets.entries()) {
     if (!t.email) continue;
+    let result: BreakupReviveDraft;
     try {
+      // Custom serial loop, so it repeats runEmailPlay's guards itself.
+      throwIfCancelled(opts.signal, `${PLAY_NAME} draft`);
       const draft = await draftEmailFromPrompt({
         promptName: "breakup-revive-email",
         inputBlock: [
@@ -75,6 +89,7 @@ export async function runBreakupRevive(
 
       const flags = lintEmail(draft.subject, draft.body, 80);
 
+      throwIfCancelled(opts.signal, `${PLAY_NAME} send`);
       const send = await sendDraftedEmail({
         playName: PLAY_NAME,
         to: t.email,
@@ -95,7 +110,7 @@ export async function runBreakupRevive(
         allowRecontact: true,
       });
 
-      drafted.push({
+      result = {
         prospectEmail: t.email,
         prospectName: t.name,
         daysCold: t.daysCold,
@@ -104,14 +119,17 @@ export async function runBreakupRevive(
         receiptIds: send.receiptIds,
         sent: send.sent,
         flags,
-      });
+        originalTargetIndex: index,
+      };
     } catch (err) {
       // Daily-cap deferral is not a per-target failure — abort the run so the
       // caller leaves remaining targets queued instead of stamping error drafts.
       if (isSendDeferred(err)) throw err;
+      // Same for a cancellation: propagate so the run row lands 'cancelled'.
+      if (isRunCancelled(err)) throw err;
       logTargetError({ playName: PLAY_NAME, to: t.email, err });
       const stub = errorDraft((err as Error)?.message);
-      drafted.push({
+      result = {
         prospectEmail: t.email,
         prospectName: t.name,
         daysCold: t.daysCold,
@@ -120,8 +138,13 @@ export async function runBreakupRevive(
         receiptIds: stub.receiptIds,
         sent: stub.sent,
         flags: stub.flags,
-      });
+        originalTargetIndex: index,
+      };
     }
+    drafted.push(result);
+    // Keep observer failures distinct from a target's draft/send failure. In
+    // particular, do not manufacture a second error draft and callback.
+    opts.onProgress?.(index, result);
   }
 
   return { drafted };

@@ -25,6 +25,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     enrichProfile: async () => ({ result: { profile: {} }, receiptId: 1 }),
     sendEmail: async () => ({ receiptId: 3 }),
     getLedger: () => ({
+      getCadence: () => null,
       upsertProspect: () => 1,
       recordSequenceEvent: () => 1,
       hasSentSequenceEvent: () => false,
@@ -32,6 +33,8 @@ vi.mock("@oneshot-gtm/core", async () => {
       // repo-interest is 2-touch and must enroll a cadence here. [] prior events
       // means no step-0 yet, so sendDraftedEmail's dedup lets the send proceed.
       findProspectByEmail: () => ({ id: 1 }),
+      // sendDraftedEmail reads the stored ICP verdict before a first touch.
+      getProspectById: () => null,
       listSequenceEventsForProspectPlay: () => [],
       prospectHasFirstTouch: () => false,
       getCachedEnrichment: () => null,

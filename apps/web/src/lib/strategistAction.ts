@@ -3,10 +3,11 @@
  * can be unit-tested without rendering.
  */
 
-type StrategistActionKind = "enable" | "disable" | "apply-config";
+type StrategistActionKind = "enable" | "disable" | "apply-config" | "apply-pack";
 
 export interface ParsedStrategistAction {
   kind: StrategistActionKind;
+  /** Trigger name for enable/disable/apply-config; pack id for apply-pack. */
   trigger: string;
   /** Only present when kind === "apply-config" and the JSON parsed cleanly. */
   config?: Record<string, unknown>;
@@ -22,7 +23,8 @@ export interface ParsedStrategistAction {
  * handle JSON with multiple `-->` substrings (rare, but possible if a vendor
  * name contains them).
  */
-const ACTION_RE = /<!--ACTION:(enable|disable|apply-config):([^:>]+?)(?::([\s\S]*?))?-->/;
+const ACTION_RE =
+  /<!--ACTION:(enable|disable|apply-config|apply-pack):([^:>]+?)(?::([\s\S]*?))?-->/;
 
 /**
  * Looser match for partial markers mid-stream — strips "<!--ACTION:..." fragments

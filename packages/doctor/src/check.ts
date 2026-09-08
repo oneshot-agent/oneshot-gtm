@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   capGroupKey,
   configDir,
+  dailySpendStatus,
   daysAgoSqliteUtc,
   getBalance,
   getGmailProfile,
@@ -20,15 +21,19 @@ import {
   oneshotEnvReady,
   resolveIdentities,
   secretSource,
+  secretsPath,
+  sqliteToIso,
   currentWorkspaceName,
   listWorkspaces,
   loadGmailTokens,
+  spendCeilingReason,
 } from "@oneshot-gtm/core";
+import { finderApprovalHealth, storedTriggerConfig, TRIGGERS } from "@oneshot-gtm/find";
 
 type CheckSeverity = "ok" | "warn" | "fail";
 
 /** Section a check renders under in the dashboard's grouped Doctor panel. */
-type CheckGroup = "install" | "senders" | "deliverability" | "spend";
+type CheckGroup = "install" | "senders" | "deliverability" | "finders" | "spend";
 
 interface CheckResult {
   name: string;
@@ -36,6 +41,42 @@ interface CheckResult {
   severity: CheckSeverity;
   message: string;
   hint?: string;
+  approvalRate?: number | null;
+  approved?: number;
+  reviewed?: number;
+  threshold?: number;
+  windowDays?: number;
+  minSamples?: number;
+  deprioritized?: boolean;
+}
+
+function finderApprovalChecks(): CheckResult[] {
+  const ledger = getLedger();
+  return TRIGGERS.map((spec) => {
+    const health = finderApprovalHealth(
+      spec.name,
+      storedTriggerConfig(ledger.getTrigger(spec.name), spec),
+    );
+    const pct = health.rate == null ? "no reviewed rows" : `${(health.rate * 100).toFixed(1)}%`;
+    return {
+      name: `finder ${spec.name}`,
+      group: "finders",
+      severity: health.deprioritized ? "warn" : "ok",
+      message: health.sufficientData
+        ? `${pct} approved (${health.approved}/${health.reviewed}, ${health.windowDays}d)${health.deprioritized ? " — deprioritized: low-approval-rate" : ""}`
+        : `${pct} (${health.reviewed}/${health.minSamples} reviewed minimum) — insufficient data, no penalty`,
+      ...(health.deprioritized
+        ? { hint: "tune approvalRateThreshold in the trigger config or use --ignore-approval-rate" }
+        : {}),
+      approvalRate: health.rate,
+      approved: health.approved,
+      reviewed: health.reviewed,
+      threshold: health.threshold,
+      windowDays: health.windowDays,
+      minSamples: health.minSamples,
+      deprioritized: health.deprioritized,
+    };
+  });
 }
 
 /** Trailing window for the bounce rate — long enough to accumulate signal at founder-scale volume. */
@@ -201,7 +242,7 @@ function placementCheck(): CheckResult {
       };
     }
     const ageDays = Math.floor(
-      (Date.now() - new Date(`${last.created_at.replace(" ", "T")}Z`).getTime()) / 86_400_000,
+      (Date.now() - new Date(sqliteToIso(last.created_at)).getTime()) / 86_400_000,
     );
     const age = Number.isFinite(ageDays) ? `${ageDays}d ago` : "unknown age";
     const auth = `spf=${last.spf} dkim=${last.dkim} dmarc=${last.dmarc}`;
@@ -416,7 +457,7 @@ function githubTokenCheck(): CheckResult | null {
     group: "install",
     severity: "warn",
     message: `GITHUB_TOKEN not set — ${enabled.join(", ")} limited to 60 req/hr and will halt on 403`,
-    hint: "create a classic token with NO scopes at https://github.com/settings/tokens/new, then add GITHUB_TOKEN=... to .env",
+    hint: `create a classic token with NO scopes at https://github.com/settings/tokens/new, then add GITHUB_TOKEN=... to ${secretsPath()}`,
   };
 }
 
@@ -491,6 +532,44 @@ function readJson<T>(path: string): T | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * Install-wide daily USD spend ceiling (issue #481). Read-only: never
+ * reserves or mutates anything, just reports today's spend against the
+ * configured ceiling so a founder sees the same number that gates automated
+ * finder/drain runs. Absent a configured ceiling, this is silent — the
+ * historical behavior — so an install that never opted in doesn't get a
+ * confusing "unlimited" line cluttering the panel.
+ */
+function dailySpendCeilingCheck(): CheckResult | null {
+  let status: ReturnType<typeof dailySpendStatus>;
+  try {
+    status = dailySpendStatus();
+  } catch (err) {
+    return {
+      name: "daily spend ceiling",
+      group: "spend",
+      severity: "warn",
+      message: `could not evaluate: ${(err as Error).message}`,
+    };
+  }
+  if (status.ceilingUsd == null) return null;
+  return {
+    name: "daily spend ceiling",
+    group: "spend",
+    severity: status.ceilingReached ? "warn" : "ok",
+    message: status.ceilingReached
+      ? spendCeilingReason(status)
+      : // effectiveUsd = spentUsd (posted receipts) + reservedUsd (calls
+        // currently in flight) — the same total the ceiling is compared
+        // against. Labeling it "spent" alone would understate it whenever a
+        // concurrent automated call is holding a reservation.
+        `$${status.effectiveUsd.toFixed(2)}/$${status.ceilingUsd.toFixed(2)} spent or reserved today (resets at local midnight)`,
+    ...(status.ceilingReached
+      ? { hint: "automated finder runs + drains are halted; manual /queue sends still work" }
+      : {}),
+  };
 }
 
 export async function runDoctor(): Promise<CheckResult[]> {
@@ -775,15 +854,28 @@ export async function runDoctor(): Promise<CheckResult[]> {
   // the "never tested" prompt.
   results.push(...deliverabilityChecks());
   results.push(placementCheck());
+  try {
+    results.push(...finderApprovalChecks());
+  } catch (err) {
+    results.push({
+      name: "finder approval rates",
+      group: "finders",
+      severity: "warn",
+      message: `could not evaluate: ${(err as Error).message}`,
+    });
+  }
 
   if (oneshotEnvReady()) {
     try {
       const bal = await getBalance();
+      const amount = Number.parseFloat(bal.balance.trim());
+      const usable = Number.isFinite(amount) && amount > 0;
       results.push({
         name: "wallet balance",
         group: "spend",
-        severity: "ok",
+        severity: usable ? "ok" : "warn",
         message: `${bal.balance}`,
+        ...(usable ? {} : { hint: "paid calls require USDC on Base" }),
       });
     } catch (err) {
       results.push({
@@ -794,6 +886,9 @@ export async function runDoctor(): Promise<CheckResult[]> {
       });
     }
   }
+
+  const spendCeiling = dailySpendCeilingCheck();
+  if (spendCeiling) results.push(spendCeiling);
 
   return results;
 }

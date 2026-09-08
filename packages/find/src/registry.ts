@@ -1,18 +1,27 @@
 import {
+  DEFAULT_SPEND_RESERVATION_USD,
+  dailySpendStatus,
   getLedger,
   logEvent,
   safeParseJsonRecord,
+  spendCeilingReason,
   startRun,
+  tryReserveDailySpend,
   type TriggerRow,
 } from "@oneshot-gtm/core";
 import { type CohortEntry, runAcceleratorBatchFinder } from "./accelerator-batch.ts";
 import { deriveCohortLabel } from "./_yc-oss-adapter.ts";
 import { runBreakupReviveFinder } from "./breakup-revive.ts";
-import { type RepoWatch, runGitHubStarsFinder } from "./github-stars.ts";
+import { runCivicAgendaFinder } from "./civic-agenda.ts";
+import { runGitHubStarsFinder, type RepoWatch } from "./github-stars.ts";
 import { runGitHubTopicsFinder } from "./github-topics.ts";
+import { runGovSolicitationFinder } from "./gov-solicitation.ts";
 import { runHiringSignalFinder } from "./hiring-signal.ts";
 import { runJobChangeFinder } from "./job-change.ts";
+import { runLocalBusinessFinder } from "./local-business.ts";
 import { runLumaFinder } from "./luma.ts";
+import { runLocalRegistryFinder } from "./local-registry.ts";
+import type { SocrataPortalConfig } from "./_registry-sources.ts";
 import { runPodcastGuestFinder } from "./podcast-guest.ts";
 import { runPostFundingFinder } from "./post-funding.ts";
 import { runShowHnFinder } from "./show-hn.ts";
@@ -20,6 +29,8 @@ import { runXRepostersFinder } from "./x-reposters.ts";
 import type { XSeed } from "./_x-types.ts";
 import type { HarvestKnobs } from "./_x-engine.ts";
 import type { FinderResult } from "./_types.ts";
+import { collectQueueBusinessAddress } from "@oneshot-gtm/plays";
+import { researchNewQueueRows } from "./_product-research.ts";
 
 export interface TriggerSpec {
   name: string;
@@ -45,7 +56,54 @@ export interface TriggerSpec {
   run: (config: Record<string, unknown>) => Promise<FinderResult>;
 }
 
+/** Run a finder, then attach product context to only the pending rows it created. */
+export async function runFinderWithProductResearch(
+  spec: TriggerSpec,
+  config: Record<string, unknown>,
+): Promise<FinderResult> {
+  const ledger = getLedger();
+  const afterId = ledger.latestQueueId();
+  const result = await spec.run(config);
+  await researchNewQueueRows({
+    afterId,
+    result,
+    enabled: config["productResearch"] !== false,
+    priorSdkCostUsd: result.sdkCostUsd ?? result.costUsd,
+    ...(typeof config["maxCostUsd"] === "number"
+      ? { maxCostUsd: config["maxCostUsd"] as number }
+      : {}),
+  });
+  let mailCost = 0;
+  for (const row of ledger.listPendingQueueAfterId(afterId)) {
+    const remaining =
+      typeof config["maxCostUsd"] === "number"
+        ? Math.max(0, config["maxCostUsd"] - (result.sdkCostUsd ?? result.costUsd) - mailCost)
+        : 1;
+    mailCost += await collectQueueBusinessAddress(row.id, remaining);
+  }
+  result.costUsd += mailCost;
+  if (result.sdkCostUsd !== undefined) result.sdkCostUsd += mailCost;
+  return result;
+}
+
 export type Readiness = { ready: true } | { ready: false; reason: string };
+
+/**
+ * Worst-case spend estimate for reserving against the daily ceiling before a
+ * trigger fires. Reads `maxCostUsd` (every finder's SDK/LLM cap) plus, for
+ * x-reposters, `maxSpendPerRun` (its separate X-read meter) — the two are
+ * independent budgets on that one finder, so both must be held. Falls back
+ * to `DEFAULT_SPEND_RESERVATION_USD` for a finder with neither configured
+ * (e.g. `breakup-revive`, which is ledger-only and spends nothing) so a
+ * free finder can't starve the day's reservation slot for a paid one.
+ */
+export function estimatedTriggerSpendUsd(config: Record<string, unknown>): number {
+  const maxCostUsd = typeof config["maxCostUsd"] === "number" ? config["maxCostUsd"] : 0;
+  const maxSpendPerRun =
+    typeof config["maxSpendPerRun"] === "number" ? config["maxSpendPerRun"] : 0;
+  const total = maxCostUsd + maxSpendPerRun;
+  return total > 0 ? total : DEFAULT_SPEND_RESERVATION_USD;
+}
 
 /** Evaluate a spec's readiness fn (defaulting to ready when absent). */
 export function checkReadiness(spec: TriggerSpec, config: Record<string, unknown>): Readiness {
@@ -60,6 +118,7 @@ export function checkReadiness(spec: TriggerSpec, config: Record<string, unknown
 }
 
 const ONE_HOUR = 3600 * 1000;
+const PRODUCT_RESEARCH_DEFAULT = { productResearch: true } as const;
 
 /**
  * Default cohort sweep for `accelerator-batch`. Only yc-* entries hit the
@@ -90,7 +149,7 @@ export const TRIGGERS: TriggerSpec[] = [
   {
     name: "show-hn",
     defaultIntervalMs: 6 * ONE_HOUR,
-    defaultConfig: { sinceDays: 1, limit: 25, maxCostUsd: 5 },
+    defaultConfig: { ...PRODUCT_RESEARCH_DEFAULT, sinceDays: 1, limit: 25, maxCostUsd: 5 },
     configBrief:
       "Polls Hacker News Algolia for recent Show HN posts, ICP-filters them, enriches founder contact, and enqueues them for review. Config: `sinceDays` (lookback window, default 1), `limit` (max kept, default 25), `maxCostUsd` (per-run spend cap), `minPoints` (upvote floor, default 5 — posts below it drop as low-signal). Defaults work for most ICPs — bump sinceDays to 7+ if your ICP is niche enough that daily volume is thin. STRATEGIST NOTE: minPoints is a MOTION choice, not noise control — selling a paid product, keep ≥5 (traction = budget); driving adoption of a founder tool, drop to 1-2 (the quiet launch IS the pain signal).",
     run: (cfg) =>
@@ -108,12 +167,14 @@ export const TRIGGERS: TriggerSpec[] = [
     enabledByDefault: false,
     // Every known incubator × {latest, previous-latest}; editable in /queue.
     defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
       cohorts: DEFAULT_COHORTS,
+      yourEdge: "",
       limit: 25,
       maxCostUsd: 15,
     },
     configBrief:
-      "Sweeps every known incubator (YC, Techstars, Antler, 500 Global, AI Grant, SPC, Neo) at its latest + previous-latest cohorts in one run. Config: `cohorts` (array of `{cohort, cohortLabel}` — defaults to the 14-entry curated list; edit to add/remove batches as new cohorts announce), optional `cohort` + `cohortLabel` (legacy single-cohort shape; still accepted), optional `adapter` (`yc-oss` | `websearch`; auto-picked per cohort — yc-* tags use the free yc-oss/api directory, everything else falls back to web search), `senderCohort` (YOUR own cohort tag, e.g. `yc-w23` — the peer angle the email is built on; REQUIRED, stamped onto every enqueued row so rows draft inline), `freeForCohortOffer` (optional time-bound offer, also stamped onto rows), `limit` (global enqueue cap across all cohorts), `maxCostUsd`. Per-cohort failures (spotty incubator, network blip) log and continue; the run only halts when EVERY cohort returns 0 candidates. ROTATION: the default list goes stale within ~3 months — edit when YC announces W27, Techstars rolls Fall 2026, etc. STRATEGIST DUTY: when the founder's ICP overlaps strongly with one incubator population, narrow the cohorts list rather than sweeping all seven — e.g. AI/infra startups → keep yc-* + ai-grant-*, drop the rest.",
+      'Sweeps every known incubator (YC, Techstars, Antler, 500 Global, AI Grant, SPC, Neo) at its latest + previous-latest cohorts in one run. Config: `cohorts` (array of `{cohort, cohortLabel}` — defaults to the 14-entry curated list; edit to add/remove batches as new cohorts announce), optional `cohort` + `cohortLabel` (legacy single-cohort shape; still accepted), optional `adapter` (`yc-oss` | `websearch`; auto-picked per cohort — yc-* tags use the free yc-oss/api directory, everything else falls back to web search), `yourEdge` (the one concrete thing worth telling a founder at this stage — REQUIRED, stamped onto every enqueued row so rows draft inline; may hold several `//`-separated angles, and the email picks the ONE that fits what the company is shipping), `limit` (global enqueue cap across all cohorts), `maxCostUsd`. Per-cohort failures (spotty incubator, network blip) log and continue; the run only halts when EVERY cohort returns 0 candidates. ROTATION: the default list goes stale within ~3 months — edit when YC announces W27, Techstars rolls Fall 2026, etc. AFFILIATION: the batch is a TIMING signal about the prospect (fresh money, demo-day clock, no distribution) and the honest answer to "how did you find me" — it is NOT a relationship the sender has. There is no sender-cohort setting here on purpose; if the founder genuinely did an accelerator, `founderCohort` in config (Setup → social proof) turns on the peer angle, and blank — the default — writes as the outsider the sender is. STRATEGIST DUTY: when the founder\'s ICP overlaps strongly with one incubator population, narrow the cohorts list rather than sweeping all seven — e.g. AI/infra startups → keep yc-* + ai-grant-*, drop the rest.',
     readiness: (cfg) => {
       const cohorts = Array.isArray(cfg["cohorts"]) ? cfg["cohorts"] : null;
       const legacyCohort =
@@ -124,12 +185,15 @@ export const TRIGGERS: TriggerSpec[] = [
           reason: "set `cohorts[]` (or legacy `cohort`)",
         };
       }
-      const senderCohort =
-        typeof cfg["senderCohort"] === "string" ? (cfg["senderCohort"] as string).trim() : "";
-      if (senderCohort.length === 0) {
+      // Deliberately NOT gated on a sender cohort. That gate is what made
+      // installs invent one to get the finder running, and the email then
+      // claimed a batch the founder was never in. Affiliation is optional and
+      // lives in config; what the email actually needs is something true to say.
+      const edge = cfg["yourEdge"];
+      if (typeof edge !== "string" || edge.trim().length === 0) {
         return {
           ready: false,
-          reason: "set `senderCohort` (your own cohort tag, e.g. yc-w23)",
+          reason: "set `yourEdge` — what you'd tell a founder fresh out of a batch",
         };
       }
       return { ready: true };
@@ -165,15 +229,9 @@ export const TRIGGERS: TriggerSpec[] = [
         ...(cfg["adapter"] === "yc-oss" || cfg["adapter"] === "websearch"
           ? { adapter: cfg["adapter"] as "yc-oss" | "websearch" }
           : {}),
-        // Sender cohort (+ offer) stamped onto every enqueued row so the play
-        // drafts inline without a run-level value. Readiness gates senderCohort.
-        ...(typeof cfg["senderCohort"] === "string" && cfg["senderCohort"].trim().length > 0
-          ? { senderCohort: (cfg["senderCohort"] as string).trim() }
-          : {}),
-        ...(typeof cfg["freeForCohortOffer"] === "string" &&
-        cfg["freeForCohortOffer"].trim().length > 0
-          ? { freeForCohortOffer: (cfg["freeForCohortOffer"] as string).trim() }
-          : {}),
+        // Stamped onto every enqueued row so the play drafts inline without a
+        // run-level value — same shape as github-topics. Readiness gates it.
+        ...(typeof cfg["yourEdge"] === "string" ? { yourEdge: cfg["yourEdge"] as string } : {}),
         limit: (cfg["limit"] as number) ?? 25,
         maxCostUsd: (cfg["maxCostUsd"] as number) ?? 15,
       });
@@ -183,6 +241,7 @@ export const TRIGGERS: TriggerSpec[] = [
     name: "post-funding-auto",
     defaultIntervalMs: 12 * ONE_HOUR,
     defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
       autoRounds: ["Seed", "Series A"],
       autoSinceDays: 7,
       limit: 25,
@@ -210,18 +269,27 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
       personas: ["VP Engineering", "Head of Growth", "Director of Product", "Chief of Staff"],
+      yourEdge: "",
       sinceDays: 14,
       limit: 25,
       maxCostUsd: 5,
     },
     configBrief:
-      "Searches for 'joined X as Y' job-change announcements, ICP-filters, enriches the new email. Config: `personas` (the roles whose JOB CHANGE represents a buying moment for THIS product — not generic 'VP Eng' unless that's actually who buys; e.g. 'Head of AI', 'Founding Engineer' for AI-tooling ICPs), `companies` (optional whitelist of companies to bias toward), `sinceDays` (lookback, default 14), `limit`, `maxCostUsd`. Strong personas matter more than long lists.",
+      "Searches for 'joined X as Y' job-change announcements, ICP-filters, enriches the new email. Config: `personas` (the roles whose JOB CHANGE represents a buying moment for THIS product — not generic 'VP Eng' unless that's actually who buys; e.g. 'Head of AI', 'Founding Engineer' for AI-tooling ICPs), `companies` (optional whitelist of companies to bias toward), `yourEdge` (what this specific move makes newly relevant to them, REQUIRED — the Offer beat draws from it and nothing else; may hold several `//`-separated angles, and the email picks the one that fits the move), `sinceDays` (lookback, default 14), `limit`, `maxCostUsd`. Strong personas matter more than long lists.",
+    readiness: (cfg) => {
+      const edge = cfg["yourEdge"];
+      return typeof edge === "string" && edge.trim().length > 0
+        ? { ready: true }
+        : { ready: false, reason: "set `yourEdge` — what the move makes newly relevant" };
+    },
     run: (cfg) =>
       runJobChangeFinder({
         dryRun: false,
         ...(Array.isArray(cfg["personas"]) ? { personas: cfg["personas"] as string[] } : {}),
         ...(Array.isArray(cfg["companies"]) ? { companies: cfg["companies"] as string[] } : {}),
+        ...(typeof cfg["yourEdge"] === "string" ? { yourEdge: cfg["yourEdge"] as string } : {}),
         sinceDays: (cfg["sinceDays"] as number) ?? 14,
         limit: (cfg["limit"] as number) ?? 25,
         maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
@@ -232,6 +300,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
       roles: ["Staff Engineer", "ML Engineer", "Solutions Engineer"],
       sinceDays: 14,
       limit: 25,
@@ -261,6 +330,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
       podcasts: ["Latent Space", "Lenny's Podcast", "20VC", "Acquired", "Invest Like the Best"],
       sinceDays: 21,
       skipRead: false,
@@ -287,6 +357,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
       topics: ["AI", "founders"] as string[],
       cities: ["San Francisco", "New York"] as string[],
       sinceDays: 14,
@@ -335,6 +406,146 @@ export const TRIGGERS: TriggerSpec[] = [
       }),
   },
   {
+    // Local-registry finder over free, keyless public-registry APIs
+    // (Socrata business-license open data + NPPES NPI + FMCSA Company
+    // Census). Recent-issue lane
+    // routes to new-business, the rest to free-pilot. Ships empty (no
+    // portals/taxonomies/entityTypes configured) so
+    // nothing fires until the founder or an industry pack (#458/#464) sets
+    // a source.
+    name: "local-registry",
+    defaultIntervalMs: 24 * ONE_HOUR,
+    enabledByDefault: false,
+    defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
+      portals: [] as SocrataPortalConfig[],
+      naics: [] as string[],
+      licenseTypes: [] as string[],
+      taxonomies: [] as string[],
+      states: [] as string[],
+      entityTypes: [] as string[],
+      minPowerUnits: null as number | null,
+      maxPowerUnits: null as number | null,
+      sinceDays: 60,
+      freshnessDays: 21,
+      yourEdge: "",
+      limit: 25,
+      maxCostUsd: 5,
+    },
+    configBrief:
+      "Discovers newly-licensed or newly-enumerated main-street businesses over free, keyless public registries. Three sources, any combination may be configured: `portals` (array of {host, dataset, label} - a Socrata open-data business-license portal) filtered by `naics`/`licenseTypes`; `taxonomies` + `states` (NPPES NPI registry - taxonomy description like 'Dentist', 'Veterinarian', 'Chiropractor' crossed with 2-letter state codes); `entityTypes` (carrier/broker/freight-forwarder) + `states` + `minPowerUnits`/`maxPowerUnits` (FMCSA Company Census - the whole trucking/freight/3PL vertical, ~2.2M active entities; carries a published email on the record so there is no findEmail/verifyEmail spend at all, and the 10-100 power-unit fleet-size band is the segment that actually buys software). `sinceDays` (discovery window against the issue/enumeration/registration date, default 60) and `freshnessDays` (records inside this window route to the new-business play - nothing to rip out, the main-street equivalent of post-funding; everything else routes to free-pilot - clamped to sinceDays, default 21). `yourEdge` (the pitch angle for an owner-operator, REQUIRED - short and concrete, no founder jargon; may reference why a shop is relevant, e.g. new to the neighborhood - NEVER a violation, a score, or a lapsed license, which the copy lint holds regardless). A dead portal or an empty taxonomy state pair logs and continues; the run only halts when EVERY configured source returns 0 records. socrata-license/nppes carry a business name + address but no email - each such candidate resolves a domain, phone and operating status via the SDK's `localResolve` (name + address) before falling through to the normal contact-resolution spine, and a business the index says has closed is dropped; fmcsa skips that entirely. STRATEGIST DUTY: propose taxonomies+states for healthcare verticals, portals+naics/licenseTypes for general main-street, and entityTypes+states+minPowerUnits/maxPowerUnits for trucking/freight/logistics ICPs.",
+    readiness: (cfg) => {
+      const portals = Array.isArray(cfg["portals"]) ? cfg["portals"] : [];
+      const validPortals = portals.filter(
+        (p) =>
+          p &&
+          typeof p === "object" &&
+          typeof (p as Record<string, unknown>)["host"] === "string" &&
+          ((p as Record<string, unknown>)["host"] as string).trim().length > 0 &&
+          typeof (p as Record<string, unknown>)["dataset"] === "string" &&
+          ((p as Record<string, unknown>)["dataset"] as string).trim().length > 0,
+      );
+      const taxonomies = Array.isArray(cfg["taxonomies"])
+        ? (cfg["taxonomies"] as unknown[]).filter((t) => typeof t === "string" && t.trim())
+        : [];
+      const states = Array.isArray(cfg["states"])
+        ? (cfg["states"] as unknown[]).filter((s) => typeof s === "string" && s.trim())
+        : [];
+      const hasNppes = taxonomies.length > 0 && states.length > 0;
+      // Same allowlist `run` applies below (validEntityTypes) — an invalid
+      // entityTypes value (e.g. "trucking" instead of "carrier") must not
+      // pass readiness only to have `run` normalize it away and start with
+      // no configured fmcsa source, which reports the unhelpful "every
+      // configured source returned 0 records" instead of pointing at the
+      // bad value.
+      const validEntityTypes = new Set(["carrier", "broker", "freight-forwarder"]);
+      const entityTypes = Array.isArray(cfg["entityTypes"])
+        ? (cfg["entityTypes"] as unknown[]).filter(
+            (t) => typeof t === "string" && validEntityTypes.has(t.trim()),
+          )
+        : [];
+      const hasFmcsa =
+        entityTypes.length > 0 ||
+        typeof cfg["minPowerUnits"] === "number" ||
+        typeof cfg["maxPowerUnits"] === "number";
+      if (validPortals.length === 0 && !hasNppes && !hasFmcsa) {
+        return {
+          ready: false,
+          reason:
+            "set `portals[]` ({host, dataset, label}), `taxonomies[]` + `states[]`, or `entityTypes[]`/`minPowerUnits`/`maxPowerUnits` (fmcsa)",
+        };
+      }
+      const edge = cfg["yourEdge"];
+      if (typeof edge !== "string" || edge.trim().length === 0) {
+        return {
+          ready: false,
+          reason: "set `yourEdge` - your one-line pitch for an owner-operator",
+        };
+      }
+      return { ready: true };
+    },
+    run: (cfg) => {
+      const portals: SocrataPortalConfig[] = (
+        Array.isArray(cfg["portals"]) ? (cfg["portals"] as unknown[]) : []
+      )
+        .map((p): SocrataPortalConfig | null => {
+          if (!p || typeof p !== "object") return null;
+          const e = p as Record<string, unknown>;
+          const host = typeof e["host"] === "string" ? e["host"].trim() : "";
+          const dataset = typeof e["dataset"] === "string" ? e["dataset"].trim() : "";
+          if (host.length === 0 || dataset.length === 0) return null;
+          const label =
+            typeof e["label"] === "string" && e["label"].trim() ? e["label"].trim() : host;
+          return { host, dataset, label };
+        })
+        .filter((p): p is SocrataPortalConfig => p !== null);
+      const naics = Array.isArray(cfg["naics"])
+        ? (cfg["naics"] as unknown[]).filter((t): t is string => typeof t === "string")
+        : [];
+      const licenseTypes = Array.isArray(cfg["licenseTypes"])
+        ? (cfg["licenseTypes"] as unknown[]).filter((t): t is string => typeof t === "string")
+        : [];
+      const taxonomies = Array.isArray(cfg["taxonomies"])
+        ? (cfg["taxonomies"] as unknown[]).filter((t): t is string => typeof t === "string")
+        : [];
+      const states = Array.isArray(cfg["states"])
+        ? (cfg["states"] as unknown[]).filter((s): s is string => typeof s === "string")
+        : [];
+      const validEntityTypes = new Set(["carrier", "broker", "freight-forwarder"]);
+      // Trim before validating AND keep the trimmed value: readiness above
+      // accepts " carrier " because it tests t.trim(), so without the same
+      // normalization here a config reports ready and then starts with no
+      // FMCSA source. Filtering on the trimmed form while passing the raw
+      // one downstream would be the same bug wearing a hat.
+      const entityTypes = Array.isArray(cfg["entityTypes"])
+        ? (cfg["entityTypes"] as unknown[])
+            .filter((t): t is string => typeof t === "string")
+            .map((t) => t.trim())
+            .filter((t): t is "carrier" | "broker" | "freight-forwarder" => validEntityTypes.has(t))
+        : [];
+      return runLocalRegistryFinder({
+        dryRun: false,
+        ...(portals.length > 0 ? { portals } : {}),
+        ...(naics.length > 0 ? { naics } : {}),
+        ...(licenseTypes.length > 0 ? { licenseTypes } : {}),
+        ...(taxonomies.length > 0 ? { taxonomies } : {}),
+        ...(states.length > 0 ? { states } : {}),
+        ...(entityTypes.length > 0 ? { entityTypes } : {}),
+        ...(typeof cfg["minPowerUnits"] === "number"
+          ? { minPowerUnits: cfg["minPowerUnits"] as number }
+          : {}),
+        ...(typeof cfg["maxPowerUnits"] === "number"
+          ? { maxPowerUnits: cfg["maxPowerUnits"] as number }
+          : {}),
+        sinceDays: (cfg["sinceDays"] as number) ?? 60,
+        freshnessDays: (cfg["freshnessDays"] as number) ?? 21,
+        yourEdge: typeof cfg["yourEdge"] === "string" ? cfg["yourEdge"] : "",
+        limit: (cfg["limit"] as number) ?? 25,
+        maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
+      });
+    },
+  },
+  {
     // GitHub-Topic-driven repo finder (free Search API, `topic:<slug>`).
     // Routes to stack-consolidation, or competitor-switch on a
     // `directCompetitors` match. Ships empty so nothing fires until configured.
@@ -342,6 +553,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 12 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
       topics: [] as string[],
       vendors: [] as string[],
       directCompetitors: [] as string[],
@@ -412,6 +624,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 12 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
       repos: [] as Array<{ repo: string; rel: string; label?: string; repoEdge?: string }>,
       yourEdge: "",
       sinceDays: 30,
@@ -472,10 +685,66 @@ export const TRIGGERS: TriggerSpec[] = [
     },
   },
   {
+    name: "local-business",
+    defaultIntervalMs: 24 * ONE_HOUR,
+    enabledByDefault: false,
+    defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
+      jobTitles: [] as string[],
+      industries: [] as string[],
+      locations: [] as string[],
+      employeeRange: "",
+      keywords: [] as string[],
+      engine: "b2b",
+      yourEdge: "",
+      limit: 25,
+      maxCostUsd: 5,
+    },
+    configBrief:
+      "Reaches businesses with no GitHub repo, no Show HN post, no funding round and no accelerator batch — the local-business/main-street population the other ten finders can't touch. One `peopleSearch` call ($0.01 flat) returns up to 500 people matching `jobTitles` × `industries` × `locations` × `employeeRange`, many already carrying a `best_work_email` — those skip findEmail/verifyEmail entirely and go straight to the person-level ICP gate, so a run where every result has an email costs about one search call, not one per candidate. Config: `jobTitles` (roles that make the buying decision — e.g. 'Owner', 'Office Manager', 'Practice Manager'), `industries` (e.g. 'Dental Practices', 'HVAC Contractors', 'Independent Restaurants'), `locations` (metro/city/state filters), `employeeRange` (company-size band, e.g. '1-10', '11-50'), `keywords` (free-text refinement), `yourEdge` (the free-pilot pitch — what you set up for them free and what it saves them, REQUIRED, fed to the `free-pilot` play), `limit`, `maxCostUsd`. When `industries` is set and `jobTitles` is empty, the search is business-shaped: a `companySearch` pass resolves matching company domains first, then `peopleSearch` is scoped to those domains instead of searching on industry directly. `engine` (`b2b`, the default, or `local`): `local` swaps the B2B people database for the SDK's `localSearch` — the places index, `industries` as the category × `locations` as the city — and walks each business through the domain-only contact spine. Pick `local` for main-street verticals the B2B database indexes poorly (independent restaurants, single-location practices, one-truck trades); it is one flat-priced search per run plus the normal per-candidate contact spend. STRATEGIST DUTY: propose `jobTitles` AND `industries` proactively from the founder's ICP — a pre-PMF founder selling to dental practices or HVAC companies shouldn't have to enumerate either by hand.",
+    readiness: (cfg) => {
+      const jobTitles = Array.isArray(cfg["jobTitles"])
+        ? (cfg["jobTitles"] as unknown[]).filter((t) => typeof t === "string" && t.trim())
+        : [];
+      const industries = Array.isArray(cfg["industries"])
+        ? (cfg["industries"] as unknown[]).filter((t) => typeof t === "string" && t.trim())
+        : [];
+      if (jobTitles.length === 0 && industries.length === 0) {
+        return { ready: false, reason: "set `jobTitles` or `industries` (at least one)" };
+      }
+      const edge = cfg["yourEdge"];
+      if (typeof edge !== "string" || edge.trim().length === 0) {
+        return { ready: false, reason: "set `yourEdge` — your one-line free-pilot pitch" };
+      }
+      return { ready: true };
+    },
+    run: (cfg) => {
+      const strArray = (key: string): string[] =>
+        Array.isArray(cfg[key])
+          ? (cfg[key] as unknown[]).filter((t): t is string => typeof t === "string")
+          : [];
+      return runLocalBusinessFinder({
+        dryRun: false,
+        jobTitles: strArray("jobTitles"),
+        industries: strArray("industries"),
+        locations: strArray("locations"),
+        keywords: strArray("keywords"),
+        ...(typeof cfg["employeeRange"] === "string" && cfg["employeeRange"].trim().length > 0
+          ? { employeeRange: (cfg["employeeRange"] as string).trim() }
+          : {}),
+        yourEdge: typeof cfg["yourEdge"] === "string" ? cfg["yourEdge"] : "",
+        ...(cfg["engine"] === "local" ? { engine: "local" as const } : {}),
+        limit: (cfg["limit"] as number) ?? 25,
+        maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
+      });
+    },
+  },
+  {
     name: "x-reposters",
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
       seeds: [] as Array<{ handle: string; edge?: string }>,
       engine: "xapi",
       laneSplit: 0.5,
@@ -576,6 +845,125 @@ export const TRIGGERS: TriggerSpec[] = [
         limit: (cfg["limit"] as number) ?? 25,
       }),
   },
+  {
+    // One SDK govSolicitations search per run: every notice comes back with
+    // its contracting officer's contact (name, title, email, phone) and the
+    // description inline, so this finder needs no findEmail/verifyEmail and
+    // no second fetch — the search is the whole spend.
+    name: "gov-solicitation",
+    defaultIntervalMs: 24 * ONE_HOUR,
+    enabledByDefault: false,
+    defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
+      naics: [] as string[],
+      noticeTypes: ["r", "p"] as string[],
+      agencies: [] as string[],
+      sinceDays: 30,
+      yourEdge: "",
+      limit: 25,
+      maxCostUsd: 5,
+    },
+    configBrief:
+      "Pulls federal notices matching your NAICS codes through the SDK's `govSolicitations` and pitches the notice's own published contracting officer — no findEmail/verifyEmail spend, since the notice already carries a name, title, email and phone. Config: `naics` (one or more 6-digit NAICS codes describing what you sell — REQUIRED), `noticeTypes` (SAM.gov `ptype` codes, default `['r','p']`), `agencies` (optional case-insensitive substring allowlist to narrow to agencies you actually want to sell to), `sinceDays` (lookback window for `postedFrom`, default 30, capped at 365 — SAM.gov's own one-year max range), `yourEdge` (your one-line pitch, REQUIRED), `limit`, `maxCostUsd`. No key: this is one flat-priced SDK search per run (all NAICS codes in one call, contact and description inline), counted against `maxCostUsd`. STRATEGIST NOTE: `noticeTypes` is a MOTION choice, not a filter — `r` (Sources Sought) and `p` (Presolicitation) reach the agency WHILE the requirement is still being written, the one window where a startup with no past-performance record can shape it; `o` (Solicitation) reaches it AFTER the requirement is fixed, when a competitor with an incumbent relationship has usually already shaped it. Default to r/p unless the founder explicitly wants to bid on finished RFPs. `r`/`p` notices route to `sources-sought`; everything else routes to `design-partner-loi`.",
+    readiness: (cfg) => {
+      const naics = Array.isArray(cfg["naics"]) ? cfg["naics"] : null;
+      if (!naics || naics.filter((n) => typeof n === "string" && n.trim()).length === 0) {
+        return { ready: false, reason: "set `naics` (one or more 6-digit NAICS codes)" };
+      }
+      const edge = cfg["yourEdge"];
+      if (typeof edge !== "string" || edge.trim().length === 0) {
+        return { ready: false, reason: "set `yourEdge` — one-line pitch for the agency POC" };
+      }
+      return { ready: true };
+    },
+    run: (cfg) => {
+      const configuredNoticeTypes = (
+        Array.isArray(cfg["noticeTypes"]) ? cfg["noticeTypes"] : []
+      ).filter((t): t is string => typeof t === "string" && t.trim().length > 0);
+      return runGovSolicitationFinder({
+        dryRun: false,
+        ...(Array.isArray(cfg["naics"])
+          ? { naics: (cfg["naics"] as unknown[]).filter((n): n is string => typeof n === "string") }
+          : {}),
+        // Omit noticeTypes entirely (rather than passing an empty array
+        // through) when the stored config has no usable entries, so the
+        // finder's own default (["r","p"]) applies instead of halting on
+        // "set `noticeTypes`" — the config endpoint persists an empty array
+        // without normalizing it to the default.
+        ...(configuredNoticeTypes.length > 0 ? { noticeTypes: configuredNoticeTypes } : {}),
+        ...(Array.isArray(cfg["agencies"])
+          ? {
+              agencies: (cfg["agencies"] as unknown[]).filter(
+                (a): a is string => typeof a === "string",
+              ),
+            }
+          : {}),
+        ...(typeof cfg["yourEdge"] === "string" ? { yourEdge: cfg["yourEdge"] as string } : {}),
+        sinceDays: (cfg["sinceDays"] as number) ?? 30,
+        limit: (cfg["limit"] as number) ?? 25,
+        maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
+      });
+    },
+  },
+  {
+    // Legistar/Granicus council agendas: keyword-gate agenda item titles free,
+    // then one LLM relevance call on the survivors — same pre-spend discipline
+    // as luma.ts. The body's own OfficeRecords contact is used; no SDK spend.
+    name: "civic-agenda",
+    defaultIntervalMs: 24 * ONE_HOUR,
+    enabledByDefault: false,
+    defaultConfig: {
+      ...PRODUCT_RESEARCH_DEFAULT,
+      cities: [] as string[],
+      keywords: [] as string[],
+      sinceDays: 30,
+      yourEdge: "",
+      limit: 25,
+      maxCostUsd: 5,
+    },
+    configBrief:
+      "Scans city/county council agendas via the Legistar/Granicus Web API for items matching your keywords, and pitches the meeting body's own published contact. Config: `cities` (city names mapped to a Legistar client — see `_civic-legistar.ts` for the curated list; unmapped cities are skipped and logged), `keywords` (free word-boundary gate applied to agenda item TITLES before any paid call — e.g. ['AI', 'automation', 'software'] — REQUIRED), `sinceDays` (forward-looking window, default 30), `yourEdge` (your one-line pilot pitch, REQUIRED), `limit`, `maxCostUsd`. No API key needed (Legistar is a public, keyless JSON API). STRATEGIST DUTY: keywords must match the VOCABULARY agenda clerks actually use, not marketing language — 'body-worn camera' beats 'law enforcement AI', 'permitting software' beats 'GovTech'. Routes to `civic-pilot`.",
+    readiness: (cfg) => {
+      const cities = Array.isArray(cfg["cities"]) ? cfg["cities"] : null;
+      if (!cities || cities.filter((c) => typeof c === "string" && c.trim()).length === 0) {
+        return { ready: false, reason: "set `cities` (e.g. ['New York', 'Chicago'])" };
+      }
+      const keywords = Array.isArray(cfg["keywords"]) ? cfg["keywords"] : null;
+      if (!keywords || keywords.filter((k) => typeof k === "string" && k.trim()).length === 0) {
+        return {
+          ready: false,
+          reason: "set `keywords` (agenda-title gate, e.g. ['AI','automation'])",
+        };
+      }
+      const edge = cfg["yourEdge"];
+      if (typeof edge !== "string" || edge.trim().length === 0) {
+        return { ready: false, reason: "set `yourEdge` — one-line pilot pitch" };
+      }
+      return { ready: true };
+    },
+    run: (cfg) =>
+      runCivicAgendaFinder({
+        dryRun: false,
+        ...(Array.isArray(cfg["cities"])
+          ? {
+              cities: (cfg["cities"] as unknown[]).filter(
+                (c): c is string => typeof c === "string",
+              ),
+            }
+          : {}),
+        ...(Array.isArray(cfg["keywords"])
+          ? {
+              keywords: (cfg["keywords"] as unknown[]).filter(
+                (k): k is string => typeof k === "string",
+              ),
+            }
+          : {}),
+        ...(typeof cfg["yourEdge"] === "string" ? { yourEdge: cfg["yourEdge"] as string } : {}),
+        sinceDays: (cfg["sinceDays"] as number) ?? 30,
+        limit: (cfg["limit"] as number) ?? 25,
+        maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
+      }),
+  },
 ];
 
 /**
@@ -602,6 +990,74 @@ export interface TriggerRunOutcome {
   duration_ms?: number;
   /** ms until this trigger is next due */
   nextDueInMs: number;
+  /** Named scheduler skip reason (disabled/not-due remain unnamed). */
+  skippedReason?: string;
+}
+
+export const DEFAULT_APPROVAL_RATE_THRESHOLD = 0.1;
+export const DEFAULT_APPROVAL_RATE_WINDOW_DAYS = 30;
+export const DEFAULT_APPROVAL_RATE_MIN_SAMPLES = 100;
+
+export interface FinderApprovalHealth {
+  approved: number;
+  reviewed: number;
+  rate: number | null;
+  threshold: number;
+  windowDays: number;
+  minSamples: number;
+  sufficientData: boolean;
+  deprioritized: boolean;
+  reason: string | null;
+}
+
+/** Pure boundary logic shared by scheduler, API, doctor, and tests. */
+export function evaluateFinderApprovalHealth(input: {
+  approved: number;
+  reviewed: number;
+  threshold?: number;
+  windowDays?: number;
+  minSamples?: number;
+}): FinderApprovalHealth {
+  const threshold = input.threshold ?? DEFAULT_APPROVAL_RATE_THRESHOLD;
+  const windowDays = input.windowDays ?? DEFAULT_APPROVAL_RATE_WINDOW_DAYS;
+  const minSamples = input.minSamples ?? DEFAULT_APPROVAL_RATE_MIN_SAMPLES;
+  const rate = input.reviewed > 0 ? input.approved / input.reviewed : null;
+  const sufficientData = input.reviewed >= minSamples;
+  const deprioritized = sufficientData && rate !== null && rate < threshold;
+  return {
+    ...input,
+    rate,
+    threshold,
+    windowDays,
+    minSamples,
+    sufficientData,
+    deprioritized,
+    reason: deprioritized ? "low-approval-rate" : null,
+  };
+}
+
+export function finderApprovalHealth(
+  name: string,
+  config: Record<string, unknown>,
+): FinderApprovalHealth {
+  const numberOr = (key: string, fallback: number): number => {
+    const value = config[key];
+    return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback;
+  };
+  const threshold = Math.min(1, numberOr("approvalRateThreshold", DEFAULT_APPROVAL_RATE_THRESHOLD));
+  const windowDays = Math.max(
+    1,
+    numberOr("approvalRateWindowDays", DEFAULT_APPROVAL_RATE_WINDOW_DAYS),
+  );
+  const minSamples = Math.max(
+    1,
+    Math.floor(numberOr("approvalRateMinSamples", DEFAULT_APPROVAL_RATE_MIN_SAMPLES)),
+  );
+  const stats = getLedger().finderApprovalStats({
+    finder: name,
+    sinceIso: new Date(Date.now() - windowDays * 86_400_000).toISOString(),
+  });
+  return evaluateFinderApprovalHealth({ ...stats, threshold, windowDays, minSamples });
 }
 
 /**
@@ -677,6 +1133,16 @@ export function fireTriggerNow(name: string): void {
   if (!readiness.ready) {
     throw new Error(`not ready: ${readiness.reason}`);
   }
+  // Daily spend ceiling gate (issue #481): a manual "run now" click is still
+  // an AUTOMATED paid call (as opposed to a human-reviewed /queue send), so it
+  // is bound by the same install-wide ceiling as scheduled runs. This is an
+  // early read-only check for a fast 409 — runTriggerNow re-checks
+  // atomically via tryReserveDailySpend right before firing, which is what
+  // actually closes the race between two concurrent automated calls.
+  const status = dailySpendStatus();
+  if (status.ceilingReached) {
+    throw new Error(`not ready: ${spendCeilingReason(status)}`);
+  }
   // Bootstrap the row if it doesn't exist yet — markTriggerRunning is an
   // UPDATE that no-ops on a missing row, so we'd silently lose state.
   if (!stored) {
@@ -697,7 +1163,7 @@ export function fireTriggerNow(name: string): void {
   }
   // Explicit catch (not `void`): a rejection before runTriggerNow's own
   // try/catch must surface AND clear the stranded `running_started_at`.
-  runTriggerNow(name).catch((err) => {
+  runTriggerNow(name, { claimHeld: true }).catch((err) => {
     const message = (err as Error).message ?? "runTriggerNow rejected";
     logEvent("trigger.run.fire_failed", { name, message_120: message.slice(0, 120) }, "error");
     try {
@@ -716,7 +1182,10 @@ export function fireTriggerNow(name: string): void {
  * (the founder explicitly asked). Persists last_polled_at + last_run_summary
  * so the watch loop respects the run.
  */
-export async function runTriggerNow(name: string): Promise<TriggerRunOutcome> {
+export async function runTriggerNow(
+  name: string,
+  options: { claimHeld?: boolean } = {},
+): Promise<TriggerRunOutcome> {
   startRun();
   const spec = TRIGGERS.find((t) => t.name === name);
   if (!spec) throw new Error(`unknown trigger '${name}'`);
@@ -743,10 +1212,40 @@ export async function runTriggerNow(name: string): Promise<TriggerRunOutcome> {
     logEvent("trigger.run.skipped", { name, source: "ad_hoc", reason: readiness.reason });
     return { name, fired: false, error: message, nextDueInMs: intervalMs };
   }
+  // fireTriggerNow claims before detaching its promise. Direct callers must
+  // claim here so this exported boundary cannot overlap same-trigger runs.
+  if (!options.claimHeld) {
+    const claimNowIso = new Date().toISOString();
+    const staleCutoffIso = new Date(Date.now() - MAX_RUN_AGE_MS).toISOString();
+    if (!ledger.markTriggerRunning(name, claimNowIso, staleCutoffIso)) {
+      const message = `trigger '${name}' is already running`;
+      return { name, fired: false, error: message, nextDueInMs: intervalMs };
+    }
+  }
+  // Install-wide daily spend ceiling (issue #481): reserve this run's
+  // worst-case cost against the day's budget BEFORE firing the finder. A
+  // refusal here still clears the claim taken above (updateTriggerLastPoll
+  // resets running_started_at), so a later run-now click isn't stuck behind
+  // a phantom in-flight marker.
+  const reservation = tryReserveDailySpend(estimatedTriggerSpendUsd(config));
+  if (!reservation.granted) {
+    // clearTriggerClaim, not updateTriggerLastPoll: the finder never ran, so
+    // stamping last_polled_at would push this trigger's next-due a full
+    // interval out even though it was refused with $0 spent — the ceiling
+    // resetting (or headroom opening from a released reservation) wouldn't
+    // un-stick it until the next scheduled poll, which could be hours away
+    // (issue #481 review finding).
+    ledger.clearTriggerClaim({
+      name,
+      summary: { error: reservation.reason, at: new Date().toISOString() },
+    });
+    logEvent("trigger.run.skipped", { name, source: "ad_hoc", reason: reservation.reason });
+    return { name, fired: false, error: reservation.reason, nextDueInMs: intervalMs };
+  }
   const startedAt = Date.now();
   logEvent("trigger.run.start", { name, source: "ad_hoc" });
   try {
-    const result = await spec.run(config);
+    const result = await runFinderWithProductResearch(spec, config);
     ledger.updateTriggerLastPoll({ name, summary: result });
     logEvent("trigger.run.done", {
       name,
@@ -777,6 +1276,8 @@ export async function runTriggerNow(name: string): Promise<TriggerRunOutcome> {
       "error",
     );
     return { name, fired: true, error: message, nextDueInMs: intervalMs };
+  } finally {
+    reservation.release();
   }
 }
 
@@ -784,7 +1285,9 @@ export async function runTriggerNow(name: string): Promise<TriggerRunOutcome> {
  * Run every registered trigger that's due. Persists last_polled_at + last_run_summary.
  * Returns one outcome per trigger so the caller can log + decide sleep duration.
  */
-export async function runDueTriggers(): Promise<TriggerRunOutcome[]> {
+export async function runDueTriggers(
+  options: { ignoreApprovalRate?: boolean } = {},
+): Promise<TriggerRunOutcome[]> {
   startRun();
   const ledger = getLedger();
   const now = Date.now();
@@ -815,11 +1318,35 @@ export async function runDueTriggers(): Promise<TriggerRunOutcome[]> {
     // picked up on the next tick, not the next interval boundary.
     const readiness = checkReadiness(spec, config);
     if (!readiness.ready) {
-      outcomes.push({ name: spec.name, fired: false, nextDueInMs: intervalMs });
+      outcomes.push({
+        name: spec.name,
+        fired: false,
+        nextDueInMs: intervalMs,
+        skippedReason: readiness.reason,
+      });
       logEvent("trigger.run.skipped", {
         name: spec.name,
         source: "watch",
         reason: readiness.reason,
+      });
+      continue;
+    }
+
+    const approval = finderApprovalHealth(spec.name, config);
+    if (approval.deprioritized && !options.ignoreApprovalRate) {
+      outcomes.push({
+        name: spec.name,
+        fired: false,
+        nextDueInMs: intervalMs,
+        skippedReason: approval.reason ?? "low-approval-rate",
+      });
+      logEvent("trigger.run.skipped", {
+        name: spec.name,
+        source: "watch",
+        reason: approval.reason,
+        approval_rate: approval.rate,
+        reviewed: approval.reviewed,
+        threshold: approval.threshold,
       });
       continue;
     }
@@ -847,10 +1374,38 @@ export async function runDueTriggers(): Promise<TriggerRunOutcome[]> {
       continue;
     }
 
+    // Install-wide daily spend ceiling (issue #481): reserve this run's
+    // worst-case cost before firing. Refused calls clear the claim taken
+    // above (via updateTriggerLastPoll) so the trigger isn't stuck
+    // "running" for the rest of the day.
+    const reservation = tryReserveDailySpend(estimatedTriggerSpendUsd(config));
+    if (!reservation.granted) {
+      // clearTriggerClaim, not updateTriggerLastPoll (issue #481 review
+      // finding) — see fireTriggerNow's matching comment: stamping
+      // last_polled_at on a refusal would delay the NEXT scheduled attempt
+      // by a full interval even though this one never actually ran.
+      ledger.clearTriggerClaim({
+        name: spec.name,
+        summary: { error: reservation.reason, at: new Date().toISOString() },
+      });
+      outcomes.push({
+        name: spec.name,
+        fired: false,
+        nextDueInMs: intervalMs,
+        skippedReason: reservation.reason,
+      });
+      logEvent("trigger.run.skipped", {
+        name: spec.name,
+        source: "watch",
+        reason: reservation.reason,
+      });
+      continue;
+    }
+
     const startedAt = Date.now();
     logEvent("trigger.run.start", { name: spec.name, source: "watch" });
     try {
-      const result = await spec.run(config);
+      const result = await runFinderWithProductResearch(spec, config);
       const durationMs = Date.now() - startedAt;
       ledger.updateTriggerLastPoll({ name: spec.name, summary: result });
       logEvent("trigger.run.done", {
@@ -895,6 +1450,8 @@ export async function runDueTriggers(): Promise<TriggerRunOutcome[]> {
         duration_ms: durationMs,
         nextDueInMs: intervalMs,
       });
+    } finally {
+      reservation.release();
     }
   }
   logEvent("watch.tick.done", { fired: outcomes.filter((o) => o.fired).length });

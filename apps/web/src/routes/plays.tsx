@@ -6,17 +6,20 @@ import { toast } from "sonner";
 import { isRunnablePlay, type PlayDescriptor } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { Button } from "../components/primitives/Button.tsx";
-import { Input } from "../components/primitives/Field.tsx";
+import { Input, Select } from "../components/primitives/Field.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { CadenceTimeline, type CadenceStep } from "../components/plays/CadenceTimeline.tsx";
-import { cn } from "../lib/cn.ts";
+import { cn, formatCount } from "../lib/cn.ts";
+import { readOnly } from "../lib/readOnly.ts";
 
 export const Route = createFileRoute("/plays")({
+  staticData: { title: "Plays" },
   component: PlaysPage,
 });
 
 const CHANNEL_ICON = {
   email: Mail,
+  direct_mail: Mail,
   sms: MessageSquare,
   voice: Phone,
   linkedin: MessageSquare,
@@ -228,7 +231,10 @@ function PlaysPage() {
                     <div className="font-mono text-[11px] text-ink-faint">
                       {count > 0 ? (
                         <span>
-                          <span className="text-[color:var(--ink-receipt-2)]">{count}</span> receipt
+                          <span className="text-[color:var(--ink-receipt-2)]">
+                            {formatCount(count)}
+                          </span>{" "}
+                          receipt
                           {count === 1 ? "" : "s"} signed
                         </span>
                       ) : (
@@ -312,7 +318,8 @@ function groupByPlay<T extends { playName: string }>(rows: T[]): Map<string, num
  * increasing). Save persists a per-play override; reset clears it back to the
  * code default. Structure (which prompts, breakup position) isn't editable.
  */
-function CadenceEditor({ play }: { play: PlayDescriptor }) {
+function CadenceEditor({ play: descriptor }: { play: PlayDescriptor }) {
+  const play = { ...descriptor, steps: descriptor.baseSteps ?? descriptor.steps };
   const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [days, setDays] = useState<number[]>(play.steps.map((s) => s.day));
@@ -336,7 +343,7 @@ function CadenceEditor({ play }: { play: PlayDescriptor }) {
 
   const timeline: CadenceStep[] = [
     { day: 0, label: "send" },
-    ...play.steps.map((s) => ({
+    ...descriptor.steps.map((s) => ({
       day: s.day,
       label: s.label,
       breakup: s.isBreakup,
@@ -359,6 +366,7 @@ function CadenceEditor({ play }: { play: PlayDescriptor }) {
           </button>
         )}
       </div>
+      {descriptor.mailEligible && <MotionMailEditor play={descriptor} />}
       {editing && (
         <div className="flex flex-col gap-2 rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep p-3">
           <div className="flex flex-wrap items-end gap-3">
@@ -390,6 +398,7 @@ function CadenceEditor({ play }: { play: PlayDescriptor }) {
               size="sm"
               disabled={save.isPending || !isModified}
               onClick={() => save.mutate(null)}
+              {...readOnly}
               title="Restore the code-default timing"
             >
               reset to default
@@ -411,6 +420,110 @@ function CadenceEditor({ play }: { play: PlayDescriptor }) {
             {play.defaultDays.map((d) => `d${d}`).join(" · ")}
           </p>
         </div>
+      )}
+    </div>
+  );
+}
+
+function MotionMailEditor({ play }: { play: PlayDescriptor }) {
+  const qc = useQueryClient();
+  const [mode, setMode] = useState<"automatic" | "always" | "off">(
+    play.directMail ? (play.directMail.mode ?? "always") : "off",
+  );
+  const enabled = mode !== "off";
+  const [position, setPosition] = useState(play.directMail?.position ?? 2);
+  const [delayDays, setDelayDays] = useState(play.directMail?.delayDays ?? 3);
+  const savedMode = play.directMail ? (play.directMail.mode ?? "always") : "off",
+    savedPosition = play.directMail?.position ?? 2,
+    savedDelay = play.directMail?.delayDays ?? 3;
+  useEffect(() => {
+    setMode(savedMode);
+    setPosition(savedPosition);
+    setDelayDays(savedDelay);
+  }, [savedMode, savedPosition, savedDelay]);
+  const save = useMutation({
+    mutationFn: () =>
+      api.setDirectMail(
+        play.name,
+        enabled
+          ? { position, delayDays, mode: mode === "automatic" ? "automatic" : "always" }
+          : null,
+      ),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["plays"] });
+      void qc.invalidateQueries({ queryKey: ["cadences"] });
+      toast.success("Mail step saved");
+    },
+    onError: (e) => toast.error(e.message),
+  });
+  const dirty =
+    mode !== savedMode ||
+    (enabled &&
+      (position !== play.directMail?.position || delayDays !== play.directMail?.delayDays));
+  return (
+    <div className="flex flex-wrap items-center gap-3 text-xs">
+      <label className="flex items-center gap-2">
+        Direct mail
+        <Select
+          aria-label="Direct mail policy"
+          value={mode}
+          onChange={(e) => setMode(e.target.value as typeof mode)}
+          disabled={readOnly.disabled || save.isPending}
+        >
+          {play.mailAutomaticSupported && (
+            <option value="automatic">Automatic — suitable prospects</option>
+          )}
+          <option value="always">Always include</option>
+          <option value="off">Off</option>
+        </Select>
+      </label>
+      <p className="w-full text-ink-faint">
+        {mode === "automatic"
+          ? play.mailRecommendation
+          : mode === "off"
+            ? "Direct mail is off for this motion."
+            : "Every eligible active prospect gets a mail step; missing addresses pause it."}{" "}
+        Each letter still requires individual approval. Follow-ups allow at least eight business
+        days for printing and transit, plus two days to read.
+      </p>
+      {enabled && (
+        <>
+          <label>
+            Position{" "}
+            <Select
+              aria-label="Mail step position"
+              value={position}
+              onChange={(e) => setPosition(Number(e.target.value))}
+            >
+              {Array.from({ length: (play.baseSteps ?? play.steps).length + 1 }, (_, i) => (
+                <option key={i} value={i + 2}>
+                  Step {i + 2}
+                </option>
+              ))}
+            </Select>
+          </label>
+          <label>
+            Days after previous touch{" "}
+            <Input
+              aria-label="Mail delay days"
+              type="number"
+              min={1}
+              max={120}
+              value={delayDays}
+              onChange={(e) => setDelayDays(Number(e.target.value))}
+              className="w-20"
+            />
+          </label>
+        </>
+      )}
+      {dirty && (
+        <Button
+          size="sm"
+          disabled={save.isPending || readOnly.disabled}
+          onClick={() => save.mutate()}
+        >
+          Save mail step
+        </Button>
       )}
     </div>
   );

@@ -9,10 +9,14 @@ export type CadenceStatus =
   | "breakup"
   | "completed"
   | "paused"
+  /** Explicitly stopped by the founder before the cadence naturally finished. */
+  | "stopped"
   /** Stopped by a hard bounce — the address is dead and is suppressed from further sends. */
   | "bounced"
   /** Stopped by an explicit do-not-contact reply — the prospect is suppressed from further sends. */
   | "unsubscribed";
+
+export type CadenceStopReason = "bad_timing" | "other" | "not_a_fit" | "do_not_contact";
 
 export interface CadenceNextStepDraft {
   subject: string;
@@ -32,19 +36,41 @@ export interface CadenceSentStep {
   /** ISO timestamp of when the email actually sent. */
   sentAt: string;
 }
-export type StepChannel = "email" | "sms" | "voice" | "linkedin" | "x";
+export type StepChannel = "email" | "sms" | "voice" | "linkedin" | "x" | "direct_mail";
+
+export interface BusinessMailAddress {
+  name: string;
+  address_line1: string;
+  address_line2?: string;
+  address_city: string;
+  address_state: string;
+  address_zip: string;
+  address_country?: "US";
+}
 
 export interface CadenceView {
+  nextStepChannel?: StepChannel | null;
+  businessAddress?: BusinessMailAddress | null;
+  mailDraftId?: string | null;
   prospectId: number;
   prospectEmail: string | null;
   prospectName: string | null;
   prospectCompany: string | null;
+  prospectTitle: string | null;
+  /** Present only when the stored polymorphic profile field is a valid LinkedIn member URL. */
+  prospectLinkedinUrl: string | null;
   playName: string;
   status: CadenceStatus;
   currentStep: number;
   enrolledAt: string;
   nextDueAt: string | null;
   lastPolledAt: string | null;
+  stopReason: CadenceStopReason | null;
+  stopNote: string | null;
+  stoppedAt: string | null;
+  /** Most recent persisted human reply channel; null for legacy reply rows without an inbound event. */
+  replyChannel: "email" | "linkedin" | null;
+  replyAt: string | null;
   /** Persisted next-step preview (set by Preview, cleared on advance). */
   nextStepDraft: CadenceNextStepDraft | null;
   /** Label of the next step ("value follow-up", "breakup", …). Null when
@@ -85,6 +111,7 @@ export interface CadenceCounts {
   breakup: number;
   completed: number;
   paused: number;
+  stopped: number;
   bounced: number;
   overdue: number;
 }
@@ -94,6 +121,28 @@ export interface CadencesResult {
   counts: CadenceCounts;
   /** Absent when the capacity computation failed — pages skip the figure. */
   sendsToday?: SendsToday;
+}
+
+export interface LinkedInReplyWebhookRequest {
+  source: string;
+  eventId: string;
+  occurredAt: string;
+  linkedinUrl?: string;
+  email?: string;
+  /**
+   * The message text, when the provider sends it. Optional — recording the
+   * reply (and stopping the cadence) never depends on it — but without a body
+   * the reply composer has nothing to draft against.
+   */
+  body?: string;
+}
+
+export interface LinkedInReplyResult {
+  accepted: true;
+  duplicate: boolean;
+  prospectId: number;
+  cadencesStopped: number;
+  inFlightSends: number;
 }
 
 /** RoCS value tag attached to a receipt once its outcome is known. */
@@ -143,6 +192,8 @@ export interface OutcomeByPlay {
   won: number;
   lost: number;
   ghosted: number;
+  /** Closed-won dollars for this play in the window. Pipeline is never valued. */
+  wonValueUsd: number;
 }
 
 /**
@@ -150,6 +201,19 @@ export interface OutcomeByPlay {
  * confirmed outcome value, `pendingValue` self-reported but unconfirmed; `rocs`
  * is value ÷ spend.
  */
+/** Daily signed spend for one play, oldest bucket first. See `SpendSeries`. */
+export interface SpendSeriesPlay {
+  playName: string;
+  /** One entry per day in the window, oldest first. Days with no spend are 0. */
+  spend: number[];
+}
+
+export interface SpendSeries {
+  /** How many daily buckets each `spend` array carries. */
+  days: number;
+  series: SpendSeriesPlay[];
+}
+
 export interface RocsGoalView {
   goalId: string;
   playName: string | null;
@@ -196,6 +260,8 @@ export interface HomeMetrics {
   sentLast7d: number;
   repliedLast7d: number;
   activeCadences: number;
+  /** Durable, all-time first-send milestone derived from sent sequence events. */
+  hasFirstSend: boolean;
   /** Absent when the capacity computation failed — pages skip the figure. */
   sendsToday?: SendsToday;
   /**
@@ -206,6 +272,11 @@ export interface HomeMetrics {
 }
 
 export interface PlayDescriptor {
+  directMail?: { position: number; delayDays: number; mode?: "automatic" | "always" } | null;
+  mailRecommendation?: string;
+  mailAutomaticSupported?: boolean;
+  mailEligible?: boolean;
+  baseSteps?: { day: number; label: string; channel: StepChannel; isBreakup: boolean }[];
   name: string;
   channels: StepChannel[];
   followupCount: number;
@@ -226,7 +297,7 @@ export type WalletMode = "cdp" | "private-key";
 export type KeySource = "env" | "file" | null;
 
 /** Section a doctor check renders under in the dashboard's grouped panel. */
-export type DoctorGroup = "install" | "senders" | "deliverability" | "spend";
+export type DoctorGroup = "install" | "senders" | "deliverability" | "finders" | "spend";
 
 export interface DoctorCheck {
   name: string;
@@ -235,6 +306,13 @@ export interface DoctorCheck {
   severity: "ok" | "warn" | "fail";
   message: string;
   hint?: string;
+  approvalRate?: number | null;
+  approved?: number;
+  reviewed?: number;
+  threshold?: number;
+  windowDays?: number;
+  minSamples?: number;
+  deprioritized?: boolean;
 }
 
 export interface SetupRequest {
@@ -280,6 +358,8 @@ export interface SetupRequest {
   productPortfolio?: string;
   /** Notable partners / customers (free text, brand names). Brand-recognition proof. */
   partners?: string;
+  /** Your OWN accelerator batch tag ("yc-w23"), only if you actually did one. Blank = accelerator-batch writes as an outsider. */
+  founderCohort?: string;
   /** One true concession ("two people, no enterprise logos yet") for the optional damaging-admission beat. */
   founderAdmission?: string;
   /** Product facts + canonical links replies may cite. Links absent from this brief are never sent. */
@@ -288,10 +368,26 @@ export interface SetupRequest {
   mobileSignature?: boolean;
   /** Slack incoming-webhook URL for reply/bounce/daily-summary notifications. Empty string clears it (feature off). */
   slackWebhookUrl?: string;
+  /**
+   * Install-wide daily USD spend ceiling (issue #481). `undefined` = leave
+   * unchanged; `null` = clear it (unlimited); a positive number = set it.
+   */
+  dailySpendCeilingUsd?: number | null;
   llmProvider?: LlmProvider;
   llmModel?: string;
   telemetryEnabled?: boolean;
   walletMode?: WalletMode;
+  /**
+   * Default /queue review order. `undefined` = leave unchanged. Anything but
+   * the two literals is ignored (keeps the current value).
+   */
+  queueReviewOrder?: "ranked" | "newest";
+  /**
+   * Install-wide IANA time zone (issue #451 surfaced it — no other writer
+   * exists). `undefined` = leave unchanged; `null` or blank = clear back to the
+   * runtime zone; otherwise must be a valid IANA name or the request is 400.
+   */
+  timezone?: string | null;
   secrets?: Partial<
     Record<
       | "OPENROUTER_API_KEY"
@@ -309,7 +405,10 @@ export interface SetupRequest {
       | "X_API_SECRET"
       | "X_ACCESS_TOKEN"
       | "X_ACCESS_SECRET"
-      | "TWITTERAPI_IO_KEY",
+      | "TWITTERAPI_IO_KEY"
+      | "GITHUB_TOKEN"
+      | "LUMA_SESSION_COOKIE"
+      | "LINKEDIN_REPLY_WEBHOOK_SECRET",
       string
     >
   >;
@@ -386,6 +485,66 @@ export interface SenderIdentityView {
 
 export type QueueStatusView = "pending" | "approved" | "rejected" | "sent" | "expired";
 
+export const PRIORITY_COMPONENT_KEYS = [
+  "personFit",
+  "accountFit",
+  "intentStrength",
+  "timingFreshness",
+  "signalConfidence",
+  "contactability",
+] as const;
+export type PriorityComponentKey = (typeof PRIORITY_COMPONENT_KEYS)[number];
+
+/** Every priority-artifact version the system can parse and render. */
+export type PriorityVersion = "heuristic-v1" | "heuristic-v2";
+
+/**
+ * Canonical per-version component weights (percent, each row sums to 100).
+ * The scoring engine (packages/find) AND the web chip both read THIS table —
+ * never restate the numbers elsewhere; a hand-copied weight list drifted
+ * once already. v2 kept v1's weights on purpose: the label-mined fix was
+ * feature DIRECTION (exec titles and Host roles were anti-signals), not the
+ * weighting.
+ */
+export const PRIORITY_WEIGHTS_BY_VERSION: Record<
+  PriorityVersion,
+  Record<PriorityComponentKey, number>
+> = {
+  "heuristic-v1": {
+    personFit: 30,
+    accountFit: 20,
+    intentStrength: 20,
+    timingFreshness: 15,
+    signalConfidence: 10,
+    contactability: 5,
+  },
+  "heuristic-v2": {
+    personFit: 30,
+    accountFit: 20,
+    intentStrength: 20,
+    timingFreshness: 15,
+    signalConfidence: 10,
+    contactability: 5,
+  },
+};
+
+/**
+ * Shadow-mode explainable priority score (issue #410, Phase 1). Mirrors
+ * core's `ProspectPriority` — the API contract copy, like
+ * `QueueStatus`/`QueueStatusView`. Display-only: nothing orders, filters, or
+ * gates by it, and it is NOT a conversion probability.
+ */
+export interface ProspectPriorityView {
+  version: PriorityVersion;
+  /** Weighted total, clamped integer 0..100. */
+  total: number;
+  components: Record<PriorityComponentKey, number>;
+  /** Concise evidence strings, fixed order. */
+  reasons: string[];
+  finder: string;
+  scoredAt: string;
+}
+
 export interface QueueRowView {
   id: number;
   playName: string;
@@ -413,6 +572,106 @@ export interface QueueRowView {
    * when the row's status flips to a terminal state.
    */
   isSending: boolean;
+  /**
+   * Shadow-mode priority artifact, or null on manual/legacy/pre-migration
+   * rows and rows whose stored artifact fails shape validation.
+   */
+  priority: ProspectPriorityView | null;
+  /**
+   * Decision provenance (ledger v26). `status` alone is lossy — an expiry
+   * overwrites an approval — so the browse view reads these to say who
+   * decided what. Null on undecided and pre-v26 rows.
+   */
+  decision: "approve" | "reject" | "auto_reject" | null;
+  decidedBy: "human" | "human_bulk" | "machine" | null;
+  decidedAt: string | null;
+}
+
+/** Who decided a queue row, as a /prospects filter. `human` groups per-row and bulk clicks. */
+export type DecidedByFilter = "human" | "machine" | "none";
+export type ProspectSortKey = "found" | "decided" | "name";
+
+/** The prospect record a queue row resolved to — by `prospect_id`, else by its payload email. */
+export interface ProspectLinkView {
+  id: number;
+  name: string | null;
+  email: string | null;
+  company: string | null;
+  title: string | null;
+  /** 'pass' | 'reject' | 'unclear' | null (never judged). Only 'reject' suppresses sending. */
+  icpVerdict: string | null;
+  icpVerdictReason: string | null;
+  hasDossier: boolean;
+  linkedBy: "prospect_id" | "email";
+}
+
+/** One row of the /prospects browse table: a queue row plus its linked prospect, if any. */
+export interface ProspectBrowseRow extends QueueRowView {
+  prospect: ProspectLinkView | null;
+}
+
+/**
+ * The decision trail in three words — one vocabulary for the /prospects
+ * table, its drawer and the history list, so a bulk approval never reads
+ * "bulk-approved" on one line and "approved (bulk)" on the next.
+ */
+export function describeDecision(row: {
+  decision: QueueRowView["decision"];
+  decidedBy: QueueRowView["decidedBy"];
+  status?: QueueStatusView;
+}): string {
+  if (row.decision === "auto_reject" || (row.decision === "reject" && row.decidedBy === "machine"))
+    return "auto-rejected";
+  if (row.decision === "reject") return "rejected by you";
+  if (row.decision === "approve") {
+    if (row.decidedBy === "human_bulk") return "bulk-approved";
+    if (row.decidedBy === "machine") return "approved by machine";
+    return "approved by you";
+  }
+  if (row.status === "expired") return "expired";
+  return row.status ? "undecided" : "decided";
+}
+
+/** GET /api/queue/search */
+export interface ProspectSearchResponse {
+  rows: ProspectBrowseRow[];
+  /** Rows matching every filter, before paging. */
+  total: number;
+  limit: number;
+  offset: number;
+  /** Per-status counts under the q/play/decided filters — NOT narrowed by the status filter. */
+  counts: QueueCounts;
+  /** Every play that has ever enqueued a row, for the play filter. */
+  plays: string[];
+}
+
+/** One entry of a prospect's history, newest first. Carries no reply bodies — /inbox owns those. */
+export interface ProspectTimelineEvent {
+  /** ISO timestamp. */
+  at: string;
+  kind: "surfaced" | "decided" | "sent" | "sequence" | "reply" | "channel" | "outcome";
+  label: string;
+  detail: string | null;
+  playName: string | null;
+}
+
+/** GET /api/queue/:id — everything the /prospects detail drawer shows. */
+export interface QueueRowDetail {
+  row: ProspectBrowseRow;
+  prospect: (ProspectLinkView & { linkedinUrl: string | null; createdAt: string }) | null;
+  cadences: CadenceView[];
+  timeline: ProspectTimelineEvent[];
+  flags: {
+    /** The prospect has answered (email or LinkedIn) — an override must not re-email them. */
+    replied: boolean;
+    /** A hard bounce suppresses the address. */
+    bounced: boolean;
+    /** 'unsubscribe' | 'auto_permanent' from the reply stream, else null. */
+    contactSuppressed: string | null;
+    /** A not-a-fit / do-not-contact manual stop. */
+    breakupHold: boolean;
+    icpReject: boolean;
+  };
 }
 
 /**
@@ -422,6 +681,7 @@ export interface QueueRowView {
  * Queue under the `profile-intro` play.
  */
 export interface AddProspectRequest {
+  businessAddress?: BusinessMailAddress;
   /** A LinkedIn, X/Twitter, or GitHub profile URL. */
   url: string;
   /** Optional email to use when research can't find one. */
@@ -503,6 +763,12 @@ export const RUNNABLE_PLAYS: readonly string[] = [
   "stack-consolidation",
   "repo-interest",
   "luma-events",
+  "sources-sought",
+  "civic-pilot",
+  "design-partner-loi",
+  "discovery-interview",
+  "free-pilot",
+  "new-business",
 ];
 
 /**
@@ -564,11 +830,37 @@ export function withXEngine(
  */
 export type InboundReplyKind = "human" | "auto" | "auto_permanent" | "unsubscribe";
 
+/**
+ * Sentiment/intent classification of a HUMAN reply (issue #480), mirrors
+ * intel/triage.ts's `TriageCategory` — independent of `InboundReplyKind`
+ * above (that's deliverability triage; this is sentiment). NULL/absent on a
+ * reply means it hasn't been triaged yet, or the triage call failed.
+ */
+export type ReplyIntent =
+  | "interested"
+  | "not_now"
+  | "wrong_person"
+  | "objection"
+  | "question"
+  | "unsubscribe"
+  | "auto_reply"
+  | "other";
+
+/** Positive-signal intents that surface the intent badge + needs-decision state on /inbox. */
+export const POSITIVE_REPLY_INTENTS: readonly ReplyIntent[] = [
+  "interested",
+  "question",
+  "objection",
+];
+
 /** A single inbox email (reply to outreach), with prospect/play context when matched. */
 export interface InboxReplyView {
   id: string;
   /** What this inbound actually is — only `human` counts as a reply anywhere. */
   kind: InboundReplyKind;
+  /** Sentiment classification (issue #480); null = not yet triaged (or triage failed). */
+  intent: ReplyIntent | null;
+  intentReason: string | null;
   /** Normalized sender address (lowercased, display-name stripped). */
   fromEmail: string;
   /** Raw From header as received (may include a display name). */
@@ -599,6 +891,10 @@ export interface InboxReplyView {
   thread: {
     draftBody: string | null;
     sent: { body: string; sentAt: string }[];
+    /** Founder's standing redraft instruction for this thread, if set. */
+    steer: string | null;
+    /** 'needs_decision' when the current draft's `commits-terms` lint flag survived the repair pass — Send is blocked until edited or steered. Null otherwise. */
+    status: "needs_decision" | null;
   } | null;
 }
 
@@ -636,6 +932,8 @@ export type ConversationItem =
       messageId: string | null;
       /** Classification of this inbound (NULL rows from before the classifier read as human). */
       replyKind: InboundReplyKind;
+      /** Sentiment classification (issue #480); null = not yet triaged. */
+      intent: ReplyIntent | null;
     }
   | {
       /** A manual reply the founder sent from /inbox (inbox_sent). */
@@ -656,6 +954,22 @@ export interface ConversationView {
   lastActivityAt: string;
   /** Saved (auto-saved) composer draft for the newest inbound's thread, if any. */
   draftBody: string | null;
+  /** Founder's standing redraft instruction for the newest inbound's thread, if set. */
+  steer: string | null;
+  /** 'needs_decision' when the current draft's `commits-terms` lint flag survived the repair pass. */
+  status: "needs_decision" | null;
+  /** Sentiment classification of the newest inbound reply; null = not yet triaged. */
+  intent: ReplyIntent | null;
+  /**
+   * True when a positive-intent inbound is still unacknowledged (round-2
+   * correction, #480): the founder has neither replied to it nor recorded a
+   * deal outcome for this prospect strictly after it arrived. Historical outcomes
+   * do not acknowledge newer inbound replies. False once either
+   * happens, even though `intent` itself is never cleared — `intent` is a
+   * historical classification, this is the "does it still need the nav dot"
+   * signal derived from it.
+   */
+  awaitingReply: boolean;
   items: ConversationItem[];
 }
 
@@ -684,6 +998,10 @@ export interface InboxDraftReplyResult {
   costUsd: number;
   /** True when the server ran paid research on the sender before drafting. */
   researched: boolean;
+  /** Lint flags that survived the repair pass — currently only ever `commits-terms`. */
+  flags: string[];
+  /** True when `flags` includes `commits-terms` — /inbox blocks Send until edited or steered. */
+  needsDecision: boolean;
 }
 
 /** POST /api/inbox/draft — persist the in-progress draft for a thread (auto-save). */
@@ -698,7 +1016,25 @@ export interface InboxSaveDraftRequest {
 
 export interface InboxSaveDraftResult {
   saved: boolean;
+  /** 'needs_decision' when the SAVED body's `commits-terms` lint flag fires — recomputed server-side from the text itself, never client-supplied. */
+  status: "needs_decision" | null;
 }
+
+/**
+ * POST /api/inbox/steer — persist a founder redraft instruction on a thread
+ * and generate a fresh draft grounded in it (issue #480).
+ */
+export interface InboxSteerRequest {
+  fromEmail: string;
+  subject: string;
+  body: string;
+  id?: string;
+  threadId?: string | null;
+  threadKey: string;
+  steer: string;
+}
+
+export type InboxSteerResult = InboxDraftReplyResult;
 
 /** POST /api/inbox/reply — send a (possibly edited) reply. */
 export interface InboxSendReplyRequest {
@@ -740,21 +1076,26 @@ export interface QueueListResponse {
   approvedByPlay: Record<string, number>;
   /** Absent when the capacity computation failed — pages skip the figure. */
   sendsToday?: SendsToday;
+  /**
+   * The order `rows` actually came back in — `?order=` param, else the
+   * configured `queueReviewOrder`. "ranked" only ever applies to the pending
+   * review view; every other view is "newest" (found_at DESC).
+   */
+  order: "ranked" | "newest";
 }
 
 export interface DrainRequest {
   playName: string;
   limit: number;
   dryRun: boolean;
-  /** For accelerator-batch: required cohort tag. */
-  senderCohort?: string;
-  freeForCohortOffer?: string;
 }
 
 export interface DrainResult {
   drained: number;
   sent: number;
   errors: Array<{ id: number; message: string }>;
+  /** Named reason the daily spend ceiling (issue #481) blocked this drain, if it did. */
+  haltedReason?: string;
 }
 
 export interface TriggerView {
@@ -780,6 +1121,44 @@ export interface TriggerView {
   ready: boolean;
   /** Human-readable reason when `ready === false`; null otherwise. */
   notReadyReason: string | null;
+  approvalRate: number | null;
+  approvalReviewed: number;
+  approvalMinSamples: number;
+  approvalRateThreshold: number;
+  approvalRateWindowDays: number;
+  deprioritized: boolean;
+  deprioritizedReason: string | null;
+}
+
+export interface PackView {
+  id: string;
+  label: string;
+  /** One-line buyer summary for the picker. Absent on packs written before this existed. */
+  summary?: string;
+  /** Full reasoning, including why these channels. Shown behind a disclosure. */
+  buyerBrief: string;
+  icpOneLiner: string;
+  /** Trigger names this pack touches. */
+  triggers: string[];
+  /** Founder-voice keys left blank by the pack (e.g. `yourEdge`, `yourClaim`). */
+  requires: string[];
+}
+
+export interface PackApplyTriggerResult {
+  name: string;
+  enabled: boolean;
+  ready: boolean;
+  /** Human-readable reason when `ready === false`; null otherwise. */
+  notReadyReason: string | null;
+}
+
+export interface PackApplyResult {
+  id: string;
+  applied: PackApplyTriggerResult[];
+  /** Trigger names in the pack that aren't in the registry — patch skipped, apply still succeeds. */
+  skipped: Array<{ name: string; reason: string }>;
+  /** The pack's proposed icpOneLiner — never written to config.json; the founder accepts it separately. */
+  proposedIcpOneLiner: string;
 }
 
 export interface DeriveIcpResult {
@@ -857,9 +1236,6 @@ export interface RunPlayRequest {
    * /queue is the authoritative archive only for queue-originated runs.
    */
   dedupeKeys?: (string | null)[];
-  /** For accelerator-batch: sender cohort + free offer text. */
-  senderCohort?: string;
-  freeForCohortOffer?: string;
 }
 
 /** Server-Sent Events frame contract for /api/run/$playName. */
@@ -868,25 +1244,32 @@ export type RunPlayEvent =
       kind: "verify";
       total: number;
       verified: number;
-      dropped: Array<{ email: string; reason: string }>;
+      dropped: Array<{ email: string; reason: string; index?: number }>;
     }
   | { kind: "stage"; stage: string }
   | { kind: "draft"; index: number; subject: string; body: string; flags: string[] }
   | { kind: "send"; index: number; receiptIds: number[] }
   | { kind: "error"; index: number; message: string }
   | { kind: "done"; total: number; sent: number }
+  /**
+   * Terminal frame for an aborted run — the client closed the SSE stream or
+   * POST /api/run/:runId/cancel fired. Distinct from `error`: nothing failed,
+   * the remaining targets simply never billed. `sent` counts what went out
+   * before the abort point.
+   */
+  | { kind: "cancelled"; reason: string; total: number; sent: number }
   /** First frame the server emits — gives the UI the runId so it can resume on nav-back. */
   | { kind: "runStarted"; runId: number; startedAt: string };
 
 /** Lifecycle status of a /run-page dispatch persisted in the `runs` table. */
-export type RunStatus = "running" | "done" | "interrupted";
+export type RunStatus = "running" | "done" | "interrupted" | "cancelled";
 
 /**
  * Snapshot of one /run-page dispatch — returned by GET /api/runs/:id so the UI
  * can rebuild the per-target progress view after navigate-away-and-back, AND
  * decide whether to keep polling (status === 'running') or stop (done /
- * interrupted). `events` is the accumulated SSE stream (same shape callers
- * see live), so the client renderer can be source-shared.
+ * interrupted / cancelled). `events` is the accumulated SSE stream (same shape
+ * callers see live), so the client renderer can be source-shared.
  */
 export interface RunRecord {
   id: number;
@@ -901,10 +1284,33 @@ export interface RunRecord {
   errorCount: number;
   /** Original targets array as posted to /api/run/:playName. */
   targets: unknown[];
+  /** Queue-origin keys parallel to targets; empty for manually entered runs. */
+  dedupeKeys: Array<string | null>;
   /** All SSE events accumulated so far (or all of them, when status !== 'running'). */
   events: RunPlayEvent[];
   /** Emails that were actually sent — used by /cadences?sinceRun to filter. */
   prospectEmails: string[];
+  /** Why a `cancelled` run ended (client disconnect vs explicit cancel). Null otherwise. */
+  cancelReason: string | null;
+}
+
+/**
+ * Result of `POST /api/run/:runId/cancel`. Always 200 for a run that exists —
+ * cancelling one that already finished is a no-op, and the caller tells the
+ * cases apart by the fields rather than by a status code.
+ *
+ * `cancelled` — this request is the one that flipped the row to 'cancelled'.
+ * `aborted`   — a live run in this process got the signal (false means the
+ *               row was terminal already, or the run was orphaned by a process
+ *               exit and only the ledger write applied).
+ * `status`    — the row's status after the call.
+ */
+export interface CancelRunResponse {
+  runId: number;
+  status: RunStatus;
+  cancelled: boolean;
+  aborted: boolean;
+  reason: string | null;
 }
 
 /** Workspace identity + roster served by GET /api/workspace. */

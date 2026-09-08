@@ -1,4 +1,4 @@
-import { getLedger, isDraining, logEvent } from "@oneshot-gtm/core";
+import { canonicalLinkedInProfileKey, getLedger, isDraining, logEvent } from "@oneshot-gtm/core";
 import {
   getPriorStepsBulk,
   nextStepInfo,
@@ -14,6 +14,7 @@ import type {
   CadenceCounts,
   CadenceNextStepDraft,
   CadenceStatus,
+  CadenceStopReason,
   CadenceView,
   CadencesResult,
 } from "@oneshot-gtm/shared-types";
@@ -30,43 +31,9 @@ import { reportServerExecution } from "../telemetry.ts";
  */
 const MAX_SEND_AGE_MS = 5 * 60 * 1000;
 
-/**
- * Per-play info computed once per unique play_name — avoids re-walking the
- * sequence registry + re-reading config from disk per row.
- */
-interface PlayInfo {
-  nextLabelByStep: Map<number, { label: string | null; isBreakup: boolean }>;
-  followupCount: number;
-}
-
-function buildPlayInfoMap(
-  rows: ReadonlyArray<{ play_name: string; current_step: number }>,
-): Map<string, PlayInfo> {
-  const map = new Map<string, PlayInfo>();
-  for (const row of rows) {
-    let info = map.get(row.play_name);
-    if (!info) {
-      info = {
-        nextLabelByStep: new Map(),
-        followupCount: playFollowupCount(row.play_name),
-      };
-      map.set(row.play_name, info);
-    }
-    if (!info.nextLabelByStep.has(row.current_step)) {
-      const next = nextStepInfo(row.play_name, row.current_step);
-      info.nextLabelByStep.set(row.current_step, {
-        label: next?.label ?? null,
-        isBreakup: next?.isBreakup ?? false,
-      });
-    }
-  }
-  return map;
-}
-
 function toView(
   row: ReturnType<ReturnType<typeof getLedger>["listAllCadences"]>[number],
   priorByKey: Map<string, PriorStepRow[]>,
-  playInfo: Map<string, PlayInfo>,
 ): CadenceView {
   let nextStepDraft: CadenceNextStepDraft | null = null;
   if (row.next_step_draft_json) {
@@ -85,9 +52,8 @@ function toView(
       nextStepDraft = null;
     }
   }
-  const info = playInfo.get(row.play_name);
-  const next = info?.nextLabelByStep.get(row.current_step) ?? null;
-  const followupCount = info?.followupCount ?? 0;
+  const next = nextStepInfo(row.play_name, row.current_step, row.prospect_id);
+  const followupCount = playFollowupCount(row.play_name, row.prospect_id);
   const priorSteps = (priorByKey.get(`${row.prospect_id}|${row.play_name}`) ?? []).map((s) => ({
     stepIndex: s.stepIndex,
     label: s.label,
@@ -96,16 +62,42 @@ function toView(
     sentAt: s.sentAt,
   }));
   return {
+    nextStepChannel: getLedger().findDirectMail(
+      row.prospect_id,
+      row.play_name,
+      row.enrolled_at,
+      row.current_step + 1,
+    )
+      ? "direct_mail"
+      : (next?.channel ?? null),
+    businessAddress: getLedger().getMailAddress(`prospect:${row.prospect_id}`),
+    mailDraftId:
+      getLedger().findDirectMail(
+        row.prospect_id,
+        row.play_name,
+        row.enrolled_at,
+        row.current_step + 1,
+      )?.id ?? null,
     prospectId: row.prospect_id,
     prospectEmail: row.prospect_email,
     prospectName: row.prospect_name,
     prospectCompany: row.prospect_company,
+    prospectTitle: row.prospect_title,
+    prospectLinkedinUrl:
+      row.prospect_linkedin_url && canonicalLinkedInProfileKey(row.prospect_linkedin_url)
+        ? row.prospect_linkedin_url.trim()
+        : null,
     playName: row.play_name,
     status: row.status as CadenceStatus,
     currentStep: row.current_step,
     enrolledAt: row.enrolled_at,
     nextDueAt: row.next_due_at,
     lastPolledAt: row.last_polled_at,
+    stopReason: row.stop_reason as CadenceStopReason | null,
+    stopNote: row.stop_note,
+    stoppedAt: row.stopped_at,
+    replyChannel: row.reply_channel,
+    replyAt: row.replied_at,
     nextStepDraft,
     nextStepLabel: next?.label ?? null,
     nextStepIsBreakup: next?.isBreakup ?? false,
@@ -117,14 +109,13 @@ function toView(
   };
 }
 
-function viewsForRows(
+export function viewsForRows(
   rows: ReadonlyArray<ReturnType<ReturnType<typeof getLedger>["listAllCadences"]>[number]>,
 ): CadenceView[] {
   // Single SQL fetch for ALL (prospect_id, play_name) pairs — avoids N+1.
   const pairs = rows.map((r) => ({ prospectId: r.prospect_id, playName: r.play_name }));
   const priorByKey = getPriorStepsBulk(pairs);
-  const playInfo = buildPlayInfoMap(rows);
-  return rows.map((r) => toView(r, priorByKey, playInfo));
+  return rows.map((r) => toView(r, priorByKey));
 }
 
 export function listCadences(req: Request): Response {
@@ -174,6 +165,7 @@ function tallyCounts(
     breakup: 0,
     completed: 0,
     paused: 0,
+    stopped: 0,
     bounced: 0,
     overdue: 0,
   };
@@ -184,6 +176,7 @@ function tallyCounts(
       r.status === "breakup" ||
       r.status === "completed" ||
       r.status === "paused" ||
+      r.status === "stopped" ||
       r.status === "bounced"
     ) {
       counts[r.status]++;
@@ -204,24 +197,60 @@ export function getCadence(req: Request, params: Record<string, string>): Respon
   return jsonResponse({ cadences: viewsForRows(all) }, 200, req);
 }
 
-export function stopCadence(req: Request, params: Record<string, string>): Response {
+const STOP_REASONS = new Set<CadenceStopReason>([
+  "bad_timing",
+  "other",
+  "not_a_fit",
+  "do_not_contact",
+]);
+
+export async function stopCadence(req: Request, params: Record<string, string>): Promise<Response> {
   const id = Number.parseInt(params["id"] ?? "", 10);
   if (!Number.isFinite(id)) return jsonResponse({ error: "bad id" }, 400, req);
   const url = new URL(req.url);
   const playName = url.searchParams.get("play");
-  const ledger = getLedger();
-  const cadences = ledger.listCadencesForProspect(id).filter((c) => {
-    if (playName && c.play_name !== playName) return false;
-    return c.status === "active";
-  });
-  for (const cad of cadences) {
-    ledger.setCadenceStatus({
-      prospectId: id,
-      playName: cad.play_name,
-      status: "completed",
-    });
+  if (!playName) return jsonResponse({ error: "play query param required" }, 400, req);
+  let body: { reason?: unknown; note?: unknown } = {};
+  try {
+    const parsed: unknown = await req.json();
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return jsonResponse({ error: "JSON object body required" }, 400, req);
+    }
+    body = parsed as { reason?: unknown; note?: unknown };
+  } catch {
+    return jsonResponse({ error: "JSON body required" }, 400, req);
   }
-  return jsonResponse({ stopped: cadences.length }, 200, req);
+  if (typeof body.reason !== "string" || !STOP_REASONS.has(body.reason as CadenceStopReason)) {
+    return jsonResponse({ error: "valid stop reason required" }, 400, req);
+  }
+  const note = typeof body.note === "string" ? body.note.trim() : "";
+  if (body.reason === "other" && !note) {
+    return jsonResponse({ error: "note required for other" }, 400, req);
+  }
+  if (note.length > 500)
+    return jsonResponse({ error: "note must be 500 characters or less" }, 400, req);
+  const ledger = getLedger();
+  const cadence = ledger.getCadence(id, playName);
+  if (!cadence) return jsonResponse({ error: "cadence not found" }, 404, req);
+  if (cadence.status !== "active") {
+    return jsonResponse({ error: `cadence is already ${cadence.status}` }, 409, req);
+  }
+  if (cadence.sending_started_at) {
+    return jsonResponse(
+      { error: "cadence send is already in flight; wait for it to finish" },
+      409,
+      req,
+    );
+  }
+  const stopped = ledger.stopCadence({
+    prospectId: id,
+    playName,
+    reason: body.reason as CadenceStopReason,
+    ...(note ? { note } : {}),
+  });
+  if (!stopped)
+    return jsonResponse({ error: "cadence changed while stopping; refresh and retry" }, 409, req);
+  return jsonResponse({ stopped: stopped ? 1 : 0 }, 200, req);
 }
 
 function parseProspectAndPlay(

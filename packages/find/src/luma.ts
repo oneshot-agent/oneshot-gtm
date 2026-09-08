@@ -1,15 +1,19 @@
 import {
   enrichProfile,
+  formatLocalEventTime,
   getLedger,
   logEvent,
   parallelMap,
+  resolveEventZone,
   webRead,
   webSearch,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { LumaEventsTarget } from "@oneshot-gtm/plays";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
-import { resolveVerifyEnrichQualify } from "./_contact.ts";
+import { resolveVerifyEnrichQualify, icpFields } from "./_contact.ts";
+import { enqueueScoredTarget } from "./_priority-adapters.ts";
+import { roundRobin } from "./_rank.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { qualifyPreSpend } from "./_qualify.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
@@ -27,6 +31,13 @@ const PLAY_NAME = "luma-events";
 const SOURCE = "find:luma-events";
 /** Cap per-event LLM extract input — Luma event pages are usually under 8k chars. */
 const READ_MARKDOWN_SLICE = 12000;
+/**
+ * How much event description the relevance gate sees. Enough for the opening
+ * lines that say what an event actually is — the "agentic after-hours, lightning
+ * panel with …" sentence that a punning title hides — without paying to classify
+ * a full agenda.
+ */
+const GATE_SUMMARY_SLICE = 600;
 /** Sane upper bound — no event we care about has >30 public attendees. */
 const MAX_ATTENDEES_PER_EVENT = 30;
 
@@ -50,16 +61,26 @@ interface SearchHit {
   description: string;
 }
 
+interface CitySearchHit extends SearchHit {
+  discoveryCity: string;
+}
+
 interface AttendeeWithEvent {
   attendee: LumaPublicAttendee;
+  discoveryCity: string;
   event: {
     url: string;
     title: string;
     dateIso: string;
+    /** IANA zone the event page stated, when it stated one. */
+    timezone: string | null;
     city: string;
     description: string;
   };
 }
+
+// roundRobin moved to _rank.ts (shared with the ranked review order);
+// behavior is byte-identical.
 
 /**
  * Extract the single-segment slug from a Luma event URL. Returns null when
@@ -159,7 +180,15 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
   const limit = opts.limit ?? 25;
   const sinceDays = opts.sinceDays ?? 14;
   const topics = (opts.topics ?? []).filter((t) => t.trim().length > 0);
-  const cities = (opts.cities ?? []).filter((c) => c.trim().length > 0);
+  const seenCities = new Set<string>();
+  const cities = (opts.cities ?? [])
+    .map((raw) => raw.trim())
+    .filter((city) => {
+      const key = city.toLocaleLowerCase();
+      if (!city || seenCities.has(key)) return false;
+      seenCities.add(key);
+      return true;
+    });
   const yourEdge = (opts.yourEdge ?? "").trim();
   const icp = resolveIcp(opts.icpOverride);
   const ledger = getLedger();
@@ -196,16 +225,22 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
   // after extract still enforces the exact window.
   const windowMonths = upcomingMonths(sinceDays);
   const seenUrls = new Set<string>();
-  const hits: SearchHit[] = [];
+  const cityHits = new Map<string, CitySearchHit[]>(cities.map((city) => [city, []]));
+  const discoveryStats = new Map(cities.map((city) => [city, { discovered: 0, inWindow: 0 }]));
   const cap = limit * 3;
   const windowStart = Date.now() - 24 * 3600 * 1000;
   const windowEnd = Date.now() + sinceDays * 24 * 3600 * 1000;
 
-  const pushHit = (url: string, title: string, description: string): void => {
+  const pushHit = (city: string, url: string, title: string, description: string): boolean => {
     const canonical = url.split("?")[0]!.replace(/\/$/, "");
-    if (seenUrls.has(canonical)) return;
+    if (seenUrls.has(canonical)) return false;
+    if (topics.length > 0 && !eventNameMatchesTopics(title, topics)) {
+      logEvent("finder.skipped_off_topic", { name: PLAY_NAME, url: canonical, title, city });
+      return false;
+    }
     seenUrls.add(canonical);
-    hits.push({ url: canonical, title, description });
+    cityHits.get(city)!.push({ url: canonical, title, description, discoveryCity: city });
+    return true;
   };
 
   // webSearch fallback for a single city — used when the city isn't a mapped
@@ -213,7 +248,7 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
   // (older) pages, which is why the date defense downstream still matters.
   const webSearchCity = async (city: string): Promise<void> => {
     for (const topic of topics) {
-      if (hits.length >= cap) return;
+      if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) return;
       const query = `site:luma.com "${topic}" "${city}" upcoming event ${windowMonths}`;
       try {
         const search = await webSearch(
@@ -227,7 +262,8 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
           // query string (`?k=t` / `?k=c` mark Luma's category + calendar
           // pages); canonicalizing first would strip those markers.
           if (!looksLikeLumaEventUrl(hit.url)) continue;
-          pushHit(hit.url, hit.title, hit.description);
+          discoveryStats.get(city)!.discovered++;
+          pushHit(city, hit.url, hit.title, hit.description);
         }
       } catch (err) {
         logEvent(
@@ -250,34 +286,61 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
   // genuinely-upcoming events. Fall back to webSearch per city when the city
   // isn't a mapped hub, the page won't parse, or nothing lands in the window.
   for (const city of cities) {
-    if (hits.length >= cap) break;
     const slug = cityToSlug(city);
     const discovered = slug ? await fetchCityEvents(slug) : null;
     if (discovered && discovered.length > 0) {
-      let kept = 0;
+      const stats = discoveryStats.get(city)!;
+      stats.discovered += discovered.length;
+      let eligible = 0;
       for (const ev of discovered) {
-        if (hits.length >= cap) break;
         const ms = new Date(ev.startAtIso).getTime();
         if (!Number.isFinite(ms) || ms < windowStart || ms > windowEnd) continue;
-        pushHit(`https://luma.com/${ev.slug}`, ev.name, "");
-        kept++;
+        stats.inWindow++;
+        if (pushHit(city, `https://luma.com/${ev.slug}`, ev.name, "")) eligible++;
       }
       logEvent(
         "luma-events.discover_ok",
-        { name: PLAY_NAME, city, slug, found: discovered.length, in_window: kept },
+        {
+          name: PLAY_NAME,
+          city,
+          slug,
+          found: discovered.length,
+          in_window: stats.inWindow,
+          eligible,
+        },
         "info",
       );
-      if (kept > 0) continue;
+      if (eligible > 0) continue;
     }
     await webSearchCity(city);
   }
+  const hits = roundRobin(cityHits, cap);
   result.candidates = hits.length;
 
-  // Event-level relevance criterion: one LLM call (below) weighs the founder's
-  // ICP AND topics, on the event NAME, BEFORE any webRead — so we never pay to
-  // read the dance-cardio / wine-tasting noise that city pages surface. This
-  // replaces the old per-attendee ICP filter, which rejected even on-topic
-  // attendees because Luma's public attendee data is too thin to judge.
+  logEvent(
+    "luma-events.discovery_sampled",
+    {
+      name: PLAY_NAME,
+      cap,
+      total_selected: hits.length,
+      by_city: Object.fromEntries(
+        cities.map((city) => [
+          city,
+          {
+            discovered: discoveryStats.get(city)?.discovered ?? 0,
+            in_window: discoveryStats.get(city)?.inWindow ?? 0,
+            eligible: cityHits.get(city)?.length ?? 0,
+            selected: hits.filter((hit) => hit.discoveryCity === city).length,
+          },
+        ]),
+      ),
+    },
+    "info",
+  );
+
+  // Event-level relevance criterion: one LLM call weighs the founder's ICP AND
+  // topics. This replaces the old per-attendee ICP filter, which rejected even
+  // on-topic attendees because Luma's public attendee data is too thin to judge.
   const relevanceCriteria = [
     icp,
     topics.length > 0 ? `Event must relate to: ${topics.join(", ")}` : null,
@@ -285,25 +348,38 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
     .filter(Boolean)
     .join(". ");
 
-  // Phase 2: topic/ICP gate → webRead + LLM extract per event, parallelized.
-  // Each surviving event yields 0..N attendees; flatten into one work list.
+  // Phase 2: free structured fetch → topic/ICP gate → paid webRead only on
+  // fallback, parallelized. Each surviving event yields 0..N attendees.
   const concurrency = 3;
-  const eventExtracts: Array<{ hit: SearchHit; extract: LumaEventExtract } | null> =
+  const eventExtracts: Array<{ hit: CitySearchHit; extract: LumaEventExtract } | null> =
     await parallelMap(hits.slice(0, limit * 2), concurrency, async (hit) => {
       if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) return null;
 
-      // Free keyword pre-filter: skip the LLM call for obvious off-topic names.
-      if (topics.length > 0 && !eventNameMatchesTopics(hit.title, topics)) {
-        logEvent("finder.skipped_off_topic", { name: PLAY_NAME, url: hit.url, title: hit.title });
-        return null;
-      }
-      // Event-level relevance gate (topic + ICP in one call), on the name only.
-      if (relevanceCriteria) {
+      // Gate ordering matters, and it used to be wrong. The gate ran on the
+      // event NAME alone, before any fetch, to avoid paying to read the
+      // dance-cardio noise city pages surface. But `fetchEventDetails` is a
+      // FREE anonymous JSON call, and it returns the description — so the gate
+      // was blind for no saving, and titles that are puns got dropped.
+      //
+      // "AI Infra Kebab" (Vercel/Neon, panel of Malte Ubl, Nikita Shamgunov,
+      // Max Stoiber) was rejected three days running as "a generic event title
+      // with no evidence of technical leadership", then accepted on the fourth
+      // on identical input. Its description says exactly what it is.
+      //
+      // So: fetch free details first, gate on title + description when we have
+      // them, and fall back to the old title-only gate ONLY when the structured
+      // fetch missed — because there the next step is a paid webRead and the
+      // original reasoning still holds.
+      const gate = async (description: string | null): Promise<boolean> => {
+        if (!relevanceCriteria) return true;
+        const summary = description?.trim()
+          ? description.trim().slice(0, GATE_SUMMARY_SLICE)
+          : null;
         const ev = await icpFilter({
           icp: relevanceCriteria,
-          candidate: { title: hit.title, url: hit.url },
+          candidate: { title: hit.title, url: hit.url, summary },
         });
-        if (ev.match === null) return null; // transient classifier failure → drop, no persist
+        if (ev.match === null) return false; // transient classifier failure → drop, no persist
         if (!ev.match) {
           result.droppedIcp++;
           logEvent(
@@ -312,13 +388,15 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
               name: PLAY_NAME,
               url: hit.url,
               title: hit.title,
+              grounded: description != null,
               reason_120: ev.reason.slice(0, 120),
             },
             "info",
           );
-          return null;
+          return false;
         }
-      }
+        return true;
+      };
 
       try {
         // Structured-first: the anonymous `api.lu.ma/url` JSON carries the
@@ -331,9 +409,12 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
         const eventSlug = lumaEventSlug(hit.url);
         const details = eventSlug ? await fetchEventDetails(eventSlug) : null;
         if (details && details.eventTitle && details.attendees.length > 0) {
+          // Gate on the description we just got for free.
+          if (!(await gate(details.eventDescription ?? hit.description ?? null))) return null;
           extract = {
             eventTitle: details.eventTitle,
             eventDateIso: details.eventDateIso,
+            eventTimezone: details.eventTimezone,
             eventCity: details.eventCity,
             eventDescription: details.eventDescription,
             eventHasPassed: false, // the date defense below is the authority
@@ -350,6 +431,11 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
             "info",
           );
         } else {
+          // Structured fetch missed. The next call is PAID, so gate first — on
+          // the city-page description when the hub gave us one, otherwise on
+          // the title alone, which is the pre-existing behaviour and the reason
+          // this ordering exists at all.
+          if (!(await gate(hit.description ?? null))) return null;
           const read = await webRead(
             { url: hit.url },
             {
@@ -479,7 +565,9 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
       }
     });
 
-  const attendeesWork: AttendeeWithEvent[] = [];
+  const attendeeEventBuckets = new Map(
+    cities.map((city) => [city, new Map<string, AttendeeWithEvent[]>()]),
+  );
   for (const item of eventExtracts) {
     if (!item) continue;
     const { hit, extract } = item;
@@ -487,14 +575,44 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
       url: hit.url,
       title: extract.eventTitle ?? hit.title,
       dateIso: extract.eventDateIso ?? "",
+      timezone: extract.eventTimezone ?? null,
       city: extract.eventCity ?? "",
       description: extract.eventDescription ?? "",
     };
+    const eventAttendees: AttendeeWithEvent[] = [];
     for (const attendee of extract.publicAttendees.slice(0, MAX_ATTENDEES_PER_EVENT)) {
       if (!attendee.name || attendee.name.trim().length === 0) continue;
-      attendeesWork.push({ attendee, event: eventCtx });
+      eventAttendees.push({
+        attendee,
+        discoveryCity: hit.discoveryCity,
+        event: eventCtx,
+      });
     }
+    attendeeEventBuckets.get(hit.discoveryCity)!.set(hit.url, eventAttendees);
   }
+  const attendeeBuckets = new Map(
+    cities.map((city) => {
+      const eventBuckets = attendeeEventBuckets.get(city)!;
+      const count = [...eventBuckets.values()].reduce((sum, bucket) => sum + bucket.length, 0);
+      return [city, roundRobin(eventBuckets, count)] as const;
+    }),
+  );
+  const attendeeCount = [...attendeeBuckets.values()].reduce(
+    (sum, bucket) => sum + bucket.length,
+    0,
+  );
+  const attendeesWork = roundRobin(attendeeBuckets, attendeeCount);
+  logEvent(
+    "luma-events.attendees_sampled",
+    {
+      name: PLAY_NAME,
+      total: attendeesWork.length,
+      by_city: Object.fromEntries(
+        cities.map((city) => [city, attendeeBuckets.get(city)?.length ?? 0]),
+      ),
+    },
+    "info",
+  );
 
   // Phase 3: per-attendee contact resolution, concurrency 3 to bound SDK
   // burst. Soft halt via boxed flag (same pattern as _repo-pipeline): workers
@@ -503,12 +621,14 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
   // The enqueue count itself stays exact via the synchronous re-check right
   // before enqueueTarget below.
   const phase3Halted = { value: false };
+  const attemptsByCity = new Map(cities.map((city) => [city, 0]));
   await parallelMap(attendeesWork, 3, async (work) => {
     if (phase3Halted.value) return;
     if (result.enqueued >= limit) {
       phase3Halted.value = true;
       return;
     }
+    attemptsByCity.set(work.discoveryCity, (attemptsByCity.get(work.discoveryCity) ?? 0) + 1);
     if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
       result.halted = `max-cost cap (${opts.maxCostUsd})`;
       phase3Halted.value = true;
@@ -545,7 +665,12 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
       icp,
       person: {
         name: work.attendee.name,
-        roleText: work.attendee.bio ?? work.attendee.role ?? null,
+        // `??` only falls through on null/undefined, and Luma returns an EMPTY
+        // STRING for an attendee with no bio_short — so `bio ?? role` yielded
+        // "" and the gate saw no role text at all, silently deferring every
+        // such candidate to a stage B that this finder never reaches. Take the
+        // first value with actual characters in it.
+        roleText: firstNonBlank(work.attendee.bio, work.attendee.role),
         evidence: `attended ${work.event.title}`,
       },
     });
@@ -612,6 +737,15 @@ export async function runLumaFinder(opts: LumaFinderOpts): Promise<{
       result.droppedEnrichment++;
     } else result.droppedEnrichment++;
   });
+  logEvent(
+    "luma-events.attendees_attempted",
+    {
+      name: PLAY_NAME,
+      total: [...attemptsByCity.values()].reduce((sum, count) => sum + count, 0),
+      by_city: Object.fromEntries(attemptsByCity),
+    },
+    "info",
+  );
 
   return result;
 }
@@ -620,6 +754,7 @@ export function parseLumaEventExtract(raw: string): LumaEventExtract {
   const fallback: LumaEventExtract = {
     eventTitle: null,
     eventDateIso: null,
+    eventTimezone: null,
     eventCity: null,
     eventDescription: null,
     eventHasPassed: false,
@@ -737,7 +872,7 @@ async function resolveAndEnqueueLumaAttendee(
       person: {
         name: work.attendee.name,
         company: resolvedCompany,
-        roleText: work.attendee.bio ?? work.attendee.role ?? null,
+        roleText: firstNonBlank(work.attendee.bio, work.attendee.role),
         evidence: `attended ${work.event.title}`,
       },
       // Free title from the LinkedIn-keyed enrichProfile above.
@@ -774,16 +909,32 @@ async function resolveAndEnqueueLumaAttendee(
       });
     }
 
+    // Resolve the event's zone ONCE, here, and carry the rendered string on the
+    // candidate: explicit zone from the page → the event's city → the install
+    // timezone. The draft prompt gets `eventDateLocal` and never the instant,
+    // so the model has no timezone conversion left to get wrong.
+    const eventZone = resolveEventZone({
+      zone: work.event.timezone,
+      city: work.event.city,
+    });
+    const eventDateLocal = formatLocalEventTime(work.event.dateIso, eventZone);
+
     const target: LumaEventsTarget = {
       name: work.attendee.name,
       email,
       ...(resolvedCompany ? { company: resolvedCompany } : {}),
-      ...(work.attendee.bio || work.attendee.role
-        ? { attendeeBio: work.attendee.bio ?? work.attendee.role ?? "" }
+      ...(companyDomain ? { companyDomain } : {}),
+      // Same `??`-on-empty-string trap: an attendee with `bio: ""` and a real
+      // `role` persisted `attendeeBio: ""`, which is what the draft prompt
+      // reads. Fall back on blankness, not just null.
+      ...(firstNonBlank(work.attendee.bio, work.attendee.role)
+        ? { attendeeBio: firstNonBlank(work.attendee.bio, work.attendee.role) as string }
         : {}),
       ...(work.attendee.role ? { role: work.attendee.role } : {}),
       eventTitle: work.event.title,
       eventDate: work.event.dateIso,
+      eventTimezone: eventZone,
+      ...(eventDateLocal ? { eventDateLocal } : {}),
       eventCity: work.event.city,
       eventUrl: work.event.url,
       ...(work.event.description ? { eventDescription: work.event.description } : {}),
@@ -791,12 +942,13 @@ async function resolveAndEnqueueLumaAttendee(
       ...(linkedinUrl ? { linkedinUrl } : {}),
       ...(phone ? { phone } : {}),
       ...(contact.title ? { title: contact.title } : {}),
+      ...icpFields(contact),
       ...(work.attendee.profileUrl ? { sourceProfileUrl: work.attendee.profileUrl } : {}),
     };
     // Synchronous cap re-check right before enqueue — no await between here and
     // the caller's enqueued++, so the queue cap is exact even under concurrency.
     if (capReached?.()) return "capped";
-    const id = ledger.enqueueTarget({
+    const id = enqueueScoredTarget(ledger, {
       playName: PLAY_NAME,
       payload: target,
       dedupeKey,
@@ -863,3 +1015,11 @@ registerPendingRetry(PLAY_NAME, async (raw) => {
       ? "platform-error"
       : "dropped";
 });
+
+/** First value with non-whitespace content, or null. */
+function firstNonBlank(...values: Array<string | null | undefined>): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim() !== "") return value;
+  }
+  return null;
+}

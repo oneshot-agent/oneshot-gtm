@@ -10,6 +10,7 @@ import {
   logEvent,
   receiptUrlForId,
   sendEmail,
+  throwIfCancelled,
   trackSend,
   verifyEmail,
   withDeadline,
@@ -116,9 +117,15 @@ export const SLOP_PHRASES: Array<[RegExp, string]> = [
   [/\bLoved your launch\b/i, "banned-opener:loved-your-launch"],
   [/\bReaching out because\b/i, "banned-opener:reaching-out"],
   [/\bI'd love to (?:chat|connect|jump on a call|hear)\b/i, "banned-cta:love-to-chat"],
-  [/\bWorth a 15.?min\b/i, "banned-cta:worth-15-min"],
+  // Any time-boxed meeting ask, not just the 15-minute one: "worth a 10-min
+  // back and forth" shipped 291 times past the literal 15 in this pattern.
+  [/\bWorth a \d+.?min/i, "banned-cta:worth-n-min"],
   [/\bMind if I\b/i, "banned-cta:mind-if-i"],
   [/\bJust wanted to\b/i, "banned-filler:just-wanted-to"],
+  // A meeting ask dressed as a small one (_humanizer.md -> Banned CTAs). Prompt
+  // text alone did not hold it: 120 of 312 repo-interest second touches shipped
+  // with one, because several play prompts quoted the phrase while banning it.
+  [/\b(?:compare notes|swap takes|back.?and.?forth|trade notes)\b/i, "banned-cta:compare-notes"],
   [/\bcurious to (?:learn|hear)\b/i, "banned-filler:curious-to"],
   [
     /\b(?:additionally|crucial|delve|enduring|enhance|fostering|garner|highlight|interplay|intricate|pivotal|showcase|tapestry|testament|underscore|leverage|navigate|elevate|empower|seamless|robust|comprehensive|vibrant|profound|groundbreaking|revolutionary)\b/i,
@@ -177,11 +184,132 @@ export function bodyWordsForLint(body: string, sigLines?: string[]): number {
   return trimmed.split(/\s+/).filter(Boolean).length;
 }
 
+/**
+ * Words of the body that make up an opener fingerprint. Two, measured: across
+ * 411 sent follow-ups the opener "still curious" held 55% at two words but
+ * fragmented to 18% by six, so a longer stem slips under any usable cap while
+ * the mail still reads identically to anyone who sees two of them.
+ */
+const OPENER_STEM_WORDS = 2;
+
+/** Below this many prior sends the share is noise, so the cap never fires. */
+const OPENER_MIN_SAMPLE = 8;
+
+/** Share of recent sends one stem may hold before it counts as a fingerprint. */
+const OPENER_MAX_SHARE = 0.25;
+
+/**
+ * The body's first `words` words, minus a greeting line, lowercased and
+ * stripped of punctuation — the unit the opener-frequency cap compares.
+ *
+ * The greeting goes because it is generated from the prospect's name: leaving
+ * "Hey Sam," in would make every stem unique and the cap would never fire.
+ */
+export function openerStem(body: string, words = OPENER_STEM_WORDS): string {
+  const lines = body
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  const first = lines[0] ?? "";
+  const rest =
+    lines.length > 1 &&
+    /^(?:hey|hi|hello|good (?:morning|afternoon))\b[^,]{0,40}[,\-–—]?$/i.test(first)
+      ? lines.slice(1)
+      : lines;
+  const normalized = rest
+    .join(" ")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ");
+  return normalized.split(" ").filter(Boolean).slice(0, words).join(" ");
+}
+
+/**
+ * Flags a draft whose opening words already carry more than their share of
+ * this play + step's recent sends.
+ *
+ * A frequency cap rather than a ban: the goal is not that every opener be
+ * unique, it is that no single opener speaks for the majority of a domain's
+ * touches. Prompt text alone did not hold this — the prompts advertise four
+ * shapes and the model still reached for the same one — so it is gated here,
+ * where a rule cannot be talked out of.
+ *
+ * `recentBodies` is the caller's window (newest first); an empty or short
+ * window returns no flags rather than guessing.
+ *
+ * Paired with `overusedOpeners`, which the follow-up builder feeds to the
+ * model BEFORE it drafts — the flag alone would only reject, and every
+ * rejection costs another paid draft.
+ */
+export function overusedOpeners(
+  recentBodies: readonly string[],
+  opts: { minSample?: number; maxShare?: number } = {},
+): string[] {
+  const minSample = opts.minSample ?? OPENER_MIN_SAMPLE;
+  const maxShare = opts.maxShare ?? OPENER_MAX_SHARE;
+  if (recentBodies.length < minSample) return [];
+  const counts = new Map<string, number>();
+  for (const prior of recentBodies) {
+    const stem = openerStem(prior);
+    if (stem.length > 0) counts.set(stem, (counts.get(stem) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .filter(([, n]) => n / recentBodies.length >= maxShare)
+    .toSorted((a, b) => b[1] - a[1])
+    .map(([stem]) => stem);
+}
+
+export function lintOpenerFrequency(
+  body: string,
+  recentBodies: readonly string[],
+  opts: { minSample?: number; maxShare?: number } = {},
+): string[] {
+  const stem = openerStem(body);
+  if (stem.length === 0) return [];
+  return overusedOpeners(recentBodies, opts).includes(stem) ? ["opener-overused"] : [];
+}
+
+/**
+ * A run of 2+ consecutive uppercase letters normally reads as shouting
+ * (the humanizer's own rule: "lowercase the whole subject line ... acronyms
+ * (`api` not `API`)"). But a token shaped like a SAM.gov solicitation number
+ * — hyphen-separated alphanumeric segments such as `W912DY-26-R-0042` — is an
+ * identifier the play is REQUIRED to reproduce verbatim
+ * (packages/prompts/sources-sought-email.md line 11/20), not a shouted word
+ * choice. Exempt only that hyphenated identifier shape so a compliant
+ * sources-sought subject doesn't get flagged and held from the guarded send
+ * path (finding PRRT_kwDOSKzrBs6ewQdB).
+ *
+ * round-2 correction: exempting ANY token with a letter+digit mix (regardless
+ * of hyphens) let plain shouty promo tokens like "SAVE20NOW" or "URGENT2"
+ * slip past. round-3 correction (finding PRRT_kwDOSKzrBs6ewQdB, round 3):
+ * even WITH the hyphen-count guard, a purely alphabetic shouty phrase written
+ * with hyphens instead of spaces — "SAVE-20-NOW" — still matched, because the
+ * regex only checked segment SHAPE (alphanumeric), not that at least one
+ * segment carries digits the way a real SAM.gov solicitation number's suffix
+ * segments do. round-4 correction (finding PRRT_kwDOSKzrBs6ewQdB, round 4):
+ * the round-3 fix required the final segment to be all-digits, but real
+ * SAM.gov/DoD PIID serial segments can be alphanumeric — e.g.
+ * `N00164-24-Q-GR04` (final segment `GR04`) or a multi-segment procurement
+ * type such as `N00164-26-RFPREQ-CR-JXN-0036`. Match the real shape: a
+ * leading alphanumeric agency code, a 2-digit fiscal year, one or more
+ * alphabetic procurement-type segments, then a final alphanumeric serial
+ * segment that carries at least one digit (so a purely alphabetic phrase like
+ * "SAVE-20-NOW" still fails to match and stays flagged as shouty).
+ */
+const SOLICITATION_NUMBER_RE =
+  /^[A-Za-z0-9]{4,8}-\d{2}(?:-[A-Za-z]{1,8})*-[A-Za-z0-9]{0,6}\d[A-Za-z0-9]{0,6}$/;
+
+function subjectShouty(subject: string): boolean {
+  return subject.split(/\s+/).some((token) => {
+    return !SOLICITATION_NUMBER_RE.test(token) && /[A-Z]{2,}/.test(token);
+  });
+}
+
 export function lintEmail(subject: string, body: string, maxBodyWords = 110): string[] {
   const flags: string[] = [];
   if (subject.length === 0) flags.push("empty-subject");
   if (subject.length > 60) flags.push("subject-too-long");
-  if (/[A-Z]{2,}/.test(subject)) flags.push("subject-shouty");
+  if (subjectShouty(subject)) flags.push("subject-shouty");
   if (body.length === 0) flags.push("empty-body");
   if (bodyWordsForLint(body) > maxBodyWords) flags.push("body-too-long");
   if (body.includes("—")) flags.push("em-dash");
@@ -193,6 +321,77 @@ export function lintEmail(subject: string, body: string, maxBodyWords = 110): st
   if (/(\b\w+\b),\s+(\b\w+\b),\s+and\s+\b\w+\b/.test(body)) flags.push("rule-of-three");
   if ((body.match(/!/g) ?? []).length > 1) flags.push("excess-exclamations");
   if (body.toLowerCase().includes("calendly")) flags.push("calendar-link");
+  if (citesPublicRecordLeverage(`${subject}\n${body}`)) flags.push("public-record-leverage");
+  return flags;
+}
+
+/**
+ * A public record (health inspection, license status, registration) may
+ * establish RELEVANCE, never LEVERAGE — see issue #460's copy guardrail. A
+ * draft that opens on a failed inspection, a violation, a score, or a
+ * lapsed/revoked licence is both a bad look and the fastest way to burn a
+ * sending domain, so it's held here where a rule can't be talked out of it
+ * rather than trusted to prompt text alone.
+ *
+ * Deliberately broad and word-based (not tied to any one finder's payload
+ * shape): the guard has to hold regardless of which registry/adapter fed the
+ * draft, including ones that don't exist yet.
+ */
+export function citesPublicRecordLeverage(body: string): boolean {
+  return (
+    /\b(?:failed|flunked)\s+(?:your\s+|the\s+|a\s+|an\s+)?(?:health\s+)?inspections?\b/i.test(
+      body,
+    ) ||
+    /\b(?:inspection|health)\s+(?:scores?|grades?)\b/i.test(body) ||
+    // Bare `/\bviolation\b/` also flagged legitimate non-leverage copy like
+    // "we help teams avoid compliance violations" (finding
+    // PRRT_kwDOSKzrBs6exPH6) — a violation only reads as public-record
+    // LEVERAGE when the copy points at a specific one on record (cited,
+    // reported, flagged, found, noted), in either word order.
+    /\b(?:cit(?:e|es|ed|ation)|report(?:ed)?|flagged|found|noted)\b[\s\S]{0,60}\bviolation(?:s)?\b/i.test(
+      body,
+    ) ||
+    /\bviolation(?:s)?\b[\s\S]{0,60}\b(?:cit(?:e|es|ed|ation)|report(?:ed)?|flagged|found|noted)\b/i.test(
+      body,
+    ) ||
+    /\b(?:licen[sc]e|permit|registration)s?\s+(?:lapsed|expired|revoked|suspended)\b/i.test(body) ||
+    // Adjective-first phrasing ("expired permit", "revoked license") reused
+    // the SAME state alternation the noun-first check above uses, instead of
+    // matching only `lapsed` — the other three states passed the guardrail
+    // reversed (finding PRRT_kwDOSKzrBs6fCBd-). Plural nouns ("licenses",
+    // "permits", "registrations") added alongside plural inspections/scores
+    // above — the singular-only regexes missed "failed inspections",
+    // "inspection scores", and "expired licenses" (shipped-regression
+    // finding on PR #473).
+    /\b(?:lapsed|expired|revoked|suspended)\s+(?:licen[sc]e|permit|registration)s?\b/i.test(body)
+  );
+}
+
+/**
+ * Additional pre-send flags for plays whose prompt declares a hard ban on a
+ * product link, a price/cost figure, or a discount/trial framing — e.g.
+ * discovery-interview-email.md's "Hard bans (binding, no exceptions)"
+ * section. `lintEmail()` only ever checked for the literal string "calendly"
+ * as a link-like pattern and had no price/discount check at all, so a
+ * completion carrying a bare URL, a dollar figure, or "free trial" language
+ * reached `sendDraftedEmail()` with an empty flags array and could autosend
+ * (finding: discovery-interview-email.md:9). Deliberately NOT folded into
+ * `lintEmail` itself: several plays legitimately cite a dollar figure
+ * (post-funding's raise amount) or a URL (competitor-switch/stack-
+ * consolidation/repo-interest's evidence link), so this is opt-in per play
+ * via `EmailPlayDef.extraBodyFlags` rather than a global check.
+ *
+ * The signature's plain domain line (see `signatureDirective`) is written
+ * without "http://", "https://", or "www." by contract, so it never trips
+ * the link check here.
+ */
+export function hardBanFlags(body: string): string[] {
+  const flags: string[] = [];
+  if (/https?:\/\/|www\./i.test(body)) flags.push("hard-ban:link");
+  if (/\$\s?\d|\b\d+(?:\.\d+)?\s?(?:usd|dollars?)\b/i.test(body)) flags.push("hard-ban:price");
+  if (/\bfree trial\b|\bfree for you\b|\bdiscount\b/i.test(body)) {
+    flags.push("hard-ban:discount-offer");
+  }
   return flags;
 }
 
@@ -393,6 +592,61 @@ export function admissionSlot(prospectEmail: string): boolean {
   return h % 3 === 0;
 }
 
+/**
+ * Code-gated directive per classified reply intent (issue #480) — the
+ * structured input `draftInboxReply` acts on, instead of the model guessing
+ * "are they interested?" from prose on every draft. `intent` is the
+ * TriageCategory persisted on `inbox_replies.intent`; unclassified (null) or
+ * a category with no special handling (unsubscribe/auto_reply/other — those
+ * never reach the drafter in practice) returns null and the prompt's default
+ * rules apply unmodified.
+ */
+export function intentDirectiveBlock(intent: string | null | undefined): string | null {
+  switch (intent) {
+    case "interested":
+      return [
+        "INTENT DIRECTIVE (classified: interested — follow this, do not re-derive intent from prose):",
+        "They want to move forward. Switch out of pitch mode into logistics/discovery mode: do NOT re-explain the product, and do NOT commit to anything on their behalf — no pricing, discounts, partnership terms, distribution, documentation placement, or exclusivity, even if they asked for one directly.",
+        "If they proposed specific terms, do not accept, reject, or negotiate them here — say the founder will follow up on the specifics directly, and ask the one concrete logistics question that moves this forward (a call, an access grant, a scoping detail).",
+      ].join("\n");
+    case "not_now":
+      return [
+        "INTENT DIRECTIVE (classified: not_now — follow this, do not re-derive intent from prose):",
+        "Accept the timing without a counter-pitch. At most one low-pressure door open, nothing else. Do not propose a specific follow-up date unless they named one.",
+      ].join("\n");
+    case "wrong_person":
+      return [
+        "INTENT DIRECTIVE (classified: wrong_person — follow this, do not re-derive intent from prose):",
+        "Thank them and ask for the intro or the right contact if one wasn't already given. Do not re-pitch the product.",
+      ].join("\n");
+    case "objection":
+      return [
+        "INTENT DIRECTIVE (classified: objection — follow this, do not re-derive intent from prose):",
+        "Address the SPECIFIC objection with a real, factual answer — not a deflection. Do not make a new commitment (pricing, terms, scope, timeline) to overcome it.",
+      ].join("\n");
+    case "question":
+      return [
+        "INTENT DIRECTIVE (classified: question — follow this, do not re-derive intent from prose):",
+        "Answer directly, then stop. Do not pivot into a pitch or introduce a new ask.",
+      ].join("\n");
+    default:
+      return null;
+  }
+}
+
+/**
+ * FOUNDER STEER block (issue #480) — a short standing instruction the founder
+ * typed on `/inbox` ("docs listing only, no exclusivity, no traffic
+ * promise"), persisted on the thread's draft row and passed back in on every
+ * redraft. Binding: it overrides the prompt's default framing, not just a
+ * suggestion alongside it.
+ */
+export function founderSteerBlock(steer: string | null | undefined): string | null {
+  const trimmed = steer?.trim();
+  if (!trimmed) return null;
+  return `FOUNDER STEER (binding instruction for this redraft — follow it exactly, it overrides any default framing above): ${trimmed}`;
+}
+
 export async function draftEmailFromPrompt(opts: {
   promptName: string;
   inputBlock: string;
@@ -400,23 +654,45 @@ export async function draftEmailFromPrompt(opts: {
   maxTokens?: number;
 }): Promise<DraftedEmail> {
   const system = loadPrompt(opts.promptName) + signatureDirective();
-  const res = await complete({
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: opts.inputBlock },
-    ],
-    temperature: opts.temperature ?? 0.65,
-    maxTokens: opts.maxTokens ?? 500,
-  });
-  return humanizeDraft(parseSubjectBody(res.content));
+  const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+    { role: "system", content: system },
+    { role: "user", content: opts.inputBlock },
+  ];
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await complete({
+      messages,
+      temperature: opts.temperature ?? 0.65,
+      maxTokens: opts.maxTokens ?? 500,
+    });
+    const draft = parseSubjectBody(res.content);
+    if (draft) {
+      const humanized = humanizeDraft(draft);
+      if (humanized.subject.trim() && humanized.body.trim()) return humanized;
+    }
+    logEvent("email.draft.invalid_response", { promptName: opts.promptName, attempt: attempt + 1 });
+    if (attempt === 0) {
+      messages.push(
+        { role: "assistant", content: res.content },
+        {
+          role: "user",
+          content:
+            'The response could not be read as an email draft. Return only one valid JSON object with non-empty string fields "subject" and "body". Escape newlines inside strings. Do not include commentary or other fields. Keep the original email instructions and facts.',
+        },
+      );
+    }
+  }
+  throw new Error(
+    "Draft generation failed: the model returned invalid or empty subject/body twice. Try regenerating.",
+  );
 }
 
-function parseSubjectBody(raw: string): DraftedEmail {
-  const parsed = tryParseJsonObject<{ subject?: string; body?: string }>(raw, {});
-  return {
-    subject: (parsed.subject ?? "").trim(),
-    body: (parsed.body ?? "").trim(),
-  };
+function parseSubjectBody(raw: string): DraftedEmail | null {
+  const parsed = tryParseJsonObject<unknown>(raw, null);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const { subject, body } = parsed as Record<string, unknown>;
+  if (typeof subject !== "string" || typeof body !== "string") return null;
+  if (!subject.trim() || !body.trim()) return null;
+  return { subject: subject.trim(), body: body.trim() };
 }
 
 export interface SendDraftedOpts {
@@ -425,6 +701,8 @@ export interface SendDraftedOpts {
   draft: DraftedEmail;
   flags: string[];
   prospectMeta: {
+    businessAddressSource?: string;
+    businessAddress?: import("@oneshot-gtm/core").PostalAddress | null;
     name?: string | null;
     email?: string | null;
     company?: string | null;
@@ -437,8 +715,20 @@ export interface SendDraftedOpts {
     source_profile_url?: string | null;
     /** Job title at contact time, from the person-level ICP gate. */
     title?: string | null;
+    /** Research the play assembled for this person while drafting. Persisted so
+     *  the reply drafter's free Tier-1 read (_reply-research.ts) has something
+     *  to use — before this it was always empty and every reply draft paid for
+     *  enrich + webRead again. Read as TEXT, never parsed. */
+    dossier_json?: string | null;
   };
   metadata?: Record<string, unknown>;
+  /**
+   * Person-level ICP verdict from the finder that produced this target, when
+   * it ran one. `reject` blocks the send; every verdict is persisted onto the
+   * prospect row so the audit and the cadence gate agree without a manual
+   * `ops/audit-icp.ts` pass. Absent for plays whose finder has no person gate.
+   */
+  icp?: { verdict: "pass" | "reject" | "unclear"; reason?: string | null };
   dryRun: boolean;
   /**
    * Allow a first-touch even if another play already touched the prospect.
@@ -480,6 +770,28 @@ export async function sendDraftedEmail(opts: SendDraftedOpts): Promise<SendDraft
         return { receiptIds: [], sent: false };
       }
     }
+    // Person-level ICP gate on the FIRST touch. The identical check has always
+    // existed for follow-ups (`_cadence.ts`, "off-icp"), but step 0 had none —
+    // so 65 prospects carrying a `reject` verdict were emailed while only 3
+    // cadences ever stopped for it. A verdict arrives either from the finder
+    // that just judged this candidate (`opts.icp`) or from a prior audit on the
+    // stored row; both are honoured, the fresh one first.
+    //
+    // Only `reject` blocks. `unclear` and NULL fail open, exactly as the
+    // cadence gate documents — this gate must not become a silent narrowing of
+    // the funnel on the strength of an undecided classifier.
+    const stored = existing ? ledger.getProspectById(existing.id) : null;
+    const icpVerdict = opts.icp?.verdict ?? stored?.icp_verdict ?? null;
+    if (icpVerdict === "reject") {
+      const why = opts.icp?.reason ?? stored?.icp_verdict_reason ?? "role does not fit";
+      opts.flags.push("off-icp");
+      logEvent(
+        "play.skipped_off_icp",
+        { play: opts.playName, to: opts.to, reason_120: why.slice(0, 120) },
+        "info",
+      );
+      return { receiptIds: [], sent: false };
+    }
     // Track as in-flight for the WHOLE send-and-record span (SDK call →
     // sequence_events row), so a graceful shutdown drains it before exiting and
     // never leaves a sent-but-unrecorded email the dedup can't see.
@@ -505,6 +817,13 @@ export async function sendDraftedEmail(opts: SendDraftedOpts): Promise<SendDraft
         },
       );
       const prospectId = ledger.upsertProspect(opts.prospectMeta);
+      // Persist the verdict the finder's gate already paid to compute. Without
+      // this the only production writer of the column was `ops/audit-icp.ts`,
+      // run by hand — which is why 23 rows created after its last run had no
+      // verdict at all. `transient` never reaches here (it is not a verdict).
+      if (opts.icp?.verdict) {
+        ledger.setProspectIcpVerdict(prospectId, opts.icp.verdict, opts.icp.reason ?? null);
+      }
       ledger.recordSequenceEvent({
         prospectId,
         playName: opts.playName,
@@ -680,7 +999,7 @@ export function firstNameFrom(name: string | null | undefined): string | null {
 
 interface VerifyAndFilterResult<T> {
   verified: T[];
-  dropped: Array<{ target: T; email: string; reason: string }>;
+  dropped: Array<{ target: T; email: string; reason: string; index?: number }>;
   receiptIds: number[];
   costUsd: number;
 }
@@ -691,12 +1010,17 @@ interface VerifyAndFilterResult<T> {
  * empty input; de-dupes verifyEmail calls so duplicates don't double-bill.
  * Finder-sourced rows through /queue → drain do NOT call this — they were
  * verified at enqueue time.
+ *
+ * `signal` is the run's cancellation signal: the whole batch fires in one
+ * Promise.all, so the boundary that matters is the one before it — a run
+ * cancelled during the pre-flight buys no verifications at all.
  */
 export async function verifyAndFilterTargets<T>(
   targets: T[],
   getEmail: (target: T) => string | null | undefined,
-  opts: { playName: string; dryRun: boolean },
+  opts: { playName: string; dryRun: boolean; signal?: AbortSignal },
 ): Promise<VerifyAndFilterResult<T>> {
+  throwIfCancelled(opts.signal, `${opts.playName} verify`);
   if (opts.dryRun || targets.length === 0) {
     return { verified: targets, dropped: [], receiptIds: [], costUsd: 0 };
   }
@@ -744,26 +1068,32 @@ export async function verifyAndFilterTargets<T>(
     if (v.receiptId > 0) receiptIds.push(v.receiptId);
   }
 
+  let i = 0;
   for (const t of targets) {
     const email = emailFor.get(t);
     if (!email) {
-      dropped.push({ target: t, email: "", reason: "missing email" });
+      dropped.push({ target: t, email: "", reason: "missing email", index: i });
+      i++;
       continue;
     }
     const v = byEmail.get(email);
     if (!v) {
-      dropped.push({ target: t, email, reason: "undeliverable" });
+      dropped.push({ target: t, email, reason: "undeliverable", index: i });
+      i++;
       continue;
     }
     if (v.errored) {
-      dropped.push({ target: t, email, reason: `verify-error: ${v.message}` });
+      dropped.push({ target: t, email, reason: `verify-error: ${v.message}`, index: i });
+      i++;
       continue;
     }
     if (!v.deliverable) {
-      dropped.push({ target: t, email, reason: "undeliverable" });
+      dropped.push({ target: t, email, reason: "undeliverable", index: i });
+      i++;
       continue;
     }
     verified.push(t);
+    i++;
   }
 
   return { verified, dropped, receiptIds, costUsd };

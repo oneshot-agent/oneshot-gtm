@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { registerDirectMailCommand } from "./commands/direct-mail.ts";
 import { Command } from "commander";
 import {
   readPackageVersion,
@@ -6,7 +7,8 @@ import {
   takeMarkedOutcome,
   type TelemetryOutcome,
 } from "@oneshot-gtm/core";
-import { CommandExit, fail } from "./output.ts";
+import { isSupportedPlay } from "@oneshot-gtm/plays";
+import { bail, CommandExit, fail, setJsonMode } from "./output.ts";
 import { extractInvocation, type Invocation } from "./dispatch.ts";
 import { runInit } from "./commands/init.ts";
 import {
@@ -14,12 +16,14 @@ import {
   configKeys,
   configLlm,
   configSlackWebhook,
+  configSpendCeiling,
   configTelemetry,
   configXEngine,
 } from "./commands/config.ts";
 import { commandDoctor } from "./commands/doctor.ts";
 import {
   commandIntelAdvise,
+  commandIntelBackfillIntent,
   commandIntelPersonalize,
   commandIntelTriage,
   commandIntelWeeklyReview,
@@ -63,12 +67,20 @@ import {
   commandWorkspaceUse,
 } from "./commands/workspace.ts";
 import { commandEnrichLinkedIn } from "./commands/enrich-linkedin.ts";
-import { commandFindDrain, commandFindWatch } from "./commands/find.ts";
+import { commandResearchProspects } from "./commands/research-prospects.ts";
+import { commandResearchProducts } from "./commands/research-products.ts";
+import { commandScoreProspects } from "./commands/score-prospects.ts";
+import { commandCalibrate } from "./commands/calibrate.ts";
+import { commandFindDrain, commandFindImport, commandFindWatch } from "./commands/find.ts";
+import { commandInstallService } from "./commands/install-service.ts";
+import { commandMeasureBenchmark } from "./commands/measure.ts";
 import {
   commandMotionBreakupRevive,
   commandMotionCompetitorSwitch,
   commandMotionConcierge,
   commandMotionDemoNoShow,
+  commandMotionDiscoveryInterview,
+  commandMotionFreePilot,
   commandMotionHiringSignal,
   commandMotionPodcastGuest,
   commandMotionPostFunding,
@@ -80,6 +92,7 @@ import {
 const CLI_VERSION = readPackageVersion(import.meta.url);
 
 const program = new Command();
+registerDirectMailCommand(program);
 program
   .name("oneshot-gtm")
   .description(
@@ -96,7 +109,11 @@ program
 // Bootstrap + launcher
 
 program.command("init").description("First-run setup wizard").action(runOrFail(runInit));
-program.command("doctor").description("Check setup health").action(runOrFail(commandDoctor));
+program
+  .command("doctor")
+  .description("Check setup health")
+  .option("--json", "output as JSON")
+  .action(runOrFail((opts: { json?: boolean }) => commandDoctor(opts)));
 program
   .command("ui")
   .option(
@@ -178,7 +195,8 @@ const workspace = program
 workspace
   .command("list")
   .description("Show every workspace, the current and the default")
-  .action(runOrFail(commandWorkspaceList));
+  .option("--json", "output as JSON")
+  .action(runOrFail((opts: { json?: boolean }) => commandWorkspaceList(opts)));
 workspace
   .command("create <name>")
   .description("Create an empty workspace (then: --workspace <name> init)")
@@ -229,6 +247,12 @@ config
     "Show, set, or clear the Slack incoming-webhook URL for reply/bounce/daily-summary notifications",
   )
   .action(runOrFail((url?: string) => configSlackWebhook(url)));
+config
+  .command("spend-ceiling [amount]")
+  .description(
+    "Show or set the install-wide daily USD spend ceiling (halts automated finder/drain runs once reached; 'off' clears it)",
+  )
+  .action(runOrFail((amount?: string) => configSpendCeiling(amount)));
 
 // Gmail send path: OAuth consent flow for the alternate (non-OneShot) provider.
 const gmail = program
@@ -267,7 +291,8 @@ const identities = program
 identities
   .command("list")
   .description("Show the rotation pool and the wallet's provisioned domain pool")
-  .action(runOrFail(commandIdentitiesList));
+  .option("--json", "output as JSON")
+  .action(runOrFail((opts: { json?: boolean }) => commandIdentitiesList(opts)));
 identities
   .command("add")
   .description("Add an OneShot sending identity (wallet-owned domain + mailbox) to the pool")
@@ -286,7 +311,8 @@ const domains = program
 domains
   .command("list")
   .description("Show provisioned domains with pool status, warmth, and daily usage")
-  .action(runOrFail(commandDomainsList));
+  .option("--json", "output as JSON")
+  .action(runOrFail((opts: { json?: boolean }) => commandDomainsList(opts)));
 domains
   .command("resume <domain>")
   .description("Resume a paused sending domain (e.g. oneshotagents.com)")
@@ -301,34 +327,118 @@ const find = program
   .command("find")
   .description("Scheduled discovery (daemon + drain). Ad-hoc runs live in the dashboard.");
 find
+  .command("import")
+  .requiredOption("--csv <file>", "CSV file to import")
+  .requiredOption("--play <name>", "play to enqueue imported prospects into")
+  .option(
+    "--map <column=field>",
+    "override a header mapping (field: email, name, company, title); repeatable",
+    (value: string, previous: string[]) => [...previous, value],
+    [],
+  )
+  .option("--dry-run", "print mapping and row count without ICP checks or enqueueing", false)
+  .option("--fail-on-empty", "exit 2 when zero rows are imported", false)
+  .option("--json", "emit {imported, skipped, errors[]}")
+  .description("Import a CSV cohort through admission, ICP filtering, and queue dedupe")
+  .action(
+    runOrFail(
+      async (opts: {
+        csv: string;
+        play: string;
+        map: string[];
+        dryRun: boolean;
+        failOnEmpty: boolean;
+        json?: boolean;
+      }) => {
+        setJsonMode(opts.json ?? false);
+        if (!isSupportedPlay(opts.play)) bail(`unknown play: ${opts.play}`);
+        await commandFindImport(opts);
+      },
+    ),
+  );
+find
   .command("watch")
   .option("--once", "run all due triggers once and exit (cron-friendly)", false)
   .option("--quiet", "log summary only, not per-trigger details", false)
+  .option("--json", "output as JSON (with --once)")
+  .option(
+    "--ignore-approval-rate",
+    "run due finders even when their trailing approval rate is below threshold",
+    false,
+  )
+  .option(
+    "--install-service",
+    "print a launchd plist (macOS) / systemd user unit (Linux) that runs this daemon; doesn't start watching",
+    false,
+  )
+  .option(
+    "--write",
+    "with --install-service: write the file to the platform-conventional path instead of stdout",
+    false,
+  )
+  .option(
+    "--fail-on-empty",
+    "with --once: exit 2 (not 0) when the run queued no candidates, so cron can spot a dry run",
+    false,
+  )
   .description("Daemon: continuously poll registered triggers and enqueue new candidates")
   .action(
-    runOrFail((opts: { once: boolean; quiet: boolean }) =>
-      commandFindWatch({ once: opts.once, quiet: opts.quiet }),
+    runOrFail(
+      (opts: {
+        once: boolean;
+        quiet: boolean;
+        installService: boolean;
+        write: boolean;
+        failOnEmpty: boolean;
+        json?: boolean;
+        ignoreApprovalRate: boolean;
+      }) => {
+        if (opts.json && opts.installService) bail("--json cannot be used with --install-service");
+        if (opts.installService) return commandInstallService({ write: opts.write });
+        if (opts.write) bail("--write only makes sense with --install-service");
+        // A daemon run never ends of its own accord, so it has no empty result
+        // to report — refuse the combination rather than silently ignore it.
+        // Same reasoning for --json: the document is written once, at the end.
+        if (opts.failOnEmpty && !opts.once) bail("--fail-on-empty only makes sense with --once");
+        if (opts.json && !opts.once) bail("--json only makes sense with --once");
+        return commandFindWatch({
+          once: opts.once,
+          quiet: opts.quiet,
+          failOnEmpty: opts.failOnEmpty,
+          ignoreApprovalRate: opts.ignoreApprovalRate,
+          json: opts.json,
+        });
+      },
     ),
   );
 find
   .command("drain <play>")
   .option("--limit <n>", "max approved rows to drain (default 10)", (v) => Number.parseInt(v, 10))
-  .option("--sender-cohort <tag>", "REQUIRED for accelerator-batch (your cohort tag)")
-  .option("--offer <text>", "free-for-cohort offer text (accelerator-batch only)")
   .option("--dry-run", "preview drain; don't actually send", false)
+  .option(
+    "--fail-on-empty",
+    "exit 2 (not 0) when no approved rows were drained; 1 if any row errored",
+    false,
+  )
+  .option("--json", "output as JSON")
   .description("Pull approved rows for a play and run the existing motion play on them")
   .action(
     runOrFail(
       async (
         play: string,
-        opts: { limit?: number; senderCohort?: string; offer?: string; dryRun: boolean },
+        opts: {
+          limit?: number;
+          dryRun: boolean;
+          failOnEmpty: boolean;
+          json?: boolean;
+        },
       ) => {
         await commandFindDrain({
           play,
           dryRun: opts.dryRun,
+          failOnEmpty: opts.failOnEmpty,
           ...(opts.limit ? { limit: opts.limit } : {}),
-          ...(opts.senderCohort ? { senderCohort: opts.senderCohort } : {}),
-          ...(opts.offer ? { offer: opts.offer } : {}),
+          ...(opts.json ? { json: opts.json } : {}),
         });
       },
     ),
@@ -369,6 +479,157 @@ find
     ),
   );
 
+find
+  .command("research-prospects")
+  // Defaulted like enrich-linkedin, and lower: each row is a ~$0.05 / 2-5 min
+  // call, so an unflagged run must not quietly bill for hundreds.
+  .option(
+    "--limit <n>",
+    "max prospects to research (default 250)",
+    (v) => Number.parseInt(v, 10),
+    250,
+  )
+  .option(
+    "--scope <list>",
+    "comma-separated: active,replied,unjudged,all (default active,replied,unjudged)",
+  )
+  .option("--concurrency <n>", "parallel research calls (default 3)", (v) => Number.parseInt(v, 10))
+  .option("--refresh", "re-research prospects that already have a dossier", false)
+  .option("--id <n>", "research one prospect by id, ignoring scope and dossier state", (v) =>
+    Number.parseInt(v, 10),
+  )
+  .option("--max-cost-usd <n>", "stop once this much has been billed this run", (v) =>
+    Number.parseFloat(v),
+  )
+  .option("--dry-run", "list candidates and estimated cost; research nothing", false)
+  .description("Backfill research dossiers onto existing prospects (~$0.05 each)")
+  .action(
+    runOrFail(
+      async (opts: {
+        limit?: number;
+        scope?: string;
+        concurrency?: number;
+        refresh: boolean;
+        id?: number;
+        maxCostUsd?: number;
+        dryRun: boolean;
+      }) => {
+        await commandResearchProspects({
+          dryRun: opts.dryRun,
+          refresh: opts.refresh,
+          ...(opts.limit ? { limit: opts.limit } : {}),
+          ...(opts.scope ? { scope: opts.scope } : {}),
+          ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
+          ...(Number.isFinite(opts.id) ? { id: opts.id as number } : {}),
+          ...(Number.isFinite(opts.maxCostUsd) ? { maxCostUsd: opts.maxCostUsd as number } : {}),
+        });
+      },
+    ),
+  );
+
+find
+  .command("research-products")
+  .option(
+    "--limit <n>",
+    "max combined prospects and queue rows",
+    (v) => Number.parseInt(v, 10),
+    250,
+  )
+  .option(
+    "--scope <list>",
+    "comma-separated: active,replied,unjudged,all (default active,replied,unjudged)",
+  )
+  .option("--concurrency <n>", "parallel research calls (default 3)", (v) => Number.parseInt(v, 10))
+  .option(
+    "--max-cost-usd <n>",
+    "stop starting calls after this spend target (default $5; one call may cross it)",
+    (v) => Number(v),
+    5,
+  )
+  .option("--no-cost-limit", "run the full backfill without a spend ceiling")
+  .option("--first-party-only", "skip external research and retain first-party evidence only")
+  .option("--refresh", "refresh rows that already have product research", false)
+  .option("--no-include-pending", "exclude pending queue rows")
+  .option("--dry-run", "list candidates and estimated coverage; research nothing", false)
+  .description("Backfill product-aware dossiers onto live prospects and pending review rows")
+  .action(
+    runOrFail(
+      async (opts: {
+        limit?: number;
+        scope?: string;
+        concurrency?: number;
+        maxCostUsd?: number;
+        costLimit: boolean;
+        firstPartyOnly: boolean;
+        refresh: boolean;
+        includePending: boolean;
+        dryRun: boolean;
+      }) => {
+        await commandResearchProducts({
+          dryRun: opts.dryRun,
+          refresh: opts.refresh,
+          includePending: opts.includePending,
+          externalResearch: !opts.firstPartyOnly,
+          ...(opts.costLimit !== false && opts.maxCostUsd != null
+            ? { maxCostUsd: opts.maxCostUsd }
+            : {}),
+          ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+          ...(opts.scope ? { scope: opts.scope } : {}),
+          ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
+        });
+      },
+    ),
+  );
+
+find
+  .command("score-prospects")
+  .option("--scope <play|all>", "score only this play's rows (default all)")
+  .option("--limit <n>", "max rows to score this run", (v) => Number.parseInt(v, 10))
+  .option("--refresh", "re-score rows that already carry a current-version score", false)
+  .option("--dry-run", "report score distributions; write nothing", false)
+  .option(
+    "--report",
+    "print the per-finder shadow report (score buckets + human approval rate)",
+    false,
+  )
+  .option(
+    "--all-statuses",
+    "widen from pending/approved to every row (sent/rejected/expired) — evaluation only",
+    false,
+  )
+  .description(
+    "Backfill shadow-mode priority scores from stored payloads (free, resumable, no network)",
+  )
+  .action(
+    runOrFail(
+      (opts: {
+        scope?: string;
+        limit?: number;
+        refresh: boolean;
+        dryRun: boolean;
+        report: boolean;
+        allStatuses: boolean;
+      }) => {
+        commandScoreProspects({
+          refresh: opts.refresh,
+          dryRun: opts.dryRun,
+          report: opts.report,
+          allStatuses: opts.allStatuses,
+          ...(opts.scope ? { scope: opts.scope } : {}),
+          ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+        });
+      },
+    ),
+  );
+
+find
+  .command("calibrate")
+  .option("--fit", "fit finders that meet the floors and write the artifact", false)
+  .description(
+    "Readiness-gated outcome calibration for priority scores (shadow only; no --force by design)",
+  )
+  .action(runOrFail((opts: { fit: boolean }) => commandCalibrate({ fit: opts.fit })));
+
 // Cadence: cron-able advance. List/stop are in the dashboard.
 const cadence = program
   .command("cadence")
@@ -391,7 +652,10 @@ motion
   .description("Trigger play: prospect's company recently raised (send day 3+, not day 0)")
   .action(
     runOrFail(async (opts: { target: string; dryRun: boolean }) => {
-      await commandMotionPostFunding({ targetFile: opts.target, dryRun: opts.dryRun });
+      await commandMotionPostFunding({
+        targetFile: opts.target,
+        dryRun: opts.dryRun,
+      });
     }),
   );
 motion
@@ -500,6 +764,40 @@ motion
     }),
   );
 motion
+  .command("discovery-interview")
+  .requiredOption(
+    "-t, --target <file>",
+    "JSON file: { name, email, company, businessType, topic }[]",
+  )
+  .option("--dry-run", "draft only, do not send", false)
+  .description(
+    "Main-street ask: ten minutes on how the owner-operator does this today. No pitch, no link, no price.",
+  )
+  .action(
+    runOrFail(async (opts: { target: string; dryRun: boolean }) => {
+      await commandMotionDiscoveryInterview({
+        targetFile: opts.target,
+        dryRun: opts.dryRun,
+      });
+    }),
+  );
+motion
+  .command("free-pilot")
+  .requiredOption(
+    "-t, --target <file>",
+    "JSON file: { name, email, company, businessType, yourEdge }[]",
+  )
+  .option("--dry-run", "draft only, do not send", false)
+  .description("Main-street close: set it up free for them, they keep it if it works")
+  .action(
+    runOrFail(async (opts: { target: string; dryRun: boolean }) => {
+      await commandMotionFreePilot({
+        targetFile: opts.target,
+        dryRun: opts.dryRun,
+      });
+    }),
+  );
+motion
   .command("breakup-revive")
   .option("--min-days <n>", "min days since last activity (default 60)", (v) =>
     Number.parseInt(v, 10),
@@ -589,6 +887,13 @@ pmf
   .description("Collect inbound replies and synthesize a Sean Ellis report")
   .action(runOrFail(commandPmfSurveyCollect));
 
+const measure = program.command("measure").description("Compare local GTM performance");
+measure
+  .command("benchmark")
+  .description("Compare this install with the opt-in telemetry cohort")
+  .option("--json", "output as JSON")
+  .action(runOrFail((opts: { json?: boolean }) => commandMeasureBenchmark(opts)));
+
 // Intel: interactive coaching + reply triage + personalize (no UI yet)
 const intel = program.command("intel").description("LLM-powered intelligence layer");
 intel
@@ -612,6 +917,25 @@ intel
   .option("-l, --limit <n>", "max replies to process", (v) => Number.parseInt(v, 10))
   .description("Classify and draft responses for inbound replies")
   .action(runOrFail(commandIntelTriage));
+intel
+  .command("backfill-intent")
+  .option(
+    "-l, --limit <n>",
+    "max untriaged human replies to process (default 200)",
+    (v: string) => {
+      const limit = Number(v);
+      if (!Number.isSafeInteger(limit) || limit < 0) {
+        throw new Error("--limit must be a non-negative integer");
+      }
+      return limit;
+    },
+  )
+  .description("Classify sentiment intent onto persisted human replies that predate the classifier")
+  .action(
+    runOrFail(async (opts: { limit?: number }) =>
+      commandIntelBackfillIntent(opts.limit != null ? { limit: opts.limit } : {}),
+    ),
+  );
 intel
   .command("personalize")
   .requiredOption("--prospect-name <name>", "prospect's first or full name")
@@ -644,10 +968,18 @@ handoff
 // instead of commander's default non-zero exit.
 attachHelpFallbacks(program);
 
-program.parseAsync(process.argv).catch((err) => {
-  fail((err as Error).message);
-  process.exit(1);
-});
+// The command tree itself is worth reading without running it — the README
+// count guard walks it to check the documented command total. Importing this
+// module used to parse process.argv as a side effect, which under a test
+// runner means parsing the runner's own argv.
+export { program };
+
+if (!process.env["ONESHOT_GTM_CLI_NO_PARSE"]) {
+  program.parseAsync(process.argv).catch((err) => {
+    fail((err as Error).message);
+    process.exit(1);
+  });
+}
 
 function runOrFail<A extends unknown[]>(fn: (...args: A) => void | Promise<void>) {
   return async (...args: A) => {

@@ -31,6 +31,7 @@ function row(overrides: Partial<TriggerRow> = {}): TriggerRow {
     last_run_summary: null,
     enabled: 1,
     config_json: JSON.stringify({ sinceDays: 1, limit: 25 }),
+    running_started_at: null,
     ...overrides,
   };
 }

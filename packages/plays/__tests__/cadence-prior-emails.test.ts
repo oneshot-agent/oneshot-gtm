@@ -21,16 +21,22 @@ vi.mock("@oneshot-gtm/core", async () => {
       emailIdentities: null,
       icpOneLiner: null,
       cadenceOverrides: null,
-      founderCredentials: null,
+      founderCredentials: "Previously built a million-user app",
       productPortfolio: null,
       partners: null,
       founderAdmission: null,
       productBrief: null,
       mobileSignature: false,
       slackWebhookUrl: null,
+      timezone: null,
       clientId: null,
+      dailySpendCeilingUsd: null,
     }),
     getLedger: () => ({
+      findDirectMail: () => null,
+      // Opener-frequency cap: no send history in these fakes, so nothing is worn out.
+      recentSentEmailBodies: () => [],
+      getCadence: () => ({ current_step: 0, status: "active" }),
       listSequenceEventsForProspectPlay: (_pid: number, _play: string) => storedRows,
     }),
     receiptUrlForId: (id: number) => `local://receipt/${id}`,
@@ -102,7 +108,9 @@ function ctx(prospectId = 42) {
       productBrief: null,
       mobileSignature: false,
       slackWebhookUrl: null,
+      timezone: null,
       clientId: null,
+      dailySpendCeilingUsd: null,
     },
     metadata: {},
   };
@@ -151,6 +159,8 @@ describe("buildFollowUpEmail — PRIOR EMAILS injection", () => {
     expect(llmCalls).toHaveLength(1);
     const userMsg = llmCalls[0]!.user;
     expect(userMsg).toContain("PRIOR EMAILS");
+    expect(userMsg).not.toContain("SOCIAL PROOF");
+    expect(userMsg).not.toContain("Previously built a million-user app");
     const firstIdx = userMsg.indexOf("step 1");
     const zeroIdx = userMsg.indexOf("step 0");
     expect(firstIdx).toBeGreaterThan(-1);

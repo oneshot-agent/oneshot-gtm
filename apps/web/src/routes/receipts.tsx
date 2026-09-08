@@ -7,11 +7,12 @@ import { Button } from "../components/primitives/Button.tsx";
 import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
 import { Modal } from "../components/primitives/Modal.tsx";
 import { Skeleton, SkeletonRow } from "../components/primitives/Skeleton.tsx";
-import { cn, formatUsd, timeAgo } from "../lib/cn.ts";
+import { cn, formatCount, formatUsd, timeAgo } from "../lib/cn.ts";
 import { maskDeep } from "../lib/mask.ts";
 import { usePrivacy } from "../lib/privacy.tsx";
 
 export const Route = createFileRoute("/receipts")({
+  staticData: { title: "Receipts" },
   component: ReceiptsPage,
 });
 
@@ -116,7 +117,7 @@ function ReceiptsPage() {
           {receipts.data ? (
             <>
               <div>
-                <span className="text-ink-cream-2">{visible.length}</span>{" "}
+                <span className="text-ink-cream-2">{formatCount(visible.length)}</span>{" "}
                 <span className="text-ink-muted">shown</span>
               </div>
               <div className="mt-0.5">
@@ -136,7 +137,7 @@ function ReceiptsPage() {
         {VALUE_FILTERS.map((f) => (
           <Button
             key={f.key}
-            variant={valueFilter === f.key ? "primary" : "ghost"}
+            variant={valueFilter === f.key ? "secondary" : "ghost"}
             size="sm"
             onClick={() => setValueFilter(f.key)}
           >

@@ -40,6 +40,8 @@ To point the CLI at a different ingest endpoint (e.g. a local receiver while dev
 
 Sent to a single first-party endpoint owned by OneShot (`telemetry.oneshotagent.com`), which validates the payload against the whitelist above and stores one row per event. No third-party analytics SDK is bundled in the CLI — it's a plain `fetch` POST, so there's no vendor phoning home from your machine. Aggregated and used to prioritize the public roadmap. Never sold, never shared with third parties.
 
+`oneshot-gtm measure benchmark` reads those aggregates only when telemetry sharing is enabled. It sends the existing anonymous install UUID as a query parameter so the service can return that install's command count, success rate, and median duration beside the opt-in cohort. No additional telemetry fields are collected. Set `ONESHOT_GTM_BENCHMARK_URL` to override the aggregate endpoint in development.
+
 This file is the authoritative spec. If telemetry is ever extended, this file is updated in the same PR — the client (`packages/core/src/telemetry.ts`) and the first-party receiver carry the same field whitelist deliberately, and must move together. (This is a maintainer convention; it is not yet enforced by CI.)
 
 ## Local development log (separate from telemetry)

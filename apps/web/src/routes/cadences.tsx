@@ -1,9 +1,24 @@
+import { DirectMailPanel, DirectMailHistory } from "../components/DirectMailPanel.tsx";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { ChevronDown, CircleStop, Eye, Loader2, RotateCw, Send, Trophy } from "lucide-react";
+import {
+  ChevronDown,
+  CircleStop,
+  Eye,
+  Loader2,
+  MessageCircle,
+  RotateCw,
+  Send,
+  Trophy,
+} from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
 import { toast } from "sonner";
-import type { CadenceCounts, CadenceView, OutcomeRequest } from "@oneshot-gtm/shared-types";
+import type {
+  CadenceCounts,
+  CadenceStopReason,
+  CadenceView,
+  OutcomeRequest,
+} from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
@@ -15,15 +30,18 @@ import { Modal } from "../components/primitives/Modal.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { StepProgress } from "../components/primitives/StepProgress.tsx";
 import { cn, formatSendsToday, timeAgo } from "../lib/cn.ts";
+import { readOnly } from "../lib/readOnly.ts";
 
 /** Tailwind can't build class names dynamically — enumerate the tile-count variants. */
 const TILE_GRID_COLS: Record<number, string> = {
   4: "md:grid-cols-4",
   5: "md:grid-cols-5",
   6: "md:grid-cols-6",
+  7: "md:grid-cols-7",
 };
 
 export const Route = createFileRoute("/cadences")({
+  staticData: { title: "Cadences" },
   // ?sinceRun=N deep-link from /run/<play>?runId=N done-mode — filters the
   // listing to cadences whose prospect email is in the run's prospect_emails
   // set. The page shows a clear banner with a [clear filter] CTA.
@@ -59,6 +77,8 @@ function statusTone(status: string): "receipt" | "signal" | "spend" | "blocked" 
       return "spend";
     case "completed":
       return "neutral";
+    case "stopped":
+      return "blocked";
     case "bounced":
       return "blocked";
     case "off-icp":
@@ -76,15 +96,49 @@ interface OutcomeModalState {
   playName: string;
 }
 
+interface StopModalState {
+  prospectId: number;
+  prospectName: string | null;
+  playName: string;
+}
+
+interface LinkedInReplyModalState {
+  prospectId: number;
+  prospectName: string | null;
+}
+
+const STOP_REASON_LABELS: Record<CadenceStopReason, string> = {
+  bad_timing: "Bad timing / revisit later",
+  other: "Other",
+  not_a_fit: "Not a fit",
+  do_not_contact: "Do not contact",
+};
+
 const rowKey = (c: CadenceView): string => `${c.prospectId}|${c.playName}`;
 
 function CadencesPage() {
+  const [mailKey, setMailKey] = useState<string | null>(null);
   const qc = useQueryClient();
   const [showAll, setShowAll] = useState(false);
   const [outcomeModal, setOutcomeModal] = useState<OutcomeModalState | null>(null);
   const [outcomeKind, setOutcomeKind] = useState<OutcomeRequest["outcome"]>("meeting_booked");
   const [outcomeAmount, setOutcomeAmount] = useState("");
   const [outcomeNotes, setOutcomeNotes] = useState("");
+  const [stopModal, setStopModal] = useState<StopModalState | null>(null);
+  const [linkedinReplyModal, setLinkedinReplyModal] = useState<LinkedInReplyModalState | null>(
+    null,
+  );
+  const [linkedinReplyBody, setLinkedinReplyBody] = useState("");
+  // Every close path must clear the body. Cancel used to bypass the onClose
+  // cleanup, so reopening the modal for a DIFFERENT prospect showed the
+  // previous one's text — one stray click from filing person A's message
+  // against person B.
+  const closeLinkedinReplyModal = (): void => {
+    setLinkedinReplyModal(null);
+    setLinkedinReplyBody("");
+  };
+  const [stopReason, setStopReason] = useState<CadenceStopReason>("bad_timing");
+  const [stopNote, setStopNote] = useState("");
 
   const { sinceRun } = Route.useSearch();
   const cadences = useQuery({
@@ -100,13 +154,35 @@ function CadencesPage() {
   };
 
   const stop = useMutation({
-    mutationFn: (vars: { prospectId: number; playName: string }) =>
-      api.stopCadence(vars.prospectId, vars.playName),
+    mutationFn: (vars: {
+      prospectId: number;
+      playName: string;
+      reason: CadenceStopReason;
+      note?: string;
+    }) => api.stopCadence(vars.prospectId, vars.playName, { reason: vars.reason, note: vars.note }),
     onSuccess: (data, vars) => {
       void qc.invalidateQueries({ queryKey: ["cadences"] });
+      setStopModal(null);
+      setStopReason("bad_timing");
+      setStopNote("");
       toast.success(`stopped cadence · ${vars.playName}`);
     },
     onError: (err) => toast.error(`couldn't stop cadence: ${err.message}`),
+  });
+
+  const markLinkedInReply = useMutation({
+    mutationFn: (vars: { prospectId: number; body?: string }) =>
+      api.markLinkedInReply(vars.prospectId, vars.body),
+    onSuccess: (data) => {
+      void qc.invalidateQueries({ queryKey: ["cadences"] });
+      setLinkedinReplyModal(null);
+      setLinkedinReplyBody("");
+      const warning = data.inFlightSends > 0 ? " · an in-flight email may still complete" : "";
+      toast.success(
+        `LinkedIn reply recorded · ${data.cadencesStopped} cadence(s) stopped${warning}`,
+      );
+    },
+    onError: (err) => toast.error(`couldn't record LinkedIn reply: ${err.message}`),
   });
 
   const previewNext = useMutation({
@@ -137,7 +213,6 @@ function CadencesPage() {
         next.delete(`${vars.prospectId}|${vars.playName}`);
         return next;
       });
-      setSendConfirm(null);
       toast.success(`sending · ${vars.playName} — refreshes when complete`);
     },
     onError: (err) => toast.error(`send failed: ${err.message}`),
@@ -189,18 +264,6 @@ function CadencesPage() {
       else next.add(key);
       return next;
     });
-  const [sendConfirm, setSendConfirm] = useState<{
-    prospectId: number;
-    playName: string;
-    prospectEmail: string | null;
-    prospectName: string | null;
-    subject: string;
-    isBreakup: boolean;
-    /** ISO timestamp of the scheduled fire time; null when cadence has no schedule. */
-    nextDueAt: string | null;
-    /** True when next_due_at is in the future at the moment Send was clicked. */
-    isEarly: boolean;
-  } | null>(null);
   const pendingPreviewKey =
     previewNext.isPending && previewNext.variables
       ? `${previewNext.variables.prospectId}|${previewNext.variables.playName}`
@@ -236,6 +299,10 @@ function CadencesPage() {
   // render because of the `?? []` fallback, which would thrash useMemo's
   // cache.
   const list = useMemo(() => cadences.data?.cadences ?? [], [cadences.data]);
+  const mailProspect = useMemo(
+    () => list.find((c) => rowKey(c) === mailKey) ?? null,
+    [list, mailKey],
+  );
   // Tiles read the server's full-status counts (scoped only by sinceRun), NOT
   // the table rows — so REPLIED/BREAKUP/COMPLETED stay accurate even while the
   // table is filtered to active.
@@ -244,13 +311,20 @@ function CadencesPage() {
   const nowIso = new Date().toISOString();
 
   // Bulk-action derived state.
-  const selectableActive = useMemo(() => list.filter((c) => c.status === "active"), [list]);
+  const selectableActive = useMemo(
+    () => list.filter((c) => c.status === "active" && c.nextStepChannel !== "direct_mail"),
+    [list],
+  );
   const allActiveSelected =
     selectableActive.length > 0 && selectableActive.every((c) => selected.has(rowKey(c)));
   const someActiveSelected =
     selectableActive.some((c) => selected.has(rowKey(c))) && !allActiveSelected;
   const selectedRows = useMemo(
-    () => list.filter((c) => selected.has(rowKey(c)) && c.status === "active"),
+    () =>
+      list.filter(
+        (c) =>
+          selected.has(rowKey(c)) && c.status === "active" && c.nextStepChannel !== "direct_mail",
+      ),
     [list, selected],
   );
   // Sendable = selected + has clean persisted draft + not already in flight.
@@ -300,6 +374,14 @@ function CadencesPage() {
 
   return (
     <div className="-mx-6 -my-6 flex flex-col">
+      <DirectMailHistory />
+      {mailProspect && (
+        <DirectMailPanel
+          key={`${mailProspect.prospectId}|${mailProspect.playName}`}
+          prospect={mailProspect}
+          onClose={() => setMailKey(null)}
+        />
+      )}
       <section className="flex items-end justify-between gap-4 border-b border-ink-rule px-6 pb-5 pt-6">
         <div>
           <div className="ln-eyebrow">The Ledger · Cadences</div>
@@ -352,7 +434,7 @@ function CadencesPage() {
       <section
         className={cn(
           "grid grid-cols-2 divide-x divide-ink-rule border-b border-ink-rule",
-          TILE_GRID_COLS[4 + (counts.bounced > 0 ? 1 : 0) + (cadences.data?.sendsToday ? 1 : 0)],
+          TILE_GRID_COLS[5 + (counts.bounced > 0 ? 1 : 0) + (cadences.data?.sendsToday ? 1 : 0)],
         )}
       >
         <CadenceSummary
@@ -374,6 +456,12 @@ function CadencesPage() {
           tone="spend"
         />
         <CadenceSummary label="Completed" value={counts.completed} caption="full cadence done" />
+        <CadenceSummary
+          label="Stopped"
+          value={counts.stopped}
+          caption="manually ended"
+          tone="blocked"
+        />
         {cadences.data?.sendsToday && (
           <CadenceSummary
             label="Sends today"
@@ -445,6 +533,7 @@ function CadencesPage() {
                   })),
                 )
               }
+              {...readOnly}
             >
               {previewBatch.isPending
                 ? `Previewing ${selectedRows.length}…`
@@ -477,8 +566,8 @@ function CadencesPage() {
         ) : list.length === 0 ? (
           <div className="px-6 py-8">
             <EmptyNote
-              note="No cadences in flight. The engine only runs for prospects you've already touched; send a play and they appear here."
-              cli="oneshot-gtm motion show-hn --target show-hn.json"
+              note="No cadences in flight. Find prospects from /queue's finder flow, or run the watcher; approved sends appear here."
+              cli="oneshot-gtm find watch"
             />
           </div>
         ) : (
@@ -521,12 +610,17 @@ function CadencesPage() {
             <tbody>
               {list.map((c, i) => {
                 const totalSteps = c.followupCount + 1;
+                const knownCompany =
+                  c.prospectCompany && !/^\(?unknown\)?$/i.test(c.prospectCompany.trim())
+                    ? c.prospectCompany
+                    : null;
                 const isOverdue =
                   c.status === "active" && c.nextDueAt !== null && c.nextDueAt <= nowIso;
                 // Expandable when there's something to show OR something to do:
                 // prior sends, a persisted draft, or a remaining step to generate.
                 const hasExpandable =
                   c.priorSteps.length > 0 ||
+                  c.status === "stopped" ||
                   c.nextStepDraft != null ||
                   (c.status === "active" && c.nextStepLabel != null);
                 return (
@@ -562,16 +656,45 @@ function CadencesPage() {
                               ? `select for batch preview / send`
                               : `only active cadences can be selected (status: ${c.status})`
                           }
-                          disabled={c.status !== "active"}
+                          disabled={c.status !== "active" || c.nextStepChannel === "direct_mail"}
                           checked={selected.has(rowKey(c))}
                           onChange={() => toggleSelected(rowKey(c))}
                           className="cursor-pointer disabled:cursor-not-allowed disabled:opacity-30"
                         />
                       </td>
                       <td className="px-6 py-2">
-                        <div className="text-ink-cream">
-                          {c.prospectName ? <Pii kind="name">{c.prospectName}</Pii> : "(unknown)"}
+                        <div className="flex items-center gap-2 text-ink-cream">
+                          <span>
+                            {c.prospectName ? <Pii kind="name">{c.prospectName}</Pii> : "(unknown)"}
+                          </span>
+                          {c.prospectLinkedinUrl && (
+                            <a
+                              href={c.prospectLinkedinUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="font-mono text-[10px] text-ink-muted underline decoration-ink-rule underline-offset-2 hover:text-ink-cream-2"
+                              title="Open LinkedIn profile"
+                            >
+                              LinkedIn ↗
+                            </a>
+                          )}
                         </div>
+                        {(c.prospectTitle || knownCompany) && (
+                          <div className="max-w-[280px] truncate text-[11px] text-ink-muted">
+                            {c.prospectTitle ?? "Role unknown"}
+                            {knownCompany && (
+                              <>
+                                {" · "}
+                                <Pii kind="company">{knownCompany}</Pii>
+                              </>
+                            )}
+                          </div>
+                        )}
+                        {!c.prospectTitle && !knownCompany && c.prospectLinkedinUrl && (
+                          <div className="text-[11px] text-ink-faint">
+                            Role/company not enriched
+                          </div>
+                        )}
                         <div className="font-mono text-[11px] text-ink-faint">
                           {c.prospectEmail ? <Pii kind="email">{c.prospectEmail}</Pii> : "—"}
                         </div>
@@ -582,6 +705,12 @@ function CadencesPage() {
                         {c.isSending && (
                           <Badge tone="receipt" className="ml-1.5 animate-pulse">
                             sending…
+                          </Badge>
+                        )}
+                        {c.status === "replied" && c.replyChannel && (
+                          <Badge tone="signal" className="ml-1.5">
+                            {c.replyChannel === "linkedin" ? "LinkedIn reply" : "email reply"}
+                            {c.replyAt ? ` · ${timeAgo(c.replyAt)}` : ""}
                           </Badge>
                         )}
                         {!c.isSending && c.status === "active" && c.lastSendError && (
@@ -606,7 +735,9 @@ function CadencesPage() {
                                 ? "signal"
                                 : c.status === "breakup"
                                   ? "spend"
-                                  : c.status === "bounced" || c.status === "unsubscribed"
+                                  : c.status === "bounced" ||
+                                      c.status === "unsubscribed" ||
+                                      c.status === "stopped"
                                     ? "blocked"
                                     : "receipt"
                             }
@@ -630,9 +761,61 @@ function CadencesPage() {
                       </td>
                       <td className="px-6 py-2 text-right">
                         <div className="flex items-center justify-end gap-1">
+                          {(c.status === "active" || c.status === "paused") && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              title="mark that this prospect replied on LinkedIn"
+                              onClick={() =>
+                                setLinkedinReplyModal({
+                                  prospectId: c.prospectId,
+                                  prospectName: c.prospectName,
+                                })
+                              }
+                            >
+                              <MessageCircle size={12} />
+                            </Button>
+                          )}
                           {c.status === "active" &&
                             (() => {
                               const key = `${c.prospectId}|${c.playName}`;
+                              if (c.nextStepChannel === "direct_mail")
+                                return (
+                                  <>
+                                    <Button
+                                      size="sm"
+                                      disabled={c.isSending}
+                                      onClick={() => setMailKey(rowKey(c))}
+                                    >
+                                      {c.businessAddress ? "Review mail" : "Add business address"}
+                                    </Button>
+                                    {c.priorSteps.length > 0 && (
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        title="View cadence history"
+                                        onClick={() => toggleExpanded(key)}
+                                      >
+                                        <ChevronDown size={12} />
+                                      </Button>
+                                    )}
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      title="Stop cadence"
+                                      disabled={stop.isPending || c.isSending}
+                                      onClick={() =>
+                                        setStopModal({
+                                          prospectId: c.prospectId,
+                                          prospectName: c.prospectName,
+                                          playName: c.playName,
+                                        })
+                                      }
+                                    >
+                                      <CircleStop size={12} />
+                                    </Button>
+                                  </>
+                                );
                               const draft = c.nextStepDraft;
                               const sendDisabled =
                                 !draft ||
@@ -640,6 +823,12 @@ function CadencesPage() {
                                 pendingSendKey != null ||
                                 pendingPreviewKey != null ||
                                 c.isSending;
+                              // Send fires immediately (no confirm modal), so the
+                              // early/breakup warnings live in the button tooltip.
+                              const earlyNote =
+                                c.nextDueAt != null && c.nextDueAt > new Date().toISOString()
+                                  ? ` · ${earlyByCopy(c.nextDueAt)} ahead of schedule — remaining steps recompute from today`
+                                  : "";
                               return (
                                 <>
                                   <Button
@@ -657,6 +846,7 @@ function CadencesPage() {
                                         playName: c.playName,
                                       })
                                     }
+                                    {...readOnly}
                                   >
                                     <Eye size={12} />
                                   </Button>
@@ -669,25 +859,18 @@ function CadencesPage() {
                                         : draft.flags.length > 0
                                           ? `draft held by lint (${draft.flags.length} flag(s)) — re-preview`
                                           : c.nextStepIsBreakup
-                                            ? "send breakup (final touch) — confirms first"
-                                            : "send next step — confirms first"
+                                            ? `send breakup (final touch) — sends now, no more emails after this${earlyNote}`
+                                            : `send next step — sends now${earlyNote}`
                                     }
                                     disabled={sendDisabled}
                                     onClick={() => {
                                       if (!draft) return;
-                                      setSendConfirm({
+                                      sendNext.mutate({
                                         prospectId: c.prospectId,
                                         playName: c.playName,
-                                        prospectEmail: c.prospectEmail,
-                                        prospectName: c.prospectName,
-                                        subject: draft.subject,
-                                        isBreakup: c.nextStepIsBreakup,
-                                        nextDueAt: c.nextDueAt,
-                                        isEarly:
-                                          c.nextDueAt != null &&
-                                          c.nextDueAt > new Date().toISOString(),
                                       });
                                     }}
+                                    {...readOnly}
                                   >
                                     <Send size={12} />
                                   </Button>
@@ -718,11 +901,16 @@ function CadencesPage() {
                                   <Button
                                     variant="ghost"
                                     size="sm"
-                                    title="stop cadence"
-                                    disabled={stop.isPending}
+                                    title={
+                                      c.isSending
+                                        ? "wait for the in-flight send to finish before stopping"
+                                        : "stop cadence"
+                                    }
+                                    disabled={stop.isPending || c.isSending}
                                     onClick={() =>
-                                      stop.mutate({
+                                      setStopModal({
                                         prospectId: c.prospectId,
+                                        prospectName: c.prospectName,
                                         playName: c.playName,
                                       })
                                     }
@@ -735,7 +923,7 @@ function CadencesPage() {
                           {/* Chevron for non-active rows with history — the active-status
                             block renders its own above. */}
                           {c.status !== "active" &&
-                            c.priorSteps.length > 0 &&
+                            (c.priorSteps.length > 0 || c.status === "stopped") &&
                             (() => {
                               const key = `${c.prospectId}|${c.playName}`;
                               return (
@@ -778,10 +966,26 @@ function CadencesPage() {
                         </div>
                       </td>
                     </tr>
-                    {(c.priorSteps.length > 0 || c.nextStepDraft) &&
+                    {(c.priorSteps.length > 0 || c.nextStepDraft || c.status === "stopped") &&
                       expandedKeys.has(rowKey(c)) && (
                         <tr className="border-b border-ink-rule/60 bg-ink-surface/30">
                           <td colSpan={8} className="px-6 py-3">
+                            {c.status === "stopped" && (
+                              <div className="mb-4 border-l-2 border-[color:var(--ink-blocked)] pl-3">
+                                <div className="ln-eyebrow">Stopped</div>
+                                <div className="mt-1 text-[12px] text-ink-cream-2">
+                                  {c.stopReason
+                                    ? STOP_REASON_LABELS[c.stopReason]
+                                    : "Reason unavailable"}
+                                  {c.stoppedAt ? ` · ${timeAgo(c.stoppedAt)}` : ""}
+                                </div>
+                                {c.stopNote && (
+                                  <div className="mt-1 whitespace-pre-wrap text-[12px] text-ink-muted">
+                                    {c.stopNote}
+                                  </div>
+                                )}
+                              </div>
+                            )}
                             {c.priorSteps.length > 0 && (
                               <>
                                 <div className="ln-eyebrow mb-1">
@@ -844,6 +1048,7 @@ function CadencesPage() {
                                             playName: c.playName,
                                           })
                                         }
+                                        {...readOnly}
                                       >
                                         {pending ? (
                                           <Loader2 size={11} className="animate-spin" />
@@ -916,6 +1121,7 @@ function CadencesPage() {
                 )
               }
               disabled={sendBatch.isPending || sendableRows.length === 0}
+              {...readOnly}
             >
               {sendBatch.isPending ? "Sending…" : `Send ${sendableRows.length}`}
             </Button>
@@ -972,69 +1178,118 @@ function CadencesPage() {
       </Modal>
 
       <Modal
-        open={sendConfirm != null}
-        onClose={() => setSendConfirm(null)}
-        title={
-          sendConfirm?.isBreakup
-            ? `Send breakup — ${mask("auto", sendConfirm?.prospectName ?? sendConfirm?.prospectEmail ?? "(prospect)")}`
-            : `Send next step — ${mask("auto", sendConfirm?.prospectName ?? sendConfirm?.prospectEmail ?? "(prospect)")}`
-        }
+        open={linkedinReplyModal != null}
+        onClose={closeLinkedinReplyModal}
+        title={`Mark LinkedIn reply${linkedinReplyModal?.prospectName ? ` — ${mask("name", linkedinReplyModal.prospectName)}` : ""}`}
         footer={
           <>
-            <Button variant="ghost" onClick={() => setSendConfirm(null)}>
+            <Button variant="ghost" onClick={closeLinkedinReplyModal}>
               Cancel
             </Button>
             <Button
               onClick={() => {
-                if (!sendConfirm) return;
-                sendNext.mutate(
-                  { prospectId: sendConfirm.prospectId, playName: sendConfirm.playName },
-                  { onSettled: () => setSendConfirm(null) },
-                );
+                if (linkedinReplyModal) {
+                  markLinkedInReply.mutate({
+                    prospectId: linkedinReplyModal.prospectId,
+                    body: linkedinReplyBody,
+                  });
+                }
               }}
-              disabled={sendNext.isPending}
+              disabled={markLinkedInReply.isPending}
+              {...readOnly}
             >
-              {sendNext.isPending ? "Sending…" : sendConfirm?.isBreakup ? "Send breakup" : "Send"}
+              {markLinkedInReply.isPending ? "Recording…" : "Mark replied"}
             </Button>
           </>
         }
       >
-        <div className="flex flex-col gap-3">
-          {sendConfirm?.isEarly && sendConfirm.nextDueAt && (
-            <div className="rounded border border-ink-rule bg-ink-surface/40 px-3 py-2 text-[12px] text-ink-cream-2">
-              Heads up: this step isn't scheduled to fire until{" "}
-              <span className="text-ink-cream">{timeAgo(sendConfirm.nextDueAt)}</span> (
-              {earlyByCopy(sendConfirm.nextDueAt)}). Sending now fires it ahead of schedule; the
-              remaining cadence steps will recompute their due dates from today, not the original
-              schedule.
-            </div>
-          )}
-          {sendConfirm?.isBreakup && (
-            <div className="rounded border border-ink-rule bg-ink-surface/40 px-3 py-2 text-[12px] text-[color:var(--ink-spend-2)]">
-              This is the breakup — the final touch in{" "}
-              <code className="font-mono text-[11px]">{sendConfirm.playName}</code>. After this, no
-              more emails will go to this prospect.
-            </div>
-          )}
-          <div className="font-mono text-[12px] text-ink-muted">
-            <div>
-              To:{" "}
-              <span className="text-ink-cream-2">
-                {sendConfirm?.prospectEmail
-                  ? mask("email", sendConfirm.prospectEmail)
-                  : "(no email)"}
-              </span>
-            </div>
-            <div>
-              Play: <span className="text-ink-cream-2">{sendConfirm?.playName}</span>
-            </div>
-            <div>
-              Subject: <span className="text-ink-cream-2">{sendConfirm?.subject}</span>
-            </div>
+        <div className="flex flex-col gap-2">
+          <div className="text-[12px] text-ink-muted">
+            This records a LinkedIn reply and stops every active or paused email cadence for this
+            prospect. An email already in flight cannot be recalled and may still complete.
           </div>
-          <div className="ln-eyebrow text-[10px] text-ink-faint">
-            sends the persisted preview verbatim — no LLM reroll.
+          <label className="text-[12px] text-ink-muted" htmlFor="linkedin-reply-body">
+            What they said (optional) — stored so a reply can be drafted from it later.
+          </label>
+          <textarea
+            id="linkedin-reply-body"
+            className="min-h-[96px] w-full rounded border border-line bg-surface p-2 text-[12px]"
+            value={linkedinReplyBody}
+            onChange={(e) => setLinkedinReplyBody(e.currentTarget.value)}
+            placeholder="Paste their message…"
+          />
+        </div>
+      </Modal>
+
+      <Modal
+        open={stopModal != null}
+        onClose={() => {
+          setStopModal(null);
+          setStopReason("bad_timing");
+          setStopNote("");
+        }}
+        title={`Stop cadence${stopModal?.prospectName ? ` — ${mask("name", stopModal.prospectName)}` : ""}`}
+        footer={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setStopModal(null);
+                setStopReason("bad_timing");
+                setStopNote("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                if (!stopModal) return;
+                stop.mutate({
+                  prospectId: stopModal.prospectId,
+                  playName: stopModal.playName,
+                  reason: stopReason,
+                  ...(stopNote.trim() ? { note: stopNote.trim() } : {}),
+                });
+              }}
+              disabled={stop.isPending || (stopReason === "other" && !stopNote.trim())}
+              {...readOnly}
+            >
+              {stop.isPending ? "Stopping…" : "Stop cadence"}
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-4">
+          <div className="text-[12px] text-ink-muted">
+            This stops only <code>{stopModal?.playName}</code>. The prospect will be excluded from
+            Expandi. Bad timing and Other may return through breakup-revive after 60–90 days;
+            permanent reasons will not.
           </div>
+          <Field label="Reason">
+            <Select
+              value={stopReason}
+              onChange={(e) => setStopReason(e.target.value as CadenceStopReason)}
+            >
+              {(Object.entries(STOP_REASON_LABELS) as Array<[CadenceStopReason, string]>).map(
+                ([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ),
+              )}
+            </Select>
+          </Field>
+          <Field
+            label={stopReason === "other" ? "Notes (required)" : "Notes (optional)"}
+            hint="Stored with the cadence for future context."
+          >
+            <Textarea
+              value={stopNote}
+              maxLength={500}
+              onChange={(e) => setStopNote(e.target.value)}
+              placeholder="Why are you stopping this cadence?"
+            />
+          </Field>
         </div>
       </Modal>
 
@@ -1047,7 +1302,11 @@ function CadencesPage() {
             <Button variant="ghost" onClick={() => setOutcomeModal(null)}>
               Cancel
             </Button>
-            <Button onClick={() => logOutcome.mutate()} disabled={logOutcome.isPending}>
+            <Button
+              onClick={() => logOutcome.mutate()}
+              disabled={logOutcome.isPending}
+              {...readOnly}
+            >
               {logOutcome.isPending ? "Saving…" : "Save outcome"}
             </Button>
           </>
@@ -1139,6 +1398,7 @@ const EMPTY_COUNTS: CadenceCounts = {
   breakup: 0,
   completed: 0,
   paused: 0,
+  stopped: 0,
   bounced: 0,
   overdue: 0,
 };

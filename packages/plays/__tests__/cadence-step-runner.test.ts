@@ -40,6 +40,8 @@ const advanceCalls: Array<{
 }> = [];
 const sendErrorCalls: Array<{ prospectId: number; playName: string; error: string }> = [];
 const statusCalls: Array<{ prospectId: number; playName: string; status: string }> = [];
+let mailDraft: any = null;
+let mailSends = 0;
 let throwOnSend = false;
 let deferOnSend = false;
 // Simulates a sequence_events row already existing at the step about to be sent
@@ -92,7 +94,16 @@ vi.mock("@oneshot-gtm/core", async () => {
       return { receiptId: 7 };
     },
     listInbox: async () => ({ emails: [], has_more: false }),
+    sendDirectMail: async () => {
+      mailSends++;
+      return mailDraft;
+    },
     getLedger: () => ({
+      getCadencePlan: () => null,
+      getDirectMail: () => mailDraft,
+      findDirectMail: () => null,
+      // Opener-frequency cap: no send history in these fakes, so nothing is worn out.
+      recentSentEmailBodies: () => [],
       // Reply-poll plumbing: no watermark, nothing to record (inbox is stubbed empty).
       getPollWatermark: () => null,
       setPollWatermark: () => {},
@@ -208,8 +219,12 @@ vi.mock("@oneshot-gtm/intel", async () => {
   };
 });
 
-const { previewCadenceStep, sendCadenceStep, runCadenceStepForProspect } =
-  await import("../src/_cadence.ts");
+const {
+  previewCadenceStep,
+  sendCadenceStep,
+  sendDirectMailCadenceStep,
+  runCadenceStepForProspect,
+} = await import("../src/_cadence.ts");
 // Ensure stack-consolidation's sequence is registered.
 await import("../src/stack-consolidation.ts");
 
@@ -233,6 +248,8 @@ function seedActiveCadence(): void {
 }
 
 beforeEach(() => {
+  mailDraft = null;
+  mailSends = 0;
   calls.sendEmail = 0;
   calls.llm = 0;
   calls.lastSendEmailArgs = null;
@@ -311,6 +328,15 @@ describe("sendCadenceStep", () => {
     await expect(
       sendCadenceStep({ prospectId: 1, playName: "stack-consolidation" }),
     ).rejects.toThrow(/no persisted preview/);
+  });
+
+  it("refuses to send a draft the lint held, so the API matches the disabled button", async () => {
+    await previewCadenceStep({ prospectId: 1, playName: "stack-consolidation" });
+    persistedDraft = { ...persistedDraft!, flags: ["opener-overused"] };
+    await expect(
+      sendCadenceStep({ prospectId: 1, playName: "stack-consolidation" }),
+    ).rejects.toThrow(/held by lint \(opener-overused\)/);
+    expect(calls.sendEmail).toBe(0);
   });
 
   it("attaches audit context (memo + decisionContext.source='cadence') to the SDK call", async () => {
@@ -632,5 +658,50 @@ describe("cross-workspace hold (draft-time advisory)", () => {
     } finally {
       delete process.env["ONESHOT_GTM_WORKSPACE"];
     }
+  });
+});
+
+describe("mailpiece cadence recovery", () => {
+  beforeEach(() => {
+    cadenceRows[0]!.prospect_email = "mail-recovery@example.test";
+    mailDraft = {
+      id: "mail-1",
+      prospectId: 1,
+      playName: "stack-consolidation",
+      enrollment: cadenceRows[0]!.enrolled_at,
+      stepIndex: 1,
+      order: { order_id: "order-1", order_status: "accepted" },
+    };
+    persistedDraft = {
+      subject: "Direct mail",
+      body: "Reviewed",
+      flags: [],
+      payload: { kind: "direct_mail", draftId: "mail-1" },
+      draftedAt: new Date().toISOString(),
+    };
+  });
+  it("advances an accepted mailpiece and makes repeated recovery harmless", async () => {
+    const recovered = await sendDirectMailCadenceStep("mail-1");
+    expect(recovered.action, JSON.stringify(recovered)).toBe("step-sent");
+    expect(advanceCalls).toHaveLength(1);
+    expect((await sendDirectMailCadenceStep("mail-1")).action).toBe("skipped");
+    expect(mailSends).toBe(1);
+    expect(calls.sendEmail).toBe(0);
+  });
+  it("does not dispatch a later step from an old mailpiece action", async () => {
+    cadenceRows[0]!.current_step = 1;
+    persistedDraft!.payload = { kind: "email", subject: "next", body: "next" };
+    expect((await sendDirectMailCadenceStep("mail-1")).action).toBe("skipped");
+    expect(calls.sendEmail).toBe(0);
+    expect(mailSends).toBe(0);
+  });
+  it("does not dispatch a new enrollment or a mismatched preview", async () => {
+    mailDraft.enrollment = "previous-enrollment";
+    expect((await sendDirectMailCadenceStep("mail-1")).action).toBe("skipped");
+    mailDraft.enrollment = cadenceRows[0]!.enrolled_at;
+    persistedDraft!.payload = { kind: "email", subject: "next", body: "next" };
+    await expect(sendDirectMailCadenceStep("mail-1")).rejects.toThrow("does not match");
+    expect(calls.sendEmail).toBe(0);
+    expect(mailSends).toBe(0);
   });
 });

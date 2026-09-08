@@ -25,6 +25,7 @@ export const SECRET_KEYS = [
   "GMAIL_CLIENT_SECRET",
   "GMAIL_REFRESH_TOKEN",
   "SMARTLEAD_API_KEY",
+  "LINKEDIN_REPLY_WEBHOOK_SECRET",
 ] as const;
 export type SecretKey = (typeof SECRET_KEYS)[number];
 
@@ -42,14 +43,18 @@ const DEFAULTS: OneShotConfig = {
   emailIdentities: null,
   icpOneLiner: null,
   cadenceOverrides: null,
+  queueReviewOrder: "newest",
   founderCredentials: null,
   productPortfolio: null,
   partners: null,
+  founderCohort: null,
   founderAdmission: null,
   productBrief: null,
   mobileSignature: false,
   slackWebhookUrl: null,
+  timezone: null,
   clientId: null,
+  dailySpendCeilingUsd: null,
 };
 
 export function configDir(): string {

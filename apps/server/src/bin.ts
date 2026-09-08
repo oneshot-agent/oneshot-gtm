@@ -131,6 +131,28 @@ if (cache.__oneshotGtmServer) {
     process.stderr.write(`  warn: stale queue-send sweep failed: ${(err as Error).message}\n`);
   }
 
+  // Cold-boot recovery for `claimInboxReplyForTriage` (round-2 correction,
+  // #558): a process death mid-triage leaves `intent = '__triage_pending__'`
+  // permanently on a row — the claim UPDATE only matches `intent IS NULL`,
+  // so a stranded row could never be re-claimed or classified again without
+  // this. Unlike the other markers there's no `started_at` column to age
+  // against (the claim only lives for one in-process `await`), so this is
+  // an unconditional cold-boot reset, not a `maxAgeMs`-gated sweep.
+  try {
+    const swept = getLedger().sweepStaleInboxReplyTriage();
+    if (swept > 0) {
+      logEvent("inbox_reply.triage_claim.killed_by_restart", { count: swept }, "warn");
+      process.stdout.write(`  swept ${swept} stale inbox-reply triage claim(s)\n`);
+    }
+  } catch (err) {
+    logEvent(
+      "inbox_reply.triage_claim.sweep_failed",
+      { message_120: ((err as Error).message ?? "").slice(0, 120) },
+      "error",
+    );
+    process.stderr.write(`  warn: stale triage-claim sweep failed: ${(err as Error).message}\n`);
+  }
+
   // Cold-boot sweep for /run dispatches: flip zombie 'running' rows to
   // 'interrupted'; per-event counters on the row stay accurate.
   try {

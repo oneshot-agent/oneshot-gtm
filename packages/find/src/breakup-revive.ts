@@ -1,6 +1,7 @@
 import { getLedger } from "@oneshot-gtm/core";
 import type { BreakupReviveTarget } from "@oneshot-gtm/plays";
 import { isDuplicate } from "./_dedupe.ts";
+import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import type { FinderResult, RunOpts } from "./_types.ts";
 
 const PLAY_NAME = "breakup-revive";
@@ -76,7 +77,7 @@ export function runBreakupReviveFinder(opts: BreakupReviveFinderOpts): FinderRes
       continue;
     }
 
-    const id = ledger.enqueueTarget({
+    const id = enqueueScoredTarget(ledger, {
       playName: PLAY_NAME,
       payload: target,
       dedupeKey,

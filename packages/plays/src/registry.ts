@@ -1,9 +1,15 @@
 import { type AcceleratorBatchTarget, runAcceleratorBatch } from "./accelerator-batch.ts";
 import { type BreakupReviveTarget, runBreakupRevive } from "./breakup-revive.ts";
 import { type CompetitorSwitchTarget, runCompetitorSwitch } from "./competitor-switch.ts";
+import { type FreePilotTarget, runFreePilot } from "./free-pilot.ts";
+import { type DiscoveryInterviewTarget, runDiscoveryInterview } from "./discovery-interview.ts";
+import { type SourcesSoughtTarget, runSourcesSought } from "./sources-sought.ts";
+import { type CivicPilotTarget, runCivicPilot } from "./civic-pilot.ts";
+import { type DesignPartnerLoiTarget, runDesignPartnerLoi } from "./design-partner-loi.ts";
 import { type HiringSignalTarget, runHiringSignal } from "./hiring-signal.ts";
 import { type JobChangeTarget, runJobChange } from "./job-change.ts";
 import { type LumaEventsTarget, runLumaEvents } from "./luma-events.ts";
+import { type NewBusinessTarget, runNewBusiness } from "./new-business.ts";
 import { type PodcastGuestTarget, runPodcastGuest } from "./podcast-guest.ts";
 import { type PostFundingTarget, runPostFunding } from "./post-funding.ts";
 import { type ProfileIntroTarget, runProfileIntro } from "./profile-intro.ts";
@@ -33,9 +39,6 @@ export interface DraftedRow {
 export interface PlayRunInput {
   dryRun: boolean;
   targets: unknown[];
-  /** Required by accelerator-batch. */
-  senderCohort?: string;
-  freeForCohortOffer?: string;
   /**
    * Optional per-target progress callback. Fires AFTER each target's full
    * prepare → draft → lint → send chain resolves (in completion order, not
@@ -46,6 +49,14 @@ export interface PlayRunInput {
    * live ticks.
    */
   onProgress?: (index: number, draft: DraftedRow) => void;
+  /**
+   * Cancellation signal for the run. The /api/run SSE handler owns it and
+   * aborts on client disconnect or POST /api/run/:runId/cancel; every play
+   * checks it at its paid-call boundaries, so an abort stops the spend rather
+   * than just abandoning the stream. Callers without a cancel path (CLI, queue
+   * drain, scheduler) omit it and the run stays uncancellable, as before.
+   */
+  signal?: AbortSignal;
 }
 
 export interface PlayDispatch {
@@ -64,6 +75,11 @@ export interface PlayDispatch {
 type PlayProgressFn = (index: number, draft: DraftedRow) => void;
 const progressOpt = (o: PlayRunInput): { onProgress?: PlayProgressFn } =>
   o.onProgress ? { onProgress: o.onProgress } : {};
+// Same exactOptionalPropertyTypes dance for the run's cancellation signal:
+// spread it in only when the caller supplied one, so plays keep seeing an
+// absent field rather than an explicit `undefined`.
+const signalOpt = (o: PlayRunInput): { signal?: AbortSignal } =>
+  o.signal ? { signal: o.signal } : {};
 
 export const PLAYS: Record<string, PlayDispatch> = {
   "show-hn": {
@@ -72,6 +88,7 @@ export const PLAYS: Record<string, PlayDispatch> = {
         dryRun: o.dryRun,
         targets: o.targets as ShowHnTarget[],
         ...progressOpt(o),
+        ...signalOpt(o),
       }),
   },
   "job-change": {
@@ -80,6 +97,7 @@ export const PLAYS: Record<string, PlayDispatch> = {
         dryRun: o.dryRun,
         targets: o.targets as JobChangeTarget[],
         ...progressOpt(o),
+        ...signalOpt(o),
       }),
   },
   "post-funding": {
@@ -88,6 +106,7 @@ export const PLAYS: Record<string, PlayDispatch> = {
         dryRun: o.dryRun,
         targets: o.targets as PostFundingTarget[],
         ...progressOpt(o),
+        ...signalOpt(o),
       }),
   },
   "accelerator-batch": {
@@ -95,10 +114,8 @@ export const PLAYS: Record<string, PlayDispatch> = {
       runAcceleratorBatch({
         dryRun: o.dryRun,
         targets: o.targets as AcceleratorBatchTarget[],
-        // Run-level fallback for manual /run targets; finder rows carry their own.
-        ...(o.senderCohort ? { senderCohort: o.senderCohort } : {}),
-        ...(o.freeForCohortOffer ? { freeForCohortOffer: o.freeForCohortOffer } : {}),
         ...progressOpt(o),
+        ...signalOpt(o),
       }),
   },
   "hiring-signal": {
@@ -107,6 +124,7 @@ export const PLAYS: Record<string, PlayDispatch> = {
         dryRun: o.dryRun,
         targets: o.targets as HiringSignalTarget[],
         ...progressOpt(o),
+        ...signalOpt(o),
       }),
   },
   "podcast-guest": {
@@ -115,6 +133,7 @@ export const PLAYS: Record<string, PlayDispatch> = {
         dryRun: o.dryRun,
         targets: o.targets as PodcastGuestTarget[],
         ...progressOpt(o),
+        ...signalOpt(o),
       }),
   },
   "competitor-switch": {
@@ -123,6 +142,7 @@ export const PLAYS: Record<string, PlayDispatch> = {
         dryRun: o.dryRun,
         targets: o.targets as CompetitorSwitchTarget[],
         ...progressOpt(o),
+        ...signalOpt(o),
       }),
   },
   "stack-consolidation": {
@@ -131,6 +151,7 @@ export const PLAYS: Record<string, PlayDispatch> = {
         dryRun: o.dryRun,
         targets: o.targets as StackConsolidationTarget[],
         ...progressOpt(o),
+        ...signalOpt(o),
       }),
   },
   "repo-interest": {
@@ -139,6 +160,7 @@ export const PLAYS: Record<string, PlayDispatch> = {
         dryRun: o.dryRun,
         targets: o.targets as RepoInterestTarget[],
         ...progressOpt(o),
+        ...signalOpt(o),
       }),
   },
   "luma-events": {
@@ -147,6 +169,7 @@ export const PLAYS: Record<string, PlayDispatch> = {
         dryRun: o.dryRun,
         targets: o.targets as LumaEventsTarget[],
         ...progressOpt(o),
+        ...signalOpt(o),
       }),
   },
   "profile-intro": {
@@ -155,13 +178,18 @@ export const PLAYS: Record<string, PlayDispatch> = {
         dryRun: o.dryRun,
         targets: o.targets as ProfileIntroTarget[],
         ...progressOpt(o),
+        ...signalOpt(o),
       }),
   },
   "breakup-revive": {
-    // Custom loop (not runEmailPlay). Silently ignores onProgress for now;
-    // counters will jump at the end. Acceptable until breakup-revive grows
-    // a parallelMap-style worker pool.
-    run: (o) => runBreakupRevive({ dryRun: o.dryRun, targets: o.targets as BreakupReviveTarget[] }),
+    // Custom loop (not runEmailPlay).
+    run: (o) =>
+      runBreakupRevive({
+        dryRun: o.dryRun,
+        targets: o.targets as BreakupReviveTarget[],
+        ...progressOpt(o),
+        ...signalOpt(o),
+      }),
   },
   "x-repost-intro": {
     run: (o) =>
@@ -169,6 +197,7 @@ export const PLAYS: Record<string, PlayDispatch> = {
         dryRun: o.dryRun,
         targets: o.targets as XRepostIntroTarget[],
         ...progressOpt(o),
+        ...signalOpt(o),
       }),
   },
   "x-amplify": {
@@ -177,6 +206,7 @@ export const PLAYS: Record<string, PlayDispatch> = {
         dryRun: o.dryRun,
         targets: o.targets as XAmplifyTarget[],
         ...progressOpt(o),
+        ...signalOpt(o),
       }),
   },
   "x-amplify-dm": {
@@ -185,6 +215,62 @@ export const PLAYS: Record<string, PlayDispatch> = {
         dryRun: o.dryRun,
         targets: o.targets as XAmplifyDmTarget[],
         ...progressOpt(o),
+        ...signalOpt(o),
+      }),
+  },
+  "discovery-interview": {
+    run: (o) =>
+      runDiscoveryInterview({
+        dryRun: o.dryRun,
+        targets: o.targets as DiscoveryInterviewTarget[],
+        ...progressOpt(o),
+        ...signalOpt(o),
+      }),
+  },
+  "free-pilot": {
+    run: (o) =>
+      runFreePilot({
+        dryRun: o.dryRun,
+        targets: o.targets as FreePilotTarget[],
+        ...progressOpt(o),
+        ...signalOpt(o),
+      }),
+  },
+  "sources-sought": {
+    run: (o) =>
+      runSourcesSought({
+        dryRun: o.dryRun,
+        targets: o.targets as SourcesSoughtTarget[],
+        ...progressOpt(o),
+        ...signalOpt(o),
+      }),
+  },
+  "civic-pilot": {
+    run: (o) =>
+      runCivicPilot({
+        dryRun: o.dryRun,
+        targets: o.targets as CivicPilotTarget[],
+        ...progressOpt(o),
+        ...signalOpt(o),
+      }),
+  },
+  "design-partner-loi": {
+    run: (o) =>
+      runDesignPartnerLoi({
+        dryRun: o.dryRun,
+        targets: o.targets as DesignPartnerLoiTarget[],
+        ...progressOpt(o),
+        ...signalOpt(o),
+      }),
+  },
+
+  "new-business": {
+    run: (o) =>
+      runNewBusiness({
+        dryRun: o.dryRun,
+        targets: o.targets as NewBusinessTarget[],
+        ...progressOpt(o),
+        ...signalOpt(o),
       }),
   },
 };

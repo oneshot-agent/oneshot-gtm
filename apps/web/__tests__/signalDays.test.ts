@@ -15,6 +15,13 @@ function row(foundAt: string): QueueRowView {
     sentAt: null,
     notes: null,
     prospectId: null,
+    lastDraft: null,
+    lastDraftedAt: null,
+    isSending: false,
+    priority: null,
+    decision: null,
+    decidedBy: null,
+    decidedAt: null,
   };
 }
 

@@ -62,6 +62,7 @@ describe("parseLumaEventExtract", () => {
     const raw = JSON.stringify({
       eventTitle: "SF AI Builders Meetup",
       eventDateIso: "2026-06-10",
+      eventTimezone: "America/Los_Angeles",
       eventCity: "San Francisco",
       eventDescription: "An evening on building reliable agents.",
       eventHasPassed: false,
@@ -79,6 +80,7 @@ describe("parseLumaEventExtract", () => {
     });
     const out = parseLumaEventExtract(raw);
     expect(out.eventTitle).toBe("SF AI Builders Meetup");
+    expect(out.eventTimezone).toBe("America/Los_Angeles");
     expect(out.eventDescription).toBe("An evening on building reliable agents.");
     expect(out.eventHasPassed).toBe(false);
     expect(out.publicAttendees).toHaveLength(1);
@@ -88,6 +90,7 @@ describe("parseLumaEventExtract", () => {
   it("returns fallback (empty attendees, null description) on garbage", () => {
     const out = parseLumaEventExtract("nope");
     expect(out.eventTitle).toBeNull();
+    expect(out.eventTimezone).toBeNull();
     expect(out.eventDescription).toBeNull();
     expect(out.publicAttendees).toEqual([]);
   });

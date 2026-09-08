@@ -1,9 +1,14 @@
+import { extractBusinessAddress } from "@oneshot-gtm/core";
 import {
   deepResearch,
   getLedger,
+  hasDossierSignal,
+  mergeProductDossier,
+  isRunCancelled,
   isSendDeferred,
   loadConfig,
   parallelMap,
+  throwIfCancelled,
   CONTACTED_ELSEWHERE_FLAG,
   recentTouchElsewhere,
 } from "@oneshot-gtm/core";
@@ -11,6 +16,7 @@ import {
   draftEmailFromPrompt,
   errorDraft,
   firstNameFrom,
+  hardBanFlags,
   lintEmail,
   logTargetError,
   safeEnrich,
@@ -19,9 +25,13 @@ import {
   socialProofBlock,
   type SendDraftedOpts,
 } from "./_lib.ts";
-import { enrollInCadence } from "./_cadence.ts";
+import { enrollInCadence, getSequence } from "./_cadence.ts";
 
 type AppConfig = ReturnType<typeof loadConfig>;
+
+/** Cap on the dossier persisted onto a prospect — matches the slice the
+ *  finders already apply to a queued dossier (x-reposters, add-prospect). */
+const DOSSIER_SLICE = 12_000;
 
 /**
  * What a play's per-target `prepare` step hands back to the executor: the
@@ -71,8 +81,13 @@ export interface EmailPlayDef<T, X = Record<string, never>> {
    * Enrichment / research / scrape phase. Owns all SDK calls that build
    * context for the draft. Use `standardEnrich` for the safeEnrich(+deepResearch)
    * shape; plays with browser/websearch context supply their own.
+   *
+   * `signal` is the run's cancellation signal. The executor already guards the
+   * boundary before `prepare` is entered, so a def that ignores the arg is
+   * still safe — forward it (or `throwIfCancelled` on it) when `prepare` makes
+   * more than one paid call, so the second one doesn't fire after an abort.
    */
-  prepare: (t: T, dryRun: boolean) => Promise<Prepared<X>>;
+  prepare: (t: T, dryRun: boolean, signal?: AbortSignal) => Promise<Prepared<X>>;
   buildInputBlock: (t: T, prep: Prepared<X>, cfg: AppConfig) => string;
   prospectMeta: (t: T) => SendDraftedOpts["prospectMeta"];
   metadata?: (t: T) => Record<string, unknown>;
@@ -83,6 +98,36 @@ export interface EmailPlayDef<T, X = Record<string, never>> {
    * (e.g. luma-events flags `stale-event` for long-passed events).
    */
   extraFlags?: (t: T) => string[];
+  /**
+   * When true, run `hardBanFlags()` (link / price / discount patterns)
+   * against the drafted body and merge any hits into the lint flags before
+   * sending. `lintEmail()` alone only checks for the literal string
+   * "calendly" — no generic link, price or discount check — so a play whose
+   * prompt declares those a hard, no-exceptions ban (discovery-interview:
+   * no product link, no price, no discount) needs this to actually block an
+   * offending completion rather than relying on prompt text alone. Opt-in
+   * per play: several plays legitimately cite a URL or a dollar figure
+   * (post-funding's amountUsd, competitor-switch's evidenceUrl) and must not
+   * be held for saying so.
+   */
+  hardBans?: boolean;
+  /**
+   * Keys on `T` that must be a non-empty (post-trim) string before this
+   * target is processed — server-side mirror of the web app's
+   * `PLAY_SCHEMAS[playName].fields[].required` (apps/web/src/lib/
+   * playSchemas.ts, enforced client-side by `missingRequiredFields()`).
+   * That check runs in the browser only: `/run`'s `submit()` calls
+   * `fetch('/api/run/...')` directly, so a target missing a required field
+   * (blank `businessType`, `topic`, `yourEdge`, ...) still reaches
+   * `buildInputBlock` as `undefined` if it arrives by any other path — a
+   * direct API call, a future refactor of the web form, or a queue row
+   * hand-edited before drain (finding: apps/web/src/lib/playSchemas.ts:417
+   * — "validate each play's target shape server-side"). Checked before any
+   * paid call, same boundary as `design-partner-loi`'s
+   * `assertNotOwnerOperatorBuyer` guard: a failing target lands as an
+   * `errorDraft`, not a malformed send.
+   */
+  requiredFields?: ReadonlyArray<keyof T & string>;
   /** Enroll the prospect in this play's cadence after a real send. */
   enrollCadence?: boolean;
   /** Extra fields merged onto the row when a target throws (e.g. jobPostHook). */
@@ -111,6 +156,14 @@ export async function runEmailPlay<T, X = Record<string, never>>(
      * order. Consumers that need stable indexing read the `index` arg.
      */
     onProgress?: (index: number, draft: PlayDraft<T, X>) => void;
+    /**
+     * Cancellation signal for the whole run, owned by the /api/run SSE handler
+     * (it aborts on client disconnect and on POST /api/run/:runId/cancel).
+     * Checked at every paid-call boundary below, so an abort stops the spend
+     * within one in-flight SDK call per worker instead of at the end of the
+     * batch. Absent (CLI, drain) → the run is uncancellable, as before.
+     */
+    signal?: AbortSignal;
   },
 ): Promise<{ drafted: Array<PlayDraft<T, X>> }> {
   const cfg = loadConfig();
@@ -129,7 +182,15 @@ export async function runEmailPlay<T, X = Record<string, never>>(
   // the find→cache→/run cache-hit path warm, the residual draft+send time is
   // small enough that 6 workers comfortably halve wall-clock without tripping
   // SDK rate limits in observed runs.
-  const emails = opts.targets.map((t) => def.toEmail(t).trim().toLowerCase());
+  // toEmail may hand back a non-string (undefined/blank) for a malformed
+  // target — that's Guard #0's job to catch, inside the per-target try/catch
+  // below. Normalizing here must not throw ahead of that guard, so only
+  // string emails get trimmed/lowercased; anything else passes through
+  // as-is for the dupe check.
+  const emails = opts.targets.map((t) => {
+    const email = def.toEmail(t);
+    return typeof email === "string" ? email.trim().toLowerCase() : email;
+  });
   const hasDupeEmails = new Set(emails).size !== emails.length;
   const concurrency = hasDupeEmails ? 1 : 6;
 
@@ -138,7 +199,39 @@ export async function runEmailPlay<T, X = Record<string, never>>(
     concurrency,
     async (target) => {
       try {
-        const prep = await def.prepare(target, opts.dryRun);
+        // Guard #0 — required-field shape check, before Guard #1's paid
+        // `prepare` call. Mirrors the web form's client-side
+        // `missingRequiredFields()` so a target that skipped that check
+        // (direct API call, hand-edited queue row) can't reach the LLM with
+        // an undefined field baked into the prompt.
+        if (def.requiredFields && def.requiredFields.length > 0) {
+          const missing = def.requiredFields.filter((key) => {
+            const value = (target as Record<string, unknown>)[key];
+            return typeof value !== "string" || value.trim().length === 0;
+          });
+          if (missing.length > 0) {
+            throw new Error(`missing required field(s): ${missing.join(", ")}`);
+          }
+        }
+        // Guard #1 — the whole target. Workers pull from a shared cursor, so
+        // every target still queued behind the abort dies here having billed
+        // nothing at all.
+        throwIfCancelled(opts.signal, `${def.playName} prepare`);
+        let prep = await def.prepare(target, opts.dryRun, opts.signal);
+        const productResearch = (target as { productResearch?: unknown }).productResearch;
+        if (
+          productResearch &&
+          typeof productResearch === "object" &&
+          (productResearch as { version?: unknown }).version === 1
+        ) {
+          prep = {
+            ...prep,
+            dossier: mergeProductDossier(
+              prep.dossier,
+              productResearch as Parameters<typeof mergeProductDossier>[1],
+            ),
+          };
+        }
 
         // Append SOCIAL PROOF block when any of the three optional fields is
         // set. Prompts treat it as conditional input — present only when set,
@@ -160,6 +253,8 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         if (firstName) {
           inputBlock = `${inputBlock}\n\nPROSPECT_FIRST_NAME: ${firstName}`;
         }
+        // Guard #2 — the LLM draft, the paid call `prepare` was feeding.
+        throwIfCancelled(opts.signal, `${def.playName} draft`);
         const draft = await draftEmailFromPrompt({
           promptName: def.promptName,
           inputBlock,
@@ -167,13 +262,19 @@ export async function runEmailPlay<T, X = Record<string, never>>(
 
         const flags = [
           ...lintEmail(draft.subject, draft.body, def.maxBodyWords),
+          ...(def.hardBans ? hardBanFlags(draft.body) : []),
           ...(def.extraFlags?.(target) ?? []),
+          ...lintGrounding(target, prep),
         ];
         // Cross-workspace hold, applied centrally so EVERY play gets it: a
         // soft flag (overridable on manual send) that keeps drain from auto-
         // sending to someone another workspace emailed this week.
         if (recentTouchElsewhere(def.toEmail(target))) flags.push(CONTACTED_ELSEWHERE_FLAG);
 
+        // Guard #3 — the send. The one call that both bills AND is visible to
+        // the prospect, so it is the boundary that matters most: past here the
+        // founder has an email in someone's inbox they asked us not to send.
+        throwIfCancelled(opts.signal, `${def.playName} send`);
         const send = await sendDraftedEmail({
           playName: def.playName,
           to: def.toEmail(target),
@@ -181,18 +282,40 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           flags,
           prospectMeta: {
             ...def.prospectMeta(target),
+            businessAddress: extractBusinessAddress(target),
+            businessAddressSource: (target as { businessAddressSource?: string })
+              .businessAddressSource,
             // Read generically (mirrors the /queue route's prospectMeta): any
             // finder that stamps `title` on its target payload gets it
             // persisted without each play def naming the field.
             ...(typeof (target as { title?: unknown }).title === "string"
               ? { title: (target as { title: string }).title }
               : {}),
+            // Persist the research this play just assembled. Every play returns
+            // a dossier from `prepare`, and until now all of it was thrown away
+            // the moment the draft was written — so the reply drafter's free
+            // Tier-1 read always missed and re-bought the same research.
+            // hasDossierSignal, not a bare trim: a FAILED enrich still
+            // serializes to `{"status":"failed",...}`, and storing that would
+            // register as a Tier-1 hit and suppress the paid research the
+            // reply drafter would otherwise do.
+            ...(hasDossierSignal(prep.dossier)
+              ? { dossier_json: prep.dossier.slice(0, DOSSIER_SLICE) }
+              : {}),
           },
           ...(def.metadata ? { metadata: def.metadata(target) } : {}),
+          // Same generic read as `title` above: any finder stamping the ICP
+          // gate's verdict on its payload gets it enforced at step 0 and
+          // persisted, without every play def naming the field.
+          ...icpFromTarget(target),
           dryRun: opts.dryRun,
         });
 
-        if (send.sent && def.enrollCadence) {
+        if (
+          send.sent &&
+          (def.enrollCadence ||
+            getSequence(def.playName)?.steps.some((s) => s.channel === "direct_mail"))
+        ) {
           const prospect = getLedger().findProspectByEmail(def.toEmail(target));
           if (prospect) enrollInCadence({ prospectId: prospect.id, playName: def.playName });
         }
@@ -211,6 +334,10 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         // Daily-cap deferral is not a per-target failure — propagate so the
         // caller (drain / SSE run) leaves remaining targets queued.
         if (isSendDeferred(err)) throw err;
+        // Neither is a cancellation: swallowing it here would turn every
+        // remaining target into an errorDraft and let the run finish 'done'.
+        // Propagating instead is what makes the run row land 'cancelled'.
+        if (isRunCancelled(err)) throw err;
         logTargetError({ playName: def.playName, to: def.toEmail(target), err });
         return {
           target,
@@ -233,21 +360,28 @@ export async function runEmailPlay<T, X = Record<string, never>>(
  * by email, never throws) and, on real sends only, a `deepResearch` dossier.
  * Pass `research` only when you want the research call to fire — callers gate it
  * on `!dryRun` (and, for accelerator-batch, on a launch URL being present).
+ *
+ * `signal` is forwarded by every play's `prepare`: this is the one place two
+ * paid calls sit back to back, so a run cancelled during the enrich must not go
+ * on to buy the dossier.
  */
 export async function standardEnrich(opts: {
   playName: string;
   enrichInput: Parameters<typeof safeEnrich>[0];
   enrichSlice: number;
   research?: { topic: string; slice?: number };
+  signal?: AbortSignal;
 }): Promise<Prepared> {
   const receiptIds: number[] = [];
 
+  throwIfCancelled(opts.signal, `${opts.playName} enrich`);
   const enr = await safeEnrich(opts.enrichInput, { playName: opts.playName });
   if (enr.receiptId) receiptIds.push(enr.receiptId);
   const enrichmentFailed = (enr.result as { status?: string }).status === "failed";
   let dossier = JSON.stringify(enr.result, null, 2).slice(0, opts.enrichSlice);
 
   if (opts.research) {
+    throwIfCancelled(opts.signal, `${opts.playName} research`);
     const research = await deepResearch(
       { topic: opts.research.topic, depth: "quick" },
       { playName: opts.playName },
@@ -259,4 +393,60 @@ export async function standardEnrich(opts: {
   }
 
   return { receiptIds, dossier, ...(enrichmentFailed ? { enrichmentFailed: true } : {}) };
+}
+
+/**
+ * Read the person-level ICP verdict a finder stamped on its target payload.
+ *
+ * Finders spread `icpFields(contact)` (see `find/_contact.ts`) alongside
+ * `title`; this is the reader on the send side. Unknown or missing values
+ * yield `{}` so a play whose finder has no person gate is unaffected.
+ */
+function icpFromTarget(target: unknown): {
+  icp?: { verdict: "pass" | "reject" | "unclear"; reason?: string | null };
+} {
+  const row = target as { icpVerdict?: unknown; icpVerdictReason?: unknown };
+  const verdict = row?.icpVerdict;
+  if (verdict !== "pass" && verdict !== "reject" && verdict !== "unclear") return {};
+  return {
+    icp: {
+      verdict,
+      reason: typeof row.icpVerdictReason === "string" ? row.icpVerdictReason : null,
+    },
+  };
+}
+
+/**
+ * Flag a draft the system already knows is ungrounded.
+ *
+ * `standardEnrich` serializes whatever `safeEnrich` returned straight into the
+ * prompt's DOSSIER block — including the failure sentinel. So when the enrich
+ * fails the model is handed, verbatim:
+ *
+ *     DOSSIER:
+ *     { "status": "failed", "profile": null, "cost": 0 }
+ *
+ * and drafts anyway. `prep.enrichmentFailed` was already set, already carried
+ * to the queue UI as a badge, and already ignored by the send: `sendDraftedEmail`
+ * only holds a draft when `flags` is non-empty, and nothing ever pushed one.
+ *
+ * That is how prospect 679 was emailed "did the vendor proxy babysitting bite
+ * you at taxheaven too?" — the company string was the only prospect-specific
+ * noun in the whole prompt, so the model welded it onto the stock `yourEdge`.
+ *
+ * The flag fires only when there is nothing ELSE to write from. A failed
+ * enrich on a target that still carries a real title or bio is fine: the draft
+ * has something true to say. Every sent row in this ledger was drafted AFTER
+ * its human approval (681 of 681), so a flag here is the only checkpoint that
+ * sees the draft at all.
+ */
+export function lintGrounding(target: unknown, prep: { enrichmentFailed?: boolean }): string[] {
+  if (!prep.enrichmentFailed) return [];
+  const row = target as { title?: unknown; attendeeBio?: unknown; role?: unknown };
+  const hasOwnGrounding = nonBlank(row?.title) || nonBlank(row?.attendeeBio);
+  return hasOwnGrounding ? [] : ["ungrounded"];
+}
+
+function nonBlank(value: unknown): boolean {
+  return typeof value === "string" && value.trim().length > 0;
 }

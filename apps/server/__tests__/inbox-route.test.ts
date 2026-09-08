@@ -6,6 +6,8 @@ const recordInboxSentMock = vi.fn();
 const getInboxThreadsMock = vi.fn();
 const listInboxMock = vi.fn();
 const replyEmailMock = vi.fn();
+const setInboxDraftSteerMock = vi.fn();
+const setInboxDraftBodyMock = vi.fn();
 
 const recordProspectReplyMock = vi.fn(() => []);
 const listProspectIdsWithRepliesMock = vi.fn((): number[] => []);
@@ -13,6 +15,8 @@ const listInboxRepliesForProspectMock = vi.fn((): unknown[] => []);
 const listSequenceEventsForProspectMock = vi.fn((): unknown[] => []);
 const recordInboxReplyMock = vi.fn(() => true);
 const getProspectByIdMock = vi.fn((): unknown => null);
+const listInboxReplyIntentsMock = vi.fn(() => new Map());
+const listLatestOutcomeRecordedAtByProspectMock = vi.fn((): Map<number, string> => new Map());
 let knownProspect: { id: number } | null = null;
 
 const ledger = {
@@ -32,6 +36,12 @@ const ledger = {
   getProspectByEmail: () => null,
   findProspectByEmail: () => knownProspect,
   recordProspectReply: recordProspectReplyMock,
+  // issue #480: sentiment/intent, bulk-read for the list route's badge.
+  listInboxReplyIntents: listInboxReplyIntentsMock,
+  setInboxDraftSteer: setInboxDraftSteerMock,
+  setInboxDraftBody: setInboxDraftBodyMock,
+  // round-2 correction (#480): the nav-dot ack signal — empty by default.
+  listLatestOutcomeRecordedAtByProspect: listLatestOutcomeRecordedAtByProspectMock,
 };
 
 vi.mock("@oneshot-gtm/core", async () => {
@@ -51,7 +61,13 @@ vi.mock("@oneshot-gtm/core", async () => {
 });
 
 const draftInboxReplyMock = vi.fn();
-vi.mock("@oneshot-gtm/plays", () => ({ draftInboxReply: draftInboxReplyMock }));
+// bodyCommitsTerms is the real (deterministic, no-LLM) implementation — the
+// send gate's regex check is cheap enough not to need mocking, and mocking
+// it to always-false would silently stop testing the gate at all.
+vi.mock("@oneshot-gtm/plays", async () => {
+  const actual = await vi.importActual<typeof import("@oneshot-gtm/plays")>("@oneshot-gtm/plays");
+  return { ...actual, draftInboxReply: draftInboxReplyMock };
+});
 
 // Research is unit-tested in reply-research.test.ts; here it's a seam.
 const gatherReplyContextMock = vi.fn();
@@ -59,7 +75,7 @@ vi.mock("../src/api/_reply-research.ts", () => ({
   gatherReplyContext: gatherReplyContextMock,
 }));
 
-const { draftReplyRoute, listInboxRoute, saveDraftRoute, sendReplyRoute } =
+const { draftReplyRoute, listInboxRoute, saveDraftRoute, sendReplyRoute, steerRoute } =
   await import("../src/api/inbox.ts");
 
 function post(path: string, body: unknown): Request {
@@ -173,6 +189,42 @@ describe("inbox route — persisted drafts & sent replies", () => {
     expect(conv.items[2]!.body).toBe("my answer");
   });
 
+  it.each([
+    [undefined, true],
+    ["2026-09-06 10:00:00", true],
+    ["2026-09-07 10:00:01", false],
+    ["2026-09-07 10:00:00", true],
+  ])("awaitingReply with outcome %s is %s", async (recordedAt, awaitingReply) => {
+    listInboxMock.mockResolvedValue({ emails: [] });
+    getInboxThreadsMock.mockReturnValue(new Map());
+    listProspectIdsWithRepliesMock.mockReturnValueOnce([7]);
+    getProspectByIdMock.mockReturnValueOnce({
+      id: 7,
+      name: "Coder",
+      email: "coder@x.example",
+      company: "OGs",
+      source: "show-hn",
+    });
+    listInboxRepliesForProspectMock.mockReturnValueOnce([
+      {
+        id: "m1",
+        thread_key: "t1",
+        prospect_id: 7,
+        received_at: "2026-09-07T10:00:00.000Z",
+        intent: "interested",
+      },
+    ]);
+    listLatestOutcomeRecordedAtByProspectMock.mockReturnValueOnce(
+      new Map(recordedAt == null ? [] : [[7, recordedAt]]),
+    );
+
+    const res = await listInboxRoute(new Request("http://localhost/api/inbox"));
+    const out = await res.json();
+    expect(out.conversations).toHaveLength(1);
+    expect(out.conversations[0].awaitingReply).toBe(awaitingReply);
+    expect(listLatestOutcomeRecordedAtByProspectMock).toHaveBeenCalledTimes(1);
+  });
+
   it("saveDraftRoute persists the draft via upsertInboxDraft", async () => {
     const res = await saveDraftRoute(
       post("/api/inbox/draft", {
@@ -185,7 +237,7 @@ describe("inbox route — persisted drafts & sent replies", () => {
       }),
     );
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ saved: true });
+    expect(await res.json()).toEqual({ saved: true, status: null });
     expect(upsertInboxDraftMock).toHaveBeenCalledWith(
       expect.objectContaining({ threadKey: "t1", inboundEmailId: "e1", body: "draft body" }),
     );
@@ -339,7 +391,7 @@ describe("inbox route — research-grounded drafting", () => {
       costUsd: 0.06,
       researched: true,
     });
-    draftInboxReplyMock.mockResolvedValue({ body: "the draft" });
+    draftInboxReplyMock.mockResolvedValue({ body: "the draft", flags: [] });
   });
 
   it("passes research context into draftInboxReply and reports the spend", async () => {
@@ -353,8 +405,20 @@ describe("inbox route — research-grounded drafting", () => {
       }),
     );
     expect(res.status).toBe(200);
-    const out = (await res.json()) as { body: string; costUsd: number; researched: boolean };
-    expect(out).toEqual({ body: "the draft", costUsd: 0.06, researched: true });
+    const out = (await res.json()) as {
+      body: string;
+      costUsd: number;
+      researched: boolean;
+      flags: string[];
+      needsDecision: boolean;
+    };
+    expect(out).toEqual({
+      body: "the draft",
+      costUsd: 0.06,
+      researched: true,
+      flags: [],
+      needsDecision: false,
+    });
     expect(gatherReplyContextMock).toHaveBeenCalledWith({
       fromEmail: "aladdin@aliyev.site",
       prospectId: null,
@@ -381,6 +445,61 @@ describe("inbox route — research-grounded drafting", () => {
     expect(out.costUsd).toBe(0);
     expect(draftInboxReplyMock).toHaveBeenCalledWith(
       expect.objectContaining({ dossier: null, threadSent: [] }),
+    );
+  });
+});
+
+describe("steerRoute — persists the generated redraft (round-1 correction, #480)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getInboxThreadsMock.mockReturnValue(new Map());
+    gatherReplyContextMock.mockResolvedValue({
+      dossier: null,
+      threadSent: [],
+      priorInbound: [],
+      costUsd: 0,
+      researched: false,
+    });
+  });
+
+  it("writes the generated body back to inbox_drafts, not just the steer note", async () => {
+    draftInboxReplyMock.mockResolvedValue({ body: "the redraft", flags: [] });
+    const res = await steerRoute(
+      post("/api/inbox/steer", {
+        fromEmail: "founder@acme.com",
+        subject: "Re: hi",
+        body: "their message",
+        id: "e1",
+        threadKey: "t1",
+        steer: "mention pricing is public",
+      }),
+    );
+    expect(res.status).toBe(200);
+    const out = (await res.json()) as { body: string; needsDecision: boolean };
+    expect(out.body).toBe("the redraft");
+    // The bug: steerRoute persisted the steer instruction but never the
+    // generated body, so the client-side autosave (gated on a body diff from
+    // the last SAVED value) never fired and a refresh lost the redraft.
+    expect(setInboxDraftBodyMock).toHaveBeenCalledWith("t1", "the redraft", null);
+  });
+
+  it("marks the persisted body needs_decision when the redraft commits terms", async () => {
+    draftInboxReplyMock.mockResolvedValue({ body: "20% discount, deal", flags: ["commits-terms"] });
+    const res = await steerRoute(
+      post("/api/inbox/steer", {
+        fromEmail: "founder@acme.com",
+        subject: "Re: hi",
+        body: "their message",
+        id: "e1",
+        threadKey: "t1",
+        steer: "offer a discount",
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(setInboxDraftBodyMock).toHaveBeenCalledWith(
+      "t1",
+      "20% discount, deal",
+      "needs_decision",
     );
   });
 });

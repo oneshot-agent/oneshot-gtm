@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   acceleratorBatchMetadata,
+  civicPilotMetadata,
+  designPartnerLoiMetadata,
   lumaEventsMetadata,
   playMetadata,
   postFundingMetadata,
   repoInterestMetadata,
+  sourcesSoughtMetadata,
 } from "../src/_metadata.ts";
 
 // The registry exists so the /queue send-draft route stamps the SAME step-0
@@ -81,10 +84,61 @@ describe("shared fns are what the play defs reference", () => {
       leadInvestor: null,
     });
   });
-  it("accelerator-batch reads senderCohort off the payload (no run-opts in queue context)", () => {
+  // Never the SENDER's cohort, even when an old payload still carries one:
+  // that is founder truth the play reads from config at draft time.
+  it("accelerator-batch reads only the prospect's cohort off the payload", () => {
     expect(acceleratorBatchMetadata({ senderCohort: "yc-w26", cohort: "spc-1" })).toEqual({
-      senderCohort: "yc-w26",
       prospectCohort: "spc-1",
+    });
+  });
+  it("sources-sought", () => {
+    expect(
+      sourcesSoughtMetadata({
+        agency: "GSA",
+        noticeNumber: "W912DY-26-R-0042",
+        noticeType: "Sources Sought",
+      }),
+    ).toEqual({
+      agency: "GSA",
+      noticeNumber: "W912DY-26-R-0042",
+      noticeType: "Sources Sought",
+      responseDeadline: null,
+    });
+  });
+  // finding PRRT_kwDOSKzrBs6ewQdC / issue #463: responseDeadline persists so
+  // the day-5 follow-up can skip once the notice's response window closes.
+  it("sources-sought carries responseDeadline when set", () => {
+    expect(
+      sourcesSoughtMetadata({
+        agency: "GSA",
+        noticeNumber: "W912DY-26-R-0042",
+        noticeType: "Sources Sought",
+        responseDeadline: "2026-07-01",
+      }),
+    ).toEqual({
+      agency: "GSA",
+      noticeNumber: "W912DY-26-R-0042",
+      noticeType: "Sources Sought",
+      responseDeadline: "2026-07-01",
+    });
+  });
+  it("civic-pilot", () => {
+    expect(
+      civicPilotMetadata({
+        city: "Austin",
+        agendaItemTitle: "AI vendor pilot budget",
+        meetingDate: "2026-06-10",
+      }),
+    ).toEqual({
+      city: "Austin",
+      agendaItemTitle: "AI vendor pilot budget",
+      meetingDate: "2026-06-10",
+    });
+  });
+  it("design-partner-loi", () => {
+    expect(designPartnerLoiMetadata({ buyerType: "enterprise", company: "Acme Corp" })).toEqual({
+      buyerType: "enterprise",
+      company: "Acme Corp",
     });
   });
 });

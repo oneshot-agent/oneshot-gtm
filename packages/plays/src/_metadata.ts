@@ -66,8 +66,10 @@ export const competitorSwitchMetadata = (t: object): Record<string, unknown> => 
   evidenceUrl: str(t, "evidenceUrl"),
 });
 
+// No senderCohort here on purpose: the sender's own cohort is founder truth
+// read from config at draft time, and a stale one may still sit on an old
+// queue payload. The play stamps the config value onto the metadata itself.
 export const acceleratorBatchMetadata = (t: object): Record<string, unknown> => ({
-  senderCohort: str(t, "senderCohort"),
   prospectCohort: str(t, "cohort"),
 });
 
@@ -80,6 +82,42 @@ export const xAmplifyMetadata = (t: object): Record<string, unknown> => ({
   seedHandle: str(t, "seedHandle"),
   tweetUrl: str(t, "tweetUrl"),
   launchDate: str(t, "launchDate"),
+});
+
+export const discoveryInterviewMetadata = (t: object): Record<string, unknown> => ({
+  businessType: str(t, "businessType"),
+  topic: str(t, "topic"),
+});
+
+export const freePilotMetadata = (t: object): Record<string, unknown> => ({
+  businessType: str(t, "businessType"),
+});
+
+export const sourcesSoughtMetadata = (t: object): Record<string, unknown> => ({
+  agency: str(t, "agency"),
+  noticeNumber: str(t, "noticeNumber"),
+  noticeType: str(t, "noticeType"),
+  // finding PRRT_kwDOSKzrBs6ewQdC / issue #463: persisted so the day-5
+  // follow-up (sources-sought.ts's builder) can skip once the notice's
+  // response window has closed instead of chasing a dead conversation.
+  responseDeadline: str(t, "responseDeadline"),
+});
+
+export const civicPilotMetadata = (t: object): Record<string, unknown> => ({
+  city: str(t, "city"),
+  agendaItemTitle: str(t, "agendaItemTitle"),
+  meetingDate: str(t, "meetingDate"),
+});
+
+export const designPartnerLoiMetadata = (t: object): Record<string, unknown> => ({
+  buyerType: str(t, "buyerType"),
+  company: str(t, "company"),
+});
+
+export const newBusinessMetadata = (t: object): Record<string, unknown> => ({
+  businessType: str(t, "businessType"),
+  licenseType: str(t, "licenseType"),
+  issuedAgo: str(t, "issuedAgo"),
 });
 
 const REGISTRY: Record<string, (t: object) => Record<string, unknown>> = {
@@ -96,6 +134,12 @@ const REGISTRY: Record<string, (t: object) => Record<string, unknown>> = {
   "x-repost-intro": xRepostIntroMetadata,
   "x-amplify": xAmplifyMetadata,
   "x-amplify-dm": xAmplifyMetadata,
+  "free-pilot": freePilotMetadata,
+  "discovery-interview": discoveryInterviewMetadata,
+  "sources-sought": sourcesSoughtMetadata,
+  "civic-pilot": civicPilotMetadata,
+  "design-partner-loi": designPartnerLoiMetadata,
+  "new-business": newBusinessMetadata,
 };
 
 /**

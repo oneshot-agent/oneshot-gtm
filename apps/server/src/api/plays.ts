@@ -1,6 +1,13 @@
-import { loadConfig, saveConfig } from "@oneshot-gtm/core";
+import {
+  loadConfig,
+  saveConfig,
+  motionMailPolicy,
+  type MotionMailSettings,
+} from "@oneshot-gtm/core";
 import {
   defaultSequence,
+  captureCadencePlans,
+  applyCadencePlans,
   getSequence,
   isBreakupLabel,
   isBreakupStepAt,
@@ -83,6 +90,30 @@ const PLAY_CATALOG: PlayMeta[] = [
     name: "x-amplify-dm",
     cli: "manual X send — draft on /queue, send by hand from the X app, then Mark sent",
   },
+  {
+    name: "sources-sought",
+    cli: "oneshot-gtm find watch  # fed by the gov-solicitation finder (ptype r/p), drained from /queue",
+  },
+  {
+    name: "civic-pilot",
+    cli: "oneshot-gtm find watch  # fed by the civic-agenda finder, drained from /queue",
+  },
+  {
+    name: "design-partner-loi",
+    cli: "oneshot-gtm find watch  # fed by the gov-solicitation finder (non-r/p notices) today; enterprise/hardware targets are manually queued until a matching finder exists, drained from /queue",
+  },
+  {
+    name: "discovery-interview",
+    cli: "oneshot-gtm motion discovery-interview --target ./examples/discovery-interview.json",
+  },
+  {
+    name: "free-pilot",
+    cli: "oneshot-gtm motion free-pilot --target ./examples/free-pilot.json",
+  },
+  {
+    name: "new-business",
+    cli: "oneshot-gtm find watch  # fed by the local-registry finder's recent-issue lane, drained from /queue",
+  },
 ];
 
 /** Relative per-step dayOffsets → cumulative days from the day-0 initial send. */
@@ -96,7 +127,9 @@ export function listPlays(req: Request): Response {
   const plays: PlayDescriptor[] = PLAY_CATALOG.map((p) => {
     const seq = getSequence(p.name);
     const channels: StepChannel[] = seq
-      ? Array.from(new Set(seq.steps.map((s) => s.channel as StepChannel)))
+      ? Array.from(
+          new Set<StepChannel>(["email", ...seq.steps.map((s) => s.channel as StepChannel)]),
+        )
       : ["email"];
     const followupCount = seq?.steps.length ?? 0;
     // hasBreakup uses the same step-position rule as the cadence runtime so
@@ -124,6 +157,22 @@ export function listPlays(req: Request): Response {
       cliInvocation: p.cli,
       steps,
       defaultDays: cumulativeDays(defaultSequence(p.name)),
+      directMail: motionMailPolicy(loadConfig(), p.name).settings,
+      mailRecommendation: motionMailPolicy(loadConfig(), p.name).reason,
+      mailAutomaticSupported: motionMailPolicy(loadConfig(), p.name).recommended,
+      mailEligible: !!defaultSequence(p.name),
+      baseSteps: (() => {
+        const base = defaultSequence(p.name);
+        const offsets = loadConfig().cadenceOverrides?.[p.name];
+        let day = 0;
+        return (base?.steps ?? []).map((s, i) => ({
+          day: (day +=
+            offsets && offsets.length === base?.steps.length ? offsets[i]! : s.dayOffset),
+          label: s.label ?? `step ${i + 1}`,
+          channel: s.channel,
+          isBreakup: isBreakupLabel(s.label),
+        }));
+      })(),
     };
   });
   return jsonResponse({ plays }, 200, req);
@@ -142,19 +191,54 @@ export async function setCadenceRoute(
 ): Promise<Response> {
   const name = params["name"] ?? "";
   const def = defaultSequence(name);
-  if (!def || def.steps.length === 0) {
+  if (!def) {
     return jsonResponse({ error: `play '${name}' has no editable cadence` }, 400, req);
   }
 
-  let body: { days?: number[] | null };
+  let body: { days?: number[] | null; directMail?: MotionMailSettings | null };
   try {
     body = (await req.json()) as { days?: number[] | null };
   } catch {
     return jsonResponse({ error: "invalid JSON body" }, 400, req);
   }
 
+  if (!body || typeof body !== "object" || Array.isArray(body))
+    return jsonResponse({ error: "Expected a cadence settings object" }, 400, req);
   const cfg = loadConfig();
   const overrides = { ...cfg.cadenceOverrides };
+  const previous = captureCadencePlans(name);
+  if (previous.some(({ cadence }) => cadence.sending_started_at))
+    return jsonResponse(
+      { error: "Wait for in-flight sends before changing this motion" },
+      409,
+      req,
+    );
+  if ("directMail" in body) {
+    const mail = body.directMail;
+    if (
+      mail !== null &&
+      (!mail ||
+        !Number.isInteger(mail.position) ||
+        mail.position < 2 ||
+        mail.position > def.steps.length + 2 ||
+        !Number.isInteger(mail.delayDays) ||
+        mail.delayDays < 1 ||
+        mail.delayDays > 120 ||
+        (mail.mode !== undefined && !["automatic", "always"].includes(mail.mode)) ||
+        (mail.mode === "automatic" && !motionMailPolicy(cfg, name).recommended))
+    )
+      return jsonResponse(
+        { error: "Choose a valid mail position and a delay of 1–120 days" },
+        400,
+        req,
+      );
+    const motions = { ...cfg.directMailMotions };
+    if (mail) motions[name] = mail;
+    else motions[name] = null;
+    saveConfig({ ...cfg, directMailMotions: motions });
+    applyCadencePlans(name, previous);
+    return jsonResponse({ ok: true }, 200, req);
+  }
 
   // Reset path: clear this play's override.
   if (body.days === null || body.days === undefined) {
@@ -163,6 +247,7 @@ export async function setCadenceRoute(
       ...cfg,
       cadenceOverrides: Object.keys(overrides).length > 0 ? overrides : null,
     });
+    applyCadencePlans(name, previous);
     return jsonResponse({ ok: true }, 200, req);
   }
 
@@ -188,5 +273,6 @@ export async function setCadenceRoute(
   const relative = days.map((d, i) => (i === 0 ? d : d - (days[i - 1] as number)));
   overrides[name] = relative;
   saveConfig({ ...cfg, cadenceOverrides: overrides });
+  applyCadencePlans(name, previous);
   return jsonResponse({ ok: true }, 200, req);
 }

@@ -1,7 +1,10 @@
 import type {
   AddProspectResult,
+  BusinessMailAddress,
   CadencesResult,
+  CadenceStopReason,
   CadenceView,
+  CancelRunResponse,
   DoctorCheck,
   DrainRequest,
   DrainResult,
@@ -10,14 +13,21 @@ import type {
   InboxDraftReplyRequest,
   InboxDraftReplyResult,
   InboxResult,
+  LinkedInReplyResult,
   InboxSaveDraftRequest,
   InboxSaveDraftResult,
   InboxSendReplyRequest,
   InboxSendReplyResult,
+  InboxSteerRequest,
+  InboxSteerResult,
   LastDraft,
   OutcomeByPlay,
   OutcomeRequest,
+  PackApplyResult,
+  PackView,
   PlayDescriptor,
+  ProspectSearchResponse,
+  QueueRowDetail,
   WorkspaceInfo,
   DomainActionResult,
   DomainPoolView,
@@ -34,27 +44,61 @@ import type {
   SetupRequest,
   SmartleadAccountView,
   SpendByPlay,
+  SpendSeries,
   TriggerView,
 } from "@oneshot-gtm/shared-types";
+import { demoGet, demoWrite, IS_DEMO } from "./demo.ts";
+import {
+  applyProspectFilters,
+  toApiQuery,
+  type ProspectsSearch,
+} from "../lib/prospects-helpers.ts";
 
 const BASE = "/api";
 
+/*
+ * Demo mode swaps the transport and nothing else.
+ *
+ * Every read in this file goes through getJson and every write through
+ * postJson, so these two branches are the entire seam: the api object below,
+ * the 36 mutation sites behind it and all nine routes stay untouched. That is
+ * why the seam is worth keeping narrow.
+ */
+/**
+ * Error message for a non-2xx response: the server's `{ error }` string when
+ * the body carries one (every 4xx we emit does — e.g. the /setup 400s that a
+ * section form shows inline), else `status statusText: fallback`.
+ */
+async function errorMessage(res: Response, fallback: string): Promise<string> {
+  let message = `${res.status} ${res.statusText}: ${fallback}`;
+  try {
+    const text = await res.text();
+    if (text) {
+      const body = JSON.parse(text) as { error?: unknown };
+      if (typeof body.error === "string" && body.error) message = body.error;
+      else message = `${res.status} ${res.statusText}: ${text.slice(0, 200)}`;
+    }
+  } catch {
+    // body absent, empty, or not JSON — keep the fallback message
+  }
+  return message;
+}
+
 async function getJson<T>(path: string): Promise<T> {
+  if (IS_DEMO) return demoGet<T>(path);
   const res = await fetch(BASE + path);
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}: ${path}`);
+  if (!res.ok) throw new Error(await errorMessage(res, path));
   return (await res.json()) as T;
 }
 
 async function postJson<T>(path: string, body: unknown): Promise<T> {
+  if (IS_DEMO) demoWrite(path);
   const res = await fetch(BASE + path, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`${res.status} ${res.statusText}: ${text.slice(0, 200)}`);
-  }
+  if (!res.ok) throw new Error(await errorMessage(res, path));
   return (await res.json()) as T;
 }
 
@@ -67,11 +111,22 @@ export const api = {
     return getJson<CadencesResult>(`/cadences${qs.length > 0 ? `?${qs.join("&")}` : ""}`);
   },
   run: (id: number) => getJson<RunRecord>(`/runs/${id}`),
+  cancelRun: (id: number, reason?: string) =>
+    postJson<CancelRunResponse>(`/run/${id}/cancel`, reason ? { reason } : {}),
   cadenceForProspect: (id: number) => getJson<{ cadences: CadenceView[] }>(`/cadences/${id}`),
-  stopCadence: (id: number, playName?: string) =>
+  stopCadence: (
+    id: number,
+    playName: string,
+    input: { reason: CadenceStopReason; note?: string },
+  ) =>
     postJson<{ stopped: number }>(
-      `/cadences/${id}/stop${playName ? `?play=${encodeURIComponent(playName)}` : ""}`,
-      {},
+      `/cadences/${id}/stop?play=${encodeURIComponent(playName)}`,
+      input,
+    ),
+  markLinkedInReply: (id: number, body?: string) =>
+    postJson<LinkedInReplyResult>(
+      `/prospects/${id}/linkedin-reply`,
+      body?.trim() ? { body: body.trim() } : {},
     ),
   previewCadenceNext: (id: number, playName: string) =>
     postJson<{
@@ -114,9 +169,14 @@ export const api = {
     postJson<InboxSaveDraftResult>("/inbox/draft", req),
   sendInboxReply: (req: InboxSendReplyRequest) =>
     postJson<InboxSendReplyResult>("/inbox/reply", req),
+  steerInboxReply: (req: InboxSteerRequest) => postJson<InboxSteerResult>("/inbox/steer", req),
   receipt: (id: number) => getJson<{ receipt: ReceiptDetail }>(`/receipts/${id}`),
   plays: () => getJson<{ plays: PlayDescriptor[] }>("/plays"),
   // Timing only (cumulative days from send); null resets to code defaults. Step structure is fixed.
+  setDirectMail: (
+    name: string,
+    directMail: { position: number; delayDays: number; mode?: "automatic" | "always" } | null,
+  ) => postJson<{ ok: boolean }>(`/plays/${name}/cadence`, { directMail }),
   setCadence: (name: string, days: number[] | null) =>
     postJson<{ ok: boolean }>(`/plays/${name}/cadence`, { days }),
   measureCac: (sinceDays?: number) =>
@@ -130,6 +190,10 @@ export const api = {
   rocsByGoal: (sinceDays?: number) =>
     getJson<{ goals: RocsGoalView[] }>(
       `/measure/rocs-by-goal${sinceDays != null ? `?sinceDays=${sinceDays}` : ""}`,
+    ),
+  measureSpendSeries: (sinceDays?: number) =>
+    getJson<SpendSeries>(
+      `/measure/spend-series${sinceDays != null ? `?sinceDays=${sinceDays}` : ""}`,
     ),
   recordOutcome: (req: OutcomeRequest) => postJson<{ id: number }>("/measure/outcome", req),
   doctor: () => getJson<{ checks: DoctorCheck[] }>("/doctor"),
@@ -161,29 +225,48 @@ export const api = {
         founderCredentials: string | null;
         productPortfolio: string | null;
         partners: string | null;
+        founderCohort: string | null;
         founderAdmission: string | null;
         productBrief: string | null;
         mobileSignature: boolean;
+        dailySpendCeilingUsd: number | null;
         llmProvider: "openrouter" | "openai" | "anthropic";
         llmModel: string;
         telemetryEnabled: boolean;
         walletMode: "cdp" | "private-key";
         slackWebhookUrl: string | null;
+        // Optional: older servers / the demo fixture may omit them; the
+        // server has always returned them (publicCfg spreads the whole cfg).
+        queueReviewOrder?: "ranked" | "newest";
+        timezone?: string | null;
       };
       secretsPath: string;
       sources: Record<string, "env" | "file" | null>;
     }>("/setup"),
+  /**
+   * The provisioned OneShot domain pool alone. Off the /setup critical path:
+   * the platform's listDomains has been seen taking 60–80s, so the status
+   * call above carries only a ~2.5s best-effort copy and the sender picker
+   * refines it from this route.
+   */
+  setupDomains: () => getJson<{ provisionedDomains: DomainPoolView[] }>("/setup/domains"),
   setup: (req: SetupRequest) => postJson<{ ok: boolean }>("/setup", req),
   deriveIcp: (domain: string) => postJson<DeriveIcpResult>("/setup/derive-icp", { domain }),
   deriveBrief: (urls: string[]) => postJson<DeriveBriefResult>("/setup/derive-brief", { urls }),
   // Manual add-prospect from a LinkedIn/X URL. Returns 202 immediately; the
   // researched + drafted row appears on /queue when the background job finishes.
-  addProspect: (url: string, email?: string) =>
-    postJson<AddProspectResult>("/prospects/add", { url, ...(email ? { email } : {}) }),
+  addProspect: (url: string, email?: string, businessAddress?: BusinessMailAddress) =>
+    postJson<AddProspectResult>("/prospects/add", {
+      url,
+      ...(email ? { email } : {}),
+      ...(businessAddress ? { businessAddress } : {}),
+    }),
   queue: (opts?: {
     play?: string;
     status?: QueueStatusView;
     limit?: number;
+    /** Review-order override; omit to use the configured default. */
+    order?: "ranked" | "newest";
     /** Explicit row pick — the "drain selected" path. */
     ids?: number[];
   }) => {
@@ -191,6 +274,7 @@ export const api = {
     if (opts?.play) q.set("play", opts.play);
     if (opts?.status) q.set("status", opts.status);
     if (opts?.limit != null) q.set("limit", String(opts.limit));
+    if (opts?.order) q.set("order", opts.order);
     // Note the `!= null`, not a length check: an empty array is an explicit
     // "nothing picked" and must reach the server as `ids=`, or the server would
     // read it as absent and return the unscoped batch instead of no rows.
@@ -198,6 +282,19 @@ export const api = {
     const qs = q.toString();
     return getJson<QueueListResponse>(`/queue${qs ? `?${qs}` : ""}`);
   },
+  /**
+   * /prospects browse. In the demo the search runs client-side over ONE
+   * captured document (the whole seeded ledger, `limit=500`): a free-text
+   * `q` has no bounded fixture space, and refusing to search would leave the
+   * page a mockup of itself. Live installs hand the filters to SQL.
+   */
+  prospectSearch: (search: ProspectsSearch) =>
+    IS_DEMO
+      ? demoGet<ProspectSearchResponse>("/queue/search?limit=500").then((r) =>
+          applyProspectFilters(r.rows, search),
+        )
+      : getJson<ProspectSearchResponse>(`/queue/search?${toApiQuery(search)}`),
+  queueRowDetail: (id: number) => getJson<QueueRowDetail>(`/queue/${id}`),
   approveQueue: (id: number) => postJson<{ ok: boolean }>(`/queue/${id}/approve`, {}),
   rejectQueue: (id: number, reason?: string) =>
     postJson<{ ok: boolean }>(`/queue/${id}/reject`, reason ? { reason } : {}),
@@ -224,4 +321,7 @@ export const api = {
     postJson<{ ok: boolean }>(`/triggers/${encodeURIComponent(name)}/config`, { config }),
   runTrigger: (name: string) =>
     postJson<RunTriggerResult>(`/triggers/${encodeURIComponent(name)}/run`, {}),
+  packs: () => getJson<{ packs: PackView[] }>("/packs"),
+  applyPack: (id: string) =>
+    postJson<PackApplyResult>(`/packs/${encodeURIComponent(id)}/apply`, {}),
 };

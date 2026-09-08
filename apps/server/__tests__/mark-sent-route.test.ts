@@ -80,7 +80,7 @@ describe("markSentRoute", () => {
     expect(events[0]!.status).toBe("sent");
     expect(events[0]!.playName).toBe("x-amplify-dm");
     expect(events[0]!.metadata).toMatchObject({ body: "dm text", seedHandle: "iamdevloper" });
-    expect(statusCalls).toEqual([{ id: 1, status: "sent" }]);
+    expect(statusCalls).toEqual([{ id: 1, status: "sent", decidedBy: "human" }]);
     // Prospect keyed by the X profile, not an email.
     expect(upserts[0]).toMatchObject({
       email: null,

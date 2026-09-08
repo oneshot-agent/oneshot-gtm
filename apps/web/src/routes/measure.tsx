@@ -1,3 +1,4 @@
+import { Explain } from "../components/primitives/Explain.tsx";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
@@ -7,10 +8,11 @@ import { Button } from "../components/primitives/Button.tsx";
 import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { Sparkline } from "../components/primitives/Sparkline.tsx";
-import { cn, formatUsd } from "../lib/cn.ts";
+import { cn, formatCount, formatUsd } from "../lib/cn.ts";
 import { Pii } from "../components/primitives/Pii.tsx";
 
 export const Route = createFileRoute("/measure")({
+  staticData: { title: "Measure" },
   component: MeasurePage,
 });
 
@@ -38,26 +40,37 @@ function MeasurePage() {
     staleTime: 30_000,
   });
 
-  // Pull a wide receipts window once so the per-play sparklines can show a
-  // daily-spend trend. We grab up to 500 receipts; for heavier founders we'd
-  // wire a server-side time-bucketed aggregate, but 500 covers a month of
-  // daily activity for the current scale.
-  const receipts = useQuery({
-    queryKey: ["measure", "receipts-trend"],
-    queryFn: () => api.receipts({ limit: 500 }),
+  // Daily spend per play for the sparklines, bucketed by the server. This used
+  // to list 500 receipts and bucket them here, which quietly became a five-hour
+  // window on any install carrying tens of thousands of them.
+  const sparkDays = Math.min(90, Math.max(7, sinceDays ?? 30));
+  const series = useQuery({
+    queryKey: ["measure", "spend-series", sparkDays],
+    queryFn: () => api.measureSpendSeries(sparkDays),
     staleTime: 60_000,
   });
 
-  const sparkDays = sinceDays ?? 30;
-  const spendSeries = useMemo(
-    () => buildSpendSeries(receipts.data?.receipts ?? [], sparkDays),
-    [receipts.data?.receipts, sparkDays],
-  );
+  const spendSeries = useMemo(() => {
+    const out = new Map<string, number[]>();
+    for (const s of series.data?.series ?? []) out.set(s.playName, s.spend);
+    return out;
+  }, [series.data]);
 
   const totalSpend = cac.data?.spend.reduce((a, s) => a + s.totalUsd, 0) ?? 0;
   const totalReplied = cac.data?.events.reduce((a, e) => a + e.replied, 0) ?? 0;
   const totalSent = cac.data?.events.reduce((a, e) => a + e.sent, 0) ?? 0;
   const totalWon = rocs.data?.outcomes.reduce((a, o) => a + o.won, 0) ?? 0;
+
+  /*
+   * The one ratio on this page that divides every dollar spent, not just the
+   * winner's own cadence. The RoCS-by-cadence table below is goal-level: it
+   * puts a closed deal over the handful of calls that produced it and ignores
+   * every prospect the play spent money on and never closed, which is why those
+   * multiples run four digits. This one is the program: all closed-won revenue
+   * over all signed spend in the window.
+   */
+  const totalWonValue = rocs.data?.outcomes.reduce((a, o) => a + o.wonValueUsd, 0) ?? 0;
+  const programRocs = totalSpend > 0 ? totalWonValue / totalSpend : 0;
 
   return (
     <div className="-mx-6 -my-6 flex flex-col">
@@ -91,7 +104,7 @@ function MeasurePage() {
         </div>
       </section>
 
-      <section className="grid grid-cols-2 divide-x divide-ink-rule border-b border-ink-rule md:grid-cols-4">
+      <section className="grid grid-cols-2 divide-x divide-ink-rule border-b border-ink-rule md:grid-cols-5">
         <Summary
           label="Total spend"
           value={cac.data ? formatUsd(totalSpend) : undefined}
@@ -99,12 +112,12 @@ function MeasurePage() {
         />
         <Summary
           label="Sent"
-          value={cac.data ? String(totalSent) : undefined}
-          caption="lifetime, all plays"
+          value={cac.data ? formatCount(totalSent) : undefined}
+          caption={cac.data ? `all plays, ${rangeLabel(sinceDays)}` : undefined}
         />
         <Summary
           label="Replied"
-          value={cac.data ? String(totalReplied) : undefined}
+          value={cac.data ? formatCount(totalReplied) : undefined}
           caption={
             cac.data && totalSent > 0
               ? `${((totalReplied / totalSent) * 100).toFixed(1)}% reply rate`
@@ -114,8 +127,20 @@ function MeasurePage() {
         />
         <Summary
           label="Won"
-          value={rocs.data ? String(totalWon) : undefined}
-          caption={rocs.data ? "deals" : undefined}
+          value={rocs.data ? formatCount(totalWon) : undefined}
+          caption={rocs.data ? `${formatUsd(totalWonValue)} closed` : undefined}
+        />
+        <Summary
+          label="Return"
+          value={
+            rocs.data && cac.data && programRocs > 0 ? `${programRocs.toFixed(1)}×` : undefined
+          }
+          caption={
+            rocs.data && cac.data && totalWon > 0
+              ? `${formatUsd(totalSpend / totalWon)} per won deal`
+              : undefined
+          }
+          tone="receipt"
         />
       </section>
 
@@ -129,8 +154,8 @@ function MeasurePage() {
         ) : cac.data?.spend.length === 0 ? (
           <div className="px-6 pb-6">
             <EmptyNote
-              note="No spend in this window. Run a play and the dollars will account for themselves."
-              cli="oneshot-gtm motion show-hn --target targets.json"
+              note="No spend in this window. Find prospects from /queue's finder flow, or run the watcher; spend appears after calls run."
+              cli="oneshot-gtm find watch"
             />
           </div>
         ) : (
@@ -178,9 +203,15 @@ function MeasurePage() {
                     <td className="py-2 text-right font-mono text-ink-cream">
                       {formatUsd(s.totalUsd)}
                     </td>
-                    <td className="py-2 text-right font-mono text-ink-muted">{s.calls}</td>
-                    <td className="py-2 text-right font-mono text-ink-muted">{sent}</td>
-                    <td className="py-2 text-right font-mono text-ink-muted">{replied}</td>
+                    <td className="py-2 text-right font-mono text-ink-muted">
+                      {formatCount(s.calls)}
+                    </td>
+                    <td className="py-2 text-right font-mono text-ink-muted">
+                      {formatCount(sent)}
+                    </td>
+                    <td className="py-2 text-right font-mono text-ink-muted">
+                      {formatCount(replied)}
+                    </td>
                     <td className="py-2 text-right font-mono text-ink-cream-2">
                       {sent > 0 ? (
                         formatUsd(s.totalUsd / sent)
@@ -205,7 +236,9 @@ function MeasurePage() {
 
       <section className="border-b border-ink-rule">
         <div className="flex items-baseline justify-between px-6 pb-2 pt-5">
-          <div className="ln-eyebrow">RoCS · return on cognitive spend</div>
+          <div className="ln-eyebrow">
+            RoCS · return on cognitive spend <Explain concept="rocs" />
+          </div>
           <div className="font-mono text-[11px] text-ink-faint">{rangeLabel(sinceDays)}</div>
         </div>
         {rocs.isLoading ? (
@@ -222,10 +255,16 @@ function MeasurePage() {
                 <th className="py-2 text-left font-medium">spend · {sparkDays}d</th>
                 <th className="py-2 text-right font-medium">spend</th>
                 <th className="py-2 text-right font-medium">meetings</th>
-                <th className="py-2 text-right font-medium">SQLs</th>
+                <th className="py-2 text-right font-medium">
+                  SQLs <Explain concept="sql" />
+                </th>
                 <th className="py-2 text-right font-medium">won</th>
-                <th className="py-2 text-right font-medium">$/meeting</th>
-                <th className="px-6 py-2 text-right font-medium">$/won</th>
+                <th className="py-2 text-right font-medium">
+                  $/meeting <Explain concept="costMeeting" />
+                </th>
+                <th className="px-6 py-2 text-right font-medium">
+                  $/won <Explain concept="costWon" />
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -260,10 +299,12 @@ function MeasurePage() {
                     <td className="py-2 text-right font-mono text-ink-cream">
                       {formatUsd(s.totalUsd)}
                     </td>
-                    <td className="py-2 text-right font-mono text-ink-muted">{meet}</td>
-                    <td className="py-2 text-right font-mono text-ink-muted">{sql}</td>
+                    <td className="py-2 text-right font-mono text-ink-muted">
+                      {formatCount(meet)}
+                    </td>
+                    <td className="py-2 text-right font-mono text-ink-muted">{formatCount(sql)}</td>
                     <td className="py-2 text-right font-mono text-[color:var(--ink-receipt-2)]">
-                      {won}
+                      {formatCount(won)}
                     </td>
                     <td className="py-2 text-right font-mono text-ink-cream-2">
                       {meet > 0 ? (
@@ -343,7 +384,9 @@ function MeasurePage() {
                         <span className="text-ink-faint">—</span>
                       )}
                     </td>
-                    <td className="py-2 text-right font-mono text-ink-muted">{g.receiptCount}</td>
+                    <td className="py-2 text-right font-mono text-ink-muted">
+                      {formatCount(g.receiptCount)}
+                    </td>
                     <td className="px-6 py-2 text-right font-mono text-[color:var(--ink-receipt-2)]">
                       {g.spend > 0 && g.rocs > 0 ? (
                         `${g.rocs.toFixed(1)}×`

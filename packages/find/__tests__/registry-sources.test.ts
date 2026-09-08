@@ -1,0 +1,685 @@
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("@oneshot-gtm/core", () => ({ logEvent: () => {} }));
+
+const {
+  socrataLicenseSource,
+  nppesSource,
+  fmcsaSource,
+  looksLikeLicenceDateColumn,
+  resolveDateColumn,
+  mapSocrataRows,
+  mapNppesResults,
+  mapFmcsaRows,
+  buildSocrataSearchTerm,
+  buildFmcsaWhere,
+} = await import("../src/_registry-sources.ts");
+
+function stubFetch(impl: (url: string) => Promise<unknown>): void {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => impl(url),
+    })),
+  );
+}
+
+afterEach(() => vi.unstubAllGlobals());
+
+const NOW = Date.now();
+const RECENT_ISO = new Date(NOW - 5 * 86_400_000).toISOString();
+const OLD_ISO = new Date(NOW - 400 * 86_400_000).toISOString();
+
+describe("buildSocrataSearchTerm", () => {
+  it("joins naics + licenseTypes into one $q term", () => {
+    expect(buildSocrataSearchTerm(["722511"], ["Food Service"])).toBe("722511 Food Service");
+  });
+  it("returns null when both are empty/undefined", () => {
+    expect(buildSocrataSearchTerm(undefined, undefined)).toBeNull();
+    expect(buildSocrataSearchTerm([], [])).toBeNull();
+  });
+});
+
+describe("mapSocrataRows — canned payload", () => {
+  const rows = [
+    {
+      business_name: "Rae's Taqueria",
+      address: "123 Main St",
+      city: "Brooklyn",
+      state: "NY",
+      license_creation_date: RECENT_ISO,
+    },
+    {
+      dba_name: "Old Plumbing Co",
+      address: "9 Elm St",
+      city: "Queens",
+      state: "NY",
+      issue_date: OLD_ISO,
+    },
+    // No usable name field — dropped.
+    { address: "1 Nowhere Ave", license_creation_date: RECENT_ISO },
+    // No usable date field — dropped.
+    { business_name: "No Date Co", address: "2 Elsewhere Ave" },
+  ];
+
+  it("maps a recent row inside the freshness window and drops the rest", () => {
+    const out = mapSocrataRows(rows, "NYC business licenses", 60);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      name: "Rae's Taqueria",
+      address: "123 Main St",
+      city: "Brooklyn",
+      state: "NY",
+      source: "socrata-license",
+      sourceLabel: "NYC business licenses",
+    });
+  });
+
+  it("carries the licence description as the business type when the row has one (#498)", () => {
+    const out = mapSocrataRows(
+      [
+        {
+          business_name: "Rae's Taqueria",
+          license_creation_date: RECENT_ISO,
+          license_description: "Retail Food Establishment",
+        },
+        { business_name: "No Type Co", license_creation_date: RECENT_ISO },
+      ],
+      "NYC business licenses",
+      60,
+    );
+    expect(out.map((r) => [r.name, r.businessType, r.licenseType])).toEqual([
+      ["Rae's Taqueria", "Retail Food Establishment", "Retail Food Establishment"],
+      ["No Type Co", null, null],
+    ]);
+  });
+
+  it("falls back across alternate name/date field spellings (dba_name, issue_date)", () => {
+    const out = mapSocrataRows(rows, "NYC business licenses", 500);
+    const names = out.map((r) => r.name).toSorted();
+    expect(names).toEqual(["Old Plumbing Co", "Rae's Taqueria"]);
+  });
+});
+
+describe("socrataLicenseSource.fetch — per-portal isolation", () => {
+  it("keeps records from a healthy portal when a sibling portal is dead", async () => {
+    stubFetch(async (url) => {
+      if (url.includes("dead-portal")) throw new Error("ECONNREFUSED");
+      return [
+        {
+          business_name: "Rae's Taqueria",
+          address: "123 Main St",
+          city: "Brooklyn",
+          state: "NY",
+          license_creation_date: RECENT_ISO,
+        },
+      ];
+    });
+    const out = await socrataLicenseSource.fetch({
+      sinceDays: 60,
+      limit: 25,
+      portals: [
+        { host: "dead-portal.example.com", dataset: "xxxx-xxxx", label: "Dead Portal" },
+        { host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" },
+      ],
+    });
+    expect(out.records).toHaveLength(1);
+    expect(out.records[0]?.name).toBe("Rae's Taqueria");
+    expect(out.perSource).toHaveLength(2);
+    const dead = out.perSource.find((p) => p.label === "Dead Portal");
+    const healthy = out.perSource.find((p) => p.label === "NYC licenses");
+    expect(dead?.records).toBe(0);
+    expect(dead?.error).toBeTruthy();
+    expect(healthy?.records).toBe(1);
+  });
+
+  it("returns 0 records with per-portal diagnostics when every portal is dead — the caller decides halt", async () => {
+    stubFetch(async () => {
+      throw new Error("ECONNREFUSED");
+    });
+    const out = await socrataLicenseSource.fetch({
+      sinceDays: 60,
+      limit: 25,
+      portals: [{ host: "dead.example.com", dataset: "xxxx-xxxx", label: "Dead" }],
+    });
+    expect(out.records).toHaveLength(0);
+    expect(out.perSource[0]?.error).toBeTruthy();
+  });
+
+  it("paginates past the first 200 rows and finds a fresh record living on page 2 — the exact review finding", async () => {
+    // Page 1 (offset=0): 200 rows, all OLD — simulates the "arbitrary 200
+    // rows" the old unordered $limit=200 call used to settle for, none of
+    // which are fresh. Page 2 (offset=200): 1 row, RECENT. Without
+    // pagination this recent row is invisible; with $order+$where+$offset
+    // it must surface.
+    const page1 = Array.from({ length: 200 }, (_, i) => ({
+      business_name: `Old Co ${i}`,
+      city: "Brooklyn",
+      state: "NY",
+      license_creation_date: OLD_ISO,
+    }));
+    const page2 = [
+      {
+        business_name: "Fresh Taqueria",
+        city: "Brooklyn",
+        state: "NY",
+        license_creation_date: RECENT_ISO,
+      },
+    ];
+    let sawOrder = false;
+    let sawWhere = false;
+    stubFetch(async (url) => {
+      const u = new URL(url);
+      if (u.searchParams.get("$limit") === "1") {
+        // schema-probe request
+        return [page1[0]];
+      }
+      if (u.searchParams.get("$order")) sawOrder = true;
+      if (u.searchParams.get("$where")) sawWhere = true;
+      const offset = Number(u.searchParams.get("$offset") ?? "0");
+      if (offset === 0) return page1;
+      if (offset === 200) return page2;
+      return [];
+    });
+    const out = await socrataLicenseSource.fetch({
+      sinceDays: 60,
+      limit: 500,
+      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
+    });
+    expect(sawOrder).toBe(true);
+    expect(sawWhere).toBe(true);
+    const fresh = out.records.find((r) => r.name === "Fresh Taqueria");
+    expect(fresh).toBeTruthy();
+  });
+});
+
+describe("mapNppesResults — canned payload", () => {
+  const results = [
+    {
+      number: "1111111111",
+      basic: { organization_name: "Rae's Dental PLLC", enumeration_date: RECENT_ISO },
+      addresses: [
+        {
+          address_purpose: "LOCATION",
+          address_1: "50 Health Way",
+          city: "Buffalo",
+          state: "NY",
+          telephone_number: "555-1212",
+        },
+      ],
+    },
+    {
+      number: "2222222222",
+      basic: { first_name: "Pat", last_name: "Lee", enumeration_date: OLD_ISO },
+      addresses: [{ address_purpose: "LOCATION", city: "Albany", state: "NY" }],
+    },
+    // No enumeration_date — dropped.
+    { number: "3333333333", basic: { organization_name: "No Date Dental" } },
+  ];
+
+  it("maps a recent provider and falls back to first+last name for individuals", () => {
+    const out = mapNppesResults(results, "NPPES Dentist (NY)", "NY", 60);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      name: "Rae's Dental PLLC",
+      city: "Buffalo",
+      state: "NY",
+      phone: "555-1212",
+      source: "nppes",
+    });
+  });
+
+  it("uses first+last name when organization_name is absent (individual providers)", () => {
+    const out = mapNppesResults(results, "NPPES Dentist (NY)", "NY", 500);
+    const names = out.map((r) => r.name).toSorted();
+    expect(names).toEqual(["Pat Lee", "Rae's Dental PLLC"]);
+  });
+
+  it("labels subjectType organization vs individual so a person's name isn't mistaken for a company", () => {
+    const out = mapNppesResults(results, "NPPES Dentist (NY)", "NY", 500);
+    const org = out.find((r) => r.name === "Rae's Dental PLLC");
+    const individual = out.find((r) => r.name === "Pat Lee");
+    expect(org?.subjectType).toBe("organization");
+    expect(individual?.subjectType).toBe("individual");
+  });
+});
+
+describe("nppesSource.fetch — per taxonomy×state isolation", () => {
+  it("keeps records from a healthy pair when a sibling pair 404s", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.includes("state=CA")) {
+          return {
+            ok: false,
+            status: 500,
+            statusText: "Internal Server Error",
+            json: async () => ({}),
+          };
+        }
+        return {
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          json: async () => ({
+            result_count: 1,
+            results: [
+              {
+                number: "1111111111",
+                basic: { organization_name: "Rae's Dental PLLC", enumeration_date: RECENT_ISO },
+                addresses: [{ address_purpose: "LOCATION", city: "Buffalo", state: "NY" }],
+              },
+            ],
+          }),
+        };
+      }),
+    );
+    const out = await nppesSource.fetch({
+      sinceDays: 60,
+      limit: 25,
+      taxonomies: ["Dentist"],
+      states: ["NY", "CA"],
+    });
+    expect(out.records).toHaveLength(1);
+    expect(out.perSource).toHaveLength(2);
+    const bad = out.perSource.find((p) => p.source.endsWith(":CA"));
+    const good = out.perSource.find((p) => p.source.endsWith(":NY"));
+    expect(bad?.records).toBe(0);
+    expect(bad?.error).toBeTruthy();
+    expect(good?.records).toBe(1);
+  });
+
+  it("returns empty with no perSource entries when taxonomies or states is unconfigured", async () => {
+    const out = await nppesSource.fetch({
+      sinceDays: 60,
+      limit: 25,
+      taxonomies: [],
+      states: ["NY"],
+    });
+    expect(out.records).toHaveLength(0);
+    expect(out.perSource).toHaveLength(0);
+  });
+
+  it("pages past 200 providers (skip) and finds a newly-enumerated one on page 2 — the exact review finding", async () => {
+    // Page 1 (skip=0): 200 providers, all OLD — the "arbitrary first 200"
+    // the old single-request adapter used to settle for. Page 2 (skip=200):
+    // 1 provider, RECENT. Without walking skip, this newly-enumerated
+    // provider is invisible and the pair would wrongly report "no providers
+    // in the freshness window".
+    const page1 = {
+      result_count: 200,
+      results: Array.from({ length: 200 }, (_, i) => ({
+        number: String(1000000000 + i),
+        basic: { organization_name: `Old Dental ${i}`, enumeration_date: OLD_ISO },
+        addresses: [{ address_purpose: "LOCATION", city: "Buffalo", state: "NY" }],
+      })),
+    };
+    const page2 = {
+      result_count: 1,
+      results: [
+        {
+          number: "9999999999",
+          basic: { organization_name: "New Dental Group", enumeration_date: RECENT_ISO },
+          addresses: [{ address_purpose: "LOCATION", city: "Buffalo", state: "NY" }],
+        },
+      ],
+    };
+    let sawSkip200 = false;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        const u = new URL(url);
+        const skip = Number(u.searchParams.get("skip") ?? "0");
+        if (skip === 200) sawSkip200 = true;
+        return {
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          json: async () => (skip === 0 ? page1 : skip === 200 ? page2 : { results: [] }),
+        };
+      }),
+    );
+    const out = await nppesSource.fetch({
+      sinceDays: 60,
+      limit: 500,
+      taxonomies: ["Dentist"],
+      states: ["NY"],
+    });
+    expect(sawSkip200).toBe(true);
+    const fresh = out.records.find((r) => r.name === "New Dental Group");
+    expect(fresh).toBeTruthy();
+  });
+});
+
+describe("buildFmcsaWhere", () => {
+  it("always requires an active status + a published email", () => {
+    const where = buildFmcsaWhere({ sinceDays: 60, limit: 25 });
+    expect(where).toContain("status_code='A'");
+    expect(where).toContain("email_address IS NOT NULL");
+  });
+
+  it("adds an OR'd carship clause for multiple entity types", () => {
+    const where = buildFmcsaWhere({
+      sinceDays: 60,
+      limit: 25,
+      entityTypes: ["carrier", "broker"],
+    });
+    expect(where).toContain("carship like '%C%'");
+    expect(where).toContain("carship like '%B%'");
+    expect(where).toContain(" OR ");
+  });
+
+  it("adds a phy_state IN clause, uppercased", () => {
+    const where = buildFmcsaWhere({ sinceDays: 60, limit: 25, states: ["ny", "ca"] });
+    expect(where).toContain("phy_state in('NY','CA')");
+  });
+
+  it("adds power-unit floor/ceiling clauses", () => {
+    const where = buildFmcsaWhere({
+      sinceDays: 60,
+      limit: 25,
+      minPowerUnits: 10,
+      maxPowerUnits: 100,
+    });
+    expect(where).toContain("power_units::number>=10");
+    expect(where).toContain("power_units::number<=100");
+  });
+
+  it("filters $where on add_date so the wire query itself is scoped to the freshness window", () => {
+    const where = buildFmcsaWhere({ sinceDays: 60, limit: 25 });
+    // add_date is a zero-padded YYYYMMDD string column; a lexical >= bound
+    // against another zero-padded YYYYMMDD string is a correct freshness
+    // filter server-side, so the ~2.2M-row active-carrier table isn't
+    // sampled at random relative to `sinceDays` before the local filter runs.
+    expect(where).toMatch(/add_date>='\d{8}'/);
+    const sinceStr = where.match(/add_date>='(\d{8})'/)?.[1];
+    expect(sinceStr).toBeTruthy();
+    const expected = new Date(Date.now() - 60 * 86_400_000);
+    const expectedStr =
+      expected.getUTCFullYear().toString().padStart(4, "0") +
+      (expected.getUTCMonth() + 1).toString().padStart(2, "0") +
+      expected.getUTCDate().toString().padStart(2, "0");
+    expect(sinceStr).toBe(expectedStr);
+  });
+});
+
+describe("mapFmcsaRows — canned payload", () => {
+  const NOW_STR = new Date(NOW).toISOString().slice(0, 10).replace(/-/g, "");
+  const OLD_STR = "20200101";
+  const rows = [
+    {
+      legal_name: "Slack Truck Line Inc",
+      email_address: "Dispatch@SlackTruck.com",
+      add_date: NOW_STR,
+      phy_street: "7th and Gibbon Rd",
+      phy_city: "Gibbon",
+      phy_state: "NE",
+      phone: "3083802037",
+      power_units: "4",
+    },
+    // Old registration — dropped by the freshness window.
+    {
+      legal_name: "Old Hauling Co",
+      email_address: "old@hauling.com",
+      add_date: OLD_STR,
+    },
+    // No email on file — dropped (fmcsa never falls through to findEmail).
+    { legal_name: "No Email Trucking", add_date: NOW_STR },
+    // No usable name — dropped.
+    { email_address: "noname@x.com", add_date: NOW_STR },
+  ];
+
+  it("maps a recent row with a published email and drops the rest", () => {
+    const out = mapFmcsaRows(rows, 5);
+    expect(out).toHaveLength(1);
+    expect(out[0]).toMatchObject({
+      name: "Slack Truck Line Inc",
+      knownEmail: "dispatch@slacktruck.com",
+      city: "Gibbon",
+      state: "NE",
+      phone: "3083802037",
+      source: "fmcsa",
+      sourceLabel: "FMCSA Company Census",
+    });
+  });
+
+  it("keeps the old row once the freshness window is wide enough", () => {
+    const out = mapFmcsaRows(rows, 3000);
+    const names = out.map((r) => r.name).toSorted();
+    expect(names).toEqual(["Old Hauling Co", "Slack Truck Line Inc"]);
+  });
+});
+
+describe("fmcsaSource.fetch", () => {
+  it("returns records with knownEmail set, costUsd 0", async () => {
+    stubFetch(async () => [
+      {
+        legal_name: "Slack Truck Line Inc",
+        email_address: "dispatch@slacktruck.com",
+        add_date: new Date(NOW).toISOString().slice(0, 10).replace(/-/g, ""),
+        phy_state: "NE",
+      },
+    ]);
+    const out = await fmcsaSource.fetch({ sinceDays: 30, limit: 25, entityTypes: ["carrier"] });
+    expect(out.costUsd).toBe(0);
+    expect(out.records).toHaveLength(1);
+    expect(out.records[0]?.knownEmail).toBe("dispatch@slacktruck.com");
+    expect(out.perSource[0]?.records).toBe(1);
+  });
+
+  it("returns empty with no perSource entries and does NOT call fetch when no fmcsa-specific filter is configured", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const out = await fmcsaSource.fetch({ sinceDays: 30, limit: 25 });
+    expect(out.records).toHaveLength(0);
+    expect(out.perSource).toHaveLength(0);
+    expect(out.costUsd).toBe(0);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("does NOT query on states alone — shared with nppes, not an fmcsa-specific filter", async () => {
+    // finding: an NPPES-only config (taxonomies + states) also enabled
+    // fmcsa because states alone satisfied hasFmcsaFilter, so a dentist
+    // search in CA silently enqueued CA trucking carriers too. states
+    // narrows an already-enabled fmcsa query but must not enable one by
+    // itself — mirrors registry.ts's readiness hasFmcsa check.
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const out = await fmcsaSource.fetch({ sinceDays: 30, limit: 25, states: ["NE"] });
+    expect(out.records).toHaveLength(0);
+    expect(out.perSource).toHaveLength(0);
+    expect(out.costUsd).toBe(0);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("still queries when states is paired with an fmcsa-specific filter", async () => {
+    const fetchSpy = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => [],
+    }));
+    vi.stubGlobal("fetch", fetchSpy);
+    await fmcsaSource.fetch({
+      sinceDays: 30,
+      limit: 25,
+      entityTypes: ["carrier"],
+      states: ["NE"],
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("still queries when only minPowerUnits is configured", async () => {
+    const fetchSpy = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      json: async () => [],
+    }));
+    vi.stubGlobal("fetch", fetchSpy);
+    await fmcsaSource.fetch({ sinceDays: 30, limit: 25, minPowerUnits: 10 });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces a diagnostic without throwing when the endpoint is unreachable", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("ECONNREFUSED");
+      }),
+    );
+    const out = await fmcsaSource.fetch({
+      sinceDays: 30,
+      limit: 25,
+      entityTypes: ["carrier"],
+      states: ["NE"],
+    });
+    expect(out.records).toHaveLength(0);
+    expect(out.perSource[0]?.error).toBeTruthy();
+  });
+});
+
+describe("Socrata date-column detection — portals never agree on the name", () => {
+  it("recognises effective/issue/creation-shaped names and refuses expiry/renewal/update ones", () => {
+    for (const yes of [
+      "licenseeffectivedate",
+      "license_creation_date",
+      "issue_date",
+      "DateIssued",
+      "start_date",
+      "registration_date",
+    ]) {
+      expect(looksLikeLicenceDateColumn(yes), yes).toBe(true);
+    }
+    for (const no of [
+      "licenseexpirationdate",
+      "lic_expir_dd",
+      "renewal_date",
+      "updated_date",
+      "last_modified_date",
+      "business_name",
+      "inspection_date",
+    ]) {
+      expect(looksLikeLicenceDateColumn(no), no).toBe(false);
+    }
+  });
+
+  it("prefers the exact list over the heuristic when both would match", () => {
+    expect(resolveDateColumn(["licenseeffectivedate", "issue_date"], ["issue_date"])).toBe(
+      "issue_date",
+    );
+    expect(
+      resolveDateColumn(["licenseexpirationdate", "licenseeffectivedate"], ["issue_date"]),
+    ).toBe("licenseeffectivedate");
+    expect(
+      resolveDateColumn(["licenseexpirationdate", "business_name"], ["issue_date"]),
+    ).toBeNull();
+  });
+
+  it("maps a WA L&I-shaped row (licenseeffectivedate) and drops a row that only carries an expiry", () => {
+    const out = mapSocrataRows(
+      [
+        {
+          businessname: "Rae's HVAC LLC",
+          address1: "1 Main St",
+          city: "Spokane",
+          state: "WA",
+          zip: "99201",
+          licenseeffectivedate: RECENT_ISO,
+          licenseexpirationdate: "2030-01-01T00:00:00.000",
+        },
+        {
+          businessname: "Old Expiring Co",
+          city: "Spokane",
+          state: "WA",
+          licenseexpirationdate: RECENT_ISO,
+        },
+      ],
+      "WA L&I contractor licenses",
+      60,
+    );
+    // Exactly WA's spelling — no separators, no `business_name` alias to
+    // lean on. That is the row the old exact-name lists dropped as nameless.
+    expect(out.map((r) => r.name)).toEqual(["Rae's HVAC LLC"]);
+    expect(out[0]?.matchedDateIso).toBe(new Date(RECENT_ISO).toISOString());
+    expect(out[0]?.address).toBe("1 Main St");
+    expect(out[0]?.postalCode).toBe("99201");
+  });
+
+  it("sends one $q request per licence type instead of one request that ANDs them all", async () => {
+    const seen: string[] = [];
+    stubFetch(async (url) => {
+      seen.push(url);
+      if (url.includes("/api/views/"))
+        return { columns: [{ fieldName: "businessname" }, { fieldName: "licenseeffectivedate" }] };
+      const q = new URL(url).searchParams.get("$q");
+      return q === "HVAC"
+        ? [
+            {
+              businessname: "Rae's HVAC LLC",
+              city: "Spokane",
+              state: "WA",
+              licenseeffectivedate: RECENT_ISO,
+            },
+          ]
+        : q === "Plumbing"
+          ? [
+              {
+                businessname: "Sam's Plumbing",
+                city: "Tacoma",
+                state: "WA",
+                licenseeffectivedate: RECENT_ISO,
+              },
+            ]
+          : [];
+    });
+    const out = await socrataLicenseSource.fetch({
+      sinceDays: 60,
+      limit: 25,
+      portals: [{ host: "data.wa.gov", dataset: "m8qx-ubtq", label: "WA L&I contractor licenses" }],
+      licenseTypes: ["HVAC", "Plumbing"],
+    });
+    const qs = seen
+      .filter((u) => u.includes("/resource/"))
+      .map((u) => new URL(u).searchParams.get("$q"));
+    expect(qs).toContain("HVAC");
+    expect(qs).toContain("Plumbing");
+    expect(qs).not.toContain("HVAC Plumbing");
+    expect(out.records.map((r) => r.name).toSorted()).toEqual(["Rae's HVAC LLC", "Sam's Plumbing"]);
+  });
+
+  it("drives $order and $where off the resolved column when the portal's date column is only found by the heuristic", async () => {
+    const seen: string[] = [];
+    stubFetch(async (url) => {
+      seen.push(url);
+      if (url.includes("/api/views/"))
+        return {
+          columns: [
+            { fieldName: "businessname" },
+            { fieldName: "licenseeffectivedate" },
+            { fieldName: "licenseexpirationdate" },
+          ],
+        };
+      return [
+        {
+          business_name: "Rae's HVAC LLC",
+          city: "Spokane",
+          state: "WA",
+          licenseeffectivedate: RECENT_ISO,
+        },
+      ];
+    });
+    const out = await socrataLicenseSource.fetch({
+      sinceDays: 60,
+      limit: 25,
+      portals: [{ host: "data.wa.gov", dataset: "m8qx-ubtq", label: "WA L&I contractor licenses" }],
+    });
+    expect(out.records).toHaveLength(1);
+    const resource = seen.find((u) => u.includes("/resource/"))!;
+    expect(resource).toContain("%24order=licenseeffectivedate+DESC");
+    expect(resource).toContain("%24where=licenseeffectivedate+%3E%3D");
+  });
+});

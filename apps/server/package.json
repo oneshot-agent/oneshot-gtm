@@ -1,7 +1,20 @@
 {
   "name": "oneshot-gtm-server",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Local dashboard server for oneshot-gtm. Boots Bun.serve, opens the browser to your GTM operating state.",
+  "keywords": [
+    "ai-agent",
+    "bun",
+    "dashboard",
+    "go-to-market",
+    "gtm",
+    "local-first",
+    "outreach",
+    "prospecting",
+    "sales-automation",
+    "signed-receipts",
+    "sqlite"
+  ],
   "homepage": "https://oneshot-gtm.com",
   "license": "MIT",
   "repository": {
@@ -28,8 +41,9 @@
     "prepublishOnly": "bun run --cwd ../web build && bun run build"
   },
   "dependencies": {
-    "@oneshot-agent/sdk": "0.22.0",
-    "open": "^11.0.0"
+    "@oneshot-agent/sdk": "0.32.0",
+    "open": "^11.0.0",
+    "pdf-lib": "^1.17.1"
   },
   "devDependencies": {
     "@oneshot-gtm/core": "workspace:*",

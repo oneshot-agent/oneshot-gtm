@@ -15,14 +15,26 @@ import {
   Play,
   Receipt,
   Settings,
+  UserPlus,
+  Users,
 } from "lucide-react";
 import { useEffect } from "react";
 import { toast } from "sonner";
 import { api } from "../../api/client.ts";
 import { openWorkspace } from "../../lib/openWorkspace.ts";
 import { usePrivacy } from "../../lib/privacy.tsx";
+import { READ_ONLY } from "../../lib/readOnly.ts";
 
-type NavTarget = "/" | "/queue" | "/cadences" | "/receipts" | "/measure" | "/plays" | "/setup";
+type NavTarget =
+  | "/"
+  | "/queue"
+  | "/prospects"
+  | "/cadences"
+  | "/receipts"
+  | "/measure"
+  | "/plays"
+  | "/add-prospect"
+  | "/setup";
 
 /**
  * ⌘K palette — bottom-docked. cmdk handles fuzzy search + keyboard nav;
@@ -115,6 +127,9 @@ export function CommandPalette({
           <Command.Item value="queue review" onSelect={go("/queue")}>
             <Inbox size={14} /> Queue <kbd className="ml-auto">g q</kbd>
           </Command.Item>
+          <Command.Item value="prospects browse search rejected" onSelect={go("/prospects")}>
+            <Users size={14} /> Prospects
+          </Command.Item>
           <Command.Item value="cadences sequences" onSelect={go("/cadences")}>
             <Layers size={14} /> Cadences <kbd className="ml-auto">g c</kbd>
           </Command.Item>
@@ -127,6 +142,9 @@ export function CommandPalette({
           <Command.Item value="plays catalogue motion" onSelect={go("/plays")}>
             <Feather size={14} /> Plays <kbd className="ml-auto">g p</kbd>
           </Command.Item>
+          <Command.Item value="add prospect profile url linkedin" onSelect={go("/add-prospect")}>
+            <UserPlus size={14} /> Add prospect
+          </Command.Item>
           <Command.Item value="setup config founder profile" onSelect={go("/setup")}>
             <Settings size={14} /> Setup <kbd className="ml-auto">g s</kbd>
           </Command.Item>
@@ -136,7 +154,7 @@ export function CommandPalette({
           <Command.Item
             value="approve all pending candidates"
             onSelect={act(() => approveAll.mutate())}
-            disabled={approveAll.isPending}
+            disabled={approveAll.isPending || READ_ONLY}
           >
             <Check size={14} /> Approve all pending
           </Command.Item>
@@ -181,7 +199,7 @@ export function CommandPalette({
                 key={t.name}
                 value={`run trigger ${t.name}`}
                 onSelect={act(() => runTrigger.mutate(t.name))}
-                disabled={runTrigger.isPending}
+                disabled={runTrigger.isPending || READ_ONLY}
               >
                 <Play size={14} /> Run <code>{t.name}</code>
                 <span className="ml-auto font-mono text-[11px] text-ink-faint">

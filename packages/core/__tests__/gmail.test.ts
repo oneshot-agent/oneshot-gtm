@@ -3,6 +3,7 @@ import {
   _resetGmailCache,
   buildRawMessage,
   getGmailAccessToken,
+  getGmailProfile,
   listGmailReplies,
   missingGmailSecrets,
 } from "../src/gmail.ts";
@@ -125,6 +126,174 @@ describe("buildRawMessage", () => {
     );
     const expected = `=?UTF-8?B?${Buffer.from(subject, "utf8").toString("base64")}?=`;
     expect(msg).toContain(`Subject: ${expected}`);
+  });
+});
+
+describe("gmailJson error formatting", () => {
+  // A representative Google quota envelope — same shape and metric wording
+  // as the truncated production sample from issue #485.
+  const QUOTA_BODY = JSON.stringify({
+    error: {
+      code: 403,
+      message:
+        "Quota exceeded for quota metric 'Gmail API requests' and limit " +
+        "'Requests per minute per user' of service 'gmail.googleapis.com' " +
+        "for consumer 'project_number:123456789'.",
+      status: "RESOURCE_EXHAUSTED",
+      errors: [{ message: "Quota exceeded", domain: "global", reason: "rateLimitExceeded" }],
+    },
+  });
+
+  function stubFetchWith(body: string, status: number): ReturnType<typeof vi.fn> {
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      if (String(url).startsWith("https://oauth2.googleapis.com/")) return tokenResponse();
+      return new Response(body, { status });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  it("surfaces error.status and the compacted quota metric/limit for a parseable Google error envelope", async () => {
+    stubFetchWith(QUOTA_BODY, 403);
+    await expect(getGmailProfile()).rejects.toThrow(
+      /Gmail API failed \(403\): RESOURCE_EXHAUSTED — quota metric 'Gmail API requests' \/ limit 'Requests per minute per user'/,
+    );
+  });
+
+  it("keeps both the quota metric AND the specific limit legible within the existing 120-char log convention, even on listGmailReplies' /messages/<id> path — the issue's own reproduction and the dominant real-world caller (longer than /profile)", async () => {
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      if (u.startsWith("https://oauth2.googleapis.com/")) return tokenResponse();
+      if (u.includes("/messages?")) {
+        return new Response(JSON.stringify({ messages: [{ id: "18c2a9f4e6b7d3a1" }] }), {
+          status: 200,
+        });
+      }
+      // /messages/18c2a9f4e6b7d3a1?format=full — the long path in question.
+      return new Response(QUOTA_BODY, { status: 403 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    let message = "";
+    try {
+      await listGmailReplies({ limit: 10 });
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    // Mirrors the message_120 truncation every call site applies (e.g.
+    // oneshot.ts's inbox.source_failed logging) — this is the actual
+    // acceptance bar, not just "the untruncated message is fine".
+    const truncated = message.slice(0, 120);
+    expect(truncated).toContain("RESOURCE_EXHAUSTED");
+    // Both facts the issue calls out as necessary for diagnosis: WHICH
+    // metric, and WHICH specific limit (per-user-per-second vs
+    // per-minute-per-user vs the daily project ceiling) — not just the
+    // coarser status.
+    expect(truncated).toContain("quota metric 'Gmail API requests'");
+    expect(truncated).toContain("limit 'Requests per minute per user'");
+  });
+
+  it("keeps the quota metric name legible within the existing 120-char log convention", async () => {
+    stubFetchWith(QUOTA_BODY, 403);
+    let message = "";
+    try {
+      await getGmailProfile();
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    // Mirrors the message_120 truncation every call site applies (e.g.
+    // oneshot.ts's inbox.source_failed logging) — this is the actual
+    // acceptance bar, not just "the untruncated message is fine".
+    const truncated = message.slice(0, 120);
+    expect(truncated).toContain("RESOURCE_EXHAUSTED");
+    expect(truncated).toContain("quota metric 'Gmail API requests'");
+  });
+
+  it("distinguishes a permission/scope failure from a quota failure by error.status", async () => {
+    stubFetchWith(
+      JSON.stringify({
+        error: {
+          code: 403,
+          message: "The caller does not have permission",
+          status: "PERMISSION_DENIED",
+        },
+      }),
+      403,
+    );
+    await expect(getGmailProfile()).rejects.toThrow(/PERMISSION_DENIED/);
+  });
+
+  it("falls back to the raw-slice behaviour when the body does not parse as Google's envelope", async () => {
+    stubFetchWith("<html>502 Bad Gateway</html>", 502);
+    await expect(getGmailProfile()).rejects.toThrow(
+      "Gmail API failed (502): <html>502 Bad Gateway</html> [/profile]",
+    );
+  });
+
+  it("falls back to the raw-slice behaviour when the JSON body has no error.message", async () => {
+    stubFetchWith(JSON.stringify({ error: { code: 500 } }), 500);
+    await expect(getGmailProfile()).rejects.toThrow(
+      `Gmail API failed (500): ${JSON.stringify({ error: { code: 500 } })} [/profile]`,
+    );
+  });
+
+  it("keeps the 401 branch unchanged — no body parsing, no status field", async () => {
+    stubFetchWith(QUOTA_BODY, 401);
+    await expect(getGmailProfile()).rejects.toThrow(/^Gmail auth rejected \(401\) —/);
+  });
+
+  it("does not read the response body on a 401 (auth errors must not wait on a slow body)", async () => {
+    const textSpy = vi.fn().mockResolvedValue(QUOTA_BODY);
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      if (String(url).startsWith("https://oauth2.googleapis.com/")) return tokenResponse();
+      return { ok: false, status: 401, text: textSpy } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(getGmailProfile()).rejects.toThrow(/^Gmail auth rejected \(401\) —/);
+    expect(textSpy).not.toHaveBeenCalled();
+  });
+
+  it("cancels an unread body's stream on a 401 instead of leaving it open", async () => {
+    // cancel() always returns a Promise per the ReadableStream spec — a
+    // mock that returned undefined would let a `.catch()` on the call
+    // site go unexercised, so resolve it like the real API does.
+    const cancelSpy = vi.fn().mockResolvedValue(undefined);
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      if (String(url).startsWith("https://oauth2.googleapis.com/")) return tokenResponse();
+      return {
+        ok: false,
+        status: 401,
+        text: vi.fn(),
+        body: { cancel: cancelSpy },
+      } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(getGmailProfile()).rejects.toThrow(/^Gmail auth rejected \(401\) —/);
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not throw an unhandled rejection when a 401 body's cancel() rejects", async () => {
+    const cancelSpy = vi.fn().mockRejectedValue(new Error("stream already locked"));
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      if (String(url).startsWith("https://oauth2.googleapis.com/")) return tokenResponse();
+      return {
+        ok: false,
+        status: 401,
+        text: vi.fn(),
+        body: { cancel: cancelSpy },
+      } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(getGmailProfile()).rejects.toThrow(/^Gmail auth rejected \(401\) —/);
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not blow up on a 401 when the response has no body at all", async () => {
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      if (String(url).startsWith("https://oauth2.googleapis.com/")) return tokenResponse();
+      return { ok: false, status: 401, text: vi.fn(), body: undefined } as unknown as Response;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(getGmailProfile()).rejects.toThrow(/^Gmail auth rejected \(401\) —/);
   });
 });
 

@@ -1,10 +1,10 @@
-import { logEvent } from "@oneshot-gtm/core";
+import { logEvent, type PersonResult } from "@oneshot-gtm/core";
 import type { CallContext, FindEmailInput } from "@oneshot-gtm/core";
 import { isCircuitOpen, recordResolutionOutcome } from "./_breaker.ts";
 import { shouldSkipFindEmail } from "./_findemail-prescreen.ts";
-import { safeFindEmail, safeVerifyEmail } from "./_sdk-safe.ts";
+import { safeFindEmail, safePeopleSearch, safeVerifyEmail } from "./_sdk-safe.ts";
 import { enrichVerifiedContact } from "./_enrich.ts";
-import type { PersonCandidate } from "./_filter.ts";
+import type { PersonCandidate, PersonVerdict } from "./_filter.ts";
 import { qualifyPostEnrich } from "./_qualify.ts";
 
 /**
@@ -14,7 +14,14 @@ import { qualifyPostEnrich } from "./_qualify.ts";
  * EVERY path so callers never lose cost tracking on a drop.
  */
 export type ContactResolution =
-  | { ok: true; email: string; fullName: string | null; costUsd: number }
+  | {
+      ok: true;
+      email: string;
+      fullName: string | null;
+      /** Job title the domain person-lookup surfaced, when that path ran. */
+      title?: string | null;
+      costUsd: number;
+    }
   | {
       ok: false;
       reason:
@@ -55,6 +62,22 @@ export async function resolveAndVerifyContact(args: {
   companyDomain?: string | null;
   isDuplicate?: (email: string) => boolean;
   decisionContext?: CallContext["decisionContext"];
+  /**
+   * Forwarded to `shouldSkipFindEmail` — opt in only when the caller has no
+   * owner/operator name on the source record at all (see that function's
+   * doc comment). Defaults to off.
+   */
+  allowMissingFullName?: boolean;
+  /**
+   * Skip the paid `verifyEmail` call for a `knownEmail` the caller trusts as
+   * already-deliverable (e.g. a government filing's on-file contact address,
+   * not a scraped/guessed one) — mirrors `knownEmail` itself skipping
+   * `findEmail`. Has no effect when `knownEmail` is absent (the
+   * findEmail-resolved path is never trusted enough to skip verify). Default
+   * off, so every existing `knownEmail` caller (github-stars, luma) keeps
+   * verifying unless it explicitly opts in.
+   */
+  skipVerify?: boolean;
 }): Promise<ContactResolution> {
   const ctx: CallContext = { playName: args.playName };
   if (args.decisionContext) ctx.decisionContext = args.decisionContext;
@@ -62,14 +85,21 @@ export async function resolveAndVerifyContact(args: {
   let costUsd = 0;
   let email: string;
   let fullName = args.fullName;
+  let title: string | null = null;
 
   if (args.knownEmail) {
     email = args.knownEmail;
   } else {
-    if (!args.companyDomain) return { ok: false, reason: "no-domain", costUsd };
+    if (!args.companyDomain) {
+      // Logged like a prescreen skip: a silent drop here made a whole b2b
+      // lane's misses invisible (100 candidates, 3 tried, nothing to say why).
+      logEvent("finder.skipped_findemail", { name: args.playName, reason: "no-domain" }, "info");
+      return { ok: false, reason: "no-domain", costUsd };
+    }
     const skip = shouldSkipFindEmail({
       fullName: args.fullName,
       companyDomain: args.companyDomain,
+      allowMissingFullName: args.allowMissingFullName,
     });
     if (!skip.ok) {
       logEvent("finder.skipped_findemail", { name: args.playName, reason: skip.reason }, "info");
@@ -78,26 +108,68 @@ export async function resolveAndVerifyContact(args: {
     // Circuit open (backend outage): skip the paid call entirely — fast-fail as
     // a platform error so the caller defers instead of burning spend + ~70s.
     if (isCircuitOpen()) return { ok: false, reason: "platform-error", costUsd };
-    const findInput: FindEmailInput = { companyDomain: args.companyDomain };
-    if (args.fullName) findInput.fullName = args.fullName;
-    const found = await safeFindEmail(findInput, ctx);
-    costUsd += found.result.cost ?? 0;
-    // status:"error" = the safe wrapper caught a throw (platform/transport
-    // failure), NOT a genuine "no email for this person". Don't treat as a
-    // verdict; feed the breaker and defer.
-    if (found.result.status === "error") {
-      recordResolutionOutcome(true);
-      return { ok: false, reason: "platform-error", costUsd };
+
+    // No person on the source record (a licence row, a places result): SDK
+    // 0.32's findEmail refuses a domain-only lookup, so find a person first.
+    // One flat-priced peopleSearch scoped to the domain returns whoever the
+    // B2B database has there — often with a work email already, in which
+    // case findEmail is skipped outright. Nobody named at the domain is a
+    // genuine negative for this candidate, not an outage.
+    let lookedUpEmail: string | null = null;
+    if (!fullName?.trim()) {
+      const people = await safePeopleSearch(
+        { companyDomains: [args.companyDomain], limit: 5 },
+        ctx,
+      );
+      costUsd += people.result.cost ?? 0;
+      if (people.result.status === "error") {
+        recordResolutionOutcome(true);
+        return { ok: false, reason: "platform-error", costUsd };
+      }
+      recordResolutionOutcome(false);
+      const person = pickNamedPerson(people.result.results as PersonResult[]);
+      if (!person) {
+        logEvent(
+          "finder.skipped_findemail",
+          { name: args.playName, reason: "no-named-contact", domain: args.companyDomain },
+          "info",
+        );
+        return { ok: false, reason: "not-found", costUsd };
+      }
+      fullName = person.fullName;
+      title = person.title;
+      lookedUpEmail = person.bestWorkEmail;
     }
-    recordResolutionOutcome(false); // backend answered (found or genuinely not)
-    if (!found.result.found || !found.result.email) {
-      return { ok: false, reason: "not-found", costUsd };
+
+    if (lookedUpEmail) {
+      email = lookedUpEmail;
+    } else {
+      const findInput: FindEmailInput = { companyDomain: args.companyDomain };
+      if (fullName) findInput.fullName = fullName;
+      const found = await safeFindEmail(findInput, ctx);
+      costUsd += found.result.cost ?? 0;
+      // status:"error" = the safe wrapper caught a throw (platform/transport
+      // failure), NOT a genuine "no email for this person". Don't treat as a
+      // verdict; feed the breaker and defer. status:"invalid" = the SDK
+      // refused our input before sending anything — a verdict, never an outage.
+      if (found.result.status === "error") {
+        recordResolutionOutcome(true);
+        return { ok: false, reason: "platform-error", costUsd };
+      }
+      recordResolutionOutcome(false); // backend answered (found or genuinely not)
+      if (found.result.status === "invalid" || !found.result.found || !found.result.email) {
+        return { ok: false, reason: "not-found", costUsd };
+      }
+      email = found.result.email;
+      fullName = found.result.full_name ?? fullName;
     }
-    email = found.result.email;
-    fullName = found.result.full_name ?? args.fullName;
   }
 
   if (args.isDuplicate?.(email)) return { ok: false, reason: "duplicate", costUsd };
+
+  if (args.knownEmail && args.skipVerify) {
+    return { ok: true, email, fullName, costUsd };
+  }
 
   if (isCircuitOpen()) return { ok: false, reason: "platform-error", costUsd };
   const verified = await safeVerifyEmail({ email }, ctx);
@@ -109,7 +181,40 @@ export async function resolveAndVerifyContact(args: {
   recordResolutionOutcome(false);
   if (!verified.result.deliverable) return { ok: false, reason: "undeliverable", costUsd };
 
-  return { ok: true, email, fullName, costUsd };
+  return { ok: true, email, fullName, ...(title ? { title } : {}), costUsd };
+}
+
+/**
+ * The person to write to out of a domain-scoped peopleSearch: needs a usable
+ * name; prefers someone the database already has a work email for (skips a
+ * paid findEmail), then someone with a title (feeds the role gate). Exported
+ * for the unit test.
+ */
+export function pickNamedPerson(
+  results: PersonResult[] | null | undefined,
+): { fullName: string; title: string | null; bestWorkEmail: string | null } | null {
+  if (!Array.isArray(results)) return null;
+  const named = results.flatMap((p) => {
+    if (!p || typeof p !== "object") return [];
+    const full =
+      (typeof p.full_name === "string" && p.full_name.trim()) ||
+      [p.first_name, p.last_name]
+        .filter((x): x is string => typeof x === "string" && x.trim().length > 0)
+        .join(" ")
+        .trim();
+    if (!full) return [];
+    return [
+      {
+        fullName: full,
+        title: typeof p.title === "string" && p.title.trim() ? p.title.trim() : null,
+        bestWorkEmail:
+          typeof p.best_work_email === "string" && p.best_work_email.trim()
+            ? p.best_work_email.trim()
+            : null,
+      },
+    ];
+  });
+  return named.find((p) => p.bestWorkEmail) ?? named.find((p) => p.title) ?? named[0] ?? null;
 }
 
 /**
@@ -131,6 +236,21 @@ export type QualifiedContact =
       linkedinUrl: string | null;
       /** Job title the gate judged on — persist it so the next run is free. */
       title: string | null;
+      /**
+       * What the person-level ICP gate decided. Carried out of here so the
+       * enqueue/send path can persist it onto `prospects.icp_verdict`.
+       *
+       * It used to be collapsed to `ok: true` and dropped, which meant the
+       * only production writer of that column was the manual `ops/audit-icp.ts`
+       * — so a verdict the gate had already paid to compute was recomputed by
+       * hand later, or never. `unclear` is a real value here and must be
+       * persisted as such: the cadence gate tests `=== "reject"`, so `unclear`
+       * fails open exactly as NULL does, but recording it stops the audit
+       * re-judging a row it has already settled.
+       */
+      verdict: Exclude<PersonVerdict, "transient">;
+      /** One-sentence reason from the classifier, for `icp_verdict_reason`. */
+      verdictReason: string;
       costUsd: number;
     }
   | {
@@ -189,6 +309,14 @@ export async function resolveVerifyEnrichQualify(args: {
    * post-verify enrichment title, since it came from the richer lookup.
    */
   titleHint?: string | null;
+  /**
+   * Forwarded to `resolveAndVerifyContact` / `shouldSkipFindEmail` — opt in
+   * only when the caller has no owner/operator name on the source record at
+   * all. Defaults to off.
+   */
+  allowMissingFullName?: boolean;
+  /** Forwarded to `resolveAndVerifyContact` — see its doc comment. Default off. */
+  skipVerify?: boolean;
 }): Promise<QualifiedContact> {
   const contact = await resolveAndVerifyContact({
     playName: args.playName,
@@ -197,6 +325,8 @@ export async function resolveVerifyEnrichQualify(args: {
     companyDomain: args.companyDomain,
     isDuplicate: args.isDuplicate,
     decisionContext: args.decisionContext,
+    allowMissingFullName: args.allowMissingFullName,
+    skipVerify: args.skipVerify,
   });
   let costUsd = contact.costUsd;
   if (!contact.ok) return { ok: false, reason: contact.reason, costUsd };
@@ -210,7 +340,7 @@ export async function resolveVerifyEnrichQualify(args: {
   const gate = await qualifyPostEnrich({
     icp: args.icp,
     person: args.person,
-    enrichedTitle: args.titleHint ?? enr.title,
+    enrichedTitle: args.titleHint ?? contact.title ?? enr.title,
     enrichedSummary: enr.summary,
     linkedinUrl: enr.linkedinUrl ?? args.linkedinUrlHint ?? null,
     fillGaps: args.fillGaps ?? true,
@@ -235,6 +365,29 @@ export async function resolveVerifyEnrichQualify(args: {
     phone: enr.phone,
     linkedinUrl: enr.linkedinUrl,
     title: gate.roleText ?? enr.title,
+    // `reject` and `transient` returned above, so what reaches here is a
+    // settled pass or an unresolved unclear — both worth persisting.
+    verdict: gate.verdict === "transient" ? "unclear" : gate.verdict,
+    verdictReason: gate.reason,
     costUsd,
+  };
+}
+
+/**
+ * The ICP fields to spread onto a finder's target payload, next to `title`.
+ *
+ * Finders stamp `...(contact.title ? { title: contact.title } : {})`; this is
+ * the sibling for the verdict, so `_run-play.ts` and the /queue send route can
+ * persist it onto the prospect row the same generic way they already persist
+ * `title`. Spread-safe: returns an empty object when there is nothing to say.
+ */
+export function icpFields(contact: Extract<QualifiedContact, { ok: true }>): {
+  icpVerdict?: string;
+  icpVerdictReason?: string;
+} {
+  if (!contact.verdict) return {};
+  return {
+    icpVerdict: contact.verdict,
+    ...(contact.verdictReason ? { icpVerdictReason: contact.verdictReason } : {}),
   };
 }

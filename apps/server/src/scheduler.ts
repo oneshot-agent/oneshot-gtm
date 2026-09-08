@@ -3,6 +3,7 @@ import {
   logEvent,
   type TelemetryOutcome,
   postDailySendSummaryIfDue,
+  refreshPendingDirectMail,
 } from "@oneshot-gtm/core";
 import {
   nextSleepMs,
@@ -10,7 +11,7 @@ import {
   runPendingRetries,
   type TriggerRunOutcome,
 } from "@oneshot-gtm/find";
-import { pollInboxBounces, pollInboxReplies } from "@oneshot-gtm/plays";
+import { backfillMailAddresses, pollInboxBounces, pollInboxReplies } from "@oneshot-gtm/plays";
 import { reportServerExecution } from "./telemetry.ts";
 
 /**
@@ -58,10 +59,19 @@ export function startScheduler(): SchedulerHandle {
   let timer: ReturnType<typeof setTimeout> | null = null;
   // 0 = never polled, so the first tick always sweeps.
   let lastBouncePollAt = 0;
+  let mailBackfillRunning = false;
 
   const tick = async (): Promise<void> => {
     if (cancelled) return;
     try {
+      if (!mailBackfillRunning) {
+        mailBackfillRunning = true;
+        void backfillMailAddresses()
+          .catch((e) => logEvent("mail.backfill.failed", { message: String(e) }, "warn"))
+          .finally(() => {
+            mailBackfillRunning = false;
+          });
+      }
       const outcomes = await runDueTriggers();
       const fired = outcomes.filter((o) => o.fired).length;
       // Telemetry per fired trigger — detached, must not delay the tick.
@@ -85,6 +95,19 @@ export function startScheduler(): SchedulerHandle {
         logEvent(
           "scheduler.reply_poll.failed",
           { message_120: ((err as Error).message ?? "").slice(0, 120) },
+          "warn",
+        );
+      }
+      let mailRefreshed = 0,
+        mailRefreshFailed = 0;
+      try {
+        const mail = await refreshPendingDirectMail();
+        mailRefreshed = mail.refreshed;
+        mailRefreshFailed = mail.failed;
+      } catch (err) {
+        logEvent(
+          "scheduler.direct_mail_refresh.failed",
+          { message_120: String(err instanceof Error ? err.message : err).slice(0, 120) },
           "warn",
         );
       }
@@ -133,6 +156,8 @@ export function startScheduler(): SchedulerHandle {
         repliesDetected,
         autoRepliesSkipped,
         bouncesRecorded,
+        mailRefreshed,
+        mailRefreshFailed,
         source: "server",
       });
       if (cancelled) return;

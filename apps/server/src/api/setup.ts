@@ -1,6 +1,7 @@
 import {
   deleteGmailToken,
   identityCapacities,
+  isValidTimeZone,
   listSendingDomains,
   loadConfig,
   registerOneShotIdentity,
@@ -10,6 +11,7 @@ import {
   saveSecrets,
   secretSource,
   secretsPath,
+  withDeadline,
   type DomainPoolEntry,
   type EmailIdentity,
   type OneShotConfig,
@@ -74,16 +76,106 @@ function domainViews(entries: DomainPoolEntry[]): DomainPoolView[] {
 }
 
 /**
- * Best-effort provisioned-domain pool for the setup UI. Swallows every failure
- * (transient OR auth) to `[]` so the setup page always renders — a missing
- * domain list degrades the picker, it shouldn't 500 the whole status call.
+ * How long GET /api/setup waits for the platform's domain list before
+ * answering without it. The sectioned /setup page (issue #451) renders
+ * nothing until this call returns, and `listDomains` has been observed
+ * taking 60–80s — so the status call carries only a quick best-effort copy
+ * and the picker fetches the full list separately via /api/setup/domains.
  */
-async function provisionedDomainViews(): Promise<DomainPoolView[]> {
+const SETUP_STATUS_DOMAINS_DEADLINE_MS = 2_500;
+/** The dedicated domain-list route can wait longer; it's off the page's critical path. */
+const SETUP_DOMAINS_DEADLINE_MS = 45_000;
+
+/** A pool this old is served immediately but refreshed in the background. */
+const DOMAIN_CACHE_FRESH_MS = 60_000;
+
+/**
+ * The last pool the platform returned, shared by both routes. `[]` is never
+ * cached — it means "unknown", and a later real answer must replace it. One
+ * underlying `listSendingDomains()` is shared between concurrent callers, and
+ * it keeps running after a caller's deadline fires, so a status call that
+ * gave up at 2.5s still fills the cache for the next load.
+ */
+let domainCache: { views: DomainPoolView[]; at: number } | null = null;
+let domainInflight: Promise<DomainPoolView[]> | null = null;
+/** When the platform last answered empty (or failed) — "unknown", not cached, but not re-asked on every page load either. */
+let lastEmptyAt = 0;
+
+/** Test seam: forget the cached pool between cases. */
+export function resetDomainCacheForTests(): void {
+  domainCache = null;
+  domainInflight = null;
+  lastEmptyAt = 0;
+}
+
+function refreshDomainViews(): Promise<DomainPoolView[]> {
+  if (domainInflight) return domainInflight;
+  const p = listSendingDomains()
+    .then((entries) => {
+      const views = domainViews(entries);
+      if (views.length > 0) domainCache = { views, at: Date.now() };
+      else lastEmptyAt = Date.now();
+      return views;
+    })
+    .catch((err: unknown) => {
+      lastEmptyAt = Date.now();
+      throw err;
+    })
+    .finally(() => {
+      if (domainInflight === p) domainInflight = null;
+    });
+  domainInflight = p;
+  return p;
+}
+
+/**
+ * Best-effort provisioned-domain pool for the setup UI. Swallows every failure
+ * (transient, auth, OR the deadline) to the last good pool, or `[]` when there
+ * is none, so the setup page always renders — a missing domain list degrades
+ * the picker, it shouldn't 500 or stall the status call.
+ */
+async function provisionedDomainViews(deadlineMs: number): Promise<DomainPoolView[]> {
   try {
-    return domainViews(await listSendingDomains());
+    return await withDeadline(refreshDomainViews(), deadlineMs, "provisioned domain list");
   } catch {
-    return [];
+    return domainCache?.views ?? [];
   }
+}
+
+/**
+ * What the status call carries: a cached pool is served at once (and
+ * refreshed in the background when stale). With a cold cache, only the FIRST
+ * call waits, briefly: while that fetch is still in flight, or after it came
+ * back empty within the last minute, later calls answer at once with `[]`
+ * rather than each paying the deadline again — that was the live pattern
+ * after #540 (platform answers empty after ~70s, so every load waited 2.5s).
+ */
+async function cachedDomainViews(): Promise<DomainPoolView[]> {
+  if (domainCache) {
+    if (Date.now() - domainCache.at > DOMAIN_CACHE_FRESH_MS) {
+      refreshDomainViews().catch(() => {
+        // background refresh; the stale pool stays until a real answer lands
+      });
+    }
+    return domainCache.views;
+  }
+  if (domainInflight) return [];
+  if (Date.now() - lastEmptyAt < DOMAIN_CACHE_FRESH_MS) return [];
+  return provisionedDomainViews(SETUP_STATUS_DOMAINS_DEADLINE_MS);
+}
+
+/** GET /api/setup/domains — the provisioned pool alone, for the sender picker. */
+export async function getSetupDomains(req: Request): Promise<Response> {
+  const fresh = domainCache && Date.now() - domainCache.at <= DOMAIN_CACHE_FRESH_MS;
+  return jsonResponse(
+    {
+      provisionedDomains: fresh
+        ? domainCache!.views
+        : await provisionedDomainViews(SETUP_DOMAINS_DEADLINE_MS),
+    },
+    200,
+    req,
+  );
 }
 
 export async function getSetupStatus(req: Request): Promise<Response> {
@@ -92,7 +184,7 @@ export async function getSetupStatus(req: Request): Promise<Response> {
     {
       cfg: publicCfg(cfg),
       identities: identityViews(cfg),
-      provisionedDomains: await provisionedDomainViews(),
+      provisionedDomains: await cachedDomainViews(),
       secretsPath: secretsPath(),
       sources: {
         OPENROUTER_API_KEY: secretSource("OPENROUTER_API_KEY"),
@@ -106,11 +198,14 @@ export async function getSetupStatus(req: Request): Promise<Response> {
         GMAIL_CLIENT_SECRET: secretSource("GMAIL_CLIENT_SECRET"),
         GMAIL_REFRESH_TOKEN: secretSource("GMAIL_REFRESH_TOKEN"),
         SMARTLEAD_API_KEY: secretSource("SMARTLEAD_API_KEY"),
+        LINKEDIN_REPLY_WEBHOOK_SECRET: secretSource("LINKEDIN_REPLY_WEBHOOK_SECRET"),
         X_API_KEY: secretSource("X_API_KEY"),
         X_API_SECRET: secretSource("X_API_SECRET"),
         X_ACCESS_TOKEN: secretSource("X_ACCESS_TOKEN"),
         X_ACCESS_SECRET: secretSource("X_ACCESS_SECRET"),
         TWITTERAPI_IO_KEY: secretSource("TWITTERAPI_IO_KEY"),
+        GITHUB_TOKEN: secretSource("GITHUB_TOKEN"),
+        LUMA_SESSION_COOKIE: secretSource("LUMA_SESSION_COOKIE"),
       },
     },
     200,
@@ -118,8 +213,49 @@ export async function getSetupStatus(req: Request): Promise<Response> {
   );
 }
 
+/**
+ * Thrown for a body the caller can fix (bad cap, bad ceiling, unknown time
+ * zone). The handler maps it to a 400 so the /setup form can show the message
+ * inline; anything else still surfaces as the generic 500.
+ */
+export class SetupValidationError extends Error {
+  override readonly name = "SetupValidationError";
+}
+
+/**
+ * Per-identity daily cap as submitted by the web form or a raw API client:
+ * `null` = uncapped, a finite number >= 0 = that cap (floored). Anything else
+ * — a string, NaN, a negative — is rejected instead of being coerced to
+ * "uncapped": the old fail-open coercion turned a typo in the cap box into
+ * unlimited sends for that identity.
+ */
+export function validateIdentityCap(value: unknown, where: string): number | null {
+  if (value === null) return null;
+  if (typeof value === "number" && Number.isFinite(value) && value >= 0) return Math.floor(value);
+  throw new SetupValidationError(
+    `invalid maxPerDay ${JSON.stringify(value)} for ${where} — must be a whole number of sends per day (0 or more), or null for no cap`,
+  );
+}
+
 export async function setup(req: Request): Promise<Response> {
   const body = (await req.json()) as SetupRequest;
+  try {
+    applySetup(body);
+  } catch (err) {
+    if (err instanceof SetupValidationError) {
+      return jsonResponse({ error: err.message }, 400, req);
+    }
+    throw err;
+  }
+  return jsonResponse({ ok: true }, 200, req);
+}
+
+/**
+ * Validate everything first, then write. A SetupValidationError thrown from
+ * any check below leaves config.json, the identity pool and .env exactly as
+ * they were — a partial write behind a 400 would make the 400 a lie.
+ */
+function applySetup(body: SetupRequest): void {
   const current = loadConfig();
   const llmProvider: LlmProvider = body.llmProvider ?? current.llmProvider;
   const walletMode: WalletMode = body.walletMode ?? current.walletMode;
@@ -134,32 +270,26 @@ export async function setup(req: Request): Promise<Response> {
   // client-side warm-up ramp is the only throttle — hence new identities
   // default to it.
   const adds = body.addIdentities ?? [];
+  for (const add of adds) {
+    if ("maxPerDay" in add && add.maxPerDay !== undefined) {
+      const where = add.provider === "smartlead" ? add.address : add.sendingDomain;
+      validateIdentityCap(add.maxPerDay, `new ${add.provider} sender ${where}`);
+    }
+  }
 
   // Identity-pool edits (cap changes / removals). The first edit materializes
   // the pool from legacy config so the change has somewhere to persist.
   let emailIdentities = current.emailIdentities;
   const hasIdentityEdits =
     (body.identityUpdates?.length ?? 0) > 0 || (body.removeIdentityIds?.length ?? 0) > 0;
+  const remove = new Set(body.removeIdentityIds ?? []);
   if (hasIdentityEdits) {
     let pool: EmailIdentity[] = current.emailIdentities ?? resolveIdentities(current);
     for (const upd of body.identityUpdates ?? []) {
-      const cap =
-        typeof upd.maxPerDay === "number" && Number.isFinite(upd.maxPerDay) && upd.maxPerDay >= 0
-          ? Math.floor(upd.maxPerDay)
-          : null;
+      const cap = validateIdentityCap(upd.maxPerDay, upd.id);
       pool = pool.map((i) => (i.id === upd.id ? { ...i, maxPerDay: cap } : i));
     }
-    const remove = new Set(body.removeIdentityIds ?? []);
-    if (remove.size > 0) {
-      pool = pool.filter((i) => !remove.has(i.id));
-      for (const id of remove) {
-        try {
-          deleteGmailToken(id);
-        } catch {
-          // token-store cleanup is best-effort; the identity is gone either way.
-        }
-      }
-    }
+    if (remove.size > 0) pool = pool.filter((i) => !remove.has(i.id));
     emailIdentities = pool;
   }
 
@@ -167,32 +297,18 @@ export async function setup(req: Request): Promise<Response> {
   // ignored so a malicious or accidental web POST can't rotate the anonymous
   // install id. saveConfig writes the entire cfg, so omitting clientId here
   // would silently drop it from disk.
-  saveConfig({
-    walletMode,
-    llmProvider,
-    llmModel: body.llmModel ?? current.llmModel,
-    telemetryEnabled: body.telemetryEnabled ?? current.telemetryEnabled,
-    founderName: mergeString(body.founderName, current.founderName),
-    founderEmail: mergeString(body.founderEmail, current.founderEmail),
-    productOneLiner: mergeString(body.productOneLiner, current.productOneLiner),
-    productDomain: mergeString(body.productDomain, current.productDomain),
-    sendingDomain: mergeString(body.sendingDomain, current.sendingDomain),
-    emailProvider:
-      body.emailProvider === "gmail" || body.emailProvider === "oneshot"
-        ? body.emailProvider
-        : current.emailProvider,
-    emailIdentities,
-    icpOneLiner: mergeString(body.icpOneLiner, current.icpOneLiner),
-    cadenceOverrides: current.cadenceOverrides,
-    founderCredentials: mergeString(body.founderCredentials, current.founderCredentials),
-    productPortfolio: mergeString(body.productPortfolio, current.productPortfolio),
-    partners: mergeString(body.partners, current.partners),
-    founderAdmission: mergeString(body.founderAdmission, current.founderAdmission),
-    productBrief: mergeString(body.productBrief, current.productBrief),
-    mobileSignature: body.mobileSignature ?? current.mobileSignature,
-    slackWebhookUrl: mergeString(body.slackWebhookUrl, current.slackWebhookUrl),
-    clientId: current.clientId,
-  });
+  // mergeSetupConfig is the last validator (ceiling, time zone): nothing
+  // below this line runs if it throws.
+  const merged = mergeSetupConfig(current, body, emailIdentities, llmProvider, walletMode);
+  saveConfig(merged);
+
+  for (const id of remove) {
+    try {
+      deleteGmailToken(id);
+    } catch {
+      // token-store cleanup is best-effort; the identity is gone either way.
+    }
+  }
 
   // Adds run AFTER the main saveConfig: registerOneShotIdentity reloads the
   // freshly-persisted config (so it sees the cap/removal edits above and any
@@ -220,8 +336,50 @@ export async function setup(req: Request): Promise<Response> {
   if (body.secrets && Object.keys(body.secrets).length > 0) {
     saveSecrets(body.secrets);
   }
+}
 
-  return jsonResponse({ ok: true }, 200, req);
+export function mergeSetupConfig(
+  current: OneShotConfig,
+  body: SetupRequest,
+  emailIdentities: EmailIdentity[] | null,
+  llmProvider: LlmProvider = body.llmProvider ?? current.llmProvider,
+  walletMode: WalletMode = body.walletMode ?? current.walletMode,
+): OneShotConfig {
+  return {
+    ...current,
+    walletMode,
+    llmProvider,
+    llmModel: body.llmModel ?? current.llmModel,
+    telemetryEnabled: body.telemetryEnabled ?? current.telemetryEnabled,
+    founderName: mergeString(body.founderName, current.founderName),
+    founderEmail: mergeString(body.founderEmail, current.founderEmail),
+    productOneLiner: mergeString(body.productOneLiner, current.productOneLiner),
+    productDomain: mergeString(body.productDomain, current.productDomain),
+    sendingDomain: mergeString(body.sendingDomain, current.sendingDomain),
+    emailProvider:
+      body.emailProvider === "gmail" || body.emailProvider === "oneshot"
+        ? body.emailProvider
+        : current.emailProvider,
+    emailIdentities,
+    icpOneLiner: mergeString(body.icpOneLiner, current.icpOneLiner),
+    founderCredentials: mergeString(body.founderCredentials, current.founderCredentials),
+    productPortfolio: mergeString(body.productPortfolio, current.productPortfolio),
+    partners: mergeString(body.partners, current.partners),
+    founderCohort: mergeString(body.founderCohort, current.founderCohort ?? null),
+    founderAdmission: mergeString(body.founderAdmission, current.founderAdmission),
+    productBrief: mergeString(body.productBrief, current.productBrief),
+    mobileSignature: body.mobileSignature ?? current.mobileSignature,
+    slackWebhookUrl: mergeString(body.slackWebhookUrl, current.slackWebhookUrl),
+    queueReviewOrder:
+      body.queueReviewOrder === "ranked" || body.queueReviewOrder === "newest"
+        ? body.queueReviewOrder
+        : current.queueReviewOrder,
+    timezone: mergeTimeZone(body.timezone, current.timezone),
+    dailySpendCeilingUsd:
+      body.dailySpendCeilingUsd === undefined
+        ? current.dailySpendCeilingUsd
+        : validateSpendCeiling(body.dailySpendCeilingUsd),
+  };
 }
 
 /**
@@ -234,4 +392,43 @@ function mergeString(incoming: string | undefined, current: string | null): stri
   if (incoming === undefined) return current;
   const trimmed = incoming.trim();
   return trimmed.length === 0 ? null : trimmed;
+}
+
+/**
+ * Same validation the CLI path (`configSpendCeiling`) already enforces
+ * before persisting the daily USD spend ceiling — `null` clears it back to
+ * unlimited, anything else must be a positive finite number. Without this,
+ * a direct API client (or a founder typing/submitting 0 in the /setup form,
+ * whose `<Input type="number" min="0">` doesn't stop 0) could persist a
+ * ceiling of 0, negative, or NaN. A ceiling of 0 makes
+ * `effectiveUsd (0) >= ceilingUsd (0)` true immediately with zero spend —
+ * silently halting every scheduled finder, run-now, and automatic drain
+ * install-wide, the opposite of the unlimited default this feature ships.
+ */
+function validateSpendCeiling(value: number | null): number | null {
+  if (value === null) return null;
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new SetupValidationError(
+      `invalid dailySpendCeilingUsd '${value}' — must be a positive number of USD, or null to clear`,
+    );
+  }
+  return value;
+}
+
+/**
+ * Time zone merge: undefined keeps the stored zone, null/blank clears it back
+ * to the runtime default (installTimeZone in core), anything else must be an
+ * IANA name Intl recognises — "Mars/Olympus" is a 400, not a saved string that
+ * later makes every Luma slot resolve to UTC.
+ */
+function mergeTimeZone(incoming: string | null | undefined, current: string | null): string | null {
+  if (incoming === undefined) return current;
+  if (incoming === null || incoming.trim().length === 0) return null;
+  const zone = incoming.trim();
+  if (!isValidTimeZone(zone)) {
+    throw new SetupValidationError(
+      `invalid timezone '${zone}' — must be an IANA zone such as Europe/Vienna, or blank to use this machine's zone`,
+    );
+  }
+  return zone;
 }

@@ -1,13 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { ArrowRight, ChevronDown, ChevronRight } from "lucide-react";
-import { useRef, useState } from "react";
+import { useState } from "react";
 import type { TriggerView } from "@oneshot-gtm/shared-types";
 import { api } from "../../api/client.ts";
 import { cn, timeAgo } from "../../lib/cn.ts";
 import { humanInterval } from "../../lib/humanInterval.ts";
 import { summarizeRun } from "../../lib/summarizeRun.ts";
+import { dueInMs, summarizeTriggers } from "../../lib/triggerSummary.ts";
 import { Badge } from "../primitives/Badge.tsx";
+import { Explain } from "../primitives/Explain.tsx";
 import { EmptyNote } from "../primitives/EmptyNote.tsx";
 import { SkeletonRow } from "../primitives/Skeleton.tsx";
 
@@ -42,26 +44,20 @@ export function SchedulerStrip(): React.ReactElement {
   const triggers = triggersQuery.data?.triggers ?? [];
   const now = Date.now();
 
-  const rows: Row[] = triggers.map((t) => {
-    const state: Row["state"] = t.running
+  // Schedule arithmetic is shared with /queue's trigger panel, which prints
+  // the same next-due figure in its collapsed header. Two copies of it is how
+  // the two end up disagreeing about one ledger.
+  const rows: Row[] = triggers.map((t) => ({
+    trigger: t,
+    state: t.running
       ? "running"
       : !t.enabled
         ? "disabled"
-        : !t.ready
+        : t.ready === false
           ? "not-ready"
-          : "enabled";
-    // Compute next-due only for enabled+ready triggers that have polled
-    // at least once. Never-polled rows would otherwise compute
-    // `intervalMs - now()` (a ~57-year-overdue number) — they're not really
-    // overdue, the scheduler just hasn't reached them yet, so render "—".
-    let dueInMs: number | null = null;
-    if (t.enabled && t.ready && !t.running && t.lastPolledAt) {
-      const lastMs = new Date(t.lastPolledAt).getTime();
-      const nextMs = lastMs + t.intervalMs;
-      dueInMs = nextMs - now;
-    }
-    return { trigger: t, state, dueInMs };
-  });
+          : "enabled",
+    dueInMs: dueInMs(t, now),
+  }));
 
   // Enabled-first sort, with overdue floating above due-soon. Disabled
   // / not-ready sink to the bottom and get collapsed behind the chip.
@@ -78,22 +74,14 @@ export function SchedulerStrip(): React.ReactElement {
     });
   const disabled = rows.filter((r) => r.state === "disabled");
 
-  const enabledCount = rows.filter((r) => r.trigger.enabled).length;
-  const overdueCount = rows.filter((r) => r.dueInMs != null && r.dueInMs < 0).length;
-  // Soonest upcoming tick, for the collapsed one-liner.
-  const nextDueMs = visible
-    .map((r) => r.dueInMs)
-    .filter((ms): ms is number => ms != null && ms >= 0)
-    .toSorted((a, b) => a - b)[0];
+  const {
+    enabled: enabledCount,
+    overdue: overdueCount,
+    nextDueMs,
+  } = summarizeTriggers(triggers, now);
 
-  // Collapsed by default — the table duplicates /queue's trigger panel. Seed
-  // open ONCE when something is overdue; refetches never slam a manual toggle.
+  // Warnings stay visible in the summary; only the reader opens the table.
   const [expanded, setExpanded] = useState(false);
-  const seeded = useRef(false);
-  if (!seeded.current && triggersQuery.data) {
-    seeded.current = true;
-    if (overdueCount > 0) setExpanded(true);
-  }
 
   return (
     <section className="flex flex-col border-b border-ink-rule">
@@ -102,7 +90,8 @@ export function SchedulerStrip(): React.ReactElement {
           type="button"
           onClick={() => setExpanded((v) => !v)}
           aria-expanded={expanded}
-          aria-label={`${expanded ? "Collapse" : "Expand"} the scheduler table`}
+          // No aria-label: it would replace the summary beside it as this
+          // button's accessible name. See the same note on /queue's panel.
           className="flex flex-1 items-baseline gap-3 px-6 pb-2 pt-5 text-left transition-colors duration-[var(--dur-stamp)] hover:bg-ink-surface/40"
         >
           <span className="text-ink-faint">
@@ -110,7 +99,7 @@ export function SchedulerStrip(): React.ReactElement {
           </span>
           <div className="ln-eyebrow">Scheduler</div>
           <div className="font-mono text-[11px] text-ink-faint">
-            {enabledCount} enabled
+            · {enabledCount} enabled
             {overdueCount > 0 && (
               <span className="ml-2 text-[color:var(--ink-blocked-2)]">
                 · {overdueCount} overdue
@@ -214,6 +203,7 @@ function SchedulerRow({ row, zebra }: { row: Row; zebra: boolean }): React.React
       </td>
       <td className="py-2 font-mono text-[11.5px] text-ink-muted">
         {summarizeRun(trigger.lastRunSummary)}
+        {trigger.lastRunSummary != null && <Explain concept="icpGate" />}
       </td>
       <td className="py-2 text-right font-mono text-[11.5px] text-ink-faint">
         {trigger.lastPolledAt ? timeAgo(trigger.lastPolledAt) : "never"}

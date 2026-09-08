@@ -11,6 +11,7 @@ import type {
   OutcomeRequest,
   RocsGoalView,
   SpendByPlay,
+  SpendSeries,
 } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 
@@ -68,8 +69,47 @@ export function measureRocs(req: Request): Response {
       won: r.won,
       lost: r.lost,
       ghosted: r.ghosted,
+      wonValueUsd: r.won_value_usd,
     }));
   return jsonResponse({ spend, events, outcomes }, 200, req);
+}
+
+/**
+ * Daily spend per play, for the trend sparklines.
+ *
+ * The window is clamped the way the sparkline draws it: never fewer than seven
+ * buckets, never more than ninety, so the response and the chart agree on how
+ * many columns exist.
+ */
+export function measureSpendSeries(req: Request): Response {
+  const days = Math.min(90, Math.max(7, readPeriodDays(req) ?? 30));
+  const ledger = getLedger();
+  const byPlay = new Map<string, number[]>();
+  // Bucket index 0 is the oldest day in the window, which is how the sparkline
+  // reads it left to right.
+  const today = Date.now();
+  const DAY_MS = 24 * 3600 * 1000;
+  const dayIndex = (day: string): number => {
+    const ts = Date.parse(`${day}T00:00:00Z`);
+    if (Number.isNaN(ts)) return -1;
+    const todayUtc = Math.floor(today / DAY_MS) * DAY_MS;
+    return days - 1 - Math.round((todayUtc - ts) / DAY_MS);
+  };
+  for (const row of ledger.spendSeriesByPlay({ days })) {
+    const i = dayIndex(row.day);
+    if (i < 0 || i >= days) continue;
+    let arr = byPlay.get(row.play_name);
+    if (!arr) {
+      arr = Array.from({ length: days }, () => 0);
+      byPlay.set(row.play_name, arr);
+    }
+    arr[i] = (arr[i] ?? 0) + row.total_usd;
+  }
+  const payload: SpendSeries = {
+    days,
+    series: Array.from(byPlay.entries()).map(([playName, spend]) => ({ playName, spend })),
+  };
+  return jsonResponse(payload, 200, req);
 }
 
 export async function recordOutcome(req: Request): Promise<Response> {

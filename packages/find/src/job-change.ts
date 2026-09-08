@@ -1,5 +1,6 @@
 import { getLedger, logEvent, webSearch } from "@oneshot-gtm/core";
-import { resolveVerifyEnrichQualify } from "./_contact.ts";
+import { resolveVerifyEnrichQualify, icpFields } from "./_contact.ts";
+import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { persistRoleRejection, qualifyPreSpend } from "./_qualify.ts";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { JobChangeTarget } from "@oneshot-gtm/plays";
@@ -12,6 +13,8 @@ const PLAY_NAME = "job-change";
 const SOURCE = "find:job-change";
 
 export interface JobChangeFinderOpts extends RunOpts {
+  /** The pitch angle, stamped onto every enqueued row so it drafts inline. */
+  yourEdge?: string;
   /**
    * Target personas to search for (e.g. "VP Engineering", "Head of Growth").
    * Each persona gets one webSearch query combined with sinceDays.
@@ -265,8 +268,10 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
       ...(linkedinUrl ? { linkedinUrl } : {}),
       ...(phone ? { phone } : {}),
       ...(contact.title ? { title: contact.title } : {}),
+      ...icpFields(contact),
+      yourEdge: opts.yourEdge ?? "",
     };
-    const id = ledger.enqueueTarget({
+    const id = enqueueScoredTarget(ledger, {
       playName: PLAY_NAME,
       payload: target,
       dedupeKey: hit.url,

@@ -1,14 +1,23 @@
+import { captureSdkBusinessAddress } from "./mail-enrichment.ts";
 import {
   OneShot,
+  ValidationError,
   type BrowserResult,
+  type CompanySearchResult,
   type DeepResearchPersonResult,
   type DomainPoolEntry,
   type DomainPoolStatusResult,
   type EmailResult,
+  type EnrichCompanyResult,
   type EnrichProfileResult,
   type FindEmailResult,
+  type GovNoticeTypeCode,
+  type GovSolicitationsResult,
+  type LocalResolveResult,
+  type LocalSearchResult,
   type InboxEmail,
   type InboxListResult,
+  type PeopleSearchResult,
   type ResearchResult,
   type SmsSendResult,
   type VerifyEmailResult,
@@ -43,6 +52,15 @@ import type { EmailIdentity } from "./types.ts";
 
 /** Re-exported so callers don't reach into the SDK for the domain-pool shape. */
 export type { DomainPoolEntry, DomainPoolStatusResult } from "@oneshot-agent/sdk";
+
+/** Re-exported so callers don't reach into the SDK for the prospecting result shapes. */
+export type {
+  CompanyResult,
+  CompanySearchResult,
+  EnrichCompanyResult,
+  PeopleSearchResult,
+  PersonResult,
+} from "@oneshot-agent/sdk";
 
 export interface SendEmailInput {
   to: string;
@@ -156,7 +174,7 @@ async function initAgent(): Promise<OneShot> {
   return await OneShot.create({ cdp: true });
 }
 
-async function getAgent(): Promise<OneShot> {
+export async function getAgent(): Promise<OneShot> {
   if (!agentSingleton) agentSingleton = await initAgent();
   return agentSingleton;
 }
@@ -378,6 +396,14 @@ async function dispatchEmail(input: SendEmailInput, ctx: CallContext) {
     throw new SuppressedRecipientError(
       `${input.to} ${why} (${contactStop.kind} reply on ${contactStop.received_at.slice(0, 10)}) — not sending`,
     );
+  }
+  if (ctx.playName === "breakup-revive") {
+    const manualHold = getLedger().breakupReviveHoldFor(input.to);
+    if (manualHold) {
+      throw new SuppressedRecipientError(
+        `${input.to} has a ${manualHold.reason} manual stop from ${manualHold.stopped_at.slice(0, 10)} — not reviving`,
+      );
+    }
   }
   // Sender rotation: resolve the sticky per-prospect identity BEFORE any
   // network call. Throws SendDeferredError when every identity is at its
@@ -636,6 +662,12 @@ export async function enrichProfile(input: EnrichInput, ctx: CallContext) {
     costUsd: result.cost,
     oneshotRequestId: result.request_id,
   });
+  captureSdkBusinessAddress(result, {
+    email: input.email,
+    name: input.name,
+    companyDomain: input.companyDomain ?? (result.profile?.company_domain as string | undefined),
+    source: "sdk:enrich.profile",
+  });
   return { result, receiptId };
 }
 
@@ -723,6 +755,322 @@ export async function verifyEmail(input: VerifyEmailInput, ctx: CallContext) {
     costUsd: result.cost,
     oneshotRequestId: result.request_id,
   });
+  return { result, receiptId };
+}
+
+export interface PeopleSearchInput {
+  jobTitles?: string[];
+  keywords?: string[];
+  companies?: string[];
+  companyDomains?: string[];
+  location?: string[];
+  skills?: string[];
+  seniority?: string[];
+  industry?: string[];
+  companySize?: string;
+  /** SDK default is 100; server caps at 500. */
+  limit?: number;
+}
+
+/**
+ * B2B-database-backed person search — $0.01 flat per call, up to 500 results
+ * (server cap; SDK default 100). Unlike `findEmail`/`enrichProfile`, this
+ * doesn't resolve ONE known candidate: it discovers a whole slate up front,
+ * each already carrying `best_work_email`/`phone`/`title`/`company_domain`
+ * where the database has them — a finder can qualify against this list
+ * directly instead of paying per-candidate through
+ * `resolveVerifyEnrichQualify`.
+ */
+export async function peopleSearch(input: PeopleSearchInput, ctx: CallContext) {
+  const agent = await getAgent();
+  const opts: Parameters<OneShot["peopleSearch"]>[0] = {
+    ...buildAuditOpts(ctx, "research.people"),
+  };
+  if (input.jobTitles) opts.job_titles = input.jobTitles;
+  if (input.keywords) opts.keywords = input.keywords;
+  if (input.companies) opts.companies = input.companies;
+  if (input.companyDomains) opts.company_domains = input.companyDomains;
+  if (input.location) opts.location = input.location;
+  if (input.skills) opts.skills = input.skills;
+  if (input.seniority) opts.seniority = input.seniority;
+  if (input.industry) opts.industry = input.industry;
+  if (input.companySize) opts.company_size = input.companySize;
+  if (input.limit) opts.limit = input.limit;
+
+  const result: PeopleSearchResult = await agent.peopleSearch(opts);
+  const receiptId = recordCallReceipt({
+    ctx,
+    callType: "research.people",
+    signedReceipt: result,
+    costUsd: result.cost,
+    oneshotRequestId: result.request_id,
+  });
+  return { result, receiptId };
+}
+
+export interface CompanySearchInput {
+  name?: string;
+  domain?: string;
+  industry?: string[];
+  location?: string[];
+  size?: string;
+  minEmployeeCount?: number;
+  maxEmployeeCount?: number;
+  fundingStage?: string;
+  tags?: string[];
+  /** SDK/server default cap is 100. */
+  limit?: number;
+}
+
+/** Company-database search — $0.01 flat per call, up to 100 results. All filters optional (an empty call is valid per the SDK signature). */
+export async function companySearch(input: CompanySearchInput, ctx: CallContext) {
+  const agent = await getAgent();
+  const opts: Parameters<OneShot["companySearch"]>[0] = {
+    ...buildAuditOpts(ctx, "research.company"),
+  };
+  if (input.name) opts.name = input.name;
+  if (input.domain) opts.domain = input.domain;
+  if (input.industry) opts.industry = input.industry;
+  if (input.location) opts.location = input.location;
+  if (input.size) opts.size = input.size;
+  if (input.minEmployeeCount !== undefined) opts.min_employee_count = input.minEmployeeCount;
+  if (input.maxEmployeeCount !== undefined) opts.max_employee_count = input.maxEmployeeCount;
+  if (input.fundingStage) opts.funding_stage = input.fundingStage;
+  if (input.tags) opts.tags = input.tags;
+  if (input.limit) opts.limit = input.limit;
+
+  const result: CompanySearchResult = await agent.companySearch(opts);
+  const receiptId = recordCallReceipt({
+    ctx,
+    callType: "research.company",
+    signedReceipt: result,
+    costUsd: result.cost,
+    oneshotRequestId: result.request_id,
+  });
+  return { result, receiptId };
+}
+
+export interface EnrichCompanyInput {
+  domain?: string;
+  name?: string;
+  linkedinUrl?: string;
+  ticker?: string;
+}
+
+/**
+ * Company enrichment from a domain, name, LinkedIn URL or stock ticker — $0.005 per call.
+ *
+ * The identifier check below is duplicated ahead of `getAgent()` — not because
+ * the pinned SDK's own `enrichCompany` (node_modules/@oneshot-agent/sdk
+ * dist/index.js) fails to validate (it does, throwing the exact same
+ * `ValidationError` before any network call), but because `getAgent()` runs
+ * BEFORE `agent.enrichCompany(opts)` and, on a cold singleton, itself makes an
+ * outbound network call (`OneShot.create({ cdp: true })` →
+ * `CdpWalletProvider.create()` → `cdp.evm.createAccount()`) that would fire
+ * for an all-empty call before the SDK ever got a chance to reject it. Guard
+ * here first so an invalid call never pays for wallet initialization.
+ * enrichProfile (line 641), deepResearchPerson (line 680) and findEmail (line
+ * 709) above still rely solely on the SDK's own required-field validation and
+ * are unaffected by this. Callers that need a non-throwing path already have
+ * safeEnrichCompany (packages/find/src/_sdk-safe.ts), which catches this
+ * exact ValidationError and resolves to an empty-result sentinel.
+ */
+export async function enrichCompany(input: EnrichCompanyInput, ctx: CallContext) {
+  if (!input.domain && !input.name && !input.linkedinUrl && !input.ticker) {
+    throw new ValidationError(
+      "At least one of domain, name, linkedin_url, or ticker is required",
+      "identifier",
+    );
+  }
+  const agent = await getAgent();
+  const opts: Parameters<OneShot["enrichCompany"]>[0] = {
+    ...buildAuditOpts(ctx, "enrich.company"),
+  };
+  if (input.domain) opts.domain = input.domain;
+  if (input.name) opts.name = input.name;
+  if (input.linkedinUrl) opts.linkedin_url = input.linkedinUrl;
+  if (input.ticker) opts.ticker = input.ticker;
+
+  const result: EnrichCompanyResult = await agent.enrichCompany(opts);
+  const receiptId = recordCallReceipt({
+    ctx,
+    callType: "enrich.company",
+    signedReceipt: result,
+    costUsd: result.cost,
+    oneshotRequestId: result.request_id,
+  });
+  captureSdkBusinessAddress(result, {
+    name: result.company?.name,
+    companyDomain: input.domain ?? result.company?.domain,
+    source: "sdk:enrich.company",
+  });
+  return { result, receiptId };
+}
+
+export type {
+  GovContact,
+  GovNoticeType,
+  GovNoticeTypeCode,
+  GovSolicitationsResult,
+  LocalResolveResult,
+  LocalResult,
+  LocalSearchResult,
+  Solicitation,
+} from "@oneshot-agent/sdk";
+
+export interface GovSolicitationsInput {
+  /** 6-digit NAICS codes, 1-20 per call. */
+  naics: string[];
+  /** SAM.gov notice-type codes; the SDK defaults to ["r", "p"]. */
+  noticeTypes?: GovNoticeTypeCode[];
+  /** Look-back on posted date, 1-365 (SDK default 30). */
+  sinceDays?: number;
+  /** Case-insensitive agency-name substrings to keep. */
+  agencies?: string[];
+  keywords?: string[];
+  /** Place-of-performance state code. */
+  state?: string;
+  setAside?: string;
+  /** SDK default true: drops archived notices and past response deadlines. */
+  activeOnly?: boolean;
+  /** Only notices whose point of contact has both a name and an email. */
+  hasContact?: boolean;
+  /** SDK default true: description bodies come back inline (capped per search). */
+  includeDescription?: boolean;
+  /** 1-500, SDK default 100. */
+  limit?: number;
+}
+
+/**
+ * Federal Sources Sought / Presolicitation notices by NAICS, with the
+ * contracting officer's published contact and the description inline — one
+ * flat-priced search per call. Replaces the two raw SAM.gov fetches (search +
+ * per-notice description) gov-solicitation used to make itself, and with them
+ * the SAM_GOV_API_KEY those needed.
+ */
+export async function govSolicitations(input: GovSolicitationsInput, ctx: CallContext) {
+  const agent = await getAgent();
+  const opts: Parameters<OneShot["govSolicitations"]>[0] = {
+    naics: input.naics,
+    ...buildAuditOpts(ctx, "gov.solicitations"),
+  };
+  if (input.noticeTypes) opts.notice_types = input.noticeTypes;
+  if (input.sinceDays !== undefined) opts.since_days = input.sinceDays;
+  if (input.agencies) opts.agencies = input.agencies;
+  if (input.keywords) opts.keywords = input.keywords;
+  if (input.state) opts.state = input.state;
+  if (input.setAside) opts.set_aside = input.setAside;
+  if (input.activeOnly !== undefined) opts.active_only = input.activeOnly;
+  if (input.hasContact !== undefined) opts.has_contact = input.hasContact;
+  if (input.includeDescription !== undefined) opts.include_description = input.includeDescription;
+  if (input.limit) opts.limit = input.limit;
+
+  const result: GovSolicitationsResult = await agent.govSolicitations(opts);
+  const receiptId = recordCallReceipt({
+    ctx,
+    callType: "gov.solicitations",
+    signedReceipt: result,
+    costUsd: result.cost,
+    oneshotRequestId: result.request_id,
+  });
+  return { result, receiptId };
+}
+
+export interface LocalSearchInput {
+  /** Business categories, e.g. ["hvac contractor"]. `category` or `keywords` required. */
+  category?: string[];
+  keywords?: string[];
+  /** Cities, neighborhoods, or "City, ST" strings. Required. */
+  location: string[];
+  minRating?: number;
+  minReviewCount?: number;
+  /** true = only chains, false = exclude detected chains (undetected rows survive). */
+  isChain?: boolean;
+  /** SDK default "open". */
+  operatingStatus?: "open" | "any";
+  /** true = only rows with a resolvable website domain. */
+  hasDomain?: boolean;
+  /** 1-500, SDK default 100. */
+  limit?: number;
+}
+
+/**
+ * Local businesses (restaurants, contractors, practices) by category ×
+ * location — flat price per search, not per row. The main-street discovery
+ * tool the B2B people database never was.
+ */
+export async function localSearch(input: LocalSearchInput, ctx: CallContext) {
+  const agent = await getAgent();
+  const opts: Parameters<OneShot["localSearch"]>[0] = {
+    location: input.location,
+    ...buildAuditOpts(ctx, "local.search"),
+  };
+  if (input.category) opts.category = input.category;
+  if (input.keywords) opts.keywords = input.keywords;
+  if (input.minRating !== undefined) opts.min_rating = input.minRating;
+  if (input.minReviewCount !== undefined) opts.min_review_count = input.minReviewCount;
+  if (input.isChain !== undefined) opts.is_chain = input.isChain;
+  if (input.operatingStatus) opts.operating_status = input.operatingStatus;
+  if (input.hasDomain !== undefined) opts.has_domain = input.hasDomain;
+  if (input.limit) opts.limit = input.limit;
+
+  const result: LocalSearchResult = await agent.localSearch(opts);
+  const receiptId = recordCallReceipt({
+    ctx,
+    callType: "local.search",
+    signedReceipt: result,
+    costUsd: result.cost,
+    oneshotRequestId: result.request_id,
+  });
+  return { result, receiptId };
+}
+
+export interface LocalResolveInput {
+  name: string;
+  address?: string;
+  city?: string;
+  /** State / province. */
+  region?: string;
+  postalCode?: string;
+  /** Strongest single match signal after the name. */
+  phone?: string;
+}
+
+/**
+ * Business name + one locating field → website domain, phone, category and
+ * operating status, with a confidence. A miss is `found: false` (a completed
+ * job), never a rejection — the same contract as findEmail. What
+ * local-registry uses to turn a licence row into a contactable domain,
+ * using the address the registry already gave us instead of guessing from
+ * the name alone.
+ */
+export async function localResolve(input: LocalResolveInput, ctx: CallContext) {
+  const agent = await getAgent();
+  const opts: Parameters<OneShot["localResolve"]>[0] = {
+    name: input.name,
+    ...buildAuditOpts(ctx, "local.resolve"),
+  };
+  if (input.address) opts.address = input.address;
+  if (input.city) opts.city = input.city;
+  if (input.region) opts.region = input.region;
+  if (input.postalCode) opts.postal_code = input.postalCode;
+  if (input.phone) opts.phone = input.phone;
+
+  const result: LocalResolveResult = await agent.localResolve(opts);
+  const receiptId = recordCallReceipt({
+    ctx,
+    callType: "local.resolve",
+    signedReceipt: result,
+    costUsd: result.cost,
+    oneshotRequestId: result.request_id,
+  });
+  if (result.found && result.result) {
+    captureSdkBusinessAddress(result.result, {
+      name: result.result.name,
+      ...(result.result.domain ? { companyDomain: result.result.domain } : {}),
+      source: "sdk:local.resolve",
+    });
+  }
   return { result, receiptId };
 }
 

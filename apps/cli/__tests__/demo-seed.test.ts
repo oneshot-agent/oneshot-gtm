@@ -24,6 +24,20 @@ import {
 
 const ANCHOR = new Date("2026-08-17T09:00:00.000Z");
 
+/**
+ * Every test in the two describes below seeds a real ledger in its own body,
+ * and seeding got heavier when the demo install started arriving pre-run
+ * rather than freshly switched on.
+ *
+ * Measured locally: one seed is 640-800ms, and the two tests that seed twice
+ * are 1.3-1.5s. CI runners are roughly 3-4x slower, which puts those two over
+ * vitest's 5s default and leaves the single-seed tests with very little room —
+ * so the timeout is set for the whole group rather than patched onto the two
+ * that happened to cross the line first. These are not five-second unit tests
+ * and should not be held to that budget.
+ */
+const SEED_TIMEOUT_MS = 30_000;
+
 let home: string;
 
 beforeEach(() => {
@@ -46,7 +60,7 @@ function totalSpend(entries: Array<{ spend: number }>): number {
   return entries.reduce((a, r) => a + r.spend, 0);
 }
 
-describe("seedDemoHome", () => {
+describe("seedDemoHome", { timeout: SEED_TIMEOUT_MS }, () => {
   it("writes config, secrets, fixtures and a marker", () => {
     seedDemoHome({ home, anchor: ANCHOR });
 
@@ -153,6 +167,8 @@ describe("seedDemoHome", () => {
     expect(Number(orphan[0]?.["n"])).toBe(0);
   });
 
+  // Both tests below seed two disk-backed ledgers. CI takes ~6s for two seeds,
+  // above Vitest's default 5s; leave room for runner I/O without changing assertions.
   it("is deterministic — the same anchor reproduces the same ledger", () => {
     const a = seedDemoHome({ home, anchor: ANCHOR });
     const db1 = open(home);
@@ -166,7 +182,7 @@ describe("seedDemoHome", () => {
 
     expect(after).toBe(before);
     expect(b.counts).toEqual(a.counts);
-  });
+  }, 15_000);
 
   it("re-seeds in place without stacking duplicate rows", () => {
     const first = seedDemoHome({ home, anchor: ANCHOR });
@@ -177,7 +193,7 @@ describe("seedDemoHome", () => {
     const n = rows(db, "SELECT COUNT(*) n FROM prospects");
     db.close();
     expect(Number(n[0]?.["n"])).toBe(first.counts["prospects"]);
-  });
+  }, 15_000);
 
   it("refuses to seed into the real install", () => {
     const real = join(homedir(), ".oneshot-gtm");
@@ -322,7 +338,7 @@ describe("scrubInheritedSecrets", () => {
   });
 });
 
-describe("resetDemoHome", () => {
+describe("resetDemoHome", { timeout: SEED_TIMEOUT_MS }, () => {
   it("removes a seeded home", () => {
     seedDemoHome({ home, anchor: ANCHOR });
     resetDemoHome(home);

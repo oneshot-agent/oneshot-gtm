@@ -11,6 +11,7 @@ const GROUP_ORDER: Array<{ key: DoctorGroup; label: string }> = [
   { key: "install", label: "install" },
   { key: "senders", label: "senders" },
   { key: "deliverability", label: "deliverability" },
+  { key: "finders", label: "finders" },
   { key: "spend", label: "spend" },
 ];
 

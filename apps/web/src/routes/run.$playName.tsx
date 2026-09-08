@@ -1,6 +1,7 @@
+import { Explain } from "../components/primitives/Explain.tsx";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, CheckCircle2, Loader2, Play, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Loader2, Play, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   parseQueueIds,
@@ -13,9 +14,11 @@ import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
 import { Field, Input, Textarea } from "../components/primitives/Field.tsx";
 import { cn } from "../lib/cn.ts";
-import { PLAY_SCHEMAS } from "../lib/playSchemas.ts";
+import { missingRequiredFields, missingRequiredExtras, PLAY_SCHEMAS } from "../lib/playSchemas.ts";
 import { useMask } from "../lib/privacy.tsx";
-import { pruneSentRows } from "../lib/pruneSentRows.ts";
+import { pruneSentRows, remapFilteredEventIndexes } from "../lib/pruneSentRows.ts";
+import { IS_DEMO, demoWrite } from "../api/demo.ts";
+import { readOnly } from "../lib/readOnly.ts";
 
 /**
  * Search-param contract for arrivals from the `/queue` drain modal: `fromQueue=1`
@@ -26,8 +29,6 @@ interface RunSearch {
   fromQueue?: "1";
   limit?: number;
   dryRun?: "0" | "1";
-  senderCohort?: string;
-  freeForCohortOffer?: string;
   /**
    * Explicit queue-row ids ("drain selected"). When present, hydration loads
    * exactly these rows instead of the play's newest `limit` approved ones.
@@ -42,6 +43,7 @@ interface RunSearch {
 }
 
 export const Route = createFileRoute("/run/$playName")({
+  staticData: { title: (p: Record<string, string>) => `Run ${p["playName"] ?? ""}`.trim() },
   component: RunPage,
   validateSearch: (search: Record<string, unknown>): RunSearch => {
     const out: RunSearch = {};
@@ -56,10 +58,6 @@ export const Route = createFileRoute("/run/$playName")({
     const ids = parseQueueIds(typeof search["ids"] === "string" ? search["ids"] : null);
     if (ids) out.ids = ids;
     if (search["dryRun"] === "0" || search["dryRun"] === "1") out.dryRun = search["dryRun"];
-    if (typeof search["senderCohort"] === "string") out.senderCohort = search["senderCohort"];
-    if (typeof search["freeForCohortOffer"] === "string") {
-      out.freeForCohortOffer = search["freeForCohortOffer"];
-    }
     if (typeof search["runId"] === "number") out.runId = search["runId"];
     else if (typeof search["runId"] === "string" && /^\d+$/.test(search["runId"])) {
       out.runId = Number.parseInt(search["runId"], 10);
@@ -88,6 +86,8 @@ function RunPage() {
   // commonly a preview than a real send.
   const [dryRun, setDryRun] = useState(search.dryRun !== "0");
   const [running, setRunning] = useState(false);
+  // In-flight state for the Stop button, so a slow cancel can't be double-fired.
+  const [cancelling, setCancelling] = useState(false);
   const [events, setEvents] = useState<RunPlayEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
   const navigate = Route.useNavigate();
@@ -114,7 +114,7 @@ function RunPage() {
     search.runId != null &&
     runQuery.isError &&
     /\b404\b/.test((runQuery.error as Error | null)?.message ?? "");
-  const mode: "edit" | "progress" | "done" | "interrupted" =
+  const mode: "edit" | "progress" | "done" | "interrupted" | "cancelled" =
     search.runId == null || runNotFound
       ? "edit"
       : runRecord == null
@@ -123,7 +123,9 @@ function RunPage() {
           ? "progress"
           : runRecord.status === "interrupted"
             ? "interrupted"
-            : "done";
+            : runRecord.status === "cancelled"
+              ? "cancelled"
+              : "done";
   // When the server-persisted record arrives, mirror its events into the
   // local stream array so the existing per-target rendering keeps working
   // unmodified. Local SSE writes still hit setEvents during a live submit;
@@ -178,25 +180,6 @@ function RunPage() {
         setHydrationEmpty(false);
         setRows(targets);
         setDedupeKeys(pairs.map((p) => p.dedupeKey));
-        // Reflect any per-row extras the finder stamped (e.g. accelerator-batch's
-        // senderCohort) in the form's extras, so the field shows the value that
-        // will actually be used instead of sitting empty. prev wins, so a value
-        // the founder typed (or the drain modal passed) is never clobbered.
-        const stampedString = (key: string): string | undefined => {
-          for (const { payload } of pairs) {
-            const v = payload[key];
-            if (typeof v === "string" && v.trim().length > 0) return v;
-          }
-          return undefined;
-        };
-        const stamped: Record<string, string> = {};
-        for (const key of ["senderCohort", "freeForCohortOffer"]) {
-          const v = stampedString(key);
-          if (v) stamped[key] = v;
-        }
-        if (Object.keys(stamped).length > 0) {
-          setExtras((prev) => ({ ...stamped, ...prev }));
-        }
       } catch (err) {
         if (cancelledRef?.cancelled) return;
         setError(`failed to load approved targets from queue: ${(err as Error).message}`);
@@ -210,13 +193,6 @@ function RunPage() {
     const ref = { cancelled: false };
     void (async () => {
       await hydrateFromQueue(ref);
-      if (ref.cancelled) return;
-      // Round-trip the modal's per-play extras (accelerator-batch only
-      // today) so the founder doesn't have to retype senderCohort/offer.
-      const ex: Record<string, string> = {};
-      if (search.senderCohort) ex["senderCohort"] = search.senderCohort;
-      if (search.freeForCohortOffer) ex["freeForCohortOffer"] = search.freeForCohortOffer;
-      if (Object.keys(ex).length > 0) setExtras((prev) => ({ ...prev, ...ex }));
     })();
     return () => {
       ref.cancelled = true;
@@ -244,6 +220,9 @@ function RunPage() {
   }, [events]);
 
   const doneEvent = events.find((e) => e.kind === "done");
+  // Terminal counterpart to `done` for an aborted run — present on both the
+  // live stream and the persisted resume view.
+  const cancelledEvent = events.find((e) => e.kind === "cancelled");
   const errorEvents = events.filter((e) => e.kind === "error");
   const verifyEvent = events.find((e) => e.kind === "verify");
   // Latest pipeline stage ("verifying" / "drafting + sending"), shown while the
@@ -321,6 +300,47 @@ function RunPage() {
   };
 
   const submit = async (): Promise<void> => {
+    /*
+     * The read-only guarantee is enforced HERE and not only on the button.
+     *
+     * This dispatch is the one write in the app that does not go through
+     * `postJson` — it needs an SSE body, which that wrapper cannot carry — so
+     * the transport-level refusal in api/demo.ts never sees it. A disabled
+     * button is a courtesy; this is the guarantee, and without it a demo build
+     * would POST a real run payload at whatever origin it was served from.
+     */
+    if (IS_DEMO) {
+      demoWrite(`/run/${playName}`);
+      return;
+    }
+
+    // Enforce the schema's `required` keys before dispatch. Rows here render
+    // outside a <form> (this is a plain button onClick, not a submit event),
+    // so the `required` attribute on each field is decorative — and `submit`
+    // strips blank fields below, which would otherwise let e.g. a blank
+    // `agency` or `yourEdge` reach the play as `undefined` and produce a
+    // malformed, paid draft.
+    //
+    // finding PRRT_kwDOSKzrBs6ewsAf / PRRT_kwDOSKzrBs6fD-hj: this only ever
+    // checked target-row fields (`schema.fields`). Required EXTRAS
+    // bypassed the guard entirely and
+    // `submit` below omits a blank extra from the request despite its schema
+    // contract — validate both collections before dispatching.
+    const rowIssues = rows
+      .map((row, idx) => ({ idx, missing: missingRequiredFields(schema, row) }))
+      .filter((r) => r.missing.length > 0);
+    const missingExtras = missingRequiredExtras(schema, extras);
+    if (rowIssues.length > 0 || missingExtras.length > 0) {
+      const rowDetail = rowIssues
+        .map((r) => `row ${r.idx + 1}: ${r.missing.join(", ")}`)
+        .join("; ");
+      const extraDetail =
+        missingExtras.length > 0 ? `run options: ${missingExtras.join(", ")}` : "";
+      const detail = [rowDetail, extraDetail].filter(Boolean).join("; ");
+      setError(`fill in the required fields before dispatching — ${detail}`);
+      return;
+    }
+
     setError(null);
     setEvents([]);
     setRunning(true);
@@ -341,8 +361,6 @@ function RunPage() {
       dryRun,
       targets,
       ...(hasAnyDedupeKey ? { dedupeKeys } : {}),
-      ...(extras["senderCohort"] ? { senderCohort: extras["senderCohort"] } : {}),
-      ...(extras["freeForCohortOffer"] ? { freeForCohortOffer: extras["freeForCohortOffer"] } : {}),
     };
 
     // Local mirror of the SSE event stream — avoids reading React state in
@@ -394,7 +412,8 @@ function RunPage() {
       // After a real-send run, drop rows whose draft actually shipped so
       // they can't be resent by a second submission of the same form.
       // Held / errored / unsent rows stay so the founder can edit and retry.
-      const pruned = pruneSentRows(streamedEvents, rowsSnapshot, dedupeKeysSnapshot);
+      const mappedEvents = remapFilteredEventIndexes(streamedEvents, rowsSnapshot);
+      const pruned = pruneSentRows(mappedEvents, rowsSnapshot, dedupeKeysSnapshot);
       if (pruned.prunedCount > 0) {
         setRows(pruned.rows);
         setDedupeKeys(pruned.dedupeKeys);
@@ -478,6 +497,15 @@ function RunPage() {
             {runRecord.targetCount} drafted before the kill. Click <em>Run again</em> below to
             re-fire the remaining targets — already-sent emails won't fire twice (per-prospect
             step-0 dedupe).
+            <Explain concept="dedupe" />
+          </div>
+        )}
+        {mode === "cancelled" && runRecord && (
+          <div className="mt-3 rounded-[var(--radius-sm)] border border-[color:var(--ink-blocked-2)] bg-[color:var(--ink-blocked-2)]/10 px-3 py-2 font-mono text-[12px] text-[color:var(--ink-blocked-2)]">
+            Run #{runRecord.id} was cancelled
+            {runRecord.cancelReason ? ` — ${runRecord.cancelReason}` : ""}. {runRecord.sentCount} of{" "}
+            {runRecord.targetCount} sent before the stop; targets that hadn't started yet were never
+            billed. Click <em>Run again</em> below to re-fire the remaining targets.
           </div>
         )}
       </section>
@@ -562,7 +590,10 @@ function RunPage() {
         </div>
       </RunLedgerSection>
 
-      <section className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-t border-ink-rule bg-ink-bg/90 px-6 py-3 backdrop-blur-[2px]">
+      <section
+        className="sticky bottom-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-t border-ink-rule bg-ink-bg/90 px-6 py-3 backdrop-blur-[2px]"
+        data-foot-bar
+      >
         {mode === "edit" && (
           <button
             type="button"
@@ -605,6 +636,9 @@ function RunPage() {
                 sent
               </span>
               {doneEvent?.kind === "done" && <span className="text-ink-muted">· done</span>}
+              {cancelledEvent?.kind === "cancelled" && (
+                <span className="text-ink-muted">· cancelled</span>
+              )}
             </>
           )}
           {running && aggregate.drafts === 0 && (
@@ -612,7 +646,7 @@ function RunPage() {
           )}
         </div>
         {mode === "edit" && (
-          <Button onClick={submit} disabled={running}>
+          <Button onClick={submit} disabled={running} {...readOnly}>
             <Play size={14} />
             {running
               ? "Running…"
@@ -625,11 +659,33 @@ function RunPage() {
           <div className="flex items-center gap-2 text-[12px] text-ink-muted">
             <Loader2 size={14} className="animate-spin" />
             <span>
-              Run #{search.runId} in progress · your progress is saved · feel free to navigate away.
+              Run #{search.runId} in progress · your progress is saved · closing or reloading this
+              tab stops the run.
             </span>
+            <Button
+              variant="ghost"
+              disabled={cancelling}
+              onClick={() => {
+                if (search.runId == null) return;
+                setCancelling(true);
+                // Targets already drafted keep their rows; the ones behind the
+                // abort simply never bill. Refetch so the banner flips to the
+                // cancelled state as soon as the row lands.
+                void api
+                  .cancelRun(search.runId, "cancelled from the dashboard")
+                  .catch((e: unknown) => setError((e as Error).message))
+                  .finally(() => {
+                    setCancelling(false);
+                    void runQuery.refetch();
+                  });
+              }}
+            >
+              <X size={14} />
+              {cancelling ? "Stopping…" : "Stop run"}
+            </Button>
           </div>
         )}
-        {(mode === "done" || mode === "interrupted") && (
+        {(mode === "done" || mode === "interrupted" || mode === "cancelled") && (
           <div className="flex items-center gap-2">
             {search.runId != null && (runRecord?.sentCount ?? 0) > 0 && (
               <Button
@@ -650,9 +706,32 @@ function RunPage() {
             )}
             <Button
               variant="ghost"
+              disabled={running}
               onClick={() => {
                 setEvents([]);
                 setError(null);
+                if (runRecord?.targets) {
+                  const restoredRows = runRecord.targets.map((target) => {
+                    const row: Record<string, string> = {};
+                    if (!target || typeof target !== "object" || Array.isArray(target)) return row;
+                    for (const [key, value] of Object.entries(target)) {
+                      row[key] =
+                        value == null
+                          ? ""
+                          : typeof value === "string"
+                            ? value
+                            : JSON.stringify(value);
+                    }
+                    return row;
+                  });
+                  const restoredKeys = restoredRows.map(
+                    (_, index) => runRecord.dedupeKeys[index] ?? null,
+                  );
+                  const mappedEvents = remapFilteredEventIndexes(runRecord.events, restoredRows);
+                  const retryable = pruneSentRows(mappedEvents, restoredRows, restoredKeys);
+                  setRows(retryable.rows.length > 0 ? retryable.rows : [{ ...schema.defaultRow }]);
+                  setDedupeKeys(retryable.rows.length > 0 ? retryable.dedupeKeys : [null]);
+                }
                 void navigate({ search: (prev) => ({ ...prev, runId: undefined }) });
               }}
             >
@@ -680,8 +759,8 @@ function RunPage() {
             {verifyEvent.dropped.length} dropped
           </div>
           <div className="mt-1 font-mono text-[11px] text-ink-muted">
-            {verifyEvent.dropped.map((d) => (
-              <div key={`${d.email}::${d.reason}`}>
+            {verifyEvent.dropped.map((d, idx) => (
+              <div key={`${d.email || d.reason}-${idx}`}>
                 {d.email ? mask("email", d.email) : "(missing)"} — {d.reason}
               </div>
             ))}

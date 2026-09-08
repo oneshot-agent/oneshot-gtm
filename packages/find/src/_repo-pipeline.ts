@@ -8,6 +8,7 @@ import {
 } from "@oneshot-gtm/core";
 import type { CompetitorSwitchTarget, StackConsolidationTarget } from "@oneshot-gtm/plays";
 import { isDuplicate } from "./_dedupe.ts";
+import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { shouldSkipFindEmail } from "./_findemail-prescreen.ts";
 import { icpFilter } from "./_filter.ts";
 import { persistRoleRejection, qualifyPostEnrich } from "./_qualify.ts";
@@ -328,7 +329,7 @@ export async function processRepoCandidate(
     `${ctx.notesPrefix}: ${stackLine} (${vendorCount} vendors) — ${snippetFilter.reason}`,
     220,
   );
-  const id = ledger.enqueueTarget({
+  const id = enqueueScoredTarget(ledger, {
     playName,
     payload: target,
     dedupeKey: hit.url,

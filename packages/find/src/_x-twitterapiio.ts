@@ -64,11 +64,11 @@ function mapTweet(t: any) {
 }
 
 export class TwitterApiIoEngine implements HarvestEngine {
-  readonly name = "twitterapiio";
-  readonly meter: CostMeter;
-  private readonly apiKey: string;
-  private readonly fetchImpl: FetchLike;
-  private readonly knobs: HarvestKnobs;
+  name = "twitterapiio";
+  meter: CostMeter;
+  knobs: HarvestKnobs;
+  private apiKey: string;
+  private fetchImpl: FetchLike;
 
   constructor(opts: { meter: CostMeter; knobs: HarvestKnobs; apiKey?: string; fetch?: FetchLike }) {
     this.apiKey = opts.apiKey ?? process.env["TWITTERAPI_IO_KEY"] ?? "";

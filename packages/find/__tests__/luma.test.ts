@@ -53,24 +53,39 @@ const sdkCalls = {
 // City-page discovery. Default: null → finder falls back to webSearch (so the
 // existing webSearch-driven cases below are unaffected). Discovery cases set
 // `discoveredEvents`. cityToSlug maps the baseConfig city so discovery is tried.
-let discoveredEvents: Array<{
+type DiscoveredEventFixture = {
   slug: string;
   name: string;
   startAtIso: string;
   city: string | null;
-}> | null = null;
+};
+let discoveredEvents: DiscoveredEventFixture[] | null = null;
+let discoveredEventsBySlug: Record<string, DiscoveredEventFixture[]> = {};
 // Per-event structured details (api.lu.ma/url). Default: null → finder falls
 // back to the webRead + LLM extract path the existing cases below exercise.
-let eventDetails: {
+type EventDetailsFixture = {
   eventTitle: string | null;
   eventDateIso: string | null;
+  eventTimezone?: string | null;
   eventCity: string | null;
   attendees: Array<Record<string, unknown>>;
-} | null = null;
+};
+let eventDetails: EventDetailsFixture | null = null;
+let eventDetailsBySlug: Record<string, EventDetailsFixture> = {};
+const fetchedCitySlugs: string[] = [];
+const fetchedDetailSlugs: string[] = [];
 vi.mock("../src/_luma-discover.ts", () => ({
-  cityToSlug: (city: string) => (city.trim().toLowerCase() === "san francisco" ? "sf" : null),
-  fetchCityEvents: async () => discoveredEvents,
-  fetchEventDetails: async () => eventDetails,
+  cityToSlug: (city: string) =>
+    ({ "san francisco": "sf", "new york": "nyc", london: "london" })[city.trim().toLowerCase()] ??
+    null,
+  fetchCityEvents: async (slug: string) => {
+    fetchedCitySlugs.push(slug);
+    return discoveredEventsBySlug[slug] ?? discoveredEvents;
+  },
+  fetchEventDetails: async (slug: string) => {
+    fetchedDetailSlugs.push(slug);
+    return eventDetailsBySlug[slug] ?? eventDetails;
+  },
   // Keyword pre-filter is unit-tested in luma-discover.test.ts; let it pass here
   // so these integration cases exercise the event-level ICP gate + extract.
   eventNameMatchesTopics: () => true,
@@ -209,7 +224,11 @@ beforeEach(() => {
   verifyDeliverable = true;
   shouldSkipFindEmailResult = { ok: true };
   discoveredEvents = null;
+  discoveredEventsBySlug = {};
   eventDetails = null;
+  eventDetailsBySlug = {};
+  fetchedCitySlugs.length = 0;
+  fetchedDetailSlugs.length = 0;
   for (const k of Object.keys(sdkCalls)) {
     (sdkCalls as Record<string, number>)[k] = 0;
   }
@@ -230,6 +249,7 @@ function event(
   override: Partial<{
     eventTitle: string;
     eventDateIso: string;
+    eventTimezone: string | null;
     eventCity: string;
     eventHasPassed: boolean;
     publicAttendees: Array<Record<string, unknown>>;
@@ -240,6 +260,7 @@ function event(
   const extract = {
     eventTitle: override.eventTitle ?? "SF AI Builders Meetup",
     eventDateIso: override.eventDateIso ?? futureIso(7),
+    eventTimezone: override.eventTimezone ?? null,
     eventCity: override.eventCity ?? "San Francisco",
     eventHasPassed: override.eventHasPassed ?? false,
     publicAttendees: override.publicAttendees ?? [
@@ -343,6 +364,117 @@ describe("runLumaFinder — city-page discovery", () => {
     expect(sdkCalls.webSearch).toBe(1);
     expect(out.enqueued).toBe(2);
   });
+
+  it("round-robins events and attendees so a high-volume first city cannot crowd out later cities", async () => {
+    const sfEvents = Array.from({ length: 20 }, (_, i) => ({
+      slug: `sf-${i}`,
+      name: `AI SF ${i}`,
+      startAtIso: futureIso(3),
+      city: "San Francisco",
+    }));
+    discoveredEventsBySlug = {
+      sf: sfEvents,
+      nyc: [{ slug: "ny-1", name: "AI NY", startAtIso: futureIso(3), city: "New York" }],
+      london: [{ slug: "ldn-1", name: "AI London", startAtIso: futureIso(3), city: "London" }],
+    };
+    const details = (city: string, prefix: string): EventDetailsFixture => ({
+      eventTitle: `${city} AI Meetup`,
+      eventDateIso: futureIso(3),
+      eventCity: city,
+      attendees: [
+        { name: `${prefix} One`, websiteUrl: `https://${prefix.toLowerCase()}1.dev`, role: "Host" },
+        {
+          name: `${prefix} Two`,
+          websiteUrl: `https://${prefix.toLowerCase()}2.dev`,
+          role: "Guest",
+        },
+      ],
+    });
+    eventDetailsBySlug = {
+      ...Object.fromEntries(
+        sfEvents.map((event) => [event.slug, details("San Francisco", event.slug)]),
+      ),
+      "ny-1": details("New York", "NY"),
+      "ldn-1": details("London", "LDN"),
+    };
+
+    const out = await runLumaFinder({
+      ...baseConfig,
+      cities: ["San Francisco", "New York", "London"],
+      limit: 6,
+    });
+
+    expect(out.candidates).toBe(18);
+    expect(fetchedDetailSlugs.slice(0, 3)).toEqual(["sf-0", "ny-1", "ldn-1"]);
+    expect(enqueued).toHaveLength(6);
+    const byCity = enqueued.reduce<Record<string, number>>((counts, row) => {
+      const city = String(row.payload["eventCity"]);
+      counts[city] = (counts[city] ?? 0) + 1;
+      return counts;
+    }, {});
+    expect(byCity).toEqual({ "San Francisco": 2, "New York": 2, London: 2 });
+  });
+
+  it("redistributes sparse-city capacity, dedupes configured cities, and reads cross-listed events once", async () => {
+    const sfEvents = Array.from({ length: 12 }, (_, i) => ({
+      slug: `shared-${i}`,
+      name: `AI SF ${i}`,
+      startAtIso: futureIso(3),
+      city: "San Francisco",
+    }));
+    discoveredEventsBySlug = {
+      sf: sfEvents,
+      nyc: [sfEvents[0]!],
+      london: [{ slug: "ldn-only", name: "AI London", startAtIso: futureIso(3), city: "London" }],
+    };
+    const details = (city: string): EventDetailsFixture => ({
+      eventTitle: `${city} AI Meetup`,
+      eventDateIso: futureIso(3),
+      eventCity: city,
+      attendees: [
+        { name: `${city} One`, websiteUrl: "https://one.dev" },
+        { name: `${city} Two`, websiteUrl: "https://two.dev" },
+      ],
+    });
+    eventDetails = details("San Francisco");
+    eventDetailsBySlug["ldn-only"] = details("London");
+
+    const out = await runLumaFinder({
+      ...baseConfig,
+      cities: [" San Francisco ", "san francisco", "New York", "London"],
+      limit: 3,
+    });
+
+    expect(fetchedCitySlugs).toEqual(["sf", "nyc", "london"]);
+    expect(out.candidates).toBe(9);
+    expect(fetchedDetailSlugs.filter((slug) => slug === "shared-0")).toHaveLength(1);
+    expect(enqueued.filter((row) => row.payload["eventCity"] === "London")).toHaveLength(1);
+  });
+
+  it("round-robins attendees across events within the same city", async () => {
+    discoveredEventsBySlug.sf = [
+      { slug: "large", name: "AI Large", startAtIso: futureIso(3), city: "San Francisco" },
+      { slug: "small", name: "AI Small", startAtIso: futureIso(3), city: "San Francisco" },
+    ];
+    const details = (title: string, count: number): EventDetailsFixture => ({
+      eventTitle: title,
+      eventDateIso: futureIso(3),
+      eventCity: "San Francisco",
+      attendees: Array.from({ length: count }, (_, i) => ({
+        name: `${title} ${i}`,
+        websiteUrl: `https://${title.toLowerCase()}-${i}.dev`,
+      })),
+    });
+    eventDetailsBySlug = {
+      large: details("Large", 10),
+      small: details("Small", 2),
+    };
+
+    await runLumaFinder({ ...baseConfig, limit: 4 });
+
+    expect(enqueued.filter((row) => row.payload["eventTitle"] === "Large")).toHaveLength(2);
+    expect(enqueued.filter((row) => row.payload["eventTitle"] === "Small")).toHaveLength(2);
+  });
 });
 
 describe("runLumaFinder — happy path", () => {
@@ -360,6 +492,97 @@ describe("runLumaFinder — happy path", () => {
     expect(sdkCalls.findEmail).toBe(2);
     expect(sdkCalls.verifyEmail).toBe(2);
     expect(sdkCalls.enrichVerifiedContact).toBe(2);
+  });
+
+  // The finder is where an event instant stops being an instant. It resolves
+  // the zone once (explicit → city → install) and stamps the rendered string on
+  // the row, so the play and the prompt never see `2026-08-27T02:30:00Z` — the
+  // shape that makes a model call a Wednesday SF evening "Thursday".
+  describe("event zone resolution onto the queued row", () => {
+    // 7:30pm Wednesday in San Francisco; "now" is the Monday before, so the
+    // event lands inside the finder's upcoming window.
+    const SF_EVENING = "2026-08-27T02:30:00Z";
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-08-24T19:00:00Z"));
+    });
+    afterEach(() => vi.useRealTimers());
+
+    it("uses the zone the event page stated", async () => {
+      event("https://luma.com/abc", {
+        eventDateIso: SF_EVENING,
+        eventTimezone: "America/Los_Angeles",
+        // A contradictory city must not win over the page's own zone.
+        eventCity: "London",
+      });
+      await runLumaFinder(baseConfig);
+      expect(enqueued[0]?.payload["eventTimezone"]).toBe("America/Los_Angeles");
+      expect(enqueued[0]?.payload["eventDateLocal"]).toBe("Wednesday, August 26, 7:30 PM PDT");
+    });
+
+    it("derives the zone from the event's city when the page stated none", async () => {
+      event("https://luma.com/abc", { eventDateIso: SF_EVENING, eventTimezone: null });
+      await runLumaFinder(baseConfig);
+      expect(enqueued[0]?.payload["eventTimezone"]).toBe("America/Los_Angeles");
+      expect(enqueued[0]?.payload["eventDateLocal"]).toBe("Wednesday, August 26, 7:30 PM PDT");
+    });
+
+    it("keeps the raw instant on eventDate for the play's own date math", async () => {
+      // The machine field stays — the play still needs a real instant to decide
+      // upcoming/past/stale. It just never reaches the prompt.
+      event("https://luma.com/abc", {
+        eventDateIso: SF_EVENING,
+        eventTimezone: "America/Los_Angeles",
+      });
+      await runLumaFinder(baseConfig);
+      expect(enqueued[0]?.payload["eventDate"]).toBe(SF_EVENING);
+    });
+
+    it("carries the zone through the structured-details path too", async () => {
+      discoveredEvents = [
+        {
+          slug: "sf-evt-1",
+          name: "SF AI Builders",
+          startAtIso: SF_EVENING,
+          city: "San Francisco",
+        },
+      ];
+      eventDetails = {
+        eventTitle: "SF AI Builders",
+        eventDateIso: SF_EVENING,
+        eventTimezone: "America/Los_Angeles",
+        eventCity: "San Francisco",
+        attendees: [
+          {
+            name: "Dana Host",
+            profileUrl: null,
+            websiteUrl: null,
+            linkedinUrl: "https://www.linkedin.com/in/dana",
+            twitterUrl: null,
+            bio: "Organizer",
+            role: "Host",
+          },
+          // The finder requires 2+ attendees before it will spend on an event.
+          {
+            name: "Gabe Guest",
+            profileUrl: null,
+            websiteUrl: "https://gabe.dev",
+            linkedinUrl: null,
+            twitterUrl: null,
+            bio: null,
+            role: "Guest",
+          },
+        ],
+      };
+      enrichByLinkedinUrl["https://www.linkedin.com/in/dana"] = {
+        best_work_email: "dana@org.com",
+        company_domain: "org.com",
+      };
+      await runLumaFinder(baseConfig);
+      expect(enqueued[0]?.payload["eventTimezone"]).toBe("America/Los_Angeles");
+      expect(enqueued[0]?.payload["eventDateLocal"]).toBe("Wednesday, August 26, 7:30 PM PDT");
+    });
   });
 
   it("filters non-event URLs (e.g. /discover, ?k=t) out before webRead", async () => {

@@ -2,7 +2,7 @@ import { listInbox, type InboxEmail } from "@oneshot-gtm/core";
 import { complete } from "./client.ts";
 import { loadPrompt } from "./prompts.ts";
 
-type TriageCategory =
+export type TriageCategory =
   | "interested"
   | "not_now"
   | "wrong_person"
@@ -12,7 +12,22 @@ type TriageCategory =
   | "auto_reply"
   | "other";
 
-interface TriagedReply {
+/** The exact `TriageCategory` values — the runtime source of truth `triageEmails`
+ *  validates the model's output against, so a hallucinated/malformed category can
+ *  never reach the ledger and silently read as positive intent (issue #558:
+ *  `replyIntentIsPositive` treats any unrecognized string as positive). */
+const TRIAGE_CATEGORIES: ReadonlySet<string> = new Set<TriageCategory>([
+  "interested",
+  "not_now",
+  "wrong_person",
+  "objection",
+  "question",
+  "unsubscribe",
+  "auto_reply",
+  "other",
+]);
+
+export interface TriagedReply {
   id: string;
   from: string;
   subject: string;
@@ -76,13 +91,16 @@ export async function triageEmails(emails: InboxEmail[]): Promise<TriagedReply[]
     const id = String(r["id"] ?? "");
     const src = byId.get(id);
     if (!src) return [];
-    const category = String(r["category"] ?? "other") as TriageCategory;
+    const category = String(r["category"] ?? "other");
+    const validCategory: TriageCategory = TRIAGE_CATEGORIES.has(category)
+      ? (category as TriageCategory)
+      : "other";
     return [
       {
         id,
         from: src.from,
         subject: src.subject,
-        category,
+        category: validCategory,
         nextStep: String(r["next_step"] ?? "manual_review"),
         draftedReply: String(r["drafted_reply"] ?? "").trim(),
         reasoning: String(r["reasoning"] ?? "").trim(),

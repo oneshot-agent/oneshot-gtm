@@ -10,11 +10,13 @@ import {
   Mail,
   Receipt,
   Settings,
-  UserPlus,
+  Users,
 } from "lucide-react";
-import { useEffect, useRef, useState, type ComponentType } from "react";
+import { useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
 import { Toaster } from "sonner";
 import { api } from "../api/client.ts";
+import { IS_DEMO } from "../api/demo.ts";
+import { DemoFrame } from "../components/shell/DemoFrame.tsx";
 import { CommandPalette } from "../components/shell/CommandPalette.tsx";
 import { PrivacyToggle } from "../components/shell/PrivacyToggle.tsx";
 import { StatusBar } from "../components/shell/StatusBar.tsx";
@@ -22,6 +24,8 @@ import { WorkspaceSwitcher } from "../components/shell/WorkspaceSwitcher.tsx";
 import { StrategistDock } from "../components/shell/StrategistDock.tsx";
 import { useKeyboard } from "../components/shell/useKeyboard.ts";
 import { cn } from "../lib/cn.ts";
+import { useDocumentTitle } from "../lib/documentTitle.ts";
+import { applyWorkspaceFavicon } from "../lib/favicon.ts";
 import { PrivacyProvider } from "../lib/privacy.tsx";
 
 interface RootContext {
@@ -35,8 +39,8 @@ export const Route = createRootRouteWithContext<RootContext>()({
 interface NavItem {
   to:
     | "/"
-    | "/add-prospect"
     | "/queue"
+    | "/prospects"
     | "/inbox"
     | "/cadences"
     | "/receipts"
@@ -46,14 +50,14 @@ interface NavItem {
   label: string;
   icon: ComponentType<{ size?: number; className?: string }>;
   /** Which alert-data key, if any, lights a dot next to this nav item. */
-  alert?: "queue-pending" | "doctor-fail";
+  alert?: "queue-pending" | "doctor-fail" | "inbox-positive";
 }
 
 const NAV: NavItem[] = [
   { to: "/", label: "Today", icon: Activity },
-  { to: "/add-prospect", label: "Add Prospect", icon: UserPlus },
   { to: "/queue", label: "Queue", icon: Inbox, alert: "queue-pending" },
-  { to: "/inbox", label: "Replies", icon: Mail },
+  { to: "/prospects", label: "Prospects", icon: Users },
+  { to: "/inbox", label: "Replies", icon: Mail, alert: "inbox-positive" },
   { to: "/cadences", label: "Cadences", icon: Layers },
   { to: "/receipts", label: "Receipts", icon: Receipt },
   { to: "/measure", label: "Measure", icon: BarChart3 },
@@ -82,6 +86,14 @@ function RootLayout() {
     queryFn: api.doctor,
     refetchInterval: 60_000,
   });
+  // A positive reply is the highest-value event in the product and the one
+  // thing that never announced itself (issue #480) — polled at the same
+  // cadence /inbox itself uses, so the dot and the page never disagree.
+  const inboxAlertQuery = useQuery({
+    queryKey: ["inbox"],
+    queryFn: () => api.inbox(),
+    refetchInterval: 60_000,
+  });
 
   // <main> is the scroll container and it persists across routes, so without
   // this a navigation inherits the previous page's scroll offset: scroll down
@@ -104,163 +116,197 @@ function RootLayout() {
   });
   const workspace = workspaceQuery.data?.current ?? null;
 
+  // Several workspaces run at once, each its own server on its own port. Name
+  // the tab and tint its icon, or they are indistinguishable in the tab strip.
+  useDocumentTitle(workspace?.name ?? null);
+  useEffect(() => {
+    void applyWorkspaceFavicon(workspace?.name ?? null);
+  }, [workspace?.name]);
+
   const alerts: Record<NonNullable<NavItem["alert"]>, boolean> = {
     "queue-pending": (queueQuery.data?.counts.pending ?? 0) > 0,
     "doctor-fail": (doctor.data?.checks ?? []).some((c) => c.severity === "fail"),
+    // Round-2 correction (#480): `awaitingReply` (not a bare `intent` check)
+    // — it clears once the founder replies to the thread or records a deal
+    // outcome, so the dot doesn't stay lit forever after the first use.
+    "inbox-positive": (inboxAlertQuery.data?.conversations ?? []).some((c) => c.awaitingReply),
   };
 
   return (
     <PrivacyProvider>
-      <div className="grid h-full grid-cols-[224px_1fr] grid-rows-[auto_1fr_auto] bg-ink-bg text-ink-cream">
-        <aside className="row-span-3 flex flex-col border-r border-ink-rule bg-ink-bg/60 px-3 py-5 backdrop-blur-[2px]">
-          <div className="mb-7 px-2">
-            <div
-              className="text-ink-cream"
-              style={{
-                fontFamily: "var(--font-display)",
-                fontSize: 19,
-                letterSpacing: "-0.01em",
-                lineHeight: 1.1,
-              }}
-            >
-              oneshot
-              <span className="text-[color:var(--ink-spend-2)]">·</span>gtm
+      <Frame>
+        <div className="grid h-full grid-cols-[224px_1fr] grid-rows-[auto_1fr_auto] bg-ink-bg text-ink-cream">
+          <aside className="row-span-3 flex flex-col border-r border-ink-rule bg-ink-bg/60 px-3 py-5 backdrop-blur-[2px]">
+            <div className="mb-7 px-2">
+              <div
+                className="text-ink-cream"
+                style={{
+                  fontFamily: "var(--font-display)",
+                  fontSize: 19,
+                  letterSpacing: "-0.01em",
+                  lineHeight: 1.1,
+                }}
+              >
+                oneshot
+                <span className="text-[color:var(--ink-spend-2)]">·</span>gtm
+              </div>
+              <div className="mt-0.5 text-[10.5px] uppercase tracking-[0.14em] text-ink-faint">
+                Founder's ledger
+              </div>
+              {/* A vendored demo is one ledger and cannot start a second
+                server, so the switcher would offer a door onto nothing. */}
+              {!IS_DEMO && <WorkspaceSwitcher />}
             </div>
-            <div className="mt-0.5 text-[10.5px] uppercase tracking-[0.14em] text-ink-faint">
-              Founder's ledger
-            </div>
-            <WorkspaceSwitcher />
-          </div>
 
-          <nav className="flex flex-col gap-0.5" aria-label="primary">
-            {NAV.map(({ to, label, icon: Icon, alert }) => {
-              const hasAlert = alert ? alerts[alert] : false;
-              return (
-                <Link
-                  key={to}
-                  to={to}
-                  activeOptions={{ exact: to === "/" }}
-                  className={cn(
-                    "group relative flex items-center gap-2.5 rounded-[var(--radius-sm)] px-2.5 py-1.5",
-                    "font-sans text-[13px] text-ink-cream-2",
-                    "transition-colors duration-[var(--dur-stamp)]",
-                    "hover:bg-ink-surface hover:text-ink-cream",
-                  )}
-                  activeProps={{
-                    className: "bg-ink-surface text-ink-cream",
-                    "data-active": "true",
-                  }}
-                >
-                  <span
-                    aria-hidden="true"
+            <nav className="flex flex-col gap-0.5" aria-label="primary">
+              {NAV.map(({ to, label, icon: Icon, alert }) => {
+                const hasAlert = alert ? alerts[alert] : false;
+                return (
+                  <Link
+                    key={to}
+                    to={to}
+                    activeOptions={{ exact: to === "/" }}
                     className={cn(
-                      "pointer-events-none absolute bottom-1 left-0 top-1 w-[2px] rounded-full",
-                      "bg-[color:var(--ink-signal)]",
-                      "opacity-0 transition-opacity duration-[var(--dur-stamp)]",
-                      "group-data-[active=true]:opacity-100",
+                      "group relative flex items-center gap-2.5 rounded-[var(--radius-sm)] px-2.5 py-1.5",
+                      "font-sans text-[13px] text-ink-cream-2",
+                      "transition-colors duration-[var(--dur-stamp)]",
+                      "hover:bg-ink-surface hover:text-ink-cream",
                     )}
-                  />
-                  <Icon
-                    size={14}
-                    className={cn(
-                      "text-ink-muted transition-colors",
-                      "group-hover:text-ink-cream-2",
-                      "group-data-[active=true]:text-[color:var(--ink-signal-2)]",
-                    )}
-                  />
-                  <span className="flex-1">{label}</span>
-                  {hasAlert && (
+                    activeProps={{
+                      className: "bg-ink-surface text-ink-cream",
+                      "data-active": "true",
+                    }}
+                  >
                     <span
-                      aria-label={alertLabel(alert)}
-                      title={alertLabel(alert)}
+                      aria-hidden="true"
                       className={cn(
-                        "h-[6px] w-[6px] shrink-0 rounded-full",
-                        alert === "doctor-fail"
-                          ? "bg-[color:var(--ink-blocked)]"
-                          : "bg-[color:var(--ink-spend)]",
-                        "shadow-[0_0_0_2px_color-mix(in_oklch,currentColor_0%,var(--ink-bg)_100%)]",
+                        "pointer-events-none absolute bottom-1 left-0 top-1 w-[2px] rounded-full",
+                        "bg-[color:var(--ink-signal)]",
+                        "opacity-0 transition-opacity duration-[var(--dur-stamp)]",
+                        "group-data-[active=true]:opacity-100",
                       )}
                     />
-                  )}
-                </Link>
-              );
-            })}
-          </nav>
+                    <Icon
+                      size={14}
+                      className={cn(
+                        "text-ink-muted transition-colors",
+                        "group-hover:text-ink-cream-2",
+                        "group-data-[active=true]:text-[color:var(--ink-signal-2)]",
+                      )}
+                    />
+                    <span className="flex-1">{label}</span>
+                    {hasAlert && (
+                      <span
+                        aria-label={alertLabel(alert)}
+                        title={alertLabel(alert)}
+                        className={cn(
+                          "h-[6px] w-[6px] shrink-0 rounded-full",
+                          alert === "doctor-fail"
+                            ? "bg-[color:var(--ink-blocked)]"
+                            : "bg-[color:var(--ink-spend)]",
+                          "shadow-[0_0_0_2px_color-mix(in_oklch,currentColor_0%,var(--ink-bg)_100%)]",
+                        )}
+                      />
+                    )}
+                  </Link>
+                );
+              })}
+            </nav>
 
-          <div className="mt-auto border-t border-ink-rule pt-4 px-2">
-            <div className="ln-eyebrow mb-2" style={{ fontSize: 10 }}>
-              Keys
-            </div>
-            <div className="space-y-1 font-mono text-[11px] text-ink-faint">
-              <button
-                type="button"
-                onClick={() => setPaletteOpen(true)}
-                className="group flex w-full items-center justify-between rounded-[var(--radius-xs)] px-1 py-0.5 text-left transition-colors hover:bg-ink-surface/80"
-                aria-label="open command palette"
-              >
-                <span className="group-hover:text-ink-cream-2">palette</span>
-                <kbd className="rounded border border-ink-rule px-1 text-ink-cream-2">⌘K</kbd>
-              </button>
-              <div className="flex justify-between px-1">
-                <span>queue</span>
-                <kbd className="rounded border border-ink-rule px-1 text-ink-cream-2">g q</kbd>
+            <div className="mt-auto border-t border-ink-rule pt-4 px-2">
+              <div className="ln-eyebrow mb-2" style={{ fontSize: 10 }}>
+                Keys
               </div>
-              <div className="flex justify-between px-1">
-                <span>home</span>
-                <kbd className="rounded border border-ink-rule px-1 text-ink-cream-2">g h</kbd>
+              <div className="space-y-1 font-mono text-[11px] text-ink-faint">
+                <button
+                  type="button"
+                  onClick={() => setPaletteOpen(true)}
+                  className="group flex w-full items-center justify-between rounded-[var(--radius-xs)] px-1 py-0.5 text-left transition-colors hover:bg-ink-surface/80"
+                  aria-label="open command palette"
+                >
+                  <span className="group-hover:text-ink-cream-2">palette</span>
+                  <kbd className="rounded border border-ink-rule px-1 text-ink-cream-2">⌘K</kbd>
+                </button>
+                <div className="flex justify-between px-1">
+                  <span>queue</span>
+                  <kbd className="rounded border border-ink-rule px-1 text-ink-cream-2">g q</kbd>
+                </div>
+                <div className="flex justify-between px-1">
+                  <span>home</span>
+                  <kbd className="rounded border border-ink-rule px-1 text-ink-cream-2">g h</kbd>
+                </div>
               </div>
             </div>
-          </div>
-        </aside>
+          </aside>
 
-        <header className="flex items-center justify-between border-b border-ink-rule bg-ink-bg/70 px-6 py-2.5 backdrop-blur-[2px]">
-          <div className="text-[11.5px] text-ink-faint ln-mono">
-            workspace <span className="text-ink-cream">{workspace?.name ?? "…"}</span>
-            {workspace ? <span className="text-ink-muted"> :{workspace.port}</span> : null} ·
-            local-first · bound to <span className="text-ink-muted">127.0.0.1</span>
-          </div>
-          <div className="flex items-center gap-3">
-            <PrivacyToggle />
-            <StatusBar />
-          </div>
-        </header>
+          <header className="flex items-center justify-between border-b border-ink-rule bg-ink-bg/70 px-6 py-2.5 backdrop-blur-[2px]">
+            <div className="text-[11.5px] text-ink-faint ln-mono">
+              workspace <span className="text-ink-cream">{workspace?.name ?? "…"}</span>
+              {workspace ? <span className="text-ink-muted"> :{workspace.port}</span> : null} ·
+              local-first · bound to <span className="text-ink-muted">127.0.0.1</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <PrivacyToggle />
+              <StatusBar />
+            </div>
+          </header>
 
-        <main ref={mainRef} className="overflow-y-auto px-6 py-6">
-          <Outlet />
-        </main>
+          {/*
+            The bottom gutter is NOT padding here. `sticky bottom-0` resolves
+            against this scroller's content box, so padding-bottom lifts the
+            queue's selection bar and the setup and run action bars off the
+            footer at every scroll position, not just at the end. The gutter is
+            a margin on the page's last in-flow block instead — see
+            `--ledger-gutter` in styles.css.
+          */}
+          <main ref={mainRef} className="overflow-y-auto px-6 py-6">
+            <Outlet />
+          </main>
 
-        <footer className="border-t border-ink-rule bg-ink-bg/70 px-6 py-2 text-[11px] text-ink-faint backdrop-blur-[2px]">
-          Built on OneShot · Read every prompt · Fork every play ·{" "}
-          <span className="text-ink-muted">MIT</span>
-        </footer>
+          <footer className="border-t border-ink-rule bg-ink-bg/70 px-6 py-2 text-[11px] text-ink-faint backdrop-blur-[2px]">
+            Built on OneShot · Read every prompt · Fork every play ·{" "}
+            <span className="text-ink-muted">MIT</span>
+          </footer>
 
-        <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
-        <StrategistDock />
+          <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
+          {/* The strategist streams from an LLM endpoint no static build has,
+            and it is a 174 KB chunk. Demo mode drops both. */}
+          {!IS_DEMO && <StrategistDock />}
 
-        <Toaster
-          position="bottom-right"
-          theme="dark"
-          richColors={false}
-          toastOptions={{
-            className: [
-              "!bg-[color:var(--ink-surface)]",
-              "!text-[color:var(--ink-cream)]",
-              "!border-[color:var(--ink-rule)]",
-              "!font-sans",
-              "!shadow-[var(--shadow-ink-bleed)]",
-            ].join(" "),
-            style: {
-              borderRadius: "var(--radius-md)",
-            },
-          }}
-        />
-      </div>
+          <Toaster
+            position="bottom-right"
+            theme="dark"
+            richColors={false}
+            toastOptions={{
+              className: [
+                "!bg-[color:var(--ink-surface)]",
+                "!text-[color:var(--ink-cream)]",
+                "!border-[color:var(--ink-rule)]",
+                "!font-sans",
+                "!shadow-[var(--shadow-ink-bleed)]",
+              ].join(" "),
+              style: {
+                borderRadius: "var(--radius-md)",
+              },
+            }}
+          />
+        </div>
+      </Frame>
     </PrivacyProvider>
   );
+}
+
+/**
+ * Demo chrome, or nothing at all. Written as a component rather than inline so
+ * the real dashboard's DOM is exactly what it always was.
+ */
+function Frame({ children }: { children: ReactNode }) {
+  return IS_DEMO ? <DemoFrame>{children}</DemoFrame> : <>{children}</>;
 }
 
 function alertLabel(alert: NavItem["alert"]): string {
   if (alert === "queue-pending") return "pending candidates waiting for review";
   if (alert === "doctor-fail") return "doctor has a failing check";
+  if (alert === "inbox-positive") return "a positive reply is waiting for a decision";
   return "";
 }

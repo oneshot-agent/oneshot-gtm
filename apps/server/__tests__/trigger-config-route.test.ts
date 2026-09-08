@@ -67,6 +67,7 @@ describe("setTriggerConfigRoute", () => {
       last_run_summary: null,
       enabled: 0,
       config_json: JSON.stringify({ engine: "twitterapiio" }),
+      running_started_at: null,
     };
     const res = await setTriggerConfigRoute(req({ config: { engine: "xapi" } }), {
       name: "x-reposters",

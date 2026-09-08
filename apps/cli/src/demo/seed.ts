@@ -170,9 +170,12 @@ function writeLedger(dbPath: string, data: DemoDataset): Record<string, number> 
       `DELETE FROM sqlite_sequence WHERE name IN (${SEEDED_TABLES.map(() => "?").join(", ")})`,
     ).run(...SEEDED_TABLES);
 
+    // `title` is its own column and not only a dossier field: the cadence and
+    // queue views read `prospects.title`, so omitting it here rendered every
+    // seeded row as "Role unknown" while the dossier held the real one.
     const insertProspect = db.prepare(
-      `INSERT INTO prospects (id, name, email, company, linkedin_url, dossier_json, source, source_profile_url, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO prospects (id, name, email, company, title, linkedin_url, dossier_json, source, source_profile_url, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     for (const p of data.prospects) {
       insertProspect.run(
@@ -180,6 +183,7 @@ function writeLedger(dbPath: string, data: DemoDataset): Record<string, number> 
         p.name,
         p.email,
         p.company,
+        p.title,
         p.linkedinUrl,
         p.dossierJson,
         p.source,

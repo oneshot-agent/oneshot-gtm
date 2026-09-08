@@ -1,3 +1,4 @@
+import { registerSequence } from "./_cadence.ts";
 import { type EmailPlayDef, runEmailPlay, standardEnrich } from "./_run-play.ts";
 import { showHnMetadata } from "./_metadata.ts";
 export { receiptUrls } from "./_lib.ts";
@@ -22,6 +23,8 @@ export interface ShowHnRunOptions {
     index: number,
     draft: { subject: string; body: string; flags: string[]; sent: boolean; receiptIds: number[] },
   ) => void;
+  /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
+  signal?: AbortSignal;
 }
 
 export interface ShowHnRunResult {
@@ -44,11 +47,12 @@ const showHnDef: EmailPlayDef<ShowHnTarget> = {
   toEmail: (t) => t.founderEmail,
   // Enrich on both preview and real send (cached by email) so the reviewed
   // draft is personalized; the heavier deepResearch stays real-send only.
-  prepare: (t, dryRun) =>
+  prepare: (t, dryRun, signal) =>
     standardEnrich({
       playName: PLAY_NAME,
       enrichInput: { email: t.founderEmail, name: t.founderName },
       enrichSlice: 3500,
+      ...(signal ? { signal } : {}),
       ...(dryRun
         ? {}
         : {
@@ -85,3 +89,6 @@ function extractCompany(title: string): string | null {
   const m = title.match(/Show HN:\s*([^\s—–:|-]+)/i);
   return m ? (m[1] ?? null) : null;
 }
+
+// One-touch by default; an explicitly enabled mail step can extend this motion.
+registerSequence({ playName: PLAY_NAME, steps: [] });

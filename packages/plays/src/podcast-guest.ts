@@ -33,6 +33,8 @@ export interface PodcastGuestRunOptions {
   ) => void;
   /** Skip the optional web-search dossier enrichment. */
   skipSearch?: boolean;
+  /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
+  signal?: AbortSignal;
 }
 
 export interface PodcastGuestDraft {

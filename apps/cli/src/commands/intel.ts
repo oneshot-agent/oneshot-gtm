@@ -1,11 +1,12 @@
 import {
   adviseOnce,
   generateFirstLine,
+  triageEmails,
   triageInbox,
   weeklyReview,
   type LlmMessage,
 } from "@oneshot-gtm/intel";
-import { loadConfig } from "@oneshot-gtm/core";
+import { getLedger, loadConfig } from "@oneshot-gtm/core";
 import { writeFileSync } from "node:fs";
 import prompts from "prompts";
 import { bail, box, c, header, note, ok, warn } from "../output.ts";
@@ -116,6 +117,74 @@ export async function commandIntelTriage(opts: {
   }
   process.stdout.write("\n");
   ok(`${triaged.length} replies triaged.`);
+}
+
+/**
+ * Backfill sentiment intent onto persisted human replies that predate the
+ * classifier (issue #480) — the ten replies the workspace had before this
+ * shipped, and anyone else's pre-existing history. Best-effort per row: a
+ * triage failure on one batch is logged and skipped, never aborts the run.
+ */
+export async function commandIntelBackfillIntent(opts: { limit?: number } = {}): Promise<void> {
+  header("intel backfill-intent");
+  const ledger = getLedger();
+  const rows = ledger.listUntriagedHumanReplies(opts.limit ?? 200);
+  if (rows.length === 0) {
+    note("Nothing to backfill — every human reply already has an intent.");
+    return;
+  }
+  note(`${rows.length} untriaged human repl${rows.length === 1 ? "y" : "ies"} found.`);
+
+  const BATCH = 25;
+  let done = 0;
+  let failed = 0;
+  let skipped = 0;
+  for (let i = 0; i < rows.length; i += BATCH) {
+    // Same atomic claim the background poll takes (#558/#559): this command
+    // runs while the server's scheduler is live, and a row both of them see
+    // untriaged must be paid for once. A lost claim means the poll has it.
+    const batch = rows.slice(i, i + BATCH).filter((r) => {
+      if (ledger.claimInboxReplyForTriage(r.id)) return true;
+      skipped++;
+      return false;
+    });
+    if (batch.length === 0) continue;
+    // Only the paid call is inside the try: a failure there releases every
+    // claim in the batch. The write-back below runs outside it, so a partial
+    // write-back can never be "undone" by releasing rows already classified.
+    let triaged: Awaited<ReturnType<typeof triageEmails>>;
+    try {
+      triaged = await triageEmails(
+        batch.map((r) => ({
+          id: r.id,
+          from: r.from_email,
+          subject: r.subject ?? "",
+          received_at: r.received_at,
+          body: r.body,
+        })),
+      );
+    } catch (err) {
+      for (const r of batch) ledger.setInboxReplyIntent(r.id, null, null);
+      failed += batch.length;
+      warn(`batch starting at row ${i} failed: ${(err as Error)?.message ?? "unknown error"}`);
+      continue;
+    }
+    const byId = new Map(triaged.map((t) => [t.id, t]));
+    for (const r of batch) {
+      const t = byId.get(r.id);
+      if (!t) {
+        // Release the claim so a later poll (or re-run) can retry.
+        ledger.setInboxReplyIntent(r.id, null, null);
+        failed++;
+        continue;
+      }
+      ledger.setInboxReplyIntent(r.id, t.category, t.reasoning || null);
+      done++;
+    }
+  }
+  ok(
+    `backfilled ${done} repl${done === 1 ? "y" : "ies"}${failed > 0 ? `, ${failed} failed` : ""}${skipped > 0 ? `, ${skipped} already being triaged` : ""}.`,
+  );
 }
 
 export async function commandIntelPersonalize(opts: {

@@ -22,10 +22,10 @@ import {
 // them concrete + outcome-oriented (not vague "tune everything"). Each one
 // should map cleanly to a single proactive proposal the strategist can make.
 const SUGGESTIONS = [
+  "Guide me through my first send",
   "Which triggers fit my ICP?",
   "Propose github-topics topics + vendors",
   "Pick an accelerator-batch cohort for my ICP",
-  "Audit my current trigger config",
 ];
 
 /**
@@ -89,8 +89,8 @@ function ChatBody() {
       <ThreadPrimitive.Empty>
         <div className="border-b border-ink-rule/60 px-5 py-4">
           <p className="text-sm text-ink-cream-2">
-            Tell me what to set up. I'll propose configs anchored in your ICP + product and ask
-            before applying anything. Try a chip below or ask anything.
+            I can guide your first motion from signal choice to a review-ready queue. I'll propose
+            configs anchored in your ICP + product and ask before applying anything.
           </p>
         </div>
       </ThreadPrimitive.Empty>
@@ -194,9 +194,20 @@ function ActionChip({ action }: { action: ParsedStrategistAction }) {
         await api.setTriggerConfig(action.trigger, action.config);
         setDone(`config saved · ${action.trigger}`);
         toast.success(`config saved · ${action.trigger}`);
+      } else if (action.kind === "apply-pack") {
+        const result = await api.applyPack(action.trigger);
+        const readyCount = result.applied.filter((t) => t.ready).length;
+        const notReadyCount = result.applied.length - readyCount;
+        const label =
+          notReadyCount > 0
+            ? `pack applied · ${result.applied.length} triggers · ${notReadyCount} need config`
+            : `pack applied · ${result.applied.length} triggers`;
+        setDone(label);
+        toast.success(label);
       }
       void qc.invalidateQueries({ queryKey: ["triggers"] });
       void qc.invalidateQueries({ queryKey: ["queue"] });
+      void qc.invalidateQueries({ queryKey: ["packs"] });
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -217,7 +228,9 @@ function ActionChip({ action }: { action: ParsedStrategistAction }) {
       ? `Enable ${action.trigger}`
       : action.kind === "disable"
         ? `Disable ${action.trigger}`
-        : `Apply config to ${action.trigger}`;
+        : action.kind === "apply-pack"
+          ? `Apply pack: ${action.trigger}`
+          : `Apply config to ${action.trigger}`;
 
   return (
     <div className="mt-2 flex items-center gap-2">

@@ -1,6 +1,8 @@
-import { existsSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { directMailRoute } from "./api/direct-mail.ts";
+import { existsSync, statSync } from "node:fs";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { configDir, demoMode, scrubDemoPaths } from "@oneshot-gtm/core";
 import { health } from "./api/health.ts";
 import { homeMetrics } from "./api/home.ts";
 import {
@@ -13,10 +15,22 @@ import {
   sendCadenceBatchRoute,
 } from "./api/cadences.ts";
 import { listReceipts, getReceipt } from "./api/receipts.ts";
-import { draftReplyRoute, listInboxRoute, saveDraftRoute, sendReplyRoute } from "./api/inbox.ts";
+import {
+  draftReplyRoute,
+  listInboxRoute,
+  saveDraftRoute,
+  sendReplyRoute,
+  steerRoute,
+} from "./api/inbox.ts";
 import { listPlays, setCadenceRoute } from "./api/plays.ts";
-import { measureCac, measureRocs, measureRocsByGoal, recordOutcome } from "./api/measure.ts";
-import { setup, getSetupStatus } from "./api/setup.ts";
+import {
+  measureCac,
+  measureRocs,
+  measureRocsByGoal,
+  measureSpendSeries,
+  recordOutcome,
+} from "./api/measure.ts";
+import { setup, getSetupDomains, getSetupStatus } from "./api/setup.ts";
 import { gmailAuthCallbackRoute, startGmailAuthRoute } from "./api/gmail-auth.ts";
 import { smartleadAccountsRoute } from "./api/smartlead.ts";
 import { deriveBriefRoute } from "./api/derive-brief.ts";
@@ -25,7 +39,7 @@ import { strategistRoute } from "./api/strategist.ts";
 import { doctor } from "./api/doctor.ts";
 import { workspaceInfo, workspaceLaunch } from "./api/workspace.ts";
 import { pauseDomainRoute, resumeDomainRoute } from "./api/domains.ts";
-import { runPlay } from "./api/run.ts";
+import { cancelRunRoute, runPlay } from "./api/run.ts";
 import { getRunRoute } from "./api/runs.ts";
 import {
   approveAllRoute,
@@ -33,8 +47,10 @@ import {
   drainQueueRoute,
   listQueueRoute,
   markSentRoute,
+  queueRowDetailRoute,
   regenerateDraftRoute,
   rejectQueueRoute,
+  searchQueueRoute,
   sendDraftRoute,
 } from "./api/queue.ts";
 import {
@@ -43,7 +59,10 @@ import {
   setTriggerConfigRoute,
   setTriggerEnabledRoute,
 } from "./api/triggers.ts";
+import { applyPackRoute, listPacksRoute } from "./api/packs.ts";
 import { addProspectRoute } from "./api/prospects.ts";
+import { calNoShowWebhookRoute, signupWebhookRoute } from "./api/webhook-triggers.ts";
+import { linkedinReplyWebhookRoute, markLinkedInReplyRoute } from "./api/linkedin-replies.ts";
 
 interface ServerOptions {
   port: number;
@@ -70,11 +89,14 @@ function route(method: string, pattern: string, handler: RouteHandler): RouteEnt
 }
 
 const routes: RouteEntry[] = [
+  route("GET", "/api/direct-mail", directMailRoute),
+  route("POST", "/api/direct-mail/:action", directMailRoute),
   route("GET", "/api/health", health),
   route("GET", "/api/home", homeMetrics),
   route("GET", "/api/cadences", listCadences),
   route("GET", "/api/cadences/:id", getCadence),
   route("POST", "/api/cadences/:id/stop", stopCadence),
+  route("POST", "/api/prospects/:id/linkedin-reply", markLinkedInReplyRoute),
   route("POST", "/api/cadences/:id/preview-next", previewCadenceStepRoute),
   route("POST", "/api/cadences/:id/send-next", sendCadenceStepRoute),
   route("POST", "/api/cadences/preview-batch", previewCadenceBatchRoute),
@@ -85,13 +107,16 @@ const routes: RouteEntry[] = [
   route("POST", "/api/inbox/draft-reply", draftReplyRoute),
   route("POST", "/api/inbox/draft", saveDraftRoute),
   route("POST", "/api/inbox/reply", sendReplyRoute),
+  route("POST", "/api/inbox/steer", steerRoute),
   route("GET", "/api/plays", listPlays),
   route("POST", "/api/plays/:name/cadence", setCadenceRoute),
   route("GET", "/api/measure/cac", measureCac),
   route("GET", "/api/measure/rocs", measureRocs),
   route("GET", "/api/measure/rocs-by-goal", measureRocsByGoal),
+  route("GET", "/api/measure/spend-series", measureSpendSeries),
   route("POST", "/api/measure/outcome", recordOutcome),
   route("GET", "/api/setup", getSetupStatus),
+  route("GET", "/api/setup/domains", getSetupDomains),
   route("POST", "/api/setup", setup),
   route("POST", "/api/domains/resume", resumeDomainRoute),
   route("POST", "/api/domains/pause", pauseDomainRoute),
@@ -105,9 +130,15 @@ const routes: RouteEntry[] = [
   route("GET", "/api/workspace", workspaceInfo),
   route("POST", "/api/workspace/launch", workspaceLaunch),
   route("POST", "/api/run/:playName", runPlay),
+  // Distinct shape from the line above (three segments, not two), so the
+  // patterns can't collide however they are ordered.
+  route("POST", "/api/run/:runId/cancel", cancelRunRoute),
   route("GET", "/api/runs/:id", getRunRoute),
   route("POST", "/api/prospects/add", addProspectRoute),
   route("GET", "/api/queue", listQueueRoute),
+  // Literal before param: `:id` matches [^/]+ and would otherwise swallow "search".
+  route("GET", "/api/queue/search", searchQueueRoute),
+  route("GET", "/api/queue/:id", queueRowDetailRoute),
   route("POST", "/api/queue/approve-all", approveAllRoute),
   route("POST", "/api/queue/drain", drainQueueRoute),
   route("POST", "/api/queue/:id/approve", approveQueueRoute),
@@ -116,9 +147,14 @@ const routes: RouteEntry[] = [
   route("POST", "/api/queue/:id/send-draft", sendDraftRoute),
   route("POST", "/api/queue/:id/mark-sent", markSentRoute),
   route("GET", "/api/triggers", listTriggersRoute),
+  route("POST", "/api/triggers/cal-no-show", calNoShowWebhookRoute),
+  route("POST", "/api/triggers/signup", signupWebhookRoute),
+  route("POST", "/api/triggers/linkedin-reply", linkedinReplyWebhookRoute),
   route("POST", "/api/triggers/:name/enabled", setTriggerEnabledRoute),
   route("POST", "/api/triggers/:name/config", setTriggerConfigRoute),
   route("POST", "/api/triggers/:name/run", runTriggerRoute),
+  route("GET", "/api/packs", listPacksRoute),
+  route("POST", "/api/packs/:id/apply", applyPackRoute),
 ];
 
 function findRoute(req: Request): { handler: RouteHandler; params: Record<string, string> } | null {
@@ -153,21 +189,52 @@ function getStaticDir(): string | null {
   return null;
 }
 
-async function serveStatic(staticDir: string, pathname: string): Promise<Response | null> {
+const notFound = (): Response =>
+  new Response("not found", { status: 404, headers: { "content-type": "text/plain" } });
+
+/**
+ * Vite content-hashes everything under assets/, so those are immutable. Nothing
+ * else is: index.html must never be cached, or a `bunx oneshot-gtm-server`
+ * upgrade serves a stale document pointing at deleted chunks — a white screen
+ * that a reload does not fix. The brand files in public/ are unhashed too, so
+ * they land in the same revalidate bucket, which is what we want the first time
+ * an icon changes.
+ */
+function cacheHeaders(rel: string): Record<string, string> {
+  return rel.startsWith("assets/")
+    ? { "cache-control": "public, max-age=31536000, immutable" }
+    : { "cache-control": "no-cache" };
+}
+
+/** Exported for tests — CI never runs the web build, so this is the only cover it gets. */
+export async function serveStatic(staticDir: string, pathname: string): Promise<Response> {
   const root = resolve(staticDir);
   const rel = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
   const candidate = resolve(root, rel);
-  // Reject anything that escapes the static dir. `resolve` collapses `..`
-  // segments so the prefix check catches both raw `..` and encoded variants.
-  if (candidate !== root && !candidate.startsWith(`${root}/`)) return null;
-  if (existsSync(candidate)) {
-    return new Response(Bun.file(candidate));
+  // Reject anything that escapes the static dir. `relative` rather than a
+  // string prefix: on Windows `resolve` returns backslash-separated paths, so
+  // a `${root}/` comparison rejects every legitimate asset there.
+  const within = relative(root, candidate);
+  if (within.startsWith("..") || isAbsolute(within)) return notFound();
+  const stat = statSync(candidate, { throwIfNoEntry: false });
+  // isFile, not exists: a directory passes existsSync and then Bun.file() fails
+  // mid-stream with EISDIR instead of returning a status.
+  if (stat?.isFile()) {
+    return new Response(Bun.file(candidate), { headers: cacheHeaders(rel) });
   }
+  // An existing non-file — /assets, say — is not a client route, so it must not
+  // be handed the SPA shell just for having no dot in it.
+  if (stat) return notFound();
   // SPA fallback: serve index.html for non-asset paths (paths without a dot).
   if (!rel.includes(".")) {
-    return new Response(Bun.file(join(root, "index.html")));
+    return new Response(Bun.file(join(root, "index.html")), {
+      headers: cacheHeaders("index.html"),
+    });
   }
-  return null;
+  // A missing asset used to fall through to the 200 text/plain "server running"
+  // body below, which the browser then tried to decode AS the asset — a missing
+  // icon looked like a corrupt one, with no status to explain it.
+  return notFound();
 }
 
 export function buildFetchHandler(): (req: Request) => Promise<Response> | Response {
@@ -224,11 +291,10 @@ export function buildFetchHandler(): (req: Request) => Promise<Response> | Respo
       return Response.redirect(`${viteDevUrl}${url.pathname}${url.search}`, 302);
     }
 
-    // Static / SPA serving (production / built dashboard).
-    if (staticDir) {
-      const r = await serveStatic(staticDir, url.pathname);
-      if (r) return r;
-    }
+    // Static / SPA serving (production / built dashboard). getStaticDir only
+    // returns a dir that contains index.html, so the message below stays
+    // reachable for its one real case: no build on disk at all.
+    if (staticDir) return await serveStatic(staticDir, url.pathname);
 
     return new Response(
       "oneshot-gtm server running. Build the web app to see the dashboard, or set VITE_DEV_SERVER_URL.",
@@ -256,11 +322,15 @@ export async function startServer(
 function isLoopbackOrigin(origin: string): boolean {
   // Empty origin = same-origin request (curl, server-side fetch); allow.
   if (origin === "") return true;
-  return (
-    origin.startsWith("http://127.0.0.1") ||
-    origin.startsWith("http://localhost") ||
-    origin.startsWith("http://[::1]")
-  );
+  try {
+    const url = new URL(origin);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      (url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "[::1]")
+    );
+  } catch {
+    return false;
+  }
 }
 
 function isLoopbackHost(host: string | null): boolean {
@@ -290,5 +360,10 @@ export function jsonResponse(body: unknown, status = 200, req?: Request): Respon
     "content-type": "application/json; charset=utf-8",
   };
   if (req) Object.assign(headers, corsHeaders(req));
-  return new Response(JSON.stringify(body), { status, headers });
+
+  // Every JSON response the server produces passes through here, which is the
+  // only place a demo install can be stopped from printing the operator's home
+  // directory back at a camera. See scrubDemoPaths.
+  const json = JSON.stringify(body);
+  return new Response(demoMode() ? scrubDemoPaths(json, configDir()) : json, { status, headers });
 }

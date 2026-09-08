@@ -1,3 +1,5 @@
+import { Explain } from "../components/primitives/Explain.tsx";
+import { PRIORITY_CONCEPTS } from "../lib/concepts.ts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
@@ -13,6 +15,7 @@ import {
   RotateCw,
   Send,
   Target,
+  UserPlus,
   X,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -20,6 +23,7 @@ import { toast } from "sonner";
 import {
   blockingFlags,
   isRunnablePlay,
+  type PackApplyResult,
   type QueueRowView,
   type QueueStatusView,
   type TriggerView,
@@ -30,19 +34,47 @@ import { Button } from "../components/primitives/Button.tsx";
 import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
 import { Field, Input, Textarea } from "../components/primitives/Field.tsx";
 import { Modal } from "../components/primitives/Modal.tsx";
+import { AddProspectForm } from "../components/queue/AddProspectForm.tsx";
 import { Pii } from "../components/primitives/Pii.tsx";
-import { useMask } from "../lib/privacy.tsx";
+import { useMask, usePrivacy } from "../lib/privacy.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { Toggle } from "../components/primitives/Toggle.tsx";
-import { cn, eventIsPast, formatSendsToday, humanizeEventDate, timeAgo } from "../lib/cn.ts";
 import {
+  cn,
+  eventIsPast,
+  formatCount,
+  formatSendsToday,
+  humanizeEventDate,
+  timeAgo,
+} from "../lib/cn.ts";
+import {
+  bulkApprovalIds,
   drainButtonState,
   drainSelectionState,
+  isQueueFilterActive,
   mergeRowMeta,
+  queuePlayList,
+  queueRequest,
+  queueSelectionState,
+  selectVisibleQueueRows,
+  toggleQueueSelection,
   type RowMeta,
-} from "../lib/drainButton.ts";
+} from "../lib/queue-helpers.ts";
 import { humanInterval } from "../lib/humanInterval.ts";
+import { priorityBreakdown, priorityChip } from "../lib/priorityChip.ts";
+import { queueEvidence } from "../lib/queueEvidence.ts";
+import {
+  companyFor,
+  emailFor,
+  linkedinUrlFor,
+  nameFor,
+  phoneFor,
+  sourceDetail,
+  titleFor,
+} from "../lib/payloadIdentity.ts";
 import { INTERVAL_PRESETS_MS, withIntervalOverride } from "../lib/triggerInterval.ts";
+import { summarizeTriggers } from "../lib/triggerSummary.ts";
+import { useLocalStorage } from "../lib/useLocalStorage.ts";
 import {
   clearDraftGenerating,
   markDraftGenerating,
@@ -50,6 +82,7 @@ import {
 } from "../lib/draftRunState.ts";
 import { buildSignalDays } from "../lib/signalDays.ts";
 import { summarizeRun } from "../lib/summarizeRun.ts";
+import { READ_ONLY, readOnly } from "../lib/readOnly.ts";
 import {
   clearTriggerRunning,
   hasAnyRunningTrigger,
@@ -59,11 +92,19 @@ import {
 } from "../lib/triggerRunState.ts";
 
 export const Route = createFileRoute("/queue")({
+  staticData: { title: "Queue" },
   component: QueuePage,
 });
 
 /** Stable empty page — see `fetchedRows` below. */
 const EMPTY_ROWS: QueueRowView[] = [];
+
+/**
+ * Rows rendered before the "show all" disclosure. The API hands back up to 200
+ * (`queue-helpers.ts`), which at ~70px each is ~14,000px of uninterrupted
+ * table — and `rejected` alone holds thousands.
+ */
+const ROW_CAP = 50;
 
 const STATUSES: Array<QueueStatusView | "all"> = [
   "all",
@@ -122,21 +163,18 @@ function QueuePage() {
   const [rejectModal, setRejectModal] = useState<RejectModalState | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [drainModal, setDrainModal] = useState<DrainModalState | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
   const [drainLimit, setDrainLimit] = useState(10);
-  const [drainSenderCohort, setDrainSenderCohort] = useState("");
-  const [drainOffer, setDrainOffer] = useState("");
   const [drainDryRun, setDrainDryRun] = useState(true);
+  // null = follow the configured default; the server echoes what it used.
+  const [orderOverride, setOrderOverride] = useState<"ranked" | "newest" | null>(null);
 
   const queueQuery = useQuery({
-    queryKey: ["queue", statusFilter, playFilter],
-    queryFn: () =>
-      api.queue({
-        ...(statusFilter !== "all" ? { status: statusFilter } : {}),
-        ...(playFilter !== "all" ? { play: playFilter } : {}),
-        limit: 200,
-      }),
+    queryKey: ["queue", statusFilter, playFilter, orderOverride],
+    queryFn: () => api.queue(queueRequest({ statusFilter, playFilter, orderOverride })),
     refetchInterval: 20_000,
   });
+  const effectiveOrder = queueQuery.data?.order ?? "newest";
 
   const invalidate = (): void => {
     void qc.invalidateQueries({ queryKey: ["queue"] });
@@ -218,8 +256,6 @@ function QueuePage() {
       dryRun: drainDryRun ? "1" : "0",
     };
     if (drainModal.ids) search["ids"] = drainModal.ids.join(",");
-    if (drainSenderCohort.trim()) search["senderCohort"] = drainSenderCohort.trim();
-    if (drainOffer.trim()) search["freeForCohortOffer"] = drainOffer.trim();
     void navigate({
       to: "/run/$playName",
       params: { playName: drainModal.playName },
@@ -238,6 +274,14 @@ function QueuePage() {
   // every render, which would re-fire the rowMeta effect on each one.
   const fetchedRows = queueQuery.data?.rows;
   const rows = fetchedRows ?? EMPTY_ROWS;
+  /*
+   * Rows render capped, with a "show all" row at the end. Deliberately NOT
+   * persisted: lifting the cap for one look at the 7,600 rejected rows should
+   * not follow you back here tomorrow. Reset whenever the filters change, so
+   * "show all" never silently carries across a filter switch.
+   */
+  const [showAllRows, setShowAllRows] = useState(false);
+  const visibleRows = showAllRows ? rows : rows.slice(0, ROW_CAP);
   // Whole-queue approved counts per play — NOT scoped to the current filters,
   // so the drain button works from the default `pending` view too.
   const approvedByPlay = queueQuery.data?.approvedByPlay ?? {};
@@ -263,9 +307,7 @@ function QueuePage() {
   // Plays on the visible page, plus any play holding approved rows anywhere —
   // the chip both filters the table and scopes the drain button, so a play with
   // drainable rows must stay selectable even when the page shows none of them.
-  const playList = Array.from(
-    new Set([...rows.map((r) => r.playName), ...Object.keys(approvedByPlay)]),
-  ).toSorted();
+  const playList = queuePlayList(rows, approvedByPlay);
   const drain = drainButtonState({ playFilter, approvedByPlay, isRunnable: isRunnablePlay });
   // Selection outlives the filters, so read each selected row from the session
   // map rather than the visible page — otherwise filtering to one play makes a
@@ -279,8 +321,15 @@ function QueuePage() {
   });
 
   // Selection derived state — stable across renders even if rows refetch.
-  const someSelected = selected.size > 0;
-  const allSelected = rows.length > 0 && selected.size === rows.length;
+  /*
+   * Selection state is computed against the rows actually on screen, not the
+   * whole fetched set. With the row cap in place `rows` can hold 200 while 50
+   * are rendered, and the header checkbox is named for what it does —
+   * `selectVisibleQueueRows`. Passing `rows` would tick one box and silently
+   * select 150 rows the reader cannot see, which the bulk approve/reject bar
+   * would then act on.
+   */
+  const { someSelected, allSelected } = queueSelectionState(visibleRows, selected);
 
   return (
     <div className="-mx-6 -my-6 flex flex-col">
@@ -314,87 +363,138 @@ function QueuePage() {
 
       <IcpBanner />
 
-      <TriggersCard />
+      <TriggersCard queueEmpty={queueQuery.isLoading ? null : rows.length === 0} />
 
       {/* Target Queue. The play filter is inline because it narrows this table only. */}
       <section className="border-t-2 border-ink-rule">
-        <div className="flex flex-wrap items-center justify-between gap-3 px-6 pb-3 pt-5">
-          <div className="flex items-baseline gap-3">
+        {/* The 7-day histogram rides the caption rather than holding a band of
+            its own. It is one line of context about the rows below, and a full
+            width strip for it was 42px of the first screen. */}
+        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 px-6 pb-3 pt-5">
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
             <div className="ln-eyebrow">
               Target Queue{" "}
               <span className="text-ink-faint">
                 · {queueQuery.data ? rows.length : "…"} row{rows.length === 1 ? "" : "s"}
               </span>
             </div>
+            {rows.length > 0 && <SignalStrip rows={rows} ranked={effectiveOrder === "ranked"} />}
           </div>
-          <div className="font-mono text-[11px] text-ink-faint">refresh · 20s</div>
+          <div className="flex items-center gap-3">
+            {/* The one manual way a row gets here, next to the rows it makes.
+                It used to be the second item in the sidebar, which gave an
+                occasional act more prominence than the daily review. */}
+            <Button variant="ghost" size="sm" onClick={() => setAddOpen(true)} {...readOnly}>
+              <UserPlus size={13} /> Add prospect
+            </Button>
+            <div className="font-mono text-[11px] text-ink-faint">refresh · 20s</div>
+          </div>
         </div>
 
-        {/* Status + play filters, scoped to this table. */}
-        <div className="flex flex-wrap items-center gap-2 border-b border-ink-rule/60 px-6 pb-3">
+        {/*
+          Status, order and play are one filter block, so one rule closes it.
+          A rule between these two rows made them read as separate bands, which
+          on top of the caption's rule and the table head put four hairlines in
+          200px of page.
+        */}
+        <div className="flex flex-wrap items-center gap-2 px-6 pb-3">
           <span className="ln-eyebrow">status</span>
           {STATUSES.map((s) => (
             <Button
               key={s}
-              variant={statusFilter === s ? "primary" : "ghost"}
+              variant={statusFilter === s ? "secondary" : "ghost"}
               size="sm"
-              onClick={() => setStatusFilter(s)}
+              onClick={() => {
+                setStatusFilter(s);
+                setShowAllRows(false);
+                setExpanded(null);
+              }}
             >
               {s}
             </Button>
           ))}
-          <span className="mx-2 h-4 w-px bg-ink-rule" />
+          {statusFilter === "pending" && (
+            <>
+              <span className="mx-2 h-4 w-px bg-ink-rule" />
+              <span className="ln-eyebrow">order</span>
+              {(["newest", "ranked"] as const).map((o) => (
+                <Button
+                  key={o}
+                  variant={effectiveOrder === o ? "secondary" : "ghost"}
+                  size="sm"
+                  onClick={() => setOrderOverride(o)}
+                >
+                  {o}
+                </Button>
+              ))}
+            </>
+          )}
+          {/* Approve-all and drain scope to the play filter below, and sit up
+              here because status and order are a fixed, short set: this row's
+              width does not change with the install, so the buttons stay put. */}
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={approveAll.isPending || counts.pending === 0}
+              onClick={() => approveAll.mutate(playFilter === "all" ? undefined : playFilter)}
+              {...readOnly}
+            >
+              <Check size={12} /> approve all pending
+              {playFilter !== "all" ? ` (${playFilter})` : ""}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={!drain.enabled}
+              onClick={() => {
+                if (!drain.playName) return;
+                setDrainModal({ playName: drain.playName, approvedCount: drain.approvedCount });
+              }}
+              {...readOnly}
+            >
+              <Send size={12} /> {drain.label}
+            </Button>
+          </div>
+        </div>
+
+        {/* The play filter earns its own line: it is the only group here whose
+            length grows with the install — seven chips against this seeded
+            ledger, eleven on a working one — and on one row it shunted the
+            actions around every time the status tab changed. */}
+        <div className="flex flex-wrap items-center gap-2 border-b border-ink-rule/60 px-6 py-2.5">
           <span className="ln-eyebrow">play</span>
           <Button
-            variant={playFilter === "all" ? "primary" : "ghost"}
+            variant={playFilter === "all" ? "secondary" : "ghost"}
             size="sm"
-            onClick={() => setPlayFilter("all")}
+            onClick={() => {
+              setPlayFilter("all");
+              setShowAllRows(false);
+              setExpanded(null);
+            }}
           >
             all
           </Button>
           {playList.map((p) => (
             <Button
               key={p}
-              variant={playFilter === p ? "primary" : "ghost"}
+              variant={playFilter === p ? "secondary" : "ghost"}
               size="sm"
-              onClick={() => setPlayFilter(p)}
+              onClick={() => {
+                setPlayFilter(p);
+                setShowAllRows(false);
+                setExpanded(null);
+              }}
             >
               {p}
             </Button>
           ))}
         </div>
 
-        {/* Approve-all + drain both respect the current play filter. */}
-        <div className="flex flex-wrap items-center gap-2 border-b border-ink-rule/60 bg-ink-surface/30 px-6 py-3">
-          <Button
-            variant="secondary"
-            size="sm"
-            disabled={approveAll.isPending || counts.pending === 0}
-            onClick={() => approveAll.mutate(playFilter === "all" ? undefined : playFilter)}
-          >
-            <Check size={12} /> approve all pending
-            {playFilter !== "all" ? ` (${playFilter})` : ""}
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={!drain.enabled}
-            onClick={() => {
-              if (!drain.playName) return;
-              setDrainModal({ playName: drain.playName, approvedCount: drain.approvedCount });
-            }}
-          >
-            <Send size={12} /> {drain.label}
-          </Button>
-        </div>
-
-        {/* 7-day signal strip — enqueues per day from the rows in memory. */}
-        {rows.length > 0 && <SignalStrip rows={rows} />}
-
         {queueQuery.isLoading ? (
           Array.from({ length: 5 }, (_, i) => <SkeletonRow key={i} />)
         ) : rows.length === 0 ? (
-          <EmptyQueueHelp filterActive={statusFilter !== "pending" || playFilter !== "all"} />
+          <EmptyQueueHelp filterActive={isQueueFilterActive(statusFilter, playFilter)} />
         ) : (
           <table className="w-full text-[13px]">
             <thead className="sticky top-0 z-10 bg-ink-bg">
@@ -410,7 +510,7 @@ function QueuePage() {
                         if (el) el.indeterminate = someSelected && !allSelected;
                       }}
                       onChange={(e) =>
-                        setSelected(e.target.checked ? new Set(rows.map((r) => r.id)) : new Set())
+                        setSelected(new Set(selectVisibleQueueRows(visibleRows, e.target.checked)))
                       }
                       aria-label={allSelected ? "deselect all" : "select all"}
                     />
@@ -424,21 +524,17 @@ function QueuePage() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((row, i) => (
+              {visibleRows.map((row, i) => (
                 <QueueRow
                   key={row.id}
                   row={row}
+                  ranked={effectiveOrder === "ranked"}
                   zebra={i % 2 === 1}
                   expanded={expanded === row.id}
                   selected={selected.has(row.id)}
                   anySelected={someSelected}
                   onToggleSelect={() => {
-                    setSelected((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(row.id)) next.delete(row.id);
-                      else next.add(row.id);
-                      return next;
-                    });
+                    setSelected((prev) => new Set(toggleQueueSelection(prev, row.id)));
                   }}
                   onToggle={() => setExpanded(expanded === row.id ? null : row.id)}
                   generating={generating.has(row.id)}
@@ -449,13 +545,36 @@ function QueuePage() {
                   busy={approve.isPending || reject.isPending}
                 />
               ))}
+              {/* The fetch returns up to 200 rows (queue-helpers.ts `limit`)
+                  and every one used to render into this tbody — ~14,000px of
+                  table. Same one-quiet-row disclosure the inactive finders use
+                  in the Triggers panel, colSpan trick included so the shared
+                  column widths hold. */}
+              {rows.length > visibleRows.length && (
+                <tr className="border-b border-ink-rule/60">
+                  <td colSpan={7} className="px-6 py-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowAllRows(true)}
+                      className="flex items-center gap-1.5 font-mono text-[11px] text-ink-faint transition-colors hover:text-ink-cream-2"
+                    >
+                      <ChevronDown size={11} />
+                      {formatCount(rows.length - visibleRows.length)} more · show all{" "}
+                      {formatCount(rows.length)}
+                    </button>
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         )}
       </section>
 
       {someSelected && (
-        <div className="sticky bottom-0 z-20 flex items-center justify-between gap-4 border-b border-t border-ink-rule bg-ink-bg/95 px-6 py-3 backdrop-blur-[2px]">
+        <div
+          className="sticky bottom-0 z-20 flex items-center justify-between gap-4 border-b border-t border-ink-rule bg-ink-bg/95 px-6 py-3 backdrop-blur-[2px]"
+          data-foot-bar
+        >
           <div className="flex items-center gap-3">
             <span className="inline-flex h-6 min-w-[24px] items-center justify-center rounded-full bg-[color:var(--ink-signal)]/20 px-2 font-mono text-[12px] text-[color:var(--ink-signal-2)]">
               {selected.size}
@@ -476,7 +595,8 @@ function QueuePage() {
               variant="secondary"
               size="sm"
               disabled={bulkApprove.isPending || selected.size === 0}
-              onClick={() => bulkApprove.mutate([...selected])}
+              onClick={() => bulkApprove.mutate(bulkApprovalIds(selected))}
+              {...readOnly}
             >
               <Check size={12} /> approve {selected.size}
             </Button>
@@ -485,6 +605,7 @@ function QueuePage() {
               size="sm"
               disabled={bulkReject.isPending || selected.size === 0}
               onClick={() => bulkReject.mutate([...selected])}
+              {...readOnly}
             >
               <X size={12} /> reject {selected.size}
             </Button>
@@ -506,6 +627,15 @@ function QueuePage() {
           </div>
         </div>
       )}
+
+      <Modal
+        open={addOpen}
+        title="Add a prospect"
+        subtitle="Paste a profile. We research the person, pick the angle against your ICP, and draft an intro for review here."
+        onClose={() => setAddOpen(false)}
+      >
+        <AddProspectForm onQueued={() => setAddOpen(false)} />
+      </Modal>
 
       <Modal
         open={rejectModal != null}
@@ -563,6 +693,9 @@ function QueuePage() {
       >
         <div className="flex flex-col gap-3">
           {/* A selection IS the limit — never show a second, contradictory number. */}
+          <p className="text-[13px] text-ink-muted">
+            Drain approved rows <Explain concept="drain" />
+          </p>
           {drainModal?.ids ? (
             <p className="text-[13px] text-ink-cream-2">
               Draining the {drainModal.ids.length} approved{" "}
@@ -581,27 +714,6 @@ function QueuePage() {
               />
             </Field>
           )}
-          {drainModal?.playName === "accelerator-batch" && (
-            <>
-              <Field
-                label="Sender cohort (optional)"
-                hint="Overrides the cohort stamped on each row. Leave blank to use the row's own (set on the trigger)."
-              >
-                <Input
-                  value={drainSenderCohort}
-                  onChange={(e) => setDrainSenderCohort(e.target.value)}
-                  placeholder="e.g. yc-w23 · od-2 · (leave blank)"
-                />
-              </Field>
-              <Field label="Free-for-cohort offer (optional)">
-                <Input
-                  value={drainOffer}
-                  onChange={(e) => setDrainOffer(e.target.value)}
-                  placeholder="e.g. Free for your batch through demo day — reply with your cohort."
-                />
-              </Field>
-            </>
-          )}
           <label className="inline-flex cursor-pointer items-center gap-2.5 text-[13px] text-ink-cream-2 hover:text-ink-cream">
             <Toggle checked={drainDryRun} onChange={setDrainDryRun} label="dry run" />
             <span>Dry run — preview drafts only, no send (a one-time enrich lookup may apply)</span>
@@ -616,8 +728,9 @@ function QueuePage() {
   );
 }
 
-function QueueRow({
+export function QueueRow({
   row,
+  ranked,
   zebra,
   expanded,
   selected,
@@ -630,6 +743,7 @@ function QueueRow({
   busy,
 }: {
   row: QueueRowView;
+  ranked: boolean;
   zebra: boolean;
   expanded: boolean;
   selected: boolean;
@@ -652,7 +766,12 @@ function QueueRow({
   const eventCity = eventCityFor(row.payload);
   const eventUrl = eventUrlFor(row.payload);
   const eventRole = eventRoleFor(row.payload);
+  const evidence = queueEvidence(row.playName, row.payload);
   const eventPassed = eventDate != null && eventIsPast(eventDate);
+  // Privacy mode suppresses reason text — freeform reasons can embed names
+  // and companies the structured <Pii> masking can't reach.
+  const { masked } = usePrivacy();
+  const prio = priorityChip(row.priority, masked, { shadow: !ranked });
   return (
     <>
       <tr
@@ -693,7 +812,29 @@ function QueueRow({
           <div className="text-ink-cream">{name ? <Pii kind="name">{name}</Pii> : "(unknown)"}</div>
           <div className="font-mono text-[11px] text-ink-faint">
             {email ? <Pii kind="email">{email}</Pii> : "—"}
-            {title ? <span className="text-ink-cream-2">{` · ${title}`}</span> : null}
+            {/*
+              Clamped, because `title` is a LinkedIn headline and some are
+              paragraphs: "Crypto Visionary & AI Strategist ⚡ | Revolutionizing
+              Retail Investing with AI-Driven Insights 🚀 | Empowering Web3
+              Success 🌍 | Non-Financial Advice ⚠️" rendered three lines and
+              made one row twice the height of its neighbours.
+
+              Only the title is clamped, not the whole line. Email, company and
+              the [in] link are short and are what tell two rows apart, so they
+              have to survive; the first few words of a headline carry the job
+              and the rest is self-promotion. Same treatment the evidence line
+              below already gets.
+            */}
+            {title ? (
+              <>
+                {/* Separator outside the clamp: `inline-block` + `truncate`
+                    (overflow-hidden) swallows the span's own leading space. */}
+                {" · "}
+                <span className="inline-block max-w-[38ch] truncate align-bottom text-ink-cream-2">
+                  {title}
+                </span>
+              </>
+            ) : null}
             {company ? (
               <>
                 {" · "}
@@ -717,6 +858,20 @@ function QueueRow({
               </span>
             ) : null}
           </div>
+          {/*
+            Why this row is here at all. A queued candidate has no dossier yet,
+            so the finder's evidence is the only thing distinguishing one row
+            from the next, and it used to be reachable only by expanding.
+
+            Suppressed under privacy mode for the reason the priority reasons
+            are: it is freeform text that can name a person or a company, which
+            the structured <Pii> masking cannot reach inside.
+          */}
+          {evidence && !masked ? (
+            <div className="mt-0.5 max-w-[46ch] truncate text-[11px] text-ink-muted">
+              {evidence}
+            </div>
+          ) : null}
         </td>
         <td className="py-2 text-ink-cream-2">
           {row.playName}
@@ -751,6 +906,15 @@ function QueueRow({
                 draft
               </Badge>
             )}
+            {prio && (
+              <span className="inline-flex items-center">
+                <Badge tone={prio.tone}>{prio.label}</Badge>
+                <Explain
+                  concept="shadowScore"
+                  detail={`${ranked ? "Ranked review uses priority to order candidates; it does not approve or send them." : "Experimental · shadow. Does not affect ordering or sending."} ${prio.title}`}
+                />
+              </span>
+            )}
             {eventDate && (
               <span
                 title={eventPassed ? `event passed · ${eventDate}` : eventDate}
@@ -772,7 +936,7 @@ function QueueRow({
         <td className="px-6 py-2 text-right" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-end gap-1.5">
             {row.status === "pending" && (
-              <Button variant="primary" size="sm" disabled={busy} onClick={onApprove}>
+              <Button variant="primary" size="sm" disabled={busy} onClick={onApprove} {...readOnly}>
                 <Check size={12} />
                 approve
               </Button>
@@ -783,6 +947,7 @@ function QueueRow({
                 size="sm"
                 disabled={busy}
                 onClick={onReject}
+                {...readOnly}
                 className="text-[color:var(--ink-blocked-2)]"
               >
                 <X size={12} />
@@ -797,6 +962,40 @@ function QueueRow({
           <td colSpan={7} className="px-6 py-3">
             <div className="flex flex-col gap-3 text-[12px] text-ink-muted">
               {row.notes ? <div className="ln-note">{row.notes}</div> : null}
+              {row.priority && (
+                <div className="rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep">
+                  <div className="flex items-center gap-2 border-b border-ink-rule/60 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+                    <span>priority {row.priority.total}</span>
+                    <Badge tone="neutral">
+                      {ranked ? "ranked review" : "experimental · shadow"}
+                    </Badge>
+                    <Explain concept="shadowScore" />
+                    <span className="normal-case tracking-normal">
+                      {ranked
+                        ? "affects review order, never approval or sending"
+                        : "does not affect ordering or sending"}
+                    </span>
+                  </div>
+                  <div className="px-3 py-2.5">
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] text-ink-cream-2">
+                      {priorityBreakdown(row.priority).map((b) => (
+                        <span key={b.component}>
+                          {b.component} <span className="text-ink-cream">{b.score}</span>
+                          <span className="text-ink-faint"> ·{b.weightPct}%</span>
+                          <Explain concept={PRIORITY_CONCEPTS[b.component] ?? "shadowScore"} />
+                        </span>
+                      ))}
+                    </div>
+                    {!masked && row.priority.reasons.length > 0 && (
+                      <ul className="mt-1.5 list-disc pl-4 text-[11.5px]">
+                        {row.priority.reasons.map((r) => (
+                          <li key={r}>{r}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
+              )}
               {(eventTitle || eventDate || eventCity || eventUrl) && (
                 <div className="rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep">
                   <div className="flex items-center gap-2 border-b border-ink-rule/60 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
@@ -844,6 +1043,7 @@ function QueueRow({
                 draftedAt={row.lastDraftedAt}
                 generating={generating}
                 isSending={row.isSending}
+                prospectId={row.prospectId}
               />
               <details className="text-ink-faint">
                 <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.14em] hover:text-ink-cream-2">
@@ -867,8 +1067,8 @@ function QueueRow({
  * action; when none exists yet, shows a thin "no draft" bar with a generate
  * action. Both actions hit the same preview-only endpoint (dry-run, never
  * sends). Hidden for already-sent drafts (re-rolling would only overwrite the
- * preview). All plays are self-contained now — accelerator-batch rows carry
- * their senderCohort (stamped from trigger config), so they generate inline too.
+ * preview). All plays are self-contained now — every finder stamps its pitch
+ * angle onto the row it enqueues, so any row generates inline.
  */
 function DraftSection({
   id,
@@ -879,6 +1079,7 @@ function DraftSection({
   draftedAt,
   generating,
   isSending,
+  prospectId,
 }: {
   id: number;
   playName: string;
@@ -887,6 +1088,8 @@ function DraftSection({
   draft: QueueRowView["lastDraft"];
   draftedAt: string | null;
   generating: boolean;
+  /** Set once the send has created a prospect row; null before that. */
+  prospectId: number | null;
   /**
    * True when the server's `target_queue.send_started_at` marker is set —
    * survives nav-away-and-back AND `bun --watch` reloads, unlike the
@@ -923,6 +1126,7 @@ function DraftSection({
     mutationFn: () => api.sendDraft(id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["queue"] });
+      void qc.invalidateQueries({ queryKey: ["home"] });
       toast.success("sent · the reviewed draft went out as-is");
     },
     onError: (err) => {
@@ -956,6 +1160,7 @@ function DraftSection({
       size="sm"
       disabled={isGenerating}
       onClick={() => regenerate.mutate()}
+      {...readOnly}
       title="Draft this row in preview mode — dry-run, never sends"
     >
       {isGenerating ? <Loader2 size={11} className="animate-spin" /> : <RotateCw size={11} />}
@@ -971,6 +1176,7 @@ function DraftSection({
     mutationFn: () => api.markSent(id),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["queue"] });
+      void qc.invalidateQueries({ queryKey: ["home"] });
       toast.success("recorded · hand-send logged on channel x");
     },
     onError: (err) => {
@@ -978,6 +1184,76 @@ function DraftSection({
       toast.error(`couldn't record · ${err.message}`);
     },
   });
+  // Recording a LinkedIn reply used to live only on /cadences, which is a join
+  // on `cadence_state` — so it was unreachable for every one-touch play. All
+  // 130 luma-events prospects were in that hole: emailed, never enrolled in a
+  // cadence, and therefore impossible to mark when they replied on LinkedIn.
+  // The queue row is where every sent prospect is visible, so it belongs here.
+  const [linkedinBody, setLinkedinBody] = useState("");
+  const [linkedinOpen, setLinkedinOpen] = useState(false);
+  const markLinkedIn = useMutation({
+    mutationFn: () => api.markLinkedInReply(prospectId as number, linkedinBody),
+    onSuccess: (data) => {
+      void qc.invalidateQueries({ queryKey: ["queue"] });
+      void qc.invalidateQueries({ queryKey: ["cadences"] });
+      setLinkedinOpen(false);
+      setLinkedinBody("");
+      const warning = data.inFlightSends > 0 ? " · an in-flight email may still complete" : "";
+      toast.success(
+        `LinkedIn reply recorded · ${data.cadencesStopped} cadence(s) stopped${warning}`,
+      );
+    },
+    onError: (err) => toast.error(`couldn't record · ${err.message}`),
+  });
+  // Split in two so the trigger sits with the other row actions in the draft
+  // card's header strip — beside the receipt links, where every other
+  // row-level action already lives — while the textarea stays below the body,
+  // which is the only part that earns full width.
+  const canMarkLinkedIn = status === "sent" && prospectId != null;
+  const linkedinReplyButton =
+    canMarkLinkedIn && !linkedinOpen ? (
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => setLinkedinOpen(true)}
+        title="Record a LinkedIn reply and stop any email cadence for this prospect"
+      >
+        mark linkedin reply
+      </Button>
+    ) : null;
+  const linkedinReplyEditor =
+    canMarkLinkedIn && linkedinOpen ? (
+      <div className="mt-2 flex flex-col gap-2 border-t border-ink-rule pt-2">
+        <label
+          className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint"
+          htmlFor={`li-reply-${id}`}
+        >
+          they replied on linkedin — paste what they said
+        </label>
+        <textarea
+          id={`li-reply-${id}`}
+          className="min-h-[72px] w-full rounded border border-ink-rule bg-transparent p-2 text-[11px]"
+          value={linkedinBody}
+          onChange={(e) => setLinkedinBody(e.currentTarget.value)}
+          placeholder="Optional, but it is what a reply gets drafted from later."
+        />
+        <div className="flex items-center gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={markLinkedIn.isPending}
+            onClick={() => markLinkedIn.mutate()}
+            {...readOnly}
+          >
+            {markLinkedIn.isPending ? "recording…" : "record reply"}
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => setLinkedinOpen(false)}>
+            cancel
+          </Button>
+        </div>
+      </div>
+    ) : null;
+
   const p = (payload ?? {}) as Record<string, unknown>;
   const pstr = (k: string): string | null => (typeof p[k] === "string" ? (p[k] as string) : null);
   const dmOpen = p["dmOpen"] === true;
@@ -1024,6 +1300,7 @@ function DraftSection({
           size="sm"
           disabled={markSent.isPending}
           onClick={() => markSent.mutate()}
+          {...readOnly}
           title="Record that you sent this by hand from the X app"
         >
           {markSent.isPending ? (
@@ -1051,6 +1328,7 @@ function DraftSection({
         size="sm"
         disabled={sending || !cleanDraft}
         onClick={() => send.mutate()}
+        {...readOnly}
         title={
           softHold
             ? draft?.flags.includes("contacted-elsewhere")
@@ -1070,15 +1348,22 @@ function DraftSection({
 
   if (!draft) {
     return (
-      <div className="flex items-center justify-between gap-2 rounded-[var(--radius-sm)] border border-dashed border-ink-rule bg-ink-bg-deep px-3 py-2.5">
-        <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
-          no draft yet
-        </span>
-        <span className="flex items-center gap-2">
-          {manualButtons}
-          {sendButton}
-          {draftButton}
-        </span>
+      <div className="rounded-[var(--radius-sm)] border border-dashed border-ink-rule bg-ink-bg-deep px-3 py-2.5">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+            no draft yet
+          </span>
+          <span className="flex items-center gap-2">
+            {/* A sent row whose draft was never persisted used to return here
+                before the LinkedIn control rendered — so exactly the rows most
+                likely to have been replied to by hand could not record one. */}
+            {linkedinReplyButton}
+            {manualButtons}
+            {sendButton}
+            {draftButton}
+          </span>
+        </div>
+        {linkedinReplyEditor}
       </div>
     );
   }
@@ -1110,10 +1395,21 @@ function DraftSection({
         <span>{headerLabel}</span>
         {draftedAt ? <span className="text-ink-muted">· {timeAgo(draftedAt)}</span> : null}
         <Badge tone={tone}>{stateLabel}</Badge>
+        {softHold && (
+          <Explain
+            concept="softHold"
+            detail={
+              draft.flags.includes("contacted-elsewhere")
+                ? "Held — another workspace emailed this person in the last 7 days. Send the reviewed draft as-is to override."
+                : "Held for review (event has passed) — send the reviewed draft above, as-is"
+            }
+          />
+        )}
         {isStalePostSend && <Badge tone="blocked">post-send regenerate · not sent</Badge>}
         {draft.enrichmentFailed && (
-          <span title="enrichment failed — drafted from payload context only; retries automatically after ~3 days">
+          <span className="inline-flex items-center">
             <Badge tone="spend">no enrichment</Badge>
+            <Explain concept="enrichment" />
           </span>
         )}
         {draft.flags.length > 0 &&
@@ -1132,6 +1428,7 @@ function DraftSection({
               receipt #{rid}
             </Link>
           ))}
+          {linkedinReplyButton}
           {manualButtons}
           {sendButton}
           {draftButton}
@@ -1142,6 +1439,7 @@ function DraftSection({
         <pre className="mt-2 max-h-[360px] overflow-auto whitespace-pre-wrap font-mono text-[11.5px] leading-[1.55] text-ink-cream-2">
           {draft.body}
         </pre>
+        {linkedinReplyEditor}
       </div>
     </div>
   );
@@ -1153,15 +1451,17 @@ function DraftSection({
  * rows currently in memory) but gives a quick visual pulse without any
  * new API.
  */
-function SignalStrip({ rows }: { rows: QueueRowView[] }) {
+function SignalStrip({ rows, ranked = false }: { rows: QueueRowView[]; ranked?: boolean }) {
   const days = buildSignalDays(rows);
   const max = Math.max(1, ...days.map((d) => d.count));
   const total = days.reduce((a, d) => a + d.count, 0);
 
   return (
-    <div className="flex items-center gap-4 border-b border-ink-rule/60 bg-ink-bg-deep/40 px-6 py-2.5">
+    <div className="flex items-center gap-3">
       <div className="ln-eyebrow" style={{ fontSize: 10 }}>
-        last 7d
+        {/* A ranked page is no longer "the newest N", so the histogram only
+            describes the rows shown — make the existing approximation visible. */}
+        {ranked ? "last 7d · shown rows" : "last 7d"}
       </div>
       <div className="flex items-end gap-1" aria-hidden="true">
         {days.map((d) => {
@@ -1180,7 +1480,7 @@ function SignalStrip({ rows }: { rows: QueueRowView[] }) {
         })}
       </div>
       <div className="font-mono text-[11px] text-ink-muted">
-        {total} enqueued
+        {formatCount(total)} enqueued
         <span className="ml-2 text-ink-faint">
           · <span className="text-ink-cream-2">{days[days.length - 1]?.count ?? 0}</span> today
         </span>
@@ -1189,7 +1489,171 @@ function SignalStrip({ rows }: { rows: QueueRowView[] }) {
   );
 }
 
-function TriggersCard() {
+/** Per-browser memory of whether the panel is open. */
+const TRIGGERS_OPEN_KEY = "oneshot-gtm:queue-triggers-open";
+
+/**
+ * Industry pack picker — one selector, not eight cards.
+ *
+ * A pack IS trigger config: `POST /packs/:id/apply` merges each patch over the
+ * trigger's stored config and enables it. So it belongs inside the Triggers
+ * panel, which is already collapsed by default and already auto-opens on the
+ * two occasions a pack is what you came for — nothing configured yet, or an
+ * empty queue.
+ *
+ * It used to be eight always-expanded cards sitting above the candidates on a
+ * page titled "Candidates, for review.", costing ~900px — more than a whole
+ * viewport — for a once-per-vertical action. Every founder paid that on every
+ * visit, and seven of the eight are verticals any given founder will never
+ * pick.
+ */
+function PackPicker() {
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const packsQuery = useQuery({ queryKey: ["packs"], queryFn: () => api.packs() });
+  const [selectedId, setSelectedId] = useState<string>("");
+  const [lastResult, setLastResult] = useState<PackApplyResult | null>(null);
+
+  const applyPack = useMutation({
+    mutationFn: (id: string) => api.applyPack(id),
+    onSuccess: (result: PackApplyResult) => {
+      setLastResult(result);
+      const readyCount = result.applied.filter((t) => t.ready).length;
+      const notReadyCount = result.applied.length - readyCount;
+      toast.success(
+        notReadyCount > 0
+          ? `${result.id} · ${result.applied.length} triggers · ${notReadyCount} need config`
+          : `${result.id} · ${result.applied.length} triggers applied`,
+      );
+      if (result.skipped.length > 0) {
+        toast.info(`${result.id} · skipped ${result.skipped.map((s) => s.name).join(", ")}`);
+      }
+      void qc.invalidateQueries({ queryKey: ["triggers"] });
+      void qc.invalidateQueries({ queryKey: ["queue"] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const packs = packsQuery.data?.packs ?? [];
+  if (packsQuery.isLoading || packs.length === 0) return null;
+
+  const selected = packs.find((p) => p.id === selectedId) ?? null;
+  const result = lastResult && selected && lastResult.id === selected.id ? lastResult : null;
+  const stillNeeded = result?.applied.filter((t) => !t.ready) ?? [];
+
+  return (
+    <div className="border-b border-ink-rule/60 px-6 py-3">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="ln-eyebrow">Start from a pack</div>
+        <select
+          value={selectedId}
+          aria-label="industry pack"
+          /*
+           * Locked while an apply is in flight. The onChange below clears
+           * `lastResult` so one pack's outcome never reads as another's — but
+           * switching mid-apply meant the result landed against a pack that was
+           * no longer selected and rendered nowhere, so the founder saw a
+           * success toast and never the list of triggers that still need
+           * config. The write has already happened; the report has to survive.
+           */
+          disabled={applyPack.isPending}
+          onChange={(e) => {
+            setSelectedId(e.currentTarget.value);
+            // The previous pack's result must not read as this one's.
+            setLastResult(null);
+          }}
+          className="h-7 rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg px-2 text-[12px] text-ink-cream disabled:opacity-60"
+        >
+          <option value="">select a vertical…</option>
+          {packs.map((pack) => (
+            <option key={pack.id} value={pack.id}>
+              {pack.label}
+            </option>
+          ))}
+        </select>
+        {selected && (
+          <Button
+            size="sm"
+            disabled={applyPack.isPending || READ_ONLY}
+            onClick={() => applyPack.mutate(selected.id)}
+            {...readOnly}
+          >
+            {applyPack.isPending ? "Applying…" : "Apply"}
+          </Button>
+        )}
+      </div>
+
+      {selected && (
+        <div className="mt-2">
+          {/* `summary` is the founder-facing line; `buyerBrief` is the
+              provenance behind it and reads like the engineering note it is.
+              `summary` is optional, so the fallback is clamped — without it a
+              pack that omits one renders the whole paragraph inline, the exact
+              thing this picker exists to avoid. */}
+          <div className={cn("text-[12px] text-ink-cream-2", !selected.summary && "line-clamp-2")}>
+            {selected.summary ?? selected.buyerBrief}
+          </div>
+          <div className="mt-1.5 font-mono text-[11px] text-ink-faint">
+            triggers · {selected.triggers.join(", ")}
+          </div>
+          <div className="mt-1 font-mono text-[11px] text-ink-muted">
+            ICP · <span className="text-ink-cream-2">{selected.icpOneLiner}</span>
+          </div>
+          {/* Always available, including on the no-summary path — otherwise the
+              clamp above would make the rest of the reasoning unreachable. */}
+          <details className="mt-1.5">
+            <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint hover:text-ink-cream-2">
+              why these channels
+            </summary>
+            <div className="mt-1.5 text-[11.5px] leading-[1.55] text-ink-muted">
+              {selected.buyerBrief}
+            </div>
+          </details>
+        </div>
+      )}
+
+      {result && selected && (
+        <div className="mt-2.5 border-t border-ink-rule/60 pt-2.5 font-mono text-[11px]">
+          <div className="text-ink-receipt-2">
+            ✓ applied · {result.applied.map((t) => t.name).join(", ")}
+          </div>
+          {stillNeeded.length > 0 && (
+            <div className="mt-1 text-[color:var(--ink-blocked-2)]">
+              still needs: {stillNeeded.map((t) => `${t.name} (${t.notReadyReason})`).join(" · ")}
+            </div>
+          )}
+          {result.skipped.length > 0 && (
+            <div className="mt-1 text-ink-faint">
+              skipped: {result.skipped.map((s) => `${s.name} (${s.reason})`).join(" · ")}
+            </div>
+          )}
+          {/* Apply never touches icpOneLiner in config.json (see packs.ts) —
+              the proposed ICP only reaches the founder's config if they
+              explicitly accept it from /setup. */}
+          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-ink-muted">
+            <span>proposed ICP · {result.proposedIcpOneLiner}</span>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() =>
+                navigate({
+                  to: "/setup",
+                  search: { proposedIcp: result.proposedIcpOneLiner, packLabel: selected.label },
+                  // Land on the ICP section — the seeded field is the point.
+                  hash: "icp",
+                })
+              }
+            >
+              Accept in Setup
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TriggersCard({ queueEmpty }: { queueEmpty: boolean | null }) {
   const qc = useQueryClient();
   const triggersQuery = useQuery({
     queryKey: ["triggers"],
@@ -1283,6 +1747,57 @@ function TriggersCard() {
   const activeTriggers = triggers.filter((t) => t.enabled);
   const inactiveTriggers = triggers.filter((t) => !t.enabled);
   const [showInactive, setShowInactive] = useState(false);
+
+  const summary = summarizeTriggers(triggers);
+
+  /*
+   * Shut by default, because this page is named for the candidates below it
+   * and the table was taking 336px of the first screen. Trigger status is
+   * already on /home; this panel is where you act on them, which is
+   * occasional. The choice is remembered per browser.
+   *
+   * `useLocalStorage` only ever hydrates a stored value TO true, so the stored
+   * flag has to be the open one with a false default. Storing "collapsed"
+   * instead would make the remembered state unreadable.
+   */
+  const [storedOpen, setStoredOpen] = useLocalStorage(TRIGGERS_OPEN_KEY, false);
+
+  /*
+   * Open itself once when the panel is the thing you came for: something is
+   * mid-run, something refuses to fire until it is configured, or the queue is
+   * empty and EmptyQueueHelp is telling the reader to pick a finder from a
+   * panel that would otherwise be shut.
+   *
+   * Kept separate from the stored flag on purpose. A panel that opened because
+   * a finder happened to be running must not write itself into the reader's
+   * remembered preference. Seeded through a ref so it fires once per mount:
+   * without that, every 30s refetch would re-open a panel just closed.
+   */
+  const [autoOpen, setAutoOpen] = useState(false);
+  const seeded = useRef(false);
+  // `queueEmpty` is null until the queue itself has loaded. Seeding on the
+  // triggers response alone would race it: whichever query lands first decides,
+  // and an empty queue would fail to open the panel about half the time.
+  if (!seeded.current && triggersQuery.data && queueEmpty !== null) {
+    seeded.current = true;
+    if (summary.running > 0 || summary.notReady > 0 || queueEmpty) setAutoOpen(true);
+  }
+
+  const expanded = storedOpen || autoOpen;
+
+  const toggle = (): void => {
+    if (expanded) {
+      // Collapsing hides the JSON editor rather than unmounting it, so without
+      // this a reopened panel restores unsaved text the reader walked away from.
+      setEditing(null);
+      setEditError(null);
+      setShowInactive(false);
+      setAutoOpen(false);
+      setStoredOpen(false);
+      return;
+    }
+    setStoredOpen(true);
+  };
 
   const renderTriggerRow = (t: TriggerView, i: number) => {
     const summary = summarizeRun(t.lastRunSummary);
@@ -1389,62 +1904,103 @@ function TriggersCard() {
   );
 
   return (
-    <>
-      <section className="border-b border-ink-rule">
-        <div className="flex items-baseline justify-between px-6 pb-2 pt-5">
+    <section className="border-b border-ink-rule">
+      <div className="flex items-baseline justify-between pr-6">
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={expanded}
+          /*
+           * No aria-label. The summary beside the chevron is the whole point of
+           * the collapsed state, and a label would replace it as the button's
+           * accessible name — leaving a screen reader with "expand the triggers
+           * table" where a sighted reader gets "5 on, next in 4h".
+           * `aria-expanded` already carries the open/shut part.
+           */
+          className="flex flex-1 items-baseline gap-3 px-6 pb-2 pt-5 text-left transition-colors duration-[var(--dur-stamp)] hover:bg-ink-surface/40"
+        >
+          <span className="text-ink-faint">
+            {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          </span>
           <div className="ln-eyebrow">
             Triggers <span className="text-ink-faint">· {triggers.length}</span>
           </div>
-          <div className="font-mono text-[11px] text-ink-faint">refresh · 30s</div>
-        </div>
-        {triggersQuery.isLoading ? (
-          Array.from({ length: 3 }, (_, i) => <SkeletonRow key={i} />)
-        ) : triggers.length === 0 ? (
-          <div className="px-6 pb-6">
-            <EmptyNote
-              note="No triggers stored yet. Enable one below and it bootstraps itself on the next watch tick — or run the watch loop once to initialise."
-              cli="oneshot-gtm find watch --once"
-            />
+          {/* The facts you would open the panel to check, so that most of the
+              time you do not have to. Only while shut: expanded, the table
+              below says all of this in more detail. */}
+          <div className="font-mono text-[11px] text-ink-faint">
+            {/* Leading separator so the accessible name reads "· 11 · 5 on"
+                rather than running the two counts together as "115 on". */}
+            · {summary.enabled} on
+            {summary.running > 0 && (
+              <span className="ml-2 text-[color:var(--ink-signal-2)]">
+                · {summary.running} running
+              </span>
+            )}
+            {summary.notReady > 0 && (
+              <span className="ml-2 text-[color:var(--ink-blocked-2)]">
+                · {summary.notReady} need config
+              </span>
+            )}
+            {!expanded && summary.nextDueMs != null && (
+              <span className="ml-2">· next in {humanInterval(summary.nextDueMs)}</span>
+            )}
+            {!expanded && <span className="ml-2 text-ink-faint">· see more</span>}
           </div>
-        ) : (
-          <table className="w-full text-[13px]">
-            <thead>
-              <tr className="border-b border-ink-rule/60 text-[10px] uppercase tracking-[0.14em] text-ink-faint">
-                <th className="px-6 py-2 text-left font-medium">name</th>
-                <th className="py-2 text-left font-medium">enabled</th>
-                <th className="py-2 text-left font-medium">interval</th>
-                <th className="py-2 text-left font-medium">last polled</th>
-                <th className="py-2 text-left font-medium">last run</th>
-                <th className="px-6 py-2 text-right font-medium">actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {activeTriggers.map(renderTriggerRow)}
-              {/* Disabled finders are dormant, not broken — collapsed behind one
+        </button>
+        <div className="font-mono text-[11px] text-ink-faint">refresh · 30s</div>
+      </div>
+      {/* Packs configure the triggers below, so the picker rides inside this
+          panel and inherits its collapse — including the autoOpen rule, which
+          fires on exactly the occasions a pack is the thing you came for. */}
+      {expanded && <PackPicker />}
+      {!expanded ? null : triggersQuery.isLoading ? (
+        Array.from({ length: 3 }, (_, i) => <SkeletonRow key={i} />)
+      ) : triggers.length === 0 ? (
+        <div className="px-6 pb-6">
+          <EmptyNote
+            note="No triggers stored yet. Enable one below and it bootstraps itself on the next watch tick — or run the watch loop once to initialise."
+            cli="oneshot-gtm find watch --once"
+          />
+        </div>
+      ) : (
+        <table className="w-full text-[13px]">
+          <thead>
+            <tr className="border-b border-ink-rule/60 text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+              <th className="px-6 py-2 text-left font-medium">name</th>
+              <th className="py-2 text-left font-medium">enabled</th>
+              <th className="py-2 text-left font-medium">interval</th>
+              <th className="py-2 text-left font-medium">last polled</th>
+              <th className="py-2 text-left font-medium">last run</th>
+              <th className="px-6 py-2 text-right font-medium">actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {activeTriggers.map(renderTriggerRow)}
+            {/* Disabled finders are dormant, not broken — collapsed behind one
                   quiet row (same-tbody colSpan trick as SchedulerStrip, so the
                   shared column widths hold). */}
-              {inactiveTriggers.length > 0 && (
-                <tr className="border-b border-ink-rule/60">
-                  <td colSpan={6} className="px-6 py-2">
-                    <button
-                      type="button"
-                      aria-expanded={showInactive}
-                      onClick={() => setShowInactive((v) => !v)}
-                      className="flex items-center gap-1.5 font-mono text-[11px] text-ink-faint transition-colors hover:text-ink-cream-2"
-                    >
-                      {showInactive ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-                      {inactiveTriggers.length} inactive finder
-                      {inactiveTriggers.length === 1 ? "" : "s"} · {showInactive ? "hide" : "show"}
-                    </button>
-                  </td>
-                </tr>
-              )}
-              {showInactive && inactiveTriggers.map(renderTriggerRow)}
-            </tbody>
-          </table>
-        )}
-      </section>
-    </>
+            {inactiveTriggers.length > 0 && (
+              <tr className="border-b border-ink-rule/60">
+                <td colSpan={6} className="px-6 py-2">
+                  <button
+                    type="button"
+                    aria-expanded={showInactive}
+                    onClick={() => setShowInactive((v) => !v)}
+                    className="flex items-center gap-1.5 font-mono text-[11px] text-ink-faint transition-colors hover:text-ink-cream-2"
+                  >
+                    {showInactive ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                    {inactiveTriggers.length} inactive finder
+                    {inactiveTriggers.length === 1 ? "" : "s"} · {showInactive ? "hide" : "show"}
+                  </button>
+                </td>
+              </tr>
+            )}
+            {showInactive && inactiveTriggers.map(renderTriggerRow)}
+          </tbody>
+        </table>
+      )}
+    </section>
   );
 }
 
@@ -1478,9 +2034,13 @@ function TriggerRowFragment(props: TriggerRowProps) {
   // Missing `ready` field = treat as ready (tolerate older servers).
   const notReady = t.ready === false;
   const notReadyReason = t.notReadyReason ?? "missing required config";
+  const approvalBlocked = t.deprioritized === true;
   // Block enabling an unready trigger but still allow disabling.
-  const toggleDisabled = props.setEnabledPending || (notReady && !t.enabled);
-  const runDisabled = props.running || notReady;
+  // Both fold in READ_ONLY rather than taking `readOnly` as props: these two
+  // controls compute their own disabled state, and `run now` gates clicks
+  // through pointer-events rather than the `disabled` attribute.
+  const toggleDisabled = props.setEnabledPending || (notReady && !t.enabled) || READ_ONLY;
+  const runDisabled = props.running || notReady || READ_ONLY;
   return (
     <>
       <tr
@@ -1528,7 +2088,7 @@ function TriggerRowFragment(props: TriggerRowProps) {
               aria-label={`polling interval for ${t.name}`}
               className="rounded border border-ink-rule bg-ink-surface px-1 py-0.5 font-mono text-[12px] text-ink-cream"
               value={String(t.intervalMs)}
-              disabled={props.setConfigPending}
+              disabled={props.setConfigPending || READ_ONLY}
               onBlur={() => setEditingInterval(false)}
               onKeyDown={(e) => {
                 if (e.key === "Escape") setEditingInterval(false);
@@ -1554,7 +2114,7 @@ function TriggerRowFragment(props: TriggerRowProps) {
             <button
               type="button"
               title="change polling interval"
-              disabled={props.setConfigPending}
+              disabled={props.setConfigPending || READ_ONLY}
               className="cursor-pointer underline decoration-ink-faint decoration-dotted underline-offset-2 hover:text-ink-cream disabled:cursor-default disabled:opacity-60"
               onClick={() => setEditingInterval(true)}
             >
@@ -1584,7 +2144,11 @@ function TriggerRowFragment(props: TriggerRowProps) {
                 : "text-ink-muted",
           )}
         >
-          {notReady ? `not ready · ${notReadyReason}` : props.summary}
+          {notReady
+            ? `not ready · ${notReadyReason}`
+            : approvalBlocked
+              ? `deprioritized · ${t.deprioritizedReason ?? "low-approval-rate"} · ${((t.approvalRate ?? 0) * 100).toFixed(0)}% (${t.approvalReviewed}/${t.approvalMinSamples} min)`
+              : props.summary}
         </td>
         <td className="px-6 py-2 text-right">
           <div className="flex items-center justify-end gap-1">
@@ -1663,7 +2227,7 @@ function TriggerRowFragment(props: TriggerRowProps) {
                       variant="ghost"
                       size="sm"
                       onClick={props.onResetDefaults}
-                      disabled={props.setConfigPending}
+                      disabled={props.setConfigPending || READ_ONLY}
                       title="Replace the textarea with the registry default config"
                     >
                       reset
@@ -1673,7 +2237,7 @@ function TriggerRowFragment(props: TriggerRowProps) {
                     variant="ghost"
                     size="sm"
                     onClick={props.onCancelEdit}
-                    disabled={props.setConfigPending}
+                    disabled={props.setConfigPending || READ_ONLY}
                   >
                     cancel
                   </Button>
@@ -1681,7 +2245,7 @@ function TriggerRowFragment(props: TriggerRowProps) {
                     variant="primary"
                     size="sm"
                     onClick={props.onSaveEdit}
-                    disabled={props.setConfigPending}
+                    disabled={props.setConfigPending || READ_ONLY}
                   >
                     {props.setConfigPending ? "saving…" : "save"}
                   </Button>
@@ -1747,86 +2311,11 @@ function EmptyQueueHelp({ filterActive }: { filterActive: boolean }) {
   return (
     <div className="p-5">
       <EmptyNote
-        note="No targets yet. Pick a finder from the Triggers panel and run it — candidates land here for review before any send."
+        note="No targets yet. Run a finder from the Triggers panel above, or add one prospect by hand — either way candidates land here for review before any send."
         cli="oneshot-gtm find watch"
       />
     </div>
   );
-}
-
-function emailFor(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object") return null;
-  const p = payload as Record<string, unknown>;
-  if (typeof p["email"] === "string") return p["email"] as string;
-  if (typeof p["founderEmail"] === "string") return p["founderEmail"] as string;
-  return null;
-}
-
-function nameFor(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object") return null;
-  const p = payload as Record<string, unknown>;
-  if (typeof p["name"] === "string") return p["name"] as string;
-  if (typeof p["founderName"] === "string") return p["founderName"] as string;
-  // Pre-enrichment rejected rows only carry a source URL — derive a handle.
-  const repoUrl = typeof p["repoUrl"] === "string" ? (p["repoUrl"] as string) : null;
-  if (repoUrl) {
-    const m = repoUrl.match(/github\.com\/([^/]+)\/([^/?#]+)/);
-    if (m) return `${m[1]}/${m[2]}`;
-  }
-  const postUrl = typeof p["postUrl"] === "string" ? (p["postUrl"] as string) : null;
-  if (postUrl) {
-    try {
-      const host = new URL(postUrl).hostname.replace(/^www\./, "");
-      if (host) return host;
-    } catch {
-      // fall through
-    }
-  }
-  return null;
-}
-
-/**
- * The finder-specific tail of `source` ("find:github-stars:vercel/eve" ->
- * "vercel/eve") — which repo / cohort matched. Empty when source is just the
- * finder name (fully redundant with the play column).
- */
-function sourceDetail(source: string | null | undefined): string {
-  if (!source) return "";
-  return source.split(":").slice(2).join(":");
-}
-
-function companyFor(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object") return null;
-  const p = payload as Record<string, unknown>;
-  if (typeof p["company"] === "string") return p["company"] as string;
-  return null;
-}
-
-// Stamped on the payload by the person-level ICP gate; absent on rows queued
-// before the gate existed.
-function titleFor(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object") return null;
-  const p = payload as Record<string, unknown>;
-  const v = p["title"];
-  return typeof v === "string" && v.trim().length > 0 ? v.trim() : null;
-}
-
-function linkedinUrlFor(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object") return null;
-  const p = payload as Record<string, unknown>;
-  const v = p["linkedinUrl"];
-  if (typeof v !== "string" || v.length === 0) return null;
-  // Defense in depth — payload comes from sqlite but a stale/garbage row should
-  // never render as a clickable javascript:// or data:// link.
-  return /^https?:\/\/(?:[a-z0-9-]+\.)*linkedin\.com\/in\//i.test(v) ? v : null;
-}
-
-function phoneFor(payload: unknown): string | null {
-  if (!payload || typeof payload !== "object") return null;
-  const p = payload as Record<string, unknown>;
-  const v = p["phone"];
-  if (typeof v === "string" && v.length > 0) return v;
-  return null;
 }
 
 // Event metadata — present only on luma-events payloads (the persisted

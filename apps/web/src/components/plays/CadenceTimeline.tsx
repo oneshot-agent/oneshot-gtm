@@ -1,4 +1,5 @@
 import { cn } from "../../lib/cn.ts";
+import { Explain } from "../primitives/Explain.tsx";
 
 export interface CadenceStep {
   /** Day offset from enrollment (0 = first send). */
@@ -53,7 +54,10 @@ export function CadenceTimeline({
               <span className="whitespace-nowrap font-mono text-[10px] text-ink-faint">
                 d{s.day}
               </span>
-              <span className="whitespace-nowrap text-[10px] text-ink-muted">{s.label}</span>
+              <span className="whitespace-nowrap text-[10px] text-ink-muted">
+                {s.label}
+                {s.breakup && <Explain concept="breakup" />}
+              </span>
             </span>
             {!isLast && (
               <span

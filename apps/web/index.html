@@ -3,9 +3,44 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!--
+      The demo build replaces everything between these markers (see
+      apps/web/vite-plugins/demo-head.ts). It throws if they go missing, so
+      this file and that plugin cannot drift apart silently.
+    -->
+    <!-- demo:head:start -->
     <title>oneshot-gtm</title>
+    <meta
+      name="description"
+      content="Founder's ledger for GTM: run a play, watch the queue, read the receipt. Local dashboard over one SQLite ledger."
+    />
+    <!-- demo:head:end -->
+
+    <!--
+      Icon links sit OUTSIDE that block deliberately. Vite rewrites public-file
+      URLs in `transform`, which runs BEFORE a transformIndexHtml hook, so these
+      pick up the demo build's /demo/ base on their own. Anything the plugin
+      injects is post-rewrite and would stay root-absolute forever.
+    -->
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#120f0c" />
+
+    <!--
+      First paint only. Without it the window flashes white, then zinc, before
+      styles.css lands; the real rule (html { background: var(--ink-bg) }, plus
+      the ruled-paper texture) ships in that stylesheet, which Vite appends
+      after this and therefore wins.
+    -->
+    <style>
+      html {
+        background-color: #120f0c;
+      }
+    </style>
   </head>
-  <body class="bg-zinc-950 text-zinc-100 antialiased">
+  <body class="bg-ink-bg text-ink-cream antialiased">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
