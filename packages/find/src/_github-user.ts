@@ -363,16 +363,24 @@ export function _resetGitHubFollowCache(): void {
 }
 
 async function fetchLoginList(url: string): Promise<GitHubFollowRef[] | null> {
-  const res = await fetch(url, { headers: githubHeaders() });
-  if (!res.ok) return null;
-  const json = (await res.json()) as unknown;
-  if (!Array.isArray(json)) return null;
-  return json
-    .filter(
-      (u): u is Record<string, unknown> & { login: string } =>
-        typeof (u as Record<string, unknown>)["login"] === "string",
-    )
-    .map((u) => ({ login: u.login }));
+  try {
+    const res = await fetch(url, { headers: githubHeaders() });
+    if (!res.ok) return null;
+    const json = (await res.json()) as unknown;
+    if (!Array.isArray(json)) return null;
+    return json
+      .filter(
+        (u): u is Record<string, unknown> & { login: string } =>
+          typeof (u as Record<string, unknown>)["login"] === "string",
+      )
+      .map((u) => ({ login: u.login }));
+  } catch {
+    // A thrown fetch (network error, DNS failure, etc.) must degrade this one
+    // side to null exactly like a non-ok status does, so the caller's
+    // Promise.all still lets a succeeding sibling side through instead of
+    // rejecting the whole lookup (finding PRRT_kwDOSKzrBs6gUX7W).
+    return null;
+  }
 }
 
 /**

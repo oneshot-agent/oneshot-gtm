@@ -456,6 +456,21 @@ describe("fetchFollowNetwork", () => {
     expect(await fetchFollowNetwork("ada")).toBeNull();
   });
 
+  it("degrades a THROWN failure on one side to an empty list, keeping the successful side (finding PRRT_kwDOSKzrBs6gUX7W)", async () => {
+    const fn = vi.fn(async (url: string) => {
+      if (url.includes("/following")) {
+        throw new Error("ECONNRESET");
+      }
+      return new Response(JSON.stringify([{ login: "fan1" }]), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    globalThis.fetch = fn as unknown as typeof fetch;
+    const out = await fetchFollowNetwork("ada");
+    expect(out).toEqual({ following: [], followers: [{ login: "fan1" }] });
+  });
+
   it("caches across calls", async () => {
     const { fn, callCount } = mockFollowSequence([], []);
     await fetchFollowNetwork("ada");
