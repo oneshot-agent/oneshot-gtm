@@ -20,6 +20,11 @@ const WEBREAD_SLICE = 3500;
 export interface ReplyContext {
   /** Combined research text for the SENDER DOSSIER block; null = nothing known. */
   dossier: string | null;
+  /**
+   * The prospect's `angle_json` verbatim, when one exists (issue #355/#356).
+   * Free — read alongside the stored dossier, no extra research call.
+   */
+  angleJson: string | null;
   /** Replies the founder already sent in this thread (oldest first). */
   threadSent: Array<{ body: string; sentAt: string }>;
   /** The prospect's earlier inbound messages (persisted replies, oldest first) — the other half of the exchange. */
@@ -142,6 +147,7 @@ export async function gatherReplyContext(input: {
 
   return {
     dossier: parts.length > 0 ? parts.join("\n\n---\n\n") : null,
+    angleJson: prospect?.angle_json ?? null,
     threadSent,
     priorInbound,
     costUsd,

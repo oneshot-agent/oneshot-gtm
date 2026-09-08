@@ -1,4 +1,4 @@
-import { loadConfig, stripQuotedChain } from "@oneshot-gtm/core";
+import { loadConfig, stripQuotedChain, angleBlockFromJson } from "@oneshot-gtm/core";
 import { complete, type LlmMessage, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { getPriorStepsForProspect, type PriorStepRow } from "./_cadence.ts";
 import {
@@ -301,6 +301,14 @@ export interface DraftInboxReplyInput {
    * technical message with substance instead of curiosity questions.
    */
   dossier?: string | null;
+  /**
+   * Synthesized per-prospect angle JSON (issue #355), verbatim from
+   * `prospects.angle_json`. Threaded through so the ANGLE block's
+   * `doNotSay` can stop a reply re-asserting a premise the prospect already
+   * corrected — the "not sure what you mean" / "starred for research"
+   * cases. Missing/empty → no block, unchanged output (issue #356).
+   */
+  angleJson?: string | null;
   /** Replies the founder already sent in this thread (oldest first) — round 2+ must not repeat round 1. */
   threadSent?: Array<{ body: string; sentAt: string }>;
   /** The prospect's earlier inbound messages (oldest first) — the other half of the exchange. */
@@ -400,6 +408,7 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<Draf
   // and portfolio lines only render as a self-introduction, which the prospect
   // already read in the intro email. Social proof belongs in outbound drafts.
   const firstName = firstNameFrom(input.matched?.name ?? null);
+  const angleBlock = angleBlockFromJson(input.angleJson);
   const user = [
     `FOUNDER: ${cfg.founderName ?? "(unknown)"}`,
     `PRODUCT: ${cfg.productOneLiner ?? "(unknown)"}`,
@@ -414,6 +423,7 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<Draf
     ...(input.dossier?.trim()
       ? ["", `SENDER DOSSIER (research about who wrote this):\n${input.dossier.trim()}`]
       : []),
+    ...(angleBlock ? ["", angleBlock] : []),
     ...(priorBlock ? ["", priorBlock] : []),
     ...(priorInboundBlock ? ["", priorInboundBlock] : []),
     ...(threadBlock ? ["", threadBlock] : []),

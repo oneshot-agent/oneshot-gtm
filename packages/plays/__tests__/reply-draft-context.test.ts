@@ -151,4 +151,39 @@ describe("draftInboxReply context assembly", () => {
     });
     expect(lastUserBlock()).not.toContain("ASKS ALREADY MADE");
   });
+
+  // ANGLE injection (issue #356) — the reply-path payoff for #355's synthesis.
+  // `doNotSay` matters most here: it's what stops a reply re-asserting a
+  // premise the prospect already corrected ("not sure what you mean" /
+  // "starred for research").
+  it("omits the ANGLE block when angleJson is absent", async () => {
+    await draftInboxReply(BASE);
+    expect(lastUserBlock()).not.toContain("ANGLE");
+  });
+
+  it("omits the ANGLE block for null angle_json — unchanged output (issue #356)", async () => {
+    await draftInboxReply({ ...BASE, angleJson: null });
+    expect(lastUserBlock()).not.toContain("ANGLE");
+  });
+
+  it("omits the ANGLE block for blank/unparsable angle_json — must not throw", async () => {
+    await draftInboxReply({ ...BASE, angleJson: "  " });
+    expect(lastUserBlock()).not.toContain("ANGLE");
+    await draftInboxReply({ ...BASE, angleJson: "not json" });
+    expect(lastUserBlock()).not.toContain("ANGLE");
+  });
+
+  it("injects hook and doNotSay from angle_json — doNotSay is what stops re-asserting a corrected premise", async () => {
+    const angle = JSON.stringify({
+      hook: "Just shipped x402 support.",
+      doNotSay: ["not sure what you mean by that", "this was starred for research only"],
+    });
+    await draftInboxReply({ ...BASE, angleJson: angle });
+    const block = lastUserBlock();
+    expect(block).toContain("ANGLE");
+    expect(block).toContain("Hook: Just shipped x402 support.");
+    expect(block).toContain("Do NOT say");
+    expect(block).toContain("not sure what you mean by that");
+    expect(block).toContain("this was starred for research only");
+  });
 });

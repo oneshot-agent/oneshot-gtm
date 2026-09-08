@@ -11,6 +11,7 @@ import {
   throwIfCancelled,
   CONTACTED_ELSEWHERE_FLAG,
   recentTouchElsewhere,
+  angleBlockFromJson,
 } from "@oneshot-gtm/core";
 import {
   draftEmailFromPrompt,
@@ -246,6 +247,14 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         // keep, which it can't).
         const admission = admissionBlock(def.toEmail(target));
         if (admission) inputBlock = `${inputBlock}\n\n${admission}`;
+        // ANGLE (issue #356, lowest priority of the three draft paths — most
+        // outbound is first-touch, so a stored angle_json is the exception,
+        // not the rule): only present when a prior finder/synthesis run
+        // already persisted one for this email, e.g. a re-contact. Missing →
+        // no lookup cost beyond the read, no block, unchanged output.
+        const existingAngle = getLedger().getProspectByEmail(def.toEmail(target))?.angle_json;
+        const angleBlock = angleBlockFromJson(existingAngle ?? null);
+        if (angleBlock) inputBlock = `${inputBlock}\n\n${angleBlock}`;
         // Surface a real first name when extractable so the prompt can
         // occasionally open with "Hey {firstName},". Absent → prompt rule
         // says never invent a greeting; LLM dives into the Hook.

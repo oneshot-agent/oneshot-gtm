@@ -73,7 +73,7 @@ let storedRows: Array<{
 
 const { buildFollowUpEmail, getPriorStepsForProspect } = await import("../src/_cadence.ts");
 
-function ctx(prospectId = 42) {
+function ctx(prospectId = 42, angleJson: string | null = null) {
   const prospect: ProspectRecord = {
     id: prospectId,
     name: "Sam",
@@ -81,6 +81,7 @@ function ctx(prospectId = 42) {
     company: "Acme",
     linkedin_url: null,
     dossier_json: null,
+    angle_json: angleJson,
     source: "test",
     created_at: new Date().toISOString(),
   } as ProspectRecord;
@@ -228,6 +229,52 @@ describe("buildFollowUpEmail — PRIOR EMAILS injection", () => {
     });
     await builder(ctx());
     expect(llmCalls[0]!.user).not.toContain("PRIOR EMAILS");
+  });
+});
+
+describe("buildFollowUpEmail — ANGLE injection (issue #356)", () => {
+  it("omits the ANGLE block when the prospect has no angle_json", async () => {
+    storedRows = [];
+    const builder = buildFollowUpEmail({
+      playName: "stack-consolidation",
+      promptName: "stack-consolidation-followup",
+      contextLines: [],
+    });
+    await builder(ctx(42, null));
+    expect(llmCalls[0]!.user).not.toContain("ANGLE");
+  });
+
+  it("omits the ANGLE block for blank/unparsable angle_json — must not throw", async () => {
+    storedRows = [];
+    const builder = buildFollowUpEmail({
+      playName: "stack-consolidation",
+      promptName: "stack-consolidation-followup",
+      contextLines: [],
+    });
+    await builder(ctx(42, "  "));
+    expect(llmCalls[0]!.user).not.toContain("ANGLE");
+    llmCalls.length = 0;
+    await builder(ctx(42, "not json"));
+    expect(llmCalls[0]!.user).not.toContain("ANGLE");
+  });
+
+  it("injects hook and doNotSay from angle_json into the user block", async () => {
+    storedRows = [];
+    const builder = buildFollowUpEmail({
+      playName: "stack-consolidation",
+      promptName: "stack-consolidation-followup",
+      contextLines: [],
+    });
+    const angle = JSON.stringify({
+      hook: "Shipped the v2 migration last week.",
+      doNotSay: ["not evaluating vendors right now"],
+    });
+    await builder(ctx(42, angle));
+    const userMsg = llmCalls[0]!.user;
+    expect(userMsg).toContain("ANGLE");
+    expect(userMsg).toContain("Hook: Shipped the v2 migration last week.");
+    expect(userMsg).toContain("Do NOT say");
+    expect(userMsg).toContain("not evaluating vendors right now");
   });
 });
 

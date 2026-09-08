@@ -447,6 +447,7 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
   // senders. Research failing must degrade the draft, never block it.
   let context: Awaited<ReturnType<typeof gatherReplyContext>> = {
     dossier: null,
+    angleJson: null,
     threadSent: [],
     priorInbound: [],
     costUsd: 0,
@@ -499,6 +500,7 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
       body: inboundBody,
       matched,
       dossier: context.dossier,
+      angleJson: context.angleJson,
       threadSent: context.threadSent,
       priorInbound: context.priorInbound,
       intent,
@@ -627,6 +629,7 @@ export async function steerRoute(req: Request): Promise<Response> {
 
   let context: Awaited<ReturnType<typeof gatherReplyContext>> = {
     dossier: null,
+    angleJson: null,
     threadSent: [],
     priorInbound: [],
     costUsd: 0,
@@ -662,6 +665,7 @@ export async function steerRoute(req: Request): Promise<Response> {
       body: inboundBody,
       matched,
       dossier: context.dossier,
+      angleJson: context.angleJson,
       threadSent: context.threadSent,
       priorInbound: context.priorInbound,
       intent,

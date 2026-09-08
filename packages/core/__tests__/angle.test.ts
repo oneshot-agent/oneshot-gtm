@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { parseProspectAngle, type ProspectAngleGroundingContext } from "../src/angle.ts";
+import {
+  angleBlockFromJson,
+  parseProspectAngle,
+  type ProspectAngleGroundingContext,
+} from "../src/angle.ts";
 
 // Schema validation + the anti-fabrication gate for issue #355's per-prospect
 // angle. Every evidence claim without a real, TRACEABLE source must be
@@ -262,5 +266,100 @@ describe("parseProspectAngle", () => {
     expect(angle?.doNotSay).toEqual([]);
     expect(angle?.sources).toEqual([]);
     expect(angle?.evidence).toEqual([]);
+  });
+});
+
+// angleBlockFromJson — issue #356's guarded, read-only ANGLE block. Every
+// caller (cadence follow-up, reply, outbound) shares this renderer, so its
+// contract is tested once here rather than duplicated per call site.
+describe("angleBlockFromJson", () => {
+  it("returns null for null/undefined/blank input — the missing-angle case that must change nothing", () => {
+    expect(angleBlockFromJson(null)).toBeNull();
+    expect(angleBlockFromJson(undefined)).toBeNull();
+    expect(angleBlockFromJson("")).toBeNull();
+    expect(angleBlockFromJson("   ")).toBeNull();
+  });
+
+  it("returns null for unparsable JSON", () => {
+    expect(angleBlockFromJson("not json")).toBeNull();
+    expect(angleBlockFromJson("{broken")).toBeNull();
+  });
+
+  it("returns null for a non-object JSON value", () => {
+    expect(angleBlockFromJson("42")).toBeNull();
+    expect(angleBlockFromJson("null")).toBeNull();
+    expect(angleBlockFromJson("[]")).toBeNull();
+    expect(angleBlockFromJson('"a string"')).toBeNull();
+  });
+
+  it("returns null when every field is empty — an all-null shell must not render a block", () => {
+    expect(angleBlockFromJson(JSON.stringify({ hook: "", doNotSay: [], nextStep: "" }))).toBeNull();
+    expect(angleBlockFromJson(JSON.stringify({}))).toBeNull();
+  });
+
+  it("renders the Hook line when present", () => {
+    const block = angleBlockFromJson(JSON.stringify({ hook: "Shipped agent-loop v2 yesterday." }));
+    expect(block).toContain("ANGLE");
+    expect(block).toContain("Hook: Shipped agent-loop v2 yesterday.");
+  });
+
+  it("renders every doNotSay entry under a binding label", () => {
+    const block = angleBlockFromJson(
+      JSON.stringify({ doNotSay: ["not building this, just researching", "not the buyer"] }),
+    );
+    expect(block).toContain("Do NOT say");
+    expect(block).toContain("- not building this, just researching");
+    expect(block).toContain("- not the buyer");
+  });
+
+  it("renders nextStep and up to maxEvidence evidence entries", () => {
+    const block = angleBlockFromJson(
+      JSON.stringify({
+        hook: "h",
+        nextStep: "Ask about their eval pipeline.",
+        evidence: [
+          { claim: "Shipped agent-loop v2", source: "https://github.com/x/agent-loop" },
+          { claim: "Replied twice", source: "replies:2" },
+          { claim: "third", source: "dossier" },
+          { claim: "fourth, should be dropped by default cap", source: "github:live" },
+        ],
+      }),
+    );
+    expect(block).toContain("Next step: Ask about their eval pipeline.");
+    expect(block).toContain("Shipped agent-loop v2 (https://github.com/x/agent-loop)");
+    expect(block).toContain("Replied twice (replies:2)");
+    expect(block).toContain("third (dossier)");
+    expect(block).not.toContain("fourth, should be dropped");
+  });
+
+  it("drops an evidence entry missing a claim or source", () => {
+    const block = angleBlockFromJson(
+      JSON.stringify({
+        hook: "h",
+        evidence: [
+          { claim: "no source" },
+          { source: "no-claim" },
+          { claim: "ok", source: "dossier" },
+        ],
+      }),
+    );
+    expect(block).toContain("ok (dossier)");
+    expect(block).not.toContain("no source");
+    expect(block).not.toContain("no-claim");
+  });
+
+  it("respects a caller-supplied maxEvidence", () => {
+    const block = angleBlockFromJson(
+      JSON.stringify({
+        hook: "h",
+        evidence: [
+          { claim: "one", source: "dossier" },
+          { claim: "two", source: "dossier" },
+        ],
+      }),
+      { maxEvidence: 1 },
+    );
+    expect(block).toContain("one (dossier)");
+    expect(block).not.toContain("two (dossier)");
   });
 });

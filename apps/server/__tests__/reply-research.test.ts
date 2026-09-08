@@ -65,6 +65,37 @@ describe("gatherReplyContext", () => {
     expect(webReadMock).not.toHaveBeenCalled();
   });
 
+  it("surfaces the prospect's angle_json verbatim, for free, alongside the dossier (issue #356)", async () => {
+    ledger.getProspectById.mockReturnValue({
+      dossier_json: '{"title":"CTO"}',
+      angle_json: '{"hook":"shipped x402 support"}',
+    });
+    const ctx = await gatherReplyContext({
+      fromEmail: "aladdin@aliyev.site",
+      prospectId: 7,
+      threadKey: null,
+    });
+    expect(ctx.angleJson).toBe('{"hook":"shipped x402 support"}');
+    expect(ctx.costUsd).toBe(0);
+  });
+
+  it("angleJson is null when the prospect has none, or there is no prospect", async () => {
+    ledger.getProspectById.mockReturnValue({ dossier_json: '{"title":"CTO"}', angle_json: null });
+    const withProspect = await gatherReplyContext({
+      fromEmail: "aladdin@aliyev.site",
+      prospectId: 7,
+      threadKey: null,
+    });
+    expect(withProspect.angleJson).toBeNull();
+
+    const withoutProspect = await gatherReplyContext({
+      fromEmail: "someone@gmail.com",
+      prospectId: null,
+      threadKey: null,
+    });
+    expect(withoutProspect.angleJson).toBeNull();
+  });
+
   it("researches an unknown sender on a real domain: enrich + site read, cost summed", async () => {
     const ctx = await gatherReplyContext({
       fromEmail: "aladdin@aliyev.site",

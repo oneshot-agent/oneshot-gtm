@@ -19,6 +19,7 @@ import {
   tagOutcomeValue,
   trackSend,
   voiceCall,
+  angleBlockFromJson,
   type BounceKind,
   type ProspectRecord,
   type CadencePlanStep,
@@ -1758,6 +1759,11 @@ export function buildFollowUpEmail(opts: {
     // than only rejecting them afterwards: a rejected draft costs another paid
     // completion, and the model cannot see the last 40 sends on its own.
     const avoidBlock = overusedOpenersBlock(ctx.prospect.id, opts.playName);
+    // Per-prospect angle (issue #356, payoff for #355's synthesis): the only
+    // signal a follow-up got before this was config + name/email/company +
+    // prior step bodies. Missing/empty angle_json → null → no block, byte-
+    // identical output to before this issue.
+    const angleBlock = angleBlockFromJson(ctx.prospect.angle_json);
     const user = [
       `FOUNDER: ${ctx.cfg.founderName}`,
       `PRODUCT: ${ctx.cfg.productOneLiner}`,
@@ -1766,6 +1772,7 @@ export function buildFollowUpEmail(opts: {
       `COMPANY: ${ctx.prospect.company ?? "(unknown)"}`,
       ...opts.contextLines,
       ...(priorBlock ? ["", priorBlock] : []),
+      ...(angleBlock ? ["", angleBlock] : []),
       ...(firstName ? ["", `PROSPECT_FIRST_NAME: ${firstName}`] : []),
       ...(avoidBlock ? ["", avoidBlock] : []),
     ].join("\n");
