@@ -1,7 +1,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { Check, ChevronLeft, ChevronRight, Search, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Check, ChevronDown, ChevronLeft, ChevronRight, Search, X } from "lucide-react";
+import { Fragment, useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
   describeDecision,
@@ -17,7 +17,6 @@ import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
 import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
 import { Field, Input, Select, Textarea } from "../components/primitives/Field.tsx";
-import { Modal } from "../components/primitives/Modal.tsx";
 import { Pii } from "../components/primitives/Pii.tsx";
 import { Skeleton, SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { cn, formatCount, timeAgo } from "../lib/cn.ts";
@@ -95,11 +94,13 @@ function statusTone(
 function ProspectsPage() {
   const search = Route.useSearch();
   const navigate = Route.useNavigate();
-  const [activeId, setActiveId] = useState<number | null>(null);
+  // One row open at a time, expanded in place — the same shape as /queue.
+  const [expanded, setExpanded] = useState<number | null>(null);
 
   const update = (patch: Partial<ProspectsSearch>, opts: { replace?: boolean } = {}): void => {
     // Every filter change restarts at page one — page N of a different
     // search is not a place.
+    setExpanded(null);
     void navigate({
       search: (prev) => ({ ...prev, ...patch, page: undefined }),
       ...(opts.replace ? { replace: true } : {}),
@@ -314,7 +315,8 @@ function ProspectsPage() {
           <table className={cn("w-full text-[13px]", results.isFetching && "opacity-70")}>
             <thead className="sticky top-0 z-10 bg-ink-bg">
               <tr className="border-b border-ink-rule text-[10px] uppercase tracking-[0.14em] text-ink-faint">
-                <th className="px-6 py-2 text-left font-medium">prospect</th>
+                <th className="w-6 py-2 pl-4 pr-0" aria-label="expand" />
+                <th className="py-2 text-left font-medium">prospect</th>
                 <th className="py-2 text-left font-medium">play</th>
                 <th className="py-2 pr-4 text-left font-medium">status</th>
                 <th className="py-2 text-left font-medium">decision</th>
@@ -328,7 +330,8 @@ function ProspectsPage() {
                   key={row.id}
                   row={row}
                   zebra={i % 2 === 1}
-                  onOpen={() => setActiveId(row.id)}
+                  expanded={expanded === row.id}
+                  onToggle={() => setExpanded((prev) => (prev === row.id ? null : row.id))}
                 />
               ))}
             </tbody>
@@ -377,8 +380,6 @@ function ProspectsPage() {
           </div>
         </div>
       )}
-
-      <DetailModal id={activeId} onClose={() => setActiveId(null)} />
     </div>
   );
 }
@@ -386,11 +387,13 @@ function ProspectsPage() {
 function BrowseRow({
   row,
   zebra,
-  onOpen,
+  expanded,
+  onToggle,
 }: {
   row: ProspectBrowseRow;
   zebra: boolean;
-  onOpen: () => void;
+  expanded: boolean;
+  onToggle: () => void;
 }) {
   const { masked } = usePrivacy();
   const name = row.prospect?.name ?? nameFor(row.payload);
@@ -401,99 +404,115 @@ function BrowseRow({
   const evidence = queueEvidence(row.playName, row.payload);
   const detail = sourceDetail(row.source);
   return (
-    <tr
-      onClick={onOpen}
-      // Rows are the only way into the drawer, so they take focus and open on
-      // Enter like a button would.
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" && e.target === e.currentTarget) onOpen();
-      }}
-      className={cn(
-        "cursor-pointer border-b border-ink-rule/60 focus:outline-none focus-visible:bg-ink-surface/60",
-        "transition-colors duration-[var(--dur-stamp)]",
-        "hover:bg-ink-surface/60",
-        zebra && "bg-ink-surface/20",
-      )}
-    >
-      <td className="px-6 py-2">
-        <div className="text-ink-cream">{name ? <Pii kind="name">{name}</Pii> : "(unknown)"}</div>
-        <div className="font-mono text-[11px] text-ink-faint">
-          {email ? <Pii kind="email">{email}</Pii> : "—"}
-          {title ? (
-            <>
-              {" · "}
-              <span className="inline-block max-w-[38ch] truncate align-bottom text-ink-cream-2">
-                {title}
-              </span>
-            </>
-          ) : null}
-          {company ? (
-            <>
-              {" · "}
-              <Pii kind="company">{company}</Pii>
-            </>
-          ) : null}
-          {linkedinUrl ? (
-            <a
-              href={linkedinUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="ml-1 text-ink-cream-2 underline decoration-ink-rule underline-offset-2 hover:text-ink-cream hover:decoration-ink-cream-2"
-              onClick={(e) => e.stopPropagation()}
-            >
-              [in]
-            </a>
-          ) : null}
-        </div>
-        {/* Freeform finder evidence can name people the structured masking
-            cannot reach, so it hides under privacy mode as it does on /queue. */}
-        {evidence && !masked ? (
-          <div className="mt-0.5 max-w-[46ch] truncate text-[11px] text-ink-muted">{evidence}</div>
-        ) : null}
-      </td>
-      <td className="py-2 text-ink-cream-2">
-        {row.playName}
-        {detail && <div className="truncate font-mono text-[10.5px] text-ink-faint">{detail}</div>}
-      </td>
-      <td className="py-2 pr-4">
-        <Badge tone={statusTone(row.status)}>{row.status}</Badge>
-      </td>
-      <td className="py-2 text-[12px] text-ink-cream-2">
-        {describeDecision(row)}
-        {(row.prospect?.icpVerdict ?? payloadString(row.payload, "icpVerdict")) === "reject" && (
-          <span className="ml-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-[color:var(--ink-blocked-2)]">
-            off-icp
-          </span>
+    <Fragment>
+      <tr
+        onClick={onToggle}
+        // Rows are the only way into the detail, so they take focus and toggle
+        // on Enter like a button would.
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && e.target === e.currentTarget) onToggle();
+        }}
+        aria-expanded={expanded}
+        className={cn(
+          "cursor-pointer border-b border-ink-rule/60 focus:outline-none focus-visible:bg-ink-surface/60",
+          "transition-colors duration-[var(--dur-stamp)]",
+          "hover:bg-ink-surface/60",
+          zebra && "bg-ink-surface/20",
+          expanded && "bg-ink-surface/40",
         )}
-      </td>
-      <td className="py-2 text-right font-mono text-[12px] text-ink-muted">
-        {timeAgo(row.foundAt)}
-      </td>
-      <td className="px-6 py-2 text-right font-mono text-[12px] text-ink-muted">
-        {row.decidedAt ? timeAgo(row.decidedAt) : "—"}
-      </td>
-    </tr>
+      >
+        <td className="w-6 py-2 pl-4 pr-0 text-ink-faint">
+          {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+        </td>
+        <td className="py-2">
+          <div className="text-ink-cream">{name ? <Pii kind="name">{name}</Pii> : "(unknown)"}</div>
+          <div className="font-mono text-[11px] text-ink-faint">
+            {email ? <Pii kind="email">{email}</Pii> : "—"}
+            {title ? (
+              <>
+                {" · "}
+                <span className="inline-block max-w-[38ch] truncate align-bottom text-ink-cream-2">
+                  {title}
+                </span>
+              </>
+            ) : null}
+            {company ? (
+              <>
+                {" · "}
+                <Pii kind="company">{company}</Pii>
+              </>
+            ) : null}
+            {linkedinUrl ? (
+              <a
+                href={linkedinUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="ml-1 text-ink-cream-2 underline decoration-ink-rule underline-offset-2 hover:text-ink-cream hover:decoration-ink-cream-2"
+                onClick={(e) => e.stopPropagation()}
+              >
+                [in]
+              </a>
+            ) : null}
+          </div>
+          {/* Freeform finder evidence can name people the structured masking
+            cannot reach, so it hides under privacy mode as it does on /queue. */}
+          {evidence && !masked ? (
+            <div className="mt-0.5 max-w-[46ch] truncate text-[11px] text-ink-muted">
+              {evidence}
+            </div>
+          ) : null}
+        </td>
+        <td className="py-2 text-ink-cream-2">
+          {row.playName}
+          {detail && (
+            <div className="truncate font-mono text-[10.5px] text-ink-faint">{detail}</div>
+          )}
+        </td>
+        <td className="py-2 pr-4">
+          <Badge tone={statusTone(row.status)}>{row.status}</Badge>
+        </td>
+        <td className="py-2 text-[12px] text-ink-cream-2">
+          {describeDecision(row)}
+          {(row.prospect?.icpVerdict ?? payloadString(row.payload, "icpVerdict")) === "reject" && (
+            <span className="ml-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-[color:var(--ink-blocked-2)]">
+              off-icp
+            </span>
+          )}
+        </td>
+        <td className="py-2 text-right font-mono text-[12px] text-ink-muted">
+          {timeAgo(row.foundAt)}
+        </td>
+        <td className="px-6 py-2 text-right font-mono text-[12px] text-ink-muted">
+          {row.decidedAt ? timeAgo(row.decidedAt) : "—"}
+        </td>
+      </tr>
+      {expanded && (
+        <tr className="border-b border-ink-rule/60 bg-ink-surface/20">
+          <td colSpan={7} className="px-6 py-4">
+            <DetailPanel id={row.id} />
+          </td>
+        </tr>
+      )}
+    </Fragment>
   );
 }
 
-function DetailModal({ id, onClose }: { id: number | null; onClose: () => void }) {
+/**
+ * The expanded row: everything /api/queue/:id knows about this candidate, plus
+ * the override actions. Mounted per row (keyed by the table), so its
+ * rejection draft dies with the row it belonged to.
+ */
+function DetailPanel({ id }: { id: number }) {
   const qc = useQueryClient();
   const { masked } = usePrivacy();
   const [rejecting, setRejecting] = useState(false);
   const [reason, setReason] = useState("");
   const detail = useQuery({
     queryKey: ["prospects", "detail", id],
-    queryFn: () => (id == null ? Promise.resolve(null) : api.queueRowDetail(id)),
-    enabled: id != null,
+    queryFn: () => api.queueRowDetail(id),
   });
   const d = detail.data ?? null;
-
-  // A fresh row closes any half-typed rejection from the previous one.
-  useEffect(() => {
-    setRejecting(false);
-    setReason("");
-  }, [id]);
 
   const invalidate = (): void => {
     void qc.invalidateQueries({ queryKey: ["prospects"] });
@@ -520,8 +539,6 @@ function DetailModal({ id, onClose }: { id: number | null; onClose: () => void }
   });
 
   const row = d?.row ?? null;
-  const name = row ? (row.prospect?.name ?? nameFor(row.payload)) : null;
-  const email = row ? (d?.prospect?.email ?? emailFor(row.payload)) : null;
   // Never past a reply: the server refuses too (409), but the button should
   // not be there to press.
   const canApprove =
@@ -534,62 +551,7 @@ function DetailModal({ id, onClose }: { id: number | null; onClose: () => void }
     row?.prospect?.icpVerdictReason ?? payloadString(row?.payload, "icpVerdictReason");
 
   return (
-    <Modal
-      open={id != null}
-      title={name ? maskDeep(name, masked, "name") : row ? "(unknown)" : "prospect"}
-      subtitle={
-        row
-          ? `#${row.id} · ${row.playName}${email ? ` · ${maskDeep(email, masked, "email")}` : ""}`
-          : `#${id}`
-      }
-      onClose={onClose}
-      width={720}
-      footer={
-        row ? (
-          <>
-            {!rejecting && canReject && (
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  setReason(row.notes ?? "");
-                  setRejecting(true);
-                }}
-                {...readOnly}
-              >
-                <X size={12} /> Reject…
-              </Button>
-            )}
-            {rejecting && (
-              <>
-                <Button variant="ghost" onClick={() => setRejecting(false)}>
-                  Cancel
-                </Button>
-                <Button
-                  variant="danger"
-                  disabled={reject.isPending}
-                  onClick={() =>
-                    reject.mutate({ rowId: row.id, reason: reason.trim() || undefined })
-                  }
-                  {...readOnly}
-                >
-                  {reject.isPending ? "Rejecting…" : "Reject"}
-                </Button>
-              </>
-            )}
-            {!rejecting && canApprove && (
-              <Button
-                variant="secondary"
-                disabled={approve.isPending}
-                onClick={() => approve.mutate(row.id)}
-                {...readOnly}
-              >
-                <Check size={12} /> {row.status === "rejected" ? "Approve anyway" : "Approve"}
-              </Button>
-            )}
-          </>
-        ) : undefined
-      }
-    >
+    <div className="flex flex-col gap-4">
       {detail.isLoading || !d || !row ? (
         detail.isError ? (
           <div className="text-[13px] text-[color:var(--ink-blocked-2)]">
@@ -729,7 +691,48 @@ function DetailModal({ id, onClose }: { id: number | null; onClose: () => void }
           </details>
         </div>
       )}
-    </Modal>
+      {row && (canApprove || canReject || rejecting) && (
+        <div className="flex items-center justify-end gap-2 border-t border-ink-rule/60 pt-3">
+          {!rejecting && canReject && (
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setReason(row.notes ?? "");
+                setRejecting(true);
+              }}
+              {...readOnly}
+            >
+              <X size={12} /> Reject…
+            </Button>
+          )}
+          {rejecting && (
+            <>
+              <Button variant="ghost" onClick={() => setRejecting(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="danger"
+                disabled={reject.isPending}
+                onClick={() => reject.mutate({ rowId: row.id, reason: reason.trim() || undefined })}
+                {...readOnly}
+              >
+                {reject.isPending ? "Rejecting…" : "Reject"}
+              </Button>
+            </>
+          )}
+          {!rejecting && canApprove && (
+            <Button
+              variant="secondary"
+              disabled={approve.isPending}
+              onClick={() => approve.mutate(row.id)}
+              {...readOnly}
+            >
+              <Check size={12} /> {row.status === "rejected" ? "Approve anyway" : "Approve"}
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
