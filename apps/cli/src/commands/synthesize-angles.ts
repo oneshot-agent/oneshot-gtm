@@ -46,7 +46,7 @@ export async function commandSynthesizeAngles(opts: SynthesizeAnglesOpts): Promi
 
   process.stdout.write(
     `${c.dim("scope:")} ${scopes.join(",")}` +
-      `  ${c.dim("without an angle:")} ${rows.length}` +
+      `  ${c.dim(opts.refresh ? "candidates (incl. already-synthesized):" : "without an angle:")} ${rows.length}` +
       `  ${c.dim("to synthesize:")} ${candidates.length}` +
       (cap !== undefined && rows.length > candidates.length
         ? `  ${c.dim("held back by --limit:")} ${rows.length - candidates.length}`
@@ -114,7 +114,9 @@ export async function commandSynthesizeAngles(opts: SynthesizeAnglesOpts): Promi
   if (cappedAt !== null) {
     warn(
       `Stopped at the $${opts.maxCostUsd?.toFixed(2)} ceiling after ~${cappedAt} rows. ` +
-        `Re-run to continue — synthesized rows are skipped.`,
+        (opts.refresh
+          ? `Re-run to continue.`
+          : `Re-run to continue — synthesized rows are skipped.`),
     );
   }
   if (haltedAt !== null) {
