@@ -5,6 +5,7 @@ import {
   isHumanApproval,
   isHumanDecision,
   parseProspectPriority,
+  sqliteToIso,
   type ProspectPriority,
   type QueueRow,
   safeParseJsonRecord,
@@ -102,8 +103,7 @@ export function shouldSkipRow(row: Pick<QueueRow, "priority_json">, refresh: boo
  */
 export function anchorFor(row: Pick<QueueRow, "found_at">): Date {
   const raw = (row.found_at ?? "").trim();
-  const iso = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(raw) ? `${raw.replace(" ", "T")}Z` : raw;
-  const t = Date.parse(iso);
+  const t = Date.parse(sqliteToIso(raw));
   return Number.isFinite(t) ? new Date(t) : new Date();
 }
 

@@ -22,6 +22,7 @@ import {
   resolveIdentities,
   secretSource,
   secretsPath,
+  sqliteToIso,
   currentWorkspaceName,
   listWorkspaces,
   loadGmailTokens,
@@ -241,7 +242,7 @@ function placementCheck(): CheckResult {
       };
     }
     const ageDays = Math.floor(
-      (Date.now() - new Date(`${last.created_at.replace(" ", "T")}Z`).getTime()) / 86_400_000,
+      (Date.now() - new Date(sqliteToIso(last.created_at)).getTime()) / 86_400_000,
     );
     const age = Number.isFinite(ageDays) ? `${ageDays}d ago` : "unknown age";
     const auth = `spf=${last.spf} dkim=${last.dkim} dmarc=${last.dmarc}`;

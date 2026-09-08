@@ -2,6 +2,7 @@ import { loadConfig } from "./config.ts";
 import { logEvent } from "./events.ts";
 import { LEGACY_GMAIL_ID, LEGACY_ONESHOT_ID, resolveIdentities } from "./identities.ts";
 import { getLedger } from "./ledger.ts";
+import { sqliteToIso } from "./time.ts";
 import type { EmailIdentity } from "./types.ts";
 
 /**
@@ -125,7 +126,7 @@ export function warmupCap(
   const max = identity.maxPerDay ?? DEFAULT_WARMUP_MAX;
   if (!identity.warmup) return max;
   if (!firstSendAtSqliteUtc) return Math.min(identity.warmup.startPerDay, max);
-  const firstMs = new Date(`${firstSendAtSqliteUtc.replace(" ", "T")}Z`).getTime();
+  const firstMs = new Date(sqliteToIso(firstSendAtSqliteUtc)).getTime();
   const weeks = Number.isFinite(firstMs)
     ? Math.max(0, Math.floor((now.getTime() - firstMs) / MS_PER_WEEK))
     : 0;

@@ -9,6 +9,7 @@ import {
   logEvent,
   replyEmail,
   resolveIdentities,
+  sqliteToIso,
   trackSend,
   type ReplyKind,
 } from "@oneshot-gtm/core";
@@ -396,15 +397,6 @@ function buildConversations(
   }
   // Most recent activity first — the row order of the matched tab.
   return out.toSorted((a, b) => (a.lastActivityAt < b.lastActivityAt ? 1 : -1));
-}
-
-/**
- * sequence_events.created_at and deal_outcomes.recorded_at use SQLite datetime('now') format ("YYYY-MM-DD
- * HH:MM:SS", UTC, no 'T'/'Z'); inbox timestamps are ISO. Normalize so the
- * merged timeline's string sort is chronological.
- */
-function sqliteToIso(ts: string): string {
-  return ts.includes("T") ? ts : `${ts.replace(" ", "T")}Z`;
 }
 
 /**
