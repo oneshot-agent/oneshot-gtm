@@ -27,6 +27,7 @@ import {
 } from "@oneshot-agent/sdk";
 import { createHash } from "node:crypto";
 import { getLedger } from "./ledger.ts";
+import { triggerAngleRefresh } from "./angle.ts";
 import { loadConfig, oneshotEnvReady } from "./config.ts";
 import { demoFixture, demoMode } from "./demo.ts";
 import { claimContactTouch, describeTouch, recordContactTouch } from "./shared-db.ts";
@@ -1712,6 +1713,13 @@ export async function tagOutcomeValue(input: {
   // can't run (no wallet creds) or fails. No-op when no receipt carries this goal.
   const mirrored = ledger.setReceiptValueTagByGoal(goalId, tagJson);
   if (mirrored === 0) return { tagged: false };
+
+  // Refresh the per-prospect angle (issue #357): an outcome is exactly the
+  // kind of signal that should change how the next touch reads this
+  // prospect. Keyed by prospect_id per the issue, fires once the value tag
+  // is actually applied (not on a no-op/downgraded re-tag above), and is
+  // itself debounced on `angle_synthesized_at` — never blocks this call.
+  triggerAngleRefresh(input.prospectId);
 
   let agent: OneShot | null = null;
   try {

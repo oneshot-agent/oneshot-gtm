@@ -10,6 +10,8 @@
  * signal just because the tone was friendly.
  */
 
+import { getLedger } from "./ledger.ts";
+
 export type AngleRelationship =
   | "builder"
   | "adjacent"
@@ -205,4 +207,64 @@ export function parseProspectAngle(
     model: meta.model,
     synthesizedAt: meta.synthesizedAt ?? new Date().toISOString(),
   };
+}
+
+/**
+ * Fire-and-forget re-synthesis hook (issue #357): a new human reply or a
+ * tagged outcome should refresh `angle_json` instead of leaving it frozen at
+ * backfill time. The actual work (gatherAngleEvidence + synthesizePersonAngle)
+ * lives in `@oneshot-gtm/find`, which depends on this package — core cannot
+ * import find back without a cycle, so find registers its implementation
+ * here at module load (`packages/find/src/angle.ts`) and core's hot paths
+ * (ledger's `recordInboxReply` caller in `pollInboxReplies`, and
+ * `tagOutcomeValue` below) call `triggerAngleRefresh` without ever knowing
+ * find exists. Until find's module has loaded — e.g. a CLI invocation that
+ * never touches `@oneshot-gtm/find` — the trigger is a no-op, the same
+ * degrade-gracefully rule every other best-effort call in this codebase
+ * follows.
+ */
+export type AngleRefreshTrigger = (prospectId: number) => void;
+let angleRefreshTrigger: AngleRefreshTrigger | null = null;
+
+export function registerAngleRefreshTrigger(fn: AngleRefreshTrigger): void {
+  angleRefreshTrigger = fn;
+}
+
+/**
+ * Debounce window (issue #357's "stale after N hours guard is enough"): a
+ * burst of replies on the same live thread, or a reply immediately followed
+ * by an outcome tag, must not each re-buy a synthesis. Re-synthesis only
+ * fires when the existing `angle_synthesized_at` is missing or older than
+ * this, so the guard is entirely a function of the persisted timestamp —
+ * no extra state, and correct across process restarts and across the two
+ * independent call sites (reply poll, outcome tagging).
+ */
+export const ANGLE_REFRESH_STALE_HOURS = 6;
+
+/**
+ * Best-effort, fire-and-forget: never throws. No-ops until a trigger is
+ * registered (find's module hasn't loaded), and no-ops when the angle was
+ * synthesized more recently than `ANGLE_REFRESH_STALE_HOURS` ago — the
+ * debounce that keeps a reply burst or a reply-then-outcome pair from paying
+ * for synthesis twice.
+ */
+export function triggerAngleRefresh(prospectId: number): void {
+  if (!angleRefreshTrigger) return;
+  try {
+    const prospect = getLedger().getProspectById(prospectId);
+    if (!prospect) return;
+    if (prospect.angle_synthesized_at) {
+      const ageMs = Date.now() - Date.parse(prospect.angle_synthesized_at);
+      if (Number.isFinite(ageMs) && ageMs < ANGLE_REFRESH_STALE_HOURS * 3600_000) return;
+    }
+    angleRefreshTrigger(prospectId);
+  } catch {
+    // Best-effort — a ledger read failure must never propagate into a
+    // caller's hot path (reply recording, outcome tagging).
+  }
+}
+
+/** Test-only: reset the registered hook between cases. */
+export function _resetAngleRefreshTrigger(): void {
+  angleRefreshTrigger = null;
 }

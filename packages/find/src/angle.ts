@@ -1,9 +1,11 @@
 import {
+  demoMode,
   getLedger,
   hasDossierSignal,
   loadConfig,
   logEvent,
   parseProspectAngle,
+  registerAngleRefreshTrigger,
   type ProspectAngle,
   webRead,
 } from "@oneshot-gtm/core";
@@ -23,6 +25,7 @@ import {
 } from "./_github-user.ts";
 import { safeDeepResearchPerson } from "./_sdk-safe.ts";
 import { researchUrl } from "./_profile-url.ts";
+import { isCircuitOpen } from "./_breaker.ts";
 
 /**
  * Evidence gathering + LLM synthesis for the per-prospect angle (issue #355).
@@ -392,3 +395,55 @@ export async function synthesizePersonAngle(
   );
   return { angle, costUsd: 0 };
 }
+
+/**
+ * Re-synthesize and persist one prospect's angle (issue #357) — the same
+ * gather → synthesize → `setProspectAngle` pipeline `synthesize-angles`
+ * drives, invoked from `triggerAngleRefresh`'s fire-and-forget hook instead
+ * of a CLI backfill row. Never throws: every failure mode (demo mode, an
+ * open circuit, no evidence, an empty synthesis) degrades to a no-op, the
+ * same contract `runProspectResearch` (`packages/plays/src/add-prospect.ts`)
+ * follows for its own `void`-called background research.
+ */
+async function refreshProspectAngle(prospectId: number): Promise<void> {
+  // Demo mode is read-only by design (packages/core/src/demo.ts) — a stray
+  // reply/outcome on a seeded demo install must not synthesize for real.
+  if (demoMode()) return;
+  // The circuit breaker guards paid OneShot resolution calls; an open
+  // breaker means the backend is failing, so this is exactly the moment to
+  // skip a paid gather rather than add to the pile-up.
+  if (isCircuitOpen()) return;
+  try {
+    const evidence = await gatherAngleEvidence(prospectId);
+    if (!evidence) return;
+    const ledger = getLedger();
+    const prospect = ledger.getProspectById(prospectId);
+    if (!prospect) return;
+    const { angle } = await synthesizePersonAngle({
+      prospect: {
+        id: prospect.id,
+        name: prospect.name,
+        company: prospect.company,
+        email: prospect.email,
+      },
+      evidence,
+    });
+    if (!angle) return;
+    ledger.setProspectAngle(prospectId, JSON.stringify(angle));
+    logEvent("angle.refresh.done", { prospectId, hook: angle.hook.slice(0, 60) });
+  } catch (err) {
+    logEvent(
+      "angle.refresh.failed",
+      { prospectId, message_120: ((err as Error).message ?? "").slice(0, 120) },
+      "warn",
+    );
+  }
+}
+
+// Registered at module load so core's hot paths (recordInboxReply's caller
+// in pollInboxReplies, tagOutcomeValue) can trigger a refresh without
+// importing this package back — see registerAngleRefreshTrigger's doc in
+// packages/core/src/angle.ts for why the wiring runs this direction.
+registerAngleRefreshTrigger((prospectId: number) => {
+  void refreshProspectAngle(prospectId);
+});

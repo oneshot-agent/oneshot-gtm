@@ -76,6 +76,16 @@ GITHUB_TOKEN-authed) and `GitHubUserInfo` now carries account-maturity fields (`
 of the same shape, the six-lookups-by-hand problem this issue exists to close. No drafting changes;
 reading the angle into drafts is #356.
 
+Per-prospect angle, Phase 3 (#357): the angle no longer sits frozen at backfill time. A new HUMAN
+reply (`pollInboxReplies`'s `recordInboxReply` call) and a tagged deal outcome (`tagOutcomeValue`)
+both fire-and-forget a re-synthesis through a new `triggerAngleRefresh` seam in
+`packages/core/src/angle.ts` — core can't import `@oneshot-gtm/find` back (a cycle), so find
+registers its `refreshProspectAngle` implementation onto the seam at module load instead. Debounced
+on `angle_synthesized_at`'s own freshness (6h) rather than extra state, so a reply burst or a
+reply-then-outcome pair only pays for one re-synthesis; auto-replies and unsubscribes never trigger
+it at all. Best-effort throughout: demo mode, an open circuit breaker, a missing prospect, or an
+empty LLM result all degrade to a silent no-op, never a thrown error on the hot path.
+
 Updated by hand after each dogfood run.
 
 ---

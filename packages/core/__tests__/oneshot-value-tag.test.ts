@@ -117,6 +117,48 @@ describe("tagOutcomeValue (goal-level)", () => {
     }
   });
 
+  // Issue #357: a tagged outcome is exactly the kind of signal that should
+  // refresh the prospect's stored angle.
+  it("refreshes the prospect's angle when the tag actually applies", async () => {
+    const { registerAngleRefreshTrigger, _resetAngleRefreshTrigger } =
+      await import("../src/angle.ts");
+    const calls: number[] = [];
+    registerAngleRefreshTrigger((id) => calls.push(id));
+    try {
+      const { prospectId } = seedCadence("show-hn", "angle@x.dev");
+
+      await tagOutcomeValue({
+        prospectId,
+        playName: "show-hn",
+        valueTag: { type: "meeting", label: "meeting booked" },
+      });
+
+      expect(calls).toEqual([prospectId]);
+    } finally {
+      _resetAngleRefreshTrigger();
+    }
+  });
+
+  it("does not refresh the angle when no receipt carries the goal (no-op tag)", async () => {
+    const { registerAngleRefreshTrigger, _resetAngleRefreshTrigger } =
+      await import("../src/angle.ts");
+    const calls: number[] = [];
+    registerAngleRefreshTrigger((id) => calls.push(id));
+    try {
+      const prospectId = h.ledger.upsertProspect({ email: "no-receipt@x.dev" });
+
+      await tagOutcomeValue({
+        prospectId,
+        playName: "show-hn",
+        valueTag: { type: "engagement" },
+      });
+
+      expect(calls).toEqual([]);
+    } finally {
+      _resetAngleRefreshTrigger();
+    }
+  });
+
   it("no-ops when no receipt carries the cadence goal", async () => {
     const prospectId = h.ledger.upsertProspect({ email: "nobody@x.dev" });
     const res = await tagOutcomeValue({
