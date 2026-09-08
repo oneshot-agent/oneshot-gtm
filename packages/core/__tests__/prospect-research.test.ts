@@ -222,7 +222,8 @@ describe("setProspectAngle", () => {
   });
 
   it("OVERWRITES an existing angle, like setProspectDossier", () => {
-    const id = add("angle-b@x.dev", { angle_json: "stale" });
+    const id = add("angle-b@x.dev");
+    ledger.setProspectAngle(id, "stale");
     ledger.setProspectAngle(id, "fresh");
     expect(ledger.getProspectById(id)?.angle_json).toBe("fresh");
   });
@@ -259,6 +260,22 @@ describe("listProspectsForAngle", () => {
       subject: "re: hi",
       body: "not sure what you mean",
       receivedAt: new Date().toISOString(),
+    });
+    expect(ledger.listProspectsForAngle({ scopes: ["replied"] }).map((r) => r.id)).toEqual([id]);
+  });
+
+  it("selects a prospect with only a LinkedIn reply (finding PRRT_kwDOSKzrBs6gUX7P)", () => {
+    // recordLinkedInReply writes to channel_events, not inbox_replies. The
+    // 'replied' scope must see it too, or a pass-judged prospect who only
+    // ever replied on LinkedIn is invisible to angle synthesis.
+    const id = ledger.upsertProspect({ name: "LinkedIn Only", email: null, source: "reply" });
+    ledger.setProspectIcpVerdict(id, "pass"); // judged, so 'unjudged' would miss it
+    ledger.recordLinkedInReply({
+      prospectId: id,
+      source: "linkedin",
+      externalEventId: "li-1",
+      occurredAt: new Date().toISOString(),
+      body: "sounds interesting",
     });
     expect(ledger.listProspectsForAngle({ scopes: ["replied"] }).map((r) => r.id)).toEqual([id]);
   });
