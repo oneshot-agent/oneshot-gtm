@@ -1,5 +1,5 @@
 import type { ProspectPriorityComponents, SentOutcomeRawRow } from "@oneshot-gtm/core";
-import { parseProspectPriority } from "@oneshot-gtm/core";
+import { parseProspectPriority, sqliteToIso } from "@oneshot-gtm/core";
 import { mannWhitneyAuc, meanOf, wilson95 } from "./_gauge.ts";
 import { SCORE_BUCKETS, bucketOf } from "./_buckets.ts";
 
@@ -99,9 +99,7 @@ export function labelSentRow(
   now: Date,
 ): SentOutcomeLabel {
   const priority = parseProspectPriority(raw.priority_json);
-  const sentAtIso = /^\d{4}-\d{2}-\d{2} /.test(raw.sent_at)
-    ? `${raw.sent_at.replace(" ", "T")}Z`
-    : raw.sent_at;
+  const sentAtIso = sqliteToIso(raw.sent_at);
   const sentMs = Date.parse(sentAtIso);
   const daysSinceSend = Number.isFinite(sentMs) ? (now.getTime() - sentMs) / DAY_MS : 0;
   const joinable = raw.joined_prospect_id !== null;

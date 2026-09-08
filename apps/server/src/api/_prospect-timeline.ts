@@ -1,3 +1,4 @@
+import { sqliteToIso } from "@oneshot-gtm/core/time";
 import type {
   ChannelEventRecord,
   DealOutcomeRecord,
@@ -6,17 +7,6 @@ import type {
   SequenceEventRecord,
 } from "@oneshot-gtm/core";
 import { describeDecision, type ProspectTimelineEvent } from "@oneshot-gtm/shared-types";
-
-/**
- * sequence_events.created_at, deal_outcomes.recorded_at and target_queue's
- * found_at use SQLite datetime('now') format ("YYYY-MM-DD HH:MM:SS", UTC, no
- * 'T'/'Z'); reply and decision timestamps are ISO. Normalise so the merged
- * string sort is chronological. Same rule as inbox.ts, kept local so this
- * pure module does not drag the Gmail-backed inbox route into its tests.
- */
-function sqliteToIso(ts: string): string {
-  return ts.includes("T") ? ts : `${ts.replace(" ", "T")}Z`;
-}
 
 /**
  * The history behind one /prospects row, newest first: the queue row's own
