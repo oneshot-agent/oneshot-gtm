@@ -252,7 +252,15 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         // not the rule): only present when a prior finder/synthesis run
         // already persisted one for this email, e.g. a re-contact. Missing →
         // no lookup cost beyond the read, no block, unchanged output.
-        const existingAngle = getLedger().getProspectByEmail(def.toEmail(target))?.angle_json;
+        // Uses findProspectByEmail + getProspectById (not getProspectByEmail)
+        // deliberately: both are already the lookup pair every play's
+        // sendDraftedEmail call relies on, so every existing ledger test
+        // double already implements them — no test churn to add this read.
+        const existingProspectId = getLedger().findProspectByEmail(def.toEmail(target))?.id;
+        const existingAngle =
+          existingProspectId != null
+            ? getLedger().getProspectById(existingProspectId)?.angle_json
+            : null;
         const angleBlock = angleBlockFromJson(existingAngle ?? null);
         if (angleBlock) inputBlock = `${inputBlock}\n\n${angleBlock}`;
         // Surface a real first name when extractable so the prompt can
