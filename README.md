@@ -80,10 +80,10 @@ bun run cli -- find drain podcast-guest --dry-run  # preview approved /queue row
 bun run cli -- cadence advance                     # daily tick: poll inbox, fire follow-ups
 ```
 
-66 commands — `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
+67 commands — `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
 
 | Group                    | Commands                                                                                                                                                                                                                                                                                            |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `init` · `doctor` · `ui` | setup wizard · health check · open the dashboard                                                                                                                                                                                                                                                    |
 | `config`                 | `llm` · `founder` · `keys` · `telemetry on\|off` · `slack-webhook [url]` · `x-engine [engine]` · `spend-ceiling [amount\|off]`                                                                                                                                                                      |
 | `identities`             | `list` · `add` · `remove <id>` — the sender pool                                                                                                                                                                                                                                                    |
@@ -95,11 +95,11 @@ bun run cli -- cadence advance                     # daily tick: poll inbox, fir
 | `cadence`                | `advance` — poll inbound, fire due steps                                                                                                                                                                                                                                                            |
 | `direct-mail`            | `list` · `upload` · `preview` · `refresh` · `approve` · `send` · `cancel` — individual physical-mail approvals                                                                                                                                                                                      |
 | `discover`               | `icp interview-prep` · `icp synthesize` · `pmf classify` · `pmf survey` · `pmf survey-collect`                                                                                                                                                                                                      |
-| `measure`                | `benchmark` — compare this install's command activity with the opt-in telemetry cohort; supports `--json`                                                                                                                                                                                          |
+| `measure`                | `benchmark` — compare this install's command activity with the opt-in telemetry cohort; supports `--json`                                                                                                                                                                                           |
 | `intel`                  | `advise` · `personalize` · `triage-replies` · `backfill-intent` · `weekly-review`                                                                                                                                                                                                                   |
 | `handoff`                | `readiness` · `templatize` · `first-ae`                                                                                                                                                                                                                                                             |
 | `demo`                   | `seed` · `ui` · `reset` — a fictional install for screenshots and video                                                                                                                                                                                                                             |
-| `workspace`              | `list` · `create <name>` · `use <name>` · `current` · `path <name>` · `remove <name>` — one isolated install per product; `--workspace <name>` on any command                                                                                                                                      |
+| `workspace`              | `list` · `create <name>` · `use <name>` · `current` · `path <name>` · `remove <name>` — one isolated install per product; `--workspace <name>` on any command                                                                                                                                       |
 
 Spend, CAC, RoCS and outcome logging live in the dashboard's Measure and Cadences pages so there's one source of truth. Add `--json` to a read-only command (`doctor`, `identities list`, `domains list`, `workspace list`) for machine-readable output, or script the `/api/measure/*` routes.
 
@@ -224,7 +224,7 @@ Workspaces share one thing: `~/.oneshot-gtm-shared/shared.sqlite`, holding the p
 
 ```
 apps/
-  cli/        the 66-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
+  cli/        the 67-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
   server/     Bun.serve + SSE; tsdown bundle published as `oneshot-gtm-server`
   web/        Vite + React 19 + TanStack + Base UI — 9 pages, run form, strategist dock, privacy mode
 packages/

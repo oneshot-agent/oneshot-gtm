@@ -25,6 +25,7 @@ const current = {
   mobileSignature: true,
   timezone: "Europe/Vienna",
   clientId: "client-1",
+  slackWebhookUrl: null,
   dailySpendCeilingUsd: null,
 } satisfies OneShotConfig;
 
