@@ -3283,10 +3283,48 @@ export class Ledger {
             ? [input.status, now, now, now, decidedBy, input.notes, input.id]
             : [input.status, now, now, now, decidedBy, input.id]),
         );
-    } else if (input.status === "approved" || input.status === "rejected") {
-      // Always overwrites: the latest decision wins on a re-decide.
-      const decision =
-        input.status === "approved" ? "approve" : decidedBy === "human" ? "reject" : "auto_reject";
+    } else if (input.status === "approved" || input.status === "pending") {
+      // The ledger, not the routes, owns "never re-approve a sent row": drain
+      // picks up every `status = 'approved'` row, so moving a sent row back to
+      // pending/approved would re-email the person. queue.ts and
+      // add-prospect.ts keep their own pre-checks (they produce the
+      // user-facing 400/409 messages), but this is the guard that can't be
+      // forgotten by a future caller (#561).
+      //
+      // The guard is baked into the UPDATE's WHERE clause instead of a
+      // separate SELECT-then-UPDATE: a single statement is its own atomic
+      // check-and-set, so two processes racing this call in WAL mode can't
+      // both pass a "not sent yet" check before either holds the write lock
+      // — the same class of race dequeueApproved's BEGIN IMMEDIATE guards
+      // against a few lines below (~3449), just closed here by folding the
+      // check into one statement instead of wrapping a transaction.
+      const decision = input.status === "approved" ? "approve" : null;
+      const result =
+        input.status === "approved"
+          ? this.db
+              .prepare(
+                `UPDATE target_queue SET status = ?, reviewed_at = ?, decision = ?, decided_at = ?, decided_by = ?, send_started_at = NULL ${input.notes ? ", notes = ?" : ""} WHERE id = ? AND status != 'sent' AND sent_at IS NULL`,
+              )
+              .run(
+                ...(input.notes
+                  ? [input.status, now, decision, now, decidedBy, input.notes, input.id]
+                  : [input.status, now, decision, now, decidedBy, input.id]),
+              )
+          : this.db
+              .prepare(
+                `UPDATE target_queue SET status = ?, reviewed_at = NULL, send_started_at = NULL ${input.notes !== undefined ? ", notes = ?" : ""} WHERE id = ? AND status != 'sent' AND sent_at IS NULL`,
+              )
+              .run(
+                ...(input.notes !== undefined
+                  ? [input.status, input.notes, input.id]
+                  : [input.status, input.id]),
+              );
+      this.throwIfSentRowGuardBlocked(result.changes, input.id, input.status);
+    } else if (input.status === "rejected") {
+      // Always overwrites: the latest decision wins on a re-decide. Rejecting
+      // a sent row is allowed — it's a label, not a send, so no sent-row
+      // guard here.
+      const decision = decidedBy === "human" ? "reject" : "auto_reject";
       this.db
         .prepare(
           `UPDATE target_queue SET status = ?, reviewed_at = ?, decision = ?, decided_at = ?, decided_by = ?, send_started_at = NULL ${input.notes ? ", notes = ?" : ""} WHERE id = ?`,
@@ -3296,20 +3334,28 @@ export class Ledger {
             ? [input.status, now, decision, now, decidedBy, input.notes, input.id]
             : [input.status, now, decision, now, decidedBy, input.id]),
         );
-    } else if (input.status === "pending") {
-      this.db
-        .prepare(
-          `UPDATE target_queue SET status = ?, reviewed_at = NULL, send_started_at = NULL ${input.notes !== undefined ? ", notes = ?" : ""} WHERE id = ?`,
-        )
-        .run(
-          ...(input.notes !== undefined
-            ? [input.status, input.notes, input.id]
-            : [input.status, input.id]),
-        );
     } else {
       this.db
         .prepare(`UPDATE target_queue SET status = ?, send_started_at = NULL WHERE id = ?`)
         .run(input.status, input.id);
+    }
+  }
+
+  /**
+   * Fired after a guarded approved/pending UPDATE affects 0 rows: the row
+   * may simply not exist (fine, matches the pre-#561 no-op behavior for an
+   * unknown id) or it may have been excluded by the sent-row guard in the
+   * WHERE clause. Only the latter throws.
+   */
+  private throwIfSentRowGuardBlocked(changes: number, id: number, status: QueueStatus): void {
+    if (changes > 0) return;
+    const current = this.db
+      .query("SELECT status, sent_at FROM target_queue WHERE id = ?")
+      .get(id) as { status: QueueStatus; sent_at: string | null } | undefined;
+    if (current && (current.status === "sent" || current.sent_at != null)) {
+      throw new Error(
+        `setQueueStatus: row #${id} was already sent — refusing to move it to '${status}' (would re-send on the next drain)`,
+      );
     }
   }
 
@@ -3332,8 +3378,12 @@ export class Ledger {
     if (input.staleCutoffIso) args.push(input.staleCutoffIso);
     const result = this.db
       .prepare(
+        // sent_at IS NULL is belt-and-braces alongside status = 'approved' —
+        // the same guard setQueueStatus and dequeueApproved apply, closed
+        // here too so a row desynced back to 'approved' with a stale
+        // sent_at can't be claimed and re-sent through this path (#561).
         `UPDATE target_queue SET send_started_at = ?
-         WHERE id = ? AND status = 'approved' AND ${markerWhere}`,
+         WHERE id = ? AND status = 'approved' AND sent_at IS NULL AND ${markerWhere}`,
       )
       .run(...args);
     return result.changes > 0;
@@ -3390,7 +3440,10 @@ export class Ledger {
   }
 
   approveAllPending(opts: { playName?: string } = {}): number {
-    const where: string[] = ["status = 'pending'"];
+    // `sent_at IS NULL` is belt-and-braces alongside `status = 'pending'` —
+    // a pending row should never carry a sent_at, but the invariant lives
+    // here, not in the caller (#561).
+    const where: string[] = ["status = 'pending'", "sent_at IS NULL"];
     const args: unknown[] = [];
     if (opts.playName) {
       where.push("play_name = ?");
@@ -3422,7 +3475,7 @@ export class Ledger {
       const rows = this.db
         .query(
           `SELECT * FROM target_queue
-           WHERE play_name = ? AND status = 'approved'
+           WHERE play_name = ? AND status = 'approved' AND sent_at IS NULL
              AND (drain_claimed_at IS NULL OR drain_claimed_at < ?)
            ORDER BY found_at ASC
            LIMIT ?`,
