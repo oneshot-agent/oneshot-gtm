@@ -164,6 +164,14 @@ export interface SequenceEventRecord {
    * already the occurrence time in that case).
    */
   replied_at: string | null;
+  /**
+   * The provider's own bounce timestamp (DSN `bouncedAt`, from the message's
+   * `internalDate`), distinct from `created_at` — a fresh row IS inserted per
+   * bounce, but `created_at` is stamped at POLL/detection time, which can lag
+   * the real bounce by however long the mailbox went unpolled. NULL on rows
+   * written before this column existed, or any non-`bounced` row.
+   */
+  bounced_at: string | null;
 }
 
 /**

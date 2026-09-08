@@ -531,7 +531,7 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
         channel TEXT NOT NULL,
         status TEXT NOT NULL,
         metadata_json TEXT,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')), receipt_id INTEGER, replied_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')), receipt_id INTEGER, replied_at TEXT, bounced_at TEXT,
         FOREIGN KEY(prospect_id) REFERENCES prospects(id)
       )",
       "tbl_name": "sequence_events",

@@ -806,6 +806,7 @@ export async function pollInboxBounces(): Promise<BouncePollResult> {
           diagnostic: b.diagnostic,
           identityId: b.identityId,
         },
+        bouncedAt: b.bouncedAt,
       });
       // Only a HARD bounce stops the sequence — a 5.7.x block judges the
       // message/domain, not the mailbox (blocks surface via the doctor check).

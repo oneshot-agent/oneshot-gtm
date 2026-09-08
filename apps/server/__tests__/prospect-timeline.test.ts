@@ -27,6 +27,7 @@ describe("buildProspectTimeline", () => {
           metadata_json: JSON.stringify({ subject: "following up" }),
           created_at: "2026-09-05 07:30:00",
           replied_at: null,
+          bounced_at: null,
         },
       ],
       replies: [
@@ -102,6 +103,7 @@ describe("buildProspectTimeline", () => {
           metadata_json: JSON.stringify({ label: "intro", subject: "s" }),
           created_at: "2026-09-02 07:30:00",
           replied_at: null,
+          bounced_at: null,
         },
       ],
       replies: [
@@ -146,6 +148,7 @@ describe("buildProspectTimeline ordering", () => {
           // SQLite whole-second form of the same second; lexically "34Z" > "34.900Z".
           created_at: "2026-09-07 19:03:34",
           replied_at: null,
+          bounced_at: null,
         },
       ],
       replies: [],

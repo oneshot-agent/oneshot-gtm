@@ -412,6 +412,48 @@ describe("Ledger receipts + prospects + spend rollups", () => {
     expect(sendDayWindow?.sent).toBe(1);
     expect(sendDayWindow?.replied ?? 0).toBe(0);
   });
+
+  it("eventsByPlay windows a bounce by its OWN occurrence day, not the poll/detection day", () => {
+    // recordSequenceEvent always inserts a FRESH row for a bounce (unlike the
+    // reply flip-in-place), so created_at looks like occurrence time — but
+    // it's actually the time pollInboxBounces detected the DSN, which can lag
+    // the provider's own bounce timestamp (bounced_at) by however long the
+    // mailbox went unpolled. A date-windowed rollup (the Slack daily summary)
+    // must not attribute the bounce to the detection day instead of the day
+    // it actually happened.
+    const id = ledger.upsertProspect({ name: "BW", email: "bw@x.com", source: "t" });
+    ledger.recordSequenceEvent({
+      prospectId: id,
+      playName: "post-funding",
+      stepIndex: 0,
+      channel: "email",
+      status: "bounced",
+      bouncedAt: "2026-08-20 09:00:00",
+    });
+    const db = (
+      ledger as unknown as {
+        db: { query(s: string): { run(...a: unknown[]): unknown } };
+      }
+    ).db;
+    // Back-date created_at to the (late) POLL day, far outside the window
+    // we'll query below — bounced_at (set above, at insert time) stays put.
+    db.query(
+      `UPDATE sequence_events SET created_at = '2026-08-28 10:00:00' WHERE prospect_id = ?`,
+    ).run(id);
+
+    // A window covering only the real BOUNCE day, nowhere near the poll day.
+    const windowed = ledger
+      .eventsByPlay({ sinceIso: "2026-08-20 00:00:00", untilIso: "2026-08-21 00:00:00" })
+      .find((r) => r.play_name === "post-funding");
+    expect(windowed?.bounced).toBe(1);
+
+    // A window covering only the POLL day must NOT count the bounce there —
+    // the old created_at-only windowing would have credited it here instead.
+    const pollDayWindow = ledger
+      .eventsByPlay({ sinceIso: "2026-08-28 00:00:00", untilIso: "2026-08-29 00:00:00" })
+      .find((r) => r.play_name === "post-funding");
+    expect(pollDayWindow?.bounced ?? 0).toBe(0);
+  });
 });
 
 describe("Ledger cadence state", () => {
