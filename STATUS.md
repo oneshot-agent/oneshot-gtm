@@ -1,8 +1,8 @@
 # Status
 
-**Assume green.** The 66 CLI commands, 23 plays, 15 finders, ten dashboard pages plus the run form, and the server's REST + SSE routes are all covered by the test suite — and verified end to end against the live OneShot API: every paid call type has made the live round trip, including the voice and SMS legs (`motion concierge` / `motion demo-no-show`), the PMF survey pair, reply triage, bounce harvesting, and `gmail placement`.
+**Assume green.** The 67 CLI commands, 23 plays, 15 finders, ten dashboard pages plus the run form, and the server's REST + SSE routes are all covered by the test suite — and verified end to end against the live OneShot API: every paid call type has made the live round trip, including the voice and SMS legs (`motion concierge` / `motion demo-no-show`), the PMF survey pair, reply triage, bounce harvesting, and `gmail placement`.
 
-Last verified **2026-09-08** · Bun 1.3.13 · OneShot SDK 0.32.0 · **3323 tests / 255 files** · typecheck + oxlint + oxfmt pass (36 lint warnings, 0 errors).
+Last verified **2026-09-08** · Bun 1.3.13 · OneShot SDK 0.32.0 · **3383 tests / 258 files** · typecheck + oxlint + oxfmt pass (36 lint warnings, 0 errors).
 
 **What the gate covers.** `apps/web` is now inside `bun run typecheck` — the dashboard source is
 type-checked in CI, and a deliberate error under `apps/web/src` fails the root script. As of
@@ -61,6 +61,20 @@ boundary). The affordance moved onto `/queue`: it had lived only on `/cadences`,
 `cadence_state`, so all 127 emailed luma-events prospects — a one-touch play that never enrols —
 were unreachable. `/api/run`'s `persistDraftsToQueue` now links `target_queue.prospect_id`, which
 only `drain.ts` had been doing: 680 of 681 sent rows carried a NULL link.
+
+Per-prospect angle, Phase 1 (#355): `prospects.angle_json` (+ `angle_synthesized_at`) is a durable
+LLM synthesis of dossier + live GitHub work + reply history — evidence-cited (`evidence[].source`
+must trace to something real or the claim is dropped), with a separate `relationship` (what they
+build) vs. `valueMode`/`buyerStage` (could they buy, at what stage) so a warm reply from a
+one-month-old student-led GitHub org is never inflated into a buyer signal. `find synthesize-angles`
+backfills it (`--scope/--limit/--concurrency/--refresh/--cheap/--max-cost-usd/--dry-run`), reusing
+`listProspectsForResearch`'s scope semantics via a new `listProspectsForAngle` selector — unlike
+that selector, a social URL isn't required, since reply history alone is a usable evidence tier.
+`_github-user.ts` gained `fetchGitHubOrgs`/`fetchGitHubOrgProfile`/`fetchFollowNetwork` (all cached,
+GITHUB_TOKEN-authed) and `GitHubUserInfo` now carries account-maturity fields (`createdAt`,
+`publicRepos`, `followers`) — together these are what separate a funded company from a student lab
+of the same shape, the six-lookups-by-hand problem this issue exists to close. No drafting changes;
+reading the angle into drafts is #356.
 
 Updated by hand after each dogfood run.
 

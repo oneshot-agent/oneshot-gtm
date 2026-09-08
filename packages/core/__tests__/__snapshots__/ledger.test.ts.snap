@@ -464,7 +464,7 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
         dossier_json TEXT,
         source TEXT,
         created_at TEXT NOT NULL DEFAULT (datetime('now'))
-      , source_profile_url TEXT, title TEXT, icp_verdict TEXT, icp_verdict_reason TEXT)",
+      , source_profile_url TEXT, title TEXT, icp_verdict TEXT, icp_verdict_reason TEXT, angle_json TEXT, angle_synthesized_at TEXT)",
       "tbl_name": "prospects",
       "type": "table",
     },

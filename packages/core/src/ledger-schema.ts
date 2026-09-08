@@ -521,6 +521,13 @@ export function migrateLedgerSchema(db: Database): void {
   // on for replies (bounces are unaffected — recordSequenceEvent always
   // inserts a fresh row, so created_at is already the occurrence time).
   addColumnIfMissing(db, "sequence_events", "replied_at", "TEXT");
+  // v32: per-prospect angle (issue #355) — LLM synthesis of dossier + live
+  // public work + reply history, distinct from `dossier_json` (raw research
+  // input) and from `yourEdge` (founder config stamped identically on every
+  // target). `angle_synthesized_at` NULL = never synthesized; set alongside
+  // `angle_json` by `setProspectAngle`, cleared together when passed null.
+  addColumnIfMissing(db, "prospects", "angle_json", "TEXT");
+  addColumnIfMissing(db, "prospects", "angle_synthesized_at", "TEXT");
 }
 
 /**
