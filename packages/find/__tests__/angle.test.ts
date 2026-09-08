@@ -18,6 +18,12 @@ interface ProspectStub {
 let prospect: ProspectStub | null = null;
 let queueRow: { id: number; payload_json: string } | null = null;
 let replies: Array<{ body: string; subject: string | null; received_at: string }> = [];
+let channelEvents: Array<{
+  event_type: string;
+  channel: string;
+  body: string | null;
+  occurred_at: string;
+}> = [];
 let deepResearchResult: { status: string; result: unknown; cost: number } = {
   status: "completed",
   result: { enrichment: { title: "Founder" } },
@@ -47,6 +53,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       getProspectById: (id: number) => (prospect?.id === id ? prospect : null),
       getQueueRowForProspect: () => queueRow,
       listInboxRepliesForProspect: () => replies,
+      listChannelEventsForProspect: () => channelEvents,
     }),
     webRead: async (input: { url: string }) => {
       webReadCalls.push(input.url);
@@ -122,6 +129,7 @@ beforeEach(() => {
   };
   queueRow = null;
   replies = [];
+  channelEvents = [];
   deepResearchResult = {
     status: "completed",
     result: { enrichment: { title: "Founder" } },
@@ -271,6 +279,40 @@ describe("gatherAngleEvidence", () => {
     expect(out?.replies).toHaveLength(1);
     expect(out?.dossierText).toBeNull();
     expect(out?.github).toBeNull();
+  });
+
+  it("includes a LinkedIn reply (channel_events) alongside inbox replies (finding PRRT_kwDOSKzrBs6gUX7P)", async () => {
+    replies = [
+      { body: "email reply first", subject: "re: hi", received_at: "2026-09-01T00:00:00Z" },
+    ];
+    channelEvents = [
+      {
+        event_type: "reply",
+        channel: "linkedin",
+        body: "linkedin reply second",
+        occurred_at: "2026-09-02T00:00:00Z",
+      },
+    ];
+    const out = await gatherAngleEvidence(1, { allowPaidResearch: false });
+    expect(out?.replies).toHaveLength(2);
+    expect(out?.replies.map((r) => r.body)).toEqual(["email reply first", "linkedin reply second"]);
+    expect(out?.sources).toContain("replies:2");
+  });
+
+  it("gathers a LinkedIn-only reply with no email/inbox history at all", async () => {
+    replies = [];
+    channelEvents = [
+      {
+        event_type: "reply",
+        channel: "linkedin",
+        body: "only channel event",
+        occurred_at: "2026-09-01T00:00:00Z",
+      },
+    ];
+    const out = await gatherAngleEvidence(1, { allowPaidResearch: false });
+    expect(out?.replies).toHaveLength(1);
+    expect(out?.replies[0]?.body).toBe("only channel event");
+    expect(out?.sources).toContain("replies:1");
   });
 
   it("prefers a researchable linkedin_url over a non-researchable source_profile_url", async () => {

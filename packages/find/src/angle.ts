@@ -210,14 +210,28 @@ export async function gatherAngleEvidence(
   }
 
   // Reply history — the prospect's own corrections outrank any inferred signal.
-  const replies: AngleReplyEvidence[] = ledger
+  // Includes both inbox (email) replies and LinkedIn channel_events replies
+  // (recordLinkedInReply) — a prospect who only ever replied on LinkedIn must
+  // not have that reply invisible to synthesis (finding PRRT_kwDOSKzrBs6gUX7P).
+  const emailReplies: AngleReplyEvidence[] = ledger
     .listInboxRepliesForProspect(prospectId)
-    .slice(-MAX_REPLIES)
     .map((r) => ({
-      body: r.body.slice(0, REPLY_BODY_SLICE),
+      body: r.body,
       subject: r.subject,
       receivedAt: r.received_at,
     }));
+  const linkedinReplies: AngleReplyEvidence[] = ledger
+    .listChannelEventsForProspect(prospectId)
+    .filter((e) => e.event_type === "reply" && e.body?.trim())
+    .map((e) => ({
+      body: e.body as string,
+      subject: `(${e.channel} reply)`,
+      receivedAt: e.occurred_at,
+    }));
+  const replies: AngleReplyEvidence[] = [...emailReplies, ...linkedinReplies]
+    .sort((a, b) => a.receivedAt.localeCompare(b.receivedAt))
+    .slice(-MAX_REPLIES)
+    .map((r) => ({ ...r, body: r.body.slice(0, REPLY_BODY_SLICE) }));
   if (replies.length > 0) sources.push(`replies:${replies.length}`);
 
   return {

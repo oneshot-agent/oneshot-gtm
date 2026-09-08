@@ -2206,7 +2206,10 @@ export class Ledger {
         );
       }
       if (scopes.includes("replied")) {
-        any.push("EXISTS(SELECT 1 FROM inbox_replies ir WHERE ir.prospect_id = p.id)");
+        any.push(
+          "EXISTS(SELECT 1 FROM inbox_replies ir WHERE ir.prospect_id = p.id) OR " +
+            "EXISTS(SELECT 1 FROM channel_events ce WHERE ce.prospect_id = p.id AND ce.event_type = 'reply')",
+        );
       }
       if (scopes.includes("unjudged")) {
         any.push(
