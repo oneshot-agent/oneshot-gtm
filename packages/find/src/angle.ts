@@ -70,6 +70,11 @@ export interface AngleEvidenceBundle {
   github: AngleGitHubEvidence | null;
   /** First-party page text for a non-GitHub profile URL (LinkedIn/X/Luma etc). */
   webReadText: string | null;
+  /** The URL `webReadText` was read from — rendered alongside the text so a
+   *  citation of it can satisfy the URL-must-appear-literally grounding
+   *  check even when the fetched markdown doesn't happen to repeat its own
+   *  URL (issue #569 freshness audit). Null exactly when `webReadText` is. */
+  webReadUrl: string | null;
   /** True when a paid `webRead` call actually ran. */
   webReadResearched: boolean;
   replies: AngleReplyEvidence[];
@@ -171,6 +176,7 @@ export async function gatherAngleEvidence(
   // first-party read of whatever profile URL we do have.
   let github: AngleGitHubEvidence | null = null;
   let webReadText: string | null = null;
+  let webReadUrl: string | null = null;
   let webReadResearched = false;
   const profileUrl = researchUrl(prospect);
   const githubOwner = profileUrl ? ownerFromRepoUrl(profileUrl) : null;
@@ -197,6 +203,7 @@ export async function gatherAngleEvidence(
       const text = (read.result.markdown ?? "").trim().slice(0, WEBREAD_SLICE);
       if (text) {
         webReadText = text;
+        webReadUrl = profileUrl;
         webReadResearched = true;
         sources.push("webread");
       }
@@ -240,6 +247,7 @@ export async function gatherAngleEvidence(
     queueSignal,
     github,
     webReadText,
+    webReadUrl,
     webReadResearched,
     replies,
     costUsd,
@@ -295,8 +303,19 @@ function renderGitHubEvidence(gh: AngleGitHubEvidence): string {
     );
   }
   if (gh.network && (gh.network.following.length > 0 || gh.network.followers.length > 0)) {
+    const followingLogins = gh.network.following
+      .slice(0, 15)
+      .map((f) => f.login)
+      .join(", ");
+    const followerLogins = gh.network.followers
+      .slice(0, 15)
+      .map((f) => f.login)
+      .join(", ");
     lines.push(
-      `Network: follows ${gh.network.following.length}, followed by ${gh.network.followers.length}`,
+      `Network: follows ${gh.network.following.length}` +
+        `${followingLogins ? ` (${followingLogins})` : ""}` +
+        `, followed by ${gh.network.followers.length}` +
+        `${followerLogins ? ` (${followerLogins})` : ""}`,
     );
   }
   return lines.join("\n");
@@ -308,7 +327,10 @@ function renderEvidenceForPrompt(evidence: AngleEvidenceBundle): string {
   if (evidence.queueSignal)
     blocks.push(`FINDER SIGNAL (why they were queued):\n${evidence.queueSignal}`);
   if (evidence.github) blocks.push(renderGitHubEvidence(evidence.github));
-  if (evidence.webReadText) blocks.push(`PROFILE PAGE:\n${evidence.webReadText}`);
+  if (evidence.webReadText)
+    blocks.push(
+      `PROFILE PAGE${evidence.webReadUrl ? ` (${evidence.webReadUrl})` : ""}:\n${evidence.webReadText}`,
+    );
   if (evidence.replies.length > 0) {
     const replyLines = evidence.replies.map(
       (r, i) => `[${i + 1}] ${r.receivedAt}${r.subject ? ` — ${r.subject}` : ""}\n${r.body}`,
