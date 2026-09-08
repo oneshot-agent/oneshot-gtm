@@ -506,6 +506,16 @@ export class Ledger {
         harvested_at TEXT NOT NULL
       );
     `);
+    // v24: occurrence timestamp for a reply, separate from created_at.
+    // markLatestStepReplied flips the ORIGINAL sent row's status in place, so
+    // created_at stays pinned to the send time — eventsByPlay's sinceIso/
+    // untilIso window (used by the Slack daily-summary aggregate) was
+    // silently dropping any reply landing after the SENT step's created_at
+    // window instead of the reply's own occurrence day. replied_at is stamped
+    // at the moment of the flip and is what date-windowed rollups must filter
+    // on for replies (bounces are unaffected — recordSequenceEvent always
+    // inserts a fresh row, so created_at is already the occurrence time).
+    this.addColumnIfMissing("sequence_events", "replied_at", "TEXT");
   }
 
   /**
@@ -1818,12 +1828,16 @@ export class Ledger {
    * Mark the latest sent step `replied` — a state transition of the existing
    * step, NOT a new event, so `sent` counts stay correct. Idempotent per
    * (prospect, play) via the NOT EXISTS guard; returns true on the one call
-   * that flips a row.
+   * that flips a row. Stamps `replied_at` to the actual reply moment — the
+   * row's `created_at` stays pinned to the original SEND time, so date-windowed
+   * rollups (eventsByPlay, the Slack daily summary) must use replied_at, not
+   * created_at, to count a reply on the day it happened rather than the day it
+   * was sent.
    */
   markLatestStepReplied(input: { prospectId: number; playName: string }): boolean {
     const result = this.db
       .prepare(
-        `UPDATE sequence_events SET status = 'replied'
+        `UPDATE sequence_events SET status = 'replied', replied_at = datetime('now')
          WHERE id = (
            SELECT id FROM sequence_events
            WHERE prospect_id = ? AND play_name = ? AND channel = 'email'
@@ -2061,6 +2075,20 @@ export class Ledger {
     }>;
   }
 
+  /**
+   * Per-play rollup of sequence_events, windowed by `sinceIso`/`untilIso`.
+   * sent/delivered/bounced are windowed on `created_at` (the row's own
+   * timestamp — a fresh INSERT for every status including bounces, so it's
+   * always the occurrence time). `replied` is windowed on
+   * `COALESCE(replied_at, created_at)` instead: `markLatestStepReplied` flips
+   * the ORIGINAL sent row's status in place rather than inserting a new one,
+   * so that row's `created_at` stays pinned to the SEND time — windowing
+   * replied on created_at would silently drop any reply that lands after the
+   * send day's window (the common case, since replies rarely arrive same-day)
+   * from every completed-day rollup, including the Slack daily summary.
+   * `replied_at` is NULL on rows predating that column; COALESCE falls back
+   * to created_at for those so they still count somewhere rather than vanish.
+   */
   eventsByPlay(opts: { sinceIso?: string; untilIso?: string } = {}): Array<{
     play_name: string;
     sent: number;
@@ -2068,28 +2096,33 @@ export class Ledger {
     replied: number;
     bounced: number;
   }> {
-    const where: string[] = [];
-    const args: unknown[] = [];
+    const createdClause: string[] = [];
+    const repliedClause: string[] = [];
     if (opts.sinceIso) {
-      where.push("created_at >= ?");
-      args.push(opts.sinceIso);
+      createdClause.push("created_at >= $sinceIso");
+      repliedClause.push("COALESCE(replied_at, created_at) >= $sinceIso");
     }
     if (opts.untilIso) {
-      where.push("created_at < ?");
-      args.push(opts.untilIso);
+      createdClause.push("created_at < $untilIso");
+      repliedClause.push("COALESCE(replied_at, created_at) < $untilIso");
     }
+    const createdWindow = createdClause.length ? `(${createdClause.join(" AND ")})` : "1";
+    const repliedWindow = repliedClause.length ? `(${repliedClause.join(" AND ")})` : "1";
+    const params: Record<string, string> = {};
+    if (opts.sinceIso) params["$sinceIso"] = opts.sinceIso;
+    if (opts.untilIso) params["$untilIso"] = opts.untilIso;
     const sql = `
       SELECT
         play_name,
-        SUM(CASE WHEN status IN ('sent', 'delivered', 'replied') THEN 1 ELSE 0 END) AS sent,
-        SUM(CASE WHEN status IN ('delivered', 'replied') THEN 1 ELSE 0 END) AS delivered,
-        SUM(CASE WHEN status = 'replied' THEN 1 ELSE 0 END) AS replied,
-        SUM(CASE WHEN status = 'bounced' THEN 1 ELSE 0 END) AS bounced
+        SUM(CASE WHEN status IN ('sent', 'delivered', 'replied') AND ${createdWindow} THEN 1 ELSE 0 END) AS sent,
+        SUM(CASE WHEN status IN ('delivered', 'replied') AND ${createdWindow} THEN 1 ELSE 0 END) AS delivered,
+        SUM(CASE WHEN status = 'replied' AND ${repliedWindow} THEN 1 ELSE 0 END) AS replied,
+        SUM(CASE WHEN status = 'bounced' AND ${createdWindow} THEN 1 ELSE 0 END) AS bounced
       FROM sequence_events
-      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+      WHERE ${createdWindow} OR (status = 'replied' AND ${repliedWindow})
       GROUP BY play_name
     `;
-    return this.db.query(sql).all(...(args as never[])) as Array<{
+    return this.db.query(sql).all(params) as Array<{
       play_name: string;
       sent: number;
       delivered: number;

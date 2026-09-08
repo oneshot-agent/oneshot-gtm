@@ -185,7 +185,10 @@ function utcDay(d: Date): string {
  * At-most-once — the watermark is stamped before the POST, so a failed
  * delivery is dropped rather than re-attempted (best-effort by contract).
  * Quiet days (no sequence events at all) stamp without posting.
- * Returns true when a summary was posted. Never throws.
+ * `sent`/`bounced` count events whose OWN occurrence landed in the window;
+ * `replied` counts replies whose occurrence (not the original send) landed in
+ * the window — see Ledger.eventsByPlay's replied_at note. Returns true when a
+ * summary was posted. Never throws.
  */
 export async function postDailySendSummaryIfDue(now: Date = new Date()): Promise<boolean> {
   try {

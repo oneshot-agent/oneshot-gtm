@@ -286,6 +286,8 @@ export interface SetupRequest {
   productBrief?: string;
   /** When true, signature appends a literal "Sent from my iPhone" line. */
   mobileSignature?: boolean;
+  /** Slack incoming-webhook URL for reply/bounce/daily-summary notifications. Empty string clears it (feature off). */
+  slackWebhookUrl?: string;
   llmProvider?: LlmProvider;
   llmModel?: string;
   telemetryEnabled?: boolean;

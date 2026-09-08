@@ -102,6 +102,14 @@ export interface SequenceEventRecord {
   status: "queued" | "sent" | "delivered" | "replied" | "bounced" | "failed" | "unsubscribed";
   metadata_json: string | null;
   created_at: string;
+  /**
+   * When a `replied` status was stamped (markLatestStepReplied), separate from
+   * `created_at` — a reply flips the ORIGINAL sent row in place, so created_at
+   * stays pinned to the SEND time. NULL on rows written before this column
+   * existed, or rows inserted directly with status `replied` (created_at is
+   * already the occurrence time in that case).
+   */
+  replied_at: string | null;
 }
 
 /**

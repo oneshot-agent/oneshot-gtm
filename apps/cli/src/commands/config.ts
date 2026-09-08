@@ -126,6 +126,33 @@ export async function configTelemetry(state: "on" | "off"): Promise<void> {
   ok(`telemetry ${state === "on" ? c.green("enabled") : c.dim("disabled")}`);
 }
 
+/**
+ * Show or set the Slack incoming-webhook URL (reply/bounce/daily-summary
+ * notifications, see slack-notify.ts). Blank input clears it — the feature is
+ * off whenever this is unset, mirroring `config x-engine`'s show-then-set shape.
+ */
+export async function configSlackWebhook(url?: string): Promise<void> {
+  header("Slack notifications");
+  const cfg = loadConfig();
+  if (url === undefined) {
+    note(
+      cfg.slackWebhookUrl
+        ? `webhook: ${c.cyan(cfg.slackWebhookUrl)}`
+        : `webhook: ${c.dim("not set — reply/bounce/daily-summary notifications are off")}`,
+    );
+    note(c.dim("set with: oneshot-gtm config slack-webhook <url>"));
+    note(c.dim("clear with: oneshot-gtm config slack-webhook ''"));
+    return;
+  }
+  const trimmed = url.trim();
+  saveConfig({ ...cfg, slackWebhookUrl: trimmed.length > 0 ? trimmed : null });
+  ok(
+    trimmed.length > 0
+      ? `webhook saved: ${c.cyan(trimmed)}`
+      : "webhook cleared — notifications off",
+  );
+}
+
 const X_TRIGGER = "x-reposters";
 const set = (k: string) => (process.env[k] ? c.green("set") : c.red("missing"));
 

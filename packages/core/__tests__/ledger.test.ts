@@ -305,6 +305,48 @@ describe("Ledger receipts + prospects + spend rollups", () => {
       .find((r) => r.play_name === "show-hn");
     expect(unbounded?.sent).toBe(2);
   });
+
+  it("eventsByPlay windows a reply by its OWN occurrence day, not the day it was sent", () => {
+    // markLatestStepReplied flips the sent row in place, so created_at stays
+    // pinned to the send date. A date-windowed rollup (the Slack daily
+    // summary) must not drop the reply just because it landed after the send
+    // day's window — it should show up on the day it actually happened.
+    const id = ledger.upsertProspect({ name: "RW", email: "rw@x.com", source: "t" });
+    ledger.recordSequenceEvent({
+      prospectId: id,
+      playName: "repo-interest",
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+    });
+    const db = (
+      ledger as unknown as {
+        db: { query(s: string): { run(...a: unknown[]): unknown } };
+      }
+    ).db;
+    // Back-date the send far outside the window we'll query below.
+    db.query(
+      `UPDATE sequence_events SET created_at = '2026-08-20 09:00:00' WHERE prospect_id = ?`,
+    ).run(id);
+    // The reply itself happens on 2026-08-28 — inside the window we query.
+    db.query(
+      `UPDATE sequence_events SET status = 'replied', replied_at = '2026-08-28 10:00:00' WHERE prospect_id = ?`,
+    ).run(id);
+
+    // A window covering only the REPLY day, nowhere near the send day.
+    const windowed = ledger
+      .eventsByPlay({ sinceIso: "2026-08-28 00:00:00", untilIso: "2026-08-29 00:00:00" })
+      .find((r) => r.play_name === "repo-interest");
+    expect(windowed?.replied).toBe(1);
+
+    // A window covering only the SEND day must NOT double-count the reply —
+    // the old created_at-only windowing would have credited it here instead.
+    const sendDayWindow = ledger
+      .eventsByPlay({ sinceIso: "2026-08-20 00:00:00", untilIso: "2026-08-21 00:00:00" })
+      .find((r) => r.play_name === "repo-interest");
+    expect(sendDayWindow?.sent).toBe(1);
+    expect(sendDayWindow?.replied ?? 0).toBe(0);
+  });
 });
 
 describe("Ledger cadence state", () => {

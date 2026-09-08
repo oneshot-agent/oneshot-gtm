@@ -13,6 +13,7 @@ import {
   configFounder,
   configKeys,
   configLlm,
+  configSlackWebhook,
   configTelemetry,
   configXEngine,
 } from "./commands/config.ts";
@@ -222,6 +223,12 @@ config
     "Show or switch the x-reposters data provider (xapi = first-party X API, twitterapiio = ~55x cheaper third-party)",
   )
   .action(runOrFail((engine?: string) => configXEngine(engine)));
+config
+  .command("slack-webhook [url]")
+  .description(
+    "Show, set, or clear the Slack incoming-webhook URL for reply/bounce/daily-summary notifications",
+  )
+  .action(runOrFail((url?: string) => configSlackWebhook(url)));
 
 // Gmail send path: OAuth consent flow for the alternate (non-OneShot) provider.
 const gmail = program

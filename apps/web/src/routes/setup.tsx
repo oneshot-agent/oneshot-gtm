@@ -98,6 +98,7 @@ function SetupPage() {
   const [briefSources, setBriefSources] = useState("");
   const [briefDeriveInfo, setBriefDeriveInfo] = useState<string | null>(null);
   const [mobileSignature, setMobileSignature] = useState(false);
+  const [slackWebhookUrl, setSlackWebhookUrl] = useState("");
   const [secrets, setSecrets] = useState<Record<string, string>>({});
   const [savedAt, setSavedAt] = useState<number | null>(null);
 
@@ -133,6 +134,7 @@ function SetupPage() {
     if (!briefDirty.current) setProductBrief(c.productBrief ?? "");
     setBriefSources((prev) => prev || (c.productDomain ? `https://${c.productDomain}` : ""));
     setMobileSignature(c.mobileSignature ?? false);
+    setSlackWebhookUrl(c.slackWebhookUrl ?? "");
     setLlmProvider(c.llmProvider);
     setLlmModel(c.llmModel || LLM_DEFAULTS[c.llmProvider] || "");
     setTelemetryEnabled(c.telemetryEnabled);
@@ -255,6 +257,7 @@ function SetupPage() {
         founderAdmission,
         productBrief,
         mobileSignature,
+        slackWebhookUrl,
         llmProvider,
         llmModel,
         telemetryEnabled,
@@ -1243,6 +1246,24 @@ function SetupPage() {
               </>
             )}
           </div>
+        </LedgerSection>
+
+        <LedgerSection
+          eyebrow="06.5 · Notifications"
+          lede="Post to a Slack incoming webhook when a reply lands, a bounce is recorded, or once a day for the send summary. Leave blank to keep it off."
+        >
+          <Field
+            label="Slack webhook URL"
+            hint="Create one at Slack → Apps → Incoming Webhooks. Delivery is best-effort: a failed or slow POST (5s timeout, no retries) is logged and never blocks the send/inbox pipeline."
+          >
+            <Input
+              type="password"
+              value={slackWebhookUrl}
+              onChange={(e) => setSlackWebhookUrl(e.target.value)}
+              placeholder="https://hooks.slack.com/services/…"
+              autoComplete="off"
+            />
+          </Field>
         </LedgerSection>
 
         <LedgerSection

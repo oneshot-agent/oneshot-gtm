@@ -358,6 +358,51 @@ describe("slack-notify", () => {
       const payload = JSON.parse(fetchMock.mock.calls![0]![1]!.body) as SlackNotification;
       expect(payload.data).toMatchObject({ date: "2026-08-28", sent: 1 });
     });
+
+    it("credits a reply to the day it actually arrived, not the day the original email was sent", async () => {
+      // Regression test for the round-1 review finding: markLatestStepReplied
+      // flips the ORIGINAL sent row in place, so its created_at stays pinned
+      // to the send date. Before eventsByPlay windowed `replied` on
+      // replied_at, a reply landing after the send day's 24h window was
+      // permanently dropped from every future daily summary.
+      vi.spyOn(config, "loadConfigCached").mockReturnValue({
+        slackWebhookUrl: "https://hooks.slack.com/test",
+      } as any);
+      fetchMock.mockResolvedValue({ ok: true } as Response);
+
+      const ledger = getLedger();
+      ledger.setPollWatermark(SLACK_DAILY_SUMMARY_WATERMARK, "");
+      const pid = ledger.upsertProspect({ name: "LateReply", email: "lr@x.com", source: "t" });
+      ledger.recordSequenceEvent({
+        prospectId: pid,
+        playName: "repo-interest",
+        stepIndex: 0,
+        channel: "email",
+        status: "sent",
+      });
+      const db = (
+        ledger as unknown as {
+          db: { query(s: string): { run(...a: unknown[]): unknown } };
+        }
+      ).db;
+      // The email was sent 8 days before the reply — well outside the
+      // completed day's 24h window the summary aggregates over.
+      db.query(
+        `UPDATE sequence_events SET created_at = '2026-08-20 09:00:00' WHERE prospect_id = ?`,
+      ).run(pid);
+      // recordCadenceReply is the real call path (inbox poll / /api/inbox);
+      // it stamps replied_at to "now" via markLatestStepReplied.
+      const nowIso = "2026-08-28 15:00:00";
+      db.query(
+        `UPDATE sequence_events SET status = 'replied', replied_at = ? WHERE prospect_id = ?`,
+      ).run(nowIso, pid);
+
+      const posted = await postDailySendSummaryIfDue(new Date("2026-08-29T10:00:00Z"));
+
+      expect(posted).toBe(true);
+      const payload = JSON.parse(fetchMock.mock.calls![0]![1]!.body) as SlackNotification;
+      expect(payload.data).toMatchObject({ date: "2026-08-28", replied: 1 });
+    });
   });
 
   describe("non-blocking behavior", () => {
