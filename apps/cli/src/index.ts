@@ -618,7 +618,15 @@ find
           dryRun: opts.dryRun,
           refresh: opts.refresh,
           cheap: opts.cheap,
-          ...(opts.limit ? { limit: opts.limit } : {}),
+          // Always forward limit — it carries a commander default (250), so
+          // it's never actually undefined, and resolveCap (this command's
+          // synthesize-angles handler → research-prospects.ts) is what
+          // decides what an explicit 0 or a NaN (bad --limit input) means.
+          // Gating this behind `opts.limit ?` treated both as "omit the
+          // field", which resolveCap reads as "no cap" — so a mistyped
+          // `--limit 0` on this paid backfill silently ran the entire
+          // backlog instead of stopping.
+          limit: opts.limit,
           ...(opts.scope ? { scope: opts.scope } : {}),
           ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
           ...(Number.isFinite(opts.maxCostUsd) ? { maxCostUsd: opts.maxCostUsd as number } : {}),

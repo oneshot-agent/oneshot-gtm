@@ -233,9 +233,21 @@ export async function gatherAngleEvidence(
   };
 }
 
-/** Render one GitHub evidence bundle into prompt-sized prose. */
+/**
+ * Render one GitHub evidence bundle into prompt-sized prose.
+ *
+ * Each entity carries its own `https://github.com/...` URL alongside its
+ * bare name/login — the LLM's `evidence[].source` schema (and the prompt's
+ * own example) shows a per-repo/per-profile URL like
+ * `https://github.com/ada/agent-loop`, and `isGroundedSource`
+ * (packages/core/src/angle.ts) only grounds a URL-shaped source when it
+ * appears literally in this rendered text. Without the URL here, a genuine,
+ * non-fabricated GitHub citation could never pass grounding — only the
+ * coarse `"github:live"` tier tag could.
+ */
 function renderGitHubEvidence(gh: AngleGitHubEvidence): string {
-  const lines: string[] = [`GITHUB (@${gh.login}):`];
+  const profileUrl = `https://github.com/${gh.login}`;
+  const lines: string[] = [`GITHUB (@${gh.login}, ${profileUrl}):`];
   if (gh.profile) {
     const p = gh.profile;
     lines.push(
@@ -249,16 +261,20 @@ function renderGitHubEvidence(gh: AngleGitHubEvidence): string {
     lines.push("Recent repos:");
     for (const r of gh.topRepos.slice(0, 5)) {
       lines.push(
-        `- ${r.name}${r.language ? ` (${r.language})` : ""}: ${r.description ?? "(no description)"}`,
+        `- ${r.name} (${profileUrl}/${r.name})${r.language ? ` [${r.language}]` : ""}: ` +
+          `${r.description ?? "(no description)"}`,
       );
     }
   }
   if (gh.orgs && gh.orgs.length > 0) {
-    lines.push(`Orgs: ${gh.orgs.map((o) => o.login).join(", ")}`);
+    lines.push(
+      `Orgs: ${gh.orgs.map((o) => `${o.login} (https://github.com/${o.login})`).join(", ")}`,
+    );
   }
   if (gh.linkedOrg) {
+    const orgUrl = `https://github.com/${gh.linkedOrg.login}`;
     lines.push(
-      `Linked org @${gh.linkedOrg.login}: ${gh.linkedOrg.name ?? gh.linkedOrg.login}` +
+      `Linked org @${gh.linkedOrg.login} (${orgUrl}): ${gh.linkedOrg.name ?? gh.linkedOrg.login}` +
         `${gh.linkedOrg.description ? ` — ${gh.linkedOrg.description}` : ""}` +
         ` (${gh.linkedOrg.publicRepos} public repos` +
         `${gh.linkedOrg.createdAt ? `, created ${gh.linkedOrg.createdAt}` : ""})`,
