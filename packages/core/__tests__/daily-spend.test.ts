@@ -170,6 +170,18 @@ describe("tryReserveDailySpend — blocked-path reporting", () => {
     expect(dailySpendStatus().reservedUsd).toBe(0);
   });
 
+  it("compares in cents, so a decimal sum that lands exactly on the ceiling is granted", () => {
+    // 0.10 + 0.10 + 0.10 is 0.30000000000000004 as a double.
+    mockCfg = { dailySpendCeilingUsd: 0.3 };
+    recordSpend(0.1);
+    recordSpend(0.1);
+    const exact = tryReserveDailySpend(0.1);
+    expect(exact.granted).toBe(true);
+    if (!exact.granted) throw new Error("expected granted");
+    exact.release();
+    expect(tryReserveDailySpend(0.11).granted).toBe(false);
+  });
+
   it("release() is idempotent — a finally + an explicit release must not double-delete", () => {
     mockCfg = { dailySpendCeilingUsd: 10 };
     const outcome = tryReserveDailySpend(3);

@@ -111,6 +111,11 @@ const QUEUE_STATUSES: readonly QueueStatus[] = [
   "expired",
 ];
 
+/** USD as integer cents, so money comparisons are exact. */
+function cents(usd: number): number {
+  return Math.round(usd * 100);
+}
+
 /** Escape a user term for `LIKE ? ESCAPE '\'` so `%` and `_` match literally. */
 function escapeLike(term: string): string {
   return term.replace(/[\\%_]/g, (c) => `\\${c}`);
@@ -2720,7 +2725,9 @@ export class Ledger {
     const txn = this.db.transaction((): number | null => {
       const effectiveUsd =
         this.totalSpendUsd({ sinceIso: opts.sinceIso }) + this.reservedSpendUsd(opts.sinceIso);
-      if (effectiveUsd + opts.amountUsd > opts.ceilingUsd) return null;
+      // Compare in integer cents: receipts are REALs and three $0.10 calls
+      // sum to 0.30000000000000004, which would read as over a $0.30 ceiling.
+      if (cents(effectiveUsd) + cents(opts.amountUsd) > cents(opts.ceilingUsd)) return null;
       return this.reserveSpend(opts.amountUsd);
     });
     return txn.immediate();
