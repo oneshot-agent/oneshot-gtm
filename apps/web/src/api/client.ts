@@ -168,6 +168,7 @@ export const api = {
         llmModel: string;
         telemetryEnabled: boolean;
         walletMode: "cdp" | "private-key";
+        slackWebhookUrl: string | null;
       };
       secretsPath: string;
       sources: Record<string, "env" | "file" | null>;

@@ -19,6 +19,10 @@ let listInboxArgs: Array<Record<string, unknown>> = [];
 let failedSources: string[] = [];
 // (prospectId, playName) pairs whose sequence_events row flipped to `replied` this run.
 let repliedSteps: Array<{ prospectId: number; playName: string }> = [];
+// repliedAt values passed to the stub's recordProspectReply, in call order —
+// lets tests assert the poll threads the inbound email's own timestamp
+// through rather than defaulting to "now" (see markLatestStepReplied).
+let recordProspectReplyRepliedAts: Array<string | null | undefined> = [];
 // The play behind the prospect's latest sent step — the no-cadence-row fallback.
 let latestSentPlay: string | null = null;
 // v21 inbox_replies rows captured by the poll (id-keyed, INSERT OR IGNORE semantics).
@@ -121,7 +125,11 @@ vi.mock("@oneshot-gtm/core", async () => {
       // prospect stops (control plane); the analytics event is credited to ONE
       // play — `latestSentPlay` stands in for the subject/latest resolution —
       // and recorded once (idempotent per prospect+play).
-      recordProspectReply: (prospectId: number) => {
+      recordProspectReply: (
+        prospectId: number,
+        opts?: { subject?: string | null; repliedAt?: string | null },
+      ) => {
+        recordProspectReplyRepliedAts.push(opts?.repliedAt);
         const out = new Map<string, { newlyReplied: boolean; eventRecorded: boolean }>();
         for (const r of rows.filter((x) => x.prospect_id === prospectId)) {
           const live = r.status === "active" || r.status === "paused";
@@ -163,6 +171,7 @@ beforeEach(() => {
   repliedSteps = [];
   persistedReplies = [];
   seqEvents = [];
+  recordProspectReplyRepliedAts = [];
   notifySlackReplyReceivedMock.mockClear();
   // The fixture cadence is also the latest play that emailed the prospect.
   latestSentPlay = "stack-consolidation";
@@ -220,6 +229,24 @@ describe("advanceCadence — reply detection", () => {
     expect(result.polled).toBe(0);
     expect(result.repliesDetected).toBe(0);
     expect(rows[0]?.status).toBe("active");
+  });
+
+  it("credits the reply to the inbound email's own received_at, not the poll time", async () => {
+    // Regression test for round-2 review finding: recordProspectReply must be
+    // called with the inbound email's own timestamp so a backlog reply is
+    // attributed to the day it actually arrived (see markLatestStepReplied /
+    // eventsByPlay's replied_at note), not the day this poll happened to run.
+    inboxEmails = [
+      {
+        from: "Sophia Stein <Sophia@AgenticArchitect.AI>",
+        subject: "re: your agent stack",
+        received_at: "2026-08-20T09:00:00.000Z",
+      },
+    ];
+
+    await advanceCadence({ dryRun: false });
+
+    expect(recordProspectReplyRepliedAts).toEqual(["2026-08-20T09:00:00.000Z"]);
   });
 });
 

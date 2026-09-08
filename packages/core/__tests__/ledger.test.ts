@@ -1088,6 +1088,26 @@ describe("Ledger recordCadenceReply — atomic control + analytics write", () =>
     expect(ev).toMatchObject({ sent: 1, replied: 1 });
   });
 
+  it("stamps replied_at with a caller-supplied repliedAt, not the call time", () => {
+    // Regression test for round-2 review finding: markLatestStepReplied must
+    // accept the inbound email's own timestamp so the background inbox poll
+    // (packages/plays/src/_cadence.ts walkInboxWindow) can credit a backlog
+    // reply to the day it actually arrived, not the day the poll ran.
+    const id = enrollWithSentStep();
+
+    const { newlyReplied } = ledger.recordCadenceReply({
+      prospectId: id,
+      playName: "repo-interest",
+      repliedAt: "2026-08-20T09:00:00.000Z",
+    });
+
+    expect(newlyReplied).toBe(true);
+    const [ev] = ledger.listSequenceEventsForProspectPlay(id, "repo-interest");
+    // datetime() normalizes the stored ISO input to SQLite's space-separated
+    // form so it sorts consistently against created_at / sinceIso / untilIso.
+    expect(ev?.replied_at).toBe("2026-08-20 09:00:00");
+  });
+
   it("is idempotent — a second call doesn't re-count or mark a second step", () => {
     const id = enrollWithSentStep();
     // A second sent step (e.g. a follow-up) before the reply lands.

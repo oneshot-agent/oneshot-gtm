@@ -1832,12 +1832,27 @@ export class Ledger {
    * row's `created_at` stays pinned to the original SEND time, so date-windowed
    * rollups (eventsByPlay, the Slack daily summary) must use replied_at, not
    * created_at, to count a reply on the day it happened rather than the day it
-   * was sent.
+   * was sent. `repliedAt` defaults to now (the manual-reply / UI-send path,
+   * where the moment of the call IS the reply); the background inbox poll
+   * passes the inbound email's own `received_at` so a reply pulled from a
+   * backlog page — arriving in this process well after it actually landed in
+   * the mailbox — is still credited to the day it was actually sent, not the
+   * day this poll happened to run.
    */
-  markLatestStepReplied(input: { prospectId: number; playName: string }): boolean {
+  markLatestStepReplied(input: {
+    prospectId: number;
+    playName: string;
+    repliedAt?: string | null;
+  }): boolean {
+    // datetime(?) normalizes any SQLite-recognized input (an ISO 8601 string
+    // with 'T'/'Z', or the 'YYYY-MM-DD HH:MM:SS' form) to the latter — the
+    // same format datetime('now') already writes everywhere else in this
+    // table. Storing repliedAt un-normalized would make replied_at sort
+    // lexicographically wrong against created_at / sinceIso / untilIso
+    // (ISO's 'T' separator sorts after the space datetime('now') uses).
     const result = this.db
       .prepare(
-        `UPDATE sequence_events SET status = 'replied', replied_at = datetime('now')
+        `UPDATE sequence_events SET status = 'replied', replied_at = datetime(COALESCE(?, 'now'))
          WHERE id = (
            SELECT id FROM sequence_events
            WHERE prospect_id = ? AND play_name = ? AND channel = 'email'
@@ -1849,7 +1864,13 @@ export class Ledger {
            WHERE prospect_id = ? AND play_name = ? AND status = 'replied'
          )`,
       )
-      .run(input.prospectId, input.playName, input.prospectId, input.playName);
+      .run(
+        input.repliedAt ?? null,
+        input.prospectId,
+        input.playName,
+        input.prospectId,
+        input.playName,
+      );
     return result.changes > 0;
   }
 
@@ -1864,7 +1885,7 @@ export class Ledger {
    * exactly once per (prospect, play)); `newlyReplied` marks the control
    * transition.
    */
-  recordCadenceReply(input: { prospectId: number; playName: string }): {
+  recordCadenceReply(input: { prospectId: number; playName: string; repliedAt?: string | null }): {
     newlyReplied: boolean;
     eventRecorded: boolean;
   } {
@@ -1881,6 +1902,7 @@ export class Ledger {
       const eventRecorded = this.markLatestStepReplied({
         prospectId: input.prospectId,
         playName: input.playName,
+        repliedAt: input.repliedAt,
       });
       return { newlyReplied, eventRecorded };
     })();
@@ -1891,11 +1913,14 @@ export class Ledger {
    * nobody keeps getting follow-ups after answering. Analytics: the reply is
    * credited to exactly ONE play — the one whose sent subject it threads on
    * (`Re: …`), else the most recent play that emailed them. Returns one entry
-   * per play touched.
+   * per play touched. `repliedAt` (default now) should be the inbound
+   * email's own received/sent timestamp when known — see
+   * markLatestStepReplied's note on why the background inbox poll must pass
+   * it rather than let this stamp the moment the poll happened to run.
    */
   recordProspectReply(
     prospectId: number,
-    opts?: { subject?: string | null },
+    opts?: { subject?: string | null; repliedAt?: string | null },
   ): Array<{ playName: string; newlyReplied: boolean; eventRecorded: boolean }> {
     return this.db.transaction(() => {
       const credited = this.latestSentPlayForProspect(prospectId, opts?.subject);
@@ -1908,7 +1933,11 @@ export class Ledger {
         out.set(cad.play_name, { newlyReplied: live, eventRecorded: false });
       }
       if (credited) {
-        const eventRecorded = this.markLatestStepReplied({ prospectId, playName: credited });
+        const eventRecorded = this.markLatestStepReplied({
+          prospectId,
+          playName: credited,
+          repliedAt: opts?.repliedAt,
+        });
         out.set(credited, {
           newlyReplied: out.get(credited)?.newlyReplied ?? false,
           eventRecorded,

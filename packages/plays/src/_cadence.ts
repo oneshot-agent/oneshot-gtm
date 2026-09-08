@@ -345,7 +345,15 @@ async function walkInboxWindow(
         }
         continue;
       }
-      for (const r of ledger.recordProspectReply(prospect.id, { subject: e.subject })) {
+      for (const r of ledger.recordProspectReply(prospect.id, {
+        subject: e.subject,
+        // The inbound email's own timestamp, not "now" — this poll can walk a
+        // backlog page well after the reply actually landed in the mailbox,
+        // and eventsByPlay's date-windowed rollups (the Slack daily summary)
+        // must credit the reply to the day it happened, not the day this
+        // process happened to notice it.
+        repliedAt: e.received_at,
+      })) {
         if (r.newlyReplied) out.cadencesStopped++;
         if (!r.eventRecorded) continue;
         out.repliesDetected++;
