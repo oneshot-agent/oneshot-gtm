@@ -170,6 +170,9 @@ describe("queue.tsx fixed-props render fixture", () => {
       lastDraftedAt: null,
       isSending: false,
       priority: null,
+      decision: null,
+      decidedBy: null,
+      decidedAt: null,
     };
 
     const html = renderToStaticMarkup(

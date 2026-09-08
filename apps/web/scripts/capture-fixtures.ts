@@ -77,6 +77,10 @@ const SEEDS = [
 
   // Queue: the table (limit 200), the Today strip (16), and the nav's alert dot.
   "/queue?limit=16",
+
+  // Prospects: one document — the whole seeded ledger — and the page
+  // searches, sorts and pages it client-side (client.ts `prospectSearch`).
+  "/queue/search?limit=500",
   "/queue?status=pending&limit=1",
 
   // Measure: all-time, 30d, 7d — the three range buttons.
@@ -117,6 +121,21 @@ function expand(url: string, body: unknown): string[] {
     // Clicking a row opens its detail. Every row is clickable, so every row's
     // detail is part of the demo.
     return (receipts ?? []).map((r) => `/receipts/${r.id}`);
+  }
+
+  if (url.startsWith("/queue/search?")) {
+    const { rows, total } = body as { rows?: Array<{ id: number }>; total?: number };
+    // The demo searches this one document client-side, so it has to hold the
+    // whole seeded queue. The server clamps `limit` (to 200 today), so compare
+    // against the total it reports rather than the limit we asked for.
+    if (typeof total === "number" && total > (rows ?? []).length) {
+      console.error(
+        `  /queue/search fixture holds ${(rows ?? []).length} of ${total} rows — the seed outgrew the server's page cap`,
+      );
+      process.exit(1);
+    }
+    // Every row opens a detail drawer.
+    return (rows ?? []).map((r) => `/queue/${r.id}`);
   }
 
   if (url.startsWith("/queue?") && !url.includes("play=")) {

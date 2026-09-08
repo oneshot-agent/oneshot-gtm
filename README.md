@@ -109,10 +109,11 @@ Spend, CAC, RoCS and outcome logging live in the dashboard's Measure and Cadence
 bun run cli -- ui [--dev] [--port 4000] [--no-browser]
 ```
 
-Nine pages plus a run form:
+Ten pages plus a run form:
 
 - **Home** — spend, reply-rate trend, in-flight cadences, and a scheduler strip showing each trigger's state, last run and next due
 - **Queue** — triggers table (enable, edit config, fire) plus the target queue with bulk approve and per-play **Drain**
+- **Prospects** — search and browse every candidate a finder ever surfaced, any status, with who decided it and why, what happened after, and an override
 - **Add Prospect** — paste a LinkedIn / X / GitHub URL; deep research builds a dossier, the LLM picks an angle against your ICP and drafts an intro, and the row lands in the queue
 - **Replies** — every reply matched to its prospect, play and cadence status across all sender identities; answer in place, by hand or LLM-drafted and research-grounded
 - **Cadences** — stop, log outcome, preview the next step, batch send email, and [review/send direct mail](#direct-mail) per prospect

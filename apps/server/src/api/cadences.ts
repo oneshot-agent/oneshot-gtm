@@ -109,7 +109,7 @@ function toView(
   };
 }
 
-function viewsForRows(
+export function viewsForRows(
   rows: ReadonlyArray<ReturnType<ReturnType<typeof getLedger>["listAllCadences"]>[number]>,
 ): CadenceView[] {
   // Single SQL fetch for ALL (prospect_id, play_name) pairs — avoids N+1.

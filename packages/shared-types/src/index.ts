@@ -575,6 +575,101 @@ export interface QueueRowView {
    * rows and rows whose stored artifact fails shape validation.
    */
   priority: ProspectPriorityView | null;
+  /**
+   * Decision provenance (ledger v26). `status` alone is lossy — an expiry
+   * overwrites an approval — so the browse view reads these to say who
+   * decided what. Null on undecided and pre-v26 rows.
+   */
+  decision: "approve" | "reject" | "auto_reject" | null;
+  decidedBy: "human" | "human_bulk" | "machine" | null;
+  decidedAt: string | null;
+}
+
+/** Who decided a queue row, as a /prospects filter. `human` groups per-row and bulk clicks. */
+export type DecidedByFilter = "human" | "machine" | "none";
+export type ProspectSortKey = "found" | "decided" | "name";
+
+/** The prospect record a queue row resolved to — by `prospect_id`, else by its payload email. */
+export interface ProspectLinkView {
+  id: number;
+  name: string | null;
+  email: string | null;
+  company: string | null;
+  title: string | null;
+  /** 'pass' | 'reject' | 'unclear' | null (never judged). Only 'reject' suppresses sending. */
+  icpVerdict: string | null;
+  icpVerdictReason: string | null;
+  hasDossier: boolean;
+  linkedBy: "prospect_id" | "email";
+}
+
+/** One row of the /prospects browse table: a queue row plus its linked prospect, if any. */
+export interface ProspectBrowseRow extends QueueRowView {
+  prospect: ProspectLinkView | null;
+}
+
+/**
+ * The decision trail in three words — one vocabulary for the /prospects
+ * table, its drawer and the history list, so a bulk approval never reads
+ * "bulk-approved" on one line and "approved (bulk)" on the next.
+ */
+export function describeDecision(row: {
+  decision: QueueRowView["decision"];
+  decidedBy: QueueRowView["decidedBy"];
+  status?: QueueStatusView;
+}): string {
+  if (row.decision === "auto_reject" || (row.decision === "reject" && row.decidedBy === "machine"))
+    return "auto-rejected";
+  if (row.decision === "reject") return "rejected by you";
+  if (row.decision === "approve") {
+    if (row.decidedBy === "human_bulk") return "bulk-approved";
+    if (row.decidedBy === "machine") return "approved by machine";
+    return "approved by you";
+  }
+  if (row.status === "expired") return "expired";
+  return row.status ? "undecided" : "decided";
+}
+
+/** GET /api/queue/search */
+export interface ProspectSearchResponse {
+  rows: ProspectBrowseRow[];
+  /** Rows matching every filter, before paging. */
+  total: number;
+  limit: number;
+  offset: number;
+  /** Per-status counts under the q/play/decided filters — NOT narrowed by the status filter. */
+  counts: QueueCounts;
+  /** Every play that has ever enqueued a row, for the play filter. */
+  plays: string[];
+}
+
+/** One entry of a prospect's history, newest first. Carries no reply bodies — /inbox owns those. */
+export interface ProspectTimelineEvent {
+  /** ISO timestamp. */
+  at: string;
+  kind: "surfaced" | "decided" | "sent" | "sequence" | "reply" | "channel" | "outcome";
+  label: string;
+  detail: string | null;
+  playName: string | null;
+}
+
+/** GET /api/queue/:id — everything the /prospects detail drawer shows. */
+export interface QueueRowDetail {
+  row: ProspectBrowseRow;
+  prospect: (ProspectLinkView & { linkedinUrl: string | null; createdAt: string }) | null;
+  cadences: CadenceView[];
+  timeline: ProspectTimelineEvent[];
+  flags: {
+    /** The prospect has answered (email or LinkedIn) — an override must not re-email them. */
+    replied: boolean;
+    /** A hard bounce suppresses the address. */
+    bounced: boolean;
+    /** 'unsubscribe' | 'auto_permanent' from the reply stream, else null. */
+    contactSuppressed: string | null;
+    /** A not-a-fit / do-not-contact manual stop. */
+    breakupHold: boolean;
+    icpReject: boolean;
+  };
 }
 
 /**

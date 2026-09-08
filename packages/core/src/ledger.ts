@@ -20,6 +20,7 @@ import type {
   BounceRecord,
   CanaryResultRecord,
   ChannelEventRecord,
+  DealOutcomeRecord,
   GmailPlacement,
   InboxReplyRecord,
   IcpDecisionExample,
@@ -28,6 +29,8 @@ import type {
   ProspectRecord,
   SentOutcomeRawRow,
   QueueRow,
+  QueueSearchOpts,
+  QueueSearchRow,
   QueueStatus,
   ReceiptRecord,
   SequenceEventRecord,
@@ -99,6 +102,72 @@ export const LINKEDIN_CACHE_TTL_MS = 30 * 24 * 3600 * 1000;
  * spend of repeatedly running finders over the same candidate pool.
  */
 export const LINKEDIN_MISS_TTL_MS = 14 * 24 * 3600 * 1000;
+
+const QUEUE_STATUSES: readonly QueueStatus[] = [
+  "pending",
+  "approved",
+  "rejected",
+  "sent",
+  "expired",
+];
+
+/** Escape a user term for `LIKE ? ESCAPE '\'` so `%` and `_` match literally. */
+function escapeLike(term: string): string {
+  return term.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
+/**
+ * The searchable text of a queue row for `searchQueue`: every identity key a
+ * finder writes into `payload_json` (the same keys the /queue row reads —
+ * `name`/`founderName`, `email`/`founderEmail`, company, title, the show-hn
+ * post, the repo/post URLs a pre-enrichment reject only carries, LinkedIn),
+ * plus the reviewer's notes, the play, and the joined prospect record. Built
+ * once as a string so each term binds against the same expression.
+ *
+ * No LOWER(): bun's SQLite has no ICU, so LOWER() and LIKE fold ASCII only.
+ * Case-insensitivity for non-ASCII letters comes from binding each term
+ * twice (see `likePatternsFor`) rather than from a wrapper that would leave
+ * "Émile" unfindable by "émile".
+ */
+const QUEUE_SEARCH_HAYSTACK = `(${[
+  "name",
+  "founderName",
+  "email",
+  "founderEmail",
+  "company",
+  "title",
+  "postTitle",
+  "repoUrl",
+  "postUrl",
+  "linkedinUrl",
+]
+  .map((key) => `COALESCE(json_extract(b.payload_json, '$.${key}'), '')`)
+  .concat([
+    "COALESCE(b.notes, '')",
+    "b.play_name",
+    "COALESCE(p.name, '')",
+    "COALESCE(p.email, '')",
+    "COALESCE(p.company, '')",
+    "COALESCE(p.title, '')",
+  ])
+  .join(" || ' ' || ")})`;
+
+/**
+ * Bind patterns for one search term. LIKE already folds ASCII case, so an
+ * ASCII term needs one pattern; a term with non-ASCII letters is bound in
+ * lower and upper case, which together also catch title case ("Émile"
+ * matches the upper pattern because every ASCII letter after É folds).
+ */
+function likePatternsFor(term: string): string[] {
+  const lower = term.toLowerCase();
+  const upper = term.toUpperCase();
+  // eslint-disable-next-line no-control-regex
+  if (lower === upper || !/[^\x00-\x7f]/.test(term)) return [`%${escapeLike(lower)}%`];
+  return [`%${escapeLike(lower)}%`, `%${escapeLike(upper)}%`];
+}
+
+/** Best display name for a queue row: the prospect record, then the payload. */
+const QUEUE_SEARCH_NAME_EXPR = `COALESCE(NULLIF(p.name, ''), NULLIF(json_extract(b.payload_json, '$.name'), ''), NULLIF(json_extract(b.payload_json, '$.founderName'), ''))`;
 
 /**
  * Canonical form for matching prospect emails — trim + lowercase. Inbound reply
@@ -2974,6 +3043,181 @@ export class Ledger {
 
   getQueueRow(id: number): QueueRow | null {
     return (this.db.query("SELECT * FROM target_queue WHERE id = ?").get(id) as QueueRow) ?? null;
+  }
+
+  /**
+   * FROM + WHERE shared by `searchQueue` (rows and total) and
+   * `searchQueueStatusCounts`. The prospect is resolved with a scalar
+   * subquery (`LIMIT 1`) rather than an OR-join so one queue row can never
+   * fan out into two — two prospects sharing an email would otherwise
+   * inflate `total` and shift every OFFSET. Filters that only need the queue
+   * row (status, play, decided_by) go inside the derived table so the
+   * existing status/play indexes still prune before the prospect lookup;
+   * the free-text terms need the joined prospect and stay outside.
+   */
+  private queueSearchParts(
+    opts: Pick<QueueSearchOpts, "q" | "statuses" | "playName" | "decidedBy">,
+    withStatus: boolean,
+  ): { sql: string; args: unknown[] } {
+    const inner: string[] = [];
+    const outer: string[] = [];
+    const args: unknown[] = [];
+    const statuses = (opts.statuses ?? []).filter((s) => QUEUE_STATUSES.includes(s));
+    if (withStatus && statuses.length > 0 && statuses.length < QUEUE_STATUSES.length) {
+      inner.push(`q.status IN (${statuses.map(() => "?").join(",")})`);
+      args.push(...statuses);
+    }
+    if (opts.playName) {
+      inner.push("q.play_name = ?");
+      args.push(opts.playName);
+    }
+    switch (opts.decidedBy) {
+      case "human":
+        inner.push("q.decided_by IN ('human', 'human_bulk')");
+        break;
+      case "machine":
+        inner.push("q.decided_by = 'machine'");
+        break;
+      case "none":
+        inner.push("q.decided_by IS NULL");
+        break;
+      default:
+        break;
+    }
+    const terms = (opts.q ?? "")
+      .split(/\s+/)
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
+    for (const term of terms) {
+      const patterns = likePatternsFor(term);
+      outer.push(
+        `(${patterns.map(() => `${QUEUE_SEARCH_HAYSTACK} LIKE ? ESCAPE '\\'`).join(" OR ")})`,
+      );
+      args.push(...patterns);
+    }
+    const sql = `
+      FROM (
+        SELECT q.*, COALESCE(q.prospect_id, (
+            SELECT p2.id FROM prospects p2
+             WHERE p2.email = LOWER(TRIM(COALESCE(json_extract(q.payload_json, '$.email'),
+                                                  json_extract(q.payload_json, '$.founderEmail'))))
+             ORDER BY p2.id LIMIT 1)) AS joined_prospect_id
+          FROM target_queue q
+          ${inner.length ? `WHERE ${inner.join(" AND ")}` : ""}) b
+      LEFT JOIN prospects p ON p.id = b.joined_prospect_id
+      ${outer.length ? `WHERE ${outer.join(" AND ")}` : ""}`;
+    return { sql, args };
+  }
+
+  /**
+   * The /prospects browse view: every queue row, any status, searched, sorted
+   * and paged. `q` is a deliberate full scan (LIKE over json_extract can use
+   * no index) — measured at ~50 ms on 9k rows. Past ~100k rows an FTS5
+   * external-content table is the upgrade path; nothing here would change
+   * shape. Without `q` the derived table is pruned by the status/play
+   * indexes like `listQueue`.
+   */
+  searchQueue(opts: QueueSearchOpts): { rows: QueueSearchRow[]; total: number | null } {
+    const limit = Math.max(1, Math.min(200, Math.floor(opts.limit)));
+    const offset = Math.max(0, Math.floor(opts.offset));
+    const dir = opts.dir === "asc" ? "ASC" : "DESC";
+    let orderSql: string;
+    switch (opts.sort) {
+      case "decided_at":
+        // Undecided rows sink to the bottom in both directions.
+        orderSql = `(b.decided_at IS NULL) ASC, b.decided_at ${dir}, b.id ${dir}`;
+        break;
+      case "name":
+        // Named rows first; rows that only carry a source URL (pre-enrichment
+        // rejects) sort after them by that URL, then by dedupe key.
+        orderSql = `(${QUEUE_SEARCH_NAME_EXPR} IS NULL) ASC, LOWER(COALESCE(${QUEUE_SEARCH_NAME_EXPR}, json_extract(b.payload_json, '$.repoUrl'), json_extract(b.payload_json, '$.postUrl'), b.dedupe_key)) ${dir}, b.id ${dir}`;
+        break;
+      default:
+        orderSql = `b.found_at ${dir}, b.id ${dir}`;
+        break;
+    }
+    const { sql, args } = this.queueSearchParts(opts, true);
+    const rows = this.db
+      .query(
+        `SELECT b.*, p.id AS p_id, p.name AS p_name, p.email AS p_email, p.company AS p_company,
+                p.title AS p_title,
+                p.icp_verdict AS p_icp_verdict, p.icp_verdict_reason AS p_icp_verdict_reason,
+                (p.dossier_json IS NOT NULL AND TRIM(p.dossier_json) != '') AS p_has_dossier,
+                (b.prospect_id IS NULL AND p.id IS NOT NULL) AS p_linked_by_email
+         ${sql}
+         ORDER BY ${orderSql}
+         LIMIT ? OFFSET ?`,
+      )
+      .all(...(args as never[]), limit, offset) as QueueSearchRow[];
+    if (opts.withTotal === false) return { rows, total: null };
+    const total = (
+      this.db.query(`SELECT COUNT(*) AS n ${sql}`).get(...(args as never[])) as {
+        n: number;
+      }
+    ).n;
+    return { rows, total };
+  }
+
+  /**
+   * Per-status counts for the /prospects filter chips under the current
+   * search/play/decided filters — the status filter itself is left out so a
+   * chip can show how many rows it would reveal.
+   */
+  searchQueueStatusCounts(
+    opts: Pick<QueueSearchOpts, "q" | "playName" | "decidedBy">,
+  ): Record<QueueStatus, number> {
+    const { sql, args } = this.queueSearchParts(opts, false);
+    const rows = this.db
+      .query(`SELECT b.status AS status, COUNT(*) AS n ${sql} GROUP BY b.status`)
+      .all(...(args as never[])) as Array<{ status: QueueStatus; n: number }>;
+    const out: Record<QueueStatus, number> = {
+      pending: 0,
+      approved: 0,
+      rejected: 0,
+      sent: 0,
+      expired: 0,
+    };
+    for (const r of rows) if (r.status in out) out[r.status] = r.n;
+    return out;
+  }
+
+  /** Every play that has ever enqueued a row, for the /prospects play filter. */
+  listQueuePlayNames(): string[] {
+    return (
+      this.db
+        .query("SELECT DISTINCT play_name FROM target_queue ORDER BY play_name ASC")
+        .all() as Array<{ play_name: string }>
+    ).map((r) => r.play_name);
+  }
+
+  /**
+   * Every recorded step for a prospect across all plays — including bounced,
+   * failed and unsubscribed ones, which `listSequenceEventsForProspect`
+   * (the conversation view) filters out. `queued` rows are reservations,
+   * not history. Oldest first.
+   */
+  listAllSequenceEventsForProspect(prospectId: number): SequenceEventRecord[] {
+    return this.db
+      .query(
+        `SELECT * FROM sequence_events
+         WHERE prospect_id = ? AND status != 'queued'
+         ORDER BY created_at ASC, id ASC`,
+      )
+      .all(prospectId) as SequenceEventRecord[];
+  }
+
+  /** Inbound engagement on non-email channels (LinkedIn replies) for one prospect, oldest first. */
+  listChannelEventsForProspect(prospectId: number): ChannelEventRecord[] {
+    return this.db
+      .query(`SELECT * FROM channel_events WHERE prospect_id = ? ORDER BY occurred_at ASC, id ASC`)
+      .all(prospectId) as ChannelEventRecord[];
+  }
+
+  /** Recorded deal outcomes for one prospect, oldest first. */
+  listDealOutcomesForProspect(prospectId: number): DealOutcomeRecord[] {
+    return this.db
+      .query(`SELECT * FROM deal_outcomes WHERE prospect_id = ? ORDER BY recorded_at ASC, id ASC`)
+      .all(prospectId) as DealOutcomeRecord[];
   }
 
   /** Remove an unreviewed queue reservation, leaving reviewed rows untouched. */

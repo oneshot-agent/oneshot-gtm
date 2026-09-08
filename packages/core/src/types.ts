@@ -86,6 +86,19 @@ export interface ChannelEventRecord {
   created_at: string;
 }
 
+/** One `deal_outcomes` row — column-shaped. Positives-only by construction
+ *  (the cadences modal offers only the three positive states), so a missing
+ *  row is never evidence of failure. */
+export interface DealOutcomeRecord {
+  id: number;
+  prospect_id: number;
+  play_name: string | null;
+  outcome: string;
+  amount_usd: number | null;
+  notes: string | null;
+  recorded_at: string;
+}
+
 export interface CadencePlanStep {
   id: string;
   dayOffset: number;
@@ -433,6 +446,49 @@ export interface QueueRow {
   decided_at: string | null;
   /** 'human' (per-row click) | 'human_bulk' (approve-all batch) | 'machine'. */
   decided_by: "human" | "human_bulk" | "machine" | null;
+}
+
+/** Who decided a queue row: `human` groups per-row and bulk clicks; `none` = undecided. */
+export type QueueSearchDecidedBy = "human" | "machine" | "none";
+export type QueueSearchSort = "found_at" | "decided_at" | "name";
+
+/** Filters for `Ledger.searchQueue` — the /prospects browse view. */
+export interface QueueSearchOpts {
+  /** Free text; whitespace-split terms are AND-ed, each a case-insensitive substring. */
+  q?: string;
+  /** Empty or absent = every status. */
+  statuses?: QueueStatus[];
+  playName?: string;
+  decidedBy?: QueueSearchDecidedBy;
+  sort?: QueueSearchSort;
+  dir?: "asc" | "desc";
+  limit: number;
+  offset: number;
+  /**
+   * Skip the COUNT(*) pass and return `total: null`. The /prospects route
+   * already runs the per-status facet query under the same filters, and the
+   * total is the sum of the selected statuses' counts — a third scan of the
+   * haystack buys nothing.
+   */
+  withTotal?: boolean;
+}
+
+/**
+ * A queue row joined to the prospect it resolved to — by `prospect_id`, else
+ * by the payload's email. `p_*` columns are null when no prospect exists (the
+ * common case: `prospects` only holds people who were actually emailed).
+ */
+export interface QueueSearchRow extends QueueRow {
+  p_id: number | null;
+  p_name: string | null;
+  p_email: string | null;
+  p_company: string | null;
+  p_title: string | null;
+  p_icp_verdict: string | null;
+  p_icp_verdict_reason: string | null;
+  p_has_dossier: 0 | 1;
+  /** 1 when the link came from the email fallback rather than `prospect_id`. */
+  p_linked_by_email: 0 | 1;
 }
 
 /**

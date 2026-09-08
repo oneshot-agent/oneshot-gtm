@@ -26,6 +26,8 @@ import type {
   PackApplyResult,
   PackView,
   PlayDescriptor,
+  ProspectSearchResponse,
+  QueueRowDetail,
   WorkspaceInfo,
   DomainActionResult,
   DomainPoolView,
@@ -46,6 +48,11 @@ import type {
   TriggerView,
 } from "@oneshot-gtm/shared-types";
 import { demoGet, demoWrite, IS_DEMO } from "./demo.ts";
+import {
+  applyProspectFilters,
+  toApiQuery,
+  type ProspectsSearch,
+} from "../lib/prospects-helpers.ts";
 
 const BASE = "/api";
 
@@ -274,6 +281,19 @@ export const api = {
     const qs = q.toString();
     return getJson<QueueListResponse>(`/queue${qs ? `?${qs}` : ""}`);
   },
+  /**
+   * /prospects browse. In the demo the search runs client-side over ONE
+   * captured document (the whole seeded ledger, `limit=500`): a free-text
+   * `q` has no bounded fixture space, and refusing to search would leave the
+   * page a mockup of itself. Live installs hand the filters to SQL.
+   */
+  prospectSearch: (search: ProspectsSearch) =>
+    IS_DEMO
+      ? demoGet<ProspectSearchResponse>("/queue/search?limit=500").then((r) =>
+          applyProspectFilters(r.rows, search),
+        )
+      : getJson<ProspectSearchResponse>(`/queue/search?${toApiQuery(search)}`),
+  queueRowDetail: (id: number) => getJson<QueueRowDetail>(`/queue/${id}`),
   approveQueue: (id: number) => postJson<{ ok: boolean }>(`/queue/${id}/approve`, {}),
   rejectQueue: (id: number, reason?: string) =>
     postJson<{ ok: boolean }>(`/queue/${id}/reject`, reason ? { reason } : {}),
