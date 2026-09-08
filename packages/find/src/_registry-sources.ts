@@ -34,6 +34,19 @@ export interface RegistryRecord {
    */
   subjectType?: "individual" | "organization";
   /**
+   * What kind of business this is, in the registry's own words — a Socrata
+   * licence description ("Retail Food Establishment"), the NPPES taxonomy
+   * that matched ("Dentist"), or "motor carrier" for FMCSA. Null when the
+   * portal's row has no such column. The plays' `businessType` field.
+   */
+  businessType?: string | null;
+  /**
+   * What was issued: the licence description again for Socrata, the NPI
+   * enumeration for NPPES, USDOT registration for FMCSA. Null when unknown.
+   * The `new-business` play's `licenseType` field.
+   */
+  licenseType?: string | null;
+  /**
    * The record's own on-file email (fmcsa only) — carries a published email,
    * so the caller skips `findEmail`/`verifyEmail` entirely for this
    * candidate rather than paying to re-derive what the record already
@@ -112,6 +125,20 @@ const SOCRATA_ADDRESS_FIELDS = [
 const SOCRATA_CITY_FIELDS = ["city", "business_city", "city_name", "address_city"];
 const SOCRATA_STATE_FIELDS = ["state", "business_state", "state_code", "address_state"];
 const SOCRATA_PHONE_FIELDS = ["phone", "contact_phone", "business_phone", "telephone_number"];
+/** What the licence is for — the closest thing a business-licence row has to a business type. */
+const SOCRATA_LICENSE_FIELDS = [
+  "license_description",
+  "licence_description",
+  "license_type",
+  "licence_type",
+  "license_category",
+  "business_activity",
+  "industry",
+  "naics_description",
+  "category",
+  "description",
+];
+
 const SOCRATA_DATE_FIELDS = [
   "license_creation_date",
   "issue_date",
@@ -269,6 +296,8 @@ export function mapSocrataRows(
       matchedDateIso,
       source: "socrata-license",
       sourceLabel: portalLabel,
+      businessType: pickField(rec, SOCRATA_LICENSE_FIELDS),
+      licenseType: pickField(rec, SOCRATA_LICENSE_FIELDS),
     });
   }
   return out;
@@ -504,6 +533,8 @@ export function mapNppesResults(
   label: string,
   fallbackState: string,
   sinceDays: number,
+  /** The taxonomy description the query matched on ("Dentist") — the record's business type. */
+  taxonomy?: string,
 ): RegistryRecord[] {
   const sinceMs = Date.now() - sinceDays * 86_400_000;
   const out: RegistryRecord[] = [];
@@ -527,6 +558,8 @@ export function mapNppesResults(
       source: "nppes",
       sourceLabel: label,
       subjectType: nppesSubjectType(r.basic),
+      businessType: taxonomy ?? null,
+      licenseType: taxonomy ? `NPI enumeration as ${taxonomy}` : "NPI enumeration",
     });
   }
   return out;
@@ -599,7 +632,7 @@ async function fetchNppesPair(
     return { records: [], diagnostic: `nppes has no ${taxonomy} providers in ${state}` };
   }
 
-  const records = mapNppesResults(results, label, state, cfg.sinceDays);
+  const records = mapNppesResults(results, label, state, cfg.sinceDays, taxonomy);
   if (records.length === 0) {
     return {
       records: [],
@@ -749,6 +782,8 @@ export function mapFmcsaRows(rows: unknown[], sinceDays: number): RegistryRecord
       source: "fmcsa",
       sourceLabel: "FMCSA Company Census",
       knownEmail: email.toLowerCase(),
+      businessType: "motor carrier",
+      licenseType: "USDOT motor carrier registration",
     });
   }
   return out;

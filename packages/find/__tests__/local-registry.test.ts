@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { dedupeKeyFor, routePlayFor } from "../src/local-registry.ts";
+import {
+  dedupeKeyFor,
+  routePlayFor,
+  businessTypeFor,
+  issuedAgoLabel,
+  licenseTypeFor,
+} from "../src/local-registry.ts";
 import type { RegistryRecord } from "../src/_registry-sources.ts";
 
 describe("dedupeKeyFor", () => {
@@ -414,6 +420,31 @@ describe("runLocalRegistryFinder — routing + isolation", () => {
     expect(fresh?.payload["source"]).toBe("socrata-license");
     expect(fresh?.payload["matchedDateIso"]).toBe(RECENT_ISO);
     expect(fresh?.payload["yourEdge"]).toBe("we set it up free");
+    // #498: both plays REQUIRE these, and runEmailPlay drops a row without
+    // them before the LLM — every local-registry row used to be dropped.
+    expect(fresh?.payload["businessType"]).toBe("newly licensed local business");
+    expect(fresh?.payload["licenseType"]).toBe("business licence");
+    expect(fresh?.payload["issuedAgo"]).toMatch(/\S/);
+    expect(old?.payload["businessType"]).toBe("newly licensed local business");
+  });
+
+  it("prefers the registry's own business type / licence description when the row carries one", async () => {
+    nextSocrataRecords = [
+      makeRecord({
+        name: "Rae's Taqueria",
+        matchedDateIso: RECENT_ISO,
+        businessType: "Retail Food Establishment",
+        licenseType: "Retail Food Establishment",
+      }),
+    ];
+    const out = await runLocalRegistryFinder({
+      dryRun: false,
+      yourEdge: "x",
+      portals: [{ host: "data.cityofnewyork.us", dataset: "w7w3-xahh", label: "NYC licenses" }],
+    });
+    expect(out.enqueued).toBe(1);
+    expect(enqueued[0]?.payload["businessType"]).toBe("Retail Food Establishment");
+    expect(enqueued[0]?.payload["licenseType"]).toBe("Retail Food Establishment");
   });
 
   it("keeps candidates from a healthy source when a sibling source throws (one dead source doesn't fail the run)", async () => {
@@ -836,5 +867,27 @@ describe("runLocalRegistryFinder — trade name from an address-confirmed match"
     expect(out.enqueued).toBe(1);
     expect(enqueued[0]?.payload["company"]).toBe("Smiles at Telfair Family and Cosmetic Dentistry");
     expect(enqueued[0]?.payload["registryName"]).toBe("A PROFESSIONAL DENTAL ORGANIZATION");
+  });
+});
+
+describe("issuedAgoLabel / per-source defaults (#498)", () => {
+  const now = Date.parse("2026-09-08T12:00:00Z");
+  const daysAgo = (n: number): string => new Date(now - n * 86_400_000).toISOString();
+  it("reads like a person would say it", () => {
+    expect(issuedAgoLabel(daysAgo(0), now)).toBe("today");
+    expect(issuedAgoLabel(daysAgo(1), now)).toBe("yesterday");
+    expect(issuedAgoLabel(daysAgo(6), now)).toBe("6 days ago");
+    expect(issuedAgoLabel(daysAgo(20), now)).toBe("2 weeks ago");
+    expect(issuedAgoLabel(daysAgo(45), now)).toBe("6 weeks ago");
+    expect(issuedAgoLabel(daysAgo(60), now)).toBe("2 months ago");
+    expect(issuedAgoLabel(daysAgo(100), now)).toBe("3 months ago");
+    expect(issuedAgoLabel("not a date", now)).toBe("recently");
+  });
+  it("falls back per source and never returns an empty string", () => {
+    const base = makeRecord({ businessType: "  ", licenseType: null });
+    expect(businessTypeFor({ ...base, source: "nppes" })).toBe("healthcare practice");
+    expect(licenseTypeFor({ ...base, source: "nppes" })).toBe("NPI enumeration");
+    expect(businessTypeFor({ ...base, source: "fmcsa" })).toBe("motor carrier");
+    expect(businessTypeFor({ ...base, businessType: "Dentist" })).toBe("Dentist");
   });
 });

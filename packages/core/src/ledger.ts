@@ -2705,8 +2705,12 @@ export class Ledger {
    * total and both pass the check before either commits: the second
    * caller's transaction blocks until the first one's reservation is
    * already reflected in the sum it reads. Returns the new reservation id
-   * when granted, or null when posted+reserved+`amountUsd` would meet or
-   * exceed `ceilingUsd`.
+   * when granted, or null when posted+reserved+`amountUsd` would EXCEED
+   * `ceilingUsd`. Landing exactly on the ceiling is allowed: the ceiling is
+   * "spend up to this", and a finder whose worst-case estimate equals the
+   * ceiling (`config spend-ceiling 5` against a `maxCostUsd: 5` finder) must
+   * still be able to fire once — with `>=` it never could, reporting
+   * "$0.00/$5.00 spent today" while refusing forever (#488).
    */
   reserveSpendIfUnderCeiling(opts: {
     sinceIso: string;
@@ -2716,7 +2720,7 @@ export class Ledger {
     const txn = this.db.transaction((): number | null => {
       const effectiveUsd =
         this.totalSpendUsd({ sinceIso: opts.sinceIso }) + this.reservedSpendUsd(opts.sinceIso);
-      if (effectiveUsd + opts.amountUsd >= opts.ceilingUsd) return null;
+      if (effectiveUsd + opts.amountUsd > opts.ceilingUsd) return null;
       return this.reserveSpend(opts.amountUsd);
     });
     return txn.immediate();

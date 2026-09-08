@@ -152,6 +152,24 @@ describe("tryReserveDailySpend — blocked-path reporting", () => {
     expect(dailySpendStatus().reservedUsd).toBe(0);
   });
 
+  it("grants a first-ever reservation that lands exactly on the ceiling (#488)", () => {
+    // A finder's worst-case estimate is its own maxCostUsd; with `>=` a
+    // ceiling equal to that estimate could never be reached, only refused.
+    mockCfg = { dailySpendCeilingUsd: 5 };
+    const exact = tryReserveDailySpend(5);
+    expect(exact.granted).toBe(true);
+    if (!exact.granted) throw new Error("expected granted");
+    expect(dailySpendStatus().effectiveUsd).toBe(5);
+    expect(dailySpendStatus().ceilingReached).toBe(true);
+    // Anything further is over, not at, the ceiling.
+    const over = tryReserveDailySpend(0.01);
+    expect(over.granted).toBe(false);
+    exact.release();
+    // Exceeding by a cent on a fresh day is still refused.
+    expect(tryReserveDailySpend(5.01).granted).toBe(false);
+    expect(dailySpendStatus().reservedUsd).toBe(0);
+  });
+
   it("release() is idempotent — a finally + an explicit release must not double-delete", () => {
     mockCfg = { dailySpendCeilingUsd: 10 };
     const outcome = tryReserveDailySpend(3);
