@@ -3266,6 +3266,22 @@ export class Ledger {
   }): void {
     const now = new Date().toISOString();
     const decidedBy = input.decidedBy ?? (input.status === "approved" ? "human" : "machine");
+    // The ledger, not the routes, owns "never re-approve a sent row": drain
+    // picks up every `status = 'approved'` row, so moving a sent row back to
+    // pending/approved would re-email the person. queue.ts and
+    // add-prospect.ts keep their own pre-checks (they produce the
+    // user-facing 400/409 messages), but this is the guard that can't be
+    // forgotten by a future caller (#561).
+    if (input.status === "approved" || input.status === "pending") {
+      const current = this.db
+        .query("SELECT status, sent_at FROM target_queue WHERE id = ?")
+        .get(input.id) as { status: QueueStatus; sent_at: string | null } | undefined;
+      if (current && (current.status === "sent" || current.sent_at != null)) {
+        throw new Error(
+          `setQueueStatus: row #${input.id} was already sent — refusing to move it to '${input.status}' (would re-send on the next drain)`,
+        );
+      }
+    }
     // Every status transition clears `send_started_at` — a deliberate status
     // change means the previous "sending" attempt (if any) is settled. Terminal
     // states (sent/rejected/expired) clear naturally. Approved → approved
@@ -3390,7 +3406,10 @@ export class Ledger {
   }
 
   approveAllPending(opts: { playName?: string } = {}): number {
-    const where: string[] = ["status = 'pending'"];
+    // `sent_at IS NULL` is belt-and-braces alongside `status = 'pending'` —
+    // a pending row should never carry a sent_at, but the invariant lives
+    // here, not in the caller (#561).
+    const where: string[] = ["status = 'pending'", "sent_at IS NULL"];
     const args: unknown[] = [];
     if (opts.playName) {
       where.push("play_name = ?");
@@ -3422,7 +3441,7 @@ export class Ledger {
       const rows = this.db
         .query(
           `SELECT * FROM target_queue
-           WHERE play_name = ? AND status = 'approved'
+           WHERE play_name = ? AND status = 'approved' AND sent_at IS NULL
              AND (drain_claimed_at IS NULL OR drain_claimed_at < ?)
            ORDER BY found_at ASC
            LIMIT ?`,

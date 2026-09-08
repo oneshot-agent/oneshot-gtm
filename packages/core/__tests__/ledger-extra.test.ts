@@ -356,6 +356,92 @@ describe("setQueueStatus pending", () => {
   });
 });
 
+describe("setQueueStatus refuses to re-open a sent row (#561)", () => {
+  it("throws when moving a sent row back to approved", () => {
+    const id = ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: {},
+      dedupeKey: "sent-reopen-approved",
+      source: "test",
+    })!;
+    ledger.setQueueStatus({ id, status: "sent" });
+    expect(() => ledger.setQueueStatus({ id, status: "approved" })).toThrow(/already sent/);
+    // Refused — the row is still sent, not silently re-approved.
+    expect(ledger.getQueueRow(id)?.status).toBe("sent");
+  });
+
+  it("throws when moving a sent row back to pending", () => {
+    const id = ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: {},
+      dedupeKey: "sent-reopen-pending",
+      source: "test",
+    })!;
+    ledger.setQueueStatus({ id, status: "sent" });
+    expect(() => ledger.setQueueStatus({ id, status: "pending" })).toThrow(/already sent/);
+    expect(ledger.getQueueRow(id)?.status).toBe("sent");
+  });
+
+  it("still allows a sent row to be rejected — a label, not a send", () => {
+    const id = ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: {},
+      dedupeKey: "sent-reject-ok",
+      source: "test",
+    })!;
+    ledger.setQueueStatus({ id, status: "sent" });
+    expect(() => ledger.setQueueStatus({ id, status: "rejected" })).not.toThrow();
+    expect(ledger.getQueueRow(id)?.status).toBe("rejected");
+  });
+
+  it("guards on sent_at alone, even if a row's status were somehow desynced", () => {
+    // Belt-and-braces: the guard checks `sent_at IS NOT NULL` independently
+    // of `status`, so a hypothetical desynced row (sent_at set, status not
+    // yet 'sent') is still refused — not just the common case.
+    const id = ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: {},
+      dedupeKey: "desynced-sent-at",
+      source: "test",
+    })!;
+    (ledger as unknown as { db: { prepare(s: string): { run(...a: unknown[]): unknown } } }).db
+      .prepare("UPDATE target_queue SET sent_at = ? WHERE id = ?")
+      .run(new Date().toISOString(), id);
+    expect(() => ledger.setQueueStatus({ id, status: "approved" })).toThrow(/already sent/);
+  });
+
+  it("approveAllPending never includes a sent row, even with sent_at set on a 'pending' row", () => {
+    // Defence-in-depth: approveAllPending filters status='pending' AND
+    // sent_at IS NULL in SQL, not just in application code.
+    const id = ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: {},
+      dedupeKey: "pending-with-sent-at",
+      source: "test",
+    })!;
+    (ledger as unknown as { db: { prepare(s: string): { run(...a: unknown[]): unknown } } }).db
+      .prepare("UPDATE target_queue SET sent_at = ? WHERE id = ?")
+      .run(new Date().toISOString(), id);
+    expect(ledger.approveAllPending()).toBe(0);
+    expect(ledger.getQueueRow(id)?.status).toBe("pending");
+  });
+
+  it("dequeueApproved never returns a row with sent_at set, even if status somehow reads 'approved'", () => {
+    // Belt-and-braces per the issue: dequeueApproved adds AND sent_at IS
+    // NULL on top of status = 'approved'.
+    const id = ledger.enqueueTarget({
+      playName: "show-hn",
+      payload: {},
+      dedupeKey: "approved-with-sent-at",
+      source: "test",
+    })!;
+    (ledger as unknown as { db: { prepare(s: string): { run(...a: unknown[]): unknown } } }).db
+      .prepare("UPDATE target_queue SET status = 'approved', sent_at = ? WHERE id = ?")
+      .run(new Date().toISOString(), id);
+    expect(ledger.dequeueApproved({ playName: "show-hn", limit: 10 })).toEqual([]);
+  });
+});
+
 describe("approvedCountsByPlay", () => {
   it("counts approved rows per play and omits plays with none", () => {
     const enqueue = (playName: string, key: string, status?: "approved" | "sent"): void => {
