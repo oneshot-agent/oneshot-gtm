@@ -740,7 +740,11 @@ function IdentityBlock({ row, detail }: { row: ProspectBrowseRow; detail: QueueR
   const { masked } = usePrivacy();
   const title = detail.prospect?.title ?? titleFor(row.payload);
   const company = detail.prospect?.company ?? companyFor(row.payload);
-  const linkedinUrl = detail.prospect?.linkedinUrl ?? linkedinUrlFor(row.payload);
+  // The prospect column is polymorphic (LinkedIn, X or GitHub) and written
+  // unvalidated; run it through the same guard as the payload so a stored
+  // `javascript:` value can never become an href.
+  const linkedinUrl =
+    linkedinUrlFor({ linkedinUrl: detail.prospect?.linkedinUrl }) ?? linkedinUrlFor(row.payload);
   const evidence = queueEvidence(row.playName, row.payload);
   const source = sourceDetail(row.source);
   return (
@@ -750,7 +754,7 @@ function IdentityBlock({ row, detail }: { row: ProspectBrowseRow; detail: QueueR
         {[title, company ? maskDeep(company, masked, "company") : null]
           .filter(Boolean)
           .join(" · ") || <span className="text-ink-faint">no title or company on record</span>}
-        {linkedinUrl && /linkedin\.com\/in\//i.test(linkedinUrl) && (
+        {linkedinUrl && (
           <a
             href={linkedinUrl}
             target="_blank"

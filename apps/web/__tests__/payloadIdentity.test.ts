@@ -39,6 +39,9 @@ describe("payload identity readers", () => {
       "https://www.linkedin.com/in/ada",
     );
     expect(linkedinUrlFor({ linkedinUrl: "javascript:alert(1)" })).toBeNull();
+    // A scheme smuggled in front of a real-looking host, as a stored column value might carry.
+    expect(linkedinUrlFor({ linkedinUrl: "javascript:x//linkedin.com/in/a" })).toBeNull();
+    expect(linkedinUrlFor({ linkedinUrl: null })).toBeNull();
     expect(linkedinUrlFor({ linkedinUrl: "https://x.com/ada" })).toBeNull();
   });
 

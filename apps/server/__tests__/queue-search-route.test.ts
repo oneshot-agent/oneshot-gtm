@@ -109,10 +109,17 @@ describe("searchQueueRoute", () => {
       "http://x/api/queue/search?status=bogus,sent,&decided=robot&sort=price&dir=sideways",
     );
     expect(searchCalls[0]).toMatchObject({ statuses: ["sent"], sort: "found_at", dir: "desc" });
+    // The junk `decided` value is dropped, not forwarded — asserted on THIS
+    // request, before the next call clears `searchCalls`.
+    expect(searchCalls[0]).not.toHaveProperty("decidedBy");
     // Prototype names are not sort keys.
     await body("http://x/api/queue/search?sort=toString");
     expect(searchCalls[0]).toMatchObject({ sort: "found_at" });
-    expect(searchCalls[0]).not.toHaveProperty("decidedBy");
+    // Duplicates collapse: five copies of one status is one status, and the
+    // total is that status's count alone.
+    const dup = await body("http://x/api/queue/search?status=sent,sent,sent,sent,sent");
+    expect(searchCalls[0]).toMatchObject({ statuses: ["sent", "sent", "sent", "sent", "sent"] });
+    expect(dup["total"]).toBe(728);
     // A status list made only of junk is the same as no status filter.
     await body("http://x/api/queue/search?status=bogus");
     expect(searchCalls[0]).not.toHaveProperty("statuses");

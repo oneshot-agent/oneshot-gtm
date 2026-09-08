@@ -3062,7 +3062,9 @@ export class Ledger {
     const inner: string[] = [];
     const outer: string[] = [];
     const args: unknown[] = [];
-    const statuses = (opts.statuses ?? []).filter((s) => QUEUE_STATUSES.includes(s));
+    // De-duplicated: `?status=sent,sent,sent,sent,sent` is one status, not
+    // "all five" — the length guard below must see distinct values.
+    const statuses = [...new Set((opts.statuses ?? []).filter((s) => QUEUE_STATUSES.includes(s)))];
     if (withStatus && statuses.length > 0 && statuses.length < QUEUE_STATUSES.length) {
       inner.push(`q.status IN (${statuses.map(() => "?").join(",")})`);
       args.push(...statuses);

@@ -106,6 +106,14 @@ describe("searchQueue", () => {
     expect(
       ledger.searchQueue({ statuses: ["rejected", "approved"], limit: 50, offset: 0 }).total,
     ).toBe(4);
+    // A repeated status is one status, not "as many as there are statuses".
+    expect(
+      ledger.searchQueue({
+        statuses: ["sent", "sent", "sent", "sent", "sent"],
+        limit: 50,
+        offset: 0,
+      }).total,
+    ).toBe(0);
     // Every status listed is the same as no status filter.
     expect(
       ledger.searchQueue({
