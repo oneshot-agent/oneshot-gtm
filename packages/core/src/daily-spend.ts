@@ -124,8 +124,11 @@ export type SpendReservationOutcome =
  * paid path (finder trigger runs, automatic drains). Sweeps orphaned
  * reservations first so a crashed process can't hold spend hostage for the
  * rest of the day, then checks the ceiling and reserves atomically — a call
- * that would push effective spend at/over the ceiling is refused outright
- * rather than reserved-then-immediately-over.
+ * that would push effective spend OVER the ceiling is refused outright
+ * rather than reserved-then-immediately-over. Landing exactly on it is
+ * allowed (the ceiling is a cap, not a fence — see
+ * `Ledger.reserveSpendIfUnderCeiling`); once effective spend has reached
+ * it, `ceilingReached` halts everything after.
  *
  * The check-then-reserve itself happens in ONE SQLite transaction on the
  * ledger connection (`Ledger.reserveSpendIfUnderCeiling`, `BEGIN IMMEDIATE`

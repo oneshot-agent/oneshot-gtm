@@ -76,6 +76,17 @@ export interface LocalRegistryTarget {
   matchedDateIso: string;
   yourEdge: string;
   /**
+   * The three fields `free-pilot` / `new-business` REQUIRE (`requiredFields`
+   * in packages/plays): without them `runEmailPlay` drops the row before the
+   * LLM with "missing required field(s)", which is what every local-registry
+   * row did until #498. Filled from the registry record when it says, else
+   * from a per-source default that is at least true.
+   */
+  businessType: string;
+  licenseType: string;
+  /** "3 days ago", "2 weeks ago" — computed at enqueue time from `matchedDateIso`. */
+  issuedAgo: string;
+  /**
    * nppes only. Carried through from `RegistryRecord.subjectType` so a
    * `/queue` reviewer sees the same NPI-1 (individual) vs NPI-2
    * (organization) signal that explains why a "company" row shows a
@@ -186,6 +197,46 @@ function leadingStreetNumber(address: string | null | undefined): string | null 
 function postalCode5(postalCode: string | null | undefined): string | null {
   const digits = (postalCode ?? "").replace(/\D/g, "");
   return digits.length >= 5 ? digits.slice(0, 5) : null;
+}
+
+/** What kind of business, when the registry row did not say. */
+const DEFAULT_BUSINESS_TYPE: Record<RegistryRecord["source"], string> = {
+  "socrata-license": "newly licensed local business",
+  nppes: "healthcare practice",
+  fmcsa: "motor carrier",
+};
+
+/** What was issued, when the registry row did not say. */
+const DEFAULT_LICENSE_TYPE: Record<RegistryRecord["source"], string> = {
+  "socrata-license": "business licence",
+  nppes: "NPI enumeration",
+  fmcsa: "USDOT motor carrier registration",
+};
+
+export function businessTypeFor(record: RegistryRecord): string {
+  return record.businessType?.trim() || DEFAULT_BUSINESS_TYPE[record.source];
+}
+
+export function licenseTypeFor(record: RegistryRecord): string {
+  return record.licenseType?.trim() || DEFAULT_LICENSE_TYPE[record.source];
+}
+
+/**
+ * "today", "3 days ago", "2 weeks ago", "3 months ago" — the `issuedAgo` the
+ * new-business prompt reads. Computed when the row is enqueued, so a row
+ * that sits in /queue for a while reads slightly fresher than it is; the
+ * matched date itself is on the payload for anyone who needs the exact day.
+ */
+export function issuedAgoLabel(matchedDateIso: string, now = Date.now()): string {
+  const t = Date.parse(matchedDateIso);
+  if (!Number.isFinite(t)) return "recently";
+  const days = Math.max(0, Math.floor((now - t) / 86_400_000));
+  if (days === 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days < 14) return `${days} days ago`;
+  if (days < 60) return `${Math.floor(days / 7)} weeks ago`;
+  const months = Math.floor(days / 30);
+  return months === 1 ? "a month ago" : `${months} months ago`;
 }
 
 /** Recent-issue routing: fresh (within `freshnessDays`) → new-business, else → free-pilot. */
@@ -490,6 +541,9 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
       sourceLabel: record.sourceLabel,
       matchedDateIso: record.matchedDateIso,
       yourEdge: opts.yourEdge,
+      businessType: businessTypeFor(record),
+      licenseType: licenseTypeFor(record),
+      issuedAgo: issuedAgoLabel(record.matchedDateIso),
       ...(record.subjectType ? { subjectType: record.subjectType } : {}),
       ...(record.postalCode ? { postalCode: record.postalCode } : {}),
       ...(record.address ? { address: record.address } : {}),

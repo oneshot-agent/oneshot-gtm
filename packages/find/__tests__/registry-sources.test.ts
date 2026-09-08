@@ -78,6 +78,25 @@ describe("mapSocrataRows — canned payload", () => {
     });
   });
 
+  it("carries the licence description as the business type when the row has one (#498)", () => {
+    const out = mapSocrataRows(
+      [
+        {
+          business_name: "Rae's Taqueria",
+          license_creation_date: RECENT_ISO,
+          license_description: "Retail Food Establishment",
+        },
+        { business_name: "No Type Co", license_creation_date: RECENT_ISO },
+      ],
+      "NYC business licenses",
+      60,
+    );
+    expect(out.map((r) => [r.name, r.businessType, r.licenseType])).toEqual([
+      ["Rae's Taqueria", "Retail Food Establishment", "Retail Food Establishment"],
+      ["No Type Co", null, null],
+    ]);
+  });
+
   it("falls back across alternate name/date field spellings (dba_name, issue_date)", () => {
     const out = mapSocrataRows(rows, "NYC business licenses", 500);
     const names = out.map((r) => r.name).toSorted();
