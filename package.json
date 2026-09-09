@@ -21,6 +21,7 @@
     "dev": "turbo run dev",
     "test": "vitest run",
     "test:watch": "vitest",
+    "status:stamp": "bun run scripts/status-stamp.ts",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint --report-unused-disable-directives",
     "fmt": "oxfmt",
