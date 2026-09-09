@@ -28,6 +28,7 @@ import { useMask, usePrivacy } from "../lib/privacy.tsx";
 import { Field, Input, Select, Textarea } from "../components/primitives/Field.tsx";
 import { Modal } from "../components/primitives/Modal.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
+import { StepProgress } from "../components/primitives/StepProgress.tsx";
 import { cn, formatSendsToday, timeAgo } from "../lib/cn.ts";
 import { readOnly } from "../lib/readOnly.ts";
 import { STOP_REASON_LABELS, cadenceStateLabel } from "../lib/cadenceState.ts";
@@ -620,6 +621,27 @@ function CadencesPage() {
                 // Line 2 is the sequence state (#602); every row opens into the
                 // sheet, which always has at least the enrolment to show.
                 const state = cadenceStateLabel(c, now);
+                // Line 2 is the step dots, and beside them only what needs a
+                // hand today: overdue, a send in flight, a failed send. The
+                // words ("step 1 of 2 · sent 2d ago · next in 22h") wait in the
+                // sheet, where there is room to read them once.
+                const dotsTone =
+                  c.status === "replied"
+                    ? "signal"
+                    : c.status === "breakup"
+                      ? "spend"
+                      : c.status === "bounced" ||
+                          c.status === "unsubscribed" ||
+                          c.status === "stopped"
+                        ? "blocked"
+                        : "receipt";
+                const rowNote = c.isSending
+                  ? { text: "sending…", cls: "text-[color:var(--ink-receipt-2)]" }
+                  : isOverdue && c.nextDueAt
+                    ? { text: `overdue · due ${timeAgo(c.nextDueAt)}`, cls: "text-ink-spend-2" }
+                    : c.status === "active" && c.lastSendError
+                      ? { text: "send failed", cls: "text-ink-blocked-2" }
+                      : null;
                 const open = expandedKeys.has(key);
                 const draft = c.nextStepDraft;
                 const previewPending = pendingPreviewKey === key;
@@ -650,6 +672,13 @@ function CadencesPage() {
                   !masked && c.queuePayload ? queueEvidence(c.playName, c.queuePayload) : null;
                 const fitReason = masked ? null : fitReasonFor(c.queuePayload);
                 const caseRows: CaseListRow[] = [
+                  {
+                    key: "state",
+                    value: state.text,
+                    ...(state.tone === "spend" || state.tone === "blocked"
+                      ? { tone: state.tone }
+                      : {}),
+                  },
                   { key: "enrolled", value: timeAgo(c.enrolledAt) },
                   ...(c.status === "active" && c.nextDueAt
                     ? [
@@ -660,14 +689,6 @@ function CadencesPage() {
                         },
                       ]
                     : []),
-                  {
-                    key: "step",
-                    value: `${Math.min(c.currentStep + 1, totalSteps)} of ${totalSteps}${
-                      c.nextStepLabel
-                        ? ` · next: ${c.nextStepLabel}${c.nextStepIsBreakup ? " (breakup)" : ""}`
-                        : ""
-                    }`,
-                  },
                   ...(c.status === "replied"
                     ? [
                         {
@@ -889,7 +910,20 @@ function CadencesPage() {
                           linkedinUrl: c.prospectLinkedinUrl,
                         }}
                         line2Privacy="show"
-                        line2={<SignalLabel tone={state.tone}>{state.text}</SignalLabel>}
+                        line2={
+                          <span className="inline-flex max-w-full items-center gap-2">
+                            <StepProgress
+                              current={Math.min(c.currentStep + 1, totalSteps)}
+                              total={totalSteps}
+                              tone={dotsTone}
+                            />
+                            {rowNote && (
+                              <span className={cn("truncate font-mono text-[11px]", rowNote.cls)}>
+                                {rowNote.text}
+                              </span>
+                            )}
+                          </span>
+                        }
                       />
                       <td className="whitespace-nowrap py-[10px] pr-6 text-ink-cream-2">
                         {c.playName}

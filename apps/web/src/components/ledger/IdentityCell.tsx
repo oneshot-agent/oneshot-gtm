@@ -108,7 +108,7 @@ const SIGNAL_TONE: Record<SignalTone, string> = {
   receipt: "text-[color:var(--ink-receipt-2)]",
 };
 
-/** The small mono label that is a ledger row's second line. */
+/** The small mono label that is a ledger row's second line — plain case, never shouting. */
 export function SignalLabel({
   children,
   tone = "muted",
@@ -121,7 +121,7 @@ export function SignalLabel({
   return (
     <span
       className={cn(
-        "inline-block max-w-full truncate align-bottom font-mono text-[10px] uppercase tracking-[0.08em]",
+        "inline-block max-w-full truncate align-bottom font-mono text-[11px]",
         SIGNAL_TONE[tone],
         className,
       )}
