@@ -64,9 +64,7 @@ Not code — these need capture, not commits. `demo seed` + `demo ui` now stand 
 
 ## Approved, not yet started
 
-- [ ] **feat(notify): Slack incoming-webhook notifications for replies, bounces, and daily send summary** — issue #71.
-- [ ] **feat(plays): wire per-prospect angle into reply, cadence, and outbound drafts** — issue #356.
-- [ ] **feat(plays): refresh per-prospect angle on new reply or outcome** — issue #357.
+_Nothing approved and waiting._
 
 ## Things we intentionally do NOT do
 
