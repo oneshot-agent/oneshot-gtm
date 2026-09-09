@@ -2,7 +2,7 @@
 
 **Assume green.** The 67 CLI commands, 23 plays, 15 finders, ten dashboard pages plus the run form, and the server's REST + SSE routes are all covered by the test suite — and verified end to end against the live OneShot API: every paid call type has made the live round trip, including the voice and SMS legs (`motion concierge` / `motion demo-no-show`), the PMF survey pair, reply triage, bounce harvesting, and `gmail placement`.
 
-Last verified **2026-09-08** · Bun 1.3.13 · OneShot SDK 0.32.0 · **3383 tests / 258 files** · typecheck + oxlint + oxfmt pass (36 lint warnings, 0 errors).
+Last verified **2026-09-08** · Bun 1.3.13 · OneShot SDK 0.32.0 · **3447 tests / 260 files** · typecheck + oxlint + oxfmt pass (38 lint warnings, 0 errors).
 
 **What the gate covers.** `apps/web` is now inside `bun run typecheck` — the dashboard source is
 type-checked in CI, and a deliberate error under `apps/web/src` fails the root script. As of
@@ -86,6 +86,16 @@ biggest win — cadence follow-ups previously read only config + name/email/comp
 `inbox.ts`'s two draft routes — free, since it rides the same prospect row the dossier tier already
 reads), and `runEmailPlay`'s `buildInputBlock` assembly (`_run-play.ts`, lowest priority — most
 outbound is first-touch with no angle yet, but a re-contact can have one).
+
+Per-prospect angle, Phase 3 (#357): the angle no longer sits frozen at backfill time. A new HUMAN
+reply (`pollInboxReplies`'s `recordInboxReply` call) and a tagged deal outcome (`tagOutcomeValue`)
+both fire-and-forget a re-synthesis through a new `triggerAngleRefresh` seam in
+`packages/core/src/angle.ts` — core can't import `@oneshot-gtm/find` back (a cycle), so find
+registers its `refreshProspectAngle` implementation onto the seam at module load instead. Debounced
+on `angle_synthesized_at`'s own freshness (6h) rather than extra state, so a reply burst or a
+reply-then-outcome pair only pays for one re-synthesis; auto-replies and unsubscribes never trigger
+it at all. Best-effort throughout: demo mode, an open circuit breaker, a missing prospect, or an
+empty LLM result all degrade to a silent no-op, never a thrown error on the hot path.
 
 Updated by hand after each dogfood run.
 

@@ -18,6 +18,7 @@ import {
   sendSms,
   tagOutcomeValue,
   trackSend,
+  triggerAngleRefresh,
   voiceCall,
   angleBlockFromJson,
   type BounceKind,
@@ -491,7 +492,7 @@ async function walkInboxWindow(
       // inserted a new row no longer gates triage (round-1 correction,
       // #558): see claimInboxReplyForTriage below for why the atomic claim
       // on `intent` replaced it.
-      ledger.recordInboxReply({
+      const insertedReply = ledger.recordInboxReply({
         id: e.id,
         threadKey: e.thread_id ?? e.id,
         prospectId: prospect.id,
@@ -505,6 +506,13 @@ async function walkInboxWindow(
         messageId: e.message_id ?? null,
         kind,
       });
+      // Refresh the per-prospect angle (issue #357) on a genuinely new human
+      // reply only — never auto-replies/unsubscribes (no signal worth paying
+      // for), and never a re-swept row the watermark overlap re-examines
+      // (insertedReply false = recordInboxReply's INSERT OR IGNORE no-op).
+      // Fire-and-forget: triggerAngleRefresh itself debounces on
+      // angle_synthesized_at and never throws.
+      if (insertedReply && kind === "human") triggerAngleRefresh(prospect.id);
       if (kind !== "human") {
         out.autoRepliesSkipped++;
         // A dead mailbox ("retired", "no longer at company") is a human-layer

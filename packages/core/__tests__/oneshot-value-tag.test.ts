@@ -117,6 +117,57 @@ describe("tagOutcomeValue (goal-level)", () => {
     }
   });
 
+  // Issue #357: a tagged outcome is exactly the kind of signal that should
+  // refresh the prospect's stored angle.
+  it("refreshes the prospect's angle when the tag actually applies", async () => {
+    const { registerAngleRefreshTrigger, _resetAngleRefreshTrigger } =
+      await import("../src/angle.ts");
+    const calls: Array<{ id: number; context?: { outcome?: unknown } }> = [];
+    registerAngleRefreshTrigger((id, context) => {
+      calls.push({ id, context });
+    });
+    try {
+      const { prospectId } = seedCadence("show-hn", "angle@x.dev");
+
+      await tagOutcomeValue({
+        prospectId,
+        playName: "show-hn",
+        valueTag: { type: "meeting", label: "meeting booked" },
+      });
+
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.id).toBe(prospectId);
+      // Round-1 correction (issue #357): the value tag itself must reach the
+      // refresh pipeline as outcome context, not just a bare prospect id —
+      // otherwise the outcome-triggered synthesis can't reflect the outcome.
+      expect(calls[0]?.context?.outcome).toEqual({ type: "meeting", label: "meeting booked" });
+    } finally {
+      _resetAngleRefreshTrigger();
+    }
+  });
+
+  it("does not refresh the angle when no receipt carries the goal (no-op tag)", async () => {
+    const { registerAngleRefreshTrigger, _resetAngleRefreshTrigger } =
+      await import("../src/angle.ts");
+    const calls: number[] = [];
+    registerAngleRefreshTrigger((id) => {
+      calls.push(id);
+    });
+    try {
+      const prospectId = h.ledger.upsertProspect({ email: "no-receipt@x.dev" });
+
+      await tagOutcomeValue({
+        prospectId,
+        playName: "show-hn",
+        valueTag: { type: "engagement" },
+      });
+
+      expect(calls).toEqual([]);
+    } finally {
+      _resetAngleRefreshTrigger();
+    }
+  });
+
   it("no-ops when no receipt carries the cadence goal", async () => {
     const prospectId = h.ledger.upsertProspect({ email: "nobody@x.dev" });
     const res = await tagOutcomeValue({
