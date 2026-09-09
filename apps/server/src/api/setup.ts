@@ -1,9 +1,11 @@
 import {
   deleteGmailToken,
+  hasCalendarScope,
   identityCapacities,
   isValidTimeZone,
   listSendingDomains,
   loadConfig,
+  loadGmailTokens,
   registerOneShotIdentity,
   registerSmartleadIdentity,
   resolveIdentities,
@@ -46,6 +48,7 @@ function identityViews(cfg: OneShotConfig): SenderIdentityView[] {
   // Per cap-group: capToday + domainSentToday reflect the shared per-domain
   // budget (all mailboxes on one OneShot domain pool one reputation/limit).
   const caps = identityCapacities();
+  const tokens = loadGmailTokens();
   return resolveIdentities(cfg).map((i) => {
     const cap = caps.get(i.id);
     return {
@@ -61,6 +64,7 @@ function identityViews(cfg: OneShotConfig): SenderIdentityView[] {
       domainSentToday: cap?.domainSentToday ?? 0,
       capToday: cap && Number.isFinite(cap.capToday) ? cap.capToday : null,
       legacy,
+      hasCalendarScope: i.provider === "gmail" ? hasCalendarScope(tokens[i.id] ?? null) : null,
     };
   });
 }
@@ -301,6 +305,20 @@ function applySetup(body: SetupRequest): void {
   // mergeSetupConfig is the last validator (ceiling, time zone): nothing
   // below this line runs if it throws.
   const merged = mergeSetupConfig(current, body, emailIdentities, llmProvider, walletMode);
+
+  // A calendarIdentityId must point at a Gmail identity actually in the pool
+  // (post-edits) — refusing here is much cheaper than a scheduler tick
+  // discovering it can't find the identity every 10 minutes forever.
+  if (body.calendarIdentityId !== undefined && body.calendarIdentityId !== null) {
+    const pool = merged.emailIdentities ?? resolveIdentities(merged);
+    const identity = pool.find((i) => i.id === body.calendarIdentityId);
+    if (!identity || identity.provider !== "gmail") {
+      throw new SetupValidationError(
+        `calendarIdentityId '${body.calendarIdentityId}' is not a connected Gmail identity`,
+      );
+    }
+  }
+
   saveConfig(merged);
 
   for (const id of remove) {
@@ -380,6 +398,10 @@ export function mergeSetupConfig(
       body.dailySpendCeilingUsd === undefined
         ? current.dailySpendCeilingUsd
         : validateSpendCeiling(body.dailySpendCeilingUsd),
+    calendarIdentityId:
+      body.calendarIdentityId === undefined ? current.calendarIdentityId : body.calendarIdentityId,
+    calendarId:
+      body.calendarId === undefined ? current.calendarId : body.calendarId.trim() || "primary",
   };
 }
 

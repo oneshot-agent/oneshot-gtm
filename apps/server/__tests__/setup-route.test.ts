@@ -85,6 +85,8 @@ const BASE: OneShotConfig = {
   clientId: "11111111-2222-3333-4444-555555555555",
   slackWebhookUrl: null,
   dailySpendCeilingUsd: null,
+  calendarIdentityId: null,
+  calendarId: "primary",
 };
 
 beforeEach(() => {
@@ -166,6 +168,31 @@ describe("POST /api/setup — section-scoped bodies", () => {
     expect(await post({ queueReviewOrder: "sideways" })).toEqual({ status: 200 });
     expect(savedCfg().queueReviewOrder).toBe("ranked");
   });
+
+  it("calendarIdentityId pointing at a connected Gmail identity is accepted and calendarId trims/defaults", async () => {
+    expect(
+      await post({
+        calendarIdentityId: "gmail:jane@gmail.com",
+        calendarId: " work@group.calendar.google.com ",
+      }),
+    ).toEqual({ status: 200 });
+    const cfg = savedCfg();
+    expect(cfg.calendarIdentityId).toBe("gmail:jane@gmail.com");
+    expect(cfg.calendarId).toBe("work@group.calendar.google.com");
+  });
+
+  it("calendarIdentityId: null turns the feature off and is accepted with no identity check", async () => {
+    current.calendarIdentityId = "gmail:jane@gmail.com";
+    expect(await post({ calendarIdentityId: null })).toEqual({ status: 200 });
+    expect(savedCfg().calendarIdentityId).toBeNull();
+  });
+
+  it("a blank calendarId defaults back to 'primary'", async () => {
+    expect(await post({ calendarIdentityId: "gmail:jane@gmail.com", calendarId: "  " })).toEqual({
+      status: 200,
+    });
+    expect(savedCfg().calendarId).toBe("primary");
+  });
 });
 
 describe("POST /api/setup — rejected bodies answer 400 and write nothing", () => {
@@ -244,6 +271,20 @@ describe("POST /api/setup — rejected bodies answer 400 and write nothing", () 
     const res = await post({ timezone: "Mars/Olympus" });
     expect(res.status).toBe(400);
     expect(res.error).toMatch(/invalid timezone 'Mars\/Olympus'/);
+    untouched();
+  });
+
+  it("a calendarIdentityId pointing at a non-existent identity is a 400 (never persisted, never polled)", async () => {
+    const res = await post({ calendarIdentityId: "gmail:never-connected@x.dev" });
+    expect(res.status).toBe(400);
+    expect(res.error).toMatch(/is not a connected Gmail identity/);
+    untouched();
+  });
+
+  it("a calendarIdentityId pointing at a non-Gmail identity is a 400", async () => {
+    const res = await post({ calendarIdentityId: "oneshot:jane@mail.acme.dev" });
+    expect(res.status).toBe(400);
+    expect(res.error).toMatch(/is not a connected Gmail identity/);
     untouched();
   });
 

@@ -36,6 +36,8 @@ const FULL_CFG: OneShotConfig = {
   clientId: "11111111-2222-3333-4444-555555555555",
   slackWebhookUrl: null,
   dailySpendCeilingUsd: null,
+  calendarIdentityId: null,
+  calendarId: "primary",
 };
 
 describe("publicCfg — privacy boundary", () => {

@@ -48,6 +48,8 @@ const BASE: OneShotConfig = {
   timezone: null,
   clientId: null,
   dailySpendCeilingUsd: null,
+  calendarIdentityId: null,
+  calendarId: "primary",
 };
 
 beforeEach(() => {

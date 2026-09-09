@@ -4,7 +4,10 @@ import type {
   CadencesResult,
   CadenceStopReason,
   CadenceView,
+  CalendarPickerEntry,
   CancelRunResponse,
+  ConfirmMeetingMatchRequest,
+  DismissMeetingMatchRequest,
   DoctorCheck,
   DrainRequest,
   DrainResult,
@@ -21,6 +24,8 @@ import type {
   InboxSteerRequest,
   InboxSteerResult,
   LastDraft,
+  LogMeetingOutcomeRequest,
+  MeetingsResult,
   OutcomeByPlay,
   OutcomeRequest,
   PackApplyResult,
@@ -239,6 +244,8 @@ export const api = {
         // server has always returned them (publicCfg spreads the whole cfg).
         queueReviewOrder?: "ranked" | "newest";
         timezone?: string | null;
+        calendarIdentityId?: string | null;
+        calendarId?: string;
       };
       secretsPath: string;
       sources: Record<string, "env" | "file" | null>;
@@ -251,8 +258,19 @@ export const api = {
    */
   setupDomains: () => getJson<{ provisionedDomains: DomainPoolView[] }>("/setup/domains"),
   setup: (req: SetupRequest) => postJson<{ ok: boolean }>("/setup", req),
+  setupCalendars: (identityId: string) =>
+    getJson<{ calendars: CalendarPickerEntry[] }>(
+      `/setup/calendars?identityId=${encodeURIComponent(identityId)}`,
+    ),
   deriveIcp: (domain: string) => postJson<DeriveIcpResult>("/setup/derive-icp", { domain }),
   deriveBrief: (urls: string[]) => postJson<DeriveBriefResult>("/setup/derive-brief", { urls }),
+  meetings: () => getJson<MeetingsResult>("/meetings"),
+  logMeetingOutcome: (req: LogMeetingOutcomeRequest) =>
+    postJson<{ ok: boolean }>("/meetings/outcome", req),
+  confirmMeetingMatch: (req: ConfirmMeetingMatchRequest) =>
+    postJson<{ ok: boolean }>("/meetings/confirm", req),
+  dismissMeetingMatch: (req: DismissMeetingMatchRequest) =>
+    postJson<{ ok: boolean }>("/meetings/dismiss", req),
   // Manual add-prospect from a LinkedIn/X URL. Returns 202 immediately; the
   // researched + drafted row appears on /queue when the background job finishes.
   addProspect: (url: string, email?: string, businessAddress?: BusinessMailAddress) =>

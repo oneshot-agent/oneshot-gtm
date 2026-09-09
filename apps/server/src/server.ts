@@ -32,6 +32,13 @@ import {
 } from "./api/measure.ts";
 import { setup, getSetupDomains, getSetupStatus } from "./api/setup.ts";
 import { gmailAuthCallbackRoute, startGmailAuthRoute } from "./api/gmail-auth.ts";
+import {
+  confirmMeetingMatchRoute,
+  dismissMeetingMatchRoute,
+  listMeetingsRoute,
+  logMeetingOutcomeRoute,
+} from "./api/meetings.ts";
+import { listCalendarsRoute } from "./api/calendar-setup.ts";
 import { smartleadAccountsRoute } from "./api/smartlead.ts";
 import { deriveBriefRoute } from "./api/derive-brief.ts";
 import { deriveIcpRoute } from "./api/derive-icp.ts";
@@ -117,11 +124,16 @@ const routes: RouteEntry[] = [
   route("POST", "/api/measure/outcome", recordOutcome),
   route("GET", "/api/setup", getSetupStatus),
   route("GET", "/api/setup/domains", getSetupDomains),
+  route("GET", "/api/setup/calendars", listCalendarsRoute),
   route("POST", "/api/setup", setup),
   route("POST", "/api/domains/resume", resumeDomainRoute),
   route("POST", "/api/domains/pause", pauseDomainRoute),
   route("GET", "/api/gmail/auth/start", startGmailAuthRoute),
   route("GET", "/api/gmail/auth/callback", gmailAuthCallbackRoute),
+  route("GET", "/api/meetings", listMeetingsRoute),
+  route("POST", "/api/meetings/outcome", logMeetingOutcomeRoute),
+  route("POST", "/api/meetings/confirm", confirmMeetingMatchRoute),
+  route("POST", "/api/meetings/dismiss", dismissMeetingMatchRoute),
   route("POST", "/api/smartlead/accounts", smartleadAccountsRoute),
   route("POST", "/api/setup/derive-icp", deriveIcpRoute),
   route("POST", "/api/setup/derive-brief", deriveBriefRoute),

@@ -83,6 +83,7 @@ export const SECTIONS = [
   { id: "notifications", eyebrow: "06.5 · Notifications", label: "Notifications" },
   { id: "x", eyebrow: "07 · X / Twitter", label: "X / Twitter" },
   { id: "email", eyebrow: "08 · Email transport", label: "Email transport" },
+  { id: "calendar", eyebrow: "08.5 · Calendar", label: "Calendar" },
   { id: "review", eyebrow: "09 · Review queue & time zone", label: "Queue & time zone" },
   { id: "telemetry", eyebrow: "10 · Telemetry", label: "Telemetry" },
   { id: "credentials", eyebrow: "11 · Credentials", label: "Credentials" },

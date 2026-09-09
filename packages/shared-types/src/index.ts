@@ -373,6 +373,15 @@ export interface SetupRequest {
    * unchanged; `null` = clear it (unlimited); a positive number = set it.
    */
   dailySpendCeilingUsd?: number | null;
+  /**
+   * Which Gmail identity's calendar the scheduler polls (issue #577).
+   * `undefined` = leave unchanged; `null` = turn the feature off (entirely
+   * inert — no poll, no writes). Must be a `provider: 'gmail'` identity id
+   * already in the pool with calendar.readonly scope.
+   */
+  calendarIdentityId?: string | null;
+  /** Which calendar of `calendarIdentityId`'s account to poll. `undefined` = leave unchanged; blank/omit defaults to "primary" server-side. */
+  calendarId?: string;
   llmProvider?: LlmProvider;
   llmModel?: string;
   telemetryEnabled?: boolean;
@@ -481,6 +490,13 @@ export interface SenderIdentityView {
   capToday: number | null;
   /** True when synthesized from legacy single-provider config (not yet a persisted pool). */
   legacy: boolean;
+  /**
+   * Gmail only (issue #577): whether this identity's token carries the
+   * calendar.readonly scope. Null for non-Gmail providers, which have no
+   * calendar concept at all — the /setup "Reconnect for calendar" action is
+   * only offered on `false`.
+   */
+  hasCalendarScope: boolean | null;
 }
 
 export type QueueStatusView = "pending" | "approved" | "rejected" | "sent" | "expired";
@@ -1325,4 +1341,65 @@ export interface WorkspaceInfo {
     /** Live-probed server-side (~300ms /api/health ping). */
     running: boolean;
   }>;
+}
+
+/* ── Calendar meetings (issue #577) ──────────────────────────────────── */
+
+export type MeetingOutcomeView = "held" | "no_show" | "cancelled" | "rescheduled";
+export type MeetingMatchStatusView = "exact" | "suggested" | "ambiguous" | "dismissed" | null;
+
+/** One `meetings` row, projected for the browser. */
+export interface MeetingView {
+  calendarId: string;
+  eventId: string;
+  summary: string | null;
+  startsAt: string | null;
+  endsAt: string | null;
+  organizerEmail: string | null;
+  externalAttendees: string[];
+  prospectId: number | null;
+  prospectName: string | null;
+  prospectEmail: string | null;
+  suggestedProspectId: number | null;
+  suggestedProspectName: string | null;
+  suggestedProspectEmail: string | null;
+  matchStatus: MeetingMatchStatusView;
+  /** The match method, rendered as a human sentence — never the bare score. */
+  matchReason: string | null;
+  outcome: MeetingOutcomeView | null;
+  outcomeNote: string | null;
+}
+
+/** GET /api/meetings — split into the two lists the dashboard renders. */
+export interface MeetingsResult {
+  /** Past, matched, no outcome recorded — the nudge list. */
+  awaitingOutcome: MeetingView[];
+  /** Suggested/ambiguous matches needing a founder confirm/dismiss. */
+  needsReview: MeetingView[];
+}
+
+export interface LogMeetingOutcomeRequest {
+  calendarId: string;
+  eventId: string;
+  outcome: MeetingOutcomeView;
+  note?: string;
+}
+
+export interface ConfirmMeetingMatchRequest {
+  calendarId: string;
+  eventId: string;
+  prospectId: number;
+}
+
+export interface DismissMeetingMatchRequest {
+  calendarId: string;
+  eventId: string;
+}
+
+/** One calendar in the /setup picker, with a 7-day event count — a founder cannot reliably say which calendar their bookings land on. */
+export interface CalendarPickerEntry {
+  id: string;
+  summary: string;
+  accessRole: string;
+  recentEventCount: number;
 }

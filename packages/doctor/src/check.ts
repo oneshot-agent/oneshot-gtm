@@ -10,6 +10,7 @@ import {
   getLedger,
   GMAIL_AUTH_HINT,
   gmailAccountFor,
+  hasCalendarScope,
   identityCapacities,
   listSendingDomains,
   listSmartleadAccounts,
@@ -572,6 +573,76 @@ function dailySpendCeilingCheck(): CheckResult | null {
   };
 }
 
+/**
+ * Live-probes the designated calendar identity's Gmail-family token for
+ * calendar scope (issue #577). `calendarIdentityId: null` = feature off —
+ * returns null so the check is invisible when the founder never opted in,
+ * matching the daily-spend-ceiling check's own "null = don't report"
+ * convention just above.
+ *
+ * The persisted `GmailTokenEntry.scope` is checked FIRST (cheap, no
+ * network) — an absent/Gmail-only scope is reported as a failing check with
+ * the reconnect instruction without ever making a live call. Only when the
+ * stored scope claims calendar access does this go on to actually probe
+ * `getGmailProfile` (mirroring the existing per-identity sender probe
+ * above), because a scope can be revoked at myaccount.google.com without
+ * invalidating the refresh token — the persisted string alone is not
+ * authoritative, and a live 403 ACCESS_TOKEN_SCOPE_INSUFFICIENT is the only
+ * way to catch that case.
+ */
+async function calendarIdentityCheck(
+  cfg: ReturnType<typeof loadConfig>,
+): Promise<CheckResult | null> {
+  if (!cfg.calendarIdentityId) return null;
+  const identity = resolveIdentities(cfg).find((i) => i.id === cfg.calendarIdentityId);
+  if (!identity || identity.provider !== "gmail") {
+    return {
+      name: "calendar access",
+      group: "senders",
+      severity: "fail",
+      message: `calendarIdentityId '${cfg.calendarIdentityId}' does not point at a connected Gmail identity`,
+      hint: "Pick a calendar identity on /setup.",
+    };
+  }
+  const tokenEntry = loadGmailTokens()[identity.id] ?? null;
+  if (!hasCalendarScope(tokenEntry)) {
+    return {
+      name: "calendar access",
+      group: "senders",
+      severity: "fail",
+      message: `${identity.id} has no recorded calendar.readonly scope`,
+      hint: "Reconnect for calendar access on /setup (Sender → Reconnect for calendar).",
+    };
+  }
+  const account = gmailAccountFor(identity);
+  if (!account) {
+    return {
+      name: "calendar access",
+      group: "senders",
+      severity: "fail",
+      message: `${identity.id}: no refresh token stored`,
+      hint: GMAIL_AUTH_HINT,
+    };
+  }
+  try {
+    await getGmailProfile(account);
+    return {
+      name: "calendar access",
+      group: "senders",
+      severity: "ok",
+      message: `${identity.id} · calendar '${cfg.calendarId || "primary"}'`,
+    };
+  } catch (err) {
+    return {
+      name: "calendar access",
+      group: "senders",
+      severity: "fail",
+      message: `${identity.id}: ${(err as Error).message}`,
+      hint: "Reconnect for calendar access on /setup (Sender → Reconnect for calendar).",
+    };
+  }
+}
+
 export async function runDoctor(): Promise<CheckResult[]> {
   const cfg = loadConfig();
   const results: CheckResult[] = [];
@@ -889,6 +960,9 @@ export async function runDoctor(): Promise<CheckResult[]> {
 
   const spendCeiling = dailySpendCeilingCheck();
   if (spendCeiling) results.push(spendCeiling);
+
+  const calendarCheck = await calendarIdentityCheck(cfg);
+  if (calendarCheck) results.push(calendarCheck);
 
   return results;
 }

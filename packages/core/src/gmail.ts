@@ -14,8 +14,16 @@ const GMAIL_API = "https://gmail.googleapis.com/gmail/v1/users/me";
 
 export const GMAIL_AUTH_HINT = "run: bun run cli -- gmail auth";
 
-export const GMAIL_OAUTH_SCOPES =
-  "https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly";
+/**
+ * Read-only Calendar access — bundled into the same consent request as the
+ * Gmail scopes (issue #577) so a founder authorizes once and gets both. A
+ * refresh token is scope-bound and never rotated by this codebase, so an
+ * account authorized BEFORE this scope existed does not have it; see
+ * `GmailTokenEntry.scope` for how that's tracked.
+ */
+export const CALENDAR_READONLY_SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
+
+export const GMAIL_OAUTH_SCOPES = `https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/gmail.readonly ${CALENDAR_READONLY_SCOPE}`;
 
 /** Google consent URL for the loopback OAuth flow (CLI command and /setup button share it). */
 export function gmailConsentUrl(opts: {
@@ -34,13 +42,20 @@ export function gmailConsentUrl(opts: {
   })}`;
 }
 
+/** Result of exchanging an authorization code for tokens. */
+export interface GmailAuthExchangeResult {
+  refreshToken: string;
+  /** Space-delimited scopes Google actually granted — may be narrower than what was requested. */
+  scope: string | null;
+}
+
 /** Exchange an authorization code for a refresh token. Throws with an actionable message on any failure. */
 export async function exchangeGmailAuthCode(opts: {
   code: string;
   clientId: string;
   clientSecret: string;
   redirectUri: string;
-}): Promise<string> {
+}): Promise<GmailAuthExchangeResult> {
   const res = await fetch(TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -54,6 +69,7 @@ export async function exchangeGmailAuthCode(opts: {
   });
   const data = (await res.json()) as {
     refresh_token?: string;
+    scope?: string;
     error?: string;
     error_description?: string;
   };
@@ -67,7 +83,7 @@ export async function exchangeGmailAuthCode(opts: {
         : "";
     throw new Error(`Gmail token exchange failed: ${detail}${hint}`);
   }
-  return data.refresh_token;
+  return { refreshToken: data.refresh_token, scope: data.scope ?? null };
 }
 
 export function missingGmailSecrets(): string[] {
@@ -113,6 +129,18 @@ export function _resetGmailCache(): void {
   tokenCache.clear();
   profileCache.clear();
   messageCache.clear();
+}
+
+/**
+ * Drop ONE account's cached access token (shared by every Gmail-family API,
+ * calendar included — see gcal.ts). `tokenCache` can hold a live token for
+ * up to an hour, so a token revoked at myaccount.google.com surfaces as a
+ * 401 on the next API CALL, not as `invalid_grant` on the next refresh — the
+ * caller must evict the stale entry here or the next poll keeps reusing the
+ * dead token until it naturally expires.
+ */
+export function invalidateGmailAccessToken(account?: GmailAccount): void {
+  tokenCache.delete(account?.id ?? LEGACY_CACHE_KEY);
 }
 
 export async function getGmailAccessToken(account?: GmailAccount): Promise<string> {
@@ -173,7 +201,7 @@ async function gmailFetch(
 }
 
 /** Google's stable API error envelope: `{ error: { code, message, status, errors[] } }`. */
-interface GoogleApiErrorEnvelope {
+export interface GoogleApiErrorEnvelope {
   error?: {
     code?: number;
     message?: string;
@@ -212,7 +240,7 @@ function compactQuotaMessage(message: string): string | null {
  * JSON is mostly whitespace/scaffolding, so 200 chars of it is the same
  * "better than nothing" fallback the old code always used.
  */
-function formatGmailApiError(raw: string): string {
+export function formatGmailApiError(raw: string): string {
   try {
     const parsed = JSON.parse(raw) as GoogleApiErrorEnvelope;
     const message = parsed.error?.message;
@@ -515,7 +543,7 @@ const DAEMON_ADDRESS_RE = /^(mailer-daemon|postmaster)@/i;
  * body with no `@` backtracks from every start position, and DSN bodies are
  * attacker-influenced. See also PROSE_SCAN_LIMIT.
  */
-const EMAIL_RE = /[\w.!#$%&'*+/=?^`{|}~-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63}){1,8}/g;
+export const EMAIL_RE = /[\w.!#$%&'*+/=?^`{|}~-]{1,64}@[\w-]{1,63}(?:\.[\w-]{1,63}){1,8}/g;
 /**
  * Prose cap (chars) for the fallback parser — a real DSN states the failure
  * up front; the cap bounds regex work on hostile input.

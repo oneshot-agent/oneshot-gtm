@@ -362,6 +362,14 @@ function IdentityRow({
           {i.provider === "oneshot" && <Explain concept="domainCaps" />}
           {i.warmup && <Explain concept="warmup" />}
         </span>
+        {i.provider === "gmail" && i.hasCalendarScope === false && (
+          <a
+            href="/api/gmail/auth/start?purpose=calendar"
+            className="mt-1 w-fit font-mono text-[11px] text-[color:var(--ink-spend-2)] underline decoration-dotted underline-offset-2 hover:text-[color:var(--ink-spend)]"
+          >
+            Reconnect for calendar access
+          </a>
+        )}
       </div>
       <div className="ml-auto flex items-start gap-2">
         <Field

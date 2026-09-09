@@ -378,3 +378,72 @@ export function localDayOffset(
   const b = Date.UTC(event.year, event.month - 1, event.day);
   return Math.round((b - a) / 86_400_000);
 }
+
+/**
+ * The inverse of `wallClock`: a naive local date or date-time (no zone —
+ * Calendar's `start.date`/`start.dateTime` when the source is date-only, or
+ * any other "this clock reading, in this zone" input) → the real UTC
+ * instant it names. Every OTHER helper in this file goes instant → local
+ * string; this is the one exception, needed because an all-day event's
+ * `start.date`/`end.date` carries no offset at all and has to be anchored
+ * to a zone before it can be stored or compared as an instant.
+ *
+ * Standard two-pass technique: guess the instant as if the wall clock were
+ * UTC, read back what THAT instant looks like in `zone`, then shift the
+ * guess by the difference. Convergent to the second for any zone with a
+ * whole-minute DST transition (all IANA zones qualify) — the only failure
+ * mode is a wall-clock value that never occurs (spring-forward gap), which
+ * this treats as its nearest valid instant rather than throwing, since a
+ * calendar's own date-only fields can never land in a gap.
+ *
+ * Returns null for unparseable input or an unrecognized zone.
+ */
+export function naiveLocalToInstant(naive: string, zone: string): string | null {
+  if (!isValidTimeZone(zone)) return null;
+  const dateOnly = DATE_ONLY.exec(naive.trim());
+  const naiveDateTime = NAIVE_DATETIME.exec(naive.trim());
+  let year: number, month: number, day: number, hour: number, minute: number, second: number;
+  if (dateOnly) {
+    year = Number(dateOnly[1]);
+    month = Number(dateOnly[2]);
+    day = Number(dateOnly[3]);
+    hour = 0;
+    minute = 0;
+    second = 0;
+  } else if (naiveDateTime) {
+    year = Number(naiveDateTime[1]);
+    month = Number(naiveDateTime[2]);
+    day = Number(naiveDateTime[3]);
+    hour = Number(naiveDateTime[4]);
+    minute = Number(naiveDateTime[5]);
+    second = naiveDateTime[6] === undefined ? 0 : Number(naiveDateTime[6]);
+  } else {
+    return null;
+  }
+  if (!isValidDate(year, month, day) || hour > 23 || minute > 59 || second > 59) return null;
+
+  const asIfUtc = Date.UTC(year, month - 1, day, hour, minute, second);
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: zone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  const parts = partsOf(fmt, new Date(asIfUtc));
+  // hour12:false can still emit "24" for midnight in some ICU builds.
+  const readHour = Number(parts["hour"]) % 24;
+  const seenAsUtc = Date.UTC(
+    Number(parts["year"]),
+    Number(parts["month"]) - 1,
+    Number(parts["day"]),
+    readHour,
+    Number(parts["minute"]),
+    Number(parts["second"]),
+  );
+  const instant = asIfUtc - (seenAsUtc - asIfUtc);
+  return new Date(instant).toISOString();
+}
