@@ -77,3 +77,12 @@ describe("timeAgo", () => {
     expect(timeAgo("2026-06-08 16:00:00")).toBe("in 1d");
   });
 });
+
+describe("timeAgo with an injected clock (#600)", () => {
+  it("measures against nowMs, not the wall clock", () => {
+    const now = Date.parse("2026-09-10T12:00:00Z");
+    expect(timeAgo("2026-09-10T09:00:00Z", now)).toBe("3h ago");
+    expect(timeAgo("2026-09-11T12:00:00Z", now)).toBe("in 1d");
+    expect(timeAgo(null, now)).toBe("—");
+  });
+});

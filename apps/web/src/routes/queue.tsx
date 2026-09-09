@@ -16,7 +16,7 @@ import {
   UserPlus,
   X,
 } from "lucide-react";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   blockingFlags,
@@ -33,7 +33,6 @@ import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
 import { Field, Input, Textarea } from "../components/primitives/Field.tsx";
 import { Modal } from "../components/primitives/Modal.tsx";
 import { AddProspectForm } from "../components/queue/AddProspectForm.tsx";
-import { Pii } from "../components/primitives/Pii.tsx";
 import { useMask, usePrivacy } from "../lib/privacy.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { Toggle } from "../components/primitives/Toggle.tsx";
@@ -63,8 +62,17 @@ import { priorityBreakdown, priorityChip } from "../lib/priorityChip.ts";
 import { fitReasonFor } from "../lib/queueRationale.ts";
 import { queueEvidence } from "../lib/queueEvidence.ts";
 import { heldSummary } from "../lib/flagLabels.ts";
-import { caseMeta, caseRows, type CaseRow } from "../lib/queueCase.ts";
-import { ReceiptEdge } from "../components/primitives/ReceiptEdge.tsx";
+import { caseMeta, caseRows } from "../lib/queueCase.ts";
+import { IdentityCell, SignalLabel } from "../components/ledger/IdentityCell.tsx";
+import { SheetHeading } from "../components/ledger/SheetHeading.tsx";
+import { Rule, Sheet } from "../components/ledger/Sheet.tsx";
+import {
+  CaseList,
+  Disclosure,
+  PayloadJson,
+  type CaseListRow,
+} from "../components/ledger/CaseList.tsx";
+import { DraftStateLine, LetterCard, LetterEmpty } from "../components/ledger/LetterCard.tsx";
 import {
   companyFor,
   emailFor,
@@ -730,23 +738,6 @@ function QueuePage() {
   );
 }
 
-/** The eyebrow + hairline that opens each half of an open row's sheet. */
-function SheetHeading({ label, right }: { label: string; right?: React.ReactNode }) {
-  return (
-    <div className="mb-3 flex items-center gap-3">
-      <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
-        {label}
-      </span>
-      <span className="h-px flex-1 bg-ink-rule" />
-      {right ? <span className="font-mono text-[11px] text-ink-muted">{right}</span> : null}
-    </div>
-  );
-}
-
-interface SheetRow extends CaseRow {
-  href?: string;
-}
-
 export function QueueRow({
   row,
   ranked,
@@ -806,7 +797,7 @@ export function QueueRow({
   // The signal is already the row's label above; the sheet's meta line says
   // only where the row came from and when.
   const metaLine = caseMeta([detail, `found ${timeAgo(row.foundAt)}`]);
-  const sheetRows: SheetRow[] = [
+  const sheetRows: CaseListRow[] = [
     ...(eventTitle
       ? [{ key: "event", value: eventRole ? `${eventTitle} · ${eventRole}` : eventTitle }]
       : []),
@@ -816,6 +807,7 @@ export function QueueRow({
           {
             key: "when",
             value: `${humanizeEventDate(eventDate)} (${timeAgo(eventDate)})${eventPassed ? " · passed" : ""}`,
+            ...(eventPassed ? { tone: "blocked" as const } : {}),
           },
         ]
       : []),
@@ -863,79 +855,18 @@ export function QueueRow({
             />
           </label>
         </td>
-        {/* `w-full max-w-0`: take the width the fixed columns leave, and let
-            the two lines inside truncate at that width instead of stretching
-            the table. */}
-        <td className="w-full max-w-0 py-[10px] pr-6">
-          <div className="flex items-baseline gap-2 overflow-hidden whitespace-nowrap leading-5">
-            <span className="shrink-0 text-ink-cream">
-              {name ? <Pii kind="name">{name}</Pii> : "(unknown)"}
-            </span>
-            <span className="truncate font-mono text-[11px] text-ink-faint">
-              {email ? <Pii kind="email">{email}</Pii> : "—"}
-              {/*
-                The title is a LinkedIn headline and some are paragraphs, so
-                it alone is clamped; email, company and the [in] link are what
-                tell two rows apart and have to survive it.
-              */}
-              {title ? (
-                <>
-                  {" · "}
-                  <span className="inline-block max-w-[38ch] truncate align-bottom text-ink-cream-2">
-                    {title}
-                  </span>
-                </>
-              ) : null}
-              {company ? (
-                <>
-                  {" · "}
-                  <Pii kind="company">{company}</Pii>
-                </>
-              ) : null}
-              {linkedinUrl ? (
-                <a
-                  href={linkedinUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="ml-1 text-ink-cream-2 underline decoration-ink-rule underline-offset-2 hover:text-ink-cream hover:decoration-ink-cream-2"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  [in]
-                </a>
-              ) : null}
-              {phone ? (
-                <span className="ml-1">
-                  · <Pii kind="phone">{phone}</Pii>
-                </span>
-              ) : null}
-            </span>
-          </div>
-          <div
-            className="truncate text-[12px] leading-4 text-ink-cream-2"
-            title={!masked && fitReason ? fitReason : undefined}
-          >
-            {masked ? (
-              <span className="text-ink-faint">rationale hidden in privacy mode</span>
+        {/* Line 2 is the signal alone (#600); the fit sentence lives in the
+            sheet, where there is room to read it. */}
+        <IdentityCell
+          identity={{ name, email, title, company, linkedinUrl, phone }}
+          line2={
+            signalLabel ? (
+              <SignalLabel tone={eventPassed ? "blocked" : "muted"}>{signalLabel}</SignalLabel>
             ) : (
-              <>
-                {signalLabel ? (
-                  <span
-                    className={cn(
-                      "mr-2 inline-block max-w-[44ch] truncate align-bottom font-mono text-[10px] uppercase tracking-[0.08em]",
-                      eventPassed ? "text-ink-blocked-2" : "text-ink-muted",
-                    )}
-                  >
-                    {signalLabel}
-                  </span>
-                ) : null}
-                {fitReason ??
-                  (signalLabel ? null : (
-                    <span className="text-ink-faint">no rationale on this row yet</span>
-                  ))}
-              </>
-            )}
-          </div>
-        </td>
+              <span className="text-ink-faint">no signal on this row</span>
+            )
+          }
+        />
         <td className="whitespace-nowrap py-[10px] pr-6 leading-4 text-ink-cream-2">
           {row.playName}
           {/* The source column is gone (redundant with play), but its meaningful
@@ -994,132 +925,81 @@ export function QueueRow({
         </td>
       </tr>
       {expanded && (
-        <tr className="border-b border-ink-rule/60 bg-ink-bg-deep/50">
-          <td colSpan={7} className="py-5 pl-16 pr-6">
-            {/*
-              The sheet reads left to right: the case, then the letter. No
-              boxes — hierarchy comes from type and hairlines, and the one
-              accent on the page is the total line under a sendable letter.
-            */}
-            <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,5fr)_minmax(0,8fr)] xl:gap-10">
-              <div className="flex min-w-0 flex-col gap-3 text-[12px] text-ink-muted">
-                <SheetHeading label="the case" />
-                {metaLine && (
-                  <div className="-mt-1 font-mono text-[11px] leading-4 text-ink-muted">
-                    {metaLine}
-                  </div>
-                )}
-                {!masked && fitReason && (
-                  <p className="m-0 text-[13px] leading-5 text-ink-cream-2 [text-wrap:pretty]">
-                    {fitReason}
-                  </p>
-                )}
-                {sheetRows.length > 0 && (
-                  <>
-                    <div className="mt-1 h-px bg-ink-rule" />
-                    <div className="grid grid-cols-[92px_minmax(0,1fr)] gap-x-3 gap-y-1 leading-4">
-                      {sheetRows.map((r) => (
-                        <Fragment key={`${r.key ?? ""}|${r.value}`}>
-                          {r.key ? (
-                            <span className="pt-px font-mono text-[10.5px] uppercase tracking-[0.04em] text-ink-faint">
-                              {r.key}
-                            </span>
-                          ) : null}
-                          <span
-                            className={cn(
-                              "min-w-0 break-words",
-                              r.key ? "text-ink-cream-2" : "col-span-2 text-ink-muted",
-                              eventPassed && r.key === "when" && "text-ink-blocked-2",
-                            )}
-                          >
-                            {r.href ? (
-                              <a
-                                href={r.href}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 text-ink-cream-2 underline decoration-ink-rule underline-offset-2 hover:text-ink-cream hover:decoration-ink-cream-2"
-                              >
-                                <ExternalLink size={11} /> {r.value}
-                              </a>
-                            ) : (
-                              r.value
-                            )}
-                          </span>
-                        </Fragment>
-                      ))}
-                    </div>
-                  </>
-                )}
-                {/* `notes` is the pre-#592 rationale; once a row has its fit
-                    line the note only repeats it (or a diagnostic). */}
-                {!masked && !fitReason && row.notes && (
-                  <div className="text-[11.5px] leading-4 text-ink-faint">{row.notes}</div>
-                )}
-                {row.priority && prio && (
-                  <>
-                    <div className="mt-1 h-px bg-ink-rule" />
-                    {/* The score is a margin note: the chip, and the breakdown
-                        behind a disclosure whose first line is the caveat. */}
-                    <details className="group/score">
-                      <summary className="flex cursor-pointer list-none items-center gap-2 [&::-webkit-details-marker]:hidden">
-                        <Badge tone={prio.tone}>{prio.label}</Badge>
-                        <span className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint group-hover/score:text-ink-cream-2">
-                          <ChevronRight
-                            size={12}
-                            className="transition-transform group-open/score:rotate-90"
-                          />
-                          explain score
-                        </span>
-                      </summary>
-                      <div className="mt-2 flex flex-col gap-2 border-l border-ink-rule pl-3">
-                        <div className="flex items-center leading-4 text-ink-muted">
-                          {ranked
-                            ? "Ranked review uses it to order candidates. It never approves or sends."
-                            : "Experimental. It does not affect ordering or sending."}
-                          <Explain concept="shadowScore" />
-                        </div>
-                        <div className="grid max-w-[420px] grid-cols-2 gap-x-6 gap-y-1 font-mono text-[11px] leading-4 text-ink-cream-2">
-                          {priorityBreakdown(row.priority).map((b) => (
-                            <div key={b.component} className="flex justify-between gap-2">
-                              <span>{b.component}</span>
-                              <span>
-                                <span className="text-ink-cream">{b.score}</span>
-                                <span className="text-ink-faint"> ·{b.weightPct}%</span>
-                              </span>
-                            </div>
-                          ))}
-                        </div>
+        <Sheet
+          colSpan={7}
+          indent="pl-16"
+          theCase={
+            <>
+              <SheetHeading label="the case" />
+              {metaLine && (
+                <div className="-mt-1 font-mono text-[11px] leading-4 text-ink-muted">
+                  {metaLine}
+                </div>
+              )}
+              {!masked && fitReason && (
+                <p className="m-0 text-[13px] leading-5 text-ink-cream-2 [text-wrap:pretty]">
+                  {fitReason}
+                </p>
+              )}
+              {sheetRows.length > 0 && (
+                <>
+                  <Rule />
+                  <CaseList rows={sheetRows} />
+                </>
+              )}
+              {/* `notes` is the pre-#592 rationale; once a row has its fit
+                  line the note only repeats it (or a diagnostic). */}
+              {!masked && !fitReason && row.notes && (
+                <div className="text-[11.5px] leading-4 text-ink-faint">{row.notes}</div>
+              )}
+              {row.priority && prio && (
+                <>
+                  <Rule />
+                  {/* The score is a margin note: the chip, and the breakdown
+                      behind a disclosure whose first line is the caveat. */}
+                  <Disclosure
+                    label="explain score"
+                    summary={<Badge tone={prio.tone}>{prio.label}</Badge>}
+                  >
+                    <div className="mt-2 flex flex-col gap-2 border-l border-ink-rule pl-3">
+                      <div className="flex items-center leading-4 text-ink-muted">
+                        {ranked
+                          ? "Ranked review uses it to order candidates. It never approves or sends."
+                          : "Experimental. It does not affect ordering or sending."}
+                        <Explain concept="shadowScore" />
                       </div>
-                    </details>
-                  </>
-                )}
-                <details className="group/payload text-ink-faint">
-                  <summary className="inline-flex cursor-pointer list-none items-center gap-1 font-mono text-[10px] uppercase tracking-[0.14em] hover:text-ink-cream-2 [&::-webkit-details-marker]:hidden">
-                    <ChevronRight
-                      size={12}
-                      className="transition-transform group-open/payload:rotate-90"
-                    />
-                    payload json
-                  </summary>
-                  <pre className="mt-2 max-h-[300px] overflow-auto rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep p-3 font-mono text-[11.5px] leading-[1.55] text-ink-cream-2">
-                    {JSON.stringify(row.payload, null, 2)}
-                  </pre>
-                </details>
-              </div>
-              <DraftSection
-                id={row.id}
-                playName={row.playName}
-                payload={row.payload}
-                status={row.status}
-                draft={row.lastDraft}
-                draftedAt={row.lastDraftedAt}
-                generating={generating}
-                isSending={row.isSending}
-                prospectId={row.prospectId}
-              />
-            </div>
-          </td>
-        </tr>
+                      <div className="grid max-w-[420px] grid-cols-2 gap-x-6 gap-y-1 font-mono text-[11px] leading-4 text-ink-cream-2">
+                        {priorityBreakdown(row.priority).map((b) => (
+                          <div key={b.component} className="flex justify-between gap-2">
+                            <span>{b.component}</span>
+                            <span>
+                              <span className="text-ink-cream">{b.score}</span>
+                              <span className="text-ink-faint"> ·{b.weightPct}%</span>
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </Disclosure>
+                </>
+              )}
+              <PayloadJson value={row.payload} />
+            </>
+          }
+          theLetter={
+            <DraftSection
+              id={row.id}
+              playName={row.playName}
+              payload={row.payload}
+              status={row.status}
+              draft={row.lastDraft}
+              draftedAt={row.lastDraftedAt}
+              generating={generating}
+              isSending={row.isSending}
+              prospectId={row.prospectId}
+            />
+          }
+        />
       )}
     </>
   );
@@ -1414,13 +1294,10 @@ function DraftSection({
 
   if (!draft) {
     return (
-      <div className="min-w-0">
-        <SheetHeading label="the letter" />
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-sm)] border border-dashed border-ink-rule px-5 py-3.5">
-          <span className="text-[12px] text-ink-muted">
-            No draft yet. Drafting is a preview and never sends.
-          </span>
-          <span className="flex items-center gap-2">
+      <LetterEmpty
+        note="No draft yet. Drafting is a preview and never sends."
+        actions={
+          <>
             {/* A sent row whose draft was never persisted used to return here
                 before the LinkedIn control rendered — so exactly the rows most
                 likely to have been replied to by hand could not record one. */}
@@ -1428,14 +1305,13 @@ function DraftSection({
             {manualButtons}
             {sendButton}
             {draftButton}
-          </span>
-        </div>
-        {linkedinReplyEditor}
-      </div>
+          </>
+        }
+        below={linkedinReplyEditor}
+      />
     );
   }
 
-  const held = heldSummary(draft.flags);
   // Row was sent but lastDraft.sent is false → a post-send regenerate landed
   // before the server-side guard was added. The card body is NOT the email
   // that went out (the original is only in the prospect's inbox now).
@@ -1450,59 +1326,36 @@ function DraftSection({
         ? "preview, not sent"
         : "not sent";
   return (
-    <div className="min-w-0">
-      <SheetHeading label="the letter" right={meta} />
-      <div className="rounded-t-[var(--radius-sm)] border border-b-0 border-ink-rule bg-ink-bg-deep">
-        <div className="px-5 pt-4">
-          <div className="text-[13px] font-medium leading-5 text-ink-cream">{draft.subject}</div>
-          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[12px] leading-4">
-            {draft.sent ? (
-              <Badge tone="receipt">sent</Badge>
-            ) : held ? (
-              <>
-                <Badge tone={held.kind === "lint" ? "blocked" : "spend"}>held · {held.kind}</Badge>
-                <span className={held.kind === "lint" ? "text-ink-blocked-2" : "text-ink-spend-2"}>
-                  {held.text}
-                </span>
-                <span className="text-ink-muted">· {held.next}</span>
-                {softHold && <Explain concept="softHold" detail={softHoldDetail} />}
-              </>
-            ) : (
-              <span className="text-ink-muted">
-                {draft.dryRun ? "preview" : "drafted"} · no flags
-              </span>
-            )}
-            {draft.receiptIds.map((rid) => (
-              <Link
-                key={rid}
-                to="/receipts"
-                className="font-mono text-[11px] text-ink-muted underline decoration-ink-rule underline-offset-2 hover:text-ink-cream-2"
-              >
-                receipt #{rid}
-              </Link>
-            ))}
-            {isStalePostSend && <Badge tone="blocked">post-send regenerate · not sent</Badge>}
-            {draft.enrichmentFailed && (
-              <span className="inline-flex items-center">
-                <Badge tone="spend">no enrichment</Badge>
-                <Explain concept="enrichment" />
-              </span>
-            )}
-          </div>
-          <div className="my-3 h-px bg-ink-rule" />
-          <pre className="ln-prose m-0 max-h-[420px] overflow-auto whitespace-pre-wrap text-[13px] text-ink-cream-2">
-            {draft.body}
-          </pre>
-          {linkedinReplyEditor}
-        </div>
-        <div
-          className={cn(
-            "mx-5 mt-5 flex flex-wrap items-center justify-between gap-3 border-t py-3",
-            sendable ? "border-[color:var(--ink-receipt)]" : "border-ink-rule",
+    <LetterCard
+      meta={meta}
+      subject={draft.subject}
+      stateLine={
+        <DraftStateLine sent={draft.sent} flags={draft.flags} dryRun={draft.dryRun}>
+          {softHold && <Explain concept="softHold" detail={softHoldDetail} />}
+          {draft.receiptIds.map((rid) => (
+            <Link
+              key={rid}
+              to="/receipts"
+              className="font-mono text-[11px] text-ink-muted underline decoration-ink-rule underline-offset-2 hover:text-ink-cream-2"
+            >
+              receipt #{rid}
+            </Link>
+          ))}
+          {isStalePostSend && <Badge tone="blocked">post-send regenerate · not sent</Badge>}
+          {draft.enrichmentFailed && (
+            <span className="inline-flex items-center">
+              <Badge tone="spend">no enrichment</Badge>
+              <Explain concept="enrichment" />
+            </span>
           )}
-        >
-          <span className="flex items-center gap-2">{draftButton}</span>
-          <span className="flex flex-wrap items-center gap-3">
+        </DraftStateLine>
+      }
+      body={draft.body}
+      afterBody={linkedinReplyEditor}
+      foot={{
+        left: draftButton,
+        right: (
+          <>
             {sendable && !softHold && (
               <span className="font-mono text-[11px] text-[color:var(--ink-receipt-2)]">
                 ready · no flags
@@ -1511,11 +1364,11 @@ function DraftSection({
             {linkedinReplyButton}
             {manualButtons}
             {sendButton}
-          </span>
-        </div>
-      </div>
-      <ReceiptEdge />
-    </div>
+          </>
+        ),
+      }}
+      sendable={sendable}
+    />
   );
 }
 
