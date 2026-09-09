@@ -25,6 +25,14 @@ export interface ReplyContext {
    * Free — read alongside the stored dossier, no extra research call.
    */
   angleJson: string | null;
+  /**
+   * The founder's most recently recorded outcome for this prospect's
+   * calendar meeting(s) (issue #578) — the direct path into the reply
+   * prompt, alongside the indirect `tagOutcomeValue` → `angle_json` path.
+   * Free — a ledger read alongside `angleJson`, Tier 0, must survive a
+   * research failure the same way.
+   */
+  meeting: { outcome: string; note: string | null; summary: string | null } | null;
   /** Replies the founder already sent in this thread (oldest first). */
   threadSent: Array<{ body: string; sentAt: string }>;
   /** The prospect's earlier inbound messages (persisted replies, oldest first) — the other half of the exchange. */
@@ -148,6 +156,7 @@ export async function gatherReplyContext(input: {
   return {
     dossier: parts.length > 0 ? parts.join("\n\n---\n\n") : null,
     angleJson: prospect?.angle_json ?? null,
+    meeting: input.prospectId != null ? ledger.latestMeetingOutcomeFor(input.prospectId) : null,
     threadSent,
     priorInbound,
     costUsd,

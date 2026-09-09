@@ -51,6 +51,9 @@ let alreadySentNextStep = false;
 let suppression: { status_code: string | null; bounced_at: string } | null = null;
 let contactSuppression: { kind: string; received_at: string } | null = null;
 let icpVerdict: { verdict: string; reason: string | null } | null = null;
+let meetingOutcome: { outcome: string; note: string | null; summary: string | null } | null = null;
+const stopCalls: Array<{ prospectId: number; playName: string; reason: string; note?: string }> =
+  [];
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -111,6 +114,20 @@ vi.mock("@oneshot-gtm/core", async () => {
       // Null by default: most tests exercise the normal send path.
       suppressionFor: () => suppression,
       contactSuppressionFor: () => contactSuppression,
+      latestMeetingOutcomeFor: () => meetingOutcome,
+      stopCadence: (input: {
+        prospectId: number;
+        playName: string;
+        reason: string;
+        note?: string;
+      }) => {
+        stopCalls.push(input);
+        const row = cadenceRows.find(
+          (c) => c.prospect_id === input.prospectId && c.play_name === input.playName,
+        );
+        if (row) row.status = "stopped";
+        return true;
+      },
       listAllCadences: () => cadenceRows,
       listActiveCadences: () => cadenceRows.filter((c) => c.status === "active"),
       listCadencesForProspect: (prospectId: number) =>
@@ -264,6 +281,8 @@ beforeEach(() => {
   suppression = null;
   contactSuppression = null;
   icpVerdict = null;
+  meetingOutcome = null;
+  stopCalls.length = 0;
   seedActiveCadence();
 });
 
@@ -428,6 +447,91 @@ describe("runCadenceStepForProspect — off-ICP gate", () => {
     });
     expect(result.action).toBe("step-sent");
     expect(calls.sendEmail).toBe(1);
+  });
+});
+
+describe("runCadenceStepForProspect — meeting-outcome gate (issue #578)", () => {
+  it("a held meeting stops the cadence before drafting, with an honest stop_reason", async () => {
+    meetingOutcome = { outcome: "held", note: null, summary: "Intro call" };
+    const result = await runCadenceStepForProspect({
+      prospectId: 1,
+      playName: "stack-consolidation",
+      dryRun: false,
+    });
+    expect(result.action).toBe("skipped");
+    expect(result.note).toMatch(/meeting held/);
+    expect(calls.llm).toBe(0);
+    expect(calls.sendEmail).toBe(0);
+    expect(stopCalls).toEqual([
+      {
+        prospectId: 1,
+        playName: "stack-consolidation",
+        reason: "other",
+        note: "meeting held — cadence superseded by a real conversation",
+      },
+    ]);
+  });
+
+  it("a no-show is NOT terminal — the cadence still drafts and sends", async () => {
+    meetingOutcome = { outcome: "no_show", note: null, summary: null };
+    const result = await runCadenceStepForProspect({
+      prospectId: 1,
+      playName: "stack-consolidation",
+      dryRun: false,
+    });
+    expect(result.action).toBe("step-sent");
+    expect(calls.sendEmail).toBe(1);
+    expect(stopCalls).toHaveLength(0);
+  });
+
+  it("cancelled/rescheduled outcomes do not stop the cadence — neither meeting ever happened", async () => {
+    meetingOutcome = { outcome: "cancelled", note: null, summary: null };
+    let result = await runCadenceStepForProspect({
+      prospectId: 1,
+      playName: "stack-consolidation",
+      dryRun: false,
+    });
+    expect(result.action).toBe("step-sent");
+    // advanceCadence clears the persisted draft between runs; re-seed for the
+    // second call in this same test.
+    seedActiveCadence();
+    meetingOutcome = { outcome: "rescheduled", note: null, summary: null };
+    result = await runCadenceStepForProspect({
+      prospectId: 1,
+      playName: "stack-consolidation",
+      dryRun: false,
+    });
+    expect(result.action).toBe("step-sent");
+    expect(stopCalls).toHaveLength(0);
+  });
+
+  it("no meeting on the prospect at all sends normally — unchanged from before #578", async () => {
+    meetingOutcome = null;
+    const result = await runCadenceStepForProspect({
+      prospectId: 1,
+      playName: "stack-consolidation",
+      dryRun: false,
+    });
+    expect(result.action).toBe("step-sent");
+    expect(calls.sendEmail).toBe(1);
+    expect(stopCalls).toHaveLength(0);
+  });
+
+  it("dryRun: a held meeting reports skipped but must NOT stop the live cadence (finding PRRT_kwDOSKzrBs6gwORi)", async () => {
+    meetingOutcome = { outcome: "held", note: null, summary: "Intro call" };
+    const result = await runCadenceStepForProspect({
+      prospectId: 1,
+      playName: "stack-consolidation",
+      dryRun: true,
+    });
+    expect(result.action).toBe("skipped");
+    expect(result.note).toMatch(/meeting held/);
+    expect(calls.llm).toBe(0);
+    expect(calls.sendEmail).toBe(0);
+    // The critical assertion: a preview must never write the stop — that
+    // would cancel a real cadence (clear its schedule + pending draft) from
+    // what the caller believed was a read-only dry run.
+    expect(stopCalls).toHaveLength(0);
   });
 });
 

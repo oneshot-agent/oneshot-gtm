@@ -4862,6 +4862,34 @@ export class Ledger {
   }
 
   /**
+   * The most recent founder-recorded outcome for a prospect's calendar
+   * meeting(s) (issue #578) — modelled on `contactSuppressionFor`, a ledger
+   * read returning a verdict for the reply drafter and cadence gate to act
+   * on. This is the DIRECT path from an outcome into a draft: the existing
+   * `tagOutcomeValue` → `triggerAngleRefresh` → `prospects.angle_json` path
+   * never hands the outcome to the synthesizer as text, so this is a second
+   * read, not a replacement. Newest by `outcome_recorded_at` wins when a
+   * prospect has more than one resolved meeting.
+   */
+  latestMeetingOutcomeFor(
+    prospectId: number,
+  ): { outcome: MeetingOutcome; note: string | null; summary: string | null } | null {
+    return (
+      (this.db
+        .query(
+          `SELECT outcome, outcome_note AS note, summary
+           FROM meetings
+           WHERE prospect_id = ? AND outcome IS NOT NULL
+           ORDER BY outcome_recorded_at DESC, starts_at DESC
+           LIMIT 1`,
+        )
+        .get(prospectId) as
+        | { outcome: MeetingOutcome; note: string | null; summary: string | null }
+        | undefined) ?? null
+    );
+  }
+
+  /**
    * Stamp `outcome_prompted_at` — called when the founder is shown the
    * nudge for this meeting, so a UI that dedupes reminders doesn't have to
    * infer "already asked" from anything else. `upsertMeeting`'s reschedule

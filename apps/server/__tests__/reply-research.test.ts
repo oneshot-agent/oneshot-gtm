@@ -12,6 +12,9 @@ const ledger = {
   getCachedEnrichment: vi.fn<Ledger["getCachedEnrichment"]>(() => null),
   setCachedEnrichment: vi.fn(),
   setCachedEnrichmentFailure: vi.fn(),
+  latestMeetingOutcomeFor: vi.fn(
+    (): { outcome: string; note: string | null; summary: string | null } | null => null,
+  ),
 };
 
 const webReadMock = vi.fn();
@@ -40,6 +43,7 @@ beforeEach(() => {
   ledger.getProspectById.mockReturnValue(null);
   ledger.getInboxThreads.mockReturnValue(new Map());
   ledger.getCachedEnrichment.mockReturnValue(null);
+  ledger.latestMeetingOutcomeFor.mockReturnValue(null);
   safeEnrichMock.mockResolvedValue({
     result: { status: "completed", profile: { name: "Aladdin" }, cost: 0.05 },
     receiptId: 42,
@@ -94,6 +98,46 @@ describe("gatherReplyContext", () => {
       threadKey: null,
     });
     expect(withoutProspect.angleJson).toBeNull();
+  });
+
+  it("surfaces the latest meeting outcome, for free, when a prospect id is given (issue #578)", async () => {
+    ledger.getProspectById.mockReturnValue({ dossier_json: '{"title":"CTO"}' });
+    ledger.latestMeetingOutcomeFor.mockReturnValue({
+      outcome: "held",
+      note: "Asked about SSO.",
+      summary: "Intro call",
+    });
+    const ctx = await gatherReplyContext({
+      fromEmail: "aladdin@aliyev.site",
+      prospectId: 7,
+      threadKey: null,
+    });
+    expect(ledger.latestMeetingOutcomeFor).toHaveBeenCalledWith(7);
+    expect(ctx.meeting).toEqual({
+      outcome: "held",
+      note: "Asked about SSO.",
+      summary: "Intro call",
+    });
+    expect(ctx.costUsd).toBe(0);
+  });
+
+  it("meeting is null when the prospect has none, or there is no prospect id", async () => {
+    ledger.getProspectById.mockReturnValue({ dossier_json: '{"title":"CTO"}' });
+    const withProspect = await gatherReplyContext({
+      fromEmail: "aladdin@aliyev.site",
+      prospectId: 7,
+      threadKey: null,
+    });
+    expect(withProspect.meeting).toBeNull();
+
+    ledger.latestMeetingOutcomeFor.mockClear();
+    const withoutProspect = await gatherReplyContext({
+      fromEmail: "someone@gmail.com",
+      prospectId: null,
+      threadKey: null,
+    });
+    expect(withoutProspect.meeting).toBeNull();
+    expect(ledger.latestMeetingOutcomeFor).not.toHaveBeenCalled();
   });
 
   it("researches an unknown sender on a real domain: enrich + site read, cost summed", async () => {

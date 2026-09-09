@@ -1159,6 +1159,41 @@ export async function runCadenceStepForProspect(
       };
     }
   }
+  // Meeting verdict (issue #578) — modelled on the suppression checks above:
+  // a ledger read returning a verdict, then a status change, before paying
+  // for a draft. Code-level on purpose, same principle as the ICP gate.
+  // Only 'held' is terminal here: a real conversation already happened, so
+  // an automated follow-up cadence has been obsoleted by it. A no-show is
+  // explicitly NOT terminal (the card: "a reason to write a different
+  // reply, not to stop the cadence") and cancelled/rescheduled meetings
+  // never happened at all, so neither stops anything — the cadence
+  // continues exactly as it would with no meeting on the prospect.
+  //
+  // dryRun must never mutate the live cadence (same rule the suppression
+  // and ICP checks above don't have to worry about because they only READ —
+  // this is the one gate here that both reads and writes). A preview pass
+  // (finding PRRT_kwDOSKzrBs6gwORi) still reports "skipped" so a caller sees
+  // the cadence would stop, but the actual stopCadence write — which clears
+  // the live schedule and any pending draft — only happens for a real run.
+  {
+    const meeting = ledger.latestMeetingOutcomeFor(opts.prospectId);
+    if (meeting?.outcome === "held") {
+      if (!opts.dryRun) {
+        ledger.stopCadence({
+          prospectId: opts.prospectId,
+          playName: opts.playName,
+          reason: "other",
+          note: "meeting held — cadence superseded by a real conversation",
+        });
+      }
+      return {
+        action: "skipped",
+        payload: null,
+        receiptIds: [],
+        note: "stopped: meeting held with founder",
+      };
+    }
+  }
   // Cross-workspace hold, same reasoning as the suppression check above:
   // decide before paying for a draft. Not a status change — the step stays
   // due and fires once the other workspace's touch ages out of the window.
