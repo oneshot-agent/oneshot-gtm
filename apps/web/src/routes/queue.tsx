@@ -1675,7 +1675,13 @@ function TriggersCard({ queueEmpty }: { queueEmpty: boolean | null }) {
   const setConfig = useMutation({
     mutationFn: (vars: { name: string; config: unknown; source: "editor" | "inline" }) =>
       api.setTriggerConfig(vars.name, vars.config),
-    onSuccess: (_data, vars) => {
+    onSuccess: (data, vars) => {
+      // Edge lint (issue #585) — warn, never refuse: the save already landed.
+      if (data.warnings && data.warnings.length > 0) {
+        toast.warning(`${vars.name} · yourEdge: ${data.warnings.join(" · ")}`, {
+          duration: 9000,
+        });
+      }
       // Close the JSON editor only when the save CAME from it — an inline
       // interval change on another row must not discard unsaved editor text.
       if (vars.source === "editor") {
@@ -2217,6 +2223,17 @@ function TriggerRowFragment(props: TriggerRowProps) {
                 className="font-mono text-[12px]"
                 spellCheck={false}
               />
+              {/yourEdge|yourClaim/.test(props.editing.text) && (
+                <div className="ln-note text-[12px] text-ink-cream-2">
+                  <code className="ln-mono text-[11.5px] text-[color:var(--ink-signal-2)]">
+                    yourEdge
+                  </code>{" "}
+                  is what you learned, not a pitch: 3–4 angles separated by{" "}
+                  <code className="ln-mono text-[11.5px]">//</code>, each opening with who it fits
+                  (&quot;For a founder selling to clinics —&quot;), then a named failure and what
+                  you found. The tool picks one per prospect.
+                </div>
+              )}
               <div className="flex items-center justify-between gap-2">
                 <div className="font-mono text-[11.5px] text-[color:var(--ink-blocked-2)]">
                   {props.editError ?? ""}

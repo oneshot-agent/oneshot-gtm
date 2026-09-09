@@ -3,6 +3,7 @@ export * from "./_cadence.ts";
 export * from "./_run-play.ts";
 export * from "./_metadata.ts";
 export * from "./_angles.ts";
+export * from "./_edge-lint.ts";
 export * from "./reply.ts";
 export * from "./registry.ts";
 export * from "./show-hn.ts";

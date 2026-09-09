@@ -191,9 +191,16 @@ function ActionChip({ action }: { action: ParsedStrategistAction }) {
         setDone(`disabled · ${action.trigger}`);
         toast.success(`disabled · ${action.trigger}`);
       } else if (action.kind === "apply-config" && action.config) {
-        await api.setTriggerConfig(action.trigger, action.config);
+        const saved = await api.setTriggerConfig(action.trigger, action.config);
         setDone(`config saved · ${action.trigger}`);
         toast.success(`config saved · ${action.trigger}`);
+        // Edge lint (issue #585): the strategist writes most edges, so this is
+        // where a flat or pitch-shaped one gets caught — warned, not refused.
+        if (saved.warnings && saved.warnings.length > 0) {
+          toast.warning(`${action.trigger} · yourEdge: ${saved.warnings.join(" · ")}`, {
+            duration: 9000,
+          });
+        }
       } else if (action.kind === "apply-pack") {
         const result = await api.applyPack(action.trigger);
         const readyCount = result.applied.filter((t) => t.ready).length;

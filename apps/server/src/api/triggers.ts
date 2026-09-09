@@ -13,6 +13,7 @@ import {
   type Readiness,
   type TriggerSpec,
 } from "@oneshot-gtm/find";
+import { describeEdgeWarning, lintEdge } from "@oneshot-gtm/plays";
 import type { RunTriggerResult, TriggerView } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
 
@@ -179,7 +180,20 @@ export async function setTriggerConfigRoute(
   } else {
     ledger.setTriggerConfig(name, JSON.stringify(body.config));
   }
-  return jsonResponse({ ok: true, name }, 200, req);
+  // Warn-tier edge lint (issue #585): this route is the one place both the
+  // strategist's apply-config chip and the /queue JSON editor write through,
+  // so it is where a founder learns their edge is a single flat pitch. Never
+  // a refusal — the save above already happened; readiness stays a non-empty
+  // check and `yourEdge: "x"` stays a valid fixture.
+  const cfg = body.config as Record<string, unknown>;
+  const edge =
+    typeof cfg["yourEdge"] === "string"
+      ? cfg["yourEdge"]
+      : typeof cfg["yourClaim"] === "string"
+        ? cfg["yourClaim"]
+        : null;
+  const warnings = edge ? lintEdge(edge).map(describeEdgeWarning) : [];
+  return jsonResponse({ ok: true, name, warnings }, 200, req);
 }
 
 /** Fire-and-forget: 202 on kick-off, 409 if already running. UI polls `GET /api/triggers`. */

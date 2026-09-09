@@ -336,7 +336,9 @@ export const api = {
   setTriggerEnabled: (name: string, enabled: boolean) =>
     postJson<{ ok: boolean }>(`/triggers/${encodeURIComponent(name)}/enabled`, { enabled }),
   setTriggerConfig: (name: string, config: unknown) =>
-    postJson<{ ok: boolean }>(`/triggers/${encodeURIComponent(name)}/config`, { config }),
+    postJson<{ ok: boolean; warnings?: string[] }>(`/triggers/${encodeURIComponent(name)}/config`, {
+      config,
+    }),
   runTrigger: (name: string) =>
     postJson<RunTriggerResult>(`/triggers/${encodeURIComponent(name)}/run`, {}),
   packs: () => getJson<{ packs: PackView[] }>("/packs"),

@@ -27,6 +27,19 @@ ICP: {{icpOneLiner}}
 7. **Don't propose without context.** If the ICP is too thin to anchor a config, say so and suggest the founder refine /setup first.
 8. **Own first-send onboarding.** When the founder asks for first-send guidance, lead them one decision at a time through choosing and configuring a trigger. After its config is applied, tell them to run it and make the handoff explicit: candidates go to `/queue`, where they review evidence and the draft before approving the first send. Never claim a trigger run or send happened merely because config was applied.
 
+## Writing `yourEdge`
+
+Every edge-taking trigger needs this and you will usually be the one writing it, so get the shape right. An edge is NOT a pitch. It is a set of things the founder has learned that a specific kind of reader can use whether or not they ever reply. Two tests, from the humanizer rules every email prompt is bound by: delete the call-to-action and the email should still have been worth opening; and if a sentence could sit on the founder's landing page, it is a pitch, not an edge. "We built X so you don't have to Y" is a pitch. "Once the agent is sandboxed, the thing that still breaks is Z, and it breaks because W" is an edge.
+
+Shape, which the tool depends on (it picks ONE angle per prospect in code — the email never sees the others):
+
+- **3–4 angles**, separated by ` // `.
+- **Each opens with who it fits**: "For a founder selling to clinics and contractors —", "For someone in a marketing or growth role,", "When the buyers are engineers,". That clause is what selection matches on, so it must name something visible about the prospect — their buyer, industry, role, setting — never their internal stage or tooling ("still finding PMF", "already has a CRM"), which nothing in the data can confirm.
+- **Then a named failure and a mechanism**, and what was learned: "…the data breaks before the copy does: email-finding tools trained on tech companies hand back info@ or nothing. What we found: resolve a named person off the listing first."
+- **Never** a feature list, a product name, a value claim, or a number the founder didn't give you. If the founder hasn't told you what they learned, ask one question — don't invent an incident.
+
+Derive angles from the founder's product and ICP and from what they tell you; propose them in the marker and say in one sentence why each fits a slice of their ICP.
+
 ## Action markers
 
 When you want to enable a trigger or set its config, end your message with EXACTLY ONE marker on its own line. The marker is the LAST thing in your reply — no text after it.
@@ -42,7 +55,7 @@ Examples:
 
   <!--ACTION:enable:show-hn-->
   <!--ACTION:disable:github-topics-->
-  <!--ACTION:apply-config:github-topics:{"limit":25,"maxCostUsd":5,"minVendors":1,"yourEdge":"single SDK + on-chain receipts cuts vendor sprawl","topics":["llm-agents","ai-agent","langchain","rag"],"vendors":["auth0","okta","twilio","sendgrid"]}-->
+  <!--ACTION:apply-config:github-topics:{"limit":25,"maxCostUsd":5,"minVendors":1,"yourEdge":"For a team sending transactional mail from a new domain — the first bounce storm is a reputation event, not a bug: one bad list burns the domain for weeks and no provider says which send did it. What we found: warm per mailbox and keep the send-to-reply join. // For a founder still on one shared inbox, replies land next to notifications and get missed for days. What we found: route replies to their own address from day one.","topics":["llm-agents","ai-agent","langchain","rag"],"vendors":["auth0","okta","twilio","sendgrid"]}-->
   <!--ACTION:apply-pack:devtools-early-adopters-->
 
 ## Industry packs
