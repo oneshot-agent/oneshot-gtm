@@ -90,7 +90,7 @@ function cadenceRank(status: string): number {
  */
 const LIVE_INBOX_TTL_MS = 30_000;
 type LiveInbox = { emails: Awaited<ReturnType<typeof listInbox>>["emails"]; hasMore: boolean };
-let liveInbox: { at: number; promise: Promise<LiveInbox> } | null = null;
+let liveInbox: { at: number; promise: Promise<LiveInbox>; settled: boolean } | null = null;
 
 /** Test-only: forget the shared live read between cases. */
 export function _resetLiveInboxCache(): void {
@@ -99,7 +99,12 @@ export function _resetLiveInboxCache(): void {
 
 function fetchLiveInbox(ledger: ReturnType<typeof getLedger>): Promise<LiveInbox> {
   const now = Date.now();
-  if (liveInbox && now - liveInbox.at < LIVE_INBOX_TTL_MS) return liveInbox.promise;
+  // A read still in flight is always shared, however long it has been
+  // running (the per-source deadlines can add up past the TTL); the TTL
+  // only governs how long a SETTLED result is reused.
+  if (liveInbox && (!liveInbox.settled || now - liveInbox.at < LIVE_INBOX_TTL_MS)) {
+    return liveInbox.promise;
+  }
   const promise = (async (): Promise<LiveInbox> => {
     // Wide window: matching only runs over what's fetched, and mailbox noise
     // would bury a genuine prospect reply in a small one.
@@ -133,11 +138,19 @@ function fetchLiveInbox(ledger: ReturnType<typeof getLedger>): Promise<LiveInbox
     }
     return { emails, hasMore };
   })();
-  liveInbox = { at: now, promise };
-  promise.catch(() => {
-    // A failed read must not be served to the next caller.
-    if (liveInbox?.promise === promise) liveInbox = null;
-  });
+  const entry = { at: now, promise, settled: false };
+  liveInbox = entry;
+  promise.then(
+    () => {
+      // The reuse window starts when the result exists, not when the read began.
+      entry.settled = true;
+      entry.at = Date.now();
+    },
+    () => {
+      // A failed read must not be served to the next caller.
+      if (liveInbox === entry) liveInbox = null;
+    },
+  );
   return promise;
 }
 

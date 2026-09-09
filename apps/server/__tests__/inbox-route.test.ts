@@ -111,6 +111,26 @@ describe("inbox route — persisted drafts & sent replies", () => {
     vi.clearAllMocks();
   });
 
+  it("keeps sharing a read that is still in flight past the TTL instead of starting a second one", async () => {
+    listInboxMock.mockReset();
+    let release!: (v: { emails: unknown[]; has_more: boolean }) => void;
+    listInboxMock.mockReturnValue(
+      new Promise<{ emails: unknown[]; has_more: boolean }>((resolve) => {
+        release = resolve;
+      }),
+    );
+    getInboxThreadsMock.mockReturnValue(new Map());
+    const req = () => new Request("http://x/api/inbox");
+    const first = listInboxRoute(req());
+    // 31 s later the first read is still pending: the second caller must join it.
+    const nowSpy = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 31_000);
+    const second = listInboxRoute(req());
+    release({ emails: [], has_more: false });
+    await Promise.all([first, second]);
+    nowSpy.mockRestore();
+    expect(listInboxMock).toHaveBeenCalledTimes(1);
+  });
+
   it("listInboxRoute annotates each email with its persisted thread", async () => {
     getInboxThreadsMock.mockReturnValue(
       new Map([
