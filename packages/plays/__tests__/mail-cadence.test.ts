@@ -24,6 +24,7 @@ const {
   nextStepInfo,
   runCadenceStepForProspect,
   skipDirectMailStep,
+  getPriorStepsForProspect,
   sendDirectMailCadenceStep,
   sendCadenceStepBatch,
 } = await import("../src/_cadence.ts");
@@ -173,6 +174,18 @@ describe("optional motion mail steps", () => {
     skipDirectMailStep({ prospectId: id, playName: PLAY });
     expect(step(id)?.label).toBe("touch 1");
     expect(ledger.getCadence(id, PLAY)!.current_step).toBe(1);
+    // #610: the skip is part of the history, and never a send.
+    const events = ledger.listSequenceEventsForProspectPlay(id, PLAY);
+    expect(events.map((e) => [e.step_index, e.channel, e.status])).toEqual([
+      [1, "direct_mail", "skipped"],
+    ]);
+    expect(getPriorStepsForProspect(id, PLAY)).toMatchObject([
+      { stepIndex: 1, label: "letter skipped", body: null, status: "skipped" },
+    ]);
+    expect(ledger.hasSentSequenceEvent(id, PLAY, 1)).toBe(false);
+    expect(ledger.countSends({ playName: PLAY })).toBe(0);
+    expect(ledger.eventsByPlay().find((r) => r.play_name === PLAY)?.sent ?? 0).toBe(0);
+    expect(ledger.listSequenceEventsForProspect(id)).toEqual([]);
   });
   it("prevents batches from dispatching reviewed mail; individual accepted orders advance exactly once", async () => {
     configure(2);

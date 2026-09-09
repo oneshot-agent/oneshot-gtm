@@ -13,6 +13,31 @@ const row = {
 };
 
 describe("buildProspectTimeline", () => {
+  it("names a skipped letter plainly, with no subject (#610)", () => {
+    const out = buildProspectTimeline({
+      row,
+      sequenceEvents: [
+        {
+          id: 2,
+          prospect_id: 1,
+          play_name: "post-funding",
+          step_index: 2,
+          channel: "direct_mail",
+          status: "skipped",
+          metadata_json: JSON.stringify({ label: "Direct mail", reason: "skipped by founder" }),
+          created_at: "2026-09-06 07:30:00",
+          replied_at: null,
+          bounced_at: null,
+        },
+      ],
+      replies: [],
+      channelEvents: [],
+      outcomes: [],
+    });
+    const ev = out.find((e) => e.kind === "sequence");
+    expect(ev).toMatchObject({ label: "letter skipped", detail: null, playName: "post-funding" });
+  });
+
   it("orders SQLite and ISO timestamps together, newest first", () => {
     const out = buildProspectTimeline({
       row: { ...row, sent_at: "2026-09-02T10:00:00.000Z" },

@@ -25,8 +25,10 @@ On **Cadences**, click a prospect's **Review mail** button. Both saved addresses
 
 An accepted order advances the cadence once. Its next follow-up allows at least eight business days for printing and transit, plus two calendar days to read; longer configured delays remain in force. This is an estimate, not a delivery guarantee. Skipping mail keeps the normal next-touch delay. Postal delivery does not prove readership.
 
+To skip a letter, use **Skip mail** on the prospect's row on **Cadences**, in its open sheet, or in the mail review; the toolbar offers one action for every cadence waiting on a letter. A skipped letter is recorded as *letter skipped* in the cadence history and the prospect's timeline, and never counts as a send.
+
 ## CLI
 
 ```
-direct-mail list · upload · preview · refresh · approve · send · cancel
+direct-mail list · upload · preview · refresh · approve · send · cancel · skip
 ```

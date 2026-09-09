@@ -7,6 +7,7 @@ import {
   previewCadenceStepBatch,
   sendCadenceStep,
   sendCadenceStepBatch,
+  skipDirectMailStep,
   type BatchItem,
   type PriorStepRow,
 } from "@oneshot-gtm/plays";
@@ -61,24 +62,18 @@ function toView(
     subject: s.subject,
     body: s.body,
     sentAt: s.sentAt,
+    status: s.status,
   }));
+  const mailDraft = getLedger().findDirectMail(
+    row.prospect_id,
+    row.play_name,
+    row.enrolled_at,
+    row.current_step + 1,
+  );
   return {
-    nextStepChannel: getLedger().findDirectMail(
-      row.prospect_id,
-      row.play_name,
-      row.enrolled_at,
-      row.current_step + 1,
-    )
-      ? "direct_mail"
-      : (next?.channel ?? null),
+    nextStepChannel: mailDraft ? "direct_mail" : (next?.channel ?? null),
     businessAddress: getLedger().getMailAddress(`prospect:${row.prospect_id}`),
-    mailDraftId:
-      getLedger().findDirectMail(
-        row.prospect_id,
-        row.play_name,
-        row.enrolled_at,
-        row.current_step + 1,
-      )?.id ?? null,
+    mailDraftId: mailDraft?.id ?? null,
     prospectId: row.prospect_id,
     prospectEmail: row.prospect_email,
     prospectName: row.prospect_name,
@@ -480,4 +475,93 @@ export async function sendCadenceBatchRoute(req: Request): Promise<Response> {
     }
   })();
   return jsonResponse({ accepted: claimed.length }, 202, req);
+}
+
+/**
+ * Skip a cadence's pending direct-mail step and move on to the next email
+ * (issue #610). Mirrors `stopCadence`'s gates, then defers to
+ * `skipDirectMailStep`, which re-checks them and records the skip as a
+ * `skipped` sequence event. A mailpiece already submitted to the printer
+ * cannot be skipped from here — recover it in the mail review first.
+ */
+export function skipCadenceMailRoute(req: Request, params: Record<string, string>): Response {
+  const parsed = parseProspectAndPlay(req, params);
+  if (parsed instanceof Response) return parsed;
+  const { prospectId, playName } = parsed;
+  const ledger = getLedger();
+  const cadence = ledger.getCadence(prospectId, playName);
+  if (!cadence) return jsonResponse({ error: "cadence not found" }, 404, req);
+  if (cadence.status !== "active") {
+    return jsonResponse({ error: `cadence is already ${cadence.status}` }, 409, req);
+  }
+  if (cadence.sending_started_at) {
+    return jsonResponse(
+      { error: "cadence send is already in flight; wait for it to finish" },
+      409,
+      req,
+    );
+  }
+  const next = nextStepInfo(playName, cadence.current_step, prospectId);
+  const mailDraft = ledger.findDirectMail(
+    prospectId,
+    playName,
+    cadence.enrolled_at,
+    cadence.current_step + 1,
+  );
+  if (!mailDraft && next?.channel !== "direct_mail") {
+    return jsonResponse({ error: "the next step is not a letter" }, 409, req);
+  }
+  if (mailDraft?.started) {
+    return jsonResponse(
+      { error: "the mailpiece was already submitted; recover it in the mail review first" },
+      409,
+      req,
+    );
+  }
+  try {
+    skipDirectMailStep({ prospectId, playName });
+  } catch (err) {
+    return jsonResponse({ error: (err as Error).message }, 409, req);
+  }
+  const after = ledger.getCadence(prospectId, playName);
+  const following = after ? nextStepInfo(playName, after.current_step, prospectId) : null;
+  return jsonResponse(
+    {
+      ok: true,
+      currentStep: after?.current_step ?? cadence.current_step + 1,
+      status: after?.status ?? "active",
+      nextStepChannel: following?.channel ?? null,
+    },
+    200,
+    req,
+  );
+}
+
+export interface SkipMailBatchResult {
+  prospectId: number;
+  playName: string;
+  ok: boolean;
+  error?: string;
+}
+
+/**
+ * Skip the letter on many cadences at once (issue #610) — the founder who
+ * never meant to send post; the rows are unselectable for email batches so
+ * this takes its own item list. Sequential and per-item: one submitted
+ * mailpiece reports its reason and never stops the rest.
+ */
+export async function skipCadenceMailBatchRoute(req: Request): Promise<Response> {
+  const items = await parseBatchItems(req);
+  if (items instanceof Response) return items;
+  const results: SkipMailBatchResult[] = [];
+  for (const item of items) {
+    try {
+      skipDirectMailStep(item);
+      results.push({ ...item, ok: true });
+    } catch (err) {
+      results.push({ ...item, ok: false, error: (err as Error).message });
+    }
+  }
+  const skipped = results.filter((r) => r.ok).length;
+  return jsonResponse({ results, skipped, failed: results.length - skipped }, 200, req);
 }

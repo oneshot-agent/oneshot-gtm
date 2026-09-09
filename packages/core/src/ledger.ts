@@ -2799,12 +2799,18 @@ export class Ledger {
       .run(key, value);
   }
 
+  /**
+   * A play's prior steps for one prospect — every send, plus a letter the
+   * founder skipped (#610), so the cadence history says why step N never
+   * went out. The conversation view (`listSequenceEventsForProspect`) stays
+   * sends-only; so does every counter.
+   */
   listSequenceEventsForProspectPlay(prospectId: number, playName: string): SequenceEventRecord[] {
     return this.db
       .query(
         `SELECT * FROM sequence_events
          WHERE prospect_id = ? AND play_name = ?
-           AND status IN ('sent','delivered','replied')
+           AND status IN ('sent','delivered','replied','skipped')
          ORDER BY step_index ASC, id ASC`,
       )
       .all(prospectId, playName) as SequenceEventRecord[];
@@ -2841,7 +2847,7 @@ export class Ledger {
       .query(
         `SELECT * FROM sequence_events
          WHERE (${conditions})
-           AND status IN ('sent','delivered','replied')
+           AND status IN ('sent','delivered','replied','skipped')
          ORDER BY prospect_id ASC, play_name ASC, step_index ASC, id ASC`,
       )
       .all(...(args as never[])) as SequenceEventRecord[];
