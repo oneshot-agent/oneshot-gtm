@@ -31,14 +31,14 @@ describe("slack-notify", () => {
 
   describe("slackWebhookUrl", () => {
     it("returns empty string when config is null", () => {
-      vi.spyOn(config, "loadConfigCached").mockReturnValue({
+      vi.spyOn(config, "loadConfig").mockReturnValue({
         slackWebhookUrl: null,
       } as any);
       expect(slackWebhookUrl()).toBe("");
     });
 
     it("trims the configured URL", () => {
-      vi.spyOn(config, "loadConfigCached").mockReturnValue({
+      vi.spyOn(config, "loadConfig").mockReturnValue({
         slackWebhookUrl: "  https://hooks.slack.com/test  ",
       } as any);
       expect(slackWebhookUrl()).toBe("https://hooks.slack.com/test");
@@ -47,7 +47,7 @@ describe("slack-notify", () => {
 
   describe("notifySlackReplyReceived", () => {
     it("does nothing when webhook URL is not configured", async () => {
-      vi.spyOn(config, "loadConfigCached").mockReturnValue({
+      vi.spyOn(config, "loadConfig").mockReturnValue({
         slackWebhookUrl: null,
       } as any);
 
@@ -62,7 +62,7 @@ describe("slack-notify", () => {
     });
 
     it("posts correct payload when configured", async () => {
-      vi.spyOn(config, "loadConfigCached").mockReturnValue({
+      vi.spyOn(config, "loadConfig").mockReturnValue({
         slackWebhookUrl: "https://hooks.slack.com/test",
       } as any);
       fetchMock.mockResolvedValue({ ok: true } as Response);
@@ -96,7 +96,7 @@ describe("slack-notify", () => {
     });
 
     it("escapes Slack mrkdwn special characters in text to prevent @channel/@here/mention injection via untrusted subject/from_email", async () => {
-      vi.spyOn(config, "loadConfigCached").mockReturnValue({
+      vi.spyOn(config, "loadConfig").mockReturnValue({
         slackWebhookUrl: "https://hooks.slack.com/test",
       } as any);
       fetchMock.mockResolvedValue({ ok: true } as Response);
@@ -122,7 +122,7 @@ describe("slack-notify", () => {
     });
 
     it("does not throw on fetch failure", async () => {
-      vi.spyOn(config, "loadConfigCached").mockReturnValue({
+      vi.spyOn(config, "loadConfig").mockReturnValue({
         slackWebhookUrl: "https://hooks.slack.com/test",
       } as any);
       fetchMock.mockRejectedValue(new Error("Network error"));
@@ -144,7 +144,7 @@ describe("slack-notify", () => {
     });
 
     it("logs non-2xx responses", async () => {
-      vi.spyOn(config, "loadConfigCached").mockReturnValue({
+      vi.spyOn(config, "loadConfig").mockReturnValue({
         slackWebhookUrl: "https://hooks.slack.com/test",
       } as any);
       fetchMock.mockResolvedValue({ ok: false, status: 400 } as Response);
@@ -166,7 +166,7 @@ describe("slack-notify", () => {
 
   describe("notifySlackBounceRecorded", () => {
     it("posts correct payload", async () => {
-      vi.spyOn(config, "loadConfigCached").mockReturnValue({
+      vi.spyOn(config, "loadConfig").mockReturnValue({
         slackWebhookUrl: "https://hooks.slack.com/test",
       } as any);
       fetchMock.mockResolvedValue({ ok: true } as Response);
@@ -190,7 +190,7 @@ describe("slack-notify", () => {
     });
 
     it("escapes Slack mrkdwn special characters in bounce recipient/kind", async () => {
-      vi.spyOn(config, "loadConfigCached").mockReturnValue({
+      vi.spyOn(config, "loadConfig").mockReturnValue({
         slackWebhookUrl: "https://hooks.slack.com/test",
       } as any);
       fetchMock.mockResolvedValue({ ok: true } as Response);
@@ -240,7 +240,7 @@ describe("slack-notify", () => {
 
   describe("notifySlackDailySendSummary", () => {
     it("posts correct payload", async () => {
-      vi.spyOn(config, "loadConfigCached").mockReturnValue({
+      vi.spyOn(config, "loadConfig").mockReturnValue({
         slackWebhookUrl: "https://hooks.slack.com/test",
       } as any);
       fetchMock.mockResolvedValue({ ok: true } as Response);
@@ -268,7 +268,7 @@ describe("slack-notify", () => {
 
   describe("postDailySendSummaryIfDue", () => {
     it("does nothing when webhook URL is not configured", async () => {
-      vi.spyOn(config, "loadConfigCached").mockReturnValue({
+      vi.spyOn(config, "loadConfig").mockReturnValue({
         slackWebhookUrl: null,
       } as any);
 
@@ -279,7 +279,7 @@ describe("slack-notify", () => {
     });
 
     it("does nothing when day already processed", async () => {
-      vi.spyOn(config, "loadConfigCached").mockReturnValue({
+      vi.spyOn(config, "loadConfig").mockReturnValue({
         slackWebhookUrl: "https://hooks.slack.com/test",
       } as any);
 
@@ -293,7 +293,7 @@ describe("slack-notify", () => {
     });
 
     it("stamps watermark even on quiet days", async () => {
-      vi.spyOn(config, "loadConfigCached").mockReturnValue({
+      vi.spyOn(config, "loadConfig").mockReturnValue({
         slackWebhookUrl: "https://hooks.slack.com/test",
       } as any);
 
@@ -311,7 +311,7 @@ describe("slack-notify", () => {
     });
 
     it("does not throw on ledger errors", async () => {
-      vi.spyOn(config, "loadConfigCached").mockReturnValue({
+      vi.spyOn(config, "loadConfig").mockReturnValue({
         slackWebhookUrl: "https://hooks.slack.com/test",
       } as any);
 
@@ -327,7 +327,7 @@ describe("slack-notify", () => {
     });
 
     it("excludes events from the in-progress day (upper-bounded to the completed day)", async () => {
-      vi.spyOn(config, "loadConfigCached").mockReturnValue({
+      vi.spyOn(config, "loadConfig").mockReturnValue({
         slackWebhookUrl: "https://hooks.slack.com/test",
       } as any);
       fetchMock.mockResolvedValue({ ok: true } as Response);
@@ -365,7 +365,7 @@ describe("slack-notify", () => {
       // to the send date. Before eventsByPlay windowed `replied` on
       // replied_at, a reply landing after the send day's 24h window was
       // permanently dropped from every future daily summary.
-      vi.spyOn(config, "loadConfigCached").mockReturnValue({
+      vi.spyOn(config, "loadConfig").mockReturnValue({
         slackWebhookUrl: "https://hooks.slack.com/test",
       } as any);
       fetchMock.mockResolvedValue({ ok: true } as Response);
@@ -407,7 +407,7 @@ describe("slack-notify", () => {
 
   describe("non-blocking behavior", () => {
     it("catches all errors and never propagates them", async () => {
-      vi.spyOn(config, "loadConfigCached").mockImplementation(() => {
+      vi.spyOn(config, "loadConfig").mockImplementation(() => {
         throw new Error("Config explosion");
       });
 

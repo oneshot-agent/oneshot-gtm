@@ -28,7 +28,12 @@ let latestSentPlay: string | null = null;
 // v21 inbox_replies rows captured by the poll (id-keyed, INSERT OR IGNORE semantics).
 let persistedReplies: Array<{ id: string; kind?: string | null }> = [];
 // Audit-trail sequence events recorded outside recordProspectReply (bounced/unsubscribed).
-let seqEvents: Array<{ prospectId: number; playName: string; status: string }> = [];
+let seqEvents: Array<{
+  prospectId: number;
+  playName: string;
+  status: string;
+  bouncedAt?: string;
+}> = [];
 // Persisted intent classifications (issue #558): keyed by reply id, mirrors
 // the real ledger's inbox_replies.intent column that setInboxReplyIntent
 // writes and listInboxReplyIntents reads back.
@@ -107,11 +112,17 @@ vi.mock("@oneshot-gtm/core", async () => {
         if (isNew) persistedReplies.push(row as (typeof persistedReplies)[number]);
         return isNew;
       },
-      recordSequenceEvent: (input: { prospectId: number; playName: string; status: string }) => {
+      recordSequenceEvent: (input: {
+        prospectId: number;
+        playName: string;
+        status: string;
+        bouncedAt?: string;
+      }) => {
         seqEvents.push({
           prospectId: input.prospectId,
           playName: input.playName,
           status: input.status,
+          ...(input.bouncedAt !== undefined ? { bouncedAt: input.bouncedAt } : {}),
         });
       },
       setCadenceStatus: ({
@@ -615,7 +626,15 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
     expect(rows[0]?.status).toBe("bounced");
     expect(repliedSteps).toHaveLength(0);
     expect(seqEvents).toEqual([
-      { prospectId: 1, playName: "stack-consolidation", status: "bounced" },
+      {
+        prospectId: 1,
+        playName: "stack-consolidation",
+        status: "bounced",
+        // Occurrence time (the autoresponder's own received_at), not poll
+        // time — matches the DSN-bounce path's bouncedAt so both feed the
+        // Slack daily summary's occurrence window consistently.
+        bouncedAt: "2026-08-27T16:07:46.000Z",
+      },
     ]);
     expect(persistedReplies[0]?.kind).toBe("auto_permanent");
     expect(notifySlackReplyReceivedMock).not.toHaveBeenCalled();

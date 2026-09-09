@@ -541,6 +541,13 @@ async function walkInboxWindow(
               channel: "email",
               status,
               metadata: { reason: kind === "unsubscribe" ? "unsubscribe" : "auto-reply-permanent" },
+              // Occurrence time = when the autoresponder actually landed in the
+              // mailbox, not poll time — same reasoning as the DSN-bounce path
+              // in pollInboxBounces, so the Slack daily summary's occurrence
+              // window credits this to the right UTC day. unsubscribe rows
+              // don't carry bouncedAt: it's a bounced-column semantic, and this
+              // status is only "bounced" for the auto_permanent branch.
+              ...(status === "bounced" ? { bouncedAt: e.received_at } : {}),
             });
             ledger.setCadenceStatus({ prospectId: prospect.id, playName: cad.play_name, status });
             out.cadencesStopped++;

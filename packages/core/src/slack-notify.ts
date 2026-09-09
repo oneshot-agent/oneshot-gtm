@@ -1,4 +1,4 @@
-import { loadConfigCached } from "./config.ts";
+import { loadConfig } from "./config.ts";
 import { logEvent } from "./events.ts";
 import { getLedger } from "./ledger.ts";
 import type { OneShotConfig } from "./types.ts";
@@ -71,9 +71,16 @@ function escapeSlackText(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-/** Resolve the configured webhook URL; "" = feature off. */
+/**
+ * Resolve the configured webhook URL; "" = feature off. Reads via `loadConfig()`
+ * (not the process-memoized `loadConfigCached()`) on every call: this is checked
+ * once per event, not on a hot per-request path like telemetry, and the
+ * long-running server process must see a CLI-driven enable/disable of the
+ * webhook without a restart — a stale cached "on" would keep POSTing
+ * prospect data after the operator turned it off.
+ */
 export function slackWebhookUrl(
-  cfg: Pick<OneShotConfig, "slackWebhookUrl"> = loadConfigCached(),
+  cfg: Pick<OneShotConfig, "slackWebhookUrl"> = loadConfig(),
 ): string {
   return (cfg.slackWebhookUrl ?? "").trim();
 }
