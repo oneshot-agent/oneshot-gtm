@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, CheckCircle2, Loader2, Play, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import {
   parseQueueIds,
   type RunPlayEvent,
@@ -90,6 +91,13 @@ function RunPage() {
   const [cancelling, setCancelling] = useState(false);
   const [events, setEvents] = useState<RunPlayEvent[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // Every other page says what went wrong in a toast, where the eye already
+  // is. The banner under the form stays as the record; a validation refusal
+  // that only appeared down there read as a button that did nothing.
+  const fail = (message: string): void => {
+    setError(message);
+    toast.error(message);
+  };
   const navigate = Route.useNavigate();
   // Cross-route navigation (e.g. to /cadences for the deep-link from done mode).
   const globalNavigate = useNavigate();
@@ -182,7 +190,7 @@ function RunPage() {
         setDedupeKeys(pairs.map((p) => p.dedupeKey));
       } catch (err) {
         if (cancelledRef?.cancelled) return;
-        setError(`failed to load approved targets from queue: ${(err as Error).message}`);
+        fail(`failed to load approved targets from queue: ${(err as Error).message}`);
       }
     },
     [playName, schema, search.limit, search.ids],
@@ -337,7 +345,7 @@ function RunPage() {
       const extraDetail =
         missingExtras.length > 0 ? `run options: ${missingExtras.join(", ")}` : "";
       const detail = [rowDetail, extraDetail].filter(Boolean).join("; ");
-      setError(`fill in the required fields before dispatching — ${detail}`);
+      fail(`fill in the required fields before dispatching — ${detail}`);
       return;
     }
 
@@ -406,7 +414,7 @@ function RunPage() {
         }
       }
     } catch (err) {
-      setError((err as Error).message);
+      fail((err as Error).message);
     } finally {
       setRunning(false);
       // After a real-send run, drop rows whose draft actually shipped so
@@ -673,7 +681,7 @@ function RunPage() {
                 // cancelled state as soon as the row lands.
                 void api
                   .cancelRun(search.runId, "cancelled from the dashboard")
-                  .catch((e: unknown) => setError((e as Error).message))
+                  .catch((e: unknown) => fail((e as Error).message))
                   .finally(() => {
                     setCancelling(false);
                     void runQuery.refetch();
