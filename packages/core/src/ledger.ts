@@ -1222,6 +1222,39 @@ export class Ledger {
     return rows.map((r) => r.email);
   }
 
+  listInboxArchives(): Map<number, string> {
+    const rows = this.db
+      .query("SELECT prospect_id, archived_at FROM inbox_archives")
+      .all() as Array<{ prospect_id: number; archived_at: string }>;
+    return new Map(rows.map((r) => [r.prospect_id, r.archived_at]));
+  }
+
+  /** Compare the caller's visible replies under the same write lock as archiving. */
+  archiveInboxConversation(
+    prospectId: number,
+    observedReplyIds: string[],
+  ): "archived" | "stale" | "missing" {
+    return this.db
+      .transaction(() => {
+        const current = this.listInboxRepliesForProspect(prospectId).map((r) => r.id);
+        if (!current.length) return "missing" as const;
+        const observed = new Set(observedReplyIds);
+        if (observed.size !== current.length || current.some((id) => !observed.has(id)))
+          return "stale" as const;
+        this.db
+          .query(
+            "INSERT INTO inbox_archives(prospect_id, archived_at) VALUES (?, ?) ON CONFLICT(prospect_id) DO UPDATE SET archived_at=excluded.archived_at",
+          )
+          .run(prospectId, new Date().toISOString());
+        return "archived" as const;
+      })
+      .immediate();
+  }
+
+  restoreInboxConversation(prospectId: number): void {
+    this.db.query("DELETE FROM inbox_archives WHERE prospect_id=?").run(prospectId);
+  }
+
   /**
    * Persist one inbound reply (full body) keyed by provider email id.
    * INSERT OR IGNORE — re-sweeps and double captures are no-ops. Returns true
@@ -1241,28 +1274,33 @@ export class Ledger {
     messageId?: string | null;
     kind?: ReplyKind | null;
   }): boolean {
-    const res = this.db
-      .query(
-        `INSERT OR IGNORE INTO inbox_replies
+    return this.db
+      .transaction(() => {
+        const res = this.db
+          .query(
+            `INSERT OR IGNORE INTO inbox_replies
            (id, thread_key, prospect_id, play_name, from_email, subject, body,
             received_at, source_identity_id, thread_id, message_id, kind)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        row.id,
-        row.threadKey,
-        row.prospectId,
-        row.playName ?? null,
-        canonEmail(row.fromEmail),
-        row.subject ?? null,
-        row.body,
-        row.receivedAt,
-        row.sourceIdentityId ?? null,
-        row.threadId ?? null,
-        row.messageId ?? null,
-        row.kind ?? null,
-      );
-    return res.changes > 0;
+          )
+          .run(
+            row.id,
+            row.threadKey,
+            row.prospectId,
+            row.playName ?? null,
+            canonEmail(row.fromEmail),
+            row.subject ?? null,
+            row.body,
+            row.receivedAt,
+            row.sourceIdentityId ?? null,
+            row.threadId ?? null,
+            row.messageId ?? null,
+            row.kind ?? null,
+          );
+        if (res.changes > 0) this.restoreInboxConversation(row.prospectId);
+        return res.changes > 0;
+      })
+      .immediate();
   }
 
   /**

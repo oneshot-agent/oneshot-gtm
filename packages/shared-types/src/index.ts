@@ -970,6 +970,8 @@ export type ConversationItem =
 /** The full exchange with one prospect — ledger-backed, complete forever. */
 export interface ConversationView {
   prospectId: number;
+  /** Workspace-local archive; a new inbound reply clears it. */
+  archivedAt: string | null;
   name: string | null;
   company: string | null;
   email: string;
@@ -1004,6 +1006,14 @@ export interface InboxResult {
   hasMore: boolean;
   /** Present when the inbox fetch failed; replies will be empty. */
   error?: string;
+}
+
+export type InboxArchiveRequest =
+  | { prospectId: number; archived: true; observedReplyIds: string[] }
+  | { prospectId: number; archived: false };
+
+export interface InboxArchiveResult {
+  ok: true;
 }
 
 /** POST /api/inbox/draft-reply — generate an LLM reply draft for an inbound email. */

@@ -25,7 +25,13 @@ const notifySlackReplyReceivedMock = vi.fn(async () => {});
 const notifySlackBounceRecordedMock = vi.fn(async () => {});
 let knownProspect: { id: number } | null = null;
 
+const archiveConversationMock = vi.fn();
+const restoreConversationMock = vi.fn();
+const inboxArchivesMock = vi.fn(() => new Map<number, string>());
 const ledger = {
+  listInboxArchives: inboxArchivesMock,
+  archiveInboxConversation: archiveConversationMock,
+  restoreInboxConversation: restoreConversationMock,
   upsertInboxDraft: upsertInboxDraftMock,
   clearInboxDraft: clearInboxDraftMock,
   recordInboxSent: recordInboxSentMock,
@@ -88,6 +94,7 @@ vi.mock("../src/api/_reply-research.ts", () => ({
 }));
 
 const {
+  archiveInboxConversationRoute,
   _resetLiveInboxCache,
   draftReplyRoute,
   listInboxRoute,
@@ -303,6 +310,7 @@ describe("inbox route — persisted drafts & sent replies", () => {
         ],
       ]),
     );
+    inboxArchivesMock.mockReturnValueOnce(new Map([[7, "2026-09-09T12:00:00Z"]]));
     listProspectIdsWithRepliesMock.mockReturnValueOnce([7]);
     getProspectByIdMock.mockReturnValueOnce({
       id: 7,
@@ -342,6 +350,7 @@ describe("inbox route — persisted drafts & sent replies", () => {
     const out = (await res.json()) as {
       conversations: Array<{
         prospectId: number;
+        archivedAt: string | null;
         draftBody: string | null;
         items: Array<{ kind: string; at: string; body: string | null }>;
       }>;
@@ -349,6 +358,7 @@ describe("inbox route — persisted drafts & sent replies", () => {
     expect(out.conversations).toHaveLength(1);
     const conv = out.conversations[0]!;
     expect(conv.prospectId).toBe(7);
+    expect(conv.archivedAt).toBe("2026-09-09T12:00:00Z");
     // Saved composer draft rides along for the newest inbound's thread.
     expect(conv.draftBody).toBe("wip");
     // Timeline order: outreach (SQLite timestamp, normalized) → their reply → our manual answer.
@@ -716,5 +726,57 @@ describe("steerRoute — persists the generated redraft (round-1 correction, #48
     expect(draftInboxReplyMock).toHaveBeenCalledWith(
       expect.objectContaining({ dossier: null, angleJson: '{"hook":"steer path angle"}' }),
     );
+  });
+});
+
+describe("inbox archive endpoint", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getProspectByIdMock.mockReturnValue({ id: 42 });
+  });
+  it("archives the displayed snapshot", async () => {
+    archiveConversationMock.mockReturnValue("archived");
+    const res = await archiveInboxConversationRoute(
+      post("/api/inbox/archive", { prospectId: 42, archived: true, observedReplyIds: ["r1"] }),
+    );
+    expect(res.status).toBe(200);
+    expect(archiveConversationMock).toHaveBeenCalledWith(42, ["r1"]);
+    expect(recordInboxSentMock).not.toHaveBeenCalled();
+  });
+  it("returns a conflict when a new reply arrived", async () => {
+    archiveConversationMock.mockReturnValue("stale");
+    const res = await archiveInboxConversationRoute(
+      post("/api/inbox/archive", { prospectId: 42, archived: true, observedReplyIds: ["r1"] }),
+    );
+    expect(res.status).toBe(409);
+  });
+  it("restores without requiring a snapshot", async () => {
+    const res = await archiveInboxConversationRoute(
+      post("/api/inbox/archive", { prospectId: 42, archived: false }),
+    );
+    expect(res.status).toBe(200);
+    expect(restoreConversationMock).toHaveBeenCalledWith(42);
+  });
+  it.each([
+    null,
+    {},
+    { prospectId: -1, archived: false },
+    { prospectId: 42, archived: true },
+    { prospectId: 42, archived: true, observedReplyIds: [3] },
+  ])("rejects malformed input %j", async (body) => {
+    expect((await archiveInboxConversationRoute(post("/api/inbox/archive", body))).status).toBe(
+      400,
+    );
+    expect(archiveConversationMock).not.toHaveBeenCalled();
+  });
+  it("rejects a missing prospect", async () => {
+    getProspectByIdMock.mockReturnValueOnce(null);
+    expect(
+      (
+        await archiveInboxConversationRoute(
+          post("/api/inbox/archive", { prospectId: 42, archived: false }),
+        )
+      ).status,
+    ).toBe(404);
   });
 });

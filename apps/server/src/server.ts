@@ -16,6 +16,7 @@ import {
 } from "./api/cadences.ts";
 import { listReceipts, getReceipt } from "./api/receipts.ts";
 import {
+  archiveInboxConversationRoute,
   draftReplyRoute,
   listInboxRoute,
   saveDraftRoute,
@@ -111,6 +112,7 @@ const routes: RouteEntry[] = [
   route("GET", "/api/receipts", listReceipts),
   route("GET", "/api/receipts/:id", getReceipt),
   route("GET", "/api/inbox", listInboxRoute),
+  route("POST", "/api/inbox/archive", archiveInboxConversationRoute),
   route("POST", "/api/inbox/draft-reply", draftReplyRoute),
   route("POST", "/api/inbox/draft", saveDraftRoute),
   route("POST", "/api/inbox/reply", sendReplyRoute),

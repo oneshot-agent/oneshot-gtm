@@ -291,3 +291,54 @@ describe("inbox_replies.intent (issue #480)", () => {
     expect(ledger.listUntriagedHumanReplies().map((r) => r.id)).toEqual(["msg-legacy"]);
   });
 });
+
+describe("conversation archive", () => {
+  it("persists across reopen and restores without deleting messages or drafts", () => {
+    record();
+    ledger.upsertInboxDraft({
+      threadKey: "thread-1",
+      inboundEmailId: "msg-1",
+      toEmail: "jane@prospect.example",
+      subject: "reply",
+      identityId: null,
+      body: "saved draft",
+    });
+    expect(ledger.archiveInboxConversation(1, ["msg-1"])).toBe("archived");
+    ledger.close();
+    ledger = new Ledger(dbPath);
+    expect(ledger.listInboxArchives().has(1)).toBe(true);
+    expect(ledger.getInboxThreads().get("thread-1")?.draftBody).toBe("saved draft");
+    ledger.restoreInboxConversation(1);
+    expect(ledger.listInboxArchives().has(1)).toBe(false);
+    expect(ledger.listInboxRepliesForProspect(1)).toHaveLength(1);
+  });
+  it("only reopens for a newly inserted inbound, including older timestamps on a different thread", () => {
+    record();
+    ledger.archiveInboxConversation(1, ["msg-1"]);
+    record();
+    ledger.setInboxReplyIntent("msg-1", "interested", "test");
+    ledger.recordInboxSent({
+      threadKey: "thread-1",
+      toEmail: "jane@prospect.example",
+      subject: "reply",
+      body: "sent",
+      identityId: null,
+      requestId: null,
+    });
+    expect(ledger.listInboxArchives().has(1)).toBe(true);
+    record({ id: "msg-2", threadKey: "thread-2", receivedAt: "2026-08-24T22:00:00.000Z" });
+    expect(ledger.listInboxArchives().has(1)).toBe(false);
+    expect(ledger.listInboxRepliesForProspect(1)).toHaveLength(2);
+  });
+  it("rejects an archive based on stale messages and does not affect another prospect", () => {
+    record();
+    record({ id: "other", prospectId: 2 });
+    ledger.archiveInboxConversation(2, ["other"]);
+    record({ id: "msg-2" });
+    expect(ledger.archiveInboxConversation(1, ["msg-1"])).toBe("stale");
+    expect(ledger.listInboxArchives().has(1)).toBe(false);
+    expect(ledger.listInboxArchives().has(2)).toBe(true);
+    expect(ledger.archiveInboxConversation(1, ["msg-1", "msg-2"])).toBe("archived");
+    expect(ledger.archiveInboxConversation(999, ["missing"])).toBe("missing");
+  });
+});

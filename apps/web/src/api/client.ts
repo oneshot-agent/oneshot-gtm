@@ -1,3 +1,4 @@
+import type { InboxArchiveRequest, InboxArchiveResult } from "@oneshot-gtm/shared-types";
 import type {
   AddProspectResult,
   BusinessMailAddress,
@@ -168,6 +169,8 @@ export const api = {
     return getJson<{ receipts: ReceiptView[] }>(`/receipts${qs ? `?${qs}` : ""}`);
   },
   inbox: () => getJson<InboxResult>("/inbox"),
+  archiveInboxConversation: (req: InboxArchiveRequest) =>
+    postJson<InboxArchiveResult>("/inbox/archive", req),
   draftInboxReply: (req: InboxDraftReplyRequest) =>
     postJson<InboxDraftReplyResult>("/inbox/draft-reply", req),
   saveInboxDraft: (req: InboxSaveDraftRequest) =>
