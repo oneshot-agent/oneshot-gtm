@@ -40,6 +40,19 @@ function requestOf(fn: ReturnType<typeof respondWith>): {
   };
 }
 
+/** A mocked 400 whose body rejects the given reasoning effort tier. */
+function rejectedReasoning(effort: string) {
+  return {
+    ok: false,
+    status: 400,
+    headers: { get: () => null },
+    text: () =>
+      Promise.resolve(
+        `{"error":{"message":"reasoning.effort must be 'high' for this model, got '${effort}'"}}`,
+      ),
+  };
+}
+
 async function errorFrom(p: Promise<unknown>): Promise<Error> {
   return await p.then(
     () => {
@@ -138,16 +151,6 @@ describe("complete() truncation — openrouter", () => {
 });
 
 describe("complete() reasoning switch — openrouter vs openai", () => {
-  const rejectedReasoning = (effort: string) => ({
-    ok: false,
-    status: 400,
-    headers: { get: () => null },
-    text: () =>
-      Promise.resolve(
-        `{"error":{"message":"reasoning.effort must be 'high' for this model, got '${effort}'"}}`,
-      ),
-  });
-
   it("turns reasoning off on OpenRouter requests, where it would eat the small max_tokens budgets", async () => {
     const fetchMock = respondWith({
       choices: [{ message: { content: "{}" }, finish_reason: "stop" }],
@@ -318,6 +321,43 @@ describe("complete() reasoning switch — openrouter vs openai", () => {
     const retryBody = JSON.parse((fn.mock.calls[1]![1] as RequestInit).body as string);
     expect(retryBody).toHaveProperty("reasoning", { effort: "minimal" });
     expect(retryBody).toHaveProperty("max_tokens", 2000);
+  });
+
+  it("stops climbing and surfaces the real error when a ladder rung 400s for a reason unrelated to reasoning effort", async () => {
+    // Round-2 finding: completeWithLowestSupportedEffort's catch used to
+    // advance the ladder on ANY 400, without checking the body was actually
+    // about reasoning/effort (unlike the outer isMandatoryReasoningRejection
+    // gate used to enter the ladder). If the ladder's own raised max_tokens
+    // allowance pushed a request over the model's hard token ceiling, that
+    // unrelated 400 got misread as "this effort is unsupported" and burned
+    // every remaining rung on requests that could never succeed, then
+    // reported the wrong (last, unrelated) error instead of the real one.
+    cfg.model = "hard-ceiling-model";
+    const notReasoningRelated = {
+      ok: false,
+      status: 400,
+      headers: { get: () => null },
+      text: () =>
+        Promise.resolve(
+          '{"error":{"message":"This model\'s maximum context length is 4096 tokens"}}',
+        ),
+    };
+    const fn = vi
+      .fn()
+      // probe: disableReasoning -> rejected as mandatory
+      .mockResolvedValueOnce(rejectedReasoning("disabled"))
+      // first ladder rung's raised max_tokens trips an unrelated 400.
+      .mockResolvedValueOnce(notReasoningRelated);
+    global.fetch = fn as unknown as typeof fetch;
+
+    const err = await errorFrom(
+      complete({ messages: [{ role: "user", content: "hi" }], maxTokens: 500, maxAttempts: 1 }),
+    );
+
+    expect(err.message).toContain("maximum context length is 4096 tokens");
+    // Exactly the probe + the one doomed rung — never climbs the remaining
+    // three rungs on a request that could never succeed.
+    expect(fn).toHaveBeenCalledTimes(2);
   });
 
   it("persists a learned mandatory-reasoning model AND its verified working effort to disk, so the next process skips the probe round trip", async () => {

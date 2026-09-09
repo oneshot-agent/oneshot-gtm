@@ -379,11 +379,16 @@ async function completeWithLowestSupportedEffort(
       return result;
     } catch (err) {
       lastErr = err;
-      // Anything other than a 400 (a 429, a 5xx, a timeout) is not "this
-      // effort is unsupported" — it is weather the outer retry loop in
-      // complete() already knows how to classify. Only a 400 means "try the
-      // next rung up".
-      if (!(err instanceof LlmError) || err.status !== 400) throw err;
+      // Anything other than a reasoning-specific 400 (a 429, a 5xx, a
+      // timeout, or a 400 caused by something else entirely — e.g. the
+      // raised max_tokens allowance itself tripping the model's own hard
+      // token ceiling) is not "this effort is unsupported" — it is either
+      // weather the outer retry loop in complete() already knows how to
+      // classify, or a real error this ladder must surface immediately
+      // instead of burning every remaining rung on a guaranteed-failing
+      // request. Reuse the same reasoning-body check the outer dispatch used
+      // to enter the ladder in the first place.
+      if (!isMandatoryReasoningRejection(err)) throw err;
     }
   }
   throw lastErr;
