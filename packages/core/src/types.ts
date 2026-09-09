@@ -255,6 +255,45 @@ export interface InterviewRecord {
   created_at: string;
 }
 
+export type MeetingOutcome = "held" | "no_show" | "cancelled" | "rescheduled";
+/** 'exact' (email-identity, auto-linked) | 'suggested'/'ambiguous' (fuzzy, review-only) | 'dismissed' (founder said no, sticks until the attendee set changes) | null (no candidate at all). */
+export type MeetingMatchStatus = "exact" | "suggested" | "ambiguous" | "dismissed" | null;
+export type MeetingMatchMethod = "name_domain" | "domain" | "name" | "description" | null;
+
+/** One `meetings` row (v34) — a calendar event, possibly a prospect call. */
+export interface MeetingRecord {
+  calendar_id: string;
+  event_id: string;
+  ical_uid: string | null;
+  recurring_event_id: string | null;
+  status: string;
+  summary: string | null;
+  all_day: number;
+  starts_at: string | null;
+  ends_at: string | null;
+  event_timezone: string | null;
+  organizer_email: string | null;
+  /** The founder's own (self:true) attendee responseStatus, e.g. 'accepted' | 'declined' | 'tentative' | 'needsAction'. */
+  self_response: string | null;
+  external_attendee_count: number;
+  /** JSON array of external attendee emails, capped ~20. */
+  external_attendees_json: string | null;
+  attendees_omitted: number;
+  prospect_id: number | null;
+  suggested_prospect_id: number | null;
+  match_status: MeetingMatchStatus;
+  match_method: MeetingMatchMethod;
+  match_confidence: number | null;
+  outcome: MeetingOutcome | null;
+  outcome_note: string | null;
+  outcome_recorded_at: string | null;
+  outcome_prompted_at: string | null;
+  event_updated_at: string | null;
+  first_seen_at: string;
+  last_seen_at: string;
+  attendees_fingerprint: string | null;
+}
+
 export interface OneShotConfig {
   walletMode: "cdp" | "private-key";
   llmProvider: "openrouter" | "openai" | "anthropic";
@@ -389,6 +428,25 @@ export interface OneShotConfig {
    * never consult it. Set from `config spend-ceiling <amount>` or `/setup`.
    */
   dailySpendCeilingUsd: number | null;
+  /**
+   * The Gmail identity (pool `id`, e.g. `gmail:jn@freebutter.ai`) whose
+   * calendar the scheduler polls for past meetings needing an outcome
+   * (issue #577). Null = feature off, entirely inert — no poll, no logging,
+   * no `meetings` writes. Must be a `provider: 'gmail'` identity carrying
+   * the calendar.readonly scope; `removeIdentity` clears this back to null
+   * when the pointed-at identity is removed, and the poller itself tolerates
+   * a dangling id (skip, log once) in case this file is hand-edited.
+   */
+  calendarIdentityId: string | null;
+  /**
+   * Which calendar of `calendarIdentityId`'s account to poll — a Google
+   * Calendar id, e.g. "primary" or an email-shaped secondary-calendar id.
+   * Default "primary": most founders' bookings land on their main calendar,
+   * and the /setup picker shows a 7-day event count per calendar because a
+   * founder cannot reliably state which one their booking tool actually
+   * writes to. Only meaningful when `calendarIdentityId` is set.
+   */
+  calendarId: string;
 }
 
 export type QueueStatus = "pending" | "approved" | "rejected" | "sent" | "expired";

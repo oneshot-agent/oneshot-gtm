@@ -69,8 +69,19 @@ export function resolveIdentities(cfg: OneShotConfig): EmailIdentity[] {
  * Persist a freshly authorized Gmail account (token → chmod-600 store,
  * identity → pool). The legacy pool is materialized first so existing prospect
  * pins survive; re-auth only refreshes the token, tuned caps are left alone.
+ *
+ * `calendarOnly` (issue #577): the connect flow's `?purpose=calendar` path —
+ * a mailbox authorized purely to read its calendar must register at
+ * `maxPerDay: 0` (never sends) instead of the warm-up ramp, or connecting it
+ * silently enrols the account as a sender. Only applies to a genuinely NEW
+ * identity: re-authing an existing sender (`created: false`) must never touch
+ * its tuned caps, calendar purpose or not.
  */
-export function registerGmailIdentity(input: { address: string; refreshToken: string }): {
+export function registerGmailIdentity(input: {
+  address: string;
+  refreshToken: string;
+  calendarOnly?: boolean;
+}): {
   identityId: string;
   created: boolean;
 } {
@@ -86,7 +97,7 @@ export function registerGmailIdentity(input: { address: string; refreshToken: st
     provider: "gmail",
     label: input.address,
     address: input.address,
-    ...WARMUP_DEFAULTS,
+    ...(input.calendarOnly ? { maxPerDay: 0, warmup: null } : WARMUP_DEFAULTS),
   });
   saveConfig({ ...cfg, emailIdentities: pool });
   return { identityId, created: true };
@@ -215,7 +226,16 @@ export function removeIdentity(identityId: string): { removed: boolean } {
   } catch {
     // token-store cleanup is best-effort; the identity is gone either way.
   }
-  saveConfig({ ...cfg, emailIdentities: next });
+  saveConfig({
+    ...cfg,
+    emailIdentities: next,
+    // A removed identity can't be polled — leaving the pointer dangling
+    // would either silently stop the calendar poll (poller sees an unknown
+    // id and skips) or, worse, resolve against whatever identity id happens
+    // to be reused later. Clearing it here makes the feature visibly "off"
+    // in /setup rather than invisibly broken.
+    calendarIdentityId: cfg.calendarIdentityId === identityId ? null : cfg.calendarIdentityId,
+  });
   return { removed: true };
 }
 

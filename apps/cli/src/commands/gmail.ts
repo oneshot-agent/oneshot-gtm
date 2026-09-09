@@ -9,6 +9,7 @@ import {
   resolveCanaryPair,
   runPlacementCanary,
   SAME_DOMAIN_WARNING,
+  saveGmailToken,
   saveSecrets,
   secretsPath,
   SINGLE_SEED_CAVEAT,
@@ -116,13 +117,16 @@ export async function commandGmailAuth(): Promise<void> {
     }
 
     let refreshToken: string;
+    let scope: string | null;
     try {
-      refreshToken = await exchangeGmailAuthCode({
+      const exchanged = await exchangeGmailAuthCode({
         code: outcome.code,
         clientId,
         clientSecret,
         redirectUri,
       });
+      refreshToken = exchanged.refreshToken;
+      scope = exchanged.scope;
     } catch (err) {
       warn((err as Error).message);
       return;
@@ -136,6 +140,10 @@ export async function commandGmailAuth(): Promise<void> {
     const { emailAddress } = await getGmailProfile({ id: "pending", refreshToken });
     _resetGmailCache();
     const { identityId, created } = registerGmailIdentity({ address: emailAddress, refreshToken });
+    // registerGmailIdentity's saveGmailToken call doesn't carry the scope;
+    // overwrite it here so `doctor`/`setup` can tell whether this consent
+    // actually granted calendar access (issue #577).
+    saveGmailToken(identityId, { refreshToken, address: emailAddress, scope });
     ok(`Saved refresh token for ${c.cyan(emailAddress)} (${c.dim(secretsPath())} dir)`);
 
     if (created) {

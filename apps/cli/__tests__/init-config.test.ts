@@ -27,6 +27,8 @@ const current = {
   clientId: "client-1",
   slackWebhookUrl: null,
   dailySpendCeilingUsd: null,
+  calendarIdentityId: null,
+  calendarId: "primary",
 } satisfies OneShotConfig;
 
 describe("init config writer", () => {

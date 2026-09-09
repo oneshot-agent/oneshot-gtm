@@ -540,6 +540,93 @@ export function migrateLedgerSchema(db: Database): void {
   // eventsByPlay can window bounces the same way it windows replies, via
   // COALESCE(bounced_at, created_at).
   addColumnIfMissing(db, "sequence_events", "bounced_at", "TEXT");
+  // v34 (issue #577): past calendar meetings needing an outcome. Composite
+  // PK because a Google Calendar event id is only unique WITHIN one
+  // calendar. `singleEvents=true` derives a recurring instance's id from its
+  // ORIGINAL start, so it survives a reschedule — recurring_event_id is kept
+  // so a moved instance is never forked into a ghost row. `ical_uid` is
+  // indexed (not unique) because the same meeting on two calendars produces
+  // two distinct (calendar_id, event_id) rows sharing one iCalUID.
+  //
+  // Every write here MUST be an idempotent `ON CONFLICT DO UPDATE`, never
+  // `INSERT OR REPLACE` (a cancellation stub carries almost no fields and
+  // would wipe summary/prospect_id/outcome) and never `INSERT OR IGNORE`
+  // (unlike an immutable inbox_replies row, an event mutates in place —
+  // reschedules and cancellations are updates to the SAME row, not new
+  // ones). See `upsertMeeting` in ledger.ts for the COALESCE(excluded.col,
+  // meetings.col) pattern this requires.
+  db.exec(`
+      CREATE TABLE IF NOT EXISTS meetings (
+        calendar_id                TEXT NOT NULL,
+        event_id                   TEXT NOT NULL,
+        ical_uid                   TEXT,
+        recurring_event_id         TEXT,
+        status                     TEXT NOT NULL DEFAULT 'confirmed',
+        summary                    TEXT,
+        all_day                    INTEGER NOT NULL DEFAULT 0,
+        starts_at                  TEXT,
+        ends_at                    TEXT,
+        event_timezone             TEXT,
+        organizer_email            TEXT,
+        -- The founder's own (self:true) attendee responseStatus. Distinct
+        -- from match_status (which is about PROSPECT identification, not
+        -- the founder's RSVP) — a declined event is excluded from the
+        -- pending-outcome nudge but the row is kept, never dropped.
+        self_response              TEXT,
+        external_attendee_count    INTEGER NOT NULL DEFAULT 0,
+        -- Capped ~20 entries; sourced from attendees ∪ {organizer, creator}
+        -- minus the founder's own addresses. Never the raw attendees[]
+        -- payload — description/dial-in PINs must never land here either.
+        external_attendees_json    TEXT,
+        attendees_omitted          INTEGER NOT NULL DEFAULT 0,
+        prospect_id                INTEGER,
+        suggested_prospect_id      INTEGER,
+        -- 'exact' | 'suggested' | 'ambiguous' | 'dismissed' | NULL (no
+        -- candidate at all — a self-block or an unmatched event).
+        match_status               TEXT,
+        -- 'name_domain' | 'domain' | 'name' | 'description' | NULL for an
+        -- 'exact' match (email-identity, no fuzzy method to name).
+        match_method               TEXT,
+        match_confidence           REAL,
+        -- 'held' | 'no_show' | 'cancelled' | 'rescheduled', founder-set only.
+        outcome                    TEXT,
+        outcome_note               TEXT,
+        outcome_recorded_at        TEXT,
+        -- Cleared (not the outcome) when a reschedule changes starts_at —
+        -- a stale nudge must withdraw, but a recorded outcome must survive.
+        outcome_prompted_at        TEXT,
+        -- The API's own 'updated' timestamp on this event — the
+        -- idempotency guard: if this hasn't advanced since last_seen_at,
+        -- the poll should touch only last_seen_at and skip re-deriving
+        -- everything else.
+        event_updated_at           TEXT,
+        first_seen_at              TEXT NOT NULL DEFAULT (datetime('now')),
+        last_seen_at               TEXT NOT NULL DEFAULT (datetime('now')),
+        -- Sorted, joined external emails. The fingerprint is what makes a
+        -- founder's dismiss STICK: re-matching only runs when this value
+        -- changes between polls, so a dismissed suggestion is never
+        -- silently re-proposed on an unchanged attendee list.
+        attendees_fingerprint      TEXT,
+        PRIMARY KEY (calendar_id, event_id)
+      );
+      -- The pending-outcome nudge query's exact WHERE clause, as a partial
+      -- index: only rows that could ever match it are indexed.
+      CREATE INDEX IF NOT EXISTS idx_meetings_pending_outcome
+        ON meetings(ends_at)
+        WHERE outcome IS NULL AND status = 'confirmed' AND all_day = 0
+          AND prospect_id IS NOT NULL;
+      -- The founder-facing review list (unmatched/suggested/ambiguous rows).
+      CREATE INDEX IF NOT EXISTS idx_meetings_match_status
+        ON meetings(match_status, starts_at);
+      -- Per-prospect meeting timeline.
+      CREATE INDEX IF NOT EXISTS idx_meetings_prospect
+        ON meetings(prospect_id, starts_at);
+      -- Duplicate detection: the same meeting on two calendars has two ids
+      -- and one iCalUID. Partial (most rows carry one) — indexing NULLs
+      -- would cost space for a column that's never queried on for them.
+      CREATE INDEX IF NOT EXISTS idx_meetings_ical_uid
+        ON meetings(ical_uid) WHERE ical_uid IS NOT NULL;
+    `);
 }
 
 /**

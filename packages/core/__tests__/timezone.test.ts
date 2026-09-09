@@ -9,6 +9,7 @@ import {
   localDayOffset,
   localShortDate,
   localWeekday,
+  naiveLocalToInstant,
   resolveEventZone,
 } from "../src/timezone.ts";
 
@@ -217,5 +218,45 @@ describe("calendar-day helpers", () => {
     expect(localWeekday("whenever", "America/Los_Angeles")).toBeNull();
     expect(localShortDate("whenever", "America/Los_Angeles")).toBeNull();
     expect(formatLocalDay("whenever", "America/Los_Angeles")).toBeNull();
+  });
+});
+
+describe("naiveLocalToInstant (issue #577 — all-day calendar events)", () => {
+  it("anchors a bare date to midnight in the given zone", () => {
+    // 2026-08-26 00:00 in Los Angeles is 2026-08-26T07:00:00Z (PDT, UTC-7).
+    expect(naiveLocalToInstant("2026-08-26", "America/Los_Angeles")).toBe(
+      "2026-08-26T07:00:00.000Z",
+    );
+  });
+
+  it("round-trips through formatLocalDay for the SAME zone", () => {
+    const instant = naiveLocalToInstant("2026-08-26", "America/Los_Angeles")!;
+    expect(formatLocalDay(instant, "America/Los_Angeles")).toBe("Wednesday, August 26, 2026");
+  });
+
+  it("anchors a naive date-time to that wall clock in the given zone", () => {
+    // 2026-08-26 14:00 in Vienna (CEST, UTC+2) is 2026-08-26T12:00:00Z.
+    expect(naiveLocalToInstant("2026-08-26T14:00:00", "Europe/Vienna")).toBe(
+      "2026-08-26T12:00:00.000Z",
+    );
+  });
+
+  it("handles a DST transition correctly (fall-back, LA)", () => {
+    // 2026-11-01 01:30 in LA, BEFORE the fall-back at 2am, is still PDT (UTC-7).
+    expect(naiveLocalToInstant("2026-11-01T01:30:00", "America/Los_Angeles")).toBe(
+      "2026-11-01T08:30:00.000Z",
+    );
+  });
+
+  it("returns null for an unrecognized zone", () => {
+    expect(naiveLocalToInstant("2026-08-26", "Mars/Olympus")).toBeNull();
+  });
+
+  it("returns null for unparseable input", () => {
+    expect(naiveLocalToInstant("not a date", "America/Los_Angeles")).toBeNull();
+  });
+
+  it("returns null for an impossible calendar date", () => {
+    expect(naiveLocalToInstant("2026-02-30", "America/Los_Angeles")).toBeNull();
   });
 });

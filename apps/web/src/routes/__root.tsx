@@ -4,6 +4,7 @@ import type { QueryClient } from "@tanstack/react-query";
 import {
   Activity,
   BarChart3,
+  CalendarClock,
   Feather,
   Inbox,
   Layers,
@@ -43,6 +44,7 @@ interface NavItem {
     | "/prospects"
     | "/inbox"
     | "/cadences"
+    | "/meetings"
     | "/receipts"
     | "/measure"
     | "/plays"
@@ -50,7 +52,7 @@ interface NavItem {
   label: string;
   icon: ComponentType<{ size?: number; className?: string }>;
   /** Which alert-data key, if any, lights a dot next to this nav item. */
-  alert?: "queue-pending" | "doctor-fail" | "inbox-positive";
+  alert?: "queue-pending" | "doctor-fail" | "inbox-positive" | "meetings-pending";
 }
 
 const NAV: NavItem[] = [
@@ -59,6 +61,7 @@ const NAV: NavItem[] = [
   { to: "/prospects", label: "Prospects", icon: Users },
   { to: "/inbox", label: "Replies", icon: Mail, alert: "inbox-positive" },
   { to: "/cadences", label: "Cadences", icon: Layers },
+  { to: "/meetings", label: "Meetings", icon: CalendarClock, alert: "meetings-pending" },
   { to: "/receipts", label: "Receipts", icon: Receipt },
   { to: "/measure", label: "Measure", icon: BarChart3 },
   { to: "/plays", label: "Plays", icon: Feather },
@@ -92,6 +95,14 @@ function RootLayout() {
   const inboxAlertQuery = useQuery({
     queryKey: ["inbox"],
     queryFn: () => api.inbox(),
+    refetchInterval: 60_000,
+  });
+  // A past meeting with no outcome logged (issue #577) — same idea as the
+  // inbox dot: the founder should never have to open /meetings to notice one
+  // is waiting.
+  const meetingsAlertQuery = useQuery({
+    queryKey: ["meetings"],
+    queryFn: api.meetings,
     refetchInterval: 60_000,
   });
 
@@ -130,6 +141,7 @@ function RootLayout() {
     // — it clears once the founder replies to the thread or records a deal
     // outcome, so the dot doesn't stay lit forever after the first use.
     "inbox-positive": (inboxAlertQuery.data?.conversations ?? []).some((c) => c.awaitingReply),
+    "meetings-pending": (meetingsAlertQuery.data?.awaitingOutcome.length ?? 0) > 0,
   };
 
   return (
@@ -308,5 +320,6 @@ function alertLabel(alert: NavItem["alert"]): string {
   if (alert === "queue-pending") return "pending candidates waiting for review";
   if (alert === "doctor-fail") return "doctor has a failing check";
   if (alert === "inbox-positive") return "a positive reply is waiting for a decision";
+  if (alert === "meetings-pending") return "a past meeting is waiting for an outcome";
   return "";
 }

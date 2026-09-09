@@ -4,6 +4,7 @@ import {
   type TelemetryOutcome,
   postDailySendSummaryIfDue,
   refreshPendingDirectMail,
+  withDeadline,
 } from "@oneshot-gtm/core";
 import {
   nextSleepMs,
@@ -11,7 +12,12 @@ import {
   runPendingRetries,
   type TriggerRunOutcome,
 } from "@oneshot-gtm/find";
-import { backfillMailAddresses, pollInboxBounces, pollInboxReplies } from "@oneshot-gtm/plays";
+import {
+  backfillMailAddresses,
+  pollCalendarMeetings,
+  pollInboxBounces,
+  pollInboxReplies,
+} from "@oneshot-gtm/plays";
 import { reportServerExecution } from "./telemetry.ts";
 
 /**
@@ -46,6 +52,12 @@ const REPLY_POLL_MAX_MS = 5 * 60_000;
  * nothing, while replies are time-sensitive (cadence might send again).
  */
 const BOUNCE_POLL_INTERVAL_MS = 30 * 60_000;
+/**
+ * Calendar poll throttle (issue #577): mirrors the bounce sweep's cadence —
+ * nothing about a meeting is minute-sensitive, so there's no reason to poll
+ * it on the same ~tick-length cadence as replies.
+ */
+const CALENDAR_POLL_INTERVAL_MS = 10 * 60_000;
 
 export function startScheduler(): SchedulerHandle {
   // Demo mode idles: firing triggers would hit placeholder credentials and
@@ -83,6 +95,17 @@ export function startScheduler(): SchedulerHandle {
   // kept identical to bouncePollClean for the same "carry forward, don't
   // reset" reason) doesn't silently re-arm to clean.
   let replyPollClean = true;
+  // 0 = never polled, so the first tick can fire the calendar poll too.
+  let lastCalendarPollAt = 0;
+  // The calendar poll is intentionally NOT included in sweepClean (issue
+  // #577) — it must not join bouncePollClean/replyPollClean for
+  // postDailySendSummaryIfDue's gate. A calendar outage has nothing to do
+  // with whether every SEND-side event for the day is recorded, and folding
+  // it in would let a calendar hiccup permanently defer the daily summary
+  // watermark. Kept as its own variable, outside the tick closure, purely
+  // so its OWN next poll can see whether the last one was clean if that
+  // ever becomes relevant — nothing currently reads it.
+  let calendarPollClean = true;
 
   const tick = async (): Promise<void> => {
     if (cancelled) return;
@@ -181,6 +204,31 @@ export function startScheduler(): SchedulerHandle {
           "warn",
         );
       }
+      // Calendar poll (issue #577): a free read, not a spend-gated trigger,
+      // so it belongs in the tick body rather than the TRIGGERS registry.
+      // Throttled like the bounce sweep — nothing about a meeting is
+      // minute-sensitive. Isolated in its own try/catch (wrapping its own
+      // internal withDeadline) so a calendar outage can't skip trigger
+      // scheduling or the reply poll. Idle (no-op) in demo mode or when no
+      // calendarIdentityId is configured — pollCalendarMeetings itself
+      // handles both and returns `idle: true` rather than this call site
+      // needing to check.
+      let meetingsIngested = 0;
+      if (Date.now() - lastCalendarPollAt >= CALENDAR_POLL_INTERVAL_MS) {
+        lastCalendarPollAt = Date.now();
+        try {
+          const calendarPoll = await withDeadline(pollCalendarMeetings(), 60_000, "calendar poll");
+          meetingsIngested = calendarPoll.meetingsIngested;
+          calendarPollClean = calendarPoll.clean;
+        } catch (err) {
+          calendarPollClean = false;
+          logEvent(
+            "scheduler.calendar_poll.failed",
+            { message_120: ((err as Error).message ?? "").slice(0, 120) },
+            "warn",
+          );
+        }
+      }
       // Daily send summary to Slack: fires once per completed UTC day when
       // slackWebhookUrl is set. Isolated like the reply poll — failure must
       // not skip trigger scheduling. Gated on BOTH pollers' cleanliness
@@ -208,6 +256,8 @@ export function startScheduler(): SchedulerHandle {
         bouncesRecorded,
         mailRefreshed,
         mailRefreshFailed,
+        meetingsIngested,
+        calendarPollClean,
         source: "server",
       });
       if (cancelled) return;

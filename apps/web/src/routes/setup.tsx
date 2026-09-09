@@ -7,6 +7,7 @@ import { api } from "../api/client.ts";
 import { Skeleton } from "../components/primitives/Skeleton.tsx";
 import { CredentialsSection } from "../components/setup/CredentialsSection.tsx";
 import { EmailTransportSection } from "../components/setup/EmailTransportSection.tsx";
+import { CalendarSection } from "../components/setup/CalendarSection.tsx";
 import { FounderSection } from "../components/setup/FounderSection.tsx";
 import { IcpSection } from "../components/setup/IcpSection.tsx";
 import { LlmSection } from "../components/setup/LlmSection.tsx";
@@ -236,6 +237,7 @@ function Sections({
         smartleadKeyEpoch={smartleadKeyEpoch}
         onDirtyChange={onDirtyChange}
       />
+      <CalendarSection {...common} identities={status.identities ?? []} />
       <ReviewQueueSection {...common} />
       <TelemetrySection {...common} />
       <CredentialsSection

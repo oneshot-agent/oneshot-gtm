@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { homedir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
+import { CALENDAR_READONLY_SCOPE } from "./gmail.ts";
 import { safeParseJsonRecord } from "./json.ts";
 import type { OneShotConfig } from "./types.ts";
 
@@ -55,6 +56,8 @@ const DEFAULTS: OneShotConfig = {
   timezone: null,
   clientId: null,
   dailySpendCeilingUsd: null,
+  calendarIdentityId: null,
+  calendarId: "primary",
 };
 
 export function configDir(): string {
@@ -264,6 +267,22 @@ const GMAIL_TOKENS_PATH = join(CONFIG_DIR, "gmail-tokens.json");
 export interface GmailTokenEntry {
   refreshToken: string;
   address: string;
+  /**
+   * Space-delimited scopes Google granted at consent time (issue #577).
+   * `undefined`/absent means "unknown, pre-dates scope tracking" and is
+   * always read as NOT having calendar access — an absent scope must never
+   * be treated as "unknown, try anyway": a Gmail-only token making a
+   * Calendar call just burns a 403 for nothing, and worse, the caller has
+   * no way to distinguish a real revoke from a token this old.
+   *
+   * NOT authoritative on its own: a scope can be revoked at
+   * myaccount.google.com without invalidating the refresh token, so the API
+   * itself can answer 403 ACCESS_TOKEN_SCOPE_INSUFFICIENT while this string
+   * still claims the scope. Callers that see that specific error must clear
+   * the scope here (see `clearGmailTokenCalendarScope`) so the reconnect
+   * affordance reappears.
+   */
+  scope?: string | null;
 }
 
 /**
@@ -287,6 +306,7 @@ export function loadGmailTokens(): Record<string, GmailTokenEntry> {
       out[id] = {
         refreshToken: e.refreshToken,
         address: typeof e.address === "string" ? e.address : "",
+        scope: typeof e.scope === "string" ? e.scope : null,
       };
     }
   }
@@ -309,6 +329,33 @@ export function deleteGmailToken(identityId: string): void {
   const all = loadGmailTokens();
   if (!(identityId in all)) return;
   delete all[identityId];
+  writeFileSync(GMAIL_TOKENS_PATH, JSON.stringify(all, null, 2));
+}
+
+/**
+ * True when the stored scope string for this identity includes Calendar
+ * read access. Absent scope (pre-#577 token, or one this codebase never
+ * saw the grant for) reads as false, never "unknown, try anyway" — see the
+ * `GmailTokenEntry.scope` doc.
+ */
+export function hasCalendarScope(entry: GmailTokenEntry | null | undefined): boolean {
+  if (!entry?.scope) return false;
+  return entry.scope.split(/\s+/).includes(CALENDAR_READONLY_SCOPE);
+}
+
+/**
+ * Clear the persisted scope for one identity WITHOUT touching its refresh
+ * token — used when a live API call answers `403
+ * ACCESS_TOKEN_SCOPE_INSUFFICIENT` even though the stored scope claims
+ * calendar access (a scope revoked at myaccount.google.com doesn't
+ * invalidate the refresh token, so this is the only signal that arrives).
+ * A no-op if the identity has no stored token.
+ */
+export function clearGmailTokenScope(identityId: string): void {
+  const all = loadGmailTokens();
+  const entry = all[identityId];
+  if (!entry) return;
+  entry.scope = null;
   writeFileSync(GMAIL_TOKENS_PATH, JSON.stringify(all, null, 2));
 }
 

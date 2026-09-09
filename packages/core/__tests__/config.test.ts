@@ -98,6 +98,8 @@ describe("bootstrapClientId", () => {
     timezone: null,
     clientId: null,
     dailySpendCeilingUsd: null,
+    calendarIdentityId: null,
+    calendarId: "primary",
   };
 
   it("mints a UUID-shaped clientId when none is stored", () => {

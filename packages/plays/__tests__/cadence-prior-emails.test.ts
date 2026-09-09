@@ -31,6 +31,8 @@ vi.mock("@oneshot-gtm/core", async () => {
       timezone: null,
       clientId: null,
       dailySpendCeilingUsd: null,
+      calendarIdentityId: null,
+      calendarId: "primary",
     }),
     getLedger: () => ({
       findDirectMail: () => null,
@@ -112,6 +114,8 @@ function ctx(prospectId = 42, angleJson: string | null = null) {
       timezone: null,
       clientId: null,
       dailySpendCeilingUsd: null,
+      calendarIdentityId: null,
+      calendarId: "primary",
     },
     metadata: {},
   };
