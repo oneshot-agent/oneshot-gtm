@@ -84,8 +84,19 @@ vi.mock("../src/api/_reply-research.ts", () => ({
   gatherReplyContext: gatherReplyContextMock,
 }));
 
-const { draftReplyRoute, listInboxRoute, saveDraftRoute, sendReplyRoute, steerRoute } =
-  await import("../src/api/inbox.ts");
+const {
+  _resetLiveInboxCache,
+  draftReplyRoute,
+  listInboxRoute,
+  saveDraftRoute,
+  sendReplyRoute,
+  steerRoute,
+} = await import("../src/api/inbox.ts");
+
+// The route shares one live mailbox read for 30s; every case starts fresh.
+beforeEach(() => {
+  _resetLiveInboxCache();
+});
 
 function post(path: string, body: unknown): Request {
   return new Request(`http://localhost${path}`, {

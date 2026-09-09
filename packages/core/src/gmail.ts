@@ -91,10 +91,28 @@ const LEGACY_CACHE_KEY = "__legacy_env__";
 const tokenCache = new Map<string, { token: string; expiresAt: number }>();
 const profileCache = new Map<string, { emailAddress: string }>();
 
+/**
+ * Fetched messages, keyed by account + Gmail message id. A Gmail message is
+ * immutable once it exists, and every inbox poll (the nav dot and the /inbox
+ * page each minute, the scheduler every few minutes) re-lists the same
+ * 30-day window and used to re-fetch every message in it with
+ * `format=full` — up to 200 `messages.get` calls per account per poll, which
+ * is what tripped Gmail's per-user-per-minute "Total Query Cost" quota across
+ * all three mailboxes at once. With this cache a repeat poll pays for the
+ * list call plus only the ids it has not seen. Bounded so a long-running
+ * server cannot grow without limit; insertion order makes eviction FIFO.
+ */
+const messageCache = new Map<
+  string,
+  InboxEmail & { message_id?: string; auto_submitted?: boolean }
+>();
+const MESSAGE_CACHE_MAX = 4000;
+
 /** Test-only: clears the memoized access tokens + profiles (all accounts). */
 export function _resetGmailCache(): void {
   tokenCache.clear();
   profileCache.clear();
+  messageCache.clear();
 }
 
 export async function getGmailAccessToken(account?: GmailAccount): Promise<string> {
@@ -429,10 +447,13 @@ export async function listGmailReplies(
     account,
   );
   const ids = (list.messages ?? []).map((m) => m.id);
+  const cachePrefix = `${account?.id ?? LEGACY_CACHE_KEY}:`;
   const emails = await parallelMap(
     ids,
     4,
     async (id): Promise<InboxEmail & { message_id?: string; auto_submitted?: boolean }> => {
+      const cached = messageCache.get(cachePrefix + id);
+      if (cached) return cached;
       const msg = await gmailJson<GmailMessageMeta>(
         `/messages/${id}?format=full`,
         undefined,
@@ -441,7 +462,7 @@ export async function listGmailReplies(
       // RFC 2822 Message-ID — needed as In-Reply-To/References on a threaded reply.
       const messageId = header(msg, "Message-ID");
       const autoSubmitted = isAutoSubmitted(msg);
-      return {
+      const email = {
         id: msg.id,
         from: header(msg, "From"),
         subject: header(msg, "Subject"),
@@ -451,6 +472,12 @@ export async function listGmailReplies(
         ...(messageId ? { message_id: messageId } : {}),
         ...(autoSubmitted ? { auto_submitted: true } : {}),
       };
+      if (messageCache.size >= MESSAGE_CACHE_MAX) {
+        const oldest = messageCache.keys().next().value;
+        if (oldest !== undefined) messageCache.delete(oldest);
+      }
+      messageCache.set(cachePrefix + id, email);
+      return email;
     },
   );
   // has_more from Gmail's own paging: a nextPageToken means the query matched

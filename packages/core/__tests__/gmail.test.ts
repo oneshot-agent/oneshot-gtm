@@ -561,3 +561,56 @@ describe("listGmailReplies", () => {
     expect(out.has_more).toBe(true);
   });
 });
+
+describe("listGmailReplies message cache", () => {
+  const tokenResponse = () =>
+    new Response(JSON.stringify({ access_token: "tok", expires_in: 3600 }), { status: 200 });
+  const full = (id: string) =>
+    JSON.stringify({
+      id,
+      threadId: `t-${id}`,
+      internalDate: "1757000000000",
+      payload: {
+        headers: [
+          { name: "From", value: "a@b.example" },
+          { name: "Subject", value: "hi" },
+          { name: "Message-ID", value: `<${id}@b>` },
+        ],
+        mimeType: "text/plain",
+        body: { data: Buffer.from("hello").toString("base64url") },
+      },
+    });
+
+  it("fetches each message body once across polls; a repeat poll pays for the list only", async () => {
+    const gets: string[] = [];
+    let listIds = ["m1", "m2"];
+    const fetchMock = vi.fn(async (url: string | URL) => {
+      const u = String(url);
+      if (u.startsWith("https://oauth2.googleapis.com/")) return tokenResponse();
+      if (u.includes("/messages?")) {
+        return new Response(JSON.stringify({ messages: listIds.map((id) => ({ id })) }), {
+          status: 200,
+        });
+      }
+      const id = u.match(/\/messages\/([^?]+)/)?.[1] ?? "";
+      gets.push(id);
+      return new Response(full(id), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const first = await listGmailReplies({ limit: 10 });
+    expect(first.emails.map((e) => e.id)).toEqual(["m1", "m2"]);
+    expect(gets).toEqual(["m1", "m2"]);
+
+    // Same window again, plus one new message: only the new id is fetched.
+    listIds = ["m1", "m2", "m3"];
+    const second = await listGmailReplies({ limit: 10 });
+    expect(second.emails.map((e) => e.id)).toEqual(["m1", "m2", "m3"]);
+    expect(gets).toEqual(["m1", "m2", "m3"]);
+    expect(second.emails[0]?.body).toBe("hello");
+
+    // The cache is per account: a different account re-fetches.
+    await listGmailReplies({ limit: 10 }, { id: "gmail:other", refreshToken: "r" });
+    expect(gets.length).toBe(6);
+  });
+});

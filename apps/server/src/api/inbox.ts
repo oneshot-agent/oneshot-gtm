@@ -77,19 +77,37 @@ function cadenceRank(status: string): number {
  * cadence status when available. Live fetch — no storage. The SDK exposes only
  * inboxList (no reply/markRead), so this is read-only.
  */
-export async function listInboxRoute(req: Request): Promise<Response> {
-  const ledger = getLedger();
+/**
+ * The live mailbox read, shared by every caller that lands inside the window:
+ * the nav's alert dot and the /inbox page each poll once a minute and used to
+ * fire two full fetches (list + every message body, across every Gmail
+ * account) within the same second — enough, with the scheduler's own poll,
+ * to trip Gmail's per-user-per-minute query-cost quota on all mailboxes at
+ * once. One in-flight promise is handed to concurrent callers, and the result
+ * is reused for `LIVE_INBOX_TTL_MS`; failures are never cached. Reads only —
+ * the opportunistic capture below still runs per request against whatever
+ * this returns.
+ */
+const LIVE_INBOX_TTL_MS = 30_000;
+type LiveInbox = { emails: Awaited<ReturnType<typeof listInbox>>["emails"]; hasMore: boolean };
+let liveInbox: { at: number; promise: Promise<LiveInbox> } | null = null;
 
-  let emails: Awaited<ReturnType<typeof listInbox>>["emails"];
-  let hasMore = false;
-  try {
+/** Test-only: forget the shared live read between cases. */
+export function _resetLiveInboxCache(): void {
+  liveInbox = null;
+}
+
+function fetchLiveInbox(ledger: ReturnType<typeof getLedger>): Promise<LiveInbox> {
+  const now = Date.now();
+  if (liveInbox && now - liveInbox.at < LIVE_INBOX_TTL_MS) return liveInbox.promise;
+  const promise = (async (): Promise<LiveInbox> => {
     // Wide window: matching only runs over what's fetched, and mailbox noise
     // would bury a genuine prospect reply in a small one.
     const result = await listInbox({ limit: 200 });
-    emails = result.emails;
+    let emails = result.emails;
     // Truthful truncation signal — the page must never present a clamped
     // window as the entire mailbox.
-    hasMore = result.has_more;
+    const hasMore = result.has_more;
     // Known repliers get a targeted all-time fetch on top of the window: the
     // ledger knows who replied, and their mail must never be pushed out by
     // noise or the broad query's 30d recency cutoff. Best-effort in its own
@@ -101,7 +119,7 @@ export async function listInboxRoute(req: Request): Promise<Response> {
         const seen = new Set(emails.map((e) => e.id));
         const extra = targeted.filter((e) => !seen.has(e.id));
         if (extra.length > 0) {
-          emails = [...emails, ...extra].sort(
+          emails = [...emails, ...extra].toSorted(
             (a, b) => new Date(b.received_at).getTime() - new Date(a.received_at).getTime(),
           );
         }
@@ -113,6 +131,25 @@ export async function listInboxRoute(req: Request): Promise<Response> {
         "warn",
       );
     }
+    return { emails, hasMore };
+  })();
+  liveInbox = { at: now, promise };
+  promise.catch(() => {
+    // A failed read must not be served to the next caller.
+    if (liveInbox?.promise === promise) liveInbox = null;
+  });
+  return promise;
+}
+
+export async function listInboxRoute(req: Request): Promise<Response> {
+  const ledger = getLedger();
+
+  let emails: LiveInbox["emails"];
+  let hasMore = false;
+  try {
+    const live = await fetchLiveInbox(ledger);
+    emails = live.emails;
+    hasMore = live.hasMore;
   } catch (err) {
     logEvent(
       "inbox.list_failed",
