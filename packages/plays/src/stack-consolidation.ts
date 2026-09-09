@@ -67,7 +67,7 @@ const stackConsolidationDef: EmailPlayDef<StackConsolidationTarget> = {
     [
       `FOUNDER: ${cfg.founderName}`,
       `PRODUCT: ${cfg.productOneLiner}`,
-      `PROSPECT: ${t.name} at ${t.company}`,
+      `PROSPECT: ${t.name}${t.company ? ` at ${t.company}` : ""}`,
       `STACK: ${t.vendorStack}`,
       `YOUR EDGE: ${t.yourEdge}`,
       `DOSSIER:\n${prep.dossier || "(dry-run)"}`,
