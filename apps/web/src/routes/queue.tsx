@@ -1,9 +1,7 @@
 import { Explain } from "../components/primitives/Explain.tsx";
-import { PRIORITY_CONCEPTS } from "../lib/concepts.ts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
-  CalendarDays,
   Check,
   ChevronDown,
   ChevronRight,
@@ -18,7 +16,7 @@ import {
   UserPlus,
   X,
 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   blockingFlags,
@@ -62,7 +60,11 @@ import {
 } from "../lib/queue-helpers.ts";
 import { humanInterval } from "../lib/humanInterval.ts";
 import { priorityBreakdown, priorityChip } from "../lib/priorityChip.ts";
-import { rationaleLine } from "../lib/queueRationale.ts";
+import { fitReasonFor } from "../lib/queueRationale.ts";
+import { queueEvidence } from "../lib/queueEvidence.ts";
+import { heldSummary } from "../lib/flagLabels.ts";
+import { caseMeta, caseRows, type CaseRow } from "../lib/queueCase.ts";
+import { ReceiptEdge } from "../components/primitives/ReceiptEdge.tsx";
 import {
   companyFor,
   emailFor,
@@ -728,6 +730,23 @@ function QueuePage() {
   );
 }
 
+/** The eyebrow + hairline that opens each half of an open row's sheet. */
+function SheetHeading({ label, right }: { label: string; right?: React.ReactNode }) {
+  return (
+    <div className="mb-3 flex items-center gap-3">
+      <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+        {label}
+      </span>
+      <span className="h-px flex-1 bg-ink-rule" />
+      {right ? <span className="font-mono text-[11px] text-ink-muted">{right}</span> : null}
+    </div>
+  );
+}
+
+interface SheetRow extends CaseRow {
+  href?: string;
+}
+
 export function QueueRow({
   row,
   ranked,
@@ -766,12 +785,47 @@ export function QueueRow({
   const eventCity = eventCityFor(row.payload);
   const eventUrl = eventUrlFor(row.payload);
   const eventRole = eventRoleFor(row.payload);
-  const evidence = rationaleLine(row.playName, row.payload);
   const eventPassed = eventDate != null && eventIsPast(eventDate);
-  // Privacy mode suppresses reason text — freeform reasons can embed names
-  // and companies the structured <Pii> masking can't reach.
+  // Privacy mode suppresses the rationale — both halves are freeform text
+  // that can name a person or a company, which the structured <Pii> masking
+  // cannot reach inside. The row keeps its height so the list does not jump.
   const { masked } = usePrivacy();
+  // The row is a ledger entry: one line of identity, one line of why (#594).
+  // The why is the same shape on every play — the finder's signal as a small
+  // label, then the fit sentence every finder stamps (#592). The event's date
+  // rides on the signal label: it is what makes a luma row urgent.
+  const signal = queueEvidence(row.playName, row.payload);
+  const fitReason = fitReasonFor(row.payload);
+  const when = eventDate
+    ? `${humanizeEventDate(eventDate)}${eventPassed ? " · passed" : ""}`
+    : null;
+  const signalLabel = signal && when ? `${signal} · ${when}` : (signal ?? when);
   const prio = priorityChip(row.priority, masked, { shadow: !ranked });
+  const held = row.lastDraft && !row.lastDraft.sent ? heldSummary(row.lastDraft.flags) : null;
+  const detail = sourceDetail(row.source);
+  // The signal is already the row's label above; the sheet's meta line says
+  // only where the row came from and when.
+  const metaLine = caseMeta([detail, `found ${timeAgo(row.foundAt)}`]);
+  const sheetRows: SheetRow[] = [
+    ...(eventTitle
+      ? [{ key: "event", value: eventRole ? `${eventTitle} · ${eventRole}` : eventTitle }]
+      : []),
+    ...(eventCity ? [{ key: "where", value: eventCity }] : []),
+    ...(eventDate
+      ? [
+          {
+            key: "when",
+            value: `${humanizeEventDate(eventDate)} (${timeAgo(eventDate)})${eventPassed ? " · passed" : ""}`,
+          },
+        ]
+      : []),
+    ...(eventUrl ? [{ key: "link", value: "event page", href: eventUrl }] : []),
+    // The engine repeats the event as a reason ("Guest at <event>"); the
+    // event row above already says it.
+    ...(!masked && row.priority
+      ? caseRows(row.priority.reasons.filter((r) => !eventTitle || !r.includes(eventTitle)))
+      : []),
+  ];
   return (
     <>
       <tr
@@ -780,14 +834,15 @@ export function QueueRow({
           "transition-colors duration-[var(--dur-stamp)]",
           "hover:bg-ink-surface/60",
           zebra && "bg-ink-surface/20",
+          expanded && "bg-ink-surface",
           selected && "bg-[color:var(--ink-signal)]/8",
         )}
         onClick={onToggle}
       >
-        <td className="w-6 py-2 pl-4 pr-0 text-ink-faint">
+        <td className="w-6 py-[10px] pl-4 pr-0 text-ink-faint">
           {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         </td>
-        <td className="w-6 py-2" onClick={(e) => e.stopPropagation()}>
+        <td className="w-6 py-[10px]" onClick={(e) => e.stopPropagation()}>
           <label className="inline-flex cursor-pointer items-center">
             <input
               type="checkbox"
@@ -808,132 +863,113 @@ export function QueueRow({
             />
           </label>
         </td>
-        <td className="py-2">
-          <div className="text-ink-cream">{name ? <Pii kind="name">{name}</Pii> : "(unknown)"}</div>
-          <div className="font-mono text-[11px] text-ink-faint">
-            {email ? <Pii kind="email">{email}</Pii> : "—"}
-            {/*
-              Clamped, because `title` is a LinkedIn headline and some are
-              paragraphs: "Crypto Visionary & AI Strategist ⚡ | Revolutionizing
-              Retail Investing with AI-Driven Insights 🚀 | Empowering Web3
-              Success 🌍 | Non-Financial Advice ⚠️" rendered three lines and
-              made one row twice the height of its neighbours.
-
-              Only the title is clamped, not the whole line. Email, company and
-              the [in] link are short and are what tell two rows apart, so they
-              have to survive; the first few words of a headline carry the job
-              and the rest is self-promotion. Same treatment the evidence line
-              below already gets.
-            */}
-            {title ? (
-              <>
-                {/* Separator outside the clamp: `inline-block` + `truncate`
-                    (overflow-hidden) swallows the span's own leading space. */}
-                {" · "}
-                <span className="inline-block max-w-[38ch] truncate align-bottom text-ink-cream-2">
-                  {title}
+        {/* `w-full max-w-0`: take the width the fixed columns leave, and let
+            the two lines inside truncate at that width instead of stretching
+            the table. */}
+        <td className="w-full max-w-0 py-[10px] pr-6">
+          <div className="flex items-baseline gap-2 overflow-hidden whitespace-nowrap leading-5">
+            <span className="shrink-0 text-ink-cream">
+              {name ? <Pii kind="name">{name}</Pii> : "(unknown)"}
+            </span>
+            <span className="truncate font-mono text-[11px] text-ink-faint">
+              {email ? <Pii kind="email">{email}</Pii> : "—"}
+              {/*
+                The title is a LinkedIn headline and some are paragraphs, so
+                it alone is clamped; email, company and the [in] link are what
+                tell two rows apart and have to survive it.
+              */}
+              {title ? (
+                <>
+                  {" · "}
+                  <span className="inline-block max-w-[38ch] truncate align-bottom text-ink-cream-2">
+                    {title}
+                  </span>
+                </>
+              ) : null}
+              {company ? (
+                <>
+                  {" · "}
+                  <Pii kind="company">{company}</Pii>
+                </>
+              ) : null}
+              {linkedinUrl ? (
+                <a
+                  href={linkedinUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ml-1 text-ink-cream-2 underline decoration-ink-rule underline-offset-2 hover:text-ink-cream hover:decoration-ink-cream-2"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  [in]
+                </a>
+              ) : null}
+              {phone ? (
+                <span className="ml-1">
+                  · <Pii kind="phone">{phone}</Pii>
                 </span>
-              </>
-            ) : null}
-            {company ? (
-              <>
-                {" · "}
-                <Pii kind="company">{company}</Pii>
-              </>
-            ) : null}
-            {linkedinUrl ? (
-              <a
-                href={linkedinUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="ml-1 text-ink-cream-2 underline decoration-ink-rule underline-offset-2 hover:text-ink-cream hover:decoration-ink-cream-2"
-                onClick={(e) => e.stopPropagation()}
-              >
-                [in]
-              </a>
-            ) : null}
-            {phone ? (
-              <span className="ml-1 text-ink-faint">
-                · <Pii kind="phone">{phone}</Pii>
-              </span>
-            ) : null}
+              ) : null}
+            </span>
           </div>
-          {/*
-            Why this row is here at all. A queued candidate has no dossier yet,
-            so the finder's evidence is the only thing distinguishing one row
-            from the next, and it used to be reachable only by expanding.
-
-            Suppressed under privacy mode for the reason the priority reasons
-            are: it is freeform text that can name a person or a company, which
-            the structured <Pii> masking cannot reach inside.
-          */}
-          {evidence && !masked ? (
-            <div className="mt-0.5 max-w-[46ch] truncate text-[11px] text-ink-muted">
-              {evidence}
-            </div>
-          ) : null}
+          <div
+            className="truncate text-[12px] leading-4 text-ink-cream-2"
+            title={!masked && fitReason ? fitReason : undefined}
+          >
+            {masked ? (
+              <span className="text-ink-faint">rationale hidden in privacy mode</span>
+            ) : (
+              <>
+                {signalLabel ? (
+                  <span
+                    className={cn(
+                      "mr-2 inline-block max-w-[44ch] truncate align-bottom font-mono text-[10px] uppercase tracking-[0.08em]",
+                      eventPassed ? "text-ink-blocked-2" : "text-ink-muted",
+                    )}
+                  >
+                    {signalLabel}
+                  </span>
+                ) : null}
+                {fitReason ??
+                  (signalLabel ? null : (
+                    <span className="text-ink-faint">no rationale on this row yet</span>
+                  ))}
+              </>
+            )}
+          </div>
         </td>
-        <td className="py-2 text-ink-cream-2">
+        <td className="whitespace-nowrap py-[10px] pr-6 leading-4 text-ink-cream-2">
           {row.playName}
           {/* The source column is gone (redundant with play), but its meaningful
               suffix — which repo / cohort the finder matched — survives here. */}
-          {sourceDetail(row.source) && (
-            <div className="truncate font-mono text-[10.5px] text-ink-faint">
-              {sourceDetail(row.source)}
-            </div>
-          )}
+          {detail && <div className="font-mono text-[10.5px] text-ink-faint">{detail}</div>}
         </td>
-        <td className="py-2">
+        <td className="whitespace-nowrap py-[10px] pr-6">
           <div className="flex items-center gap-1.5">
             <Badge tone={statusTone(row.status)}>{row.status}</Badge>
-            {row.status !== "sent" && row.lastDraft && (
-              <Badge
-                tone={
-                  row.lastDraft.sent
-                    ? "receipt"
-                    : row.lastDraft.flags.length > 0
-                      ? "blocked"
-                      : "neutral"
-                }
-                title={
-                  row.lastDraft.sent
-                    ? "draft sent"
-                    : row.lastDraft.flags.length > 0
-                      ? `draft held · ${row.lastDraft.flags.length} flag(s)`
-                      : "draft preview"
-                }
-              >
-                draft
-              </Badge>
-            )}
+            {row.status !== "sent" &&
+              row.lastDraft &&
+              (row.lastDraft.sent ? (
+                <Badge tone="receipt">sent</Badge>
+              ) : held ? (
+                <Badge tone={held.kind === "lint" ? "blocked" : "spend"} title={held.text}>
+                  held · {row.lastDraft.flags.length} flag
+                  {row.lastDraft.flags.length === 1 ? "" : "s"}
+                </Badge>
+              ) : (
+                <Badge tone="neutral" title="draft preview">
+                  draft
+                </Badge>
+              ))}
             {prio && (
-              <span className="inline-flex items-center">
-                <Badge tone={prio.tone}>{prio.label}</Badge>
-                <Explain
-                  concept="shadowScore"
-                  detail={`${ranked ? "Ranked review uses priority to order candidates; it does not approve or send them." : "Experimental · shadow. Does not affect ordering or sending."} ${prio.title}`}
-                />
-              </span>
-            )}
-            {eventDate && (
-              <span
-                title={eventPassed ? `event passed · ${eventDate}` : eventDate}
-                className={cn(
-                  "inline-flex items-center gap-1 font-mono text-[10.5px]",
-                  eventPassed ? "text-ink-blocked" : "text-ink-muted",
-                )}
-              >
-                <CalendarDays size={11} className={eventPassed ? undefined : "text-ink-faint"} />
-                {humanizeEventDate(eventDate)}
-                {eventPassed && " · passed"}
-              </span>
+              <Badge tone={prio.tone} title={prio.title}>
+                {prio.label}
+              </Badge>
             )}
           </div>
         </td>
-        <td className="py-2 text-right font-mono text-[12px] text-ink-muted">
+        <td className="whitespace-nowrap py-[10px] text-right font-mono text-[12px] text-ink-muted">
           {timeAgo(row.foundAt)}
         </td>
-        <td className="px-6 py-2 text-right" onClick={(e) => e.stopPropagation()}>
+        <td className="px-6 py-[10px] text-right" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-end gap-1.5">
             {row.status === "pending" && (
               <Button variant="primary" size="sm" disabled={busy} onClick={onApprove} {...readOnly}>
@@ -959,81 +995,117 @@ export function QueueRow({
       </tr>
       {expanded && (
         <tr className="border-b border-ink-rule/60 bg-ink-bg-deep/50">
-          <td colSpan={7} className="px-6 py-3">
-            <div className="flex flex-col gap-3 text-[12px] text-ink-muted">
-              {row.notes ? <div className="ln-note">{row.notes}</div> : null}
-              {row.priority && (
-                <div className="rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep">
-                  <div className="flex items-center gap-2 border-b border-ink-rule/60 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
-                    <span>priority {row.priority.total}</span>
-                    <Badge tone="neutral">
-                      {ranked ? "ranked review" : "experimental · shadow"}
-                    </Badge>
-                    <Explain concept="shadowScore" />
-                    <span className="normal-case tracking-normal">
-                      {ranked
-                        ? "affects review order, never approval or sending"
-                        : "does not affect ordering or sending"}
-                    </span>
+          <td colSpan={7} className="py-5 pl-16 pr-6">
+            {/*
+              The sheet reads left to right: the case, then the letter. No
+              boxes — hierarchy comes from type and hairlines, and the one
+              accent on the page is the total line under a sendable letter.
+            */}
+            <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,5fr)_minmax(0,8fr)] xl:gap-10">
+              <div className="flex min-w-0 flex-col gap-3 text-[12px] text-ink-muted">
+                <SheetHeading label="the case" />
+                {metaLine && (
+                  <div className="-mt-1 font-mono text-[11px] leading-4 text-ink-muted">
+                    {metaLine}
                   </div>
-                  <div className="px-3 py-2.5">
-                    <div className="flex flex-wrap gap-x-4 gap-y-1 font-mono text-[11px] text-ink-cream-2">
-                      {priorityBreakdown(row.priority).map((b) => (
-                        <span key={b.component}>
-                          {b.component} <span className="text-ink-cream">{b.score}</span>
-                          <span className="text-ink-faint"> ·{b.weightPct}%</span>
-                          <Explain concept={PRIORITY_CONCEPTS[b.component] ?? "shadowScore"} />
-                        </span>
+                )}
+                {!masked && fitReason && (
+                  <p className="m-0 text-[13px] leading-5 text-ink-cream-2 [text-wrap:pretty]">
+                    {fitReason}
+                  </p>
+                )}
+                {sheetRows.length > 0 && (
+                  <>
+                    <div className="mt-1 h-px bg-ink-rule" />
+                    <div className="grid grid-cols-[92px_minmax(0,1fr)] gap-x-3 gap-y-1 leading-4">
+                      {sheetRows.map((r) => (
+                        <Fragment key={`${r.key ?? ""}|${r.value}`}>
+                          {r.key ? (
+                            <span className="pt-px font-mono text-[10.5px] uppercase tracking-[0.04em] text-ink-faint">
+                              {r.key}
+                            </span>
+                          ) : null}
+                          <span
+                            className={cn(
+                              "min-w-0 break-words",
+                              r.key ? "text-ink-cream-2" : "col-span-2 text-ink-muted",
+                              eventPassed && r.key === "when" && "text-ink-blocked-2",
+                            )}
+                          >
+                            {r.href ? (
+                              <a
+                                href={r.href}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-ink-cream-2 underline decoration-ink-rule underline-offset-2 hover:text-ink-cream hover:decoration-ink-cream-2"
+                              >
+                                <ExternalLink size={11} /> {r.value}
+                              </a>
+                            ) : (
+                              r.value
+                            )}
+                          </span>
+                        </Fragment>
                       ))}
                     </div>
-                    {!masked && row.priority.reasons.length > 0 && (
-                      <ul className="mt-1.5 list-disc pl-4 text-[11.5px]">
-                        {row.priority.reasons.map((r) => (
-                          <li key={r}>{r}</li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                </div>
-              )}
-              {(eventTitle || eventDate || eventCity || eventUrl) && (
-                <div className="rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep">
-                  <div className="flex items-center gap-2 border-b border-ink-rule/60 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
-                    <span>event</span>
-                    {eventRole && <Badge tone="neutral">{eventRole}</Badge>}
-                    {eventPassed && <Badge tone="blocked">passed</Badge>}
-                  </div>
-                  <div className="px-3 py-2.5">
-                    {eventTitle && (
-                      <div className="text-[13px] font-medium text-ink-cream">{eventTitle}</div>
-                    )}
-                    <div className="mt-1 flex flex-wrap items-center gap-1.5 font-mono text-[11.5px] text-ink-cream-2">
-                      {eventCity && <span>{eventCity}</span>}
-                      {eventCity && eventDate && <span className="text-ink-faint">·</span>}
-                      {eventDate && (
-                        <span>
-                          {humanizeEventDate(eventDate)}{" "}
-                          <span className="text-ink-faint">({timeAgo(eventDate)})</span>
+                  </>
+                )}
+                {/* `notes` is the pre-#592 rationale; once a row has its fit
+                    line the note only repeats it (or a diagnostic). */}
+                {!masked && !fitReason && row.notes && (
+                  <div className="text-[11.5px] leading-4 text-ink-faint">{row.notes}</div>
+                )}
+                {row.priority && prio && (
+                  <>
+                    <div className="mt-1 h-px bg-ink-rule" />
+                    {/* The score is a margin note: the chip, and the breakdown
+                        behind a disclosure whose first line is the caveat. */}
+                    <details className="group/score">
+                      <summary className="flex cursor-pointer list-none items-center gap-2 [&::-webkit-details-marker]:hidden">
+                        <Badge tone={prio.tone}>{prio.label}</Badge>
+                        <span className="inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint group-hover/score:text-ink-cream-2">
+                          <ChevronRight
+                            size={12}
+                            className="transition-transform group-open/score:rotate-90"
+                          />
+                          explain score
                         </span>
-                      )}
-                      {eventUrl && (
-                        <>
-                          <span className="text-ink-faint">·</span>
-                          <a
-                            href={eventUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center gap-1 text-ink-cream-2 underline decoration-ink-rule underline-offset-2 hover:text-ink-cream hover:decoration-ink-cream-2"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <ExternalLink size={11} /> event
-                          </a>
-                        </>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )}
+                      </summary>
+                      <div className="mt-2 flex flex-col gap-2 border-l border-ink-rule pl-3">
+                        <div className="flex items-center leading-4 text-ink-muted">
+                          {ranked
+                            ? "Ranked review uses it to order candidates. It never approves or sends."
+                            : "Experimental. It does not affect ordering or sending."}
+                          <Explain concept="shadowScore" />
+                        </div>
+                        <div className="grid max-w-[420px] grid-cols-2 gap-x-6 gap-y-1 font-mono text-[11px] leading-4 text-ink-cream-2">
+                          {priorityBreakdown(row.priority).map((b) => (
+                            <div key={b.component} className="flex justify-between gap-2">
+                              <span>{b.component}</span>
+                              <span>
+                                <span className="text-ink-cream">{b.score}</span>
+                                <span className="text-ink-faint"> ·{b.weightPct}%</span>
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </details>
+                  </>
+                )}
+                <details className="group/payload text-ink-faint">
+                  <summary className="inline-flex cursor-pointer list-none items-center gap-1 font-mono text-[10px] uppercase tracking-[0.14em] hover:text-ink-cream-2 [&::-webkit-details-marker]:hidden">
+                    <ChevronRight
+                      size={12}
+                      className="transition-transform group-open/payload:rotate-90"
+                    />
+                    payload json
+                  </summary>
+                  <pre className="mt-2 max-h-[300px] overflow-auto rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep p-3 font-mono text-[11.5px] leading-[1.55] text-ink-cream-2">
+                    {JSON.stringify(row.payload, null, 2)}
+                  </pre>
+                </details>
+              </div>
               <DraftSection
                 id={row.id}
                 playName={row.playName}
@@ -1045,14 +1117,6 @@ export function QueueRow({
                 isSending={row.isSending}
                 prospectId={row.prospectId}
               />
-              <details className="text-ink-faint">
-                <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.14em] hover:text-ink-cream-2">
-                  payload json
-                </summary>
-                <pre className="mt-2 max-h-[300px] overflow-auto rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep p-3 font-mono text-[11.5px] leading-[1.55] text-ink-cream-2">
-                  {JSON.stringify(row.payload, null, 2)}
-                </pre>
-              </details>
             </div>
           </td>
         </tr>
@@ -1062,13 +1126,14 @@ export function QueueRow({
 }
 
 /**
- * Expanded-row draft area. Shows the persisted draft (subject + body + lint
- * flags + send state + receipt links) when one exists, with a regenerate
- * action; when none exists yet, shows a thin "no draft" bar with a generate
- * action. Both actions hit the same preview-only endpoint (dry-run, never
- * sends). Hidden for already-sent drafts (re-rolling would only overwrite the
- * preview). All plays are self-contained now — every finder stamps its pitch
- * angle onto the row it enqueues, so any row generates inline.
+ * The letter: the right half of an open row. Shows the persisted draft
+ * (subject, why it is held in words, body, receipt links, send state) with a
+ * regenerate action, or a thin "no draft yet" bar with a generate action. Both
+ * actions hit the same preview-only endpoint (dry-run, never sends). The card
+ * ends in the receipt's torn edge; a sendable letter's foot is the total line,
+ * the one place the page spends receipt green. All plays are self-contained —
+ * every finder stamps its pitch angle onto the row it enqueues, so any row
+ * generates inline.
  */
 function DraftSection({
   id,
@@ -1152,8 +1217,8 @@ function DraftSection({
   // mutation window (send.mutate() fired but server marker not yet refetched)
   // is also covered — symmetric with the sendButton's own gate below.
   const canDraft = status !== "sent" && !sending && !(draft?.sent ?? false);
-  const verb = draft ? "regenerate" : "generate draft";
-  const pendingVerb = draft ? "regenerating…" : "generating…";
+  const verb = draft ? "Regenerate draft" : "Generate draft";
+  const pendingVerb = draft ? "Regenerating…" : "Generating…";
   const draftButton = canDraft ? (
     <Button
       variant="ghost"
@@ -1205,10 +1270,10 @@ function DraftSection({
     },
     onError: (err) => toast.error(`couldn't record · ${err.message}`),
   });
-  // Split in two so the trigger sits with the other row actions in the draft
-  // card's header strip — beside the receipt links, where every other
-  // row-level action already lives — while the textarea stays below the body,
-  // which is the only part that earns full width.
+  // Split in two so the trigger sits with the other row actions on the
+  // letter's foot — where every other row-level action already lives — while
+  // the textarea stays under the body, which is the only part that earns full
+  // width.
   const canMarkLinkedIn = status === "sent" && prospectId != null;
   const linkedinReplyButton =
     canMarkLinkedIn && !linkedinOpen ? (
@@ -1218,12 +1283,12 @@ function DraftSection({
         onClick={() => setLinkedinOpen(true)}
         title="Record a LinkedIn reply and stop any email cadence for this prospect"
       >
-        mark linkedin reply
+        Record a LinkedIn reply
       </Button>
     ) : null;
   const linkedinReplyEditor =
     canMarkLinkedIn && linkedinOpen ? (
-      <div className="mt-2 flex flex-col gap-2 border-t border-ink-rule pt-2">
+      <div className="mt-3 flex flex-col gap-2 border-t border-ink-rule pt-3">
         <label
           className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint"
           htmlFor={`li-reply-${id}`}
@@ -1232,7 +1297,7 @@ function DraftSection({
         </label>
         <textarea
           id={`li-reply-${id}`}
-          className="min-h-[72px] w-full rounded border border-ink-rule bg-transparent p-2 text-[11px]"
+          className="min-h-[72px] w-full rounded border border-ink-rule bg-transparent p-2 text-[12px]"
           value={linkedinBody}
           onChange={(e) => setLinkedinBody(e.currentTarget.value)}
           placeholder="Optional, but it is what a reply gets drafted from later."
@@ -1245,10 +1310,10 @@ function DraftSection({
             onClick={() => markLinkedIn.mutate()}
             {...readOnly}
           >
-            {markLinkedIn.isPending ? "recording…" : "record reply"}
+            {markLinkedIn.isPending ? "Recording…" : "Record reply"}
           </Button>
           <Button variant="ghost" size="sm" onClick={() => setLinkedinOpen(false)}>
-            cancel
+            Cancel
           </Button>
         </div>
       </div>
@@ -1277,14 +1342,14 @@ function DraftSection({
           }}
           title="Copy the draft text to paste into X"
         >
-          <Copy size={11} /> copy text
+          <Copy size={11} /> Copy text
         </Button>
         {openOnXUrl && (
           <a
             href={openOnXUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 font-mono text-[10px] text-ink-cream-2 underline decoration-ink-rule underline-offset-2 hover:text-ink-cream"
+            className="inline-flex items-center gap-1 font-mono text-[11px] text-ink-cream-2 underline decoration-ink-rule underline-offset-2 hover:text-ink-cream"
             title={
               dmOpen
                 ? `DM @${pstr("handle") ?? ""} — their DMs are open`
@@ -1296,7 +1361,7 @@ function DraftSection({
           </a>
         )}
         <Button
-          variant="secondary"
+          variant="receipt"
           size="sm"
           disabled={markSent.isPending}
           onClick={() => markSent.mutate()}
@@ -1308,7 +1373,7 @@ function DraftSection({
           ) : (
             <Check size={11} />
           )}
-          {markSent.isPending ? "recording…" : "mark sent"}
+          {markSent.isPending ? "Recording…" : "Mark sent"}
         </Button>
       </>
     ) : null;
@@ -1321,37 +1386,39 @@ function DraftSection({
   const cleanDraft = draft != null && blocking.length === 0 && !draft.sent;
   // Soft-flagged but otherwise sendable: held for review, founder is overriding.
   const softHold = cleanDraft && draft != null && draft.flags.length > 0;
-  const sendButton =
-    !isManualPlay && status === "approved" && !(draft?.sent ?? false) ? (
-      <Button
-        variant="secondary"
-        size="sm"
-        disabled={sending || !cleanDraft}
-        onClick={() => send.mutate()}
-        {...readOnly}
-        title={
-          softHold
-            ? draft?.flags.includes("contacted-elsewhere")
-              ? "Held — another workspace emailed this person in the last 7 days. Send the reviewed draft as-is to override."
-              : "Held for review (event has passed) — send the reviewed draft above, as-is"
-            : cleanDraft
-              ? "Send this prospect now — sends the reviewed draft above, as-is"
-              : draft == null
-                ? "Generate a draft first, then send it"
-                : "Draft has lint flags — regenerate to clear them, then send"
-        }
-      >
-        {sending ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
-        {sending ? "sending…" : "send this one"}
-      </Button>
-    ) : null;
+  const softHoldDetail = draft?.flags.includes("contacted-elsewhere")
+    ? "Held — another workspace emailed this person in the last 7 days. Send the reviewed draft as-is to override."
+    : "Held for review (event has passed) — send the reviewed draft as-is";
+  const showSend = !isManualPlay && status === "approved" && !(draft?.sent ?? false);
+  const sendButton = showSend ? (
+    <Button
+      variant="receipt"
+      size="sm"
+      disabled={sending || !cleanDraft}
+      onClick={() => send.mutate()}
+      {...readOnly}
+      title={
+        softHold
+          ? softHoldDetail
+          : cleanDraft
+            ? "Send this prospect now — sends the reviewed draft, as-is"
+            : draft == null
+              ? "Generate a draft first, then send it"
+              : "Draft has lint flags — regenerate to clear them, then send"
+      }
+    >
+      {sending ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
+      {sending ? "Sending…" : softHold ? "Send anyway" : "Send this one"}
+    </Button>
+  ) : null;
 
   if (!draft) {
     return (
-      <div className="rounded-[var(--radius-sm)] border border-dashed border-ink-rule bg-ink-bg-deep px-3 py-2.5">
-        <div className="flex items-center justify-between gap-2">
-          <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
-            no draft yet
+      <div className="min-w-0">
+        <SheetHeading label="the letter" />
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-sm)] border border-dashed border-ink-rule px-5 py-3.5">
+          <span className="text-[12px] text-ink-muted">
+            No draft yet. Drafting is a preview and never sends.
           </span>
           <span className="flex items-center gap-2">
             {/* A sent row whose draft was never persisted used to return here
@@ -1368,79 +1435,86 @@ function DraftSection({
     );
   }
 
-  const tone: "receipt" | "spend" | "blocked" | "neutral" = draft.sent
-    ? "receipt"
-    : draft.flags.length > 0
-      ? "blocked"
-      : draft.dryRun
-        ? "spend"
-        : "neutral";
-  const stateLabel = draft.sent
-    ? "sent"
-    : draft.flags.length > 0
-      ? blockingFlags(draft.flags).length > 0
-        ? "held · lint"
-        : "held · review"
-      : draft.dryRun
-        ? "preview"
-        : "drafted";
+  const held = heldSummary(draft.flags);
   // Row was sent but lastDraft.sent is false → a post-send regenerate landed
   // before the server-side guard was added. The card body is NOT the email
   // that went out (the original is only in the prospect's inbox now).
   const isStalePostSend = status === "sent" && !draft.sent;
-  const headerLabel = draft.sent ? "sent" : "last draft";
+  // The total line: green under a letter the founder can send right now.
+  const sendable = showSend && cleanDraft && !sending;
+  const meta = draft.sent
+    ? "sent"
+    : draftedAt
+      ? `drafted ${timeAgo(draftedAt)} · ${draft.dryRun ? "preview, not sent" : "not sent"}`
+      : draft.dryRun
+        ? "preview, not sent"
+        : "not sent";
   return (
-    <div className="rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep">
-      <div className="flex items-center gap-2 border-b border-ink-rule/60 px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
-        <span>{headerLabel}</span>
-        {draftedAt ? <span className="text-ink-muted">· {timeAgo(draftedAt)}</span> : null}
-        <Badge tone={tone}>{stateLabel}</Badge>
-        {softHold && (
-          <Explain
-            concept="softHold"
-            detail={
-              draft.flags.includes("contacted-elsewhere")
-                ? "Held — another workspace emailed this person in the last 7 days. Send the reviewed draft as-is to override."
-                : "Held for review (event has passed) — send the reviewed draft above, as-is"
-            }
-          />
-        )}
-        {isStalePostSend && <Badge tone="blocked">post-send regenerate · not sent</Badge>}
-        {draft.enrichmentFailed && (
-          <span className="inline-flex items-center">
-            <Badge tone="spend">no enrichment</Badge>
-            <Explain concept="enrichment" />
+    <div className="min-w-0">
+      <SheetHeading label="the letter" right={meta} />
+      <div className="rounded-t-[var(--radius-sm)] border border-b-0 border-ink-rule bg-ink-bg-deep">
+        <div className="px-5 pt-4">
+          <div className="text-[13px] font-medium leading-5 text-ink-cream">{draft.subject}</div>
+          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[12px] leading-4">
+            {draft.sent ? (
+              <Badge tone="receipt">sent</Badge>
+            ) : held ? (
+              <>
+                <Badge tone={held.kind === "lint" ? "blocked" : "spend"}>held · {held.kind}</Badge>
+                <span className={held.kind === "lint" ? "text-ink-blocked-2" : "text-ink-spend-2"}>
+                  {held.text}
+                </span>
+                <span className="text-ink-muted">· {held.next}</span>
+                {softHold && <Explain concept="softHold" detail={softHoldDetail} />}
+              </>
+            ) : (
+              <span className="text-ink-muted">
+                {draft.dryRun ? "preview" : "drafted"} · no flags
+              </span>
+            )}
+            {draft.receiptIds.map((rid) => (
+              <Link
+                key={rid}
+                to="/receipts"
+                className="font-mono text-[11px] text-ink-muted underline decoration-ink-rule underline-offset-2 hover:text-ink-cream-2"
+              >
+                receipt #{rid}
+              </Link>
+            ))}
+            {isStalePostSend && <Badge tone="blocked">post-send regenerate · not sent</Badge>}
+            {draft.enrichmentFailed && (
+              <span className="inline-flex items-center">
+                <Badge tone="spend">no enrichment</Badge>
+                <Explain concept="enrichment" />
+              </span>
+            )}
+          </div>
+          <div className="my-3 h-px bg-ink-rule" />
+          <pre className="ln-prose m-0 max-h-[420px] overflow-auto whitespace-pre-wrap text-[13px] text-ink-cream-2">
+            {draft.body}
+          </pre>
+          {linkedinReplyEditor}
+        </div>
+        <div
+          className={cn(
+            "mx-5 mt-5 flex flex-wrap items-center justify-between gap-3 border-t py-3",
+            sendable ? "border-[color:var(--ink-receipt)]" : "border-ink-rule",
+          )}
+        >
+          <span className="flex items-center gap-2">{draftButton}</span>
+          <span className="flex flex-wrap items-center gap-3">
+            {sendable && !softHold && (
+              <span className="font-mono text-[11px] text-[color:var(--ink-receipt-2)]">
+                ready · no flags
+              </span>
+            )}
+            {linkedinReplyButton}
+            {manualButtons}
+            {sendButton}
           </span>
-        )}
-        {draft.flags.length > 0 &&
-          draft.flags.map((f) => (
-            <Badge key={f} tone="blocked">
-              {f}
-            </Badge>
-          ))}
-        <span className="ml-auto flex items-center gap-2 normal-case tracking-normal">
-          {draft.receiptIds.map((rid) => (
-            <Link
-              key={rid}
-              to="/receipts"
-              className="font-mono text-[10px] text-ink-faint underline decoration-ink-rule underline-offset-2 hover:text-ink-cream-2"
-            >
-              receipt #{rid}
-            </Link>
-          ))}
-          {linkedinReplyButton}
-          {manualButtons}
-          {sendButton}
-          {draftButton}
-        </span>
+        </div>
       </div>
-      <div className="px-3 py-2.5">
-        <div className="text-[13px] font-medium text-ink-cream">{draft.subject}</div>
-        <pre className="mt-2 max-h-[360px] overflow-auto whitespace-pre-wrap font-mono text-[11.5px] leading-[1.55] text-ink-cream-2">
-          {draft.body}
-        </pre>
-        {linkedinReplyEditor}
-      </div>
+      <ReceiptEdge />
     </div>
   );
 }
