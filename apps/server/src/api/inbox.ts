@@ -33,7 +33,7 @@ import {
   inboxThreadKey,
   POSITIVE_REPLY_INTENTS,
 } from "@oneshot-gtm/shared-types";
-import { jsonResponse } from "../server.ts";
+import { isLoopbackOrigin, jsonResponse } from "../server.ts";
 import { gatherReplyContext } from "./_reply-research.ts";
 
 /**
@@ -883,6 +883,10 @@ export async function sendReplyRoute(req: Request): Promise<Response> {
 
 /** Local organization only: never mutates a provider mailbox or sends mail. */
 export async function archiveInboxConversationRoute(req: Request): Promise<Response> {
+  // CORS only prevents reading the response; simple cross-origin POSTs still execute.
+  if (!isLoopbackOrigin(req.headers.get("origin") ?? "")) {
+    return jsonResponse({ error: "forbidden origin" }, 403, req);
+  }
   let body: unknown;
   try {
     body = await req.json();

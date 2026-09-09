@@ -333,7 +333,7 @@ export async function startServer(
   return { url: `http://127.0.0.1:${server.port}`, server };
 }
 
-function isLoopbackOrigin(origin: string): boolean {
+export function isLoopbackOrigin(origin: string): boolean {
   // Empty origin = same-origin request (curl, server-side fetch); allow.
   if (origin === "") return true;
   try {

@@ -780,3 +780,36 @@ describe("inbox archive endpoint", () => {
     ).toBe(404);
   });
 });
+
+describe("archive origin validation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getProspectByIdMock.mockReturnValue({ id: 42 });
+  });
+  it.each(["https://evil.example", "null", "http://localhost.evil.example", "not-a-url"])(
+    "rejects a simple POST from %s before mutation",
+    async (origin) => {
+      const req = new Request("http://localhost/api/inbox/archive", {
+        method: "POST",
+        headers: { origin, "content-type": "text/plain" },
+        body: JSON.stringify({ prospectId: 42, archived: false }),
+      });
+      expect((await archiveInboxConversationRoute(req)).status).toBe(403);
+      expect(getProspectByIdMock).not.toHaveBeenCalled();
+      expect(archiveConversationMock).not.toHaveBeenCalled();
+      expect(restoreConversationMock).not.toHaveBeenCalled();
+    },
+  );
+  it.each(["http://localhost:3032", "http://127.0.0.1:5173", "http://[::1]:3032"])(
+    "allows dashboard origin %s",
+    async (origin) => {
+      const req = new Request("http://localhost/api/inbox/archive", {
+        method: "POST",
+        headers: { origin, "content-type": "application/json" },
+        body: JSON.stringify({ prospectId: 42, archived: false }),
+      });
+      expect((await archiveInboxConversationRoute(req)).status).toBe(200);
+      expect(restoreConversationMock).toHaveBeenCalledWith(42);
+    },
+  );
+});
