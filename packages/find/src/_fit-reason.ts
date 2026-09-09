@@ -106,8 +106,13 @@ export function parseReasonFromNotes(
   // writes the bare reason; github-topics writes `<prefix>: <stack> (N vendors) — <reason>`
   // truncated at 220 chars (a truncated note may have lost the reason itself).
   if (playName === "competitor-switch" || playName === "stack-consolidation") {
-    const m = /\(\d+ vendors?\) — (.+)$/.exec(n);
-    if (m) return n.length >= 220 ? null : plausibleSentence(normalizeFitReason(m[1]));
+    // Locate the marker, then slice — no `(.+)$` capture, which CodeQL flags
+    // as polynomial on adversarial input (a note is library-supplied text).
+    const marker = /\(\d+ vendors?\) — /.exec(n);
+    if (marker) {
+      if (n.length >= 220) return null;
+      return plausibleSentence(normalizeFitReason(n.slice(marker.index + marker[0].length)));
+    }
     return playName === "competitor-switch" ? plausibleSentence(normalizeFitReason(n)) : null;
   }
 
