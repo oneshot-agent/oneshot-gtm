@@ -10,6 +10,7 @@ import { EmailTransportSection } from "../components/setup/EmailTransportSection
 import { FounderSection } from "../components/setup/FounderSection.tsx";
 import { IcpSection } from "../components/setup/IcpSection.tsx";
 import { LlmSection } from "../components/setup/LlmSection.tsx";
+import { NotificationsSection } from "../components/setup/NotificationsSection.tsx";
 import { ProductBriefSection } from "../components/setup/ProductBriefSection.tsx";
 import { ReviewQueueSection } from "../components/setup/ReviewQueueSection.tsx";
 import { SectionNav, jumpToSection } from "../components/setup/SectionNav.tsx";
@@ -228,6 +229,7 @@ function Sections({
       <ProductBriefSection {...common} />
       <LlmSection {...common} />
       <WalletSection {...common} homeDir={homeDir} />
+      <NotificationsSection {...common} />
       <XSection sources={sources} xTrigger={xTrigger} onDirtyChange={onDirtyChange} />
       <EmailTransportSection
         status={status}

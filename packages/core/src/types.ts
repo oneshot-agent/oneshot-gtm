@@ -156,6 +156,22 @@ export interface SequenceEventRecord {
   status: "queued" | "sent" | "delivered" | "replied" | "bounced" | "failed" | "unsubscribed";
   metadata_json: string | null;
   created_at: string;
+  /**
+   * When a `replied` status was stamped (markLatestStepReplied), separate from
+   * `created_at` — a reply flips the ORIGINAL sent row in place, so created_at
+   * stays pinned to the SEND time. NULL on rows written before this column
+   * existed, or rows inserted directly with status `replied` (created_at is
+   * already the occurrence time in that case).
+   */
+  replied_at: string | null;
+  /**
+   * The provider's own bounce timestamp (DSN `bouncedAt`, from the message's
+   * `internalDate`), distinct from `created_at` — a fresh row IS inserted per
+   * bounce, but `created_at` is stamped at POLL/detection time, which can lag
+   * the real bounce by however long the mailbox went unpolled. NULL on rows
+   * written before this column existed, or any non-`bounced` row.
+   */
+  bounced_at: string | null;
 }
 
 /**
@@ -340,6 +356,13 @@ export interface OneShotConfig {
    * forgot to disable the default. Default false.
    */
   mobileSignature: boolean;
+  /**
+   * Slack incoming-webhook URL for operational notifications (reply received,
+   * bounce recorded, daily send summary). Null/empty = feature off. Delivery
+   * is best-effort: failures are logged via logEvent and never block or fail
+   * the triggering operation.
+   */
+  slackWebhookUrl: string | null;
   /**
    * IANA zone (e.g. "America/Los_Angeles") this install's dates are rendered in
    * when nothing more specific is known. It is the LAST resort in the event

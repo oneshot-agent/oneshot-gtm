@@ -15,6 +15,7 @@ type Bounce = {
 };
 
 let bounces: Bounce[] = [];
+let failedSources: string[] = [];
 /** message ids the stub ledger has already stored — mirrors the real PK dedupe. */
 let seen: Set<string>;
 let recorded: Array<{ recipient: string; kind: string; prospectId: number | null }> = [];
@@ -29,7 +30,7 @@ vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
   return {
     ...actual,
-    listBounces: async () => bounces,
+    listBounces: async () => ({ bounces, failedSources }),
     getLedger: () => ({
       findDirectMail: () => null,
       findProspectByEmail: (email: string) =>
@@ -90,6 +91,7 @@ function bounce(over: Partial<Bounce> = {}): Bounce {
 
 beforeEach(() => {
   bounces = [];
+  failedSources = [];
   seen = new Set();
   recorded = [];
   sequenceEvents = [];
@@ -191,5 +193,23 @@ describe("pollInboxBounces", () => {
     await pollInboxBounces();
     expect(sequenceEvents).toHaveLength(1);
     expect(recorded).toHaveLength(1);
+  });
+
+  // issue #71 round-4 review finding: the scheduler's forced day-rollover
+  // sweep is only trustworthy if the sweep itself reports whether it was
+  // complete. `clean` is the signal postDailySendSummaryIfDue's caller uses
+  // to decide whether it's safe to permanently watermark the completed day.
+  it("reports clean: true when every bounce source succeeded", async () => {
+    bounces = [bounce()];
+    failedSources = [];
+    const out = await pollInboxBounces();
+    expect(out.clean).toBe(true);
+  });
+
+  it("reports clean: false when a bounce source errored or was skipped", async () => {
+    bounces = [];
+    failedSources = ["gmail:me@corp.example"];
+    const out = await pollInboxBounces();
+    expect(out.clean).toBe(false);
   });
 });

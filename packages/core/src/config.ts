@@ -51,6 +51,7 @@ const DEFAULTS: OneShotConfig = {
   founderAdmission: null,
   productBrief: null,
   mobileSignature: false,
+  slackWebhookUrl: null,
   timezone: null,
   clientId: null,
   dailySpendCeilingUsd: null,
@@ -124,6 +125,18 @@ export function saveConfig(cfg: OneShotConfig): void {
   ensureConfigDir();
   if (!existsSync(dirname(CONFIG_PATH))) mkdirSync(dirname(CONFIG_PATH), { recursive: true });
   writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
+  // config.json can carry a bearer credential (slackWebhookUrl — whoever
+  // holds it can post to the operator's Slack channel), so it gets the same
+  // owner-only permissions as SECRETS_PATH/GMAIL_TOKENS_PATH below (issue #71
+  // round-6 review finding: config.json was world-readable at the directory's
+  // default mode with no chmod call anywhere in this file). Every save
+  // re-applies it, so a pre-existing looser-mode file is corrected on its
+  // next write, not just at creation.
+  try {
+    chmodSync(CONFIG_PATH, 0o600);
+  } catch {
+    // chmod may fail on Windows; the file is still in $HOME so reasonably scoped.
+  }
   // Bust the read cache so loadConfigCached() reflects this write (same process).
   cachedConfig = null;
 }

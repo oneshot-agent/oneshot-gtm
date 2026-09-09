@@ -80,6 +80,7 @@ export const SECTIONS = [
   { id: "brief", eyebrow: "04 · Product brief", label: "Product brief" },
   { id: "llm", eyebrow: "05 · LLM provider", label: "LLM provider" },
   { id: "wallet", eyebrow: "06 · Wallet & spend", label: "Wallet & spend" },
+  { id: "notifications", eyebrow: "06.5 · Notifications", label: "Notifications" },
   { id: "x", eyebrow: "07 · X / Twitter", label: "X / Twitter" },
   { id: "email", eyebrow: "08 · Email transport", label: "Email transport" },
   { id: "review", eyebrow: "09 · Review queue & time zone", label: "Queue & time zone" },

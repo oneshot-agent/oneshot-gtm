@@ -15,6 +15,7 @@ import {
   type DomainPoolEntry,
   type EmailIdentity,
   type OneShotConfig,
+  isSlackWebhookUrl,
 } from "@oneshot-gtm/core";
 import type {
   DomainPoolView,
@@ -369,6 +370,7 @@ export function mergeSetupConfig(
     founderAdmission: mergeString(body.founderAdmission, current.founderAdmission),
     productBrief: mergeString(body.productBrief, current.productBrief),
     mobileSignature: body.mobileSignature ?? current.mobileSignature,
+    slackWebhookUrl: mergeSlackWebhookUrl(body.slackWebhookUrl, current.slackWebhookUrl),
     queueReviewOrder:
       body.queueReviewOrder === "ranked" || body.queueReviewOrder === "newest"
         ? body.queueReviewOrder
@@ -387,6 +389,21 @@ export function mergeSetupConfig(
  *   ""        → clear (caller deliberately emptied the field)
  *   non-empty → trim + save
  */
+/**
+ * Same merge as `mergeString`, but a non-empty value must be a real Slack
+ * incoming-webhook URL — the server POSTs reply/bounce/summary data to it, so
+ * an arbitrary destination is a data-exfiltration hole, not a typo.
+ */
+function mergeSlackWebhookUrl(incoming: string | undefined, current: string | null): string | null {
+  const merged = mergeString(incoming, current);
+  if (incoming !== undefined && merged != null && !isSlackWebhookUrl(merged)) {
+    throw new SetupValidationError(
+      "slackWebhookUrl must be a Slack incoming-webhook URL (https://hooks.slack.com/services/…)",
+    );
+  }
+  return merged;
+}
+
 function mergeString(incoming: string | undefined, current: string | null): string | null {
   if (incoming === undefined) return current;
   const trimmed = incoming.trim();

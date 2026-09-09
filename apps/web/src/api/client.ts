@@ -234,6 +234,7 @@ export const api = {
         llmModel: string;
         telemetryEnabled: boolean;
         walletMode: "cdp" | "private-key";
+        slackWebhookUrl: string | null;
         // Optional: older servers / the demo fixture may omit them; the
         // server has always returned them (publicCfg spreads the whole cfg).
         queueReviewOrder?: "ranked" | "newest";
