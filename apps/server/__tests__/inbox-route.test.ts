@@ -19,6 +19,7 @@ const listInboxReplyIntentsMock = vi.fn(() => new Map());
 const listLatestOutcomeRecordedAtByProspectMock = vi.fn((): Map<number, string> => new Map());
 const getProspectByEmailMock = vi.fn((): unknown => null);
 const notifySlackReplyReceivedMock = vi.fn(async () => {});
+const notifySlackBounceRecordedMock = vi.fn(async () => {});
 let knownProspect: { id: number } | null = null;
 
 const ledger = {
@@ -60,6 +61,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     trackSend: async (fn: () => Promise<unknown>) => ({ result: await fn() }),
     replyEmail: replyEmailMock,
     notifySlackReplyReceived: notifySlackReplyReceivedMock,
+    notifySlackBounceRecorded: notifySlackBounceRecordedMock,
   };
 });
 
@@ -167,6 +169,86 @@ describe("inbox route — persisted drafts & sent replies", () => {
       expect(notifySlackReplyReceivedMock).toHaveBeenCalledWith(
         expect.objectContaining({ from_email: "jane@acme.com", kind: "human" }),
       );
+    } finally {
+      knownProspect = null;
+      getProspectByEmailMock.mockReturnValue(null);
+    }
+  });
+
+  // issue #71 round-6/7 review finding: this opportunistic capture and the
+  // scheduler's pollInboxReplies() both call recordInboxReply with the same
+  // id (INSERT OR IGNORE), so whichever one wins the first-sight race is the
+  // only one that can fire a notification. Before this fix, inbox.ts never
+  // called notifySlackBounceRecorded at all for a dead-mailbox autoresponder,
+  // so a GET /api/inbox that raced ahead of the scheduler's poll silently
+  // dropped the bounce alert forever (the scheduler's later poll then sees
+  // isNewReply=false and also skips it).
+  it("opportunistic capture notifies a Slack bounce alert for a first-seen dead-mailbox autoresponder", async () => {
+    getInboxThreadsMock.mockReturnValue(new Map());
+    knownProspect = { id: 43 };
+    getProspectByEmailMock.mockReturnValue({
+      id: 43,
+      name: "Dead Mailbox",
+      company: "Ghostco",
+      source: "cold",
+    });
+    listInboxMock.mockResolvedValue({
+      emails: [
+        {
+          id: "auto-permanent-1",
+          from: "retired@ghostco.com",
+          subject: "Delivery has failed",
+          received_at: "2026-06-10T01:00:00Z",
+          body: "This person is no longer with the company.",
+          auto_submitted: true,
+        },
+      ],
+    });
+
+    try {
+      const res = await listInboxRoute(new Request("http://localhost/api/inbox"));
+      expect(res.status).toBe(200);
+      expect(notifySlackBounceRecordedMock).toHaveBeenCalledTimes(1);
+      expect(notifySlackBounceRecordedMock).toHaveBeenCalledWith({
+        recipient: "retired@ghostco.com",
+        kind: "auto_permanent",
+        status_code: null,
+      });
+      // Not a human reply — must not also fire the reply-received alert.
+      expect(notifySlackReplyReceivedMock).not.toHaveBeenCalled();
+    } finally {
+      knownProspect = null;
+      getProspectByEmailMock.mockReturnValue(null);
+    }
+  });
+
+  it("opportunistic capture does not re-fire a bounce alert on an already-recorded email (isNew=false)", async () => {
+    getInboxThreadsMock.mockReturnValue(new Map());
+    knownProspect = { id: 44 };
+    getProspectByEmailMock.mockReturnValue({
+      id: 44,
+      name: "Dead Mailbox",
+      company: "Ghostco",
+      source: "cold",
+    });
+    recordInboxReplyMock.mockReturnValueOnce(false);
+    listInboxMock.mockResolvedValue({
+      emails: [
+        {
+          id: "auto-permanent-2",
+          from: "retired2@ghostco.com",
+          subject: "Delivery has failed",
+          received_at: "2026-06-10T01:00:00Z",
+          body: "This person is no longer with the company.",
+          auto_submitted: true,
+        },
+      ],
+    });
+
+    try {
+      const res = await listInboxRoute(new Request("http://localhost/api/inbox"));
+      expect(res.status).toBe(200);
+      expect(notifySlackBounceRecordedMock).not.toHaveBeenCalled();
     } finally {
       knownProspect = null;
       getProspectByEmailMock.mockReturnValue(null);
