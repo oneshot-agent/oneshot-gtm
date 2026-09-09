@@ -71,7 +71,7 @@ Constraints:
 ## Subject-line patterns (allowed)
 
 - 2-5 lowercase words. Always all-lowercase including brand names + acronyms.
-- "quick question" — allowed _as a subject_. Still forbidden as the body's first sentence (see Banned email openers).
+- "quick question" — allowed _as a subject_. Still forbidden anywhere in the body (see Banned email openers).
 - Specific-flaw callout: "your playwright bill", "wasting $2,300 a month", "your api stack".
 - Friend-style fragment: "stack thing", "saw your repo", "podcast question".
 
@@ -124,7 +124,7 @@ NEVER use these in any output: additionally, align with, crucial, delve, emphasi
 
 ## Banned email openers
 
-These bans apply to the BODY's first sentence. Subject lines may use the same phrase as a curiosity hook (see Subject-line patterns).
+These bans apply anywhere in the BODY — the linter matches each phrase wherever it appears, not only as the opener. Subject lines may use the same phrase as a curiosity hook (see Subject-line patterns).
 
 NEVER start the email body with any of these phrasings:
 
@@ -134,6 +134,7 @@ NEVER start the email body with any of these phrasings:
 - "Quick question..."
 - "Loved your launch..."
 - "Reaching out because..."
+- "I was looking at..." / "I've been looking through..." / "I stumbled on..." / "I happened across..." — the provenance verbs. Say how you found them as a list you read: "found you in", "you came up in".
 
 These openers signal cold outreach to anyone who has read a sales email. Start with the specific evidence or angle.
 
@@ -143,7 +144,7 @@ A follow-up body is ANCHORED to the concrete thing the first email named — the
 
 Requiring every body to literally begin with the noun would just trade one uniform shape for another. Vary the sentence, keep the anchor.
 
-This one is measured, not trusted: a draft whose first two words already open more than a quarter of that play + step's recent sends is flagged `opener-overused` and held until it is rewritten.
+This one is measured, not trusted: a draft whose first two words already open more than a quarter of that play + step's recent sends is flagged `opener-overused` and held until it is rewritten. This check runs on cadence follow-ups; a first touch is not measured against it.
 
 The example lines in each play prompt are SHAPES, not strings. They show how long the sentence is and what it is allowed to reference. Copying one verbatim, or reusing the same first three words every send, is a failure of this rule even when the copied line breaks no other ban.
 
@@ -210,9 +211,9 @@ These are chatbot artifacts pasted into output. Drop them.
 ## Email-specific formatting
 
 - Max one exclamation per email. Two or more reads as bot energy.
-- Subject case: lowercase the whole subject line. That includes brand names (`twilio`, not `TWILIO`) and acronyms (`api` not `API`). The post-generation lint flags any run of two-or-more uppercase letters, real acronyms included. Lowercase across the board avoids the flag.
-- Body length: aim for ≤80 words. Most plays cap at 80-100 words; longer drafts get flagged. PMF surveys are the exception (they cap at 200).
-- No Calendly URLs in body. The founder adds the scheduling link manually if relevant. Embedding it in a generated draft signals a bot.
+- Subject case: lowercase the whole subject line. That includes brand names (`twilio`, not `TWILIO`) and acronyms (`api` not `API`). The post-generation lint flags any run of two-or-more uppercase letters, real acronyms included (a SAM.gov solicitation number is the one exemption). Lowercase across the board avoids the flag.
+- Body length: aim for ≤80 words. The linter holds a draft past its play's cap — 110 words by default, 150 for accelerator-batch, and PMF surveys are the exception (they cap at 200).
+- No scheduling links in the body — Calendly, cal.com, SavvyCal, zcal, a Google appointment page. The founder adds the scheduling link manually if relevant. Embedding it in a generated draft signals a bot.
 
 ## Banned rhetorical moves (these survive a word ban)
 
@@ -238,7 +239,7 @@ tells that outlive a vocabulary list, and in a cold email each one reads as tech
 
 ## What NOT to flag
 
-The linter runs post-generation, so a false positive costs a regenerate on copy that was fine.
+The linter runs post-generation and HOLDS a flagged draft for the founder, so a false positive costs a manual regenerate on copy that was fine.
 Do not treat any of these as a tell on its own:
 
 - One em dash, one short fragment, one "honestly" mid-sentence. The tell is the run, not the instance.
@@ -257,4 +258,4 @@ Do not treat any of these as a tell on its own:
 - Acknowledge complexity when it exists. "Impressive but unsettling" beats "impressive".
 - Let some structural mess in. Perfect symmetry feels algorithmic.
 
-These rules are enforced post-generation by `lintEmail()`. Compliance up front means zero rewrite cost. Every flag the linter raises is a token you didn't need to spend on a regenerate.
+The phrase-level bans above — openers, CTAs, filler, closers, hedges, vocabulary, punctuation, length, scheduling links — are enforced post-generation by `lintEmail()`, which holds a flagged draft for the founder rather than regenerating it. The structural rules — invented artifacts, rhetorical moves, hedging constructions — are on you: nothing checks them. Compliance up front means zero rewrite cost.
