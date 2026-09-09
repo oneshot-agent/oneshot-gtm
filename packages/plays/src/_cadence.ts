@@ -30,6 +30,7 @@ import {
   notifySlackReplyReceived,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject, triageEmails } from "@oneshot-gtm/intel";
+import { followUpEdgeAngle, followUpEdgeBlock } from "./_angles.ts";
 import {
   firstNameFrom,
   humanizeDraft,
@@ -1908,6 +1909,11 @@ export function buildFollowUpEmail(opts: {
     // prior step bodies. Missing/empty angle_json → null → no block, byte-
     // identical output to before this issue.
     const angleBlock = angleBlockFromJson(ctx.prospect.angle_json);
+    // YOUR EDGE for a follow-up (issue #584): until this, a follow-up never
+    // saw the edge at all — only the prior body under "do not repeat" — so it
+    // could not say anything new. It now gets a DIFFERENT angle from the
+    // intro's. No multi-angle edge on the sent row → null → no block.
+    const edgeBlock = followUpEdgeBlock(await followUpEdgeAngle(ctx.prospect, opts.playName));
     const user = [
       `FOUNDER: ${ctx.cfg.founderName}`,
       `PRODUCT: ${ctx.cfg.productOneLiner}`,
@@ -1917,6 +1923,7 @@ export function buildFollowUpEmail(opts: {
       ...opts.contextLines,
       ...(priorBlock ? ["", priorBlock] : []),
       ...(angleBlock ? ["", angleBlock] : []),
+      ...(edgeBlock ? ["", edgeBlock] : []),
       ...(firstName ? ["", `PROSPECT_FIRST_NAME: ${firstName}`] : []),
       ...(avoidBlock ? ["", avoidBlock] : []),
     ].join("\n");

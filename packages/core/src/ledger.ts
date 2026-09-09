@@ -4444,6 +4444,30 @@ export class Ledger {
       .run(JSON.stringify(input.payload), input.id);
   }
 
+  /**
+   * The payload of the most recent SENT queue row for this play and address —
+   * how a follow-up recovers the edge the intro drew its angle from (issue
+   * #584), whichever path sent it (drain, /queue send-draft, mark-sent). Null
+   * when nothing was sent to them on this play, or the payload won't parse.
+   */
+  latestSentQueuePayload(playName: string, email: string): Record<string, unknown> | null {
+    const row = this.db
+      .query(
+        `SELECT payload_json FROM target_queue
+          WHERE play_name = ? AND status = 'sent'
+            AND lower(trim(json_extract(payload_json, '$.email'))) = lower(trim(?))
+          ORDER BY sent_at DESC, id DESC LIMIT 1`,
+      )
+      .get(playName, email) as { payload_json: string } | null;
+    if (!row) return null;
+    try {
+      const parsed: unknown = JSON.parse(row.payload_json);
+      return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
+    } catch {
+      return null;
+    }
+  }
+
   latestQueueId(): number {
     const row = this.db.query("SELECT COALESCE(MAX(id), 0) AS id FROM target_queue").get() as {
       id: number;
