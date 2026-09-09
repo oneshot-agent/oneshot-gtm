@@ -207,8 +207,24 @@ function utcDay(d: Date): string {
  * path, de-duplicated per prospect+occurrence) — the two disjoint,
  * individually-deduplicated sources that together cover every bounce this
  * codebase records. Returns true when a summary was posted. Never throws.
+ *
+ * `opts.sweepClean`: pass `false` when the CALLER's own bounce sweep this
+ * tick came back partial (a source errored or was skipped — see
+ * pollInboxBounces' `clean` flag) or didn't run at all when one was needed.
+ * The watermark for the completed day must not be stamped on a tick where
+ * this function cannot be sure every bounce for that day has actually been
+ * swept yet — the scheduler forces a bounce sweep on the tick that crosses
+ * the UTC day boundary specifically so this function has a trustworthy
+ * answer here; a `sweepClean: false` on that same tick means the forced
+ * sweep itself came back partial, so stamping now would permanently drop
+ * whatever bounces the failed source hasn't reported yet (issue #71 round-4
+ * review finding). Defaults to `true` (unchanged behaviour) for callers that
+ * don't pass it, e.g. direct/test invocations.
  */
-export async function postDailySendSummaryIfDue(now: Date = new Date()): Promise<boolean> {
+export async function postDailySendSummaryIfDue(
+  now: Date = new Date(),
+  opts: { sweepClean?: boolean } = {},
+): Promise<boolean> {
   try {
     if (!slackWebhookUrl()) return false;
     // 24h back always lands on the previous UTC calendar day (UTC days are a
@@ -216,6 +232,10 @@ export async function postDailySendSummaryIfDue(now: Date = new Date()): Promise
     const day = utcDay(new Date(now.getTime() - 86_400_000));
     const ledger = getLedger();
     if (ledger.getPollWatermark(SLACK_DAILY_SUMMARY_WATERMARK) === day) return false;
+    if (opts.sweepClean === false) {
+      logEvent("slack.daily_summary.deferred", { day, reason: "bounce_sweep_partial" }, "warn");
+      return false;
+    }
     ledger.setPollWatermark(SLACK_DAILY_SUMMARY_WATERMARK, day);
     // sqlite-format bounds ("YYYY-MM-DD HH:MM:SS") so the string comparison
     // matches sequence_events.created_at, which is datetime('now')-stamped.

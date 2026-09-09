@@ -113,6 +113,13 @@ export function startScheduler(): SchedulerHandle {
       }
       // Bounce detection, isolated like the reply poll; non-spending.
       let bouncesRecorded = 0;
+      // True unless a sweep that ran (or should have run) this tick came back
+      // partial or failed outright — gates postDailySendSummaryIfDue below so
+      // it never permanently watermarks a day it can't be sure was fully
+      // swept (issue #71 round-4 review finding). Stays true when no sweep
+      // was due this tick (not a day-rollover tick — see dayRolledOver
+      // below), since the watermark can't be about to change in that case.
+      let bouncePollClean = true;
       // Throttled to BOUNCE_POLL_INTERVAL_MS, EXCEPT when the UTC calendar day
       // has rolled over since the last sweep: postDailySendSummaryIfDue below
       // stamps an at-most-once watermark for "yesterday" (UTC) on this same
@@ -132,8 +139,11 @@ export function startScheduler(): SchedulerHandle {
         // let ticks queue up behind it and then all fire at once.
         lastBouncePollAt = Date.now();
         try {
-          bouncesRecorded = (await pollInboxBounces()).recorded;
+          const bouncePoll = await pollInboxBounces();
+          bouncesRecorded = bouncePoll.recorded;
+          bouncePollClean = bouncePoll.clean;
         } catch (err) {
+          bouncePollClean = false;
           logEvent(
             "scheduler.bounce_poll.failed",
             { message_120: ((err as Error).message ?? "").slice(0, 120) },
@@ -157,7 +167,7 @@ export function startScheduler(): SchedulerHandle {
       // slackWebhookUrl is set. Isolated like the reply poll — failure must
       // not skip trigger scheduling.
       try {
-        await postDailySendSummaryIfDue();
+        await postDailySendSummaryIfDue(new Date(), { sweepClean: bouncePollClean });
       } catch (err) {
         logEvent(
           "scheduler.daily_summary.failed",

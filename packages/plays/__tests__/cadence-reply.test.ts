@@ -57,6 +57,7 @@ let rows: Row[] = [];
 const STORED_EMAIL = "sophia@agenticarchitect.ai";
 
 const notifySlackReplyReceivedMock = vi.fn(async () => {});
+const notifySlackBounceRecordedMock = vi.fn(async () => {});
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -64,6 +65,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     ...actual,
     loadConfig: () => ({ founderName: "J", productOneLiner: "thing" }),
     notifySlackReplyReceived: notifySlackReplyReceivedMock,
+    notifySlackBounceRecorded: notifySlackBounceRecordedMock,
     sendEmail: async () => {
       calls.sendEmail++;
       return { receiptId: 1 };
@@ -232,6 +234,7 @@ beforeEach(() => {
   seqEvents = [];
   recordProspectReplyRepliedAts = [];
   notifySlackReplyReceivedMock.mockClear();
+  notifySlackBounceRecordedMock.mockClear();
   intents = new Map();
   triageEmailsMock.mockClear();
   // The fixture cadence is also the latest play that emailed the prospect.
@@ -638,6 +641,17 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
     ]);
     expect(persistedReplies[0]?.kind).toBe("auto_permanent");
     expect(notifySlackReplyReceivedMock).not.toHaveBeenCalled();
+    // issue #71 round-4 review finding: the auto_permanent bounce path is
+    // counted into the Slack daily summary's bounced total (via
+    // Ledger.countAutoPermanentBounces) but never fired the Slack
+    // "bounce recorded" event itself. Must fire exactly once per
+    // autoresponder email, not once per cadence stopped.
+    expect(notifySlackBounceRecordedMock).toHaveBeenCalledTimes(1);
+    expect(notifySlackBounceRecordedMock).toHaveBeenCalledWith({
+      recipient: STORED_EMAIL,
+      kind: "auto_permanent",
+      status_code: null,
+    });
   });
 
   it("an unsubscribe request stops the cadence as unsubscribed", async () => {
@@ -660,6 +674,10 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
     ]);
     expect(persistedReplies[0]?.kind).toBe("unsubscribe");
     expect(notifySlackReplyReceivedMock).not.toHaveBeenCalled();
+    // Unsubscribe is a do-not-contact, not a bounce — must not raise a
+    // "Bounce recorded" alert (only auto_permanent is a bounce by this
+    // codebase's own status mapping above).
+    expect(notifySlackBounceRecordedMock).not.toHaveBeenCalled();
   });
 
   it("a terminal cadence is not resurrected or re-stopped by a dead-mailbox notice", async () => {

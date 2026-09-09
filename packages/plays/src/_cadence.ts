@@ -532,6 +532,21 @@ async function walkInboxWindow(
         // bounces-table row (that would poison identity reputation stats).
         if (kind === "auto_permanent" || kind === "unsubscribe") {
           const status = kind === "unsubscribe" ? "unsubscribed" : "bounced";
+          // Slack notification: fire-and-forget, once per autoresponder email
+          // (not per cadence — the loop below can touch several). Mirrors the
+          // DSN path's notifySlackBounceRecorded call in pollInboxBounces;
+          // this is the reply-stream bounce source and is now counted into
+          // the same daily bounced total (Ledger.countAutoPermanentBounces),
+          // so it must also fire the same event (issue #71 review finding —
+          // "counted but never notified"). No status_code: a dead-mailbox
+          // autoresponder carries no SMTP DSN code, unlike a real bounce.
+          if (status === "bounced") {
+            void notifySlackBounceRecorded({
+              recipient: from,
+              kind: "auto_permanent",
+              status_code: null,
+            });
+          }
           for (const cad of ledger.listCadencesForProspect(prospect.id)) {
             if (cad.status !== "active" && cad.status !== "paused") continue;
             ledger.recordSequenceEvent({
@@ -737,6 +752,15 @@ export interface BouncePollResult {
   recorded: number;
   /** Cadences stopped by a hard bounce this poll. */
   cadencesStopped: number;
+  /**
+   * No bounce source errored or was skipped this sweep. False on a partial
+   * sweep — the caller (scheduler) must not treat a partial sweep as proof
+   * "no more bounces are coming" when deciding whether it's safe to
+   * permanently watermark a day for the Slack daily summary (issue #71
+   * round-4 review finding: forcing the sweep on day rollover is useless if
+   * the forced sweep itself can silently come back partial).
+   */
+  clean: boolean;
   details: Array<{
     recipient: string;
     kind: BounceKind;
@@ -752,9 +776,16 @@ export interface BouncePollResult {
  */
 export async function pollInboxBounces(): Promise<BouncePollResult> {
   const ledger = getLedger();
-  const out: BouncePollResult = { polled: 0, recorded: 0, cadencesStopped: 0, details: [] };
-  const bounces = await listBounces();
+  const out: BouncePollResult = {
+    polled: 0,
+    recorded: 0,
+    cadencesStopped: 0,
+    clean: true,
+    details: [],
+  };
+  const { bounces, failedSources } = await listBounces();
   out.polled = bounces.length;
+  out.clean = failedSources.length === 0;
 
   for (const b of bounces) {
     const prospect = ledger.findProspectByEmail(b.recipient);

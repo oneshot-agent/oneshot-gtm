@@ -40,7 +40,7 @@ vi.mock("@oneshot-gtm/plays", () => ({
   pollInboxReplies: async () => ({ repliesDetected: 0, autoRepliesSkipped: 0 }),
   pollInboxBounces: async () => {
     calls.pollInboxBounces++;
-    return { polled: 0, recorded: 0, cadencesStopped: 0, details: [] };
+    return { polled: 0, recorded: 0, cadencesStopped: 0, clean: bouncePollCleanValue, details: [] };
   },
 }));
 
@@ -51,14 +51,17 @@ vi.mock("@oneshot-gtm/core", () => ({
   // These cases exercise the real scheduler loop. Demo mode short-circuits it
   // to a no-op handle — covered separately below.
   demoMode: () => demoModeValue,
-  postDailySendSummaryIfDue: async () => {
+  postDailySendSummaryIfDue: async (_now: Date, opts: { sweepClean?: boolean }) => {
     calls.postDailySendSummaryIfDue++;
+    postDailySendSummaryIfDueOpts.push(opts);
     return false;
   },
   refreshPendingDirectMail: async () => ({ refreshed: 0, failed: 0 }),
 }));
 
 let demoModeValue = false;
+let bouncePollCleanValue = true;
+let postDailySendSummaryIfDueOpts: Array<{ sweepClean?: boolean }> = [];
 
 const { startScheduler } = await import("../src/scheduler.ts");
 
@@ -74,6 +77,8 @@ beforeEach(() => {
   throwOnNextRun = null;
   runDueTriggersGate = null;
   demoModeValue = false;
+  bouncePollCleanValue = true;
+  postDailySendSummaryIfDueOpts = [];
 });
 
 afterEach(() => {
@@ -256,6 +261,32 @@ describe("startScheduler", () => {
     vi.setSystemTime(new Date("2026-08-29T00:02:00.000Z"));
     await vi.advanceTimersByTimeAsync(60_000);
     expect(calls.pollInboxBounces).toBe(2);
+
+    handle.stop();
+  });
+
+  // issue #71 round-4 review finding: forcing the bounce sweep on day
+  // rollover is only useful if postDailySendSummaryIfDue actually refuses
+  // to stamp the watermark when that forced sweep came back partial. The
+  // scheduler must pass the sweep's own `clean` flag through as
+  // `sweepClean` on every tick, not just day-rollover ticks.
+  it("passes the bounce sweep's clean flag through to postDailySendSummaryIfDue as sweepClean", async () => {
+    nextSleepValue = 60_000;
+    bouncePollCleanValue = false;
+    const handle = startScheduler();
+
+    // First tick ever always sweeps (lastBouncePollAt === 0); the sweep
+    // reports clean: false via the mock.
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(calls.pollInboxBounces).toBe(1);
+    expect(postDailySendSummaryIfDueOpts.at(-1)).toEqual({ sweepClean: false });
+
+    // A clean sweep reports sweepClean: true.
+    bouncePollCleanValue = true;
+    vi.setSystemTime(new Date(Date.now() + 31 * 60_000)); // clears the 30-min throttle
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(calls.pollInboxBounces).toBe(2);
+    expect(postDailySendSummaryIfDueOpts.at(-1)).toEqual({ sweepClean: true });
 
     handle.stop();
   });

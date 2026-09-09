@@ -1350,6 +1350,21 @@ export interface IdentityBounce extends GmailBounce {
   identityId: string;
 }
 
+export interface BounceListResult {
+  bounces: IdentityBounce[];
+  /**
+   * Identity ids whose mailbox errored or has no token this sweep (multi-source
+   * only — a lone source's failure still returns `[]` bounces here, never
+   * throws). The bounce sweep needs this: a sweep that silently dropped a
+   * source is NOT the same as "that mailbox truly has zero DSNs right now",
+   * and a caller deciding whether it's safe to treat this sweep as a complete
+   * picture of recent bounces (e.g. before permanently watermarking a day as
+   * summarized) must be able to tell the two apart (issue #71 round-4 review
+   * finding).
+   */
+  failedSources: string[];
+}
+
 /**
  * Delivery failures across the sender pool. Gmail identities only — a DSN
  * returns to the envelope sender, and OneShot's return path belongs to the
@@ -1361,12 +1376,14 @@ export interface IdentityBounce extends GmailBounce {
 export async function listBounces(opts?: {
   since?: string;
   limit?: number;
-}): Promise<IdentityBounce[]> {
+}): Promise<BounceListResult> {
   const identities = resolveIdentities(loadConfig()).filter((i) => i.provider === "gmail");
+  const failedSources: string[] = [];
   const results = await parallelMap(identities, 3, async (identity) => {
     const account = gmailAccountFor(identity);
     if (!account) {
       logEvent("bounce.source_skipped", { source: identity.id, reason: "no_token" }, "warn");
+      failedSources.push(identity.id);
       return [];
     }
     try {
@@ -1383,10 +1400,11 @@ export async function listBounces(opts?: {
         { source: identity.id, message_120: ((err as Error).message ?? "").slice(0, 120) },
         "warn",
       );
+      failedSources.push(identity.id);
       return [];
     }
   });
-  return results.flat();
+  return { bounces: results.flat(), failedSources };
 }
 
 export interface BuildSiteInput {

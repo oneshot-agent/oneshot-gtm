@@ -326,6 +326,49 @@ describe("slack-notify", () => {
       );
     });
 
+    // issue #71 round-4 review finding: the scheduler forces a bounce sweep
+    // on the tick that crosses the UTC day boundary specifically so this
+    // function can trust that day's bounces are fully accounted for before
+    // stamping the watermark. If that forced sweep itself comes back
+    // partial (a source errored/skipped), stamping anyway would permanently
+    // drop whatever bounces the failed source hasn't reported — the
+    // watermark never re-opens a stamped day.
+    it("does NOT stamp the watermark or post when sweepClean is false", async () => {
+      vi.spyOn(config, "loadConfig").mockReturnValue({
+        slackWebhookUrl: "https://hooks.slack.com/test",
+      } as any);
+      const ledger = getLedger();
+      ledger.setPollWatermark(SLACK_DAILY_SUMMARY_WATERMARK, "");
+
+      const posted = await postDailySendSummaryIfDue(new Date("2026-08-29T10:00:00Z"), {
+        sweepClean: false,
+      });
+
+      expect(posted).toBe(false);
+      expect(fetchMock).not.toHaveBeenCalled();
+      // Watermark stays unset — a later, clean sweep must still be able to
+      // stamp and post for this day.
+      expect(ledger.getPollWatermark(SLACK_DAILY_SUMMARY_WATERMARK)).toBe("");
+      expect(logEventSpy).toHaveBeenCalledWith(
+        "slack.daily_summary.deferred",
+        expect.objectContaining({ day: "2026-08-28", reason: "bounce_sweep_partial" }),
+        "warn",
+      );
+    });
+
+    it("stamps the watermark as usual when sweepClean is omitted (default true)", async () => {
+      vi.spyOn(config, "loadConfig").mockReturnValue({
+        slackWebhookUrl: "https://hooks.slack.com/test",
+      } as any);
+      const ledger = getLedger();
+      ledger.setPollWatermark(SLACK_DAILY_SUMMARY_WATERMARK, "");
+
+      const posted = await postDailySendSummaryIfDue(new Date("2026-08-29T10:00:00Z"));
+
+      expect(posted).toBe(false); // quiet day
+      expect(ledger.getPollWatermark(SLACK_DAILY_SUMMARY_WATERMARK)).toBe("2026-08-28");
+    });
+
     it("excludes events from the in-progress day (upper-bounded to the completed day)", async () => {
       vi.spyOn(config, "loadConfig").mockReturnValue({
         slackWebhookUrl: "https://hooks.slack.com/test",
