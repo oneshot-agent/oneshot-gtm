@@ -10,6 +10,7 @@ import { cn } from "../../lib/cn.ts";
  *   ghost     — unadorned; hover darkens only.
  *   danger    — oxblood outline, never a filled red.
  *   accent    — cobalt outline for rare informational actions.
+ *   receipt   — receipt-green outline; the total line's "Send this one".
  */
 const buttonStyles = cva(
   [
@@ -48,6 +49,13 @@ const buttonStyles = cva(
           "bg-transparent text-[color:var(--ink-signal-2)]",
           "border border-[color:var(--ink-signal)]",
           "hover:bg-[color:var(--ink-signal)]/10",
+        ].join(" "),
+        // The total line's button: receipt-green outline, the one place a
+        // page spends the accent — "Send this one" on a clean draft.
+        receipt: [
+          "bg-transparent text-[color:var(--ink-receipt-2)]",
+          "border border-[color:var(--ink-receipt)]/55",
+          "hover:bg-[color:var(--ink-receipt)]/10 hover:border-[color:var(--ink-receipt)]",
         ].join(" "),
       },
       size: {

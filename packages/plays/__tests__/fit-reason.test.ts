@@ -44,6 +44,11 @@ describe("normalizeFitReason", () => {
   });
 
   it("drops the gates' canned non-reasons and unwraps the stage-C prefix", () => {
+    expect(normalizeFitReason("fill-the-gap enrichment returned no title")).toBeNull();
+    expect(normalizeFitReason("fill-the-gap enrichment failed")).toBeNull();
+    expect(
+      normalizeFitReason("product research unavailable: no product research signal found"),
+    ).toBeNull();
     expect(normalizeFitReason("no ICP set; pass-through")).toBeNull();
     expect(normalizeFitReason("No role text available")).toBeNull();
     expect(normalizeFitReason("classifier unavailable pre-spend; deferred")).toBeNull();

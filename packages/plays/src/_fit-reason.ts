@@ -42,6 +42,15 @@ const NOT_A_REASON = new Set([
 ]);
 
 /**
+ * The same family by prefix: what a gate or the product-research step writes
+ * when it could NOT judge ("fill-the-gap enrichment returned no title",
+ * "product research unavailable: …"). Three of these reached live rows as
+ * their fit line before this pattern existed (#594).
+ */
+const DIAGNOSTIC =
+  /^(?:fill-the-gap enrichment|product research unavailable|no role text|classifier unavailable|no icp set)\b/i;
+
+/**
  * Trim, collapse whitespace, strip wrapping quotes, drop the gates' canned
  * non-reasons, cap length. Null for blank or non-string input — the caller's
  * "nothing to stamp" signal.
@@ -53,7 +62,7 @@ export function normalizeFitReason(raw: unknown): string | null {
     s = s.slice(1, -1).trim();
   }
   s = s.replace(/^unclear-after-enrich:\s*/i, "");
-  if (s.length === 0 || NOT_A_REASON.has(s.toLowerCase())) return null;
+  if (s.length === 0 || NOT_A_REASON.has(s.toLowerCase()) || DIAGNOSTIC.test(s)) return null;
   return s.length > FIT_REASON_MAX_CHARS ? `${s.slice(0, FIT_REASON_MAX_CHARS - 1).trimEnd()}…` : s;
 }
 
