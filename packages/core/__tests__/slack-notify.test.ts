@@ -552,9 +552,11 @@ describe("slack-notify", () => {
     });
 
     it("counts a dead-mailbox autoresponder bounce that stopped multiple concurrent cadences as one", async () => {
-      // The auto_permanent reply-stream path has the identical multi-cadence
-      // duplication problem as DSN bounces, but never touches the `bounces`
-      // table — countAutoPermanentBounces must de-duplicate it separately.
+      // The auto_permanent reply-stream path is counted from inbox_replies
+      // (issue #71 round-1 correction), not sequence_events — recordInboxReply
+      // is INSERT OR IGNORE keyed on the provider's own message id, so one
+      // real event is already exactly one row regardless of how many
+      // concurrent cadences the sequence_events loop separately wrote for it.
       vi.spyOn(config, "loadConfig").mockReturnValue({
         slackWebhookUrl: "https://hooks.slack.com/test",
       } as any);
@@ -575,6 +577,16 @@ describe("slack-notify", () => {
           bouncedAt,
         });
       }
+      ledger.recordInboxReply({
+        id: "dead-msg-1",
+        threadKey: "dead-msg-1",
+        prospectId: pid,
+        fromEmail: "dead@x.com",
+        subject: "Out of office",
+        body: "I no longer work here.",
+        receivedAt: bouncedAt,
+        kind: "auto_permanent",
+      });
 
       const posted = await postDailySendSummaryIfDue(new Date("2026-09-04T10:00:00Z"));
 

@@ -204,9 +204,13 @@ function utcDay(d: Date): string {
  * duplication problem but never touches `bounces` at all. So `bounced` is
  * the sum of `ledger.countBounces` (DSN path, one row per event in the
  * `bounces` table) and `ledger.countAutoPermanentBounces` (reply-stream
- * path, de-duplicated per prospect+occurrence) — the two disjoint,
- * individually-deduplicated sources that together cover every bounce this
- * codebase records. Returns true when a summary was posted. Never throws.
+ * path, counted straight from `inbox_replies` — every matched auto_permanent
+ * email is persisted there unconditionally via `recordInboxReply`, whether
+ * or not the prospect had a live cadence for the `sequence_events` write
+ * right after, so it is the complete source, issue #71 round-1 correction)
+ * — the two disjoint, individually-deduplicated sources that together cover
+ * every bounce this codebase records. Returns true when a summary was
+ * posted. Never throws.
  *
  * `opts.sweepClean`: pass `false` when the CALLER's own bounce sweep this
  * tick came back partial (a source errored or was skipped — see

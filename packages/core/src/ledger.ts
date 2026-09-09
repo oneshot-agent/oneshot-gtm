@@ -1741,33 +1741,32 @@ export class Ledger {
    * reply kind, see reply-classify.ts) in the window — the OTHER bounce
    * source the Slack daily summary's `bounced` total must include alongside
    * countBounces (DSN bounces never touch `sequence_events`; this reply-
-   * stream path never touches `bounces`). `pollInboxReplies` inserts one
-   * `sequence_events` row per active/paused cadence the prospect is enrolled
-   * in for a single autoresponder email, so counting rows would duplicate
-   * one real event; DISTINCT on (prospect_id, bounced_at) collapses that
-   * back to one, since every row from the same email shares the same
-   * `bounced_at` (= the inbound email's own received_at, always set for this
-   * path — see _cadence.ts's pollInboxReplies). `metadata_json.reason`
-   * distinguishes this from an ordinary DSN-recorded 'bounced' row (which
-   * carries no `reason` field).
+   * stream path never touches `bounces`). Counted from `inbox_replies`, NOT
+   * `sequence_events` (issue #71 round-1 correction): `pollInboxReplies`
+   * (and the /inbox route's opportunistic capture) call `recordInboxReply`
+   * for EVERY matched auto_permanent email unconditionally, but only write a
+   * `sequence_events` row inside the `listCadencesForProspect(...).filter
+   * (status active|paused)` loop right after — a dead-mailbox reply for a
+   * prospect whose only cadence is already terminal (or who has none) still
+   * fires `notifySlackBounceRecorded` and is persisted here, but would never
+   * produce a `sequence_events` row to count. `inbox_replies.id` is the
+   * provider's own message id and PRIMARY KEY (INSERT OR IGNORE), so each
+   * real event is already exactly one row — no de-dup math needed, unlike
+   * countBounces' sibling problem on the multi-cadence `sequence_events`
+   * path.
    */
   countAutoPermanentBounces(opts: { sinceIso?: string; untilIso?: string } = {}): number {
-    const where: string[] = [
-      "status = 'bounced'",
-      "bounced_at IS NOT NULL",
-      "json_extract(metadata_json, '$.reason') = 'auto-reply-permanent'",
-    ];
+    const where: string[] = ["kind = 'auto_permanent'"];
     const args: unknown[] = [];
     if (opts.sinceIso) {
-      where.push("bounced_at >= ?");
+      where.push("received_at >= ?");
       args.push(opts.sinceIso);
     }
     if (opts.untilIso) {
-      where.push("bounced_at < ?");
+      where.push("received_at < ?");
       args.push(opts.untilIso);
     }
-    const sql = `SELECT COUNT(DISTINCT prospect_id || '|' || bounced_at) AS n
-      FROM sequence_events WHERE ${where.join(" AND ")}`;
+    const sql = `SELECT COUNT(*) AS n FROM inbox_replies WHERE ${where.join(" AND ")}`;
     return (this.db.query(sql).get(...(args as never[])) as { n: number } | null)?.n ?? 0;
   }
 

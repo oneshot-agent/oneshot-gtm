@@ -73,6 +73,16 @@ export function startScheduler(): SchedulerHandle {
   // updates it, to either outcome; ticks with no sweep due leave it as the
   // last sweep left it.
   let bouncePollClean = true;
+  // Same reasoning as bouncePollClean above, for the reply-poll side (issue
+  // #71 round-1 correction): postDailySendSummaryIfDue's watermark also
+  // depends on every one of yesterday's replies being recorded, and a
+  // partial reply poll on the UTC-day-rollover tick must defer the stamp
+  // the same way a partial bounce sweep already does. Lives outside the
+  // tick closure so a tick that runs no reply poll of its own (there's no
+  // throttle here — pollInboxReplies runs every tick — but the pattern is
+  // kept identical to bouncePollClean for the same "carry forward, don't
+  // reset" reason) doesn't silently re-arm to clean.
+  let replyPollClean = true;
 
   const tick = async (): Promise<void> => {
     if (cancelled) return;
@@ -104,7 +114,9 @@ export function startScheduler(): SchedulerHandle {
         const replyPoll = await pollInboxReplies();
         repliesDetected = replyPoll.repliesDetected;
         autoRepliesSkipped = replyPoll.autoRepliesSkipped;
+        replyPollClean = replyPoll.clean;
       } catch (err) {
+        replyPollClean = false;
         logEvent(
           "scheduler.reply_poll.failed",
           { message_120: ((err as Error).message ?? "").slice(0, 120) },
@@ -171,9 +183,17 @@ export function startScheduler(): SchedulerHandle {
       }
       // Daily send summary to Slack: fires once per completed UTC day when
       // slackWebhookUrl is set. Isolated like the reply poll — failure must
-      // not skip trigger scheduling.
+      // not skip trigger scheduling. Gated on BOTH pollers' cleanliness
+      // (issue #71 round-1 correction): the summary's `bounced` total is
+      // ledger.countBounces + ledger.countAutoPermanentBounces, sourced from
+      // the bounce sweep AND the reply poll respectively, so a partial
+      // reply poll on the day-rollover tick is exactly as unsafe to stamp
+      // over as a partial bounce sweep — either can permanently drop
+      // yesterday's not-yet-recorded events from every future summary.
       try {
-        await postDailySendSummaryIfDue(new Date(), { sweepClean: bouncePollClean });
+        await postDailySendSummaryIfDue(new Date(), {
+          sweepClean: bouncePollClean && replyPollClean,
+        });
       } catch (err) {
         logEvent(
           "scheduler.daily_summary.failed",

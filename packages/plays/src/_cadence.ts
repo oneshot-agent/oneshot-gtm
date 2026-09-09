@@ -388,6 +388,18 @@ export interface ReplyPollResult {
   cadencesStopped: number;
   /** Matched inbound mail classified as non-human (OOO / dead mailbox / unsubscribe) — stored, never counted as a reply. */
   autoRepliesSkipped: number;
+  /**
+   * No mailbox source errored or was skipped anywhere this poll touched (the
+   * live window walk, and the backlog drain when one ran) — mirrors
+   * BouncePollResult.clean below. False on a partial poll, so the caller
+   * (scheduler) must not treat a partial reply poll as proof every reply for
+   * the UTC day now closing has been recorded before stamping the daily
+   * summary watermark (issue #71 round-1 correction — same class of bug the
+   * round-3/round-4 findings already fixed for the bounce sweep, here
+   * applied to the reply-poll side). Defaults to true; only individual
+   * `walkInboxWindow` calls that come back non-clean flip it.
+   */
+  clean: boolean;
   details: Array<{ prospectEmail: string; playName: string; subject: string }>;
 }
 
@@ -677,6 +689,7 @@ export async function pollInboxReplies(opts?: {
     repliesDetected: 0,
     cadencesStopped: 0,
     autoRepliesSkipped: 0,
+    clean: true,
     details: [],
   };
   const pageSize = opts?.pageSize ?? REPLY_POLL_LIMIT;
@@ -694,6 +707,7 @@ export async function pollInboxReplies(opts?: {
     pages: maxPages,
     pageSize,
   });
+  if (!fwd.clean) out.clean = false;
 
   // Advance the watermark only on a CLEAN walk. A partial result (one mailbox
   // timed out) leaves the mark where it was, so the next good poll re-covers
@@ -724,6 +738,7 @@ export async function pollInboxReplies(opts?: {
   const budget = maxPages - fwd.pagesUsed;
   if (backlog && budget > 0) {
     const back = await walkInboxWindow(ledger, out, seen, { ...backlog, pages: budget, pageSize });
+    if (!back.clean) out.clean = false;
     if (back.clean) {
       if (back.exhausted) {
         ledger.setPollWatermark(REPLY_BACKLOG_KEY, "");

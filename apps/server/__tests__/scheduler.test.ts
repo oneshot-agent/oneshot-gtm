@@ -12,6 +12,7 @@ const calls = {
   nextSleepMs: 0,
   eventKinds: [] as string[],
   pollInboxBounces: 0,
+  pollInboxReplies: 0,
   postDailySendSummaryIfDue: 0,
 };
 
@@ -37,7 +38,10 @@ vi.mock("@oneshot-gtm/find", () => ({
 
 vi.mock("@oneshot-gtm/plays", () => ({
   backfillMailAddresses: async () => {},
-  pollInboxReplies: async () => ({ repliesDetected: 0, autoRepliesSkipped: 0 }),
+  pollInboxReplies: async () => {
+    calls.pollInboxReplies++;
+    return { repliesDetected: 0, autoRepliesSkipped: 0, clean: replyPollCleanValue };
+  },
   pollInboxBounces: async () => {
     calls.pollInboxBounces++;
     return { polled: 0, recorded: 0, cadencesStopped: 0, clean: bouncePollCleanValue, details: [] };
@@ -61,6 +65,7 @@ vi.mock("@oneshot-gtm/core", () => ({
 
 let demoModeValue = false;
 let bouncePollCleanValue = true;
+let replyPollCleanValue = true;
 let postDailySendSummaryIfDueOpts: Array<{ sweepClean?: boolean }> = [];
 
 const { startScheduler } = await import("../src/scheduler.ts");
@@ -71,6 +76,7 @@ beforeEach(() => {
   calls.nextSleepMs = 0;
   calls.eventKinds = [];
   calls.pollInboxBounces = 0;
+  calls.pollInboxReplies = 0;
   calls.postDailySendSummaryIfDue = 0;
   nextOutcomes = [];
   nextSleepValue = 60_000;
@@ -78,6 +84,7 @@ beforeEach(() => {
   runDueTriggersGate = null;
   demoModeValue = false;
   bouncePollCleanValue = true;
+  replyPollCleanValue = true;
   postDailySendSummaryIfDueOpts = [];
 });
 
@@ -315,6 +322,25 @@ describe("startScheduler", () => {
     // partial result from the last real sweep, not reset to true.
     await vi.advanceTimersByTimeAsync(60_000);
     expect(calls.pollInboxBounces).toBe(1); // confirms no sweep ran this tick
+    expect(postDailySendSummaryIfDueOpts.at(-1)).toEqual({ sweepClean: false });
+
+    handle.stop();
+  });
+
+  // issue #71 round-1 correction: postDailySendSummaryIfDue's watermark
+  // stamping was gated only on the bounce sweep's `clean` flag, not on
+  // reply-poll completeness — but the summary's `bounced` total also
+  // depends on the reply poll (countAutoPermanentBounces reads
+  // inbox_replies, which the reply poll writes). A partial reply poll must
+  // defer the stamp exactly like a partial bounce sweep does.
+  it("passes sweepClean: false when the reply poll is partial even though the bounce sweep is clean", async () => {
+    nextSleepValue = 60_000;
+    bouncePollCleanValue = true;
+    replyPollCleanValue = false;
+    const handle = startScheduler();
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(calls.pollInboxReplies).toBe(1);
     expect(postDailySendSummaryIfDueOpts.at(-1)).toEqual({ sweepClean: false });
 
     handle.stop();

@@ -199,16 +199,46 @@ describe("countBounces", () => {
 });
 
 describe("countAutoPermanentBounces", () => {
-  it("counts one dead-mailbox autoresponder event even when it stops multiple concurrent cadences", () => {
+  // issue #71 round-1 correction: countAutoPermanentBounces now reads
+  // `inbox_replies` (via recordInboxReply, kind='auto_permanent') instead of
+  // `sequence_events` — a dead-mailbox reply for a prospect with no
+  // active/paused cadence still gets persisted to inbox_replies and still
+  // fires notifySlackBounceRecorded, but pollInboxReplies only writes
+  // sequence_events inside its active/paused-cadence loop, so the old
+  // sequence_events-based count silently dropped that case.
+  it("counts a persisted auto_permanent reply even when the prospect has no active/paused cadence", () => {
     const prospectId = ledger.upsertProspect({
       name: "Gone",
       email: "gone@dead.example",
       source: "t",
     });
-    // pollInboxReplies loops every active/paused cadence for the prospect and
-    // writes one sequence_events row per cadence for a single autoresponder —
-    // both rows share the same bounced_at (the inbound email's received_at).
-    const bouncedAt = "2026-08-28T09:00:00.000Z";
+    ledger.recordInboxReply({
+      id: "msg-1",
+      threadKey: "msg-1",
+      prospectId,
+      fromEmail: "gone@dead.example",
+      subject: "Out of office",
+      body: "I no longer work here.",
+      receivedAt: "2026-08-28T09:00:00.000Z",
+      kind: "auto_permanent",
+    });
+    const n = ledger.countAutoPermanentBounces({
+      sinceIso: "2026-08-28T00:00:00.000Z",
+      untilIso: "2026-08-29T00:00:00.000Z",
+    });
+    expect(n).toBe(1);
+  });
+
+  it("counts one row per real event, regardless of how many concurrent cadences the prospect had", () => {
+    // Even though pollInboxReplies loops every active/paused cadence to
+    // write sequence_events (potentially several rows for one email),
+    // recordInboxReply is INSERT OR IGNORE keyed on the provider's own
+    // message id — exactly one inbox_replies row per real inbound email.
+    const prospectId = ledger.upsertProspect({
+      name: "Gone",
+      email: "gone2@dead.example",
+      source: "t",
+    });
     for (const playName of ["play-a", "play-b"]) {
       ledger.recordSequenceEvent({
         prospectId,
@@ -217,9 +247,19 @@ describe("countAutoPermanentBounces", () => {
         channel: "email",
         status: "bounced",
         metadata: { reason: "auto-reply-permanent" },
-        bouncedAt,
+        bouncedAt: "2026-08-28T09:00:00.000Z",
       });
     }
+    ledger.recordInboxReply({
+      id: "msg-2",
+      threadKey: "msg-2",
+      prospectId,
+      fromEmail: "gone2@dead.example",
+      subject: "Out of office",
+      body: "I no longer work here.",
+      receivedAt: "2026-08-28T09:00:00.000Z",
+      kind: "auto_permanent",
+    });
     const n = ledger.countAutoPermanentBounces({
       sinceIso: "2026-08-28T00:00:00.000Z",
       untilIso: "2026-08-29T00:00:00.000Z",
@@ -227,20 +267,31 @@ describe("countAutoPermanentBounces", () => {
     expect(n).toBe(1);
   });
 
-  it("excludes an ordinary DSN-recorded bounced sequence_event (no auto-reply-permanent reason)", () => {
+  it("excludes a human reply and other reply kinds", () => {
     const prospectId = ledger.upsertProspect({
-      name: "DSN",
-      email: "dsn@dead.example",
+      name: "Human",
+      email: "human@example.com",
       source: "t",
     });
-    ledger.recordSequenceEvent({
+    ledger.recordInboxReply({
+      id: "msg-3",
+      threadKey: "msg-3",
       prospectId,
-      playName: "p",
-      stepIndex: 0,
-      channel: "email",
-      status: "bounced",
-      metadata: { kind: "hard", statusCode: "5.1.1" },
-      bouncedAt: "2026-08-28T09:00:00.000Z",
+      fromEmail: "human@example.com",
+      subject: "re: stack",
+      body: "Sure, let's talk.",
+      receivedAt: "2026-08-28T09:00:00.000Z",
+      kind: "human",
+    });
+    ledger.recordInboxReply({
+      id: "msg-4",
+      threadKey: "msg-4",
+      prospectId,
+      fromEmail: "human@example.com",
+      subject: "OOO",
+      body: "Back Monday.",
+      receivedAt: "2026-08-28T09:05:00.000Z",
+      kind: "auto",
     });
     expect(
       ledger.countAutoPermanentBounces({
@@ -250,29 +301,21 @@ describe("countAutoPermanentBounces", () => {
     ).toBe(0);
   });
 
-  it("excludes rows outside the window and rows with no bounced_at", () => {
+  it("excludes rows outside the window", () => {
     const prospectId = ledger.upsertProspect({
       name: "NoTs",
       email: "nots@dead.example",
       source: "t",
     });
-    ledger.recordSequenceEvent({
+    ledger.recordInboxReply({
+      id: "msg-5",
+      threadKey: "msg-5",
       prospectId,
-      playName: "p",
-      stepIndex: 0,
-      channel: "email",
-      status: "bounced",
-      metadata: { reason: "auto-reply-permanent" },
-      // No bouncedAt.
-    });
-    ledger.recordSequenceEvent({
-      prospectId,
-      playName: "p2",
-      stepIndex: 0,
-      channel: "email",
-      status: "bounced",
-      metadata: { reason: "auto-reply-permanent" },
-      bouncedAt: "2026-01-01T00:00:00.000Z", // Outside the window below.
+      fromEmail: "nots@dead.example",
+      subject: "Gone",
+      body: "No longer at this company.",
+      receivedAt: "2026-01-01T00:00:00.000Z", // Outside the window below.
+      kind: "auto_permanent",
     });
     expect(
       ledger.countAutoPermanentBounces({
