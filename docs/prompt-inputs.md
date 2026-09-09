@@ -30,6 +30,7 @@ On top of that:
 | Prior emails on the thread                                            | no                       | yes               | yes                                          |
 | Overused-openers avoid list                                           | no                       | yes               | no                                           |
 | `founderCohort`                                                       | `accelerator-batch` only | no                | no                                           |
+| Meeting outcome + founder's pasted notes (issue #578)                 | no                       | no                | yes                                          |
 
 [^icp]:
     except `add-prospect`, `profile-intro` and `x-repost-intro`, which

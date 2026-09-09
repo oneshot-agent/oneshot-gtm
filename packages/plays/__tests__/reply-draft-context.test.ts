@@ -186,4 +186,49 @@ describe("draftInboxReply context assembly", () => {
     expect(block).toContain("not sure what you mean by that");
     expect(block).toContain("this was starred for research only");
   });
+
+  // MEETING injection (issue #578) — the direct outcome-to-draft path,
+  // alongside the indirect tagOutcomeValue -> angle_json path.
+  it("omits the MEETING block when there is no meeting", async () => {
+    await draftInboxReply(BASE);
+    expect(lastUserBlock()).not.toContain("MEETING");
+  });
+
+  it("omits the MEETING block for null meeting — byte-identical output with no meeting on the prospect", async () => {
+    await draftInboxReply({ ...BASE, meeting: null });
+    expect(lastUserBlock()).not.toContain("MEETING");
+  });
+
+  it("injects a held meeting as the most specific fact known, outranking the dossier", async () => {
+    await draftInboxReply({
+      ...BASE,
+      meeting: { outcome: "held", note: "They asked about SSO timelines.", summary: "Intro call" },
+    });
+    const block = lastUserBlock();
+    expect(block).toContain("MEETING");
+    expect(block).toContain("the call happened");
+    expect(block).toContain("outranks the dossier");
+    expect(block).toContain("They asked about SSO timelines.");
+  });
+
+  it("injects a no-show as non-terminal — re-offer, never acknowledge the miss", async () => {
+    await draftInboxReply({ ...BASE, meeting: { outcome: "no_show", note: null, summary: null } });
+    const block = lastUserBlock();
+    expect(block).toContain("MEETING");
+    expect(block).toContain("no-showed");
+    expect(block).toContain("Do not acknowledge the no-show");
+  });
+
+  it("omits the MEETING block for a cancelled or rescheduled meeting — neither ever happened", async () => {
+    await draftInboxReply({
+      ...BASE,
+      meeting: { outcome: "cancelled", note: null, summary: "Intro call" },
+    });
+    expect(lastUserBlock()).not.toContain("MEETING");
+    await draftInboxReply({
+      ...BASE,
+      meeting: { outcome: "rescheduled", note: null, summary: "Intro call" },
+    });
+    expect(lastUserBlock()).not.toContain("MEETING");
+  });
 });

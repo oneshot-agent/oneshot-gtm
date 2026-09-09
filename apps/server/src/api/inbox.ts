@@ -534,6 +534,7 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
   let context: Awaited<ReturnType<typeof gatherReplyContext>> = {
     dossier: null,
     angleJson: prospect?.angle_json ?? null,
+    meeting: prospect ? ledger.latestMeetingOutcomeFor(prospect.id) : null,
     threadSent: [],
     priorInbound: [],
     costUsd: 0,
@@ -587,6 +588,7 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
       matched,
       dossier: context.dossier,
       angleJson: context.angleJson,
+      meeting: context.meeting,
       threadSent: context.threadSent,
       priorInbound: context.priorInbound,
       intent,
@@ -716,6 +718,7 @@ export async function steerRoute(req: Request): Promise<Response> {
   let context: Awaited<ReturnType<typeof gatherReplyContext>> = {
     dossier: null,
     angleJson: prospect?.angle_json ?? null,
+    meeting: prospect ? ledger.latestMeetingOutcomeFor(prospect.id) : null,
     threadSent: [],
     priorInbound: [],
     costUsd: 0,
@@ -752,6 +755,7 @@ export async function steerRoute(req: Request): Promise<Response> {
       matched,
       dossier: context.dossier,
       angleJson: context.angleJson,
+      meeting: context.meeting,
       threadSent: context.threadSent,
       priorInbound: context.priorInbound,
       intent,

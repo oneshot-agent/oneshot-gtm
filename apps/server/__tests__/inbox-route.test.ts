@@ -49,6 +49,9 @@ const ledger = {
   setInboxDraftBody: setInboxDraftBodyMock,
   // round-2 correction (#480): the nav-dot ack signal — empty by default.
   listLatestOutcomeRecordedAtByProspect: listLatestOutcomeRecordedAtByProspectMock,
+  // issue #578: no meeting on the prospect by default — routes must fall
+  // back to null and keep the fallback ReplyContext byte-identical.
+  latestMeetingOutcomeFor: () => null,
 };
 
 vi.mock("@oneshot-gtm/core", async () => {

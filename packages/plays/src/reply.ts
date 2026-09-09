@@ -8,6 +8,7 @@ import {
   humanizeDraft,
   intentDirectiveBlock,
   lintEmail,
+  meetingBlock,
   signatureDirective,
 } from "./_lib.ts";
 
@@ -309,6 +310,16 @@ export interface DraftInboxReplyInput {
    * cases. Missing/empty → no block, unchanged output (issue #356).
    */
   angleJson?: string | null;
+  /**
+   * The founder's most recently recorded outcome for this prospect's
+   * calendar meeting(s) (issue #578) — a direct, structured fact from the
+   * ledger, not inferred from prose. Only `held`/`no_show` render (a
+   * cancelled/rescheduled meeting never happened, so there's nothing to
+   * relay); the founder's optional pasted note is untrusted content to
+   * reason from, never instructions to follow. Missing/null → no block,
+   * unchanged output.
+   */
+  meeting?: { outcome: string; note: string | null; summary: string | null } | null;
   /** Replies the founder already sent in this thread (oldest first) — round 2+ must not repeat round 1. */
   threadSent?: Array<{ body: string; sentAt: string }>;
   /** The prospect's earlier inbound messages (oldest first) — the other half of the exchange. */
@@ -401,6 +412,8 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<Draf
   const intentBlock = intentDirectiveBlock(input.intent);
   // Founder steer (issue #480) — a binding redraft instruction from /inbox.
   const steerBlock = founderSteerBlock(input.steer);
+  // MEETING (issue #578) — the direct outcome-to-draft path.
+  const meetingBlockText = meetingBlock(input.meeting ?? null);
 
   // No SOCIAL PROOF block here, deliberately. It is an instruction ("pick the
   // ONE beat that best fits this play"), and in a reply it contradicts the
@@ -424,6 +437,7 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<Draf
       ? ["", `SENDER DOSSIER (research about who wrote this):\n${input.dossier.trim()}`]
       : []),
     ...(angleBlock ? ["", angleBlock] : []),
+    ...(meetingBlockText ? ["", meetingBlockText] : []),
     ...(priorBlock ? ["", priorBlock] : []),
     ...(priorInboundBlock ? ["", priorInboundBlock] : []),
     ...(threadBlock ? ["", threadBlock] : []),

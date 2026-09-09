@@ -263,3 +263,61 @@ describe("Ledger fuzzy-match helpers", () => {
     expect(ledger.lastOutreachAt(pid)).not.toBeNull();
   });
 });
+
+describe("Ledger.latestMeetingOutcomeFor (issue #578)", () => {
+  it("returns null for a prospect with no meetings at all", () => {
+    const pid = ledger.upsertProspect({ email: "pat@acme.com", source: "t" });
+    expect(ledger.latestMeetingOutcomeFor(pid)).toBeNull();
+  });
+
+  it("returns null when the prospect's only meeting has no recorded outcome yet", () => {
+    const pid = ledger.upsertProspect({ email: "pat@acme.com", source: "t" });
+    ledger.upsertMeeting({ ...BASE, prospectId: pid, matchStatus: "exact" });
+    expect(ledger.latestMeetingOutcomeFor(pid)).toBeNull();
+  });
+
+  it("returns the outcome, note and summary once one is recorded", () => {
+    const pid = ledger.upsertProspect({ email: "pat@acme.com", source: "t" });
+    ledger.upsertMeeting({ ...BASE, prospectId: pid, matchStatus: "exact" });
+    ledger.setMeetingOutcome({
+      calendarId: "primary",
+      eventId: "e1",
+      outcome: "held",
+      note: "Asked about SSO.",
+    });
+    expect(ledger.latestMeetingOutcomeFor(pid)).toEqual({
+      outcome: "held",
+      note: "Asked about SSO.",
+      summary: "Intro call",
+    });
+  });
+
+  it("picks the newest meeting by starts_at when two outcomes tie on recorded time", () => {
+    const pid = ledger.upsertProspect({ email: "pat@acme.com", source: "t" });
+    ledger.upsertMeeting({
+      ...BASE,
+      eventId: "earlier",
+      startsAt: "2026-07-01T14:00:00.000Z",
+      prospectId: pid,
+      matchStatus: "exact",
+    });
+    ledger.upsertMeeting({
+      ...BASE,
+      eventId: "later",
+      startsAt: "2026-08-15T14:00:00.000Z",
+      prospectId: pid,
+      matchStatus: "exact",
+    });
+    ledger.setMeetingOutcome({ calendarId: "primary", eventId: "earlier", outcome: "no_show" });
+    ledger.setMeetingOutcome({ calendarId: "primary", eventId: "later", outcome: "held" });
+    expect(ledger.latestMeetingOutcomeFor(pid)?.outcome).toBe("held");
+  });
+
+  it("ignores a different prospect's meeting", () => {
+    const pidA = ledger.upsertProspect({ email: "a@acme.com", source: "t" });
+    const pidB = ledger.upsertProspect({ email: "b@acme.com", source: "t" });
+    ledger.upsertMeeting({ ...BASE, prospectId: pidA, matchStatus: "exact" });
+    ledger.setMeetingOutcome({ calendarId: "primary", eventId: "e1", outcome: "held" });
+    expect(ledger.latestMeetingOutcomeFor(pidB)).toBeNull();
+  });
+});
