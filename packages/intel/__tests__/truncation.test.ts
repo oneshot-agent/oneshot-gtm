@@ -147,7 +147,12 @@ describe("complete() reasoning switch — openrouter vs openai", () => {
     expect(requestOf(fetchMock).body["reasoning"]).toEqual({ enabled: false });
   });
 
-  it("falls back to the plain request when OpenRouter says the model's reasoning is mandatory, and remembers it", async () => {
+  it("falls back to a raised-budget, lowest-effort request when OpenRouter says the model's reasoning is mandatory, and remembers it", async () => {
+    // Card #586: the retry used to keep the caller's small max_tokens budget
+    // and send NO effort dial, so a reasoning-mandatory model reliably burned
+    // the whole budget on reasoning and truncated every draft. The retry now
+    // asks for the lowest supported effort AND raises max_tokens by the
+    // reasoning allowance on top of the caller's own budget.
     cfg.model = "mandatory-reasoning-model";
     const ok = {
       ok: true,
@@ -172,14 +177,80 @@ describe("complete() reasoning switch — openrouter vs openai", () => {
       JSON.parse((init as RequestInit).body as string),
     );
     expect(bodies[0]).toHaveProperty("reasoning", { enabled: false });
-    expect(bodies[1]).not.toHaveProperty("reasoning");
+    expect(bodies[0]).toHaveProperty("max_tokens", 500);
+    // The retry carries BOTH the lowest supported effort and a raised budget
+    // (caller's 500 + the reasoning allowance), never neither.
+    expect(bodies[1]).toHaveProperty("reasoning", { effort: "low" });
+    expect(bodies[1]).toHaveProperty("max_tokens", 500 + 1500);
 
-    // Remembered: the next call to the same model skips the switch and the round trip.
+    // Remembered: the next call to the same model skips the probe round trip
+    // and goes straight to the effort dial + raised budget.
     await complete({ messages: [{ role: "user", content: "again" }], maxTokens: 500 });
     expect(fn).toHaveBeenCalledTimes(3);
-    expect(JSON.parse((fn.mock.calls[2]![1] as RequestInit).body as string)).not.toHaveProperty(
-      "reasoning",
+    const thirdBody = JSON.parse((fn.mock.calls[2]![1] as RequestInit).body as string);
+    expect(thirdBody).toHaveProperty("reasoning", { effort: "low" });
+    expect(thirdBody).toHaveProperty("max_tokens", 500 + 1500);
+  });
+
+  it("still raises the truncation diagnostic on a mandatory-reasoning model, never a silent empty draft, even when the raised budget still isn't enough", async () => {
+    cfg.model = "mandatory-reasoning-model-2";
+    const rejected = {
+      ok: false,
+      status: 400,
+      headers: { get: () => null },
+      text: () => Promise.resolve('{"error":{"message":"reasoning cannot be disabled"}}'),
+    };
+    const stillTruncated = {
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          choices: [{ message: { content: "" }, finish_reason: "length" }],
+          usage: { completion_tokens: 2000, completion_tokens_details: { reasoning_tokens: 1999 } },
+        }),
+    };
+    const fn = vi.fn().mockResolvedValueOnce(rejected).mockResolvedValue(stillTruncated);
+    global.fetch = fn as unknown as typeof fetch;
+
+    const err = await errorFrom(
+      complete({ messages: [{ role: "user", content: "hi" }], maxTokens: 500 }),
     );
+    expect(err.message).toContain("truncated at max_tokens=2000");
+    expect(err.message).toContain("1999/2000 tokens were reasoning");
+    const retryBody = JSON.parse((fn.mock.calls[1]![1] as RequestInit).body as string);
+    expect(retryBody).toHaveProperty("reasoning", { effort: "low" });
+    expect(retryBody).toHaveProperty("max_tokens", 2000);
+  });
+
+  it("persists a learned mandatory-reasoning model to disk, so the next process skips the probe round trip", async () => {
+    cfg.model = "mandatory-reasoning-model-3";
+    const ok = {
+      ok: true,
+      json: () =>
+        Promise.resolve({ choices: [{ message: { content: "{}" }, finish_reason: "stop" }] }),
+    };
+    const rejected = {
+      ok: false,
+      status: 400,
+      headers: { get: () => null },
+      text: () => Promise.resolve('{"error":{"message":"reasoning cannot be disabled"}}'),
+    };
+    const firstProcessFetch = vi.fn().mockResolvedValueOnce(rejected).mockResolvedValue(ok);
+    global.fetch = firstProcessFetch as unknown as typeof fetch;
+    await complete({ messages: [{ role: "user", content: "hi" }], maxTokens: 500 });
+    expect(firstProcessFetch).toHaveBeenCalledTimes(2);
+
+    // Simulate a fresh process: reset the module registry and re-import
+    // client.ts so its module-level Set is rebuilt from scratch, reading
+    // only what was persisted to disk by the call above.
+    vi.resetModules();
+    const { complete: completeInFreshProcess } = await import("../src/client.ts");
+    const secondProcessFetch = vi.fn().mockResolvedValue(ok);
+    global.fetch = secondProcessFetch as unknown as typeof fetch;
+    await completeInFreshProcess({ messages: [{ role: "user", content: "hi" }], maxTokens: 500 });
+    // No probe 400 this time — the fresh process already knew from disk.
+    expect(secondProcessFetch).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((secondProcessFetch.mock.calls[0]![1] as RequestInit).body as string);
+    expect(body).toHaveProperty("reasoning", { effort: "low" });
   });
 
   it("does not swallow an unrelated 400 as a reasoning rejection", async () => {

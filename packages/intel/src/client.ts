@@ -1,4 +1,6 @@
-import { llmApiKey, loadConfig, logEvent, type OneShotConfig } from "@oneshot-gtm/core";
+import { llmApiKey, loadConfig, logEvent, type OneShotConfig, configDir } from "@oneshot-gtm/core";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { loadPrompt } from "./prompts.ts";
 
 export interface LlmMessage {
@@ -167,6 +169,38 @@ function truncationMessage(d: {
   return `truncated at max_tokens=${d.maxTokens} (raise maxTokens) — ${where}.`;
 }
 
+/**
+ * OpenRouter's per-model reasoning metadata (`GET /api/v1/models` →
+ * `reasoning.supported_efforts`) differs by mandatory-reasoning model:
+ * `google/gemini-3.8-flash` only accepts `"low" | "medium" | "high"` — no
+ * `"minimal"`, and sending it 400s — while `google/gemini-3.5-flash` and
+ * others do support `"minimal"`. `"low"` is the lowest tier every mandatory
+ * model this repo has seen accepts, so it is the uniform choice for the
+ * retry rather than risking a THIRD failure mode (an unsupported-effort
+ * 400) stacked on top of the `enabled:false` rejection this dispatch
+ * already handles.
+ */
+const MANDATORY_REASONING_EFFORT = "low";
+
+/**
+ * Extra `max_tokens` layered on top of the caller's own budget for a
+ * reasoning-mandatory retry, so a small JSON budget (every drafting prompt
+ * in packages/plays asks for 200-2000 tokens) still has room to answer once
+ * the model spends part of the ceiling on reasoning it cannot switch off.
+ * Sized from the one live data point issue #586 reports: openrouter
+ * google/gemini-3.8-flash at max_tokens=500, DEFAULT effort (medium — the
+ * only effort measured live) spent 481/496 tokens on reasoning. No
+ * OPENROUTER_API_KEY was available in the environment this fix was written
+ * in to measure a live call at the lower "low" effort the retry now
+ * requests, so this allowance is sized well above that one medium-effort
+ * data point rather than assumed to shrink proportionally — OpenRouter's own
+ * docs say Gemini 3 reasoning-token consumption under a thinkingLevel dial
+ * is "determined internally by Google", i.e. opaque, not a fixed ratio of
+ * max_tokens. A model whose consumption is opaque needs headroom, not a
+ * tight guess; re-measure and tighten this once a live key is available.
+ */
+const MANDATORY_REASONING_TOKEN_ALLOWANCE = 1500;
+
 let humanizerPrologueCache: string | null = null;
 function humanizerPrologue(): string {
   if (humanizerPrologueCache !== null) return humanizerPrologueCache;
@@ -298,6 +332,24 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
   return result;
 }
 
+/**
+ * A mandatory-reasoning retry raises `max_tokens` by the reasoning
+ * allowance so the caller's own budget still reaches the answer, but that
+ * larger ceiling must never mask a GENUINE plain overrun on top of it — so
+ * the mandatory-reasoning args below still expose the caller's original
+ * budget for `truncationMessage`'s "raise maxTokens" arithmetic. Kept as a
+ * distinct helper (not folded into `dispatch`) so it stays unit-testable
+ * against a fake `openaiCompatibleComplete` without a real HTTP layer.
+ */
+function mandatoryReasoningArgs(args: OpenAIArgs): OpenAIArgs {
+  const callerMaxTokens = args.input.maxTokens ?? 1024;
+  return {
+    ...args,
+    reasoningEffort: MANDATORY_REASONING_EFFORT,
+    input: { ...args.input, maxTokens: callerMaxTokens + MANDATORY_REASONING_TOKEN_ALLOWANCE },
+  };
+}
+
 function dispatch(
   provider: OneShotConfig["llmProvider"],
   model: string,
@@ -329,14 +381,23 @@ function dispatch(
       // to each provider's own switch, so this is one line for all of them —
       // except the ~100 models OpenRouter marks `reasoning.mandatory`
       // (gpt-5, the newer Gemini flashes, Fable 5.1), which answer the
-      // switch with a 400. Those get one retry without it and are
-      // remembered for the rest of the process, so the founder's model choice
-      // never has to know which kind it is.
-      if (mandatoryReasoningModels.has(model)) return openaiCompatibleComplete(args);
+      // switch with a 400. For THOSE, `enabled: false` never has a code
+      // path that succeeds, so retrying it is pointless: the retry instead
+      // asks for the lowest supported effort (never zero — that is exactly
+      // what "mandatory" forecloses) and raises max_tokens by a reasoning
+      // allowance on top of the caller's own budget (see
+      // MANDATORY_REASONING_TOKEN_ALLOWANCE), so the caller's requested
+      // answer size still fits after the model spends part of the larger
+      // ceiling on reasoning it cannot switch off. Learned once per model
+      // per process (the 400 costs nothing useful — a 4xx isn't billed) and
+      // persisted to disk so later process starts skip the round trip too.
+      if (mandatoryReasoningModels.has(model)) {
+        return openaiCompatibleComplete(mandatoryReasoningArgs(args));
+      }
       return openaiCompatibleComplete({ ...args, disableReasoning: true }).catch((err: unknown) => {
         if (isMandatoryReasoningRejection(err)) {
-          mandatoryReasoningModels.add(model);
-          return openaiCompatibleComplete(args);
+          rememberMandatoryReasoningModel(model);
+          return openaiCompatibleComplete(mandatoryReasoningArgs(args));
         }
         throw err;
       });
@@ -355,12 +416,58 @@ function dispatch(
   }
 }
 
-/** OpenRouter models that rejected `reasoning: { enabled: false }` — see the openrouter dispatch. */
-const mandatoryReasoningModels = new Set<string>();
+/**
+ * OpenRouter models that rejected `reasoning: { enabled: false }` — see the
+ * openrouter dispatch. Seeded from disk on first use (`loadMandatoryReasoningModels`)
+ * so a fresh process doesn't have to pay for the 400 again for a model a
+ * PRIOR process already learned about; every addition is persisted back so
+ * the set survives restarts, not just the current process's lifetime.
+ */
+const mandatoryReasoningModels = new Set<string>(loadMandatoryReasoningModels());
+
+function rememberMandatoryReasoningModel(model: string): void {
+  if (mandatoryReasoningModels.has(model)) return;
+  mandatoryReasoningModels.add(model);
+  saveMandatoryReasoningModels(mandatoryReasoningModels);
+}
 
 /** A 400 whose body talks about reasoning: the model cannot have it switched off. */
 function isMandatoryReasoningRejection(err: unknown): boolean {
   return err instanceof LlmError && err.status === 400 && /reasoning/i.test(err.message);
+}
+
+function mandatoryReasoningModelsPath(): string {
+  return join(configDir(), "mandatory-reasoning-models.json");
+}
+
+/**
+ * Best-effort disk read for the persisted set — any failure (missing file,
+ * corrupt JSON, a non-array shape) falls back to empty, exactly as if this
+ * were the first time the process had ever seen a mandatory-reasoning
+ * model. A read failure here must never crash `complete()` — the first
+ * call just re-learns via the normal 400-and-remember path.
+ */
+function loadMandatoryReasoningModels(): string[] {
+  try {
+    const path = mandatoryReasoningModelsPath();
+    if (!existsSync(path)) return [];
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((v): v is string => typeof v === "string");
+  } catch {
+    return [];
+  }
+}
+
+/** Best-effort disk write. Failure (read-only fs, etc.) never blocks the in-memory learning. */
+function saveMandatoryReasoningModels(models: Set<string>): void {
+  try {
+    const dir = configDir();
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(mandatoryReasoningModelsPath(), JSON.stringify([...models].toSorted(), null, 2));
+  } catch {
+    // best-effort persistence — the in-memory Set still works for this process.
+  }
 }
 
 /**
@@ -450,6 +557,12 @@ interface OpenAIArgs {
   extraHeaders?: Record<string, string>;
   /** Send OpenRouter's `reasoning: { enabled: false }` — see the openrouter dispatch. */
   disableReasoning?: boolean;
+  /**
+   * Send OpenRouter's `reasoning: { effort: ... }` — the reasoning-mandatory
+   * retry path, mutually exclusive with `disableReasoning` (a model that
+   * rejected `enabled: false` gets an effort dial instead, never both).
+   */
+  reasoningEffort?: string;
 }
 
 async function openaiCompatibleComplete(args: OpenAIArgs): Promise<LlmCompleteOutput> {
@@ -462,7 +575,11 @@ async function openaiCompatibleComplete(args: OpenAIArgs): Promise<LlmCompleteOu
       temperature: args.input.temperature ?? 0.7,
       max_tokens: args.input.maxTokens ?? 1024,
       // OpenRouter only — the OpenAI API rejects unknown parameters.
-      ...(args.disableReasoning ? { reasoning: { enabled: false } } : {}),
+      ...(args.disableReasoning
+        ? { reasoning: { enabled: false } }
+        : args.reasoningEffort
+          ? { reasoning: { effort: args.reasoningEffort } }
+          : {}),
     },
     provider: args.provider,
     timeoutMs: args.timeoutMs,
