@@ -171,16 +171,19 @@ function truncationMessage(d: {
 
 /**
  * OpenRouter's per-model reasoning metadata (`GET /api/v1/models` →
- * `reasoning.supported_efforts`) differs by mandatory-reasoning model:
- * `google/gemini-3.8-flash` only accepts `"low" | "medium" | "high"` — no
- * `"minimal"`, and sending it 400s — while `google/gemini-3.5-flash` and
- * others do support `"minimal"`. `"low"` is the lowest tier every mandatory
- * model this repo has seen accepts, so it is the uniform choice for the
- * retry rather than risking a THIRD failure mode (an unsupported-effort
- * 400) stacked on top of the `enabled:false` rejection this dispatch
- * already handles.
+ * `reasoning.supported_efforts`) differs by mandatory-reasoning model, and no
+ * single tier is safe to hardcode: `google/gemini-3.8-flash` accepts
+ * `"low" | "medium" | "high"` but 400s on `"minimal"`, while
+ * `openai/o4-mini-high` and `openai/o3-mini-high` accept ONLY `"high"` —
+ * `"low"` itself 400s on those. A fixed `"low"` therefore either fails
+ * outright (o4-mini-high) or overpays (any model that does support
+ * `"minimal"`). Instead the retry climbs this ladder lowest-to-highest,
+ * stopping at the first effort the model accepts — see
+ * `completeWithLowestSupportedEffort`, which is what actually "reads" the
+ * supported set, by trial against the live 400s rather than a second network
+ * round trip to the models endpoint.
  */
-const MANDATORY_REASONING_EFFORT = "low";
+const REASONING_EFFORT_LADDER = ["minimal", "low", "medium", "high"] as const;
 
 /**
  * Extra `max_tokens` layered on top of the caller's own budget for a
@@ -341,13 +344,49 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
  * distinct helper (not folded into `dispatch`) so it stays unit-testable
  * against a fake `openaiCompatibleComplete` without a real HTTP layer.
  */
-function mandatoryReasoningArgs(args: OpenAIArgs): OpenAIArgs {
+function mandatoryReasoningArgs(args: OpenAIArgs, effort: string): OpenAIArgs {
   const callerMaxTokens = args.input.maxTokens ?? 1024;
   return {
     ...args,
-    reasoningEffort: MANDATORY_REASONING_EFFORT,
+    reasoningEffort: effort,
     input: { ...args.input, maxTokens: callerMaxTokens + MANDATORY_REASONING_TOKEN_ALLOWANCE },
   };
+}
+
+/**
+ * Climbs `REASONING_EFFORT_LADDER` from the lowest tier up, stopping at the
+ * first effort OpenRouter actually accepts for this model. Each rung is one
+ * real request — a rejected 400 isn't billed, so this costs nothing beyond
+ * latency — and it is what "reads" the model's supported-effort set by
+ * trial rather than a second authenticated call to `/api/v1/models` (which
+ * would need its own caching and staleness story for a single lookup).
+ *
+ * `rememberMandatoryReasoningModel` is only called on an actual success —
+ * never before the retry's outcome is known — so a model that rejects every
+ * rung is never marked mandatory-with-a-working-effort; the caller sees the
+ * real terminal error, and the NEXT call re-probes instead of replaying a
+ * value nothing ever verified.
+ */
+async function completeWithLowestSupportedEffort(
+  args: OpenAIArgs,
+  model: string,
+): Promise<LlmCompleteOutput> {
+  let lastErr: unknown;
+  for (const effort of REASONING_EFFORT_LADDER) {
+    try {
+      const result = await openaiCompatibleComplete(mandatoryReasoningArgs(args, effort));
+      rememberMandatoryReasoningModel(model, effort);
+      return result;
+    } catch (err) {
+      lastErr = err;
+      // Anything other than a 400 (a 429, a 5xx, a timeout) is not "this
+      // effort is unsupported" — it is weather the outer retry loop in
+      // complete() already knows how to classify. Only a 400 means "try the
+      // next rung up".
+      if (!(err instanceof LlmError) || err.status !== 400) throw err;
+    }
+  }
+  throw lastErr;
 }
 
 function dispatch(
@@ -383,21 +422,23 @@ function dispatch(
       // (gpt-5, the newer Gemini flashes, Fable 5.1), which answer the
       // switch with a 400. For THOSE, `enabled: false` never has a code
       // path that succeeds, so retrying it is pointless: the retry instead
-      // asks for the lowest supported effort (never zero — that is exactly
-      // what "mandatory" forecloses) and raises max_tokens by a reasoning
+      // climbs REASONING_EFFORT_LADDER to find the lowest effort THIS model
+      // actually accepts (never assumed — different mandatory models accept
+      // different minimum tiers) and raises max_tokens by a reasoning
       // allowance on top of the caller's own budget (see
       // MANDATORY_REASONING_TOKEN_ALLOWANCE), so the caller's requested
       // answer size still fits after the model spends part of the larger
       // ceiling on reasoning it cannot switch off. Learned once per model
-      // per process (the 400 costs nothing useful — a 4xx isn't billed) and
-      // persisted to disk so later process starts skip the round trip too.
-      if (mandatoryReasoningModels.has(model)) {
-        return openaiCompatibleComplete(mandatoryReasoningArgs(args));
+      // per process (each rejected rung costs nothing useful — a 4xx isn't
+      // billed) and persisted to disk, together with the effort that
+      // actually worked, so later process starts skip the whole climb too.
+      const known = mandatoryReasoningModels.get(model);
+      if (known !== undefined) {
+        return openaiCompatibleComplete(mandatoryReasoningArgs(args, known));
       }
       return openaiCompatibleComplete({ ...args, disableReasoning: true }).catch((err: unknown) => {
         if (isMandatoryReasoningRejection(err)) {
-          rememberMandatoryReasoningModel(model);
-          return openaiCompatibleComplete(mandatoryReasoningArgs(args));
+          return completeWithLowestSupportedEffort(args, model);
         }
         throw err;
       });
@@ -417,17 +458,19 @@ function dispatch(
 }
 
 /**
- * OpenRouter models that rejected `reasoning: { enabled: false }` — see the
- * openrouter dispatch. Seeded from disk on first use (`loadMandatoryReasoningModels`)
- * so a fresh process doesn't have to pay for the 400 again for a model a
- * PRIOR process already learned about; every addition is persisted back so
- * the set survives restarts, not just the current process's lifetime.
+ * OpenRouter models known to reject `reasoning: { enabled: false }`, mapped
+ * to the lowest effort tier that DID succeed for that model — see the
+ * openrouter dispatch and `completeWithLowestSupportedEffort`. Seeded from
+ * disk on first use (`loadMandatoryReasoningModels`) so a fresh process
+ * doesn't have to pay for the climb again for a model a PRIOR process
+ * already learned about; every addition is persisted back so the mapping
+ * survives restarts, not just the current process's lifetime.
  */
-const mandatoryReasoningModels = new Set<string>(loadMandatoryReasoningModels());
+const mandatoryReasoningModels = new Map<string, string>(loadMandatoryReasoningModels());
 
-function rememberMandatoryReasoningModel(model: string): void {
-  if (mandatoryReasoningModels.has(model)) return;
-  mandatoryReasoningModels.add(model);
+function rememberMandatoryReasoningModel(model: string, effort: string): void {
+  if (mandatoryReasoningModels.get(model) === effort) return;
+  mandatoryReasoningModels.set(model, effort);
   saveMandatoryReasoningModels(mandatoryReasoningModels);
 }
 
@@ -441,32 +484,48 @@ function mandatoryReasoningModelsPath(): string {
 }
 
 /**
- * Best-effort disk read for the persisted set — any failure (missing file,
- * corrupt JSON, a non-array shape) falls back to empty, exactly as if this
- * were the first time the process had ever seen a mandatory-reasoning
- * model. A read failure here must never crash `complete()` — the first
- * call just re-learns via the normal 400-and-remember path.
+ * Best-effort disk read for the persisted model → working-effort mapping —
+ * any failure (missing file, corrupt JSON, a non-object shape) falls back to
+ * empty, exactly as if this were the first time the process had ever seen a
+ * mandatory-reasoning model. A read failure here must never crash
+ * `complete()` — the first call just re-learns via the normal climb-and-
+ * remember path.
+ *
+ * The pre-correction shape (#586 round 1) persisted a bare array of model
+ * names with NO effort recorded, implicitly paired with a single hardcoded
+ * `"low"` that 400s on real mandatory models such as `openai/o4-mini-high`.
+ * That shape carries no verified effort, so it is discarded here rather than
+ * migrated — a model in an old-shape file just re-probes once, the same as
+ * a model never seen before.
  */
-function loadMandatoryReasoningModels(): string[] {
+function loadMandatoryReasoningModels(): Array<[string, string]> {
   try {
     const path = mandatoryReasoningModelsPath();
     if (!existsSync(path)) return [];
     const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((v): v is string => typeof v === "string");
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+    return Object.entries(parsed as Record<string, unknown>).filter(
+      (entry): entry is [string, string] => typeof entry[1] === "string",
+    );
   } catch {
     return [];
   }
 }
 
 /** Best-effort disk write. Failure (read-only fs, etc.) never blocks the in-memory learning. */
-function saveMandatoryReasoningModels(models: Set<string>): void {
+function saveMandatoryReasoningModels(models: Map<string, string>): void {
   try {
     const dir = configDir();
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-    writeFileSync(mandatoryReasoningModelsPath(), JSON.stringify([...models].toSorted(), null, 2));
+    const obj: Record<string, string> = {};
+    for (const [model, effort] of [...models.entries()].toSorted(([a], [b]) =>
+      a.localeCompare(b),
+    )) {
+      obj[model] = effort;
+    }
+    writeFileSync(mandatoryReasoningModelsPath(), JSON.stringify(obj, null, 2));
   } catch {
-    // best-effort persistence — the in-memory Set still works for this process.
+    // best-effort persistence — the in-memory Map still works for this process.
   }
 }
 
