@@ -10,6 +10,8 @@
  * signal just because the tone was friendly.
  */
 
+import { getLedger } from "./ledger.ts";
+
 export type AngleRelationship =
   | "builder"
   | "adjacent"
@@ -283,4 +285,156 @@ export function angleBlockFromJson(
   }
   if (nextStep) lines.push(`Next step: ${nextStep}`);
   return lines.join("\n");
+}
+
+/**
+ * Fire-and-forget re-synthesis hook (issue #357): a new human reply or a
+ * tagged outcome should refresh `angle_json` instead of leaving it frozen at
+ * backfill time. The actual work (gatherAngleEvidence + synthesizePersonAngle)
+ * lives in `@oneshot-gtm/find`, which depends on this package — core cannot
+ * import find back without a cycle, so find registers its implementation
+ * here at module load (`packages/find/src/angle.ts`) and core's hot paths
+ * (ledger's `recordInboxReply` caller in `pollInboxReplies`, and
+ * `tagOutcomeValue` below) call `triggerAngleRefresh` without ever knowing
+ * find exists. Until find's module has loaded — e.g. a CLI invocation that
+ * never touches `@oneshot-gtm/find` — the trigger is a no-op, the same
+ * degrade-gracefully rule every other best-effort call in this codebase
+ * follows.
+ *
+ * `AngleRefreshContext` (round-1 correction, issue #357) lets a caller hand
+ * extra signal alongside the prospect id: an outcome tag carries data (deal
+ * value, meeting booked, ...) that reply-triggered refreshes never have, and
+ * without it the outcome-triggered path re-runs the identical
+ * gather+synthesize pipeline against unchanged evidence — an LLM call that
+ * can't reflect the outcome it was fired for.
+ */
+export interface AngleRefreshContext {
+  outcome?: { type: string; amount?: number; label?: string };
+}
+
+export type AngleRefreshTrigger = (
+  prospectId: number,
+  context?: AngleRefreshContext,
+) => void | Promise<void>;
+let angleRefreshTrigger: AngleRefreshTrigger | null = null;
+
+export function registerAngleRefreshTrigger(fn: AngleRefreshTrigger): void {
+  angleRefreshTrigger = fn;
+}
+
+/**
+ * Debounce window (issue #357's "stale after N hours guard is enough"): a
+ * burst of replies on the same live thread, or a reply immediately followed
+ * by an outcome tag, must not each re-buy a synthesis. Re-synthesis only
+ * fires when the existing `angle_synthesized_at` is missing or older than
+ * this, so the guard is entirely a function of the persisted timestamp —
+ * no extra state, and correct across process restarts and across the two
+ * independent call sites (reply poll, outcome tagging).
+ */
+export const ANGLE_REFRESH_STALE_HOURS = 6;
+
+/**
+ * In-flight guard (round-1 correction, issue #357): the timestamp-based
+ * debounce above only protects once a prior refresh has already finished and
+ * stamped `angle_synthesized_at` — two triggers for the same prospect that
+ * land before that write (two replies in one `pollInboxReplies()` page, or a
+ * reply immediately followed by an outcome tag) both read the same
+ * stale/missing timestamp and would both launch a full paid gather+synthesize
+ * concurrently, with the later completion silently overwriting the earlier
+ * one's `angle_json`. Tracking in-flight prospect ids in memory closes that
+ * window without touching the persisted debounce: a second trigger for a
+ * prospect already being refreshed is dropped outright (the in-flight
+ * refresh will itself read fresh evidence), and the id is released once the
+ * registered trigger's returned promise settles either way.
+ */
+const inFlightRefreshes = new Set<number>();
+
+/**
+ * Outcome context dropped by the in-flight guard while a same-prospect
+ * refresh is already running (round-2 correction, issue #357): the guard
+ * above still drops the SECOND trigger outright (the in-flight refresh
+ * can't be redirected mid-flight), but an outcome carries data — deal
+ * value, meeting booked — a plain reply trigger never has, so silently
+ * losing it means the completed write can't reflect it and the freshness
+ * debounce then blocks a retry for `ANGLE_REFRESH_STALE_HOURS`. Queuing it
+ * here (last one wins) lets `launchAngleRefresh`'s completion hook fire a
+ * follow-up refresh carrying this context the moment the in-flight one
+ * settles, bypassing the freshness check since that check exists to guard
+ * against a plain re-trigger, not this deliberate catch-up. A dropped
+ * REPLY trigger (no `context.outcome`) is never queued — the in-flight
+ * refresh already reads replies fresh from the ledger, so nothing is lost.
+ */
+const pendingOutcomeRefreshes = new Map<number, AngleRefreshContext>();
+
+/**
+ * Add the in-flight marker and launch the registered trigger, draining any
+ * outcome queued for this prospect (see `pendingOutcomeRefreshes` above)
+ * once this run settles. Self-contained try/catch so a synchronous throw
+ * from `angleRefreshTrigger` — on the initial call or a queued follow-up —
+ * never escapes as an unhandled exception.
+ */
+function launchAngleRefresh(prospectId: number, context?: AngleRefreshContext): void {
+  try {
+    inFlightRefreshes.add(prospectId);
+    Promise.resolve(angleRefreshTrigger!(prospectId, context))
+      .catch(() => {
+        // Best-effort — a rejected refresh must never surface as an
+        // unhandled rejection in a caller's hot path (reply recording,
+        // outcome tagging).
+      })
+      .finally(() => {
+        inFlightRefreshes.delete(prospectId);
+        const pendingContext = pendingOutcomeRefreshes.get(prospectId);
+        if (pendingContext) {
+          pendingOutcomeRefreshes.delete(prospectId);
+          launchAngleRefresh(prospectId, pendingContext);
+        }
+      });
+  } catch {
+    // A trigger that throws synchronously must never propagate into a
+    // caller's hot path — release the in-flight slot it claimed above.
+    inFlightRefreshes.delete(prospectId);
+  }
+}
+
+/**
+ * Best-effort, fire-and-forget: never throws. No-ops until a trigger is
+ * registered (find's module hasn't loaded), no-ops when the angle was
+ * synthesized more recently than `ANGLE_REFRESH_STALE_HOURS` ago — the
+ * debounce that keeps a reply burst or a reply-then-outcome pair from paying
+ * for synthesis twice — and no-ops when a refresh for this prospect is
+ * already in flight (see `inFlightRefreshes` above), queuing the outcome
+ * context instead when the dropped trigger carries one.
+ */
+export function triggerAngleRefresh(prospectId: number, context?: AngleRefreshContext): void {
+  if (!angleRefreshTrigger) return;
+  if (inFlightRefreshes.has(prospectId)) {
+    if (context?.outcome) pendingOutcomeRefreshes.set(prospectId, context);
+    return;
+  }
+  try {
+    const prospect = getLedger().getProspectById(prospectId);
+    if (!prospect) return;
+    // The freshness debounce guards against a plain re-trigger. An outcome
+    // is new evidence the stored angle cannot contain (deal value, meeting
+    // booked), so it bypasses the debounce (#573) — otherwise a reply that
+    // refreshed the angle minutes earlier would silently discard the
+    // outcome for the rest of the stale window, with no retry.
+    if (prospect.angle_synthesized_at && !context?.outcome) {
+      const ageMs = Date.now() - Date.parse(prospect.angle_synthesized_at);
+      if (Number.isFinite(ageMs) && ageMs < ANGLE_REFRESH_STALE_HOURS * 3600_000) return;
+    }
+    launchAngleRefresh(prospectId, context);
+  } catch {
+    // Best-effort — a ledger read failure must never propagate into a
+    // caller's hot path (reply recording, outcome tagging).
+    inFlightRefreshes.delete(prospectId);
+  }
+}
+
+/** Test-only: reset the registered hook (and any in-flight tracking) between cases. */
+export function _resetAngleRefreshTrigger(): void {
+  angleRefreshTrigger = null;
+  inFlightRefreshes.clear();
+  pendingOutcomeRefreshes.clear();
 }

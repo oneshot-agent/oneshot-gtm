@@ -32,6 +32,8 @@ let intents: Map<string, { intent: string | null; intentReason: string | null }>
 // Persisted poll_state rows (watermark + backlog), as the real ledger holds them.
 let pollState: Record<string, string> = {};
 const watermarkOf = () => pollState["inbox_replies"] ?? null;
+// Prospect ids for which the angle-refresh hook (issue #357) fired.
+let angleRefreshCalls: number[] = [];
 
 type Row = {
   prospect_id: number;
@@ -55,6 +57,9 @@ vi.mock("@oneshot-gtm/core", async () => {
     sendEmail: async () => {
       calls.sendEmail++;
       return { receiptId: 1 };
+    },
+    triggerAngleRefresh: (prospectId: number) => {
+      angleRefreshCalls.push(prospectId);
     },
     // A faithful fake of listInbox's contract: filter `inboxEmails` by
     // since/until on received_at, newest first, clamp to `limit`, has_more
@@ -210,6 +215,7 @@ beforeEach(() => {
   seqEvents = [];
   intents = new Map();
   triageEmailsMock.mockClear();
+  angleRefreshCalls = [];
   // The fixture cadence is also the latest play that emailed the prospect.
   latestSentPlay = "stack-consolidation";
   pollState = {};
@@ -285,6 +291,27 @@ describe("pollInboxReplies — standalone background detection (no sends)", () =
     // The reply metric (home/CAC) is fed via markLatestStepReplied.
     expect(repliedSteps).toEqual([{ prospectId: 1, playName: "stack-consolidation" }]);
     expect(calls.sendEmail).toBe(0);
+  });
+
+  // Issue #357: a genuinely new human reply refreshes the per-prospect angle.
+  it("triggers an angle refresh for a new human reply", async () => {
+    inboxEmails = [{ id: "m1", from: "sophia@agenticarchitect.ai", subject: "re: stack" }];
+
+    await pollInboxReplies();
+
+    expect(angleRefreshCalls).toEqual([1]);
+  });
+
+  it("does not trigger an angle refresh for a re-swept already-recorded reply", async () => {
+    inboxEmails = [{ id: "m1", from: "sophia@agenticarchitect.ai", subject: "re: stack" }];
+
+    await pollInboxReplies();
+    angleRefreshCalls = [];
+    // Same email re-examined by the watermark overlap: recordInboxReply's
+    // INSERT OR IGNORE reports it as not-new.
+    await pollInboxReplies();
+
+    expect(angleRefreshCalls).toEqual([]);
   });
 
   it("persists every matched inbound (body included) into inbox_replies", async () => {
@@ -541,6 +568,8 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
     expect(repliedSteps).toHaveLength(0); // no sequence_events flip → metric untouched
     expect(persistedReplies).toHaveLength(1); // conversation history stays complete
     expect(persistedReplies[0]?.kind).toBe("auto");
+    // Issue #357: an auto-reply is never signal worth paying to re-synthesize.
+    expect(angleRefreshCalls).toEqual([]);
   });
 
   it("a dead-mailbox autoresponder stops the cadence as bounced, not replied", async () => {
@@ -586,6 +615,8 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
       { prospectId: 1, playName: "stack-consolidation", status: "unsubscribed" },
     ]);
     expect(persistedReplies[0]?.kind).toBe("unsubscribe");
+    // Issue #357: an unsubscribe is never signal worth paying to re-synthesize.
+    expect(angleRefreshCalls).toEqual([]);
   });
 
   it("a terminal cadence is not resurrected or re-stopped by a dead-mailbox notice", async () => {

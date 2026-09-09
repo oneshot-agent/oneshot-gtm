@@ -1,10 +1,15 @@
 import {
+  type AngleRefreshContext,
+  DEFAULT_SPEND_RESERVATION_USD,
+  demoMode,
   getLedger,
   hasDossierSignal,
   loadConfig,
   logEvent,
   parseProspectAngle,
+  registerAngleRefreshTrigger,
   type ProspectAngle,
+  tryReserveDailySpend,
   webRead,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
@@ -23,6 +28,7 @@ import {
 } from "./_github-user.ts";
 import { safeDeepResearchPerson } from "./_sdk-safe.ts";
 import { researchUrl } from "./_profile-url.ts";
+import { isCircuitOpen } from "./_breaker.ts";
 
 /**
  * Evidence gathering + LLM synthesis for the per-prospect angle (issue #355).
@@ -82,6 +88,13 @@ export interface AngleEvidenceBundle {
   costUsd: number;
   /** Which tiers actually contributed evidence, e.g. ["dossier", "github:live", "replies:3"]. */
   sources: string[];
+  /**
+   * The value-tag outcome that triggered this refresh, if any (round-1
+   * correction, issue #357) — e.g. a meeting booked or a deal's amount.
+   * Optional/absent for reply-triggered and CLI-backfill gathers, which have
+   * no outcome to report.
+   */
+  outcome?: AngleRefreshContext["outcome"] | null;
 }
 
 /**
@@ -111,6 +124,14 @@ export interface GatherAngleEvidenceOpts {
    * backfill spends nothing.
    */
   allowPaidResearch?: boolean;
+  /**
+   * The value-tag outcome that triggered this gather, if any (round-1
+   * correction, issue #357) — threaded straight onto the returned bundle so
+   * `renderEvidenceForPrompt` can put it in front of the LLM instead of the
+   * outcome-triggered path paying for a synthesis call that can't reflect
+   * the outcome it was fired for.
+   */
+  outcome?: AngleRefreshContext["outcome"];
 }
 
 /**
@@ -252,6 +273,7 @@ export async function gatherAngleEvidence(
     replies,
     costUsd,
     sources,
+    outcome: opts.outcome ?? null,
   };
 }
 
@@ -323,6 +345,15 @@ function renderGitHubEvidence(gh: AngleGitHubEvidence): string {
 
 function renderEvidenceForPrompt(evidence: AngleEvidenceBundle): string {
   const blocks: string[] = [];
+  if (evidence.outcome) {
+    const o = evidence.outcome;
+    blocks.push(
+      `OUTCOME JUST RECORDED: ${o.type}` +
+        `${o.amount != null ? ` ($${o.amount})` : ""}` +
+        `${o.label ? ` — ${o.label}` : ""}` +
+        ` — this just happened; the angle should reflect it.`,
+    );
+  }
   if (evidence.dossierText) blocks.push(`DOSSIER:\n${evidence.dossierText}`);
   if (evidence.queueSignal)
     blocks.push(`FINDER SIGNAL (why they were queued):\n${evidence.queueSignal}`);
@@ -414,3 +445,81 @@ export async function synthesizePersonAngle(
   );
   return { angle, costUsd: 0 };
 }
+
+/**
+ * Re-synthesize and persist one prospect's angle (issue #357) — the same
+ * gather → synthesize → `setProspectAngle` pipeline `synthesize-angles`
+ * drives, invoked from `triggerAngleRefresh`'s fire-and-forget hook instead
+ * of a CLI backfill row. Never throws: every failure mode (demo mode, an
+ * open circuit, no evidence, an empty synthesis) degrades to a no-op, the
+ * same contract `runProspectResearch` (`packages/plays/src/add-prospect.ts`)
+ * follows for its own `void`-called background research.
+ */
+async function refreshProspectAngle(
+  prospectId: number,
+  context?: AngleRefreshContext,
+): Promise<void> {
+  // Demo mode is read-only by design (packages/core/src/demo.ts) — a stray
+  // reply/outcome on a seeded demo install must not synthesize for real.
+  if (demoMode()) return;
+  // The circuit breaker guards paid OneShot resolution calls; an open
+  // breaker means the backend is failing, so this is exactly the moment to
+  // skip a paid gather rather than add to the pile-up.
+  if (isCircuitOpen()) return;
+  // Install-wide daily spend ceiling (issue #481, round-2 correction to
+  // #357): this fire-and-forget refresh has no cap of its own, and
+  // `gatherAngleEvidence` defaults `allowPaidResearch` to true — the same
+  // deepResearchPerson/webRead calls every OTHER automated paid path
+  // (trigger runs, drains, mail-research's address lookup) gates behind
+  // `tryReserveDailySpend` first. A reply or outcome tag can fire this on
+  // every prospect with no cached dossier signal, so it must be gated the
+  // same way rather than spending unbounded against the founder's
+  // configured `dailySpendCeilingUsd`. Reserved at the same worst-case
+  // bound `researchBusinessAddress` (packages/plays/src/_mail-research.ts)
+  // uses for its own uncapped automated research, and released the moment
+  // the gather returns regardless of whether it actually spent — the
+  // reservation only needs to close the race against other concurrently
+  // starting automated calls.
+  const reservation = tryReserveDailySpend(DEFAULT_SPEND_RESERVATION_USD);
+  if (!reservation.granted) {
+    logEvent("angle.refresh.spend_capped", { prospectId, reason: reservation.reason }, "warn");
+  }
+  try {
+    const evidence = await gatherAngleEvidence(prospectId, {
+      outcome: context?.outcome,
+      allowPaidResearch: reservation.granted,
+    });
+    if (!evidence) return;
+    const ledger = getLedger();
+    const prospect = ledger.getProspectById(prospectId);
+    if (!prospect) return;
+    const { angle } = await synthesizePersonAngle({
+      prospect: {
+        id: prospect.id,
+        name: prospect.name,
+        company: prospect.company,
+        email: prospect.email,
+      },
+      evidence,
+    });
+    if (!angle) return;
+    ledger.setProspectAngle(prospectId, JSON.stringify(angle));
+    logEvent("angle.refresh.done", { prospectId, hook: angle.hook.slice(0, 60) });
+  } catch (err) {
+    logEvent(
+      "angle.refresh.failed",
+      { prospectId, message_120: ((err as Error).message ?? "").slice(0, 120) },
+      "warn",
+    );
+  } finally {
+    if (reservation.granted) reservation.release();
+  }
+}
+
+// Registered at module load so core's hot paths (recordInboxReply's caller
+// in pollInboxReplies, tagOutcomeValue) can trigger a refresh without
+// importing this package back — see registerAngleRefreshTrigger's doc in
+// packages/core/src/angle.ts for why the wiring runs this direction.
+registerAngleRefreshTrigger((prospectId: number, context?: AngleRefreshContext) => {
+  return refreshProspectAngle(prospectId, context);
+});
