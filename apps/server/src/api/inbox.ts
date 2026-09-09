@@ -445,8 +445,13 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
 
   // Research before drafting: free tiers always, paid tier only for unknown
   // senders. Research failing must degrade the draft, never block it.
+  // angleJson still seeds from the matched prospect on this fallback path —
+  // it's a free ledger field, not part of what research produces, so a
+  // research failure must not also throw away a stored angle (finding
+  // PRRT_kwDOSKzrBs6gZ7Qs).
   let context: Awaited<ReturnType<typeof gatherReplyContext>> = {
     dossier: null,
+    angleJson: prospect?.angle_json ?? null,
     threadSent: [],
     priorInbound: [],
     costUsd: 0,
@@ -499,6 +504,7 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
       body: inboundBody,
       matched,
       dossier: context.dossier,
+      angleJson: context.angleJson,
       threadSent: context.threadSent,
       priorInbound: context.priorInbound,
       intent,
@@ -627,6 +633,7 @@ export async function steerRoute(req: Request): Promise<Response> {
 
   let context: Awaited<ReturnType<typeof gatherReplyContext>> = {
     dossier: null,
+    angleJson: prospect?.angle_json ?? null,
     threadSent: [],
     priorInbound: [],
     costUsd: 0,
@@ -662,6 +669,7 @@ export async function steerRoute(req: Request): Promise<Response> {
       body: inboundBody,
       matched,
       dossier: context.dossier,
+      angleJson: context.angleJson,
       threadSent: context.threadSent,
       priorInbound: context.priorInbound,
       intent,

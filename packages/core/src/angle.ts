@@ -223,3 +223,64 @@ export function parseProspectAngle(
     synthesizedAt: meta.synthesizedAt ?? new Date().toISOString(),
   };
 }
+
+/**
+ * Render a persisted `prospects.angle_json` value into an ANGLE input block
+ * for a draft prompt — issue #356, the payoff for #355's synthesis. `hook`
+ * is what the next message should lead with; `doNotSay` is what stops a
+ * draft re-asserting a premise the prospect already corrected — the
+ * strongest signal of the two, since repeating it reads as not having read
+ * their reply. `evidence`/`nextStep` are included when present because they
+ * cost nothing extra and a concrete citation beats a vague hook.
+ *
+ * Guarded and additive by design: missing, blank, unparsable, or
+ * all-empty-fields JSON returns null so callers can skip the block
+ * entirely — a prospect with no synthesis yet must see byte-identical
+ * output to before this issue.
+ */
+export function angleBlockFromJson(
+  raw: string | null | undefined,
+  opts: { maxEvidence?: number } = {},
+): string | null {
+  const trimmed = raw?.trim();
+  if (!trimmed) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return null;
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+  const a = parsed as Record<string, unknown>;
+
+  const hook = str(a["hook"]);
+  const doNotSay = strArray(a["doNotSay"]);
+  const nextStep = str(a["nextStep"]);
+  const rawEvidence = Array.isArray(a["evidence"]) ? (a["evidence"] as unknown[]) : [];
+  const evidence = rawEvidence
+    .map((e) => {
+      if (e === null || typeof e !== "object") return null;
+      const claim = str((e as Record<string, unknown>)["claim"]);
+      const source = str((e as Record<string, unknown>)["source"]);
+      return claim && source ? { claim, source } : null;
+    })
+    .filter((e): e is ProspectAngleEvidence => e !== null);
+
+  if (!hook && doNotSay.length === 0 && !nextStep && evidence.length === 0) return null;
+
+  const maxEvidence = opts.maxEvidence ?? 3;
+  const lines: string[] = [
+    "ANGLE (synthesized read on this prospect — a hook to lead with, and premises never to repeat):",
+  ];
+  if (hook) lines.push(`Hook: ${hook}`);
+  if (doNotSay.length > 0) {
+    lines.push("Do NOT say (they already corrected these in a reply — never repeat):");
+    for (const d of doNotSay) lines.push(`- ${d}`);
+  }
+  if (evidence.length > 0) {
+    lines.push("Evidence:");
+    for (const e of evidence.slice(0, maxEvidence)) lines.push(`- ${e.claim} (${e.source})`);
+  }
+  if (nextStep) lines.push(`Next step: ${nextStep}`);
+  return lines.join("\n");
+}

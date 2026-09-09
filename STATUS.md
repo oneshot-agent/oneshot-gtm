@@ -76,6 +76,17 @@ GITHUB_TOKEN-authed) and `GitHubUserInfo` now carries account-maturity fields (`
 of the same shape, the six-lookups-by-hand problem this issue exists to close. No drafting changes;
 reading the angle into drafts is #356.
 
+Per-prospect angle, Phase 2 (#356): the three draft paths now read `prospects.angle_json`.
+`angleBlockFromJson` (`packages/core/src/angle.ts`) renders a stored angle into an ANGLE block —
+`hook` to lead with, `doNotSay` (binding — a prompt rule now forbids restating any of it) plus
+`evidence`/`nextStep` when present; null/blank/unparsable JSON returns null, so a prospect with no
+synthesis yet sees byte-identical output. Wired into `buildFollowUpEmail` (`_cadence.ts`, the
+biggest win — cadence follow-ups previously read only config + name/email/company + prior bodies),
+`draftInboxReply` (`reply.ts`, threaded through `gatherReplyContext`/`_reply-research.ts` and
+`inbox.ts`'s two draft routes — free, since it rides the same prospect row the dossier tier already
+reads), and `runEmailPlay`'s `buildInputBlock` assembly (`_run-play.ts`, lowest priority — most
+outbound is first-touch with no angle yet, but a re-contact can have one).
+
 Updated by hand after each dogfood run.
 
 ---
