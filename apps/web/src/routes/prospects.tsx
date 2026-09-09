@@ -9,7 +9,6 @@ import {
   type DecidedByFilter,
   type ProspectBrowseRow,
   type ProspectSortKey,
-  type QueueRowDetail,
   type QueueStatusView,
 } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
@@ -17,7 +16,6 @@ import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
 import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
 import { Field, Input, Select, Textarea } from "../components/primitives/Field.tsx";
-import { Pii } from "../components/primitives/Pii.tsx";
 import { Skeleton, SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { cn, formatCount, timeAgo } from "../lib/cn.ts";
 import { maskDeep } from "../lib/mask.ts";
@@ -31,12 +29,19 @@ import {
 } from "../lib/payloadIdentity.ts";
 import { usePrivacy } from "../lib/privacy.tsx";
 import {
+  decisionLine,
   pageSummary,
   parseProspectsSearch,
   pastEnd,
   type ProspectsSearch,
 } from "../lib/prospects-helpers.ts";
-import { rationaleLine } from "../lib/queueRationale.ts";
+import { fitReasonFor } from "../lib/queueRationale.ts";
+import { queueEvidence } from "../lib/queueEvidence.ts";
+import { IdentityCell, SignalLabel } from "../components/ledger/IdentityCell.tsx";
+import { SheetHeading } from "../components/ledger/SheetHeading.tsx";
+import { Rule, Sheet } from "../components/ledger/Sheet.tsx";
+import { CaseList, PayloadJson, type CaseListRow } from "../components/ledger/CaseList.tsx";
+import { DraftStateLine, LetterCard, LetterEmpty } from "../components/ledger/LetterCard.tsx";
 import { readOnly } from "../lib/readOnly.ts";
 
 export const Route = createFileRoute("/prospects")({
@@ -318,10 +323,8 @@ function ProspectsPage() {
                 <th className="w-6 py-2 pl-4 pr-0" aria-label="expand" />
                 <th className="py-2 text-left font-medium">prospect</th>
                 <th className="py-2 text-left font-medium">play</th>
-                <th className="py-2 pr-4 text-left font-medium">status</th>
-                <th className="py-2 text-left font-medium">decision</th>
-                <th className="py-2 text-right font-medium">found</th>
-                <th className="px-6 py-2 text-right font-medium">decided</th>
+                <th className="py-2 text-left font-medium">status</th>
+                <th className="px-6 py-2 text-right font-medium">found</th>
               </tr>
             </thead>
             <tbody>
@@ -401,8 +404,16 @@ function BrowseRow({
   const title = row.prospect?.title ?? titleFor(row.payload);
   const company = companyFor(row.payload);
   const linkedinUrl = linkedinUrlFor(row.payload);
-  const evidence = rationaleLine(row.playName, row.payload);
   const detail = sourceDetail(row.source);
+  const offIcp =
+    (row.prospect?.icpVerdict ?? payloadString(row.payload, "icpVerdict")) === "reject";
+  // Line 2 answers this page's question — what happened to them — after the
+  // finder's signal (#601). The signal is freeform and can name a person or a
+  // company, so it drops under privacy mode; the decision names nobody.
+  const signal = masked ? null : queueEvidence(row.playName, row.payload);
+  const line2 = [signal, decisionLine(row, timeAgo), offIcp ? "off-icp" : null]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <Fragment>
       <tr
@@ -419,81 +430,29 @@ function BrowseRow({
           "transition-colors duration-[var(--dur-stamp)]",
           "hover:bg-ink-surface/60",
           zebra && "bg-ink-surface/20",
-          expanded && "bg-ink-surface/40",
+          expanded && "bg-ink-surface",
         )}
       >
-        <td className="w-6 py-2 pl-4 pr-0 text-ink-faint">
+        <td className="w-6 py-[10px] pl-4 pr-0 text-ink-faint">
           {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         </td>
-        <td className="py-2">
-          <div className="text-ink-cream">{name ? <Pii kind="name">{name}</Pii> : "(unknown)"}</div>
-          <div className="font-mono text-[11px] text-ink-faint">
-            {email ? <Pii kind="email">{email}</Pii> : "—"}
-            {title ? (
-              <>
-                {" · "}
-                <span className="inline-block max-w-[38ch] truncate align-bottom text-ink-cream-2">
-                  {title}
-                </span>
-              </>
-            ) : null}
-            {company ? (
-              <>
-                {" · "}
-                <Pii kind="company">{company}</Pii>
-              </>
-            ) : null}
-            {linkedinUrl ? (
-              <a
-                href={linkedinUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="ml-1 text-ink-cream-2 underline decoration-ink-rule underline-offset-2 hover:text-ink-cream hover:decoration-ink-cream-2"
-                onClick={(e) => e.stopPropagation()}
-              >
-                [in]
-              </a>
-            ) : null}
-          </div>
-          {/* Freeform finder evidence can name people the structured masking
-            cannot reach, so it hides under privacy mode as it does on /queue. */}
-          {evidence && !masked ? (
-            <div className="mt-0.5 max-w-[46ch] truncate text-[11px] text-ink-muted">
-              {evidence}
-            </div>
-          ) : null}
-        </td>
-        <td className="py-2 text-ink-cream-2">
+        <IdentityCell
+          identity={{ name, email, title, company, linkedinUrl }}
+          line2Privacy="show"
+          line2={<SignalLabel tone={offIcp ? "blocked" : "muted"}>{line2}</SignalLabel>}
+        />
+        <td className="whitespace-nowrap py-[10px] pr-6 leading-4 text-ink-cream-2">
           {row.playName}
-          {detail && (
-            <div className="truncate font-mono text-[10.5px] text-ink-faint">{detail}</div>
-          )}
+          {detail && <div className="font-mono text-[10.5px] text-ink-faint">{detail}</div>}
         </td>
-        <td className="py-2 pr-4">
+        <td className="whitespace-nowrap py-[10px] pr-6">
           <Badge tone={statusTone(row.status)}>{row.status}</Badge>
         </td>
-        <td className="py-2 text-[12px] text-ink-cream-2">
-          {describeDecision(row)}
-          {(row.prospect?.icpVerdict ?? payloadString(row.payload, "icpVerdict")) === "reject" && (
-            <span className="ml-1.5 font-mono text-[10px] uppercase tracking-[0.08em] text-[color:var(--ink-blocked-2)]">
-              off-icp
-            </span>
-          )}
-        </td>
-        <td className="py-2 text-right font-mono text-[12px] text-ink-muted">
+        <td className="whitespace-nowrap px-6 py-[10px] text-right font-mono text-[12px] text-ink-muted">
           {timeAgo(row.foundAt)}
         </td>
-        <td className="px-6 py-2 text-right font-mono text-[12px] text-ink-muted">
-          {row.decidedAt ? timeAgo(row.decidedAt) : "—"}
-        </td>
       </tr>
-      {expanded && (
-        <tr className="border-b border-ink-rule/60 bg-ink-surface/20">
-          <td colSpan={7} className="px-6 py-4">
-            <DetailPanel id={row.id} />
-          </td>
-        </tr>
-      )}
+      {expanded && <DetailPanel id={row.id} />}
     </Fragment>
   );
 }
@@ -550,20 +509,137 @@ function DetailPanel({ id }: { id: number }) {
   const icpReason =
     row?.prospect?.icpVerdictReason ?? payloadString(row?.payload, "icpVerdictReason");
 
+  const fitReason = row ? fitReasonFor(row.payload) : null;
+  const source = row ? sourceDetail(row.source) : null;
+  const title = d?.prospect?.title ?? titleFor(row?.payload);
+  const company = d?.prospect?.company ?? companyFor(row?.payload);
+  // The prospect column is polymorphic (LinkedIn, X or GitHub) and written
+  // unvalidated; run it through the same guard as the payload so a stored
+  // `javascript:` value can never become an href.
+  const linkedinUrl =
+    linkedinUrlFor({ linkedinUrl: d?.prospect?.linkedinUrl }) ?? linkedinUrlFor(row?.payload);
+  const caseRows: CaseListRow[] = row
+    ? [
+        {
+          key: "who",
+          value:
+            [title, company ? maskDeep(company, masked, "company") : null]
+              .filter(Boolean)
+              .join(" · ") || "no title or company on record",
+        },
+        ...(linkedinUrl ? [{ key: "linkedin", value: "profile", href: linkedinUrl }] : []),
+        ...(icpVerdict || icpReason
+          ? [
+              {
+                key: "icp",
+                value: [icpVerdict ?? "—", icpReason ? maskDeep(icpReason, masked) : null]
+                  .filter(Boolean)
+                  .join(" · "),
+                ...(icpVerdict === "reject" ? { tone: "blocked" as const } : {}),
+              },
+            ]
+          : []),
+        {
+          key: "surfaced",
+          value: `${timeAgo(row.foundAt)} by ${row.playName}${source ? ` · ${source}` : ""}`,
+        },
+        {
+          key: "prospect",
+          value: d?.prospect
+            ? `#${d.prospect.id}${d.prospect.linkedBy === "email" ? " · matched by email" : ""}${d.prospect.hasDossier ? " · researched" : ""}`
+            : "never emailed",
+        },
+      ]
+    : [];
+
+  // The override actions sit on the letter's foot; the reject reason opens
+  // under the body, where a note about the letter belongs.
+  const actions =
+    row && (canApprove || canReject || rejecting) ? (
+      <>
+        {!rejecting && canReject && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setReason(row.notes ?? "");
+              setRejecting(true);
+            }}
+            {...readOnly}
+          >
+            <X size={12} /> Reject…
+          </Button>
+        )}
+        {rejecting && (
+          <>
+            <Button variant="ghost" size="sm" onClick={() => setRejecting(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="danger"
+              size="sm"
+              disabled={reject.isPending}
+              onClick={() => reject.mutate({ rowId: row.id, reason: reason.trim() || undefined })}
+              {...readOnly}
+            >
+              {reject.isPending ? "Rejecting…" : "Reject"}
+            </Button>
+          </>
+        )}
+        {!rejecting && canApprove && (
+          <Button
+            variant="secondary"
+            size="sm"
+            disabled={approve.isPending}
+            onClick={() => approve.mutate(row.id)}
+            {...readOnly}
+          >
+            <Check size={12} /> {row.status === "rejected" ? "Approve anyway" : "Approve"}
+          </Button>
+        )}
+      </>
+    ) : null;
+  const rejectEditor = rejecting ? (
+    <div className="mt-3 border-t border-ink-rule pt-3">
+      <Field label="Reason (optional, logged for ICP-filter learning)">
+        <Textarea
+          rows={3}
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="e.g. wrong stage, wrong industry, already a customer"
+        />
+      </Field>
+    </div>
+  ) : null;
+
+  if (detail.isLoading || !d || !row) {
+    return (
+      <Sheet
+        colSpan={5}
+        indent="pl-10"
+        theCase={
+          detail.isError ? (
+            <div className="text-[13px] text-[color:var(--ink-blocked-2)]">
+              {detail.error.message}
+            </div>
+          ) : (
+            <Skeleton lines={8} />
+          )
+        }
+        theLetter={null}
+      />
+    );
+  }
+
   return (
-    <div className="flex flex-col gap-4">
-      {detail.isLoading || !d || !row ? (
-        detail.isError ? (
-          <div className="text-[13px] text-[color:var(--ink-blocked-2)]">
-            {detail.error.message}
-          </div>
-        ) : (
-          <Skeleton lines={8} />
-        )
-      ) : (
-        <div className="flex flex-col gap-4">
-          {/* Decision block: what happened to this row and why. */}
-          <div className="flex flex-wrap items-center gap-2">
+    <Sheet
+      colSpan={5}
+      indent="pl-10"
+      theCase={
+        <>
+          <SheetHeading label="the case" />
+          {/* What happened to this row, and why. */}
+          <div className="-mt-1 flex flex-wrap items-center gap-2">
             <Badge tone={statusTone(row.status)}>{row.status}</Badge>
             <span className="text-[13px] text-ink-cream-2">{describeDecision(row)}</span>
             {row.decidedAt && (
@@ -578,78 +654,63 @@ function DetailPanel({ id }: { id: number }) {
             )}
             {d.flags.breakupHold && <Badge tone="blocked">do not contact</Badge>}
           </div>
-          {row.notes && (
-            <div>
-              <div className="ln-eyebrow mb-1">notes · reason</div>
-              {/* Freeform: an auto-reject reason routinely names the person and
-                  their company, which structured masking cannot reach, so under
-                  privacy mode it is withheld rather than half-masked. */}
+          {/* Freeform: an auto-reject reason routinely names the person and
+              their company, which structured masking cannot reach, so under
+              privacy mode it is withheld rather than half-masked. Once a row
+              has its fit sentence the note only repeats it. */}
+          {row.notes && row.notes !== fitReason && (
+            <div className="text-[12px] leading-4 text-ink-muted">
               {masked ? (
-                <div className="text-[12px] text-ink-faint">hidden under privacy mode</div>
+                <span className="text-ink-faint">notes hidden in privacy mode</span>
               ) : (
-                <div className="text-[13px] text-ink-cream-2">{row.notes}</div>
+                row.notes
               )}
             </div>
           )}
           {d.flags.replied && (
-            <div className="text-[12px] text-ink-muted">
+            <div className="text-[12px] leading-4 text-ink-muted">
               This person has replied — the conversation lives on /inbox and this row will not be
               re-approved here.
             </div>
           )}
           {row.status === "expired" && !d.flags.replied && (
-            <div className="text-[12px] text-ink-muted">
-              Expired rows can be approved again, but any draft below is stale — it will be
-              re-drafted on the next run.
+            <div className="text-[12px] leading-4 text-ink-muted">
+              Expired rows can be approved again, but any draft is stale — it will be re-drafted on
+              the next run.
             </div>
           )}
-          {rejecting && (
-            <Field label="Reason (optional, logged for ICP-filter learning)">
-              <Textarea
-                rows={3}
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder="e.g. wrong stage, wrong industry, already a customer"
-              />
-            </Field>
+          {!masked && fitReason && (
+            <p className="m-0 text-[13px] leading-5 text-ink-cream-2 [text-wrap:pretty]">
+              {fitReason}
+            </p>
           )}
-
-          <IdentityBlock row={row} detail={d} />
-
-          {(icpVerdict || icpReason) && (
-            <div>
-              <div className="ln-eyebrow mb-1">icp verdict</div>
-              <div className="text-[13px] text-ink-cream-2">
-                <span
-                  className={cn(icpVerdict === "reject" && "text-[color:var(--ink-blocked-2)]")}
-                >
-                  {icpVerdict ?? "—"}
-                </span>
-                {icpReason && (
-                  <span className="text-ink-muted"> · {maskDeep(icpReason, masked)}</span>
-                )}
-              </div>
-            </div>
-          )}
-
+          <Rule />
+          <CaseList rows={caseRows} />
           {d.cadences.length > 0 && (
-            <div>
-              <div className="ln-eyebrow mb-1">cadences</div>
-              <ul className="flex flex-col gap-1 text-[13px] text-ink-cream-2">
-                {d.cadences.map((c) => (
-                  <CadenceLine key={`${c.prospectId}-${c.playName}`} c={c} />
-                ))}
-              </ul>
-            </div>
+            <>
+              <Rule />
+              <div>
+                <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+                  cadences
+                </div>
+                <ul className="flex flex-col gap-1 text-[12px] text-ink-cream-2">
+                  {d.cadences.map((c) => (
+                    <CadenceLine key={`${c.prospectId}-${c.playName}`} c={c} />
+                  ))}
+                </ul>
+              </div>
+            </>
           )}
-
+          <Rule />
           <div>
-            <div className="ln-eyebrow mb-1">history</div>
+            <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+              history
+            </div>
             <ol className="flex flex-col gap-1">
               {d.timeline.map((ev) => (
                 <li
                   key={`${ev.at}|${ev.kind}|${ev.label}`}
-                  className="flex items-baseline gap-3 text-[13px]"
+                  className="flex items-baseline gap-3 text-[12px] leading-4"
                 >
                   <span className="w-[64px] shrink-0 text-right font-mono text-[11px] text-ink-faint">
                     {timeAgo(ev.at)}
@@ -659,121 +720,50 @@ function DetailPanel({ id }: { id: number }) {
                     <span className="font-mono text-[11px] text-ink-faint">{ev.playName}</span>
                   )}
                   {ev.detail && !masked && (
-                    <span className="min-w-0 truncate text-[12px] text-ink-muted">{ev.detail}</span>
+                    <span className="min-w-0 truncate text-ink-muted">{ev.detail}</span>
                   )}
                 </li>
               ))}
             </ol>
           </div>
-
-          {row.lastDraft && (
-            <div>
-              <div className="ln-eyebrow mb-1">
-                last draft{row.lastDraft.sent ? " · sent" : ""}
-                {row.lastDraftedAt ? ` · ${timeAgo(row.lastDraftedAt)}` : ""}
-              </div>
-              <div className="text-[13px] text-ink-cream">
-                {maskDeep(row.lastDraft.subject, masked)}
-              </div>
-              <pre className="mt-1 max-h-[28vh] overflow-auto whitespace-pre-wrap rounded-[var(--radius-md)] border border-ink-rule bg-ink-bg-deep p-3 font-prose text-[12.5px] leading-[1.55] text-ink-cream-2">
-                {maskDeep(row.lastDraft.body, masked)}
-              </pre>
-            </div>
-          )}
-
-          <details className="text-ink-faint">
-            <summary className="cursor-pointer font-mono text-[10px] uppercase tracking-[0.14em] hover:text-ink-cream-2">
-              payload json
-            </summary>
-            <pre className="mt-2 max-h-[300px] overflow-auto rounded-[var(--radius-sm)] border border-ink-rule bg-ink-bg-deep p-3 font-mono text-[11.5px] leading-[1.55] text-ink-cream-2">
-              {JSON.stringify(maskDeep(row.payload, masked), null, 2)}
-            </pre>
-          </details>
-        </div>
-      )}
-      {row && (canApprove || canReject || rejecting) && (
-        <div className="flex items-center justify-end gap-2 border-t border-ink-rule/60 pt-3">
-          {!rejecting && canReject && (
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setReason(row.notes ?? "");
-                setRejecting(true);
-              }}
-              {...readOnly}
-            >
-              <X size={12} /> Reject…
-            </Button>
-          )}
-          {rejecting && (
-            <>
-              <Button variant="ghost" onClick={() => setRejecting(false)}>
-                Cancel
-              </Button>
-              <Button
-                variant="danger"
-                disabled={reject.isPending}
-                onClick={() => reject.mutate({ rowId: row.id, reason: reason.trim() || undefined })}
-                {...readOnly}
-              >
-                {reject.isPending ? "Rejecting…" : "Reject"}
-              </Button>
-            </>
-          )}
-          {!rejecting && canApprove && (
-            <Button
-              variant="secondary"
-              disabled={approve.isPending}
-              onClick={() => approve.mutate(row.id)}
-              {...readOnly}
-            >
-              <Check size={12} /> {row.status === "rejected" ? "Approve anyway" : "Approve"}
-            </Button>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function IdentityBlock({ row, detail }: { row: ProspectBrowseRow; detail: QueueRowDetail }) {
-  const { masked } = usePrivacy();
-  const title = detail.prospect?.title ?? titleFor(row.payload);
-  const company = detail.prospect?.company ?? companyFor(row.payload);
-  // The prospect column is polymorphic (LinkedIn, X or GitHub) and written
-  // unvalidated; run it through the same guard as the payload so a stored
-  // `javascript:` value can never become an href.
-  const linkedinUrl =
-    linkedinUrlFor({ linkedinUrl: detail.prospect?.linkedinUrl }) ?? linkedinUrlFor(row.payload);
-  const evidence = rationaleLine(row.playName, row.payload);
-  const source = sourceDetail(row.source);
-  return (
-    <div>
-      <div className="ln-eyebrow mb-1">who · why</div>
-      <div className="text-[13px] text-ink-cream-2">
-        {[title, company ? maskDeep(company, masked, "company") : null]
-          .filter(Boolean)
-          .join(" · ") || <span className="text-ink-faint">no title or company on record</span>}
-        {linkedinUrl && (
-          <a
-            href={linkedinUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="ml-2 text-ink-cream-2 underline decoration-ink-rule underline-offset-2 hover:text-ink-cream"
-          >
-            [in]
-          </a>
-        )}
-      </div>
-      {evidence && !masked && <div className="mt-0.5 text-[12px] text-ink-muted">{evidence}</div>}
-      <div className="mt-1 font-mono text-[11px] text-ink-faint">
-        surfaced {timeAgo(row.foundAt)} by {row.playName}
-        {source ? ` · ${source}` : ""}
-        {detail.prospect
-          ? ` · prospect #${detail.prospect.id}${detail.prospect.linkedBy === "email" ? " (matched by email)" : ""}${detail.prospect.hasDossier ? " · researched" : ""}`
-          : " · never emailed"}
-      </div>
-    </div>
+          <PayloadJson value={maskDeep(row.payload, masked)} />
+        </>
+      }
+      theLetter={
+        row.lastDraft ? (
+          <LetterCard
+            meta={
+              row.lastDraft.sent
+                ? "sent"
+                : row.lastDraftedAt
+                  ? `drafted ${timeAgo(row.lastDraftedAt)} · not sent`
+                  : "not sent"
+            }
+            subject={maskDeep(row.lastDraft.subject, masked)}
+            stateLine={
+              <DraftStateLine
+                sent={row.lastDraft.sent}
+                flags={row.lastDraft.flags}
+                dryRun={row.lastDraft.dryRun}
+              />
+            }
+            body={maskDeep(row.lastDraft.body, masked)}
+            afterBody={rejectEditor}
+            foot={actions ? { right: actions } : null}
+          />
+        ) : (
+          <LetterEmpty
+            note={
+              row.status === "sent"
+                ? "Sent, but the letter itself was not kept on this row."
+                : "No draft on this row yet."
+            }
+            actions={actions}
+            below={rejectEditor}
+          />
+        )
+      }
+    />
   );
 }
 
