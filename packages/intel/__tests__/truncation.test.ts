@@ -290,6 +290,70 @@ describe("complete() reasoning switch — openrouter vs openai", () => {
     expect(firstRetryBody).toHaveProperty("reasoning", { enabled: false });
   });
 
+  it("forgets a remembered effort that starts 400ing and re-probes, instead of wedging every future call on a now-rejected effort (finding PRRT_kwDOSKzrBs6gzFE2)", async () => {
+    // Round-1 finding: the `known` branch sent the remembered effort with no
+    // catch at all, so a stale persisted effort (model revision, provider
+    // change) 400ed forever — in this process AND every future process,
+    // since the mapping is written to disk — until someone found and deleted
+    // mandatory-reasoning-models.json by hand.
+    cfg.model = "goes-stale-model";
+    const ok = {
+      ok: true,
+      json: () =>
+        Promise.resolve({ choices: [{ message: { content: "{}" }, finish_reason: "stop" }] }),
+    };
+    const rejectedReasoning = {
+      ok: false,
+      status: 400,
+      headers: { get: () => null },
+      text: () => Promise.resolve('{"error":{"message":"reasoning cannot be disabled"}}'),
+    };
+    const fn = vi
+      .fn()
+      // probe: disableReasoning -> rejected as mandatory
+      .mockResolvedValueOnce(rejectedReasoning)
+      // ladder: minimal -> 200, remembered.
+      .mockResolvedValueOnce(ok);
+    global.fetch = fn as unknown as typeof fetch;
+
+    await complete({ messages: [{ role: "user", content: "hi" }], maxTokens: 500 });
+    expect(fn).toHaveBeenCalledTimes(2);
+    const firstBody = JSON.parse((fn.mock.calls[1]![1] as RequestInit).body as string);
+    expect(firstBody).toHaveProperty("reasoning", { effort: "minimal" });
+
+    // The remembered "minimal" effort now starts 400ing (model revision).
+    // Without the fix this single response wedges the model forever: the
+    // `known` branch has no catch, so the LlmError propagates straight to
+    // the caller and the stale entry is never cleared.
+    fn.mockReset();
+    fn
+      // remembered path retried with "minimal" -> now rejected
+      .mockResolvedValueOnce(rejectedReasoning)
+      // forgotten -> completeWithLowestSupportedEffort climbs straight into
+      // the ladder (no disableReasoning re-probe): minimal -> also rejected
+      .mockResolvedValueOnce(rejectedReasoning)
+      // low -> 200, the new remembered value
+      .mockResolvedValueOnce(ok);
+
+    await complete({ messages: [{ role: "user", content: "again" }], maxTokens: 500 });
+    expect(fn).toHaveBeenCalledTimes(3);
+    const bodies = fn.mock.calls.map(([, init]) =>
+      JSON.parse((init as RequestInit).body as string),
+    );
+    expect(bodies[0]).toHaveProperty("reasoning", { effort: "minimal" });
+    expect(bodies[1]).toHaveProperty("reasoning", { effort: "minimal" });
+    expect(bodies[2]).toHaveProperty("reasoning", { effort: "low" });
+
+    // The next call skips straight to "low" — the entry was overwritten,
+    // not just cleared, and reflects the NEW verified working effort.
+    fn.mockReset();
+    fn.mockResolvedValue(ok);
+    await complete({ messages: [{ role: "user", content: "once more" }], maxTokens: 500 });
+    expect(fn).toHaveBeenCalledTimes(1);
+    const finalBody = JSON.parse((fn.mock.calls[0]![1] as RequestInit).body as string);
+    expect(finalBody).toHaveProperty("reasoning", { effort: "low" });
+  });
+
   it("still raises the truncation diagnostic on a mandatory-reasoning model, never a silent empty draft, even when the raised budget still isn't enough", async () => {
     cfg.model = "mandatory-reasoning-model-2";
     const rejected = {

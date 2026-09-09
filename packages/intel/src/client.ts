@@ -337,12 +337,16 @@ export async function complete(input: LlmCompleteInput): Promise<LlmCompleteOutp
 
 /**
  * A mandatory-reasoning retry raises `max_tokens` by the reasoning
- * allowance so the caller's own budget still reaches the answer, but that
- * larger ceiling must never mask a GENUINE plain overrun on top of it — so
- * the mandatory-reasoning args below still expose the caller's original
- * budget for `truncationMessage`'s "raise maxTokens" arithmetic. Kept as a
- * distinct helper (not folded into `dispatch`) so it stays unit-testable
- * against a fake `openaiCompatibleComplete` without a real HTTP layer.
+ * allowance so the caller's own budget still reaches the answer after the
+ * model spends part of the larger ceiling on reasoning it cannot switch
+ * off. The caller's original budget is NOT preserved anywhere — the raised
+ * ceiling (`callerMaxTokens + MANDATORY_REASONING_TOKEN_ALLOWANCE`) fully
+ * replaces `input.maxTokens`, so `truncationMessage`'s "raise maxTokens"
+ * diagnostic reports the raised ceiling itself (e.g. 2000 for a 500-token
+ * caller — see `truncation.test.ts`), not the caller's original request.
+ * Kept as a distinct helper (not folded into `dispatch`) so it stays
+ * unit-testable against a fake `openaiCompatibleComplete` without a real
+ * HTTP layer.
  */
 function mandatoryReasoningArgs(args: OpenAIArgs, effort: string): OpenAIArgs {
   const callerMaxTokens = args.input.maxTokens ?? 1024;
@@ -439,7 +443,22 @@ function dispatch(
       // actually worked, so later process starts skip the whole climb too.
       const known = mandatoryReasoningModels.get(model);
       if (known !== undefined) {
-        return openaiCompatibleComplete(mandatoryReasoningArgs(args, known));
+        return openaiCompatibleComplete(mandatoryReasoningArgs(args, known)).catch(
+          (err: unknown) => {
+            // The remembered effort itself can go stale (model revision,
+            // provider change) and start 400ing — see #586 round-1 finding
+            // PRRT_kwDOSKzrBs6gzFE2. Without this branch a stale entry wedges
+            // every future call, in this process and every later one, until
+            // someone finds and deletes mandatory-reasoning-models.json by
+            // hand. Forget it and re-probe the ladder exactly as a model seen
+            // for the first time would.
+            if (isMandatoryReasoningRejection(err)) {
+              forgetMandatoryReasoningModel(model);
+              return completeWithLowestSupportedEffort(args, model);
+            }
+            throw err;
+          },
+        );
       }
       return openaiCompatibleComplete({ ...args, disableReasoning: true }).catch((err: unknown) => {
         if (isMandatoryReasoningRejection(err)) {
@@ -476,6 +495,17 @@ const mandatoryReasoningModels = new Map<string, string>(loadMandatoryReasoningM
 function rememberMandatoryReasoningModel(model: string, effort: string): void {
   if (mandatoryReasoningModels.get(model) === effort) return;
   mandatoryReasoningModels.set(model, effort);
+  saveMandatoryReasoningModels(mandatoryReasoningModels);
+}
+
+/**
+ * Discards a remembered model → effort mapping that has started 400ing —
+ * see the `known` branch of the openrouter dispatch (#586 round-1 finding
+ * PRRT_kwDOSKzrBs6gzFE2). A no-op if the model was never remembered, so
+ * callers don't need to check `has()` first.
+ */
+function forgetMandatoryReasoningModel(model: string): void {
+  if (!mandatoryReasoningModels.delete(model)) return;
   saveMandatoryReasoningModels(mandatoryReasoningModels);
 }
 
