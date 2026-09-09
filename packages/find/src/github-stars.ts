@@ -312,6 +312,7 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
       payload: target,
       dedupeKey,
       source: sourceFor(c.repo),
+      fitReason: filter.reason,
       notes: filter.reason,
     });
     if (id != null) result.enqueued++;

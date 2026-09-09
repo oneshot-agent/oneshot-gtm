@@ -74,6 +74,8 @@ function dedupeKeyFor(candidate: AgendaCandidate): string {
 async function resolveAndEnqueueAgendaItem(
   candidate: AgendaCandidate,
   yourEdge: string,
+  /** The company-gate reason from the caller's `icpFilter` — absent on a pending-retry replay. */
+  fitReason?: string | null,
 ): Promise<"enqueued" | "duplicate" | "dropped" | "platform-error"> {
   const ledger = getLedger();
   const dedupeKey = dedupeKeyFor(candidate);
@@ -117,6 +119,7 @@ async function resolveAndEnqueueAgendaItem(
     payload: target,
     dedupeKey,
     source: SOURCE,
+    fitReason,
     notes:
       `${candidate.city} — ${candidate.event.eventBodyName ?? "meeting"} — ${candidate.item.title}`.slice(
         0,
@@ -283,7 +286,7 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
       continue;
     }
 
-    const outcome = await resolveAndEnqueueAgendaItem(candidate, yourEdge);
+    const outcome = await resolveAndEnqueueAgendaItem(candidate, yourEdge, filter.reason);
     if (outcome === "enqueued") result.enqueued++;
     else if (outcome === "duplicate") result.droppedDuplicate++;
     else if (outcome === "platform-error") {

@@ -334,6 +334,7 @@ export async function processRepoCandidate(
     payload: target,
     dedupeKey: hit.url,
     source: ctx.sourceTag,
+    fitReason: snippetFilter.reason,
     notes,
   });
   if (id != null) result.enqueued++;

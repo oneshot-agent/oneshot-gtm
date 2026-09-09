@@ -8,6 +8,7 @@ import {
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { XAmplifyDmTarget, XAmplifyTarget, XRepostIntroTarget } from "@oneshot-gtm/plays";
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
+import { generateFitReason } from "./_fit-reason.ts";
 import { loadXHarvest, saveXHarvest } from "./_x-cache.ts";
 import { CostMeter, estimateHarvestCost, type XEngineName } from "./_x-cost.ts";
 import {
@@ -387,11 +388,20 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
             ...base,
             ...(opts.launchDate ? { launchDate: opts.launchDate } : {}),
           };
+      // Amplifiers are never pitched, so no gate ran — the row still needs its
+      // fit line (#592); the prompt says plainly when nothing connects.
+      const fitReason = await generateFitReason({
+        icp,
+        playName: sdkEmail ? "x-amplify" : "x-amplify-dm",
+        payload: target,
+      });
       const id = enqueueScoredTarget(ledger, {
         playName: sdkEmail ? "x-amplify" : "x-amplify-dm",
         payload: target,
         dedupeKey,
         source,
+        fitReason,
+        fitReasonSource: "generated",
         notes: pick.why,
       });
       if (id != null) result.enqueued++;
@@ -489,6 +499,8 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
       payload: target,
       dedupeKey,
       source,
+      fitReason: stageB.reason,
+      fitReasonSource: "person-gate",
       notes: pick.why,
     });
     if (id != null) result.enqueued++;

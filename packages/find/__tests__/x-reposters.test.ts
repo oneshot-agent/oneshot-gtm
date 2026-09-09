@@ -232,6 +232,9 @@ describe("runXRepostersFinder — lane → play routing", () => {
     expect(row.source).toBe("find:x-reposters:@iamdevloper");
     expect(row.payload["email"]).toBe("fiona@acme.dev");
     expect(row.payload["title"]).toBe("CTO");
+    // #592: the founder lane's person-gate reason is the row's fit sentence.
+    expect(row.payload["fitReason"]).toBe("stub");
+    expect(row.payload["fitReasonSource"]).toBe("person-gate");
     expect(row.payload["seedHandle"]).toBe("iamdevloper");
     expect(row.payload["seedEdge"]).toBe("his audience ships CLIs for fun");
     expect(row.payload["tweetUrl"]).toContain("/status/t-iamdevloper");

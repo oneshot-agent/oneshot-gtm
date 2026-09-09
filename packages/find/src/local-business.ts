@@ -386,6 +386,7 @@ export async function runLocalBusinessFinder(opts: LocalBusinessFinderOpts): Pro
       payload: target,
       dedupeKey,
       source: SOURCE,
+      fitReason: filter.reason,
       notes: filter.reason,
     });
     if (id != null) result.enqueued++;
@@ -594,6 +595,7 @@ async function runLocalEngine(opts: LocalBusinessFinderOpts): Promise<FinderResu
       payload: target,
       dedupeKey,
       source: SOURCE,
+      fitReason: filter.reason,
       notes: filter.reason,
     });
     if (id != null) result.enqueued++;

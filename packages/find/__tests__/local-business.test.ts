@@ -186,6 +186,8 @@ describe("runLocalBusinessFinder — lane routing on best_work_email", () => {
     expect(row.playName).toBe("free-pilot");
     expect(row.payload["email"]).toBe("dana@riverahvac.com");
     expect(row.payload["businessType"]).toBeTruthy();
+    expect(typeof row.payload["fitReason"]).toBe("string"); // #592
+    expect(row.payload["fitReasonSource"]).toBe("company-gate");
   });
 
   it("costs approximately one search call, not one call per candidate, when every result has best_work_email", async () => {

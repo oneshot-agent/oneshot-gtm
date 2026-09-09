@@ -432,6 +432,7 @@ export async function runAcceleratorBatchFinder(
       email,
       company: record.name,
       cohort: record.cohort,
+      cohortLabel: record.cohortLabel,
       ...(record.ycUrl
         ? { launchUrl: record.ycUrl }
         : record.website
@@ -452,6 +453,7 @@ export async function runAcceleratorBatchFinder(
       payload: target,
       dedupeKey,
       source,
+      fitReason: filter.reason,
       notes: `${record.cohortLabel} — ${filter.reason}`,
     });
     if (id != null) result.enqueued++;

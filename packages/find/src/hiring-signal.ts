@@ -299,6 +299,7 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
       payload: target,
       dedupeKey: hit.url,
       source: SOURCE,
+      fitReason: filter.reason,
       notes: `${extract.company} hiring "${extract.jobTitle}"${extract.team ? ` (${extract.team})` : ""} — ${filter.reason}`,
     });
     if (id != null) result.enqueued++;

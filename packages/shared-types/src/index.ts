@@ -734,6 +734,14 @@ export interface LastDraft {
 }
 
 /**
+ * Where a queue row's `fitReason` came from (issue #592): the company-level
+ * ICP gate at find time, the person-level gate, one generated sentence (the
+ * finders with no gate, the manual add, the backfill), or a reason recovered
+ * from a pre-#592 `notes` template by the backfill.
+ */
+export type FitReasonSource = "company-gate" | "person-gate" | "generated" | "notes";
+
+/**
  * Draft flags that HOLD a draft from auto-send but are deliberately overridable
  * by a founder on a manual "send this one" — they mean "needs a human glance,"
  * not "broken copy." Unlike lint flags (em-dash, rule-of-three, …) or dedup

@@ -71,6 +71,7 @@ import { commandResearchProspects } from "./commands/research-prospects.ts";
 import { commandResearchProducts } from "./commands/research-products.ts";
 import { commandSynthesizeAngles } from "./commands/synthesize-angles.ts";
 import { commandScoreProspects } from "./commands/score-prospects.ts";
+import { commandBackfillFitReason } from "./commands/backfill-fit-reason.ts";
 import { commandCalibrate } from "./commands/calibrate.ts";
 import { commandFindDrain, commandFindImport, commandFindWatch } from "./commands/find.ts";
 import { commandInstallService } from "./commands/install-service.ts";
@@ -678,6 +679,43 @@ find
           allStatuses: opts.allStatuses,
           ...(opts.scope ? { scope: opts.scope } : {}),
           ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+        });
+      },
+    ),
+  );
+
+find
+  .command("backfill-fit-reason")
+  .option("--play <name>", "only this play's rows (default: every play)")
+  .option("--write", "persist; without it the run is a dry run and writes nothing", false)
+  .option("--limit <n>", "max rows to touch this run", (v) => Number.parseInt(v, 10))
+  .option(
+    "--max-cost <usd>",
+    "ceiling on estimated generation spend for this run (default 1.00)",
+    (v) => Number.parseFloat(v),
+  )
+  .option("--refresh", "re-derive rows that already carry a fitReason", false)
+  .option("--no-generate", "free rungs only (notes, person gate); never call the model")
+  .description(
+    "Backfill the row's ICP-fit sentence onto pending/approved queue rows (free rungs first; generation capped)",
+  )
+  .action(
+    runOrFail(
+      async (opts: {
+        play?: string;
+        write: boolean;
+        limit?: number;
+        maxCost?: number;
+        refresh: boolean;
+        generate: boolean;
+      }) => {
+        await commandBackfillFitReason({
+          write: opts.write,
+          refresh: opts.refresh,
+          generate: opts.generate,
+          ...(opts.play ? { play: opts.play } : {}),
+          ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
+          ...(opts.maxCost !== undefined ? { maxCostUsd: opts.maxCost } : {}),
         });
       },
     ),

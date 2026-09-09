@@ -1,4 +1,5 @@
 import { type Ledger, type ProspectPriority, logEvent } from "@oneshot-gtm/core";
+import { type FitReasonSource, stampFitReason } from "./_fit-reason.ts";
 import {
   type PriorityEvidence,
   type PrioritySignal,
@@ -451,11 +452,21 @@ export function safeScorePriority(
  * — their thin payloads carry no evidence, and a gate must never be argued
  * with by a score.
  */
-export function enqueueScoredTarget(
-  ledger: Ledger,
-  input: Parameters<Ledger["enqueueTarget"]>[0],
-): number | null {
+/** `enqueueTarget`'s input plus the finder's ICP-fit sentence, when it has one in hand (#592). */
+export type ScoredEnqueueInput = Parameters<Ledger["enqueueTarget"]>[0] & {
+  fitReason?: string | null;
+  /** Defaults to `company-gate` when `fitReason` is given. */
+  fitReasonSource?: FitReasonSource;
+};
+
+export function enqueueScoredTarget(ledger: Ledger, input: ScoredEnqueueInput): number | null {
+  const { fitReason, fitReasonSource, ...rest } = input;
+  // A gate's "no" is not a fit reason: rejected inserts are never stamped.
+  const payload =
+    rest.initialStatus === "rejected"
+      ? rest.payload
+      : stampFitReason(rest.playName, rest.payload, fitReason, fitReasonSource);
   const priority =
-    input.initialStatus === "rejected" ? null : safeScorePriority(input.playName, input.payload);
-  return ledger.enqueueTarget({ ...input, priority });
+    rest.initialStatus === "rejected" ? null : safeScorePriority(rest.playName, payload);
+  return ledger.enqueueTarget({ ...rest, payload, priority });
 }

@@ -261,6 +261,7 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
       payload: target,
       dedupeKey: hit.url,
       source: SOURCE,
+      fitReason: filter.reason,
       notes: `${extract.guestName} on ${extract.podcastName} — ${filter.reason}`,
     });
     if (id != null) result.enqueued++;

@@ -85,6 +85,8 @@ export function queueEvidence(playName: string, payload: unknown): string | null
     case "luma-events":
       return str(p, "eventTitle");
 
+    // `github-stars` / `github-topics` are finder names, not plays, but rows
+    // stamped with them exist in older ledgers and a test pins the line.
     case "github-stars":
     case "github-topics":
     case "repo-interest": {
@@ -118,9 +120,14 @@ export function queueEvidence(playName: string, payload: unknown): string | null
     }
 
     case "accelerator-batch": {
-      const cohort = str(p, "cohort");
+      // The human program name once the finder stamps it (#592); the slug for older rows.
+      const cohort = str(p, "cohortLabel") ?? str(p, "cohort");
       return cohort ? `cohort ${cohort}` : null;
     }
+
+    // The manual add: the one line of research it carries is the angle.
+    case "profile-intro":
+      return str(p, "angle");
 
     case "new-business":
     case "free-pilot": {
@@ -139,23 +146,6 @@ export function queueEvidence(playName: string, payload: unknown): string | null
       if (!label) return subject;
       const labelled = matched ? `${label} — matched ${matched.slice(0, 10)}` : label;
       return subject ? `${labelled} (${subject})` : labelled;
-    }
-
-    // gov-solicitation's two routes share the same evidence shape: the
-    // notice title, plus the agency when known.
-    case "sources-sought":
-    case "design-partner-loi": {
-      const title = str(p, "title");
-      if (!title) return null;
-      const agency = str(p, "agency");
-      return agency ? `${title} — ${agency}` : title;
-    }
-
-    case "civic-pilot": {
-      const title = str(p, "agendaItemTitle");
-      if (!title) return null;
-      const city = str(p, "city");
-      return city ? `${title} — ${city}` : title;
     }
 
     // gov-solicitation's two routes share the same evidence shape: the

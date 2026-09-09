@@ -559,6 +559,7 @@ export async function runLocalRegistryFinder(opts: LocalRegistryFinderOpts): Pro
       payload: target,
       dedupeKey,
       source: SOURCE,
+      fitReason: filter.reason,
       notes: `${record.sourceLabel} — ${filter.reason}`,
     });
     if (id != null) result.enqueued++;

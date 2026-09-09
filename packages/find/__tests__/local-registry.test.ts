@@ -418,6 +418,8 @@ describe("runLocalRegistryFinder — routing + isolation", () => {
     expect(fresh?.playName).toBe("new-business");
     expect(old?.playName).toBe("free-pilot");
     expect(fresh?.payload["source"]).toBe("socrata-license");
+    expect(typeof fresh?.payload["fitReason"]).toBe("string"); // #592
+    expect(fresh?.payload["fitReasonSource"]).toBe("company-gate");
     expect(fresh?.payload["matchedDateIso"]).toBe(RECENT_ISO);
     expect(fresh?.payload["yourEdge"]).toBe("we set it up free");
     // #498: both plays REQUIRE these, and runEmailPlay drops a row without

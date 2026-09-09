@@ -261,8 +261,10 @@ describe("runProspectResearch", () => {
     await runProspectResearch(7);
 
     expect(state.calls.deepResearchPerson).toBe(1);
-    // Two LLM calls: the ICP-grounded extract + the intro draft.
-    expect(state.calls.llm).toBe(2);
+    // Three LLM calls: the ICP-grounded extract, the intro draft, and the
+    // row's fit sentence (#592 — the manual add runs no gate, so it is
+    // generated from the research it just paid for).
+    expect(state.calls.llm).toBe(3);
 
     // Draft persisted.
     expect(state.row.last_draft_json).not.toBeNull();

@@ -45,6 +45,7 @@
       },
       "dependencies": {
         "@oneshot-agent/sdk": "0.32.0",
+        "@oneshot-gtm/plays": "workspace:*",
         "open": "^11.0.0",
         "pdf-lib": "^1.17.1",
       },

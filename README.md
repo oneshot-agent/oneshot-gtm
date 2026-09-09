@@ -80,7 +80,7 @@ bun run cli -- find drain podcast-guest --dry-run  # preview approved /queue row
 bun run cli -- cadence advance                     # daily tick: poll inbox, fire follow-ups
 ```
 
-68 commands — `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
+69 commands — `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
 
 | Group                    | Commands                                                                                                                                                                                                                                                                                                                  |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -224,7 +224,7 @@ Workspaces share one thing: `~/.oneshot-gtm-shared/shared.sqlite`, holding the p
 
 ```
 apps/
-  cli/        the 68-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
+  cli/        the 69-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
   server/     Bun.serve + SSE; tsdown bundle published as `oneshot-gtm-server`
   web/        Vite + React 19 + TanStack + Base UI — 9 pages, run form, strategist dock, privacy mode
 packages/

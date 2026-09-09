@@ -158,6 +158,9 @@ describe("runGitHubStarsFinder — per-repo rel routing", () => {
       "Starred Apollo's repo (apollographql/router)",
     );
     expect(comp?.payload["yourEdge"]).toBe("one SDK for the tools they wire up");
+    // #592: the company-gate reason rides on the row as its fit sentence.
+    expect(typeof comp?.payload["fitReason"]).toBe("string");
+    expect(comp?.payload["fitReasonSource"]).toBe("company-gate");
 
     const adj = enqueued.find((r) => r.playName === "repo-interest");
     expect(adj).toBeDefined();

@@ -292,6 +292,7 @@ async function resolveAndEnqueueShowHn(
     payload: target,
     dedupeKey: hit.objectID,
     source: SOURCE,
+    fitReason: filterReason,
     notes: filterReason,
   });
   return id != null ? "enqueued" : "duplicate";

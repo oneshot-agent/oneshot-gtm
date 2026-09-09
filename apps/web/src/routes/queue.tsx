@@ -62,7 +62,7 @@ import {
 } from "../lib/queue-helpers.ts";
 import { humanInterval } from "../lib/humanInterval.ts";
 import { priorityBreakdown, priorityChip } from "../lib/priorityChip.ts";
-import { queueEvidence } from "../lib/queueEvidence.ts";
+import { rationaleLine } from "../lib/queueRationale.ts";
 import {
   companyFor,
   emailFor,
@@ -766,7 +766,7 @@ export function QueueRow({
   const eventCity = eventCityFor(row.payload);
   const eventUrl = eventUrlFor(row.payload);
   const eventRole = eventRoleFor(row.payload);
-  const evidence = queueEvidence(row.playName, row.payload);
+  const evidence = rationaleLine(row.playName, row.payload);
   const eventPassed = eventDate != null && eventIsPast(eventDate);
   // Privacy mode suppresses reason text — freeform reasons can embed names
   // and companies the structured <Pii> masking can't reach.

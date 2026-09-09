@@ -197,6 +197,8 @@ describe("runCivicAgendaFinder — happy path", () => {
     expect(row.playName).toBe("civic-pilot");
     expect(row.payload["city"]).toBe("New York");
     expect(row.payload["agendaItemTitle"]).toBe("Resolution on AI use in permitting");
+    // #592: a pass-through ("no ICP set") is not a reason and must never be stamped.
+    expect(row.payload["fitReason"]).not.toBe("no ICP set; pass-through");
     expect(row.payload["meetingDate"]).toBe("2026-09-10");
     expect(row.payload["email"]).toBe("alex.chen+nyc-10@council.nyc.gov");
     expect(row.payload["name"]).toBe("Alex Chen");
