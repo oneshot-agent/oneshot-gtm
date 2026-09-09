@@ -562,31 +562,31 @@ describe("listGmailReplies", () => {
   });
 });
 
-describe("listGmailReplies message cache", () => {
-  const tokenResponse = () =>
-    new Response(JSON.stringify({ access_token: "tok", expires_in: 3600 }), { status: 200 });
-  const full = (id: string) =>
-    JSON.stringify({
-      id,
-      threadId: `t-${id}`,
-      internalDate: "1757000000000",
-      payload: {
-        headers: [
-          { name: "From", value: "a@b.example" },
-          { name: "Subject", value: "hi" },
-          { name: "Message-ID", value: `<${id}@b>` },
-        ],
-        mimeType: "text/plain",
-        body: { data: Buffer.from("hello").toString("base64url") },
-      },
-    });
+const cacheTokenResponse = () =>
+  new Response(JSON.stringify({ access_token: "tok", expires_in: 3600 }), { status: 200 });
+const cacheFullMessage = (id: string) =>
+  JSON.stringify({
+    id,
+    threadId: `t-${id}`,
+    internalDate: "1757000000000",
+    payload: {
+      headers: [
+        { name: "From", value: "a@b.example" },
+        { name: "Subject", value: "hi" },
+        { name: "Message-ID", value: `<${id}@b>` },
+      ],
+      mimeType: "text/plain",
+      body: { data: Buffer.from("hello").toString("base64url") },
+    },
+  });
 
+describe("listGmailReplies message cache", () => {
   it("fetches each message body once across polls; a repeat poll pays for the list only", async () => {
     const gets: string[] = [];
     let listIds = ["m1", "m2"];
     const fetchMock = vi.fn(async (url: string | URL) => {
       const u = String(url);
-      if (u.startsWith("https://oauth2.googleapis.com/")) return tokenResponse();
+      if (u.startsWith("https://oauth2.googleapis.com/")) return cacheTokenResponse();
       if (u.includes("/messages?")) {
         return new Response(JSON.stringify({ messages: listIds.map((id) => ({ id })) }), {
           status: 200,
@@ -594,7 +594,7 @@ describe("listGmailReplies message cache", () => {
       }
       const id = u.match(/\/messages\/([^?]+)/)?.[1] ?? "";
       gets.push(id);
-      return new Response(full(id), { status: 200 });
+      return new Response(cacheFullMessage(id), { status: 200 });
     });
     vi.stubGlobal("fetch", fetchMock);
 
