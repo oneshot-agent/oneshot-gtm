@@ -1,10 +1,11 @@
-import type {
-  DecidedByFilter,
-  ProspectBrowseRow,
-  ProspectSearchResponse,
-  ProspectSortKey,
-  QueueCounts,
-  QueueStatusView,
+import {
+  describeDecision,
+  type DecidedByFilter,
+  type ProspectBrowseRow,
+  type ProspectSearchResponse,
+  type ProspectSortKey,
+  type QueueCounts,
+  type QueueStatusView,
 } from "@oneshot-gtm/shared-types";
 import { companyFor, emailFor, nameFor, titleFor } from "./payloadIdentity.ts";
 
@@ -200,4 +201,18 @@ export function applyProspectFilters(
     counts,
     plays: [...new Set(rows.map((r) => r.playName))].toSorted(),
   };
+}
+
+/**
+ * The /prospects row's second line, after the signal (issue #601): what
+ * happened to this candidate and when — "approved by you 3d ago",
+ * "auto-rejected 2w ago", "undecided". `ago` is injected so the line stays
+ * pure in tests.
+ */
+export function decisionLine(
+  row: Parameters<typeof describeDecision>[0] & { decidedAt: string | null },
+  ago: (iso: string) => string,
+): string {
+  const what = describeDecision(row);
+  return row.decidedAt ? `${what} ${ago(row.decidedAt)}` : what;
 }

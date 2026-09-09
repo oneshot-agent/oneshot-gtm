@@ -2,6 +2,7 @@ import type { ProspectBrowseRow } from "@oneshot-gtm/shared-types";
 import { describe, expect, it } from "vitest";
 import { describeDecision } from "@oneshot-gtm/shared-types";
 import {
+  decisionLine,
   applyProspectFilters,
   pageSummary,
   parseProspectsSearch,
@@ -203,5 +204,39 @@ describe("applyProspectFilters (demo mode)", () => {
     expect(
       applyProspectFilters(rows, { sort: "decided", dir: "asc" }).rows.map((r) => r.id),
     ).toEqual([1, 2, 3]);
+  });
+});
+
+const ago = (iso: string): string => `on ${iso.slice(0, 10)}`;
+
+describe("decisionLine (#601)", () => {
+  it("is the decision, then when it was made", () => {
+    expect(
+      decisionLine(
+        {
+          decision: "approve",
+          decidedBy: "human",
+          status: "approved",
+          decidedAt: "2026-09-01T10:00:00Z",
+        },
+        ago,
+      ),
+    ).toBe("approved by you on 2026-09-01");
+    expect(
+      decisionLine(
+        {
+          decision: "auto_reject",
+          decidedBy: "machine",
+          status: "rejected",
+          decidedAt: "2026-08-20T10:00:00Z",
+        },
+        ago,
+      ),
+    ).toBe("auto-rejected on 2026-08-20");
+  });
+  it("is the decision alone when nothing was decided", () => {
+    expect(
+      decisionLine({ decision: null, decidedBy: null, status: "pending", decidedAt: null }, ago),
+    ).toBe("undecided");
   });
 });
