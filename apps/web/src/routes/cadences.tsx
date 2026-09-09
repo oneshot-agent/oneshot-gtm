@@ -24,13 +24,20 @@ import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
 import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
 import { Pii } from "../components/primitives/Pii.tsx";
-import { useMask } from "../lib/privacy.tsx";
+import { useMask, usePrivacy } from "../lib/privacy.tsx";
 import { Field, Input, Select, Textarea } from "../components/primitives/Field.tsx";
 import { Modal } from "../components/primitives/Modal.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
-import { StepProgress } from "../components/primitives/StepProgress.tsx";
 import { cn, formatSendsToday, timeAgo } from "../lib/cn.ts";
 import { readOnly } from "../lib/readOnly.ts";
+import { STOP_REASON_LABELS, cadenceStateLabel } from "../lib/cadenceState.ts";
+import { fitReasonFor } from "../lib/queueRationale.ts";
+import { queueEvidence } from "../lib/queueEvidence.ts";
+import { IdentityCell, SignalLabel } from "../components/ledger/IdentityCell.tsx";
+import { SheetHeading } from "../components/ledger/SheetHeading.tsx";
+import { Rule, Sheet } from "../components/ledger/Sheet.tsx";
+import { CaseList, Disclosure, type CaseListRow } from "../components/ledger/CaseList.tsx";
+import { DraftStateLine, LetterCard, LetterEmpty } from "../components/ledger/LetterCard.tsx";
 
 /** Tailwind can't build class names dynamically — enumerate the tile-count variants. */
 const TILE_GRID_COLS: Record<number, string> = {
@@ -106,13 +113,6 @@ interface LinkedInReplyModalState {
   prospectId: number;
   prospectName: string | null;
 }
-
-const STOP_REASON_LABELS: Record<CadenceStopReason, string> = {
-  bad_timing: "Bad timing / revisit later",
-  other: "Other",
-  not_a_fit: "Not a fit",
-  do_not_contact: "Do not contact",
-};
 
 const rowKey = (c: CadenceView): string => `${c.prospectId}|${c.playName}`;
 
@@ -308,7 +308,9 @@ function CadencesPage() {
   // table is filtered to active.
   const counts = cadences.data?.counts ?? EMPTY_COUNTS;
   const mask = useMask();
-  const nowIso = new Date().toISOString();
+  const { masked } = usePrivacy();
+  const now = new Date();
+  const nowIso = now.toISOString();
 
   // Bulk-action derived state.
   const selectableActive = useMemo(
@@ -598,11 +600,9 @@ function CadencesPage() {
                     className="cursor-pointer"
                   />
                 </th>
-                <th className="px-6 py-2 text-left font-medium">prospect</th>
+                <th className="py-2 pl-3 text-left font-medium">prospect</th>
                 <th className="py-2 text-left font-medium">play</th>
                 <th className="py-2 text-left font-medium">status</th>
-                <th className="py-2 text-left font-medium">step</th>
-                <th className="py-2 text-right font-medium">next due</th>
                 <th className="py-2 text-right font-medium">enrolled</th>
                 <th className="px-6 py-2 text-right font-medium">actions</th>
               </tr>
@@ -610,44 +610,261 @@ function CadencesPage() {
             <tbody>
               {list.map((c, i) => {
                 const totalSteps = c.followupCount + 1;
+                const key = rowKey(c);
                 const knownCompany =
                   c.prospectCompany && !/^\(?unknown\)?$/i.test(c.prospectCompany.trim())
                     ? c.prospectCompany
                     : null;
                 const isOverdue =
                   c.status === "active" && c.nextDueAt !== null && c.nextDueAt <= nowIso;
-                // Expandable when there's something to show OR something to do:
-                // prior sends, a persisted draft, or a remaining step to generate.
-                const hasExpandable =
-                  c.priorSteps.length > 0 ||
-                  c.status === "stopped" ||
-                  c.nextStepDraft != null ||
-                  (c.status === "active" && c.nextStepLabel != null);
+                // Line 2 is the sequence state (#602); every row opens into the
+                // sheet, which always has at least the enrolment to show.
+                const state = cadenceStateLabel(c, now);
+                const open = expandedKeys.has(key);
+                const draft = c.nextStepDraft;
+                const previewPending = pendingPreviewKey === key;
+                const sendPending = c.isSending || pendingSendKey === key;
+                const sendDisabled =
+                  !draft ||
+                  draft.flags.length > 0 ||
+                  pendingSendKey != null ||
+                  pendingPreviewKey != null ||
+                  c.isSending;
+                // Send fires immediately (no confirm modal), so the
+                // early/breakup warnings live in the button tooltip.
+                const earlyNote =
+                  c.nextDueAt != null && c.nextDueAt > nowIso
+                    ? ` · ${earlyByCopy(c.nextDueAt)} ahead of schedule — remaining steps recompute from today`
+                    : "";
+                const sendTitle = !draft
+                  ? "generate a draft first"
+                  : draft.flags.length > 0
+                    ? `draft held by lint (${draft.flags.length} flag(s)) — regenerate`
+                    : c.nextStepIsBreakup
+                      ? `send breakup (final touch) — sends now, no more emails after this${earlyNote}`
+                      : `send next step — sends now${earlyNote}`;
+                // The reminder: why this person was written to in the first
+                // place — the intro's signal and fit sentence, off the sent
+                // queue row (#599). Freeform, so it drops under privacy mode.
+                const reminderSignal =
+                  !masked && c.queuePayload ? queueEvidence(c.playName, c.queuePayload) : null;
+                const fitReason = masked ? null : fitReasonFor(c.queuePayload);
+                const caseRows: CaseListRow[] = [
+                  { key: "enrolled", value: timeAgo(c.enrolledAt) },
+                  ...(c.status === "active" && c.nextDueAt
+                    ? [
+                        {
+                          key: "next due",
+                          value: `${timeAgo(c.nextDueAt)}${isOverdue ? " · overdue" : ""}`,
+                          ...(isOverdue ? { tone: "spend" as const } : {}),
+                        },
+                      ]
+                    : []),
+                  {
+                    key: "step",
+                    value: `${Math.min(c.currentStep + 1, totalSteps)} of ${totalSteps}${
+                      c.nextStepLabel
+                        ? ` · next: ${c.nextStepLabel}${c.nextStepIsBreakup ? " (breakup)" : ""}`
+                        : ""
+                    }`,
+                  },
+                  ...(c.status === "replied"
+                    ? [
+                        {
+                          key: "replied",
+                          value: [
+                            c.replyChannel ? `on ${c.replyChannel}` : null,
+                            c.replyAt ? timeAgo(c.replyAt) : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · "),
+                        },
+                      ]
+                    : []),
+                  ...(c.status === "stopped"
+                    ? [
+                        {
+                          key: "stopped",
+                          value: `${c.stopReason ? STOP_REASON_LABELS[c.stopReason] : "reason unavailable"}${
+                            c.stoppedAt ? ` · ${timeAgo(c.stoppedAt)}` : ""
+                          }`,
+                          tone: "blocked" as const,
+                        },
+                      ]
+                    : []),
+                  ...(c.stopNote ? [{ key: "note", value: c.stopNote }] : []),
+                  ...(c.lastSendError && !c.isSending
+                    ? [
+                        {
+                          key: "send failed",
+                          value: `${c.lastSendError}${
+                            c.lastSendErrorAt ? ` · ${timeAgo(c.lastSendErrorAt)}` : ""
+                          }`,
+                          tone: "blocked" as const,
+                        },
+                      ]
+                    : []),
+                ];
+                const stopButton =
+                  c.status === "active" ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      title={
+                        c.isSending
+                          ? "wait for the in-flight send to finish before stopping"
+                          : "stop cadence"
+                      }
+                      disabled={stop.isPending || c.isSending}
+                      onClick={() =>
+                        setStopModal({
+                          prospectId: c.prospectId,
+                          prospectName: c.prospectName,
+                          playName: c.playName,
+                        })
+                      }
+                    >
+                      <CircleStop size={11} /> Stop
+                    </Button>
+                  ) : null;
+                const regenerateButton =
+                  c.status === "active" &&
+                  c.nextStepLabel != null &&
+                  c.nextStepChannel !== "direct_mail" ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={pendingPreviewKey != null}
+                      title={
+                        draft
+                          ? `regenerate next step (drafted ${timeAgo(draft.draftedAt)})`
+                          : "generate next-step draft — dry-run LLM, never sends"
+                      }
+                      onClick={() =>
+                        previewNext.mutate({ prospectId: c.prospectId, playName: c.playName })
+                      }
+                      {...readOnly}
+                    >
+                      {previewPending ? (
+                        <Loader2 size={11} className="animate-spin" />
+                      ) : (
+                        <RotateCw size={11} />
+                      )}
+                      {previewPending
+                        ? draft
+                          ? "Regenerating…"
+                          : "Generating…"
+                        : draft
+                          ? "Regenerate draft"
+                          : "Generate draft"}
+                    </Button>
+                  ) : null;
+                const sendButton =
+                  c.status === "active" &&
+                  c.nextStepLabel != null &&
+                  c.nextStepChannel !== "direct_mail" ? (
+                    <Button
+                      variant={sendDisabled ? "ghost" : "receipt"}
+                      size="sm"
+                      title={sendTitle}
+                      disabled={sendDisabled}
+                      onClick={() => {
+                        if (!draft) return;
+                        sendNext.mutate({ prospectId: c.prospectId, playName: c.playName });
+                      }}
+                      {...readOnly}
+                    >
+                      {sendPending ? (
+                        <Loader2 size={11} className="animate-spin" />
+                      ) : (
+                        <Send size={11} />
+                      )}
+                      {sendPending
+                        ? "Sending…"
+                        : c.nextStepIsBreakup
+                          ? "Send breakup"
+                          : "Send this one"}
+                    </Button>
+                  ) : null;
+                const letter =
+                  c.status === "active" && c.nextStepChannel === "direct_mail" ? (
+                    <LetterEmpty
+                      note={`Next step goes by post${c.nextStepLabel ? ` · ${c.nextStepLabel}` : ""}.`}
+                      actions={
+                        <>
+                          <Button size="sm" disabled={c.isSending} onClick={() => setMailKey(key)}>
+                            {c.businessAddress ? "Review mail" : "Add business address"}
+                          </Button>
+                          {stopButton}
+                        </>
+                      }
+                    />
+                  ) : c.status === "active" && c.nextStepLabel != null ? (
+                    draft ? (
+                      <LetterCard
+                        meta={`drafted ${timeAgo(draft.draftedAt)} · preview, not sent`}
+                        subject={draft.subject}
+                        stateLine={<DraftStateLine sent={false} flags={draft.flags} />}
+                        body={draft.body}
+                        foot={{
+                          left: regenerateButton,
+                          right: (
+                            <>
+                              {!sendDisabled && (
+                                <span className="font-mono text-[11px] text-[color:var(--ink-receipt-2)]">
+                                  ready · no flags
+                                </span>
+                              )}
+                              {sendButton}
+                              {stopButton}
+                            </>
+                          ),
+                        }}
+                        sendable={!sendDisabled}
+                      />
+                    ) : (
+                      <LetterEmpty
+                        note={`No draft yet for the ${c.nextStepLabel}. Drafting is a dry run and never sends.`}
+                        actions={
+                          <>
+                            {regenerateButton}
+                            {stopButton}
+                          </>
+                        }
+                      />
+                    )
+                  ) : (
+                    <LetterEmpty
+                      note={
+                        c.status === "replied"
+                          ? "They replied — the conversation lives on /inbox."
+                          : c.status === "active"
+                            ? "No steps left in this cadence."
+                            : "Nothing left to send."
+                      }
+                    />
+                  );
                 return (
                   <Fragment key={`${c.prospectId}-${c.playName}`}>
                     <tr
-                      onClick={
-                        hasExpandable
-                          ? (e) => {
-                              // Ignore clicks that originated on interactive
-                              // controls inside the row (buttons / inputs /
-                              // links / labels). Without this guard, clicking
-                              // Preview / Send / Stop / the checkbox would
-                              // ALSO toggle the row expansion.
-                              const t = e.target as HTMLElement;
-                              if (t.closest("button, input, a, label, [role='button']")) return;
-                              toggleExpanded(rowKey(c));
-                            }
-                          : undefined
-                      }
+                      onClick={(e) => {
+                        // Ignore clicks that originated on interactive
+                        // controls inside the row (buttons / inputs /
+                        // links / labels). Without this guard, clicking
+                        // Preview / Send / Stop / the checkbox would
+                        // ALSO toggle the row expansion.
+                        const t = e.target as HTMLElement;
+                        if (t.closest("button, input, a, label, [role='button']")) return;
+                        toggleExpanded(key);
+                      }}
                       className={cn(
-                        "border-b border-ink-rule/60 transition-colors duration-[var(--dur-stamp)]",
+                        "cursor-pointer border-b border-ink-rule/60 transition-colors duration-[var(--dur-stamp)]",
                         "hover:bg-ink-surface/60",
                         i % 2 === 1 && "bg-ink-surface/20",
-                        hasExpandable && "cursor-pointer",
+                        open && "bg-ink-surface",
                       )}
                     >
-                      <td className="px-3 py-2" style={{ width: 32 }}>
+                      <td className="px-3 py-[10px]" style={{ width: 32 }}>
                         <input
                           type="checkbox"
                           aria-label={`select ${c.prospectName ?? c.prospectEmail ?? "row"}`}
@@ -662,104 +879,40 @@ function CadencesPage() {
                           className="cursor-pointer disabled:cursor-not-allowed disabled:opacity-30"
                         />
                       </td>
-                      <td className="px-6 py-2">
-                        <div className="flex items-center gap-2 text-ink-cream">
-                          <span>
-                            {c.prospectName ? <Pii kind="name">{c.prospectName}</Pii> : "(unknown)"}
-                          </span>
-                          {c.prospectLinkedinUrl && (
-                            <a
-                              href={c.prospectLinkedinUrl}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="font-mono text-[10px] text-ink-muted underline decoration-ink-rule underline-offset-2 hover:text-ink-cream-2"
-                              title="Open LinkedIn profile"
-                            >
-                              LinkedIn ↗
-                            </a>
-                          )}
-                        </div>
-                        {(c.prospectTitle || knownCompany) && (
-                          <div className="max-w-[280px] truncate text-[11px] text-ink-muted">
-                            {c.prospectTitle ?? "Role unknown"}
-                            {knownCompany && (
-                              <>
-                                {" · "}
-                                <Pii kind="company">{knownCompany}</Pii>
-                              </>
-                            )}
-                          </div>
-                        )}
-                        {!c.prospectTitle && !knownCompany && c.prospectLinkedinUrl && (
-                          <div className="text-[11px] text-ink-faint">
-                            Role/company not enriched
-                          </div>
-                        )}
-                        <div className="font-mono text-[11px] text-ink-faint">
-                          {c.prospectEmail ? <Pii kind="email">{c.prospectEmail}</Pii> : "—"}
-                        </div>
+                      <IdentityCell
+                        className="pl-3"
+                        identity={{
+                          name: c.prospectName,
+                          email: c.prospectEmail,
+                          title: c.prospectTitle,
+                          company: knownCompany,
+                          linkedinUrl: c.prospectLinkedinUrl,
+                        }}
+                        line2Privacy="show"
+                        line2={<SignalLabel tone={state.tone}>{state.text}</SignalLabel>}
+                      />
+                      <td className="whitespace-nowrap py-[10px] pr-6 text-ink-cream-2">
+                        {c.playName}
                       </td>
-                      <td className="py-2 text-ink-cream-2">{c.playName}</td>
-                      <td className="py-2">
-                        <Badge tone={statusTone(c.status)}>{c.status}</Badge>
-                        {c.isSending && (
-                          <Badge tone="receipt" className="ml-1.5 animate-pulse">
-                            sending…
-                          </Badge>
-                        )}
-                        {c.status === "replied" && c.replyChannel && (
-                          <Badge tone="signal" className="ml-1.5">
-                            {c.replyChannel === "linkedin" ? "LinkedIn reply" : "email reply"}
-                            {c.replyAt ? ` · ${timeAgo(c.replyAt)}` : ""}
-                          </Badge>
-                        )}
-                        {!c.isSending && c.status === "active" && c.lastSendError && (
-                          <span
-                            title={`${c.lastSendError}${
-                              c.lastSendErrorAt ? ` · ${timeAgo(c.lastSendErrorAt)}` : ""
-                            } — click Send to retry`}
-                          >
-                            <Badge tone="blocked" className="ml-1.5">
-                              send failed
-                            </Badge>
-                          </span>
-                        )}
+                      <td className="whitespace-nowrap py-[10px] pr-6">
+                        {/* Sending, reply and send-failed now live on line 2;
+                            the failure's message keeps its tooltip here. */}
+                        <span
+                          title={
+                            !c.isSending && c.status === "active" && c.lastSendError
+                              ? `${c.lastSendError}${
+                                  c.lastSendErrorAt ? ` · ${timeAgo(c.lastSendErrorAt)}` : ""
+                                } — click Send to retry`
+                              : undefined
+                          }
+                        >
+                          <Badge tone={statusTone(c.status)}>{c.status}</Badge>
+                        </span>
                       </td>
-                      <td className="py-2">
-                        <div className="flex items-center gap-2">
-                          <StepProgress
-                            current={Math.min(c.currentStep + 1, totalSteps)}
-                            total={totalSteps}
-                            tone={
-                              c.status === "replied"
-                                ? "signal"
-                                : c.status === "breakup"
-                                  ? "spend"
-                                  : c.status === "bounced" ||
-                                      c.status === "unsubscribed" ||
-                                      c.status === "stopped"
-                                    ? "blocked"
-                                    : "receipt"
-                            }
-                          />
-                          <span className="font-mono text-[11px] text-ink-faint">
-                            {c.currentStep + 1}/{totalSteps}
-                          </span>
-                        </div>
-                      </td>
-                      <td
-                        className={cn(
-                          "py-2 text-right font-mono text-[12px]",
-                          isOverdue ? "text-[color:var(--ink-spend-2)]" : "text-ink-muted",
-                        )}
-                      >
-                        {timeAgo(c.nextDueAt)}
-                        {isOverdue && <span className="ml-1 text-[10px]">· overdue</span>}
-                      </td>
-                      <td className="py-2 text-right font-mono text-[11px] text-ink-faint">
+                      <td className="whitespace-nowrap py-[10px] text-right font-mono text-[11px] text-ink-faint">
                         {timeAgo(c.enrolledAt)}
                       </td>
-                      <td className="px-6 py-2 text-right">
+                      <td className="whitespace-nowrap px-6 py-[10px] text-right">
                         <div className="flex items-center justify-end gap-1">
                           {(c.status === "active" || c.status === "paused") && (
                             <Button
@@ -778,7 +931,6 @@ function CadencesPage() {
                           )}
                           {c.status === "active" &&
                             (() => {
-                              const key = `${c.prospectId}|${c.playName}`;
                               if (c.nextStepChannel === "direct_mail")
                                 return (
                                   <>
@@ -816,19 +968,6 @@ function CadencesPage() {
                                     </Button>
                                   </>
                                 );
-                              const draft = c.nextStepDraft;
-                              const sendDisabled =
-                                !draft ||
-                                draft.flags.length > 0 ||
-                                pendingSendKey != null ||
-                                pendingPreviewKey != null ||
-                                c.isSending;
-                              // Send fires immediately (no confirm modal), so the
-                              // early/breakup warnings live in the button tooltip.
-                              const earlyNote =
-                                c.nextDueAt != null && c.nextDueAt > new Date().toISOString()
-                                  ? ` · ${earlyByCopy(c.nextDueAt)} ahead of schedule — remaining steps recompute from today`
-                                  : "";
                               return (
                                 <>
                                   <Button
@@ -925,7 +1064,6 @@ function CadencesPage() {
                           {c.status !== "active" &&
                             (c.priorSteps.length > 0 || c.status === "stopped") &&
                             (() => {
-                              const key = `${c.prospectId}|${c.playName}`;
                               return (
                                 <Button
                                   variant="ghost"
@@ -966,134 +1104,68 @@ function CadencesPage() {
                         </div>
                       </td>
                     </tr>
-                    {(c.priorSteps.length > 0 || c.nextStepDraft || c.status === "stopped") &&
-                      expandedKeys.has(rowKey(c)) && (
-                        <tr className="border-b border-ink-rule/60 bg-ink-surface/30">
-                          <td colSpan={8} className="px-6 py-3">
-                            {c.status === "stopped" && (
-                              <div className="mb-4 border-l-2 border-[color:var(--ink-blocked)] pl-3">
-                                <div className="ln-eyebrow">Stopped</div>
-                                <div className="mt-1 text-[12px] text-ink-cream-2">
-                                  {c.stopReason
-                                    ? STOP_REASON_LABELS[c.stopReason]
-                                    : "Reason unavailable"}
-                                  {c.stoppedAt ? ` · ${timeAgo(c.stoppedAt)}` : ""}
-                                </div>
-                                {c.stopNote && (
-                                  <div className="mt-1 whitespace-pre-wrap text-[12px] text-ink-muted">
-                                    {c.stopNote}
-                                  </div>
-                                )}
-                              </div>
+                    {open && (
+                      <Sheet
+                        colSpan={6}
+                        indent="pl-14"
+                        theCase={
+                          <>
+                            <SheetHeading label="the case" />
+                            {reminderSignal && (
+                              <SignalLabel className="-mt-1">{reminderSignal}</SignalLabel>
                             )}
+                            {fitReason && (
+                              <p className="m-0 text-[13px] leading-5 text-ink-cream-2 [text-wrap:pretty]">
+                                {fitReason}
+                              </p>
+                            )}
+                            {(reminderSignal || fitReason) && <Rule />}
+                            <CaseList rows={caseRows} />
                             {c.priorSteps.length > 0 && (
                               <>
-                                <div className="ln-eyebrow mb-1">
-                                  Sent so far ({c.priorSteps.length})
-                                </div>
-                                <div className="flex flex-col gap-3">
-                                  {c.priorSteps.map((s) => (
-                                    <div
-                                      key={s.stepIndex}
-                                      className="border-l-2 border-ink-rule pl-3"
-                                    >
-                                      <div className="font-mono text-[11px] text-ink-faint">
-                                        step {s.stepIndex} ({s.label}) · sent {timeAgo(s.sentAt)}
-                                      </div>
-                                      <div className="mt-1 font-mono text-[12px] text-ink-cream">
-                                        Subject: {s.subject}
-                                      </div>
-                                      {s.body ? (
-                                        <pre className="mt-1 whitespace-pre-wrap text-[12px] text-ink-cream-2">
-                                          {s.body}
-                                        </pre>
-                                      ) : (
-                                        <div className="mt-1 font-mono text-[11px] italic text-ink-faint">
-                                          (body not captured — sent before per-touch body
-                                          persistence landed)
+                                <Rule />
+                                <div>
+                                  <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+                                    sent so far · {c.priorSteps.length}
+                                  </div>
+                                  <ol className="flex flex-col gap-2">
+                                    {c.priorSteps.map((st) => (
+                                      <li key={st.stepIndex} className="flex flex-col gap-1">
+                                        <div className="flex items-baseline gap-3 leading-4">
+                                          <span className="w-[64px] shrink-0 text-right font-mono text-[11px] text-ink-faint">
+                                            {timeAgo(st.sentAt)}
+                                          </span>
+                                          <span className="shrink-0 whitespace-nowrap text-ink-cream-2">
+                                            step {st.stepIndex} · {st.label}
+                                          </span>
+                                          <span className="min-w-0 truncate text-ink-muted">
+                                            {st.subject}
+                                          </span>
                                         </div>
-                                      )}
-                                    </div>
-                                  ))}
+                                        <div className="pl-[76px]">
+                                          {st.body ? (
+                                            <Disclosure label="body">
+                                              <pre className="ln-prose mt-2 whitespace-pre-wrap text-[12px] text-ink-cream-2">
+                                                {st.body}
+                                              </pre>
+                                            </Disclosure>
+                                          ) : (
+                                            <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+                                              body not captured
+                                            </span>
+                                          )}
+                                        </div>
+                                      </li>
+                                    ))}
+                                  </ol>
                                 </div>
                               </>
                             )}
-                            {c.status === "active" && c.nextStepLabel != null && (
-                              <div className={c.priorSteps.length > 0 ? "mt-5" : ""}>
-                                <div className="mb-1 flex items-center justify-between gap-2">
-                                  <div className="ln-eyebrow">
-                                    Next-step preview
-                                    {c.nextStepIsBreakup && (
-                                      <span className="ml-2 normal-case tracking-normal text-ink-faint">
-                                        · breakup
-                                      </span>
-                                    )}
-                                  </div>
-                                  {(() => {
-                                    const pending =
-                                      pendingPreviewKey === `${c.prospectId}|${c.playName}`;
-                                    return (
-                                      <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        disabled={pendingPreviewKey != null}
-                                        title={
-                                          c.nextStepDraft
-                                            ? `regenerate next step (drafted ${timeAgo(c.nextStepDraft.draftedAt)})`
-                                            : "generate next-step draft — dry-run LLM, never sends"
-                                        }
-                                        onClick={() =>
-                                          previewNext.mutate({
-                                            prospectId: c.prospectId,
-                                            playName: c.playName,
-                                          })
-                                        }
-                                        {...readOnly}
-                                      >
-                                        {pending ? (
-                                          <Loader2 size={11} className="animate-spin" />
-                                        ) : (
-                                          <RotateCw size={11} />
-                                        )}
-                                        {pending
-                                          ? c.nextStepDraft
-                                            ? "regenerating…"
-                                            : "generating…"
-                                          : c.nextStepDraft
-                                            ? "regenerate"
-                                            : "generate draft"}
-                                      </Button>
-                                    );
-                                  })()}
-                                </div>
-                                {c.nextStepDraft ? (
-                                  <>
-                                    <div className="font-mono text-[11px] text-ink-faint">
-                                      drafted {timeAgo(c.nextStepDraft.draftedAt)}
-                                      {c.nextStepDraft.flags.length > 0 && (
-                                        <span className="ml-2 text-[color:var(--ink-spend-2)]">
-                                          · {c.nextStepDraft.flags.length} flag(s):{" "}
-                                          {c.nextStepDraft.flags.join(", ")}
-                                        </span>
-                                      )}
-                                    </div>
-                                    <div className="mt-2 font-mono text-[12px] text-ink-cream">
-                                      Subject: {c.nextStepDraft.subject}
-                                    </div>
-                                    <pre className="mt-1 whitespace-pre-wrap text-[12px] text-ink-cream-2">
-                                      {c.nextStepDraft.body}
-                                    </pre>
-                                  </>
-                                ) : (
-                                  <div className="font-mono text-[11px] uppercase tracking-[0.14em] text-ink-faint">
-                                    no draft yet
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      )}
+                          </>
+                        }
+                        theLetter={letter}
+                      />
+                    )}
                   </Fragment>
                 );
               })}
