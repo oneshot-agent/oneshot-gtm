@@ -140,7 +140,9 @@ function RootLayout() {
     // Round-2 correction (#480): `awaitingReply` (not a bare `intent` check)
     // — it clears once the founder replies to the thread or records a deal
     // outcome, so the dot doesn't stay lit forever after the first use.
-    "inbox-positive": (inboxAlertQuery.data?.conversations ?? []).some((c) => c.awaitingReply),
+    "inbox-positive": (inboxAlertQuery.data?.conversations ?? []).some(
+      (c) => !c.archivedAt && c.awaitingReply,
+    ),
     "meetings-pending": (meetingsAlertQuery.data?.awaitingOutcome.length ?? 0) > 0,
   };
 

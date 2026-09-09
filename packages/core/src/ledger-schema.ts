@@ -379,6 +379,11 @@ export function migrateLedgerSchema(db: Database): void {
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
     `);
+  // Local, per-prospect inbox organization; independent of drafts and provider mailboxes.
+  db.exec(`CREATE TABLE IF NOT EXISTS inbox_archives (
+    prospect_id INTEGER PRIMARY KEY,
+    archived_at TEXT NOT NULL
+  )`);
   // v21: inbound replies persisted at detection (body included) — the ledger,
   // not the mailbox, is the store; a reply must never depend on a live fetch
   // window. PK is the provider email id so the poll's overlap re-sweeps and

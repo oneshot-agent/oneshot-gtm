@@ -1,3 +1,4 @@
+import { inboxConversations, inboxNeedsAttention } from "../lib/inboxArchive.ts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
 import { ChevronDown, ChevronRight, Loader2, RefreshCw, Send, Sparkles } from "lucide-react";
@@ -46,6 +47,7 @@ function statusTone(status: string | null): "receipt" | "spend" | "blocked" | "s
 }
 
 function InboxPage() {
+  const [archiveView, setArchiveView] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   // Default to `matched` — most inbox mail is unmatched noise (newsletters,
   // bounces, system mail); landing on matched surfaces real prospect replies
@@ -60,6 +62,8 @@ function InboxPage() {
   const replies = inbox.data?.replies ?? [];
   // Ledger-backed threaded view — complete regardless of the live window.
   const conversations = inbox.data?.conversations ?? [];
+  const archivedCount = conversations.filter((c) => c.archivedAt).length;
+  const displayedConversations = inboxConversations(conversations, archiveView);
   const error = inbox.data?.error;
   // The server fetches a clamped window (newest 200 across all identities).
   // When listInbox says there was more, all/no-match totals get a "+" so the
@@ -72,9 +76,7 @@ function InboxPage() {
   const suffixFor = (key: ReplyMatchFilter): string => (key === "matched" ? "" : windowSuffix);
   const visible = replies.filter((r) => matchesReplyFilter(r, matchFilter));
   const showConversations = matchFilter === "matched";
-  const needsDecisionCount = conversations.filter(
-    (c) => c.status === "needs_decision" || c.awaitingReply,
-  ).length;
+  const needsDecisionCount = conversations.filter(inboxNeedsAttention).length;
 
   return (
     <div className="-mx-6 -my-6 flex flex-col">
@@ -104,7 +106,7 @@ function InboxPage() {
             {!inbox.data
               ? "…"
               : showConversations
-                ? `${conversations.length} conversation${conversations.length === 1 ? "" : "s"}`
+                ? `${displayedConversations.length} conversation${displayedConversations.length === 1 ? "" : "s"}`
                 : matchFilter === "all"
                   ? `${replies.length}${windowSuffix} repl${replies.length === 1 && !windowSuffix ? "y" : "ies"}`
                   : `${visible.length} of ${replies.length}${windowSuffix}`}
@@ -156,6 +158,30 @@ function InboxPage() {
         ))}
       </div>
 
+      {showConversations && (
+        <div className="flex gap-2 border-b border-ink-rule/60 px-6 py-3">
+          <Button
+            size="sm"
+            variant={!archiveView ? "secondary" : "ghost"}
+            onClick={() => {
+              setArchiveView(false);
+              setExpanded(null);
+            }}
+          >
+            Inbox <span className="ml-1 opacity-60">{conversations.length - archivedCount}</span>
+          </Button>
+          <Button
+            size="sm"
+            variant={archiveView ? "secondary" : "ghost"}
+            onClick={() => {
+              setArchiveView(true);
+              setExpanded(null);
+            }}
+          >
+            Archived <span className="ml-1 opacity-60">{archivedCount}</span>
+          </Button>
+        </div>
+      )}
       {error && (
         <section className="border-b border-ink-rule/60 px-6 py-3">
           <div className="font-mono text-[12px] text-[color:var(--ink-blocked-2)]">{error}</div>
@@ -165,13 +191,19 @@ function InboxPage() {
       {inbox.isLoading ? (
         Array.from({ length: 5 }, (_, i) => <SkeletonRow key={i} />)
       ) : showConversations ? (
-        conversations.length === 0 ? (
+        displayedConversations.length === 0 ? (
           <div className="p-5">
-            <EmptyNote note="No conversations yet. When a prospect writes back, the whole exchange shows here." />
+            <EmptyNote
+              note={
+                archiveView
+                  ? "No archived conversations."
+                  : "No active conversations. New replies appear here; handled conversations are in Archived."
+              }
+            />
           </div>
         ) : (
           <div>
-            {conversations.map((c, i) => (
+            {displayedConversations.map((c, i) => (
               <ConversationRow
                 key={c.prospectId}
                 conversation={c}
@@ -229,6 +261,29 @@ function ConversationRow({
   onToggle: () => void;
 }) {
   const c = conversation;
+  const queryClient = useQueryClient();
+  const archive = useMutation({
+    mutationFn: () =>
+      api.archiveInboxConversation(
+        c.archivedAt
+          ? { prospectId: c.prospectId, archived: false }
+          : {
+              prospectId: c.prospectId,
+              archived: true,
+              observedReplyIds: c.items.filter((i) => i.kind === "reply").map((i) => i.id),
+            },
+      ),
+    onSuccess: async () => {
+      toast.success(
+        c.archivedAt ? "Conversation restored" : "Archived. A new reply will bring it back.",
+      );
+      await queryClient.invalidateQueries({ queryKey: ["inbox"] });
+    },
+    onError: async (error: Error) => {
+      toast.error(error.message);
+      await queryClient.invalidateQueries({ queryKey: ["inbox"] });
+    },
+  });
   const who = c.name ?? c.email;
   const replyCount = c.items.filter((i) => i.kind === "reply").length;
   const newest = [...c.items].reverse().find((i) => i.kind === "reply");
@@ -261,46 +316,59 @@ function ConversationRow({
   const kb = intentBadge(c.intent);
   return (
     <>
-      <button
-        type="button"
-        onClick={onToggle}
-        className={cn(
-          "group flex w-full items-center gap-3 border-b border-ink-rule/60 px-6 py-3 text-left",
-          "transition-colors duration-[var(--dur-stamp)] hover:bg-ink-surface/60",
-          zebra && "bg-ink-surface/20",
-        )}
-      >
-        <span className="text-ink-faint">
-          {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-2">
-            <span className="truncate text-[13px] text-ink-cream">
-              <Pii kind="auto">{who}</Pii>
-            </span>
-            {c.company ? (
-              <span className="truncate font-mono text-[11px] text-ink-faint">
-                · <Pii kind="company">{c.company}</Pii>
+      <div className="flex items-center border-b border-ink-rule/60 pr-6">
+        <button
+          type="button"
+          onClick={onToggle}
+          className={cn(
+            "group flex min-w-0 flex-1 items-center gap-3 px-6 py-3 text-left",
+            "transition-colors duration-[var(--dur-stamp)] hover:bg-ink-surface/60",
+            zebra && "bg-ink-surface/20",
+          )}
+        >
+          <span className="text-ink-faint">
+            {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center gap-2">
+              <span className="truncate text-[13px] text-ink-cream">
+                <Pii kind="auto">{who}</Pii>
               </span>
-            ) : null}
+              {c.company ? (
+                <span className="truncate font-mono text-[11px] text-ink-faint">
+                  · <Pii kind="company">{c.company}</Pii>
+                </span>
+              ) : null}
+            </span>
+            <span className="block truncate text-[12px] text-ink-muted">
+              {newest?.subject || `${c.items.length} messages`}
+            </span>
           </span>
-          <span className="block truncate text-[12px] text-ink-muted">
-            {newest?.subject || `${c.items.length} messages`}
+          <span className="shrink-0 font-mono text-[11px] text-ink-faint">
+            {replyCount} repl{replyCount === 1 ? "y" : "ies"}
           </span>
-        </span>
-        <span className="shrink-0 font-mono text-[11px] text-ink-faint">
-          {replyCount} repl{replyCount === 1 ? "y" : "ies"}
-        </span>
-        <Badge tone={statusTone(c.cadenceStatus)}>
-          {c.playName ?? "prospect"}
-          {c.cadenceStatus ? ` · ${c.cadenceStatus}` : ""}
-        </Badge>
-        {kb ? <Badge tone={kb.tone}>{kb.label}</Badge> : null}
-        {c.status === "needs_decision" && <Badge tone="blocked">needs decision</Badge>}
-        <span className="shrink-0 font-mono text-[12px] text-ink-muted">
-          {timeAgo(c.lastActivityAt)}
-        </span>
-      </button>
+          <Badge tone={statusTone(c.cadenceStatus)}>
+            {c.playName ?? "prospect"}
+            {c.cadenceStatus ? ` · ${c.cadenceStatus}` : ""}
+          </Badge>
+          {kb ? <Badge tone={kb.tone}>{kb.label}</Badge> : null}
+          {c.status === "needs_decision" && <Badge tone="blocked">needs decision</Badge>}
+          <span className="shrink-0 font-mono text-[12px] text-ink-muted">
+            {timeAgo(c.lastActivityAt)}
+          </span>
+        </button>
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={archive.isPending}
+          {...readOnly}
+          onClick={() => archive.mutate()}
+          aria-label={`${c.archivedAt ? "Restore" : "Archive"} conversation with ${who}`}
+        >
+          {archive.isPending ? <Loader2 size={12} className="animate-spin" /> : null}
+          {c.archivedAt ? "Restore" : "Archive"}
+        </Button>
+      </div>
       {expanded && (
         <div className="border-b border-ink-rule/60 bg-ink-bg-deep/50 px-6 py-3">
           <div className="flex flex-col gap-2">

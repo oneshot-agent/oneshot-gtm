@@ -33,7 +33,7 @@ import {
   inboxThreadKey,
   POSITIVE_REPLY_INTENTS,
 } from "@oneshot-gtm/shared-types";
-import { jsonResponse } from "../server.ts";
+import { isLoopbackOrigin, jsonResponse } from "../server.ts";
 import { gatherReplyContext } from "./_reply-research.ts";
 
 /**
@@ -395,6 +395,7 @@ function buildConversations(
   outcomeRecordedAtByProspect: Map<number, string>,
 ): ConversationView[] {
   const out: ConversationView[] = [];
+  const archives = ledger.listInboxArchives();
   for (const prospectId of ledger.listProspectIdsWithReplies()) {
     const prospect = ledger.getProspectById(prospectId);
     if (!prospect?.email) continue;
@@ -466,6 +467,7 @@ function buildConversations(
     const awaitingReply = positiveIntent && !repliedSince && !outcomeSince;
     out.push({
       prospectId,
+      archivedAt: archives.get(prospectId) ?? null,
       name: prospect.name,
       company: prospect.company,
       email: prospect.email,
@@ -877,4 +879,56 @@ export async function sendReplyRoute(req: Request): Promise<Response> {
     logEvent("inbox.reply.send_failed", { message_120: message.slice(0, 120) }, "warn");
     return jsonResponse({ error: message }, 400, req);
   }
+}
+
+/** Local organization only: never mutates a provider mailbox or sends mail. */
+export async function archiveInboxConversationRoute(req: Request): Promise<Response> {
+  // CORS only prevents reading the response; simple cross-origin POSTs still execute.
+  if (!isLoopbackOrigin(req.headers.get("origin") ?? "")) {
+    return jsonResponse({ error: "forbidden origin" }, 403, req);
+  }
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return jsonResponse({ error: "invalid JSON body" }, 400, req);
+  }
+  if (!body || typeof body !== "object")
+    return jsonResponse({ error: "invalid archive request" }, 400, req);
+  const { prospectId, archived, observedReplyIds } = body as Record<string, unknown>;
+  if (
+    typeof prospectId !== "number" ||
+    !Number.isSafeInteger(prospectId) ||
+    prospectId <= 0 ||
+    typeof archived !== "boolean"
+  ) {
+    return jsonResponse({ error: "prospectId and archived are required" }, 400, req);
+  }
+  const ledger = getLedger();
+  if (!ledger.getProspectById(prospectId))
+    return jsonResponse({ error: "prospect not found" }, 404, req);
+  if (archived) {
+    if (
+      !Array.isArray(observedReplyIds) ||
+      !observedReplyIds.length ||
+      !observedReplyIds.every((id) => typeof id === "string" && id.length > 0)
+    ) {
+      return jsonResponse(
+        { error: "observedReplyIds must contain the displayed reply IDs" },
+        400,
+        req,
+      );
+    }
+    const result = ledger.archiveInboxConversation(prospectId, observedReplyIds);
+    if (result === "missing") return jsonResponse({ error: "conversation not found" }, 404, req);
+    if (result === "stale")
+      return jsonResponse(
+        { error: "The conversation changed. Review the new reply before archiving." },
+        409,
+        req,
+      );
+  } else {
+    ledger.restoreInboxConversation(prospectId);
+  }
+  return jsonResponse({ ok: true }, 200, req);
 }
