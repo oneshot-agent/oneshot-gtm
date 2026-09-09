@@ -8,6 +8,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const getRunMock = vi.fn();
 const listActiveCadencesMock = vi.fn();
 const listAllCadencesMock = vi.fn();
+const latestSentQueuePayloadsMock = vi.fn<
+  (
+    pairs: ReadonlyArray<{ playName: string; email: string | null }>,
+  ) => Map<string, Record<string, unknown>>
+>(() => new Map());
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -21,6 +26,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       listAllCadences: listAllCadencesMock,
       // Stubs for unrelated viewsForRows internals.
       listSequenceEventsForCadences: () => new Map(),
+      latestSentQueuePayloads: latestSentQueuePayloadsMock,
     }),
   };
 });
@@ -82,6 +88,7 @@ describe("listCadences — ?sinceRun filter", () => {
     getRunMock.mockReset();
     listActiveCadencesMock.mockReset();
     listAllCadencesMock.mockReset();
+    latestSentQueuePayloadsMock.mockClear();
   });
 
   it("no sinceRun → returns the unfiltered active set", async () => {
@@ -90,6 +97,34 @@ describe("listCadences — ?sinceRun filter", () => {
     const body = (await res.json()) as { cadences: Array<{ prospectEmail: string }> };
     expect(body.cadences.map((c) => c.prospectEmail).toSorted()).toEqual(["a@x.dev", "b@x.dev"]);
     expect(getRunMock).not.toHaveBeenCalled();
+  });
+
+  it("each view carries the sent queue payload for its play + email, or null (#599)", async () => {
+    const rows = [makeRow("Sarah@AcmeAI.com"), makeRow("b@x.dev")];
+    listAllCadencesMock.mockReturnValue(rows);
+    latestSentQueuePayloadsMock.mockReturnValueOnce(
+      new Map([
+        [
+          `${rows[0]!.play_name}|sarah@acmeai.com`,
+          { fitReason: "Runs GTM at Acme.", cohort: "yc-s26" },
+        ],
+      ]),
+    );
+    const res = listCadences(req("/api/cadences"));
+    const body = (await res.json()) as {
+      cadences: Array<{ prospectEmail: string; queuePayload: unknown }>;
+    };
+    const byEmail = new Map(body.cadences.map((c) => [c.prospectEmail, c.queuePayload]));
+    expect(byEmail.get("Sarah@AcmeAI.com")).toEqual({
+      fitReason: "Runs GTM at Acme.",
+      cohort: "yc-s26",
+    });
+    expect(byEmail.get("b@x.dev")).toBeNull();
+    // Asked once, for the whole page — not once per row.
+    expect(latestSentQueuePayloadsMock).toHaveBeenCalledTimes(1);
+    expect(latestSentQueuePayloadsMock.mock.calls[0]![0]).toEqual(
+      rows.map((r) => ({ playName: r.play_name, email: r.prospect_email })),
+    );
   });
 
   it("sinceRun=N → filters to prospect_emails on the run row", async () => {

@@ -97,6 +97,14 @@ export interface CadenceView {
   lastSendError: string | null;
   /** ISO timestamp of `lastSendError`. */
   lastSendErrorAt: string | null;
+  /**
+   * The payload of the latest SENT queue row for this play + email — the
+   * signal the finder matched on and the `fitReason` the intro was drawn from
+   * (issue #599). The /cadences sheet shows both as the reminder of why this
+   * person is being followed up. Null when no sent row exists (a cadence
+   * enrolled by hand, an older ledger) — the UI simply omits the reminder.
+   */
+  queuePayload: unknown | null;
 }
 
 /**

@@ -4469,6 +4469,55 @@ export class Ledger {
   }
 
   /**
+   * `latestSentQueuePayload` for a whole page of cadences at once (issue
+   * #599): one query over the sent rows of the plays involved, newest first,
+   * keeping the first row per `play|email`. Keyed exactly like the single-row
+   * lookup canonicalises (lower-cased, trimmed email). Pairs with no email are
+   * skipped; an empty input touches nothing. Never throws — `json_valid`
+   * keeps a malformed row out of `json_extract` (which would fail the whole
+   * query), so a bad payload is simply absent from the map.
+   */
+  latestSentQueuePayloads(
+    pairs: ReadonlyArray<{ playName: string; email: string | null }>,
+  ): Map<string, Record<string, unknown>> {
+    const out = new Map<string, Record<string, unknown>>();
+    const wanted = new Set<string>();
+    const plays = new Set<string>();
+    for (const p of pairs) {
+      const email = p.email?.trim().toLowerCase();
+      if (!email) continue;
+      wanted.add(`${p.playName}|${email}`);
+      plays.add(p.playName);
+    }
+    if (wanted.size === 0) return out;
+    const playList = [...plays];
+    const rows = this.db
+      .query(
+        `SELECT play_name, lower(trim(json_extract(payload_json, '$.email'))) AS email, payload_json
+           FROM target_queue
+          WHERE status = 'sent' AND json_valid(payload_json)
+            AND play_name IN (${playList.map(() => "?").join(",")})
+          ORDER BY sent_at DESC, id DESC`,
+      )
+      .all(...playList) as Array<{ play_name: string; email: string | null; payload_json: string }>;
+    for (const row of rows) {
+      if (!row.email) continue;
+      const key = `${row.play_name}|${row.email}`;
+      if (!wanted.has(key) || out.has(key)) continue;
+      try {
+        const parsed: unknown = JSON.parse(row.payload_json);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          out.set(key, parsed as Record<string, unknown>);
+        }
+      } catch {
+        // an unparsable payload is no reminder; the row simply has none
+      }
+      if (out.size === wanted.size) break;
+    }
+    return out;
+  }
+
+  /**
    * Merge a few keys into a LIVE queue row's payload (issue #592) — pending or
    * approved, not sent, not mid-send. One statement, so there is no window
    * between checking eligibility and writing: a row that got sent between the
