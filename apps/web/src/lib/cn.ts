@@ -91,9 +91,9 @@ export function eventIsPast(iso: string): boolean {
   return Math.round((d.getTime() - Date.now()) / (24 * 3600 * 1000)) < 0;
 }
 
-export function timeAgo(iso: string | null): string {
+export function timeAgo(iso: string | null, nowMs: number = Date.now()): string {
   if (!iso) return "—";
-  const seconds = Math.floor((Date.now() - new Date(normalizeUtcIso(iso)).getTime()) / 1000);
+  const seconds = Math.floor((nowMs - new Date(normalizeUtcIso(iso)).getTime()) / 1000);
   // Future deltas cascade through the same buckets as past deltas — without
   // this, the /cadences "NEXT DUE" column rendered "in 150983s" instead of
   // "in 2d" for a step due ~42h from now. `Math.abs` once; bucket once.
