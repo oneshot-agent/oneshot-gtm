@@ -80,12 +80,12 @@ bun run cli -- find drain podcast-guest --dry-run  # preview approved /queue row
 bun run cli -- cadence advance                     # daily tick: poll inbox, fire follow-ups
 ```
 
-67 commands — `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
+68 commands — `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
 
 | Group                    | Commands                                                                                                                                                                                                                                                                                                                  |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `init` · `doctor` · `ui` | setup wizard · health check · open the dashboard                                                                                                                                                                                                                                                                          |
-| `config`                 | `llm` · `founder` · `keys` · `telemetry on\|off` · `x-engine [engine]` · `spend-ceiling [amount\|off]`                                                                                                                                                                                                                    |
+| `config`                 | `llm` · `founder` · `keys` · `telemetry on\|off` · `slack-webhook [url]` · `x-engine [engine]` · `spend-ceiling [amount\|off]`                                                                                                                                                                                            |
 | `identities`             | `list` · `add` · `remove <id>` — the sender pool                                                                                                                                                                                                                                                                          |
 | `gmail`                  | `auth` (OAuth a sending account) · `placement` (inbox-placement canary)                                                                                                                                                                                                                                                   |
 | `smartlead`              | `connect` — API key + pick Smartlead mailboxes into the pool (send-only)                                                                                                                                                                                                                                                  |
@@ -224,7 +224,7 @@ Workspaces share one thing: `~/.oneshot-gtm-shared/shared.sqlite`, holding the p
 
 ```
 apps/
-  cli/        the 67-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
+  cli/        the 68-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
   server/     Bun.serve + SSE; tsdown bundle published as `oneshot-gtm-server`
   web/        Vite + React 19 + TanStack + Base UI — 9 pages, run form, strategist dock, privacy mode
 packages/
@@ -263,7 +263,7 @@ bun run --cwd apps/web build       # → apps/web/dist/
 bun run --cwd apps/server build    # → apps/server/dist/bin.mjs + dist/web/
 ```
 
-The suite is 3447 cases across 260 files (STATUS.md carries the current totals). Tests set `ONESHOT_GTM_HOME` to a temp dir, so they never touch your real ledger. CI runs `bun --bun run test` — the flag matters, since `bun:sqlite` doesn't exist under Node. Core and server install the SDK from the archive in `vendor/`; its README has the coordinated release step.
+The suite is 3497 cases across 261 files (STATUS.md carries the current totals). Tests set `ONESHOT_GTM_HOME` to a temp dir, so they never touch your real ledger. CI runs `bun --bun run test` — the flag matters, since `bun:sqlite` doesn't exist under Node. Core and server install the SDK from the archive in `vendor/`; its README has the coordinated release step.
 
 ### Watching what's happening
 

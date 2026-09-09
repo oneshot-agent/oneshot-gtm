@@ -26,6 +26,8 @@ import {
   type CadencePlanStep,
   describeTouch,
   recentTouchElsewhere,
+  notifySlackBounceRecorded,
+  notifySlackReplyReceived,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject, triageEmails } from "@oneshot-gtm/intel";
 import {
@@ -388,6 +390,18 @@ export interface ReplyPollResult {
   cadencesStopped: number;
   /** Matched inbound mail classified as non-human (OOO / dead mailbox / unsubscribe) — stored, never counted as a reply. */
   autoRepliesSkipped: number;
+  /**
+   * No mailbox source errored or was skipped anywhere this poll touched (the
+   * live window walk, and the backlog drain when one ran) — mirrors
+   * BouncePollResult.clean below. False on a partial poll, so the caller
+   * (scheduler) must not treat a partial reply poll as proof every reply for
+   * the UTC day now closing has been recorded before stamping the daily
+   * summary watermark (issue #71 round-1 correction — same class of bug the
+   * round-3/round-4 findings already fixed for the bounce sweep, here
+   * applied to the reply-poll side). Defaults to true; only individual
+   * `walkInboxWindow` calls that come back non-clean flip it.
+   */
+  clean: boolean;
   details: Array<{ prospectEmail: string; playName: string; subject: string }>;
 }
 
@@ -487,16 +501,18 @@ async function walkInboxWindow(
       // is the reply store. Every matched email, not just the first reply per
       // (prospect, play): later replies on a live thread must be kept too.
       // Same thread key convention as inboxThreadKey (thread_id, else id).
+      const playName = ledger.latestSentPlayForProspect(prospect.id, e.subject);
       // recordInboxReply is INSERT OR IGNORE — an idempotent re-sweep is a
       // no-op on a row a prior poll already recorded. Whether THIS call
       // inserted a new row no longer gates triage (round-1 correction,
       // #558): see claimInboxReplyForTriage below for why the atomic claim
-      // on `intent` replaced it.
+      // on `intent` replaced it. It still gates the first-sight-only actions
+      // below (angle refresh, Slack "reply received").
       const insertedReply = ledger.recordInboxReply({
         id: e.id,
         threadKey: e.thread_id ?? e.id,
         prospectId: prospect.id,
-        playName: ledger.latestSentPlayForProspect(prospect.id, e.subject),
+        playName,
         fromEmail: from,
         subject: e.subject,
         body: e.body ?? "",
@@ -513,6 +529,22 @@ async function walkInboxWindow(
       // Fire-and-forget: triggerAngleRefresh itself debounces on
       // angle_synthesized_at and never throws.
       if (insertedReply && kind === "human") triggerAngleRefresh(prospect.id);
+      // Slack notification: fire-and-forget on first sight only, and only for
+      // real human replies. This is the primary reply-detection path
+      // (scheduler -> pollInboxReplies), unlike the opportunistic capture in
+      // apps/server/src/api/inbox.ts which only covers the UI-poll route.
+      // Gated on `kind === "human"` (not just `insertedReply`): autoresponders
+      // (OOO, dead mailbox) and unsubscribe requests are NOT replies by this
+      // codebase's own definition (see the classifyReply comment above) and
+      // must not raise a false "Reply from ..." alert.
+      if (insertedReply && kind === "human") {
+        void notifySlackReplyReceived({
+          from_email: from,
+          subject: e.subject,
+          play_name: playName,
+          kind,
+        });
+      }
       if (kind !== "human") {
         out.autoRepliesSkipped++;
         // A dead mailbox ("retired", "no longer at company") is a human-layer
@@ -521,6 +553,33 @@ async function walkInboxWindow(
         // bounces-table row (that would poison identity reputation stats).
         if (kind === "auto_permanent" || kind === "unsubscribe") {
           const status = kind === "unsubscribe" ? "unsubscribed" : "bounced";
+          // Slack notification: fire-and-forget, once per autoresponder email
+          // (not per cadence — the loop below can touch several). Gated on
+          // `insertedReply`, mirroring the human-reply branch above: the reply
+          // poll's `since` window intentionally re-examines up to
+          // REPLY_WATERMARK_OVERLAP_MS before the watermark on every poll
+          // (overlap costs fetches, not correctness — see the comment on
+          // `since` below), and `seen` only dedupes within a single
+          // `pollInboxReplies()` call, not across polls. Without this gate a
+          // dead-mailbox autoresponder re-seen in that overlap window on the
+          // next poll would refire this alert a second time.
+          // `recordInboxReply`'s INSERT OR IGNORE (and therefore `insertedReply`)
+          // is the only signal keyed on the email id itself, so it's the
+          // correct first-sight check here, same as it is for the human-reply
+          // notification. Mirrors the DSN path's notifySlackBounceRecorded
+          // call in pollInboxBounces; this is the reply-stream bounce source
+          // and is now counted into the same daily bounced total
+          // (Ledger.countAutoPermanentBounces), so it must also fire the same
+          // event (issue #71 review finding — "counted but never notified").
+          // No status_code: a dead-mailbox autoresponder carries no SMTP DSN
+          // code, unlike a real bounce.
+          if (status === "bounced" && insertedReply) {
+            void notifySlackBounceRecorded({
+              recipient: from,
+              kind: "auto_permanent",
+              status_code: null,
+            });
+          }
           for (const cad of ledger.listCadencesForProspect(prospect.id)) {
             if (cad.status !== "active" && cad.status !== "paused") continue;
             ledger.recordSequenceEvent({
@@ -530,6 +589,13 @@ async function walkInboxWindow(
               channel: "email",
               status,
               metadata: { reason: kind === "unsubscribe" ? "unsubscribe" : "auto-reply-permanent" },
+              // Occurrence time = when the autoresponder actually landed in the
+              // mailbox, not poll time — same reasoning as the DSN-bounce path
+              // in pollInboxBounces, so the Slack daily summary's occurrence
+              // window credits this to the right UTC day. unsubscribe rows
+              // don't carry bouncedAt: it's a bounced-column semantic, and this
+              // status is only "bounced" for the auto_permanent branch.
+              ...(status === "bounced" ? { bouncedAt: e.received_at } : {}),
             });
             ledger.setCadenceStatus({ prospectId: prospect.id, playName: cad.play_name, status });
             out.cadencesStopped++;
@@ -542,10 +608,10 @@ async function walkInboxWindow(
       // sentiment). Best-effort and non-blocking, like the neighbouring
       // tagOutcomeValue call below: a triage failure logs and leaves
       // `intent` NULL, it never loses the reply itself (already persisted
-      // above). `isNewReply` alone used to gate this and skipped rows the
+      // above). `insertedReply` alone used to gate this and skipped rows the
       // /inbox route's opportunistic capture had already inserted (issue
       // #558) — those are real new replies from this poll's perspective but
-      // arrive here with isNewReply === false, so they were silently never
+      // arrive here with insertedReply === false, so they were silently never
       // triaged.
       //
       // Round-1 correction (#558): a bare re-check of the persisted `intent`
@@ -578,7 +644,15 @@ async function walkInboxWindow(
           );
         }
       }
-      for (const r of ledger.recordProspectReply(prospect.id, { subject: e.subject })) {
+      for (const r of ledger.recordProspectReply(prospect.id, {
+        subject: e.subject,
+        // The inbound email's own timestamp, not "now" — this poll can walk a
+        // backlog page well after the reply actually landed in the mailbox,
+        // and eventsByPlay's date-windowed rollups (the Slack daily summary)
+        // must credit the reply to the day it happened, not the day this
+        // process happened to notice it.
+        repliedAt: e.received_at,
+      })) {
         if (r.newlyReplied) out.cadencesStopped++;
         if (!r.eventRecorded) continue;
         out.repliesDetected++;
@@ -624,6 +698,7 @@ export async function pollInboxReplies(opts?: {
     repliesDetected: 0,
     cadencesStopped: 0,
     autoRepliesSkipped: 0,
+    clean: true,
     details: [],
   };
   const pageSize = opts?.pageSize ?? REPLY_POLL_LIMIT;
@@ -641,6 +716,7 @@ export async function pollInboxReplies(opts?: {
     pages: maxPages,
     pageSize,
   });
+  if (!fwd.clean) out.clean = false;
 
   // Advance the watermark only on a CLEAN walk. A partial result (one mailbox
   // timed out) leaves the mark where it was, so the next good poll re-covers
@@ -671,6 +747,7 @@ export async function pollInboxReplies(opts?: {
   const budget = maxPages - fwd.pagesUsed;
   if (backlog && budget > 0) {
     const back = await walkInboxWindow(ledger, out, seen, { ...backlog, pages: budget, pageSize });
+    if (!back.clean) out.clean = false;
     if (back.clean) {
       if (back.exhausted) {
         ledger.setPollWatermark(REPLY_BACKLOG_KEY, "");
@@ -711,6 +788,15 @@ export interface BouncePollResult {
   recorded: number;
   /** Cadences stopped by a hard bounce this poll. */
   cadencesStopped: number;
+  /**
+   * No bounce source errored or was skipped this sweep. False on a partial
+   * sweep — the caller (scheduler) must not treat a partial sweep as proof
+   * "no more bounces are coming" when deciding whether it's safe to
+   * permanently watermark a day for the Slack daily summary (issue #71
+   * round-4 review finding: forcing the sweep on day rollover is useless if
+   * the forced sweep itself can silently come back partial).
+   */
+  clean: boolean;
   details: Array<{
     recipient: string;
     kind: BounceKind;
@@ -726,9 +812,16 @@ export interface BouncePollResult {
  */
 export async function pollInboxBounces(): Promise<BouncePollResult> {
   const ledger = getLedger();
-  const out: BouncePollResult = { polled: 0, recorded: 0, cadencesStopped: 0, details: [] };
-  const bounces = await listBounces();
+  const out: BouncePollResult = {
+    polled: 0,
+    recorded: 0,
+    cadencesStopped: 0,
+    clean: true,
+    details: [],
+  };
+  const { bounces, failedSources } = await listBounces();
   out.polled = bounces.length;
+  out.clean = failedSources.length === 0;
 
   for (const b of bounces) {
     const prospect = ledger.findProspectByEmail(b.recipient);
@@ -747,6 +840,13 @@ export async function pollInboxBounces(): Promise<BouncePollResult> {
     // and event log from repeating forever.
     if (!isNew) continue;
     out.recorded++;
+
+    // Slack notification: fire-and-forget, never blocks the poll.
+    void notifySlackBounceRecorded({
+      recipient: b.recipient,
+      kind: b.kind,
+      status_code: b.statusCode ?? null,
+    });
 
     // Soft = transient (mailbox full, greylisted). Stored for context, but it
     // says nothing durable about the address or our reputation.
@@ -780,6 +880,7 @@ export async function pollInboxBounces(): Promise<BouncePollResult> {
           diagnostic: b.diagnostic,
           identityId: b.identityId,
         },
+        bouncedAt: b.bouncedAt,
       });
       // Only a HARD bounce stops the sequence — a 5.7.x block judges the
       // message/domain, not the mailbox (blocks surface via the doctor check).

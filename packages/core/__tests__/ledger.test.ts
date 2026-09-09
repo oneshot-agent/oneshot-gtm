@@ -344,6 +344,157 @@ describe("Ledger receipts + prospects + spend rollups", () => {
     expect(show?.sent).toBe(2);
     expect(show?.replied).toBe(1);
   });
+
+  it("eventsByPlay respects an untilIso upper bound", () => {
+    const id = ledger.upsertProspect({ name: "UB", email: "ub@x.com", source: "t" });
+    const db = (
+      ledger as unknown as {
+        db: { query(s: string): { run(...a: unknown[]): unknown } };
+      }
+    ).db;
+    db.query(
+      `INSERT INTO sequence_events (prospect_id, play_name, step_index, channel, status, created_at)
+       VALUES (?, ?, 0, 'email', 'sent', '2026-08-27 12:00:00')`,
+    ).run(id, "show-hn");
+    db.query(
+      `INSERT INTO sequence_events (prospect_id, play_name, step_index, channel, status, created_at)
+       VALUES (?, ?, 0, 'email', 'sent', '2026-08-28 12:00:00')`,
+    ).run(id, "show-hn");
+    const bounded = ledger
+      .eventsByPlay({ sinceIso: "2026-08-27 00:00:00", untilIso: "2026-08-28 00:00:00" })
+      .find((r) => r.play_name === "show-hn");
+    expect(bounded?.sent).toBe(1);
+
+    const unbounded = ledger
+      .eventsByPlay({ sinceIso: "2026-08-27 00:00:00" })
+      .find((r) => r.play_name === "show-hn");
+    expect(unbounded?.sent).toBe(2);
+  });
+
+  it("eventsByPlay windows a reply by its OWN occurrence day, not the day it was sent, when occurrenceWindow is requested", () => {
+    // markLatestStepReplied flips the sent row in place, so created_at stays
+    // pinned to the send date. A date-windowed rollup (the Slack daily
+    // summary) opts into occurrenceWindow so it must not drop the reply just
+    // because it landed after the send day's window — it should show up on
+    // the day it actually happened. Without occurrenceWindow (the default,
+    // relied on by home.ts/measure.ts/weekly-review.ts), the reply stays
+    // windowed on created_at like everything else, preserving replied<=sent.
+    const id = ledger.upsertProspect({ name: "RW", email: "rw@x.com", source: "t" });
+    ledger.recordSequenceEvent({
+      prospectId: id,
+      playName: "repo-interest",
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+    });
+    const db = (
+      ledger as unknown as {
+        db: { query(s: string): { run(...a: unknown[]): unknown } };
+      }
+    ).db;
+    // Back-date the send far outside the window we'll query below.
+    db.query(
+      `UPDATE sequence_events SET created_at = '2026-08-20 09:00:00' WHERE prospect_id = ?`,
+    ).run(id);
+    // The reply itself happens on 2026-08-28 — inside the window we query.
+    db.query(
+      `UPDATE sequence_events SET status = 'replied', replied_at = '2026-08-28 10:00:00' WHERE prospect_id = ?`,
+    ).run(id);
+
+    // A window covering only the REPLY day, nowhere near the send day.
+    // occurrenceWindow: true credits the reply here — but that also means
+    // `sent` for this window is 0 (the send row's created_at doesn't fall
+    // inside it), which is the intentional, documented replied>sent tradeoff
+    // of this mode; asserting it here pins that tradeoff so a future change
+    // can't silently widen occurrenceWindow's blast radius without a test
+    // noticing.
+    const windowed = ledger
+      .eventsByPlay({
+        sinceIso: "2026-08-28 00:00:00",
+        untilIso: "2026-08-29 00:00:00",
+        occurrenceWindow: true,
+      })
+      .find((r) => r.play_name === "repo-interest");
+    expect(windowed?.replied).toBe(1);
+    expect(windowed?.sent ?? 0).toBe(0);
+
+    // The default (no occurrenceWindow) call windows replied on created_at
+    // like every other column, so the reply-day window sees nothing at all —
+    // this is the behaviour home.ts/measure.ts/weekly-review.ts depend on.
+    const defaultWindowed = ledger
+      .eventsByPlay({ sinceIso: "2026-08-28 00:00:00", untilIso: "2026-08-29 00:00:00" })
+      .find((r) => r.play_name === "repo-interest");
+    expect(defaultWindowed).toBeUndefined();
+
+    // A window covering only the SEND day must NOT double-count the reply —
+    // the old created_at-only windowing would have credited it here instead.
+    const sendDayWindow = ledger
+      .eventsByPlay({
+        sinceIso: "2026-08-20 00:00:00",
+        untilIso: "2026-08-21 00:00:00",
+        occurrenceWindow: true,
+      })
+      .find((r) => r.play_name === "repo-interest");
+    expect(sendDayWindow?.sent).toBe(1);
+    expect(sendDayWindow?.replied ?? 0).toBe(0);
+  });
+
+  it("eventsByPlay windows a bounce by its OWN occurrence day, not the poll/detection day, when occurrenceWindow is requested", () => {
+    // recordSequenceEvent always inserts a FRESH row for a bounce (unlike the
+    // reply flip-in-place), so created_at looks like occurrence time — but
+    // it's actually the time pollInboxBounces detected the DSN, which can lag
+    // the provider's own bounce timestamp (bounced_at) by however long the
+    // mailbox went unpolled. A date-windowed rollup (the Slack daily summary)
+    // opts into occurrenceWindow so it must not attribute the bounce to the
+    // detection day instead of the day it actually happened.
+    const id = ledger.upsertProspect({ name: "BW", email: "bw@x.com", source: "t" });
+    ledger.recordSequenceEvent({
+      prospectId: id,
+      playName: "post-funding",
+      stepIndex: 0,
+      channel: "email",
+      status: "bounced",
+      bouncedAt: "2026-08-20 09:00:00",
+    });
+    const db = (
+      ledger as unknown as {
+        db: { query(s: string): { run(...a: unknown[]): unknown } };
+      }
+    ).db;
+    // Back-date created_at to the (late) POLL day, far outside the window
+    // we'll query below — bounced_at (set above, at insert time) stays put.
+    db.query(
+      `UPDATE sequence_events SET created_at = '2026-08-28 10:00:00' WHERE prospect_id = ?`,
+    ).run(id);
+
+    // A window covering only the real BOUNCE day, nowhere near the poll day.
+    const windowed = ledger
+      .eventsByPlay({
+        sinceIso: "2026-08-20 00:00:00",
+        untilIso: "2026-08-21 00:00:00",
+        occurrenceWindow: true,
+      })
+      .find((r) => r.play_name === "post-funding");
+    expect(windowed?.bounced).toBe(1);
+
+    // The default (no occurrenceWindow) call windows bounced on created_at
+    // like every other column, so the bounce-day window sees nothing at all.
+    const defaultWindowed = ledger
+      .eventsByPlay({ sinceIso: "2026-08-20 00:00:00", untilIso: "2026-08-21 00:00:00" })
+      .find((r) => r.play_name === "post-funding");
+    expect(defaultWindowed).toBeUndefined();
+
+    // A window covering only the POLL day must NOT count the bounce there —
+    // the old created_at-only windowing would have credited it here instead.
+    const pollDayWindow = ledger
+      .eventsByPlay({
+        sinceIso: "2026-08-28 00:00:00",
+        untilIso: "2026-08-29 00:00:00",
+        occurrenceWindow: true,
+      })
+      .find((r) => r.play_name === "post-funding");
+    expect(pollDayWindow?.bounced ?? 0).toBe(0);
+  });
 });
 
 describe("Ledger cadence state", () => {
@@ -1118,6 +1269,26 @@ describe("Ledger recordCadenceReply — atomic control + analytics write", () =>
     // Reply rate stays sane: the replied step is still counted as sent.
     const ev = ledger.eventsByPlay().find((e) => e.play_name === "repo-interest");
     expect(ev).toMatchObject({ sent: 1, replied: 1 });
+  });
+
+  it("stamps replied_at with a caller-supplied repliedAt, not the call time", () => {
+    // Regression test for round-2 review finding: markLatestStepReplied must
+    // accept the inbound email's own timestamp so the background inbox poll
+    // (packages/plays/src/_cadence.ts walkInboxWindow) can credit a backlog
+    // reply to the day it actually arrived, not the day the poll ran.
+    const id = enrollWithSentStep();
+
+    const { newlyReplied } = ledger.recordCadenceReply({
+      prospectId: id,
+      playName: "repo-interest",
+      repliedAt: "2026-08-20T09:00:00.000Z",
+    });
+
+    expect(newlyReplied).toBe(true);
+    const [ev] = ledger.listSequenceEventsForProspectPlay(id, "repo-interest");
+    // datetime() normalizes the stored ISO input to SQLite's space-separated
+    // form so it sorts consistently against created_at / sinceIso / untilIso.
+    expect(ev?.replied_at).toBe("2026-08-20 09:00:00");
   });
 
   it("is idempotent — a second call doesn't re-count or mark a second step", () => {

@@ -12,6 +12,8 @@ import {
   sqliteToIso,
   trackSend,
   type ReplyKind,
+  notifySlackBounceRecorded,
+  notifySlackReplyReceived,
 } from "@oneshot-gtm/core";
 import { bodyCommitsTerms, draftInboxReply } from "@oneshot-gtm/plays";
 import {
@@ -228,7 +230,7 @@ export async function listInboxRoute(req: Request): Promise<Response> {
       if (!r.matched) continue;
       const p = ledger.findProspectByEmail(r.fromEmail);
       if (!p) continue;
-      ledger.recordInboxReply({
+      const isNew = ledger.recordInboxReply({
         id: r.id,
         threadKey: inboxThreadKey({ threadId: r.threadId, id: r.id }),
         prospectId: p.id,
@@ -242,6 +244,36 @@ export async function listInboxRoute(req: Request): Promise<Response> {
         messageId: r.messageId,
         kind: r.kind,
       });
+      // Slack notification: fire-and-forget on first sight only, and only for
+      // real human replies — same `kind === "human"` gate as the primary
+      // detection path in _cadence.ts (autoresponders/unsubscribes are not
+      // replies by this codebase's own definition and must not alert).
+      if (isNew && r.kind === "human") {
+        void notifySlackReplyReceived({
+          from_email: r.fromEmail,
+          subject: r.subject,
+          play_name: r.matched.playName,
+          kind: r.kind,
+        });
+      }
+      // Dead-mailbox bounce alert: this opportunistic capture and the
+      // scheduler's pollInboxReplies() both call recordInboxReply with the
+      // same id (INSERT OR IGNORE), so `isNew` here is a first-sight claim
+      // that can race the scheduler's own first-sight check in _cadence.ts
+      // (issue #71 review finding — a GET /api/inbox hitting a dead-mailbox
+      // autoresponder before the next scheduled poll would claim isNew here,
+      // leaving the scheduler's poll to see isNew=false and skip its own
+      // alert, silently dropping the bounce notification entirely). Mirror
+      // _cadence.ts's gate exactly: only `auto_permanent` counts as a bounce
+      // (`unsubscribe` is a do-not-contact, not a bounce) and fires only once
+      // per email via the same isNew signal.
+      if (isNew && r.kind === "auto_permanent") {
+        void notifySlackBounceRecorded({
+          recipient: r.fromEmail,
+          kind: "auto_permanent",
+          status_code: null,
+        });
+      }
     }
   } catch (err) {
     logEvent(

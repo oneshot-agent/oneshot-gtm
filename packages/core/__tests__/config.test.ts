@@ -94,6 +94,7 @@ describe("bootstrapClientId", () => {
     founderAdmission: null,
     productBrief: null,
     mobileSignature: false,
+    slackWebhookUrl: null,
     timezone: null,
     clientId: null,
     dailySpendCeilingUsd: null,

@@ -19,12 +19,21 @@ let listInboxArgs: Array<Record<string, unknown>> = [];
 let failedSources: string[] = [];
 // (prospectId, playName) pairs whose sequence_events row flipped to `replied` this run.
 let repliedSteps: Array<{ prospectId: number; playName: string }> = [];
+// repliedAt values passed to the stub's recordProspectReply, in call order —
+// lets tests assert the poll threads the inbound email's own timestamp
+// through rather than defaulting to "now" (see markLatestStepReplied).
+let recordProspectReplyRepliedAts: Array<string | null | undefined> = [];
 // The play behind the prospect's latest sent step — the no-cadence-row fallback.
 let latestSentPlay: string | null = null;
 // v21 inbox_replies rows captured by the poll (id-keyed, INSERT OR IGNORE semantics).
 let persistedReplies: Array<{ id: string; kind?: string | null }> = [];
 // Audit-trail sequence events recorded outside recordProspectReply (bounced/unsubscribed).
-let seqEvents: Array<{ prospectId: number; playName: string; status: string }> = [];
+let seqEvents: Array<{
+  prospectId: number;
+  playName: string;
+  status: string;
+  bouncedAt?: string;
+}> = [];
 // Persisted intent classifications (issue #558): keyed by reply id, mirrors
 // the real ledger's inbox_replies.intent column that setInboxReplyIntent
 // writes and listInboxReplyIntents reads back.
@@ -49,11 +58,16 @@ let rows: Row[] = [];
 // lowercase is found from any-cased inbound address.
 const STORED_EMAIL = "sophia@agenticarchitect.ai";
 
+const notifySlackReplyReceivedMock = vi.fn(async () => {});
+const notifySlackBounceRecordedMock = vi.fn(async () => {});
+
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
   return {
     ...actual,
     loadConfig: () => ({ founderName: "J", productOneLiner: "thing" }),
+    notifySlackReplyReceived: notifySlackReplyReceivedMock,
+    notifySlackBounceRecorded: notifySlackBounceRecordedMock,
     sendEmail: async () => {
       calls.sendEmail++;
       return { receiptId: 1 };
@@ -105,11 +119,17 @@ vi.mock("@oneshot-gtm/core", async () => {
         if (isNew) persistedReplies.push(row as (typeof persistedReplies)[number]);
         return isNew;
       },
-      recordSequenceEvent: (input: { prospectId: number; playName: string; status: string }) => {
+      recordSequenceEvent: (input: {
+        prospectId: number;
+        playName: string;
+        status: string;
+        bouncedAt?: string;
+      }) => {
         seqEvents.push({
           prospectId: input.prospectId,
           playName: input.playName,
           status: input.status,
+          ...(input.bouncedAt !== undefined ? { bouncedAt: input.bouncedAt } : {}),
         });
       },
       setCadenceStatus: ({
@@ -128,7 +148,11 @@ vi.mock("@oneshot-gtm/core", async () => {
       // prospect stops (control plane); the analytics event is credited to ONE
       // play — `latestSentPlay` stands in for the subject/latest resolution —
       // and recorded once (idempotent per prospect+play).
-      recordProspectReply: (prospectId: number) => {
+      recordProspectReply: (
+        prospectId: number,
+        opts?: { subject?: string | null; repliedAt?: string | null },
+      ) => {
+        recordProspectReplyRepliedAts.push(opts?.repliedAt);
         const out = new Map<string, { newlyReplied: boolean; eventRecorded: boolean }>();
         for (const r of rows.filter((x) => x.prospect_id === prospectId)) {
           const live = r.status === "active" || r.status === "paused";
@@ -213,6 +237,9 @@ beforeEach(() => {
   repliedSteps = [];
   persistedReplies = [];
   seqEvents = [];
+  recordProspectReplyRepliedAts = [];
+  notifySlackReplyReceivedMock.mockClear();
+  notifySlackBounceRecordedMock.mockClear();
   intents = new Map();
   triageEmailsMock.mockClear();
   angleRefreshCalls = [];
@@ -272,6 +299,24 @@ describe("advanceCadence — reply detection", () => {
     expect(result.polled).toBe(0);
     expect(result.repliesDetected).toBe(0);
     expect(rows[0]?.status).toBe("active");
+  });
+
+  it("credits the reply to the inbound email's own received_at, not the poll time", async () => {
+    // Regression test for round-2 review finding: recordProspectReply must be
+    // called with the inbound email's own timestamp so a backlog reply is
+    // attributed to the day it actually arrived (see markLatestStepReplied /
+    // eventsByPlay's replied_at note), not the day this poll happened to run.
+    inboxEmails = [
+      {
+        from: "Sophia Stein <Sophia@AgenticArchitect.AI>",
+        subject: "re: your agent stack",
+        received_at: "2026-08-20T09:00:00.000Z",
+      },
+    ];
+
+    await advanceCadence({ dryRun: false });
+
+    expect(recordProspectReplyRepliedAts).toEqual(["2026-08-20T09:00:00.000Z"]);
   });
 });
 
@@ -337,6 +382,25 @@ describe("pollInboxReplies — standalone background detection (no sends)", () =
     ];
     await pollInboxReplies();
     expect(persistedReplies.map((r) => r.id)).toEqual(["m1", "m3"]);
+  });
+
+  it("fires a Slack reply-received notification on first sight only (background poll path)", async () => {
+    inboxEmails = [{ id: "m1", from: "Sophia <sophia@agenticarchitect.ai>", subject: "re: stack" }];
+
+    await pollInboxReplies();
+
+    expect(notifySlackReplyReceivedMock).toHaveBeenCalledTimes(1);
+    expect(notifySlackReplyReceivedMock).toHaveBeenCalledWith({
+      from_email: STORED_EMAIL,
+      subject: "re: stack",
+      play_name: "stack-consolidation",
+      kind: "human",
+    });
+
+    // Re-polling the same window re-sees the same message id but must not
+    // notify again — recordInboxReply's INSERT OR IGNORE already dedupes it.
+    await pollInboxReplies();
+    expect(notifySlackReplyReceivedMock).toHaveBeenCalledTimes(1);
   });
 
   it("backfills the reply event for an already-replied cadence; no cadence is stopped", async () => {
@@ -570,6 +634,9 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
     expect(persistedReplies[0]?.kind).toBe("auto");
     // Issue #357: an auto-reply is never signal worth paying to re-synthesize.
     expect(angleRefreshCalls).toEqual([]);
+    // Autoresponders are not replies by classifyReply's own contract — must
+    // not raise a false "Reply from ..." Slack alert (round-1 correction).
+    expect(notifySlackReplyReceivedMock).not.toHaveBeenCalled();
   });
 
   it("a dead-mailbox autoresponder stops the cadence as bounced, not replied", async () => {
@@ -591,9 +658,61 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
     expect(rows[0]?.status).toBe("bounced");
     expect(repliedSteps).toHaveLength(0);
     expect(seqEvents).toEqual([
-      { prospectId: 1, playName: "stack-consolidation", status: "bounced" },
+      {
+        prospectId: 1,
+        playName: "stack-consolidation",
+        status: "bounced",
+        // Occurrence time (the autoresponder's own received_at), not poll
+        // time — matches the DSN-bounce path's bouncedAt so both feed the
+        // Slack daily summary's occurrence window consistently.
+        bouncedAt: "2026-08-27T16:07:46.000Z",
+      },
     ]);
     expect(persistedReplies[0]?.kind).toBe("auto_permanent");
+    expect(notifySlackReplyReceivedMock).not.toHaveBeenCalled();
+    // issue #71 round-4 review finding: the auto_permanent bounce path is
+    // counted into the Slack daily summary's bounced total (via
+    // Ledger.countAutoPermanentBounces) but never fired the Slack
+    // "bounce recorded" event itself. Must fire exactly once per
+    // autoresponder email, not once per cadence stopped.
+    expect(notifySlackBounceRecordedMock).toHaveBeenCalledTimes(1);
+    expect(notifySlackBounceRecordedMock).toHaveBeenCalledWith({
+      recipient: STORED_EMAIL,
+      kind: "auto_permanent",
+      status_code: null,
+    });
+  });
+
+  // issue #71 round-5 review finding: the alert above was gated only on
+  // `kind === "auto_permanent"`, not on first-sight. The reply poll's `since`
+  // window intentionally re-examines up to REPLY_WATERMARK_OVERLAP_MS (1h)
+  // before the watermark on every poll, and `seen` only dedupes within a
+  // single pollInboxReplies() call — so the SAME dead-mailbox autoresponder,
+  // still inside that overlap window on the next poll, would refire the
+  // alert a second time. It must be gated on isNewReply (recordInboxReply's
+  // INSERT OR IGNORE return), exactly like the human-reply branch is.
+  it("does not refire the bounce alert when the same autoresponder email is re-seen on a later poll", async () => {
+    inboxEmails = [
+      {
+        id: "dead-mailbox-1",
+        from: "sophia@agenticarchitect.ai",
+        subject: "out of office Re: your agent stack",
+        body: "Retired October 2025. No longer using this email.",
+        received_at: "2026-08-27T16:07:46.000Z",
+      },
+    ];
+
+    const first = await pollInboxReplies();
+    expect(first.autoRepliesSkipped).toBe(1);
+    expect(notifySlackBounceRecordedMock).toHaveBeenCalledTimes(1);
+
+    // Second poll re-fetches the same email id — exactly what happens when
+    // the next poll's `since` (watermark - 1h overlap) still covers this
+    // email's received_at. recordInboxReply's INSERT OR IGNORE means
+    // isNewReply is false this time; the alert must not refire.
+    const second = await pollInboxReplies();
+    expect(second.autoRepliesSkipped).toBe(1);
+    expect(notifySlackBounceRecordedMock).toHaveBeenCalledTimes(1);
   });
 
   it("an unsubscribe request stops the cadence as unsubscribed", async () => {
@@ -617,6 +736,11 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
     expect(persistedReplies[0]?.kind).toBe("unsubscribe");
     // Issue #357: an unsubscribe is never signal worth paying to re-synthesize.
     expect(angleRefreshCalls).toEqual([]);
+    expect(notifySlackReplyReceivedMock).not.toHaveBeenCalled();
+    // Unsubscribe is a do-not-contact, not a bounce — must not raise a
+    // "Bounce recorded" alert (only auto_permanent is a bounce by this
+    // codebase's own status mapping above).
+    expect(notifySlackBounceRecordedMock).not.toHaveBeenCalled();
   });
 
   it("a terminal cadence is not resurrected or re-stopped by a dead-mailbox notice", async () => {

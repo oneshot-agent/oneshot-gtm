@@ -1,8 +1,9 @@
 import {
-  refreshPendingDirectMail,
   demoMode,
   logEvent,
   type TelemetryOutcome,
+  postDailySendSummaryIfDue,
+  refreshPendingDirectMail,
 } from "@oneshot-gtm/core";
 import {
   nextSleepMs,
@@ -59,6 +60,29 @@ export function startScheduler(): SchedulerHandle {
   // 0 = never polled, so the first tick always sweeps.
   let lastBouncePollAt = 0;
   let mailBackfillRunning = false;
+  // True unless the most recent sweep that actually ran came back partial or
+  // failed outright. Lives OUTSIDE the tick closure (not re-initialized per
+  // tick) — it must persist across ticks, not just describe the current one:
+  // a throttled tick right after a partial/failed sweep runs no sweep of its
+  // own, so if this flag reset to `true` every tick it would hand
+  // postDailySendSummaryIfDue a false "clean" on the very next tick and
+  // permanently watermark a day the forced sweep never actually finished
+  // confirming (issue #71 round-5 review finding — this is the bug the
+  // round-4 fix was supposed to prevent, recurring one tick later because
+  // the flag wasn't carried forward). Only a tick whose sweep actually runs
+  // updates it, to either outcome; ticks with no sweep due leave it as the
+  // last sweep left it.
+  let bouncePollClean = true;
+  // Same reasoning as bouncePollClean above, for the reply-poll side (issue
+  // #71 round-1 correction): postDailySendSummaryIfDue's watermark also
+  // depends on every one of yesterday's replies being recorded, and a
+  // partial reply poll on the UTC-day-rollover tick must defer the stamp
+  // the same way a partial bounce sweep already does. Lives outside the
+  // tick closure so a tick that runs no reply poll of its own (there's no
+  // throttle here — pollInboxReplies runs every tick — but the pattern is
+  // kept identical to bouncePollClean for the same "carry forward, don't
+  // reset" reason) doesn't silently re-arm to clean.
+  let replyPollClean = true;
 
   const tick = async (): Promise<void> => {
     if (cancelled) return;
@@ -90,7 +114,9 @@ export function startScheduler(): SchedulerHandle {
         const replyPoll = await pollInboxReplies();
         repliesDetected = replyPoll.repliesDetected;
         autoRepliesSkipped = replyPoll.autoRepliesSkipped;
+        replyPollClean = replyPoll.clean;
       } catch (err) {
+        replyPollClean = false;
         logEvent(
           "scheduler.reply_poll.failed",
           { message_120: ((err as Error).message ?? "").slice(0, 120) },
@@ -112,13 +138,30 @@ export function startScheduler(): SchedulerHandle {
       }
       // Bounce detection, isolated like the reply poll; non-spending.
       let bouncesRecorded = 0;
-      if (Date.now() - lastBouncePollAt >= BOUNCE_POLL_INTERVAL_MS) {
+      // Throttled to BOUNCE_POLL_INTERVAL_MS, EXCEPT when the UTC calendar day
+      // has rolled over since the last sweep: postDailySendSummaryIfDue below
+      // stamps an at-most-once watermark for "yesterday" (UTC) on this same
+      // tick, and a bounce that arrived before midnight but is still waiting
+      // behind the 30-minute throttle would otherwise get its bounced_at
+      // windowed into the already-watermarked day and be permanently dropped
+      // from every future daily summary (issue #71 round-3 review finding) —
+      // not delayed, dropped, since the watermark never re-opens a stamped
+      // day. Forcing the sweep here guarantees it runs before the watermark
+      // is stamped, on the very tick that crosses the boundary.
+      const dayRolledOver =
+        lastBouncePollAt > 0 &&
+        new Date(lastBouncePollAt).toISOString().slice(0, 10) !==
+          new Date().toISOString().slice(0, 10);
+      if (Date.now() - lastBouncePollAt >= BOUNCE_POLL_INTERVAL_MS || dayRolledOver) {
         // Stamped before the await, not after: a slow or failing sweep must not
         // let ticks queue up behind it and then all fire at once.
         lastBouncePollAt = Date.now();
         try {
-          bouncesRecorded = (await pollInboxBounces()).recorded;
+          const bouncePoll = await pollInboxBounces();
+          bouncesRecorded = bouncePoll.recorded;
+          bouncePollClean = bouncePoll.clean;
         } catch (err) {
+          bouncePollClean = false;
           logEvent(
             "scheduler.bounce_poll.failed",
             { message_120: ((err as Error).message ?? "").slice(0, 120) },
@@ -134,6 +177,26 @@ export function startScheduler(): SchedulerHandle {
       } catch (err) {
         logEvent(
           "scheduler.pending_retry.failed",
+          { message_120: ((err as Error).message ?? "").slice(0, 120) },
+          "warn",
+        );
+      }
+      // Daily send summary to Slack: fires once per completed UTC day when
+      // slackWebhookUrl is set. Isolated like the reply poll — failure must
+      // not skip trigger scheduling. Gated on BOTH pollers' cleanliness
+      // (issue #71 round-1 correction): the summary's `bounced` total is
+      // ledger.countBounces + ledger.countAutoPermanentBounces, sourced from
+      // the bounce sweep AND the reply poll respectively, so a partial
+      // reply poll on the day-rollover tick is exactly as unsafe to stamp
+      // over as a partial bounce sweep — either can permanently drop
+      // yesterday's not-yet-recorded events from every future summary.
+      try {
+        await postDailySendSummaryIfDue(new Date(), {
+          sweepClean: bouncePollClean && replyPollClean,
+        });
+      } catch (err) {
+        logEvent(
+          "scheduler.daily_summary.failed",
           { message_120: ((err as Error).message ?? "").slice(0, 120) },
           "warn",
         );

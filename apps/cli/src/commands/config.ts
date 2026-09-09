@@ -5,6 +5,7 @@ import {
   saveConfig,
   saveSecrets,
   secretsPath,
+  isSlackWebhookUrl,
 } from "@oneshot-gtm/core";
 import { TRIGGERS, checkReadiness } from "@oneshot-gtm/find";
 import { withXEngine, type XEngine } from "@oneshot-gtm/shared-types";
@@ -139,6 +140,38 @@ export async function configTelemetry(state: "on" | "off"): Promise<void> {
   const cfg = loadConfig();
   saveConfig({ ...cfg, telemetryEnabled: state === "on" });
   ok(`telemetry ${state === "on" ? c.green("enabled") : c.dim("disabled")}`);
+}
+
+/**
+ * Show or set the Slack incoming-webhook URL (reply/bounce/daily-summary
+ * notifications, see slack-notify.ts). Blank input clears it — the feature is
+ * off whenever this is unset, mirroring `config x-engine`'s show-then-set shape.
+ */
+export async function configSlackWebhook(url?: string): Promise<void> {
+  header("Slack notifications");
+  const cfg = loadConfig();
+  if (url === undefined) {
+    note(
+      cfg.slackWebhookUrl
+        ? `webhook: ${c.cyan(cfg.slackWebhookUrl)}`
+        : `webhook: ${c.dim("not set — reply/bounce/daily-summary notifications are off")}`,
+    );
+    note(c.dim("set with: oneshot-gtm config slack-webhook <url>"));
+    note(c.dim("clear with: oneshot-gtm config slack-webhook ''"));
+    return;
+  }
+  const trimmed = url.trim();
+  if (trimmed.length > 0 && !isSlackWebhookUrl(trimmed)) {
+    throw new Error(
+      "not a Slack incoming-webhook URL — expected https://hooks.slack.com/services/…",
+    );
+  }
+  saveConfig({ ...cfg, slackWebhookUrl: trimmed.length > 0 ? trimmed : null });
+  ok(
+    trimmed.length > 0
+      ? `webhook saved: ${c.cyan(trimmed)}`
+      : "webhook cleared — notifications off",
+  );
 }
 
 /**

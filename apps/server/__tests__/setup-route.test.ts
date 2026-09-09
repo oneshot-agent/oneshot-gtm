@@ -83,6 +83,7 @@ const BASE: OneShotConfig = {
   mobileSignature: false,
   timezone: null,
   clientId: "11111111-2222-3333-4444-555555555555",
+  slackWebhookUrl: null,
   dailySpendCeilingUsd: null,
 };
 
@@ -213,6 +214,23 @@ describe("POST /api/setup — rejected bodies answer 400 and write nothing", () 
     expect(res.status).toBe(400);
     expect(res.error).toMatch(/invalid maxPerDay "ramp" for new oneshot sender acme.email/);
     untouched();
+  });
+
+  it("a webhook URL that is not a Slack incoming webhook is a 400 (SSRF guard)", async () => {
+    for (const bad of [
+      "https://evil.example/services/T000",
+      "http://hooks.slack.com/services/T000/B000/x",
+      "https://169.254.169.254/latest/meta-data",
+    ]) {
+      const out = await post({ slackWebhookUrl: bad });
+      expect(out.status, bad).toBe(400);
+      expect(out.error).toMatch(/hooks\.slack\.com/);
+    }
+    // A real one saves; a blank clears.
+    expect(
+      (await post({ slackWebhookUrl: "https://hooks.slack.com/services/T0/B0/x" })).status,
+    ).toBe(200);
+    expect((await post({ slackWebhookUrl: "" })).status).toBe(200);
   });
 
   it("a spend ceiling of 0 is a 400 (was a 500 via the generic handler wrapper)", async () => {

@@ -1705,6 +1705,71 @@ export class Ledger {
       .all(opts.limit ?? 20) as BounceRecord[];
   }
 
+  /**
+   * Count of distinct recorded delivery-failure events in the window, keyed
+   * by `bounces`' own (message_id, recipient) PK — the Slack daily summary's
+   * `bounced` total (issue #71 round-3 review finding). Deliberately NOT
+   * derived from `sequence_events`: `pollInboxBounces` inserts one
+   * sequence_events row PER CADENCE a bounced prospect is enrolled in, so a
+   * single DSN for a prospect in 2+ concurrent cadences would be counted
+   * multiple times there, and it skips sequence_events entirely for soft
+   * bounces and for bounces on prospects with no ledger match — both of
+   * which still land here and still fire `notifySlackBounceRecorded`. This
+   * table is the one row per real bounce event; `bounced_at` is NOT NULL on
+   * every row (unlike sequence_events', which predates the column on old
+   * rows), so no COALESCE fallback is needed. Sibling of
+   * countAutoPermanentBounces (the reply-stream bounce path, which never
+   * writes to this table).
+   */
+  countBounces(opts: { sinceIso?: string; untilIso?: string } = {}): number {
+    const where: string[] = [];
+    const args: unknown[] = [];
+    if (opts.sinceIso) {
+      where.push("bounced_at >= ?");
+      args.push(opts.sinceIso);
+    }
+    if (opts.untilIso) {
+      where.push("bounced_at < ?");
+      args.push(opts.untilIso);
+    }
+    const sql = `SELECT COUNT(*) AS n FROM bounces${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`;
+    return (this.db.query(sql).get(...(args as never[])) as { n: number } | null)?.n ?? 0;
+  }
+
+  /**
+   * Count of distinct dead-mailbox autoresponder events ("auto_permanent"
+   * reply kind, see reply-classify.ts) in the window — the OTHER bounce
+   * source the Slack daily summary's `bounced` total must include alongside
+   * countBounces (DSN bounces never touch `sequence_events`; this reply-
+   * stream path never touches `bounces`). Counted from `inbox_replies`, NOT
+   * `sequence_events` (issue #71 round-1 correction): `pollInboxReplies`
+   * (and the /inbox route's opportunistic capture) call `recordInboxReply`
+   * for EVERY matched auto_permanent email unconditionally, but only write a
+   * `sequence_events` row inside the `listCadencesForProspect(...).filter
+   * (status active|paused)` loop right after — a dead-mailbox reply for a
+   * prospect whose only cadence is already terminal (or who has none) still
+   * fires `notifySlackBounceRecorded` and is persisted here, but would never
+   * produce a `sequence_events` row to count. `inbox_replies.id` is the
+   * provider's own message id and PRIMARY KEY (INSERT OR IGNORE), so each
+   * real event is already exactly one row — no de-dup math needed, unlike
+   * countBounces' sibling problem on the multi-cadence `sequence_events`
+   * path.
+   */
+  countAutoPermanentBounces(opts: { sinceIso?: string; untilIso?: string } = {}): number {
+    const where: string[] = ["kind = 'auto_permanent'"];
+    const args: unknown[] = [];
+    if (opts.sinceIso) {
+      where.push("received_at >= ?");
+      args.push(opts.sinceIso);
+    }
+    if (opts.untilIso) {
+      where.push("received_at < ?");
+      args.push(opts.untilIso);
+    }
+    const sql = `SELECT COUNT(*) AS n FROM inbox_replies WHERE ${where.join(" AND ")}`;
+    return (this.db.query(sql).get(...(args as never[])) as { n: number } | null)?.n ?? 0;
+  }
+
   recordCanaryResult(input: {
     fromIdentity: string;
     toIdentity: string;
@@ -2393,10 +2458,18 @@ export class Ledger {
     /** The send receipt this step produced — links the step to its billable call
      *  so an outcome (reply/deal) can tag the receipt's value. */
     receiptId?: number;
+    /**
+     * The provider's own bounce timestamp (DSN `bouncedAt`), for `status:
+     * "bounced"` rows only. `created_at` is stamped at POLL/detection time —
+     * this is the real occurrence time, so date-windowed rollups (the Slack
+     * daily summary) attribute the bounce to the day it actually happened
+     * rather than the day the mailbox happened to be polled.
+     */
+    bouncedAt?: string;
   }): number {
     const stmt = this.db.prepare(`
-      INSERT INTO sequence_events(prospect_id, play_name, step_index, channel, status, metadata_json, receipt_id)
-      VALUES(?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sequence_events(prospect_id, play_name, step_index, channel, status, metadata_json, receipt_id, bounced_at)
+      VALUES(?, ?, ?, ?, ?, ?, ?, ?)
     `);
     const result = stmt.run(
       input.prospectId,
@@ -2406,6 +2479,7 @@ export class Ledger {
       input.status,
       input.metadata ? JSON.stringify(input.metadata) : null,
       input.receiptId ?? null,
+      input.bouncedAt ?? null,
     );
     return Number(result.lastInsertRowid);
   }
@@ -2500,12 +2574,31 @@ export class Ledger {
    * Mark the latest sent step `replied` — a state transition of the existing
    * step, NOT a new event, so `sent` counts stay correct. Idempotent per
    * (prospect, play) via the NOT EXISTS guard; returns true on the one call
-   * that flips a row.
+   * that flips a row. Stamps `replied_at` to the actual reply moment — the
+   * row's `created_at` stays pinned to the original SEND time, so date-windowed
+   * rollups (eventsByPlay, the Slack daily summary) must use replied_at, not
+   * created_at, to count a reply on the day it happened rather than the day it
+   * was sent. `repliedAt` defaults to now (the manual-reply / UI-send path,
+   * where the moment of the call IS the reply); the background inbox poll
+   * passes the inbound email's own `received_at` so a reply pulled from a
+   * backlog page — arriving in this process well after it actually landed in
+   * the mailbox — is still credited to the day it was actually sent, not the
+   * day this poll happened to run.
    */
-  markLatestStepReplied(input: { prospectId: number; playName: string }): boolean {
+  markLatestStepReplied(input: {
+    prospectId: number;
+    playName: string;
+    repliedAt?: string | null;
+  }): boolean {
+    // datetime(?) normalizes any SQLite-recognized input (an ISO 8601 string
+    // with 'T'/'Z', or the 'YYYY-MM-DD HH:MM:SS' form) to the latter — the
+    // same format datetime('now') already writes everywhere else in this
+    // table. Storing repliedAt un-normalized would make replied_at sort
+    // lexicographically wrong against created_at / sinceIso / untilIso
+    // (ISO's 'T' separator sorts after the space datetime('now') uses).
     const result = this.db
       .prepare(
-        `UPDATE sequence_events SET status = 'replied'
+        `UPDATE sequence_events SET status = 'replied', replied_at = datetime(COALESCE(?, 'now'))
          WHERE id = (
            SELECT id FROM sequence_events
            WHERE prospect_id = ? AND play_name = ? AND channel = 'email'
@@ -2517,7 +2610,13 @@ export class Ledger {
            WHERE prospect_id = ? AND play_name = ? AND status = 'replied'
          )`,
       )
-      .run(input.prospectId, input.playName, input.prospectId, input.playName);
+      .run(
+        input.repliedAt ?? null,
+        input.prospectId,
+        input.playName,
+        input.prospectId,
+        input.playName,
+      );
     return result.changes > 0;
   }
 
@@ -2532,7 +2631,7 @@ export class Ledger {
    * exactly once per (prospect, play)); `newlyReplied` marks the control
    * transition.
    */
-  recordCadenceReply(input: { prospectId: number; playName: string }): {
+  recordCadenceReply(input: { prospectId: number; playName: string; repliedAt?: string | null }): {
     newlyReplied: boolean;
     eventRecorded: boolean;
   } {
@@ -2545,6 +2644,7 @@ export class Ledger {
       const eventRecorded = this.markLatestStepReplied({
         prospectId: input.prospectId,
         playName: input.playName,
+        repliedAt: input.repliedAt,
       });
       return { newlyReplied, eventRecorded };
     })();
@@ -2555,11 +2655,14 @@ export class Ledger {
    * nobody keeps getting follow-ups after answering. Analytics: the reply is
    * credited to exactly ONE play — the one whose sent subject it threads on
    * (`Re: …`), else the most recent play that emailed them. Returns one entry
-   * per play touched.
+   * per play touched. `repliedAt` (default now) should be the inbound
+   * email's own received/sent timestamp when known — see
+   * markLatestStepReplied's note on why the background inbox poll must pass
+   * it rather than let this stamp the moment the poll happened to run.
    */
   recordProspectReply(
     prospectId: number,
-    opts?: { subject?: string | null },
+    opts?: { subject?: string | null; repliedAt?: string | null },
   ): Array<{ playName: string; newlyReplied: boolean; eventRecorded: boolean }> {
     return this.db.transaction(() => {
       const credited = this.latestSentPlayForProspect(prospectId, opts?.subject);
@@ -2572,7 +2675,11 @@ export class Ledger {
         out.set(cad.play_name, { newlyReplied: live, eventRecorded: false });
       }
       if (credited) {
-        const eventRecorded = this.markLatestStepReplied({ prospectId, playName: credited });
+        const eventRecorded = this.markLatestStepReplied({
+          prospectId,
+          playName: credited,
+          repliedAt: opts?.repliedAt,
+        });
         out.set(credited, {
           newlyReplied: out.get(credited)?.newlyReplied ?? false,
           eventRecorded,
@@ -2753,31 +2860,76 @@ export class Ledger {
     }>;
   }
 
-  eventsByPlay(opts: { sinceIso?: string } = {}): Array<{
+  /**
+   * Per-play rollup of sequence_events, windowed by `sinceIso`/`untilIso`.
+   *
+   * By default every column windows on `created_at` alone — byte-for-byte the
+   * pre-existing behaviour every current caller (home.ts's sentLast7d/
+   * repliedLast7d, measure.ts's reply-rate %, weekly-review.ts) depends on,
+   * which guarantees `replied <= sent` for any window: a reply can only be
+   * counted once its originating send's `created_at` already falls inside
+   * the same window.
+   *
+   * Pass `occurrenceWindow: true` to window `replied`/`bounced` on their OWN
+   * occurrence column instead (COALESCEd onto `created_at` for older rows
+   * that predate it), which the Slack daily summary needs so a reply or
+   * bounce landing the day AFTER it was sent still shows up on the day it
+   * actually happened rather than vanishing from every completed-day rollup:
+   *   - `replied`: `COALESCE(replied_at, created_at)` — `markLatestStepReplied`
+   *     flips the ORIGINAL sent row in place rather than inserting a new one,
+   *     so that row's `created_at` stays pinned to the SEND time.
+   *   - `bounced`: `COALESCE(bounced_at, created_at)` — a bounce DOES insert a
+   *     fresh row, but `created_at` is stamped at POLL/detection time, not the
+   *     provider's own bounce time; a poll resuming after downtime (or a
+   *     delayed DSN) would otherwise misattribute the bounce to the wrong day.
+   * This mode intentionally breaks the `replied <= sent` invariant for a
+   * window whose reply/bounce occurrence lands inside it but whose send
+   * predates it — that's why it's opt-in, scoped to the one caller that reads
+   * `sent`/`replied`/`bounced` as independent daily counts rather than a
+   * cohort funnel.
+   */
+  eventsByPlay(
+    opts: { sinceIso?: string; untilIso?: string; occurrenceWindow?: boolean } = {},
+  ): Array<{
     play_name: string;
     sent: number;
     delivered: number;
     replied: number;
     bounced: number;
   }> {
-    const where: string[] = [];
-    const args: unknown[] = [];
+    const createdClause: string[] = [];
+    const repliedClause: string[] = [];
+    const bouncedClause: string[] = [];
+    const repliedCol = opts.occurrenceWindow ? "COALESCE(replied_at, created_at)" : "created_at";
+    const bouncedCol = opts.occurrenceWindow ? "COALESCE(bounced_at, created_at)" : "created_at";
     if (opts.sinceIso) {
-      where.push("created_at >= ?");
-      args.push(opts.sinceIso);
+      createdClause.push("created_at >= $sinceIso");
+      repliedClause.push(`${repliedCol} >= $sinceIso`);
+      bouncedClause.push(`${bouncedCol} >= $sinceIso`);
     }
+    if (opts.untilIso) {
+      createdClause.push("created_at < $untilIso");
+      repliedClause.push(`${repliedCol} < $untilIso`);
+      bouncedClause.push(`${bouncedCol} < $untilIso`);
+    }
+    const createdWindow = createdClause.length ? `(${createdClause.join(" AND ")})` : "1";
+    const repliedWindow = repliedClause.length ? `(${repliedClause.join(" AND ")})` : "1";
+    const bouncedWindow = bouncedClause.length ? `(${bouncedClause.join(" AND ")})` : "1";
+    const params: Record<string, string> = {};
+    if (opts.sinceIso) params["$sinceIso"] = opts.sinceIso;
+    if (opts.untilIso) params["$untilIso"] = opts.untilIso;
     const sql = `
       SELECT
         play_name,
-        SUM(CASE WHEN status IN ('sent', 'delivered', 'replied') THEN 1 ELSE 0 END) AS sent,
-        SUM(CASE WHEN status IN ('delivered', 'replied') THEN 1 ELSE 0 END) AS delivered,
-        SUM(CASE WHEN status = 'replied' THEN 1 ELSE 0 END) AS replied,
-        SUM(CASE WHEN status = 'bounced' THEN 1 ELSE 0 END) AS bounced
+        SUM(CASE WHEN status IN ('sent', 'delivered', 'replied') AND ${createdWindow} THEN 1 ELSE 0 END) AS sent,
+        SUM(CASE WHEN status IN ('delivered', 'replied') AND ${createdWindow} THEN 1 ELSE 0 END) AS delivered,
+        SUM(CASE WHEN status = 'replied' AND ${repliedWindow} THEN 1 ELSE 0 END) AS replied,
+        SUM(CASE WHEN status = 'bounced' AND ${bouncedWindow} THEN 1 ELSE 0 END) AS bounced
       FROM sequence_events
-      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+      WHERE ${createdWindow} OR (status = 'replied' AND ${repliedWindow}) OR (status = 'bounced' AND ${bouncedWindow})
       GROUP BY play_name
     `;
-    return this.db.query(sql).all(...(args as never[])) as Array<{
+    return this.db.query(sql).all(params) as Array<{
       play_name: string;
       sent: number;
       delivered: number;

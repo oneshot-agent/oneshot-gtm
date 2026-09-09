@@ -511,13 +511,35 @@ export function migrateLedgerSchema(db: Database): void {
   // describes.
   addColumnIfMissing(db, "inbox_drafts", "steer", "TEXT");
   addColumnIfMissing(db, "inbox_drafts", "status", "TEXT");
-  // v31: per-prospect angle (issue #355) — LLM synthesis of dossier + live
+  // v31: occurrence timestamp for a reply, separate from created_at.
+  // markLatestStepReplied flips the ORIGINAL sent row's status in place, so
+  // created_at stays pinned to the send time — eventsByPlay's sinceIso/
+  // untilIso window (used by the Slack daily-summary aggregate) was
+  // silently dropping any reply landing after the SENT step's created_at
+  // window instead of the reply's own occurrence day. replied_at is stamped
+  // at the moment of the flip and is what date-windowed rollups must filter
+  // on for replies. (Bounces get the equivalent fix in v33 — created_at
+  // alone turned out NOT to be occurrence time for them either: see that
+  // migration's comment.)
+  addColumnIfMissing(db, "sequence_events", "replied_at", "TEXT");
+  // v32: per-prospect angle (issue #355) — LLM synthesis of dossier + live
   // public work + reply history, distinct from `dossier_json` (raw research
   // input) and from `yourEdge` (founder config stamped identically on every
   // target). `angle_synthesized_at` NULL = never synthesized; set alongside
   // `angle_json` by `setProspectAngle`, cleared together when passed null.
   addColumnIfMissing(db, "prospects", "angle_json", "TEXT");
   addColumnIfMissing(db, "prospects", "angle_synthesized_at", "TEXT");
+  // v33: issue #71 round-2 review finding — a bounced sequence_events row IS
+  // freshly inserted per occurrence (unlike the replied flip-in-place), so
+  // created_at looked like occurrence time, but it's actually POLL/detection
+  // time: pollInboxBounces only sees a DSN once the mailbox is next polled,
+  // and a poll resuming after downtime (or a delayed bounce) can misattribute
+  // the bounce to the wrong UTC calendar day in the Slack daily summary.
+  // bounced_at carries the provider's own bounce timestamp (already captured
+  // as `bouncedAt` from the message's internalDate — see gmail.ts) so
+  // eventsByPlay can window bounces the same way it windows replies, via
+  // COALESCE(bounced_at, created_at).
+  addColumnIfMissing(db, "sequence_events", "bounced_at", "TEXT");
 }
 
 /**
