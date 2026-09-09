@@ -7,7 +7,13 @@ let throwOnNextRun: Error | null = null;
 // When set, runDueTriggers awaits this before resolving/throwing, so a test
 // can suspend a tick mid-flight and control exactly when it resumes.
 let runDueTriggersGate: Promise<void> | null = null;
-const calls = { runDueTriggers: 0, nextSleepMs: 0, eventKinds: [] as string[] };
+const calls = {
+  runDueTriggers: 0,
+  nextSleepMs: 0,
+  eventKinds: [] as string[],
+  pollInboxBounces: 0,
+  postDailySendSummaryIfDue: 0,
+};
 
 vi.mock("@oneshot-gtm/find", () => ({
   runDueTriggers: async () => {
@@ -29,6 +35,15 @@ vi.mock("@oneshot-gtm/find", () => ({
   },
 }));
 
+vi.mock("@oneshot-gtm/plays", () => ({
+  backfillMailAddresses: async () => {},
+  pollInboxReplies: async () => ({ repliesDetected: 0, autoRepliesSkipped: 0 }),
+  pollInboxBounces: async () => {
+    calls.pollInboxBounces++;
+    return { polled: 0, recorded: 0, cadencesStopped: 0, details: [] };
+  },
+}));
+
 vi.mock("@oneshot-gtm/core", () => ({
   logEvent: (kind: string) => {
     calls.eventKinds.push(kind);
@@ -36,6 +51,11 @@ vi.mock("@oneshot-gtm/core", () => ({
   // These cases exercise the real scheduler loop. Demo mode short-circuits it
   // to a no-op handle — covered separately below.
   demoMode: () => demoModeValue,
+  postDailySendSummaryIfDue: async () => {
+    calls.postDailySendSummaryIfDue++;
+    return false;
+  },
+  refreshPendingDirectMail: async () => ({ refreshed: 0, failed: 0 }),
 }));
 
 let demoModeValue = false;
@@ -47,6 +67,8 @@ beforeEach(() => {
   calls.runDueTriggers = 0;
   calls.nextSleepMs = 0;
   calls.eventKinds = [];
+  calls.pollInboxBounces = 0;
+  calls.postDailySendSummaryIfDue = 0;
   nextOutcomes = [];
   nextSleepValue = 60_000;
   throwOnNextRun = null;
@@ -197,5 +219,44 @@ describe("startScheduler", () => {
     expect(calls.runDueTriggers).toBe(0);
     expect(calls.eventKinds).toContain("demo.scheduler_idle");
     expect(() => handle.stop()).not.toThrow();
+  });
+
+  // Issue #71 round-3 review finding: the bounce sweep and the daily-summary
+  // watermark stamp used to be governed by fully independent timers
+  // (BOUNCE_POLL_INTERVAL_MS=30min vs. every tick). A tick that crossed
+  // midnight UTC less than 30 minutes after the last sweep would skip the
+  // bounce poll but still stamp the just-completed day's watermark via
+  // postDailySendSummaryIfDue — permanently excluding any bounce that
+  // hadn't been swept yet from every future daily summary. The scheduler
+  // must force the sweep on the tick where the UTC calendar day changes,
+  // even inside the 30-minute throttle window.
+  it("forces a bounce sweep on the first tick, honors the throttle after, and forces again on UTC day rollover", async () => {
+    nextSleepValue = 60_000; // fixed 60s cadence between ticks for this test
+    vi.setSystemTime(new Date("2026-08-28T23:55:00.000Z"));
+    const handle = startScheduler();
+
+    // First tick ever (lastBouncePollAt === 0): always sweeps.
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(calls.pollInboxBounces).toBe(1);
+
+    // A tick 1 minute later, still Aug 28, well inside the 30-minute
+    // throttle and no day rollover: must NOT sweep again.
+    vi.setSystemTime(new Date("2026-08-28T23:56:00.000Z"));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(calls.pollInboxBounces).toBe(1);
+
+    // The next tick crosses midnight UTC into Aug 29, still well inside the
+    // 30-minute throttle window since the last real sweep — this is exactly
+    // the scenario the round-3 finding describes. It must sweep anyway.
+    vi.setSystemTime(new Date("2026-08-29T00:01:00.000Z"));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(calls.pollInboxBounces).toBe(2);
+
+    // Immediately after, still Aug 29, inside the throttle again: no sweep.
+    vi.setSystemTime(new Date("2026-08-29T00:02:00.000Z"));
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(calls.pollInboxBounces).toBe(2);
+
+    handle.stop();
   });
 });

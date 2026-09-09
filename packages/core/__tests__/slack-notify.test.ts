@@ -403,6 +403,142 @@ describe("slack-notify", () => {
       const payload = JSON.parse(fetchMock.mock.calls![0]![1]!.body) as SlackNotification;
       expect(payload.data).toMatchObject({ date: "2026-08-28", replied: 1 });
     });
+
+    it("counts a bounce once even when the DSN stopped multiple concurrent cadences (round-3 review fix)", async () => {
+      // Regression test for the round-3 review finding: eventsByPlay's
+      // `bounced` sum double-counted a single DSN when pollInboxBounces wrote
+      // one sequence_events row per cadence the prospect was enrolled in.
+      // postDailySendSummaryIfDue must count real bounce EVENTS (the
+      // `bounces` table), not sequence_events rows.
+      vi.spyOn(config, "loadConfig").mockReturnValue({
+        slackWebhookUrl: "https://hooks.slack.com/test",
+      } as any);
+      fetchMock.mockResolvedValue({ ok: true } as Response);
+
+      const ledger = getLedger();
+      ledger.setPollWatermark(SLACK_DAILY_SUMMARY_WATERMARK, "");
+      const pid = ledger.upsertProspect({ name: "Multi", email: "multi@x.com", source: "t" });
+      // One real bounce event...
+      ledger.recordBounce({
+        messageId: "dsn-multi",
+        recipient: "multi@x.com",
+        identityId: "gmail:me@corp.example",
+        kind: "hard",
+        statusCode: "5.1.1",
+        diagnostic: "smtp; 550 user unknown",
+        prospectId: pid,
+        bouncedAt: "2026-08-28T09:00:00.000Z",
+      });
+      // ...but pollInboxBounces' per-cadence loop writes TWO sequence_events
+      // rows for it (the prospect was enrolled in two concurrent cadences).
+      for (const playName of ["play-a", "play-b"]) {
+        ledger.recordSequenceEvent({
+          prospectId: pid,
+          playName,
+          stepIndex: 0,
+          channel: "email",
+          status: "bounced",
+          metadata: { kind: "hard", statusCode: "5.1.1" },
+          bouncedAt: "2026-08-28T09:00:00.000Z",
+        });
+      }
+
+      const posted = await postDailySendSummaryIfDue(new Date("2026-08-29T10:00:00Z"));
+
+      expect(posted).toBe(true);
+      const payload = JSON.parse(fetchMock.mock.calls![0]![1]!.body) as SlackNotification;
+      // Must be 1 (the real event count), not 2 (the sequence_events row count).
+      expect(payload.data).toMatchObject({ date: "2026-08-28", bounced: 1 });
+    });
+
+    it("counts a bounce recorded on a prospect with no cadence match (round-3 review fix)", async () => {
+      // Regression test: pollInboxBounces `continue`s before writing ANY
+      // sequence_events row for a bounce on an address it can't match to a
+      // prospect — the old eventsByPlay-derived total silently dropped it.
+      vi.spyOn(config, "loadConfig").mockReturnValue({
+        slackWebhookUrl: "https://hooks.slack.com/test",
+      } as any);
+      fetchMock.mockResolvedValue({ ok: true } as Response);
+
+      const ledger = getLedger();
+      ledger.setPollWatermark(SLACK_DAILY_SUMMARY_WATERMARK, "");
+      ledger.recordBounce({
+        messageId: "dsn-unmatched",
+        recipient: "unknown@x.com",
+        identityId: "gmail:me@corp.example",
+        kind: "hard",
+        statusCode: "5.1.1",
+        diagnostic: null,
+        prospectId: null,
+        bouncedAt: "2026-09-01T09:00:00.000Z",
+      });
+
+      const posted = await postDailySendSummaryIfDue(new Date("2026-09-02T10:00:00Z"));
+
+      expect(posted).toBe(true);
+      const payload = JSON.parse(fetchMock.mock.calls![0]![1]!.body) as SlackNotification;
+      expect(payload.data).toMatchObject({ date: "2026-09-01", bounced: 1 });
+    });
+
+    it("counts a soft bounce even though it never stops a cadence (round-3 review fix)", async () => {
+      // Regression test: pollInboxBounces `continue`s before writing a
+      // sequence_events row for soft bounces.
+      vi.spyOn(config, "loadConfig").mockReturnValue({
+        slackWebhookUrl: "https://hooks.slack.com/test",
+      } as any);
+      fetchMock.mockResolvedValue({ ok: true } as Response);
+
+      const ledger = getLedger();
+      ledger.setPollWatermark(SLACK_DAILY_SUMMARY_WATERMARK, "");
+      ledger.recordBounce({
+        messageId: "dsn-soft",
+        recipient: "soft@x.com",
+        identityId: "gmail:me@corp.example",
+        kind: "soft",
+        statusCode: "4.2.2",
+        diagnostic: null,
+        prospectId: null,
+        bouncedAt: "2026-09-02T09:00:00.000Z",
+      });
+
+      const posted = await postDailySendSummaryIfDue(new Date("2026-09-03T10:00:00Z"));
+
+      expect(posted).toBe(true);
+      const payload = JSON.parse(fetchMock.mock.calls![0]![1]!.body) as SlackNotification;
+      expect(payload.data).toMatchObject({ date: "2026-09-02", bounced: 1 });
+    });
+
+    it("counts a dead-mailbox autoresponder bounce that stopped multiple concurrent cadences as one", async () => {
+      // The auto_permanent reply-stream path has the identical multi-cadence
+      // duplication problem as DSN bounces, but never touches the `bounces`
+      // table — countAutoPermanentBounces must de-duplicate it separately.
+      vi.spyOn(config, "loadConfig").mockReturnValue({
+        slackWebhookUrl: "https://hooks.slack.com/test",
+      } as any);
+      fetchMock.mockResolvedValue({ ok: true } as Response);
+
+      const ledger = getLedger();
+      ledger.setPollWatermark(SLACK_DAILY_SUMMARY_WATERMARK, "");
+      const pid = ledger.upsertProspect({ name: "Dead", email: "dead@x.com", source: "t" });
+      const bouncedAt = "2026-09-03T09:00:00.000Z";
+      for (const playName of ["play-a", "play-b"]) {
+        ledger.recordSequenceEvent({
+          prospectId: pid,
+          playName,
+          stepIndex: 0,
+          channel: "email",
+          status: "bounced",
+          metadata: { reason: "auto-reply-permanent" },
+          bouncedAt,
+        });
+      }
+
+      const posted = await postDailySendSummaryIfDue(new Date("2026-09-04T10:00:00Z"));
+
+      expect(posted).toBe(true);
+      const payload = JSON.parse(fetchMock.mock.calls![0]![1]!.body) as SlackNotification;
+      expect(payload.data).toMatchObject({ date: "2026-09-03", bounced: 1 });
+    });
   });
 
   describe("non-blocking behavior", () => {

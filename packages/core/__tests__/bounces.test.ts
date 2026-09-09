@@ -162,3 +162,123 @@ describe("bounced cadence status", () => {
     expect(ledger.getCadenceDraft({ prospectId, playName: "p" })).toBeNull();
   });
 });
+
+describe("countBounces", () => {
+  it("counts distinct bounce events (not per-cadence sequence_events rows) in a window", () => {
+    record({ messageId: "a", recipient: "1@x.example", bouncedAt: "2026-08-28T09:00:00.000Z" });
+    record({ messageId: "b", recipient: "2@x.example", bouncedAt: "2026-08-28T10:00:00.000Z" });
+    // Outside the window.
+    record({ messageId: "c", recipient: "3@x.example", bouncedAt: "2026-08-27T10:00:00.000Z" });
+
+    const n = ledger.countBounces({
+      sinceIso: "2026-08-28T00:00:00.000Z",
+      untilIso: "2026-08-29T00:00:00.000Z",
+    });
+    expect(n).toBe(2);
+  });
+
+  it("counts every kind, including soft (no cadence stop) and unmatched (no prospect)", () => {
+    // pollInboxBounces `continue`s before writing any sequence_events row for
+    // both of these — they must still show up here, since they still fire
+    // notifySlackBounceRecorded.
+    record({ messageId: "soft", recipient: "1@x.example", kind: "soft" });
+    record({ messageId: "unmatched", recipient: "2@x.example", prospectId: null });
+    expect(
+      ledger.countBounces({
+        sinceIso: "2026-01-01T00:00:00.000Z",
+        untilIso: "2027-01-01T00:00:00.000Z",
+      }),
+    ).toBe(2);
+  });
+
+  it("returns 0 with no window bounds beyond an empty table", () => {
+    expect(ledger.countBounces()).toBe(0);
+    record();
+    expect(ledger.countBounces()).toBe(1);
+  });
+});
+
+describe("countAutoPermanentBounces", () => {
+  it("counts one dead-mailbox autoresponder event even when it stops multiple concurrent cadences", () => {
+    const prospectId = ledger.upsertProspect({
+      name: "Gone",
+      email: "gone@dead.example",
+      source: "t",
+    });
+    // pollInboxReplies loops every active/paused cadence for the prospect and
+    // writes one sequence_events row per cadence for a single autoresponder —
+    // both rows share the same bounced_at (the inbound email's received_at).
+    const bouncedAt = "2026-08-28T09:00:00.000Z";
+    for (const playName of ["play-a", "play-b"]) {
+      ledger.recordSequenceEvent({
+        prospectId,
+        playName,
+        stepIndex: 0,
+        channel: "email",
+        status: "bounced",
+        metadata: { reason: "auto-reply-permanent" },
+        bouncedAt,
+      });
+    }
+    const n = ledger.countAutoPermanentBounces({
+      sinceIso: "2026-08-28T00:00:00.000Z",
+      untilIso: "2026-08-29T00:00:00.000Z",
+    });
+    expect(n).toBe(1);
+  });
+
+  it("excludes an ordinary DSN-recorded bounced sequence_event (no auto-reply-permanent reason)", () => {
+    const prospectId = ledger.upsertProspect({
+      name: "DSN",
+      email: "dsn@dead.example",
+      source: "t",
+    });
+    ledger.recordSequenceEvent({
+      prospectId,
+      playName: "p",
+      stepIndex: 0,
+      channel: "email",
+      status: "bounced",
+      metadata: { kind: "hard", statusCode: "5.1.1" },
+      bouncedAt: "2026-08-28T09:00:00.000Z",
+    });
+    expect(
+      ledger.countAutoPermanentBounces({
+        sinceIso: "2026-08-28T00:00:00.000Z",
+        untilIso: "2026-08-29T00:00:00.000Z",
+      }),
+    ).toBe(0);
+  });
+
+  it("excludes rows outside the window and rows with no bounced_at", () => {
+    const prospectId = ledger.upsertProspect({
+      name: "NoTs",
+      email: "nots@dead.example",
+      source: "t",
+    });
+    ledger.recordSequenceEvent({
+      prospectId,
+      playName: "p",
+      stepIndex: 0,
+      channel: "email",
+      status: "bounced",
+      metadata: { reason: "auto-reply-permanent" },
+      // No bouncedAt.
+    });
+    ledger.recordSequenceEvent({
+      prospectId,
+      playName: "p2",
+      stepIndex: 0,
+      channel: "email",
+      status: "bounced",
+      metadata: { reason: "auto-reply-permanent" },
+      bouncedAt: "2026-01-01T00:00:00.000Z", // Outside the window below.
+    });
+    expect(
+      ledger.countAutoPermanentBounces({
+        sinceIso: "2026-08-28T00:00:00.000Z",
+        untilIso: "2026-08-29T00:00:00.000Z",
+      }),
+    ).toBe(0);
+  });
+});

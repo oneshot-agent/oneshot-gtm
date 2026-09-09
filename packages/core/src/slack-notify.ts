@@ -192,10 +192,21 @@ function utcDay(d: Date): string {
  * At-most-once — the watermark is stamped before the POST, so a failed
  * delivery is dropped rather than re-attempted (best-effort by contract).
  * Quiet days (no sequence events at all) stamp without posting.
- * `sent`/`bounced` count events whose OWN occurrence landed in the window;
- * `replied` counts replies whose occurrence (not the original send) landed in
- * the window — see Ledger.eventsByPlay's replied_at note. Returns true when a
- * summary was posted. Never throws.
+ * `sent`/`replied` count `sequence_events` rows whose OWN occurrence landed
+ * in the window — see Ledger.eventsByPlay's replied_at note. `bounced` is
+ * NOT derived from `sequence_events`: `pollInboxBounces` writes one
+ * `sequence_events` row per CONCURRENT cadence a bounced prospect is
+ * enrolled in (so one DSN can appear several times there) and skips it
+ * entirely for soft bounces and for bounces on prospects with no ledger
+ * match (both still hit the `bounces` table and both still fire
+ * `notifySlackBounceRecorded`); the dead-mailbox-autoresponder bounce path
+ * (`auto_permanent`, via pollInboxReplies) has the identical multi-cadence
+ * duplication problem but never touches `bounces` at all. So `bounced` is
+ * the sum of `ledger.countBounces` (DSN path, one row per event in the
+ * `bounces` table) and `ledger.countAutoPermanentBounces` (reply-stream
+ * path, de-duplicated per prospect+occurrence) — the two disjoint,
+ * individually-deduplicated sources that together cover every bounce this
+ * codebase records. Returns true when a summary was posted. Never throws.
  */
 export async function postDailySendSummaryIfDue(now: Date = new Date()): Promise<boolean> {
   try {
@@ -219,13 +230,26 @@ export async function postDailySendSummaryIfDue(now: Date = new Date()): Promise
     });
     const sent = rows.reduce((a, r) => a + r.sent, 0);
     const replied = rows.reduce((a, r) => a + r.replied, 0);
-    const bounced = rows.reduce((a, r) => a + r.bounced, 0);
+    // Both bounce sources stamp their own `bounced_at` as `.toISOString()`
+    // (gmail.ts's DSN internalDate and the inbound autoresponder's
+    // received_at respectively) — NOT the sqlite `datetime('now')` format
+    // used above — hence the separate ISO-format window bounds here.
+    const isoWindow = { sinceIso: `${day}T00:00:00.000Z`, untilIso: `${nextDay}T00:00:00.000Z` };
+    const bounced = ledger.countBounces(isoWindow) + ledger.countAutoPermanentBounces(isoWindow);
     if (sent === 0 && replied === 0 && bounced === 0) return false;
     await notifySlackDailySendSummary({
       date: day,
       sent,
       replied,
       bounced,
+      // Per-play `bounced` stays sourced from `eventsByPlay` (sequence_events),
+      // NOT the corrected top-level total above: the `bounces` table has no
+      // play_name, and one DSN can stop several concurrent cadences on
+      // different plays via pollInboxBounces' per-cadence loop, so there is
+      // no single correct play to attribute it to. This is a best-effort,
+      // known-approximate breakdown; the top-level `bounced` figure above is
+      // the accurate one and the two are not guaranteed to sum to the same
+      // value (issue #71 round-3 review finding — scoped to the total only).
       by_play: rows.map((r) => ({
         play_name: r.play_name,
         sent: r.sent,

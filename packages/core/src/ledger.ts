@@ -1705,6 +1705,72 @@ export class Ledger {
       .all(opts.limit ?? 20) as BounceRecord[];
   }
 
+  /**
+   * Count of distinct recorded delivery-failure events in the window, keyed
+   * by `bounces`' own (message_id, recipient) PK — the Slack daily summary's
+   * `bounced` total (issue #71 round-3 review finding). Deliberately NOT
+   * derived from `sequence_events`: `pollInboxBounces` inserts one
+   * sequence_events row PER CADENCE a bounced prospect is enrolled in, so a
+   * single DSN for a prospect in 2+ concurrent cadences would be counted
+   * multiple times there, and it skips sequence_events entirely for soft
+   * bounces and for bounces on prospects with no ledger match — both of
+   * which still land here and still fire `notifySlackBounceRecorded`. This
+   * table is the one row per real bounce event; `bounced_at` is NOT NULL on
+   * every row (unlike sequence_events', which predates the column on old
+   * rows), so no COALESCE fallback is needed. Sibling of
+   * countAutoPermanentBounces (the reply-stream bounce path, which never
+   * writes to this table).
+   */
+  countBounces(opts: { sinceIso?: string; untilIso?: string } = {}): number {
+    const where: string[] = [];
+    const args: unknown[] = [];
+    if (opts.sinceIso) {
+      where.push("bounced_at >= ?");
+      args.push(opts.sinceIso);
+    }
+    if (opts.untilIso) {
+      where.push("bounced_at < ?");
+      args.push(opts.untilIso);
+    }
+    const sql = `SELECT COUNT(*) AS n FROM bounces${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`;
+    return (this.db.query(sql).get(...(args as never[])) as { n: number } | null)?.n ?? 0;
+  }
+
+  /**
+   * Count of distinct dead-mailbox autoresponder events ("auto_permanent"
+   * reply kind, see reply-classify.ts) in the window — the OTHER bounce
+   * source the Slack daily summary's `bounced` total must include alongside
+   * countBounces (DSN bounces never touch `sequence_events`; this reply-
+   * stream path never touches `bounces`). `pollInboxReplies` inserts one
+   * `sequence_events` row per active/paused cadence the prospect is enrolled
+   * in for a single autoresponder email, so counting rows would duplicate
+   * one real event; DISTINCT on (prospect_id, bounced_at) collapses that
+   * back to one, since every row from the same email shares the same
+   * `bounced_at` (= the inbound email's own received_at, always set for this
+   * path — see _cadence.ts's pollInboxReplies). `metadata_json.reason`
+   * distinguishes this from an ordinary DSN-recorded 'bounced' row (which
+   * carries no `reason` field).
+   */
+  countAutoPermanentBounces(opts: { sinceIso?: string; untilIso?: string } = {}): number {
+    const where: string[] = [
+      "status = 'bounced'",
+      "bounced_at IS NOT NULL",
+      "json_extract(metadata_json, '$.reason') = 'auto-reply-permanent'",
+    ];
+    const args: unknown[] = [];
+    if (opts.sinceIso) {
+      where.push("bounced_at >= ?");
+      args.push(opts.sinceIso);
+    }
+    if (opts.untilIso) {
+      where.push("bounced_at < ?");
+      args.push(opts.untilIso);
+    }
+    const sql = `SELECT COUNT(DISTINCT prospect_id || '|' || bounced_at) AS n
+      FROM sequence_events WHERE ${where.join(" AND ")}`;
+    return (this.db.query(sql).get(...(args as never[])) as { n: number } | null)?.n ?? 0;
+  }
+
   recordCanaryResult(input: {
     fromIdentity: string;
     toIdentity: string;

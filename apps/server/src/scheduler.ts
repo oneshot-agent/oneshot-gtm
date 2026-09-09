@@ -113,7 +113,21 @@ export function startScheduler(): SchedulerHandle {
       }
       // Bounce detection, isolated like the reply poll; non-spending.
       let bouncesRecorded = 0;
-      if (Date.now() - lastBouncePollAt >= BOUNCE_POLL_INTERVAL_MS) {
+      // Throttled to BOUNCE_POLL_INTERVAL_MS, EXCEPT when the UTC calendar day
+      // has rolled over since the last sweep: postDailySendSummaryIfDue below
+      // stamps an at-most-once watermark for "yesterday" (UTC) on this same
+      // tick, and a bounce that arrived before midnight but is still waiting
+      // behind the 30-minute throttle would otherwise get its bounced_at
+      // windowed into the already-watermarked day and be permanently dropped
+      // from every future daily summary (issue #71 round-3 review finding) —
+      // not delayed, dropped, since the watermark never re-opens a stamped
+      // day. Forcing the sweep here guarantees it runs before the watermark
+      // is stamped, on the very tick that crosses the boundary.
+      const dayRolledOver =
+        lastBouncePollAt > 0 &&
+        new Date(lastBouncePollAt).toISOString().slice(0, 10) !==
+          new Date().toISOString().slice(0, 10);
+      if (Date.now() - lastBouncePollAt >= BOUNCE_POLL_INTERVAL_MS || dayRolledOver) {
         // Stamped before the await, not after: a slow or failing sweep must not
         // let ticks queue up behind it and then all fire at once.
         lastBouncePollAt = Date.now();
