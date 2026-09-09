@@ -328,18 +328,38 @@ export function skipDirectMailStep(input: { prospectId: number; playName: string
     c.current_step + 1,
   );
   if (draft?.started) throw new Error("Recover the submitted mailpiece before continuing");
-  if (draft) {
-    draft.canceled = true;
-    draft.approvalId = undefined;
-    ledger.saveDirectMail(draft);
-  }
   const next = seq.steps[c.current_step + 1];
-  ledger.advanceCadence({
-    ...input,
-    newStep: c.current_step + 1,
-    nextDueAt: next ? new Date(Date.now() + next.dayOffset * 86400000).toISOString() : null,
+  // One transaction: the cancelled draft, the recorded skip and the advance
+  // land together or not at all — a retry after a crash never finds a
+  // "skipped" row beside a cadence still parked on the letter.
+  ledger.transaction(() => {
+    if (draft) {
+      draft.canceled = true;
+      draft.approvalId = undefined;
+      ledger.saveDirectMail(draft);
+    }
+    // The skip is part of the cadence's history (#610): the same step index
+    // a send would have written, status "skipped", so "sent so far" and the
+    // prospect timeline can say why step N never went out. Every send
+    // counter filters on sent/delivered/replied and never sees it.
+    ledger.recordSequenceEvent({
+      prospectId: input.prospectId,
+      playName: input.playName,
+      stepIndex: c.current_step + 1,
+      channel: "direct_mail",
+      status: "skipped",
+      metadata: {
+        label: seq.steps[c.current_step]?.label ?? "Direct mail",
+        reason: "skipped by founder",
+      },
+    });
+    ledger.advanceCadence({
+      ...input,
+      newStep: c.current_step + 1,
+      nextDueAt: next ? new Date(Date.now() + next.dayOffset * 86400000).toISOString() : null,
+    });
+    if (!next) ledger.setCadenceStatus({ ...input, status: "completed" });
   });
-  if (!next) ledger.setCadenceStatus({ ...input, status: "completed" });
   logEvent("cadence.mail.skipped", input);
 }
 
@@ -1954,9 +1974,9 @@ export interface PriorStepRow {
   subject: string;
   /** Null for legacy pre-v8 rows whose metadata_json didn't include the body. */
   body: string | null;
-  /** sequence_events.created_at (UTC ISO). */
+  /** sequence_events.created_at (UTC ISO) — for a skipped letter, when it was skipped. */
   sentAt: string;
-  status: "sent" | "delivered" | "replied";
+  status: "sent" | "delivered" | "replied" | "skipped";
 }
 
 /**
@@ -1994,6 +2014,18 @@ function rowToPriorStep(r: {
     r.metadata_json ?? "",
     {},
   );
+  if (r.status === "skipped") {
+    // A letter the founder skipped (#610): a line in the history, never a
+    // prior email — no subject, no body, so the LLM block ignores it.
+    return {
+      stepIndex: r.step_index,
+      label: "letter skipped",
+      subject: "",
+      body: null,
+      sentAt: r.created_at,
+      status: "skipped",
+    };
+  }
   return {
     stepIndex: r.step_index,
     label: meta.label ?? (r.step_index === 0 ? "initial send" : "follow-up"),
@@ -2043,9 +2075,9 @@ export function getPriorStepsBulk(
 }
 
 function buildPriorEmailsBlock(prospectId: number, playName: string): string | null {
-  const prior = getPriorStepsForProspect(prospectId, playName).filter(
-    (r): r is PriorStepRow & { body: string } => r.body !== null && r.body.length > 0,
-  );
+  const prior = getPriorStepsForProspect(prospectId, playName)
+    .filter((s) => s.status !== "skipped")
+    .filter((r): r is PriorStepRow & { body: string } => r.body !== null && r.body.length > 0);
   if (prior.length === 0) return null;
   const lines = [
     "PRIOR EMAILS (your previous touches to this prospect on this play; do not repeat their angles, hooks, openers, or closes):",

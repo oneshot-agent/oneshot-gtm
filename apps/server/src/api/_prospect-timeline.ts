@@ -58,6 +58,17 @@ export function buildProspectTimeline(input: {
 
   for (const ev of input.sequenceEvents) {
     const meta = parseMeta(ev.metadata_json);
+    if (ev.status === "skipped") {
+      // A letter the founder skipped (#610): the step never went out.
+      events.push({
+        at: sqliteToIso(ev.created_at),
+        kind: "sequence",
+        label: "letter skipped",
+        detail: null,
+        playName: ev.play_name,
+      });
+      continue;
+    }
     const step = typeof meta["label"] === "string" ? meta["label"] : `step ${ev.step_index + 1}`;
     const status = ev.status === "sent" || ev.status === "delivered" ? "" : ` · ${ev.status}`;
     events.push({

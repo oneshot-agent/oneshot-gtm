@@ -153,7 +153,15 @@ export interface SequenceEventRecord {
   play_name: string;
   step_index: number;
   channel: "email" | "sms" | "voice" | "linkedin" | "x" | "direct_mail";
-  status: "queued" | "sent" | "delivered" | "replied" | "bounced" | "failed" | "unsubscribed";
+  status:
+    | "queued"
+    | "sent"
+    | "delivered"
+    | "replied"
+    | "bounced"
+    | "failed"
+    | "unsubscribed"
+    | "skipped";
   metadata_json: string | null;
   created_at: string;
   /**

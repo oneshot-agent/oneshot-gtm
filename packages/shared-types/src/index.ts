@@ -33,8 +33,10 @@ export interface CadenceSentStep {
   subject: string;
   /** Null when this row was written before subject/body persistence landed (pre-v8). */
   body: string | null;
-  /** ISO timestamp of when the email actually sent. */
+  /** ISO timestamp of when the email actually sent — for a skipped letter, when it was skipped. */
   sentAt: string;
+  /** Absent on older servers; `skipped` is a direct-mail step the founder skipped (#610). */
+  status?: "sent" | "delivered" | "replied" | "skipped";
 }
 export type StepChannel = "email" | "sms" | "voice" | "linkedin" | "x" | "direct_mail";
 

@@ -80,7 +80,7 @@ bun run cli -- find drain podcast-guest --dry-run  # preview approved /queue row
 bun run cli -- cadence advance                     # daily tick: poll inbox, fire follow-ups
 ```
 
-69 commands — `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
+70 commands — `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
 
 | Group                    | Commands                                                                                                                                                                                                                                                                                                                                          |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -93,7 +93,7 @@ bun run cli -- cadence advance                     # daily tick: poll inbox, fir
 | `find`                   | `watch` · `drain <play>` · `import --csv <file> --play <name>` · `enrich-linkedin` · `research-prospects` · `research-products` · `synthesize-angles` · `score-prospects` · `backfill-fit-reason` · `calibrate` — `--fail-on-empty` makes `watch --once` and `drain` [exit 2 on a run that produced nothing](#background-monitoring-as-a-service) |
 | `motion`                 | `post-funding` `concierge` `demo-no-show` `competitor-switch` `hiring-signal` `podcast-guest` `discovery-interview` `free-pilot` — each takes `--target <file>`; `breakup-revive` reads the ledger                                                                                                                                                |
 | `cadence`                | `advance` — poll inbound, fire due steps                                                                                                                                                                                                                                                                                                          |
-| `direct-mail`            | `list` · `upload` · `preview` · `refresh` · `approve` · `send` · `cancel` — individual physical-mail approvals                                                                                                                                                                                                                                    |
+| `direct-mail`            | `list` · `upload` · `preview` · `refresh` · `approve` · `send` · `cancel` · `skip` — individual physical-mail approvals                                                                                                                                                                                                                           |
 | `discover`               | `icp interview-prep` · `icp synthesize` · `pmf classify` · `pmf survey` · `pmf survey-collect`                                                                                                                                                                                                                                                    |
 | `measure`                | `benchmark` — compare this install's command activity with the opt-in telemetry cohort; supports `--json`                                                                                                                                                                                                                                         |
 | `intel`                  | `advise` · `personalize` · `triage-replies` · `backfill-intent` · `weekly-review`                                                                                                                                                                                                                                                                 |
@@ -224,7 +224,7 @@ Workspaces share one thing: `~/.oneshot-gtm-shared/shared.sqlite`, holding the p
 
 ```
 apps/
-  cli/        the 69-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
+  cli/        the 70-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
   server/     Bun.serve + SSE; tsdown bundle published as `oneshot-gtm-server`
   web/        Vite + React 19 + TanStack + Base UI — 9 pages, run form, strategist dock, privacy mode
 packages/

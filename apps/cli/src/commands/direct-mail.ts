@@ -7,7 +7,7 @@ import {
   approveDirectMail,
   cancelDirectMail,
 } from "@oneshot-gtm/core";
-import { sendDirectMailCadenceStep } from "@oneshot-gtm/plays";
+import { sendDirectMailCadenceStep, skipDirectMailStep } from "@oneshot-gtm/plays";
 export function registerDirectMailCommand(program: Command) {
   const cmd = program
     .command("direct-mail")
@@ -70,4 +70,11 @@ export function registerDirectMailCommand(program: Command) {
   cmd
     .command("cancel <id>")
     .action(async (id) => console.log(JSON.stringify(await cancelDirectMail(id), null, 2)));
+  cmd
+    .command("skip <prospect-id> <play>")
+    .description("Skip the pending letter and continue the cadence with its next step")
+    .action((prospect, play) => {
+      skipDirectMailStep({ prospectId: Number(prospect), playName: play });
+      console.log(JSON.stringify({ ok: true }, null, 2));
+    });
 }
