@@ -314,6 +314,15 @@ function dispatch(
         provider: "openrouter",
         input,
         timeoutMs,
+        // Models that reason by default (Claude Sonnet 5 / Opus 5, o-series,
+        // Gemini thinking) spend their reasoning INSIDE `max_tokens` on
+        // OpenRouter, and every caller here sets a small, deliberate budget
+        // (200–2000 tokens of JSON). Measured on anthropic/claude-sonnet-5 at
+        // max_tokens=500: default → finish_reason=length with 313 reasoning
+        // tokens and truncated JSON; reasoning off → a clean 184-token answer
+        // at 40% of the cost. OpenRouter's unified `reasoning` parameter maps
+        // to each provider's own switch, so this is one line for all of them.
+        disableReasoning: true,
         extraHeaders: {
           "HTTP-Referer": "https://github.com/oneshot-agent/oneshot-gtm",
           "X-Title": "oneshot-gtm",
@@ -418,6 +427,8 @@ interface OpenAIArgs {
   input: LlmCompleteInput;
   timeoutMs: number | undefined;
   extraHeaders?: Record<string, string>;
+  /** Send OpenRouter's `reasoning: { enabled: false }` — see the openrouter dispatch. */
+  disableReasoning?: boolean;
 }
 
 async function openaiCompatibleComplete(args: OpenAIArgs): Promise<LlmCompleteOutput> {
@@ -429,6 +440,8 @@ async function openaiCompatibleComplete(args: OpenAIArgs): Promise<LlmCompleteOu
       messages: args.input.messages,
       temperature: args.input.temperature ?? 0.7,
       max_tokens: args.input.maxTokens ?? 1024,
+      // OpenRouter only — the OpenAI API rejects unknown parameters.
+      ...(args.disableReasoning ? { reasoning: { enabled: false } } : {}),
     },
     provider: args.provider,
     timeoutMs: args.timeoutMs,

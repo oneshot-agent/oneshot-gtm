@@ -137,6 +137,27 @@ describe("complete() truncation — openrouter", () => {
   });
 });
 
+describe("complete() reasoning switch — openrouter vs openai", () => {
+  it("turns reasoning off on OpenRouter requests, where it would eat the small max_tokens budgets", async () => {
+    const fetchMock = respondWith({
+      choices: [{ message: { content: "{}" }, finish_reason: "stop" }],
+      usage: { completion_tokens: 2 },
+    });
+    await complete({ messages: [{ role: "user", content: "hi" }], maxTokens: 500 });
+    expect(requestOf(fetchMock).body["reasoning"]).toEqual({ enabled: false });
+  });
+
+  it("sends no reasoning parameter to the OpenAI API, which rejects unknown fields", async () => {
+    cfg.provider = "openai";
+    const fetchMock = respondWith({
+      choices: [{ message: { content: "{}" }, finish_reason: "stop" }],
+      usage: { completion_tokens: 2 },
+    });
+    await complete({ messages: [{ role: "user", content: "hi" }], maxTokens: 500 });
+    expect(requestOf(fetchMock).body).not.toHaveProperty("reasoning");
+  });
+});
+
 describe("complete() truncation — openai", () => {
   beforeEach(() => {
     cfg.provider = "openai";
