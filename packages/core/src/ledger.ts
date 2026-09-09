@@ -4473,8 +4473,9 @@ export class Ledger {
    * #599): one query over the sent rows of the plays involved, newest first,
    * keeping the first row per `play|email`. Keyed exactly like the single-row
    * lookup canonicalises (lower-cased, trimmed email). Pairs with no email are
-   * skipped; an empty input touches nothing. Never throws — an unparsable
-   * payload is simply absent from the map.
+   * skipped; an empty input touches nothing. Never throws — `json_valid`
+   * keeps a malformed row out of `json_extract` (which would fail the whole
+   * query), so a bad payload is simply absent from the map.
    */
   latestSentQueuePayloads(
     pairs: ReadonlyArray<{ playName: string; email: string | null }>,
@@ -4494,7 +4495,8 @@ export class Ledger {
       .query(
         `SELECT play_name, lower(trim(json_extract(payload_json, '$.email'))) AS email, payload_json
            FROM target_queue
-          WHERE status = 'sent' AND play_name IN (${playList.map(() => "?").join(",")})
+          WHERE status = 'sent' AND json_valid(payload_json)
+            AND play_name IN (${playList.map(() => "?").join(",")})
           ORDER BY sent_at DESC, id DESC`,
       )
       .all(...playList) as Array<{ play_name: string; email: string | null; payload_json: string }>;
