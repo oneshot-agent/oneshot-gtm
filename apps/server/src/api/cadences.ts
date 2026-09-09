@@ -34,6 +34,7 @@ const MAX_SEND_AGE_MS = 5 * 60 * 1000;
 function toView(
   row: ReturnType<ReturnType<typeof getLedger>["listAllCadences"]>[number],
   priorByKey: Map<string, PriorStepRow[]>,
+  payloadByKey: Map<string, Record<string, unknown>>,
 ): CadenceView {
   let nextStepDraft: CadenceNextStepDraft | null = null;
   if (row.next_step_draft_json) {
@@ -106,7 +107,13 @@ function toView(
     isSending: row.sending_started_at != null,
     lastSendError: row.last_send_error,
     lastSendErrorAt: row.last_send_error_at,
+    queuePayload: payloadByKey.get(payloadKey(row.play_name, row.prospect_email)) ?? null,
   };
+}
+
+/** Same canonical key `latestSentQueuePayloads` builds: play, then the lower-cased trimmed email. */
+function payloadKey(playName: string, email: string | null): string {
+  return `${playName}|${email?.trim().toLowerCase() ?? ""}`;
 }
 
 export function viewsForRows(
@@ -115,7 +122,18 @@ export function viewsForRows(
   // Single SQL fetch for ALL (prospect_id, play_name) pairs — avoids N+1.
   const pairs = rows.map((r) => ({ prospectId: r.prospect_id, playName: r.play_name }));
   const priorByKey = getPriorStepsBulk(pairs);
-  return rows.map((r) => toView(r, priorByKey));
+  // The intro's queue payload (signal + fitReason) for the sheet's reminder —
+  // one query for the page (#599). Best-effort like the prior steps: a ledger
+  // that cannot answer leaves every row without one, never without a page.
+  let payloadByKey: Map<string, Record<string, unknown>>;
+  try {
+    payloadByKey = getLedger().latestSentQueuePayloads(
+      rows.map((r) => ({ playName: r.play_name, email: r.prospect_email })),
+    );
+  } catch {
+    payloadByKey = new Map();
+  }
+  return rows.map((r) => toView(r, priorByKey, payloadByKey));
 }
 
 export function listCadences(req: Request): Response {
