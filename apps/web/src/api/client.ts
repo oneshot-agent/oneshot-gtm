@@ -129,6 +129,20 @@ export const api = {
       `/cadences/${id}/stop?play=${encodeURIComponent(playName)}`,
       input,
     ),
+  /** Skip a cadence's pending letter and continue with its next step (#611). */
+  skipCadenceMail: (id: number, playName: string) =>
+    postJson<{
+      ok: boolean;
+      currentStep: number;
+      status: string;
+      nextStepChannel: string | null;
+    }>(`/cadences/${id}/skip-mail?play=${encodeURIComponent(playName)}`, {}),
+  skipCadenceMailBatch: (items: Array<{ prospectId: number; playName: string }>) =>
+    postJson<{
+      results: Array<{ prospectId: number; playName: string; ok: boolean; error?: string }>;
+      skipped: number;
+      failed: number;
+    }>(`/cadences/skip-mail-batch`, { items }),
   markLinkedInReply: (id: number, body?: string) =>
     postJson<LinkedInReplyResult>(
       `/prospects/${id}/linkedin-reply`,

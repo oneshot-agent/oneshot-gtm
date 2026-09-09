@@ -6,6 +6,7 @@ import {
   CircleStop,
   Eye,
   Loader2,
+  MailX,
   MessageCircle,
   RotateCw,
   Send,
@@ -31,7 +32,7 @@ import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { StepProgress } from "../components/primitives/StepProgress.tsx";
 import { cn, formatSendsToday, timeAgo } from "../lib/cn.ts";
 import { readOnly } from "../lib/readOnly.ts";
-import { STOP_REASON_LABELS, cadenceStateLabel } from "../lib/cadenceState.ts";
+import { STOP_REASON_LABELS, cadenceStateLabel, mailWaitingRows } from "../lib/cadenceState.ts";
 import { fitReasonFor } from "../lib/queueRationale.ts";
 import { queueEvidence } from "../lib/queueEvidence.ts";
 import { IdentityCell, SignalLabel } from "../components/ledger/IdentityCell.tsx";
@@ -171,6 +172,32 @@ function CadencesPage() {
     onError: (err) => toast.error(`couldn't stop cadence: ${err.message}`),
   });
 
+  // Skip a pending letter and move on to the next email (#611). No reason
+  // field: the cadence simply continues, and the skip is recorded as
+  // "letter skipped" in its history.
+  const skipMail = useMutation({
+    mutationFn: (vars: { prospectId: number; playName: string }) =>
+      api.skipCadenceMail(vars.prospectId, vars.playName),
+    onSuccess: (_data, vars) => {
+      void qc.invalidateQueries({ queryKey: ["cadences"] });
+      void qc.invalidateQueries({ queryKey: ["direct-mail"] });
+      toast.success(`letter skipped · ${vars.playName}`);
+    },
+    onError: (err) => toast.error(`couldn't skip the letter: ${err.message}`),
+  });
+  const skipMailBatch = useMutation({
+    mutationFn: (items: Array<{ prospectId: number; playName: string }>) =>
+      api.skipCadenceMailBatch(items),
+    onSuccess: (data) => {
+      void qc.invalidateQueries({ queryKey: ["cadences"] });
+      void qc.invalidateQueries({ queryKey: ["direct-mail"] });
+      setSkipMailConfirmOpen(false);
+      const tail = data.failed > 0 ? ` · ${data.failed} need attention in the mail review` : "";
+      toast.success(`skipped ${data.skipped} letter${data.skipped === 1 ? "" : "s"}${tail}`);
+    },
+    onError: (err) => toast.error(`couldn't skip the letters: ${err.message}`),
+  });
+
   const markLinkedInReply = useMutation({
     mutationFn: (vars: { prospectId: number; body?: string }) =>
       api.markLinkedInReply(vars.prospectId, vars.body),
@@ -251,6 +278,7 @@ function CadencesPage() {
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkSendConfirmOpen, setBulkSendConfirmOpen] = useState(false);
+  const [skipMailConfirmOpen, setSkipMailConfirmOpen] = useState(false);
   const toggleExpanded = (key: string): void =>
     setExpandedKeys((prev) => {
       const next = new Set(prev);
@@ -318,6 +346,7 @@ function CadencesPage() {
     () => list.filter((c) => c.status === "active" && c.nextStepChannel !== "direct_mail"),
     [list],
   );
+  const mailWaiting = useMemo(() => mailWaitingRows(list), [list]);
   const allActiveSelected =
     selectableActive.length > 0 && selectableActive.every((c) => selected.has(rowKey(c)));
   const someActiveSelected =
@@ -508,6 +537,19 @@ function CadencesPage() {
                 </Button>
               ))}
             </div>
+          )}
+          {mailWaiting.length > 0 && (
+            <Button
+              variant="secondary"
+              size="sm"
+              title="Skip the letter on every cadence waiting on one and continue each with its next email"
+              onClick={() => setSkipMailConfirmOpen(true)}
+              {...readOnly}
+            >
+              <MailX size={12} />
+              Skip mail for the {mailWaiting.length} cadence{mailWaiting.length === 1 ? "" : "s"}{" "}
+              waiting on a letter
+            </Button>
           )}
           <div className="font-mono text-[11px] text-ink-faint">refresh · 15s</div>
         </div>
@@ -726,6 +768,21 @@ function CadencesPage() {
                       ]
                     : []),
                 ];
+                const skipMailButton =
+                  c.status === "active" && c.nextStepChannel === "direct_mail" ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      title="Skip the letter and continue with the next step"
+                      disabled={c.isSending || skipMail.isPending}
+                      onClick={() =>
+                        skipMail.mutate({ prospectId: c.prospectId, playName: c.playName })
+                      }
+                      {...readOnly}
+                    >
+                      <MailX size={11} /> Skip mail
+                    </Button>
+                  ) : null;
                 const stopButton =
                   c.status === "active" ? (
                     <Button
@@ -816,6 +873,7 @@ function CadencesPage() {
                           <Button size="sm" disabled={c.isSending} onClick={() => setMailKey(key)}>
                             {c.businessAddress ? "Review mail" : "Add business address"}
                           </Button>
+                          {skipMailButton}
                           {stopButton}
                         </>
                       }
@@ -975,6 +1033,7 @@ function CadencesPage() {
                                     >
                                       {c.businessAddress ? "Review mail" : "Add business address"}
                                     </Button>
+                                    {skipMailButton}
                                     {c.priorSteps.length > 0 && (
                                       <Button
                                         size="sm"
@@ -1163,34 +1222,48 @@ function CadencesPage() {
                                     sent so far · {c.priorSteps.length}
                                   </div>
                                   <ol className="flex flex-col gap-2">
-                                    {c.priorSteps.map((st) => (
-                                      <li key={st.stepIndex} className="flex flex-col gap-1">
-                                        <div className="flex items-baseline gap-3 leading-4">
+                                    {c.priorSteps.map((st) =>
+                                      st.status === "skipped" ? (
+                                        <li
+                                          key={st.stepIndex}
+                                          className="flex items-baseline gap-3 leading-4"
+                                        >
                                           <span className="w-[64px] shrink-0 text-right font-mono text-[11px] text-ink-faint">
                                             {timeAgo(st.sentAt)}
                                           </span>
-                                          <span className="shrink-0 whitespace-nowrap text-ink-cream-2">
-                                            step {st.stepIndex} · {st.label}
+                                          <span className="shrink-0 whitespace-nowrap text-ink-faint">
+                                            step {st.stepIndex} · letter skipped
                                           </span>
-                                          <span className="min-w-0 truncate text-ink-muted">
-                                            {st.subject}
-                                          </span>
-                                        </div>
-                                        <div className="pl-[76px]">
-                                          {st.body ? (
-                                            <Disclosure label="body">
-                                              <pre className="ln-prose mt-2 whitespace-pre-wrap text-[12px] text-ink-cream-2">
-                                                {st.body}
-                                              </pre>
-                                            </Disclosure>
-                                          ) : (
-                                            <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
-                                              body not captured
+                                        </li>
+                                      ) : (
+                                        <li key={st.stepIndex} className="flex flex-col gap-1">
+                                          <div className="flex items-baseline gap-3 leading-4">
+                                            <span className="w-[64px] shrink-0 text-right font-mono text-[11px] text-ink-faint">
+                                              {timeAgo(st.sentAt)}
                                             </span>
-                                          )}
-                                        </div>
-                                      </li>
-                                    ))}
+                                            <span className="shrink-0 whitespace-nowrap text-ink-cream-2">
+                                              step {st.stepIndex} · {st.label}
+                                            </span>
+                                            <span className="min-w-0 truncate text-ink-muted">
+                                              {st.subject}
+                                            </span>
+                                          </div>
+                                          <div className="pl-[76px]">
+                                            {st.body ? (
+                                              <Disclosure label="body">
+                                                <pre className="ln-prose mt-2 whitespace-pre-wrap text-[12px] text-ink-cream-2">
+                                                  {st.body}
+                                                </pre>
+                                              </Disclosure>
+                                            ) : (
+                                              <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
+                                                body not captured
+                                              </span>
+                                            )}
+                                          </div>
+                                        </li>
+                                      ),
+                                    )}
                                   </ol>
                                 </div>
                               </>
@@ -1207,6 +1280,37 @@ function CadencesPage() {
           </table>
         )}
       </section>
+
+      <Modal
+        open={skipMailConfirmOpen}
+        onClose={() => setSkipMailConfirmOpen(false)}
+        title={`Skip the letter for ${mailWaiting.length} cadence${mailWaiting.length === 1 ? "" : "s"}`}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setSkipMailConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() =>
+                skipMailBatch.mutate(
+                  mailWaiting.map((c) => ({ prospectId: c.prospectId, playName: c.playName })),
+                )
+              }
+              disabled={skipMailBatch.isPending || mailWaiting.length === 0}
+              {...readOnly}
+            >
+              {skipMailBatch.isPending ? "Skipping…" : `Skip ${mailWaiting.length}`}
+            </Button>
+          </>
+        }
+      >
+        <div className="text-[12px] text-ink-muted">
+          Each cadence moves past the letter: on to its next email on the normal delay, or to
+          completed when the letter was the last step. The skip is recorded as “letter skipped” in
+          its history. A mailpiece already submitted to the printer is left alone; recover it in the
+          mail review.
+        </div>
+      </Modal>
 
       <Modal
         open={bulkSendConfirmOpen}
