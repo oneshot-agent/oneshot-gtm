@@ -100,6 +100,12 @@ fires by accident or never. Then a named failure, a mechanism, and what was
 learned. If something must appear in every email, an angle is the wrong home
 for it.
 
+The same definition lives in `packages/prompts/strategist-trigger.md` (the
+strategist writes most edges) and in every edge-taking trigger's `configBrief`,
+and saving a trigger config runs `lintEdge` (`packages/plays/src/_edge-lint.ts`)
+over the edge — warnings only, never a refusal — so a new install gets the
+shape without the founder having to know the convention.
+
 ## Keeping this page true
 
 Re-derive rather than trusting it:

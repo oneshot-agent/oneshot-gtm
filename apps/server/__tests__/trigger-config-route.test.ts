@@ -88,3 +88,33 @@ describe("setTriggerConfigRoute", () => {
     ).toBe(400);
   });
 });
+
+describe("setTriggerConfigRoute — edge warnings (issue #585)", () => {
+  it("warns on a single flat pitch and still saves", async () => {
+    const res = await setTriggerConfigRoute(
+      req({ config: { yourEdge: "single SDK + on-chain receipts cuts vendor sprawl" } }),
+      { name: "github-topics" },
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { ok: boolean; warnings: string[] };
+    expect(body.ok).toBe(true);
+    expect(body.warnings.some((w) => w.includes("one angle only"))).toBe(true);
+    expect(body.warnings.some((w) => w.includes("who it fits"))).toBe(true);
+    expect(upserts).toHaveLength(1); // saved regardless
+  });
+
+  it("says nothing about a well-shaped edge, and nothing when there is no edge", async () => {
+    const edge = [
+      "For a founder selling to clinics and contractors — the data breaks before the copy does: email-finding tools hand back info@ or nothing. What we found: resolve a named person off the listing first.",
+      "For someone in a marketing role, outbound dies on the second touch: the follow-up re-sends the first argument with a bump on top. What we found: a follow-up built on one new fact gets read.",
+    ].join(" // ");
+    const good = await setTriggerConfigRoute(req({ config: { yourEdge: edge } }), {
+      name: "github-topics",
+    });
+    expect(((await good.json()) as { warnings: string[] }).warnings).toEqual([]);
+    const none = await setTriggerConfigRoute(req({ config: { sinceDays: 3 } }), {
+      name: "show-hn",
+    });
+    expect(((await none.json()) as { warnings: string[] }).warnings).toEqual([]);
+  });
+});
