@@ -533,14 +533,26 @@ async function walkInboxWindow(
         if (kind === "auto_permanent" || kind === "unsubscribe") {
           const status = kind === "unsubscribe" ? "unsubscribed" : "bounced";
           // Slack notification: fire-and-forget, once per autoresponder email
-          // (not per cadence — the loop below can touch several). Mirrors the
-          // DSN path's notifySlackBounceRecorded call in pollInboxBounces;
-          // this is the reply-stream bounce source and is now counted into
-          // the same daily bounced total (Ledger.countAutoPermanentBounces),
-          // so it must also fire the same event (issue #71 review finding —
-          // "counted but never notified"). No status_code: a dead-mailbox
-          // autoresponder carries no SMTP DSN code, unlike a real bounce.
-          if (status === "bounced") {
+          // (not per cadence — the loop below can touch several). Gated on
+          // `isNewReply`, mirroring the human-reply branch above: the reply
+          // poll's `since` window intentionally re-examines up to
+          // REPLY_WATERMARK_OVERLAP_MS before the watermark on every poll
+          // (overlap costs fetches, not correctness — see the comment on
+          // `since` below), and `seen` only dedupes within a single
+          // `pollInboxReplies()` call, not across polls. Without this gate a
+          // dead-mailbox autoresponder re-seen in that overlap window on the
+          // next poll would refire this alert a second time.
+          // `recordInboxReply`'s INSERT OR IGNORE (and therefore `isNewReply`)
+          // is the only signal keyed on the email id itself, so it's the
+          // correct first-sight check here, same as it is for the human-reply
+          // notification. Mirrors the DSN path's notifySlackBounceRecorded
+          // call in pollInboxBounces; this is the reply-stream bounce source
+          // and is now counted into the same daily bounced total
+          // (Ledger.countAutoPermanentBounces), so it must also fire the same
+          // event (issue #71 review finding — "counted but never notified").
+          // No status_code: a dead-mailbox autoresponder carries no SMTP DSN
+          // code, unlike a real bounce.
+          if (status === "bounced" && isNewReply) {
             void notifySlackBounceRecorded({
               recipient: from,
               kind: "auto_permanent",

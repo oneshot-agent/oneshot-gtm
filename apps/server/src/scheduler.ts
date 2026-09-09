@@ -60,6 +60,19 @@ export function startScheduler(): SchedulerHandle {
   // 0 = never polled, so the first tick always sweeps.
   let lastBouncePollAt = 0;
   let mailBackfillRunning = false;
+  // True unless the most recent sweep that actually ran came back partial or
+  // failed outright. Lives OUTSIDE the tick closure (not re-initialized per
+  // tick) — it must persist across ticks, not just describe the current one:
+  // a throttled tick right after a partial/failed sweep runs no sweep of its
+  // own, so if this flag reset to `true` every tick it would hand
+  // postDailySendSummaryIfDue a false "clean" on the very next tick and
+  // permanently watermark a day the forced sweep never actually finished
+  // confirming (issue #71 round-5 review finding — this is the bug the
+  // round-4 fix was supposed to prevent, recurring one tick later because
+  // the flag wasn't carried forward). Only a tick whose sweep actually runs
+  // updates it, to either outcome; ticks with no sweep due leave it as the
+  // last sweep left it.
+  let bouncePollClean = true;
 
   const tick = async (): Promise<void> => {
     if (cancelled) return;
@@ -113,13 +126,6 @@ export function startScheduler(): SchedulerHandle {
       }
       // Bounce detection, isolated like the reply poll; non-spending.
       let bouncesRecorded = 0;
-      // True unless a sweep that ran (or should have run) this tick came back
-      // partial or failed outright — gates postDailySendSummaryIfDue below so
-      // it never permanently watermarks a day it can't be sure was fully
-      // swept (issue #71 round-4 review finding). Stays true when no sweep
-      // was due this tick (not a day-rollover tick — see dayRolledOver
-      // below), since the watermark can't be about to change in that case.
-      let bouncePollClean = true;
       // Throttled to BOUNCE_POLL_INTERVAL_MS, EXCEPT when the UTC calendar day
       // has rolled over since the last sweep: postDailySendSummaryIfDue below
       // stamps an at-most-once watermark for "yesterday" (UTC) on this same

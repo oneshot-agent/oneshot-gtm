@@ -290,4 +290,33 @@ describe("startScheduler", () => {
 
     handle.stop();
   });
+
+  // issue #71 round-5 review finding: bouncePollClean used to be a `let`
+  // re-initialized to `true` at the top of every tick's closure. Sequence:
+  // a tick's sweep comes back partial (sweepClean: false, summary correctly
+  // deferred, watermark NOT stamped) — the very next tick, inside the
+  // 30-minute throttle so no sweep runs at all, would still reset the flag
+  // to `true` and hand postDailySendSummaryIfDue a false "clean", stamping
+  // the still-incomplete day one tick later. The flag must persist across
+  // ticks: a tick with no sweep due must carry forward whatever the last
+  // sweep that actually ran reported, not assume clean by default.
+  it("keeps sweepClean false on a throttled tick that runs no sweep of its own, after a partial sweep", async () => {
+    nextSleepValue = 60_000;
+    bouncePollCleanValue = false;
+    const handle = startScheduler();
+
+    // First tick ever always sweeps (lastBouncePollAt === 0); reports partial.
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(calls.pollInboxBounces).toBe(1);
+    expect(postDailySendSummaryIfDueOpts.at(-1)).toEqual({ sweepClean: false });
+
+    // Next tick, 1 minute later: well inside the 30-minute throttle and no
+    // day rollover, so no sweep runs. sweepClean must still be false — the
+    // partial result from the last real sweep, not reset to true.
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(calls.pollInboxBounces).toBe(1); // confirms no sweep ran this tick
+    expect(postDailySendSummaryIfDueOpts.at(-1)).toEqual({ sweepClean: false });
+
+    handle.stop();
+  });
 });

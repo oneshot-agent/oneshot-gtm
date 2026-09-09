@@ -654,6 +654,38 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
     });
   });
 
+  // issue #71 round-5 review finding: the alert above was gated only on
+  // `kind === "auto_permanent"`, not on first-sight. The reply poll's `since`
+  // window intentionally re-examines up to REPLY_WATERMARK_OVERLAP_MS (1h)
+  // before the watermark on every poll, and `seen` only dedupes within a
+  // single pollInboxReplies() call — so the SAME dead-mailbox autoresponder,
+  // still inside that overlap window on the next poll, would refire the
+  // alert a second time. It must be gated on isNewReply (recordInboxReply's
+  // INSERT OR IGNORE return), exactly like the human-reply branch is.
+  it("does not refire the bounce alert when the same autoresponder email is re-seen on a later poll", async () => {
+    inboxEmails = [
+      {
+        id: "dead-mailbox-1",
+        from: "sophia@agenticarchitect.ai",
+        subject: "out of office Re: your agent stack",
+        body: "Retired October 2025. No longer using this email.",
+        received_at: "2026-08-27T16:07:46.000Z",
+      },
+    ];
+
+    const first = await pollInboxReplies();
+    expect(first.autoRepliesSkipped).toBe(1);
+    expect(notifySlackBounceRecordedMock).toHaveBeenCalledTimes(1);
+
+    // Second poll re-fetches the same email id — exactly what happens when
+    // the next poll's `since` (watermark - 1h overlap) still covers this
+    // email's received_at. recordInboxReply's INSERT OR IGNORE means
+    // isNewReply is false this time; the alert must not refire.
+    const second = await pollInboxReplies();
+    expect(second.autoRepliesSkipped).toBe(1);
+    expect(notifySlackBounceRecordedMock).toHaveBeenCalledTimes(1);
+  });
+
   it("an unsubscribe request stops the cadence as unsubscribed", async () => {
     inboxEmails = [
       {
