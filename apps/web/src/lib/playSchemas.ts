@@ -325,7 +325,7 @@ export const PLAY_SCHEMAS: Record<string, PlaySchema> = {
     fields: [
       { key: "name", label: "Prospect name", type: "text", required: true },
       { key: "email", label: "Prospect email", type: "email", required: true },
-      { key: "company", label: "Company", type: "text", required: true },
+      { key: "company", label: "Company (optional)", type: "text" },
       {
         key: "vendorStack",
         label: "Vendor stack (comma-separated)",
@@ -365,7 +365,7 @@ export const PLAY_SCHEMAS: Record<string, PlaySchema> = {
     fields: [
       { key: "name", label: "Prospect name", type: "text", required: true },
       { key: "email", label: "Prospect email", type: "email", required: true },
-      { key: "company", label: "Company", type: "text", required: true },
+      { key: "company", label: "Company (optional)", type: "text" },
       {
         key: "repo",
         label: "Repo they starred (owner/name)",

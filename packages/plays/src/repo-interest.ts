@@ -94,7 +94,7 @@ const repoInterestDef: EmailPlayDef<RepoInterestTarget> = {
     [
       `FOUNDER: ${cfg.founderName}`,
       `PRODUCT: ${cfg.productOneLiner}`,
-      `PROSPECT: ${t.name} at ${t.company}`,
+      `PROSPECT: ${t.name}${t.company ? ` at ${t.company}` : ""}`,
       `STARRED REPO: ${t.repoLabel ?? t.repo}`,
       `YOUR EDGE: ${t.yourEdge}`,
       ...(t.repoEdge

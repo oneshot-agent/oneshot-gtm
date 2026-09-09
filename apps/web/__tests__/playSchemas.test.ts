@@ -165,3 +165,16 @@ describe("missingRequiredFields — requireOneOf (civic-pilot purchasing route)"
     );
   });
 });
+
+// A stargazer or a stack-consolidation lead often has no company on record —
+// the GitHub profile is blank and the email is a gmail. The finder enqueues
+// them anyway and the queue's own send path drafts them fine, so the run
+// form must not refuse the same rows ("row 2: Company; row 4: Company").
+describe("company is optional where the finder cannot always supply it", () => {
+  it("repo-interest and stack-consolidation do not require company", () => {
+    for (const play of ["repo-interest", "stack-consolidation"] as const) {
+      const field = PLAY_SCHEMAS[play]!.fields.find((f) => f.key === "company");
+      expect(field?.required ?? false).toBe(false);
+    }
+  });
+});
