@@ -284,6 +284,18 @@ export function buildFetchHandler(): (req: Request) => Promise<Response> | Respo
     }
 
     if (url.pathname.startsWith("/api/")) {
+      // Cross-site request forgery defense for every mutating route. The CORS
+      // headers below only keep a cross-site page from READING a response; a
+      // simple POST (form, text/plain fetch) still executes. Browsers stamp
+      // `Origin` on every POST and page script cannot forge it, so a mutating
+      // call whose Origin is not loopback is refused before dispatch. No
+      // Origin (curl, the CLI, server-side fetch) passes as before.
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        const origin = req.headers.get("origin") ?? "";
+        if (!isLoopbackOrigin(origin) || req.headers.get("sec-fetch-site") === "cross-site") {
+          return jsonResponse({ error: "forbidden: cross-site request" }, 403, req);
+        }
+      }
       const match = findRoute(req);
       if (!match) {
         return jsonResponse({ error: "not found", path: url.pathname }, 404, req);

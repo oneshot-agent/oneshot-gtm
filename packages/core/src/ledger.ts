@@ -4562,6 +4562,16 @@ export class Ledger {
   }
 
   /**
+   * Run several ledger writes as one SQLite transaction. For the engine
+   * steps that must land together (a recorded event and the state advance it
+   * explains) — an interruption between them would leave a row that says one
+   * thing and a cadence that says another.
+   */
+  transaction<T>(fn: () => T): T {
+    return this.db.transaction(fn)();
+  }
+
+  /**
    * Merge a few keys into a LIVE queue row's payload (issue #592) — pending or
    * approved, not sent, not mid-send. One statement, so there is no window
    * between checking eligibility and writing: a row that got sent between the

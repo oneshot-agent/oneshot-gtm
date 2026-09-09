@@ -328,33 +328,38 @@ export function skipDirectMailStep(input: { prospectId: number; playName: string
     c.current_step + 1,
   );
   if (draft?.started) throw new Error("Recover the submitted mailpiece before continuing");
-  if (draft) {
-    draft.canceled = true;
-    draft.approvalId = undefined;
-    ledger.saveDirectMail(draft);
-  }
-  // The skip is part of the cadence's history (#610): the same step index a
-  // send would have written, status "skipped", so "sent so far" and the
-  // prospect timeline can say why step N never went out. Every send counter
-  // filters on sent/delivered/replied and never sees it.
-  ledger.recordSequenceEvent({
-    prospectId: input.prospectId,
-    playName: input.playName,
-    stepIndex: c.current_step + 1,
-    channel: "direct_mail",
-    status: "skipped",
-    metadata: {
-      label: seq.steps[c.current_step]?.label ?? "Direct mail",
-      reason: "skipped by founder",
-    },
-  });
   const next = seq.steps[c.current_step + 1];
-  ledger.advanceCadence({
-    ...input,
-    newStep: c.current_step + 1,
-    nextDueAt: next ? new Date(Date.now() + next.dayOffset * 86400000).toISOString() : null,
+  // One transaction: the cancelled draft, the recorded skip and the advance
+  // land together or not at all — a retry after a crash never finds a
+  // "skipped" row beside a cadence still parked on the letter.
+  ledger.transaction(() => {
+    if (draft) {
+      draft.canceled = true;
+      draft.approvalId = undefined;
+      ledger.saveDirectMail(draft);
+    }
+    // The skip is part of the cadence's history (#610): the same step index
+    // a send would have written, status "skipped", so "sent so far" and the
+    // prospect timeline can say why step N never went out. Every send
+    // counter filters on sent/delivered/replied and never sees it.
+    ledger.recordSequenceEvent({
+      prospectId: input.prospectId,
+      playName: input.playName,
+      stepIndex: c.current_step + 1,
+      channel: "direct_mail",
+      status: "skipped",
+      metadata: {
+        label: seq.steps[c.current_step]?.label ?? "Direct mail",
+        reason: "skipped by founder",
+      },
+    });
+    ledger.advanceCadence({
+      ...input,
+      newStep: c.current_step + 1,
+      nextDueAt: next ? new Date(Date.now() + next.dayOffset * 86400000).toISOString() : null,
+    });
+    if (!next) ledger.setCadenceStatus({ ...input, status: "completed" });
   });
-  if (!next) ledger.setCadenceStatus({ ...input, status: "completed" });
   logEvent("cadence.mail.skipped", input);
 }
 
