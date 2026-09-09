@@ -68,6 +68,9 @@ export function runAcceleratorBatch(
     playName: PLAY_NAME,
     promptName: "accelerator-batch-email",
     maxBodyWords: 150,
+    // The prompt forbids links, prices and any discount "regardless"; until
+    // #593 nothing enforced it. Same opt-in discovery-interview uses.
+    hardBans: true,
     enrollCadence: true,
     toEmail: (t) => t.email,
     // Enrich on both preview and real send (cached by email); deepResearch is

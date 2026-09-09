@@ -409,3 +409,49 @@ describe("meetingBlock — direct outcome-to-draft path (issue #578)", () => {
     expect(block).not.toContain("Calendar title");
   });
 });
+
+describe("lintEmail — what the prompts say it catches (issue #593)", () => {
+  it("flags the provenance verbs anywhere in the body, not only as the opener", () => {
+    for (const body of [
+      "Hey Ada, your repo came up while I was looking at new infrastructure teams. Sam",
+      "I've been looking through the S26 list and your launch stood out. Sam",
+      "Your post turned up when I stumbled on the agents thread. Sam",
+      "I happened across your launch page yesterday. Sam",
+    ]) {
+      expect(lintEmail("x", body)).toContain("banned-opener:provenance-verb");
+    }
+    // The verbs the prompt recommends stay clean.
+    expect(
+      lintEmail("x", "Found you in the YC S26 list. Did the retry path bite yet? Sam"),
+    ).toEqual([]);
+  });
+
+  it("flags any scheduling link, not only Calendly", () => {
+    for (const body of [
+      "Grab a slot: cal.com/sam/quick-chat. Sam",
+      "Here is my savvycal if easier. Sam",
+      "calendar.app.google/abc123 works too. Sam",
+    ]) {
+      expect(lintEmail("x", body)).toContain("calendar-link");
+    }
+  });
+
+  it("flags two specific time slots, 'I'd be happy to', and 'not only … but also'", () => {
+    expect(lintEmail("x", "Does 3:30 today or 12:00 tomorrow work? Sam")).toContain(
+      "banned-cta:time-slots",
+    );
+    expect(lintEmail("x", "I'd be happy to walk you through it. Sam")).toContain("servile-closer");
+    expect(lintEmail("x", "It is not only faster but also cheaper to run. Sam")).toContain(
+      "negative-parallelism",
+    );
+  });
+
+  it("the widened vocabulary list still leaves ordinary copy alone", () => {
+    expect(
+      lintEmail("x", "the key question is which one actually bites on your journey. Sam"),
+    ).toEqual([]);
+    expect(
+      lintEmail("x", "we found the valuable part was the join, not the sending. Sam"),
+    ).toContain("ai-vocab");
+  });
+});

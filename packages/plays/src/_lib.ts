@@ -116,6 +116,13 @@ export const SLOP_PHRASES: Array<[RegExp, string]> = [
   [/\bQuick question\b/i, "banned-opener:quick-question"],
   [/\bLoved your launch\b/i, "banned-opener:loved-your-launch"],
   [/\bReaching out because\b/i, "banned-opener:reaching-out"],
+  // The provenance verbs accelerator-batch-email.md bans "wherever they appear"
+  // — two of the four it named had no pattern, and "…while I was looking at
+  // new infrastructure teams." shipped with zero flags (#593).
+  [
+    /\bI(?:'ve| have)? (?:was|been) looking (?:at|through|into)\b|\bI stumbled (?:on|upon|across)\b|\bI happened (?:across|upon)\b/i,
+    "banned-opener:provenance-verb",
+  ],
   [/\bI'd love to (?:chat|connect|jump on a call|hear)\b/i, "banned-cta:love-to-chat"],
   // Any time-boxed meeting ask, not just the 15-minute one: "worth a 10-min
   // back and forth" shipped 291 times past the literal 15 in this pattern.
@@ -126,9 +133,14 @@ export const SLOP_PHRASES: Array<[RegExp, string]> = [
   // text alone did not hold it: 120 of 312 repo-interest second touches shipped
   // with one, because several play prompts quoted the phrase while banning it.
   [/\b(?:compare notes|swap takes|back.?and.?forth|trade notes)\b/i, "banned-cta:compare-notes"],
+  // "3:30 today or 12:00 tomorrow?" — a meeting ask dressed as a scheduling question.
+  [
+    /\b\d{1,2}(?::\d{2})?(?:\s?[ap]m)?\s+(?:today|tomorrow|(?:on\s+)?(?:mon|tues|wednes|thurs|fri|satur|sun)day)\b[^.?!]{0,40}\bor\b[^.?!]{0,40}\b\d{1,2}(?::\d{2})?(?:\s?[ap]m)?\b/i,
+    "banned-cta:time-slots",
+  ],
   [/\bcurious to (?:learn|hear)\b/i, "banned-filler:curious-to"],
   [
-    /\b(?:additionally|crucial|delve|enduring|enhance|fostering|garner|highlight|interplay|intricate|pivotal|showcase|tapestry|testament|underscore|leverage|navigate|elevate|empower|seamless|robust|comprehensive|vibrant|profound|groundbreaking|revolutionary)\b/i,
+    /\b(?:additionally|crucial|delve|enduring|enhance|fostering|garner|highlight|interplay|intricate|pivotal|showcase|tapestry|testament|underscore|leverage|navigate|elevate|empower|seamless|robust|comprehensive|vibrant|profound|groundbreaking|revolutionary|unlock|transform|landscape|ecosystem|realm|nestled|valuable|emphasize|intricacies|align with|at the intersection of|in the heart of)\b/i,
     "ai-vocab",
   ],
   [
@@ -140,12 +152,18 @@ export const SLOP_PHRASES: Array<[RegExp, string]> = [
     /\b(?:as of my last training|based on available information|while specific details are limited)\b/i,
     "knowledge-cutoff-hedge",
   ],
-  [/\bIt'?s not (?:just|merely) [^.]+, it'?s\b/i, "negative-parallelism"],
+  [
+    /\bIt'?s not (?:just|merely) [^.]+, it'?s\b|\bnot only\b[^.]{1,80}\bbut also\b/i,
+    "negative-parallelism",
+  ],
   [
     /\b(?:the future looks bright|exciting times lie ahead|journey toward)\b/i,
     "generic-positive-ending",
   ],
-  [/\b(?:hope this helps|let me know if you'?d like|happy to expand)\b/i, "servile-closer"],
+  [
+    /\b(?:hope this helps|let me know if you'?d like|happy to expand|I'?d be happy to)\b/i,
+    "servile-closer",
+  ],
 ];
 
 /**
@@ -320,7 +338,10 @@ export function lintEmail(subject: string, body: string, maxBodyWords = 110): st
   }
   if (/(\b\w+\b),\s+(\b\w+\b),\s+and\s+\b\w+\b/.test(body)) flags.push("rule-of-three");
   if ((body.match(/!/g) ?? []).length > 1) flags.push("excess-exclamations");
-  if (body.toLowerCase().includes("calendly")) flags.push("calendar-link");
+  // Any scheduling link, not only the one vendor the string match used to catch.
+  if (/\b(?:calendly|cal\.com|savvycal|zcal)\b|calendar\.app\.google/i.test(body)) {
+    flags.push("calendar-link");
+  }
   if (citesPublicRecordLeverage(`${subject}\n${body}`)) flags.push("public-record-leverage");
   return flags;
 }

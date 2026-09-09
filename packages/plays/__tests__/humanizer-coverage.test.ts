@@ -29,11 +29,13 @@ const PROBES: RuleProbe[] = [
   { flag: "banned-opener:quick-question", marker: "quick question" },
   { flag: "banned-opener:loved-your-launch", marker: "loved your launch" },
   { flag: "banned-opener:reaching-out", marker: "reaching out because" },
+  { flag: "banned-opener:provenance-verb", marker: "i was looking at" },
   // Banned CTAs
   { flag: "banned-cta:love-to-chat", marker: "i'd love to chat" },
   { flag: "banned-cta:worth-n-min", marker: "worth a 15" },
   { flag: "banned-cta:compare-notes", marker: "compare notes" },
   { flag: "banned-cta:mind-if-i", marker: "mind if i" },
+  { flag: "banned-cta:time-slots", marker: "two specific time slots" },
   // Banned filler
   { flag: "banned-filler:just-wanted-to", marker: "just wanted to" },
   { flag: "banned-filler:curious-to", marker: "curious to" },
