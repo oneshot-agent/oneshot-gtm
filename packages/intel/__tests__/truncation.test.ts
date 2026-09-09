@@ -172,13 +172,18 @@ describe("complete() reasoning switch — openrouter vs openai", () => {
       JSON.parse((init as RequestInit).body as string),
     );
     expect(bodies[0]).toHaveProperty("reasoning", { enabled: false });
-    expect(bodies[1]).not.toHaveProperty("reasoning");
+    // Issue #586: the retry is not "the same request without the switch" — a
+    // mandatory model spends its thinking inside max_tokens, so it gets the
+    // lowest effort and a raised budget (see reasoning-mandatory.test.ts).
+    expect(bodies[1]).toHaveProperty("reasoning", { effort: "low" });
+    expect(bodies[1].max_tokens).toBeGreaterThan(500);
 
     // Remembered: the next call to the same model skips the switch and the round trip.
     await complete({ messages: [{ role: "user", content: "again" }], maxTokens: 500 });
     expect(fn).toHaveBeenCalledTimes(3);
-    expect(JSON.parse((fn.mock.calls[2]![1] as RequestInit).body as string)).not.toHaveProperty(
+    expect(JSON.parse((fn.mock.calls[2]![1] as RequestInit).body as string)).toHaveProperty(
       "reasoning",
+      { effort: "low" },
     );
   });
 

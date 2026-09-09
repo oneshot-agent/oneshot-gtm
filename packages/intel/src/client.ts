@@ -327,16 +327,26 @@ function dispatch(
       // tokens and truncated JSON; reasoning off → a clean 184-token answer
       // at 40% of the cost. OpenRouter's unified `reasoning` parameter maps
       // to each provider's own switch, so this is one line for all of them —
-      // except the ~100 models OpenRouter marks `reasoning.mandatory`
-      // (gpt-5, the newer Gemini flashes, Fable 5.1), which answer the
-      // switch with a 400. Those get one retry without it and are
-      // remembered for the rest of the process, so the founder's model choice
-      // never has to know which kind it is.
-      if (mandatoryReasoningModels.has(model)) return openaiCompatibleComplete(args);
+      // except the models OpenRouter marks `reasoning.mandatory` (gpt-5, the
+      // Gemini 3.5+ flashes, Fable 5.1), which answer the switch with a 400.
+      //
+      // For those, retrying WITHOUT the switch is not enough (issue #586):
+      // the retry keeps the caller's budget and the model spends all of it
+      // thinking — google/gemini-3.8-flash at max_tokens=500 returned
+      // finish_reason=length with 481/496 tokens of reasoning and an empty
+      // body, on every single draft. So the mandatory path asks for the
+      // lowest effort AND tops the budget up by an allowance, so the caller's
+      // maxTokens keeps meaning "tokens of answer I want". The model is
+      // remembered for the rest of the process (and the common families are
+      // seeded) so the founder's model choice never has to know which kind
+      // it is, and only the first call of a boot pays for the 400.
+      if (mandatoryReasoningModels.has(model) || seededMandatory(model)) {
+        return completeWithMandatoryReasoning(args);
+      }
       return openaiCompatibleComplete({ ...args, disableReasoning: true }).catch((err: unknown) => {
         if (isMandatoryReasoningRejection(err)) {
           mandatoryReasoningModels.add(model);
-          return openaiCompatibleComplete(args);
+          return completeWithMandatoryReasoning(args);
         }
         throw err;
       });
@@ -355,8 +365,47 @@ function dispatch(
   }
 }
 
-/** OpenRouter models that rejected `reasoning: { enabled: false }` — see the openrouter dispatch. */
+/**
+ * Completion budget granted on top of the caller's `maxTokens` for a
+ * reasoning-mandatory model. One data point behind the number: gemini-3.8-flash
+ * at effort=medium used 481 reasoning tokens for what would have been a
+ * ~200-token answer. `low` should need less, but a too-small allowance costs a
+ * truncated draft and a too-large one costs nothing (unused budget is not
+ * billed), so it errs high.
+ */
+export const MANDATORY_REASONING_ALLOWANCE_TOKENS = 1536;
+/** Every reasoning-mandatory model on OpenRouter accepts `low`; not all accept `minimal`. */
+export const MANDATORY_REASONING_EFFORT = "low";
+
+/**
+ * OpenRouter models that cannot have reasoning switched off — see the
+ * openrouter dispatch. Learned at runtime from the 400, seeded with the
+ * families known to be mandatory so the first call of a boot doesn't pay for
+ * it. The seed is an optimisation, never the authority: an unlisted model is
+ * still detected, and a listed one that later allows the switch merely wastes
+ * a little budget.
+ */
 const mandatoryReasoningModels = new Set<string>();
+const MANDATORY_REASONING_SEED = [/^google\/gemini-3\.[5-9]-flash/, /^openai\/gpt-5/];
+function seededMandatory(model: string): boolean {
+  return MANDATORY_REASONING_SEED.some((re) => re.test(model));
+}
+
+/**
+ * The mandatory path: lowest effort plus the allowance. A model that rejects
+ * the `effort` parameter too (a second 400 about reasoning) is called with no
+ * reasoning parameter at all — but still with the raised budget, which is the
+ * half of the fix that actually matters.
+ */
+function completeWithMandatoryReasoning(args: OpenAIArgs): Promise<LlmCompleteOutput> {
+  const raised = { ...args, extraMaxTokens: MANDATORY_REASONING_ALLOWANCE_TOKENS };
+  return openaiCompatibleComplete({ ...raised, reasoningEffort: MANDATORY_REASONING_EFFORT }).catch(
+    (err: unknown) => {
+      if (isMandatoryReasoningRejection(err)) return openaiCompatibleComplete(raised);
+      throw err;
+    },
+  );
+}
 
 /** A 400 whose body talks about reasoning: the model cannot have it switched off. */
 function isMandatoryReasoningRejection(err: unknown): boolean {
@@ -450,9 +499,21 @@ interface OpenAIArgs {
   extraHeaders?: Record<string, string>;
   /** Send OpenRouter's `reasoning: { enabled: false }` — see the openrouter dispatch. */
   disableReasoning?: boolean;
+  /**
+   * Send OpenRouter's `reasoning: { effort }` instead — for models whose
+   * reasoning cannot be switched off. Mutually exclusive with disableReasoning.
+   */
+  reasoningEffort?: string;
+  /**
+   * Extra completion budget on top of the caller's `maxTokens`. A reasoning-
+   * mandatory model spends its thinking inside `max_tokens`, so the caller's
+   * "tokens of answer I want" has to be topped up or the answer never starts.
+   */
+  extraMaxTokens?: number;
 }
 
 async function openaiCompatibleComplete(args: OpenAIArgs): Promise<LlmCompleteOutput> {
+  const maxTokens = (args.input.maxTokens ?? 1024) + (args.extraMaxTokens ?? 0);
   const data = (await postJson({
     url: `${args.baseUrl}/chat/completions`,
     headers: { Authorization: `Bearer ${args.key}`, ...args.extraHeaders },
@@ -460,9 +521,13 @@ async function openaiCompatibleComplete(args: OpenAIArgs): Promise<LlmCompleteOu
       model: args.model,
       messages: args.input.messages,
       temperature: args.input.temperature ?? 0.7,
-      max_tokens: args.input.maxTokens ?? 1024,
+      max_tokens: maxTokens,
       // OpenRouter only — the OpenAI API rejects unknown parameters.
-      ...(args.disableReasoning ? { reasoning: { enabled: false } } : {}),
+      ...(args.disableReasoning
+        ? { reasoning: { enabled: false } }
+        : args.reasoningEffort
+          ? { reasoning: { effort: args.reasoningEffort } }
+          : {}),
     },
     provider: args.provider,
     timeoutMs: args.timeoutMs,
@@ -501,7 +566,7 @@ async function openaiCompatibleComplete(args: OpenAIArgs): Promise<LlmCompleteOu
       truncationMessage({
         provider: args.provider,
         model: args.model,
-        maxTokens: args.input.maxTokens ?? 1024,
+        maxTokens,
         completionTokens: data.usage?.completion_tokens,
         reasoningTokens: data.usage?.completion_tokens_details?.reasoning_tokens,
       }),
