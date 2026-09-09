@@ -478,13 +478,23 @@ function MotionMailEditor({ play }: { play: PlayDescriptor }) {
         </Select>
       </label>
       <p className="w-full text-ink-faint">
-        {mode === "automatic"
-          ? play.mailRecommendation
-          : mode === "off"
-            ? "Direct mail is off for this motion."
-            : "Every eligible active prospect gets a mail step; missing addresses pause it."}{" "}
-        Each letter still requires individual approval. Follow-ups allow at least eight business
-        days for printing and transit, plus two days to read.
+        {mode === "off" ? (
+          <>
+            Direct mail is off for this motion: new enrollments plan no letter, and a letter not yet
+            prepared on an active cadence is dropped from its plan. A letter already in review stays
+            until you skip or send it on Cadences.
+          </>
+        ) : (
+          <>
+            {mode === "automatic"
+              ? play.mailRecommendation
+              : "Every eligible active prospect gets a mail step; missing addresses pause it."}{" "}
+            A letter is planned as step {position} for new enrollments that qualify. Each letter
+            still requires individual approval; skip it from Cadences when you would rather not send
+            post. Follow-ups allow at least eight business days for printing and transit, plus two
+            days to read.
+          </>
+        )}
       </p>
       {enabled && (
         <>

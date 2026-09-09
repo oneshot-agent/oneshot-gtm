@@ -30,7 +30,8 @@ export function cadenceStateLabel(c: CadenceView, now: Date): CadenceState {
   const ago = (iso: string): string => timeAgo(iso, nowMs);
   const total = c.followupCount + 1;
   const step = `step ${Math.min(c.currentStep + 1, total)} of ${total}`;
-  const lastSent = c.priorSteps.at(-1)?.sentAt ?? null;
+  // A skipped letter is history, not a send — "sent 3d ago" stays the last email.
+  const lastSent = c.priorSteps.findLast((s) => s.status !== "skipped")?.sentAt ?? null;
 
   if (c.isSending) return { text: join([step, "sending…"]), tone: "receipt" };
 
@@ -89,4 +90,15 @@ export function cadenceStateLabel(c: CadenceView, now: Date): CadenceState {
     default:
       return { text: c.status, tone: "muted" };
   }
+}
+
+/**
+ * The cadences waiting on a letter (issue #611): active, next step goes by
+ * post, nothing in flight. These rows are unselectable for email batches, so
+ * the bulk skip takes this set directly rather than the checkboxes.
+ */
+export function mailWaitingRows(list: ReadonlyArray<CadenceView>): CadenceView[] {
+  return list.filter(
+    (c) => c.status === "active" && c.nextStepChannel === "direct_mail" && !c.isSending,
+  );
 }

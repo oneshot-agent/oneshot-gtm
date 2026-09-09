@@ -1,6 +1,6 @@
 import type { CadenceView } from "@oneshot-gtm/shared-types";
 import { describe, expect, it } from "vitest";
-import { cadenceStateLabel } from "../src/lib/cadenceState.ts";
+import { cadenceStateLabel, mailWaitingRows } from "../src/lib/cadenceState.ts";
 
 // Issue #602: the /cadences row's second line is the sequence state, in one
 // mono label. Every branch, against a fixed clock.
@@ -113,5 +113,38 @@ describe("cadenceStateLabel", () => {
       text: "paused · step 2 of 4",
       tone: "muted",
     });
+  });
+});
+
+describe("a skipped letter (#611)", () => {
+  it("does not count as the last send", () => {
+    const c = cadence({
+      priorSteps: [
+        { stepIndex: 0, label: "intro", subject: "hi", body: null, sentAt: daysAgo(3) },
+        {
+          stepIndex: 1,
+          label: "letter skipped",
+          subject: "",
+          body: null,
+          sentAt: daysAgo(1),
+          status: "skipped",
+        },
+      ],
+      currentStep: 2,
+    });
+    expect(cadenceStateLabel(c, now).text).toBe("step 3 of 4 · sent 3d ago · next in 1d");
+  });
+});
+
+describe("mailWaitingRows", () => {
+  it("is the active rows whose next step goes by post and nothing in flight", () => {
+    const rows = [
+      cadence({ prospectId: 1, nextStepChannel: "direct_mail" }),
+      cadence({ prospectId: 2, nextStepChannel: "direct_mail", isSending: true }),
+      cadence({ prospectId: 3, nextStepChannel: "direct_mail", status: "stopped" }),
+      cadence({ prospectId: 4, nextStepChannel: "email" }),
+      cadence({ prospectId: 5 }),
+    ];
+    expect(mailWaitingRows(rows).map((c) => c.prospectId)).toEqual([1]);
   });
 });
