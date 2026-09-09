@@ -1305,9 +1305,10 @@ function CadencesPage() {
         }
       >
         <div className="text-[12px] text-ink-muted">
-          Each cadence continues with its next email on the normal delay, and the skip is recorded
-          as “letter skipped” in its history. A mailpiece already submitted to the printer is left
-          alone; recover it in the mail review.
+          Each cadence moves past the letter: on to its next email on the normal delay, or to
+          completed when the letter was the last step. The skip is recorded as “letter skipped” in
+          its history. A mailpiece already submitted to the printer is left alone; recover it in the
+          mail review.
         </div>
       </Modal>
 
