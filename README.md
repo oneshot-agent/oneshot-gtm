@@ -263,7 +263,7 @@ bun run --cwd apps/web build       # → apps/web/dist/
 bun run --cwd apps/server build    # → apps/server/dist/bin.mjs + dist/web/
 ```
 
-The suite is 3499 cases across 261 files (STATUS.md carries the current totals). Tests set `ONESHOT_GTM_HOME` to a temp dir, so they never touch your real ledger. CI runs `bun --bun run test` — the flag matters, since `bun:sqlite` doesn't exist under Node. Core and server install the SDK from the archive in `vendor/`; its README has the coordinated release step.
+The suite is 3501 cases across 261 files (STATUS.md carries the current totals). Tests set `ONESHOT_GTM_HOME` to a temp dir, so they never touch your real ledger. CI runs `bun --bun run test` — the flag matters, since `bun:sqlite` doesn't exist under Node. Core and server install the SDK from the archive in `vendor/`; its README has the coordinated release step.
 
 ### Watching what's happening
 

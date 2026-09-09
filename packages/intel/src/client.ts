@@ -306,28 +306,41 @@ function dispatch(
   timeoutMs: number | undefined,
 ): Promise<LlmCompleteOutput> {
   switch (provider) {
-    case "openrouter":
-      return openaiCompatibleComplete({
+    case "openrouter": {
+      const args: OpenAIArgs = {
         key,
         model,
         baseUrl: "https://openrouter.ai/api/v1",
         provider: "openrouter",
         input,
         timeoutMs,
-        // Models that reason by default (Claude Sonnet 5 / Opus 5, o-series,
-        // Gemini thinking) spend their reasoning INSIDE `max_tokens` on
-        // OpenRouter, and every caller here sets a small, deliberate budget
-        // (200–2000 tokens of JSON). Measured on anthropic/claude-sonnet-5 at
-        // max_tokens=500: default → finish_reason=length with 313 reasoning
-        // tokens and truncated JSON; reasoning off → a clean 184-token answer
-        // at 40% of the cost. OpenRouter's unified `reasoning` parameter maps
-        // to each provider's own switch, so this is one line for all of them.
-        disableReasoning: true,
         extraHeaders: {
           "HTTP-Referer": "https://github.com/oneshot-agent/oneshot-gtm",
           "X-Title": "oneshot-gtm",
         },
+      };
+      // Models that reason by default (Claude Sonnet 5 / Opus 5, o-series,
+      // Gemini thinking) spend their reasoning INSIDE `max_tokens` on
+      // OpenRouter, and every caller here sets a small, deliberate budget
+      // (200–2000 tokens of JSON). Measured on anthropic/claude-sonnet-5 at
+      // max_tokens=500: default → finish_reason=length with 313 reasoning
+      // tokens and truncated JSON; reasoning off → a clean 184-token answer
+      // at 40% of the cost. OpenRouter's unified `reasoning` parameter maps
+      // to each provider's own switch, so this is one line for all of them —
+      // except the ~100 models OpenRouter marks `reasoning.mandatory`
+      // (gpt-5, the newer Gemini flashes, Fable 5.1), which answer the
+      // switch with a 400. Those get one retry without it and are
+      // remembered for the rest of the process, so the founder's model choice
+      // never has to know which kind it is.
+      if (mandatoryReasoningModels.has(model)) return openaiCompatibleComplete(args);
+      return openaiCompatibleComplete({ ...args, disableReasoning: true }).catch((err: unknown) => {
+        if (isMandatoryReasoningRejection(err)) {
+          mandatoryReasoningModels.add(model);
+          return openaiCompatibleComplete(args);
+        }
+        throw err;
       });
+    }
     case "openai":
       return openaiCompatibleComplete({
         key,
@@ -340,6 +353,14 @@ function dispatch(
     case "anthropic":
       return anthropicComplete({ key, model, input, timeoutMs });
   }
+}
+
+/** OpenRouter models that rejected `reasoning: { enabled: false }` — see the openrouter dispatch. */
+const mandatoryReasoningModels = new Set<string>();
+
+/** A 400 whose body talks about reasoning: the model cannot have it switched off. */
+function isMandatoryReasoningRejection(err: unknown): boolean {
+  return err instanceof LlmError && err.status === 400 && /reasoning/i.test(err.message);
 }
 
 /**

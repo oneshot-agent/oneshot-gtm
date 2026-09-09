@@ -147,6 +147,57 @@ describe("complete() reasoning switch — openrouter vs openai", () => {
     expect(requestOf(fetchMock).body["reasoning"]).toEqual({ enabled: false });
   });
 
+  it("falls back to the plain request when OpenRouter says the model's reasoning is mandatory, and remembers it", async () => {
+    cfg.model = "mandatory-reasoning-model";
+    const ok = {
+      ok: true,
+      json: () =>
+        Promise.resolve({ choices: [{ message: { content: "{}" }, finish_reason: "stop" }] }),
+    };
+    const rejected = {
+      ok: false,
+      status: 400,
+      headers: { get: () => null },
+      text: () =>
+        Promise.resolve(
+          '{"error":{"message":"Reasoning is mandatory for this model and cannot be disabled"}}',
+        ),
+    };
+    const fn = vi.fn().mockResolvedValueOnce(rejected).mockResolvedValue(ok);
+    global.fetch = fn as unknown as typeof fetch;
+
+    await complete({ messages: [{ role: "user", content: "hi" }], maxTokens: 500 });
+    expect(fn).toHaveBeenCalledTimes(2);
+    const bodies = fn.mock.calls.map(([, init]) =>
+      JSON.parse((init as RequestInit).body as string),
+    );
+    expect(bodies[0]).toHaveProperty("reasoning", { enabled: false });
+    expect(bodies[1]).not.toHaveProperty("reasoning");
+
+    // Remembered: the next call to the same model skips the switch and the round trip.
+    await complete({ messages: [{ role: "user", content: "again" }], maxTokens: 500 });
+    expect(fn).toHaveBeenCalledTimes(3);
+    expect(JSON.parse((fn.mock.calls[2]![1] as RequestInit).body as string)).not.toHaveProperty(
+      "reasoning",
+    );
+  });
+
+  it("does not swallow an unrelated 400 as a reasoning rejection", async () => {
+    cfg.model = "other-model";
+    const fn = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      headers: { get: () => null },
+      text: () => Promise.resolve('{"error":{"message":"invalid messages"}}'),
+    });
+    global.fetch = fn as unknown as typeof fetch;
+    const err = await errorFrom(
+      complete({ messages: [{ role: "user", content: "hi" }], maxTokens: 500, maxAttempts: 1 }),
+    );
+    expect(err.message).toContain("openrouter 400");
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
   it("sends no reasoning parameter to the OpenAI API, which rejects unknown fields", async () => {
     cfg.provider = "openai";
     const fetchMock = respondWith({
