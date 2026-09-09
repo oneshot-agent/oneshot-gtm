@@ -516,6 +516,23 @@ describe("runCadenceStepForProspect — meeting-outcome gate (issue #578)", () =
     expect(calls.sendEmail).toBe(1);
     expect(stopCalls).toHaveLength(0);
   });
+
+  it("dryRun: a held meeting reports skipped but must NOT stop the live cadence (finding PRRT_kwDOSKzrBs6gwORi)", async () => {
+    meetingOutcome = { outcome: "held", note: null, summary: "Intro call" };
+    const result = await runCadenceStepForProspect({
+      prospectId: 1,
+      playName: "stack-consolidation",
+      dryRun: true,
+    });
+    expect(result.action).toBe("skipped");
+    expect(result.note).toMatch(/meeting held/);
+    expect(calls.llm).toBe(0);
+    expect(calls.sendEmail).toBe(0);
+    // The critical assertion: a preview must never write the stop — that
+    // would cancel a real cadence (clear its schedule + pending draft) from
+    // what the caller believed was a read-only dry run.
+    expect(stopCalls).toHaveLength(0);
+  });
 });
 
 describe("runCadenceStepForProspect", () => {

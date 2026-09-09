@@ -1168,15 +1168,24 @@ export async function runCadenceStepForProspect(
   // reply, not to stop the cadence") and cancelled/rescheduled meetings
   // never happened at all, so neither stops anything — the cadence
   // continues exactly as it would with no meeting on the prospect.
+  //
+  // dryRun must never mutate the live cadence (same rule the suppression
+  // and ICP checks above don't have to worry about because they only READ —
+  // this is the one gate here that both reads and writes). A preview pass
+  // (finding PRRT_kwDOSKzrBs6gwORi) still reports "skipped" so a caller sees
+  // the cadence would stop, but the actual stopCadence write — which clears
+  // the live schedule and any pending draft — only happens for a real run.
   {
     const meeting = ledger.latestMeetingOutcomeFor(opts.prospectId);
     if (meeting?.outcome === "held") {
-      ledger.stopCadence({
-        prospectId: opts.prospectId,
-        playName: opts.playName,
-        reason: "other",
-        note: "meeting held — cadence superseded by a real conversation",
-      });
+      if (!opts.dryRun) {
+        ledger.stopCadence({
+          prospectId: opts.prospectId,
+          playName: opts.playName,
+          reason: "other",
+          note: "meeting held — cadence superseded by a real conversation",
+        });
+      }
       return {
         action: "skipped",
         payload: null,
