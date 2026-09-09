@@ -1,4 +1,5 @@
 export * from "./_types.ts";
+export * from "./_fit-reason.ts";
 export * from "./_filter.ts";
 export * from "./_qualify.ts";
 export * from "./_dedupe.ts";

@@ -194,6 +194,15 @@ const NOT_EVIDENCE = new Set<string>([
   "sourceProfileUrl",
   "dedupeKey",
   "icpVerdictReason",
+  // Our own summaries of the row — never evidence for a classifier (#592).
+  "fitReason",
+  "fitReasonSource",
+  // Postal data: identifying, never a fit signal.
+  "address",
+  "postalCode",
+  "businessAddress",
+  "founderEmail",
+  "emailOverride",
 ]);
 
 /**

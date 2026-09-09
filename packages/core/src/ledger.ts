@@ -4468,6 +4468,29 @@ export class Ledger {
     }
   }
 
+  /**
+   * Merge a few keys into a LIVE queue row's payload (issue #592) — pending or
+   * approved, not sent, not mid-send. One statement, so there is no window
+   * between checking eligibility and writing: a row that got sent between the
+   * caller's listing and this call is simply not updated, and the caller is
+   * told. `updateQueuePayload` above has no guard and stays for the paths that
+   * own their row (the manual add's research rewrite).
+   */
+  patchLiveQueuePayload(input: { id: number; patch: Record<string, unknown> }): boolean {
+    const r = this.db
+      .prepare(
+        `UPDATE target_queue
+            SET payload_json = json_patch(payload_json, ?)
+          WHERE id = ?
+            AND status IN ('pending', 'approved')
+            AND sent_at IS NULL
+            AND send_started_at IS NULL
+            AND json_valid(payload_json)`,
+      )
+      .run(JSON.stringify(input.patch), input.id);
+    return r.changes === 1;
+  }
+
   latestQueueId(): number {
     const row = this.db.query("SELECT COALESCE(MAX(id), 0) AS id FROM target_queue").get() as {
       id: number;

@@ -276,6 +276,7 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
       payload: target,
       dedupeKey: hit.url,
       source: SOURCE,
+      fitReason: filter.reason,
       notes: `${extract.fullName} → ${extract.newRole} @ ${extract.newCompany} — ${filter.reason}`,
     });
     if (id != null) result.enqueued++;

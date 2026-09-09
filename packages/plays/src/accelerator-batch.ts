@@ -8,6 +8,8 @@ export interface AcceleratorBatchTarget {
   email: string;
   company: string;
   cohort: string;
+  /** Human program name ("YC Summer 2026") — the row's signal label; the slug stays for scoring. */
+  cohortLabel?: string;
   launchUrl?: string;
   productOneLiner?: string;
   linkedinUrl?: string;

@@ -74,6 +74,8 @@ function dedupeKeyFor(candidate: AgendaCandidate): string {
 async function resolveAndEnqueueAgendaItem(
   candidate: AgendaCandidate,
   yourEdge: string,
+  /** The company-gate reason from the caller's `icpFilter` — absent on a pending-retry replay. */
+  fitReason?: string | null,
 ): Promise<"enqueued" | "duplicate" | "dropped" | "platform-error"> {
   const ledger = getLedger();
   const dedupeKey = dedupeKeyFor(candidate);
@@ -117,6 +119,7 @@ async function resolveAndEnqueueAgendaItem(
     payload: target,
     dedupeKey,
     source: SOURCE,
+    fitReason,
     notes:
       `${candidate.city} — ${candidate.event.eventBodyName ?? "meeting"} — ${candidate.item.title}`.slice(
         0,
@@ -283,7 +286,7 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
       continue;
     }
 
-    const outcome = await resolveAndEnqueueAgendaItem(candidate, yourEdge);
+    const outcome = await resolveAndEnqueueAgendaItem(candidate, yourEdge, filter.reason);
     if (outcome === "enqueued") result.enqueued++;
     else if (outcome === "duplicate") result.droppedDuplicate++;
     else if (outcome === "platform-error") {
@@ -293,7 +296,7 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
         playName: PLAY_NAME,
         dedupeKey,
         source: SOURCE,
-        raw: { candidate, yourEdge },
+        raw: { candidate, yourEdge, fitReason: filter.reason },
       });
       result.droppedEnrichment++;
     } else result.droppedEnrichment++;
@@ -316,8 +319,12 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
 // fires, but the office-holder contact and the ICP verdict already reached —
 // this is purely finishing a resolution the backend, not the source, failed.
 registerPendingRetry(PLAY_NAME, async (raw) => {
-  const { candidate, yourEdge } = raw as { candidate: AgendaCandidate; yourEdge: string };
-  const outcome = await resolveAndEnqueueAgendaItem(candidate, yourEdge);
+  const { candidate, yourEdge, fitReason } = raw as {
+    candidate: AgendaCandidate;
+    yourEdge: string;
+    fitReason?: string | null;
+  };
+  const outcome = await resolveAndEnqueueAgendaItem(candidate, yourEdge, fitReason ?? null);
   return outcome === "enqueued"
     ? "enqueued"
     : outcome === "platform-error"

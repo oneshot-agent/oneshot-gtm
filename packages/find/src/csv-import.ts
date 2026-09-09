@@ -1,6 +1,7 @@
 import { getLedger } from "@oneshot-gtm/core";
 import { isDuplicate } from "./_dedupe.ts";
 import { qualifyPerson, resolveIcp } from "./_filter.ts";
+import { normalizeFitReason } from "./_fit-reason.ts";
 
 export const CSV_IMPORT_FIELDS = [
   "email",
@@ -273,6 +274,19 @@ export async function importCsv(input: {
         ledger.setQueueStatus({ id, status: "rejected", notes: `auto: ICP — ${verdict.reason}` });
       }
       continue;
+    }
+    // Keep the gate's reason on the row it just approved (#592). The row is
+    // ours and still parked, so the plain payload rewrite is race-free here.
+    const fitReason = normalizeFitReason(verdict.reason);
+    if (fitReason) {
+      try {
+        ledger.updateQueuePayload({
+          id,
+          payload: { ...candidate.payload, fitReason, fitReasonSource: "person-gate" },
+        });
+      } catch {
+        /* a ledger double without the method: the row still imports */
+      }
     }
     // Now that classification passed, we put it into pending
     ledger.setQueueStatus({ id, status: "pending", notes: "CSV import: ICP accepted" });

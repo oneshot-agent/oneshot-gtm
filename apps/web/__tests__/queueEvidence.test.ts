@@ -215,3 +215,19 @@ describe("coverage against the priority adapters", () => {
     expect(unhandled).toEqual([]);
   });
 });
+
+describe("queueEvidence — issue #592 additions", () => {
+  it("prefers the human cohort label over the slug", () => {
+    expect(
+      queueEvidence("accelerator-batch", { cohort: "yc-s26", cohortLabel: "YC Summer 2026" }),
+    ).toBe("cohort YC Summer 2026");
+    expect(queueEvidence("accelerator-batch", { cohort: "yc-s26" })).toBe("cohort yc-s26");
+  });
+
+  it("reads the manual add's angle as its line", () => {
+    expect(
+      queueEvidence("profile-intro", { angle: "runs a 6-person GTM team on spreadsheets" }),
+    ).toBe("runs a 6-person GTM team on spreadsheets");
+    expect(queueEvidence("profile-intro", {})).toBeNull();
+  });
+});

@@ -77,11 +77,17 @@ export function runBreakupReviveFinder(opts: BreakupReviveFinderOpts): FinderRes
       continue;
     }
 
+    // This finder is synchronous by design (no spend), so it can't generate a
+    // sentence; a prospect who was emailed before carries the person gate's
+    // reason on their row, and the backfill covers anyone who doesn't (#592).
+    const storedReason = ledger.getProspectById(p.id)?.icp_verdict_reason ?? null;
     const id = enqueueScoredTarget(ledger, {
       playName: PLAY_NAME,
       payload: target,
       dedupeKey,
       source: SOURCE,
+      fitReason: storedReason,
+      fitReasonSource: "person-gate",
       notes: `${daysCold}d cold${p.company ? ` — ${p.company}` : ""}`,
     });
     if (id != null) {

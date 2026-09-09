@@ -36,7 +36,7 @@ import {
   pastEnd,
   type ProspectsSearch,
 } from "../lib/prospects-helpers.ts";
-import { queueEvidence } from "../lib/queueEvidence.ts";
+import { rationaleLine } from "../lib/queueRationale.ts";
 import { readOnly } from "../lib/readOnly.ts";
 
 export const Route = createFileRoute("/prospects")({
@@ -401,7 +401,7 @@ function BrowseRow({
   const title = row.prospect?.title ?? titleFor(row.payload);
   const company = companyFor(row.payload);
   const linkedinUrl = linkedinUrlFor(row.payload);
-  const evidence = queueEvidence(row.playName, row.payload);
+  const evidence = rationaleLine(row.playName, row.payload);
   const detail = sourceDetail(row.source);
   return (
     <Fragment>
@@ -745,7 +745,7 @@ function IdentityBlock({ row, detail }: { row: ProspectBrowseRow; detail: QueueR
   // `javascript:` value can never become an href.
   const linkedinUrl =
     linkedinUrlFor({ linkedinUrl: detail.prospect?.linkedinUrl }) ?? linkedinUrlFor(row.payload);
-  const evidence = queueEvidence(row.playName, row.payload);
+  const evidence = rationaleLine(row.playName, row.payload);
   const source = sourceDetail(row.source);
   return (
     <div>

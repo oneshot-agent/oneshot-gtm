@@ -197,6 +197,8 @@ describe("runCivicAgendaFinder — happy path", () => {
     expect(row.playName).toBe("civic-pilot");
     expect(row.payload["city"]).toBe("New York");
     expect(row.payload["agendaItemTitle"]).toBe("Resolution on AI use in permitting");
+    // #592: a pass-through ("no ICP set") is not a reason and must never be stamped.
+    expect(row.payload["fitReason"]).not.toBe("no ICP set; pass-through");
     expect(row.payload["meetingDate"]).toBe("2026-09-10");
     expect(row.payload["email"]).toBe("alex.chen+nyc-10@council.nyc.gov");
     expect(row.payload["name"]).toBe("Alex Chen");
@@ -217,6 +219,9 @@ describe("runCivicAgendaFinder — happy path", () => {
     expect(out.droppedEnrichment).toBe(1);
     expect(pendingPersisted).toHaveLength(1);
     expect(pendingPersisted[0]!.playName).toBe("civic-agenda");
+    // The retry re-enqueues from this blob alone, so the accepted company-gate
+    // reason has to ride along or the retried row lands without its fit line.
+    expect((pendingPersisted[0]!.raw as { fitReason?: string }).fitReason).toMatch(/^fits: /);
   });
 
   it("persists for retry when the contact lookup hits a 5xx", async () => {

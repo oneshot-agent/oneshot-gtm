@@ -253,6 +253,7 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
       payload: target,
       dedupeKey: url,
       source: SOURCE,
+      fitReason: filter.reason,
       notes: `${extract.round ?? "?"} ${extract.amountUsd ? `$${extract.amountUsd.toLocaleString()}` : ""} — ${filter.reason}`,
     });
     if (id != null) result.enqueued++;

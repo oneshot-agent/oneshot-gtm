@@ -1,6 +1,8 @@
 import { getLedger, logEvent, type GovContact, type Solicitation } from "@oneshot-gtm/core";
 import { isDuplicate } from "./_dedupe.ts";
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
+import { resolveIcp } from "./_filter.ts";
+import { FIT_REASON_COST_ESTIMATE_USD, generateFitReason } from "./_fit-reason.ts";
 import { safeGovSolicitations } from "./_sdk-safe.ts";
 import type { FinderResult, RunOpts } from "./_types.ts";
 
@@ -235,6 +237,9 @@ export async function runGovSolicitationFinder(
   const sinceDays = Math.min(MAX_WINDOW_DAYS, Math.max(1, opts.sinceDays ?? 30));
   const yourEdge = (opts.yourEdge ?? "").trim();
   const ledger = getLedger();
+  // No ICP gate runs here (the notice publishes its own contact), so the fit
+  // line is generated per row (#592) — one small call, or none without an ICP.
+  const icp = resolveIcp(opts.icpOverride);
 
   const result: FinderResult = {
     source: SOURCE,
@@ -357,11 +362,27 @@ export async function runGovSolicitationFinder(
       continue;
     }
 
+    const target = buildTarget(candidate, yourEdge);
+    // With an ICP configured the generator always makes its one small call,
+    // sentence or not — so the estimate is charged per call, and the cap is
+    // checked before it like every other paid step.
+    if (
+      icp &&
+      opts.maxCostUsd != null &&
+      result.costUsd + FIT_REASON_COST_ESTIMATE_USD > opts.maxCostUsd
+    ) {
+      result.halted = `max-cost cap (${opts.maxCostUsd})`;
+      break;
+    }
+    const fitReason = await generateFitReason({ icp, playName, payload: target });
+    if (icp) result.costUsd += FIT_REASON_COST_ESTIMATE_USD;
     const id = enqueueScoredTarget(ledger, {
       playName,
-      payload: buildTarget(candidate, yourEdge),
+      payload: target,
       dedupeKey: candidate.noticeId,
       source: SOURCE,
+      fitReason,
+      fitReasonSource: "generated",
       notes: `${candidate.noticeType} — ${candidate.agency} — ${candidate.title}`.slice(0, 300),
     });
     if (id != null) result.enqueued++;

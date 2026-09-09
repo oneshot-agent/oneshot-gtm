@@ -1,6 +1,7 @@
 import { deepResearchPerson, getLedger, loadConfig } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import { type ProfileIntroTarget, runProfileIntro } from "./profile-intro.ts";
+import { generateFitReason } from "./_fit-reason.ts";
 
 const PLAY_NAME = "profile-intro";
 
@@ -238,6 +239,16 @@ export async function runProspectResearch(queueId: number): Promise<void> {
       return;
     }
 
+    // The manual add runs no gate — the founder pasting a profile is the
+    // qualification — so the row's fit line is generated from the research it
+    // just paid for (#592). Null (no ICP, or a failed call) simply omits it.
+    const fitReason = await generateFitReason({
+      icp: loadConfig().icpOneLiner ?? null,
+      playName: "profile-intro",
+      payload: target,
+      dossier,
+    });
+
     // 5. Persist — re-read first so a concurrent reject/send isn't clobbered.
     // Only an untouched placeholder (still pending/approved, not sending) gets
     // the draft; a row the founder rejected mid-research stays rejected.
@@ -253,6 +264,7 @@ export async function runProspectResearch(queueId: number): Promise<void> {
       id: queueId,
       payload: {
         ...target,
+        ...(fitReason ? { fitReason, fitReasonSource: "generated" as const } : {}),
         ...(JSON.parse(fresh.payload_json).businessAddress
           ? { businessAddress: JSON.parse(fresh.payload_json).businessAddress }
           : {}),
