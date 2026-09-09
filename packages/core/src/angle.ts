@@ -117,16 +117,33 @@ function strArray(v: unknown): string[] {
 const URL_SOURCE: RegExp = /^https?:\/\//i;
 
 /**
+ * Named-tier source aliases: a citation using the LEFT name is accepted when
+ * either it or its RIGHT alias is in `sourceTags`. Needed because the DOSSIER
+ * evidence block renders identically whether the dossier was already stored
+ * (`sources` tag `"dossier"`) or freshly bought this run (tag
+ * `"dossier:live"` — see `gatherAngleEvidence`), and the synthesis prompt's
+ * own literal example tells the model to cite it as `"dossier"` either way
+ * (packages/prompts/angle-synthesis.md:36). Without this, a legitimate
+ * `"dossier"` citation on a paid-research prospect was silently dropped by
+ * `isGroundedSource` even though the evidence really was gathered (issue
+ * #569 freshness audit).
+ */
+const NAMED_SOURCE_ALIASES: ReadonlyMap<string, string> = new Map([["dossier", "dossier:live"]]);
+
+/**
  * True when `source` is traceable to evidence the LLM was actually handed —
  * not merely a non-blank string. A URL-shaped source must appear literally in
  * the rendered evidence text (the GITHUB/DOSSIER/PROFILE PAGE blocks); a
  * named-tier source (`"dossier"`, `"replies:2"`, `"github:live"`) must match
- * one of the tiers `gatherAngleEvidence` actually recorded. Anything else —
- * a hallucinated URL, an invented tier name, "trust me" — is NOT grounded.
+ * one of the tiers `gatherAngleEvidence` actually recorded, or that tier's
+ * alias (see `NAMED_SOURCE_ALIASES`). Anything else — a hallucinated URL, an
+ * invented tier name, "trust me" — is NOT grounded.
  */
 function isGroundedSource(source: string, grounding: ProspectAngleGroundingContext): boolean {
   if (URL_SOURCE.test(source)) return grounding.evidenceText.includes(source);
-  return grounding.sourceTags.includes(source);
+  if (grounding.sourceTags.includes(source)) return true;
+  const alias = NAMED_SOURCE_ALIASES.get(source);
+  return alias !== undefined && grounding.sourceTags.includes(alias);
 }
 
 /**
@@ -198,7 +215,7 @@ export function parseProspectAngle(
     evidence,
     doNotSay: strArray(r["doNotSay"]),
     nextStep: str(r["nextStep"]) ?? "",
-    sources: strArray(r["sources"]),
+    sources: strArray(r["sources"]).filter((s) => isGroundedSource(s, grounding)),
     valueMode,
     buyerStage,
     qualification: str(r["qualification"]) ?? "",

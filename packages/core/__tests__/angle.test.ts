@@ -133,6 +133,28 @@ describe("parseProspectAngle", () => {
     expect(angle?.evidence).toEqual([{ claim: "has a dossier", source: "dossier" }]);
   });
 
+  it("keeps a 'dossier' citation when only 'dossier:live' was gathered — the prompt's own example cites the tier as 'dossier' either way (issue #569)", () => {
+    const liveOnly: ProspectAngleGroundingContext = {
+      evidenceText: "DOSSIER:\nfresh research payload",
+      sourceTags: ["dossier:live"],
+    };
+    const angle = parseProspectAngle(
+      { brief: "b", hook: "h", evidence: [{ claim: "has a dossier", source: "dossier" }] },
+      META,
+      liveOnly,
+    );
+    expect(angle?.evidence).toEqual([{ claim: "has a dossier", source: "dossier" }]);
+  });
+
+  it("still rejects 'dossier' when neither 'dossier' nor 'dossier:live' was gathered", () => {
+    const angle = parseProspectAngle(
+      { brief: "b", hook: "h", evidence: [{ claim: "has a dossier", source: "dossier" }] },
+      META,
+      UNGROUNDED,
+    );
+    expect(angle?.evidence).toEqual([]);
+  });
+
   it("returns null when both brief and hook are missing — nothing was actually synthesized", () => {
     expect(parseProspectAngle({ evidence: [] }, META, GROUNDED)).toBeNull();
     expect(parseProspectAngle({ brief: "", hook: "" }, META, GROUNDED)).toBeNull();
@@ -213,6 +235,15 @@ describe("parseProspectAngle", () => {
       GROUNDED,
     );
     expect(angle?.doNotSay).toEqual(["real"]);
+    expect(angle?.sources).toEqual(["dossier"]);
+  });
+
+  it("drops a top-level sources[] tier that was never actually gathered — a hallucinated tier name is not persisted as fact (issue #569)", () => {
+    const angle = parseProspectAngle(
+      { brief: "b", sources: ["dossier", "webread", "replies:3"] },
+      META,
+      GROUNDED, // sourceTags only has dossier/github:live — webread and replies:3 were never gathered
+    );
     expect(angle?.sources).toEqual(["dossier"]);
   });
 

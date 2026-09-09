@@ -223,6 +223,7 @@ describe("gatherAngleEvidence", () => {
     const out = await gatherAngleEvidence(1);
     expect(webReadCalls).toEqual(["https://x.com/pat"]);
     expect(out?.webReadText).toContain("Pat's X profile bio");
+    expect(out?.webReadUrl).toBe("https://x.com/pat");
     expect(out?.webReadResearched).toBe(true);
     expect(out?.sources).toContain("webread");
   });
@@ -346,6 +347,7 @@ describe("synthesizePersonAngle", () => {
         queueSignal: null,
         github: null,
         webReadText: null,
+        webReadUrl: null,
         webReadResearched: false,
         replies: [],
         costUsd: 0,
@@ -382,6 +384,7 @@ describe("synthesizePersonAngle", () => {
         queueSignal: null,
         github: null,
         webReadText: null,
+        webReadUrl: null,
         webReadResearched: false,
         replies: [],
         costUsd: 0,
@@ -403,6 +406,7 @@ describe("synthesizePersonAngle", () => {
         queueSignal: null,
         github: null,
         webReadText: null,
+        webReadUrl: null,
         webReadResearched: false,
         replies: [],
         costUsd: 0,
@@ -421,6 +425,7 @@ describe("synthesizePersonAngle", () => {
         queueSignal: null,
         github: null,
         webReadText: null,
+        webReadUrl: null,
         webReadResearched: false,
         replies: [],
         costUsd: 0,
@@ -431,6 +436,59 @@ describe("synthesizePersonAngle", () => {
     expect(llmCalls[0]!.user).toContain("FOUNDER: Founder");
     expect(llmCalls[0]!.user).toContain("PRODUCT: TestProduct");
     expect(llmCalls[0]!.user).toContain("some dossier text");
+  });
+
+  it("renders the webRead URL alongside the PROFILE PAGE text so a citation of it can ground (issue #569)", async () => {
+    await synthesizePersonAngle({
+      prospect: { id: 1, name: "Pat", company: null, email: null },
+      evidence: {
+        dossierText: null,
+        dossierResearched: false,
+        queueSignal: null,
+        github: null,
+        webReadText: "Pat's bio, no URL repeated in the markdown itself",
+        webReadUrl: "https://x.com/pat",
+        webReadResearched: true,
+        replies: [],
+        costUsd: 0,
+        sources: ["webread"],
+      },
+    });
+    expect(llmCalls).toHaveLength(1);
+    expect(llmCalls[0]!.user).toContain("PROFILE PAGE (https://x.com/pat):");
+    expect(llmCalls[0]!.user).toContain("https://x.com/pat");
+  });
+
+  it("renders actual follow-network logins, not just counts, so a colleague citation is possible (issue #569)", async () => {
+    await synthesizePersonAngle({
+      prospect: { id: 1, name: "Pat", company: null, email: null },
+      evidence: {
+        dossierText: null,
+        dossierResearched: false,
+        queueSignal: null,
+        github: {
+          login: "ada",
+          profile: null,
+          topRepos: null,
+          orgs: null,
+          linkedOrg: null,
+          network: {
+            following: [{ login: "grace" }, { login: "linus" }],
+            followers: [{ login: "margaret" }],
+          },
+        },
+        webReadText: null,
+        webReadUrl: null,
+        webReadResearched: false,
+        replies: [],
+        costUsd: 0,
+        sources: ["github:live"],
+      },
+    });
+    expect(llmCalls).toHaveLength(1);
+    expect(llmCalls[0]!.user).toContain("grace");
+    expect(llmCalls[0]!.user).toContain("linus");
+    expect(llmCalls[0]!.user).toContain("margaret");
   });
 
   it("drops an evidence entry whose source is a hallucinated citation, end to end", async () => {
@@ -453,6 +511,7 @@ describe("synthesizePersonAngle", () => {
         queueSignal: null,
         github: null,
         webReadText: null,
+        webReadUrl: null,
         webReadResearched: false,
         replies: [],
         costUsd: 0,
