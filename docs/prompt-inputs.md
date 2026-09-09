@@ -73,12 +73,31 @@ concession, `yourEdge` for the argument, `productBrief` for facts and links,
 
 ## Multiple angles
 
-`yourEdge` may hold several angles separated by `//`. Every angle is sent to
-the model on every call — `//` is not a visibility switch. The rule is on the
-output: the email is 4-6 sentences, and `_humanizer.md` forbids blending, so
-the model picks the one angle that fits this prospect and writes from it
-alone. An angle that never fits is never used; that is the model working, not
-failing. If something must appear in every email, an angle is the wrong home
+`yourEdge` may hold several angles separated by `//`. **One** of them reaches
+the prompt (`packages/plays/src/_angles.ts`, issue #584): a small isolated
+classifier call picks the angle whose opening condition is true of this
+prospect — judged from the target's own fields (company, product, title, bio,
+event, repo, stack) and the research `prepare` assembled — and the verdict is
+cached per (prospect, edge) so a regenerate makes the same choice and pays
+nothing. A one-angle edge makes no call and reaches the prompt unchanged.
+
+Left to the writing prompt, the choice collapsed: measured on a live ledger,
+25 of 30 accelerator-batch drafts and 26 of 36 luma-events drafts landed on a
+single angle, and three of luma's six were never used once. A model cannot
+hold a distribution across independent calls — the same reason the 1-in-3
+admission is drawn in code (`admissionBlock`).
+
+Follow-ups get a **different** angle from the intro's (`followUpEdgeAngle`),
+so the second touch carries new material instead of being a bump. A play with
+a one-angle edge behaves exactly as before.
+
+What makes an angle selectable: it opens with the condition it fits — "For a
+founder selling to clinics and contractors —", "For someone in a marketing
+role —" — and that condition is something visible in the payload. An angle
+routed on the prospect's internal stage or tooling ("still testing the pitch",
+"already has the stack wired") cannot be matched from a product one-liner and
+fires by accident or never. Then a named failure, a mechanism, and what was
+learned. If something must appear in every email, an angle is the wrong home
 for it.
 
 ## Keeping this page true

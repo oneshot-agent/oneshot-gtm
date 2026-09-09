@@ -27,6 +27,14 @@ import {
   type SendDraftedOpts,
 } from "./_lib.ts";
 import { enrollInCadence, getSequence } from "./_cadence.ts";
+import {
+  type AngleSelection,
+  describeTargetForAngle,
+  edgeFieldOf,
+  selectAngle,
+  splitEdgeAngles,
+  withSelectedAngle,
+} from "./_angles.ts";
 
 type AppConfig = ReturnType<typeof loadConfig>;
 
@@ -234,13 +242,35 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           };
         }
 
+        // ANGLE SELECTION (issue #584): a multi-angle `yourEdge`/`yourClaim`
+        // is resolved to ONE angle here, in code, before any prompt sees it.
+        // Left to the writing prompt, the choice collapsed onto the most
+        // writable angle on nearly every call (see _angles.ts). A one-angle
+        // edge takes no call and reaches the prompt byte-identical to before.
+        const rawTarget = target as Record<string, unknown>;
+        const edgeField = edgeFieldOf(rawTarget);
+        let draftTarget: T = target;
+        let angleSelection: AngleSelection | null = null;
+        if (edgeField) {
+          const edge = rawTarget[edgeField] as string;
+          if (splitEdgeAngles(edge).length > 1) {
+            angleSelection = await selectAngle({
+              edge,
+              prospectKey: def.toEmail(target),
+              description: describeTargetForAngle(rawTarget, prep.dossier),
+              playName: def.playName,
+            });
+            draftTarget = withSelectedAngle(target, edgeField, angleSelection.angle);
+          }
+        }
+
         // Append SOCIAL PROOF block when any of the three optional fields is
         // set. Prompts treat it as conditional input — present only when set,
         // and the prompt picks ONE beat per email (never stacks).
         const proof = socialProofBlock();
         let inputBlock = proof
-          ? `${def.buildInputBlock(target, prep, cfg)}\n\n${proof}`
-          : def.buildInputBlock(target, prep, cfg);
+          ? `${def.buildInputBlock(draftTarget, prep, cfg)}\n\n${proof}`
+          : def.buildInputBlock(draftTarget, prep, cfg);
         // Same conditional shape for the damaging-admission beat: present only
         // when the founder wrote one AND this prospect drew the ~1-in-3 slot,
         // so the prompt has real material or none (and never a frequency to
@@ -320,7 +350,21 @@ export async function runEmailPlay<T, X = Record<string, never>>(
               ? { dossier_json: prep.dossier.slice(0, DOSSIER_SLICE) }
               : {}),
           },
-          ...(def.metadata ? { metadata: def.metadata(target) } : {}),
+          // Step-0 metadata: the play's own map, plus which angle this send
+          // was built on (issue #584) so a human reading the row can tell.
+          ...(() => {
+            const metadata = {
+              ...(def.metadata ? def.metadata(target) : {}),
+              ...(angleSelection
+                ? {
+                    angleIndex: angleSelection.index,
+                    angleCount: angleSelection.count,
+                    angleMethod: angleSelection.method,
+                  }
+                : {}),
+            };
+            return Object.keys(metadata).length > 0 ? { metadata } : {};
+          })(),
           // Same generic read as `title` above: any finder stamping the ICP
           // gate's verdict on its payload gets it enforced at step 0 and
           // persisted, without every play def naming the field.
