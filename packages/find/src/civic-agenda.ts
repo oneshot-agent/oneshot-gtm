@@ -296,7 +296,7 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
         playName: PLAY_NAME,
         dedupeKey,
         source: SOURCE,
-        raw: { candidate, yourEdge },
+        raw: { candidate, yourEdge, fitReason: filter.reason },
       });
       result.droppedEnrichment++;
     } else result.droppedEnrichment++;
@@ -319,8 +319,12 @@ export async function runCivicAgendaFinder(opts: CivicAgendaFinderOpts): Promise
 // fires, but the office-holder contact and the ICP verdict already reached —
 // this is purely finishing a resolution the backend, not the source, failed.
 registerPendingRetry(PLAY_NAME, async (raw) => {
-  const { candidate, yourEdge } = raw as { candidate: AgendaCandidate; yourEdge: string };
-  const outcome = await resolveAndEnqueueAgendaItem(candidate, yourEdge);
+  const { candidate, yourEdge, fitReason } = raw as {
+    candidate: AgendaCandidate;
+    yourEdge: string;
+    fitReason?: string | null;
+  };
+  const outcome = await resolveAndEnqueueAgendaItem(candidate, yourEdge, fitReason ?? null);
   return outcome === "enqueued"
     ? "enqueued"
     : outcome === "platform-error"

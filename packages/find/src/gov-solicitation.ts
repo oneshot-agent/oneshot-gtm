@@ -363,8 +363,19 @@ export async function runGovSolicitationFinder(
     }
 
     const target = buildTarget(candidate, yourEdge);
+    // With an ICP configured the generator always makes its one small call,
+    // sentence or not — so the estimate is charged per call, and the cap is
+    // checked before it like every other paid step.
+    if (
+      icp &&
+      opts.maxCostUsd != null &&
+      result.costUsd + FIT_REASON_COST_ESTIMATE_USD > opts.maxCostUsd
+    ) {
+      result.halted = `max-cost cap (${opts.maxCostUsd})`;
+      break;
+    }
     const fitReason = await generateFitReason({ icp, playName, payload: target });
-    if (icp && fitReason) result.costUsd += FIT_REASON_COST_ESTIMATE_USD;
+    if (icp) result.costUsd += FIT_REASON_COST_ESTIMATE_USD;
     const id = enqueueScoredTarget(ledger, {
       playName,
       payload: target,

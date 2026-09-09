@@ -8,7 +8,7 @@ import {
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { XAmplifyDmTarget, XAmplifyTarget, XRepostIntroTarget } from "@oneshot-gtm/plays";
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
-import { generateFitReason } from "./_fit-reason.ts";
+import { FIT_REASON_COST_ESTIMATE_USD, generateFitReason } from "./_fit-reason.ts";
 import { loadXHarvest, saveXHarvest } from "./_x-cache.ts";
 import { CostMeter, estimateHarvestCost, type XEngineName } from "./_x-cost.ts";
 import {
@@ -395,6 +395,9 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
         playName: sdkEmail ? "x-amplify" : "x-amplify-dm",
         payload: target,
       });
+      // One small LLM call whenever an ICP is set — it counts against the
+      // same SDK/LLM ceiling as research, sentence or not.
+      if (icp) sdkCost += FIT_REASON_COST_ESTIMATE_USD;
       const id = enqueueScoredTarget(ledger, {
         playName: sdkEmail ? "x-amplify" : "x-amplify-dm",
         payload: target,

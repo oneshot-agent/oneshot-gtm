@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 import { registerDirectMailCommand } from "./commands/direct-mail.ts";
-import { Command } from "commander";
+import { Command, InvalidArgumentError } from "commander";
 import {
   readPackageVersion,
   reportTelemetryEvent,
@@ -692,7 +692,15 @@ find
   .option(
     "--max-cost <usd>",
     "ceiling on estimated generation spend for this run (default 1.00)",
-    (v) => Number.parseFloat(v),
+    (v) => {
+      // NaN would compare false against every row's spend and lift the cap
+      // for the whole run — refuse the value instead of running uncapped.
+      const n = Number(v.trim());
+      if (v.trim() === "" || !Number.isFinite(n) || n < 0) {
+        throw new InvalidArgumentError("--max-cost must be a number >= 0");
+      }
+      return n;
+    },
   )
   .option("--refresh", "re-derive rows that already carry a fitReason", false)
   .option("--no-generate", "free rungs only (notes, person gate); never call the model")

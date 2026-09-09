@@ -9,6 +9,7 @@ import {
   FIT_REASON_COST_ESTIMATE_USD,
   type FitReasonSource,
   generateFitReason,
+  normalizeFitReason,
   parseReasonFromNotes,
 } from "@oneshot-gtm/find";
 import { c, header, note, ok, warn } from "../output.ts";
@@ -79,13 +80,9 @@ export function freeRung(
 ): { fitReason: string; fitReasonSource: FitReasonSource } | null {
   const fromNotes = parseReasonFromNotes(row.play_name, row.notes);
   if (fromNotes) return { fitReason: fromNotes, fitReasonSource: "notes" };
-  const person = payload["icpVerdictReason"];
-  if (
-    typeof person === "string" &&
-    person.trim().length > 0 &&
-    payload["icpVerdict"] !== "reject"
-  ) {
-    return { fitReason: person.trim(), fitReasonSource: "person-gate" };
+  if (payload["icpVerdict"] !== "reject") {
+    const person = normalizeFitReason(payload["icpVerdictReason"]);
+    if (person) return { fitReason: person, fitReasonSource: "person-gate" };
   }
   return null;
 }

@@ -146,6 +146,24 @@ describe("commandBackfillFitReason", () => {
     expect(generateMock).not.toHaveBeenCalled();
   });
 
+  it("the person-gate rung drops the gates' canned non-reasons like the notes rung does", async () => {
+    const deferred = enqueue("luma-events", {
+      icpVerdict: "unclear",
+      icpVerdictReason: "no role text at discovery; deferred to enrichment",
+    });
+    const wrapped = enqueue("luma-events", {
+      icpVerdict: "pass",
+      icpVerdictReason: "unclear-after-enrich: Runs GTM at a seed-stage B2B startup.",
+    });
+    const s = await commandBackfillFitReason({ write: true, refresh: false, generate: false });
+    expect(payloadOf(deferred)["fitReason"]).toBeUndefined();
+    expect(payloadOf(wrapped)).toMatchObject({
+      fitReason: "Runs GTM at a seed-stage B2B startup.",
+      fitReasonSource: "person-gate",
+    });
+    expect(s).toMatchObject({ fromPersonGate: 1, unresolved: 1, written: 1 });
+  });
+
   it("--refresh re-derives; a reject verdict is never promoted; sent rows are never touched", async () => {
     const kept = enqueue("show-hn", { fitReason: "old", fitReasonSource: "notes" }, { notes: R });
     const rejected = enqueue("luma-events", {

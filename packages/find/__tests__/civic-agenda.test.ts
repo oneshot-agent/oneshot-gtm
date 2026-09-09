@@ -219,6 +219,9 @@ describe("runCivicAgendaFinder — happy path", () => {
     expect(out.droppedEnrichment).toBe(1);
     expect(pendingPersisted).toHaveLength(1);
     expect(pendingPersisted[0]!.playName).toBe("civic-agenda");
+    // The retry re-enqueues from this blob alone, so the accepted company-gate
+    // reason has to ride along or the retried row lands without its fit line.
+    expect((pendingPersisted[0]!.raw as { fitReason?: string }).fitReason).toMatch(/^fits: /);
   });
 
   it("persists for retry when the contact lookup hits a 5xx", async () => {

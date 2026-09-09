@@ -387,11 +387,13 @@ describe("runXRepostersFinder — gates and bookkeeping", () => {
     expect(savedHarvests).toHaveLength(1);
   });
 
-  it("SDK research spend lands in costUsd", async () => {
+  it("SDK research spend lands in costUsd, and so does the amplifier's fit-reason call", async () => {
     harvestCandidates = [amplifierCandidate("amp")];
     emailsByHandle = { amp: "a@b.co" };
     const out = await runXRepostersFinder({ dryRun: false, seeds: SEEDS });
-    expect(out.costUsd).toBeCloseTo(0.05, 5);
+    // 0.05 research + 0.001 for the one fit-reason completion an ICP triggers
+    // on the amplifier lane — charged per call, whether or not it yields a line.
+    expect(out.costUsd).toBeCloseTo(0.051, 5);
   });
 
   it("a mid-harvest stop surfaces as halted while survivors still enqueue", async () => {
