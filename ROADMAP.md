@@ -49,6 +49,7 @@ The ICP filter currently judges each candidate cold — `icpFilter` in `packages
 - [ ] **Split `packages/core/src/ledger.ts`** · L — 2967 lines covering receipts, prospects, queue, cadence, inbox, bounces, canaries and caches behind one class, with `migrate()` at 400 lines of inline DDL.
       _Done when:_ the file is split by domain with the exported class surface and every call site unchanged, `migrate()` still produces a byte-identical schema for a fresh install, and `packages/core/__tests__/ledger.test.ts` passes untouched.
       _Progress (#452):_ fresh-install schema construction + inline migrations extracted to `packages/core/src/ledger-schema.ts`; `Ledger.migrate()` now delegates to it. Byte-identical fresh-install schema verified (sqlite_master + schema_version snapshot in `ledger.test.ts`); domain methods (receipts, prospects, queue, cadence, inbox, bounces, canaries, caches) remain in `ledger.ts` for a follow-up slice.
+      **Progress (#616):** receipt reads, writes, attribution and aggregation extracted to `packages/core/src/ledger-receipts.ts` as a `ReceiptStore` constructed from the migrated `Database` handle; `Ledger` delegates every receipt method to it with signatures, return values and transaction boundaries unchanged. Prospects, queue, cadence, inbox, bounces, canaries and caches remain in `ledger.ts` for further slices (bounces/canaries tracked as issue #617).
 
 ## Launch assets
 
@@ -64,7 +65,6 @@ Not code — these need capture, not commits. `demo seed` + `demo ui` now stand 
 
 ## Approved, not yet started
 
-- [ ] **Extract receipt persistence from Ledger** — issue #616.
 - [ ] **Extract bounce and canary persistence from Ledger** — issue #617.
 
 ## Things we intentionally do NOT do

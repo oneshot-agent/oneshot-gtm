@@ -12,6 +12,7 @@ import {
 } from "./dossier.ts";
 import { humanDecisionWhereSql } from "./labels.ts";
 import { migrateLedgerSchema } from "./ledger-schema.ts";
+import { ReceiptStore } from "./ledger-receipts.ts";
 import { getSharedDb } from "./shared-db.ts";
 import type { ReplyKind } from "./reply-classify.ts";
 import type {
@@ -286,6 +287,7 @@ function publicIntent(intent: string | null): string | null {
 export class Ledger {
   private db: Database;
   private path: string;
+  private receipts: ReceiptStore;
 
   constructor(path: string = DEFAULT_DB_PATH) {
     this.path = path;
@@ -299,6 +301,11 @@ export class Ledger {
     // / "no such table" mid-migration.
     this.db.exec("PRAGMA busy_timeout = 5000");
     this.migrate();
+    // Receipt reads/writes/attribution/aggregation live in ledger-receipts.ts
+    // (see its doc comment) — extracted as the next slice of the ledger split
+    // tracked in ROADMAP.md, following the schema extraction in #452.
+    // Constructed AFTER migrate() so the receipts table already exists.
+    this.receipts = new ReceiptStore(this.db);
   }
 
   getDirectMail(id: string): DirectMailDraft | null {
@@ -1514,52 +1521,7 @@ export class Ledger {
     /** Call-time decisionContext blob; JSON-stringified into the column. */
     decisionContext?: unknown;
   }): number {
-    // Idempotent on the job id: the SDK's idempotency replay returns the
-    // ORIGINAL request_id when a timed-out/double-fired send is retried, and a
-    // Gmail message id is unique per send — so a non-null request_id already in
-    // the table means "same underlying send". Return the existing receipt
-    // instead of inserting a duplicate that would double-count spend and caps.
-    // Null request_ids (cache hits, SDK omissions) are distinct events and skip
-    // this — they must never collapse together.
-    if (input.oneshotRequestId) {
-      const existing = this.db
-        .query("SELECT id FROM receipts WHERE oneshot_request_id = ?")
-        .get(input.oneshotRequestId) as { id: number } | undefined;
-      if (existing) return existing.id;
-    }
-    // Number.isFinite guard rejects undefined / Infinity / NaN — those land
-    // as NULL in the column, NOT silently distorted into a number.
-    const costUsd =
-      typeof input.costUsd === "number" && Number.isFinite(input.costUsd) ? input.costUsd : null;
-    // Mirror what buildAuditOpts sends to OneShot so the stored memo/context
-    // match the platform receipt even at call sites that don't enrich.
-    const memo = input.memo ?? `${input.playName} ${input.callType}`;
-    const decisionContext = input.decisionContext ?? {
-      playName: input.playName,
-      callType: input.callType,
-    };
-    // Mirror the cadence correlation key (decisionContext.goalId) into its own
-    // column so an outcome can value-tag the whole goal in one UPDATE.
-    const goalId =
-      typeof (decisionContext as { goalId?: unknown }).goalId === "string"
-        ? (decisionContext as { goalId: string }).goalId
-        : null;
-    const stmt = this.db.prepare(`
-      INSERT INTO receipts(play_name, call_type, cost_usd, signed_receipt, oneshot_request_id, sender_identity, memo, decision_context, goal_id)
-      VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    const result = stmt.run(
-      input.playName,
-      input.callType,
-      costUsd,
-      input.signedReceipt ? JSON.stringify(input.signedReceipt) : null,
-      input.oneshotRequestId ?? null,
-      input.senderIdentity ?? null,
-      memo,
-      JSON.stringify(decisionContext),
-      goalId,
-    );
-    return Number(result.lastInsertRowid);
+    return this.receipts.recordReceipt(input);
   }
 
   getSenderAssignment(email: string): string | null {
@@ -1940,25 +1902,13 @@ export class Ledger {
   }
 
   getReceipt(id: number): ReceiptRecord | null {
-    return (this.db.query("SELECT * FROM receipts WHERE id = ?").get(id) as ReceiptRecord) ?? null;
+    return this.receipts.getReceipt(id);
   }
 
   listReceipts(
     opts: { playName?: string; sinceIso?: string; limit?: number } = {},
   ): ReceiptRecord[] {
-    const where: string[] = [];
-    const args: unknown[] = [];
-    if (opts.playName) {
-      where.push("play_name = ?");
-      args.push(opts.playName);
-    }
-    if (opts.sinceIso) {
-      where.push("created_at >= ?");
-      args.push(opts.sinceIso);
-    }
-    const sql = `SELECT * FROM receipts ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY created_at DESC LIMIT ?`;
-    args.push(opts.limit ?? 200);
-    return this.db.query(sql).all(...(args as never[])) as ReceiptRecord[];
+    return this.receipts.listReceipts(opts);
   }
 
   upsertProspect(input: Partial<ProspectRecord> & { email?: string | null }): number {
@@ -2528,9 +2478,7 @@ export class Ledger {
 
   /** Persist the RoCS value tag (JSON `{type,amount?,label?}`) on a single receipt. */
   setReceiptValueTag(receiptId: number, valueTagJson: string): void {
-    this.db
-      .prepare(`UPDATE receipts SET value_tag = ?, value_tagged_at = datetime('now') WHERE id = ?`)
-      .run(valueTagJson, receiptId);
+    this.receipts.setReceiptValueTag(receiptId, valueTagJson);
   }
 
   /**
@@ -2540,20 +2488,12 @@ export class Ledger {
    * `tagReceiptValue({goalId})`; this just keeps the dashboard in sync.
    */
   setReceiptValueTagByGoal(goalId: string, valueTagJson: string): number {
-    const res = this.db
-      .prepare(
-        `UPDATE receipts SET value_tag = ?, value_tagged_at = datetime('now') WHERE goal_id = ?`,
-      )
-      .run(valueTagJson, goalId);
-    return res.changes;
+    return this.receipts.setReceiptValueTagByGoal(goalId, valueTagJson);
   }
 
   /** Current local value tag for a goal (any one of its receipts), or null. */
   currentGoalValueTag(goalId: string): string | null {
-    const row = this.db
-      .query(`SELECT value_tag FROM receipts WHERE goal_id = ? AND value_tag IS NOT NULL LIMIT 1`)
-      .get(goalId) as { value_tag: string } | undefined;
-    return row?.value_tag ?? null;
+    return this.receipts.currentGoalValueTag(goalId);
   }
 
   /**
@@ -2562,35 +2502,7 @@ export class Ledger {
    * "{play} → {prospect}". First receipt per goal wins.
    */
   goalLabels(goalIds: string[]): Map<string, { playName: string | null; prospect: string | null }> {
-    const out = new Map<string, { playName: string | null; prospect: string | null }>();
-    if (goalIds.length === 0) return out;
-    const placeholders = goalIds.map(() => "?").join(",");
-    const rows = this.db
-      .query(
-        `SELECT goal_id, play_name, decision_context FROM receipts WHERE goal_id IN (${placeholders})`,
-      )
-      .all(...goalIds) as Array<{
-      goal_id: string;
-      play_name: string;
-      decision_context: string | null;
-    }>;
-    for (const r of rows) {
-      if (out.has(r.goal_id)) continue;
-      let prospect: string | null = null;
-      if (r.decision_context) {
-        try {
-          const dc = JSON.parse(r.decision_context) as {
-            prospectEmail?: string;
-            customerName?: string;
-          };
-          prospect = dc.prospectEmail ?? dc.customerName ?? null;
-        } catch {
-          prospect = null;
-        }
-      }
-      out.set(r.goal_id, { playName: r.play_name, prospect });
-    }
-    return out;
+    return this.receipts.goalLabels(goalIds);
   }
 
   /**
@@ -2888,24 +2800,7 @@ export class Ledger {
   spendByPlay(
     opts: { sinceIso?: string } = {},
   ): Array<{ play_name: string; calls: number; total_usd: number }> {
-    const where: string[] = [];
-    const args: unknown[] = [];
-    if (opts.sinceIso) {
-      where.push("created_at >= ?");
-      args.push(opts.sinceIso);
-    }
-    const sql = `
-      SELECT play_name, COUNT(*) AS calls, COALESCE(SUM(cost_usd), 0) AS total_usd
-      FROM receipts
-      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-      GROUP BY play_name
-      ORDER BY total_usd DESC, calls DESC
-    `;
-    return this.db.query(sql).all(...(args as never[])) as Array<{
-      play_name: string;
-      calls: number;
-      total_usd: number;
-    }>;
+    return this.receipts.spendByPlay(opts);
   }
 
   /**
@@ -2995,18 +2890,7 @@ export class Ledger {
    * nothing in the response to say it had been truncated.
    */
   countReceipts(opts: { sinceIso?: string; playName?: string } = {}): number {
-    const where: string[] = [];
-    const args: unknown[] = [];
-    if (opts.playName) {
-      where.push("play_name = ?");
-      args.push(opts.playName);
-    }
-    if (opts.sinceIso) {
-      where.push("created_at >= ?");
-      args.push(opts.sinceIso);
-    }
-    const sql = `SELECT COUNT(*) AS n FROM receipts${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`;
-    return (this.db.query(sql).get(...(args as never[])) as { n: number } | null)?.n ?? 0;
+    return this.receipts.countReceipts(opts);
   }
 
   /**
@@ -3024,29 +2908,11 @@ export class Ledger {
     day: string;
     total_usd: number;
   }> {
-    const sql = `
-      SELECT play_name, date(created_at) AS day, COALESCE(SUM(cost_usd), 0) AS total_usd
-      FROM receipts
-      WHERE cost_usd IS NOT NULL AND date(created_at) >= date('now', ?)
-      GROUP BY play_name, day
-      ORDER BY day ASC
-    `;
-    return this.db.query(sql).all(`-${Math.max(1, Math.floor(opts.days))} days` as never) as never;
+    return this.receipts.spendSeriesByPlay(opts);
   }
 
   totalSpendUsd(opts: { sinceIso?: string; playName?: string } = {}): number {
-    const where: string[] = ["cost_usd IS NOT NULL"];
-    const args: unknown[] = [];
-    if (opts.playName) {
-      where.push("play_name = ?");
-      args.push(opts.playName);
-    }
-    if (opts.sinceIso) {
-      where.push("created_at >= ?");
-      args.push(opts.sinceIso);
-    }
-    const sql = `SELECT COALESCE(SUM(cost_usd), 0) AS total FROM receipts WHERE ${where.join(" AND ")}`;
-    return (this.db.query(sql).get(...(args as never[])) as { total: number } | null)?.total ?? 0;
+    return this.receipts.totalSpendUsd(opts);
   }
 
   // ── spend_reservations (issue #481: install-wide daily USD spend ceiling) ──
@@ -4737,12 +4603,7 @@ export class Ledger {
    * `cadenceGoalId`.
    */
   listValueTaggedReceipts(): Array<{ goal_id: string; value_tag: string }> {
-    return this.db
-      .query(
-        `SELECT goal_id, value_tag FROM receipts
-         WHERE value_tag IS NOT NULL AND goal_id IS NOT NULL`,
-      )
-      .all() as Array<{ goal_id: string; value_tag: string }>;
+    return this.receipts.listValueTaggedReceipts();
   }
 
   close(): void {
