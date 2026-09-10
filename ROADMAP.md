@@ -51,6 +51,8 @@ The ICP filter currently judges each candidate cold — `icpFilter` in `packages
       _Progress (#452):_ fresh-install schema construction + inline migrations extracted to `packages/core/src/ledger-schema.ts`; `Ledger.migrate()` now delegates to it. Byte-identical fresh-install schema verified (sqlite_master + schema_version snapshot in `ledger.test.ts`); domain methods (receipts, prospects, queue, cadence, inbox, bounces, canaries, caches) remain in `ledger.ts` for a follow-up slice.
       **Progress (#616):** receipt reads, writes, attribution and aggregation extracted to `packages/core/src/ledger-receipts.ts` as a `ReceiptStore` constructed from the migrated `Database` handle; `Ledger` delegates every receipt method to it with signatures, return values and transaction boundaries unchanged. Prospects, queue, cadence, inbox, bounces, canaries and caches remain in `ledger.ts` for further slices (bounces/canaries tracked as issue #617).
 
+      _Progress (#618):_ cache get/set/expiry/invalidation extracted to `packages/core/src/ledger-cache.ts`; `Ledger` delegates to a `LedgerCache` instance, keeping identical public method signatures and TTL constants. Receipts, prospects, queue, cadence, inbox, bounces and canaries remain in `ledger.ts` for further slices.
+
 ## Launch assets
 
 Not code — these need capture, not commits. `demo seed` + `demo ui` now stand up a populated, fictional install to record against, so neither is blocked on having something to point a camera at.
