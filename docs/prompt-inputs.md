@@ -22,7 +22,7 @@ On top of that:
 | Founder-authored input                                                | First touch              | Cadence follow-up | Reply                                        |
 | --------------------------------------------------------------------- | ------------------------ | ----------------- | -------------------------------------------- |
 | `founderName`, `productOneLiner`                                      | yes                      | yes               | yes                                          |
-| `yourEdge` / `yourClaim` (trigger config, stamped onto the row)       | yes                      | no                | no                                           |
+| `yourEdge` / `yourClaim` (current trigger config for queued drafts)   | yes                      | no                | no                                           |
 | Social proof — `founderCredentials` / `productPortfolio` / `partners` | yes                      | yes               | no                                           |
 | `founderAdmission`                                                    | yes (~1 in 3)            | no                | no                                           |
 | `icpOneLiner`                                                         | no [^icp]                | no                | yes                                          |
@@ -116,3 +116,17 @@ sed -n '/buildFollowUpEmail/,/^}/p' packages/plays/src/_cadence.ts
 grep -n "const user = \[" -A 20 packages/plays/src/reply.ts
 grep -rn "socialProofBlock\|admissionBlock" packages/plays/src
 ```
+
+## Edge edits and queued prospects
+
+Queue drafting and regeneration refresh `yourEdge` and `yourClaim` from the
+originating trigger immediately before generation, including prospects queued
+before the edit. Prospect facts and the original queue payload remain intact.
+An explicitly empty or null edge clears the saved edge for that generation.
+Missing triggers or absent fields retain the saved value; malformed trigger
+configuration fails generation with an error so it can be corrected.
+Manual/imported targets without finder provenance keep their supplied edges.
+
+Editing an edge does not rewrite an existing draft or sent email. Regenerate a
+draft to use the new edge; sending a saved draft still sends the reviewed text.
+Once this behavior is installed, edge edits require no server restart.
