@@ -7,7 +7,7 @@ export function resolveQueueTarget(row: Pick<QueueRow, "payload_json" | "source"
   const name = /^find:([^:]+)(?::|$)/.exec(row.source ?? "")?.[1];
   if (!name) return target;
   const trigger = getLedger().getTrigger(name === "post-funding" ? "post-funding-auto" : name);
-  if (!trigger?.config_json) return target;
+  if (!trigger || trigger.config_json == null) return target;
   let config: Record<string, unknown>;
   try {
     const parsed: unknown = JSON.parse(trigger.config_json);

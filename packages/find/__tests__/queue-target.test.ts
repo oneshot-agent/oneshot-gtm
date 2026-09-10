@@ -63,7 +63,7 @@ it.each([null, { config_json: null }, { config_json: "{}" }])(
   },
 );
 
-it.each(["{", "[]", "null", '{"yourEdge":123}'])(
+it.each(["", "{", "[]", "null", '{"yourEdge":123}'])(
   "rejects malformed configuration (%s)",
   (config_json) => {
     getTrigger.mockReturnValue({ config_json });
