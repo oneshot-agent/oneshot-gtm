@@ -64,7 +64,7 @@ Not code — these need capture, not commits. `demo seed` + `demo ui` now stand 
 
 ## Approved, not yet started
 
-- [ ] **Generate the STATUS.md verification stamp instead of hand-editing it** — issue #582.
+_Nothing approved and waiting._
 
 ## Things we intentionally do NOT do
 
