@@ -69,6 +69,8 @@ Not code — these need capture, not commits. `demo seed` + `demo ui` now stand 
 
 ## Approved, not yet started
 
+_Nothing approved and waiting._
+
 ## Things we intentionally do NOT do
 
 - **Run an SDR.** This helps you do founder-led sales. It refuses to advise a `first-ae` hire pre-PMF.
