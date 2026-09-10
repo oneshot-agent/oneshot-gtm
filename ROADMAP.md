@@ -65,7 +65,6 @@ Not code — these need capture, not commits. `demo seed` + `demo ui` now stand 
 
 ## Approved, not yet started
 
-- [ ] **Extract receipt persistence from Ledger** — issue #616.
 - [ ] **Extract bounce and canary persistence from Ledger** — issue #617.
 
 ## Things we intentionally do NOT do
