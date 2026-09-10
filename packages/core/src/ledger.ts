@@ -10,6 +10,18 @@ import {
   mergeProductDossier,
   type ProductResearchDossier,
 } from "./dossier.ts";
+import {
+  bounceStatsByIdentity as delivBounceStatsByIdentity,
+  contactSuppressionFor as delivContactSuppressionFor,
+  countAutoPermanentBounces as delivCountAutoPermanentBounces,
+  countBounces as delivCountBounces,
+  latestCanaryResult as delivLatestCanaryResult,
+  latestSentEmailCopy as delivLatestSentEmailCopy,
+  listRecentBounces as delivListRecentBounces,
+  recordBounce as delivRecordBounce,
+  recordCanaryResult as delivRecordCanaryResult,
+  suppressionFor as delivSuppressionFor,
+} from "./delivery-health.ts";
 import { humanDecisionWhereSql } from "./labels.ts";
 import { LedgerCache } from "./ledger-cache.ts";
 import { migrateLedgerSchema } from "./ledger-schema.ts";
@@ -1581,23 +1593,7 @@ export class Ledger {
     prospectId: number | null;
     bouncedAt: string;
   }): boolean {
-    const result = this.db
-      .prepare(
-        `INSERT OR IGNORE INTO bounces
-           (message_id, recipient, identity_id, kind, status_code, diagnostic, prospect_id, bounced_at)
-         VALUES(?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        input.messageId,
-        canonEmail(input.recipient),
-        input.identityId,
-        input.kind,
-        input.statusCode,
-        input.diagnostic?.slice(0, 300) ?? null,
-        input.prospectId,
-        input.bouncedAt,
-      );
-    return result.changes > 0;
+    return delivRecordBounce(this.db, input);
   }
 
   /**
@@ -1608,14 +1604,7 @@ export class Ledger {
    * Soft bounces are transient by definition.
    */
   suppressionFor(email: string): BounceRecord | null {
-    return (
-      (this.db
-        .query(
-          `SELECT * FROM bounces WHERE recipient = ? AND kind = 'hard'
-           ORDER BY bounced_at DESC LIMIT 1`,
-        )
-        .get(canonEmail(email)) as BounceRecord) ?? null
-    );
+    return delivSuppressionFor(this.db, email);
   }
 
   /**
@@ -1626,15 +1615,7 @@ export class Ledger {
    * an unsubscribed or gone prospect. Sibling of suppressionFor (bounces).
    */
   contactSuppressionFor(email: string): { kind: string; received_at: string } | null {
-    return (
-      (this.db
-        .query(
-          `SELECT kind, received_at FROM inbox_replies
-           WHERE from_email = ? AND kind IN ('unsubscribe', 'auto_permanent')
-           ORDER BY received_at DESC LIMIT 1`,
-        )
-        .get(canonEmail(email)) as { kind: string; received_at: string }) ?? null
-    );
+    return delivContactSuppressionFor(this.db, email);
   }
 
   /** Permanent manual-stop hold used only by breakup-revive's final send backstop. */
@@ -1659,30 +1640,12 @@ export class Ledger {
   bounceStatsByIdentity(opts: {
     sinceIso: string;
   }): Map<string, { hard: number; block: number; soft: number }> {
-    const rows = this.db
-      .query(
-        `SELECT identity_id, kind, COUNT(*) AS n FROM bounces
-         WHERE bounced_at >= ? AND identity_id IS NOT NULL
-         GROUP BY identity_id, kind`,
-      )
-      .all(opts.sinceIso) as Array<{ identity_id: string; kind: BounceKind; n: number }>;
-    const out = new Map<string, { hard: number; block: number; soft: number }>();
-    for (const r of rows) {
-      let entry = out.get(r.identity_id);
-      if (!entry) {
-        entry = { hard: 0, block: 0, soft: 0 };
-        out.set(r.identity_id, entry);
-      }
-      entry[r.kind] = r.n;
-    }
-    return out;
+    return delivBounceStatsByIdentity(this.db, opts);
   }
 
   /** Most recent bounces for display (doctor detail lines, debugging). */
   listRecentBounces(opts: { limit?: number } = {}): BounceRecord[] {
-    return this.db
-      .query(`SELECT * FROM bounces ORDER BY bounced_at DESC LIMIT ?`)
-      .all(opts.limit ?? 20) as BounceRecord[];
+    return delivListRecentBounces(this.db, opts);
   }
 
   /**
@@ -1702,18 +1665,7 @@ export class Ledger {
    * writes to this table).
    */
   countBounces(opts: { sinceIso?: string; untilIso?: string } = {}): number {
-    const where: string[] = [];
-    const args: unknown[] = [];
-    if (opts.sinceIso) {
-      where.push("bounced_at >= ?");
-      args.push(opts.sinceIso);
-    }
-    if (opts.untilIso) {
-      where.push("bounced_at < ?");
-      args.push(opts.untilIso);
-    }
-    const sql = `SELECT COUNT(*) AS n FROM bounces${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`;
-    return (this.db.query(sql).get(...(args as never[])) as { n: number } | null)?.n ?? 0;
+    return delivCountBounces(this.db, opts);
   }
 
   /**
@@ -1736,18 +1688,7 @@ export class Ledger {
    * path.
    */
   countAutoPermanentBounces(opts: { sinceIso?: string; untilIso?: string } = {}): number {
-    const where: string[] = ["kind = 'auto_permanent'"];
-    const args: unknown[] = [];
-    if (opts.sinceIso) {
-      where.push("received_at >= ?");
-      args.push(opts.sinceIso);
-    }
-    if (opts.untilIso) {
-      where.push("received_at < ?");
-      args.push(opts.untilIso);
-    }
-    const sql = `SELECT COUNT(*) AS n FROM inbox_replies WHERE ${where.join(" AND ")}`;
-    return (this.db.query(sql).get(...(args as never[])) as { n: number } | null)?.n ?? 0;
+    return delivCountAutoPermanentBounces(this.db, opts);
   }
 
   recordCanaryResult(input: {
@@ -1761,36 +1702,12 @@ export class Ledger {
     sameDomain: boolean;
     latencyMs: number | null;
   }): number {
-    const result = this.db
-      .prepare(
-        `INSERT INTO canary_results
-           (from_identity, to_identity, placement, labels_json, spf, dkim, dmarc,
-            subject, source_play, same_domain, latency_ms)
-         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      )
-      .run(
-        input.fromIdentity,
-        input.toIdentity,
-        input.placement,
-        JSON.stringify(input.labelIds),
-        input.auth.spf,
-        input.auth.dkim,
-        input.auth.dmarc,
-        input.subject,
-        input.sourcePlay,
-        input.sameDomain ? 1 : 0,
-        input.latencyMs,
-      );
-    return Number(result.lastInsertRowid);
+    return delivRecordCanaryResult(this.db, input);
   }
 
   /** Newest placement test, or null if one has never been run. */
   latestCanaryResult(): CanaryResultRecord | null {
-    return (
-      (this.db
-        .query(`SELECT * FROM canary_results ORDER BY created_at DESC, id DESC LIMIT 1`)
-        .get() as CanaryResultRecord) ?? null
-    );
+    return delivLatestCanaryResult(this.db);
   }
 
   /**
@@ -1803,42 +1720,7 @@ export class Ledger {
   latestSentEmailCopy(
     opts: { playName?: string } = {},
   ): { subject: string; body: string; playName: string } | null {
-    const rows = this.db
-      .query(
-        // 'sent' rows are UPDATEd in place to 'replied', so all three statuses
-        // mean "sent" — matching only 'sent' would skip every prospect who
-        // answered. Usability is filtered in SQL (not a JS slice) so the small
-        // bound below only ever trims genuinely valid candidates.
-        `SELECT play_name, metadata_json FROM sequence_events
-         WHERE status IN ('sent', 'delivered', 'replied')
-           AND channel = 'email' AND metadata_json IS NOT NULL
-           AND json_valid(metadata_json)
-           AND json_extract(metadata_json, '$.subject') IS NOT NULL
-           AND trim(coalesce(json_extract(metadata_json, '$.body'), '')) != ''
-           ${opts.playName ? "AND play_name = ?" : ""}
-         -- id DESC breaks ties: created_at is second-precision, and a cadence
-         -- batch writes several rows within one second, leaving their relative
-         -- order otherwise unspecified.
-         ORDER BY created_at DESC, id DESC LIMIT 25`,
-      )
-      .all(...(opts.playName ? [opts.playName] : [])) as Array<{
-      play_name: string;
-      metadata_json: string;
-    }>;
-    // Backstop for shapes SQL can't reject — a numeric subject, say, which
-    // json_extract happily returns but which isn't usable copy.
-    for (const row of rows) {
-      let meta: { subject?: unknown; body?: unknown };
-      try {
-        meta = JSON.parse(row.metadata_json) as { subject?: unknown; body?: unknown };
-      } catch {
-        continue;
-      }
-      if (typeof meta.subject === "string" && typeof meta.body === "string" && meta.body.trim()) {
-        return { subject: meta.subject, body: meta.body, playName: row.play_name };
-      }
-    }
-    return null;
+    return delivLatestSentEmailCopy(this.db, opts);
   }
 
   /**

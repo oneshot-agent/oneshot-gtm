@@ -53,6 +53,8 @@ The ICP filter currently judges each candidate cold — `icpFilter` in `packages
 
       _Progress (#618):_ cache get/set/expiry/invalidation extracted to `packages/core/src/ledger-cache.ts`; `Ledger` delegates to a `LedgerCache` instance, keeping identical public method signatures and TTL constants. Receipts, prospects, queue, cadence, inbox, bounces and canaries remain in `ledger.ts` for further slices.
 
+      **Progress (#617):** bounce, suppression, and canary persistence extracted to `packages/core/src/delivery-health.ts` (pure functions of a raw `Database` handle, mirroring the `ledger-schema.ts` pattern); `Ledger`'s recordBounce/suppressionFor/contactSuppressionFor/bounceStatsByIdentity/listRecentBounces/countBounces/countAutoPermanentBounces/recordCanaryResult/latestCanaryResult/latestSentEmailCopy now delegate to it, same signatures and SQL, every call site unchanged. Prospects, queue, cadence, and inbox domain methods remain in `ledger.ts` for further slices.
+
 ## Launch assets
 
 Not code — these need capture, not commits. `demo seed` + `demo ui` now stand up a populated, fictional install to record against, so neither is blocked on having something to point a camera at.
@@ -66,8 +68,6 @@ Not code — these need capture, not commits. `demo seed` + `demo ui` now stand 
 ---
 
 ## Approved, not yet started
-
-- [ ] **Extract bounce and canary persistence from Ledger** — issue #617.
 
 ## Things we intentionally do NOT do
 
