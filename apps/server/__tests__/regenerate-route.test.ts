@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 interface RowSnapshot {
   id: number;
+  source?: string;
   play_name: string;
   payload_json: string;
   status: string;
@@ -28,6 +29,9 @@ let dispatchPlayImpl: () => Promise<
   Array<{ subject: string; body: string; flags: string[] }>
 > = async () => [{ subject: "subj", body: "body", flags: [] }];
 
+const getTrigger = vi.fn();
+const dispatchCalls: unknown[] = [];
+
 const setQueueDraftCalls: Array<{ id: number; sent: boolean }> = [];
 
 vi.mock("@oneshot-gtm/core", async () => {
@@ -37,6 +41,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     isDraining: () => false,
     getLedger: () => ({
       getQueueRow: () => ({ ...row }),
+      getTrigger,
       setQueueDraft: (input: { id: number; draft: { sent: boolean } }) => {
         setQueueDraftCalls.push({ id: input.id, sent: input.draft.sent });
       },
@@ -45,7 +50,10 @@ vi.mock("@oneshot-gtm/core", async () => {
 });
 
 vi.mock("../src/api/_play-dispatch.ts", () => ({
-  dispatchPlay: () => dispatchPlayImpl(),
+  dispatchPlay: (_name: string, body: unknown) => {
+    dispatchCalls.push(body);
+    return dispatchPlayImpl();
+  },
 }));
 
 const { regenerateDraftRoute } = await import("../src/api/queue.ts");
@@ -59,6 +67,8 @@ beforeEach(() => {
     send_started_at: null,
   };
   setQueueDraftCalls.length = 0;
+  dispatchCalls.length = 0;
+  getTrigger.mockReset();
   dispatchPlayImpl = async () => [{ subject: "subj", body: "body", flags: [] }];
 });
 
@@ -120,4 +130,32 @@ describe("regenerateDraftRoute — TOCTOU guards", () => {
     expect(setQueueDraftCalls).toHaveLength(1);
     expect(setQueueDraftCalls[0]?.sent).toBe(false);
   });
+});
+
+it("regenerates from current trigger edges without changing saved context", async () => {
+  row.source = "find:luma-events";
+  row.payload_json = JSON.stringify({
+    email: "a@b.dev",
+    yourEdge: "LinkedIn versus email",
+    dossier: "facts",
+  });
+  const original = row.payload_json;
+  getTrigger.mockReturnValue({
+    config_json: JSON.stringify({ yourEdge: "the product is the playbook" }),
+  });
+  const res = await regenerateDraftRoute(req(), { id: "1" });
+  expect(res.status).toBe(200);
+  expect(dispatchCalls[0]).toEqual({
+    dryRun: true,
+    targets: [{ email: "a@b.dev", yourEdge: "the product is the playbook", dossier: "facts" }],
+  });
+  expect(row.payload_json).toBe(original);
+});
+it("rejects malformed trigger config before dispatching", async () => {
+  row.source = "find:luma-events";
+  getTrigger.mockReturnValue({ config_json: "{" });
+  const res = await regenerateDraftRoute(req(), { id: "1" });
+  expect(res.status).toBe(400);
+  expect(dispatchCalls).toHaveLength(0);
+  expect(setQueueDraftCalls).toHaveLength(0);
 });

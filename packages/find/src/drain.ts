@@ -7,6 +7,7 @@ import {
   type QueueRow,
 } from "@oneshot-gtm/core";
 import { type DraftedRow, isSupportedPlay, MANUAL_PLAYS, PLAYS } from "@oneshot-gtm/plays";
+import { resolveQueueTarget } from "./queue-target.ts";
 
 export interface DrainOpts {
   playName: string;
@@ -66,9 +67,8 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
   // but before checking whether rows are empty, so an unknown play adds an error
   // to the outcome (exit 1 when the CLI sees it) instead of returning an empty
   // outcome (exit 2 under --fail-on-empty), regardless of queue state.
-  // No per-play drain-level options: every finder row is self-contained
-  // (the angle is stamped on at enqueue time), and anything about the SENDER
-  // is read from config by the play itself.
+  // Prospect facts stay on the queue row; sender edges are refreshed from
+  // its originating trigger immediately before generation.
   if (!isSupportedPlay(opts.playName)) {
     outcome.errors.push({ id: -1, message: `drain: unsupported play '${opts.playName}'` });
     return outcome;
@@ -183,7 +183,7 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
 async function dispatchOneTarget(opts: DrainOpts, row: QueueRow): Promise<DraftedRow> {
   const play = PLAYS[opts.playName];
   if (!play) throw new Error(`drain: unsupported play '${opts.playName}'`);
-  const target = JSON.parse(row.payload_json) as unknown;
+  const target = resolveQueueTarget(row);
   const result = await play.run({
     dryRun: opts.dryRun,
     targets: [target],

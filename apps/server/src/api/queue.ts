@@ -12,7 +12,7 @@ import {
   type QueueStatus,
   type TelemetryOutcome,
 } from "@oneshot-gtm/core";
-import { drainQueue, rankPendingRows } from "@oneshot-gtm/find";
+import { drainQueue, rankPendingRows, resolveQueueTarget } from "@oneshot-gtm/find";
 import {
   MANUAL_PLAYS,
   enrollInCadence,
@@ -484,14 +484,14 @@ export async function regenerateDraftRoute(
 
   let target: unknown;
   try {
-    target = JSON.parse(row.payload_json);
-  } catch {
-    return jsonResponse({ error: "row payload is not valid JSON" }, 400, req);
+    target = resolveQueueTarget(row);
+  } catch (err) {
+    const error =
+      err instanceof SyntaxError ? "row payload is not valid JSON" : (err as Error).message;
+    return jsonResponse({ error }, 400, req);
   }
 
-  // Every finder row is self-contained (its pitch angle is stamped on at
-  // enqueue time), so the payload IS the target and there are no run-level
-  // extras to carry through.
+  // The target retains queued prospect facts with current trigger edges.
   const body: RunPlayRequest = {
     dryRun: true,
     targets: [target],

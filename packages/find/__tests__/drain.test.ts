@@ -32,6 +32,7 @@ function row(id: number, payload: Record<string, unknown> = {}): QueueRow {
 }
 
 const ledgerStub = {
+  getTrigger: vi.fn(),
   dequeueApproved: vi.fn<(opts: { playName: string; limit?: number }) => QueueRow[]>(),
   setQueueDraft: vi.fn(),
   setQueueStatus: vi.fn(),
@@ -79,6 +80,7 @@ const { drainQueue, idsForSentDrafts } = await import("../src/drain.ts");
 const { tryReserveDailySpend: tryReserveDailySpendMock } = await import("@oneshot-gtm/core");
 
 beforeEach(() => {
+  ledgerStub.getTrigger.mockReset();
   ledgerStub.dequeueApproved.mockReset();
   ledgerStub.setQueueDraft.mockReset();
   ledgerStub.setQueueStatus.mockReset();
@@ -343,4 +345,24 @@ describe("drainQueue per-target dispatch + persistence", () => {
     expect(ledgerStub.setQueueStatus).not.toHaveBeenCalled();
     expect(out.sent).toBe(0);
   });
+});
+
+it("drains with current source edges without rewriting the queue payload", async () => {
+  const queued = row(91);
+  queued.source = "find:github-topics";
+  const original = queued.payload_json;
+  ledgerStub.dequeueApproved.mockReturnValue([queued]);
+  ledgerStub.getTrigger.mockReturnValue({
+    config_json: JSON.stringify({ yourEdge: "the product is the playbook" }),
+  });
+  runStackConsolidationMock.mockResolvedValue({
+    drafted: [{ subject: "s", body: "b", flags: [], sent: false, receiptIds: [] }],
+  });
+  const result = await drainQueue({ playName: "stack-consolidation", dryRun: true });
+  expect(result.errors).toEqual([]);
+  expect(runStackConsolidationMock).toHaveBeenCalledWith({
+    dryRun: true,
+    targets: [{ ...JSON.parse(original), yourEdge: "the product is the playbook" }],
+  });
+  expect(queued.payload_json).toBe(original);
 });
