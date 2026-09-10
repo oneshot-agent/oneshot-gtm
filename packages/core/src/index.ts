@@ -1,6 +1,7 @@
 export * from "./oneshot.ts";
 export * from "./inflight.ts";
 export * from "./ledger.ts";
+export * from "./ledger-cache.ts";
 export * from "./config.ts";
 export * from "./demo.ts";
 export * from "./shared-db.ts";
