@@ -142,8 +142,15 @@ describe("enrichment cache (delegated to SharedDb) — hits, misses, replacement
 });
 
 describe("LinkedIn cache (delegated to SharedDb) — hits, misses, replacement", () => {
+  // `getCachedLinkedIn`/`setCachedLinkedIn` are delegated to the process-wide
+  // `getSharedDb()` singleton, whose tables are never truncated between
+  // tests (unlike `dbPath`, which is recreated per test in beforeEach). Every
+  // case below therefore needs its own unique query key — reusing a key
+  // across cases makes assertions order-dependent on stale rows written by
+  // an earlier case, the same footgun ledger.test.ts already avoids for the
+  // enrichment cache by giving each case its own email.
   it("is a miss (null row) for a query key never searched", () => {
-    expect(ledger.getCachedLinkedIn("ada acme.dev")).toBeNull();
+    expect(ledger.getCachedLinkedIn("quinn nobody.dev")).toBeNull();
   });
 
   it("is a hit with status 'hit' when a URL was found", () => {
@@ -162,11 +169,11 @@ describe("LinkedIn cache (delegated to SharedDb) — hits, misses, replacement",
   });
 
   it("replacement: a later hit overwrites an earlier miss for the same query key", () => {
-    ledger.setCachedLinkedIn("ada acme.dev", null);
-    expect(ledger.getCachedLinkedIn("ada acme.dev")?.status).toBe("miss");
-    ledger.setCachedLinkedIn("ada acme.dev", "https://linkedin.com/in/ada");
-    expect(ledger.getCachedLinkedIn("ada acme.dev")).toMatchObject({
-      url: "https://linkedin.com/in/ada",
+    ledger.setCachedLinkedIn("grace flux.dev", null);
+    expect(ledger.getCachedLinkedIn("grace flux.dev")?.status).toBe("miss");
+    ledger.setCachedLinkedIn("grace flux.dev", "https://linkedin.com/in/grace");
+    expect(ledger.getCachedLinkedIn("grace flux.dev")).toMatchObject({
+      url: "https://linkedin.com/in/grace",
       status: "hit",
     });
   });
