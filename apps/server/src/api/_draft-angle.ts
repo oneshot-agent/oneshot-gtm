@@ -6,6 +6,7 @@ import {
   edgeFieldOf,
   selectAngle,
   splitEdgeAngles,
+  slopFlags,
 } from "@oneshot-gtm/plays";
 import type { DraftAngle } from "@oneshot-gtm/shared-types";
 
@@ -156,6 +157,15 @@ export async function draftAngleFor(input: {
       ) {
         throw new Error(
           `Could not create ${ANGLE_POOL_SIZE} distinct angles. Your draft is unchanged; try again.`,
+        );
+      }
+      // A generated angle is copied into the draft almost verbatim, so the
+      // humanizer's phrase bans apply to it too. "the hard part isn't the
+      // engineering, it's finding the first ten teams" reached a ready draft
+      // this way with no flags.
+      if (slopFlags(text).includes("negative-parallelism")) {
+        throw new Error(
+          "A generated angle used a negation contrast (\"isn't X, it's Y\"). Your draft is unchanged; try again.",
         );
       }
       pool.push({ text, origin: "generated" });
