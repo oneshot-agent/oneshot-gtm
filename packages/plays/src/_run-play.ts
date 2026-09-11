@@ -311,6 +311,9 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         const draft = await draftEmailFromPrompt({
           promptName: def.promptName,
           inputBlock,
+          // The same cap lintEmail holds at, so an over-long first pass gets
+          // one tighter redraft instead of becoming a lint-held send.
+          maxBodyWords: def.maxBodyWords,
         });
 
         const flags = [
