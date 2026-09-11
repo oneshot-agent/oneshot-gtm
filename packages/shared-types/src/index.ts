@@ -731,7 +731,18 @@ export interface AddProspectResult {
  * true only when the SDK actually emitted the email (false for dryRun
  * and for lint-blocked drafts).
  */
+export interface DraftAngle {
+  pool?: Array<{ text: string; origin: "configured" | "generated" }>;
+  text: string;
+  origin: "configured" | "generated";
+  index?: number;
+  count?: number;
+  fingerprint: string;
+  history: string[];
+}
+
 export interface LastDraft {
+  angle?: DraftAngle;
   subject: string;
   body: string;
   flags: string[];

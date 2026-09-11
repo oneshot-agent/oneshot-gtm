@@ -1,3 +1,4 @@
+import { draftAngleFor, parseDraftAngle } from "./_draft-angle.ts";
 import { extractBusinessAddress } from "@oneshot-gtm/core";
 import {
   getLedger,
@@ -16,6 +17,7 @@ import { drainQueue, rankPendingRows, resolveQueueTarget } from "@oneshot-gtm/fi
 import {
   MANUAL_PLAYS,
   enrollInCadence,
+  generateRejectReason,
   logTargetError,
   playMetadata,
   sendDraftedEmail,
@@ -76,6 +78,7 @@ export function toView(row: QueueRow): QueueRowView {
           receiptIds: Array.isArray(parsed.receiptIds) ? parsed.receiptIds : [],
           dryRun: parsed.dryRun === true,
           draftedAt: typeof parsed.draftedAt === "string" ? parsed.draftedAt : "",
+          ...(parseDraftAngle(parsed.angle) ? { angle: parseDraftAngle(parsed.angle)! } : {}),
           ...(parsed.enrichmentFailed === true ? { enrichmentFailed: true } : {}),
         };
       }
@@ -390,27 +393,97 @@ export async function approveQueueRoute(
   return jsonResponse({ ok: true }, 200, req);
 }
 
+/**
+ * The same cap the auto-reject gates apply to their notes
+ * (`packages/find/src/_qualify.ts`): the column is one freeform slot and the
+ * timeline renders it whole.
+ */
+export const REJECT_REASON_MAX_CHARS = 300;
+
+/**
+ * The `auto:` prefix is how `isAutoRejected` (score-prospects) and the
+ * pre-v26 `isHumanDecision` arm tell a machine negative from a human one, and
+ * both read `notes` unconditionally. A human-submitted reason must never carry
+ * it, or the founder's own decision gets counted as the machine's.
+ */
+const MACHINE_PREFIX = /^auto:/i;
+
+/**
+ * Body → the note to write, or an error. `undefined` means the key was absent
+ * (leave the note alone); `""` means the founder emptied the box (clear it).
+ */
+export function parseRejectReason(body: unknown): { reason?: string } | { error: string } {
+  if (!body || typeof body !== "object" || !("reason" in body)) return {};
+  const raw = (body as { reason: unknown }).reason;
+  if (raw === undefined || raw === null) return {};
+  if (typeof raw !== "string") return { error: "reason must be a string" };
+  const reason = raw.replace(/\s+/g, " ").trim().slice(0, REJECT_REASON_MAX_CHARS);
+  if (MACHINE_PREFIX.test(reason)) {
+    return { error: "reason can't start with 'auto:' — that prefix marks machine decisions" };
+  }
+  return { reason };
+}
+
 export async function rejectQueueRoute(
   req: Request,
   params: Record<string, string>,
 ): Promise<Response> {
   const id = Number.parseInt(params["id"] ?? "", 10);
   if (!Number.isFinite(id)) return jsonResponse({ error: "bad id" }, 400, req);
-  let body: { reason?: string } = {};
+  let body: unknown = {};
   try {
-    body = (await req.json()) as { reason?: string };
+    body = await req.json();
   } catch {
     // empty body is fine
   }
+  const parsed = parseRejectReason(body);
+  if ("error" in parsed) return jsonResponse({ error: parsed.error }, 400, req);
   const ledger = getLedger();
   const row = ledger.getQueueRow(id);
   if (!row) return jsonResponse({ error: `row #${id} not found` }, 404, req);
-  ledger.setQueueStatus(
-    body.reason
-      ? { id, status: "rejected", notes: body.reason, decidedBy: "human" }
-      : { id, status: "rejected", decidedBy: "human" },
-  );
+  ledger.setQueueStatus({
+    id,
+    status: "rejected",
+    decidedBy: "human",
+    ...(parsed.reason !== undefined ? { notes: parsed.reason } : {}),
+  });
   return jsonResponse({ ok: true }, 200, req);
+}
+
+/**
+ * The reject box's LLM fallback: when the row carries neither a person-gate
+ * verdict reason nor a finder note, the web asks for one sentence on why this
+ * prospect might not fit. Preview only — nothing is written, nothing is
+ * decided. A provider failure or a model that sees no mismatch both answer
+ * `{ reason: null }`, and the box simply stays empty.
+ */
+export async function suggestRejectReasonRoute(
+  req: Request,
+  params: Record<string, string>,
+): Promise<Response> {
+  const id = Number.parseInt(params["id"] ?? "", 10);
+  if (!Number.isFinite(id)) return jsonResponse({ error: "bad id" }, 400, req);
+  const ledger = getLedger();
+  const row = ledger.getQueueRow(id);
+  if (!row) return jsonResponse({ error: `row #${id} not found` }, 404, req);
+  let payload: unknown;
+  try {
+    payload = resolveQueueTarget(row);
+  } catch (err) {
+    const error =
+      err instanceof SyntaxError ? "row payload is not valid JSON" : (err as Error).message;
+    return jsonResponse({ error }, 400, req);
+  }
+  const dossier =
+    row.prospect_id != null
+      ? (ledger.getProspectById(row.prospect_id)?.dossier_json ?? null)
+      : null;
+  const reason = await generateRejectReason({ playName: row.play_name, payload, dossier });
+  return jsonResponse(
+    reason ? { reason, source: "llm" } : { reason: null, source: null },
+    200,
+    req,
+  );
 }
 
 export async function approveAllRoute(req: Request): Promise<Response> {
@@ -465,7 +538,28 @@ export async function drainQueueRoute(req: Request): Promise<Response> {
  * draft. Always dry-run: enrichment is skipped and nothing is sent, even
  * when the fresh draft is lint-clean.
  */
+const generatingDrafts = new Set<number>();
+
 export async function regenerateDraftRoute(
+  req: Request,
+  params: Record<string, string>,
+): Promise<Response> {
+  const id = Number.parseInt(params["id"] ?? "", 10);
+  if (generatingDrafts.has(id))
+    return jsonResponse(
+      { error: "Already generating this draft; wait for it to finish." },
+      409,
+      req,
+    );
+  generatingDrafts.add(id);
+  try {
+    return await regenerateDraftInner(req, params);
+  } finally {
+    generatingDrafts.delete(id);
+  }
+}
+
+async function regenerateDraftInner(
   req: Request,
   params: Record<string, string>,
 ): Promise<Response> {
@@ -491,6 +585,40 @@ export async function regenerateDraftRoute(
     return jsonResponse({ error }, 400, req);
   }
 
+  let rotate = false;
+  try {
+    const raw = await req.text();
+    const options: unknown = raw.trim() ? JSON.parse(raw) : {};
+    if (!options || typeof options !== "object" || Array.isArray(options)) throw new Error();
+    const value = (options as { rotateAngle?: unknown }).rotateAngle;
+    if (value !== undefined && typeof value !== "boolean") throw new Error();
+    rotate = value === true;
+  } catch {
+    return jsonResponse({ error: "rotateAngle must be a boolean" }, 400, req);
+  }
+  let previous: Partial<LastDraft> = {};
+  try {
+    previous = JSON.parse(row.last_draft_json ?? "{}");
+  } catch {
+    /* legacy draft */
+  }
+  if (previous?.sent === true) return jsonResponse({ error: "draft already sent" }, 400, req);
+  let angle: LastDraft["angle"];
+  try {
+    const research =
+      row.prospect_id != null ? ledger.getProspectById(row.prospect_id)?.dossier_json : null;
+    angle = await draftAngleFor({
+      ...(research ? { research } : {}),
+      target,
+      playName: row.play_name,
+      ...(parseDraftAngle(previous?.angle) ? { previous: parseDraftAngle(previous.angle)! } : {}),
+      ...(typeof previous?.body === "string" ? { previousBody: previous.body } : {}),
+      rotate,
+    });
+  } catch (err) {
+    return jsonResponse({ error: (err as Error).message }, 400, req);
+  }
+
   // The target retains queued prospect facts with current trigger edges.
   const body: RunPlayRequest = {
     dryRun: true,
@@ -499,12 +627,18 @@ export async function regenerateDraftRoute(
 
   let drafted: Awaited<ReturnType<typeof dispatchPlay>>;
   try {
-    drafted = await dispatchPlay(row.play_name, body);
+    drafted = await dispatchPlay(row.play_name, body, undefined, undefined, angle?.text);
   } catch (err) {
     return jsonResponse({ error: (err as Error).message }, 400, req);
   }
   const draft = drafted[0];
-  if (!draft) return jsonResponse({ error: "no draft produced" }, 500, req);
+  if (!draft || !draft.body.trim() || draft.flags.some((f) => f.startsWith("error:"))) {
+    return jsonResponse(
+      { error: "Draft generation failed. Your existing draft is unchanged; try again." },
+      500,
+      req,
+    );
+  }
 
   // TOCTOU close: re-read after the multi-second dispatchPlay await — a
   // concurrent send completing mid-LLM-call must not get its canonical sent
@@ -514,19 +648,6 @@ export async function regenerateDraftRoute(
     return jsonResponse({ error: "send completed (or started) during regenerate" }, 409, req);
   }
 
-  ledger.setQueueDraft({
-    id,
-    draft: {
-      subject: draft.subject,
-      body: draft.body,
-      flags: draft.flags,
-      sent: false,
-      receiptIds: [],
-      dryRun: true,
-      ...(draft.enrichmentFailed ? { enrichmentFailed: true } : {}),
-    },
-  });
-
   const out: LastDraft = {
     subject: draft.subject,
     body: draft.body,
@@ -535,8 +656,21 @@ export async function regenerateDraftRoute(
     receiptIds: [],
     dryRun: true,
     draftedAt: new Date().toISOString(),
+    ...(angle ? { angle } : {}),
     ...(draft.enrichmentFailed ? { enrichmentFailed: true } : {}),
   };
+  const saved = ledger.setQueueDraftIfCurrent({
+    id,
+    previousDraft: row.last_draft_json ?? null,
+    previousPayload: row.payload_json,
+    draft: out,
+  });
+  if (!saved)
+    return jsonResponse(
+      { error: "Draft changed during generation; refresh and try again." },
+      409,
+      req,
+    );
   return jsonResponse(out, 200, req);
 }
 
@@ -816,7 +950,15 @@ export async function sendDraftRoute(
   ledger.setQueueStatus({ id, status: "sent", decidedBy: "human" });
   ledger.setQueueDraft({
     id,
-    draft: { subject, body, flags: [], sent: true, receiptIds: result.receiptIds, dryRun: false },
+    draft: {
+      subject,
+      body,
+      flags: [],
+      sent: true,
+      receiptIds: result.receiptIds,
+      dryRun: false,
+      ...(parseDraftAngle(parsed.angle) ? { angle: parseDraftAngle(parsed.angle)! } : {}),
+    },
   });
 
   return done("ok", jsonResponse({ sent: true, receiptIds: result.receiptIds }, 200, req));

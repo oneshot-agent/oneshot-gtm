@@ -130,3 +130,35 @@ Manual/imported targets without finder provenance keep their supplied edges.
 Editing an edge does not rewrite an existing draft or sent email. Regenerate a
 draft to use the new edge; sending a saved draft still sends the reviewed text.
 Once this behavior is installed, edge edits require no server restart.
+
+## Rotate angle
+
+On an unsent queue draft, **Rotate angle** creates a new preview using the next
+configured angle. It cycles in order and wraps after the last. When there are
+fewer than twelve available angles, the first rotation fills the pool to twelve with
+alternatives grounded in current product positioning and prospect context. Later
+clicks cycle through the saved pool without generating more alternatives. Generated alternatives belong to that prospect's draft; they do not
+edit trigger configuration.
+
+The selected angle is shown below the draft and saved with it. **Regenerate**
+keeps that selection until product positioning or configured edges change.
+Older drafts recover their initial configured choice through the normal selector.
+Generation errors leave the existing draft intact. Rotation never sends; it may
+incur the usual LLM and research costs. This control is available across queue
+plays, including manual DMs; it is not added to run results or inbox replies.
+
+## Reject reason
+
+The reject box on `/queue` and `/prospects` opens prefilled. Nothing reaches a
+model for that: the box takes the person gate's verdict reason when the verdict
+was _reject_ or _unclear_, else the finder's own note with its `auto:` prefix
+removed. Only when a row has neither — most approved rows, where the gate said
+_pass_ — does the `/queue` modal ask `reject-reason.md` for one sentence, from
+the same inputs as the fit line: the ICP one-liner, the play name and the
+prospect's own evidence (company, title, bio, event, repo, research excerpt).
+It never sees names, emails or URLs, may answer null, and its sentence is only
+a suggestion in the box until the founder submits. What is submitted is
+trimmed, capped at 300 characters, refused if it starts with `auto:` (the
+machine-decision marker), and stored on the row as the note the timeline
+shows. An emptied box clears an old note. The text is not forwarded to the
+ICP filter's few-shot examples — only the decision is (see `_filter.ts`).

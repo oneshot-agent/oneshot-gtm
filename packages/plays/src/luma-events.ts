@@ -150,6 +150,8 @@ export interface LumaEventsRunOptions {
   ) => void;
   /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
   signal?: AbortSignal;
+  /** Explicit draft argument chosen by the user; bypasses automatic angle selection. */
+  draftAngle?: string;
 }
 
 interface LumaEventsDraft {

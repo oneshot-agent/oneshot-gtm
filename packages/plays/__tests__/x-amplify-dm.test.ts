@@ -89,3 +89,8 @@ describe("runXAmplifyDm", () => {
     expect(MANUAL_PLAYS["x-amplify-dm"]).toEqual({ channel: "x" });
   });
 });
+
+it("writes from an explicit generated angle", async () => {
+  await runXAmplifyDm({ dryRun: true, targets: [target()], draftAngle: "A concrete new argument" });
+  expect(JSON.stringify(completeInputs)).toContain("SELECTED ANGLE: A concrete new argument");
+});

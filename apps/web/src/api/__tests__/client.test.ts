@@ -59,3 +59,43 @@ describe("api client getJson handling", () => {
     await expect(api.home()).rejects.toThrow("502 Bad Gateway: /home");
   });
 });
+
+describe("reject body shapes", () => {
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.resetAllMocks();
+  });
+
+  function okJson(body: unknown): void {
+    mockFetch({
+      ok: true,
+      status: 200,
+      statusText: "OK",
+      text: () => Promise.resolve(JSON.stringify(body)),
+      json: () => Promise.resolve(body),
+    });
+  }
+  const sentBody = (): unknown => {
+    const call = (global.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!;
+    return JSON.parse((call[1] as RequestInit).body as string);
+  };
+
+  it("omits `reason` when undefined, sends it verbatim otherwise — including empty", async () => {
+    okJson({ ok: true });
+    await api.rejectQueue(7);
+    expect(sentBody()).toEqual({});
+    okJson({ ok: true });
+    await api.rejectQueue(7, "");
+    expect(sentBody()).toEqual({ reason: "" });
+    okJson({ ok: true });
+    await api.rejectQueue(7, "wrong stage");
+    expect(sentBody()).toEqual({ reason: "wrong stage" });
+  });
+
+  it("asks the reject-reason endpoint with an empty body", async () => {
+    okJson({ reason: null, source: null });
+    expect(await api.suggestRejectReason(7)).toEqual({ reason: null, source: null });
+    const call = (global.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!;
+    expect(String(call[0])).toMatch(/\/queue\/7\/reject-reason$/);
+  });
+});

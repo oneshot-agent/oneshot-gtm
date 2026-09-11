@@ -57,6 +57,8 @@ export interface PlayRunInput {
    * drain, scheduler) omit it and the run stays uncancellable, as before.
    */
   signal?: AbortSignal;
+  /** Explicit draft argument chosen by the user; bypasses automatic angle selection. */
+  draftAngle?: string;
 }
 
 export interface PlayDispatch {
@@ -78,8 +80,10 @@ const progressOpt = (o: PlayRunInput): { onProgress?: PlayProgressFn } =>
 // Same exactOptionalPropertyTypes dance for the run's cancellation signal:
 // spread it in only when the caller supplied one, so plays keep seeing an
 // absent field rather than an explicit `undefined`.
-const signalOpt = (o: PlayRunInput): { signal?: AbortSignal } =>
-  o.signal ? { signal: o.signal } : {};
+const signalOpt = (o: PlayRunInput): { signal?: AbortSignal; draftAngle?: string } => ({
+  ...(o.signal ? { signal: o.signal } : {}),
+  ...(o.draftAngle ? { draftAngle: o.draftAngle } : {}),
+});
 
 export const PLAYS: Record<string, PlayDispatch> = {
   "show-hn": {

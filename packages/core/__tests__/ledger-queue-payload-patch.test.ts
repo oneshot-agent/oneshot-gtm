@@ -80,3 +80,43 @@ describe("Ledger.patchLiveQueuePayload", () => {
     expect(ledger.patchLiveQueuePayload({ id: 999_999, patch: { fitReason: "x" } })).toBe(false);
   });
 });
+
+describe("atomic queue draft generation", () => {
+  const draft = {
+    subject: "s",
+    body: "b",
+    flags: [],
+    sent: false,
+    receiptIds: [],
+    dryRun: true,
+    angle: {
+      text: "new argument",
+      origin: "generated",
+      fingerprint: "v1",
+      history: ["new argument"],
+    },
+  };
+  it("persists angle metadata and rejects a stale competing writer", () => {
+    const id = enqueue({ name: "A" });
+    const row = ledger.getQueueRow(id)!;
+    const input = { id, previousDraft: null, previousPayload: row.payload_json, draft };
+    expect(ledger.setQueueDraftIfCurrent(input)).toBe(true);
+    expect(JSON.parse(ledger.getQueueRow(id)!.last_draft_json!).angle).toEqual(draft.angle);
+    expect(ledger.setQueueDraftIfCurrent(input)).toBe(false);
+    expect(ledger.getQueueRow(id)!.payload_json).toBe(row.payload_json);
+  });
+  it("does not overwrite after payload changes or a send", () => {
+    const id = enqueue({ name: "A" });
+    const row = ledger.getQueueRow(id)!;
+    const input = { id, previousDraft: null, previousPayload: row.payload_json, draft };
+    ledger.updateQueuePayload({ id, payload: { name: "B" } });
+    expect(ledger.setQueueDraftIfCurrent(input)).toBe(false);
+    ledger.setQueueStatus({ id, status: "sent" });
+    expect(
+      ledger.setQueueDraftIfCurrent({
+        ...input,
+        previousPayload: ledger.getQueueRow(id)!.payload_json,
+      }),
+    ).toBe(false);
+  });
+});

@@ -48,6 +48,8 @@ export interface XAmplifyDmRunOptions {
   onProgress?: (index: number, draft: DraftedRow) => void;
   /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
   signal?: AbortSignal;
+  /** Explicit draft argument chosen by the user; bypasses automatic angle selection. */
+  draftAngle?: string;
 }
 
 interface XAmplifyDmDraft extends DraftedRow {
@@ -82,6 +84,12 @@ export async function runXAmplifyDm(
         // call below is this play's only paid step.
         throwIfCancelled(opts.signal, `${PLAY_NAME} draft`);
         const input = [
+          ...(opts.draftAngle
+            ? [
+                `SELECTED ANGLE: ${opts.draftAngle}`,
+                "Build the draft around this argument while preserving the play’s channel, tone, and factual constraints.",
+              ]
+            : []),
           `FOUNDER: ${cfg.founderName}`,
           `PRODUCT: ${cfg.productOneLiner}`,
           `PROSPECT: ${t.name} (@${t.handle} on X)`,

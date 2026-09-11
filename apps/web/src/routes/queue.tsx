@@ -60,6 +60,12 @@ import {
 import { humanInterval } from "../lib/humanInterval.ts";
 import { priorityBreakdown, priorityChip } from "../lib/priorityChip.ts";
 import { fitReasonFor } from "../lib/queueRationale.ts";
+import {
+  appendReason,
+  REJECT_REASON_CHIPS,
+  suggestRejectReason,
+  type RejectReasonSource,
+} from "../lib/rejectReason.ts";
 import { queueEvidence } from "../lib/queueEvidence.ts";
 import { heldSummary } from "../lib/flagLabels.ts";
 import { caseMeta, caseRows } from "../lib/queueCase.ts";
@@ -142,9 +148,22 @@ function statusTone(
   }
 }
 
+/**
+ * One modal for both the row button and the bulk bar. `suggested` is what the
+ * box opens with — the row's own evidence, computed at open time so the box
+ * belongs to THIS row and not to whichever one was cancelled before it.
+ */
 interface RejectModalState {
-  id: number;
-  email: string;
+  ids: number[];
+  email: string | null;
+  suggested: string;
+  source: RejectReasonSource;
+  /**
+   * Opened under privacy mode: nothing is prefilled and the LLM fallback is
+   * not asked, for the same reason the sheet hides `fitReason` and `notes`
+   * there — a gate's reason routinely names the person.
+   */
+  privacy: boolean;
 }
 
 interface DrainModalState {
@@ -172,6 +191,39 @@ function QueuePage() {
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [rejectModal, setRejectModal] = useState<RejectModalState | null>(null);
   const [rejectReason, setRejectReason] = useState("");
+  // True while the LLM fallback is drafting a sentence for a row that had
+  // nothing to prefill from. The box is editable throughout; a reply only
+  // lands if the founder hasn't typed yet.
+  const [rejectDrafting, setRejectDrafting] = useState(false);
+  useEffect(() => {
+    if (!rejectModal) {
+      setRejectReason("");
+      setRejectDrafting(false);
+      return;
+    }
+    setRejectReason(rejectModal.suggested);
+    const single = rejectModal.ids.length === 1 ? rejectModal.ids[0] : undefined;
+    if (single === undefined || rejectModal.suggested || rejectModal.privacy) {
+      setRejectDrafting(false);
+      return;
+    }
+    let live = true;
+    setRejectDrafting(true);
+    api
+      .suggestRejectReason(single)
+      .then((r) => {
+        if (!live) return;
+        setRejectDrafting(false);
+        if (r.reason) setRejectReason((cur) => (cur.trim() ? cur : r.reason!));
+      })
+      .catch(() => {
+        // The box simply stays empty; the founder was never blocked on it.
+        if (live) setRejectDrafting(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [rejectModal]);
   const [drainModal, setDrainModal] = useState<DrainModalState | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [drainLimit, setDrainLimit] = useState(10);
@@ -196,10 +248,9 @@ function QueuePage() {
     onError: (err) => toast.error(`couldn't approve · ${err.message}`),
   });
   const reject = useMutation({
-    mutationFn: (vars: { id: number; reason?: string }) => api.rejectQueue(vars.id, vars.reason),
+    mutationFn: (vars: { id: number; reason: string }) => api.rejectQueue(vars.id, vars.reason),
     onSuccess: () => {
       setRejectModal(null);
-      setRejectReason("");
       invalidate();
     },
     onError: (err) => toast.error(`couldn't reject · ${err.message}`),
@@ -234,20 +285,22 @@ function QueuePage() {
     },
   });
   const bulkReject = useMutation({
-    mutationFn: async (ids: number[]) => {
+    mutationFn: async (vars: { ids: number[]; reason: string }) => {
       let ok = 0;
-      for (const id of ids) {
+      for (const id of vars.ids) {
         try {
-          await api.rejectQueue(id);
+          // The one reason lands on every row; "" leaves each row's own note.
+          await api.rejectQueue(id, vars.reason || undefined);
           ok++;
         } catch {
           /* ignore */
         }
       }
-      return { ok, total: ids.length };
+      return { ok, total: vars.ids.length };
     },
     onSuccess: ({ ok, total }) => {
       setSelected(new Set());
+      setRejectModal(null);
       invalidate();
       toast.success(`rejected ${ok} of ${total}`);
     },
@@ -305,6 +358,7 @@ function QueuePage() {
     setRowMeta((prev) => mergeRowMeta(prev, fetchedRows));
   }, [fetchedRows]);
   const mask = useMask();
+  const { masked } = usePrivacy();
 
   // Per-row "generating draft" spinners, reconstructed from localStorage so they
   // survive navigating away + back (the regenerate mutation's isPending is local
@@ -549,9 +603,18 @@ function QueuePage() {
                   onToggle={() => setExpanded(expanded === row.id ? null : row.id)}
                   generating={generating.has(row.id)}
                   onApprove={() => approve.mutate(row.id)}
-                  onReject={() =>
-                    setRejectModal({ id: row.id, email: emailFor(row.payload) ?? `#${row.id}` })
-                  }
+                  onReject={() => {
+                    const s = masked
+                      ? { text: "", source: null }
+                      : suggestRejectReason({ payload: row.payload, notes: row.notes });
+                    setRejectModal({
+                      ids: [row.id],
+                      email: emailFor(row.payload),
+                      suggested: s.text,
+                      source: s.source,
+                      privacy: masked,
+                    });
+                  }}
                   busy={approve.isPending || reject.isPending}
                 />
               ))}
@@ -614,7 +677,15 @@ function QueuePage() {
               variant="ghost"
               size="sm"
               disabled={bulkReject.isPending || selected.size === 0}
-              onClick={() => bulkReject.mutate([...selected])}
+              onClick={() =>
+                setRejectModal({
+                  ids: [...selected],
+                  email: null,
+                  suggested: "",
+                  source: null,
+                  privacy: masked,
+                })
+              }
               {...readOnly}
             >
               <X size={12} /> reject {selected.size}
@@ -650,7 +721,11 @@ function QueuePage() {
       <Modal
         open={rejectModal != null}
         onClose={() => setRejectModal(null)}
-        title={`Reject #${rejectModal?.id} — ${mask("auto", rejectModal?.email)}`}
+        title={
+          rejectModal && rejectModal.ids.length > 1
+            ? `Reject ${rejectModal.ids.length} rows`
+            : `Reject #${rejectModal?.ids[0]} — ${mask("auto", rejectModal?.email ?? `#${rejectModal?.ids[0]}`)}`
+        }
         footer={
           <>
             <Button variant="ghost" onClick={() => setRejectModal(null)}>
@@ -658,25 +733,66 @@ function QueuePage() {
             </Button>
             <Button
               variant="danger"
-              onClick={() =>
-                rejectModal &&
-                reject.mutate({ id: rejectModal.id, reason: rejectReason || undefined })
-              }
-              disabled={reject.isPending}
+              onClick={() => {
+                if (!rejectModal) return;
+                const reason = rejectReason.trim();
+                if (rejectModal.ids.length === 1) {
+                  reject.mutate({ id: rejectModal.ids[0]!, reason });
+                } else {
+                  bulkReject.mutate({ ids: rejectModal.ids, reason });
+                }
+              }}
+              disabled={reject.isPending || bulkReject.isPending}
+              {...readOnly}
             >
-              {reject.isPending ? "Rejecting…" : "Reject"}
+              {reject.isPending || bulkReject.isPending
+                ? "Rejecting…"
+                : rejectModal && rejectModal.ids.length > 1
+                  ? `Reject ${rejectModal.ids.length}`
+                  : "Reject"}
             </Button>
           </>
         }
       >
-        <Field label="Reason (optional, logged for ICP-filter learning)">
+        <Field label="Reason (optional — kept on the prospect's timeline)">
           <Textarea
             rows={3}
+            autoFocus
             value={rejectReason}
             onChange={(e) => setRejectReason(e.target.value)}
-            placeholder="e.g. wrong stage, wrong industry, already a customer"
+            placeholder={
+              rejectDrafting
+                ? "drafting a reason from the row's evidence…"
+                : "e.g. wrong stage, wrong industry, already a customer"
+            }
           />
         </Field>
+        {rejectModal?.source === "person-gate" && (
+          <p className="mt-1 text-xs text-ink-muted">
+            Prefilled from the ICP gate's verdict — edit freely, or clear it.
+          </p>
+        )}
+        {rejectModal?.source === "notes" && (
+          <p className="mt-1 text-xs text-ink-muted">
+            Prefilled from the finder's note — edit freely, or clear it.
+          </p>
+        )}
+        {rejectDrafting && <p className="mt-1 text-xs text-ink-faint">drafting a reason…</p>}
+        {rejectModal?.privacy && (
+          <p className="mt-1 text-xs text-ink-faint">Privacy mode — nothing prefilled.</p>
+        )}
+        <div className="mt-2 flex flex-wrap gap-1">
+          {REJECT_REASON_CHIPS.map((chip) => (
+            <Button
+              key={chip}
+              variant="ghost"
+              size="sm"
+              onClick={() => setRejectReason((cur) => appendReason(cur, chip))}
+            >
+              {chip}
+            </Button>
+          ))}
+        </div>
       </Modal>
 
       <Modal
@@ -1044,7 +1160,7 @@ function DraftSection({
 }): React.ReactElement {
   const qc = useQueryClient();
   const regenerate = useMutation({
-    mutationFn: () => api.regenerateDraft(id),
+    mutationFn: (rotateAngle: boolean) => api.regenerateDraft(id, rotateAngle),
     // Persist a localStorage marker so the spinner survives leaving + returning
     // to /queue while the draft generates server-side; cleared on settle (and,
     // for the unmounted case, reconciled away once lastDraftedAt advances).
@@ -1100,17 +1216,31 @@ function DraftSection({
   const verb = draft ? "Regenerate draft" : "Generate draft";
   const pendingVerb = draft ? "Regenerating…" : "Generating…";
   const draftButton = canDraft ? (
-    <Button
-      variant="ghost"
-      size="sm"
-      disabled={isGenerating}
-      onClick={() => regenerate.mutate()}
-      {...readOnly}
-      title="Draft this row in preview mode — dry-run, never sends"
-    >
-      {isGenerating ? <Loader2 size={11} className="animate-spin" /> : <RotateCw size={11} />}
-      {isGenerating ? pendingVerb : verb}
-    </Button>
+    <div className="flex flex-wrap items-center gap-2">
+      <Button
+        variant="ghost"
+        size="sm"
+        disabled={isGenerating}
+        onClick={() => regenerate.mutate(false)}
+        {...readOnly}
+        title="Draft this row in preview mode — dry-run, never sends"
+      >
+        {isGenerating ? <Loader2 size={11} className="animate-spin" /> : <RotateCw size={11} />}
+        {isGenerating ? pendingVerb : verb}
+      </Button>
+      {draft && (
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={isGenerating}
+          onClick={() => regenerate.mutate(true)}
+          {...readOnly}
+          title="Try another angle and generate a new preview"
+        >
+          <RotateCw size={11} /> Rotate angle
+        </Button>
+      )}
+    </div>
   ) : null;
 
   // Manual-send play (x-amplify-dm): there is no transport — the founder
@@ -1243,7 +1373,7 @@ function DraftSection({
         <Button
           variant="receipt"
           size="sm"
-          disabled={markSent.isPending}
+          disabled={markSent.isPending || isGenerating}
           onClick={() => markSent.mutate()}
           {...readOnly}
           title="Record that you sent this by hand from the X app"
@@ -1274,7 +1404,7 @@ function DraftSection({
     <Button
       variant="receipt"
       size="sm"
-      disabled={sending || !cleanDraft}
+      disabled={sending || isGenerating || !cleanDraft}
       onClick={() => send.mutate()}
       {...readOnly}
       title={
@@ -1351,7 +1481,19 @@ function DraftSection({
         </DraftStateLine>
       }
       body={draft.body}
-      afterBody={linkedinReplyEditor}
+      afterBody={
+        <>
+          {draft.angle && (
+            <details className="px-4 py-2 text-xs text-ink-muted">
+              <summary className="cursor-pointer">
+                {`Angle ${(draft.angle.index ?? 0) + 1} of ${draft.angle.count ?? 1}${draft.angle.origin === "generated" ? " · generated" : ""}`}
+              </summary>
+              <p className="mt-2">{draft.angle.text}</p>
+            </details>
+          )}
+          {linkedinReplyEditor}
+        </>
+      }
       foot={{
         left: draftButton,
         right: (

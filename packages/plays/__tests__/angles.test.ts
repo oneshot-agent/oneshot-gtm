@@ -222,6 +222,19 @@ describe("a play's input block (accelerator-batch through runEmailPlay)", () => 
     productOneLiner: "scheduling for dental clinics",
   };
 
+  it("an explicit rotation bypasses the selector and excludes other edges", async () => {
+    await runAcceleratorBatch({
+      dryRun: true,
+      targets: [{ ...base, yourEdge: EDGE }],
+      draftAngle: "the product is the playbook",
+    });
+    expect(calls.classifier).toHaveLength(0);
+    expect(calls.writer[0]).toContain("YOUR EDGE: the product is the playbook");
+    expect(calls.writer[0]).toContain("SELECTED ANGLE: the product is the playbook");
+    expect(calls.writer[0]).not.toContain(A1);
+    expect(calls.writer[0]).not.toContain(A2);
+  });
+
   it("a one-angle edge reaches the prompt whole, with no classifier call", async () => {
     await runAcceleratorBatch({ dryRun: true, targets: [{ ...base, yourEdge: A1 }] });
     expect(calls.classifier).toHaveLength(0);
@@ -239,4 +252,33 @@ describe("a play's input block (accelerator-batch through runEmailPlay)", () => 
     expect(block).not.toContain(A3);
     expect(block).not.toContain("//");
   });
+});
+
+it("a play without an edge field still receives the selected argument", async () => {
+  const { runEmailPlay } = await import("../src/_run-play.ts");
+  await runEmailPlay(
+    {
+      playName: "show-hn",
+      promptName: "show-hn-email",
+      maxBodyWords: 100,
+      toEmail: (t: { email: string }) => t.email,
+      prospectMeta: () => ({ name: "Merlin", email: "m@rex.inc" }),
+      prepare: async () => ({ receiptIds: [], dossier: "facts" }),
+      buildInputBlock: () => "PROSPECT: a founder",
+    },
+    { dryRun: true, targets: [{ email: "m@rex.inc" }], draftAngle: "Grounded alternative" },
+  );
+  expect(calls.writer[0]).toContain("SELECTED ANGLE: Grounded alternative");
+  expect(calls.classifier).toHaveLength(0);
+});
+it("the custom breakup runner receives the selected argument", async () => {
+  const { runBreakupRevive } = await import("../src/breakup-revive.ts");
+  await runBreakupRevive({
+    dryRun: true,
+    targets: [
+      { name: "Merlin", email: "m@rex.inc", company: "Rex", daysCold: 75, lastEventAt: null },
+    ],
+    draftAngle: "Grounded alternative",
+  });
+  expect(calls.writer[0]).toContain("SELECTED ANGLE: Grounded alternative");
 });

@@ -43,6 +43,8 @@ export interface BreakupReviveOptions {
   valueDrop?: string;
   /** Abort signal for the run — see `runEmailPlay`'s `signal`. */
   signal?: AbortSignal;
+  /** Explicit draft argument chosen by the user; bypasses automatic angle selection. */
+  draftAngle?: string;
   /** Called after each target completes, with the target's original index. */
   onProgress?: (index: number, draft: BreakupReviveDraft) => void;
 }
@@ -79,6 +81,12 @@ export async function runBreakupRevive(
       const draft = await draftEmailFromPrompt({
         promptName: "breakup-revive-email",
         inputBlock: [
+          ...(opts.draftAngle
+            ? [
+                `SELECTED ANGLE: ${opts.draftAngle}`,
+                "Build the draft around this argument while preserving the play’s channel, tone, and factual constraints.",
+              ]
+            : []),
           `FOUNDER: ${cfg.founderName}`,
           `PRODUCT: ${cfg.productOneLiner}`,
           `PROSPECT: ${t.name ?? "(unknown)"} at ${t.company ?? "(unknown)"}`,
