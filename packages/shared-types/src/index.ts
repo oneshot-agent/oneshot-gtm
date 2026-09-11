@@ -777,13 +777,16 @@ export type FitReasonSource = "company-gate" | "person-gate" | "generated" | "no
  * bio, so the draft could only lean on the company name (`lintGrounding`).
  * Regenerating cannot clear that one either: the research is what is missing,
  * and a founder who has read the draft is the only judge of whether it still
- * says something true. Sending as-is is the founder saying "I know, do it
- * anyway."
+ * says something true. `email-at-former-employer` — person research says the
+ * stored address belongs to a company they have left; the address is never
+ * swapped (dedupe, verification and consent history key on it), the founder
+ * decides. Sending as-is is the founder saying "I know, do it anyway."
  */
 export const SOFT_REVIEW_FLAGS: readonly string[] = [
   "stale-event",
   "contacted-elsewhere",
   "ungrounded",
+  "email-at-former-employer",
 ];
 
 /**

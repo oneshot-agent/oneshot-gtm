@@ -182,6 +182,11 @@ async function classify(
 
 /** Keys that are identifiers, URLs, or the edge itself — not evidence of who the prospect is. */
 const NOT_EVIDENCE = new Set<string>([
+  // The finder's originals once research corrected the row: a stale title is
+  // never evidence again.
+  "titleAtFinder",
+  "companyAtFinder",
+  "companyDomainAtFinder",
   ...EDGE_FIELDS,
   "email",
   "phone",

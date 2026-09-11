@@ -236,3 +236,160 @@ describe("mergePersonDossier — must not clobber the product half", () => {
     expect(() => JSON.parse(mergePersonDossier(null, { title: "CTO" }))).not.toThrow();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Person research: the record every consumer reads (current role from the
+// LinkedIn history), and the merge that puts it in the person half.
+// ---------------------------------------------------------------------------
+import {
+  boundPersonResearch,
+  companyRecordFromResearch,
+  isPersonResearchDossier,
+  mergePersonResearchDossier,
+  personRecordFromResearch,
+  readPersonHalf,
+  renderCompanyFacts,
+  renderCurrentRole,
+  renderFormerRoles,
+  type PersonResearchDossier,
+} from "../src/dossier.ts";
+
+const julia: PersonResearchDossier = {
+  version: 1,
+  status: "complete",
+  researchedAt: "2026-09-11T20:00:00.000Z",
+  seed: { url: "https://linkedin.com/in/julia-zabrodska-akinci-cv", name: "Julia Zabrodska" },
+  currentRole: { title: "Founder & Product Owner", company: "WildMuse.App", since: "Mar 2026" },
+  organizations: [
+    {
+      name: "WildMuse.App",
+      title: "Founder & Product Owner",
+      startDate: "Mar 2026",
+      current: true,
+    },
+    {
+      name: "L'ETO Group",
+      title: "Head of Product and Business Development Manager",
+      startDate: "Nov 2024",
+      endDate: "Oct 2025",
+      current: false,
+    },
+    {
+      name: "Julia's Consultancy",
+      title: "Business Consultant",
+      startDate: "Oct 2022",
+      endDate: "Nov 2024",
+      current: false,
+    },
+  ],
+  bio: "Solo-built consumer wellness app from 0 to first revenue.",
+  location: "London",
+  workEmail: "julia@wildmuse.app",
+  company: {
+    name: "WildMuse.App",
+    industry: "Software",
+    size: "1-10",
+    founded: 2026,
+    description: "Consumer wellness app.",
+  },
+  costUsd: 0.055,
+  cached: false,
+};
+
+describe("person research record", () => {
+  it("renders the current role, company facts and former roles as short lines", () => {
+    expect(renderCurrentRole(julia)).toBe("Founder & Product Owner at WildMuse.App since Mar 2026");
+    expect(renderCompanyFacts(julia.company)).toBe(
+      "WildMuse.App · Software · 1-10 employees · founded 2026 — Consumer wellness app.",
+    );
+    expect(renderFormerRoles(julia)).toBe(
+      "Head of Product and Business Development Manager at L'ETO Group (Nov 2024–Oct 2025); Business Consultant at Julia's Consultancy (Oct 2022–Nov 2024)",
+    );
+  });
+
+  it("builds the person record the reject describer and the signal gate read", () => {
+    const record = personRecordFromResearch(julia);
+    expect(record["title"]).toBe("Founder & Product Owner");
+    expect(record["company"]).toBe("WildMuse.App");
+    expect(record["summary"]).toBe(julia.bio);
+    expect(record["organizations"]).toEqual([
+      {
+        name: "WildMuse.App",
+        title: "Founder & Product Owner",
+        startDate: "Mar 2026",
+        is_current: true,
+      },
+      expect.objectContaining({ name: "L'ETO Group", is_current: false }),
+      expect.objectContaining({ name: "Julia's Consultancy", is_current: false }),
+    ]);
+    expect(hasDossierSignal(record)).toBe(true);
+    expect(companyRecordFromResearch(julia)).toEqual({
+      name: "WildMuse.App",
+      industry: "Software",
+      size: "1-10",
+      founded: 2026,
+      description: "Consumer wellness app.",
+    });
+    expect(companyRecordFromResearch({ ...julia, company: undefined })).toBeNull();
+  });
+
+  it("merges into the person half, keeps the product half and a prior enrich record, drops a failed sentinel", () => {
+    const product = { version: 1, status: "partial", researchedAt: "x", subject: {}, sources: [] };
+    const withEnrich = JSON.stringify({
+      person: {
+        status: "completed",
+        profile: { title: "| Curious Explorer", company: "L'eto Group" },
+      },
+      product,
+    });
+    const merged = JSON.parse(mergePersonResearchDossier(withEnrich, julia)) as Record<
+      string,
+      unknown
+    >;
+    expect(merged["product"]).toEqual(product);
+    const person = merged["person"] as Record<string, unknown>;
+    expect(person["title"]).toBe("Founder & Product Owner");
+    expect(person["source"]).toBe("deepResearchPerson");
+    expect((person["enrichment"] as Record<string, unknown>)["status"]).toBe("completed");
+
+    const failed = JSON.stringify({
+      person: { status: "failed", profile: null, cost: 0 },
+      product,
+    });
+    const merged2 = JSON.parse(mergePersonResearchDossier(failed, julia)) as Record<
+      string,
+      unknown
+    >;
+    expect((merged2["person"] as Record<string, unknown>)["enrichment"]).toBeUndefined();
+    expect(merged2["product"]).toEqual(product);
+
+    // A second research run replaces the earlier researched record rather than nesting it.
+    const again = JSON.parse(mergePersonResearchDossier(JSON.stringify(merged), julia)) as Record<
+      string,
+      unknown
+    >;
+    expect((again["person"] as Record<string, unknown>)["enrichment"]).toBeUndefined();
+    expect(readPersonHalf(JSON.stringify(again))).toEqual(again["person"]);
+  });
+
+  it("bounds the record at 4,000 chars without losing the current role", () => {
+    const big: PersonResearchDossier = {
+      ...julia,
+      bio: "x".repeat(3000),
+      company: { ...julia.company, description: "y".repeat(400) },
+      organizations: [
+        julia.organizations[0]!,
+        ...Array.from({ length: 7 }, (_, i) => ({
+          name: `Old Co ${i} ${"z".repeat(300)}`,
+          current: false,
+        })),
+      ],
+    };
+    const bounded = boundPersonResearch(big);
+    expect(JSON.stringify(bounded).length).toBeLessThanOrEqual(4000);
+    expect(bounded.currentRole).toEqual(julia.currentRole);
+    expect(bounded.organizations[0]).toEqual(julia.organizations[0]);
+    expect(isPersonResearchDossier(bounded)).toBe(true);
+    expect(isPersonResearchDossier({ version: 2 })).toBe(false);
+  });
+});

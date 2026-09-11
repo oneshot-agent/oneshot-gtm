@@ -32,6 +32,7 @@ const NAMED: Record<string, string> = {
   "stale-event": "the event has passed",
   "contacted-elsewhere": "another workspace emailed them this week",
   ungrounded: "research found nothing on them; the draft leans on the company name",
+  "email-at-former-employer": "their address is at a company they have left",
   "already-enrolled": "already in a cadence",
   "already-contacted": "already contacted",
   "off-icp": "off ICP",

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { loadConfig } from "@oneshot-gtm/core";
+import { isPersonResearchDossier, loadConfig, personRecordFromResearch } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import {
   describeTargetForAngle,
@@ -82,6 +82,10 @@ export async function draftAngleFor(input: {
   const history = current?.history ?? [];
   const research = [
     input.research,
+    // The researched person first: current role, employer, history.
+    isPersonResearchDossier(target.personResearch) && target.personResearch.status !== "unavailable"
+      ? JSON.stringify(personRecordFromResearch(target.personResearch))
+      : undefined,
     target.dossier,
     target.dossier_json,
     target.productResearch && typeof target.productResearch === "object"

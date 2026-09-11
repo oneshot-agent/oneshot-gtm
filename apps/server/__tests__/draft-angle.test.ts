@@ -6,7 +6,10 @@ const cfg = {
 };
 const complete = vi.fn();
 const selectAngle = vi.fn();
-vi.mock("@oneshot-gtm/core", () => ({ loadConfig: () => cfg }));
+vi.mock("@oneshot-gtm/core", async () => {
+  const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
+  return { ...actual, loadConfig: () => cfg };
+});
 vi.mock("@oneshot-gtm/intel", () => ({
   complete,
   loadPrompt: () => "grounded alternative",

@@ -87,3 +87,61 @@ export function phoneFor(payload: unknown): string | null {
   if (typeof v === "string" && v.length > 0) return v;
   return null;
 }
+
+/**
+ * The person research the post-finder step stamps on a row (current role from
+ * the public work history). Mirrors `PersonResearchDossier` in core without
+ * importing it: the web app reads payloads as untyped JSON, so a shape check
+ * is the contract.
+ */
+export interface PersonResearchView {
+  version: 1;
+  status: "complete" | "partial" | "unavailable";
+  researchedAt: string;
+  currentRole?: { title?: string; company: string; since?: string };
+  organizations: Array<{
+    name: string;
+    title?: string;
+    startDate?: string;
+    endDate?: string;
+    current: boolean;
+  }>;
+  company?: {
+    name?: string;
+    industry?: string;
+    size?: string;
+    employeeCount?: number;
+    founded?: string | number;
+    fundingStage?: string;
+    description?: string;
+  };
+}
+
+export function personResearchFor(payload: unknown): PersonResearchView | null {
+  const p = record(payload);
+  const v = p?.["personResearch"];
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const r = v as Record<string, unknown>;
+  if (r["version"] !== 1 || !Array.isArray(r["organizations"])) return null;
+  if (r["status"] !== "complete" && r["status"] !== "partial" && r["status"] !== "unavailable") {
+    return null;
+  }
+  if (typeof r["researchedAt"] !== "string") return null;
+  return v as PersonResearchView;
+}
+
+function stringAt(payload: unknown, key: string): string | null {
+  const p = record(payload);
+  const v = p?.[key];
+  return typeof v === "string" && v.trim().length > 0 ? v.trim() : null;
+}
+
+/** The finder's title before research corrected it; null when it never changed. */
+export function titleAtFinderFor(payload: unknown): string | null {
+  return stringAt(payload, "titleAtFinder");
+}
+
+/** The finder's company before research corrected it; null when it never changed. */
+export function companyAtFinderFor(payload: unknown): string | null {
+  return stringAt(payload, "companyAtFinder");
+}

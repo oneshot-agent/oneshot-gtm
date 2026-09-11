@@ -1,9 +1,11 @@
 import { getLedger, hasDossierSignal, parallelMap } from "@oneshot-gtm/core";
 import {
+  applyPersonResearchToProspect,
   isCircuitOpen,
   isResearchableUrl,
+  personSeedForProspect,
+  researchPerson,
   researchUrl,
-  safeDeepResearchPerson,
 } from "@oneshot-gtm/find";
 import { c, header, note, ok, warn } from "../output.ts";
 
@@ -22,9 +24,17 @@ export { isResearchableUrl, researchUrl };
  * research the finders already bought was computed and discarded. This fills
  * the column so that work is done once and reused.
  *
- * Sibling of `enrich-linkedin`: same shape (capped, dry-runnable, bounded
+ * Since 2026-09-11 it writes the same record the post-finder person research
+ * step writes on queue rows (`packages/find/src/_person-research.ts`): the
+ * current role derived from the LinkedIn organisation history, facts about
+ * the current employer, the `title` / `company` columns corrected when they
+ * were stale, and the person gate re-judged on those facts. A `reject` on a
+ * prospect in cadence stops its follow-ups through the existing off-ICP gate.
+ *
+ * Sibling of `enrich-linkedin`: same shape (dry-runnable, bounded
  * concurrency, breaker-aware), different call. Concurrency defaults lower
- * because deepResearchPerson runs minutes, not seconds.
+ * because deepResearchPerson runs minutes, not seconds. Uncapped by default;
+ * `--max-cost-usd` bounds a rehearsal.
  */
 
 const RESEARCH_COST_USD = 0.05;
@@ -45,6 +55,10 @@ export interface ResearchProspectsOpts {
   id?: number;
   /** Hard ceiling on billed spend for this run. Stops cleanly when reached. */
   maxCostUsd?: number;
+  /** Skip the person-gate re-judge. */
+  noRejudge?: boolean;
+  /** Skip the company lookup for the current employer. */
+  noCompany?: boolean;
 }
 
 /**
@@ -166,6 +180,9 @@ export async function commandResearchProspects(opts: ResearchProspectsOpts): Pro
   let empty = 0;
   let failed = 0;
   let cached = 0;
+  let titleUpdated = 0;
+  let pass = 0;
+  let reject = 0;
   let haltedAt: number | null = null;
 
   let cappedAt: number | null = null;
@@ -186,53 +203,63 @@ export async function commandResearchProspects(opts: ResearchProspectsOpts): Pro
     }
     const url = researchUrl(row);
     const email = row.email?.trim();
-    const res = await safeDeepResearchPerson(
-      {
-        ...(url ? { socialMediaUrl: url } : {}),
-        ...(email ? { email } : {}),
-        ...(row.name ? { name: row.name } : {}),
-        ...(row.company && row.company !== "(unknown)" ? { company: row.company } : {}),
-      },
-      {
-        playName: "research-prospects",
-        memo: `backfill dossier for prospect ${row.id}`,
-        decisionContext: { source: "research-prospects", prospectId: row.id, scope: scopes },
-      },
-    );
-    // receiptId 0 = served without billing (cache hit, or the failure
-    // sentinel). The cached payload still carries the ORIGINAL call's `cost`,
-    // so adding it unconditionally would report spend that never happened.
-    const billed = res.receiptId !== 0;
-    if (billed) costUsd += res.result?.cost ?? 0;
-
-    const payload = res.result?.result;
-    if (res.result?.status === "failed") {
-      failed++;
+    // The row from the backlog query lacks the columns the derivation
+    // compares against (title, verdict); read the live prospect for them.
+    const prospect = ledger.getProspectById(row.id);
+    const seed = personSeedForProspect({
+      ...row,
+      ...(prospect?.title !== undefined ? { title: prospect.title } : {}),
+      ...(prospect?.icp_verdict !== undefined ? { icp_verdict: prospect.icp_verdict } : {}),
+    });
+    const remainingUsd =
+      opts.maxCostUsd != null ? Math.max(0, opts.maxCostUsd - costUsd) : Number.POSITIVE_INFINITY;
+    // Same cache key as before (`person:<url>`), so a prospect researched by
+    // the older code, the angle gather or the queue backfill is a free hit.
+    const researched = await researchPerson({
+      seed,
+      playName: "research-prospects",
+      subject: { prospectId: row.id },
+      remainingUsd,
+      enrichCompany: !opts.noCompany,
+    });
+    costUsd += researched.costUsd;
+    if (researched.dossier.status === "unavailable") {
+      if (/failed/.test(researched.dossier.warning ?? "")) failed++;
+      else empty++;
       return;
     }
     // Counted only for calls that returned real data, so `cached` and `failed`
     // stay mutually exclusive (a negative-cache hit is a failure, not a saving).
-    if (!billed) cached++;
-    if (!hasSignal(payload)) {
+    if (researched.cached) cached++;
+    // Merge, never replace: `research-products` owns the `product` half of the
+    // same column and the two commands run independently; the earlier enrich
+    // record is kept under `enrichment`. The merge re-reads inside a write
+    // transaction rather than reusing `row.dossier_json`, which was read when
+    // the backlog was selected — minutes earlier. The PERSON half is bounded
+    // (DOSSIER_SLICE) before merging: truncating the wrapper would make it
+    // invalid JSON and take the product half down with it.
+    const applied = await applyPersonResearchToProspect(
+      ledger,
+      {
+        ...row,
+        ...(prospect?.title !== undefined ? { title: prospect.title } : {}),
+        ...(prospect?.icp_verdict !== undefined ? { icp_verdict: prospect.icp_verdict } : {}),
+      },
+      researched.dossier,
+      { rejudge: !opts.noRejudge, dossierSlice: DOSSIER_SLICE, playName: "research-prospects" },
+    );
+    if (applied.outcome !== "written") {
       empty++;
       return;
     }
-    // Merge, never replace: `research-products` owns the `product` half of the
-    // same column and the two commands run independently. A bare
-    // JSON.stringify(payload) here used to discard whatever it had written.
-    //
-    // The merge re-reads inside a write transaction rather than reusing
-    // `row.dossier_json`, which was read when the backlog was selected —
-    // minutes earlier, since each research call takes 2-5 of them. The
-    // workspace server can (and did) write the same column in that window.
-    //
-    // The PERSON half is bounded before merging rather than the merged string
-    // being sliced: truncating the wrapper would make it invalid JSON and take
-    // the product half down with it.
-    ledger.mergeProspectDossierHalf(row.id, "person", bounded(payload));
     written++;
+    if (applied.roleChanged) titleUpdated++;
+    if (applied.verdict === "pass") pass++;
+    if (applied.verdict === "reject") reject++;
     process.stdout.write(
-      `  ${c.green("→")} ${(row.name ?? "").slice(0, 26).padEnd(28)} ${c.dim(url ?? email ?? "")}\n`,
+      `  ${c.green("→")} ${(row.name ?? "").slice(0, 26).padEnd(28)} ${c.dim(url ?? email ?? "")}` +
+        (applied.verdict ? `  ${c.dim(`verdict: ${applied.verdict}`)}` : "") +
+        `\n`,
     );
   });
 
@@ -251,6 +278,8 @@ export async function commandResearchProspects(opts: ResearchProspectsOpts): Pro
   }
   ok(
     `researched ${written}  ${c.dim("no signal:")} ${empty}  ${c.dim("failed:")} ${failed}  ` +
-      `${c.dim("free (cached):")} ${cached}  ${c.dim("spent:")} $${costUsd.toFixed(2)}`,
+      `${c.dim("free (cached):")} ${cached}  ${c.dim("title updated:")} ${titleUpdated}  ` +
+      `${c.dim("re-judged pass:")} ${pass}  ${c.dim("re-judged reject:")} ${reject}  ` +
+      `${c.dim("spent:")} $${costUsd.toFixed(2)}`,
   );
 }

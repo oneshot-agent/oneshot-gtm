@@ -107,6 +107,11 @@ export const CONCEPTS = {
     body: "enrichment failed — drafted from payload context only; retries automatically after ~3 days",
     href: docs + "finders",
   },
+  personResearch: {
+    title: "Person research",
+    body: "current role and company facts from the person's public work history, researched after the finder ran; a draft made before it landed picks it up on Regenerate",
+    href: docs + "finders",
+  },
 } satisfies Record<string, Concept>;
 
 export type ConceptId = keyof typeof CONCEPTS;
