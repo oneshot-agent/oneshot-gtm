@@ -3,7 +3,6 @@ import { join } from "node:path";
 import { configDir, loadConfig } from "./config.ts";
 import { resolveIdentities } from "./identities.ts";
 import { smartleadApiKey } from "./smartlead.ts";
-import { mailboxHash } from "./mailbox-store.ts";
 
 export interface MailboxConnection {
   address: string;
@@ -15,7 +14,12 @@ export function smartleadMailboxIdentities() {
   return resolveIdentities(loadConfig()).filter((i) => i.provider === "smartlead");
 }
 
-let cached: { key: string; at: number; rows: Record<string, unknown>[] } | null = null;
+let cached: {
+  workspace: string;
+  apiKey: string;
+  at: number;
+  rows: Record<string, unknown>[];
+} | null = null;
 
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 const decode = (v: unknown): string => (v ? Buffer.from(str(v), "base64").toString("utf8") : "");
@@ -24,8 +28,13 @@ const decode = (v: unknown): string => (v ? Buffer.from(str(v), "base64").toStri
 async function accounts(): Promise<Record<string, unknown>[]> {
   const apiKey = smartleadApiKey();
   if (!apiKey) throw new Error("Smartlead API key is missing. Reconnect Smartlead in Setup.");
-  const key = mailboxHash(`${configDir()}:${apiKey}`);
-  if (cached?.key === key && Date.now() - cached.at < 5 * 60_000) return cached.rows;
+  const workspace = configDir();
+  if (
+    cached?.workspace === workspace &&
+    cached.apiKey === apiKey &&
+    Date.now() - cached.at < 5 * 60_000
+  )
+    return cached.rows;
   const rows: Record<string, unknown>[] = [];
   for (let page = 0; page < 50; page++) {
     const query = new URLSearchParams({
@@ -49,7 +58,7 @@ async function accounts(): Promise<Record<string, unknown>[]> {
     if (!Array.isArray(data)) throw new Error("Smartlead returned an invalid mailbox list.");
     rows.push(...data);
     if (data.length < 100) {
-      cached = { key, at: Date.now(), rows };
+      cached = { workspace, apiKey, at: Date.now(), rows };
       return rows;
     }
   }
