@@ -712,17 +712,52 @@ export function meetingBlock(
   return lines.join("\n");
 }
 
+type DraftMessages = Array<{ role: "system" | "user" | "assistant"; content: string }>;
+
+interface DraftCallOpts {
+  promptName: string;
+  temperature?: number;
+  maxTokens?: number;
+}
+
+/**
+ * The redraft asks for this share of the cap, not the cap itself: a model
+ * that just wrote 160 words against "150" will land near 150 again if told
+ * "150". Measured 2026-09-11 on accelerator-batch (cap 150): gemini-3.8-flash
+ * averaged 106 words and never crossed; kimi-k3 crossed on 2 of 4, kimi-k2.6
+ * on 1 of 6, both by 10-16 words. Three quarters leaves room for that drift.
+ */
+export const LENGTH_RETRY_RATIO = 0.75;
+
 export async function draftEmailFromPrompt(opts: {
   promptName: string;
   inputBlock: string;
   temperature?: number;
   maxTokens?: number;
+  /**
+   * The play's body cap (what `lintEmail` will hold the draft at). When set,
+   * a draft that comes back over it earns ONE redraft with a tighter budget
+   * stated in the message, so a wordy model doesn't turn into a lint-held
+   * send. Absent → the draft is returned as written.
+   */
+  maxBodyWords?: number;
 }): Promise<DraftedEmail> {
   const system = loadPrompt(opts.promptName) + signatureDirective();
-  const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+  const messages: DraftMessages = [
     { role: "system", content: system },
     { role: "user", content: opts.inputBlock },
   ];
+  const draft = await draftOnce(messages, opts);
+  if (opts.maxBodyWords === undefined) return draft;
+  return tightenIfTooLong(messages, draft, opts.maxBodyWords, opts);
+}
+
+/**
+ * One draft: up to two calls, the second only when the first could not be read
+ * as a subject/body JSON object. Appends to `messages` so a caller that wants
+ * to continue the conversation (the length redraft) has the real history.
+ */
+async function draftOnce(messages: DraftMessages, opts: DraftCallOpts): Promise<DraftedEmail> {
   for (let attempt = 0; attempt < 2; attempt++) {
     const res = await complete({
       messages,
@@ -749,6 +784,60 @@ export async function draftEmailFromPrompt(opts: {
   throw new Error(
     "Draft generation failed: the model returned invalid or empty subject/body twice. Try regenerating.",
   );
+}
+
+/**
+ * Over the cap → one redraft in the same conversation, asking for
+ * `LENGTH_RETRY_RATIO` of the cap and to cut sentences rather than compress
+ * them. The shorter of the two drafts wins, even when the redraft is still
+ * over — lint decides what is sendable, this only stops a model's house style
+ * from holding every other send. A failed redraft returns the original.
+ */
+async function tightenIfTooLong(
+  messages: DraftMessages,
+  draft: DraftedEmail,
+  maxBodyWords: number,
+  opts: DraftCallOpts,
+): Promise<DraftedEmail> {
+  const words = bodyWordsForLint(draft.body);
+  if (words <= maxBodyWords) return draft;
+  const target = Math.max(30, Math.floor(maxBodyWords * LENGTH_RETRY_RATIO));
+  messages.push(
+    { role: "assistant", content: JSON.stringify({ subject: draft.subject, body: draft.body }) },
+    {
+      role: "user",
+      content:
+        `That body is ${words} words; this email is held at ${maxBodyWords}. Rewrite it in at most ${target} words. ` +
+        "Keep the subject, the facts, the one argument and the closing question. Cut whole sentences rather than compressing them into longer ones. " +
+        'Return only the JSON object with "subject" and "body".',
+    },
+  );
+  let retry: DraftedEmail;
+  try {
+    retry = await draftOnce(messages, opts);
+  } catch (err) {
+    logEvent(
+      "email.draft.too_long_retry_failed",
+      {
+        promptName: opts.promptName,
+        words,
+        cap: maxBodyWords,
+        message_120: (err as Error).message.slice(0, 120),
+      },
+      "warn",
+    );
+    return draft;
+  }
+  const retryWords = bodyWordsForLint(retry.body);
+  logEvent("email.draft.too_long_retry", {
+    promptName: opts.promptName,
+    words,
+    cap: maxBodyWords,
+    target,
+    retry_words: retryWords,
+    kept: retryWords < words ? "retry" : "original",
+  });
+  return retryWords < words ? retry : draft;
 }
 
 function parseSubjectBody(raw: string): DraftedEmail | null {
