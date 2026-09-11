@@ -60,19 +60,31 @@ export async function gatherReplyContext(input: {
 }): Promise<ReplyContext> {
   const ledger = getLedger();
 
-  const threadSent = input.threadKey
+  let threadSent = input.threadKey
     ? (ledger.getInboxThreads().get(input.threadKey)?.sent ?? [])
     : [];
 
   // Tier 0 (free): the prospect's earlier inbound messages from the ledger —
   // the drafter should see the whole exchange, not just the newest email.
-  const priorInbound =
+  let priorInbound =
     input.prospectId != null
       ? ledger
           .listInboxRepliesForProspect(input.prospectId)
           .filter((r) => r.id !== input.excludeId)
           .map((r) => ({ body: r.body, subject: r.subject, receivedAt: r.received_at }))
       : [];
+
+  if (input.threadKey?.startsWith("mailbox:")) {
+    const messages = ledger.mailboxes.thread(input.threadKey);
+    // The durable mailbox timeline includes replies sent outside this app,
+    // and keeps separate conversations with the same prospect separate.
+    threadSent = messages
+      .filter((m) => m.direction === "outbound")
+      .map((m) => ({ body: m.body, sentAt: m.at }));
+    priorInbound = messages
+      .filter((m) => m.direction === "inbound" && m.id !== input.excludeId)
+      .map((m) => ({ body: m.body, subject: m.subject, receivedAt: m.at }));
+  }
 
   const parts: string[] = [];
   let costUsd = 0;

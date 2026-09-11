@@ -1,5 +1,7 @@
 import {
   demoMode,
+  loadConfig,
+  resolveIdentities,
   logEvent,
   type TelemetryOutcome,
   postDailySendSummaryIfDue,
@@ -118,17 +120,6 @@ export function startScheduler(): SchedulerHandle {
             mailBackfillRunning = false;
           });
       }
-      const outcomes = await runDueTriggers();
-      const fired = outcomes.filter((o) => o.fired).length;
-      // Telemetry per fired trigger — detached, must not delay the tick.
-      for (const o of outcomes) {
-        if (!o.fired) continue;
-        void reportServerExecution(`server.trigger.${o.name}`, {
-          outcome: triggerOutcome(o),
-          durationMs: o.duration_ms ?? 0,
-          flags: ["scheduled"],
-        });
-      }
       // Reply detection is isolated: an inbox outage must not skip trigger
       // scheduling (or vice-versa), and it never sends, so it can't double-spend.
       let repliesDetected = 0;
@@ -175,7 +166,10 @@ export function startScheduler(): SchedulerHandle {
         lastBouncePollAt > 0 &&
         new Date(lastBouncePollAt).toISOString().slice(0, 10) !==
           new Date().toISOString().slice(0, 10);
-      if (Date.now() - lastBouncePollAt >= BOUNCE_POLL_INTERVAL_MS || dayRolledOver) {
+      const bounceInterval = resolveIdentities(loadConfig()).some((i) => i.provider === "smartlead")
+        ? 60_000
+        : BOUNCE_POLL_INTERVAL_MS;
+      if (Date.now() - lastBouncePollAt >= bounceInterval || dayRolledOver) {
         // Stamped before the await, not after: a slow or failing sweep must not
         // let ticks queue up behind it and then all fire at once.
         lastBouncePollAt = Date.now();
@@ -191,6 +185,17 @@ export function startScheduler(): SchedulerHandle {
             "warn",
           );
         }
+      }
+      const outcomes = await runDueTriggers();
+      const fired = outcomes.filter((o) => o.fired).length;
+      // Telemetry per fired trigger — detached, must not delay the tick.
+      for (const o of outcomes) {
+        if (!o.fired) continue;
+        void reportServerExecution(`server.trigger.${o.name}`, {
+          outcome: triggerOutcome(o),
+          durationMs: o.duration_ms ?? 0,
+          flags: ["scheduled"],
+        });
       }
       // Drain outage-deferred candidates (time-windowed finders) now the
       // backend may be healthy again. Isolated like the reply poll — its
@@ -261,7 +266,10 @@ export function startScheduler(): SchedulerHandle {
         source: "server",
       });
       if (cancelled) return;
-      const sleepMs = Math.min(nextSleepMs(outcomes), REPLY_POLL_MAX_MS);
+      const replyInterval = resolveIdentities(loadConfig()).some((i) => i.provider === "smartlead")
+        ? 60_000
+        : REPLY_POLL_MAX_MS;
+      const sleepMs = Math.min(nextSleepMs(outcomes), replyInterval);
       timer = setTimeout(() => void tick(), sleepMs);
     } catch (err) {
       logEvent(

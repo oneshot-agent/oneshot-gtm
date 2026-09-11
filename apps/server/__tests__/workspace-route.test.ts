@@ -87,6 +87,7 @@ describe("POST /api/workspace/launch", () => {
   });
 
   it("spawns the target bound to its registered home + port, browser suppressed", async () => {
+    vi.stubEnv("SMARTLEAD_API_KEY", "parent-workspace-key");
     const spawns: Array<{ binPath: string; env: Record<string, string | undefined> }> = [];
     _setLaunchSpawn((opts) => spawns.push(opts));
 
@@ -104,6 +105,8 @@ describe("POST /api/workspace/launch", () => {
     // A dev-mode parent must not leak its vite URL — the child would 302 the
     // whole UI to the wrong workspace's dev server.
     expect(env["VITE_DEV_SERVER_URL"]).toBeUndefined();
+    expect(env["SMARTLEAD_API_KEY"]).toBeUndefined();
+    vi.unstubAllEnvs();
   });
 
   it("reports already-running instead of double-spawning when the probe succeeds", async () => {

@@ -236,6 +236,24 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
       "type": "index",
     },
     {
+      "name": "mailbox_attempts_inbound",
+      "sql": "CREATE INDEX mailbox_attempts_inbound ON mailbox_attempts(inbound_id, status)",
+      "tbl_name": "mailbox_attempts",
+      "type": "index",
+    },
+    {
+      "name": "mailbox_messages_rfc",
+      "sql": "CREATE INDEX mailbox_messages_rfc ON mailbox_messages(identity_id, message_id)",
+      "tbl_name": "mailbox_messages",
+      "type": "index",
+    },
+    {
+      "name": "mailbox_messages_thread",
+      "sql": "CREATE INDEX mailbox_messages_thread ON mailbox_messages(thread_key, at)",
+      "tbl_name": "mailbox_messages",
+      "type": "index",
+    },
+    {
       "name": "bounces",
       "sql": "CREATE TABLE bounces (
         message_id  TEXT NOT NULL,
@@ -454,6 +472,47 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
     PRIMARY KEY(prospect_id,play_name,enrollment,step_index)
   )",
       "tbl_name": "mail_preparations",
+      "type": "table",
+    },
+    {
+      "name": "mailbox_attempts",
+      "sql": "CREATE TABLE mailbox_attempts (
+        id TEXT PRIMARY KEY, inbound_id TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL
+      )",
+      "tbl_name": "mailbox_attempts",
+      "type": "table",
+    },
+    {
+      "name": "mailbox_messages",
+      "sql": "CREATE TABLE mailbox_messages (
+        id TEXT PRIMARY KEY, identity_id TEXT NOT NULL, thread_key TEXT NOT NULL,
+        message_id TEXT, prospect_id INTEGER, direction TEXT NOT NULL,
+        at TEXT NOT NULL, data TEXT NOT NULL, is_read INTEGER NOT NULL DEFAULT 0
+      , needs_processing INTEGER NOT NULL DEFAULT 1)",
+      "tbl_name": "mailbox_messages",
+      "type": "table",
+    },
+    {
+      "name": "mailbox_references",
+      "sql": "CREATE TABLE mailbox_references (
+        identity_id TEXT NOT NULL, reference_id TEXT NOT NULL, message_id TEXT NOT NULL,
+        PRIMARY KEY(identity_id, reference_id, message_id)
+      )",
+      "tbl_name": "mailbox_references",
+      "type": "table",
+    },
+    {
+      "name": "mailbox_state",
+      "sql": "CREATE TABLE mailbox_state (key TEXT PRIMARY KEY, data TEXT NOT NULL)",
+      "tbl_name": "mailbox_state",
+      "type": "table",
+    },
+    {
+      "name": "mailbox_threads",
+      "sql": "CREATE TABLE mailbox_threads (
+        thread_key TEXT PRIMARY KEY, archived_at TEXT, history_complete INTEGER NOT NULL DEFAULT 0
+      , last_read_at TEXT)",
+      "tbl_name": "mailbox_threads",
       "type": "table",
     },
     {

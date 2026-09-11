@@ -140,6 +140,11 @@ describe("inbox_replies.kind (v23)", () => {
 });
 
 describe("contactSuppressionFor", () => {
+  it("suppresses the matched prospect when an opt-out comes from an alternate address", () => {
+    const id = ledger.upsertProspect({ email: "primary@example.org" });
+    record({ prospectId: id, fromEmail: "alternate@example.org", kind: "unsubscribe" });
+    expect(ledger.contactSuppressionFor("primary@example.org")?.kind).toBe("unsubscribe");
+  });
   it("returns the newest unsubscribe / dead-mailbox verdict for an address", () => {
     record({ kind: "auto" }); // temporary OOO never suppresses
     expect(ledger.contactSuppressionFor("jane@prospect.example")).toBeNull();

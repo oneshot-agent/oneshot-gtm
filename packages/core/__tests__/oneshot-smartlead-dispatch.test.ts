@@ -145,7 +145,7 @@ describe("replyEmail with a smartlead identity", () => {
         },
         { playName: "inbox" },
       ),
-    ).rejects.toThrow(/aren't supported yet/);
+    ).rejects.toThrow(/stored inbound message/);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

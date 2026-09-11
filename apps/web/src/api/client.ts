@@ -183,6 +183,16 @@ export const api = {
     return getJson<{ receipts: ReceiptView[] }>(`/receipts${qs ? `?${qs}` : ""}`);
   },
   inbox: () => getJson<InboxResult>("/inbox"),
+  mailboxState: (req: import("@oneshot-gtm/shared-types").MailboxStateRequest) =>
+    postJson<{ ok: boolean }>("/inbox/thread-state", req),
+  mailboxMatch: (threadKey: string, email: string) =>
+    postJson<{ ok: boolean }>("/inbox/thread-match", { threadKey, email }),
+  mailboxHistory: (threadKey: string) =>
+    postJson<{ ok: boolean }>("/inbox/thread-history", { threadKey }),
+  mailboxRefresh: () =>
+    postJson<Pick<InboxResult, "mailboxThreads" | "mailboxes">>("/inbox/mailbox-refresh", {}),
+  mailboxConnect: (req: import("@oneshot-gtm/shared-types").MailboxConnectionRequest) =>
+    postJson<{ ok: boolean }>("/inbox/mailbox-connect", req),
   archiveInboxConversation: (req: InboxArchiveRequest) =>
     postJson<InboxArchiveResult>("/inbox/archive", req),
   draftInboxReply: (req: InboxDraftReplyRequest) =>

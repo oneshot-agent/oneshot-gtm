@@ -104,10 +104,11 @@ export function contactSuppressionFor(
     (db
       .query(
         `SELECT kind, received_at FROM inbox_replies
-         WHERE from_email = ? AND kind IN ('unsubscribe', 'auto_permanent')
+         WHERE (from_email = ? OR prospect_id IN (SELECT id FROM prospects WHERE email = ?))
+           AND kind IN ('unsubscribe', 'auto_permanent')
          ORDER BY received_at DESC LIMIT 1`,
       )
-      .get(canonEmail(email)) as { kind: string; received_at: string }) ?? null
+      .get(canonEmail(email), canonEmail(email)) as { kind: string; received_at: string }) ?? null
   );
 }
 

@@ -1,3 +1,4 @@
+import { contactAllowedClause } from "./contact-optout.ts";
 import { extractBusinessAddress } from "./mail-address.ts";
 import type { DirectMailDraft, PostalAddress } from "./direct-mail.ts";
 import { Database } from "bun:sqlite";
@@ -25,6 +26,7 @@ import {
 import { humanDecisionWhereSql } from "./labels.ts";
 import { LedgerCache } from "./ledger-cache.ts";
 import { migrateLedgerSchema } from "./ledger-schema.ts";
+import { MailboxStore } from "./mailbox-store.ts";
 import { ReceiptStore } from "./ledger-receipts.ts";
 import { getSharedDb } from "./shared-db.ts";
 import type { ReplyKind } from "./reply-classify.ts";
@@ -277,6 +279,7 @@ function publicIntent(intent: string | null): string | null {
 }
 
 export class Ledger {
+  readonly mailboxes: MailboxStore;
   private db: Database;
   private path: string;
   private receipts: ReceiptStore;
@@ -301,6 +304,7 @@ export class Ledger {
     this.receipts = new ReceiptStore(this.db);
     // Same slice, same reason: the cache tables exist only after migrate().
     this.cache = new LedgerCache(this.db, this.path);
+    this.mailboxes = new MailboxStore(this.db);
   }
 
   getDirectMail(id: string): DirectMailDraft | null {
@@ -905,6 +909,13 @@ export class Ledger {
     requestId: string | null;
   }): void {
     this.db.transaction(() => {
+      if (
+        input.requestId &&
+        this.db
+          .query("SELECT 1 FROM inbox_sent WHERE request_id=? AND identity_id IS ? LIMIT 1")
+          .get(input.requestId, input.identityId)
+      )
+        return;
       this.db
         .prepare(
           `INSERT INTO inbox_sent(thread_key, to_email, subject, body, identity_id, request_id, sent_at)
@@ -2282,7 +2293,7 @@ export class Ledger {
       FROM prospects p
       LEFT JOIN sequence_events s ON s.prospect_id = p.id
       LEFT JOIN cadence_state c ON c.prospect_id = p.id
-      WHERE NOT EXISTS (
+      WHERE ${contactAllowedClause(this.db)} AND NOT EXISTS (
         SELECT 1 FROM cadence_state blocked
         WHERE blocked.prospect_id = p.id AND blocked.status = 'stopped'
           AND blocked.stop_reason IN ('not_a_fit', 'do_not_contact')

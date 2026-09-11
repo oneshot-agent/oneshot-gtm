@@ -49,6 +49,8 @@ vi.mock("@oneshot-gtm/plays", () => ({
 }));
 
 vi.mock("@oneshot-gtm/core", () => ({
+  loadConfig: () => ({}),
+  resolveIdentities: () => (smartleadEnabled ? [{ provider: "smartlead" }] : []),
   logEvent: (kind: string) => {
     calls.eventKinds.push(kind);
   },
@@ -64,11 +66,23 @@ vi.mock("@oneshot-gtm/core", () => ({
 }));
 
 let demoModeValue = false;
+let smartleadEnabled = false;
 let bouncePollCleanValue = true;
 let replyPollCleanValue = true;
 let postDailySendSummaryIfDueOpts: Array<{ sweepClean?: boolean }> = [];
 
 const { startScheduler } = await import("../src/scheduler.ts");
+
+it("polls Smartlead workspaces at most a minute after a completed tick", async () => {
+  smartleadEnabled = true;
+  nextSleepValue = 600_000;
+  const handle = startScheduler();
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(calls.pollInboxReplies).toBe(1);
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(calls.pollInboxReplies).toBe(2);
+  handle.stop();
+});
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -83,6 +97,7 @@ beforeEach(() => {
   throwOnNextRun = null;
   runDueTriggersGate = null;
   demoModeValue = false;
+  smartleadEnabled = false;
   bouncePollCleanValue = true;
   replyPollCleanValue = true;
   postDailySendSummaryIfDueOpts = [];

@@ -28,7 +28,9 @@ let knownProspect: { id: number } | null = null;
 const archiveConversationMock = vi.fn();
 const restoreConversationMock = vi.fn();
 const inboxArchivesMock = vi.fn(() => new Map<number, string>());
+const mailboxGetMock = vi.fn();
 const ledger = {
+  mailboxes: { get: mailboxGetMock, all: () => [] },
   listInboxArchives: inboxArchivesMock,
   archiveInboxConversation: archiveConversationMock,
   restoreInboxConversation: restoreConversationMock,
@@ -812,4 +814,106 @@ describe("archive origin validation", () => {
       expect(restoreConversationMock).toHaveBeenCalledWith(42);
     },
   );
+});
+
+describe("mailbox draft context binding", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mailboxGetMock.mockReturnValue({
+      id: "mailbox:inbound",
+      direction: "inbound",
+      threadKey: "mailbox:correct-thread",
+      from: "stored@example.com",
+      replyTo: null,
+      subject: "Stored subject",
+      body: "Stored inbound",
+      prospectId: null,
+      kind: "human",
+      identityId: "smartlead:me@example.com",
+    });
+    getProspectByEmailMock.mockReturnValue(null);
+    getInboxThreadsMock.mockReturnValue(new Map());
+    gatherReplyContextMock.mockResolvedValue({
+      dossier: null,
+      threadSent: [],
+      priorInbound: [],
+      costUsd: 0,
+      researched: false,
+    });
+    draftInboxReplyMock.mockResolvedValue({ body: "Safe draft", flags: [] });
+  });
+
+  it.each([draftReplyRoute, steerRoute])(
+    "uses stored thread and message content for research and drafting",
+    async (route) => {
+      const res = await route(
+        post("/api/inbox/test", {
+          id: "mailbox:inbound",
+          threadId: "wrong-thread",
+          threadKey: "wrong-thread",
+          fromEmail: "wrong@example.com",
+          subject: "Wrong subject",
+          body: "Wrong body",
+          steer: "Be brief",
+        }),
+      );
+      expect(res.status).toBe(200);
+      expect(gatherReplyContextMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fromEmail: "stored@example.com",
+          threadKey: "mailbox:correct-thread",
+          excludeId: "mailbox:inbound",
+        }),
+      );
+      expect(draftInboxReplyMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          fromEmail: "stored@example.com",
+          subject: "Stored subject",
+          body: "Stored inbound",
+        }),
+      );
+      if (route === steerRoute)
+        expect(setInboxDraftSteerMock).toHaveBeenCalledWith("mailbox:correct-thread", "Be brief");
+    },
+  );
+
+  it.each([draftReplyRoute, steerRoute])(
+    "rejects missing stored mailbox messages before research or persistence",
+    async (route) => {
+      mailboxGetMock.mockReturnValue(null);
+      const res = await route(
+        post("/api/inbox/test", {
+          id: "mailbox:missing",
+          threadKey: "mailbox:thread",
+          fromEmail: "wrong@example.com",
+          subject: "Wrong",
+          body: "Wrong",
+          steer: "Be brief",
+        }),
+      );
+      expect(res.status).toBe(400);
+      expect(gatherReplyContextMock).not.toHaveBeenCalled();
+      expect(upsertInboxDraftMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("persists edited drafts under the stored inbound thread", async () => {
+    const res = await saveDraftRoute(
+      post("/api/inbox/draft", {
+        inboundEmailId: "mailbox:inbound",
+        threadKey: "wrong-thread",
+        toEmail: "wrong@example.com",
+        body: "Edited answer",
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(upsertInboxDraftMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        threadKey: "mailbox:correct-thread",
+        toEmail: "stored@example.com",
+        subject: "Stored subject",
+        body: "Edited answer",
+      }),
+    );
+  });
 });

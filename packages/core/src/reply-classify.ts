@@ -112,8 +112,8 @@ const UNSUBSCRIBE_RE = new RegExp(
     "\\bremove me\\b",
     "\\btake me off\\b",
     "\\bstop (?:emailing|contacting|messaging)\\b",
-    "\\bdo not (?:contact|email) me\\b",
-    "\\bdon'?t (?:contact|email) me\\b",
+    "\\bdo not (?:ever )?(?:contact|email) me\\b",
+    "\\bdon'?t (?:ever )?(?:contact|email) me\\b",
     "\\bopt me out\\b",
     "\\bnot interested\\b.{0,80}\\b(?:stop|remove|unsubscribe|don'?t)\\b",
   ].join("|"),
@@ -135,8 +135,8 @@ export function classifyReply(input: {
   body?: string | null;
   autoSubmitted?: boolean;
 }): ReplyKind {
-  const subject = input.subject ?? "";
-  const stripped = stripQuotedChain(input.body ?? "");
+  const subject = (input.subject ?? "").replace(/[’‘]/g, "'");
+  const stripped = stripQuotedChain(input.body ?? "").replace(/[’‘]/g, "'");
   const head = stripped.slice(0, BODY_HEAD_CHARS);
   const permanent = PERMANENT_RE.test(subject) || PERMANENT_RE.test(head);
 

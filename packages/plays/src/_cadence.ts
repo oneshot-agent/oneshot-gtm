@@ -507,7 +507,10 @@ async function walkInboxWindow(
         if (pageOldest == null || e.received_at < pageOldest) pageOldest = e.received_at;
       }
       const from = normalizeEmail(e.from);
-      const prospect = ledger.findProspectByEmail(from);
+      const prospect =
+        e.matched_prospect_id != null
+          ? ledger.getProspectById(e.matched_prospect_id)
+          : ledger.findProspectByEmail(from);
       if (!prospect) continue;
       // Autoresponders (OOO, "no longer here") and unsubscribe requests are
       // NOT replies: they must not stop cadences as engagement, move the reply
@@ -622,6 +625,7 @@ async function walkInboxWindow(
             out.cadencesStopped++;
           }
         }
+        if (e.id.startsWith("mailbox:")) ledger.mailboxes.acknowledge(e.id, prospect.id);
         continue;
       }
       // Sentiment/intent classification (issue #480), via the existing
@@ -686,6 +690,7 @@ async function walkInboxWindow(
           valueTag: { type: "engagement", label: "reply" },
         });
       }
+      if (e.id.startsWith("mailbox:")) ledger.mailboxes.acknowledge(e.id, prospect.id);
     }
     if (pageOldest && (res.oldest == null || pageOldest < res.oldest)) res.oldest = pageOldest;
 

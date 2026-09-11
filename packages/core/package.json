@@ -16,6 +16,13 @@
   },
   "dependencies": {
     "@oneshot-agent/sdk": "file:../../vendor/oneshot-agent-sdk-0.32.0.tgz",
+    "imapflow": "^2.0.2",
+    "mailparser": "^3.9.24",
+    "nodemailer": "^10.0.3",
     "pdf-lib": "^1.17.1"
+  },
+  "devDependencies": {
+    "@types/mailparser": "^3.4.6",
+    "@types/nodemailer": "^8.0.1"
   }
 }

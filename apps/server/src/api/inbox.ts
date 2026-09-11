@@ -35,6 +35,7 @@ import {
 } from "@oneshot-gtm/shared-types";
 import { isLoopbackOrigin, jsonResponse } from "../server.ts";
 import { gatherReplyContext } from "./_reply-research.ts";
+import { mailboxInboxView } from "./mailboxes.ts";
 
 /**
  * Classification of the inbound being answered: the persisted kind when the
@@ -47,6 +48,10 @@ function inboundReplyKind(
   subject: string,
   inboundBody: string,
 ): ReplyKind {
+  if (typeof body.id === "string" && body.id.startsWith("mailbox:")) {
+    const stored = ledger.mailboxes.get(body.id);
+    if (stored) return stored.kind;
+  }
   if (prospectId != null && typeof body.id === "string") {
     const stored = ledger.listInboxRepliesForProspect(prospectId).find((r) => r.id === body.id);
     if (stored?.kind) return stored.kind as ReplyKind;
@@ -183,6 +188,7 @@ export async function listInboxRoute(req: Request): Promise<Response> {
       // degraded twice over — return the error state alone.
     }
     const out: InboxResult = {
+      ...mailboxInboxView(),
       replies: [],
       conversations,
       hasMore: false,
@@ -277,6 +283,9 @@ export async function listInboxRoute(req: Request): Promise<Response> {
   // didn't triage (see _cadence.ts's isNewReply-or-untriaged check).
   try {
     for (const r of visible) {
+      // Direct mailbox capture/classification goes through the background poll,
+      // including explicit matches where the sender differs from the prospect.
+      if (r.sourceProvider === "smartlead") continue;
       if (!r.matched) continue;
       const p = ledger.findProspectByEmail(r.fromEmail);
       if (!p) continue;
@@ -352,7 +361,19 @@ export async function listInboxRoute(req: Request): Promise<Response> {
     );
   }
 
-  const out: InboxResult = { replies: visible, conversations, hasMore };
+  // Mailbox threads have their own durable view; do not duplicate them in the
+  // legacy per-prospect timeline when a prospect also has Gmail/OneShot mail.
+  const out: InboxResult = {
+    replies: visible,
+    conversations: conversations
+      .map((c) => ({
+        ...c,
+        items: c.items.filter((i) => i.kind !== "reply" || !i.id.startsWith("mailbox:")),
+      }))
+      .filter((c) => c.items.some((i) => i.kind === "reply")),
+    hasMore,
+    ...mailboxInboxView(),
+  };
   return jsonResponse(out, 200, req);
 }
 
@@ -498,6 +519,20 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
   } catch {
     return jsonResponse({ error: "invalid JSON body" }, 400, req);
   }
+  const ledger = getLedger();
+  const mailboxRequest = body.id?.startsWith("mailbox:") || body.threadId?.startsWith("mailbox:");
+  const mailboxMessage = mailboxRequest && body.id ? ledger.mailboxes.get(body.id) : null;
+  if (mailboxRequest) {
+    if (!mailboxMessage || mailboxMessage.direction !== "inbound")
+      return jsonResponse({ error: "Stored inbound mailbox message is required" }, 400, req);
+    body = {
+      ...body,
+      fromEmail: mailboxMessage.from,
+      subject: mailboxMessage.subject,
+      body: mailboxMessage.body,
+      threadId: mailboxMessage.threadKey,
+    };
+  }
   const fromEmail = (body.fromEmail ?? "").trim().toLowerCase();
   const subject = (body.subject ?? "").trim();
   const inboundBody = (body.body ?? "").trim();
@@ -509,8 +544,10 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
     return jsonResponse({ error: "this email has no body to draft a reply from" }, 400, req);
   }
 
-  const ledger = getLedger();
-  const prospect = ledger.getProspectByEmail(fromEmail);
+  const prospect =
+    mailboxMessage?.prospectId != null
+      ? ledger.getProspectById(mailboxMessage.prospectId)
+      : ledger.getProspectByEmail(fromEmail);
   let matched: Parameters<typeof draftInboxReply>[0]["matched"] = null;
   if (prospect) {
     // Same ranking as the list route's badge (cadenceRank).
@@ -625,6 +662,19 @@ export async function saveDraftRoute(req: Request): Promise<Response> {
   } catch {
     return jsonResponse({ error: "invalid JSON body" }, 400, req);
   }
+  const ledger = getLedger();
+  if (body.inboundEmailId?.startsWith("mailbox:") || body.threadKey?.startsWith("mailbox:")) {
+    const message = body.inboundEmailId ? ledger.mailboxes.get(body.inboundEmailId) : null;
+    if (!message || message.direction !== "inbound")
+      return jsonResponse({ error: "Stored inbound mailbox message is required" }, 400, req);
+    body = {
+      ...body,
+      threadKey: message.threadKey,
+      toEmail: message.replyTo ?? message.from,
+      subject: message.subject,
+      identityId: message.identityId,
+    };
+  }
   const threadKey = (body.threadKey ?? "").trim();
   const inboundEmailId = (body.inboundEmailId ?? "").trim();
   const toEmail = (body.toEmail ?? "").trim();
@@ -632,7 +682,6 @@ export async function saveDraftRoute(req: Request): Promise<Response> {
     return jsonResponse({ error: "threadKey, inboundEmailId and toEmail are required" }, 400, req);
   }
 
-  const ledger = getLedger();
   const draftBody = body.body ?? "";
   let status: "needs_decision" | null = null;
   // An emptied composer clears the draft so a refresh can't resurrect it.
@@ -668,6 +717,20 @@ export async function steerRoute(req: Request): Promise<Response> {
   } catch {
     return jsonResponse({ error: "invalid JSON body" }, 400, req);
   }
+  const ledger = getLedger();
+  const mailboxRequest = body.id?.startsWith("mailbox:") || body.threadKey?.startsWith("mailbox:");
+  const mailboxMessage = mailboxRequest && body.id ? ledger.mailboxes.get(body.id) : null;
+  if (mailboxRequest) {
+    if (!mailboxMessage || mailboxMessage.direction !== "inbound")
+      return jsonResponse({ error: "Stored inbound mailbox message is required" }, 400, req);
+    body = {
+      ...body,
+      fromEmail: mailboxMessage.from,
+      subject: mailboxMessage.subject,
+      body: mailboxMessage.body,
+      threadKey: mailboxMessage.threadKey,
+    };
+  }
   const fromEmail = (body.fromEmail ?? "").trim().toLowerCase();
   const subject = (body.subject ?? "").trim();
   const inboundBody = (body.body ?? "").trim();
@@ -680,8 +743,10 @@ export async function steerRoute(req: Request): Promise<Response> {
     return jsonResponse({ error: "this email has no body to draft a reply from" }, 400, req);
   }
 
-  const ledger = getLedger();
-  const prospect = ledger.getProspectByEmail(fromEmail);
+  const prospect =
+    mailboxMessage?.prospectId != null
+      ? ledger.getProspectById(mailboxMessage.prospectId)
+      : ledger.getProspectByEmail(fromEmail);
   let matched: Parameters<typeof draftInboxReply>[0]["matched"] = null;
   if (prospect) {
     const cadences = ledger.listCadencesForProspect(prospect.id);
@@ -792,6 +857,8 @@ export async function steerRoute(req: Request): Promise<Response> {
  * are a best-effort fresh send (the platform has no threading API).
  */
 export async function sendReplyRoute(req: Request): Promise<Response> {
+  if (!isLoopbackOrigin(req.headers.get("origin") ?? ""))
+    return jsonResponse({ error: "forbidden origin" }, 403, req);
   if (isDraining()) {
     return jsonResponse({ error: "server restarting — retry in a moment" }, 503, req);
   }
@@ -801,8 +868,27 @@ export async function sendReplyRoute(req: Request): Promise<Response> {
   } catch {
     return jsonResponse({ error: "invalid JSON body" }, 400, req);
   }
-  const to = (body.to ?? "").trim();
-  const subject = (body.subject ?? "").trim();
+  const stored = body.inboundEmailId ? getLedger().mailboxes.get(body.inboundEmailId) : null;
+  if (
+    body.inboundEmailId &&
+    (!stored ||
+      stored.direction !== "inbound" ||
+      stored.identityId !== body.identityId ||
+      stored.threadKey !== body.threadKey)
+  ) {
+    return jsonResponse(
+      { error: "Inbound message does not match this workspace thread and sender." },
+      400,
+      req,
+    );
+  }
+  if (
+    stored &&
+    (typeof body.sendRequestId !== "string" || !/^[a-zA-Z0-9-]{16,100}$/.test(body.sendRequestId))
+  )
+    return jsonResponse({ error: "A valid send request ID is required." }, 400, req);
+  const to = stored ? stored.replyTo || stored.from : (body.to ?? "").trim();
+  const subject = stored ? stored.subject : (body.subject ?? "").trim();
   const replyBody = (body.body ?? "").trim();
   const identityId = (body.identityId ?? "").trim();
   const threadKey = (body.threadKey ?? "").trim();
@@ -837,6 +923,7 @@ export async function sendReplyRoute(req: Request): Promise<Response> {
           to,
           subject,
           body: replyBody,
+          ...(stored ? { inboundEmailId: stored.id, sendRequestId: body.sendRequestId } : {}),
           ...(body.threadId ? { threadId: body.threadId } : {}),
           ...(body.inReplyTo ? { inReplyTo: body.inReplyTo } : {}),
           ...(body.replyToEmailId ? { replyToEmailId: body.replyToEmailId } : {}),
@@ -858,7 +945,10 @@ export async function sendReplyRoute(req: Request): Promise<Response> {
     // last resort when the background poll misses. Idempotent, and never
     // allowed to fail a send that already happened.
     try {
-      const prospect = ledger.findProspectByEmail(to);
+      const prospect =
+        stored?.prospectId != null
+          ? ledger.getProspectById(stored.prospectId)
+          : ledger.findProspectByEmail(to);
       if (prospect) ledger.recordProspectReply(prospect.id, { subject });
     } catch (err) {
       logEvent(
