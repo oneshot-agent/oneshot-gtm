@@ -32,6 +32,10 @@ vi.mock("@oneshot-gtm/plays", () => ({
       .map((v) => v.trim())
       .filter(Boolean),
   describeTargetForAngle: () => "Founder selling to clinics",
+  slopFlags: (text: string) =>
+    /\b(?:isn'?t|is not|not just)\b[^.;:!?]{1,60},\s*it'?s\b/i.test(text)
+      ? ["negative-parallelism"]
+      : [],
 }));
 const { draftAngleFor } = await import("../src/api/_draft-angle.ts");
 const POOL = 12;
@@ -147,4 +151,17 @@ it.each([
 it("propagates provider errors without a random fallback", async () => {
   complete.mockRejectedValue(new Error("unavailable"));
   await expect(draftAngleFor({ ...base, target: {}, rotate: true })).rejects.toThrow("unavailable");
+});
+
+it("rejects a generated angle built on a negation contrast and leaves the draft unchanged", async () => {
+  complete.mockImplementation(async (input) => {
+    const count = JSON.parse(input.messages[1].content).count;
+    const angles = Array.from({ length: count }, (_, i) => `Distinct argument ${i + 1}`);
+    angles[2] =
+      "The hard part isn't the engineering, it's finding the first ten teams patient enough to switch.";
+    return { content: JSON.stringify({ angles }) };
+  });
+  await expect(
+    draftAngleFor({ ...base, target: { yourEdge: "first // second" }, rotate: true }),
+  ).rejects.toThrow(/negation contrast/);
 });

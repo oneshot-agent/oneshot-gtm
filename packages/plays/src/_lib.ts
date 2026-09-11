@@ -153,7 +153,10 @@ export const SLOP_PHRASES: Array<[RegExp, string]> = [
     "knowledge-cutoff-hedge",
   ],
   [
-    /\bIt'?s not (?:just|merely) [^.]+, it'?s\b|\bnot only\b[^.]{1,80}\bbut also\b/i,
+    // "It's not just X, it's Y", "not only X but also Y", and the plain
+    // contrast that walked past both: "the hard part isn't X, it's Y" /
+    // "X is not A, it's B" / "not about X, it's about Y".
+    /\bIt'?s not (?:just|merely) [^.]+, it'?s\b|\bnot only\b[^.]{1,80}\bbut also\b|\b(?:isn'?t|is not|aren'?t|are not|wasn'?t|was not|weren'?t|were not|not about|never about)\b[^.;:!?]{1,60},\s*(?:it'?s|it is|it was|they'?re|they are|that'?s|that is)\b/i,
     "negative-parallelism",
   ],
   [
@@ -188,6 +191,11 @@ function configuredSigLines(): string[] {
  * prompt's word budget. `sigLines` (last-line-first) is exposed for tests;
  * production passes nothing and reads config.
  */
+/** The SLOP_PHRASES labels a piece of text trips — the phrase-level half of lintEmail, for text that is not an email (a generated angle). */
+export function slopFlags(text: string): string[] {
+  return SLOP_PHRASES.filter(([re]) => re.test(text)).map(([, label]) => label);
+}
+
 export function bodyWordsForLint(body: string, sigLines?: string[]): number {
   const lines = sigLines ?? configuredSigLines();
   let trimmed = body.replace(/\s+$/, "");

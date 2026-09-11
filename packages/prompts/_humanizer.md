@@ -90,7 +90,7 @@ NEVER use these in any output: additionally, align with, crucial, delve, emphasi
 
 - **Copula avoidance**: NEVER write "X serves as Y", "X stands as Y", "X represents Y", "X marks a Y", "X functions as Y". Just say "X is Y".
 - **Superficial -ing tails**: NEVER tack on "...highlighting...", "...underscoring...", "...reflecting...", "...emphasizing...", "...showcasing...", "...fostering...", "...ensuring...". They're filler.
-- **Negative parallelism**: NEVER use "It's not just X, it's Y" or "Not only X but also Y". Pick one and say it.
+- **Negative parallelism**: NEVER use "It's not just X, it's Y", "Not only X but also Y", or the plain contrast "X isn't A, it's B" ("the hard part isn't the engineering, it's finding the first ten teams"). Say what it is: "the hard part is finding the first ten teams".
 - **Rule of three**: NEVER force three-item lists when two would do. "Speed, quality, and adoption" is a tell.
 - **False ranges**: NEVER write "from X to Y" when X and Y aren't on a scale.
 - **Significance puffery**: NEVER claim something "marks a turning point", "represents a shift", "underscores its importance", "is a testament to", "reflects broader trends". Just describe what happened.

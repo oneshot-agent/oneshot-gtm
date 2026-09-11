@@ -61,6 +61,28 @@ describe("lintEmail — humanizer canon", () => {
     ).toContain("negative-parallelism");
   });
 
+  it("flags the plain 'isn't X, it's Y' contrast that reached a ready draft unflagged", () => {
+    expect(
+      lintEmail(
+        "hi",
+        "A cloud devbox that feels local, the hard part isn't the engineering, it's finding the first ten teams patient enough to switch. Sam",
+      ),
+    ).toContain("negative-parallelism");
+    expect(
+      lintEmail("hi", "The bottleneck is not the model, it is the data pipeline. Sam"),
+    ).toContain("negative-parallelism");
+    expect(lintEmail("hi", "This was never about speed, it's about trust. Sam")).toContain(
+      "negative-parallelism",
+    );
+    // Plain negation without the contrast stays legal.
+    expect(lintEmail("hi", "The API isn't public yet. It ships Friday. Sam")).not.toContain(
+      "negative-parallelism",
+    );
+    expect(lintEmail("hi", "I'm not sure this fits, but the finder part might. Sam")).not.toContain(
+      "negative-parallelism",
+    );
+  });
+
   it("flags servile closers", () => {
     expect(lintEmail("hi", "Hope this helps. Let me know if you want more. Sam")).toContain(
       "servile-closer",
