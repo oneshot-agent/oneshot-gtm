@@ -26,6 +26,7 @@ import type {
   SetupRequest,
   WalletMode,
 } from "@oneshot-gtm/shared-types";
+import { seedLinkedInSession } from "@oneshot-gtm/find";
 import { jsonResponse } from "../server.ts";
 
 /**
@@ -211,11 +212,49 @@ export async function getSetupStatus(req: Request): Promise<Response> {
         TWITTERAPI_IO_KEY: secretSource("TWITTERAPI_IO_KEY"),
         GITHUB_TOKEN: secretSource("GITHUB_TOKEN"),
         LUMA_SESSION_COOKIE: secretSource("LUMA_SESSION_COOKIE"),
+        LINKEDIN_SESSION_COOKIE: secretSource("LINKEDIN_SESSION_COOKIE"),
       },
     },
     200,
     req,
   );
+}
+
+/**
+ * POST /api/setup/linkedin-session — connect the founder's LinkedIn session:
+ * open linkedin.com in a persistent OneShot browser profile, set the stored
+ * `li_at` cookie in-page, and record whether the member is signed in. The
+ * cookie never appears in the response or a log; only the outcome does.
+ */
+export async function linkedinSessionRoute(req: Request): Promise<Response> {
+  if (!secretSource("LINKEDIN_SESSION_COOKIE")) {
+    return jsonResponse(
+      { error: "paste the LinkedIn session cookie (li_at) first, then connect" },
+      400,
+      req,
+    );
+  }
+  try {
+    const result = await seedLinkedInSession({
+      playName: "setup",
+      memo: "connect linkedin session",
+    });
+    return jsonResponse(
+      {
+        ok: true,
+        loggedIn: result.loggedIn,
+        name: result.name,
+        profileId: result.profileId,
+        costUsd: result.costUsd,
+        checkedAt: new Date().toISOString(),
+      },
+      200,
+      req,
+    );
+  } catch (err) {
+    const message = ((err as Error).message ?? "connect failed").slice(0, 300);
+    return jsonResponse({ error: message }, 502, req);
+  }
 }
 
 /**

@@ -6,7 +6,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // list said "| Curious Explorer" at L'eto Group; LinkedIn said Founder &
 // Product Owner at WildMuse.App since Mar 2026, L'ETO ended Oct 2025.
 
-const calls = { research: 0, company: 0, classify: 0, webRead: 0 };
+const calls = { research: 0, company: 0, classify: 0, webRead: 0, browser: 0 };
+let liveSession = false;
 const patches: Array<{ id: number; patch: Record<string, unknown> }> = [];
 const notes: Array<{ id: number; notes: string }> = [];
 const statuses: Array<Record<string, unknown>> = [];
@@ -58,12 +59,21 @@ vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
   return {
     ...actual,
-    loadConfig: () => ({ ...actual.loadConfig(), icpOneLiner: icp }),
+    loadConfig: () => ({
+      ...actual.loadConfig(),
+      icpOneLiner: icp,
+      linkedinBrowserProfileId: liveSession ? "prof_1" : null,
+      linkedinSessionCheckedAt: liveSession ? "2026-09-11T20:00:00.000Z" : null,
+      linkedinSessionInvalidAt: null,
+      linkedinReadsPerDay: 80,
+    }),
+    saveConfig: () => {},
     logEvent: () => {},
     getLedger: () => ({
-      getCachedEnrichment: () => enrichmentCache,
+      getCachedEnrichment: (key: string) => (key.startsWith("person:") ? enrichmentCache : null),
       setCachedEnrichment: () => {},
       setCachedEnrichmentFailure: () => {},
+      countCachedEnrichmentSince: () => 0,
       getProductResearchCache: (key: string) => productCache.get(key) ?? null,
       setProductResearchCache: (key: string, value: string) => productCache.set(key, value),
       patchLiveQueuePayload: (input: { id: number; patch: Record<string, unknown> }) => {
@@ -105,6 +115,33 @@ vi.mock("@oneshot-gtm/core", async () => {
         receiptId: 8,
       };
     },
+    browserTask: async () => {
+      calls.browser++;
+      return {
+        result: {
+          output: {
+            loggedIn: true,
+            name: "Julia Zabrodska-Akinci",
+            headline: "Founder & Product Owner at WildMuse.App",
+            experience: [
+              {
+                company: "WildMuse.App",
+                title: "Founder & Product Owner",
+                period: "Mar 2026 - Present",
+              },
+              {
+                company: "L'ETO Group",
+                title: "Head of Product and Business Development Manager",
+                period: "Nov 2024 - Oct 2025",
+              },
+            ],
+          },
+          steps: [],
+          cost: 0.012,
+        },
+        receiptId: 11,
+      };
+    },
     webRead: async ({ url }: { url: string }) => {
       calls.webRead++;
       return { result: { markdown: `first-party ${url}`, cost: 0.01 }, receiptId: 9 };
@@ -142,6 +179,7 @@ const {
   researchNewQueueRowPeople,
   researchPerson,
 } = await import("../src/_person-research.ts");
+const { _resetLinkedInReadGate } = await import("../src/_linkedin-profile.ts");
 
 const juliaPayload = {
   name: "Julia Zabrodska",
@@ -169,7 +207,10 @@ const row = (id: number, status: "pending" | "approved") => ({
 });
 
 beforeEach(() => {
-  calls.research = calls.company = calls.classify = calls.webRead = 0;
+  calls.research = calls.company = calls.classify = calls.webRead = calls.browser = 0;
+  liveSession = false;
+  delete process.env["LINKEDIN_SESSION_COOKIE"];
+  _resetLinkedInReadGate();
   patches.length = notes.length = statuses.length = priorities.length = prospectWrites.length = 0;
   productCache.clear();
   enrichmentCache = null;
@@ -397,6 +438,114 @@ describe("researchPerson + personPayloadPatch", () => {
     });
     expect(dossier.status).toBe("unavailable");
     expect(personPayloadPatch(juliaPayload, dossier)).toEqual({ personResearch: dossier });
+  });
+});
+
+describe("live LinkedIn tier", () => {
+  const providerSaysLeto = {
+    ...juliaResearch,
+    result: {
+      enrichment: {
+        ...juliaResearch.result.enrichment,
+        organizations: [
+          {
+            name: "L'ETO Group",
+            title: "Head of Product and Business Development Manager",
+            startDate: "Nov 2024",
+            endDate_formatted: { is_current: true },
+          },
+          {
+            name: "Old Co",
+            title: "Analyst",
+            startDate: "2018",
+            endDate: "2020",
+            endDate_formatted: { is_current: false },
+          },
+        ],
+      },
+    },
+  };
+
+  it("the live page wins on currency for the companies it lists; provider-only history is kept", async () => {
+    process.env["LINKEDIN_SESSION_COOKIE"] = "cookie";
+    liveSession = true;
+    enrichmentCache = {
+      result_json: JSON.stringify(providerSaysLeto),
+      fetched_at: new Date().toISOString(),
+      status: "ok",
+    };
+    const { dossier, costUsd } = await researchPerson({
+      seed: personSeedFor(juliaPayload),
+      playName: "luma-events",
+      subject: { queueId: 1 },
+      remainingUsd: 1,
+    });
+    expect(calls.browser).toBe(1);
+    expect(dossier.currentRole).toEqual({
+      title: "Founder & Product Owner",
+      company: "WildMuse.App",
+      since: "Mar 2026",
+    });
+    expect(dossier.organizations.map((o) => `${o.name}:${o.current}`)).toEqual([
+      "WildMuse.App:true",
+      "L'ETO Group:false",
+      "Old Co:false",
+    ]);
+    expect(dossier.liveProfile?.url).toContain("linkedin.com/in/julia-zabrodska-akinci-cv");
+    expect(costUsd).toBeCloseTo(0.012 + 0.005, 5);
+    // The provider's bio stays; the page headline only fills a gap.
+    expect(dossier.bio).toBe("Solo-built consumer wellness app from 0 to first revenue.");
+  });
+
+  it("does not read without a configured session, and records why", async () => {
+    process.env["LINKEDIN_SESSION_COOKIE"] = "cookie";
+    liveSession = false; // cookie stored, never checked
+    const { dossier } = await researchPerson({
+      seed: personSeedFor(juliaPayload),
+      playName: "luma-events",
+      subject: { queueId: 1 },
+      remainingUsd: 1,
+    });
+    expect(calls.browser).toBe(0);
+    expect(dossier.warning).toBe("live profile skipped: session-unchecked");
+    expect(dossier.liveProfile).toBeUndefined();
+  });
+
+  it("liveProfile: false skips the read even with a session; a non-LinkedIn seed never reads", async () => {
+    process.env["LINKEDIN_SESSION_COOKIE"] = "cookie";
+    liveSession = true;
+    await researchPerson({
+      seed: personSeedFor(juliaPayload),
+      playName: "luma-events",
+      subject: { queueId: 1 },
+      remainingUsd: 1,
+      liveProfile: false,
+    });
+    await researchPerson({
+      seed: personSeedFor({
+        ...juliaPayload,
+        linkedinUrl: undefined,
+        sourceProfileUrl: "https://github.com/julia",
+      }),
+      playName: "luma-events",
+      subject: { queueId: 1 },
+      remainingUsd: 1,
+    });
+    expect(calls.browser).toBe(0);
+  });
+
+  it("a live read alone carries the row when the provider failed", async () => {
+    process.env["LINKEDIN_SESSION_COOKIE"] = "cookie";
+    liveSession = true;
+    researchStatus = "failed";
+    const { dossier } = await researchPerson({
+      seed: personSeedFor(juliaPayload),
+      playName: "luma-events",
+      subject: { queueId: 1 },
+      remainingUsd: 1,
+    });
+    expect(dossier.status).not.toBe("unavailable");
+    expect(dossier.currentRole?.company).toBe("WildMuse.App");
   });
 });
 

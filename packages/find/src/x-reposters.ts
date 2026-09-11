@@ -5,6 +5,7 @@ import {
   logEvent,
   parallelMap,
 } from "@oneshot-gtm/core";
+import { dossierFromProviderResult, personPayloadPatch } from "./_person-research.ts";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { XAmplifyDmTarget, XAmplifyTarget, XRepostIntroTarget } from "@oneshot-gtm/plays";
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
@@ -362,6 +363,18 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
     const dossier = hasSignal
       ? JSON.stringify(research?.result?.result ?? research?.result, null, 2).slice(0, 6000)
       : "";
+    // The research is already paid for: carry it as `personResearch` so the
+    // post-finder person-research step skips this row instead of re-buying it.
+    const providerDossier = research?.result
+      ? dossierFromProviderResult(
+          { url: twitterUrl, email: null, name: c.user.name ?? null, company: null },
+          research.result,
+          { costUsd: research.result.cost ?? 0, billed: true },
+        )
+      : null;
+    const researched = providerDossier
+      ? personPayloadPatch({ name: c.user.name ?? "" }, providerDossier)
+      : {};
 
     // SDK-found emails, cheapest-to-extract order.
     const altEmails = Array.isArray(enrichment["altemails"])
@@ -380,6 +393,7 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
             name: c.user.name,
             email: sdkEmail,
             ...(dossier ? { dossier } : {}),
+            ...researched,
             ...base,
             ...(opts.launchDate ? { launchDate: opts.launchDate } : {}),
           }
@@ -492,6 +506,7 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
       ...(role ? { title: role } : {}),
       dossier,
       angle: str(extracted.angle),
+      ...researched,
       ...base,
       ...(edgeBySeed.has(seedHandle.toLowerCase())
         ? { seedEdge: edgeBySeed.get(seedHandle.toLowerCase())! }

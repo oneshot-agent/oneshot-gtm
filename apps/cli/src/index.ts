@@ -29,6 +29,7 @@ import {
   configSpendCeiling,
   configTelemetry,
   configXEngine,
+  configLinkedInSession,
 } from "./commands/config.ts";
 import { commandDoctor } from "./commands/doctor.ts";
 import {
@@ -254,6 +255,12 @@ config
     "Show or switch the x-reposters data provider (xapi = first-party X API, twitterapiio = ~55x cheaper third-party)",
   )
   .action(runOrFail((engine?: string) => configXEngine(engine)));
+config
+  .command("linkedin-session")
+  .description(
+    "Connect the stored LinkedIn cookie to a OneShot browser profile so person research can read live profiles",
+  )
+  .action(runOrFail(configLinkedInSession));
 config
   .command("slack-webhook [url]")
   .description(
@@ -516,6 +523,7 @@ find
   )
   .option("--no-rejudge", "keep the stored ICP verdict; skip the person-gate re-judge")
   .option("--no-company", "skip the company lookup for the current employer")
+  .option("--no-live", "skip the live LinkedIn profile read (provider history only)")
   .option("--dry-run", "list candidates and estimated cost; research nothing", false)
   .description(
     "Backfill person research onto existing prospects: current role, company facts, ICP re-judge (~$0.055 each)",
@@ -531,6 +539,7 @@ find
         maxCostUsd?: number;
         rejudge: boolean;
         company: boolean;
+        live: boolean;
         dryRun: boolean;
       }) => {
         await commandResearchProspects({
@@ -538,6 +547,7 @@ find
           refresh: opts.refresh,
           noRejudge: opts.rejudge === false,
           noCompany: opts.company === false,
+          noLive: opts.live === false,
           ...(opts.limit ? { limit: opts.limit } : {}),
           ...(opts.scope ? { scope: opts.scope } : {}),
           ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
@@ -567,6 +577,7 @@ find
   .option("--refresh", "re-research rows that already carry person research", false)
   .option("--no-rejudge", "keep the row's ICP verdict; skip the person-gate re-judge")
   .option("--no-company", "skip the company lookup for the current employer")
+  .option("--no-live", "skip the live LinkedIn profile read (provider history only)")
   .option("--dry-run", "list candidates and estimated cost; research nothing", false)
   .description(
     "Backfill person research onto live queue rows: current role from the LinkedIn history, company facts, ICP re-judge (~$0.055 each)",
@@ -583,6 +594,7 @@ find
         refresh: boolean;
         rejudge: boolean;
         company: boolean;
+        live: boolean;
         dryRun: boolean;
       }) => {
         await commandResearchQueue({
@@ -590,6 +602,7 @@ find
           refresh: opts.refresh,
           noRejudge: opts.rejudge === false,
           noCompany: opts.company === false,
+          noLive: opts.live === false,
           ...(opts.play ? { play: opts.play } : {}),
           ...(opts.status ? { status: opts.status } : {}),
           ...(Number.isFinite(opts.id) ? { id: opts.id as number } : {}),

@@ -47,6 +47,8 @@ export interface ResearchQueueOpts {
   noRejudge?: boolean;
   /** Skip the company lookup for the current employer. */
   noCompany?: boolean;
+  /** Skip the live LinkedIn profile read (provider history only). */
+  noLive?: boolean;
 }
 
 /**
@@ -259,6 +261,7 @@ export async function commandResearchQueue(opts: ResearchQueueOpts): Promise<voi
       subject: { queueId: row.id },
       remainingUsd,
       enrichCompany: !opts.noCompany,
+      liveProfile: !opts.noLive,
     });
     spend.costUsd += researched.costUsd;
     if (researched.cached) tally.cached++;

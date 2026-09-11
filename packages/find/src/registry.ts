@@ -90,6 +90,7 @@ export async function runFinderWithProductResearch(
     afterId,
     result,
     enabled: config["personResearch"] !== false,
+    liveProfile: config["linkedinProfileRead"] !== false,
     // mailCost is already in both baselines (lines above); do not add it twice.
     priorSdkCostUsd: result.sdkCostUsd ?? result.costUsd,
     ...(typeof config["maxCostUsd"] === "number"
@@ -140,7 +141,11 @@ const ONE_HOUR = 3600 * 1000;
  * trigger config turns that stage off; a stored config that predates a key
  * behaves as `true`.
  */
-const RESEARCH_DEFAULT = { productResearch: true, personResearch: true } as const;
+const RESEARCH_DEFAULT = {
+  productResearch: true,
+  personResearch: true,
+  linkedinProfileRead: true,
+} as const;
 const PERSON_RESEARCH_BRIEF =
   'personResearch (default true): after the run, each new row with a profile URL gets its current title and employer from the person\'s work history (~$0.055/row, minutes), the person gate is re-judged on it, and the facts land in the dossier; counts against maxCostUsd, and "Run now" takes longer while it completes.';
 
@@ -992,7 +997,10 @@ export const TRIGGERS: TriggerSpec[] = [
 
 // Every trigger runs person research unless its config says `false`; say so
 // in every brief rather than hand-editing fifteen strings.
-for (const spec of TRIGGERS) spec.configBrief = `${spec.configBrief}\n${PERSON_RESEARCH_BRIEF}`;
+const LINKEDIN_READ_BRIEF =
+  "linkedinProfileRead (default true): when a LinkedIn session cookie is connected on /setup, person research also reads the live profile's Experience section in a OneShot browser profile (~$0.02/row, serialized, capped per day) and lets it win over the provider's history; reads show as profile views from your account.";
+for (const spec of TRIGGERS)
+  spec.configBrief = `${spec.configBrief}\n${PERSON_RESEARCH_BRIEF}\n${LINKEDIN_READ_BRIEF}`;
 
 /**
  * Resolve the active interval for a trigger: stored config_json may override

@@ -265,6 +265,8 @@ export interface PersonResearchDossier {
   /** `best_work_email` — informational; the stored address is never swapped. */
   workEmail?: string;
   company?: PersonResearchCompany;
+  /** Set when the Experience section came from a live read of the profile page (wins over the provider's history). */
+  liveProfile?: { url: string; readAt: string };
   costUsd: number;
   cached: boolean;
   warning?: string;
@@ -388,6 +390,7 @@ export function personRecordFromResearch(r: PersonResearchDossier): Record<strin
     ...(companyFacts ? { companyFacts } : {}),
     ...(formerRoles ? { formerRoles } : {}),
     ...(r.workEmail ? { workEmail: r.workEmail } : {}),
+    ...(r.liveProfile ? { liveProfileReadAt: r.liveProfile.readAt } : {}),
   };
 }
 

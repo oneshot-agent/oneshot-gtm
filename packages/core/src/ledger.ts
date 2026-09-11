@@ -1502,6 +1502,10 @@ export class Ledger {
   setCachedEnrichmentFailure(email: string, message: string): void {
     this.cache.setCachedEnrichmentFailure(email, message);
   }
+  /** Rows under a namespaced cache prefix written since `sinceIso` (successes only). */
+  countCachedEnrichmentSince(prefix: string, sinceIso: string): number {
+    return this.cache.countCachedEnrichmentSince(prefix, sinceIso);
+  }
 
   recordReceipt(input: {
     playName: string;

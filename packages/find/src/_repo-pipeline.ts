@@ -6,6 +6,7 @@ import {
   logEvent,
   verifyEmail,
 } from "@oneshot-gtm/core";
+import { dossierFromProviderResult, personPayloadPatch } from "./_person-research.ts";
 import type { CompetitorSwitchTarget, StackConsolidationTarget } from "@oneshot-gtm/plays";
 import { isDuplicate } from "./_dedupe.ts";
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
@@ -292,10 +293,39 @@ export async function processRepoCandidate(
   const name = extract.authorFullName ?? contact.fullName ?? extract.githubHandle ?? "there";
   const company = extract.companyName ?? extract.githubHandle ?? companyFallback;
   const gateTitle = gate.roleText ?? contact.title;
+  // Path C research, when it ran, rides on the row as `personResearch` so the
+  // post-finder step skips it (cache key = the owner's profile URL).
+  const stashedResearch = contact.research
+    ? (() => {
+        const dossier = dossierFromProviderResult(
+          {
+            url: extract.githubHandle ? `https://github.com/${extract.githubHandle}` : null,
+            email: contact.email,
+            name: extract.authorFullName ?? contact.fullName,
+            company: extract.companyName ?? null,
+          },
+          contact.research,
+          { costUsd: 0, billed: false },
+        );
+        return dossier
+          ? personPayloadPatch(
+              {
+                ...((extract.authorFullName ?? contact.fullName)
+                  ? { name: extract.authorFullName ?? contact.fullName }
+                  : {}),
+                ...(extract.companyName ? { company: extract.companyName } : {}),
+                ...(gateTitle ? { title: gateTitle } : {}),
+              },
+              dossier,
+            )
+          : {};
+      })()
+    : {};
   const contactExtras = {
     ...(contact.linkedinUrl ? { linkedinUrl: contact.linkedinUrl } : {}),
     ...(contact.phone ? { phone: contact.phone } : {}),
     ...(gateTitle ? { title: gateTitle } : {}),
+    ...stashedResearch,
     // Durable re-enrichment key. When today's LinkedIn lookup misses, a later
     // backfill can work from the GitHub profile rather than a bare name.
     ...(extract.githubHandle
@@ -369,6 +399,8 @@ interface ResolvedContact {
   phone: string | null;
   /** Job title, when any enrichment path surfaced one. Feeds the ICP gate. */
   title: string | null;
+  /** The raw deepResearchPerson result when Path C ran — stashed on the row as `personResearch`. */
+  research?: unknown;
   /** Free-text bio/headline from post-verify enrichment. Secondary gate evidence. */
   summary: string | null;
   /**
@@ -543,7 +575,9 @@ export async function resolveContact(args: {
   try {
     const dr = await deepResearchPerson(
       {
-        socialMediaUrl: repoUrl,
+        // The owner's profile, not the repo: that is the URL the person-research
+        // cache is keyed on, so a later backfill is a hit instead of a re-buy.
+        socialMediaUrl: ghUser ? `https://github.com/${ghUser.login}` : repoUrl,
         ...(hasName ? { name: extract.authorFullName as string } : {}),
         ...(hasCompany ? { company: companyForGate as string } : {}),
       },
@@ -565,6 +599,7 @@ export async function resolveContact(args: {
       title: null,
       summary: null,
       enrichedByLinkedin: didEnrichByLinkedin,
+      research: dr.result,
       email: drEmail,
       fullName: drFullName,
       domain: domainForGate ?? ghUser?.blogDomain ?? drEmail.split("@")[1] ?? null,

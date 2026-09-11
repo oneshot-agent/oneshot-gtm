@@ -7,7 +7,12 @@ import {
   secretsPath,
   isSlackWebhookUrl,
 } from "@oneshot-gtm/core";
-import { TRIGGERS, checkReadiness } from "@oneshot-gtm/find";
+import {
+  TRIGGERS,
+  checkReadiness,
+  linkedinSessionState,
+  seedLinkedInSession,
+} from "@oneshot-gtm/find";
 import { withXEngine, type XEngine } from "@oneshot-gtm/shared-types";
 import prompts from "prompts";
 import { c, header, note, ok } from "../output.ts";
@@ -272,6 +277,38 @@ export async function configXEngine(engineArg?: string): Promise<void> {
   note(ready.ready ? c.green("ready") : `not ready — ${ready.reason}`);
 }
 
+/**
+ * `config linkedin-session`: seed the OneShot browser profile with the
+ * stored LinkedIn cookie and report whether the member is signed in.
+ */
+export async function configLinkedInSession(): Promise<void> {
+  header("LinkedIn session (live profile reads)");
+  const before = linkedinSessionState();
+  note(`state: ${c.cyan(before)}`);
+  if (before === "unset") {
+    note(
+      `LINKEDIN_SESSION_COOKIE is not set — paste your li_at cookie with ${c.cyan("oneshot-gtm config keys")} (or on /setup), then run this again.`,
+    );
+    return;
+  }
+  note(c.dim("opening linkedin.com in a OneShot browser profile… about a minute"));
+  try {
+    const r = await seedLinkedInSession({ playName: "config", memo: "connect linkedin session" });
+    if (r.loggedIn) {
+      ok(
+        `logged in as ${c.cyan(r.name ?? "(name not shown)")} · profile ${c.dim(r.profileId)} · $${r.costUsd.toFixed(3)}`,
+      );
+    } else {
+      note(
+        `not signed in — LinkedIn did not accept the cookie as a session. Paste a fresh li_at (browser dev tools → Application → Cookies → linkedin.com) and run this again. Profile ${c.dim(r.profileId)} · $${r.costUsd.toFixed(3)}`,
+      );
+    }
+  } catch (err) {
+    note(`connect failed: ${(err as Error).message}`);
+    note(c.dim("paste a fresh li_at cookie and run this again"));
+  }
+}
+
 export async function configKeys(): Promise<void> {
   header("Configure API keys");
   note(`Keys are saved to ${c.cyan(secretsPath())} (chmod 600). Empty input = leave unchanged.\n`);
@@ -366,6 +403,12 @@ export async function configKeys(): Promise<void> {
         name: "lumaSessionCookie",
         message: "LUMA_SESSION_COOKIE (optional; hosted-event guest lists)",
       },
+      {
+        type: "password",
+        name: "linkedinSessionCookie",
+        message:
+          "LINKEDIN_SESSION_COOKIE (optional; live LinkedIn profile reads, your li_at cookie)",
+      },
     ],
     { onCancel: () => process.exit(0) },
   );
@@ -385,6 +428,8 @@ export async function configKeys(): Promise<void> {
   if (answers["githubToken"]) updates["GITHUB_TOKEN"] = answers["githubToken"] as string;
   if (answers["lumaSessionCookie"])
     updates["LUMA_SESSION_COOKIE"] = answers["lumaSessionCookie"] as string;
+  if (answers["linkedinSessionCookie"])
+    updates["LINKEDIN_SESSION_COOKIE"] = answers["linkedinSessionCookie"] as string;
 
   if (Object.keys(updates).length === 0) {
     note("No changes.");

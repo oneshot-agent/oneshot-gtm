@@ -40,7 +40,7 @@ import {
   measureSpendSeries,
   recordOutcome,
 } from "./api/measure.ts";
-import { setup, getSetupDomains, getSetupStatus } from "./api/setup.ts";
+import { setup, getSetupDomains, getSetupStatus, linkedinSessionRoute } from "./api/setup.ts";
 import { gmailAuthCallbackRoute, startGmailAuthRoute } from "./api/gmail-auth.ts";
 import {
   confirmMeetingMatchRoute,
@@ -156,6 +156,7 @@ const routes: RouteEntry[] = [
   route("POST", "/api/smartlead/accounts", smartleadAccountsRoute),
   route("POST", "/api/setup/derive-icp", deriveIcpRoute),
   route("POST", "/api/setup/derive-brief", deriveBriefRoute),
+  route("POST", "/api/setup/linkedin-session", linkedinSessionRoute),
   route("POST", "/api/strategist/stream", strategistRoute),
   route("GET", "/api/doctor", doctor),
   route("GET", "/api/workspace", workspaceInfo),

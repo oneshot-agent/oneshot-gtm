@@ -28,6 +28,7 @@ import {
   listWorkspaces,
   loadGmailTokens,
   spendCeilingReason,
+  type OneShotConfig,
 } from "@oneshot-gtm/core";
 import { finderApprovalHealth, storedTriggerConfig, TRIGGERS } from "@oneshot-gtm/find";
 
@@ -463,6 +464,48 @@ function githubTokenCheck(): CheckResult | null {
 }
 
 /**
+ * The LinkedIn session behind live profile reads. Unset is fine (person
+ * research falls back to the provider's history) and says so at "ok";
+ * a cookie that never seeded a session, or one a read found expired, is a
+ * warn — the tier silently degrades otherwise.
+ */
+function linkedinSessionCheck(cfg: OneShotConfig): CheckResult {
+  const src = secretSource("LINKEDIN_SESSION_COOKIE");
+  if (!process.env["LINKEDIN_SESSION_COOKIE"]) {
+    return {
+      name: "linkedin session",
+      group: "install",
+      severity: "ok",
+      message: "LINKEDIN_SESSION_COOKIE not set — person research uses provider history only",
+    };
+  }
+  if (cfg.linkedinSessionInvalidAt) {
+    return {
+      name: "linkedin session",
+      group: "install",
+      severity: "warn",
+      message: `LINKEDIN_SESSION_COOKIE set (${src ?? "?"}) but the session expired ${cfg.linkedinSessionInvalidAt} — live profile reads are paused`,
+      hint: "paste a fresh li_at cookie on /setup and run `oneshot-gtm config linkedin-session`",
+    };
+  }
+  if (!cfg.linkedinSessionCheckedAt) {
+    return {
+      name: "linkedin session",
+      group: "install",
+      severity: "warn",
+      message: `LINKEDIN_SESSION_COOKIE set (${src ?? "?"}) but the session was never checked — live profile reads wait for it`,
+      hint: "run `oneshot-gtm config linkedin-session` (or Connect on /setup) to seed the browser profile",
+    };
+  }
+  return {
+    name: "linkedin session",
+    group: "install",
+    severity: "ok",
+    message: `set (${src ?? "?"}) · logged in as ${cfg.linkedinSessionName ?? "(name unknown)"} (checked ${cfg.linkedinSessionCheckedAt})`,
+  };
+}
+
+/**
  * Same only-when-enabled shape as the GitHub check, but engine-aware: the
  * x-reposters trigger reads whichever credentials its configured engine needs.
  * First-party (default) needs all four OAuth1 user-context vars — an app-only
@@ -688,6 +731,8 @@ export async function runDoctor(): Promise<CheckResult[]> {
 
   const xc = xCredsCheck();
   if (xc) results.push(xc);
+
+  results.push(linkedinSessionCheck(cfg));
 
   const cdpSrc = secretSource("CDP_API_KEY_ID");
   const pkSrc = secretSource("AGENT_PRIVATE_KEY");

@@ -92,6 +92,10 @@ export class LedgerCache {
     this.shared().setCachedEnrichmentFailure(email, message);
   }
 
+  countCachedEnrichmentSince(prefix: string, sinceIso: string): number {
+    return this.shared().countCachedEnrichmentSince(prefix, sinceIso);
+  }
+
   getProductResearchCache(cacheKey: string, maxAgeMs: number): string | null {
     const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
     const row = this.db

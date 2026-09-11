@@ -166,6 +166,16 @@ export class SharedDb {
       );
   }
 
+  /** How many cache rows under a key prefix were written since `sinceIso` — the daily counter for throttled paid reads. */
+  countCachedEnrichmentSince(prefix: string, sinceIso: string): number {
+    const row = this.db
+      .query(
+        "SELECT COUNT(*) AS n FROM enrichment_cache WHERE email LIKE ? ESCAPE '\\' AND fetched_at >= ? AND status IS NULL",
+      )
+      .get(`${prefix.replace(/[\\%_]/g, (c) => `\\${c}`)}%`, sinceIso) as { n: number };
+    return Number(row?.n ?? 0);
+  }
+
   getCachedLinkedIn(
     queryKey: string,
   ): { url: string | null; status: string; fetched_at: string } | null {

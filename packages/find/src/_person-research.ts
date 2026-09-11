@@ -41,6 +41,13 @@ import { qualifyPerson, resolveIcp, type PersonVerdict } from "./_filter.ts";
 import { isDudDomain } from "./_findemail-prescreen.ts";
 import { stampFitReason } from "./_fit-reason.ts";
 import { researchQueueRowProduct } from "./_product-research.ts";
+import { isLinkedInProfileUrl } from "./_linkedin.ts";
+import {
+  LINKEDIN_READ_COST_ESTIMATE_USD,
+  linkedinSessionState,
+  readLinkedInProfile,
+  type LiveProfileRead,
+} from "./_linkedin-profile.ts";
 import { isResearchableUrl } from "./_profile-url.ts";
 import { safeScorePriority } from "./_priority-adapters.ts";
 import { safeDeepResearchPerson, safeEnrichCompany } from "./_sdk-safe.ts";
@@ -48,8 +55,12 @@ import type { FinderResult } from "./_types.ts";
 
 export const PERSON_RESEARCH_COST_ESTIMATE_USD = 0.05;
 export const COMPANY_RESEARCH_COST_ESTIMATE_USD = 0.005;
-/** Reserved per in-flight call against the trigger cap; released on completion. */
-const RESERVE_USD = 0.06;
+/** Reserved per in-flight call against the trigger cap (research + company + live read); released on completion. */
+const RESERVE_USD =
+  PERSON_RESEARCH_COST_ESTIMATE_USD +
+  COMPANY_RESEARCH_COST_ESTIMATE_USD +
+  LINKEDIN_READ_COST_ESTIMATE_USD +
+  0.005;
 /** Soft wall budget for one post-finder pass; leftover rows wait for the backfill or the next run. */
 const RUN_BUDGET_MS = 20 * 60 * 1000;
 const COMPANY_ENRICH_TIMEOUT_MS = 30_000;
@@ -312,6 +323,22 @@ export interface ResearchPersonInput {
   remainingUsd: number;
   /** Buy the current company's record (default true). */
   enrichCompany?: boolean;
+  /** Read the live LinkedIn profile when the seed is one and a session is configured (default true). */
+  liveProfile?: boolean;
+}
+
+/**
+ * The live page's Experience list wins on currency: for every company the
+ * page lists, the provider's entries for that company are dropped (they are
+ * the ones that go stale); provider-only history is kept behind it.
+ */
+export function reconcileOrganizations(
+  live: PersonResearchOrganization[],
+  provider: PersonResearchOrganization[],
+): PersonResearchOrganization[] {
+  if (live.length === 0) return provider;
+  const liveCompanies = new Set(live.map((o) => normalizeCompany(o.name)));
+  return [...live, ...provider.filter((o) => !liveCompanies.has(normalizeCompany(o.name)))];
 }
 
 export async function researchPerson(input: ResearchPersonInput): Promise<{
@@ -350,16 +377,45 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
   );
   const billed = res.receiptId !== 0;
   let costUsd = billed ? (res.result?.cost ?? 0) : 0;
-  if (!res.result || res.result.status === "failed") {
+  const providerFailed = !res.result || res.result.status === "failed";
+  const providerOrgs = providerFailed ? [] : organizationsFromResearch(res.result);
+  const inner =
+    !providerFailed && isRecord(res.result.result) ? (res.result.result as JsonRecord) : {};
+  const enrichment = isRecord(inner["enrichment"]) ? (inner["enrichment"] as JsonRecord) : {};
+
+  // Live tier: the profile page itself, when the seed is a LinkedIn profile
+  // and the founder's session is configured. Its Experience list wins on
+  // currency over the provider's (see reconcileOrganizations).
+  let live: LiveProfileRead | null = null;
+  if (input.liveProfile !== false && seed.url && isLinkedInProfileUrl(seed.url)) {
+    if (linkedinSessionState() !== "unset") {
+      live = await readLinkedInProfile(
+        seed.url,
+        {
+          playName: input.playName,
+          memo: "person research: live LinkedIn profile read",
+          decisionContext: { source: "person-research", ...input.subject },
+        },
+        { remainingUsd: Math.max(0, input.remainingUsd - costUsd) },
+      );
+      costUsd += live.costUsd;
+    }
+  }
+  const liveOrgs = live?.profile
+    ? organizationsFromResearch({ experience: live.profile.experience })
+    : [];
+  const orgs = reconcileOrganizations(liveOrgs, providerOrgs);
+  const { current, organizations } = deriveCurrentRole(orgs);
+  const bio = str(enrichment, "bio", "summary", "headline") ?? live?.profile?.headline ?? undefined;
+  const location = str(enrichment, "location") ?? live?.profile?.location ?? undefined;
+  const workEmail = str(enrichment, "best_work_email")?.toLowerCase() ?? undefined;
+  const liveWarning =
+    live && !live.profile && live.skipped && live.skipped !== "not-linkedin"
+      ? `live profile skipped: ${live.skipped}`
+      : undefined;
+  if (providerFailed && liveOrgs.length === 0) {
     return { dossier: unavailable(seed, "person research failed"), costUsd, cached: false };
   }
-  const orgs = organizationsFromResearch(res.result);
-  const { current, organizations } = deriveCurrentRole(orgs);
-  const inner = isRecord(res.result.result) ? (res.result.result as JsonRecord) : {};
-  const enrichment = isRecord(inner["enrichment"]) ? (inner["enrichment"] as JsonRecord) : {};
-  const bio = str(enrichment, "bio", "summary", "headline") ?? undefined;
-  const location = str(enrichment, "location") ?? undefined;
-  const workEmail = str(enrichment, "best_work_email")?.toLowerCase() ?? undefined;
   if (!current && organizations.length === 0 && !bio) {
     return {
       dossier: unavailable(seed, "person research returned no organisation history"),
@@ -428,10 +484,61 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
     ...(location ? { location } : {}),
     ...(workEmail ? { workEmail } : {}),
     ...(company ? { company } : {}),
+    ...(live?.profile
+      ? { liveProfile: { url: live.profile.url, readAt: live.profile.readAt } }
+      : {}),
+    ...(liveWarning ? { warning: liveWarning } : {}),
     costUsd,
-    cached: !billed,
+    cached: !billed && !(live?.profile && !live.cached),
   });
-  return { dossier, costUsd, cached: !billed };
+  return { dossier, costUsd, cached: !billed && !(live?.profile && !live.cached) };
+}
+
+/**
+ * The provider half of a dossier from a `deepResearchPerson` result a finder
+ * already paid for (x-reposters, the repo pipeline's last resort), so the row
+ * carries `personResearch` from the start and the batch step skips it. No
+ * company or live tier here; null when the result holds no history or bio.
+ */
+export function dossierFromProviderResult(
+  seed: Pick<PersonSeed, "url" | "email" | "name" | "company">,
+  result: unknown,
+  opts: { costUsd: number; billed: boolean },
+): PersonResearchDossier | null {
+  if (!isRecord(result) || result["status"] === "failed") return null;
+  const { current, organizations } = deriveCurrentRole(organizationsFromResearch(result));
+  const inner = isRecord(result["result"]) ? (result["result"] as JsonRecord) : {};
+  const enrichment = isRecord(inner["enrichment"]) ? (inner["enrichment"] as JsonRecord) : {};
+  const bio = str(enrichment, "bio", "summary", "headline") ?? undefined;
+  const location = str(enrichment, "location") ?? undefined;
+  const workEmail = str(enrichment, "best_work_email")?.toLowerCase() ?? undefined;
+  if (!current && organizations.length === 0 && !bio) return null;
+  return boundPersonResearch({
+    version: 1,
+    status: "partial",
+    researchedAt: new Date().toISOString(),
+    seed: {
+      ...(seed.url ? { url: seed.url } : {}),
+      ...(seed.email ? { email: seed.email } : {}),
+      ...(seed.name ? { name: seed.name } : {}),
+      ...(seed.company ? { company: seed.company } : {}),
+    },
+    ...(current
+      ? {
+          currentRole: {
+            ...(current.title ? { title: current.title } : {}),
+            company: current.name,
+            ...(current.startDate ? { since: current.startDate } : {}),
+          },
+        }
+      : {}),
+    organizations,
+    ...(bio ? { bio: bio.replace(/\s+/g, " ").slice(0, 600) } : {}),
+    ...(location ? { location } : {}),
+    ...(workEmail ? { workEmail } : {}),
+    costUsd: opts.billed ? opts.costUsd : 0,
+    cached: !opts.billed,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -709,6 +816,8 @@ export async function researchNewQueueRowPeople(input: {
   maxCostUsd?: number;
   enabled: boolean;
   priorSdkCostUsd?: number;
+  /** Live LinkedIn reads for this run (default true; needs a configured session). */
+  liveProfile?: boolean;
 }): Promise<void> {
   if (!input.enabled) return;
   const ledger = getLedger();
@@ -761,6 +870,7 @@ export async function researchNewQueueRowPeople(input: {
         playName: row.play_name,
         subject: { queueId: row.id },
         remainingUsd,
+        ...(input.liveProfile !== undefined ? { liveProfile: input.liveProfile } : {}),
       });
       input.result.costUsd += researched.costUsd;
       const applied = await applyPersonResearch(ledger, row, researched.dossier, {

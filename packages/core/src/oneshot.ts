@@ -1611,12 +1611,30 @@ export interface BrowserTaskInput {
   startUrl?: string;
   allowedDomains?: string[];
   outputSchema?: Record<string, unknown>;
+  /** A persistent browser profile (cookies, local storage) to run in. */
   profileId?: string;
+  /** Domain-scoped credentials the remote agent may use, e.g. { "linkedin.com": "li_at:<cookie>" }. Never logged. */
+  secrets?: Record<string, string>;
+  /** Resume a prior live browser session. */
+  sessionId?: string;
   maxSteps?: number;
   maxCost?: number;
+  /** Poll deadline in seconds (SDK default 300). */
+  timeoutSec?: number;
+}
+
+/** A persistent browser profile on the platform (free to create, list, delete). */
+export interface BrowserProfile {
+  id: string;
+  name: string;
 }
 
 export async function browserTask(input: BrowserTaskInput, ctx: CallContext) {
+  // A demo install must never reach the network; the other paid tools already
+  // short-circuit on demoMode(), this one never had a branch.
+  if (demoMode()) {
+    return { result: { output: "", steps: [], cost: 0 } as BrowserResult, receiptId: 0 };
+  }
   const agent = await getAgent();
   const opts: Parameters<OneShot["browser"]>[0] = {
     task: input.task,
@@ -1626,8 +1644,11 @@ export async function browserTask(input: BrowserTaskInput, ctx: CallContext) {
   if (input.allowedDomains) opts.allowed_domains = input.allowedDomains;
   if (input.outputSchema) opts.output_schema = input.outputSchema;
   if (input.profileId) opts.profile_id = input.profileId;
+  if (input.secrets) opts.secrets = input.secrets;
+  if (input.sessionId) opts.session_id = input.sessionId;
   if (input.maxSteps) opts.max_steps = input.maxSteps;
   if (input.maxCost) opts.maxCost = input.maxCost;
+  if (input.timeoutSec) opts.timeout = input.timeoutSec;
   const result: BrowserResult = await agent.browser(opts);
   const receiptId = recordCallReceipt({
     ctx,
@@ -1637,6 +1658,36 @@ export async function browserTask(input: BrowserTaskInput, ctx: CallContext) {
     oneshotRequestId: result.browser_task_id ?? undefined,
   });
   return { result, receiptId };
+}
+
+/**
+ * Browser profiles: create / list / delete. Signed reads on the platform, no
+ * quote and no receipt, so they are logged as events instead.
+ */
+export async function createBrowserProfile(
+  name: string,
+  ctx: CallContext,
+): Promise<BrowserProfile> {
+  if (demoMode()) return { id: "prof_demo", name };
+  const agent = await getAgent();
+  const profile = await agent.createBrowserProfile(name);
+  logEvent("browser.profile.created", { play: ctx.playName, profile_id: profile.id });
+  return profile;
+}
+
+export async function listBrowserProfiles(ctx: CallContext): Promise<BrowserProfile[]> {
+  if (demoMode()) return [];
+  const agent = await getAgent();
+  const profiles = await agent.listBrowserProfiles();
+  logEvent("browser.profile.listed", { play: ctx.playName, count: profiles.length });
+  return profiles;
+}
+
+export async function deleteBrowserProfile(profileId: string, ctx: CallContext): Promise<void> {
+  if (demoMode()) return;
+  const agent = await getAgent();
+  await agent.deleteBrowserProfile(profileId);
+  logEvent("browser.profile.deleted", { play: ctx.playName, profile_id: profileId });
 }
 
 export type {

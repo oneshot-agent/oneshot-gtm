@@ -273,6 +273,11 @@ export const api = {
         timezone?: string | null;
         calendarIdentityId?: string | null;
         calendarId?: string;
+        linkedinBrowserProfileId?: string | null;
+        linkedinSessionCheckedAt?: string | null;
+        linkedinSessionName?: string | null;
+        linkedinSessionInvalidAt?: string | null;
+        linkedinReadsPerDay?: number;
       };
       secretsPath: string;
       sources: Record<string, "env" | "file" | null>;
@@ -291,6 +296,16 @@ export const api = {
     ),
   deriveIcp: (domain: string) => postJson<DeriveIcpResult>("/setup/derive-icp", { domain }),
   deriveBrief: (urls: string[]) => postJson<DeriveBriefResult>("/setup/derive-brief", { urls }),
+  /** Seed the OneShot browser profile with the stored LinkedIn cookie and report the session. */
+  connectLinkedInSession: () =>
+    postJson<{
+      ok: boolean;
+      loggedIn: boolean;
+      name: string | null;
+      profileId: string;
+      costUsd: number;
+      checkedAt: string;
+    }>("/setup/linkedin-session", {}),
   meetings: () => getJson<MeetingsResult>("/meetings"),
   logMeetingOutcome: (req: LogMeetingOutcomeRequest) =>
     postJson<{ ok: boolean }>("/meetings/outcome", req),

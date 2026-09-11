@@ -1,7 +1,10 @@
-import { useMemo } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
 import type { XEngine } from "@oneshot-gtm/shared-types";
 import { api } from "../../api/client.ts";
+import { timeAgo } from "../../lib/cn.ts";
 import { Badge } from "../primitives/Badge.tsx";
+import { Button } from "../primitives/Button.tsx";
 import { Field, Input } from "../primitives/Field.tsx";
 import {
   CDP_KEYS,
@@ -54,6 +57,35 @@ interface Group {
   /** Extra hint for one key (e.g. the legacy-only refresh token). */
   keyHint?: Partial<Record<SecretKey, string>>;
   placeholder?: Partial<Record<SecretKey, string>>;
+  /** One line of runtime state under the caption (a session's health, say). */
+  status?: string;
+  /** A side action for the group (connect a session), rendered under the status line. */
+  action?: {
+    label: string;
+    pendingLabel: string;
+    disabled: boolean;
+    pending: boolean;
+    error: string | null;
+    onClick: () => void;
+  };
+}
+
+/**
+ * What the LinkedIn card says about the session. The cookie itself is never
+ * echoed; the four states come from the setup status the server sends.
+ */
+export function linkedinSessionStatus(
+  cfg: Pick<
+    SectionProps["cfg"],
+    "linkedinSessionCheckedAt" | "linkedinSessionName" | "linkedinSessionInvalidAt"
+  >,
+  cookieSet: boolean,
+): string {
+  if (!cookieSet) return "not connected";
+  if (cfg.linkedinSessionInvalidAt) return "session expired — paste a fresh cookie";
+  if (!cfg.linkedinSessionCheckedAt) return "cookie stored, session not checked yet";
+  const who = cfg.linkedinSessionName ? `logged in as ${cfg.linkedinSessionName}` : "logged in";
+  return `${who} · checked ${timeAgo(cfg.linkedinSessionCheckedAt)}`;
 }
 
 /**
@@ -94,6 +126,27 @@ export function CredentialsSection({
     },
   });
   useReportDirty("credentials", draft.dirty, onDirtyChange);
+
+  // Connect LinkedIn: one browser task that seeds the OneShot profile with
+  // the stored cookie. The status line re-renders from the refetched cfg.
+  const qc = useQueryClient();
+  const [connectError, setConnectError] = useState<string | null>(null);
+  const connectLinkedIn = useMutation({
+    mutationFn: () => api.connectLinkedInSession(),
+    onMutate: () => setConnectError(null),
+    onSuccess: (r) => {
+      if (!r.loggedIn)
+        setConnectError(
+          "LinkedIn did not treat the cookie as a signed-in session — paste a fresh li_at and try again.",
+        );
+      void qc.invalidateQueries({ queryKey: ["setup"] });
+      void qc.invalidateQueries({ queryKey: ["doctor"] });
+    },
+    onError: (err: Error) => setConnectError(err.message),
+  });
+  const cookieSet = Boolean(sources.LINKEDIN_SESSION_COOKIE);
+  const sessionChecked = Boolean(cfg.linkedinSessionCheckedAt);
+  const connectPending = connectLinkedIn.isPending;
 
   const groups = useMemo<Group[]>(
     () => [
@@ -159,8 +212,36 @@ export function CredentialsSection({
         inUse: () => true,
         optional: true,
       },
+      {
+        title: "LinkedIn profile reads",
+        caption:
+          "Your li_at cookie (browser dev tools → Application → Cookies → linkedin.com). Person research then reads prospects' profiles live in a OneShot browser profile logged in as you; those reads show up to them as profile views from your account. Optional: without it, research uses the data provider's history.",
+        keys: ["LINKEDIN_SESSION_COOKIE"],
+        inUse: () => true,
+        optional: true,
+        status: linkedinSessionStatus(cfg, cookieSet),
+        action: {
+          label: sessionChecked ? "Reconnect" : "Connect",
+          pendingLabel: "opening linkedin.com in a OneShot browser profile… ~1 min",
+          disabled: !cookieSet,
+          pending: connectPending,
+          error: connectError,
+          onClick: () => connectLinkedIn.mutate(),
+        },
+      },
     ],
-    [cfg.llmProvider, cfg.emailProvider, sources, homeDir, isLegacyPool, xEngine],
+    [
+      cfg,
+      sources,
+      homeDir,
+      isLegacyPool,
+      xEngine,
+      cookieSet,
+      sessionChecked,
+      connectPending,
+      connectError,
+      connectLinkedIn,
+    ],
   );
 
   return (
@@ -178,6 +259,28 @@ export function CredentialsSection({
           <fieldset key={g.title} className="flex flex-col gap-3 border-t border-ink-rule/60 pt-4">
             <legend className="ln-eyebrow float-left pr-2">{g.title}</legend>
             {g.caption && <p className="clear-both text-[12px] text-ink-faint">{g.caption}</p>}
+            {g.status && (
+              <p className="clear-both font-mono text-[11px] text-ink-muted">{g.status}</p>
+            )}
+            {g.action && (
+              <div className="clear-both flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="receipt"
+                  size="sm"
+                  disabled={g.action.disabled || g.action.pending}
+                  onClick={g.action.onClick}
+                  title={g.action.disabled ? "Save the cookie first, then connect" : undefined}
+                >
+                  {g.action.pending ? g.action.pendingLabel : g.action.label}
+                </Button>
+                {g.action.error && (
+                  <span className="text-[12px] text-[color:var(--ink-blocked-2)]">
+                    {g.action.error}
+                  </span>
+                )}
+              </div>
+            )}
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               {g.keys.map((k) => {
                 const state = keyState(g, k, Boolean(sources[k]));

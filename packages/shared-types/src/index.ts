@@ -427,6 +427,7 @@ export interface SetupRequest {
       | "TWITTERAPI_IO_KEY"
       | "GITHUB_TOKEN"
       | "LUMA_SESSION_COOKIE"
+      | "LINKEDIN_SESSION_COOKIE"
       | "LINKEDIN_REPLY_WEBHOOK_SECRET",
       string
     >

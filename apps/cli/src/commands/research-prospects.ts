@@ -59,6 +59,8 @@ export interface ResearchProspectsOpts {
   noRejudge?: boolean;
   /** Skip the company lookup for the current employer. */
   noCompany?: boolean;
+  /** Skip the live LinkedIn profile read (provider history only). */
+  noLive?: boolean;
 }
 
 /**
@@ -221,6 +223,7 @@ export async function commandResearchProspects(opts: ResearchProspectsOpts): Pro
       subject: { prospectId: row.id },
       remainingUsd,
       enrichCompany: !opts.noCompany,
+      liveProfile: !opts.noLive,
     });
     costUsd += researched.costUsd;
     if (researched.dossier.status === "unavailable") {

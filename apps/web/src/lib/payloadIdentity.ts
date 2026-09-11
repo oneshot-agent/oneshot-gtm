@@ -95,6 +95,7 @@ export function phoneFor(payload: unknown): string | null {
  * is the contract.
  */
 export interface PersonResearchView {
+  liveProfile?: { url?: string; readAt?: string } | null;
   version: 1;
   status: "complete" | "partial" | "unavailable";
   researchedAt: string;
