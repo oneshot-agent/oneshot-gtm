@@ -216,14 +216,45 @@ export function bodyCommitsTerms(body: string): boolean {
   );
 }
 
+const URL_RE = /(?:https?:\/\/|www\.)[^\s<>()"'\]]+/gi;
+
+/** Trailing punctuation and slashes never distinguish two links. */
+function normalizeUrl(url: string): string {
+  return url
+    .replace(/[.,;:!?)]+$/, "")
+    .replace(/\/+$/, "")
+    .toLowerCase();
+}
+
+/** The links a reply may cite: every URL that appears in the product brief. */
+export function briefUrls(brief: string | null | undefined): Set<string> {
+  return new Set((brief?.match(URL_RE) ?? []).map(normalizeUrl));
+}
+
+/**
+ * True when the body cites a URL that is not verbatim in the brief. The
+ * prompt already says "only a URL that appears VERBATIM in PRODUCT BRIEF";
+ * this is the check that holds when the model adapts a docs path anyway.
+ * No brief means no link is allowed.
+ */
+export function citesLinkOutsideBrief(body: string, allowed: ReadonlySet<string>): boolean {
+  return (body.match(URL_RE) ?? []).some((url) => !allowed.has(normalizeUrl(url)));
+}
+
 /**
  * Body-only lint: a reply keeps the inbound "Re: …", so subject flags are not
  * ours to raise — lintEmail gets a dummy subject and they're dropped.
  */
-function lintReply(body: string, maxWords: number, priorTexts: readonly string[]): string[] {
+function lintReply(
+  body: string,
+  maxWords: number,
+  priorTexts: readonly string[],
+  allowedUrls: ReadonlySet<string>,
+): string[] {
   const flags = lintEmail("x", body, maxWords).filter((f) => !f.startsWith("subject-"));
   if (repeatsPriorText(body, priorTexts)) flags.push("repeats-prior-email");
   if (bodyCommitsTerms(body)) flags.push("commits-terms");
+  if (citesLinkOutsideBrief(body, allowedUrls)) flags.push("link-not-in-brief");
   return flags;
 }
 
@@ -237,8 +268,9 @@ function replyPenalty(
   body: string,
   maxWords: number,
   priorTexts: readonly string[],
+  allowedUrls: ReadonlySet<string>,
 ): [number, number] {
-  const flags = lintReply(body, maxWords, priorTexts);
+  const flags = lintReply(body, maxWords, priorTexts, allowedUrls);
   return [flags.length, Math.max(0, bodyWordsForLint(body) - maxWords)];
 }
 
@@ -328,6 +360,14 @@ export interface DraftInboxReplyInput {
   intent?: string | null;
   /** Founder's standing redraft instruction for this thread (issue #480) — binding on this draft. */
   steer?: string | null;
+  /**
+   * The ICP gate's call on this prospect (`prospects.icp_verdict` + reason):
+   * title-based and made before the conversation. Rendered with the caveat
+   * that the thread outranks it — a reject whose reply shows they build
+   * agent systems is a stale verdict, not a reason to disengage. Missing or
+   * null verdict → no line, unchanged output.
+   */
+  icp?: { verdict: string | null; reason: string | null } | null;
 }
 
 export interface DraftInboxReplyResult {
@@ -422,6 +462,11 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<Draf
   // already read in the intro email. Social proof belongs in outbound drafts.
   const firstName = firstNameFrom(input.matched?.name ?? null);
   const angleBlock = angleBlockFromJson(input.angleJson);
+  // ICP GATE — a free ledger fact, rendered with its caveat inline so the
+  // model never reads a title-based reject as an instruction to disengage.
+  const icpGateLine = input.icp?.verdict
+    ? `ICP GATE (title-based, decided before this conversation; the thread outranks it): ${input.icp.verdict}${input.icp.reason ? ` - ${input.icp.reason}` : ""}`
+    : null;
   const user = [
     `FOUNDER: ${cfg.founderName ?? "(unknown)"}`,
     `PRODUCT: ${cfg.productOneLiner ?? "(unknown)"}`,
@@ -430,6 +475,7 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<Draf
     `EMAIL: ${input.fromEmail}`,
     `COMPANY: ${input.matched?.company ?? "(unknown)"}`,
     ...(input.matched?.playName ? [`PLAY: ${input.matched.playName}`] : []),
+    ...(icpGateLine ? [icpGateLine] : []),
     ...(cfg.productBrief?.trim()
       ? ["", `PRODUCT BRIEF (facts and the ONLY links you may cite):\n${cfg.productBrief.trim()}`]
       : []),
@@ -465,7 +511,8 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<Draf
   // (issue #480), which DOES get a send gate: see the route's needsDecision.
   const priorTexts = [...prior.map((r) => r.body!), ...(input.threadSent ?? []).map((t) => t.body)];
   const budget = replyWordBudget(input.body);
-  let flags = lintReply(body, budget, priorTexts);
+  const allowedUrls = briefUrls(cfg.productBrief);
+  let flags = lintReply(body, budget, priorTexts, allowedUrls);
   if (flags.length > 0) {
     const repaired = await repairReply({ messages, first: res.content, flags, budget, input });
     // Keep the rewrite only when it is strictly better — fewer flags, or the
@@ -473,10 +520,13 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<Draf
     // for another is not an improvement worth the swap.
     if (
       repaired &&
-      better(replyPenalty(repaired, budget, priorTexts), replyPenalty(body, budget, priorTexts))
+      better(
+        replyPenalty(repaired, budget, priorTexts, allowedUrls),
+        replyPenalty(body, budget, priorTexts, allowedUrls),
+      )
     ) {
       body = repaired;
-      flags = lintReply(body, budget, priorTexts);
+      flags = lintReply(body, budget, priorTexts, allowedUrls);
     }
   }
   return { body, flags };
@@ -504,6 +554,8 @@ async function repairReply(opts: {
             `They wrote ${inboundWords} words; yours must come in under ${opts.budget}, signature excluded.`,
             "Rewrite it. Answer only what they actually said, and cut every sentence that pitches,",
             "re-introduces you or the product, repeats wording from an email already in this thread,",
+            "cites a link that is not verbatim in PRODUCT BRIEF, describes the product in their words",
+            "rather than the brief's, or affirms something the brief does not establish,",
             "or commits the founder to pricing, discounts, partnership terms, distribution, documentation",
             "placement, exclusivity, roadmap dates, or headcount that were never authorised.",
             "Same JSON shape.",

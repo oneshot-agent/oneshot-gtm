@@ -232,3 +232,55 @@ describe("draftInboxReply context assembly", () => {
     expect(lastUserBlock()).not.toContain("MEETING");
   });
 });
+
+describe("draftInboxReply ledger grounding", () => {
+  it("renders the ICP gate with its caveat when the ledger has a verdict", async () => {
+    await draftInboxReply({
+      ...BASE,
+      icp: {
+        verdict: "reject",
+        reason: "VMware Administrator roles focus on infrastructure maintenance.",
+      },
+    });
+    expect(lastUserBlock()).toContain(
+      "ICP GATE (title-based, decided before this conversation; the thread outranks it): reject - VMware Administrator roles focus on infrastructure maintenance.",
+    );
+  });
+
+  it("renders a verdict without a reason, and nothing when the verdict is missing", async () => {
+    await draftInboxReply({ ...BASE, icp: { verdict: "pass", reason: null } });
+    expect(lastUserBlock()).toContain("the thread outranks it): pass\n");
+    await draftInboxReply({ ...BASE, icp: { verdict: null, reason: "stale" } });
+    expect(lastUserBlock()).not.toContain("ICP GATE");
+    await draftInboxReply({ ...BASE, icp: null });
+    expect(lastUserBlock()).not.toContain("ICP GATE");
+  });
+});
+
+describe("draftInboxReply link gate", () => {
+  it("flags a URL that is not verbatim in the product brief", async () => {
+    cfgOverride = { productBrief: "Docs: https://docs.example.com/", icpOneLiner: null };
+    completeMock.mockResolvedValue({
+      content: JSON.stringify({ body: "see https://docs.example.com/receipts for the shape." }),
+    });
+    const draft = await draftInboxReply(BASE);
+    expect(draft.flags).toContain("link-not-in-brief");
+  });
+
+  it("accepts a brief URL, ignoring a trailing slash or punctuation", async () => {
+    cfgOverride = { productBrief: "Docs: https://docs.example.com/", icpOneLiner: null };
+    completeMock.mockResolvedValue({
+      content: JSON.stringify({ body: "the spec is at https://docs.example.com, have a look." }),
+    });
+    const draft = await draftInboxReply(BASE);
+    expect(draft.flags).not.toContain("link-not-in-brief");
+  });
+
+  it("allows no link at all when there is no brief", async () => {
+    completeMock.mockResolvedValue({
+      content: JSON.stringify({ body: "docs are at https://docs.example.com/" }),
+    });
+    const draft = await draftInboxReply(BASE);
+    expect(draft.flags).toContain("link-not-in-brief");
+  });
+});
