@@ -770,12 +770,21 @@ export type FitReasonSource = "company-gate" | "person-gate" | "generated" | "no
  * the founder either sends as-is or rejects.
  *
  * Currently: `stale-event` — a luma-events event >14 days past, where the
- * guest-list signal is old enough to want confirmation before sending; and
+ * guest-list signal is old enough to want confirmation before sending;
  * `contacted-elsewhere` — another WORKSPACE (another product of yours) emailed
  * this person inside the 7-day hold window, so two motions don't stack in one
- * inbox. Sending as-is is the founder saying "I know, do it anyway."
+ * inbox; and `ungrounded` — enrichment failed and the row carries no title or
+ * bio, so the draft could only lean on the company name (`lintGrounding`).
+ * Regenerating cannot clear that one either: the research is what is missing,
+ * and a founder who has read the draft is the only judge of whether it still
+ * says something true. Sending as-is is the founder saying "I know, do it
+ * anyway."
  */
-export const SOFT_REVIEW_FLAGS: readonly string[] = ["stale-event", "contacted-elsewhere"];
+export const SOFT_REVIEW_FLAGS: readonly string[] = [
+  "stale-event",
+  "contacted-elsewhere",
+  "ungrounded",
+];
 
 /**
  * The subset of a draft's flags that genuinely block sending (everything except
