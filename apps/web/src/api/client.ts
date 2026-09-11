@@ -331,12 +331,19 @@ export const api = {
       : getJson<ProspectSearchResponse>(`/queue/search?${toApiQuery(search)}`),
   queueRowDetail: (id: number) => getJson<QueueRowDetail>(`/queue/${id}`),
   approveQueue: (id: number) => postJson<{ ok: boolean }>(`/queue/${id}/approve`, {}),
+  // `reason` undefined → the row's note is left alone; a string — including
+  // "" — is written, so a founder can clear a prefilled reason.
   rejectQueue: (id: number, reason?: string) =>
-    postJson<{ ok: boolean }>(`/queue/${id}/reject`, reason ? { reason } : {}),
+    postJson<{ ok: boolean }>(`/queue/${id}/reject`, reason === undefined ? {} : { reason }),
+  // The reject box's LLM fallback: one sentence on why this row might not
+  // fit, or null when the model sees no mismatch. Never sends, never decides.
+  suggestRejectReason: (id: number) =>
+    postJson<{ reason: string | null; source: "llm" | null }>(`/queue/${id}/reject-reason`, {}),
   approveAllQueue: (play?: string) =>
     postJson<{ approved: number }>("/queue/approve-all", play ? { play } : {}),
   // Re-draft a row in preview (dry-run, never sends); overwrites the persisted last_draft_json.
-  regenerateDraft: (id: number) => postJson<LastDraft>(`/queue/${id}/regenerate`, {}),
+  regenerateDraft: (id: number, rotateAngle = false) =>
+    postJson<LastDraft>(`/queue/${id}/regenerate`, { rotateAngle }),
   // Send the row's already-reviewed draft verbatim (no LLM re-roll). Requires
   // a clean, not-yet-sent persisted draft; marks the row sent on success.
   sendDraft: (id: number) =>

@@ -173,6 +173,8 @@ export async function runEmailPlay<T, X = Record<string, never>>(
      * batch. Absent (CLI, drain) → the run is uncancellable, as before.
      */
     signal?: AbortSignal;
+    /** Explicit draft argument chosen by the user; bypasses automatic angle selection. */
+    draftAngle?: string;
   },
 ): Promise<{ drafted: Array<PlayDraft<T, X>> }> {
   const cfg = loadConfig();
@@ -251,7 +253,9 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         const edgeField = edgeFieldOf(rawTarget);
         let draftTarget: T = target;
         let angleSelection: AngleSelection | null = null;
-        if (edgeField) {
+        if (opts.draftAngle) {
+          if (edgeField) draftTarget = withSelectedAngle(target, edgeField, opts.draftAngle);
+        } else if (edgeField) {
           const edge = rawTarget[edgeField] as string;
           if (splitEdgeAngles(edge).length > 1) {
             angleSelection = await selectAngle({
@@ -292,7 +296,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
             ? getLedger().getProspectById(existingProspectId)?.angle_json
             : null;
         const angleBlock = angleBlockFromJson(existingAngle ?? null);
-        if (angleBlock) inputBlock = `${inputBlock}\n\n${angleBlock}`;
+        if (angleBlock && !opts.draftAngle) inputBlock = `${inputBlock}\n\n${angleBlock}`;
         // Surface a real first name when extractable so the prompt can
         // occasionally open with "Hey {firstName},". Absent → prompt rule
         // says never invent a greeting; LLM dives into the Hook.
@@ -300,6 +304,8 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         if (firstName) {
           inputBlock = `${inputBlock}\n\nPROSPECT_FIRST_NAME: ${firstName}`;
         }
+        if (opts.draftAngle)
+          inputBlock += `\n\nSELECTED ANGLE: ${opts.draftAngle}\nBuild this draft around this argument. Preserve the play’s channel, tone, and factual constraints. Do not blend in other arguments.`;
         // Guard #2 — the LLM draft, the paid call `prepare` was feeding.
         throwIfCancelled(opts.signal, `${def.playName} draft`);
         const draft = await draftEmailFromPrompt({

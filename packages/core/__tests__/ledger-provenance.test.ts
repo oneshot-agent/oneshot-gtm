@@ -90,6 +90,21 @@ describe("decision provenance writes (v26)", () => {
     expect(isHumanDecision(row)).toBe(false);
   });
 
+  it("a human re-reject with an empty reason clears the note; omitting it leaves the note", () => {
+    const id = enqueue();
+    ledger.setQueueStatus({ id, status: "rejected", notes: "auto: role — recruiter" });
+    expect(ledger.getQueueRow(id)!.notes).toBe("auto: role — recruiter");
+    // Absent → untouched (the bulk path and the no-body reject).
+    ledger.setQueueStatus({ id, status: "rejected", decidedBy: "human" });
+    expect(ledger.getQueueRow(id)!.notes).toBe("auto: role — recruiter");
+    // Present but empty → cleared (the founder emptied the prefilled box).
+    ledger.setQueueStatus({ id, status: "rejected", notes: "", decidedBy: "human" });
+    const row = ledger.getQueueRow(id)!;
+    expect(row.notes).toBe("");
+    expect(row.decision).toBe("reject");
+    expect(row.decided_by).toBe("human");
+  });
+
   it("re-open to pending keeps the decision; a re-decide overwrites (latest wins)", () => {
     const id = enqueue();
     ledger.setQueueStatus({ id, status: "approved", decidedBy: "human" });

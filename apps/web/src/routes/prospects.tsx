@@ -36,6 +36,7 @@ import {
   type ProspectsSearch,
 } from "../lib/prospects-helpers.ts";
 import { fitReasonFor } from "../lib/queueRationale.ts";
+import { appendReason, REJECT_REASON_CHIPS, suggestRejectReason } from "../lib/rejectReason.ts";
 import { queueEvidence } from "../lib/queueEvidence.ts";
 import { IdentityCell, SignalLabel } from "../components/ledger/IdentityCell.tsx";
 import { SheetHeading } from "../components/ledger/SheetHeading.tsx";
@@ -562,7 +563,19 @@ function DetailPanel({ id }: { id: number }) {
             variant="ghost"
             size="sm"
             onClick={() => {
-              setReason(row.notes ?? "");
+              // The gate's "why they don't fit" or the finder's note, never
+              // the raw `auto:` string — a human re-saving that would label
+              // their own decision as the machine's. Nothing under privacy
+              // mode: the same text the sheet withholds there.
+              setReason(
+                masked
+                  ? ""
+                  : suggestRejectReason({
+                      payload: row.payload,
+                      notes: row.notes,
+                      icpVerdictReason: row.prospect?.icpVerdictReason ?? null,
+                    }).text,
+              );
               setRejecting(true);
             }}
             {...readOnly}
@@ -601,14 +614,27 @@ function DetailPanel({ id }: { id: number }) {
     ) : null;
   const rejectEditor = rejecting ? (
     <div className="mt-3 border-t border-ink-rule pt-3">
-      <Field label="Reason (optional, logged for ICP-filter learning)">
+      <Field label="Reason (optional — kept on the prospect's timeline)">
         <Textarea
           rows={3}
+          autoFocus
           value={reason}
           onChange={(e) => setReason(e.target.value)}
           placeholder="e.g. wrong stage, wrong industry, already a customer"
         />
       </Field>
+      <div className="mt-2 flex flex-wrap gap-1">
+        {REJECT_REASON_CHIPS.map((chip) => (
+          <Button
+            key={chip}
+            variant="ghost"
+            size="sm"
+            onClick={() => setReason((cur) => appendReason(cur, chip))}
+          >
+            {chip}
+          </Button>
+        ))}
+      </div>
     </div>
   ) : null;
 

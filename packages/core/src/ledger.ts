@@ -3451,14 +3451,16 @@ export class Ledger {
     } else if (input.status === "rejected") {
       // Always overwrites: the latest decision wins on a re-decide. Rejecting
       // a sent row is allowed — it's a label, not a send, so no sent-row
-      // guard here.
+      // guard here. `notes` follows the pending branch: present (even "")
+      // means write it, so a founder can clear a stale reason; absent means
+      // leave whatever is there.
       const decision = decidedBy === "human" ? "reject" : "auto_reject";
       this.db
         .prepare(
-          `UPDATE target_queue SET status = ?, reviewed_at = ?, decision = ?, decided_at = ?, decided_by = ?, send_started_at = NULL ${input.notes ? ", notes = ?" : ""} WHERE id = ?`,
+          `UPDATE target_queue SET status = ?, reviewed_at = ?, decision = ?, decided_at = ?, decided_by = ?, send_started_at = NULL ${input.notes !== undefined ? ", notes = ?" : ""} WHERE id = ?`,
         )
         .run(
-          ...(input.notes
+          ...(input.notes !== undefined
             ? [input.status, now, decision, now, decidedBy, input.notes, input.id]
             : [input.status, now, decision, now, decidedBy, input.id]),
         );
@@ -4177,6 +4179,29 @@ export class Ledger {
     }
   }
 
+  /** Save a generated draft only if no concurrent edit/send changed its inputs. */
+  setQueueDraftIfCurrent(input: {
+    id: number;
+    previousDraft: string | null;
+    previousPayload: string;
+    draft: Parameters<Ledger["setQueueDraft"]>[0]["draft"];
+  }): boolean {
+    const at = new Date().toISOString();
+    return (
+      this.db
+        .prepare(`UPDATE target_queue SET last_draft_json = ?, last_drafted_at = ?
+      WHERE id = ? AND last_draft_json IS ? AND payload_json = ?
+      AND status != 'sent' AND sent_at IS NULL AND send_started_at IS NULL`)
+        .run(
+          JSON.stringify({ ...input.draft, draftedAt: at }),
+          at,
+          input.id,
+          input.previousDraft,
+          input.previousPayload,
+        ).changes === 1
+    );
+  }
+
   /**
    * Persist the most-recent draft for this queue row (the /run page is
    * ephemeral; /queue reviews from here). Most-recent-wins — re-runs
@@ -4192,6 +4217,7 @@ export class Ledger {
       receiptIds: number[];
       dryRun: boolean;
       enrichmentFailed?: boolean;
+      angle?: unknown;
     };
   }): void {
     const draftedAtIso = new Date().toISOString();

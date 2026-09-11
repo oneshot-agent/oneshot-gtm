@@ -52,6 +52,7 @@ export async function dispatchPlay(
   body: RunPlayRequest,
   onProgress?: (index: number, view: DraftedView) => void,
   signal?: AbortSignal,
+  draftAngle?: string,
 ): Promise<DraftedView[]> {
   const play = PLAYS[playName];
   if (!play) {
@@ -59,6 +60,7 @@ export async function dispatchPlay(
   }
 
   const result = await play.run({
+    ...(draftAngle ? { draftAngle } : {}),
     dryRun: body.dryRun,
     targets: body.targets,
     ...(signal ? { signal } : {}),
