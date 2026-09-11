@@ -116,6 +116,33 @@ beforeEach(() => {
 afterEach(() => ledger.close());
 
 describe("durable mailbox threads", () => {
+  it.each(["delivered", "replied"] as const)(
+    "retains %s outreach in the backfill watermark",
+    (status) => {
+      const id = ledger.upsertProspect({ email: "person@example.com", source: "test" });
+      ledger.recordSequenceEvent({
+        prospectId: id,
+        playName: "test",
+        stepIndex: 0,
+        channel: "email",
+        status,
+      });
+      expect(ledger.mailboxes.oldestOutreach()).not.toBeNull();
+    },
+  );
+
+  it("allows retry after SMTP explicitly accepts no recipients", async () => {
+    const inbound = await put();
+    mocks.smtp.sendMail.mockResolvedValueOnce({ accepted: [] });
+    await expect(sendMailboxReply(inbound.id, "answer", "rejected-all")).rejects.toThrow(
+      /not sent/,
+    );
+    expect(ledger.mailboxes.attempt("rejected-all")?.status).toBe("failed");
+    await sendMailboxReply(inbound.id, "answer", "retry-rejected-all");
+    expect(mocks.smtp.sendMail).toHaveBeenCalledTimes(2);
+    expect(ledger.mailboxes.attempt("retry-rejected-all")?.status).toBe("sent");
+  });
+
   it("keeps identical messages and organization isolated across workspaces", async () => {
     const other = new Ledger(":memory:");
     try {

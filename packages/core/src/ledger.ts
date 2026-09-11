@@ -1,3 +1,4 @@
+import { contactAllowedClause } from "./contact-optout.ts";
 import { extractBusinessAddress } from "./mail-address.ts";
 import type { DirectMailDraft, PostalAddress } from "./direct-mail.ts";
 import { Database } from "bun:sqlite";
@@ -2292,7 +2293,7 @@ export class Ledger {
       FROM prospects p
       LEFT JOIN sequence_events s ON s.prospect_id = p.id
       LEFT JOIN cadence_state c ON c.prospect_id = p.id
-      WHERE NOT EXISTS (
+      WHERE ${contactAllowedClause(this.db)} AND NOT EXISTS (
         SELECT 1 FROM cadence_state blocked
         WHERE blocked.prospect_id = p.id AND blocked.status = 'stopped'
           AND blocked.stop_reason IN ('not_a_fit', 'do_not_contact')

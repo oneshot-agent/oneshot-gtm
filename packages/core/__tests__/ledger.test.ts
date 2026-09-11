@@ -1190,6 +1190,44 @@ describe("Ledger outcomes + cold prospects", () => {
     expect(show?.lost).toBe(0);
   });
 
+  it("never selects an unsubscribed prospect for revival", () => {
+    const pid = ledger.upsertProspect({
+      name: "Opt Out",
+      email: "optout@example.com",
+      source: "test",
+    });
+    ledger.recordSequenceEvent({
+      prospectId: pid,
+      playName: "test",
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+    });
+    const window = { minDaysSinceLastEvent: 0, maxDaysSinceLastEvent: 90 };
+    expect(ledger.listColdProspects(window).map((p) => p.id)).toContain(pid);
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "test",
+      nextDueAt: new Date().toISOString(),
+    });
+    ledger.setCadenceStatus({ prospectId: pid, playName: "test", status: "unsubscribed" });
+    expect(ledger.listColdProspects(window).map((p) => p.id)).not.toContain(pid);
+    ledger.setCadenceStatus({ prospectId: pid, playName: "test", status: "active" });
+
+    ledger.recordInboxReply({
+      id: "optout-revival",
+      threadKey: "optout-revival",
+      prospectId: pid,
+      playName: "test",
+      fromEmail: "alternate@example.com",
+      subject: "stop",
+      body: "Don't email me again",
+      receivedAt: new Date().toISOString(),
+      kind: "unsubscribe",
+    });
+    expect(ledger.listColdProspects(window).map((p) => p.id)).not.toContain(pid);
+  });
+
   it("listColdProspects respects the day window", () => {
     const pid = ledger.upsertProspect({ name: "D", email: "d@x.com", source: "t" });
     // Manually backdate a sequence event to 75 days ago by inserting one then UPDATE.

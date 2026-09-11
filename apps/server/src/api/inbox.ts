@@ -519,6 +519,20 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
   } catch {
     return jsonResponse({ error: "invalid JSON body" }, 400, req);
   }
+  const ledger = getLedger();
+  const mailboxRequest = body.id?.startsWith("mailbox:") || body.threadId?.startsWith("mailbox:");
+  const mailboxMessage = mailboxRequest && body.id ? ledger.mailboxes.get(body.id) : null;
+  if (mailboxRequest) {
+    if (!mailboxMessage || mailboxMessage.direction !== "inbound")
+      return jsonResponse({ error: "Stored inbound mailbox message is required" }, 400, req);
+    body = {
+      ...body,
+      fromEmail: mailboxMessage.from,
+      subject: mailboxMessage.subject,
+      body: mailboxMessage.body,
+      threadId: mailboxMessage.threadKey,
+    };
+  }
   const fromEmail = (body.fromEmail ?? "").trim().toLowerCase();
   const subject = (body.subject ?? "").trim();
   const inboundBody = (body.body ?? "").trim();
@@ -530,8 +544,6 @@ export async function draftReplyRoute(req: Request): Promise<Response> {
     return jsonResponse({ error: "this email has no body to draft a reply from" }, 400, req);
   }
 
-  const ledger = getLedger();
-  const mailboxMessage = body.id?.startsWith("mailbox:") ? ledger.mailboxes.get(body.id) : null;
   const prospect =
     mailboxMessage?.prospectId != null
       ? ledger.getProspectById(mailboxMessage.prospectId)
@@ -650,6 +662,19 @@ export async function saveDraftRoute(req: Request): Promise<Response> {
   } catch {
     return jsonResponse({ error: "invalid JSON body" }, 400, req);
   }
+  const ledger = getLedger();
+  if (body.inboundEmailId?.startsWith("mailbox:") || body.threadKey?.startsWith("mailbox:")) {
+    const message = body.inboundEmailId ? ledger.mailboxes.get(body.inboundEmailId) : null;
+    if (!message || message.direction !== "inbound")
+      return jsonResponse({ error: "Stored inbound mailbox message is required" }, 400, req);
+    body = {
+      ...body,
+      threadKey: message.threadKey,
+      toEmail: message.replyTo ?? message.from,
+      subject: message.subject,
+      identityId: message.identityId,
+    };
+  }
   const threadKey = (body.threadKey ?? "").trim();
   const inboundEmailId = (body.inboundEmailId ?? "").trim();
   const toEmail = (body.toEmail ?? "").trim();
@@ -657,7 +682,6 @@ export async function saveDraftRoute(req: Request): Promise<Response> {
     return jsonResponse({ error: "threadKey, inboundEmailId and toEmail are required" }, 400, req);
   }
 
-  const ledger = getLedger();
   const draftBody = body.body ?? "";
   let status: "needs_decision" | null = null;
   // An emptied composer clears the draft so a refresh can't resurrect it.
@@ -693,6 +717,20 @@ export async function steerRoute(req: Request): Promise<Response> {
   } catch {
     return jsonResponse({ error: "invalid JSON body" }, 400, req);
   }
+  const ledger = getLedger();
+  const mailboxRequest = body.id?.startsWith("mailbox:") || body.threadKey?.startsWith("mailbox:");
+  const mailboxMessage = mailboxRequest && body.id ? ledger.mailboxes.get(body.id) : null;
+  if (mailboxRequest) {
+    if (!mailboxMessage || mailboxMessage.direction !== "inbound")
+      return jsonResponse({ error: "Stored inbound mailbox message is required" }, 400, req);
+    body = {
+      ...body,
+      fromEmail: mailboxMessage.from,
+      subject: mailboxMessage.subject,
+      body: mailboxMessage.body,
+      threadKey: mailboxMessage.threadKey,
+    };
+  }
   const fromEmail = (body.fromEmail ?? "").trim().toLowerCase();
   const subject = (body.subject ?? "").trim();
   const inboundBody = (body.body ?? "").trim();
@@ -705,8 +743,6 @@ export async function steerRoute(req: Request): Promise<Response> {
     return jsonResponse({ error: "this email has no body to draft a reply from" }, 400, req);
   }
 
-  const ledger = getLedger();
-  const mailboxMessage = body.id?.startsWith("mailbox:") ? ledger.mailboxes.get(body.id) : null;
   const prospect =
     mailboxMessage?.prospectId != null
       ? ledger.getProspectById(mailboxMessage.prospectId)

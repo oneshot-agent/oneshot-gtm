@@ -192,6 +192,17 @@ export class MailboxStore {
   }
 
   /** Includes unprocessed old matches even after a newer global poll watermark. */
+  /** Read only potential delivery notices, including legacy rows awaiting classification. */
+  bounceCandidates(since?: string): MailboxMessage[] {
+    return (
+      this.db
+        .query(`SELECT data FROM mailbox_messages WHERE direction='inbound'
+      AND (? IS NULL OR at >= ?) AND (json_extract(data, '$.bounces') IS NULL
+      OR json_array_length(data, '$.bounces') > 0)`)
+        .all(since ?? null, since ?? null) as { data: string }[]
+    ).map((row) => JSON.parse(row.data));
+  }
+
   inbound(identityId: string, since?: string, until?: string): MailboxMessage[] {
     return (
       this.db
@@ -324,7 +335,7 @@ export class MailboxStore {
   oldestOutreach(): string | null {
     const row = this.db
       .query(
-        "SELECT min(created_at) AS at FROM sequence_events WHERE channel='email' AND status='sent'",
+        "SELECT min(created_at) AS at FROM sequence_events WHERE channel='email' AND status IN ('sent','delivered','replied')",
       )
       .get() as { at: string | null };
     return row.at

@@ -57,28 +57,26 @@ export function listMailboxBounces(opts?: { since?: string }): BounceListResult 
   if (!identities.size) return { bounces: [], failedSources: [] };
   const ledger = getLedger();
   const bounces = ledger.mailboxes
-    .all()
-    .filter(
-      (m) =>
-        identities.has(m.identityId) &&
-        m.direction === "inbound" &&
-        (!opts?.since || m.at >= opts.since),
-    )
-    .flatMap((m) =>
-      (m.bounces ?? parseMailboxBounces(m.from, m.subject, m.body))
-        // Smartlead warmup uses the same mailbox. Those delivery reports must
-        // not inflate this workspace's outreach bounce rate or notifications.
-        .filter((b) => ledger.hasPriorEmailSend(b.recipient))
-        .map((b) => ({
-          recipient: b.recipient,
-          kind: b.kind,
-          statusCode: b.statusCode,
-          diagnostic: b.diagnostic,
-          messageId: m.id,
-          identityId: m.identityId,
-          bouncedAt: m.at,
-        })),
-    );
+    .bounceCandidates(opts?.since)
+    .filter((m) => identities.has(m.identityId))
+    .flatMap((m) => {
+      const parsed = m.bounces ?? parseMailboxBounces(m.from, m.subject, m.body);
+      if (m.bounces == null) ledger.mailboxes.reclassify(m, m.kind, parsed);
+      return (
+        parsed
+          // Smartlead warmup shares the mailbox but is not workspace outreach.
+          .filter((b) => ledger.hasPriorEmailSend(b.recipient))
+          .map((b) => ({
+            recipient: b.recipient,
+            kind: b.kind,
+            statusCode: b.statusCode,
+            diagnostic: b.diagnostic,
+            messageId: m.id,
+            identityId: m.identityId,
+            bouncedAt: m.at,
+          }))
+      );
+    });
   return {
     bounces,
     failedSources: mailboxHealth()
@@ -559,7 +557,10 @@ export async function sendMailboxReply(
       envelope: { from: connection.address, to: message.to },
       raw: mime.message,
     });
-    if (!accepted.accepted?.length) throw new Error("SMTP did not accept the reply.");
+    if (!accepted.accepted?.length) {
+      submitted = false; // SMTP explicitly accepted no recipients; retry is safe.
+      throw new Error("SMTP did not accept the reply.");
+    }
     store.put(message);
     store.saveAttempt({ ...fresh, status: "sent" });
     ledger.clearInboxDraft(message.threadKey);

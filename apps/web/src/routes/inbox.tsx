@@ -88,7 +88,7 @@ function InboxPage() {
       ? conversations.length + mailboxThreads.filter((t) => t.prospectId != null).length
       : key === "no-match"
         ? noMatchCount
-        : replies.length + mailboxThreads.length;
+        : replies.length + (inbox.data?.mailboxThreads?.length ?? 0);
   const suffixFor = (key: ReplyMatchFilter): string => (key === "matched" ? "" : windowSuffix);
   const visible = replies.filter((r) => matchesReplyFilter(r, matchFilter));
   const showConversations = matchFilter === "matched";
@@ -134,8 +134,8 @@ function InboxPage() {
               : showConversations
                 ? `${displayedConversations.length + mailboxVisible.length} conversations`
                 : matchFilter === "all"
-                  ? `${replies.length}${windowSuffix} repl${replies.length === 1 && !windowSuffix ? "y" : "ies"}`
-                  : `${visible.length} of ${replies.length}${windowSuffix}`}
+                  ? `${replies.length + mailboxVisible.length}${windowSuffix} repl${replies.length + mailboxVisible.length === 1 && !windowSuffix ? "y" : "ies"}`
+                  : `${visible.length + mailboxVisible.length} of ${replies.length + (inbox.data?.mailboxThreads?.length ?? 0)}${windowSuffix}`}
           </span>
           <Button
             variant="ghost"
