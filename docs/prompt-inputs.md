@@ -40,6 +40,17 @@ Beyond that spine every play's own `buildInputBlock` adds its trigger-specific
 fields — the repo they starred, the event they signed up for, the cohort they
 launched out of.
 
+The reply also receives what the ledger knows about the sender: the stored
+dossier, the synthesized angle (`prospects.angle_json`), any recorded meeting
+outcome, and the ICP gate's verdict with its reason (`prospects.icp_verdict`).
+The gate line carries its own caveat — title-based, decided before the
+conversation, outranked by the thread — so a stale reject never reads as an
+instruction to disengage. The prompt's claim-grounding rules keep product
+statements inside `productBrief` and forbid describing the product in the
+sender's vocabulary; the link rule is enforced in code as well
+(`link-not-in-brief` in `packages/plays/src/reply.ts`), since a prose rule
+alone gets walked past.
+
 ## The shape worth remembering
 
 **The first touch knows your argument but not your product. The reply knows
