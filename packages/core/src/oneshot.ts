@@ -886,6 +886,8 @@ export interface EnrichCompanyInput {
   name?: string;
   linkedinUrl?: string;
   ticker?: string;
+  /** End-to-end deadline for the SDK call (its `totalTimeoutMs`), for callers answering an interactive click. */
+  timeoutMs?: number;
 }
 
 /**
@@ -921,6 +923,7 @@ export async function enrichCompany(input: EnrichCompanyInput, ctx: CallContext)
   if (input.name) opts.name = input.name;
   if (input.linkedinUrl) opts.linkedin_url = input.linkedinUrl;
   if (input.ticker) opts.ticker = input.ticker;
+  if (input.timeoutMs) opts.totalTimeoutMs = input.timeoutMs;
 
   const result: EnrichCompanyResult = await agent.enrichCompany(opts);
   const receiptId = recordCallReceipt({

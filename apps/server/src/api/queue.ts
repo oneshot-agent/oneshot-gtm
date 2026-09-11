@@ -470,12 +470,16 @@ export function rejectLookupDomain(payload: unknown): string | null {
       : typeof p.domain === "string"
         ? p.domain
         : "";
+  // Normalize first, then peel: scheme, www., and anything from the first
+  // path, query or fragment separator on. " HTTPS://WWW.Acme.dev?ref=x " is
+  // acme.dev, not "https:".
   const domain = (fromEmail || own)
+    .trim()
+    .toLowerCase()
     .replace(/^https?:\/\//, "")
     .replace(/^www\./, "")
-    .split("/")[0]!
-    .trim()
-    .toLowerCase();
+    .split(/[/?#]/)[0]!
+    .trim();
   return domain || null;
 }
 
@@ -517,17 +521,22 @@ export async function suggestRejectReasonRoute(
   let company: Record<string, unknown> | null = null;
   const domain = dossier?.trim() ? null : rejectLookupDomain(payload);
   if (domain && !isDudDomain(domain)) {
+    // The SDK gets the deadline too (totalTimeoutMs), so a slow lookup is
+    // cancelled end to end rather than merely released here.
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const enriched = await Promise.race([
       safeEnrichCompany(
-        { domain },
+        { domain, timeoutMs: REJECT_ENRICH_DEADLINE_MS },
         {
           playName: row.play_name,
           memo: "company facts before prefilling a reject reason",
           decisionContext: { reason: "queue row has no dossier; reject box prefill", queueId: id },
         },
       ),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), REJECT_ENRICH_DEADLINE_MS)),
-    ]);
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), REJECT_ENRICH_DEADLINE_MS + 500);
+      }),
+    ]).finally(() => clearTimeout(timer));
     const record = enriched && enriched.result.status !== "error" ? enriched.result.company : null;
     if (record && Object.keys(record).length > 0) company = record as Record<string, unknown>;
   }

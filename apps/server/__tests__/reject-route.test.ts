@@ -193,7 +193,7 @@ describe("suggestRejectReasonRoute", () => {
       researched: true,
     });
     expect(enrichMock).toHaveBeenCalledWith(
-      { domain: "magna.so" },
+      { domain: "magna.so", timeoutMs: expect.any(Number) },
       expect.objectContaining({ playName: "luma-events" }),
     );
     expect(generateMock).toHaveBeenCalledWith(
@@ -244,6 +244,8 @@ describe("suggestRejectReasonRoute", () => {
   it("rejectLookupDomain prefers the address domain and falls back to the payload's own", () => {
     expect(rejectLookupDomain({ email: "A@Magna.so" })).toBe("magna.so");
     expect(rejectLookupDomain({ companyDomain: "https://www.acme.dev/about" })).toBe("acme.dev");
+    expect(rejectLookupDomain({ companyDomain: " HTTPS://WWW.Acme.dev?ref=x " })).toBe("acme.dev");
+    expect(rejectLookupDomain({ domain: "acme.dev#team" })).toBe("acme.dev");
     expect(rejectLookupDomain({ name: "nobody" })).toBeNull();
   });
 

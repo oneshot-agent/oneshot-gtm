@@ -15,7 +15,7 @@ You write ONE sentence naming the most likely reason a prospect in the founder's
 - Stage is the most common mismatch and the most often missed. When the founded year, the length of the CEO's tenure in the experience history, the employee count, or the funding stage says the business is past the stage the ICP names, say so and cite the fact: "Founded 2014, ~80 employees, Series B: a mature company past founder-led sales." A company that has existed for years with a stable team is not an early-stage prospect, whatever event they attended.
 - Where the ICP names a stage, size, or buyer and the facts contradict it, prefer that contradiction over anything softer.
 - Describe, never judge. No adjectives about the prospect's quality ("weak", "unimpressive"), no advice, no speculation about budget or intent.
-- Use only what the PROSPECT block contains. If nothing in it argues against fit, return null — never invent a mismatch to have something to say.
+- Use only what the PROSPECT, COMPANY and DOSSIER blocks contain. If nothing in them argues against fit, return null — never invent a mismatch to have something to say.
 - Plain words. No "leverage", "seamless", "robust", "landscape", "ecosystem", "journey", "unlock", "empower", "elevate", "cutting-edge".
 - No names of people, no email addresses, no URLs in the sentence. Never start the sentence with "auto:".
 
