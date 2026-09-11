@@ -7,7 +7,11 @@
  *  - the person gate's verdict reason, when the verdict was `reject` or
  *    `unclear` — that sentence is literally "why they don't fit", which is
  *    exactly why `stampFitReason` refuses to promote it to the fit line;
- *  - the finder's own note, once the machine prefix is gone.
+ *  - the finder's own note, once the machine prefix is gone — but only a
+ *    machine negative (`auto: …`). A finder note without the prefix is
+ *    provenance ("Bruno going to Corgi Founders Breakfast Club"), not a
+ *    reason, and prefilling it hid the one tier that reads the dossier:
+ *    the box opened with the event name and the LLM fallback never ran.
  *
  * The prefix matters: `auto:` is how `isAutoRejected` in score-prospects and
  * the pre-v26 `isHumanDecision` arm tell a machine negative from a human one,
@@ -59,13 +63,16 @@ function str(v: unknown): string {
   return typeof v === "string" ? v.replace(/\s+/g, " ").trim() : "";
 }
 
-/** A note with the machine prefix removed, or "" when nothing usable is left. */
+/**
+ * A machine negative with its prefix removed, or "" when the note is not one.
+ * Only `auto:` notes are reasons; anything else on a pending or approved row
+ * is the finder's provenance line, which the LLM tier reads as evidence
+ * instead of the founder reading it as a verdict.
+ */
 export function reasonFromNotes(notes: string | null | undefined): string {
   let s = str(notes);
-  if (!s) return "";
-  if (AUTO_PREFIX.test(s)) {
-    s = s.replace(AUTO_PREFIX, "").replace(COHORT_LABEL, "").trim();
-  }
+  if (!s || !AUTO_PREFIX.test(s)) return "";
+  s = s.replace(AUTO_PREFIX, "").replace(COHORT_LABEL, "").trim();
   if (s.length < MIN_REASON_CHARS || NOT_A_REASON.has(s.toLowerCase()) || DIAGNOSTIC.test(s)) {
     return "";
   }

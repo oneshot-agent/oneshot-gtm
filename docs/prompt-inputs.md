@@ -160,15 +160,21 @@ plays, including manual DMs; it is not added to run results or inbox replies.
 
 ## Reject reason
 
-The reject box on `/queue` and `/prospects` opens prefilled. Nothing reaches a
-model for that: the box takes the person gate's verdict reason when the verdict
-was _reject_ or _unclear_, else the finder's own note with its `auto:` prefix
-removed. Only when a row has neither — most approved rows, where the gate said
-_pass_ — does the `/queue` modal ask `reject-reason.md` for one sentence, from
-the same inputs as the fit line: the ICP one-liner, the play name and the
-prospect's own evidence (company, title, bio, event, repo, research excerpt).
-It never sees names, emails or URLs, may answer null, and its sentence is only
-a suggestion in the box until the founder submits. What is submitted is
+The reject box on `/queue` and `/prospects` opens prefilled. Two tiers are free:
+the person gate's verdict reason when the verdict was _reject_ or _unclear_,
+else a machine-negative note (`auto: …`) with its prefix removed. A finder note
+without the prefix is provenance ("going to the founders breakfast"), not a
+reason, and is never prefilled. Every other row — most approved rows, where the
+gate said _pass_ — has the `/queue` modal ask `reject-reason.md` for one
+sentence from the ICP one-liner, the play name, the prospect's own evidence
+(company, title, bio, event, repo), the stored dossier rendered as facts
+(title, summary, the experience history with periods), and, when the row has
+no dossier, one bounded company lookup by the address domain (SDK
+`enrichCompany`, $0.005: founded year, headcount, funding stage). The prompt
+reads company and dossier before the finder's line and is asked to name a
+stage mismatch with the fact that shows it. It never sees names, emails or
+URLs, may answer null, and its sentence is only a suggestion in the box until
+the founder submits. What is submitted is
 trimmed, capped at 300 characters, refused if it starts with `auto:` (the
 machine-decision marker), and stored on the row as the note the timeline
 shows. An emptied box clears an old note. The text is not forwarded to the
