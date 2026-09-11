@@ -13,7 +13,13 @@ import {
   type QueueStatus,
   type TelemetryOutcome,
 } from "@oneshot-gtm/core";
-import { drainQueue, rankPendingRows, resolveQueueTarget } from "@oneshot-gtm/find";
+import {
+  drainQueue,
+  isDudDomain,
+  rankPendingRows,
+  resolveQueueTarget,
+  safeEnrichCompany,
+} from "@oneshot-gtm/find";
 import {
   MANUAL_PLAYS,
   enrollInCadence,
@@ -450,12 +456,42 @@ export async function rejectQueueRoute(
   return jsonResponse({ ok: true }, 200, req);
 }
 
+/** How long the reject box waits on a company lookup before judging without it. */
+const REJECT_ENRICH_DEADLINE_MS = 12_000;
+
+/** The domain a company lookup can key on: the address's, else the payload's own. */
+export function rejectLookupDomain(payload: unknown): string | null {
+  const p = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
+  const email = typeof p.email === "string" ? p.email.trim().toLowerCase() : "";
+  const fromEmail = email.includes("@") ? email.split("@")[1]! : "";
+  const own =
+    typeof p.companyDomain === "string"
+      ? p.companyDomain
+      : typeof p.domain === "string"
+        ? p.domain
+        : "";
+  const domain = (fromEmail || own)
+    .replace(/^https?:\/\//, "")
+    .replace(/^www\./, "")
+    .split("/")[0]!
+    .trim()
+    .toLowerCase();
+  return domain || null;
+}
+
 /**
  * The reject box's LLM fallback: when the row carries neither a person-gate
- * verdict reason nor a finder note, the web asks for one sentence on why this
- * prospect might not fit. Preview only — nothing is written, nothing is
- * decided. A provider failure or a model that sees no mismatch both answer
- * `{ reason: null }`, and the box simply stays empty.
+ * verdict reason nor a machine-negative note, the web asks for one sentence
+ * on why this prospect might not fit. Preview only — nothing is written,
+ * nothing is decided. A provider failure or a model that sees no mismatch
+ * both answer `{ reason: null }`, and the box simply stays empty.
+ *
+ * A row with no stored dossier gets one bounded company lookup by domain
+ * (SDK enrichCompany, $0.005), so the facts a stage judgment turns on —
+ * founded year, headcount, funding stage — reach the model. Row #882
+ * (2026-09-11) was a ten-year-old company whose only evidence was the
+ * breakfast it attended. Best-effort: a personal-provider address, a
+ * failure, or a slow answer all leave the lookup out.
  */
 export async function suggestRejectReasonRoute(
   req: Request,
@@ -478,9 +514,28 @@ export async function suggestRejectReasonRoute(
     row.prospect_id != null
       ? (ledger.getProspectById(row.prospect_id)?.dossier_json ?? null)
       : null;
-  const reason = await generateRejectReason({ playName: row.play_name, payload, dossier });
+  let company: Record<string, unknown> | null = null;
+  const domain = dossier?.trim() ? null : rejectLookupDomain(payload);
+  if (domain && !isDudDomain(domain)) {
+    const enriched = await Promise.race([
+      safeEnrichCompany(
+        { domain },
+        {
+          playName: row.play_name,
+          memo: "company facts before prefilling a reject reason",
+          decisionContext: { reason: "queue row has no dossier; reject box prefill", queueId: id },
+        },
+      ),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), REJECT_ENRICH_DEADLINE_MS)),
+    ]);
+    const record = enriched && enriched.result.status !== "error" ? enriched.result.company : null;
+    if (record && Object.keys(record).length > 0) company = record as Record<string, unknown>;
+  }
+  const reason = await generateRejectReason({ playName: row.play_name, payload, dossier, company });
   return jsonResponse(
-    reason ? { reason, source: "llm" } : { reason: null, source: null },
+    reason
+      ? { reason, source: "llm", researched: company !== null }
+      : { reason: null, source: null, researched: company !== null },
     200,
     req,
   );

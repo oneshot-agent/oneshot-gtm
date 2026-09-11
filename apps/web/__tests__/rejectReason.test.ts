@@ -43,7 +43,7 @@ describe("suggestRejectReason", () => {
     ).toBe("Role unclear from the bio.");
   });
 
-  it("falls back to the finder's note with the machine prefix stripped", () => {
+  it("falls back to a machine-negative note with the prefix stripped", () => {
     expect(
       suggestRejectReason({ payload: {}, notes: "auto: role — Recruiter, not a founder." }),
     ).toEqual({
@@ -54,9 +54,22 @@ describe("suggestRejectReason", () => {
       "Consumer app, no business buyer.",
     );
     expect(reasonFromNotes("auto: dedup — not re-sent")).toBe("not re-sent");
-    expect(reasonFromNotes("Wrong segment; already spoke last year.")).toBe(
-      "Wrong segment; already spoke last year.",
+  });
+
+  it("a note without the prefix is the finder's provenance, never a reason, so the dossier tier runs", () => {
+    // Row #882 (2026-09-11) opened with the event name below and the LLM
+    // fallback never ran; the company was ten years old.
+    expect(reasonFromNotes("Bruno Faviero going to Corgi Founders Breakfast Club with Rho")).toBe(
+      "",
     );
+    expect(reasonFromNotes("starred langchain/langchain 3d ago — owns acquisition")).toBe("");
+    expect(reasonFromNotes("Wrong segment; already spoke last year.")).toBe("");
+    expect(
+      suggestRejectReason({
+        payload: { icpVerdict: "pass", icpVerdictReason: "Co-founder, owns acquisition" },
+        notes: "Bruno Faviero going to Corgi Founders Breakfast Club with Rho",
+      }),
+    ).toEqual({ text: "", source: null });
   });
 
   it("never surfaces the gates' pass-throughs, CSV status strings, or a bare token", () => {

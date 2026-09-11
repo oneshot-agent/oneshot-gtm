@@ -24,13 +24,27 @@ vi.mock("@oneshot-gtm/core", async () => {
     }),
   };
 });
+const enrichMock = vi.fn();
+vi.mock("@oneshot-gtm/find", async () => {
+  const actual = await vi.importActual<typeof import("@oneshot-gtm/find")>("@oneshot-gtm/find");
+  return {
+    ...actual,
+    safeEnrichCompany: enrichMock,
+    isDudDomain: (d: string | null | undefined) => d === "gmail.com",
+  };
+});
 vi.mock("@oneshot-gtm/plays", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/plays")>("@oneshot-gtm/plays");
   return { ...actual, generateRejectReason: generateMock };
 });
 
-const { parseRejectReason, rejectQueueRoute, suggestRejectReasonRoute, REJECT_REASON_MAX_CHARS } =
-  await import("../src/api/queue.ts");
+const {
+  parseRejectReason,
+  rejectLookupDomain,
+  rejectQueueRoute,
+  suggestRejectReasonRoute,
+  REJECT_REASON_MAX_CHARS,
+} = await import("../src/api/queue.ts");
 
 function post(id: string, body?: unknown): Request {
   return new Request(`http://x/api/queue/${id}/reject`, {
@@ -44,6 +58,7 @@ beforeEach(() => {
   prospectsById.clear();
   statusCalls.length = 0;
   generateMock.mockReset();
+  enrichMock.mockReset();
   queueRows.set(7, {
     id: 7,
     play_name: "luma-events",
@@ -131,21 +146,111 @@ describe("suggestRejectReasonRoute", () => {
     expect(await res.json()).toEqual({
       reason: "Recruiter, not the person who buys.",
       source: "llm",
+      researched: false,
     });
     expect(generateMock).toHaveBeenCalledWith(
       expect.objectContaining({
         playName: "luma-events",
         payload: expect.objectContaining({ company: "Acme" }),
         dossier: "dossier text",
+        company: null,
       }),
     );
+    // A stored dossier means no paid lookup.
+    expect(enrichMock).not.toHaveBeenCalled();
     expect(statusCalls).toHaveLength(0);
+  });
+
+  it("with no dossier, looks the company up by the address domain and hands the record to the generator", async () => {
+    queueRows.set(8, {
+      id: 8,
+      play_name: "luma-events",
+      status: "approved",
+      payload_json: JSON.stringify({ email: "bruno@magna.so", company: "Magna" }),
+      prospect_id: null,
+      notes: "Bruno going to a founders breakfast",
+    });
+    enrichMock.mockResolvedValue({
+      result: {
+        status: "ok",
+        company: {
+          name: "Magna",
+          employee_count: 80,
+          funding_stage: "series_b",
+          founded_year: 2014,
+        },
+        cost: 0.005,
+      },
+      receiptId: 1,
+    });
+    generateMock.mockResolvedValue(
+      "Founded 2014, ~80 employees, Series B: past founder-led sales.",
+    );
+    const res = await ask("8");
+    expect(await res.json()).toEqual({
+      reason: "Founded 2014, ~80 employees, Series B: past founder-led sales.",
+      source: "llm",
+      researched: true,
+    });
+    expect(enrichMock).toHaveBeenCalledWith(
+      { domain: "magna.so" },
+      expect.objectContaining({ playName: "luma-events" }),
+    );
+    expect(generateMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dossier: null,
+        company: expect.objectContaining({ founded_year: 2014, employee_count: 80 }),
+      }),
+    );
+  });
+
+  it("skips the lookup for a personal-provider address and on a failed record", async () => {
+    queueRows.set(9, {
+      id: 9,
+      play_name: "luma-events",
+      status: "approved",
+      payload_json: JSON.stringify({ email: "someone@gmail.com" }),
+      prospect_id: null,
+      notes: null,
+    });
+    generateMock.mockResolvedValue(null);
+    expect(await (await ask("9")).json()).toEqual({
+      reason: null,
+      source: null,
+      researched: false,
+    });
+    expect(enrichMock).not.toHaveBeenCalled();
+
+    queueRows.set(10, {
+      id: 10,
+      play_name: "show-hn",
+      status: "pending",
+      payload_json: JSON.stringify({ email: "x@acme.dev" }),
+      prospect_id: null,
+      notes: null,
+    });
+    enrichMock.mockResolvedValue({
+      result: { status: "error", company: {}, cost: 0 },
+      receiptId: 0,
+    });
+    expect(await (await ask("10")).json()).toEqual({
+      reason: null,
+      source: null,
+      researched: false,
+    });
+    expect(generateMock).toHaveBeenLastCalledWith(expect.objectContaining({ company: null }));
+  });
+
+  it("rejectLookupDomain prefers the address domain and falls back to the payload's own", () => {
+    expect(rejectLookupDomain({ email: "A@Magna.so" })).toBe("magna.so");
+    expect(rejectLookupDomain({ companyDomain: "https://www.acme.dev/about" })).toBe("acme.dev");
+    expect(rejectLookupDomain({ name: "nobody" })).toBeNull();
   });
 
   it("a null from the generator is a null to the box, not an error", async () => {
     generateMock.mockResolvedValue(null);
     const res = await ask("7");
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ reason: null, source: null });
+    expect(await res.json()).toEqual({ reason: null, source: null, researched: false });
   });
 });
