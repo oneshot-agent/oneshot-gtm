@@ -31,6 +31,7 @@ const NAMED: Record<string, string> = {
   "banned-cta:time-slots": "time-slot ask",
   "stale-event": "the event has passed",
   "contacted-elsewhere": "another workspace emailed them this week",
+  ungrounded: "research found nothing on them; the draft leans on the company name",
   "already-enrolled": "already in a cadence",
   "already-contacted": "already contacted",
   "off-icp": "off ICP",

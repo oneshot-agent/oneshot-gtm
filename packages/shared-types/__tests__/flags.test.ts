@@ -12,6 +12,12 @@ describe("blockingFlags", () => {
     expect(blockingFlags(["stale-event"])).toEqual([]);
   });
 
+  it("treats ungrounded as soft: regenerating cannot supply the missing research, the founder judges", () => {
+    expect(SOFT_REVIEW_FLAGS).toContain("ungrounded");
+    expect(blockingFlags(["ungrounded"])).toEqual([]);
+    expect(blockingFlags(["ungrounded", "contacted-elsewhere"])).toEqual([]);
+  });
+
   it("keeps lint/dedup flags blocking", () => {
     expect(blockingFlags(["em-dash"])).toEqual(["em-dash"]);
     expect(blockingFlags(["already-contacted", "rule-of-three"])).toEqual([

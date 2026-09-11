@@ -12,6 +12,9 @@ describe("humanizeFlag", () => {
     expect(humanizeFlag("hard-ban:discount-offer")).toBe("hard ban: discount offer");
     expect(humanizeFlag("stale-event")).toBe("the event has passed");
     expect(humanizeFlag("contacted-elsewhere")).toBe("another workspace emailed them this week");
+    expect(humanizeFlag("ungrounded")).toBe(
+      "research found nothing on them; the draft leans on the company name",
+    );
   });
 
   it("degrades an unknown label to its words instead of hiding it", () => {
@@ -40,5 +43,11 @@ describe("heldSummary", () => {
 
   it("a soft flag beside a lint flag is still a lint hold", () => {
     expect(heldSummary(["stale-event", "em-dash"])?.kind).toBe("lint");
+    // ungrounded alone is a review hold with a send-anyway, not a lint block.
+    expect(heldSummary(["ungrounded"])).toEqual({
+      kind: "review",
+      text: "1 flag: research found nothing on them; the draft leans on the company name",
+      next: "read it once more, then send as-is",
+    });
   });
 });

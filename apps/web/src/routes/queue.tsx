@@ -1398,7 +1398,9 @@ function DraftSection({
   const softHold = cleanDraft && draft != null && draft.flags.length > 0;
   const softHoldDetail = draft?.flags.includes("contacted-elsewhere")
     ? "Held — another workspace emailed this person in the last 7 days. Send the reviewed draft as-is to override."
-    : "Held for review (event has passed) — send the reviewed draft as-is";
+    : draft?.flags.includes("ungrounded")
+      ? "Held — research found nothing on this person, so the draft leans on the company name. Read it once more; send as-is if it still holds up."
+      : "Held for review (event has passed) — send the reviewed draft as-is";
   const showSend = !isManualPlay && status === "approved" && !(draft?.sent ?? false);
   const sendButton = showSend ? (
     <Button
