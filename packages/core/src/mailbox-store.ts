@@ -50,11 +50,13 @@ export interface MailboxAttempt {
   error: string | null;
 }
 
+/** Produce the stable, non-reversible key used in workspace mailbox IDs. */
 export const mailboxHash = (value: string): string =>
   createHash("sha256").update(value).digest("hex").slice(0, 32);
 
 /** Workspace-local storage. No credentials and no global/shared database. */
 export class MailboxStore {
+  /** Initialize the workspace-local mailbox tables and compatibility columns. */
   constructor(private db: Database) {
     db.exec(`
       CREATE TABLE IF NOT EXISTS mailbox_messages (
@@ -81,6 +83,7 @@ export class MailboxStore {
     addColumnIfMissing(db, "mailbox_messages", "needs_processing", "INTEGER NOT NULL DEFAULT 1");
   }
 
+  /** Look up a persisted mailbox message by its workspace ID. */
   get(id: string): MailboxMessage | null {
     const row = this.db.query("SELECT data FROM mailbox_messages WHERE id=?").get(id) as {
       data: string;
@@ -88,6 +91,7 @@ export class MailboxStore {
     return row ? JSON.parse(row.data) : null;
   }
 
+  /** Look up a message by mailbox identity and RFC Message-ID. */
   byMessageId(identityId: string, messageId: string): MailboxMessage | null {
     const row = this.db
       .query("SELECT data FROM mailbox_messages WHERE identity_id=? AND message_id=?")
@@ -95,6 +99,7 @@ export class MailboxStore {
     return row ? JSON.parse(row.data) : null;
   }
 
+  /** Find the earliest stored message that references an RFC Message-ID. */
   referencing(identityId: string, messageId: string): MailboxMessage | null {
     const row = this.db
       .query(`SELECT m.data FROM mailbox_messages m JOIN mailbox_references r ON r.message_id=m.id
@@ -103,6 +108,7 @@ export class MailboxStore {
     return row ? JSON.parse(row.data) : null;
   }
 
+  /** Persist a message once and update its thread association and state. */
   put(message: MailboxMessage): boolean {
     return this.db
       .transaction(() => {
@@ -175,6 +181,7 @@ export class MailboxStore {
       .immediate();
   }
 
+  /** Return one thread's messages in chronological order. */
   thread(key: string): MailboxMessage[] {
     return (
       this.db
@@ -183,6 +190,7 @@ export class MailboxStore {
     ).map((r) => JSON.parse(r.data));
   }
 
+  /** Return all stored mailbox messages with the newest first. */
   all(): MailboxMessage[] {
     return (
       this.db.query("SELECT data FROM mailbox_messages ORDER BY at DESC,id").all() as {
@@ -203,6 +211,7 @@ export class MailboxStore {
     ).map((row) => JSON.parse(row.data));
   }
 
+  /** List inbound messages eligible for an identity's inbox processing window. */
   inbound(identityId: string, since?: string, until?: string): MailboxMessage[] {
     return (
       this.db
@@ -217,6 +226,7 @@ export class MailboxStore {
     ).map((r) => JSON.parse(r.data));
   }
 
+  /** Read JSON state associated with an internal mailbox key. */
   state<T>(key: string): T | null {
     const row = this.db.query("SELECT data FROM mailbox_state WHERE key=?").get(key) as {
       data: string;
@@ -224,6 +234,7 @@ export class MailboxStore {
     return row ? JSON.parse(row.data) : null;
   }
 
+  /** Upsert JSON state associated with an internal mailbox key. */
   setState(key: string, data: unknown): void {
     this.db
       .query(
@@ -232,6 +243,7 @@ export class MailboxStore {
       .run(key, JSON.stringify(data));
   }
 
+  /** Read the user-visible state derived for a mailbox thread. */
   threadState(key: string): {
     unread: boolean;
     archivedAt: string | null;
@@ -252,6 +264,7 @@ export class MailboxStore {
     };
   }
 
+  /** Mark a thread's provider-history import as complete. */
   markHistoryComplete(key: string): void {
     this.db.query("UPDATE mailbox_threads SET history_complete=1 WHERE thread_key=?").run(key);
   }
@@ -294,6 +307,7 @@ export class MailboxStore {
       .immediate();
   }
 
+  /** Associate every message in a thread with a workspace prospect. */
   associate(key: string, prospectId: number): void {
     this.db
       .transaction(() => {
@@ -308,12 +322,14 @@ export class MailboxStore {
       .immediate();
   }
 
+  /** Mark a matched inbound message as processed by cadence polling. */
   acknowledge(id: string, prospectId: number): void {
     this.db
       .query("UPDATE mailbox_messages SET needs_processing=0 WHERE id=? AND prospect_id=?")
       .run(id, prospectId);
   }
 
+  /** Persist an updated reply classification and parsed bounce details. */
   reclassify(message: MailboxMessage, kind: ReplyKind, bounces?: ParsedBounce[]): void {
     if (message.kind === kind && message.bounces != null) return;
     this.db
@@ -332,6 +348,7 @@ export class MailboxStore {
       .immediate();
   }
 
+  /** Return the earliest recorded email outreach timestamp for backfill. */
   oldestOutreach(): string | null {
     const row = this.db
       .query(
@@ -343,6 +360,7 @@ export class MailboxStore {
       : null;
   }
 
+  /** Look up a persisted SMTP send attempt by request ID. */
   attempt(id: string): MailboxAttempt | null {
     const row = this.db.query("SELECT data FROM mailbox_attempts WHERE id=?").get(id) as {
       data: string;
@@ -350,6 +368,7 @@ export class MailboxStore {
     return row ? JSON.parse(row.data) : null;
   }
 
+  /** Return send attempts that still need Sent-folder reconciliation. */
   attempts(): MailboxAttempt[] {
     return (
       this.db
@@ -358,6 +377,7 @@ export class MailboxStore {
     ).map((r) => JSON.parse(r.data));
   }
 
+  /** Atomically claim an idempotent send attempt or return its prior result. */
   claimAttempt(attempt: MailboxAttempt): MailboxAttempt {
     return this.db
       .transaction(() => {
@@ -378,6 +398,7 @@ export class MailboxStore {
       .immediate();
   }
 
+  /** Persist the latest status and payload for an SMTP send attempt. */
   saveAttempt(attempt: MailboxAttempt): void {
     this.db
       .query(

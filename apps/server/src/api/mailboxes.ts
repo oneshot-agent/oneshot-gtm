@@ -18,6 +18,7 @@ import type {
 } from "@oneshot-gtm/shared-types";
 import { isLoopbackOrigin, jsonResponse } from "../server.ts";
 
+/** Build the workspace-local mailbox health and threaded inbox view. */
 export function mailboxInboxView(): Pick<InboxResult, "mailboxes" | "mailboxThreads"> {
   const health = mailboxHealth();
   const ledger = getLedger();
@@ -112,10 +113,12 @@ export function mailboxInboxView(): Pick<InboxResult, "mailboxes" | "mailboxThre
   };
 }
 
+/** Restrict credential and mailbox mutations to the local workspace UI. */
 function allowed(req: Request): boolean {
   return isLoopbackOrigin(req.headers.get("origin") ?? "");
 }
 
+/** Update read or archive state for the messages visible to the caller. */
 export async function mailboxStateRoute(req: Request): Promise<Response> {
   if (!allowed(req)) return jsonResponse({ error: "forbidden origin" }, 403, req);
   try {
@@ -139,6 +142,7 @@ export async function mailboxStateRoute(req: Request): Promise<Response> {
   }
 }
 
+/** Associate a mailbox thread with an existing workspace prospect. */
 export async function mailboxMatchRoute(req: Request): Promise<Response> {
   if (!allowed(req)) return jsonResponse({ error: "forbidden origin" }, 403, req);
   try {
@@ -160,6 +164,7 @@ export async function mailboxMatchRoute(req: Request): Promise<Response> {
   }
 }
 
+/** Import the remaining provider history for one mailbox thread. */
 export async function mailboxHistoryRoute(req: Request): Promise<Response> {
   if (!allowed(req)) return jsonResponse({ error: "forbidden origin" }, 403, req);
   try {
@@ -176,12 +181,14 @@ export async function mailboxHistoryRoute(req: Request): Promise<Response> {
   }
 }
 
+/** Force a mailbox sync and return the refreshed mailbox inbox view. */
 export async function mailboxRefreshRoute(req: Request): Promise<Response> {
   if (!allowed(req)) return jsonResponse({ error: "forbidden origin" }, 403, req);
   await syncSmartleadMailboxes(true);
   return jsonResponse(mailboxInboxView(), 200, req);
 }
 
+/** Verify and save IMAP/SMTP settings for a workspace mailbox identity. */
 export async function mailboxConnectRoute(req: Request): Promise<Response> {
   if (!allowed(req)) return jsonResponse({ error: "forbidden origin" }, 403, req);
   try {

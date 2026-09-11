@@ -10,6 +10,7 @@ export interface MailboxConnection {
   smtp: { host: string; port: number; secure: boolean; user: string; pass: string };
 }
 
+/** Return Smartlead identities configured in the active workspace. */
 export function smartleadMailboxIdentities() {
   return resolveIdentities(loadConfig()).filter((i) => i.provider === "smartlead");
 }
@@ -21,7 +22,9 @@ let cached: {
   rows: Record<string, unknown>[];
 } | null = null;
 
+/** Normalize an unknown provider field to a trimmed string. */
 const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
+/** Decode a provider's optional base64-encoded credential field. */
 const decode = (v: unknown): string => (v ? Buffer.from(str(v), "base64").toString("utf8") : "");
 
 /** This module is deliberately not re-exported by the public core barrel. */
@@ -65,10 +68,12 @@ async function accounts(): Promise<Record<string, unknown>[]> {
   throw new Error("Smartlead mailbox listing is incomplete.");
 }
 
+/** Clear the workspace-scoped Smartlead account cache. */
 export function resetMailboxConnections(): void {
   cached = null;
 }
 
+/** Validate the required IMAP and SMTP connection fields. */
 export function validateMailboxConnection(input: MailboxConnection): MailboxConnection {
   if (!input || typeof input.address !== "string") throw new Error("Mailbox address is required.");
   for (const transport of [input.imap, input.smtp]) {
@@ -88,11 +93,13 @@ export function validateMailboxConnection(input: MailboxConnection): MailboxConn
   return input;
 }
 
+/** Read manually configured mailbox connections for the active workspace. */
 function overrides(): Record<string, MailboxConnection> {
   const path = join(configDir(), "mailbox-connections.json");
   return existsSync(path) ? JSON.parse(readFileSync(path, "utf8")) : {};
 }
 
+/** Persist a verified mailbox connection with owner-only permissions. */
 export function saveMailboxConnection(identityId: string, input: MailboxConnection): void {
   const identity = smartleadMailboxIdentities().find((i) => i.id === identityId);
   if (!identity?.address || identity.address.toLowerCase() !== input.address?.toLowerCase())
@@ -106,6 +113,7 @@ export function saveMailboxConnection(identityId: string, input: MailboxConnecti
   resetMailboxConnections();
 }
 
+/** Resolve a mailbox connection from workspace overrides or Smartlead. */
 export async function mailboxConnection(identityId: string): Promise<MailboxConnection> {
   const identity = smartleadMailboxIdentities().find((i) => i.id === identityId);
   if (!identity?.address)

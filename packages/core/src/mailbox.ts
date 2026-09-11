@@ -27,6 +27,7 @@ const syncs = new Map<string, { started: number; pending: Promise<void> | null }
 const liveSends = new Set<string>();
 const reclassifiedStores = new WeakSet<object>();
 
+/** Adapt a parsed mailbox message to the shared delivery-failure parser. */
 function parseMailboxBounces(from: string, subject: string, body: string, deliveryStatus?: Buffer) {
   return parseBounce({
     id: "",
@@ -52,6 +53,7 @@ function parseMailboxBounces(from: string, subject: string, body: string, delive
   });
 }
 
+/** List delivery failures captured from active Smartlead mailboxes. */
 export function listMailboxBounces(opts?: { since?: string }): BounceListResult {
   const identities = new Set(smartleadMailboxIdentities().map((i) => i.id));
   if (!identities.size) return { bounces: [], failedSources: [] };
@@ -85,6 +87,7 @@ export function listMailboxBounces(opts?: { since?: string }): BounceListResult 
   };
 }
 
+/** Create a bounded, non-logging IMAP client for a mailbox connection. */
 export function mailboxClient(connection: MailboxConnection): ImapFlow {
   const c = new ImapFlow({
     host: connection.imap.host,
@@ -103,6 +106,7 @@ export function mailboxClient(connection: MailboxConnection): ImapFlow {
   return c;
 }
 
+/** Create a bounded, non-logging SMTP transport for a mailbox connection. */
 function smtpTransport(connection: MailboxConnection) {
   return nodemailer.createTransport({
     host: connection.smtp.host,
@@ -120,6 +124,7 @@ function smtpTransport(connection: MailboxConnection) {
   });
 }
 
+/** Verify that both IMAP inbox access and SMTP authentication succeed. */
 export async function verifyMailboxConnection(connection: MailboxConnection): Promise<void> {
   const imap = mailboxClient(connection);
   const smtp = smtpTransport(connection);
@@ -137,6 +142,7 @@ export async function verifyMailboxConnection(connection: MailboxConnection): Pr
   }
 }
 
+/** Select the minimal useful set of readable folders for mailbox sync. */
 export function mailboxFolders(folders: ListResponse[]): ListResponse[] {
   const selectable = folders.filter((f) => !f.flags.has("\\Noselect"));
   const all = selectable.find((f) => f.specialUse === "\\All");
@@ -152,6 +158,7 @@ export function mailboxFolders(folders: ListResponse[]): ListResponse[] {
   ];
 }
 
+/** Parse a raw provider message into the workspace's normalized mailbox record. */
 export async function parseMailboxMessage(
   raw: Buffer,
   meta: { identityId: string; address: string; fallbackId: string; threadId?: string; at?: Date },
@@ -221,6 +228,7 @@ export async function parseMailboxMessage(
   };
 }
 
+/** Fetch and persist a bounded batch of provider messages. */
 async function capture(
   client: ImapFlow,
   uids: number[],
@@ -254,6 +262,7 @@ async function capture(
   }
 }
 
+/** Resume incremental folder sync and reconcile sends for one identity. */
 async function syncIdentity(identityId: string, address: string, ledger: Ledger): Promise<void> {
   const store = ledger.mailboxes;
   const prior = store.state<MailboxHealth>(`health:${identityId}`);
@@ -374,6 +383,7 @@ export async function syncSmartleadMailboxes(force = false): Promise<void> {
   });
 }
 
+/** Return persisted connection and sync health for active mailbox identities. */
 export function mailboxHealth(): MailboxHealth[] {
   const store = getLedger().mailboxes;
   return smartleadMailboxIdentities().map(
@@ -390,6 +400,7 @@ export function mailboxHealth(): MailboxHealth[] {
   );
 }
 
+/** Sync and list one identity's normalized inbound mailbox window. */
 export async function listMailboxInbox(
   identityId: string,
   opts?: { since?: string; until?: string; limit?: number },
@@ -422,6 +433,7 @@ export async function listMailboxInbox(
   };
 }
 
+/** Import provider history for a thread until its resumable scan completes. */
 export async function hydrateMailboxThread(threadKey: string): Promise<void> {
   const ledger = getLedger();
   const store = ledger.mailboxes;
@@ -471,6 +483,7 @@ export async function hydrateMailboxThread(threadKey: string): Promise<void> {
   }
 }
 
+/** Build a threaded outbound mailbox record from a stored inbound message. */
 export function mailboxReplyMessage(
   inbound: MailboxMessage,
   address: string,

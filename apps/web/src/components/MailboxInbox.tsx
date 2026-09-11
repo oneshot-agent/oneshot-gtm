@@ -15,6 +15,7 @@ import { timeAgo } from "../lib/cn.ts";
 import { readOnly } from "../lib/readOnly.ts";
 import { IS_DEMO } from "../api/demo.ts";
 
+/** Render connection health and settings for the workspace's receiving mailboxes. */
 export function MailboxConnections({ mailboxes }: { mailboxes: MailboxHealthView[] }) {
   const [editing, setEditing] = useState<string | null>(null);
   if (!mailboxes.length) return null;
@@ -58,6 +59,7 @@ export function MailboxConnections({ mailboxes }: { mailboxes: MailboxHealthView
   );
 }
 
+/** Collect and submit IMAP/SMTP credentials for one mailbox identity. */
 function MailboxConnectionForm({
   mailbox,
   onDone,
@@ -137,6 +139,7 @@ function MailboxConnectionForm({
   );
 }
 
+/** Render an expandable mailbox conversation with local state controls. */
 export function MailboxThreadRow({
   thread: t,
   children,

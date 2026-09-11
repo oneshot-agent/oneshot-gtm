@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 
+/** Check whether an optional ledger table is available to an opt-out query. */
 function hasTable(db: Database, name: string): boolean {
   return db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name) != null;
 }
