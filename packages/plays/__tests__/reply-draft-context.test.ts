@@ -276,6 +276,18 @@ describe("draftInboxReply link gate", () => {
     expect(draft.flags).not.toContain("link-not-in-brief");
   });
 
+  it("normalizes scheme and host case only; the path stays case-sensitive", async () => {
+    cfgOverride = { productBrief: "Docs: https://docs.example.com/Payments", icpOneLiner: null };
+    completeMock.mockResolvedValue({
+      content: JSON.stringify({ body: "see HTTPS://DOCS.EXAMPLE.COM/Payments." }),
+    });
+    expect((await draftInboxReply(BASE)).flags).not.toContain("link-not-in-brief");
+    completeMock.mockResolvedValue({
+      content: JSON.stringify({ body: "see https://docs.example.com/payments." }),
+    });
+    expect((await draftInboxReply(BASE)).flags).toContain("link-not-in-brief");
+  });
+
   it("allows no link at all when there is no brief", async () => {
     completeMock.mockResolvedValue({
       content: JSON.stringify({ body: "docs are at https://docs.example.com/" }),

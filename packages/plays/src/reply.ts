@@ -218,12 +218,25 @@ export function bodyCommitsTerms(body: string): boolean {
 
 const URL_RE = /(?:https?:\/\/|www\.)[^\s<>()"'\]]+/gi;
 
-/** Trailing punctuation and slashes never distinguish two links. */
+const TRAILING_PUNCT = new Set([".", ",", ";", ":", "!", "?", ")"]);
+
+/**
+ * Trailing punctuation and slashes never distinguish two links, and neither
+ * does the case of the scheme or host. The path, query and fragment keep
+ * their case: `/Payments` and `/payments` can be different resources.
+ * Character loops rather than `[...]+$` regexes so the check stays linear on
+ * model output (CodeQL: polynomial regex on uncontrolled data).
+ */
 function normalizeUrl(url: string): string {
+  let end = url.length;
+  while (end > 0 && TRAILING_PUNCT.has(url[end - 1]!)) end--;
+  while (end > 0 && url[end - 1] === "/") end--;
   return url
-    .replace(/[.,;:!?)]+$/, "")
-    .replace(/\/+$/, "")
-    .toLowerCase();
+    .slice(0, end)
+    .replace(
+      /^(https?:\/\/)?([^/?#]+)/i,
+      (_match, scheme: string = "", host: string) => `${scheme.toLowerCase()}${host.toLowerCase()}`,
+    );
 }
 
 /** The links a reply may cite: every URL that appears in the product brief. */
