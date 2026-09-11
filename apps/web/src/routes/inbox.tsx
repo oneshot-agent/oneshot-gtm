@@ -17,6 +17,7 @@ import { cn, timeAgo } from "../lib/cn.ts";
 import { matchesReplyFilter, type ReplyMatchFilter } from "../lib/replyFilter.ts";
 import { readOnly } from "../lib/readOnly.ts";
 import { IS_DEMO } from "../api/demo.ts";
+import { MailboxConnections, MailboxThreadRow } from "../components/MailboxInbox.tsx";
 
 const MATCH_FILTERS: Array<{ key: ReplyMatchFilter; label: string }> = [
   { key: "all", label: "all" },
@@ -59,10 +60,19 @@ function InboxPage() {
     refetchInterval: 60_000,
   });
 
-  const replies = inbox.data?.replies ?? [];
+  const replies = (inbox.data?.replies ?? []).filter((r) => r.sourceProvider !== "smartlead");
+  const mailboxThreads = inbox.data?.mailboxThreads ?? [];
+  const mailboxVisible = mailboxThreads.filter(
+    (t) =>
+      Boolean(t.archivedAt) === archiveView &&
+      (matchFilter === "all" ||
+        (matchFilter === "matched" ? t.prospectId != null : t.prospectId == null)),
+  );
   // Ledger-backed threaded view — complete regardless of the live window.
   const conversations = inbox.data?.conversations ?? [];
-  const archivedCount = conversations.filter((c) => c.archivedAt).length;
+  const archivedCount =
+    conversations.filter((c) => c.archivedAt).length +
+    mailboxThreads.filter((t) => t.archivedAt).length;
   const displayedConversations = inboxConversations(conversations, archiveView);
   const error = inbox.data?.error;
   // The server fetches a clamped window (newest 200 across all identities).
@@ -70,13 +80,29 @@ function InboxPage() {
   // page never presents the window as the whole mailbox. `matched` is exact —
   // it comes from the ledger, not the window.
   const windowSuffix = inbox.data?.hasMore ? "+" : "";
-  const noMatchCount = replies.filter((r) => r.matched == null).length;
+  const noMatchCount =
+    replies.filter((r) => r.matched == null).length +
+    mailboxThreads.filter((t) => t.prospectId == null).length;
   const countFor = (key: ReplyMatchFilter): number =>
-    key === "matched" ? conversations.length : key === "no-match" ? noMatchCount : replies.length;
+    key === "matched"
+      ? conversations.length + mailboxThreads.filter((t) => t.prospectId != null).length
+      : key === "no-match"
+        ? noMatchCount
+        : replies.length + mailboxThreads.length;
   const suffixFor = (key: ReplyMatchFilter): string => (key === "matched" ? "" : windowSuffix);
   const visible = replies.filter((r) => matchesReplyFilter(r, matchFilter));
   const showConversations = matchFilter === "matched";
-  const needsDecisionCount = conversations.filter(inboxNeedsAttention).length;
+  const needsDecisionCount =
+    conversations.filter(inboxNeedsAttention).length +
+    mailboxThreads.filter((t) => !t.archivedAt && t.reply.thread?.status === "needs_decision")
+      .length;
+  const refresh = useMutation({
+    mutationFn: async () => {
+      if (inbox.data?.mailboxes?.length) await api.mailboxRefresh();
+      await inbox.refetch();
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
 
   return (
     <div className="-mx-6 -my-6 flex flex-col">
@@ -106,7 +132,7 @@ function InboxPage() {
             {!inbox.data
               ? "…"
               : showConversations
-                ? `${displayedConversations.length} conversation${displayedConversations.length === 1 ? "" : "s"}`
+                ? `${displayedConversations.length + mailboxVisible.length} conversations`
                 : matchFilter === "all"
                   ? `${replies.length}${windowSuffix} repl${replies.length === 1 && !windowSuffix ? "y" : "ies"}`
                   : `${visible.length} of ${replies.length}${windowSuffix}`}
@@ -114,8 +140,8 @@ function InboxPage() {
           <Button
             variant="ghost"
             size="sm"
-            disabled={inbox.isFetching}
-            onClick={() => void inbox.refetch()}
+            disabled={inbox.isFetching || refresh.isPending}
+            onClick={() => refresh.mutate()}
           >
             {inbox.isFetching ? (
               <Loader2 size={12} className="animate-spin" />
@@ -158,7 +184,8 @@ function InboxPage() {
         ))}
       </div>
 
-      {showConversations && (
+      <MailboxConnections mailboxes={inbox.data?.mailboxes ?? []} />
+      {(showConversations || mailboxThreads.length > 0) && (
         <div className="flex gap-2 border-b border-ink-rule/60 px-6 py-3">
           <Button
             size="sm"
@@ -168,7 +195,10 @@ function InboxPage() {
               setExpanded(null);
             }}
           >
-            Inbox <span className="ml-1 opacity-60">{conversations.length - archivedCount}</span>
+            Inbox{" "}
+            <span className="ml-1 opacity-60">
+              {conversations.length + mailboxThreads.length - archivedCount}
+            </span>
           </Button>
           <Button
             size="sm"
@@ -188,19 +218,26 @@ function InboxPage() {
         </section>
       )}
 
+      {mailboxVisible.map((t) => (
+        <MailboxThreadRow key={t.threadKey} thread={t}>
+          <ReplyComposer key={t.reply.id} reply={t.reply} prospectId={t.prospectId ?? undefined} />
+        </MailboxThreadRow>
+      ))}
       {inbox.isLoading ? (
         Array.from({ length: 5 }, (_, i) => <SkeletonRow key={i} />)
       ) : showConversations ? (
         displayedConversations.length === 0 ? (
-          <div className="p-5">
-            <EmptyNote
-              note={
-                archiveView
-                  ? "No archived conversations."
-                  : "No active conversations. New replies appear here; handled conversations are in Archived."
-              }
-            />
-          </div>
+          mailboxVisible.length > 0 ? null : (
+            <div className="p-5">
+              <EmptyNote
+                note={
+                  archiveView
+                    ? "No archived conversations."
+                    : "No active conversations. New replies appear here; handled conversations are in Archived."
+                }
+              />
+            </div>
+          )
         ) : (
           <div>
             {displayedConversations.map((c, i) => (
@@ -217,13 +254,17 @@ function InboxPage() {
           </div>
         )
       ) : replies.length === 0 ? (
-        <div className="p-5">
-          <EmptyNote note="No replies yet. When a prospect writes back, it shows here." />
-        </div>
+        mailboxVisible.length > 0 ? null : (
+          <div className="p-5">
+            <EmptyNote note="No replies yet. When a prospect writes back, it shows here." />
+          </div>
+        )
       ) : visible.length === 0 ? (
-        <div className="p-5">
-          <EmptyNote note="No unmatched replies — every reply here matches a prospect." />
-        </div>
+        mailboxVisible.length > 0 ? null : (
+          <div className="p-5">
+            <EmptyNote note="No unmatched replies — every reply here matches a prospect." />
+          </div>
+        )
       ) : (
         <div>
           {visible.map((r, i) => (
@@ -592,6 +633,7 @@ function ReplyComposer({
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const identityId = reply.sourceIdentityId;
+  const sendRequest = useRef<{ body: string; id: string } | null>(null);
   // needs-decision state (issue #480): starts from the persisted status, then
   // tracks whatever the last draft/generate/steer call actually verified —
   // never trusted from the textarea's raw content (the client can't run the
@@ -673,8 +715,13 @@ function ReplyComposer({
   });
 
   const send = useMutation({
-    mutationFn: () =>
-      api.sendInboxReply({
+    mutationFn: () => {
+      if (!sendRequest.current || sendRequest.current.body !== draft)
+        sendRequest.current = { body: draft, id: crypto.randomUUID() };
+      return api.sendInboxReply({
+        ...(reply.sourceProvider === "smartlead"
+          ? { inboundEmailId: reply.id, sendRequestId: sendRequest.current.id }
+          : {}),
         to: reply.fromEmail,
         subject: reply.subject,
         body: draft,
@@ -685,18 +732,23 @@ function ReplyComposer({
         // OneShot-source rows: reply.id is the OneShot inbox id the platform
         // threads on. Ignored server-side for Gmail rows.
         replyToEmailId: reply.sourceProvider === "oneshot" ? reply.id : null,
-      }),
+      });
+    },
     onSuccess: (res) => {
       // Server appended to the sent history and cleared the draft. Reflect that
       // locally (clear the box, mark nothing-to-save) and refetch so the sent
       // reply shows up.
       lastSaved.current = "";
+      sendRequest.current = null;
       setDraft("");
       setNeedsDecision(false);
       void queryClient.invalidateQueries({ queryKey: ["inbox"] });
       toast.success(res.costUsd > 0 ? `reply sent · $${res.costUsd.toFixed(2)}` : "reply sent");
     },
-    onError: (err) => toast.error(`couldn't send · ${err.message}`),
+    onError: (err) => {
+      if (/was not sent|Previous send failed/.test(err.message)) sendRequest.current = null;
+      toast.error(`couldn't send · ${err.message}`);
+    },
   });
 
   const logOutcome = useMutation({

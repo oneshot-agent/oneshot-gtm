@@ -2,6 +2,10 @@ import { describe, expect, test } from "vitest";
 import { classifyReply, stripQuotedChain } from "../src/reply-classify.ts";
 
 describe("classifyReply", () => {
+  test("explicit opt-outs with curly apostrophes and ever are unsubscribe requests", () => {
+    expect(classifyReply({ body: "Don’t ever email me again." })).toBe("unsubscribe");
+    expect(classifyReply({ body: "Do not ever contact me again." })).toBe("unsubscribe");
+  });
   test("plain human reply is human", () => {
     expect(
       classifyReply({

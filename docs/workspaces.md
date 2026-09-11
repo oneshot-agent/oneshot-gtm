@@ -29,4 +29,35 @@ A masthead chip names the workspace and its port; each name gets a stable colour
 
 ## Background services
 
+### Smartlead inboxes
+
+Every workspace automatically receives mail for its registered Smartlead identities
+while its dashboard server runs. Smartlead continues handling outreach and warmup;
+the dashboard reads IMAP and sends threaded replies over SMTP from the receiving
+mailbox. Newly registered identities join the next sync automatically.
+
+Open **Replies** to see mailbox connection status, the last successful sync, and
+history import progress. The first import covers 30 days and older recorded
+outreach; opening a conversation loads its available full history. Partial imports
+and disconnected mailboxes are shown explicitly. A typical clean sync runs about
+once a minute; a stopped dashboard does not receive mail in the background.
+
+Use **Connection settings** when Smartlead does not expose working IMAP/SMTP
+credentials. Both connections are verified before saving. Explicit credentials
+live in the workspace's private `mailbox-connections.json` (mode `0600`), never in
+the ledger or browser responses. OAuth-only accounts may require an app password
+or another supported mailbox connection from the provider.
+
+Threads match existing prospects by outreach references or email address; unmatched
+mail stays under **No match**, where it can be associated with an existing prospect.
+Read/unread, drafts, and archive state belong to this workspace. Reading or archiving
+here does not change Smartlead or provider mailbox flags. A new inbound message
+reopens an archived thread. Replies preserve email threading headers and remain
+manually sent. If a send times out after submission, GTM checks Sent mail before
+allowing another attempt to avoid duplicate responses.
+
+Removing an identity stops its sync and sending but retains saved conversations.
+Connecting one mailbox in two workspaces gives both access to that mailbox; their
+prospect matches, read states, drafts, and archives remain independent.
+
 `find watch --install-service` embeds the active home, so `--workspace acme find watch --install-service` pins the generated service to that workspace. See [background monitoring](./background-monitoring.md).

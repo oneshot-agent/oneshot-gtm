@@ -13,6 +13,7 @@ let inboxEmails: Array<{
   received_at?: string;
   body?: string;
   auto_submitted?: boolean;
+  matched_prospect_id?: number;
 }> = [];
 let lookupArgs: string[] = [];
 let listInboxArgs: Array<Record<string, unknown>> = [];
@@ -94,6 +95,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       };
     },
     getLedger: () => ({
+      mailboxes: { acknowledge: () => {} },
       findDirectMail: () => null,
       listAllCadences: () => rows,
       listActiveCadences: ({ dueByIso }: { dueByIso: string }) =>
@@ -321,6 +323,30 @@ describe("advanceCadence — reply detection", () => {
 });
 
 describe("pollInboxReplies — standalone background detection (no sends)", () => {
+  it("stops the matched prospect's cadence when a mailbox reply comes from an alternate address", async () => {
+    rows = [
+      {
+        prospect_id: 1,
+        play_name: "test",
+        status: "active",
+        next_due_at: null,
+        prospect_email: STORED_EMAIL,
+      },
+    ];
+    inboxEmails = [
+      {
+        id: "mailbox:alternate",
+        from: "alternate@example.org",
+        subject: "Re: hello",
+        body: "Interested",
+        matched_prospect_id: 1,
+      },
+    ];
+    const result = await pollInboxReplies();
+    expect(rows[0]?.status).toBe("replied");
+    expect(result.cadencesStopped).toBe(1);
+    expect(calls.sendEmail).toBe(0);
+  });
   it("flips a matching active cadence to replied and records the reply event", async () => {
     inboxEmails = [{ from: "Sophia <sophia@agenticarchitect.ai>", subject: "re: stack" }];
 

@@ -1,4 +1,11 @@
 import { directMailRoute } from "./api/direct-mail.ts";
+import {
+  mailboxStateRoute,
+  mailboxMatchRoute,
+  mailboxHistoryRoute,
+  mailboxRefreshRoute,
+  mailboxConnectRoute,
+} from "./api/mailboxes.ts";
 import { existsSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -117,6 +124,11 @@ const routes: RouteEntry[] = [
   route("GET", "/api/receipts", listReceipts),
   route("GET", "/api/receipts/:id", getReceipt),
   route("GET", "/api/inbox", listInboxRoute),
+  route("POST", "/api/inbox/thread-state", mailboxStateRoute),
+  route("POST", "/api/inbox/thread-match", mailboxMatchRoute),
+  route("POST", "/api/inbox/thread-history", mailboxHistoryRoute),
+  route("POST", "/api/inbox/mailbox-refresh", mailboxRefreshRoute),
+  route("POST", "/api/inbox/mailbox-connect", mailboxConnectRoute),
   route("POST", "/api/inbox/archive", archiveInboxConversationRoute),
   route("POST", "/api/inbox/draft-reply", draftReplyRoute),
   route("POST", "/api/inbox/draft", saveDraftRoute),

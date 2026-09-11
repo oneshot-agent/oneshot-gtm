@@ -6,6 +6,7 @@ import type { Ledger } from "@oneshot-gtm/core";
 // degrade instead of blocking the draft.
 
 const ledger = {
+  mailboxes: { thread: vi.fn<Ledger["mailboxes"]["thread"]>(() => []) },
   getProspectById: vi.fn(),
   getInboxThreads: vi.fn(() => new Map()),
   listInboxRepliesForProspect: vi.fn(() => []),
@@ -55,6 +56,38 @@ beforeEach(() => {
 });
 
 describe("gatherReplyContext", () => {
+  it("uses the mailbox thread's inbound and external sent history for drafts", async () => {
+    const base = {
+      identityId: "smartlead:me@example.com",
+      threadKey: "mailbox:thread",
+      messageId: null,
+      references: [],
+      gmailThreadId: null,
+      from: "person@example.org",
+      to: ["me@example.com"],
+      replyTo: null,
+      subject: "Hi",
+      at: "2026-09-11T00:00:00Z",
+      kind: "human" as const,
+      autoSubmitted: null,
+      prospectId: null,
+    };
+    ledger.mailboxes.thread.mockReturnValueOnce([
+      { ...base, id: "older", direction: "inbound", body: "Earlier question" },
+      { ...base, id: "external", direction: "outbound", body: "Answer from my email client" },
+      { ...base, id: "current", direction: "inbound", body: "Current question" },
+    ]);
+    const context = await gatherReplyContext({
+      fromEmail: base.from,
+      prospectId: null,
+      threadKey: base.threadKey,
+      excludeId: "current",
+      skipPaid: true,
+    });
+    expect(context.priorInbound.map((m) => m.body)).toEqual(["Earlier question"]);
+    expect(context.threadSent.map((m) => m.body)).toEqual(["Answer from my email client"]);
+    expect(safeEnrichMock).not.toHaveBeenCalled();
+  });
   it("uses the stored prospect dossier for free — no paid calls", async () => {
     ledger.getProspectById.mockReturnValue({ dossier_json: '{"title":"CTO","hook":"x402"}' });
     const ctx = await gatherReplyContext({

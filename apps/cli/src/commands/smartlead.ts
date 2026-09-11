@@ -135,6 +135,6 @@ export async function commandSmartleadConnect(): Promise<void> {
     }
   }
   note(
-    "Send-only for now: replies to Smartlead-sent mail appear in Smartlead's inbox, not /inbox.",
+    "Incoming mail and threaded replies connect automatically in /inbox while this workspace's server runs. Check mailbox connection status there.",
   );
 }

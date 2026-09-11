@@ -900,6 +900,7 @@ export const POSITIVE_REPLY_INTENTS: readonly ReplyIntent[] = [
 
 /** A single inbox email (reply to outreach), with prospect/play context when matched. */
 export interface InboxReplyView {
+  bounceKind?: "hard" | "block" | "soft" | null;
   id: string;
   /** What this inbound actually is — only `human` counts as a reply anywhere. */
   kind: InboundReplyKind;
@@ -1021,6 +1022,9 @@ export interface ConversationView {
 }
 
 export interface InboxResult {
+  /** Durable direct-mailbox threads, separate from legacy per-prospect conversations. */
+  mailboxThreads?: MailboxThreadView[];
+  mailboxes?: MailboxHealthView[];
   replies: InboxReplyView[];
   /** Threaded matched view: one entry per prospect with a recorded reply. */
   conversations?: ConversationView[];
@@ -1093,6 +1097,8 @@ export type InboxSteerResult = InboxDraftReplyResult;
 
 /** POST /api/inbox/reply — send a (possibly edited) reply. */
 export interface InboxSendReplyRequest {
+  inboundEmailId?: string;
+  sendRequestId?: string;
   to: string;
   subject: string;
   body: string;
@@ -1109,6 +1115,46 @@ export interface InboxSendReplyResult {
   sent: boolean;
   id: string;
   costUsd: number;
+}
+
+export interface MailboxHealthView {
+  identityId: string;
+  address: string;
+  lastSyncAt: string | null;
+  status: "syncing" | "connected" | "error" | "disconnected";
+  error: string | null;
+  backfillRemaining: boolean;
+  messages: number;
+}
+
+export interface MailboxThreadView {
+  threadKey: string;
+  identityId: string;
+  mailboxAddress: string;
+  prospectId: number | null;
+  name: string | null;
+  company: string | null;
+  email: string;
+  unread: boolean;
+  archivedAt: string | null;
+  historyComplete: boolean;
+  lastActivityAt: string;
+  reply: InboxReplyView;
+  items: ConversationItem[];
+}
+
+export interface MailboxStateRequest {
+  threadKey: string;
+  observedReplyIds: string[];
+  read?: boolean;
+  archived?: boolean;
+}
+
+export interface MailboxConnectionRequest {
+  identityId: string;
+  address: string;
+  imap: { host: string; port: number; secure: boolean; user: string; pass: string };
+  smtp: { host: string; port: number; secure: boolean; user: string; pass: string };
 }
 
 export interface QueueCounts {

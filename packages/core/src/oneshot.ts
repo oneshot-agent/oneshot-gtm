@@ -41,6 +41,7 @@ import {
   sendGmailMessage,
 } from "./gmail.ts";
 import { gmailAccountFor, resolveIdentities } from "./identities.ts";
+import { listMailboxInbox, listMailboxBounces, sendMailboxReply } from "./mailbox.ts";
 import { sendViaSmartlead, smartleadApiKey } from "./smartlead.ts";
 import { parallelMap, withDeadline } from "./parallel.ts";
 import {
@@ -491,6 +492,9 @@ export async function sendEmail(input: SendEmailInput, ctx: CallContext) {
 }
 
 export interface ReplyEmailInput {
+  /** Direct mailbox: persisted inbound ID and idempotent client send request. */
+  inboundEmailId?: string;
+  sendRequestId?: string;
   /** Sender identity that RECEIVED the inbound email; the reply goes out from it. */
   identityId: string;
   to: string;
@@ -579,13 +583,39 @@ export async function replyEmail(input: ReplyEmailInput, ctx: CallContext) {
     return { result, receiptId };
   }
 
-  // Send-only v1: Smartlead identities produce no inbox rows, so no UI path
-  // reaches here — this guard exists so a future inbox source can't silently
-  // route a "reply" through the paid OneShot wallet from the wrong domain.
   if (identity.provider === "smartlead") {
-    throw new Error(
-      `replies from Smartlead identity '${identity.id}' aren't supported yet — reply in Smartlead's own inbox`,
-    );
+    if (!input.inboundEmailId || !input.sendRequestId)
+      throw new Error(
+        "A stored inbound message and send request ID are required for a threaded mailbox reply.",
+      );
+    const inbound = getLedger().mailboxes.get(input.inboundEmailId);
+    if (inbound?.identityId !== identity.id)
+      throw new Error("Inbound message does not belong to this sender identity.");
+    const sent = await sendMailboxReply(input.inboundEmailId, input.body, input.sendRequestId);
+    const result: EmailResult = {
+      status: "sent",
+      request_id: sent.messageId!,
+      cost: 0,
+      email: { id: sent.id, provider_message_id: sent.messageId!, status: "sent" },
+    };
+    const receiptId = recordCallReceipt({
+      ctx,
+      callType: "email.reply",
+      signedReceipt: {
+        provider: "smartlead",
+        transport: "smtp",
+        message_id: sent.messageId,
+        thread_id: sent.threadKey,
+        from: sent.from,
+        to: sent.to[0],
+        subject: sent.subject,
+      },
+      costUsd: 0,
+      oneshotRequestId: sent.messageId!,
+      senderIdentity: identity.id,
+    });
+    recordContactTouch(sent.to[0]!, ctx.playName);
+    return { result, receiptId };
   }
   if (identity.provider !== "oneshot") {
     throw new Error(`unknown email provider '${identity.provider}' for identity '${identity.id}'`);
@@ -1126,6 +1156,8 @@ async function listOneShotInbox(opts?: {
  * consumers (stop-on-reply reads `from` only) are unaffected.
  */
 export type AnnotatedInboxEmail = InboxEmail & {
+  /** Workspace-local association established from references or an explicit match. */
+  matched_prospect_id?: number;
   message_id?: string;
   source_identity_id?: string;
   /** Header-level autoresponder verdict (Gmail sources only — RFC 3834 et al.). */
@@ -1189,7 +1221,7 @@ export async function listInbox(opts?: {
   const sources: Array<{
     label: string;
     identityId: string;
-    fetch: () => Promise<InboxListResult>;
+    fetch: () => Promise<AnnotatedInboxListResult>;
   }> = [];
   const oneshotIdentity = identities.find((i) => i.provider === "oneshot");
   if (oneshotIdentity) {
@@ -1197,6 +1229,13 @@ export async function listInbox(opts?: {
       label: "oneshot",
       identityId: oneshotIdentity.id,
       fetch: () => listOneShotInbox(opts),
+    });
+  }
+  for (const identity of identities.filter((i) => i.provider === "smartlead")) {
+    sources.push({
+      label: identity.id,
+      identityId: identity.id,
+      fetch: () => listMailboxInbox(identity.id, opts),
     });
   }
   for (const identity of identities.filter((i) => i.provider === "gmail")) {
@@ -1252,7 +1291,12 @@ export async function listInbox(opts?: {
   if (ok.length === 0) {
     throw new Error("all inbox sources failed — check doctor for identity auth status");
   }
-  const failed = sources.filter((_, i) => results[i] == null).map((s) => s.label);
+  const failed = [
+    ...new Set([
+      ...sources.filter((_, i) => results[i] == null).map((s) => s.label),
+      ...ok.flatMap((r) => r.failed_sources ?? []),
+    ]),
+  ];
   return {
     ...mergeInboxWindow(ok, opts?.limit),
     ...(failed.length ? { failed_sources: failed } : {}),
@@ -1343,6 +1387,9 @@ function mergeInboxWindow(
     count: emails.length,
     has_more: results.some((r) => r.has_more) || all.length > max,
     agent_id: results.map((r) => r.agent_id).join("+"),
+    ...(results.some((r) => r.failed_sources?.length)
+      ? { failed_sources: [...new Set(results.flatMap((r) => r.failed_sources ?? []))] }
+      : {}),
   };
 }
 
@@ -1405,7 +1452,11 @@ export async function listBounces(opts?: {
       return [];
     }
   });
-  return { bounces: results.flat(), failedSources };
+  const mailbox = listMailboxBounces(opts);
+  return {
+    bounces: [...results.flat(), ...mailbox.bounces],
+    failedSources: [...failedSources, ...mailbox.failedSources],
+  };
 }
 
 export interface BuildSiteInput {

@@ -18,6 +18,7 @@ export * from "./gmail.ts";
 export * from "./gcal.ts";
 export * from "./freemail.ts";
 export * from "./smartlead.ts";
+export * from "./mailbox.ts";
 export * from "./canary.ts";
 export * from "./identities.ts";
 export * from "./send-routing.ts";

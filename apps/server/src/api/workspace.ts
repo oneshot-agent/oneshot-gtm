@@ -81,7 +81,7 @@ export type LaunchSpawn = (opts: {
 }) => void;
 
 const realSpawn: LaunchSpawn = ({ binPath, env }) => {
-  const proc = Bun.spawn([process.execPath, "run", binPath], {
+  const proc = Bun.spawn([process.execPath, "--no-env-file", "run", binPath], {
     env,
     stdout: "ignore",
     stderr: "ignore",
@@ -142,6 +142,11 @@ export async function workspaceLaunch(req: Request): Promise<Response> {
   // The parent may be running in dev mode; the child has no vite of its own
   // and must serve its static build instead of 302ing to the parent's.
   delete env["VITE_DEV_SERVER_URL"];
+  // A sibling workspace must resolve its own Smartlead account. Otherwise
+  // applySecretsToEnv's fill-blanks rule keeps the parent's key and silently
+  // lists/sends against the wrong account. --no-env-file also prevents Bun
+  // from reintroducing the repository's Smartlead key before config loads.
+  delete env["SMARTLEAD_API_KEY"];
 
   // fileURLToPath, not .pathname: a repo path with a space or non-ASCII char
   // would arrive percent-encoded and the child would die on a missing file.
