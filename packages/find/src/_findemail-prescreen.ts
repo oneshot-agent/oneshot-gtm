@@ -93,13 +93,19 @@ const DUD_DOMAINS: ReadonlySet<string> = new Set([
  */
 export function isDudDomain(domain: string | null | undefined): boolean {
   if (!domain) return true;
-  const d = domain
+  // String operations rather than `[/?#].*$` / `\.+$` regexes: this runs on
+  // provider-supplied domains too, and CodeQL flags those patterns as
+  // polynomial on adversarial input.
+  let d = domain
     .trim()
     .toLowerCase()
-    .replace(/^https?:\/\//, "")
-    .replace(/[/?#].*$/, "")
-    .replace(/^www\./, "")
-    .replace(/\.+$/, "");
+    .replace(/^https?:\/\//, "");
+  const cut = d.search(/[/?#]/);
+  if (cut >= 0) d = d.slice(0, cut);
+  d = d.replace(/^www\./, "");
+  let end = d.length;
+  while (end > 0 && d[end - 1] === ".") end--;
+  d = d.slice(0, end);
   if (d.length === 0) return true;
   if (DUD_DOMAINS.has(d)) return true;
   for (const dud of DUD_DOMAINS) {
