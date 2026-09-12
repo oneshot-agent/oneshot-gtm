@@ -876,3 +876,22 @@ export function recentSentEmailBodies(
   }
   return out;
 }
+
+/** Permanent manual-stop hold used only by breakup-revive's final send backstop. */
+export function breakupReviveHoldFor(
+  db: Database,
+  prospectId: number,
+): { reason: string; stopped_at: string } | null {
+  return (
+    (db
+      .query(
+        `SELECT stop_reason AS reason, stopped_at
+         FROM cadence_state
+         WHERE prospect_id = ? AND status = 'stopped'
+           AND stop_reason IN ('not_a_fit', 'do_not_contact')
+         ORDER BY stopped_at DESC
+         LIMIT 1`,
+      )
+      .get(prospectId) as { reason: string; stopped_at: string }) ?? null
+  );
+}
