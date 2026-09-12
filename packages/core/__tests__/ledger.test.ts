@@ -603,6 +603,100 @@ describe("Ledger cadence state", () => {
     expect(due).toHaveLength(1);
     expect(due[0]?.prospect_email).toBe("p1@x.com");
   });
+
+  it("skip transition: recordSequenceEvent('skipped') + advanceCadence moves the step and leaves the skip in history", () => {
+    const pid = ledger.upsertProspect({ name: "SK", email: "sk@x.com", source: "t" });
+    const firstDue = new Date().toISOString();
+    ledger.enrollCadence({ prospectId: pid, playName: "job-change", nextDueAt: firstDue });
+    expect(ledger.getCadence(pid, "job-change")?.current_step).toBe(0);
+
+    // Founder skips step 0 (e.g. a direct-mail step with nothing to send) —
+    // the skip is recorded as history at the step it replaces, then the
+    // cadence advances past it exactly as a real send would.
+    ledger.recordSequenceEvent({
+      prospectId: pid,
+      playName: "job-change",
+      stepIndex: 0,
+      channel: "email",
+      status: "skipped",
+      metadata: { reason: "skipped by founder" },
+    });
+    const nextDue = new Date(Date.now() + 3 * 24 * 3600 * 1000).toISOString();
+    ledger.advanceCadence({
+      prospectId: pid,
+      playName: "job-change",
+      newStep: 1,
+      nextDueAt: nextDue,
+    });
+
+    const cadence = ledger.getCadence(pid, "job-change");
+    expect(cadence?.current_step).toBe(1);
+    expect(cadence?.status).toBe("active");
+    expect(cadence?.next_due_at).toBe(nextDue);
+
+    // The skip survives in the play's history for this exact step index —
+    // listSequenceEventsForProspectPlay explicitly includes 'skipped' rows
+    // (unlike raw send counters) so the timeline can show why step 0 never went out.
+    const history = ledger.listSequenceEventsForProspectPlay(pid, "job-change");
+    expect(history).toHaveLength(1);
+    expect(history[0]?.status).toBe("skipped");
+    expect(history[0]?.step_index).toBe(0);
+  });
+
+  it("stop transition: stopCadence sets terminal state, clears in-flight fields, and expires a queued breakup-revive row", () => {
+    const pid = ledger.upsertProspect({ name: "ST", email: "st@x.com", source: "t" });
+    ledger.enrollCadence({
+      prospectId: pid,
+      playName: "job-change",
+      nextDueAt: new Date().toISOString(),
+    });
+    ledger.setCadenceDraft({
+      prospectId: pid,
+      playName: "job-change",
+      draft: { subject: "s", body: "b", flags: [], payload: null },
+    });
+    expect(ledger.getCadenceDraft({ prospectId: pid, playName: "job-change" })).not.toBeNull();
+
+    // A queued breakup-revive row for this prospect should be expired the
+    // moment the live cadence stops (it's the same signal: don't re-engage).
+    const queueId = ledger.enqueueTarget({
+      playName: "breakup-revive",
+      payload: { prospectId: pid },
+      dedupeKey: `prospect:${pid}`,
+      source: "t",
+    });
+    expect(queueId).not.toBeNull();
+    ledger.setQueueProspectId(queueId!, pid);
+
+    const changed = ledger.stopCadence({
+      prospectId: pid,
+      playName: "job-change",
+      reason: "not_a_fit",
+      note: "wrong stage",
+    });
+    expect(changed).toBe(true);
+
+    const cadence = ledger.getCadence(pid, "job-change");
+    expect(cadence?.status).toBe("stopped");
+    expect(cadence?.stop_reason).toBe("not_a_fit");
+    expect(cadence?.next_due_at).toBeNull();
+    // The draft is cleared as part of the same stop — a stopped cadence
+    // shouldn't leave a sendable preview hanging around.
+    expect(ledger.getCadenceDraft({ prospectId: pid, playName: "job-change" })).toBeNull();
+
+    // The breakup-revive backstop reads this exact hold via breakupReviveHoldFor.
+    const hold = ledger.breakupReviveHoldFor("st@x.com");
+    expect(hold?.reason).toBe("not_a_fit");
+    expect(hold?.stopped_at).toBeTruthy();
+
+    const queueRow = ledger.getQueueRow(queueId!);
+    expect(queueRow?.status).toBe("expired");
+
+    // A second stop call is a no-op (already-terminal cadence): no row to update.
+    expect(ledger.stopCadence({ prospectId: pid, playName: "job-change", reason: "other" })).toBe(
+      false,
+    );
+  });
 });
 
 describe("Ledger cadence sending marker", () => {

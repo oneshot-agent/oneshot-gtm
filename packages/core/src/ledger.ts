@@ -24,6 +24,35 @@ import {
   suppressionFor as delivSuppressionFor,
 } from "./delivery-health.ts";
 import { humanDecisionWhereSql } from "./labels.ts";
+import {
+  advanceCadence as cadAdvanceCadence,
+  breakupReviveHoldFor as cadBreakupReviveHoldFor,
+  type CadenceWithProspect,
+  clearCadenceDraft as cadClearCadenceDraft,
+  enrollCadence as cadEnrollCadence,
+  getCadence as cadGetCadence,
+  getCadenceDraft as cadGetCadenceDraft,
+  getCadencePlan as cadGetCadencePlan,
+  hasSentSequenceEvent as cadHasSentSequenceEvent,
+  latestSentPlayForProspect as cadLatestSentPlayForProspect,
+  listActiveCadences as cadListActiveCadences,
+  listAllCadences as cadListAllCadences,
+  listCadencesForProspect as cadListCadencesForProspect,
+  listSequenceEventsForCadences as cadListSequenceEventsForCadences,
+  listSequenceEventsForProspectPlay as cadListSequenceEventsForProspectPlay,
+  markLatestStepReplied as cadMarkLatestStepReplied,
+  recentSentEmailBodies as cadRecentSentEmailBodies,
+  recordCadenceReply as cadRecordCadenceReply,
+  recordCadenceSendError as cadRecordCadenceSendError,
+  recordLinkedInReply as cadRecordLinkedInReply,
+  recordProspectReply as cadRecordProspectReply,
+  recordSequenceEvent as cadRecordSequenceEvent,
+  saveCadencePlan as cadSaveCadencePlan,
+  setCadenceDraft as cadSetCadenceDraft,
+  setCadenceStatus as cadSetCadenceStatus,
+  stopCadence as cadStopCadence,
+  sweepStaleCadenceSends as cadSweepStaleCadenceSends,
+} from "./ledger-cadence.ts";
 import { LedgerCache } from "./ledger-cache.ts";
 import { migrateLedgerSchema } from "./ledger-schema.ts";
 import { MailboxStore } from "./mailbox-store.ts";
@@ -206,55 +235,13 @@ function safeParseJsonArray(raw: string): unknown[] {
   }
 }
 
-/** A `cadence_state` row joined with the prospect details needed by cadence surfaces. */
-export interface CadenceWithProspect {
-  prospect_id: number;
-  play_name: string;
-  current_step: number;
-  status: string;
-  enrolled_at: string;
-  next_due_at: string | null;
-  last_polled_at: string | null;
-  stop_reason: string | null;
-  stop_note: string | null;
-  stopped_at: string | null;
-  next_step_draft_json: string | null;
-  next_step_drafted_at: string | null;
-  /**
-   * ISO timestamp when a fire-and-forget send was claimed for this cadence.
-   * Null = no send in flight. Survives server restart so the UI's "sending"
-   * spinner doesn't get stranded by a `bun --watch` reload mid-SDK-call.
-   */
-  sending_started_at: string | null;
-  /** Last send-failure message (truncated); cleared on any forward progress.
-   *  Non-null = the most recent send attempt failed and nothing has succeeded
-   *  since — drives the "send failed · retrying" row indicator. */
-  last_send_error: string | null;
-  /** ISO timestamp of `last_send_error`. */
-  last_send_error_at: string | null;
-  prospect_email: string | null;
-  prospect_name: string | null;
-  prospect_company: string | null;
-  prospect_title: string | null;
-  prospect_linkedin_url: string | null;
-  reply_channel: "email" | "linkedin" | null;
-  replied_at: string | null;
-}
-
-/**
- * Subject as a thread key: reply/forward prefixes stripped (en/de/fr/es/sv/
- * pt/nl variants, repeated), case-folded, whitespace collapsed. Empty → null.
- */
-function normalizeSubject(subject: string | null | undefined): string | null {
-  if (!subject) return null;
-  let s = subject.trim();
-  // Each `\s*` is reachable by exactly one path, so a run of spaces can't be
-  // split between two of them (CodeQL: polynomial backtracking).
-  const prefix = /^(?:re|fw|fwd|aw|wg|sv|vs|rv|enc|tr|antw)(?:\s*\[\d+\])?\s*:\s*/i;
-  while (prefix.test(s)) s = s.replace(prefix, "");
-  s = s.replace(/\s+/g, " ").trim().toLowerCase();
-  return s.length > 0 ? s : null;
-}
+// `CadenceWithProspect` and all cadence create/lookup/advance/skip/stop/
+// disposition persistence + their SQL live in ledger-cadence.ts (#633) — the
+// next slice of the ledger split tracked in ROADMAP.md, following the
+// delivery-health extraction in #617. Re-exported here so every existing
+// `import { CadenceWithProspect } from "./ledger.ts"` (and the package's
+// `export * from "./ledger.ts"` barrel) keeps resolving unchanged.
+export type { CadenceWithProspect } from "./ledger-cadence.ts";
 
 /**
  * Sentinel written into `inbox_replies.intent` by `claimInboxReplyForTriage`
@@ -363,15 +350,14 @@ export class Ledger {
       )
       .run(id);
   }
+  // getCadencePlan/saveCadencePlan (the direct-mail cadence schedule) live in
+  // ledger-cadence.ts (#633) alongside the rest of the cadence persistence.
   getCadencePlan(
     prospectId: number,
     playName: string,
     enrollment: string,
   ): import("./types.ts").CadencePlanStep[] | null {
-    const row = this.db
-      .query("SELECT steps FROM cadence_plans WHERE prospect_id=? AND play_name=? AND enrollment=?")
-      .get(prospectId, playName, enrollment) as { steps: string } | null;
-    return row ? JSON.parse(row.steps) : null;
+    return cadGetCadencePlan(this.db, prospectId, playName, enrollment);
   }
   saveCadencePlan(
     prospectId: number,
@@ -379,11 +365,7 @@ export class Ledger {
     enrollment: string,
     steps: import("./types.ts").CadencePlanStep[],
   ): void {
-    this.db
-      .query(
-        "INSERT INTO cadence_plans VALUES(?,?,?,?) ON CONFLICT(prospect_id,play_name,enrollment) DO UPDATE SET steps=excluded.steps",
-      )
-      .run(prospectId, playName, enrollment, JSON.stringify(steps));
+    cadSaveCadencePlan(this.db, prospectId, playName, enrollment, steps);
   }
   setMailAddress(key: string, address: PostalAddress, source = "manual"): void {
     this.db
@@ -549,70 +531,21 @@ export class Ledger {
     }
   }
 
+  // Cadence create/lookup/advance/skip/stop/disposition persistence (and the
+  // cadence-specific transactions below) live in ledger-cadence.ts (#633) —
+  // the next slice of the ledger split tracked in ROADMAP.md, following the
+  // delivery-health extraction in #617. `Ledger` delegates every cadence
+  // method to it, same signatures, same SQL, same transaction boundaries.
   enrollCadence(input: { prospectId: number; playName: string; nextDueAt: string }): void {
-    this.db
-      .prepare(
-        `INSERT INTO cadence_state(prospect_id, play_name, current_step, status, next_due_at)
-         VALUES(?, ?, 0, 'active', ?)
-         ON CONFLICT(prospect_id, play_name) DO UPDATE SET
-           status = 'active',
-           next_due_at = excluded.next_due_at,
-           last_polled_at = NULL,
-           stop_reason = NULL,
-           stop_note = NULL,
-           stopped_at = NULL,
-           last_send_error = NULL,
-           last_send_error_at = NULL
-         WHERE cadence_state.status != 'stopped'`,
-      )
-      .run(input.prospectId, input.playName, input.nextDueAt);
+    cadEnrollCadence(this.db, input);
   }
 
   listActiveCadences(opts: { dueByIso?: string } = {}): CadenceWithProspect[] {
-    const where: string[] = ["c.status = 'active'"];
-    const args: unknown[] = [];
-    if (opts.dueByIso) {
-      where.push("(c.next_due_at IS NULL OR c.next_due_at <= ?)");
-      args.push(opts.dueByIso);
-    }
-    const sql = `
-      SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company,
-             p.title AS prospect_title, p.linkedin_url AS prospect_linkedin_url,
-             (SELECT channel FROM (
-                SELECT 'email' AS channel, received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
-                UNION ALL
-                SELECT channel, occurred_at AS at FROM channel_events WHERE prospect_id = p.id AND event_type = 'reply'
-              ) ORDER BY at DESC LIMIT 1) AS reply_channel,
-             (SELECT at FROM (
-                SELECT received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
-                UNION ALL
-                SELECT occurred_at AS at FROM channel_events WHERE prospect_id = p.id AND event_type = 'reply'
-              ) ORDER BY at DESC LIMIT 1) AS replied_at
-      FROM cadence_state c
-      JOIN prospects p ON p.id = c.prospect_id
-      WHERE ${where.join(" AND ")}
-      ORDER BY c.next_due_at ASC NULLS LAST
-    `;
-    return this.db.query(sql).all(...(args as never[])) as never;
+    return cadListActiveCadences(this.db, opts);
   }
 
   listAllCadences(): CadenceWithProspect[] {
-    const sql = `
-      SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company,
-             p.title AS prospect_title, p.linkedin_url AS prospect_linkedin_url,
-             (SELECT channel FROM (
-                SELECT 'email' AS channel, received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
-                UNION ALL SELECT channel, occurred_at AS at FROM channel_events WHERE prospect_id = p.id AND event_type = 'reply'
-              ) ORDER BY at DESC LIMIT 1) AS reply_channel,
-             (SELECT at FROM (
-                SELECT received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
-                UNION ALL SELECT occurred_at AS at FROM channel_events WHERE prospect_id = p.id AND event_type = 'reply'
-              ) ORDER BY at DESC LIMIT 1) AS replied_at
-      FROM cadence_state c
-      JOIN prospects p ON p.id = c.prospect_id
-      ORDER BY c.status ASC, c.next_due_at ASC NULLS LAST
-    `;
-    return this.db.query(sql).all() as never;
+    return cadListAllCadences(this.db);
   }
 
   /**
@@ -621,43 +554,12 @@ export class Ledger {
    * `listAllCadences().find(...)` scan callers used to do per row.
    */
   getCadence(prospectId: number, playName: string): CadenceWithProspect | null {
-    const sql = `
-      SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company,
-             p.title AS prospect_title, p.linkedin_url AS prospect_linkedin_url,
-             (SELECT channel FROM (
-                SELECT 'email' AS channel, received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
-                UNION ALL SELECT channel, occurred_at AS at FROM channel_events WHERE prospect_id = p.id AND event_type = 'reply'
-              ) ORDER BY at DESC LIMIT 1) AS reply_channel,
-             (SELECT at FROM (
-                SELECT received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
-                UNION ALL SELECT occurred_at AS at FROM channel_events WHERE prospect_id = p.id AND event_type = 'reply'
-              ) ORDER BY at DESC LIMIT 1) AS replied_at
-      FROM cadence_state c
-      JOIN prospects p ON p.id = c.prospect_id
-      WHERE c.prospect_id = ? AND c.play_name = ?
-    `;
-    return (this.db.query(sql).get(prospectId, playName) as CadenceWithProspect) ?? null;
+    return cadGetCadence(this.db, prospectId, playName);
   }
 
   /** All cadences for one prospect — index seek on cadence_state.prospect_id (PK prefix). */
   listCadencesForProspect(prospectId: number): CadenceWithProspect[] {
-    const sql = `
-      SELECT c.*, p.email AS prospect_email, p.name AS prospect_name, p.company AS prospect_company,
-             p.title AS prospect_title, p.linkedin_url AS prospect_linkedin_url,
-             (SELECT channel FROM (
-                SELECT 'email' AS channel, received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
-                UNION ALL SELECT channel, occurred_at AS at FROM channel_events WHERE prospect_id = p.id AND event_type = 'reply'
-              ) ORDER BY at DESC LIMIT 1) AS reply_channel,
-             (SELECT at FROM (
-                SELECT received_at AS at FROM inbox_replies WHERE prospect_id = p.id AND coalesce(kind,'human') = 'human'
-                UNION ALL SELECT occurred_at AS at FROM channel_events WHERE prospect_id = p.id AND event_type = 'reply'
-              ) ORDER BY at DESC LIMIT 1) AS replied_at
-      FROM cadence_state c
-      JOIN prospects p ON p.id = c.prospect_id
-      WHERE c.prospect_id = ?
-      ORDER BY c.status ASC, c.next_due_at ASC NULLS LAST
-    `;
-    return this.db.query(sql).all(prospectId) as never;
+    return cadListCadencesForProspect(this.db, prospectId);
   }
 
   advanceCadence(input: {
@@ -666,22 +568,7 @@ export class Ledger {
     newStep: number;
     nextDueAt: string | null;
   }): void {
-    // Also clear any persisted next-step draft AND the sending marker — the
-    // draft was for the OLD next step (stale after advance), and a successful
-    // advance means the in-flight send for this row is done. /cadences will
-    // surface a fresh "no preview yet" state.
-    // A successful advance also clears any prior send-failure marker (the send
-    // that just advanced us obviously succeeded).
-    this.db
-      .prepare(
-        `UPDATE cadence_state
-         SET current_step = ?, next_due_at = ?, last_polled_at = datetime('now'),
-             next_step_draft_json = NULL, next_step_drafted_at = NULL,
-             sending_started_at = NULL,
-             last_send_error = NULL, last_send_error_at = NULL
-         WHERE prospect_id = ? AND play_name = ?`,
-      )
-      .run(input.newStep, input.nextDueAt, input.prospectId, input.playName);
+    cadAdvanceCadence(this.db, input);
   }
 
   /**
@@ -690,13 +577,7 @@ export class Ledger {
    * setCadenceStatus on any forward progress. No-op if the row is gone.
    */
   recordCadenceSendError(input: { prospectId: number; playName: string; error: string }): void {
-    this.db
-      .prepare(
-        `UPDATE cadence_state
-         SET last_send_error = ?, last_send_error_at = datetime('now')
-         WHERE prospect_id = ? AND play_name = ?`,
-      )
-      .run(input.error.slice(0, 200), input.prospectId, input.playName);
+    cadRecordCadenceSendError(this.db, input);
   }
 
   setCadenceStatus(input: {
@@ -704,33 +585,7 @@ export class Ledger {
     playName: string;
     status: "active" | "replied" | "breakup" | "completed" | "bounced" | "off-icp" | "unsubscribed";
   }): void {
-    // Non-active terminal states clear the persisted draft AND any send
-    // marker — a replied / breakup / completed / bounced cadence shouldn't have
-    // a sendable preview hanging around or a stuck "sending" flag. A reply /
-    // breakup / completion / bounce also clears any stale send-failure marker
-    // (for a bounce that marker is actively misleading: it reads as
-    // "retrying", but a dead address will never accept a retry).
-    this.db
-      .prepare(
-        `UPDATE cadence_state
-         SET status = ?,
-             next_step_draft_json = CASE WHEN ? = 'active' THEN next_step_draft_json ELSE NULL END,
-             next_step_drafted_at = CASE WHEN ? = 'active' THEN next_step_drafted_at ELSE NULL END,
-             sending_started_at = CASE WHEN ? = 'active' THEN sending_started_at ELSE NULL END,
-             last_send_error = CASE WHEN ? = 'active' THEN last_send_error ELSE NULL END,
-             last_send_error_at = CASE WHEN ? = 'active' THEN last_send_error_at ELSE NULL END
-         WHERE prospect_id = ? AND play_name = ?`,
-      )
-      .run(
-        input.status,
-        input.status,
-        input.status,
-        input.status,
-        input.status,
-        input.status,
-        input.prospectId,
-        input.playName,
-      );
+    cadSetCadenceStatus(this.db, input);
   }
 
   stopCadence(input: {
@@ -739,25 +594,7 @@ export class Ledger {
     reason: "bad_timing" | "other" | "not_a_fit" | "do_not_contact";
     note?: string;
   }): boolean {
-    let changed = false;
-    this.db.transaction(() => {
-      const result = this.db
-        .prepare(
-          `UPDATE cadence_state
-           SET status = 'stopped', stop_reason = ?, stop_note = ?, stopped_at = datetime('now'),
-               next_due_at = NULL,
-               next_step_draft_json = NULL, next_step_drafted_at = NULL,
-               sending_started_at = NULL, last_send_error = NULL, last_send_error_at = NULL
-           WHERE prospect_id = ? AND play_name = ? AND status = 'active'
-             AND sending_started_at IS NULL`,
-        )
-        .run(input.reason, input.note?.trim() || null, input.prospectId, input.playName);
-      changed = result.changes > 0;
-      if (changed) {
-        this.expireBreakupReviveQueue(input.prospectId, "cadence stopped");
-      }
-    })();
-    return changed;
+    return cadStopCadence(this.db, input);
   }
 
   setCadenceDraft(input: {
@@ -770,15 +607,7 @@ export class Ledger {
       payload: unknown;
     };
   }): void {
-    const draftedAtIso = new Date().toISOString();
-    const json = JSON.stringify({ ...input.draft, draftedAt: draftedAtIso });
-    this.db
-      .prepare(
-        `UPDATE cadence_state
-         SET next_step_draft_json = ?, next_step_drafted_at = ?
-         WHERE prospect_id = ? AND play_name = ?`,
-      )
-      .run(json, draftedAtIso, input.prospectId, input.playName);
+    cadSetCadenceDraft(this.db, input);
   }
 
   getCadenceDraft(input: { prospectId: number; playName: string }): {
@@ -788,34 +617,11 @@ export class Ledger {
     payload: unknown;
     draftedAt: string;
   } | null {
-    const row = this.db
-      .query(
-        `SELECT next_step_draft_json AS j FROM cadence_state
-         WHERE prospect_id = ? AND play_name = ?`,
-      )
-      .get(input.prospectId, input.playName) as { j: string | null } | null;
-    if (!row?.j) return null;
-    try {
-      return JSON.parse(row.j) as {
-        subject: string;
-        body: string;
-        flags: string[];
-        payload: unknown;
-        draftedAt: string;
-      };
-    } catch {
-      return null;
-    }
+    return cadGetCadenceDraft(this.db, input);
   }
 
   clearCadenceDraft(input: { prospectId: number; playName: string }): void {
-    this.db
-      .prepare(
-        `UPDATE cadence_state
-         SET next_step_draft_json = NULL, next_step_drafted_at = NULL
-         WHERE prospect_id = ? AND play_name = ?`,
-      )
-      .run(input.prospectId, input.playName);
+    cadClearCadenceDraft(this.db, input);
   }
 
   /**
@@ -1026,60 +832,7 @@ export class Ledger {
     ageMs: number;
     actuallySent: boolean;
   }> {
-    const cutoffMs = input.now.getTime() - input.maxAgeMs;
-    const rows = this.db
-      .query(
-        `SELECT prospect_id, play_name, current_step, sending_started_at
-         FROM cadence_state
-         WHERE sending_started_at IS NOT NULL`,
-      )
-      .all() as Array<{
-      prospect_id: number;
-      play_name: string;
-      current_step: number;
-      sending_started_at: string;
-    }>;
-    const swept: Array<{
-      prospectId: number;
-      playName: string;
-      startedAt: string;
-      ageMs: number;
-      actuallySent: boolean;
-    }> = [];
-    const checkEvent = this.db.prepare(
-      `SELECT 1 FROM sequence_events
-       WHERE prospect_id = ? AND play_name = ? AND step_index = ?
-         AND status IN ('sent','delivered','replied')
-       LIMIT 1`,
-    );
-    const clear = this.db.prepare(
-      `UPDATE cadence_state
-       SET sending_started_at = NULL
-       WHERE prospect_id = ? AND play_name = ?`,
-    );
-    for (const row of rows) {
-      const startedMs = new Date(row.sending_started_at).getTime();
-      if (Number.isFinite(startedMs) && startedMs > cutoffMs) continue; // still fresh
-      const ageMs = Number.isFinite(startedMs) ? input.now.getTime() - startedMs : -1;
-      // The in-flight step's step_index is `current_step + 1` (= nextIndex in the
-      // engine): the marker is claimed while current_step still holds the OLD
-      // value, and `recordSequenceEvent` writes at nextIndex. So "did the
-      // in-flight send land?" checks current_step + 1. We also check current_step
-      // to cover the race where advanceCadence already ran (current_step moved to
-      // the sent step) but the marker hadn't been cleared yet.
-      const sentInflight = checkEvent.get(row.prospect_id, row.play_name, row.current_step + 1);
-      const sentAfterAdvance = checkEvent.get(row.prospect_id, row.play_name, row.current_step);
-      const actuallySent = sentInflight != null || sentAfterAdvance != null;
-      clear.run(row.prospect_id, row.play_name);
-      swept.push({
-        prospectId: row.prospect_id,
-        playName: row.play_name,
-        startedAt: row.sending_started_at,
-        ageMs,
-        actuallySent,
-      });
-    }
-    return swept;
+    return cadSweepStaleCadenceSends(this.db, input);
   }
 
   findProspectByEmail(email: string): { id: number } | null {
@@ -1150,74 +903,7 @@ export class Ledger {
     cadencesStopped: number;
     inFlightSends: number;
   } {
-    return this.db.transaction(() => {
-      const existing = this.db
-        .query(`SELECT * FROM channel_events WHERE source = ? AND external_event_id = ?`)
-        .get(input.source, input.externalEventId) as ChannelEventRecord | null;
-      if (existing) {
-        const inFlight = this.db
-          .query(
-            `SELECT COUNT(*) AS n FROM cadence_state
-             WHERE prospect_id = ? AND sending_started_at IS NOT NULL`,
-          )
-          .get(existing.prospect_id) as { n: number };
-        return {
-          duplicate: true,
-          prospectId: existing.prospect_id,
-          cadencesStopped: 0,
-          inFlightSends: inFlight.n,
-        };
-      }
-      const live = this.db
-        .query(
-          `SELECT sending_started_at FROM cadence_state
-           WHERE prospect_id = ? AND status IN ('active','paused')`,
-        )
-        .all(input.prospectId) as Array<{ sending_started_at: string | null }>;
-      this.db
-        .prepare(
-          `INSERT INTO channel_events
-             (source, external_event_id, prospect_id, channel, event_type, occurred_at, body)
-           VALUES (?, ?, ?, 'linkedin', 'reply', ?, ?)`,
-        )
-        .run(
-          input.source,
-          input.externalEventId,
-          input.prospectId,
-          input.occurredAt,
-          input.body?.trim() || null,
-        );
-      this.db
-        .prepare(
-          `UPDATE cadence_state
-           SET status = 'replied', next_due_at = NULL,
-               next_step_draft_json = NULL, next_step_drafted_at = NULL,
-               last_send_error = NULL, last_send_error_at = NULL
-           WHERE prospect_id = ? AND status IN ('active','paused')`,
-        )
-        .run(input.prospectId);
-      this.expireBreakupReviveQueue(input.prospectId, "prospect replied");
-      return {
-        duplicate: false,
-        prospectId: input.prospectId,
-        cadencesStopped: live.length,
-        inFlightSends: live.filter((row) => row.sending_started_at != null).length,
-      };
-    })();
-  }
-
-  private expireBreakupReviveQueue(prospectId: number, reason: string): void {
-    this.db
-      .prepare(
-        `UPDATE target_queue
-         SET status = 'expired',
-             notes = CASE WHEN notes IS NULL OR notes = '' THEN ?
-                          ELSE notes || ' · ' || ? END
-         WHERE (prospect_id = ? OR dedupe_key = ?)
-           AND play_name = 'breakup-revive'
-           AND status IN ('pending', 'approved')`,
-      )
-      .run(`expired: ${reason}`, `expired: ${reason}`, prospectId, `prospect:${prospectId}`);
+    return cadRecordLinkedInReply(this.db, input);
   }
 
   /**
@@ -1633,18 +1319,7 @@ export class Ledger {
   breakupReviveHoldFor(email: string): { reason: string; stopped_at: string } | null {
     const prospect = this.findProspectByEmail(email);
     if (!prospect) return null;
-    return (
-      (this.db
-        .query(
-          `SELECT stop_reason AS reason, stopped_at
-           FROM cadence_state
-           WHERE prospect_id = ? AND status = 'stopped'
-             AND stop_reason IN ('not_a_fit', 'do_not_contact')
-           ORDER BY stopped_at DESC
-           LIMIT 1`,
-        )
-        .get(prospect.id) as { reason: string; stopped_at: string }) ?? null
-    );
+    return cadBreakupReviveHoldFor(this.db, prospect.id);
   }
 
   /** Bounce counts per sending identity since `sinceIso` — the doctor check's numerator. */
@@ -1745,29 +1420,7 @@ export class Ledger {
    * prospect who answered and skew the share.
    */
   recentSentEmailBodies(opts: { playName: string; stepIndex: number; limit?: number }): string[] {
-    const limit = Math.max(1, Math.min(opts.limit ?? 40, 200));
-    const rows = this.db
-      .query(
-        `SELECT metadata_json FROM sequence_events
-         WHERE play_name = ? AND step_index = ?
-           AND status IN ('sent', 'delivered', 'replied')
-           AND channel = 'email' AND metadata_json IS NOT NULL
-           AND json_valid(metadata_json)
-           AND trim(coalesce(json_extract(metadata_json, '$.body'), '')) != ''
-         ORDER BY created_at DESC, id DESC LIMIT ?`,
-      )
-      .all(opts.playName, opts.stepIndex, limit) as Array<{ metadata_json: string }>;
-    const out: string[] = [];
-    for (const row of rows) {
-      let body: unknown;
-      try {
-        body = (JSON.parse(row.metadata_json) as { body?: unknown }).body;
-      } catch {
-        continue;
-      }
-      if (typeof body === "string" && body.trim()) out.push(body);
-    }
-    return out;
+    return cadRecentSentEmailBodies(this.db, opts);
   }
 
   getReceipt(id: number): ReceiptRecord | null {
@@ -2352,21 +2005,7 @@ export class Ledger {
      */
     bouncedAt?: string;
   }): number {
-    const stmt = this.db.prepare(`
-      INSERT INTO sequence_events(prospect_id, play_name, step_index, channel, status, metadata_json, receipt_id, bounced_at)
-      VALUES(?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    const result = stmt.run(
-      input.prospectId,
-      input.playName,
-      input.stepIndex,
-      input.channel,
-      input.status,
-      input.metadata ? JSON.stringify(input.metadata) : null,
-      input.receiptId ?? null,
-      input.bouncedAt ?? null,
-    );
-    return Number(result.lastInsertRowid);
+    return cadRecordSequenceEvent(this.db, input);
   }
 
   /** Persist the RoCS value tag (JSON `{type,amount?,label?}`) on a single receipt. */
@@ -2405,16 +2044,7 @@ export class Ledger {
    * the re-send on the next due tick.
    */
   hasSentSequenceEvent(prospectId: number, playName: string, stepIndex: number): boolean {
-    return (
-      this.db
-        .prepare(
-          `SELECT 1 FROM sequence_events
-           WHERE prospect_id = ? AND play_name = ? AND step_index = ?
-             AND status IN ('sent','delivered','replied')
-           LIMIT 1`,
-        )
-        .get(prospectId, playName, stepIndex) != null
-    );
+    return cadHasSentSequenceEvent(this.db, prospectId, playName, stepIndex);
   }
 
   /**
@@ -2437,34 +2067,7 @@ export class Ledger {
     playName: string;
     repliedAt?: string | null;
   }): boolean {
-    // datetime(?) normalizes any SQLite-recognized input (an ISO 8601 string
-    // with 'T'/'Z', or the 'YYYY-MM-DD HH:MM:SS' form) to the latter — the
-    // same format datetime('now') already writes everywhere else in this
-    // table. Storing repliedAt un-normalized would make replied_at sort
-    // lexicographically wrong against created_at / sinceIso / untilIso
-    // (ISO's 'T' separator sorts after the space datetime('now') uses).
-    const result = this.db
-      .prepare(
-        `UPDATE sequence_events SET status = 'replied', replied_at = datetime(COALESCE(?, 'now'))
-         WHERE id = (
-           SELECT id FROM sequence_events
-           WHERE prospect_id = ? AND play_name = ? AND channel = 'email'
-             AND status IN ('sent','delivered')
-           ORDER BY created_at DESC, id DESC LIMIT 1
-         )
-         AND NOT EXISTS (
-           SELECT 1 FROM sequence_events
-           WHERE prospect_id = ? AND play_name = ? AND status = 'replied'
-         )`,
-      )
-      .run(
-        input.repliedAt ?? null,
-        input.prospectId,
-        input.playName,
-        input.prospectId,
-        input.playName,
-      );
-    return result.changes > 0;
+    return cadMarkLatestStepReplied(this.db, input);
   }
 
   /**
@@ -2482,19 +2085,7 @@ export class Ledger {
     newlyReplied: boolean;
     eventRecorded: boolean;
   } {
-    return this.db.transaction(() => {
-      const cad = this.getCadence(input.prospectId, input.playName);
-      const newlyReplied = cad?.status === "active" || cad?.status === "paused";
-      if (newlyReplied) {
-        this.markCadenceReplied(input.prospectId, input.playName);
-      }
-      const eventRecorded = this.markLatestStepReplied({
-        prospectId: input.prospectId,
-        playName: input.playName,
-        repliedAt: input.repliedAt,
-      });
-      return { newlyReplied, eventRecorded };
-    })();
+    return cadRecordCadenceReply(this.db, input);
   }
 
   /**
@@ -2511,47 +2102,7 @@ export class Ledger {
     prospectId: number,
     opts?: { subject?: string | null; repliedAt?: string | null },
   ): Array<{ playName: string; newlyReplied: boolean; eventRecorded: boolean }> {
-    return this.db.transaction(() => {
-      const credited = this.latestSentPlayForProspect(prospectId, opts?.subject);
-      const out = new Map<string, { newlyReplied: boolean; eventRecorded: boolean }>();
-      for (const cad of this.listCadencesForProspect(prospectId)) {
-        const live = cad.status === "active" || cad.status === "paused";
-        if (live) {
-          this.markCadenceReplied(prospectId, cad.play_name);
-        }
-        out.set(cad.play_name, { newlyReplied: live, eventRecorded: false });
-      }
-      if (credited) {
-        const eventRecorded = this.markLatestStepReplied({
-          prospectId,
-          playName: credited,
-          repliedAt: opts?.repliedAt,
-        });
-        out.set(credited, {
-          newlyReplied: out.get(credited)?.newlyReplied ?? false,
-          eventRecorded,
-        });
-      }
-      this.expireBreakupReviveQueue(prospectId, "prospect replied");
-      return [...out].map(([playName, r]) => ({
-        playName,
-        newlyReplied: r.newlyReplied,
-        eventRecorded: r.eventRecorded,
-      }));
-    })();
-  }
-
-  /** Stop future work on one live cadence without hiding a send already handed to a provider. */
-  private markCadenceReplied(prospectId: number, playName: string): void {
-    this.db
-      .prepare(
-        `UPDATE cadence_state
-         SET status = 'replied', next_due_at = NULL,
-             next_step_draft_json = NULL, next_step_drafted_at = NULL,
-             last_send_error = NULL, last_send_error_at = NULL
-         WHERE prospect_id = ? AND play_name = ? AND status IN ('active','paused')`,
-      )
-      .run(prospectId, playName);
+    return cadRecordProspectReply(this.db, prospectId, opts);
   }
 
   /**
@@ -2562,30 +2113,7 @@ export class Ledger {
    * credited with an email reply. Null if never emailed.
    */
   latestSentPlayForProspect(prospectId: number, replySubject?: string | null): string | null {
-    const wanted = normalizeSubject(replySubject);
-    if (wanted) {
-      const rows = this.db
-        .query(
-          `SELECT play_name, json_extract(metadata_json, '$.subject') AS subject
-           FROM sequence_events
-           WHERE prospect_id = ? AND channel = 'email'
-             AND status IN ('sent','delivered','replied')
-             AND json_extract(metadata_json, '$.subject') IS NOT NULL
-           ORDER BY created_at DESC, id DESC`,
-        )
-        .all(prospectId) as Array<{ play_name: string; subject: string }>;
-      const hit = rows.find((r) => normalizeSubject(r.subject) === wanted);
-      if (hit) return hit.play_name;
-    }
-    const row = this.db
-      .query(
-        `SELECT play_name FROM sequence_events
-         WHERE prospect_id = ? AND channel = 'email'
-           AND status IN ('sent','delivered','replied')
-         ORDER BY created_at DESC, id DESC LIMIT 1`,
-      )
-      .get(prospectId) as { play_name: string } | null;
-    return row?.play_name ?? null;
+    return cadLatestSentPlayForProspect(this.db, prospectId, replySubject);
   }
 
   getPollWatermark(key: string): string | null {
@@ -2611,14 +2139,7 @@ export class Ledger {
    * sends-only; so does every counter.
    */
   listSequenceEventsForProspectPlay(prospectId: number, playName: string): SequenceEventRecord[] {
-    return this.db
-      .query(
-        `SELECT * FROM sequence_events
-         WHERE prospect_id = ? AND play_name = ?
-           AND status IN ('sent','delivered','replied','skipped')
-         ORDER BY step_index ASC, id ASC`,
-      )
-      .all(prospectId, playName) as SequenceEventRecord[];
+    return cadListSequenceEventsForProspectPlay(this.db, prospectId, playName);
   }
 
   /** Every sent step for a prospect across ALL plays — the outreach half of a conversation timeline. */
@@ -2641,31 +2162,7 @@ export class Ledger {
   listSequenceEventsForCadences(
     pairs: ReadonlyArray<{ prospectId: number; playName: string }>,
   ): Map<string, SequenceEventRecord[]> {
-    const map = new Map<string, SequenceEventRecord[]>();
-    if (pairs.length === 0) return map;
-    const conditions = pairs.map(() => "(prospect_id = ? AND play_name = ?)").join(" OR ");
-    const args: unknown[] = [];
-    for (const p of pairs) {
-      args.push(p.prospectId, p.playName);
-    }
-    const rows = this.db
-      .query(
-        `SELECT * FROM sequence_events
-         WHERE (${conditions})
-           AND status IN ('sent','delivered','replied','skipped')
-         ORDER BY prospect_id ASC, play_name ASC, step_index ASC, id ASC`,
-      )
-      .all(...(args as never[])) as SequenceEventRecord[];
-    for (const r of rows) {
-      const key = `${r.prospect_id}|${r.play_name}`;
-      let list = map.get(key);
-      if (!list) {
-        list = [];
-        map.set(key, list);
-      }
-      list.push(r);
-    }
-    return map;
+    return cadListSequenceEventsForCadences(this.db, pairs);
   }
 
   recordInterview(input: Omit<InterviewRecord, "id" | "created_at">): number {
