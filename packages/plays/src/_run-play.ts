@@ -592,9 +592,9 @@ export function lintStaleEmail(target: unknown): string[] {
     .trim()
     .toLowerCase();
   const domainIsFinders = finderDomain !== "" && emailDomain === finderDomain;
-  const finderCompanyEnded = research.organizations.some(
-    (o) => !o.current && companyKey(o.name) === finderCompany,
-  );
+  const matching = research.organizations.filter((o) => companyKey(o.name) === finderCompany);
+  // Someone who left and later returned to the finder's company still works there.
+  const finderCompanyEnded = matching.length > 0 && matching.every((o) => !o.current);
   return domainIsFinders && finderCompanyEnded ? ["email-at-former-employer"] : [];
 }
 

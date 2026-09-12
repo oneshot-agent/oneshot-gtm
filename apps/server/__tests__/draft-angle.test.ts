@@ -168,3 +168,39 @@ it("rejects a generated angle built on a negation contrast and leaves the draft 
     draftAngleFor({ ...base, target: { yourEdge: "first // second" }, rotate: true }),
   ).rejects.toThrow(/negation contrast/);
 });
+
+it("puts the researched person ahead of long caller research so the 600-char window still shows it", async () => {
+  const seen: string[] = [];
+  const plays = await import("@oneshot-gtm/plays");
+  const original = plays.describeTargetForAngle;
+  (plays as unknown as { describeTargetForAngle: unknown }).describeTargetForAngle = (
+    t: object,
+    r?: string | null,
+  ) => {
+    seen.push(r ?? "");
+    return (original as (t: object, r?: string | null) => string)(t, r);
+  };
+  try {
+    await draftAngleFor({
+      ...base,
+      research: "x".repeat(2000),
+      target: {
+        ...base.target,
+        personResearch: {
+          version: 1,
+          status: "partial",
+          researchedAt: "2026-09-12T00:00:00.000Z",
+          seed: {},
+          currentRole: { title: "Founder", company: "WildMuse.App" },
+          organizations: [],
+          costUsd: 0,
+          cached: false,
+        },
+      },
+    });
+  } finally {
+    (plays as unknown as { describeTargetForAngle: unknown }).describeTargetForAngle = original;
+  }
+  expect(seen[0]?.indexOf("WildMuse.App")).toBeGreaterThanOrEqual(0);
+  expect(seen[0]!.indexOf("WildMuse.App")).toBeLessThan(600);
+});

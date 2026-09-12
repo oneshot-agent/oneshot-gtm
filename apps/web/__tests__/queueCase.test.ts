@@ -124,3 +124,23 @@ describe("personResearchBadge", () => {
     ).toBe("researched · regenerate to use it");
   });
 });
+
+describe("personResearchBadge with a draft that has no timestamp", () => {
+  it("treats a missing draftedAt as stale", async () => {
+    const { personResearchBadge } = await import("../src/lib/queueCase.ts");
+    const payload = {
+      personResearch: {
+        version: 1,
+        status: "partial",
+        researchedAt: "2026-09-12T00:00:00.000Z",
+        organizations: [],
+      },
+    };
+    expect(personResearchBadge(payload, { draftedAt: null })).toBe(
+      "researched · regenerate to use it",
+    );
+    expect(personResearchBadge(payload, { draftedAt: "2026-09-13T00:00:00.000Z" })).toBe(
+      "researched",
+    );
+  });
+});

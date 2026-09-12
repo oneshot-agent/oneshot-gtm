@@ -95,8 +95,11 @@ export function personResearchBadge(
   const research = personResearchFor(payload);
   if (!research || research.status === "unavailable") return null;
   if (!lastDraft) return "researched";
+  // No timestamp on the draft means we cannot show it was written after the
+  // research; treat it as stale rather than claim the draft used the facts.
   const stale =
     lastDraft.enrichmentFailed === true ||
-    (typeof lastDraft.draftedAt === "string" && lastDraft.draftedAt < research.researchedAt);
+    typeof lastDraft.draftedAt !== "string" ||
+    lastDraft.draftedAt < research.researchedAt;
   return stale ? "researched · regenerate to use it" : "researched";
 }

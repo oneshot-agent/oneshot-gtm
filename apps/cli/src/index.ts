@@ -1,6 +1,16 @@
 #!/usr/bin/env bun
 import { registerDirectMailCommand } from "./commands/direct-mail.ts";
 import { Command, InvalidArgumentError } from "commander";
+
+/** Option parser for counts that must be at least 1; `0` or `abc` is an error, not the default. */
+function positiveInt(flag: string): (v: string) => number {
+  return (v) => {
+    const n = Number.parseInt(v, 10);
+    if (!Number.isInteger(n) || n <= 0)
+      throw new InvalidArgumentError(`${flag} must be a positive integer`);
+    return n;
+  };
+}
 import {
   readPackageVersion,
   reportTelemetryEvent,
@@ -476,7 +486,7 @@ find
           skipHandles: opts.skipHandles,
           ...(opts.limit ? { limit: opts.limit } : {}),
           ...(opts.play ? { play: opts.play } : {}),
-          ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
+          ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
         });
       },
     ),
@@ -496,7 +506,7 @@ find
     "--scope <list>",
     "comma-separated: active,replied,unjudged,all (default active,replied,unjudged)",
   )
-  .option("--concurrency <n>", "parallel research calls (default 3)", (v) => Number.parseInt(v, 10))
+  .option("--concurrency <n>", "parallel research calls (default 3)", positiveInt("--concurrency"))
   .option("--refresh", "re-research prospects that already have a dossier", false)
   .option("--id <n>", "research one prospect by id, ignoring scope and dossier state", (v) =>
     Number.parseInt(v, 10),
@@ -530,7 +540,7 @@ find
           noCompany: opts.company === false,
           ...(opts.limit ? { limit: opts.limit } : {}),
           ...(opts.scope ? { scope: opts.scope } : {}),
-          ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
+          ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
           ...(Number.isFinite(opts.id) ? { id: opts.id as number } : {}),
           ...(Number.isFinite(opts.maxCostUsd) ? { maxCostUsd: opts.maxCostUsd as number } : {}),
         });
@@ -548,7 +558,7 @@ find
     (v) => Number.parseInt(v, 10),
   )
   .option("--limit <n>", "max rows to research (default: no limit)", (v) => Number.parseInt(v, 10))
-  .option("--concurrency <n>", "parallel research calls (default 3)", (v) => Number.parseInt(v, 10))
+  .option("--concurrency <n>", "parallel research calls (default 3)", positiveInt("--concurrency"))
   .option(
     "--max-cost-usd <n>",
     "stop once this much has been billed this run (default: no cap)",
@@ -584,7 +594,7 @@ find
           ...(opts.status ? { status: opts.status } : {}),
           ...(Number.isFinite(opts.id) ? { id: opts.id as number } : {}),
           ...(Number.isFinite(opts.limit) ? { limit: opts.limit as number } : {}),
-          ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
+          ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
           ...(Number.isFinite(opts.maxCostUsd) ? { maxCostUsd: opts.maxCostUsd as number } : {}),
         });
       },
@@ -603,7 +613,7 @@ find
     "--scope <list>",
     "comma-separated: active,replied,unjudged,all (default active,replied,unjudged)",
   )
-  .option("--concurrency <n>", "parallel research calls (default 3)", (v) => Number.parseInt(v, 10))
+  .option("--concurrency <n>", "parallel research calls (default 3)", positiveInt("--concurrency"))
   .option(
     "--max-cost-usd <n>",
     "stop starting calls after this spend target (default $5; one call may cross it)",
@@ -639,7 +649,7 @@ find
             : {}),
           ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
           ...(opts.scope ? { scope: opts.scope } : {}),
-          ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
+          ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
         });
       },
     ),
@@ -698,7 +708,7 @@ find
           // backlog instead of stopping.
           limit: opts.limit,
           ...(opts.scope ? { scope: opts.scope } : {}),
-          ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
+          ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
           ...(Number.isFinite(opts.maxCostUsd) ? { maxCostUsd: opts.maxCostUsd as number } : {}),
         });
       },

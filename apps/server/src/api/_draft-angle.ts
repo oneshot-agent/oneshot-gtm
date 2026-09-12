@@ -81,11 +81,12 @@ export async function draftAngleFor(input: {
   if (!input.rotate && current) return current;
   const history = current?.history ?? [];
   const research = [
-    input.research,
-    // The researched person first: current role, employer, history.
+    // The researched person first: describeTargetForAngle keeps only the
+    // first 600 characters of research, and a caller's dossier can be longer.
     isPersonResearchDossier(target.personResearch) && target.personResearch.status !== "unavailable"
       ? JSON.stringify(personRecordFromResearch(target.personResearch))
       : undefined,
+    input.research,
     target.dossier,
     target.dossier_json,
     target.productResearch && typeof target.productResearch === "object"

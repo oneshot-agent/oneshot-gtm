@@ -127,6 +127,15 @@ export function personResearchFor(payload: unknown): PersonResearchView | null {
     return null;
   }
   if (typeof r["researchedAt"] !== "string") return null;
+  const role = r["currentRole"];
+  if (role && typeof role === "object" && !Array.isArray(role)) {
+    const company = (role as Record<string, unknown>)["company"];
+    if (typeof company !== "string" || company.trim() === "") {
+      // A role with no company would render "Founder at undefined".
+      const { currentRole: _dropped, ...rest } = r;
+      return rest as unknown as PersonResearchView;
+    }
+  }
   return v as PersonResearchView;
 }
 

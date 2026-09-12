@@ -363,12 +363,16 @@ describe("person research record", () => {
     expect((merged2["person"] as Record<string, unknown>)["enrichment"]).toBeUndefined();
     expect(merged2["product"]).toEqual(product);
 
-    // A second research run replaces the earlier researched record rather than nesting it.
+    // A second research run replaces the researched record but keeps the enrich record it carried.
     const again = JSON.parse(mergePersonResearchDossier(JSON.stringify(merged), julia)) as Record<
       string,
       unknown
     >;
-    expect((again["person"] as Record<string, unknown>)["enrichment"]).toBeUndefined();
+    expect(
+      ((again["person"] as Record<string, unknown>)["enrichment"] as Record<string, unknown>)[
+        "status"
+      ],
+    ).toBe("completed");
     expect(readPersonHalf(JSON.stringify(again))).toEqual(again["person"]);
   });
 

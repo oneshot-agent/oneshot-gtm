@@ -151,8 +151,12 @@ export function parsePeriod(period: string | null | undefined): {
   current: boolean;
 } | null {
   if (!period) return null;
+  // Collapse whitespace first so the split below has no `\s*` on both sides
+  // of an alternative (CodeQL: polynomial regex on provider text).
   const parts = period
-    .split(/\s*[-–—]\s*|\s+to\s+/i)
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(/ ?[-–—] ?| to /i)
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
   if (parts.length === 0) return null;
@@ -837,14 +841,27 @@ export async function applyPersonResearchToProspect(
 }> {
   if (dossier.status === "unavailable")
     return { outcome: "unavailable", verdict: null, roleChanged: false };
+  // Research takes minutes; re-read the row so the role and verdict decisions
+  // are made against what is stored now, not the snapshot the backlog took.
+  const fresh = ledger.getProspectById(prospect.id);
+  const current: ProspectForResearch = fresh
+    ? {
+        ...prospect,
+        name: fresh.name,
+        company: fresh.company,
+        title: fresh.title,
+        icp_verdict: fresh.icp_verdict,
+        dossier_json: fresh.dossier_json,
+      }
+    : prospect;
   const payload: JsonRecord = {
-    ...(prospect.name ? { name: prospect.name } : {}),
-    ...(prospect.company ? { company: prospect.company } : {}),
-    ...(prospect.title ? { title: prospect.title } : {}),
-    ...(prospect.icp_verdict ? { icpVerdict: prospect.icp_verdict } : {}),
+    ...(current.name ? { name: current.name } : {}),
+    ...(current.company ? { company: current.company } : {}),
+    ...(current.title ? { title: current.title } : {}),
+    ...(current.icp_verdict ? { icpVerdict: current.icp_verdict } : {}),
   };
   const patch = personPayloadPatch(payload, dossier);
-  const merged = mergePersonResearchDossier(prospect.dossier_json, dossier);
+  const merged = mergePersonResearchDossier(current.dossier_json, dossier);
   const half = readPersonHalf(merged);
   ledger.mergeProspectDossierHalf(prospect.id, "person", half, opts.dossierSlice);
   if (patch.title !== undefined || patch.company !== undefined) {

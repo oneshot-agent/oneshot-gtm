@@ -90,7 +90,8 @@ export async function runFinderWithProductResearch(
     afterId,
     result,
     enabled: config["personResearch"] !== false,
-    priorSdkCostUsd: (result.sdkCostUsd ?? result.costUsd) + mailCost,
+    // mailCost is already in both baselines (lines above); do not add it twice.
+    priorSdkCostUsd: result.sdkCostUsd ?? result.costUsd,
     ...(typeof config["maxCostUsd"] === "number"
       ? { maxCostUsd: config["maxCostUsd"] as number }
       : {}),

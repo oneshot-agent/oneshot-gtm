@@ -438,15 +438,19 @@ export function mergePersonResearchDossier(
 ): string {
   const existing = readPersonHalf(current);
   const record = personRecordFromResearch(research);
-  const keep =
-    existing &&
-    typeof existing === "object" &&
-    !Array.isArray(existing) &&
-    (existing as Record<string, unknown>)["source"] !== "deepResearchPerson" &&
-    hasDossierSignal(existing)
-      ? existing
-      : typeof existing === "string" && hasDossierSignal(existing)
-        ? existing
-        : null;
+  let keep: unknown = null;
+  if (existing && typeof existing === "object" && !Array.isArray(existing)) {
+    const prior = existing as Record<string, unknown>;
+    // A refresh replaces the researched record but keeps the enrich record the
+    // first run tucked under `enrichment`; a first run keeps the enrich record itself.
+    keep =
+      prior["source"] === "deepResearchPerson"
+        ? (prior["enrichment"] ?? null)
+        : hasDossierSignal(prior)
+          ? prior
+          : null;
+  } else if (typeof existing === "string" && hasDossierSignal(existing)) {
+    keep = existing;
+  }
   return mergePersonDossier(current, keep ? { ...record, enrichment: keep } : record);
 }
