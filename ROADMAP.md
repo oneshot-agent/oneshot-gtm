@@ -55,6 +55,8 @@ The ICP filter currently judges each candidate cold — `icpFilter` in `packages
 
       **Progress (#617):** bounce, suppression, and canary persistence extracted to `packages/core/src/delivery-health.ts` (pure functions of a raw `Database` handle, mirroring the `ledger-schema.ts` pattern); `Ledger`'s recordBounce/suppressionFor/contactSuppressionFor/bounceStatsByIdentity/listRecentBounces/countBounces/countAutoPermanentBounces/recordCanaryResult/latestCanaryResult/latestSentEmailCopy now delegate to it, same signatures and SQL, every call site unchanged. Prospects, queue, cadence, and inbox domain methods remain in `ledger.ts` for further slices.
 
+      **Progress (#634):** inbound-message recording, conversation/thread reads, reply classification state, archive/reopen operations, and inbox-specific transactions extracted to `packages/core/src/ledger-inbox.ts` as an `InboxStore` constructed from the migrated `Database` handle (same pattern as `ReceiptStore`/`LedgerCache`); `Ledger` delegates every inbox method to it with signatures, dedup behavior, ordering and transaction boundaries unchanged. No inbox-only SQL remains inline in `ledger.ts`. Prospects, queue and cadence domain methods remain in `ledger.ts`, tracked as issues #631–#633.
+
 ## Launch assets
 
 Not code — these need capture, not commits. `demo seed` + `demo ui` now stand up a populated, fictional install to record against, so neither is blocked on having something to point a camera at.
