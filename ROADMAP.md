@@ -69,7 +69,9 @@ Not code — these need capture, not commits. `demo seed` + `demo ui` now stand 
 
 ## Approved, not yet started
 
-_Nothing approved and waiting._
+- [ ] **refactor(core): extract queue persistence from Ledger** — issue #631.
+- [ ] **refactor(core): extract prospect and research persistence from Ledger** — issue #632.
+- [ ] **refactor(core): extract cadence persistence from Ledger** — issue #633.
 
 ## Things we intentionally do NOT do
 
