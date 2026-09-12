@@ -26,6 +26,7 @@ import {
 import { humanDecisionWhereSql } from "./labels.ts";
 import {
   advanceCadence as cadAdvanceCadence,
+  breakupReviveHoldFor as cadBreakupReviveHoldFor,
   type CadenceWithProspect,
   clearCadenceDraft as cadClearCadenceDraft,
   enrollCadence as cadEnrollCadence,
@@ -1318,18 +1319,7 @@ export class Ledger {
   breakupReviveHoldFor(email: string): { reason: string; stopped_at: string } | null {
     const prospect = this.findProspectByEmail(email);
     if (!prospect) return null;
-    return (
-      (this.db
-        .query(
-          `SELECT stop_reason AS reason, stopped_at
-           FROM cadence_state
-           WHERE prospect_id = ? AND status = 'stopped'
-             AND stop_reason IN ('not_a_fit', 'do_not_contact')
-           ORDER BY stopped_at DESC
-           LIMIT 1`,
-        )
-        .get(prospect.id) as { reason: string; stopped_at: string }) ?? null
-    );
+    return cadBreakupReviveHoldFor(this.db, prospect.id);
   }
 
   /** Bounce counts per sending identity since `sinceIso` — the doctor check's numerator. */
