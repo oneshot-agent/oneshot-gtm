@@ -6,12 +6,6 @@ import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { configDir } from "./config.ts";
 import {
-  hasPersonSignal,
-  mergePersonDossier,
-  mergeProductDossier,
-  type ProductResearchDossier,
-} from "./dossier.ts";
-import {
   bounceStatsByIdentity as delivBounceStatsByIdentity,
   contactSuppressionFor as delivContactSuppressionFor,
   countAutoPermanentBounces as delivCountAutoPermanentBounces,
@@ -25,6 +19,7 @@ import {
 } from "./delivery-health.ts";
 import { humanDecisionWhereSql } from "./labels.ts";
 import { LedgerCache } from "./ledger-cache.ts";
+import { ProspectStore, type ProspectMailAddress } from "./ledger-prospects.ts";
 import { migrateLedgerSchema } from "./ledger-schema.ts";
 import { MailboxStore } from "./mailbox-store.ts";
 import { ReceiptStore } from "./ledger-receipts.ts";
@@ -183,19 +178,11 @@ function canonEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
-/** Stable LinkedIn profile key across www/mobile hosts, schemes, query strings and trailing slashes. */
-export function canonicalLinkedInProfileKey(value: string): string | null {
-  try {
-    const url = new URL(value.trim());
-    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-    if (!/(^|\.)linkedin\.com$/i.test(url.hostname)) return null;
-    const match = /^\/in\/([^/]+)\/?$/i.exec(url.pathname);
-    if (!match?.[1]) return null;
-    return `linkedin.com/in/${decodeURIComponent(match[1]).toLowerCase()}`;
-  } catch {
-    return null;
-  }
-}
+// `canonicalLinkedInProfileKey` moved to ledger-prospects.ts (#632) and is
+// re-exported below so every existing `import { canonicalLinkedInProfileKey }
+// from "./ledger.ts"` (and the package's `export * from "./ledger.ts"`
+// barrel) keeps resolving unchanged.
+export { canonicalLinkedInProfileKey } from "./ledger-prospects.ts";
 
 function safeParseJsonArray(raw: string): unknown[] {
   try {
@@ -284,6 +271,7 @@ export class Ledger {
   private path: string;
   private receipts: ReceiptStore;
   private cache: LedgerCache;
+  private prospects: ProspectStore;
 
   constructor(path: string = DEFAULT_DB_PATH) {
     this.path = path;
@@ -304,6 +292,17 @@ export class Ledger {
     this.receipts = new ReceiptStore(this.db);
     // Same slice, same reason: the cache tables exist only after migrate().
     this.cache = new LedgerCache(this.db, this.path);
+    // Prospect CRUD, research-backlog queries, dossier merges and stored ICP
+    // verdicts live in ledger-prospects.ts (#632). `getProspectById` and
+    // `upsertProspect` touch the mail-address tables too (a prospect's
+    // business address), so ProspectStore takes a thin adapter over `Ledger`'s
+    // own mail-address methods instead of duplicating their SQL.
+    const mailAddress: ProspectMailAddress = {
+      get: (key) => this.getMailAddress(key),
+      set: (key, address, source) => this.setMailAddress(key, address, source),
+      getMetadata: (key) => this.getMailAddressMetadata(key),
+    };
+    this.prospects = new ProspectStore(this.db, mailAddress);
     this.mailboxes = new MailboxStore(this.db);
   }
 
@@ -1083,58 +1082,19 @@ export class Ledger {
   }
 
   findProspectByEmail(email: string): { id: number } | null {
-    return (
-      (this.db.query("SELECT id FROM prospects WHERE email = ?").get(canonEmail(email)) as {
-        id: number;
-      }) ?? null
-    );
+    return this.prospects.findProspectByEmail(email);
   }
 
   /** Full prospect record by email — used to attach name/company to inbox replies. */
   getProspectByEmail(email: string): ProspectRecord | null {
-    return (
-      (this.db
-        .query("SELECT * FROM prospects WHERE email = ?")
-        .get(canonEmail(email)) as ProspectRecord) ?? null
-    );
+    return this.prospects.getProspectByEmail(email);
   }
 
   resolveProspectForLinkedInReply(input: {
     email?: string;
     linkedinUrl?: string;
   }): { status: "matched"; prospectId: number } | { status: "unmatched" } | { status: "conflict" } {
-    const emailId = input.email ? (this.findProspectByEmail(input.email)?.id ?? null) : null;
-    let linkedinIds: number[] = [];
-    if (input.linkedinUrl) {
-      const key = canonicalLinkedInProfileKey(input.linkedinUrl);
-      if (key) {
-        const rows = this.db
-          .query(
-            `SELECT id, linkedin_url, source_profile_url FROM prospects
-             WHERE linkedin_url LIKE '%linkedin.com/in/%'
-                OR source_profile_url LIKE '%linkedin.com/in/%'`,
-          )
-          .all() as Array<{
-          id: number;
-          linkedin_url: string | null;
-          source_profile_url: string | null;
-        }>;
-        linkedinIds = rows
-          .filter(
-            (row) =>
-              (row.linkedin_url && canonicalLinkedInProfileKey(row.linkedin_url) === key) ||
-              (row.source_profile_url &&
-                canonicalLinkedInProfileKey(row.source_profile_url) === key),
-          )
-          .map((row) => row.id);
-      }
-    }
-    const uniqueLinkedIn = [...new Set(linkedinIds)];
-    if (uniqueLinkedIn.length > 1) return { status: "conflict" };
-    const linkedinId = uniqueLinkedIn[0] ?? null;
-    if (emailId && linkedinId && emailId !== linkedinId) return { status: "conflict" };
-    const prospectId = emailId ?? linkedinId;
-    return prospectId ? { status: "matched", prospectId } : { status: "unmatched" };
+    return this.prospects.resolveProspectForLinkedInReply(input);
   }
 
   recordLinkedInReply(input: {
@@ -1455,23 +1415,7 @@ export class Ledger {
 
   /** Full prospect record by id (PK seek). Avoids loading every prospect to find one. */
   getProspectById(id: number): ProspectRecord | null {
-    const prospect = this.db
-      .query("SELECT * FROM prospects WHERE id = ?")
-      .get(id) as ProspectRecord | null;
-    const address = prospect && this.getMailAddress(`prospect:${id}`);
-    return prospect
-      ? {
-          ...prospect,
-          ...(address
-            ? {
-                businessAddress: address,
-                businessAddressSource: String(
-                  this.getMailAddressMetadata(`prospect:${id}`)?.source ?? "saved address",
-                ),
-              }
-            : {}),
-        }
-      : null;
+    return this.prospects.getProspectById(id);
   }
 
   /**
@@ -1781,47 +1725,7 @@ export class Ledger {
   }
 
   upsertProspect(input: Partial<ProspectRecord> & { email?: string | null }): number {
-    // Store the canonical (lowercased) email so reply matching — which
-    // normalizes the inbound from-address the same way — always lands.
-    const email = input.email ? canonEmail(input.email) : null;
-    if (email) {
-      const existing = this.db.query("SELECT id FROM prospects WHERE email = ?").get(email) as
-        | { id: number }
-        | undefined;
-      if (existing) {
-        if (input.businessAddress && !this.getMailAddress(`prospect:${existing.id}`))
-          this.setMailAddress(
-            `prospect:${existing.id}`,
-            input.businessAddress,
-            input.businessAddressSource ?? "prospect input",
-          );
-        return existing.id;
-      }
-    }
-    const stmt = this.db.prepare(`
-      INSERT INTO prospects(name, email, phone, company, linkedin_url, dossier_json, source,
-                            source_profile_url, title)
-      VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    const result = stmt.run(
-      input.name ?? null,
-      email,
-      (input as { phone?: string | null }).phone ?? null,
-      input.company ?? null,
-      input.linkedin_url ?? null,
-      input.dossier_json ?? null,
-      input.source ?? null,
-      input.source_profile_url ?? null,
-      input.title ?? null,
-    );
-    const id = Number(result.lastInsertRowid);
-    if (input.businessAddress)
-      this.setMailAddress(
-        `prospect:${id}`,
-        input.businessAddress,
-        input.businessAddressSource ?? "prospect input",
-      );
-    return id;
+    return this.prospects.upsertProspect(input);
   }
 
   /**
@@ -1840,30 +1744,7 @@ export class Ledger {
       title?: string | null;
     },
   ): boolean {
-    const cols = ["linkedin_url", "phone", "company", "source_profile_url", "title"] as const;
-    const set: string[] = [];
-    const blank: string[] = [];
-    const args: Array<string | number> = [];
-    for (const col of cols) {
-      const value = patch[col];
-      if (typeof value !== "string" || value.trim() === "") continue;
-      // NULLIF, not a bare COALESCE: the WHERE guard below counts '' as empty
-      // (listProspectsMissingLinkedIn selects those rows), so COALESCE alone
-      // would match the row, report a change, and leave the '' in place.
-      set.push(`${col} = COALESCE(NULLIF(${col}, ''), ?)`);
-      // Guard in the WHERE so the statement only matches when at least one
-      // target column is actually empty. Without this `changes` would report 1
-      // for a pure no-op (it counts matched rows, not modified columns) and
-      // every caller would over-report how much it backfilled.
-      blank.push(`(${col} IS NULL OR ${col} = '')`);
-      args.push(value.trim());
-    }
-    if (set.length === 0) return false;
-    args.push(id);
-    const result = this.db
-      .prepare(`UPDATE prospects SET ${set.join(", ")} WHERE id = ? AND (${blank.join(" OR ")})`)
-      .run(...(args as never[]));
-    return Number(result.changes) > 0;
+    return this.prospects.updateProspectIdentity(id, patch);
   }
 
   /**
@@ -1874,20 +1755,7 @@ export class Ledger {
    * originals live inside the dossier person record, not in new columns.
    */
   setProspectCurrentRole(id: number, patch: { title?: string; company?: string }): boolean {
-    const set: string[] = [];
-    const args: Array<string | number> = [];
-    for (const col of ["title", "company"] as const) {
-      const value = patch[col];
-      if (typeof value !== "string" || value.trim() === "") continue;
-      set.push(`${col} = ?`);
-      args.push(value.trim());
-    }
-    if (set.length === 0) return false;
-    args.push(id);
-    const result = this.db
-      .prepare(`UPDATE prospects SET ${set.join(", ")} WHERE id = ?`)
-      .run(...(args as never[]));
-    return Number(result.changes) > 0;
+    return this.prospects.setProspectCurrentRole(id, patch);
   }
 
   /**
@@ -1909,9 +1777,7 @@ export class Ledger {
     verdict: "pass" | "reject" | "unclear",
     reason?: string | null,
   ): void {
-    this.db
-      .prepare("UPDATE prospects SET icp_verdict = ?, icp_verdict_reason = ? WHERE id = ?")
-      .run(verdict, reason ?? null, id);
+    this.prospects.setProspectIcpVerdict(id, verdict, reason);
   }
 
   /**
@@ -1924,7 +1790,7 @@ export class Ledger {
    * rows that already have one. Pass null to clear.
    */
   setProspectDossier(id: number, dossier: string | null): void {
-    this.db.prepare("UPDATE prospects SET dossier_json = ? WHERE id = ?").run(dossier, id);
+    this.prospects.setProspectDossier(id, dossier);
   }
 
   /**
@@ -1935,9 +1801,7 @@ export class Ledger {
    * `angle_synthesized_at` can never point at a row with no `angle_json`.
    */
   setProspectAngle(id: number, angle: string | null): void {
-    this.db
-      .prepare("UPDATE prospects SET angle_json = ?, angle_synthesized_at = ? WHERE id = ?")
-      .run(angle, angle == null ? null : new Date().toISOString(), id);
+    this.prospects.setProspectAngle(id, angle);
   }
 
   /**
@@ -1963,18 +1827,7 @@ export class Ledger {
     value: unknown,
     slice?: number,
   ): void {
-    this.db.transaction(() => {
-      const row = this.db.query("SELECT dossier_json FROM prospects WHERE id = ?").get(id) as
-        | { dossier_json: string | null }
-        | undefined;
-      if (!row) return;
-      const merged =
-        half === "person"
-          ? mergePersonDossier(row.dossier_json, value)
-          : mergeProductDossier(row.dossier_json, value as ProductResearchDossier);
-      const bounded = slice != null && merged.length > slice ? merged.slice(0, slice) : merged;
-      this.db.prepare("UPDATE prospects SET dossier_json = ? WHERE id = ?").run(bounded, id);
-    })();
+    this.prospects.mergeProspectDossierHalf(id, half, value, slice);
   }
 
   /**
@@ -1990,29 +1843,7 @@ export class Ledger {
     source: string | null;
     source_profile_url: string | null;
   }> {
-    const where = ["(linkedin_url IS NULL OR linkedin_url = '')", "name IS NOT NULL", "name != ''"];
-    const args: Array<string | number> = [];
-    if (opts.play) {
-      where.push("source = ?");
-      args.push(opts.play);
-    }
-    args.push(opts.limit ?? 500);
-    return this.db
-      .query(
-        `SELECT id, name, company, email, source, source_profile_url
-           FROM prospects
-          WHERE ${where.join(" AND ")}
-          ORDER BY id DESC
-          LIMIT ?`,
-      )
-      .all(...(args as never[])) as Array<{
-      id: number;
-      name: string | null;
-      company: string | null;
-      email: string | null;
-      source: string | null;
-      source_profile_url: string | null;
-    }>;
+    return this.prospects.listProspectsMissingLinkedIn(opts);
   }
 
   /**
@@ -2044,69 +1875,7 @@ export class Ledger {
     linkedin_url: string | null;
     dossier_json: string | null;
   }> {
-    const scopes = opts.scopes?.length ? opts.scopes : (["active", "replied", "unjudged"] as const);
-    const any: string[] = [];
-    if (scopes.includes("all")) {
-      any.push("1 = 1");
-    } else {
-      if (scopes.includes("active")) {
-        any.push(
-          "EXISTS(SELECT 1 FROM cadence_state cs WHERE cs.prospect_id = p.id AND cs.status = 'active')",
-        );
-      }
-      if (scopes.includes("replied")) {
-        any.push("EXISTS(SELECT 1 FROM inbox_replies ir WHERE ir.prospect_id = p.id)");
-      }
-      if (scopes.includes("unjudged")) {
-        any.push(
-          "(p.icp_verdict IS NULL AND COALESCE(NULLIF(TRIM(p.source_profile_url), ''), NULLIF(TRIM(p.linkedin_url), '')) IS NOT NULL)",
-        );
-      }
-    }
-    if (any.length === 0) return [];
-
-    const where = [`(${any.join(" OR ")})`];
-    // Something for deepResearchPerson to key on.
-    where.push(
-      "(COALESCE(NULLIF(TRIM(p.source_profile_url), ''), NULLIF(TRIM(p.linkedin_url), '')) IS NOT NULL OR (p.email IS NOT NULL AND TRIM(p.email) != ''))",
-    );
-
-    const rows = this.db
-      .query(
-        `SELECT p.id, p.name, p.company, p.email, p.source, p.source_profile_url, p.linkedin_url,
-                p.dossier_json
-           FROM prospects p
-          WHERE ${where.join(" AND ")}
-          ORDER BY p.id DESC`,
-      )
-      .all() as Array<{
-      id: number;
-      name: string | null;
-      company: string | null;
-      email: string | null;
-      source: string | null;
-      source_profile_url: string | null;
-      linkedin_url: string | null;
-      dossier_json: string | null;
-    }>;
-
-    // The "already researched" filter runs here, not in SQL. It used to be
-    // `dossier_json IS NULL OR TRIM(...) = ''`, which silently emptied the
-    // backlog the moment `research-products` began writing a
-    // `{person, product}` wrapper onto every row: 531 of 684 prospects held a
-    // product half and a null person half, looked researched to that test, and
-    // became permanently unreachable. `hasPersonSignal` asks the question the
-    // caller actually means — is there PERSON research here — and matches the
-    // gate every other consumer of this column already uses.
-    //
-    // `limit` is applied AFTER the filter so it keeps meaning "return N rows to
-    // research", not "consider N rows". The prospects table is small enough
-    // that scanning it whole costs nothing.
-    const eligible = opts.includeResearched
-      ? rows
-      : rows.filter((row) => !hasPersonSignal(row.dossier_json));
-    const limit = opts.limit ?? 100_000;
-    return eligible.length > limit ? eligible.slice(0, limit) : eligible;
+    return this.prospects.listProspectsForResearch(opts);
   }
 
   /**
@@ -2145,54 +1914,7 @@ export class Ledger {
     dossier_json: string | null;
     angle_json: string | null;
   }> {
-    const scopes = opts.scopes?.length ? opts.scopes : (["active", "replied", "unjudged"] as const);
-    const any: string[] = [];
-    if (scopes.includes("all")) {
-      any.push("1 = 1");
-    } else {
-      if (scopes.includes("active")) {
-        any.push(
-          "EXISTS(SELECT 1 FROM cadence_state cs WHERE cs.prospect_id = p.id AND cs.status = 'active')",
-        );
-      }
-      if (scopes.includes("replied")) {
-        any.push(
-          "EXISTS(SELECT 1 FROM inbox_replies ir WHERE ir.prospect_id = p.id) OR " +
-            "EXISTS(SELECT 1 FROM channel_events ce WHERE ce.prospect_id = p.id AND ce.event_type = 'reply')",
-        );
-      }
-      if (scopes.includes("unjudged")) {
-        any.push(
-          "(p.icp_verdict IS NULL AND COALESCE(NULLIF(TRIM(p.source_profile_url), ''), NULLIF(TRIM(p.linkedin_url), '')) IS NOT NULL)",
-        );
-      }
-    }
-    if (any.length === 0) return [];
-
-    const where = [`(${any.join(" OR ")})`];
-    const rows = this.db
-      .query(
-        `SELECT p.id, p.name, p.company, p.email, p.source, p.source_profile_url, p.linkedin_url,
-                p.dossier_json, p.angle_json
-           FROM prospects p
-          WHERE ${where.join(" AND ")}
-          ORDER BY p.id DESC`,
-      )
-      .all() as Array<{
-      id: number;
-      name: string | null;
-      company: string | null;
-      email: string | null;
-      source: string | null;
-      source_profile_url: string | null;
-      linkedin_url: string | null;
-      dossier_json: string | null;
-      angle_json: string | null;
-    }>;
-
-    const eligible = opts.includeSynthesized ? rows : rows.filter((row) => !row.angle_json?.trim());
-    const limit = opts.limit ?? 100_000;
-    return eligible.length > limit ? eligible.slice(0, limit) : eligible;
+    return this.prospects.listProspectsForAngle(opts);
   }
 
   recordOutcome(input: {
@@ -4696,14 +4418,7 @@ export class Ledger {
     email: string | null;
     company: string | null;
   }> {
-    return this.db
-      .query(`SELECT id, name, email, company FROM prospects WHERE email IS NOT NULL`)
-      .all() as Array<{
-      id: number;
-      name: string | null;
-      email: string | null;
-      company: string | null;
-    }>;
+    return this.prospects.listProspectsForFuzzyMatch();
   }
 
   /**
