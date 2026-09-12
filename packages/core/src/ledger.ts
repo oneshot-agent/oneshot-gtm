@@ -23,8 +23,8 @@ import {
   recordCanaryResult as delivRecordCanaryResult,
   suppressionFor as delivSuppressionFor,
 } from "./delivery-health.ts";
-import { humanDecisionWhereSql } from "./labels.ts";
 import { LedgerCache } from "./ledger-cache.ts";
+import { QueueStore } from "./ledger-queue.ts";
 import { migrateLedgerSchema } from "./ledger-schema.ts";
 import { MailboxStore } from "./mailbox-store.ts";
 import { ReceiptStore } from "./ledger-receipts.ts";
@@ -57,35 +57,6 @@ import type {
   TriggerRow,
 } from "./types.ts";
 
-const ICP_EXAMPLE_FIELDS = [
-  "title",
-  "url",
-  "summary",
-  "author",
-  "description",
-  "postTitle",
-  "postUrl",
-  "repo",
-  "repoUrl",
-  "eventName",
-  "eventUrl",
-  "company",
-] as const;
-
-/** Keep classifier examples useful without returning enriched contact data. */
-function icpExampleCandidate(payload: unknown): Record<string, unknown> {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return {};
-  const source = payload as Record<string, unknown>;
-  return Object.fromEntries(
-    ICP_EXAMPLE_FIELDS.flatMap((field) => {
-      const value = source[field];
-      return typeof value === "string" || typeof value === "number" || typeof value === "boolean"
-        ? [[field, value] as const]
-        : [];
-    }),
-  );
-}
-
 const DEFAULT_DB_PATH = join(configDir(), "ledger.sqlite");
 
 // Cache TTL/deadline constants and all cache get/set/expiry/invalidation
@@ -102,76 +73,10 @@ export {
   RESEARCH_DEADLINE_MS,
 } from "./ledger-cache.ts";
 
-const QUEUE_STATUSES: readonly QueueStatus[] = [
-  "pending",
-  "approved",
-  "rejected",
-  "sent",
-  "expired",
-];
-
 /** USD as integer cents, so money comparisons are exact. */
 function cents(usd: number): number {
   return Math.round(usd * 100);
 }
-
-/** Escape a user term for `LIKE ? ESCAPE '\'` so `%` and `_` match literally. */
-function escapeLike(term: string): string {
-  return term.replace(/[\\%_]/g, (c) => `\\${c}`);
-}
-
-/**
- * The searchable text of a queue row for `searchQueue`: every identity key a
- * finder writes into `payload_json` (the same keys the /queue row reads —
- * `name`/`founderName`, `email`/`founderEmail`, company, title, the show-hn
- * post, the repo/post URLs a pre-enrichment reject only carries, LinkedIn),
- * plus the reviewer's notes, the play, and the joined prospect record. Built
- * once as a string so each term binds against the same expression.
- *
- * No LOWER(): bun's SQLite has no ICU, so LOWER() and LIKE fold ASCII only.
- * Case-insensitivity for non-ASCII letters comes from binding each term
- * twice (see `likePatternsFor`) rather than from a wrapper that would leave
- * "Émile" unfindable by "émile".
- */
-const QUEUE_SEARCH_HAYSTACK = `(${[
-  "name",
-  "founderName",
-  "email",
-  "founderEmail",
-  "company",
-  "title",
-  "postTitle",
-  "repoUrl",
-  "postUrl",
-  "linkedinUrl",
-]
-  .map((key) => `COALESCE(json_extract(b.payload_json, '$.${key}'), '')`)
-  .concat([
-    "COALESCE(b.notes, '')",
-    "b.play_name",
-    "COALESCE(p.name, '')",
-    "COALESCE(p.email, '')",
-    "COALESCE(p.company, '')",
-    "COALESCE(p.title, '')",
-  ])
-  .join(" || ' ' || ")})`;
-
-/**
- * Bind patterns for one search term. LIKE already folds ASCII case, so an
- * ASCII term needs one pattern; a term with non-ASCII letters is bound in
- * lower and upper case, which together also catch title case ("Émile"
- * matches the upper pattern because every ASCII letter after É folds).
- */
-function likePatternsFor(term: string): string[] {
-  const lower = term.toLowerCase();
-  const upper = term.toUpperCase();
-  // eslint-disable-next-line no-control-regex
-  if (lower === upper || !/[^\x00-\x7f]/.test(term)) return [`%${escapeLike(lower)}%`];
-  return [`%${escapeLike(lower)}%`, `%${escapeLike(upper)}%`];
-}
-
-/** Best display name for a queue row: the prospect record, then the payload. */
-const QUEUE_SEARCH_NAME_EXPR = `COALESCE(NULLIF(p.name, ''), NULLIF(json_extract(b.payload_json, '$.name'), ''), NULLIF(json_extract(b.payload_json, '$.founderName'), ''))`;
 
 /**
  * Canonical form for matching prospect emails — trim + lowercase. Inbound reply
@@ -284,6 +189,7 @@ export class Ledger {
   private path: string;
   private receipts: ReceiptStore;
   private cache: LedgerCache;
+  private queue: QueueStore;
 
   constructor(path: string = DEFAULT_DB_PATH) {
     this.path = path;
@@ -305,6 +211,11 @@ export class Ledger {
     // Same slice, same reason: the cache tables exist only after migrate().
     this.cache = new LedgerCache(this.db, this.path);
     this.mailboxes = new MailboxStore(this.db);
+    // Queue (target_queue) reads/writes/state transitions/drain live in
+    // ledger-queue.ts (see its doc comment) — the next slice of the split,
+    // following the bounce/canary extraction in #617. Constructed AFTER
+    // migrate() so target_queue already exists.
+    this.queue = new QueueStore(this.db);
   }
 
   getDirectMail(id: string): DirectMailDraft | null {
@@ -1206,18 +1117,15 @@ export class Ledger {
     })();
   }
 
+  /**
+   * Expire live `breakup-revive` queue rows for a prospect who just replied —
+   * only ever touches `target_queue`, so the write itself lives in
+   * `QueueStore.expireBreakupReviveQueue`; this private delegate keeps every
+   * reply-handling call site above (`stopCadence`, `recordLinkedInReply`,
+   * `recordProspectReply`) unchanged.
+   */
   private expireBreakupReviveQueue(prospectId: number, reason: string): void {
-    this.db
-      .prepare(
-        `UPDATE target_queue
-         SET status = 'expired',
-             notes = CASE WHEN notes IS NULL OR notes = '' THEN ?
-                          ELSE notes || ' · ' || ? END
-         WHERE (prospect_id = ? OR dedupe_key = ?)
-           AND play_name = 'breakup-revive'
-           AND status IN ('pending', 'approved')`,
-      )
-      .run(`expired: ${reason}`, `expired: ${reason}`, prospectId, `prospect:${prospectId}`);
+    this.queue.expireBreakupReviveQueue(prospectId, reason);
   }
 
   /**
@@ -2892,46 +2800,17 @@ export class Ledger {
   }
 
   // ── target_queue ────────────────────────────────────────────────────────────
+  // Queue reads, writes, state transitions, selection/drain operations and
+  // queue-only transactions live in packages/core/src/ledger-queue.ts (see its
+  // doc comment) — extracted as the next slice of the split tracked in
+  // ROADMAP.md, following the bounce/canary extraction in #617. `Ledger`
+  // delegates every queue method to a `QueueStore` instance constructed from
+  // the migrated `Database` handle, same signatures, return values and
+  // transaction boundaries.
 
   /** Recent reviewed rows for few-shot ICP classification. */
   recentIcpDecisions(limit = 20): IcpDecisionExample[] {
-    const rows = this.db
-      .query(
-        `SELECT payload_json, status, notes
-         FROM target_queue
-         WHERE ${humanDecisionWhereSql()}
-           AND play_name IN (
-             'show-hn', 'post-funding', 'accelerator-batch', 'job-change',
-             'hiring-signal', 'podcast-guest', 'github-topics', 'github-stars',
-             'competitor-switch', 'stack-consolidation', 'repo-interest', 'luma-events'
-           )
-           AND json_valid(payload_json)
-         ORDER BY reviewed_at DESC, id DESC
-         LIMIT ?`,
-      )
-      .all(Math.max(1, Math.floor(limit))) as Array<{
-      payload_json: string;
-      status: "approved" | "rejected" | "sent";
-      notes: string | null;
-    }>;
-
-    return rows.flatMap((row) => {
-      try {
-        const payload = JSON.parse(row.payload_json) as unknown;
-        return [
-          {
-            // Queue payloads grow as a prospect is enriched and can contain
-            // email, phone and social-profile fields. Few-shot topic
-            // classification only needs the original public source context.
-            candidate: icpExampleCandidate(payload),
-            decision: row.status !== "rejected",
-            reason: row.notes,
-          },
-        ];
-      } catch {
-        return [];
-      }
-    });
+    return this.queue.recentIcpDecisions(limit);
   }
 
   /**
@@ -2956,53 +2835,11 @@ export class Ledger {
      */
     priority?: ProspectPriority | null;
   }): number | null {
-    try {
-      const status = input.initialStatus ?? "pending";
-      const reviewedAt = status === "pending" ? null : new Date().toISOString();
-      const result = this.db
-        .prepare(
-          `INSERT INTO target_queue(play_name, payload_json, dedupe_key, source, status, reviewed_at, notes, priority_json, decision, decided_at, decided_by)
-           VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          input.playName,
-          JSON.stringify(
-            input.payload && typeof input.payload === "object"
-              ? {
-                  ...input.payload,
-                  ...(extractBusinessAddress(input.payload)
-                    ? { businessAddress: extractBusinessAddress(input.payload) }
-                    : {}),
-                }
-              : input.payload,
-          ),
-          input.dedupeKey,
-          input.source,
-          status,
-          reviewedAt,
-          input.notes ?? null,
-          input.priority ? JSON.stringify(input.priority) : null,
-          // An insert-time rejection is a gate's verdict, never a human's —
-          // structural provenance replaces the `auto:` notes-sniffing (the
-          // notes convention stays for humans and pre-v26 fallback).
-          status === "rejected" ? "auto_reject" : null,
-          status === "rejected" ? reviewedAt : null,
-          status === "rejected" ? "machine" : null,
-        );
-      return Number(result.lastInsertRowid);
-    } catch (err) {
-      // Unique constraint violation = already queued; return null to signal dedupe.
-      const msg = (err as Error).message ?? "";
-      if (msg.includes("UNIQUE constraint failed")) return null;
-      throw err;
-    }
+    return this.queue.enqueueTarget(input);
   }
 
   isQueueDuplicate(playName: string, dedupeKey: string): boolean {
-    const row = this.db
-      .query("SELECT 1 FROM target_queue WHERE play_name = ? AND dedupe_key = ?")
-      .get(playName, dedupeKey);
-    return row !== null && row !== undefined;
+    return this.queue.isQueueDuplicate(playName, dedupeKey);
   }
 
   /**
@@ -3114,20 +2951,7 @@ export class Ledger {
    * prospect row exists yet). Matches both `email` and `founderEmail`.
    */
   isEmailPendingInQueue(email: string): boolean {
-    // Case-insensitive to match findProspectByEmail/upsertProspect, which store
-    // and look up the canonical (lowercased) email — otherwise a casing mismatch
-    // between two finders would slip a dup through. LOWER() on the JSON side,
-    // canonEmail() on the arg.
-    const row = this.db
-      .query(
-        `SELECT 1 FROM target_queue
-         WHERE status IN ('pending','approved')
-           AND (LOWER(json_extract(payload_json, '$.email')) = ?1
-                OR LOWER(json_extract(payload_json, '$.founderEmail')) = ?1)
-         LIMIT 1`,
-      )
-      .get(canonEmail(email));
-    return row !== null && row !== undefined;
+    return this.queue.isEmailPendingInQueue(email);
   }
 
   /**
@@ -3155,47 +2979,17 @@ export class Ledger {
    * row so we can persist `last_draft_json`. Returns null when absent.
    */
   getQueueRowByDedupe(playName: string, dedupeKey: string): QueueRow | null {
-    return (
-      (this.db
-        .query("SELECT * FROM target_queue WHERE play_name = ? AND dedupe_key = ?")
-        .get(playName, dedupeKey) as QueueRow) ?? null
-    );
+    return this.queue.getQueueRowByDedupe(playName, dedupeKey);
   }
 
   listQueue(
     opts: { playName?: string; status?: QueueStatus; limit?: number; ids?: number[] } = {},
   ): QueueRow[] {
-    const where: string[] = [];
-    const args: unknown[] = [];
-    if (opts.playName) {
-      where.push("play_name = ?");
-      args.push(opts.playName);
-    }
-    if (opts.status) {
-      where.push("status = ?");
-      args.push(opts.status);
-    }
-    // Explicit row picks (the /queue "drain selected" path). An empty array
-    // would compile to `IN ()` — a syntax error in SQLite — and semantically
-    // means "nothing selected", so return early rather than silently listing
-    // every row.
-    if (opts.ids) {
-      if (opts.ids.length === 0) return [];
-      where.push(`id IN (${opts.ids.map(() => "?").join(",")})`);
-      args.push(...opts.ids);
-    }
-    const sql = `
-      SELECT * FROM target_queue
-      ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
-      ORDER BY found_at DESC
-      LIMIT ?
-    `;
-    args.push(opts.limit ?? 200);
-    return this.db.query(sql).all(...(args as never[])) as QueueRow[];
+    return this.queue.listQueue(opts);
   }
 
   getQueueRow(id: number): QueueRow | null {
-    return (this.db.query("SELECT * FROM target_queue WHERE id = ?").get(id) as QueueRow) ?? null;
+    return this.queue.getQueueRow(id);
   }
 
   /**
@@ -3210,79 +3004,7 @@ export class Ledger {
    * and return whichever SQLite happens to prefer.
    */
   getQueueRowForProspect(prospectId: number): QueueRow | null {
-    return (
-      (this.db
-        .query(
-          "SELECT * FROM target_queue WHERE prospect_id = ? ORDER BY found_at DESC, id DESC LIMIT 1",
-        )
-        .get(prospectId) as QueueRow) ?? null
-    );
-  }
-
-  /**
-   * FROM + WHERE shared by `searchQueue` (rows and total) and
-   * `searchQueueStatusCounts`. The prospect is resolved with a scalar
-   * subquery (`LIMIT 1`) rather than an OR-join so one queue row can never
-   * fan out into two — two prospects sharing an email would otherwise
-   * inflate `total` and shift every OFFSET. Filters that only need the queue
-   * row (status, play, decided_by) go inside the derived table so the
-   * existing status/play indexes still prune before the prospect lookup;
-   * the free-text terms need the joined prospect and stay outside.
-   */
-  private queueSearchParts(
-    opts: Pick<QueueSearchOpts, "q" | "statuses" | "playName" | "decidedBy">,
-    withStatus: boolean,
-  ): { sql: string; args: unknown[] } {
-    const inner: string[] = [];
-    const outer: string[] = [];
-    const args: unknown[] = [];
-    // De-duplicated: `?status=sent,sent,sent,sent,sent` is one status, not
-    // "all five" — the length guard below must see distinct values.
-    const statuses = [...new Set((opts.statuses ?? []).filter((s) => QUEUE_STATUSES.includes(s)))];
-    if (withStatus && statuses.length > 0 && statuses.length < QUEUE_STATUSES.length) {
-      inner.push(`q.status IN (${statuses.map(() => "?").join(",")})`);
-      args.push(...statuses);
-    }
-    if (opts.playName) {
-      inner.push("q.play_name = ?");
-      args.push(opts.playName);
-    }
-    switch (opts.decidedBy) {
-      case "human":
-        inner.push("q.decided_by IN ('human', 'human_bulk')");
-        break;
-      case "machine":
-        inner.push("q.decided_by = 'machine'");
-        break;
-      case "none":
-        inner.push("q.decided_by IS NULL");
-        break;
-      default:
-        break;
-    }
-    const terms = (opts.q ?? "")
-      .split(/\s+/)
-      .map((t) => t.trim())
-      .filter((t) => t.length > 0);
-    for (const term of terms) {
-      const patterns = likePatternsFor(term);
-      outer.push(
-        `(${patterns.map(() => `${QUEUE_SEARCH_HAYSTACK} LIKE ? ESCAPE '\\'`).join(" OR ")})`,
-      );
-      args.push(...patterns);
-    }
-    const sql = `
-      FROM (
-        SELECT q.*, COALESCE(q.prospect_id, (
-            SELECT p2.id FROM prospects p2
-             WHERE p2.email = LOWER(TRIM(COALESCE(json_extract(q.payload_json, '$.email'),
-                                                  json_extract(q.payload_json, '$.founderEmail'))))
-             ORDER BY p2.id LIMIT 1)) AS joined_prospect_id
-          FROM target_queue q
-          ${inner.length ? `WHERE ${inner.join(" AND ")}` : ""}) b
-      LEFT JOIN prospects p ON p.id = b.joined_prospect_id
-      ${outer.length ? `WHERE ${outer.join(" AND ")}` : ""}`;
-    return { sql, args };
+    return this.queue.getQueueRowForProspect(prospectId);
   }
 
   /**
@@ -3294,44 +3016,7 @@ export class Ledger {
    * indexes like `listQueue`.
    */
   searchQueue(opts: QueueSearchOpts): { rows: QueueSearchRow[]; total: number | null } {
-    const limit = Math.max(1, Math.min(200, Math.floor(opts.limit)));
-    const offset = Math.max(0, Math.floor(opts.offset));
-    const dir = opts.dir === "asc" ? "ASC" : "DESC";
-    let orderSql: string;
-    switch (opts.sort) {
-      case "decided_at":
-        // Undecided rows sink to the bottom in both directions.
-        orderSql = `(b.decided_at IS NULL) ASC, b.decided_at ${dir}, b.id ${dir}`;
-        break;
-      case "name":
-        // Named rows first; rows that only carry a source URL (pre-enrichment
-        // rejects) sort after them by that URL, then by dedupe key.
-        orderSql = `(${QUEUE_SEARCH_NAME_EXPR} IS NULL) ASC, LOWER(COALESCE(${QUEUE_SEARCH_NAME_EXPR}, json_extract(b.payload_json, '$.repoUrl'), json_extract(b.payload_json, '$.postUrl'), b.dedupe_key)) ${dir}, b.id ${dir}`;
-        break;
-      default:
-        orderSql = `b.found_at ${dir}, b.id ${dir}`;
-        break;
-    }
-    const { sql, args } = this.queueSearchParts(opts, true);
-    const rows = this.db
-      .query(
-        `SELECT b.*, p.id AS p_id, p.name AS p_name, p.email AS p_email, p.company AS p_company,
-                p.title AS p_title,
-                p.icp_verdict AS p_icp_verdict, p.icp_verdict_reason AS p_icp_verdict_reason,
-                (p.dossier_json IS NOT NULL AND TRIM(p.dossier_json) != '') AS p_has_dossier,
-                (b.prospect_id IS NULL AND p.id IS NOT NULL) AS p_linked_by_email
-         ${sql}
-         ORDER BY ${orderSql}
-         LIMIT ? OFFSET ?`,
-      )
-      .all(...(args as never[]), limit, offset) as QueueSearchRow[];
-    if (opts.withTotal === false) return { rows, total: null };
-    const total = (
-      this.db.query(`SELECT COUNT(*) AS n ${sql}`).get(...(args as never[])) as {
-        n: number;
-      }
-    ).n;
-    return { rows, total };
+    return this.queue.searchQueue(opts);
   }
 
   /**
@@ -3342,28 +3027,12 @@ export class Ledger {
   searchQueueStatusCounts(
     opts: Pick<QueueSearchOpts, "q" | "playName" | "decidedBy">,
   ): Record<QueueStatus, number> {
-    const { sql, args } = this.queueSearchParts(opts, false);
-    const rows = this.db
-      .query(`SELECT b.status AS status, COUNT(*) AS n ${sql} GROUP BY b.status`)
-      .all(...(args as never[])) as Array<{ status: QueueStatus; n: number }>;
-    const out: Record<QueueStatus, number> = {
-      pending: 0,
-      approved: 0,
-      rejected: 0,
-      sent: 0,
-      expired: 0,
-    };
-    for (const r of rows) if (r.status in out) out[r.status] = r.n;
-    return out;
+    return this.queue.searchQueueStatusCounts(opts);
   }
 
   /** Every play that has ever enqueued a row, for the /prospects play filter. */
   listQueuePlayNames(): string[] {
-    return (
-      this.db
-        .query("SELECT DISTINCT play_name FROM target_queue ORDER BY play_name ASC")
-        .all() as Array<{ play_name: string }>
-    ).map((r) => r.play_name);
+    return this.queue.listQueuePlayNames();
   }
 
   /**
@@ -3398,17 +3067,11 @@ export class Ledger {
 
   /** Remove an unreviewed queue reservation, leaving reviewed rows untouched. */
   removePendingQueueTarget(id: number): boolean {
-    const result = this.db
-      .prepare("DELETE FROM target_queue WHERE id = ? AND status = 'pending'")
-      .run(id);
-    return result.changes > 0;
+    return this.queue.removePendingQueueTarget(id);
   }
 
   removeExpiredQueueTarget(id: number): boolean {
-    const result = this.db
-      .prepare("DELETE FROM target_queue WHERE id = ? AND status = 'expired'")
-      .run(id);
-    return result.changes > 0;
+    return this.queue.removeExpiredQueueTarget(id);
   }
 
   setQueueStatus(input: {
@@ -3427,101 +3090,7 @@ export class Ledger {
      */
     decidedBy?: "human" | "machine";
   }): void {
-    const now = new Date().toISOString();
-    const decidedBy = input.decidedBy ?? (input.status === "approved" ? "human" : "machine");
-    // Every status transition clears `send_started_at` — a deliberate status
-    // change means the previous "sending" attempt (if any) is settled. Terminal
-    // states (sent/rejected/expired) clear naturally. Approved → approved
-    // doesn't need to preserve a marker (caller re-claims on the next send).
-    if (input.status === "sent") {
-      // COALESCE on the decision columns: a drain/run send must never
-      // overwrite the human approve that put the row here; a send on a
-      // never-decided row records an honest machine disposition.
-      this.db
-        .prepare(
-          `UPDATE target_queue SET status = ?, sent_at = ?, reviewed_at = COALESCE(reviewed_at, ?), decision = COALESCE(decision, 'approve'), decided_at = COALESCE(decided_at, ?), decided_by = COALESCE(decided_by, ?), send_started_at = NULL ${input.notes ? ", notes = ?" : ""} WHERE id = ?`,
-        )
-        .run(
-          ...(input.notes
-            ? [input.status, now, now, now, decidedBy, input.notes, input.id]
-            : [input.status, now, now, now, decidedBy, input.id]),
-        );
-    } else if (input.status === "approved" || input.status === "pending") {
-      // The ledger, not the routes, owns "never re-approve a sent row": drain
-      // picks up every `status = 'approved'` row, so moving a sent row back to
-      // pending/approved would re-email the person. queue.ts and
-      // add-prospect.ts keep their own pre-checks (they produce the
-      // user-facing 400/409 messages), but this is the guard that can't be
-      // forgotten by a future caller (#561).
-      //
-      // The guard is baked into the UPDATE's WHERE clause instead of a
-      // separate SELECT-then-UPDATE: a single statement is its own atomic
-      // check-and-set, so two processes racing this call in WAL mode can't
-      // both pass a "not sent yet" check before either holds the write lock
-      // — the same class of race dequeueApproved's BEGIN IMMEDIATE guards
-      // against a few lines below (~3449), just closed here by folding the
-      // check into one statement instead of wrapping a transaction.
-      const decision = input.status === "approved" ? "approve" : null;
-      const result =
-        input.status === "approved"
-          ? this.db
-              .prepare(
-                `UPDATE target_queue SET status = ?, reviewed_at = ?, decision = ?, decided_at = ?, decided_by = ?, send_started_at = NULL ${input.notes ? ", notes = ?" : ""} WHERE id = ? AND status != 'sent' AND sent_at IS NULL`,
-              )
-              .run(
-                ...(input.notes
-                  ? [input.status, now, decision, now, decidedBy, input.notes, input.id]
-                  : [input.status, now, decision, now, decidedBy, input.id]),
-              )
-          : this.db
-              .prepare(
-                `UPDATE target_queue SET status = ?, reviewed_at = NULL, send_started_at = NULL ${input.notes !== undefined ? ", notes = ?" : ""} WHERE id = ? AND status != 'sent' AND sent_at IS NULL`,
-              )
-              .run(
-                ...(input.notes !== undefined
-                  ? [input.status, input.notes, input.id]
-                  : [input.status, input.id]),
-              );
-      this.throwIfSentRowGuardBlocked(result.changes, input.id, input.status);
-    } else if (input.status === "rejected") {
-      // Always overwrites: the latest decision wins on a re-decide. Rejecting
-      // a sent row is allowed — it's a label, not a send, so no sent-row
-      // guard here. `notes` follows the pending branch: present (even "")
-      // means write it, so a founder can clear a stale reason; absent means
-      // leave whatever is there.
-      const decision = decidedBy === "human" ? "reject" : "auto_reject";
-      this.db
-        .prepare(
-          `UPDATE target_queue SET status = ?, reviewed_at = ?, decision = ?, decided_at = ?, decided_by = ?, send_started_at = NULL ${input.notes !== undefined ? ", notes = ?" : ""} WHERE id = ?`,
-        )
-        .run(
-          ...(input.notes !== undefined
-            ? [input.status, now, decision, now, decidedBy, input.notes, input.id]
-            : [input.status, now, decision, now, decidedBy, input.id]),
-        );
-    } else {
-      this.db
-        .prepare(`UPDATE target_queue SET status = ?, send_started_at = NULL WHERE id = ?`)
-        .run(input.status, input.id);
-    }
-  }
-
-  /**
-   * Fired after a guarded approved/pending UPDATE affects 0 rows: the row
-   * may simply not exist (fine, matches the pre-#561 no-op behavior for an
-   * unknown id) or it may have been excluded by the sent-row guard in the
-   * WHERE clause. Only the latter throws.
-   */
-  private throwIfSentRowGuardBlocked(changes: number, id: number, status: QueueStatus): void {
-    if (changes > 0) return;
-    const current = this.db
-      .query("SELECT status, sent_at FROM target_queue WHERE id = ?")
-      .get(id) as { status: QueueStatus; sent_at: string | null } | undefined;
-    if (current && (current.status === "sent" || current.sent_at != null)) {
-      throw new Error(
-        `setQueueStatus: row #${id} was already sent — refusing to move it to '${status}' (would re-send on the next drain)`,
-      );
-    }
+    this.queue.setQueueStatus(input);
   }
 
   /**
@@ -3536,31 +3105,11 @@ export class Ledger {
     startedAtIso: string;
     staleCutoffIso?: string;
   }): boolean {
-    const markerWhere = input.staleCutoffIso
-      ? "(send_started_at IS NULL OR send_started_at < ?)"
-      : "send_started_at IS NULL";
-    const args: Array<string | number> = [input.startedAtIso, input.id];
-    if (input.staleCutoffIso) args.push(input.staleCutoffIso);
-    const result = this.db
-      .prepare(
-        // sent_at IS NULL is belt-and-braces alongside status = 'approved' —
-        // the same guard setQueueStatus and dequeueApproved apply, closed
-        // here too so a row desynced back to 'approved' with a stale
-        // sent_at can't be claimed and re-sent through this path (#561).
-        `UPDATE target_queue SET send_started_at = ?
-         WHERE id = ? AND status = 'approved' AND sent_at IS NULL AND ${markerWhere}`,
-      )
-      .run(...args);
-    return result.changes > 0;
+    return this.queue.claimQueueSendingMarker(input);
   }
 
   clearQueueSendingMarker(id: number): void {
-    this.clearMarker({
-      table: "target_queue",
-      pkeyWhere: "id = ?",
-      column: "send_started_at",
-      pkeyValues: [id],
-    });
+    this.queue.clearQueueSendingMarker(id);
   }
 
   /**
@@ -3576,54 +3125,11 @@ export class Ledger {
     ageMs: number;
     actuallySent: boolean;
   }> {
-    const cutoffMs = input.now.getTime() - input.maxAgeMs;
-    const rows = this.db
-      .query(
-        `SELECT id, status, send_started_at FROM target_queue WHERE send_started_at IS NOT NULL`,
-      )
-      .all() as Array<{ id: number; status: string; send_started_at: string }>;
-    const swept: Array<{
-      id: number;
-      startedAt: string;
-      ageMs: number;
-      actuallySent: boolean;
-    }> = [];
-    const clear = this.db.prepare(`UPDATE target_queue SET send_started_at = NULL WHERE id = ?`);
-    for (const row of rows) {
-      const startedMs = new Date(row.send_started_at).getTime();
-      if (Number.isFinite(startedMs) && startedMs > cutoffMs) continue;
-      const ageMs = Number.isFinite(startedMs) ? input.now.getTime() - startedMs : -1;
-      clear.run(row.id);
-      swept.push({
-        id: row.id,
-        startedAt: row.send_started_at,
-        ageMs,
-        actuallySent: row.status === "sent",
-      });
-    }
-    return swept;
+    return this.queue.sweepStaleQueueSends(input);
   }
 
   approveAllPending(opts: { playName?: string } = {}): number {
-    // `sent_at IS NULL` is belt-and-braces alongside `status = 'pending'` —
-    // a pending row should never carry a sent_at, but the invariant lives
-    // here, not in the caller (#561).
-    const where: string[] = ["status = 'pending'", "sent_at IS NULL"];
-    const args: unknown[] = [];
-    if (opts.playName) {
-      where.push("play_name = ?");
-      args.push(opts.playName);
-    }
-    // decided_by='human_bulk': a human sanctioned the batch, but no per-row
-    // judgment happened — evaluation code can include or exclude these
-    // explicitly instead of reverse-engineering shared timestamps.
-    const now = new Date().toISOString();
-    const result = this.db
-      .prepare(
-        `UPDATE target_queue SET status = 'approved', reviewed_at = ?, decision = 'approve', decided_at = ?, decided_by = 'human_bulk' WHERE ${where.join(" AND ")}`,
-      )
-      .run(...([now, now, ...args] as never[]));
-    return Number(result.changes);
+    return this.queue.approveAllPending(opts);
   }
 
   /**
@@ -3632,60 +3138,15 @@ export class Ledger {
    * crashed drain; held/error rows back off for the lease duration.
    */
   dequeueApproved(opts: { playName: string; limit?: number; leaseSeconds?: number }): QueueRow[] {
-    const leaseSeconds = opts.leaseSeconds ?? 900;
-    const claimedAt = new Date().toISOString();
-    const cutoff = new Date(Date.now() - leaseSeconds * 1000).toISOString();
-    const limit = opts.limit ?? 50;
-    const txn = this.db.transaction((): QueueRow[] => {
-      const rows = this.db
-        .query(
-          `SELECT * FROM target_queue
-           WHERE play_name = ? AND status = 'approved' AND sent_at IS NULL
-             AND (drain_claimed_at IS NULL OR drain_claimed_at < ?)
-           ORDER BY found_at ASC
-           LIMIT ?`,
-        )
-        .all(opts.playName, cutoff, limit) as QueueRow[];
-      if (rows.length === 0) return [];
-      const ids = rows.map((r) => r.id);
-      const placeholders = ids.map(() => "?").join(",");
-      this.db
-        .prepare(`UPDATE target_queue SET drain_claimed_at = ? WHERE id IN (${placeholders})`)
-        .run(...([claimedAt, ...ids] as never[]));
-      return rows;
-    });
-    // BEGIN IMMEDIATE takes a RESERVED lock at the start of the transaction
-    // instead of the default DEFERRED (which only locks on the first write).
-    // In WAL mode with two processes, DEFERRED lets both transactions pass
-    // the SELECT before either holds the write lock, then the second UPDATE
-    // silently overwrites the first's claim — both drains would consider the
-    // rows theirs. IMMEDIATE serializes the whole thing across connections.
-    return txn.immediate();
+    return this.queue.dequeueApproved(opts);
   }
 
   expirePendingOlderThan(days: number): number {
-    const sinceIso = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
-    const result = this.db
-      .prepare(
-        `UPDATE target_queue SET status = 'expired' WHERE status = 'pending' AND found_at < ?`,
-      )
-      .run(sinceIso);
-    return Number(result.changes);
+    return this.queue.expirePendingOlderThan(days);
   }
 
   queueCounts(): Record<QueueStatus, number> {
-    const rows = this.db
-      .query("SELECT status, COUNT(*) AS n FROM target_queue GROUP BY status")
-      .all() as Array<{ status: QueueStatus; n: number }>;
-    const out: Record<QueueStatus, number> = {
-      pending: 0,
-      approved: 0,
-      rejected: 0,
-      sent: 0,
-      expired: 0,
-    };
-    for (const r of rows) out[r.status] = r.n;
-    return out;
+    return this.queue.queueCounts();
   }
 
   /**
@@ -3695,14 +3156,7 @@ export class Ledger {
    * to `pending`. Plays with zero approved rows are absent from the map.
    */
   approvedCountsByPlay(): Record<string, number> {
-    const rows = this.db
-      .query(
-        "SELECT play_name, COUNT(*) AS n FROM target_queue WHERE status = 'approved' GROUP BY play_name",
-      )
-      .all() as Array<{ play_name: string; n: number }>;
-    const out: Record<string, number> = {};
-    for (const r of rows) out[r.play_name] = r.n;
-    return out;
+    return this.queue.approvedCountsByPlay();
   }
 
   /** Reviewed queue outcomes for one finder inside a trailing time window. */
@@ -3711,26 +3165,7 @@ export class Ledger {
     reviewed: number;
     rate: number | null;
   } {
-    // post-funding-auto predates the registry name and writes find:post-funding.
-    const sourceName = input.finder === "post-funding-auto" ? "post-funding" : input.finder;
-    const source = `find:${sourceName}`;
-    const row = this.db
-      .query(
-        `SELECT
-           SUM(CASE WHEN status IN ('approved','sent') THEN 1 ELSE 0 END) AS approved,
-           COUNT(*) AS reviewed
-         FROM target_queue
-         WHERE (source = ? OR source LIKE ?)
-           AND ${humanDecisionWhereSql()}
-           AND reviewed_at >= ?`,
-      )
-      .get(source, `${source}:%`, input.sinceIso) as {
-      approved: number | null;
-      reviewed: number;
-    };
-    const approved = row.approved ?? 0;
-    const reviewed = row.reviewed ?? 0;
-    return { approved, reviewed, rate: reviewed > 0 ? approved / reviewed : null };
+    return this.queue.finderApprovalStats(input);
   }
 
   // ── runs (per-/run-page dispatch records) ──────────────────────────────────
@@ -4197,10 +3632,12 @@ export class Ledger {
    * Associate a queued target with a known prospect (so the queue page can
    * link back to the prospect record). Best-effort — the caller is expected
    * to swallow failures since the link is a convenience, not a correctness
-   * invariant.
+   * invariant. Only the row's own `prospect_id` write lives in
+   * `QueueStore.setQueueProspectId`; the best-effort mail-address seeding
+   * below reaches into the prospect/mail-address domains, so it stays here.
    */
   setQueueProspectId(id: number, prospectId: number): void {
-    this.db.prepare(`UPDATE target_queue SET prospect_id = ? WHERE id = ?`).run(prospectId, id);
+    this.queue.setQueueProspectId(id, prospectId);
     const row = this.getQueueRow(id);
     if (row && !this.getMailAddress(`prospect:${prospectId}`)) {
       const payload = JSON.parse(row.payload_json);
@@ -4221,20 +3658,7 @@ export class Ledger {
     previousPayload: string;
     draft: Parameters<Ledger["setQueueDraft"]>[0]["draft"];
   }): boolean {
-    const at = new Date().toISOString();
-    return (
-      this.db
-        .prepare(`UPDATE target_queue SET last_draft_json = ?, last_drafted_at = ?
-      WHERE id = ? AND last_draft_json IS ? AND payload_json = ?
-      AND status != 'sent' AND sent_at IS NULL AND send_started_at IS NULL`)
-        .run(
-          JSON.stringify({ ...input.draft, draftedAt: at }),
-          at,
-          input.id,
-          input.previousDraft,
-          input.previousPayload,
-        ).changes === 1
-    );
+    return this.queue.setQueueDraftIfCurrent(input);
   }
 
   /**
@@ -4255,11 +3679,7 @@ export class Ledger {
       angle?: unknown;
     };
   }): void {
-    const draftedAtIso = new Date().toISOString();
-    const json = JSON.stringify({ ...input.draft, draftedAt: draftedAtIso });
-    this.db
-      .prepare(`UPDATE target_queue SET last_draft_json = ?, last_drafted_at = ? WHERE id = ?`)
-      .run(json, draftedAtIso, input.id);
+    this.queue.setQueueDraft(input);
   }
 
   /**
@@ -4268,9 +3688,7 @@ export class Ledger {
    * so regenerate re-drafts without paying for research again.
    */
   updateQueuePayload(input: { id: number; payload: unknown }): void {
-    this.db
-      .prepare(`UPDATE target_queue SET payload_json = ? WHERE id = ?`)
-      .run(JSON.stringify(input.payload), input.id);
+    this.queue.updateQueuePayload(input);
   }
 
   /**
@@ -4280,21 +3698,7 @@ export class Ledger {
    * when nothing was sent to them on this play, or the payload won't parse.
    */
   latestSentQueuePayload(playName: string, email: string): Record<string, unknown> | null {
-    const row = this.db
-      .query(
-        `SELECT payload_json FROM target_queue
-          WHERE play_name = ? AND status = 'sent'
-            AND lower(trim(json_extract(payload_json, '$.email'))) = lower(trim(?))
-          ORDER BY sent_at DESC, id DESC LIMIT 1`,
-      )
-      .get(playName, email) as { payload_json: string } | null;
-    if (!row) return null;
-    try {
-      const parsed: unknown = JSON.parse(row.payload_json);
-      return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
-    } catch {
-      return null;
-    }
+    return this.queue.latestSentQueuePayload(playName, email);
   }
 
   /**
@@ -4309,41 +3713,7 @@ export class Ledger {
   latestSentQueuePayloads(
     pairs: ReadonlyArray<{ playName: string; email: string | null }>,
   ): Map<string, Record<string, unknown>> {
-    const out = new Map<string, Record<string, unknown>>();
-    const wanted = new Set<string>();
-    const plays = new Set<string>();
-    for (const p of pairs) {
-      const email = p.email?.trim().toLowerCase();
-      if (!email) continue;
-      wanted.add(`${p.playName}|${email}`);
-      plays.add(p.playName);
-    }
-    if (wanted.size === 0) return out;
-    const playList = [...plays];
-    const rows = this.db
-      .query(
-        `SELECT play_name, lower(trim(json_extract(payload_json, '$.email'))) AS email, payload_json
-           FROM target_queue
-          WHERE status = 'sent' AND json_valid(payload_json)
-            AND play_name IN (${playList.map(() => "?").join(",")})
-          ORDER BY sent_at DESC, id DESC`,
-      )
-      .all(...playList) as Array<{ play_name: string; email: string | null; payload_json: string }>;
-    for (const row of rows) {
-      if (!row.email) continue;
-      const key = `${row.play_name}|${row.email}`;
-      if (!wanted.has(key) || out.has(key)) continue;
-      try {
-        const parsed: unknown = JSON.parse(row.payload_json);
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          out.set(key, parsed as Record<string, unknown>);
-        }
-      } catch {
-        // an unparsable payload is no reminder; the row simply has none
-      }
-      if (out.size === wanted.size) break;
-    }
-    return out;
+    return this.queue.latestSentQueuePayloads(pairs);
   }
 
   /**
@@ -4365,32 +3735,16 @@ export class Ledger {
    * own their row (the manual add's research rewrite).
    */
   patchLiveQueuePayload(input: { id: number; patch: Record<string, unknown> }): boolean {
-    const r = this.db
-      .prepare(
-        `UPDATE target_queue
-            SET payload_json = json_patch(payload_json, ?)
-          WHERE id = ?
-            AND status IN ('pending', 'approved')
-            AND sent_at IS NULL
-            AND send_started_at IS NULL
-            AND json_valid(payload_json)`,
-      )
-      .run(JSON.stringify(input.patch), input.id);
-    return r.changes === 1;
+    return this.queue.patchLiveQueuePayload(input);
   }
 
   latestQueueId(): number {
-    const row = this.db.query("SELECT COALESCE(MAX(id), 0) AS id FROM target_queue").get() as {
-      id: number;
-    };
-    return row.id;
+    return this.queue.latestQueueId();
   }
 
   /** Newly-created pending rows, used by the post-finder product research stage. */
   listPendingQueueAfterId(id: number): QueueRow[] {
-    return this.db
-      .query("SELECT * FROM target_queue WHERE id > ? AND status = 'pending' ORDER BY id ASC")
-      .all(id) as QueueRow[];
+    return this.queue.listPendingQueueAfterId(id);
   }
 
   getProductResearchCache(cacheKey: string, maxAgeMs: number): string | null {
@@ -4408,9 +3762,7 @@ export class Ledger {
    * settles. Pass an empty string to clear it.
    */
   setQueueNotes(input: { id: number; notes: string }): void {
-    this.db
-      .prepare(`UPDATE target_queue SET notes = ? WHERE id = ?`)
-      .run(input.notes === "" ? null : input.notes, input.id);
+    this.queue.setQueueNotes(input);
   }
 
   /**
@@ -4418,9 +3770,7 @@ export class Ledger {
    * writer). Pass null to clear.
    */
   setQueuePriority(id: number, priority: ProspectPriority | null): void {
-    this.db
-      .prepare(`UPDATE target_queue SET priority_json = ? WHERE id = ?`)
-      .run(priority ? JSON.stringify(priority) : null, id);
+    this.queue.setQueuePriority(id, priority);
   }
 
   /**
@@ -4431,26 +3781,7 @@ export class Ledger {
   listQueueRowsForScoring(
     opts: { playName?: string; limit?: number; allStatuses?: boolean } = {},
   ): QueueRow[] {
-    const args: unknown[] = [];
-    // Default scope is the live queue; `allStatuses` widens to full history so
-    // scores can be compared against dispositions already made (methodology
-    // evaluation) — it never changes what any consumer DOES with a score.
-    let where = opts.allStatuses ? `1=1` : `status IN ('pending','approved')`;
-    if (opts.playName) {
-      where += ` AND play_name = ?`;
-      args.push(opts.playName);
-    }
-    // Unbounded by default: the caller filters already-scored rows AFTER this
-    // read, so a default LIMIT would pin every run to the same prefix and rows
-    // past it could never be reached.
-    let limitSql = "";
-    if (opts.limit !== undefined) {
-      limitSql = ` LIMIT ?`;
-      args.push(opts.limit);
-    }
-    return this.db
-      .query(`SELECT * FROM target_queue WHERE ${where} ORDER BY id ASC${limitSql}`)
-      .all(...(args as never[])) as QueueRow[];
+    return this.queue.listQueueRowsForScoring(opts);
   }
 
   /**
@@ -4464,41 +3795,7 @@ export class Ledger {
    * positive states), so its absence is never evidence of failure.
    */
   listSentOutcomeRows(opts: { playName?: string } = {}): SentOutcomeRawRow[] {
-    const args: unknown[] = [];
-    let where = `q.status = 'sent' AND q.sent_at IS NOT NULL`;
-    if (opts.playName) {
-      where += ` AND q.play_name = ?`;
-      args.push(opts.playName);
-    }
-    return this.db
-      .query(
-        `SELECT q.id, q.play_name, q.dedupe_key, q.priority_json, q.sent_at,
-                q.decision, q.decided_by,
-                COALESCE(q.prospect_id, p.id) AS joined_prospect_id,
-                json_extract(q.payload_json, '$.email') AS payload_email,
-                (SELECT MIN(ir.received_at) FROM inbox_replies ir
-                  WHERE ir.prospect_id = COALESCE(q.prospect_id, p.id)
-                    AND COALESCE(ir.kind, 'human') = 'human') AS first_email_reply_at,
-                (SELECT ir.intent FROM inbox_replies ir
-                  WHERE ir.prospect_id = COALESCE(q.prospect_id, p.id)
-                    AND COALESCE(ir.kind, 'human') = 'human'
-                  ORDER BY ir.received_at ASC, ir.id ASC LIMIT 1) AS first_email_reply_intent,
-                (SELECT MIN(ce.occurred_at) FROM channel_events ce
-                  WHERE ce.prospect_id = COALESCE(q.prospect_id, p.id)
-                    AND ce.event_type = 'reply') AS first_channel_reply_at,
-                (SELECT MAX(CASE d.outcome WHEN 'deal_won' THEN 4
-                                           WHEN 'sql_qualified' THEN 3
-                                           WHEN 'meeting_booked' THEN 2
-                                           ELSE NULL END)
-                   FROM deal_outcomes d
-                  WHERE d.prospect_id = COALESCE(q.prospect_id, p.id)) AS deal_rank
-         FROM target_queue q
-         LEFT JOIN prospects p
-           ON p.email = LOWER(TRIM(json_extract(q.payload_json, '$.email')))
-         WHERE ${where}
-         ORDER BY q.id ASC`,
-      )
-      .all(...(args as never[])) as SentOutcomeRawRow[];
+    return this.queue.listSentOutcomeRows(opts);
   }
 
   /**
