@@ -1,6 +1,16 @@
 #!/usr/bin/env bun
 import { registerDirectMailCommand } from "./commands/direct-mail.ts";
 import { Command, InvalidArgumentError } from "commander";
+
+/** Option parser for counts that must be at least 1; `0` or `abc` is an error, not the default. */
+function positiveInt(flag: string): (v: string) => number {
+  return (v) => {
+    const n = Number.parseInt(v, 10);
+    if (!Number.isInteger(n) || n <= 0)
+      throw new InvalidArgumentError(`${flag} must be a positive integer`);
+    return n;
+  };
+}
 import {
   readPackageVersion,
   reportTelemetryEvent,
@@ -69,6 +79,7 @@ import {
 import { commandEnrichLinkedIn } from "./commands/enrich-linkedin.ts";
 import { commandResearchProspects } from "./commands/research-prospects.ts";
 import { commandResearchProducts } from "./commands/research-products.ts";
+import { commandResearchQueue } from "./commands/research-queue.ts";
 import { commandSynthesizeAngles } from "./commands/synthesize-angles.ts";
 import { commandScoreProspects } from "./commands/score-prospects.ts";
 import { commandBackfillFitReason } from "./commands/backfill-fit-reason.ts";
@@ -475,7 +486,7 @@ find
           skipHandles: opts.skipHandles,
           ...(opts.limit ? { limit: opts.limit } : {}),
           ...(opts.play ? { play: opts.play } : {}),
-          ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
+          ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
         });
       },
     ),
@@ -495,7 +506,7 @@ find
     "--scope <list>",
     "comma-separated: active,replied,unjudged,all (default active,replied,unjudged)",
   )
-  .option("--concurrency <n>", "parallel research calls (default 3)", (v) => Number.parseInt(v, 10))
+  .option("--concurrency <n>", "parallel research calls (default 3)", positiveInt("--concurrency"))
   .option("--refresh", "re-research prospects that already have a dossier", false)
   .option("--id <n>", "research one prospect by id, ignoring scope and dossier state", (v) =>
     Number.parseInt(v, 10),
@@ -503,8 +514,12 @@ find
   .option("--max-cost-usd <n>", "stop once this much has been billed this run", (v) =>
     Number.parseFloat(v),
   )
+  .option("--no-rejudge", "keep the stored ICP verdict; skip the person-gate re-judge")
+  .option("--no-company", "skip the company lookup for the current employer")
   .option("--dry-run", "list candidates and estimated cost; research nothing", false)
-  .description("Backfill research dossiers onto existing prospects (~$0.05 each)")
+  .description(
+    "Backfill person research onto existing prospects: current role, company facts, ICP re-judge (~$0.055 each)",
+  )
   .action(
     runOrFail(
       async (opts: {
@@ -514,15 +529,72 @@ find
         refresh: boolean;
         id?: number;
         maxCostUsd?: number;
+        rejudge: boolean;
+        company: boolean;
         dryRun: boolean;
       }) => {
         await commandResearchProspects({
           dryRun: opts.dryRun,
           refresh: opts.refresh,
+          noRejudge: opts.rejudge === false,
+          noCompany: opts.company === false,
           ...(opts.limit ? { limit: opts.limit } : {}),
           ...(opts.scope ? { scope: opts.scope } : {}),
-          ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
+          ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
           ...(Number.isFinite(opts.id) ? { id: opts.id as number } : {}),
+          ...(Number.isFinite(opts.maxCostUsd) ? { maxCostUsd: opts.maxCostUsd as number } : {}),
+        });
+      },
+    ),
+  );
+
+find
+  .command("research-queue")
+  .option("--play <name>", "only rows of this play (default: all plays)")
+  .option("--status <s>", "pending, approved, or live = both (default live)")
+  .option(
+    "--id <n>",
+    "research one queue row by id, ignoring play, status and research state",
+    (v) => Number.parseInt(v, 10),
+  )
+  .option("--limit <n>", "max rows to research (default: no limit)", (v) => Number.parseInt(v, 10))
+  .option("--concurrency <n>", "parallel research calls (default 3)", positiveInt("--concurrency"))
+  .option(
+    "--max-cost-usd <n>",
+    "stop once this much has been billed this run (default: no cap)",
+    (v) => Number.parseFloat(v),
+  )
+  .option("--refresh", "re-research rows that already carry person research", false)
+  .option("--no-rejudge", "keep the row's ICP verdict; skip the person-gate re-judge")
+  .option("--no-company", "skip the company lookup for the current employer")
+  .option("--dry-run", "list candidates and estimated cost; research nothing", false)
+  .description(
+    "Backfill person research onto live queue rows: current role from the LinkedIn history, company facts, ICP re-judge (~$0.055 each)",
+  )
+  .action(
+    runOrFail(
+      async (opts: {
+        play?: string;
+        status?: string;
+        id?: number;
+        limit?: number;
+        concurrency?: number;
+        maxCostUsd?: number;
+        refresh: boolean;
+        rejudge: boolean;
+        company: boolean;
+        dryRun: boolean;
+      }) => {
+        await commandResearchQueue({
+          dryRun: opts.dryRun,
+          refresh: opts.refresh,
+          noRejudge: opts.rejudge === false,
+          noCompany: opts.company === false,
+          ...(opts.play ? { play: opts.play } : {}),
+          ...(opts.status ? { status: opts.status } : {}),
+          ...(Number.isFinite(opts.id) ? { id: opts.id as number } : {}),
+          ...(Number.isFinite(opts.limit) ? { limit: opts.limit as number } : {}),
+          ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
           ...(Number.isFinite(opts.maxCostUsd) ? { maxCostUsd: opts.maxCostUsd as number } : {}),
         });
       },
@@ -541,7 +613,7 @@ find
     "--scope <list>",
     "comma-separated: active,replied,unjudged,all (default active,replied,unjudged)",
   )
-  .option("--concurrency <n>", "parallel research calls (default 3)", (v) => Number.parseInt(v, 10))
+  .option("--concurrency <n>", "parallel research calls (default 3)", positiveInt("--concurrency"))
   .option(
     "--max-cost-usd <n>",
     "stop starting calls after this spend target (default $5; one call may cross it)",
@@ -577,7 +649,7 @@ find
             : {}),
           ...(opts.limit !== undefined ? { limit: opts.limit } : {}),
           ...(opts.scope ? { scope: opts.scope } : {}),
-          ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
+          ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
         });
       },
     ),
@@ -636,7 +708,7 @@ find
           // backlog instead of stopping.
           limit: opts.limit,
           ...(opts.scope ? { scope: opts.scope } : {}),
-          ...(opts.concurrency ? { concurrency: opts.concurrency } : {}),
+          ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
           ...(Number.isFinite(opts.maxCostUsd) ? { maxCostUsd: opts.maxCostUsd as number } : {}),
         });
       },

@@ -31,6 +31,7 @@ import type { HarvestKnobs } from "./_x-engine.ts";
 import type { FinderResult } from "./_types.ts";
 import { collectQueueBusinessAddress } from "@oneshot-gtm/plays";
 import { researchNewQueueRows } from "./_product-research.ts";
+import { researchNewQueueRowPeople } from "./_person-research.ts";
 
 export interface TriggerSpec {
   name: string;
@@ -83,6 +84,18 @@ export async function runFinderWithProductResearch(
   }
   result.costUsd += mailCost;
   if (result.sdkCostUsd !== undefined) result.sdkCostUsd += mailCost;
+  // Last, because it is the slow stage (minutes per person): the fast facts
+  // above land first and the rows are reviewable while this completes.
+  await researchNewQueueRowPeople({
+    afterId,
+    result,
+    enabled: config["personResearch"] !== false,
+    // mailCost is already in both baselines (lines above); do not add it twice.
+    priorSdkCostUsd: result.sdkCostUsd ?? result.costUsd,
+    ...(typeof config["maxCostUsd"] === "number"
+      ? { maxCostUsd: config["maxCostUsd"] as number }
+      : {}),
+  });
   return result;
 }
 
@@ -118,7 +131,18 @@ export function checkReadiness(spec: TriggerSpec, config: Record<string, unknown
 }
 
 const ONE_HOUR = 3600 * 1000;
-const PRODUCT_RESEARCH_DEFAULT = { productResearch: true } as const;
+/**
+ * Both post-finder research stages default on. `productResearch` reads the
+ * prospect's own pages; `personResearch` resolves the person's CURRENT role
+ * and employer from their public work history (deepResearchPerson, ~$0.05,
+ * minutes) plus one company lookup (~$0.005), re-judges the person gate on
+ * it, and lands the facts in the dossier. Either key set to `false` on a
+ * trigger config turns that stage off; a stored config that predates a key
+ * behaves as `true`.
+ */
+const RESEARCH_DEFAULT = { productResearch: true, personResearch: true } as const;
+const PERSON_RESEARCH_BRIEF =
+  'personResearch (default true): after the run, each new row with a profile URL gets its current title and employer from the person\'s work history (~$0.055/row, minutes), the person gate is re-judged on it, and the facts land in the dossier; counts against maxCostUsd, and "Run now" takes longer while it completes.';
 
 /**
  * Default cohort sweep for `accelerator-batch`. Only yc-* entries hit the
@@ -149,7 +173,7 @@ export const TRIGGERS: TriggerSpec[] = [
   {
     name: "show-hn",
     defaultIntervalMs: 6 * ONE_HOUR,
-    defaultConfig: { ...PRODUCT_RESEARCH_DEFAULT, sinceDays: 1, limit: 25, maxCostUsd: 5 },
+    defaultConfig: { ...RESEARCH_DEFAULT, sinceDays: 1, limit: 25, maxCostUsd: 5 },
     configBrief:
       "Polls Hacker News Algolia for recent Show HN posts, ICP-filters them, enriches founder contact, and enqueues them for review. Config: `sinceDays` (lookback window, default 1), `limit` (max kept, default 25), `maxCostUsd` (per-run spend cap), `minPoints` (upvote floor, default 5 — posts below it drop as low-signal). Defaults work for most ICPs — bump sinceDays to 7+ if your ICP is niche enough that daily volume is thin. STRATEGIST NOTE: minPoints is a MOTION choice, not noise control — selling a paid product, keep ≥5 (traction = budget); driving adoption of a founder tool, drop to 1-2 (the quiet launch IS the pain signal).",
     run: (cfg) =>
@@ -167,7 +191,7 @@ export const TRIGGERS: TriggerSpec[] = [
     enabledByDefault: false,
     // Every known incubator × {latest, previous-latest}; editable in /queue.
     defaultConfig: {
-      ...PRODUCT_RESEARCH_DEFAULT,
+      ...RESEARCH_DEFAULT,
       cohorts: DEFAULT_COHORTS,
       yourEdge: "",
       limit: 25,
@@ -241,7 +265,7 @@ export const TRIGGERS: TriggerSpec[] = [
     name: "post-funding-auto",
     defaultIntervalMs: 12 * ONE_HOUR,
     defaultConfig: {
-      ...PRODUCT_RESEARCH_DEFAULT,
+      ...RESEARCH_DEFAULT,
       autoRounds: ["Seed", "Series A"],
       autoSinceDays: 7,
       limit: 25,
@@ -269,7 +293,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
-      ...PRODUCT_RESEARCH_DEFAULT,
+      ...RESEARCH_DEFAULT,
       personas: ["VP Engineering", "Head of Growth", "Director of Product", "Chief of Staff"],
       yourEdge: "",
       sinceDays: 14,
@@ -300,7 +324,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
-      ...PRODUCT_RESEARCH_DEFAULT,
+      ...RESEARCH_DEFAULT,
       roles: ["Staff Engineer", "ML Engineer", "Solutions Engineer"],
       sinceDays: 14,
       limit: 25,
@@ -330,7 +354,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
-      ...PRODUCT_RESEARCH_DEFAULT,
+      ...RESEARCH_DEFAULT,
       podcasts: ["Latent Space", "Lenny's Podcast", "20VC", "Acquired", "Invest Like the Best"],
       sinceDays: 21,
       skipRead: false,
@@ -357,7 +381,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
-      ...PRODUCT_RESEARCH_DEFAULT,
+      ...RESEARCH_DEFAULT,
       topics: ["AI", "founders"] as string[],
       cities: ["San Francisco", "New York"] as string[],
       sinceDays: 14,
@@ -417,7 +441,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
-      ...PRODUCT_RESEARCH_DEFAULT,
+      ...RESEARCH_DEFAULT,
       portals: [] as SocrataPortalConfig[],
       naics: [] as string[],
       licenseTypes: [] as string[],
@@ -553,7 +577,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 12 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
-      ...PRODUCT_RESEARCH_DEFAULT,
+      ...RESEARCH_DEFAULT,
       topics: [] as string[],
       vendors: [] as string[],
       directCompetitors: [] as string[],
@@ -624,7 +648,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 12 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
-      ...PRODUCT_RESEARCH_DEFAULT,
+      ...RESEARCH_DEFAULT,
       repos: [] as Array<{ repo: string; rel: string; label?: string; repoEdge?: string }>,
       yourEdge: "",
       sinceDays: 30,
@@ -689,7 +713,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
-      ...PRODUCT_RESEARCH_DEFAULT,
+      ...RESEARCH_DEFAULT,
       jobTitles: [] as string[],
       industries: [] as string[],
       locations: [] as string[],
@@ -744,7 +768,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
-      ...PRODUCT_RESEARCH_DEFAULT,
+      ...RESEARCH_DEFAULT,
       seeds: [] as Array<{ handle: string; edge?: string }>,
       engine: "xapi",
       laneSplit: 0.5,
@@ -854,7 +878,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
-      ...PRODUCT_RESEARCH_DEFAULT,
+      ...RESEARCH_DEFAULT,
       naics: [] as string[],
       noticeTypes: ["r", "p"] as string[],
       agencies: [] as string[],
@@ -913,7 +937,7 @@ export const TRIGGERS: TriggerSpec[] = [
     defaultIntervalMs: 24 * ONE_HOUR,
     enabledByDefault: false,
     defaultConfig: {
-      ...PRODUCT_RESEARCH_DEFAULT,
+      ...RESEARCH_DEFAULT,
       cities: [] as string[],
       keywords: [] as string[],
       sinceDays: 30,
@@ -965,6 +989,10 @@ export const TRIGGERS: TriggerSpec[] = [
       }),
   },
 ];
+
+// Every trigger runs person research unless its config says `false`; say so
+// in every brief rather than hand-editing fifteen strings.
+for (const spec of TRIGGERS) spec.configBrief = `${spec.configBrief}\n${PERSON_RESEARCH_BRIEF}`;
 
 /**
  * Resolve the active interval for a trigger: stored config_json may override

@@ -68,7 +68,7 @@ import {
 } from "../lib/rejectReason.ts";
 import { queueEvidence } from "../lib/queueEvidence.ts";
 import { heldSummary } from "../lib/flagLabels.ts";
-import { caseMeta, caseRows } from "../lib/queueCase.ts";
+import { caseMeta, caseRows, personResearchBadge, personResearchRows } from "../lib/queueCase.ts";
 import { IdentityCell, SignalLabel } from "../components/ledger/IdentityCell.tsx";
 import { SheetHeading } from "../components/ledger/SheetHeading.tsx";
 import { Rule, Sheet } from "../components/ledger/Sheet.tsx";
@@ -913,7 +913,13 @@ export function QueueRow({
   // The signal is already the row's label above; the sheet's meta line says
   // only where the row came from and when.
   const metaLine = caseMeta([detail, `found ${timeAgo(row.foundAt)}`]);
+  // Researched facts lead the case: where they are now outranks what the
+  // guest list said. When a "now" row exists the engine's `title:` reason is
+  // the stale one, so it is dropped rather than shown twice.
+  const researchRows = masked ? [] : personResearchRows(row.payload);
+  const hasCurrentRole = researchRows.some((r) => r.key === "now");
   const sheetRows: CaseListRow[] = [
+    ...researchRows,
     ...(eventTitle
       ? [{ key: "event", value: eventRole ? `${eventTitle} · ${eventRole}` : eventTitle }]
       : []),
@@ -931,7 +937,12 @@ export function QueueRow({
     // The engine repeats the event as a reason ("Guest at <event>"); the
     // event row above already says it.
     ...(!masked && row.priority
-      ? caseRows(row.priority.reasons.filter((r) => !eventTitle || !r.includes(eventTitle)))
+      ? caseRows(
+          row.priority.reasons.filter(
+            (r) =>
+              (!eventTitle || !r.includes(eventTitle)) && !(hasCurrentRole && /^title:/i.test(r)),
+          ),
+        )
       : []),
   ];
   return (
@@ -1448,6 +1459,12 @@ function DraftSection({
   // before the server-side guard was added. The card body is NOT the email
   // that went out (the original is only in the prospect's inbox now).
   const isStalePostSend = status === "sent" && !draft.sent;
+  // Research landed after this draft was written (or the draft was written
+  // while enrichment had failed): say so, in place of the "no enrichment" badge.
+  const researchBadge = personResearchBadge(payload, {
+    draftedAt,
+    ...(draft.enrichmentFailed ? { enrichmentFailed: true } : {}),
+  });
   // The total line: green under a letter the founder can send right now.
   const sendable = showSend && cleanDraft && !sending;
   const meta = draft.sent
@@ -1474,11 +1491,18 @@ function DraftSection({
             </Link>
           ))}
           {isStalePostSend && <Badge tone="blocked">post-send regenerate · not sent</Badge>}
-          {draft.enrichmentFailed && (
+          {researchBadge ? (
             <span className="inline-flex items-center">
-              <Badge tone="spend">no enrichment</Badge>
-              <Explain concept="enrichment" />
+              <Badge tone="receipt">{researchBadge}</Badge>
+              <Explain concept="personResearch" />
             </span>
+          ) : (
+            draft.enrichmentFailed && (
+              <span className="inline-flex items-center">
+                <Badge tone="spend">no enrichment</Badge>
+                <Explain concept="enrichment" />
+              </span>
+            )
           )}
         </DraftStateLine>
       }

@@ -1867,6 +1867,30 @@ export class Ledger {
   }
 
   /**
+   * Correct a prospect's current role from research. `updateProspectIdentity`
+   * is write-once by design (COALESCE), which is right for identity fields
+   * captured at finder time but wrong for a title the LinkedIn history says
+   * has changed since. Plain overwrite of the given keys only; the finder's
+   * originals live inside the dossier person record, not in new columns.
+   */
+  setProspectCurrentRole(id: number, patch: { title?: string; company?: string }): boolean {
+    const set: string[] = [];
+    const args: Array<string | number> = [];
+    for (const col of ["title", "company"] as const) {
+      const value = patch[col];
+      if (typeof value !== "string" || value.trim() === "") continue;
+      set.push(`${col} = ?`);
+      args.push(value.trim());
+    }
+    if (set.length === 0) return false;
+    args.push(id);
+    const result = this.db
+      .prepare(`UPDATE prospects SET ${set.join(", ")} WHERE id = ?`)
+      .run(...(args as never[]));
+    return Number(result.changes) > 0;
+  }
+
+  /**
    * Record the person-level ICP verdict for a prospect. Overwrites — a
    * re-audit with better data (a real title instead of a stale event bio)
    * must be able to flip an earlier call in either direction.

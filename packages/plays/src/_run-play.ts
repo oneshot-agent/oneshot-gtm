@@ -3,6 +3,8 @@ import {
   deepResearch,
   getLedger,
   hasDossierSignal,
+  isPersonResearchDossier,
+  mergePersonResearchDossier,
   mergeProductDossier,
   isRunCancelled,
   isSendDeferred,
@@ -229,6 +231,21 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         // nothing at all.
         throwIfCancelled(opts.signal, `${def.playName} prepare`);
         let prep = await def.prepare(target, opts.dryRun, opts.signal);
+        // PERSON RESEARCH first, so the merged dossier opens with the current
+        // role and company (readers that slice the first few hundred chars
+        // see the facts, not an enrich sentinel). A complete record also
+        // clears the "no enrichment" state: the research is the enrichment.
+        const personResearch = (target as { personResearch?: unknown }).personResearch;
+        if (isPersonResearchDossier(personResearch) && personResearch.status !== "unavailable") {
+          const { enrichmentFailed, ...rest } = prep;
+          prep = {
+            ...rest,
+            dossier: mergePersonResearchDossier(prep.dossier, personResearch),
+            ...(enrichmentFailed && personResearch.status !== "complete"
+              ? { enrichmentFailed: true }
+              : {}),
+          };
+        }
         const productResearch = (target as { productResearch?: unknown }).productResearch;
         if (
           productResearch &&
@@ -304,6 +321,11 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         if (firstName) {
           inputBlock = `${inputBlock}\n\nPROSPECT_FIRST_NAME: ${firstName}`;
         }
+        // The researched role and employer, when the row carries them. Every
+        // play gets these lines without naming the fields; absent → the input
+        // block is byte-identical to before.
+        const researchedLines = researchedRoleLines(target);
+        if (researchedLines) inputBlock = `${inputBlock}\n\n${researchedLines}`;
         if (opts.draftAngle)
           inputBlock += `\n\nSELECTED ANGLE: ${opts.draftAngle}\nBuild this draft around this argument. Preserve the play’s channel, tone, and factual constraints. Do not blend in other arguments.`;
         // Guard #2 — the LLM draft, the paid call `prepare` was feeding.
@@ -321,6 +343,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           ...(def.hardBans ? hardBanFlags(draft.body) : []),
           ...(def.extraFlags?.(target) ?? []),
           ...lintGrounding(target, prep),
+          ...lintStaleEmail(target),
         ];
         // Cross-workspace hold, applied centrally so EVERY play gets it: a
         // soft flag (overridable on manual send) that keeps drain from auto-
@@ -512,9 +535,67 @@ function icpFromTarget(target: unknown): {
  */
 export function lintGrounding(target: unknown, prep: { enrichmentFailed?: boolean }): string[] {
   if (!prep.enrichmentFailed) return [];
-  const row = target as { title?: unknown; attendeeBio?: unknown; role?: unknown };
-  const hasOwnGrounding = nonBlank(row?.title) || nonBlank(row?.attendeeBio);
+  const row = target as {
+    title?: unknown;
+    attendeeBio?: unknown;
+    role?: unknown;
+    currentRole?: unknown;
+  };
+  // A researched current role is the strongest grounding a row can carry.
+  const hasOwnGrounding =
+    nonBlank(row?.title) || nonBlank(row?.attendeeBio) || nonBlank(row?.currentRole);
   return hasOwnGrounding ? [] : ["ungrounded"];
+}
+
+/** "CURRENT ROLE: … / COMPANY FACTS: …" for a researched row, else "". */
+export function researchedRoleLines(target: unknown): string {
+  const row = target as { currentRole?: unknown; companyFacts?: unknown };
+  const lines: string[] = [];
+  if (nonBlank(row?.currentRole)) lines.push(`CURRENT ROLE: ${String(row.currentRole).trim()}`);
+  if (nonBlank(row?.companyFacts)) lines.push(`COMPANY FACTS: ${String(row.companyFacts).trim()}`);
+  return lines.join("\n");
+}
+
+/** "L'eto Group" ≡ "L'ETO Group": case, punctuation and legal suffixes never count. Mirrors find's `normalizeCompany`. */
+function companyKey(value: unknown): string {
+  return String(value ?? "")
+    .toLowerCase()
+    .replace(
+      /\b(?:group|inc|incorporated|llc|ltd|limited|co|corp|corporation|gmbh|sas|srl|plc|ag|the)\b/g,
+      " ",
+    )
+    .replace(/[^a-z0-9]+/g, "");
+}
+
+/**
+ * The stored address is at a company the research says this person has
+ * left. Never swapped (dedupe, verification and consent history are keyed on
+ * it); surfaced as a soft review flag with the researched work email in the
+ * dossier, so the founder decides.
+ */
+export function lintStaleEmail(target: unknown): string[] {
+  const row = target as {
+    email?: unknown;
+    companyAtFinder?: unknown;
+    companyDomainAtFinder?: unknown;
+    companyDomain?: unknown;
+    personResearch?: unknown;
+  };
+  const research = row?.personResearch;
+  if (!isPersonResearchDossier(research) || research.status === "unavailable") return [];
+  const email = typeof row.email === "string" ? row.email.trim().toLowerCase() : "";
+  const emailDomain = email.includes("@") ? email.split("@")[1]! : "";
+  if (!emailDomain) return [];
+  const finderCompany = companyKey(row.companyAtFinder);
+  if (!finderCompany) return [];
+  const finderDomain = String(row.companyDomainAtFinder ?? row.companyDomain ?? "")
+    .trim()
+    .toLowerCase();
+  const domainIsFinders = finderDomain !== "" && emailDomain === finderDomain;
+  const matching = research.organizations.filter((o) => companyKey(o.name) === finderCompany);
+  // Someone who left and later returned to the finder's company still works there.
+  const finderCompanyEnded = matching.length > 0 && matching.every((o) => !o.current);
+  return domainIsFinders && finderCompanyEnded ? ["email-at-former-employer"] : [];
 }
 
 function nonBlank(value: unknown): boolean {

@@ -1,5 +1,10 @@
 import { draftAngleFor, parseDraftAngle } from "./_draft-angle.ts";
-import { extractBusinessAddress } from "@oneshot-gtm/core";
+import {
+  companyRecordFromResearch,
+  extractBusinessAddress,
+  isPersonResearchDossier,
+  personRecordFromResearch,
+} from "@oneshot-gtm/core";
 import {
   getLedger,
   isDraining,
@@ -514,12 +519,21 @@ export async function suggestRejectReasonRoute(
       err instanceof SyntaxError ? "row payload is not valid JSON" : (err as Error).message;
     return jsonResponse({ error }, 400, req);
   }
+  // Research the row already carries (pre-send: `payload.personResearch`;
+  // post-send: the prospect's dossier) beats a paid lookup.
+  const research = (payload as { personResearch?: unknown } | null)?.personResearch;
+  const researched =
+    isPersonResearchDossier(research) && research.status !== "unavailable" ? research : null;
   const dossier =
     row.prospect_id != null
       ? (ledger.getProspectById(row.prospect_id)?.dossier_json ?? null)
-      : null;
-  let company: Record<string, unknown> | null = null;
-  const domain = dossier?.trim() ? null : rejectLookupDomain(payload);
+      : researched
+        ? JSON.stringify({ person: personRecordFromResearch(researched) })
+        : null;
+  let company: Record<string, unknown> | null = researched
+    ? companyRecordFromResearch(researched)
+    : null;
+  const domain = dossier?.trim() || company ? null : rejectLookupDomain(payload);
   if (domain && !isDudDomain(domain)) {
     // The SDK gets the deadline too (totalTimeoutMs), so a slow lookup is
     // cancelled end to end rather than merely released here.

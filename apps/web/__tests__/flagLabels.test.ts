@@ -15,6 +15,9 @@ describe("humanizeFlag", () => {
     expect(humanizeFlag("ungrounded")).toBe(
       "research found nothing on them; the draft leans on the company name",
     );
+    expect(humanizeFlag("email-at-former-employer")).toBe(
+      "their address is at a company they have left",
+    );
   });
 
   it("degrades an unknown label to its words instead of hiding it", () => {
