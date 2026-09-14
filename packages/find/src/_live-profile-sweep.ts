@@ -27,8 +27,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
-/** Rows per sweep; the daily cap inside the read path is the real ceiling. */
-const DEFAULT_MAX_ROWS = 40;
+/**
+ * Rows per sweep. A read takes ~5 minutes and the scheduler gives a sweep an
+ * hour, so ten fits; six sweeps a day stay under the read path's daily cap,
+ * which is the real ceiling.
+ */
+const DEFAULT_MAX_ROWS = 10;
 /** Spend per sweep, live reads plus any uncached provider call. */
 const DEFAULT_MAX_COST_USD = 2;
 
