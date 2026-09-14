@@ -68,10 +68,9 @@ import {
 } from "../lib/rejectReason.ts";
 import { queueEvidence } from "../lib/queueEvidence.ts";
 import { heldSummary } from "../lib/flagLabels.ts";
-import { caseMeta, caseRows, personResearchBadge, personResearchRows } from "../lib/queueCase.ts";
+import { caseRows, personResearchBadge, personResearchRows } from "../lib/queueCase.ts";
 import { IdentityCell, SignalLabel } from "../components/ledger/IdentityCell.tsx";
-import { SheetHeading } from "../components/ledger/SheetHeading.tsx";
-import { Rule, Sheet } from "../components/ledger/Sheet.tsx";
+import { CaseSection, Rule, Sheet } from "../components/ledger/Sheet.tsx";
 import {
   CaseList,
   Disclosure,
@@ -563,8 +562,8 @@ function QueuePage() {
           <table className="w-full text-[13px]">
             <thead className="sticky top-0 z-10 bg-ink-bg">
               <tr className="border-b border-ink-rule text-[10px] uppercase tracking-[0.14em] text-ink-faint">
-                <th className="w-6 py-2" />
-                <th className="w-6 py-2">
+                <th className="w-8 min-w-8 py-2" />
+                <th className="w-8 min-w-8 py-2">
                   <label className="inline-flex cursor-pointer items-center">
                     <input
                       type="checkbox"
@@ -910,16 +909,11 @@ export function QueueRow({
   const prio = priorityChip(row.priority, masked, { shadow: !ranked });
   const held = row.lastDraft && !row.lastDraft.sent ? heldSummary(row.lastDraft.flags) : null;
   const detail = sourceDetail(row.source);
-  // The signal is already the row's label above; the sheet's meta line says
-  // only where the row came from and when.
-  const metaLine = caseMeta([detail, `found ${timeAgo(row.foundAt)}`]);
-  // Researched facts lead the case: where they are now outranks what the
-  // guest list said. When a "now" row exists the engine's `title:` reason is
-  // the stale one, so it is dropped rather than shown twice.
   const researchRows = masked ? [] : personResearchRows(row.payload);
-  const hasCurrentRole = researchRows.some((r) => r.key === "now");
+  const profileHistory = researchRows.filter((r) => r.key === "listed as" || r.key === "formerly");
+  const scoreReasons = !masked && row.priority ? caseRows(row.priority.reasons) : [];
   const sheetRows: CaseListRow[] = [
-    ...researchRows,
+    ...researchRows.filter((r) => r.key !== "listed as" && r.key !== "formerly"),
     ...(eventTitle
       ? [{ key: "event", value: eventRole ? `${eventTitle} · ${eventRole}` : eventTitle }]
       : []),
@@ -934,16 +928,6 @@ export function QueueRow({
         ]
       : []),
     ...(eventUrl ? [{ key: "link", value: "event page", href: eventUrl }] : []),
-    // The engine repeats the event as a reason ("Guest at <event>"); the
-    // event row above already says it.
-    ...(!masked && row.priority
-      ? caseRows(
-          row.priority.reasons.filter(
-            (r) =>
-              (!eventTitle || !r.includes(eventTitle)) && !(hasCurrentRole && /^title:/i.test(r)),
-          ),
-        )
-      : []),
   ];
   return (
     <>
@@ -958,10 +942,10 @@ export function QueueRow({
         )}
         onClick={onToggle}
       >
-        <td className="w-6 py-[10px] pl-4 pr-0 text-ink-faint">
+        <td className="w-8 min-w-8 py-[10px] pl-4 pr-0 text-ink-faint">
           {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         </td>
-        <td className="w-6 py-[10px]" onClick={(e) => e.stopPropagation()}>
+        <td className="w-8 min-w-8 py-[10px]" onClick={(e) => e.stopPropagation()}>
           <label className="inline-flex cursor-pointer items-center">
             <input
               type="checkbox"
@@ -1003,7 +987,8 @@ export function QueueRow({
         <td className="whitespace-nowrap py-[10px] pr-6">
           <div className="flex items-center gap-1.5">
             <Badge tone={statusTone(row.status)}>{row.status}</Badge>
-            {row.status !== "sent" &&
+            {!expanded &&
+              row.status !== "sent" &&
               row.lastDraft &&
               (row.lastDraft.sent ? (
                 <Badge tone="receipt">sent</Badge>
@@ -1054,15 +1039,8 @@ export function QueueRow({
       {expanded && (
         <Sheet
           colSpan={7}
-          indent="pl-16"
           theCase={
-            <>
-              <SheetHeading label="the case" />
-              {metaLine && (
-                <div className="-mt-1 font-mono text-[11px] leading-4 text-ink-muted">
-                  {metaLine}
-                </div>
-              )}
+            <CaseSection>
               {!masked && fitReason && (
                 <p className="m-0 text-[13px] leading-5 text-ink-cream-2 [text-wrap:pretty]">
                   {fitReason}
@@ -1074,6 +1052,11 @@ export function QueueRow({
                   <CaseList rows={sheetRows} />
                 </>
               )}
+              {profileHistory.length > 0 && (
+                <Disclosure label="Profile history">
+                  <CaseList rows={profileHistory} className="mt-3" />
+                </Disclosure>
+              )}
               {/* `notes` is the pre-#592 rationale; once a row has its fit
                   line the note only repeats it (or a diagnostic). */}
               {!masked && !fitReason && row.notes && (
@@ -1082,12 +1065,8 @@ export function QueueRow({
               {row.priority && prio && (
                 <>
                   <Rule />
-                  {/* The score is a margin note: the chip, and the breakdown
-                      behind a disclosure whose first line is the caveat. */}
-                  <Disclosure
-                    label="explain score"
-                    summary={<Badge tone={prio.tone}>{prio.label}</Badge>}
-                  >
+                  {/* The row owns the score; its reasons and breakdown live here. */}
+                  <Disclosure label="explain score">
                     <div className="mt-2 flex flex-col gap-2 border-l border-ink-rule pl-3">
                       <div className="flex items-center leading-4 text-ink-muted">
                         {ranked
@@ -1095,6 +1074,7 @@ export function QueueRow({
                           : "Experimental. It does not affect ordering or sending."}
                         <Explain concept="shadowScore" />
                       </div>
+                      {scoreReasons.length > 0 && <CaseList rows={scoreReasons} />}
                       <div className="grid max-w-[420px] grid-cols-2 gap-x-6 gap-y-1 font-mono text-[11px] leading-4 text-ink-cream-2">
                         {priorityBreakdown(row.priority).map((b) => (
                           <div key={b.component} className="flex justify-between gap-2">
@@ -1111,7 +1091,7 @@ export function QueueRow({
                 </>
               )}
               <PayloadJson value={row.payload} />
-            </>
+            </CaseSection>
           }
           theLetter={
             <DraftSection
@@ -1431,14 +1411,14 @@ function DraftSection({
       }
     >
       {sending ? <Loader2 size={11} className="animate-spin" /> : <Send size={11} />}
-      {sending ? "Sending…" : softHold ? "Send anyway" : "Send this one"}
+      {sending ? "Sending…" : softHold ? "Send anyway" : "Send now"}
     </Button>
   ) : null;
 
   if (!draft) {
     return (
       <LetterEmpty
-        note="No draft yet. Drafting is a preview and never sends."
+        note="No draft yet."
         actions={
           <>
             {/* A sent row whose draft was never persisted used to return here
@@ -1467,50 +1447,60 @@ function DraftSection({
   });
   // The total line: green under a letter the founder can send right now.
   const sendable = showSend && cleanDraft && !sending;
-  const meta = draft.sent
-    ? "sent"
-    : draftedAt
-      ? `drafted ${timeAgo(draftedAt)} · ${draft.dryRun ? "preview, not sent" : "not sent"}`
-      : draft.dryRun
-        ? "preview, not sent"
-        : "not sent";
+  const researchWarning = researchBadge !== "researched" ? researchBadge : null;
+  const hasDraftDetails =
+    (!draft.sent && draft.flags.length > 0) ||
+    draft.receiptIds.length > 0 ||
+    isStalePostSend ||
+    researchWarning ||
+    (!researchBadge && draft.enrichmentFailed);
   return (
     <LetterCard
-      meta={meta}
+      meta={
+        <span title={draftedAt ? `Drafted ${timeAgo(draftedAt)}` : undefined}>
+          {draft.sent ? "Sent" : "Draft"}
+        </span>
+      }
       subject={draft.subject}
       stateLine={
-        <DraftStateLine sent={draft.sent} flags={draft.flags} dryRun={draft.dryRun}>
-          {softHold && <Explain concept="softHold" detail={softHoldDetail} />}
-          {draft.receiptIds.map((rid) => (
-            <Link
-              key={rid}
-              to="/receipts"
-              className="font-mono text-[11px] text-ink-muted underline decoration-ink-rule underline-offset-2 hover:text-ink-cream-2"
-            >
-              receipt #{rid}
-            </Link>
-          ))}
-          {isStalePostSend && <Badge tone="blocked">post-send regenerate · not sent</Badge>}
-          {researchBadge ? (
-            <span className="inline-flex items-center">
-              <Badge tone="receipt">{researchBadge}</Badge>
-              <Explain concept="personResearch" />
-            </span>
-          ) : (
-            draft.enrichmentFailed && (
+        hasDraftDetails ? (
+          <>
+            {!draft.sent && draft.flags.length > 0 && (
+              <DraftStateLine sent={false} flags={draft.flags} />
+            )}
+            {softHold && <Explain concept="softHold" detail={softHoldDetail} />}
+            {draft.receiptIds.map((rid) => (
+              <Link
+                key={rid}
+                to="/receipts"
+                className="font-mono text-[11px] text-ink-muted underline decoration-ink-rule underline-offset-2 hover:text-ink-cream-2"
+              >
+                receipt #{rid}
+              </Link>
+            ))}
+            {isStalePostSend && <Badge tone="blocked">post-send regenerate · not sent</Badge>}
+            {researchWarning ? (
               <span className="inline-flex items-center">
-                <Badge tone="spend">no enrichment</Badge>
-                <Explain concept="enrichment" />
+                <Badge tone="spend">{researchWarning}</Badge>
+                <Explain concept="personResearch" />
               </span>
-            )
-          )}
-        </DraftStateLine>
+            ) : (
+              !researchBadge &&
+              draft.enrichmentFailed && (
+                <span className="inline-flex items-center">
+                  <Badge tone="spend">no enrichment</Badge>
+                  <Explain concept="enrichment" />
+                </span>
+              )
+            )}
+          </>
+        ) : undefined
       }
       body={draft.body}
       afterBody={
         <>
           {draft.angle && (
-            <details className="px-4 py-2 text-xs text-ink-muted">
+            <details className="mt-3 text-xs text-ink-muted">
               <summary className="cursor-pointer">
                 {`Angle ${(draft.angle.index ?? 0) + 1} of ${draft.angle.count ?? 1}${draft.angle.origin === "generated" ? " · generated" : ""}`}
               </summary>
@@ -1524,11 +1514,6 @@ function DraftSection({
         left: draftButton,
         right: (
           <>
-            {sendable && !softHold && (
-              <span className="font-mono text-[11px] text-[color:var(--ink-receipt-2)]">
-                ready · no flags
-              </span>
-            )}
             {linkedinReplyButton}
             {manualButtons}
             {sendButton}
