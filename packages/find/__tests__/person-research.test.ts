@@ -409,6 +409,40 @@ describe("researchPerson: the record must be about the person on the row", () =>
     expect(dossier.warning).toMatch(/different person \(Rafael Lopez\)/);
   });
 
+  it("does not judge a business-named seed, and does not retry past the budget", async () => {
+    const { seedNamesABusiness } = await import("../src/_person-research.ts");
+    expect(
+      seedNamesABusiness({ name: "Ridgeway Plumbing Ltd", company: "Ridgeway Plumbing, Ltd." }),
+    ).toBe(true);
+    expect(seedNamesABusiness({ name: "Julia Zabrodska", company: "L'eto Group" })).toBe(false);
+    providerNameByUrl = "Rafael Lopez";
+    const business = await researchPerson({
+      seed: personSeedFor({
+        name: "Ridgeway Plumbing Ltd",
+        company: "Ridgeway Plumbing Ltd",
+        linkedinUrl: "https://www.linkedin.com/in/rafaell0pez/",
+      }),
+      playName: "local-business",
+      subject: { queueId: 1 },
+      remainingUsd: Number.POSITIVE_INFINITY,
+      liveProfile: false,
+    });
+    expect(calls.research).toBe(1);
+    expect(business.dossier.status).toBe("complete");
+
+    calls.research = 0;
+    const capped = await researchPerson({
+      seed: personSeedFor(juliaPayload),
+      playName: "luma-events",
+      subject: { queueId: 1 },
+      remainingUsd: 0.06,
+      liveProfile: false,
+    });
+    expect(calls.research).toBe(1);
+    expect(capped.dossier.status).toBe("unavailable");
+    expect(capped.dossier.warning).toMatch(/different person/);
+  });
+
   it("discards a live page that names someone else and keeps the provider's record", async () => {
     liveSession = true;
     liveName = "Rafael Lopez";

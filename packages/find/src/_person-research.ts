@@ -208,6 +208,18 @@ export function namesAgree(
   );
 }
 
+/**
+ * A seed whose "name" is the business, not a person (local-business rows put
+ * the company in both fields): the provider's person name has nothing to
+ * agree with, so the guard stays out of the way.
+ */
+export function seedNamesABusiness(seed: Pick<PersonSeed, "name" | "company">): boolean {
+  if (!seed.name || !seed.company) return false;
+  const a = nameTokens(seed.name);
+  const b = nameTokens(seed.company);
+  return a.length > 0 && a.length === b.length && a.every((t, i) => t === b[i]);
+}
+
 /** The person's name as the provider reports it, when it does. */
 function providerPersonName(result: unknown): string | null {
   if (!isRecord(result)) return null;
@@ -468,7 +480,7 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
   // one (the identifier the row actually owns), otherwise stop here rather
   // than patch a stranger's title onto the row and judge the stranger.
   let wrongPerson: string | null = null;
-  const urlName = seed.url ? providerPersonName(res.result) : null;
+  const urlName = seed.url && !seedNamesABusiness(seed) ? providerPersonName(res.result) : null;
   if (seed.url && urlName && !namesAgree(seed.name, urlName)) {
     logEvent(
       "person_research.wrong_person",
@@ -480,10 +492,13 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
       },
       "warn",
     );
-    if (seed.email) {
+    // The retry is a second paid call; it needs the same headroom the first one had.
+    const canRetry =
+      Boolean(seed.email) && input.remainingUsd - costUsd >= PERSON_RESEARCH_COST_ESTIMATE_USD;
+    if (canRetry) {
       const retry = await safeDeepResearchPerson(
         {
-          email: seed.email,
+          ...(seed.email ? { email: seed.email } : {}),
           ...(seed.name ? { name: seed.name } : {}),
           ...(seed.company && seed.company !== "(unknown)" ? { company: seed.company } : {}),
         },
@@ -533,7 +548,11 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
         { remainingUsd: Math.max(0, input.remainingUsd - costUsd) },
       );
       costUsd += live.costUsd;
-      if (live.profile?.name && !namesAgree(seed.name, live.profile.name)) {
+      if (
+        live.profile?.name &&
+        !seedNamesABusiness(seed) &&
+        !namesAgree(seed.name, live.profile.name)
+      ) {
         logEvent(
           "person_research.wrong_person",
           {
