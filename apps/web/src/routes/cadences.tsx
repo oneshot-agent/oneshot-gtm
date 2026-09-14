@@ -32,7 +32,7 @@ import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { StepProgress } from "../components/primitives/StepProgress.tsx";
 import { cn, formatSendsToday, timeAgo } from "../lib/cn.ts";
 import { readOnly } from "../lib/readOnly.ts";
-import { STOP_REASON_LABELS, cadenceStateLabel, mailWaitingRows } from "../lib/cadenceState.ts";
+import { STOP_REASON_LABELS, mailWaitingRows } from "../lib/cadenceState.ts";
 import { fitReasonFor } from "../lib/queueRationale.ts";
 import { queueEvidence } from "../lib/queueEvidence.ts";
 import { IdentityCell, SignalLabel } from "../components/ledger/IdentityCell.tsx";
@@ -660,13 +660,7 @@ function CadencesPage() {
                     : null;
                 const isOverdue =
                   c.status === "active" && c.nextDueAt !== null && c.nextDueAt <= nowIso;
-                // Line 2 is the sequence state (#602); every row opens into the
-                // sheet, which always has at least the enrolment to show.
-                const state = cadenceStateLabel(c, now);
-                // Line 2 is the step dots, and beside them only what needs a
-                // hand today: overdue, a send in flight, a failed send. The
-                // words ("step 1 of 2 · sent 2d ago · next in 22h") wait in the
-                // sheet, where there is room to read them once.
+                // Keep timing in the row; the sheet adds progress and history.
                 const dotsTone =
                   c.status === "replied"
                     ? "signal"
@@ -680,10 +674,15 @@ function CadencesPage() {
                 const rowNote = c.isSending
                   ? { text: "sending…", cls: "text-[color:var(--ink-receipt-2)]" }
                   : isOverdue && c.nextDueAt
-                    ? { text: `overdue · due ${timeAgo(c.nextDueAt)}`, cls: "text-ink-spend-2" }
+                    ? {
+                        text: `${timeAgo(c.nextDueAt).replace(/ ago$/, "")} overdue`,
+                        cls: "text-ink-spend-2",
+                      }
                     : c.status === "active" && c.lastSendError
                       ? { text: "send failed", cls: "text-ink-blocked-2" }
-                      : null;
+                      : c.status === "active" && c.nextDueAt
+                        ? { text: `Due ${timeAgo(c.nextDueAt)}`, cls: "text-ink-muted" }
+                        : null;
                 const open = expandedKeys.has(key);
                 const draft = c.nextStepDraft;
                 const previewPending = pendingPreviewKey === key;
@@ -715,22 +714,9 @@ function CadencesPage() {
                 const fitReason = masked ? null : fitReasonFor(c.queuePayload);
                 const caseRows: CaseListRow[] = [
                   {
-                    key: "state",
-                    value: state.text,
-                    ...(state.tone === "spend" || state.tone === "blocked"
-                      ? { tone: state.tone }
-                      : {}),
+                    key: "progress",
+                    value: `Step ${Math.min(c.currentStep + 1, totalSteps)} of ${totalSteps}`,
                   },
-                  { key: "enrolled", value: timeAgo(c.enrolledAt) },
-                  ...(c.status === "active" && c.nextDueAt
-                    ? [
-                        {
-                          key: "next due",
-                          value: `${timeAgo(c.nextDueAt)}${isOverdue ? " · overdue" : ""}`,
-                          ...(isOverdue ? { tone: "spend" as const } : {}),
-                        },
-                      ]
-                    : []),
                   ...(c.status === "replied"
                     ? [
                         {
@@ -857,11 +843,7 @@ function CadencesPage() {
                       ) : (
                         <Send size={11} />
                       )}
-                      {sendPending
-                        ? "Sending…"
-                        : c.nextStepIsBreakup
-                          ? "Send breakup"
-                          : "Send this one"}
+                      {sendPending ? "Sending…" : c.nextStepIsBreakup ? "Send breakup" : "Send now"}
                     </Button>
                   ) : null;
                 const letter =
@@ -881,19 +863,18 @@ function CadencesPage() {
                   ) : c.status === "active" && c.nextStepLabel != null ? (
                     draft ? (
                       <LetterCard
-                        meta={`drafted ${timeAgo(draft.draftedAt)} · preview, not sent`}
+                        meta={<span title={`Drafted ${timeAgo(draft.draftedAt)}`}>Draft</span>}
                         subject={draft.subject}
-                        stateLine={<DraftStateLine sent={false} flags={draft.flags} />}
+                        stateLine={
+                          draft.flags.length > 0 ? (
+                            <DraftStateLine sent={false} flags={draft.flags} />
+                          ) : undefined
+                        }
                         body={draft.body}
                         foot={{
                           left: regenerateButton,
                           right: (
                             <>
-                              {!sendDisabled && (
-                                <span className="font-mono text-[11px] text-[color:var(--ink-receipt-2)]">
-                                  ready · no flags
-                                </span>
-                              )}
                               {sendButton}
                               {stopButton}
                             </>
@@ -903,7 +884,7 @@ function CadencesPage() {
                       />
                     ) : (
                       <LetterEmpty
-                        note={`No draft yet for the ${c.nextStepLabel}. Drafting is a dry run and never sends.`}
+                        note={`No draft yet for the ${c.nextStepLabel}.`}
                         actions={
                           <>
                             {regenerateButton}
@@ -1063,49 +1044,53 @@ function CadencesPage() {
                                 );
                               return (
                                 <>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    title={
-                                      draft
-                                        ? `re-preview next step (current preview drafted ${timeAgo(draft.draftedAt)})`
-                                        : "preview next step (LLM draft, no send)"
-                                    }
-                                    disabled={pendingPreviewKey != null}
-                                    onClick={() =>
-                                      previewNext.mutate({
-                                        prospectId: c.prospectId,
-                                        playName: c.playName,
-                                      })
-                                    }
-                                    {...readOnly}
-                                  >
-                                    <Eye size={12} />
-                                  </Button>
-                                  <Button
-                                    variant={!sendDisabled ? "primary" : "ghost"}
-                                    size="sm"
-                                    title={
-                                      !draft
-                                        ? "click Preview first"
-                                        : draft.flags.length > 0
-                                          ? `draft held by lint (${draft.flags.length} flag(s)) — re-preview`
-                                          : c.nextStepIsBreakup
-                                            ? `send breakup (final touch) — sends now, no more emails after this${earlyNote}`
-                                            : `send next step — sends now${earlyNote}`
-                                    }
-                                    disabled={sendDisabled}
-                                    onClick={() => {
-                                      if (!draft) return;
-                                      sendNext.mutate({
-                                        prospectId: c.prospectId,
-                                        playName: c.playName,
-                                      });
-                                    }}
-                                    {...readOnly}
-                                  >
-                                    <Send size={12} />
-                                  </Button>
+                                  {!open && (
+                                    <>
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        title={
+                                          draft
+                                            ? `re-preview next step (current preview drafted ${timeAgo(draft.draftedAt)})`
+                                            : "preview next step (LLM draft, no send)"
+                                        }
+                                        disabled={pendingPreviewKey != null}
+                                        onClick={() =>
+                                          previewNext.mutate({
+                                            prospectId: c.prospectId,
+                                            playName: c.playName,
+                                          })
+                                        }
+                                        {...readOnly}
+                                      >
+                                        <Eye size={12} />
+                                      </Button>
+                                      <Button
+                                        variant={!sendDisabled ? "primary" : "ghost"}
+                                        size="sm"
+                                        title={
+                                          !draft
+                                            ? "click Preview first"
+                                            : draft.flags.length > 0
+                                              ? `draft held by lint (${draft.flags.length} flag(s)) — re-preview`
+                                              : c.nextStepIsBreakup
+                                                ? `send breakup (final touch) — sends now, no more emails after this${earlyNote}`
+                                                : `send next step — sends now${earlyNote}`
+                                        }
+                                        disabled={sendDisabled}
+                                        onClick={() => {
+                                          if (!draft) return;
+                                          sendNext.mutate({
+                                            prospectId: c.prospectId,
+                                            playName: c.playName,
+                                          });
+                                        }}
+                                        {...readOnly}
+                                      >
+                                        <Send size={12} />
+                                      </Button>
+                                    </>
+                                  )}
                                   {(draft || c.priorSteps.length > 0) && (
                                     <Button
                                       variant="ghost"
@@ -1130,25 +1115,27 @@ function CadencesPage() {
                                       />
                                     </Button>
                                   )}
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    title={
-                                      c.isSending
-                                        ? "wait for the in-flight send to finish before stopping"
-                                        : "stop cadence"
-                                    }
-                                    disabled={stop.isPending || c.isSending}
-                                    onClick={() =>
-                                      setStopModal({
-                                        prospectId: c.prospectId,
-                                        prospectName: c.prospectName,
-                                        playName: c.playName,
-                                      })
-                                    }
-                                  >
-                                    <CircleStop size={12} />
-                                  </Button>
+                                  {(!open || c.nextStepLabel == null) && (
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      title={
+                                        c.isSending
+                                          ? "wait for the in-flight send to finish before stopping"
+                                          : "stop cadence"
+                                      }
+                                      disabled={stop.isPending || c.isSending}
+                                      onClick={() =>
+                                        setStopModal({
+                                          prospectId: c.prospectId,
+                                          prospectName: c.prospectName,
+                                          playName: c.playName,
+                                        })
+                                      }
+                                    >
+                                      <CircleStop size={12} />
+                                    </Button>
+                                  )}
                                 </>
                               );
                             })()}
@@ -1219,7 +1206,7 @@ function CadencesPage() {
                                 <Rule />
                                 <div>
                                   <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
-                                    sent so far · {c.priorSteps.length}
+                                    History
                                   </div>
                                   <ol className="flex flex-col gap-2">
                                     {c.priorSteps.map((st) =>
