@@ -17,6 +17,7 @@ import {
 } from "@oneshot-gtm/core";
 import { bodyCommitsTerms, draftInboxReply } from "@oneshot-gtm/plays";
 import {
+  blockingFlags,
   type ConversationItem,
   type ConversationView,
   type InboxDraftReplyRequest,
@@ -901,20 +902,17 @@ export async function sendReplyRoute(req: Request): Promise<Response> {
       req,
     );
   }
-  // Send gate (issue #480): `commits-terms` is the one lint flag that blocks
-  // Send outright — checked on the TEXT BEING SENT, not a possibly-stale
-  // persisted `status` (the debounced autosave can lag a fast edit-then-send).
-  // The founder can still get past it: edit the commitment out, or steer a
-  // redraft that doesn't carry it.
-  if (bodyCommitsTerms(replyBody)) {
-    return jsonResponse(
-      {
-        error:
-          "this reply commits to something unauthorised (pricing, distribution, partnership terms, documentation placement, or similar) — edit it out or steer a redraft before sending",
-      },
-      409,
-      req,
-    );
+  // Send gate (issues #480, #647): flags are computed from the TEXT BEING SENT,
+  // not from a possibly-stale persisted `status` (the debounced autosave can lag
+  // a fast edit-then-send). Which of them actually block comes from the shared
+  // `blockingFlags`, the same helper the queue's send button uses, so the two
+  // surfaces cannot drift apart on what a founder may override. `commits-terms`
+  // is a soft review flag: it holds the draft for a second read, and sending
+  // as-is is the founder saying they stand behind the commitment.
+  const sendFlags = bodyCommitsTerms(replyBody) ? ["commits-terms"] : [];
+  const blocking = blockingFlags(sendFlags);
+  if (blocking.length > 0) {
+    return jsonResponse({ error: `this reply cannot be sent: ${blocking.join(", ")}` }, 409, req);
   }
 
   try {

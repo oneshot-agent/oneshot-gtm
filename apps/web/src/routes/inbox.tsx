@@ -393,7 +393,7 @@ function ConversationRow({
             {c.cadenceStatus ? ` · ${c.cadenceStatus}` : ""}
           </Badge>
           {kb ? <Badge tone={kb.tone}>{kb.label}</Badge> : null}
-          {c.status === "needs_decision" && <Badge tone="blocked">needs decision</Badge>}
+          {c.status === "needs_decision" && <Badge tone="spend">needs decision</Badge>}
           <span className="shrink-0 font-mono text-[12px] text-ink-muted">
             {timeAgo(c.lastActivityAt)}
           </span>
@@ -829,10 +829,9 @@ function ReplyComposer({
         )}
       </div>
       {needsDecision && (
-        <div className="mb-2 rounded-sm border border-[color:var(--ink-blocked)]/50 bg-[color:var(--ink-blocked)]/10 px-3 py-2 font-mono text-[11px] text-[color:var(--ink-blocked-2)]">
-          This draft commits to something unauthorised (pricing, distribution, partnership terms,
-          documentation placement, or similar). Send is blocked — edit the commitment out, or steer
-          a redraft below.
+        <div className="mb-2 rounded-sm border border-[color:var(--ink-spend)]/50 bg-[color:var(--ink-spend)]/10 px-3 py-2 font-mono text-[11px] text-[color:var(--ink-spend-2)]">
+          Held for review: this reply commits to pricing, distribution, partnership terms or
+          documentation placement. Read it once more, then send as-is if you stand behind it.
         </div>
       )}
       <Textarea
@@ -877,10 +876,10 @@ function ReplyComposer({
         <Button
           variant="primary"
           size="sm"
-          disabled={!draft.trim() || send.isPending || generate.isPending || needsDecision}
+          disabled={!draft.trim() || send.isPending || generate.isPending}
           title={
             needsDecision
-              ? "edit out the unauthorised commitment, or steer a redraft, before sending"
+              ? "Held for review: this reply commits terms. Send as-is if you stand behind it."
               : undefined
           }
           onClick={() => send.mutate()}

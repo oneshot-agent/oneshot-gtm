@@ -18,6 +18,13 @@ describe("blockingFlags", () => {
     expect(blockingFlags(["ungrounded", "contacted-elsewhere"])).toEqual([]);
   });
 
+  it("treats commits-terms as soft: the founder is the one who authorises terms (#647)", () => {
+    expect(SOFT_REVIEW_FLAGS).toContain("commits-terms");
+    expect(blockingFlags(["commits-terms"])).toEqual([]);
+    // Still blocked when something genuinely blocking rides along.
+    expect(blockingFlags(["commits-terms", "em-dash"])).toEqual(["em-dash"]);
+  });
+
   it("keeps lint/dedup flags blocking", () => {
     expect(blockingFlags(["em-dash"])).toEqual(["em-dash"]);
     expect(blockingFlags(["already-contacted", "rule-of-three"])).toEqual([

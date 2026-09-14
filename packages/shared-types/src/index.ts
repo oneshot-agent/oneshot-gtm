@@ -782,12 +782,20 @@ export type FitReasonSource = "company-gate" | "person-gate" | "generated" | "no
  * stored address belongs to a company they have left; the address is never
  * swapped (dedupe, verification and consent history key on it), the founder
  * decides. Sending as-is is the founder saying "I know, do it anyway."
+ * `commits-terms` — the reply promises pricing, distribution, partnership terms
+ * or documentation placement (#480). It blocked Send outright until #647, on the
+ * premise that the sender cannot authorise what they are promising. For a solo
+ * founder that premise is inverted: they are the only person who can, and the
+ * block landed hardest on the replies that most needed sending, where a partner
+ * had asked point blank whether the terms were authorised. It still earns a
+ * second read, which is what a soft flag is for.
  */
 export const SOFT_REVIEW_FLAGS: readonly string[] = [
   "stale-event",
   "contacted-elsewhere",
   "ungrounded",
   "email-at-former-employer",
+  "commits-terms",
 ];
 
 /**
