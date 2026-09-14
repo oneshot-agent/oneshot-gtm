@@ -1,4 +1,4 @@
-import { cadenceGoalId } from "@oneshot-gtm/core";
+import { cadenceGoalId, type PersonResearchDossier } from "@oneshot-gtm/core";
 import { lintEmail } from "@oneshot-gtm/plays";
 
 /**
@@ -1705,6 +1705,109 @@ function outcomeValueTag(outcome: NonNullable<DemoPerson["outcome"]>): unknown {
 // Queue
 
 function buildQueue(anchor: Date, prospects: DemoProspectRow[]): DemoDataset["queue"] {
+  // Fictional research and letters for the demo cast, never a paid lookup.
+  // Keep the stored payload shape identical to the real post-finder pipeline.
+  const cases: Record<
+    string,
+    { company: string; title: string; facts: string; fit: string; subject?: string; body?: string }
+  > = {
+    "tom@halyard.dev": {
+      company: "Halyard",
+      title: "Founder",
+      facts: "Builds deterministic replay for distributed workers.",
+      fit: "Tom is building worker replay and has identified missing spans as a debugging gap. Tracepoint can capture the job history that replay depends on.",
+      subject: "The span before the replay",
+      body: "Hey Tom,\n\nYour HN reply about capturing the span before replay gets at a useful split: recording the job history and replaying it are separate jobs.\n\nI build Tracepoint, which records background-job traces without sampling. A useful first check is whether the parent span survives when a worker retries.\n\nWhere does that context get lost in Halyard today?\n\nMira",
+    },
+    "ida@cutter.works": {
+      company: "Cutter",
+      title: "Founder",
+      facts: "Builds a durable job queue focused on keeping work through worker failures.",
+      fit: "Ida builds a job queue, and her Show HN thread asks how to debug a stuck consumer. That is a concrete background-job visibility problem for Tracepoint.",
+      subject: "The stuck consumer question",
+      body: "Hey Ida,\n\nThe question in your Cutter thread about debugging a stuck consumer is a useful test case. I would start by separating time waiting for a worker from time spent inside the handler.\n\nI build Tracepoint, which records those spans for background jobs without sampling.\n\nCan Cutter show that split today?\n\nMira",
+    },
+    "gabriel@ridgeline.systems": {
+      company: "Ridgeline",
+      title: "Co-founder / CTO",
+      facts: "Seed-stage infrastructure team building distributed job processing; raised $4.2M.",
+      fit: "Ridgeline is a seed-stage infrastructure company with background workers. Gabriel owns the technical decisions as the team grows after its funding round.",
+      subject: "Ridgeline's worker traces",
+      body: "Hey Gabriel,\n\nCongrats on the seed round. Before the worker fleet grows, one useful baseline is a trace from enqueue to completion, including every retry. It makes later regressions easier to spot.\n\nI build Tracepoint for that job, without a sidecar.\n\nDo retries keep their original trace context in your system?\n\nMira",
+    },
+    "clara@spindrift.dev": {
+      company: "Spindrift",
+      title: "Co-founder / CTO",
+      facts: "Hiring a founding reliability engineer to own its background-worker infrastructure.",
+      fit: "Spindrift's founding reliability hire will need to understand the async system. Clara is the technical founder responsible for that handoff.",
+      subject: "A first-week map for the reliability hire",
+      body: "Hey Clara,\n\nYour founding reliability role suggests the next hire will need a map of the worker fleet. A trace of one job through its retries is a useful starting point for that handoff.\n\nI build Tracepoint to record that path without sampling.\n\nWhat can a new engineer use to follow a job at Spindrift today?\n\nMira",
+    },
+    "victor@lodestar.build": {
+      company: "Lodestar",
+      title: "Founder",
+      facts: "Builds agent infrastructure with recovery and execution-history tooling.",
+      fit: "Victor's podcast describes reconstructing agent execution before a failure. His work on agent recovery fits Tracepoint's job-history tracing.",
+      subject: "Reconstructing the run before a failure",
+      body: "Hey Victor,\n\nAt 22:10 you described reconstructing what an agent did before it failed. Keeping one trace across the job's retries is a useful place to start; otherwise each attempt looks like a separate story.\n\nI build Tracepoint for background jobs.\n\nDoes Lodestar keep that history across attempts?\n\nMira",
+    },
+    "noor@brightkiln.io": {
+      company: "Brightkiln",
+      title: "VP Engineering",
+      facts:
+        "Runs background queue workers; Noor joined from a platform engineering role at Datadog.",
+      fit: "Noor now owns engineering at Brightkiln after leading platform work at Datadog. The new role is a chance to establish visibility into the worker fleet.",
+    },
+    "grace@fathomline.ai": {
+      company: "Fathomline",
+      title: "Co-founder / CTO",
+      facts:
+        "Runs an AI worker fleet; its postmortem describes disabling per-host tracing to reduce cost.",
+      fit: "Fathomline disabled worker tracing because of per-host costs, then struggled to reconstruct an incident. Tracepoint's per-job pricing addresses the tradeoff Grace documented.",
+    },
+    "priya@northwind.dev": {
+      company: "Northwind",
+      title: "Co-founder / CTO",
+      facts:
+        "Series A developer-tools company with an engineering post on queue backpressure; raised $14M.",
+      fit: "Northwind is expanding after its Series A and documents queue backpressure in its worker system. Priya owns the technical decisions around that infrastructure.",
+    },
+  };
+  const researchedPayload = (payload: Record<string, unknown>, daysAgo: number) => {
+    const email = String(payload["email"] ?? payload["founderEmail"] ?? "");
+    const prospect = prospects.find((p) => p.email === email);
+    const sample =
+      cases[email] ??
+      (prospect
+        ? {
+            company: prospect.company,
+            title: prospect.title,
+            facts: `${prospect.company}: ${JSON.parse(prospect.dossierJson).hook}`,
+            fit: JSON.parse(prospect.dossierJson).hook as string,
+          }
+        : null);
+    if (!sample) return payload;
+    const personResearch: PersonResearchDossier = {
+      version: 1,
+      status: "complete",
+      researchedAt: isoAt(anchor, daysAgo, 7, 0),
+      seed: { email, company: sample.company },
+      currentRole: { title: sample.title, company: sample.company },
+      organizations: [{ name: sample.company, title: sample.title, current: true }],
+      company: { name: sample.company, description: sample.facts },
+      costUsd: 0,
+      cached: true,
+    };
+    return {
+      ...payload,
+      company: sample.company,
+      title: sample.title,
+      fitReason: sample.fit,
+      currentRole: `${sample.title} at ${sample.company}`,
+      companyFacts: sample.facts,
+      personResearch,
+    };
+  };
   const idByEmail = new Map(prospects.map((p) => [p.email, p.id]));
   // Rows the finders surfaced but that haven't shipped yet — the founder's
   // actual inbox of work. A mix of statuses so every filter chip has something
@@ -1847,9 +1950,13 @@ function buildQueue(anchor: Date, prospects: DemoProspectRow[]): DemoDataset["qu
   const rows: DemoDataset["queue"] = [];
 
   pending.forEach((r, i) => {
+    const email = "founderEmail" in r.payload ? r.payload.founderEmail : r.payload.email;
+    const sample = cases[email!];
+    if (!sample?.subject || !sample.body) throw new Error(`Missing demo letter for ${email}`);
+    const draftedAt = isoAt(anchor, r.daysAgo, 8, jitter(i));
     rows.push({
       playName: r.play,
-      payloadJson: JSON.stringify(r.payload),
+      payloadJson: JSON.stringify(researchedPayload(r.payload, r.daysAgo)),
       dedupeKey: `demo-pending-${i}`,
       source: r.source,
       status: "pending",
@@ -1858,15 +1965,23 @@ function buildQueue(anchor: Date, prospects: DemoProspectRow[]): DemoDataset["qu
       sentAt: null,
       notes: null,
       prospectId: null,
-      lastDraftJson: null,
-      lastDraftedAt: null,
+      lastDraftJson: JSON.stringify({
+        subject: sample.subject,
+        body: sample.body,
+        flags: lintEmail(sample.subject, sample.body),
+        sent: false,
+        receiptIds: [],
+        dryRun: false,
+        draftedAt,
+      }),
+      lastDraftedAt: draftedAt,
     });
   });
 
   approved.forEach((r, i) => {
     rows.push({
       playName: r.play,
-      payloadJson: JSON.stringify(r.payload),
+      payloadJson: JSON.stringify(researchedPayload(r.payload, r.daysAgo)),
       dedupeKey: `demo-approved-${i}`,
       source: r.source,
       status: "approved",
@@ -1940,7 +2055,7 @@ function buildQueue(anchor: Date, prospects: DemoProspectRow[]): DemoDataset["qu
   sentRows.forEach((r, i) => {
     rows.push({
       playName: r.play,
-      payloadJson: JSON.stringify({ name: r.name, email: r.email }),
+      payloadJson: JSON.stringify(researchedPayload({ name: r.name, email: r.email }, r.daysAgo)),
       dedupeKey: `demo-sent-${i}`,
       source: r.source,
       status: "sent",

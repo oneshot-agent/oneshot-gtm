@@ -1,3 +1,6 @@
+import { personResearchRows } from "../../web/src/lib/queueCase.ts";
+import { fitReasonFor } from "../../web/src/lib/queueRationale.ts";
+import { lintEmail } from "@oneshot-gtm/plays";
 import { Database } from "bun:sqlite";
 import {
   existsSync,
@@ -125,6 +128,32 @@ describe("seedDemoHome", { timeout: SEED_TIMEOUT_MS }, () => {
     const statuses = rows(db, "SELECT DISTINCT status FROM target_queue").map((r) => r["status"]);
     db.close();
     expect(new Set(statuses)).toEqual(new Set(["pending", "approved", "rejected", "sent"]));
+  });
+
+  it("populates the case and unsent letter for every reviewable queue row", () => {
+    seedDemoHome({ home, anchor: ANCHOR });
+    const db = open(home);
+    const queue = rows(
+      db,
+      "SELECT payload_json, last_draft_json, last_drafted_at, sent_at FROM target_queue WHERE status IN ('pending', 'approved')",
+    );
+    db.close();
+    expect(queue).toHaveLength(8);
+    for (const row of queue) {
+      const payload = JSON.parse(String(row["payload_json"]));
+      expect(fitReasonFor(payload)).toBeTruthy();
+      expect(personResearchRows(payload).map((r) => r.key)).toEqual(
+        expect.arrayContaining(["now", "company"]),
+      );
+      const draft = JSON.parse(String(row["last_draft_json"]));
+      expect(draft.subject.length).toBeGreaterThan(10);
+      expect(draft.body.length).toBeGreaterThan(100);
+      expect(draft.sent).toBe(false);
+      expect(row["sent_at"]).toBeNull();
+      expect(draft.flags).toEqual(lintEmail(draft.subject, draft.body));
+      expect(draft.draftedAt).toBe(row["last_drafted_at"]);
+      expect(draft.draftedAt >= payload.personResearch.researchedAt).toBe(true);
+    }
   });
 
   it("backdates receipts across a 30-day window so the range filters have data", () => {
