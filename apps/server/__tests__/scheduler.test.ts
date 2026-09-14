@@ -8,6 +8,7 @@ let throwOnNextRun: Error | null = null;
 // can suspend a tick mid-flight and control exactly when it resumes.
 let runDueTriggersGate: Promise<void> | null = null;
 const calls = {
+  sweepLiveProfiles: 0,
   runDueTriggers: 0,
   nextSleepMs: 0,
   eventKinds: [] as string[],
@@ -17,6 +18,10 @@ const calls = {
 };
 
 vi.mock("@oneshot-gtm/find", () => ({
+  sweepLiveProfiles: async () => {
+    calls.sweepLiveProfiles++;
+    return { ran: true, candidates: 0, researched: 0, read: 0, costUsd: 0 };
+  },
   runDueTriggers: async () => {
     calls.runDueTriggers++;
     if (runDueTriggersGate) {
@@ -63,6 +68,7 @@ vi.mock("@oneshot-gtm/core", () => ({
     return false;
   },
   refreshPendingDirectMail: async () => ({ refreshed: 0, failed: 0 }),
+  withDeadline: <T>(p: Promise<T>) => p,
 }));
 
 let demoModeValue = false;
@@ -72,6 +78,19 @@ let replyPollCleanValue = true;
 let postDailySendSummaryIfDueOpts: Array<{ sweepClean?: boolean }> = [];
 
 const { startScheduler } = await import("../src/scheduler.ts");
+
+it("sweeps live profiles on the first tick and then at most every four hours", async () => {
+  nextSleepValue = 60_000;
+  const handle = startScheduler();
+  await vi.advanceTimersByTimeAsync(5_000);
+  expect(calls.sweepLiveProfiles).toBe(1);
+  await vi.advanceTimersByTimeAsync(3 * 60 * 60_000);
+  expect(calls.runDueTriggers).toBeGreaterThan(1);
+  expect(calls.sweepLiveProfiles).toBe(1);
+  await vi.advanceTimersByTimeAsync(61 * 60_000);
+  expect(calls.sweepLiveProfiles).toBe(2);
+  handle.stop();
+});
 
 it("polls Smartlead workspaces at most a minute after a completed tick", async () => {
   smartleadEnabled = true;
@@ -91,6 +110,7 @@ beforeEach(() => {
   calls.eventKinds = [];
   calls.pollInboxBounces = 0;
   calls.pollInboxReplies = 0;
+  calls.sweepLiveProfiles = 0;
   calls.postDailySendSummaryIfDue = 0;
   nextOutcomes = [];
   nextSleepValue = 60_000;

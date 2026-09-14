@@ -455,6 +455,24 @@ export interface OneShotConfig {
    * writes to. Only meaningful when `calendarIdentityId` is set.
    */
   calendarId: string;
+
+  /**
+   * Live LinkedIn profile reads. The OneShot browser profile the founder's
+   * LinkedIn session lives in — connected once on /setup, either by logging
+   * in through the platform's hosted browser (2FA included) or by importing
+   * a pasted `LINKEDIN_SESSION_COOKIE` (li_at) — and when a task last
+   * verified that session. A login wall stamps `linkedinSessionInvalidAt`
+   * and pauses reads until a reconnect; `config linkedin-session` / the
+   * /setup buttons fill these in.
+   */
+  linkedinBrowserProfileId?: string | null;
+  /** When the session was last confirmed logged in, and as whom. */
+  linkedinSessionCheckedAt?: string | null;
+  linkedinSessionName?: string | null;
+  /** Set when a read hit the login wall; reads stop until a fresh cookie is connected. */
+  linkedinSessionInvalidAt?: string | null;
+  /** Reads per local day before the tier skips with a reason (account safety). Default 80. */
+  linkedinReadsPerDay?: number;
 }
 
 export type QueueStatus = "pending" | "approved" | "rejected" | "sent" | "expired";

@@ -7,7 +7,15 @@ import {
   secretsPath,
   isSlackWebhookUrl,
 } from "@oneshot-gtm/core";
-import { TRIGGERS, checkReadiness } from "@oneshot-gtm/find";
+import {
+  TRIGGERS,
+  checkReadiness,
+  connectLinkedInWithCookie,
+  finishLinkedInLogin,
+  linkedinCookie,
+  linkedinSessionState,
+  startLinkedInLogin,
+} from "@oneshot-gtm/find";
 import { withXEngine, type XEngine } from "@oneshot-gtm/shared-types";
 import prompts from "prompts";
 import { c, header, note, ok } from "../output.ts";
@@ -272,6 +280,85 @@ export async function configXEngine(engineArg?: string): Promise<void> {
   note(ready.ready ? c.green("ready") : `not ready — ${ready.reason}`);
 }
 
+/**
+ * `config linkedin-session`: connect the founder's LinkedIn session to a
+ * OneShot browser profile so person research can read live profiles. With
+ * `LINKEDIN_SESSION_COOKIE` set the cookie is imported into a fresh profile;
+ * otherwise the platform opens a hosted browser on the login page, the
+ * founder logs in there (2FA included) and confirms here, and the session
+ * is saved into the profile. Either way the session is then verified.
+ */
+export async function configLinkedInSession(opts: { login?: boolean } = {}): Promise<void> {
+  header("LinkedIn session (live profile reads)");
+  note(`state: ${c.cyan(linkedinSessionState())}`);
+  const ctx = { playName: "config", memo: "connect linkedin session" };
+  const report = (r: {
+    loggedIn: boolean;
+    name: string | null;
+    profileId: string;
+    costUsd: number;
+    reason?: string;
+  }) => {
+    if (r.loggedIn) {
+      ok(
+        `logged in as ${c.cyan(r.name ?? "(name not shown)")} · profile ${c.dim(r.profileId)} · $${r.costUsd.toFixed(3)}`,
+      );
+    } else {
+      note(
+        `not signed in — ${r.reason ?? "LinkedIn showed no signed-in member"}. Run this again to retry, or ${c.cyan("oneshot-gtm config linkedin-session --login")} to log in through a hosted browser instead. Profile ${c.dim(r.profileId)} · $${r.costUsd.toFixed(3)}`,
+      );
+    }
+  };
+  try {
+    if (linkedinCookie() && !opts.login) {
+      note(
+        c.dim(
+          "importing the stored li_at cookie into a fresh OneShot browser profile, then checking the feed… about a minute",
+        ),
+      );
+      report(await connectLinkedInWithCookie(ctx));
+      return;
+    }
+    note(c.dim("opening a hosted browser on the LinkedIn login page ($0.30 platform allowance)…"));
+    const started = await startLinkedInLogin(ctx);
+    note(
+      `Log in to LinkedIn (2FA included) in this private browser:\n  ${c.cyan(started.liveUrl ?? "")}`,
+    );
+    if (started.expiresAt) note(c.dim(`the login browser closes at ${started.expiresAt}`));
+    // The open login belongs to this profile; a rerun would start another
+    // billed one, so stay here until it is done or given up.
+    for (;;) {
+      const { next } = await prompts({
+        type: "select",
+        name: "next",
+        message: "Finished logging in?",
+        choices: [
+          { title: "Yes — save the session", value: "done" },
+          { title: "Not yet — ask me again", value: "wait" },
+          { title: "Give up this login", value: "abandon" },
+        ],
+        initial: 0,
+      });
+      if (next === "done") break;
+      if (next !== "wait") {
+        note(
+          "login abandoned — the hosted browser closes on its own; run this again to start a new one",
+        );
+        return;
+      }
+    }
+    note(c.dim("saving the session into the profile and checking the feed… about a minute"));
+    report(await finishLinkedInLogin(ctx));
+  } catch (err) {
+    note(
+      c.dim(
+        "run this again; to skip the browser login, paste your li_at with `oneshot-gtm config keys` first",
+      ),
+    );
+    throw new Error(`connect failed: ${(err as Error).message}`, { cause: err });
+  }
+}
+
 export async function configKeys(): Promise<void> {
   header("Configure API keys");
   note(`Keys are saved to ${c.cyan(secretsPath())} (chmod 600). Empty input = leave unchanged.\n`);
@@ -366,6 +453,12 @@ export async function configKeys(): Promise<void> {
         name: "lumaSessionCookie",
         message: "LUMA_SESSION_COOKIE (optional; hosted-event guest lists)",
       },
+      {
+        type: "password",
+        name: "linkedinSessionCookie",
+        message:
+          "LINKEDIN_SESSION_COOKIE (optional; live LinkedIn profile reads, your li_at cookie)",
+      },
     ],
     { onCancel: () => process.exit(0) },
   );
@@ -385,6 +478,8 @@ export async function configKeys(): Promise<void> {
   if (answers["githubToken"]) updates["GITHUB_TOKEN"] = answers["githubToken"] as string;
   if (answers["lumaSessionCookie"])
     updates["LUMA_SESSION_COOKIE"] = answers["lumaSessionCookie"] as string;
+  if (answers["linkedinSessionCookie"])
+    updates["LINKEDIN_SESSION_COOKIE"] = answers["linkedinSessionCookie"] as string;
 
   if (Object.keys(updates).length === 0) {
     note("No changes.");

@@ -65,7 +65,7 @@ export function personResearchRows(payload: unknown): CaseRow[] {
           .filter(Boolean)
           .join(" ")
       : null);
-  if (now) rows.push({ key: "now", value: now });
+  if (now) rows.push({ key: "now", value: research.liveProfile ? `${now} · live profile` : now });
   const facts = stringField(payload, "companyFacts");
   if (facts) rows.push({ key: "company", value: facts });
   const listedTitle = titleAtFinderFor(payload);

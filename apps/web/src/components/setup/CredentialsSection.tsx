@@ -1,7 +1,10 @@
-import { useMemo } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMemo, useState, type ReactNode } from "react";
 import type { XEngine } from "@oneshot-gtm/shared-types";
 import { api } from "../../api/client.ts";
+import { timeAgo } from "../../lib/cn.ts";
 import { Badge } from "../primitives/Badge.tsx";
+import { Button } from "../primitives/Button.tsx";
 import { Field, Input } from "../primitives/Field.tsx";
 import {
   CDP_KEYS,
@@ -40,6 +43,15 @@ const EMPTY: Secrets = Object.fromEntries(
   (Object.keys(SECRET_LABELS) as SecretKey[]).map((k) => [k, ""]),
 ) as Secrets;
 
+interface GroupAction {
+  label: string;
+  pendingLabel: string;
+  disabled: boolean;
+  disabledTitle?: string;
+  pending: boolean;
+  onClick: () => void;
+}
+
 interface Group {
   title: string;
   caption?: string;
@@ -54,6 +66,36 @@ interface Group {
   /** Extra hint for one key (e.g. the legacy-only refresh token). */
   keyHint?: Partial<Record<SecretKey, string>>;
   placeholder?: Partial<Record<SecretKey, string>>;
+  /** One line of runtime state under the caption (a session's health, say). */
+  status?: string;
+  /** Side actions for the group (connect a session), rendered under the status line. */
+  actions?: GroupAction[];
+  /** One sentence under the actions while a multi-step action is in flight. */
+  note?: ReactNode;
+  /** An error from the last action, shown next to the buttons. */
+  error?: string | null;
+}
+
+/**
+ * What the LinkedIn card says about the session. The cookie itself is never
+ * echoed; the states come from the setup status the server sends.
+ */
+export function linkedinSessionStatus(
+  cfg: Pick<
+    SectionProps["cfg"],
+    | "linkedinBrowserProfileId"
+    | "linkedinSessionCheckedAt"
+    | "linkedinSessionName"
+    | "linkedinSessionInvalidAt"
+  >,
+  cookieSet: boolean,
+): string {
+  if (!cfg.linkedinBrowserProfileId && !cookieSet) return "not connected";
+  if (cfg.linkedinSessionInvalidAt) return "session expired — log in again or paste a fresh cookie";
+  if (!cfg.linkedinSessionCheckedAt || !cfg.linkedinBrowserProfileId)
+    return cookieSet ? "cookie stored, not connected yet" : "login started, not finished yet";
+  const who = cfg.linkedinSessionName ? `logged in as ${cfg.linkedinSessionName}` : "logged in";
+  return `${who} · checked ${timeAgo(cfg.linkedinSessionCheckedAt)}`;
 }
 
 /**
@@ -94,6 +136,55 @@ export function CredentialsSection({
     },
   });
   useReportDirty("credentials", draft.dirty, onDirtyChange);
+
+  // Connect LinkedIn, two ways. "Log in with LinkedIn" opens a hosted browser
+  // (the live URL is a credential: rendered as a link, never logged) and
+  // "Finish login" saves the state into the profile and verifies it. "Use the
+  // cookie" imports the stored li_at into a fresh profile instead. The
+  // status line re-renders from the refetched cfg.
+  const qc = useQueryClient();
+  const [connectError, setConnectError] = useState<string | null>(null);
+  const [login, setLogin] = useState<{ liveUrl: string; expiresAt: string | null } | null>(null);
+  const settle = (r: { loggedIn: boolean; reason: string | null }) => {
+    setLogin(null);
+    if (!r.loggedIn)
+      setConnectError(
+        `${r.reason ?? "LinkedIn showed no signed-in member"} — try again, or paste a fresh li_at.`,
+      );
+    void qc.invalidateQueries({ queryKey: ["setup"] });
+    void qc.invalidateQueries({ queryKey: ["doctor"] });
+  };
+  const connectLinkedIn = useMutation({
+    mutationFn: () => api.connectLinkedInSession(),
+    onMutate: () => setConnectError(null),
+    onSuccess: settle,
+    onError: (err: Error) => setConnectError(err.message),
+  });
+  const startLogin = useMutation({
+    mutationFn: () => api.startLinkedInLogin(),
+    onMutate: () => setConnectError(null),
+    onSuccess: (r) => {
+      if (!r.liveUrl) {
+        setConnectError(`the platform opened no login browser (status ${r.status})`);
+        return;
+      }
+      setLogin({ liveUrl: r.liveUrl, expiresAt: r.expiresAt });
+    },
+    onError: (err: Error) => setConnectError(err.message),
+  });
+  const finishLogin = useMutation({
+    mutationFn: () => api.finishLinkedInLogin(),
+    onMutate: () => setConnectError(null),
+    onSuccess: settle,
+    onError: (err: Error) => setConnectError(err.message),
+  });
+  const cookieSet = Boolean(sources.LINKEDIN_SESSION_COOKIE);
+  const sessionChecked = Boolean(cfg.linkedinSessionCheckedAt);
+  // A profile on record with no verified session is a hosted login that was
+  // started and never finished (a cookie import always verifies). The page
+  // may have been reloaded since, so Finish stays available for it.
+  const loginResumable = Boolean(cfg.linkedinBrowserProfileId) && !sessionChecked;
+  const anyPending = connectLinkedIn.isPending || startLogin.isPending || finishLogin.isPending;
 
   const groups = useMemo<Group[]>(
     () => [
@@ -159,8 +250,82 @@ export function CredentialsSection({
         inUse: () => true,
         optional: true,
       },
+      {
+        title: "LinkedIn profile reads",
+        caption:
+          "Person research reads prospects' profiles live in a OneShot browser profile logged in as you, so a role change the data provider has not seen yet still lands in the dossier. Log in once through a hosted browser (2FA works), or paste your li_at cookie (browser dev tools → Application → Cookies → linkedin.com). Reads show up to prospects as profile views from your account. Optional: without it, research uses the provider's history.",
+        keys: ["LINKEDIN_SESSION_COOKIE"],
+        inUse: () => true,
+        optional: true,
+        status: linkedinSessionStatus(cfg, cookieSet),
+        actions: [
+          ...(login || loginResumable
+            ? [
+                {
+                  label: "Finish login",
+                  pendingLabel: "checking the session in the OneShot browser… ~1 min",
+                  disabled: anyPending,
+                  pending: finishLogin.isPending,
+                  onClick: () => finishLogin.mutate(),
+                },
+              ]
+            : []),
+          ...(login
+            ? []
+            : [
+                {
+                  label: sessionChecked || loginResumable ? "Log in again" : "Log in with LinkedIn",
+                  pendingLabel: "opening a hosted browser on linkedin.com…",
+                  disabled: anyPending,
+                  pending: startLogin.isPending,
+                  onClick: () => startLogin.mutate(),
+                },
+                {
+                  label: "Use the cookie",
+                  pendingLabel: "importing the cookie into a OneShot browser profile… ~1 min",
+                  disabled: !cookieSet || anyPending,
+                  disabledTitle: "Save the cookie first",
+                  pending: connectLinkedIn.isPending,
+                  onClick: () => connectLinkedIn.mutate(),
+                },
+              ]),
+        ],
+        note: login ? (
+          <>
+            <a
+              href={login.liveUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="underline underline-offset-2"
+            >
+              Open the login browser
+            </a>{" "}
+            in a new tab, sign in to LinkedIn there (2FA included), then click Finish login
+            {login.expiresAt ? ` before ${new Date(login.expiresAt).toLocaleTimeString()}` : ""}.
+            The link is private to you; $0.30 per login.
+          </>
+        ) : loginResumable ? (
+          "A login was started earlier. If its hosted browser is still open in another tab and you are signed in there, click Finish login; otherwise log in again."
+        ) : null,
+        error: connectError,
+      },
     ],
-    [cfg.llmProvider, cfg.emailProvider, sources, homeDir, isLegacyPool, xEngine],
+    [
+      cfg,
+      sources,
+      homeDir,
+      isLegacyPool,
+      xEngine,
+      cookieSet,
+      sessionChecked,
+      loginResumable,
+      anyPending,
+      connectError,
+      login,
+      connectLinkedIn,
+      startLogin,
+      finishLogin,
+    ],
   );
 
   return (
@@ -178,6 +343,30 @@ export function CredentialsSection({
           <fieldset key={g.title} className="flex flex-col gap-3 border-t border-ink-rule/60 pt-4">
             <legend className="ln-eyebrow float-left pr-2">{g.title}</legend>
             {g.caption && <p className="clear-both text-[12px] text-ink-faint">{g.caption}</p>}
+            {g.status && (
+              <p className="clear-both font-mono text-[11px] text-ink-muted">{g.status}</p>
+            )}
+            {g.actions && (
+              <div className="clear-both flex flex-wrap items-center gap-2">
+                {g.actions.map((a) => (
+                  <Button
+                    key={a.label}
+                    type="button"
+                    variant="receipt"
+                    size="sm"
+                    disabled={a.disabled || a.pending}
+                    onClick={a.onClick}
+                    title={a.disabled ? a.disabledTitle : undefined}
+                  >
+                    {a.pending ? a.pendingLabel : a.label}
+                  </Button>
+                ))}
+                {g.error && (
+                  <span className="text-[12px] text-[color:var(--ink-blocked-2)]">{g.error}</span>
+                )}
+              </div>
+            )}
+            {g.note && <p className="clear-both text-[12px] text-ink-muted">{g.note}</p>}
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
               {g.keys.map((k) => {
                 const state = keyState(g, k, Boolean(sources[k]));

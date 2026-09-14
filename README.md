@@ -80,12 +80,12 @@ bun run cli -- find drain podcast-guest --dry-run  # preview approved /queue row
 bun run cli -- cadence advance                     # daily tick: poll inbox, fire follow-ups
 ```
 
-71 commands — `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
+72 commands — `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
 
 | Group                    | Commands                                                                                                                                                                                                                                                                                                                                                             |
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `init` · `doctor` · `ui` | setup wizard · health check · open the dashboard                                                                                                                                                                                                                                                                                                                     |
-| `config`                 | `llm` · `founder` · `keys` · `telemetry on\|off` · `slack-webhook [url]` · `x-engine [engine]` · `spend-ceiling [amount\|off]`                                                                                                                                                                                                                                       |
+| `config`                 | `llm` · `founder` · `keys` · `linkedin-session` · `telemetry on\|off` · `slack-webhook [url]` · `x-engine [engine]` · `spend-ceiling [amount\|off]`                                                                                                                                                                                                                  |
 | `identities`             | `list` · `add` · `remove <id>` — the sender pool                                                                                                                                                                                                                                                                                                                     |
 | `gmail`                  | `auth` (OAuth a sending account) · `placement` (inbox-placement canary)                                                                                                                                                                                                                                                                                              |
 | `smartlead`              | `connect` — API key + pick Smartlead mailboxes into the pool (send-only)                                                                                                                                                                                                                                                                                             |
@@ -224,7 +224,7 @@ Workspaces share one thing: `~/.oneshot-gtm-shared/shared.sqlite`, holding the p
 
 ```
 apps/
-  cli/        the 71-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
+  cli/        the 72-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
   server/     Bun.serve + SSE; tsdown bundle published as `oneshot-gtm-server`
   web/        Vite + React 19 + TanStack + Base UI — 9 pages, run form, strategist dock, privacy mode
 packages/

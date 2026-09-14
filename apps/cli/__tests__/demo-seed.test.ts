@@ -315,6 +315,7 @@ describe("scrubInheritedSecrets", () => {
       GMAIL_REFRESH_TOKEN: "real",
       GITHUB_TOKEN: "ghp_real",
       LUMA_SESSION_COOKIE: "real",
+      LINKEDIN_SESSION_COOKIE: "AQEDreal",
     };
     scrubInheritedSecrets(env);
     expect(Object.keys(env)).toEqual([]);

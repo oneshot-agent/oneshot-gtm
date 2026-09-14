@@ -4,11 +4,15 @@ import { saveSecrets, secretsPath } from "@oneshot-gtm/core";
 
 describe("saveSecrets", () => {
   it("preserves env-only keys through an unrelated save", () => {
-    writeFileSync(secretsPath(), "GITHUB_TOKEN=ghp_keepme\nLUMA_SESSION_COOKIE=luma_keepme\n");
+    writeFileSync(
+      secretsPath(),
+      "GITHUB_TOKEN=ghp_keepme\nLUMA_SESSION_COOKIE=luma_keepme\nLINKEDIN_SESSION_COOKIE=li_keepme\n",
+    );
     saveSecrets({ OPENROUTER_API_KEY: "sk-or-new" });
     const after = readFileSync(secretsPath(), "utf8");
     expect(after).toContain("GITHUB_TOKEN=ghp_keepme");
     expect(after).toContain("LUMA_SESSION_COOKIE=luma_keepme");
+    expect(after).toContain("LINKEDIN_SESSION_COOKIE=li_keepme");
     expect(after).toContain("OPENROUTER_API_KEY=sk-or-new");
   });
 

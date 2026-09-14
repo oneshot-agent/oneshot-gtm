@@ -8,6 +8,7 @@ import {
   researchUrl,
 } from "@oneshot-gtm/find";
 import { c, header, note, ok, warn } from "../output.ts";
+import { ROW_COST_ESTIMATE_USD } from "./research-queue.ts";
 
 // Re-exported for existing test/call-site imports; the real implementation
 // now lives in packages/find/src/_profile-url.ts so packages/find/src/angle.ts
@@ -37,7 +38,8 @@ export { isResearchableUrl, researchUrl };
  * `--max-cost-usd` bounds a rehearsal.
  */
 
-const RESEARCH_COST_USD = 0.05;
+/** Person + company research per prospect, the same slice `research-queue` shows. */
+const RESEARCH_COST_USD = ROW_COST_ESTIMATE_USD;
 /** Matches the slice the finders already use for a queued dossier. */
 const DOSSIER_SLICE = 6000;
 
@@ -59,6 +61,8 @@ export interface ResearchProspectsOpts {
   noRejudge?: boolean;
   /** Skip the company lookup for the current employer. */
   noCompany?: boolean;
+  /** Skip the live LinkedIn profile read (provider history only). */
+  noLive?: boolean;
 }
 
 /**
@@ -221,6 +225,7 @@ export async function commandResearchProspects(opts: ResearchProspectsOpts): Pro
       subject: { prospectId: row.id },
       remainingUsd,
       enrichCompany: !opts.noCompany,
+      liveProfile: !opts.noLive,
     });
     costUsd += researched.costUsd;
     if (researched.dossier.status === "unavailable") {

@@ -2,6 +2,8 @@ import { captureSdkBusinessAddress } from "./mail-enrichment.ts";
 import {
   OneShot,
   ValidationError,
+  type BrowserCookie as SdkBrowserCookie,
+  type BrowserProfileSetup,
   type BrowserResult,
   type CompanySearchResult,
   type DeepResearchPersonResult,
@@ -1611,12 +1613,62 @@ export interface BrowserTaskInput {
   startUrl?: string;
   allowedDomains?: string[];
   outputSchema?: Record<string, unknown>;
+  /** A persistent browser profile (cookies, local storage) to run in. */
   profileId?: string;
+  /** Resume a prior live browser session. */
+  sessionId?: string;
+  /**
+   * The platform's step-derived budget allowance (default 50, supported
+   * 25–100). Below 25 the session cost limit is under the initialisation
+   * cost and the task ends at step 0 with "Session cost limit reached".
+   */
   maxSteps?: number;
   maxCost?: number;
+  /** Poll deadline in seconds (SDK default 300). */
+  timeoutSec?: number;
+}
+
+/** A persistent browser profile on the platform (free to create, list, delete). */
+export interface BrowserProfile {
+  id: string;
+  name: string;
+}
+
+/** A cookie imported into a profile at creation (Playwright shape). */
+export type BrowserCookie = SdkBrowserCookie;
+
+/**
+ * An interactive login session on a profile: `liveUrl` is a private hosted
+ * browser the founder logs in through (2FA included); treat it as a
+ * credential and never log it. `status` is `created` / `running` / `idle`
+ * (ready for the login) or a failure state; the session expires after
+ * fifteen minutes.
+ */
+export interface BrowserProfileSetupState {
+  profileId: string;
+  status: string;
+  liveUrl: string | null;
+  expiresAt: string | null;
+  /** After finish: the cookie names the platform stored for the profile. */
+  storedCookies: Array<{ name: string; domain: string; path: string }>;
+}
+
+function setupState(s: BrowserProfileSetup): BrowserProfileSetupState {
+  return {
+    profileId: s.profile_id,
+    status: s.status,
+    liveUrl: s.live_url ?? null,
+    expiresAt: s.expires_at ?? null,
+    storedCookies: s.stored_cookies ?? [],
+  };
 }
 
 export async function browserTask(input: BrowserTaskInput, ctx: CallContext) {
+  // A demo install must never reach the network; the other paid tools already
+  // short-circuit on demoMode(), this one never had a branch.
+  if (demoMode()) {
+    return { result: { output: "", steps: [], cost: 0 } as BrowserResult, receiptId: 0 };
+  }
   const agent = await getAgent();
   const opts: Parameters<OneShot["browser"]>[0] = {
     task: input.task,
@@ -1626,17 +1678,116 @@ export async function browserTask(input: BrowserTaskInput, ctx: CallContext) {
   if (input.allowedDomains) opts.allowed_domains = input.allowedDomains;
   if (input.outputSchema) opts.output_schema = input.outputSchema;
   if (input.profileId) opts.profile_id = input.profileId;
+  if (input.sessionId) opts.session_id = input.sessionId;
   if (input.maxSteps) opts.max_steps = input.maxSteps;
   if (input.maxCost) opts.maxCost = input.maxCost;
+  if (input.timeoutSec) opts.timeout = input.timeoutSec;
   const result: BrowserResult = await agent.browser(opts);
   const receiptId = recordCallReceipt({
     ctx,
     callType: "browser.task",
-    costUsd: result.cost,
+    costUsd: browserTaskCost(result),
     signedReceipt: result,
     oneshotRequestId: result.browser_task_id ?? undefined,
   });
   return { result, receiptId };
+}
+
+/** What the task cost us: the billed charge when the platform reports it, else the quoted cost. */
+export function browserTaskCost(result: BrowserResult): number | undefined {
+  const v = result.billed_cost ?? result.cost ?? result.total_cost_usd;
+  return typeof v === "number" ? v : undefined;
+}
+
+/**
+ * Browser profiles: create / list / delete, plus the interactive login flow
+ * (start → the founder logs in through `liveUrl` → finish). Signed reads on
+ * the platform, no quote and no receipt, so they are logged as events
+ * instead. A profile created with `cookies` starts logged in wherever those
+ * cookies are valid; the values never appear in task prompts or receipts.
+ */
+export async function createBrowserProfile(
+  name: string,
+  ctx: CallContext,
+  options: { cookies?: BrowserCookie[] } = {},
+): Promise<BrowserProfile> {
+  if (demoMode()) return { id: "prof_demo", name };
+  const agent = await getAgent();
+  const profile = await agent.createBrowserProfile(
+    name,
+    options.cookies ? { cookies: options.cookies } : {},
+  );
+  logEvent("browser.profile.created", {
+    play: ctx.playName,
+    profile_id: profile.id,
+    imported_cookies: options.cookies?.length ?? 0,
+  });
+  return profile;
+}
+
+export async function listBrowserProfiles(ctx: CallContext): Promise<BrowserProfile[]> {
+  if (demoMode()) return [];
+  const agent = await getAgent();
+  const profiles = await agent.listBrowserProfiles();
+  logEvent("browser.profile.listed", { play: ctx.playName, count: profiles.length });
+  return profiles;
+}
+
+export async function deleteBrowserProfile(profileId: string, ctx: CallContext): Promise<void> {
+  if (demoMode()) return;
+  const agent = await getAgent();
+  await agent.deleteBrowserProfile(profileId);
+  logEvent("browser.profile.deleted", { play: ctx.playName, profile_id: profileId });
+}
+
+/** Open a hosted browser on `startUrl` for the founder to log in through ($0.30 allowance per login). */
+export async function startBrowserProfileSetup(
+  profileId: string,
+  startUrl: string,
+  ctx: CallContext,
+): Promise<BrowserProfileSetupState> {
+  if (demoMode()) {
+    return { profileId, status: "idle", liveUrl: null, expiresAt: null, storedCookies: [] };
+  }
+  const agent = await getAgent();
+  const state = setupState(await agent.startBrowserProfileSetup(profileId, startUrl));
+  logEvent("browser.profile.setup_started", {
+    play: ctx.playName,
+    profile_id: profileId,
+    status: state.status,
+  });
+  return state;
+}
+
+export async function getBrowserProfileSetup(
+  profileId: string,
+  ctx: CallContext,
+): Promise<BrowserProfileSetupState> {
+  void ctx;
+  if (demoMode()) {
+    return { profileId, status: "idle", liveUrl: null, expiresAt: null, storedCookies: [] };
+  }
+  const agent = await getAgent();
+  return setupState(await agent.getBrowserProfileSetup(profileId));
+}
+
+/** Close the login session and save its state into the profile; call after the login (and 2FA) is done. */
+export async function finishBrowserProfileSetup(
+  profileId: string,
+  ctx: CallContext,
+): Promise<BrowserProfileSetupState> {
+  if (demoMode()) {
+    return { profileId, status: "finished", liveUrl: null, expiresAt: null, storedCookies: [] };
+  }
+  const agent = await getAgent();
+  const state = setupState(await agent.finishBrowserProfileSetup(profileId));
+  logEvent("browser.profile.setup_finished", {
+    play: ctx.playName,
+    profile_id: profileId,
+    status: state.status,
+    stored_cookies: state.storedCookies.length,
+  });
+  return state;
 }
 
 export type {

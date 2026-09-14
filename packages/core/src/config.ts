@@ -58,6 +58,11 @@ const DEFAULTS: OneShotConfig = {
   dailySpendCeilingUsd: null,
   calendarIdentityId: null,
   calendarId: "primary",
+  linkedinBrowserProfileId: null,
+  linkedinSessionCheckedAt: null,
+  linkedinSessionName: null,
+  linkedinSessionInvalidAt: null,
+  linkedinReadsPerDay: 80,
 };
 
 export function configDir(): string {
@@ -173,6 +178,7 @@ function loadSecretsFile(): Record<string, string> {
 export const ENV_ONLY_SECRET_KEYS = [
   "GITHUB_TOKEN",
   "LUMA_SESSION_COOKIE",
+  "LINKEDIN_SESSION_COOKIE",
   "X_API_KEY",
   "X_API_SECRET",
   "X_ACCESS_TOKEN",

@@ -108,6 +108,17 @@ async function postJson<T>(path: string, body: unknown): Promise<T> {
   return (await res.json()) as T;
 }
 
+export interface LinkedInSessionOutcome {
+  ok: boolean;
+  loggedIn: boolean;
+  name: string | null;
+  profileId: string;
+  costUsd: number;
+  /** Why the session is not usable, when it is not. */
+  reason: string | null;
+  checkedAt: string;
+}
+
 export const api = {
   home: () => getJson<HomeMetrics>("/home"),
   cadences: (opts: { all?: boolean; sinceRun?: number } = {}) => {
@@ -273,6 +284,11 @@ export const api = {
         timezone?: string | null;
         calendarIdentityId?: string | null;
         calendarId?: string;
+        linkedinBrowserProfileId?: string | null;
+        linkedinSessionCheckedAt?: string | null;
+        linkedinSessionName?: string | null;
+        linkedinSessionInvalidAt?: string | null;
+        linkedinReadsPerDay?: number;
       };
       secretsPath: string;
       sources: Record<string, "env" | "file" | null>;
@@ -291,6 +307,22 @@ export const api = {
     ),
   deriveIcp: (domain: string) => postJson<DeriveIcpResult>("/setup/derive-icp", { domain }),
   deriveBrief: (urls: string[]) => postJson<DeriveBriefResult>("/setup/derive-brief", { urls }),
+  /**
+   * Connect LinkedIn for live profile reads. Two ways in: import the stored
+   * li_at cookie into a fresh OneShot browser profile, or open a hosted
+   * browser on the login page (the returned liveUrl is a credential: shown
+   * to the founder, never logged) and finish once the login is done.
+   */
+  connectLinkedInSession: () => postJson<LinkedInSessionOutcome>("/setup/linkedin-session", {}),
+  startLinkedInLogin: () =>
+    postJson<{
+      ok: boolean;
+      profileId: string;
+      liveUrl: string | null;
+      status: string;
+      expiresAt: string | null;
+    }>("/setup/linkedin-login/start", {}),
+  finishLinkedInLogin: () => postJson<LinkedInSessionOutcome>("/setup/linkedin-login/finish", {}),
   meetings: () => getJson<MeetingsResult>("/meetings"),
   logMeetingOutcome: (req: LogMeetingOutcomeRequest) =>
     postJson<{ ok: boolean }>("/meetings/outcome", req),

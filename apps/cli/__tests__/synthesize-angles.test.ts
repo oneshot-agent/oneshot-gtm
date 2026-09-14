@@ -35,6 +35,8 @@ vi.mock("@oneshot-gtm/core", async () => {
 });
 
 vi.mock("@oneshot-gtm/find", () => ({
+  PERSON_RESEARCH_COST_ESTIMATE_USD: 0.05,
+  COMPANY_RESEARCH_COST_ESTIMATE_USD: 0.005,
   isCircuitOpen: () => circuitOpen,
   gatherAngleEvidence: async (id: number, opts?: { allowPaidResearch?: boolean }) => {
     gatherCalls.push({ id, ...opts });

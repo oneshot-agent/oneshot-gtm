@@ -12,6 +12,7 @@ import {
   nextSleepMs,
   runDueTriggers,
   runPendingRetries,
+  sweepLiveProfiles,
   type TriggerRunOutcome,
 } from "@oneshot-gtm/find";
 import {
@@ -60,6 +61,14 @@ const BOUNCE_POLL_INTERVAL_MS = 30 * 60_000;
  * it on the same ~tick-length cadence as replies.
  */
 const CALENDAR_POLL_INTERVAL_MS = 10 * 60_000;
+/**
+ * Live LinkedIn profile reads for rows the post-finder hook did not reach
+ * (its wall budget fits about four five-minute reads). A few times a day is
+ * plenty: the reads are capped per day inside the read path, and a sweep
+ * runs its rows one at a time.
+ */
+const LIVE_PROFILE_SWEEP_INTERVAL_MS = 4 * 60 * 60_000;
+const LIVE_PROFILE_SWEEP_DEADLINE_MS = 60 * 60_000;
 
 export function startScheduler(): SchedulerHandle {
   // Demo mode idles: firing triggers would hit placeholder credentials and
@@ -97,6 +106,8 @@ export function startScheduler(): SchedulerHandle {
   // kept identical to bouncePollClean for the same "carry forward, don't
   // reset" reason) doesn't silently re-arm to clean.
   let replyPollClean = true;
+  // 0 = never swept, so the first tick after boot catches up right away.
+  let lastLiveProfileSweepAt = 0;
   // 0 = never polled, so the first tick can fire the calendar poll too.
   let lastCalendarPollAt = 0;
   // The calendar poll is intentionally NOT included in sweepClean (issue
@@ -209,6 +220,30 @@ export function startScheduler(): SchedulerHandle {
           "warn",
         );
       }
+      // Live-profile sweep: rows with a LinkedIn seed and no live read yet,
+      // approved first. Spends (~$0.01 a row) under the read path's daily
+      // cap; idle without a verified session. Isolated like the others and
+      // stamped before the await so a slow sweep never queues ticks up.
+      let liveProfilesRead = 0;
+      if (Date.now() - lastLiveProfileSweepAt >= LIVE_PROFILE_SWEEP_INTERVAL_MS) {
+        lastLiveProfileSweepAt = Date.now();
+        try {
+          // The sweep stops itself at the deadline (no new row, no write);
+          // withDeadline is the backstop for a row already in flight.
+          const sweep = await withDeadline(
+            sweepLiveProfiles({ deadlineAt: Date.now() + LIVE_PROFILE_SWEEP_DEADLINE_MS }),
+            LIVE_PROFILE_SWEEP_DEADLINE_MS + 5 * 60_000,
+            "live profile sweep",
+          );
+          liveProfilesRead = sweep.read;
+        } catch (err) {
+          logEvent(
+            "scheduler.live_profile_sweep.failed",
+            { message_120: ((err as Error).message ?? "").slice(0, 120) },
+            "warn",
+          );
+        }
+      }
       // Calendar poll (issue #577): a free read, not a spend-gated trigger,
       // so it belongs in the tick body rather than the TRIGGERS registry.
       // Throttled like the bounce sweep — nothing about a meeting is
@@ -263,6 +298,7 @@ export function startScheduler(): SchedulerHandle {
         mailRefreshFailed,
         meetingsIngested,
         calendarPollClean,
+        liveProfilesRead,
         source: "server",
       });
       if (cancelled) return;

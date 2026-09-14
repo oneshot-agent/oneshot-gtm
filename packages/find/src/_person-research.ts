@@ -41,6 +41,14 @@ import { qualifyPerson, resolveIcp, type PersonVerdict } from "./_filter.ts";
 import { isDudDomain } from "./_findemail-prescreen.ts";
 import { stampFitReason } from "./_fit-reason.ts";
 import { researchQueueRowProduct } from "./_product-research.ts";
+import { isLinkedInProfileUrl } from "./_linkedin.ts";
+import {
+  LINKEDIN_READ_COST_ESTIMATE_USD,
+  linkedinSessionState,
+  readLinkedInProfile,
+  type LiveProfileRead,
+  type LiveProfileSkip,
+} from "./_linkedin-profile.ts";
 import { isResearchableUrl } from "./_profile-url.ts";
 import { safeScorePriority } from "./_priority-adapters.ts";
 import { safeDeepResearchPerson, safeEnrichCompany } from "./_sdk-safe.ts";
@@ -48,8 +56,27 @@ import type { FinderResult } from "./_types.ts";
 
 export const PERSON_RESEARCH_COST_ESTIMATE_USD = 0.05;
 export const COMPANY_RESEARCH_COST_ESTIMATE_USD = 0.005;
-/** Reserved per in-flight call against the trigger cap; released on completion. */
-const RESERVE_USD = 0.06;
+/** Reserved per in-flight call against the trigger cap (research + company); released on completion. */
+const RESERVE_USD = PERSON_RESEARCH_COST_ESTIMATE_USD + COMPANY_RESEARCH_COST_ESTIMATE_USD + 0.005;
+
+/** The live read is reserved only for a row that can take one: a LinkedIn seed with the tier on and a session connected. */
+function liveReadPossible(
+  seed: { url?: string | null } | null,
+  liveProfile: boolean | undefined,
+): boolean {
+  return (
+    liveProfile !== false &&
+    Boolean(seed?.url && isLinkedInProfileUrl(seed.url)) &&
+    linkedinSessionState() !== "unset"
+  );
+}
+
+function reserveFor(
+  seed: { url?: string | null } | null,
+  liveProfile: boolean | undefined,
+): number {
+  return RESERVE_USD + (liveReadPossible(seed, liveProfile) ? LINKEDIN_READ_COST_ESTIMATE_USD : 0);
+}
 /** Soft wall budget for one post-finder pass; leftover rows wait for the backfill or the next run. */
 const RUN_BUDGET_MS = 20 * 60 * 1000;
 const COMPANY_ENRICH_TIMEOUT_MS = 30_000;
@@ -312,12 +339,30 @@ export interface ResearchPersonInput {
   remainingUsd: number;
   /** Buy the current company's record (default true). */
   enrichCompany?: boolean;
+  /** Read the live LinkedIn profile when the seed is one and a session is configured (default true). */
+  liveProfile?: boolean;
+}
+
+/**
+ * The live page's Experience list wins on currency: for every company the
+ * page lists, the provider's entries for that company are dropped (they are
+ * the ones that go stale); provider-only history is kept behind it.
+ */
+export function reconcileOrganizations(
+  live: PersonResearchOrganization[],
+  provider: PersonResearchOrganization[],
+): PersonResearchOrganization[] {
+  if (live.length === 0) return provider;
+  const liveCompanies = new Set(live.map((o) => normalizeCompany(o.name)));
+  return [...live, ...provider.filter((o) => !liveCompanies.has(normalizeCompany(o.name)))];
 }
 
 export async function researchPerson(input: ResearchPersonInput): Promise<{
   dossier: PersonResearchDossier;
   costUsd: number;
   cached: boolean;
+  /** Why the live LinkedIn tier did not produce a profile, when it ran and did not. Structured, for callers that stop on it. */
+  liveSkipped?: LiveProfileSkip;
 }> {
   const { seed } = input;
   if (!seed) {
@@ -350,21 +395,56 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
   );
   const billed = res.receiptId !== 0;
   let costUsd = billed ? (res.result?.cost ?? 0) : 0;
-  if (!res.result || res.result.status === "failed") {
-    return { dossier: unavailable(seed, "person research failed"), costUsd, cached: false };
-  }
-  const orgs = organizationsFromResearch(res.result);
-  const { current, organizations } = deriveCurrentRole(orgs);
-  const inner = isRecord(res.result.result) ? (res.result.result as JsonRecord) : {};
+  const providerFailed = !res.result || res.result.status === "failed";
+  const providerOrgs = providerFailed ? [] : organizationsFromResearch(res.result);
+  const inner =
+    !providerFailed && isRecord(res.result.result) ? (res.result.result as JsonRecord) : {};
   const enrichment = isRecord(inner["enrichment"]) ? (inner["enrichment"] as JsonRecord) : {};
-  const bio = str(enrichment, "bio", "summary", "headline") ?? undefined;
-  const location = str(enrichment, "location") ?? undefined;
+
+  // Live tier: the profile page itself, when the seed is a LinkedIn profile
+  // and the founder's session is configured. Its Experience list wins on
+  // currency over the provider's (see reconcileOrganizations).
+  let live: LiveProfileRead | null = null;
+  if (input.liveProfile !== false && seed.url && isLinkedInProfileUrl(seed.url)) {
+    if (linkedinSessionState() !== "unset") {
+      live = await readLinkedInProfile(
+        seed.url,
+        {
+          playName: input.playName,
+          memo: "person research: live LinkedIn profile read",
+          decisionContext: { source: "person-research", ...input.subject },
+        },
+        { remainingUsd: Math.max(0, input.remainingUsd - costUsd) },
+      );
+      costUsd += live.costUsd;
+    }
+  }
+  const liveOrgs = live?.profile
+    ? organizationsFromResearch({ experience: live.profile.experience })
+    : [];
+  const orgs = reconcileOrganizations(liveOrgs, providerOrgs);
+  const { current, organizations } = deriveCurrentRole(orgs);
+  const bio = str(enrichment, "bio", "summary", "headline") ?? live?.profile?.headline ?? undefined;
+  const location = str(enrichment, "location") ?? live?.profile?.location ?? undefined;
   const workEmail = str(enrichment, "best_work_email")?.toLowerCase() ?? undefined;
+  const liveWarning =
+    live && !live.profile && live.skipped && live.skipped !== "not-linkedin"
+      ? `live profile skipped: ${live.skipped}`
+      : undefined;
+  if (providerFailed && liveOrgs.length === 0 && !bio) {
+    return {
+      dossier: unavailable(seed, "person research failed"),
+      costUsd,
+      cached: false,
+      ...(live?.skipped ? { liveSkipped: live.skipped } : {}),
+    };
+  }
   if (!current && organizations.length === 0 && !bio) {
     return {
       dossier: unavailable(seed, "person research returned no organisation history"),
       costUsd,
       cached: !billed,
+      ...(live?.skipped ? { liveSkipped: live.skipped } : {}),
     };
   }
 
@@ -428,10 +508,66 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
     ...(location ? { location } : {}),
     ...(workEmail ? { workEmail } : {}),
     ...(company ? { company } : {}),
+    ...(live?.profile
+      ? { liveProfile: { url: live.profile.url, readAt: live.profile.readAt } }
+      : {}),
+    ...(liveWarning ? { warning: liveWarning } : {}),
     costUsd,
-    cached: !billed,
+    cached: !billed && !(live?.profile && !live.cached),
   });
-  return { dossier, costUsd, cached: !billed };
+  return {
+    dossier,
+    costUsd,
+    cached: !billed && !(live?.profile && !live.cached),
+    ...(live?.skipped ? { liveSkipped: live.skipped } : {}),
+  };
+}
+
+/**
+ * The provider half of a dossier from a `deepResearchPerson` result a finder
+ * already paid for (x-reposters, the repo pipeline's last resort), so the row
+ * carries `personResearch` from the start and the batch step skips it. No
+ * company or live tier here; null when the result holds no history or bio.
+ */
+export function dossierFromProviderResult(
+  seed: Pick<PersonSeed, "url" | "email" | "name" | "company">,
+  result: unknown,
+  opts: { costUsd: number; billed: boolean },
+): PersonResearchDossier | null {
+  if (!isRecord(result) || result["status"] === "failed") return null;
+  const { current, organizations } = deriveCurrentRole(organizationsFromResearch(result));
+  const inner = isRecord(result["result"]) ? (result["result"] as JsonRecord) : {};
+  const enrichment = isRecord(inner["enrichment"]) ? (inner["enrichment"] as JsonRecord) : {};
+  const bio = str(enrichment, "bio", "summary", "headline") ?? undefined;
+  const location = str(enrichment, "location") ?? undefined;
+  const workEmail = str(enrichment, "best_work_email")?.toLowerCase() ?? undefined;
+  if (!current && organizations.length === 0 && !bio) return null;
+  return boundPersonResearch({
+    version: 1,
+    status: "partial",
+    researchedAt: new Date().toISOString(),
+    seed: {
+      ...(seed.url ? { url: seed.url } : {}),
+      ...(seed.email ? { email: seed.email } : {}),
+      ...(seed.name ? { name: seed.name } : {}),
+      ...(seed.company ? { company: seed.company } : {}),
+    },
+    ...(current
+      ? {
+          currentRole: {
+            ...(current.title ? { title: current.title } : {}),
+            company: current.name,
+            ...(current.startDate ? { since: current.startDate } : {}),
+          },
+        }
+      : {}),
+    organizations,
+    ...(bio ? { bio: bio.replace(/\s+/g, " ").slice(0, 600) } : {}),
+    ...(location ? { location } : {}),
+    ...(workEmail ? { workEmail } : {}),
+    costUsd: opts.billed ? opts.costUsd : 0,
+    cached: !opts.billed,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -606,6 +742,24 @@ export interface ApplyPersonResearchOpts {
 }
 
 /**
+ * The dossier as a merge patch for a live row. `patchLiveQueuePayload` is a
+ * JSON merge patch (nested objects merge, keys absent from the patch stay),
+ * so the optional keys a refresh may have dropped are written as null,
+ * which the merge removes: a stale `warning` from a failed live read, or a
+ * `liveProfile` marker from before a session expired, must not outlive the
+ * research that produced it.
+ */
+export function researchMergePatch(dossier: PersonResearchDossier): JsonRecord {
+  return {
+    ...dossier,
+    warning: dossier.warning ?? null,
+    liveProfile: dossier.liveProfile ?? null,
+    currentRole: dossier.currentRole ?? null,
+    company: dossier.company ?? null,
+  };
+}
+
+/**
  * Write research onto a live queue row. Guarded: `patchLiveQueuePayload`
  * refuses sent and mid-send rows. A pending row the re-judge rejects is
  * rejected as the finder would have (`auto: role — …`, machine); an approved
@@ -627,7 +781,10 @@ export async function applyPersonResearch(
     return { outcome: "skipped", verdict: null, patch: {} };
   }
   if (dossier.status === "unavailable") {
-    const ok = ledger.patchLiveQueuePayload({ id: row.id, patch: { personResearch: dossier } });
+    const ok = ledger.patchLiveQueuePayload({
+      id: row.id,
+      patch: { personResearch: researchMergePatch(dossier) },
+    });
     if (ok) {
       ledger.setQueueNotes({
         id: row.id,
@@ -653,7 +810,10 @@ export async function applyPersonResearch(
     reason = judged.reason;
     Object.assign(patch, judged.patch);
   }
-  const ok = ledger.patchLiveQueuePayload({ id: row.id, patch });
+  const ok = ledger.patchLiveQueuePayload({
+    id: row.id,
+    patch: { ...patch, personResearch: researchMergePatch(dossier) },
+  });
   if (!ok) {
     logEvent("person_research.row_not_live", { queue_id: row.id, play: row.play_name });
     return { outcome: "skipped", verdict, patch };
@@ -709,6 +869,8 @@ export async function researchNewQueueRowPeople(input: {
   maxCostUsd?: number;
   enabled: boolean;
   priorSdkCostUsd?: number;
+  /** Live LinkedIn reads for this run (default true; needs a configured session). */
+  liveProfile?: boolean;
 }): Promise<void> {
   if (!input.enabled) return;
   const ledger = getLedger();
@@ -739,13 +901,20 @@ export async function researchNewQueueRowPeople(input: {
     } catch {
       return;
     }
-    if (personResearchOf(payload)) return;
-    if (row.prospect_id != null) {
-      const prospect = ledger.getProspectById(row.prospect_id);
-      if (prospect && hasDossierSignal(readPersonHalf(prospect.dossier_json))) return;
-    }
     const seed = personSeedFor(payload);
     if (!seed) return;
+    // A row that already carries research is done — unless it is provider
+    // history only (a finder paid for it before any live tier) and this row
+    // can take a live read now: then research re-runs, the provider call is
+    // a free cache hit, and the live Experience merges in on top.
+    const liveDue = liveReadPossible(seed, input.liveProfile);
+    const existing = personResearchOf(payload);
+    if (existing && (existing.liveProfile || !liveDue)) return;
+    if (row.prospect_id != null) {
+      const prospect = ledger.getProspectById(row.prospect_id);
+      const half = prospect ? readPersonHalf(prospect.dossier_json) : null;
+      if (half && hasDossierSignal(half) && (!liveDue || hasLiveProfile(half))) return;
+    }
     const spent =
       (input.priorSdkCostUsd ?? initialResultCostUsd) +
       (input.result.costUsd - initialResultCostUsd);
@@ -753,14 +922,16 @@ export async function researchNewQueueRowPeople(input: {
       0,
       (input.maxCostUsd ?? Number.POSITIVE_INFINITY) - spent - reserved,
     );
-    if (input.maxCostUsd !== undefined && remainingUsd < RESERVE_USD) return;
-    reserved += RESERVE_USD;
+    const reserve = reserveFor(seed, input.liveProfile);
+    if (input.maxCostUsd !== undefined && remainingUsd < reserve) return;
+    reserved += reserve;
     try {
       const researched = await researchPerson({
         seed,
         playName: row.play_name,
         subject: { queueId: row.id },
         remainingUsd,
+        ...(input.liveProfile !== undefined ? { liveProfile: input.liveProfile } : {}),
       });
       input.result.costUsd += researched.costUsd;
       const applied = await applyPersonResearch(ledger, row, researched.dossier, {
@@ -780,9 +951,13 @@ export async function researchNewQueueRowPeople(input: {
         verdict: applied.verdict,
       });
     } finally {
-      reserved -= RESERVE_USD;
+      reserved -= reserve;
     }
   });
+}
+
+function hasLiveProfile(half: unknown): boolean {
+  return isRecord(half) && isRecord(half["liveProfile"]);
 }
 
 // ---------------------------------------------------------------------------

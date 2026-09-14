@@ -419,7 +419,7 @@ describe("repo pipeline — deepResearchPerson last-resort", () => {
     });
   });
 
-  it("passes repo URL + author name + company to deepResearchPerson", async () => {
+  it("passes the owner profile URL + author name + company to deepResearchPerson", async () => {
     nextSearchHits = [makeRepo("https://github.com/ada/agent")];
     defaultGhUser = {
       login: "ada",
@@ -432,7 +432,8 @@ describe("repo pipeline — deepResearchPerson last-resort", () => {
     await runGitHubTopicsFinder(baseOpts);
     expect(deepResearchInputs).toHaveLength(1);
     expect(deepResearchInputs[0]).toEqual({
-      socialMediaUrl: "https://github.com/ada/agent",
+      // The owner's profile, not the repo: the person-research cache is keyed on it.
+      socialMediaUrl: "https://github.com/ada",
       name: "Ada Lovelace",
       company: "Acme Agents",
     });

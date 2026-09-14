@@ -26,6 +26,12 @@ import type {
   SetupRequest,
   WalletMode,
 } from "@oneshot-gtm/shared-types";
+import {
+  connectLinkedInWithCookie,
+  finishLinkedInLogin,
+  startLinkedInLogin,
+  type LinkedInSessionResult,
+} from "@oneshot-gtm/find";
 import { jsonResponse } from "../server.ts";
 
 /**
@@ -211,11 +217,97 @@ export async function getSetupStatus(req: Request): Promise<Response> {
         TWITTERAPI_IO_KEY: secretSource("TWITTERAPI_IO_KEY"),
         GITHUB_TOKEN: secretSource("GITHUB_TOKEN"),
         LUMA_SESSION_COOKIE: secretSource("LUMA_SESSION_COOKIE"),
+        LINKEDIN_SESSION_COOKIE: secretSource("LINKEDIN_SESSION_COOKIE"),
       },
     },
     200,
     req,
   );
+}
+
+/**
+ * The three LinkedIn connect routes. Two ways in, one outcome shape:
+ *  - POST /api/setup/linkedin-login/start  — open a hosted browser on the
+ *    LinkedIn login page in a fresh OneShot browser profile and return its
+ *    live URL (a credential: shown to the founder, never logged);
+ *  - POST /api/setup/linkedin-login/finish — save the logged-in state into
+ *    the profile and verify it;
+ *  - POST /api/setup/linkedin-session      — import the stored `li_at`
+ *    cookie into a fresh profile and verify it (no browser login needed).
+ * The cookie never appears in a response or a log; only the outcome does.
+ */
+function sessionResponse(result: LinkedInSessionResult, req: Request): Response {
+  return jsonResponse(
+    {
+      ok: true,
+      loggedIn: result.loggedIn,
+      name: result.name,
+      profileId: result.profileId,
+      costUsd: result.costUsd,
+      reason: result.reason ?? null,
+      checkedAt: new Date().toISOString(),
+    },
+    200,
+    req,
+  );
+}
+
+function platformFailure(err: unknown, req: Request): Response {
+  const message = ((err as Error).message ?? "connect failed").slice(0, 300);
+  return jsonResponse({ error: message }, 502, req);
+}
+
+export async function linkedinSessionRoute(req: Request): Promise<Response> {
+  if (!secretSource("LINKEDIN_SESSION_COOKIE")) {
+    return jsonResponse(
+      { error: "paste the LinkedIn session cookie (li_at) first, or log in with LinkedIn instead" },
+      400,
+      req,
+    );
+  }
+  try {
+    const result = await connectLinkedInWithCookie({
+      playName: "setup",
+      memo: "connect linkedin session (cookie)",
+    });
+    return sessionResponse(result, req);
+  } catch (err) {
+    return platformFailure(err, req);
+  }
+}
+
+export async function linkedinLoginStartRoute(req: Request): Promise<Response> {
+  try {
+    const started = await startLinkedInLogin({
+      playName: "setup",
+      memo: "connect linkedin session (login)",
+    });
+    return jsonResponse(
+      {
+        ok: true,
+        profileId: started.profileId,
+        liveUrl: started.liveUrl,
+        status: started.status,
+        expiresAt: started.expiresAt,
+      },
+      200,
+      req,
+    );
+  } catch (err) {
+    return platformFailure(err, req);
+  }
+}
+
+export async function linkedinLoginFinishRoute(req: Request): Promise<Response> {
+  try {
+    const result = await finishLinkedInLogin({
+      playName: "setup",
+      memo: "connect linkedin session (login)",
+    });
+    return sessionResponse(result, req);
+  } catch (err) {
+    return platformFailure(err, req);
+  }
 }
 
 /**
