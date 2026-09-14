@@ -36,8 +36,7 @@ import { STOP_REASON_LABELS, mailWaitingRows } from "../lib/cadenceState.ts";
 import { fitReasonFor } from "../lib/queueRationale.ts";
 import { queueEvidence } from "../lib/queueEvidence.ts";
 import { IdentityCell, SignalLabel } from "../components/ledger/IdentityCell.tsx";
-import { SheetHeading } from "../components/ledger/SheetHeading.tsx";
-import { Rule, Sheet } from "../components/ledger/Sheet.tsx";
+import { CaseSection, Rule, Sheet } from "../components/ledger/Sheet.tsx";
 import { CaseList, Disclosure, type CaseListRow } from "../components/ledger/CaseList.tsx";
 import { DraftStateLine, LetterCard, LetterEmpty } from "../components/ledger/LetterCard.tsx";
 
@@ -619,7 +618,10 @@ function CadencesPage() {
           <table className="w-full text-[13px]">
             <thead className="sticky top-0 z-10 bg-ink-bg">
               <tr className="border-b border-ink-rule text-[10px] uppercase tracking-[0.14em] text-ink-faint">
-                <th className="px-3 py-2 text-left font-medium" style={{ width: 32 }}>
+                <th
+                  className="pl-4 pr-0 py-2 text-left font-medium"
+                  style={{ width: 64, minWidth: 64 }}
+                >
                   <input
                     type="checkbox"
                     aria-label={
@@ -643,7 +645,7 @@ function CadencesPage() {
                     className="cursor-pointer"
                   />
                 </th>
-                <th className="py-2 pl-3 text-left font-medium">prospect</th>
+                <th className="py-2 text-left font-medium">prospect</th>
                 <th className="py-2 text-left font-medium">play</th>
                 <th className="py-2 text-left font-medium">status</th>
                 <th className="py-2 text-right font-medium">enrolled</th>
@@ -924,7 +926,7 @@ function CadencesPage() {
                         open && "bg-ink-surface",
                       )}
                     >
-                      <td className="px-3 py-[10px]" style={{ width: 32 }}>
+                      <td className="pl-4 pr-0 py-[10px]" style={{ width: 64, minWidth: 64 }}>
                         <input
                           type="checkbox"
                           aria-label={`select ${c.prospectName ?? c.prospectEmail ?? "row"}`}
@@ -940,7 +942,6 @@ function CadencesPage() {
                         />
                       </td>
                       <IdentityCell
-                        className="pl-3"
                         identity={{
                           name: c.prospectName,
                           email: c.prospectEmail,
@@ -1187,12 +1188,10 @@ function CadencesPage() {
                     {open && (
                       <Sheet
                         colSpan={6}
-                        indent="pl-14"
                         theCase={
-                          <>
-                            <SheetHeading label="the case" />
+                          <CaseSection>
                             {reminderSignal && (
-                              <SignalLabel className="-mt-1">{reminderSignal}</SignalLabel>
+                              <SignalLabel className="leading-5">{reminderSignal}</SignalLabel>
                             )}
                             {fitReason && (
                               <p className="m-0 text-[13px] leading-5 text-ink-cream-2 [text-wrap:pretty]">
@@ -1215,7 +1214,7 @@ function CadencesPage() {
                                           key={st.stepIndex}
                                           className="flex items-baseline gap-3 leading-4"
                                         >
-                                          <span className="w-[64px] shrink-0 text-right font-mono text-[11px] text-ink-faint">
+                                          <span className="w-[92px] shrink-0 text-right font-mono text-[11px] text-ink-faint">
                                             {timeAgo(st.sentAt)}
                                           </span>
                                           <span className="shrink-0 whitespace-nowrap text-ink-faint">
@@ -1225,7 +1224,7 @@ function CadencesPage() {
                                       ) : (
                                         <li key={st.stepIndex} className="flex flex-col gap-1">
                                           <div className="flex items-baseline gap-3 leading-4">
-                                            <span className="w-[64px] shrink-0 text-right font-mono text-[11px] text-ink-faint">
+                                            <span className="w-[92px] shrink-0 text-right font-mono text-[11px] text-ink-faint">
                                               {timeAgo(st.sentAt)}
                                             </span>
                                             <span className="shrink-0 whitespace-nowrap text-ink-cream-2">
@@ -1235,7 +1234,7 @@ function CadencesPage() {
                                               {st.subject}
                                             </span>
                                           </div>
-                                          <div className="pl-[76px]">
+                                          <div className="pl-[104px]">
                                             {st.body ? (
                                               <Disclosure label="body">
                                                 <pre className="ln-prose mt-2 whitespace-pre-wrap text-[12px] text-ink-cream-2">
@@ -1255,7 +1254,7 @@ function CadencesPage() {
                                 </div>
                               </>
                             )}
-                          </>
+                          </CaseSection>
                         }
                         theLetter={letter}
                       />

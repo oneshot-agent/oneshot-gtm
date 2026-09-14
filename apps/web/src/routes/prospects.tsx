@@ -39,8 +39,7 @@ import { fitReasonFor } from "../lib/queueRationale.ts";
 import { appendReason, REJECT_REASON_CHIPS, suggestRejectReason } from "../lib/rejectReason.ts";
 import { queueEvidence } from "../lib/queueEvidence.ts";
 import { IdentityCell, SignalLabel } from "../components/ledger/IdentityCell.tsx";
-import { SheetHeading } from "../components/ledger/SheetHeading.tsx";
-import { Rule, Sheet } from "../components/ledger/Sheet.tsx";
+import { CaseSection, Rule, Sheet } from "../components/ledger/Sheet.tsx";
 import { CaseList, PayloadJson, type CaseListRow } from "../components/ledger/CaseList.tsx";
 import { DraftStateLine, LetterCard, LetterEmpty } from "../components/ledger/LetterCard.tsx";
 import { readOnly } from "../lib/readOnly.ts";
@@ -321,7 +320,7 @@ function ProspectsPage() {
           <table className={cn("w-full text-[13px]", results.isFetching && "opacity-70")}>
             <thead className="sticky top-0 z-10 bg-ink-bg">
               <tr className="border-b border-ink-rule text-[10px] uppercase tracking-[0.14em] text-ink-faint">
-                <th className="w-6 py-2 pl-4 pr-0" aria-label="expand" />
+                <th className="w-16 min-w-16 py-2 pl-4 pr-0" aria-label="expand" />
                 <th className="py-2 text-left font-medium">prospect</th>
                 <th className="py-2 text-left font-medium">play</th>
                 <th className="py-2 text-left font-medium">status</th>
@@ -412,7 +411,11 @@ function BrowseRow({
   // finder's signal (#601). The signal is freeform and can name a person or a
   // company, so it drops under privacy mode; the decision names nobody.
   const signal = masked ? null : queueEvidence(row.playName, row.payload);
-  const line2 = [signal, decisionLine(row, timeAgo), offIcp ? "off-icp" : null]
+  const line2 = [
+    signal,
+    !expanded ? decisionLine(row, timeAgo) : null,
+    !expanded && offIcp ? "off-icp" : null,
+  ]
     .filter(Boolean)
     .join(" · ");
   return (
@@ -434,7 +437,7 @@ function BrowseRow({
           expanded && "bg-ink-surface",
         )}
       >
-        <td className="w-6 py-[10px] pl-4 pr-0 text-ink-faint">
+        <td className="w-16 min-w-16 py-[10px] pl-4 pr-0 text-ink-faint">
           {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         </td>
         <IdentityCell
@@ -511,7 +514,6 @@ function DetailPanel({ id }: { id: number }) {
     row?.prospect?.icpVerdictReason ?? payloadString(row?.payload, "icpVerdictReason");
 
   const fitReason = row ? fitReasonFor(row.payload) : null;
-  const source = row ? sourceDetail(row.source) : null;
   const title = d?.prospect?.title ?? titleFor(row?.payload);
   const company = d?.prospect?.company ?? companyFor(row?.payload);
   // The prospect column is polymorphic (LinkedIn, X or GitHub) and written
@@ -540,10 +542,6 @@ function DetailPanel({ id }: { id: number }) {
               },
             ]
           : []),
-        {
-          key: "surfaced",
-          value: `${timeAgo(row.foundAt)} by ${row.playName}${source ? ` · ${source}` : ""}`,
-        },
         {
           key: "prospect",
           value: d?.prospect
@@ -642,7 +640,6 @@ function DetailPanel({ id }: { id: number }) {
     return (
       <Sheet
         colSpan={5}
-        indent="pl-10"
         theCase={
           detail.isError ? (
             <div className="text-[13px] text-[color:var(--ink-blocked-2)]">
@@ -660,13 +657,10 @@ function DetailPanel({ id }: { id: number }) {
   return (
     <Sheet
       colSpan={5}
-      indent="pl-10"
       theCase={
-        <>
-          <SheetHeading label="the case" />
+        <CaseSection>
           {/* What happened to this row, and why. */}
-          <div className="-mt-1 flex flex-wrap items-center gap-2">
-            <Badge tone={statusTone(row.status)}>{row.status}</Badge>
+          <div className="flex flex-wrap items-center gap-2 leading-5">
             <span className="text-[13px] text-ink-cream-2">{describeDecision(row)}</span>
             {row.decidedAt && (
               <span className="font-mono text-[11px] text-ink-faint">{timeAgo(row.decidedAt)}</span>
@@ -738,7 +732,7 @@ function DetailPanel({ id }: { id: number }) {
                   key={`${ev.at}|${ev.kind}|${ev.label}`}
                   className="flex items-baseline gap-3 text-[12px] leading-4"
                 >
-                  <span className="w-[64px] shrink-0 text-right font-mono text-[11px] text-ink-faint">
+                  <span className="w-[92px] shrink-0 text-right font-mono text-[11px] text-ink-faint">
                     {timeAgo(ev.at)}
                   </span>
                   <span className="shrink-0 whitespace-nowrap text-ink-cream-2">{ev.label}</span>
@@ -753,25 +747,21 @@ function DetailPanel({ id }: { id: number }) {
             </ol>
           </div>
           <PayloadJson value={maskDeep(row.payload, masked)} />
-        </>
+        </CaseSection>
       }
       theLetter={
         row.lastDraft ? (
           <LetterCard
             meta={
-              row.lastDraft.sent
-                ? "sent"
-                : row.lastDraftedAt
-                  ? `drafted ${timeAgo(row.lastDraftedAt)} · not sent`
-                  : "not sent"
+              <span title={row.lastDraftedAt ? `Drafted ${timeAgo(row.lastDraftedAt)}` : undefined}>
+                {row.lastDraft.sent ? "Sent" : "Draft"}
+              </span>
             }
             subject={maskDeep(row.lastDraft.subject, masked)}
             stateLine={
-              <DraftStateLine
-                sent={row.lastDraft.sent}
-                flags={row.lastDraft.flags}
-                dryRun={row.lastDraft.dryRun}
-              />
+              !row.lastDraft.sent && row.lastDraft.flags.length > 0 ? (
+                <DraftStateLine sent={false} flags={row.lastDraft.flags} />
+              ) : undefined
             }
             body={maskDeep(row.lastDraft.body, masked)}
             afterBody={rejectEditor}

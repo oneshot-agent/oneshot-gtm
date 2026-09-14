@@ -21,7 +21,7 @@ export function LetterCard({
   foot,
   sendable = false,
 }: {
-  /** Right end of the heading: "drafted 6d ago · preview, not sent". */
+  /** Right end of the heading: the letter status or timestamp. */
   meta?: ReactNode;
   subject: string;
   /** Under the subject: a `DraftStateLine`, or anything in its voice. */
@@ -57,8 +57,10 @@ export function LetterCard({
               sendable ? "border-[color:var(--ink-receipt)]" : "border-ink-rule",
             )}
           >
-            <span className="flex items-center gap-2">{foot.left}</span>
-            <span className="flex flex-wrap items-center gap-3">{foot.right}</span>
+            <div className="-ml-2.5 flex min-w-0 flex-wrap items-center gap-2">{foot.left}</div>
+            <div className="ml-auto flex flex-wrap items-center justify-end gap-3">
+              {foot.right}
+            </div>
           </div>
         ) : (
           <div className="pb-4" />
@@ -85,8 +87,8 @@ export function LetterEmpty({
   return (
     <div className="min-w-0">
       {heading ? <SheetHeading label="the letter" /> : null}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-sm)] border border-dashed border-ink-rule px-5 py-3.5">
-        <span className="text-[12px] text-ink-muted">{note}</span>
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-sm)] border border-dashed border-ink-rule px-5 py-4">
+        <span className="text-[12px] leading-5 text-ink-muted">{note}</span>
         {actions ? <span className="flex flex-wrap items-center gap-2">{actions}</span> : null}
       </div>
       {below}

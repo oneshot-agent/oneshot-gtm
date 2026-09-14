@@ -362,12 +362,12 @@ function ConversationRow({
           type="button"
           onClick={onToggle}
           className={cn(
-            "group flex min-w-0 flex-1 items-center gap-3 px-6 py-3 text-left",
+            "group flex min-w-0 flex-1 items-center gap-3 pl-4 pr-6 py-3 text-left",
             "transition-colors duration-[var(--dur-stamp)] hover:bg-ink-surface/60",
             zebra && "bg-ink-surface/20",
           )}
         >
-          <span className="text-ink-faint">
+          <span className="w-9 shrink-0 text-ink-faint">
             {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
           </span>
           <span className="min-w-0 flex-1">
@@ -411,7 +411,7 @@ function ConversationRow({
         </Button>
       </div>
       {expanded && (
-        <div className="border-b border-ink-rule/60 bg-ink-bg-deep/50 px-6 py-3">
+        <div className="border-b border-ink-rule/60 bg-ink-bg-deep/50 pl-16 pr-6 py-5">
           <div className="flex flex-col gap-2">
             {c.items.map((item, i) => (
               <ConversationItemBlock key={i} item={item} />
@@ -542,12 +542,12 @@ function ReplyRow({
         type="button"
         onClick={onToggle}
         className={cn(
-          "group flex w-full items-center gap-3 border-b border-ink-rule/60 px-6 py-3 text-left",
+          "group flex w-full items-center gap-3 border-b border-ink-rule/60 pl-4 pr-6 py-3 text-left",
           "transition-colors duration-[var(--dur-stamp)] hover:bg-ink-surface/60",
           zebra && "bg-ink-surface/20",
         )}
       >
-        <span className="text-ink-faint">
+        <span className="w-9 shrink-0 text-ink-faint">
           {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         </span>
         <span className="min-w-0 flex-1">
@@ -577,7 +577,7 @@ function ReplyRow({
         </span>
       </button>
       {expanded && (
-        <div className="border-b border-ink-rule/60 bg-ink-bg-deep/50 px-6 py-3">
+        <div className="border-b border-ink-rule/60 bg-ink-bg-deep/50 pl-16 pr-6 py-5">
           <div className="mb-2 font-mono text-[11px] text-ink-faint">
             from <Pii kind="from">{reply.fromRaw}</Pii>
           </div>

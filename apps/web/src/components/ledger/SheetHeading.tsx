@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 /** The eyebrow + hairline that opens each half of an open row's sheet. */
 export function SheetHeading({ label, right }: { label: string; right?: ReactNode }) {
   return (
-    <div className="mb-3 flex items-center gap-3">
+    <div className="mb-3 flex min-h-4 items-center gap-3 leading-4">
       <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink-faint">
         {label}
       </span>
