@@ -909,6 +909,13 @@ export async function sendReplyRoute(req: Request): Promise<Response> {
   // surfaces cannot drift apart on what a founder may override. `commits-terms`
   // is a soft review flag: it holds the draft for a second read, and sending
   // as-is is the founder saying they stand behind the commitment.
+  //
+  // `commits-terms` is the only flag computed here, and it is soft, so the guard
+  // below is currently inert by construction. That is deliberate: /inbox replies
+  // are written and edited by hand, so body lint (em-dash, rule-of-three, …) has
+  // never gated this route and should not start — it would block the founder's
+  // own prose. The guard is the seam for a future flag that genuinely must stop
+  // a send, and it keeps the decision in `blockingFlags` rather than here.
   const sendFlags = bodyCommitsTerms(replyBody) ? ["commits-terms"] : [];
   const blocking = blockingFlags(sendFlags);
   if (blocking.length > 0) {
