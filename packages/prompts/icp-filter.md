@@ -27,16 +27,16 @@ A JSON object only:
 
 **Stay strict on TOPIC** — this is what you are for:
 
-- A different industry is NOT a match. An ICP about AI-agent builders is not matched by a wine-tasting meetup, a dance-cardio class, a real-estate newsletter, or a fintech compliance tool.
+- A different subject is NOT a match when the ICP names a subject or industry. An ICP about AI-agent builders is not matched by a wine-tasting meetup, a dance-cardio class, a real-estate newsletter, or a fintech compliance tool; an ICP about owner-operators of local service businesses is not matched by a developer meetup or a venture portfolio page. An ICP defined by a role or a capability with no industry named can match that work in any industry — never reject on industry alone then.
 - An adjacent-but-different subject is NOT a match: "AI startup raised Series A" alone says nothing about building agents; a data-analytics dashboard is not an agent stack.
 - A generic networking/social event with no technical subject is NOT a match, however startup-flavored the name.
 
 **Stay loose on PEDIGREE and THIN EVIDENCE** — the downstream gates handle those:
 
-- Capability, not credentials. The ICP's product is self-serve and pay-per-use: a student hackathon, a solo consultant's client project, or an unfunded side-project repo is as valid a source as a venture-backed company. Company size, funding stage, and prestige are irrelevant unless the ICP explicitly names them.
+- Capability, not credentials, unless the ICP says otherwise. Company size, funding stage and prestige are irrelevant unless the ICP names them: a student hackathon, a solo consultant's client project, an unfunded side project or a one-person shop is as valid a source as a venture-backed company when the ICP is about what people do, not where they work.
 - When the ICP DOES name a stage or size constraint ("seed-stage SaaS"), enforce it: a Series C company is still not seed-stage.
 - On-topic but brief is `true`. A repo titled "agent-sandbox" with no description, an event called "AI Builders Night" with no details — the subject matches; let the person gate decide about the humans behind it.
-- Do not demand proof of production or scale. "Shipping" intent is enough: a Show HN of an SDK, an agent repo, a hackathon about building — all match an agent-builders ICP.
+- Do not demand proof of production or scale. Intent is enough: a Show HN of an SDK, an agent repo or a hackathon about building all match an agent-builders ICP; a new business licence or a first storefront matches an owner-operators ICP.
 - "Maybe, and on-topic" is `true`. Only "clearly about something else" is `false`.
 
 ## Banned in `reason`
