@@ -3,9 +3,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// The LinkedIn session behind live profile reads: unset is a plain "ok"
-// (provider history only), a cookie without a checked session or with an
-// expired one warns, a checked session reports who it is logged in as.
+// The LinkedIn session behind live profile reads: nothing connected is a
+// plain "ok" (provider history only), a cookie or a started login without a
+// checked session warns, an expired one warns, a checked session reports who
+// it is logged in as — whether it came from a hosted login or a cookie.
 
 let cfgOverride: Record<string, unknown> = {};
 
@@ -82,6 +83,7 @@ describe("doctor: linkedin session", () => {
   it("a checked session is ok and names who it is logged in as", async () => {
     process.env["LINKEDIN_SESSION_COOKIE"] = "AQEDx";
     cfgOverride = {
+      linkedinBrowserProfileId: "prof_1",
       linkedinSessionCheckedAt: "2026-09-11T10:00:00.000Z",
       linkedinSessionName: "J. Nicolas",
       linkedinSessionInvalidAt: null,
@@ -89,5 +91,23 @@ describe("doctor: linkedin session", () => {
     const check = await linkedinCheck();
     expect(check.severity).toBe("ok");
     expect(check.message).toContain("logged in as J. Nicolas");
+    expect(check.message).toContain("via cookie");
+  });
+
+  it("a hosted login needs no cookie: a started one warns, a verified one is ok", async () => {
+    cfgOverride = { linkedinBrowserProfileId: "prof_1", linkedinSessionCheckedAt: null };
+    const started = await linkedinCheck();
+    expect(started.severity).toBe("warn");
+    expect(started.message).toContain("browser login");
+    expect(started.hint).toContain("finish the login");
+    cfgOverride = {
+      linkedinBrowserProfileId: "prof_1",
+      linkedinSessionCheckedAt: "2026-09-14T10:00:00.000Z",
+      linkedinSessionName: "J. Nicolas",
+      linkedinSessionInvalidAt: null,
+    };
+    const verified = await linkedinCheck();
+    expect(verified.severity).toBe("ok");
+    expect(verified.message).toContain("connected via browser login");
   });
 });

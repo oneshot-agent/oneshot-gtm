@@ -15,7 +15,7 @@
     "./time": "./src/time.ts"
   },
   "dependencies": {
-    "@oneshot-agent/sdk": "file:../../vendor/oneshot-agent-sdk-0.32.0.tgz",
+    "@oneshot-agent/sdk": "0.34.0",
     "imapflow": "^2.0.2",
     "mailparser": "^3.9.24",
     "nodemailer": "^10.0.3",

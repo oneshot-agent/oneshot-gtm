@@ -258,9 +258,10 @@ config
 config
   .command("linkedin-session")
   .description(
-    "Connect the stored LinkedIn cookie to a OneShot browser profile so person research can read live profiles",
+    "Connect your LinkedIn session to a OneShot browser profile (hosted login, or the stored li_at cookie) so person research can read live profiles",
   )
-  .action(runOrFail(configLinkedInSession));
+  .option("--login", "log in through a hosted browser even when a cookie is stored")
+  .action(runOrFail((opts: { login?: boolean }) => configLinkedInSession(opts)));
 config
   .command("slack-webhook [url]")
   .description(

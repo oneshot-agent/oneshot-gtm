@@ -3,13 +3,16 @@
  *
  * The enrichment provider behind `deepResearchPerson` can be a year behind a
  * person's live profile (row #9144: provider said one employer "to Present",
- * the page showed a new company since March). The founder pastes their own
- * `li_at` cookie on /setup; a one-time browser task sets it inside a
- * persistent OneShot browser profile; every later read is a cheap browser
- * task in that profile ($0.005 per session + $0.0006 per step) that returns
- * the Experience section as JSON. Reads use the founder's LinkedIn identity,
- * so they are serialized, spaced and capped per day, and a login wall marks
- * the session invalid until a fresh cookie is pasted.
+ * the page showed a new company since March). The founder connects LinkedIn
+ * once: either by logging in through a hosted browser the platform opens
+ * (`startLinkedInLogin` → live URL, 2FA included → `finishLinkedInLogin`),
+ * or by pasting their `li_at` cookie, which is imported into a fresh profile
+ * at creation (`connectLinkedInWithCookie`). Either way the platform keeps
+ * the session in a persistent browser profile, and every later read is a
+ * cheap browser task in that profile that returns the Experience section as
+ * JSON. Reads use the founder's LinkedIn identity, so they are serialized,
+ * spaced and capped per day, and a login wall marks the session invalid
+ * until it is reconnected.
  *
  * Cached cross-workspace in the shared enrichment cache under
  * `linkedin-profile:<url>` (30 days; 3-day negative cache), the same way
@@ -17,30 +20,49 @@
  */
 import {
   browserTask,
+  browserTaskCost,
   createBrowserProfile,
+  deleteBrowserProfile,
   ENRICH_FAILURE_TTL_MS,
+  finishBrowserProfileSetup,
+  getBrowserProfileSetup,
   getLedger,
   isTransientToolError,
   listBrowserProfiles,
   loadConfig,
   logEvent,
   saveConfig,
+  startBrowserProfileSetup,
   withDeadline,
+  type BrowserCookie,
+  type BrowserProfileSetupState,
   type CallContext,
 } from "@oneshot-gtm/core";
 import { isLinkedInProfileUrl } from "./_linkedin.ts";
 
 export const LINKEDIN_PROFILE_NAME = "oneshot-gtm linkedin";
+export const LINKEDIN_LOGIN_URL = "https://www.linkedin.com/login";
+const LINKEDIN_FEED_URL = "https://www.linkedin.com/feed/";
+const LINKEDIN_DOMAINS = ["linkedin.com", "www.linkedin.com"];
 /** Upper bound for one read used by the budget checks; the SDK quote refuses anything past READ_MAX_COST_USD. */
 export const LINKEDIN_READ_COST_ESTIMATE_USD = 0.02;
-const READ_MAX_COST_USD = 0.05;
-const READ_MAX_STEPS = 12;
+// The platform's step budget is an allowance, not an action count: below 25
+// the session cost limit is under the initialisation cost and the task ends
+// at step 0 with "Session cost limit reached" (probed 2026-09-12).
+const READ_MAX_COST_USD = 0.2;
+const READ_MAX_STEPS = 30;
 const READ_TIMEOUT_SEC = 240;
-const SEED_MAX_STEPS = 10;
+const VERIFY_MAX_STEPS = 25;
+const VERIFY_MAX_COST_USD = 0.1;
 const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 /** Minimum gap between two reads from the same account. */
 const READ_SPACING_MS = 15_000;
 const CACHE_PREFIX = "linkedin-profile:";
+const LOGIN_READY_STATUSES = new Set(["idle", "ready"]);
+const LOGIN_FAILED_RX = /fail|error|expired|closed|cancel/i;
+const LOGIN_POLL_MS = 2_000;
+const LOGIN_READY_TIMEOUT_MS = 90_000;
+const LOGIN_WALL_RX = /linkedin\.com\/(?:login|authwall|checkpoint|uas\/login|signup)/i;
 
 export const LINKEDIN_EXPERIENCE_SCHEMA = {
   type: "object",
@@ -66,6 +88,12 @@ export const LINKEDIN_EXPERIENCE_SCHEMA = {
   required: ["loggedIn", "experience"],
 } as const;
 
+const SESSION_SCHEMA = {
+  type: "object",
+  properties: { loggedIn: { type: "boolean" }, name: { type: ["string", "null"] } },
+  required: ["loggedIn"],
+};
+
 export interface LiveExperience {
   company: string;
   title?: string;
@@ -84,7 +112,7 @@ export interface LiveProfile {
 
 export type LiveProfileSkip =
   | "not-linkedin"
-  | "no-cookie"
+  | "not-connected"
   | "session-unchecked"
   | "session-invalid"
   | "daily-limit"
@@ -100,13 +128,28 @@ export interface LiveProfileRead {
 
 export type LinkedInSessionState = "unset" | "unchecked" | "invalid" | "ok";
 
-/** The founder's cookie, from the environment only; never persisted anywhere else. */
+export interface LinkedInSessionResult {
+  loggedIn: boolean;
+  name: string | null;
+  profileId: string;
+  costUsd: number;
+  /** Why the session is not usable, when it is not. */
+  reason?: string;
+}
+
+/** The founder's pasted cookie, from the environment only; never persisted anywhere else. */
 export function linkedinCookie(): string {
   return (process.env["LINKEDIN_SESSION_COOKIE"] ?? "").trim();
 }
 
+/**
+ * `unset` — nothing to connect with (no profile on record, no cookie);
+ * `unchecked` — a profile or cookie exists but no verified login yet;
+ * `invalid` — a login wall (or a failed verify) since the last connect;
+ * `ok` — verified, reads run.
+ */
 export function linkedinSessionState(cfg = loadConfig()): LinkedInSessionState {
-  if (!linkedinCookie()) return "unset";
+  if (!cfg.linkedinBrowserProfileId && !linkedinCookie()) return "unset";
   if (cfg.linkedinSessionInvalidAt) return "invalid";
   if (!cfg.linkedinSessionCheckedAt || !cfg.linkedinBrowserProfileId) return "unchecked";
   return "ok";
@@ -146,20 +189,48 @@ export function linkedInReadsToday(now = new Date()): number {
 /**
  * The browser profile id to run in: the stored one when the platform still
  * has it, else an existing profile with our name (two workspaces on one
- * wallet share it), else a new one. Persists the id.
+ * wallet share it), else a new one. With `fresh`, every profile carrying our
+ * name is deleted first and a new one is created — cookies can only be
+ * imported at creation, and a reconnect must not inherit a dead session.
+ * Persists the id.
  */
-export async function ensureLinkedInProfile(ctx: CallContext): Promise<string> {
+export async function ensureLinkedInProfile(
+  ctx: CallContext,
+  opts: { fresh?: boolean; cookies?: BrowserCookie[] } = {},
+): Promise<string> {
   const cfg = loadConfig();
   const profiles = await listBrowserProfiles(ctx);
-  const stored = cfg.linkedinBrowserProfileId
-    ? profiles.find((p) => p.id === cfg.linkedinBrowserProfileId)
-    : undefined;
-  const byName = stored ?? profiles.find((p) => p.name === LINKEDIN_PROFILE_NAME);
-  const profile = byName ?? (await createBrowserProfile(LINKEDIN_PROFILE_NAME, ctx));
-  if (profile.id !== cfg.linkedinBrowserProfileId) {
-    saveConfig({ ...cfg, linkedinBrowserProfileId: profile.id });
+  const ours = profiles.filter(
+    (p) => p.id === cfg.linkedinBrowserProfileId || p.name === LINKEDIN_PROFILE_NAME,
+  );
+  let profileId: string;
+  if (opts.fresh || ours.length === 0) {
+    if (opts.fresh) {
+      for (const p of ours) {
+        try {
+          await deleteBrowserProfile(p.id, ctx);
+        } catch (err) {
+          logEvent(
+            "linkedin_profile.delete_failed",
+            { profile_id: p.id, message_120: ((err as Error).message ?? "").slice(0, 120) },
+            "warn",
+          );
+        }
+      }
+    }
+    const created = await createBrowserProfile(
+      LINKEDIN_PROFILE_NAME,
+      ctx,
+      opts.cookies ? { cookies: opts.cookies } : {},
+    );
+    profileId = created.id;
+  } else {
+    profileId = (ours.find((p) => p.id === cfg.linkedinBrowserProfileId) ?? ours[0]!).id;
   }
-  return profile.id;
+  if (profileId !== cfg.linkedinBrowserProfileId) {
+    saveConfig({ ...cfg, linkedinBrowserProfileId: profileId });
+  }
+  return profileId;
 }
 
 export function markLinkedInSessionInvalid(reason: string): void {
@@ -190,47 +261,7 @@ function str(record: Record<string, unknown>, key: string): string | undefined {
   return typeof v === "string" && v.trim() ? v.trim() : undefined;
 }
 
-/**
- * One-time seeding: open linkedin.com in the profile, set the founder's
- * cookie in-page, reload, and report whether the member is signed in. The
- * cookie travels to the platform only as a task secret.
- */
-export async function seedLinkedInSession(
-  ctx: CallContext,
-  opts: { cookie?: string } = {},
-): Promise<{ loggedIn: boolean; name: string | null; profileId: string; costUsd: number }> {
-  const cookie = opts.cookie ?? linkedinCookie();
-  if (!cookie) throw new Error("LINKEDIN_SESSION_COOKIE is not set");
-  const profileId = await ensureLinkedInProfile(ctx);
-  const res = await browserTask(
-    {
-      task: [
-        "You are on https://www.linkedin.com/ and NOT logged in.",
-        "A secret for linkedin.com is provided in the form 'li_at:<value>'. Take the part after 'li_at:' as the cookie value.",
-        "Set a cookie on this page using the browser's JavaScript console exactly like:",
-        "document.cookie = 'li_at=<value>; domain=.linkedin.com; path=/; secure; SameSite=None';",
-        "Then reload https://www.linkedin.com/feed/. Do not type into any login form and do not attempt to log in another way.",
-        "Report loggedIn=true only if the page shows a personal feed or profile menu for a signed-in member, and name = the signed-in member's name if visible.",
-        "Return JSON matching the schema.",
-      ].join(" "),
-      startUrl: "https://www.linkedin.com/",
-      allowedDomains: ["linkedin.com", "www.linkedin.com"],
-      profileId,
-      secrets: { "linkedin.com": `li_at:${cookie}` },
-      outputSchema: {
-        type: "object",
-        properties: { loggedIn: { type: "boolean" }, name: { type: ["string", "null"] } },
-        required: ["loggedIn"],
-      },
-      maxSteps: SEED_MAX_STEPS,
-      maxCost: 0.1,
-      timeoutSec: READ_TIMEOUT_SEC,
-    },
-    { ...ctx, memo: ctx.memo ?? "linkedin: seed the browser profile session" },
-  );
-  const out = outputRecord(res.result.output);
-  const loggedIn = out["loggedIn"] === true;
-  const name = str(out, "name") ?? null;
+function recordSession(profileId: string, loggedIn: boolean, name: string | null): void {
   const cfg = loadConfig();
   saveConfig({
     ...cfg,
@@ -239,8 +270,145 @@ export async function seedLinkedInSession(
     linkedinSessionName: loggedIn ? name : null,
     linkedinSessionInvalidAt: loggedIn ? null : new Date().toISOString(),
   });
-  logEvent("linkedin_profile.session_seeded", { logged_in: loggedIn });
-  return { loggedIn, name, profileId, costUsd: res.result.cost ?? 0 };
+  logEvent("linkedin_profile.session_checked", { logged_in: loggedIn });
+}
+
+/**
+ * Open the feed in the profile and report whether a member is signed in and
+ * who. One cheap browser task; records the outcome in config either way.
+ */
+export async function verifyLinkedInSession(
+  profileId: string,
+  ctx: CallContext,
+): Promise<LinkedInSessionResult> {
+  const res = await browserTask(
+    {
+      task: [
+        `Open ${LINKEDIN_FEED_URL}.`,
+        "Report loggedIn=true only if the page shows a personal feed or the profile menu of a signed-in member; open the 'Me' menu if needed and set name to the signed-in member's name when visible.",
+        "If a login, sign-in or join page is shown, set loggedIn=false. Do not type into any login form and do not attempt to log in.",
+        "Return JSON matching the schema.",
+      ].join(" "),
+      startUrl: LINKEDIN_FEED_URL,
+      allowedDomains: LINKEDIN_DOMAINS,
+      profileId,
+      outputSchema: SESSION_SCHEMA,
+      maxSteps: VERIFY_MAX_STEPS,
+      maxCost: VERIFY_MAX_COST_USD,
+      timeoutSec: READ_TIMEOUT_SEC,
+    },
+    { ...ctx, memo: ctx.memo ?? "linkedin: verify the browser profile session" },
+  );
+  const out = outputRecord(res.result.output);
+  const wall = LOGIN_WALL_RX.test(res.result.final_url ?? "");
+  const loggedIn = out["loggedIn"] === true && !wall;
+  const name = str(out, "name") ?? null;
+  recordSession(profileId, loggedIn, name);
+  return {
+    loggedIn,
+    name,
+    profileId,
+    costUsd: browserTaskCost(res.result) ?? 0,
+    ...(loggedIn
+      ? {}
+      : { reason: wall ? "LinkedIn showed the login page" : "no signed-in member on the feed" }),
+  };
+}
+
+/**
+ * Connect with a pasted `li_at` cookie: a fresh profile is created with the
+ * cookie imported (the platform validates it in a fresh browser and keeps
+ * it out of task prompts and receipts), then the session is verified.
+ */
+export async function connectLinkedInWithCookie(
+  ctx: CallContext,
+  opts: { cookie?: string } = {},
+): Promise<LinkedInSessionResult> {
+  const cookie = opts.cookie ?? linkedinCookie();
+  if (!cookie) throw new Error("LINKEDIN_SESSION_COOKIE is not set");
+  const profileId = await ensureLinkedInProfile(ctx, {
+    fresh: true,
+    cookies: [
+      {
+        name: "li_at",
+        value: cookie,
+        domain: ".linkedin.com",
+        path: "/",
+        secure: true,
+        httpOnly: true,
+        sameSite: "None",
+      },
+    ],
+  });
+  return verifyLinkedInSession(profileId, ctx);
+}
+
+export interface LinkedInLoginStart {
+  profileId: string;
+  /** The hosted browser to log in through; a credential, never logged. */
+  liveUrl: string | null;
+  status: string;
+  expiresAt: string | null;
+}
+
+/**
+ * Interactive connect, step one: open a hosted browser on the LinkedIn login
+ * page in a fresh profile. The founder completes the login (and 2FA) through
+ * `liveUrl`, then calls `finishLinkedInLogin`. The session expires after
+ * fifteen minutes; $0.30 platform allowance per login.
+ */
+export async function startLinkedInLogin(
+  ctx: CallContext,
+  opts: { readyTimeoutMs?: number } = {},
+): Promise<LinkedInLoginStart> {
+  const profileId = await ensureLinkedInProfile(ctx, { fresh: true });
+  let state = await startBrowserProfileSetup(profileId, LINKEDIN_LOGIN_URL, ctx);
+  // The hosted browser reports `created` / `running` while it boots and
+  // `idle` once the login page is up; hand the founder a URL that is ready.
+  const deadline = Date.now() + (opts.readyTimeoutMs ?? LOGIN_READY_TIMEOUT_MS);
+  while (!LOGIN_READY_STATUSES.has(state.status) && Date.now() < deadline) {
+    if (LOGIN_FAILED_RX.test(state.status)) break;
+    await new Promise((r) => setTimeout(r, LOGIN_POLL_MS));
+    state = await getBrowserProfileSetup(profileId, ctx);
+  }
+  if (LOGIN_FAILED_RX.test(state.status)) {
+    throw new Error(`the platform could not open the login browser (status ${state.status})`);
+  }
+  if (!state.liveUrl) {
+    throw new Error(`the platform opened no login browser (status ${state.status})`);
+  }
+  return { profileId, liveUrl: state.liveUrl, status: state.status, expiresAt: state.expiresAt };
+}
+
+/**
+ * Interactive connect, step two: save the logged-in state into the profile
+ * and verify it. Without an `li_at` cookie among the stored ones the login
+ * did not complete, and the session is marked invalid without spending on a
+ * verify task.
+ */
+export async function finishLinkedInLogin(ctx: CallContext): Promise<LinkedInSessionResult> {
+  const cfg = loadConfig();
+  const profileId = cfg.linkedinBrowserProfileId;
+  if (!profileId) throw new Error("no LinkedIn login in progress — start one first");
+  let state: BrowserProfileSetupState;
+  try {
+    state = await finishBrowserProfileSetup(profileId, ctx);
+  } catch (err) {
+    markLinkedInSessionInvalid(`finish failed: ${(err as Error).message ?? ""}`);
+    throw err;
+  }
+  const hasSession = state.storedCookies.some((c) => c.name === "li_at");
+  if (!hasSession) {
+    recordSession(profileId, false, null);
+    return {
+      loggedIn: false,
+      name: null,
+      profileId,
+      costUsd: 0,
+      reason: "the login did not complete — LinkedIn stored no session cookie",
+    };
+  }
+  return verifyLinkedInSession(profileId, ctx);
 }
 
 // One read at a time from the founder's account, with a gap between reads.
@@ -293,7 +461,8 @@ export async function readLinkedInProfile(
   }
   const cfg = loadConfig();
   const state = linkedinSessionState(cfg);
-  if (state === "unset") return { profile: null, skipped: "no-cookie", costUsd: 0, cached: false };
+  if (state === "unset")
+    return { profile: null, skipped: "not-connected", costUsd: 0, cached: false };
   if (state === "invalid")
     return { profile: null, skipped: "session-invalid", costUsd: 0, cached: false };
   if (state === "unchecked")
@@ -324,7 +493,7 @@ export async function readLinkedInProfile(
               "Also return name, headline and location from the top of the profile. Return JSON matching the schema.",
             ].join(" "),
             startUrl: url,
-            allowedDomains: ["linkedin.com", "www.linkedin.com"],
+            allowedDomains: LINKEDIN_DOMAINS,
             profileId,
             outputSchema: LINKEDIN_EXPERIENCE_SCHEMA as unknown as Record<string, unknown>,
             maxSteps: READ_MAX_STEPS,
@@ -336,11 +505,27 @@ export async function readLinkedInProfile(
         READ_TIMEOUT_SEC * 1000 + 30_000,
         "linkedin profile read",
       );
-      const costUsd = res.result.cost ?? 0;
+      const costUsd = browserTaskCost(res.result) ?? 0;
+      if (res.result.success === false) {
+        // The platform ran nothing useful (its own error, a blocked
+        // navigation): not the page's fault, so no negative cache.
+        logEvent(
+          "linkedin_profile.read_failed",
+          {
+            message_120: (res.result.error_reason ?? "task unsuccessful").slice(0, 120),
+            error_ref: res.result.error_ref ?? null,
+            transient: true,
+          },
+          "warn",
+        );
+        return { profile: null, skipped: "failed", costUsd, cached: false };
+      }
       const out = outputRecord(res.result.output);
-      const wall = (res.result.steps ?? []).some((s) =>
-        /linkedin\.com\/(?:login|authwall|checkpoint|uas\/login)/i.test(s.url ?? ""),
-      );
+      const urls = [
+        res.result.final_url ?? "",
+        ...(res.result.steps ?? []).map((s) => s.url ?? ""),
+      ];
+      const wall = urls.some((u) => LOGIN_WALL_RX.test(u));
       if (out["loggedIn"] === false || wall) {
         markLinkedInSessionInvalid(
           wall ? "login wall during read" : "read reported loggedIn=false",

@@ -10,8 +10,11 @@ import {
 import {
   TRIGGERS,
   checkReadiness,
+  connectLinkedInWithCookie,
+  finishLinkedInLogin,
+  linkedinCookie,
   linkedinSessionState,
-  seedLinkedInSession,
+  startLinkedInLogin,
 } from "@oneshot-gtm/find";
 import { withXEngine, type XEngine } from "@oneshot-gtm/shared-types";
 import prompts from "prompts";
@@ -278,34 +281,69 @@ export async function configXEngine(engineArg?: string): Promise<void> {
 }
 
 /**
- * `config linkedin-session`: seed the OneShot browser profile with the
- * stored LinkedIn cookie and report whether the member is signed in.
+ * `config linkedin-session`: connect the founder's LinkedIn session to a
+ * OneShot browser profile so person research can read live profiles. With
+ * `LINKEDIN_SESSION_COOKIE` set the cookie is imported into a fresh profile;
+ * otherwise the platform opens a hosted browser on the login page, the
+ * founder logs in there (2FA included) and confirms here, and the session
+ * is saved into the profile. Either way the session is then verified.
  */
-export async function configLinkedInSession(): Promise<void> {
+export async function configLinkedInSession(opts: { login?: boolean } = {}): Promise<void> {
   header("LinkedIn session (live profile reads)");
-  const before = linkedinSessionState();
-  note(`state: ${c.cyan(before)}`);
-  if (before === "unset") {
-    note(
-      `LINKEDIN_SESSION_COOKIE is not set — paste your li_at cookie with ${c.cyan("oneshot-gtm config keys")} (or on /setup), then run this again.`,
-    );
-    return;
-  }
-  note(c.dim("opening linkedin.com in a OneShot browser profile… about a minute"));
-  try {
-    const r = await seedLinkedInSession({ playName: "config", memo: "connect linkedin session" });
+  note(`state: ${c.cyan(linkedinSessionState())}`);
+  const ctx = { playName: "config", memo: "connect linkedin session" };
+  const report = (r: {
+    loggedIn: boolean;
+    name: string | null;
+    profileId: string;
+    costUsd: number;
+    reason?: string;
+  }) => {
     if (r.loggedIn) {
       ok(
         `logged in as ${c.cyan(r.name ?? "(name not shown)")} · profile ${c.dim(r.profileId)} · $${r.costUsd.toFixed(3)}`,
       );
     } else {
       note(
-        `not signed in — LinkedIn did not accept the cookie as a session. Paste a fresh li_at (browser dev tools → Application → Cookies → linkedin.com) and run this again. Profile ${c.dim(r.profileId)} · $${r.costUsd.toFixed(3)}`,
+        `not signed in — ${r.reason ?? "LinkedIn showed no signed-in member"}. Run this again to retry, or ${c.cyan("oneshot-gtm config linkedin-session --login")} to log in through a hosted browser instead. Profile ${c.dim(r.profileId)} · $${r.costUsd.toFixed(3)}`,
       );
     }
+  };
+  try {
+    if (linkedinCookie() && !opts.login) {
+      note(
+        c.dim(
+          "importing the stored li_at cookie into a fresh OneShot browser profile, then checking the feed… about a minute",
+        ),
+      );
+      report(await connectLinkedInWithCookie(ctx));
+      return;
+    }
+    note(c.dim("opening a hosted browser on the LinkedIn login page ($0.30 platform allowance)…"));
+    const started = await startLinkedInLogin(ctx);
+    note(
+      `Log in to LinkedIn (2FA included) in this private browser:\n  ${c.cyan(started.liveUrl ?? "")}`,
+    );
+    if (started.expiresAt) note(c.dim(`the login browser closes at ${started.expiresAt}`));
+    const { done } = await prompts({
+      type: "confirm",
+      name: "done",
+      message: "Finished logging in?",
+      initial: true,
+    });
+    if (!done) {
+      note("left the login open — run this again and confirm once you are logged in");
+      return;
+    }
+    note(c.dim("saving the session into the profile and checking the feed… about a minute"));
+    report(await finishLinkedInLogin(ctx));
   } catch (err) {
     note(`connect failed: ${(err as Error).message}`);
-    note(c.dim("paste a fresh li_at cookie and run this again"));
+    note(
+      c.dim(
+        "run this again; to skip the browser login, paste your li_at with `oneshot-gtm config keys` first",
+      ),
+    );
   }
 }
 

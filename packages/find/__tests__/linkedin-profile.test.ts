@@ -3,14 +3,31 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // Live LinkedIn profile reads: cache first, every skip has a reason, a login
 // wall invalidates the session, reads are serialized from the founder's
 // account, and failures are negative-cached only when they are not transient.
+// Connecting: a pasted cookie is imported into a fresh profile (never into a
+// task), the hosted login flow is start → live URL → finish → verify.
 
-const calls = { browser: 0, list: 0, create: 0 };
+const calls = {
+  browser: 0,
+  list: 0,
+  create: 0,
+  delete: 0,
+  setupStart: 0,
+  setupStatus: 0,
+  setupFinish: 0,
+};
+let setupStatuses: string[] = [];
 const cache = new Map<string, { result_json: string; fetched_at: string; status: string | null }>();
 let readsToday = 0;
 let cfg: Record<string, unknown> = {};
 let browserOutput: unknown = null;
 let browserSteps: Array<{ number: number; goal: string; url: string }> = [];
+let browserFinalUrl: string | undefined;
+let browserSuccess: boolean | undefined;
 let browserError: Error | null = null;
+let browserInputs: Array<Record<string, unknown>> = [];
+let createOptions: Array<Record<string, unknown>> = [];
+let platformProfiles: Array<{ id: string; name: string }> = [];
+let storedCookies: Array<{ name: string; domain: string; path: string }> = [];
 const saved: Array<Record<string, unknown>> = [];
 
 vi.mock("@oneshot-gtm/core", async () => {
@@ -37,27 +54,72 @@ vi.mock("@oneshot-gtm/core", async () => {
     }),
     listBrowserProfiles: async () => {
       calls.list++;
-      return [{ id: "prof_existing", name: "oneshot-gtm linkedin" }];
+      return platformProfiles;
     },
-    createBrowserProfile: async (name: string) => {
+    createBrowserProfile: async (name: string, _ctx: unknown, options: Record<string, unknown>) => {
       calls.create++;
-      return { id: "prof_new", name };
+      createOptions.push(options);
+      const p = { id: `prof_new_${calls.create}`, name };
+      platformProfiles.push(p);
+      return p;
     },
-    browserTask: async () => {
+    deleteBrowserProfile: async (id: string) => {
+      calls.delete++;
+      platformProfiles = platformProfiles.filter((p) => p.id !== id);
+    },
+    startBrowserProfileSetup: async (profileId: string) => {
+      calls.setupStart++;
+      return {
+        profileId,
+        status: setupStatuses.shift() ?? "idle",
+        liveUrl: "https://live.example/session-secret",
+        expiresAt: "2026-09-14T10:15:00.000Z",
+        storedCookies: [],
+      };
+    },
+    getBrowserProfileSetup: async (profileId: string) => {
+      calls.setupStatus++;
+      return {
+        profileId,
+        status: setupStatuses.shift() ?? "idle",
+        liveUrl: "https://live.example/session-secret",
+        expiresAt: "2026-09-14T10:15:00.000Z",
+        storedCookies: [],
+      };
+    },
+    finishBrowserProfileSetup: async (profileId: string) => {
+      calls.setupFinish++;
+      return { profileId, status: "finished", liveUrl: null, expiresAt: null, storedCookies };
+    },
+    browserTask: async (input: Record<string, unknown>) => {
       calls.browser++;
+      browserInputs.push(input);
       if (browserError) throw browserError;
-      return { result: { output: browserOutput, steps: browserSteps, cost: 0.012 }, receiptId: 5 };
+      return {
+        result: {
+          output: browserOutput,
+          steps: browserSteps,
+          cost: 0.012,
+          ...(browserFinalUrl ? { final_url: browserFinalUrl } : {}),
+          ...(browserSuccess === undefined
+            ? {}
+            : { success: browserSuccess, error_reason: "internal_error" }),
+        },
+        receiptId: 5,
+      };
     },
   };
 });
 
 const {
   _resetLinkedInReadGate,
+  connectLinkedInWithCookie,
   ensureLinkedInProfile,
+  finishLinkedInLogin,
   linkedinProfileCacheKey,
   linkedinSessionState,
   readLinkedInProfile,
-  seedLinkedInSession,
+  startLinkedInLogin,
 } = await import("../src/_linkedin-profile.ts");
 
 const URL = "https://www.linkedin.com/in/julia-zabrodska-akinci-cv/";
@@ -74,14 +136,26 @@ const ok = () => ({
 });
 
 beforeEach(() => {
-  calls.browser = calls.list = calls.create = 0;
+  calls.browser =
+    calls.list =
+    calls.create =
+    calls.delete =
+    calls.setupStart =
+    calls.setupFinish =
+      0;
   cache.clear();
   saved.length = 0;
   readsToday = 0;
   browserOutput = ok();
   browserSteps = [];
+  browserFinalUrl = undefined;
+  browserSuccess = undefined;
   browserError = null;
-  process.env["LINKEDIN_SESSION_COOKIE"] = "cookie-value";
+  browserInputs = [];
+  createOptions = [];
+  platformProfiles = [{ id: "prof_existing", name: "oneshot-gtm linkedin" }];
+  storedCookies = [{ name: "li_at", domain: ".linkedin.com", path: "/" }];
+  delete process.env["LINKEDIN_SESSION_COOKIE"];
   cfg = {
     linkedinBrowserProfileId: "prof_existing",
     linkedinSessionCheckedAt: "2026-09-11T20:00:00.000Z",
@@ -98,14 +172,17 @@ afterEach(() => {
 });
 
 describe("session state", () => {
-  it("unset without a cookie, unchecked before seeding, invalid after a wall, ok otherwise", () => {
+  it("unset without a profile or cookie, unchecked before a verify, invalid after a wall, ok otherwise", () => {
     expect(linkedinSessionState()).toBe("ok");
     cfg = { ...cfg, linkedinSessionInvalidAt: "x" };
     expect(linkedinSessionState()).toBe("invalid");
     cfg = { ...cfg, linkedinSessionInvalidAt: null, linkedinSessionCheckedAt: null };
     expect(linkedinSessionState()).toBe("unchecked");
-    delete process.env["LINKEDIN_SESSION_COOKIE"];
+    cfg = { ...cfg, linkedinBrowserProfileId: null };
     expect(linkedinSessionState()).toBe("unset");
+    // a pasted cookie alone is something to connect with
+    process.env["LINKEDIN_SESSION_COOKIE"] = "cookie-value";
+    expect(linkedinSessionState()).toBe("unchecked");
   });
 
   it("the cache key normalises host, trailing slash and query", () => {
@@ -118,7 +195,7 @@ describe("session state", () => {
   });
 });
 
-describe("ensureLinkedInProfile / seedLinkedInSession", () => {
+describe("ensureLinkedInProfile", () => {
   it("reuses the platform profile with our name and persists its id", async () => {
     cfg = { ...cfg, linkedinBrowserProfileId: null };
     expect(await ensureLinkedInProfile(ctx)).toBe("prof_existing");
@@ -126,23 +203,106 @@ describe("ensureLinkedInProfile / seedLinkedInSession", () => {
     expect(saved.at(-1)?.["linkedinBrowserProfileId"]).toBe("prof_existing");
   });
 
-  it("seeding records a live session, or marks it invalid when the page is not signed in", async () => {
+  it("fresh deletes every profile with our name and creates a new one", async () => {
+    platformProfiles.push({ id: "prof_dup", name: "oneshot-gtm linkedin" });
+    const id = await ensureLinkedInProfile(ctx, { fresh: true });
+    expect(id).toBe("prof_new_1");
+    expect(calls.delete).toBe(2);
+    expect(platformProfiles.map((p) => p.id)).toEqual(["prof_new_1"]);
+    expect(cfg["linkedinBrowserProfileId"]).toBe("prof_new_1");
+  });
+});
+
+describe("connectLinkedInWithCookie", () => {
+  it("imports the cookie at profile creation, never into a task, then verifies the feed", async () => {
+    process.env["LINKEDIN_SESSION_COOKIE"] = "cookie-value";
     browserOutput = { loggedIn: true, name: "Founder Name" };
-    const seeded = await seedLinkedInSession(ctx);
-    expect(seeded).toMatchObject({
-      loggedIn: true,
-      name: "Founder Name",
-      profileId: "prof_existing",
+    const r = await connectLinkedInWithCookie(ctx);
+    expect(r).toMatchObject({ loggedIn: true, name: "Founder Name", profileId: "prof_new_1" });
+    expect(createOptions[0]).toEqual({
+      cookies: [
+        expect.objectContaining({ name: "li_at", value: "cookie-value", domain: ".linkedin.com" }),
+      ],
     });
+    expect(JSON.stringify(browserInputs)).not.toContain("cookie-value");
+    expect(browserInputs[0]?.["profileId"]).toBe("prof_new_1");
     expect(saved.at(-1)).toMatchObject({
+      linkedinBrowserProfileId: "prof_new_1",
       linkedinSessionName: "Founder Name",
       linkedinSessionInvalidAt: null,
     });
+  });
 
+  it("marks the session invalid when the feed shows no signed-in member or the login page", async () => {
+    process.env["LINKEDIN_SESSION_COOKIE"] = "cookie-value";
     browserOutput = { loggedIn: false, name: null };
-    const failed = await seedLinkedInSession(ctx);
+    const failed = await connectLinkedInWithCookie(ctx);
     expect(failed.loggedIn).toBe(false);
-    expect(typeof saved.at(-1)?.["linkedinSessionInvalidAt"]).toBe("string");
+    expect(failed.reason).toMatch(/no signed-in member/);
+    expect(typeof cfg["linkedinSessionInvalidAt"]).toBe("string");
+
+    browserOutput = { loggedIn: true, name: "x" };
+    browserFinalUrl = "https://www.linkedin.com/login/?session_redirect=%2Ffeed%2F";
+    const walled = await connectLinkedInWithCookie(ctx);
+    expect(walled.loggedIn).toBe(false);
+    expect(walled.reason).toMatch(/login page/);
+  });
+
+  it("refuses without a cookie", async () => {
+    await expect(connectLinkedInWithCookie(ctx)).rejects.toThrow(/LINKEDIN_SESSION_COOKIE/);
+    expect(calls.create).toBe(0);
+  });
+});
+
+describe("startLinkedInLogin / finishLinkedInLogin", () => {
+  it("opens the hosted login in a fresh profile and returns its live URL", async () => {
+    const started = await startLinkedInLogin(ctx);
+    expect(started).toEqual({
+      profileId: "prof_new_1",
+      liveUrl: "https://live.example/session-secret",
+      status: "idle",
+      expiresAt: "2026-09-14T10:15:00.000Z",
+    });
+    expect(calls.delete).toBe(1);
+    expect(calls.setupStart).toBe(1);
+    expect(cfg["linkedinBrowserProfileId"]).toBe("prof_new_1");
+  });
+
+  it("waits for the hosted browser to be idle before handing out the URL, and fails fast on a failed boot", async () => {
+    setupStatuses = ["created", "running", "idle"];
+    const started = startLinkedInLogin(ctx);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect((await started).status).toBe("idle");
+    expect(calls.setupStatus).toBe(2);
+
+    setupStatuses = ["created", "failed"];
+    const failed = startLinkedInLogin(ctx);
+    await vi.advanceTimersByTimeAsync(3_000);
+    await expect(failed).rejects.toThrow(/could not open the login browser/);
+  });
+
+  it("finish saves the session and verifies it when li_at was stored", async () => {
+    await startLinkedInLogin(ctx);
+    browserOutput = { loggedIn: true, name: "Founder Name" };
+    const r = await finishLinkedInLogin(ctx);
+    expect(calls.setupFinish).toBe(1);
+    expect(r).toMatchObject({ loggedIn: true, name: "Founder Name", profileId: "prof_new_1" });
+    expect(linkedinSessionState()).toBe("ok");
+  });
+
+  it("finish without a stored li_at spends nothing and marks the session invalid", async () => {
+    await startLinkedInLogin(ctx);
+    storedCookies = [{ name: "bcookie", domain: ".linkedin.com", path: "/" }];
+    const r = await finishLinkedInLogin(ctx);
+    expect(r.loggedIn).toBe(false);
+    expect(r.reason).toMatch(/did not complete/);
+    expect(calls.browser).toBe(0);
+    expect(linkedinSessionState()).toBe("invalid");
+  });
+
+  it("finish without a login in progress refuses", async () => {
+    cfg = { ...cfg, linkedinBrowserProfileId: null };
+    await expect(finishLinkedInLogin(ctx)).rejects.toThrow(/start one first/);
   });
 });
 
@@ -159,14 +319,15 @@ describe("readLinkedInProfile", () => {
     expect(calls.browser).toBe(1);
   });
 
-  it("skips with a reason instead of reading: not LinkedIn, no cookie, unchecked, invalid, daily limit, cost cap", async () => {
+  it("skips with a reason instead of reading: not LinkedIn, not connected, unchecked, invalid, daily limit, cost cap", async () => {
     expect(
       (await readLinkedInProfile("https://github.com/x", ctx, { remainingUsd: 1 })).skipped,
     ).toBe("not-linkedin");
-    delete process.env["LINKEDIN_SESSION_COOKIE"];
-    expect((await readLinkedInProfile(URL, ctx, { remainingUsd: 1 })).skipped).toBe("no-cookie");
-    process.env["LINKEDIN_SESSION_COOKIE"] = "cookie-value";
-    cfg = { ...cfg, linkedinSessionCheckedAt: null };
+    cfg = { ...cfg, linkedinBrowserProfileId: null };
+    expect((await readLinkedInProfile(URL, ctx, { remainingUsd: 1 })).skipped).toBe(
+      "not-connected",
+    );
+    cfg = { ...cfg, linkedinBrowserProfileId: "prof_existing", linkedinSessionCheckedAt: null };
     expect((await readLinkedInProfile(URL, ctx, { remainingUsd: 1 })).skipped).toBe(
       "session-unchecked",
     );
@@ -182,9 +343,9 @@ describe("readLinkedInProfile", () => {
     expect(calls.browser).toBe(0);
   });
 
-  it("a login wall marks the session invalid and caches nothing", async () => {
-    browserOutput = { loggedIn: false, experience: [] };
-    browserSteps = [{ number: 1, goal: "open", url: "https://www.linkedin.com/authwall?trk=x" }];
+  it("a login wall (final URL or a step) marks the session invalid and caches nothing", async () => {
+    browserOutput = { loggedIn: true, experience: [] };
+    browserFinalUrl = "https://www.linkedin.com/authwall?trk=x";
     const read = await readLinkedInProfile(URL, ctx, { remainingUsd: 1 });
     expect(read.skipped).toBe("session-invalid");
     expect(typeof cfg["linkedinSessionInvalidAt"]).toBe("string");
@@ -193,6 +354,15 @@ describe("readLinkedInProfile", () => {
       "session-invalid",
     );
     expect(calls.browser).toBe(1);
+  });
+
+  it("a task the platform reports unsuccessful is a transient failure: no negative cache, session kept", async () => {
+    browserSuccess = false;
+    browserOutput = "";
+    const read = await readLinkedInProfile(URL, ctx, { remainingUsd: 1 });
+    expect(read.skipped).toBe("failed");
+    expect(cache.size).toBe(0);
+    expect(cfg["linkedinSessionInvalidAt"]).toBeNull();
   });
 
   it("negative-caches a hard failure but not a transient one", async () => {

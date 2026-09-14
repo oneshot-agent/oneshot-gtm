@@ -470,38 +470,41 @@ function githubTokenCheck(): CheckResult | null {
  * warn — the tier silently degrades otherwise.
  */
 function linkedinSessionCheck(cfg: OneShotConfig): CheckResult {
-  const src = secretSource("LINKEDIN_SESSION_COOKIE");
-  if (!process.env["LINKEDIN_SESSION_COOKIE"]) {
+  const cookieSrc = secretSource("LINKEDIN_SESSION_COOKIE");
+  const cookieSet = Boolean(process.env["LINKEDIN_SESSION_COOKIE"]);
+  const name = "linkedin session";
+  if (!cfg.linkedinBrowserProfileId && !cookieSet) {
     return {
-      name: "linkedin session",
+      name,
       group: "install",
       severity: "ok",
-      message: "LINKEDIN_SESSION_COOKIE not set — person research uses provider history only",
+      message: "LinkedIn not connected — person research uses provider history only",
     };
   }
+  const via = cookieSet ? `cookie (${cookieSrc ?? "?"})` : "browser login";
   if (cfg.linkedinSessionInvalidAt) {
     return {
-      name: "linkedin session",
+      name,
       group: "install",
       severity: "warn",
-      message: `LINKEDIN_SESSION_COOKIE set (${src ?? "?"}) but the session expired ${cfg.linkedinSessionInvalidAt} — live profile reads are paused`,
-      hint: "paste a fresh li_at cookie on /setup and run `oneshot-gtm config linkedin-session`",
+      message: `LinkedIn session (${via}) expired ${cfg.linkedinSessionInvalidAt} — live profile reads are paused`,
+      hint: "reconnect on /setup (Log in with LinkedIn, or paste a fresh li_at) or run `oneshot-gtm config linkedin-session`",
     };
   }
-  if (!cfg.linkedinSessionCheckedAt) {
+  if (!cfg.linkedinSessionCheckedAt || !cfg.linkedinBrowserProfileId) {
     return {
-      name: "linkedin session",
+      name,
       group: "install",
       severity: "warn",
-      message: `LINKEDIN_SESSION_COOKIE set (${src ?? "?"}) but the session was never checked — live profile reads wait for it`,
-      hint: "run `oneshot-gtm config linkedin-session` (or Connect on /setup) to seed the browser profile",
+      message: `LinkedIn connection (${via}) started but the session was never checked — live profile reads wait for it`,
+      hint: "finish the login on /setup or run `oneshot-gtm config linkedin-session`",
     };
   }
   return {
-    name: "linkedin session",
+    name,
     group: "install",
     severity: "ok",
-    message: `set (${src ?? "?"}) · logged in as ${cfg.linkedinSessionName ?? "(name unknown)"} (checked ${cfg.linkedinSessionCheckedAt})`,
+    message: `connected via ${via} · logged in as ${cfg.linkedinSessionName ?? "(name unknown)"} (checked ${cfg.linkedinSessionCheckedAt})`,
   };
 }
 

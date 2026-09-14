@@ -457,11 +457,13 @@ export interface OneShotConfig {
   calendarId: string;
 
   /**
-   * Live LinkedIn profile reads run in a persistent OneShot browser profile
-   * that the founder's `LINKEDIN_SESSION_COOKIE` (li_at) logged in once. The
-   * profile id belongs to the wallet, so two workspaces on one wallet share
-   * it; `config linkedin-session` / the /setup Connect button fill these in.
-   * All optional so older config files and literals still type-check.
+   * Live LinkedIn profile reads. The OneShot browser profile the founder's
+   * LinkedIn session lives in — connected once on /setup, either by logging
+   * in through the platform's hosted browser (2FA included) or by importing
+   * a pasted `LINKEDIN_SESSION_COOKIE` (li_at) — and when a task last
+   * verified that session. A login wall stamps `linkedinSessionInvalidAt`
+   * and pauses reads until a reconnect; `config linkedin-session` / the
+   * /setup buttons fill these in.
    */
   linkedinBrowserProfileId?: string | null;
   /** When the session was last confirmed logged in, and as whom. */
