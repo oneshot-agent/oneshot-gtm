@@ -46,12 +46,17 @@ const LINKEDIN_FEED_URL = "https://www.linkedin.com/feed/";
 const LINKEDIN_DOMAINS = ["linkedin.com", "www.linkedin.com"];
 /** Upper bound for one read used by the budget checks; the SDK quote refuses anything past READ_MAX_COST_USD. */
 export const LINKEDIN_READ_COST_ESTIMATE_USD = 0.02;
-// The platform's step budget is an allowance, not an action count: below 25
-// the session cost limit is under the initialisation cost and the task ends
-// at step 0 with "Session cost limit reached" (probed 2026-09-12).
+// The platform's step budget is an allowance the provider's spend is bounded
+// by, not an action count (default 50, supported 25–100). A feed check alone
+// runs the provider ~$0.29 inside 25; a profile read with "Show all
+// experiences" overran 30 with `cost_limit` (2026-09-14), so reads get the
+// upper half of the range. What we are billed is far lower (~$0.01) and is
+// what `maxCost` bounds.
 const READ_MAX_COST_USD = 0.2;
-const READ_MAX_STEPS = 30;
-const READ_TIMEOUT_SEC = 240;
+const READ_MAX_STEPS = 80;
+// A profile read with the full Experience list runs the hosted browser for
+// several minutes; 240 s timed out at the 80-step allowance (2026-09-14).
+const READ_TIMEOUT_SEC = 540;
 const VERIFY_MAX_STEPS = 25;
 const VERIFY_MAX_COST_USD = 0.1;
 const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
@@ -62,6 +67,10 @@ const LOGIN_READY_STATUSES = new Set(["idle", "ready"]);
 const LOGIN_FAILED_RX = /fail|error|expired|closed|cancel/i;
 const LOGIN_POLL_MS = 2_000;
 const LOGIN_READY_TIMEOUT_MS = 90_000;
+/** The platform stopped the task on its own budget: nothing about the page is known, so never negative-cache it. */
+const BUDGET_FAILURE_RX = /cost_limit|cost limit|step_limit|max_steps/i;
+/** Shared-cache row that carries the next permitted read start across processes; not a read (different prefix). */
+const GATE_KEY = "linkedin-gate:reads";
 const LOGIN_WALL_RX = /linkedin\.com\/(?:login|authwall|checkpoint|uas\/login|signup)/i;
 
 export const LINKEDIN_EXPERIENCE_SCHEMA = {
@@ -177,22 +186,28 @@ function startOfLocalDayIso(now: Date): string {
   return d.toISOString();
 }
 
-/** Successful reads written today (local day), across workspaces. */
+/**
+ * Successful reads written today (local day), across workspaces. When the
+ * shared cache cannot answer, the count is unbounded on purpose: the daily
+ * cap protects the founder's account, so it fails closed.
+ */
 export function linkedInReadsToday(now = new Date()): number {
   try {
     return getLedger().countCachedEnrichmentSince(CACHE_PREFIX, startOfLocalDayIso(now));
   } catch {
-    return 0;
+    return Number.POSITIVE_INFINITY;
   }
 }
 
 /**
  * The browser profile id to run in: the stored one when the platform still
  * has it, else an existing profile with our name (two workspaces on one
- * wallet share it), else a new one. With `fresh`, every profile carrying our
- * name is deleted first and a new one is created — cookies can only be
- * imported at creation, and a reconnect must not inherit a dead session.
- * Persists the id.
+ * wallet share it), else a new one. With `fresh`, a new profile is created
+ * first (cookies can only be imported at creation, and a reconnect must not
+ * inherit a dead session) and only the profile this workspace's config
+ * pointed at is deleted afterwards — another workspace's profile is never
+ * touched, and a failed create leaves the working one in place. Persists
+ * the id.
  */
 export async function ensureLinkedInProfile(
   ctx: CallContext,
@@ -200,32 +215,29 @@ export async function ensureLinkedInProfile(
 ): Promise<string> {
   const cfg = loadConfig();
   const profiles = await listBrowserProfiles(ctx);
-  const ours = profiles.filter(
-    (p) => p.id === cfg.linkedinBrowserProfileId || p.name === LINKEDIN_PROFILE_NAME,
-  );
+  const stored = profiles.find((p) => p.id === cfg.linkedinBrowserProfileId);
+  const byName = stored ?? profiles.find((p) => p.name === LINKEDIN_PROFILE_NAME);
   let profileId: string;
-  if (opts.fresh || ours.length === 0) {
-    if (opts.fresh) {
-      for (const p of ours) {
-        try {
-          await deleteBrowserProfile(p.id, ctx);
-        } catch (err) {
-          logEvent(
-            "linkedin_profile.delete_failed",
-            { profile_id: p.id, message_120: ((err as Error).message ?? "").slice(0, 120) },
-            "warn",
-          );
-        }
-      }
-    }
+  if (opts.fresh || !byName) {
     const created = await createBrowserProfile(
       LINKEDIN_PROFILE_NAME,
       ctx,
       opts.cookies ? { cookies: opts.cookies } : {},
     );
     profileId = created.id;
+    if (opts.fresh && stored && stored.id !== profileId) {
+      try {
+        await deleteBrowserProfile(stored.id, ctx);
+      } catch (err) {
+        logEvent(
+          "linkedin_profile.delete_failed",
+          { profile_id: stored.id, message_120: ((err as Error).message ?? "").slice(0, 120) },
+          "warn",
+        );
+      }
+    }
   } else {
-    profileId = (ours.find((p) => p.id === cfg.linkedinBrowserProfileId) ?? ours[0]!).id;
+    profileId = byName.id;
   }
   if (profileId !== cfg.linkedinBrowserProfileId) {
     saveConfig({ ...cfg, linkedinBrowserProfileId: profileId });
@@ -299,6 +311,13 @@ export async function verifyLinkedInSession(
     },
     { ...ctx, memo: ctx.memo ?? "linkedin: verify the browser profile session" },
   );
+  if (res.result.success === false) {
+    // The platform ran nothing conclusive; the session is neither confirmed
+    // nor refuted, so leave it as it was.
+    throw new Error(
+      `the browser task did not complete (${res.result.error_reason ?? "platform error"}${res.result.error_ref ? `, ref ${res.result.error_ref}` : ""})`,
+    );
+  }
   const out = outputRecord(res.result.output);
   const wall = LOGIN_WALL_RX.test(res.result.final_url ?? "");
   const loggedIn = out["loggedIn"] === true && !wall;
@@ -412,14 +431,42 @@ export async function finishLinkedInLogin(ctx: CallContext): Promise<LinkedInSes
 }
 
 // One read at a time from the founder's account, with a gap between reads.
+// The promise chain serializes this process; the shared-cache gate row
+// carries the next permitted start across processes (a CLI backfill next to
+// the server, two workspaces on one wallet). Not a lock, a lease: each read
+// bumps it before it starts, so concurrent processes space out rather than
+// collide.
 let readChain: Promise<unknown> = Promise.resolve();
 let lastReadStartedAt = 0;
 
+function sharedNextAllowedAt(): number {
+  try {
+    const row = getLedger().getCachedEnrichment(GATE_KEY);
+    if (!row) return 0;
+    const parsed = JSON.parse(row.result_json) as { nextAllowedAt?: unknown };
+    return typeof parsed.nextAllowedAt === "number" ? parsed.nextAllowedAt : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function leaseSharedGate(startedAt: number): void {
+  try {
+    getLedger().setCachedEnrichment(
+      GATE_KEY,
+      JSON.stringify({ nextAllowedAt: startedAt + READ_SPACING_MS }),
+    );
+  } catch {
+    // best-effort; the in-process gate still holds
+  }
+}
+
 function serialized<T>(fn: () => Promise<T>): Promise<T> {
   const run = readChain.then(async () => {
-    const wait = lastReadStartedAt + READ_SPACING_MS - Date.now();
+    const wait = Math.max(lastReadStartedAt + READ_SPACING_MS, sharedNextAllowedAt()) - Date.now();
     if (wait > 0) await new Promise((r) => setTimeout(r, wait));
     lastReadStartedAt = Date.now();
+    leaseSharedGate(lastReadStartedAt);
     return fn();
   });
   readChain = run.catch(() => undefined);
@@ -497,7 +544,7 @@ export async function readLinkedInProfile(
             profileId,
             outputSchema: LINKEDIN_EXPERIENCE_SCHEMA as unknown as Record<string, unknown>,
             maxSteps: READ_MAX_STEPS,
-            maxCost: READ_MAX_COST_USD,
+            maxCost: Math.min(READ_MAX_COST_USD, opts.remainingUsd),
             timeoutSec: READ_TIMEOUT_SEC,
           },
           { ...ctx, memo: ctx.memo ?? "linkedin: read the profile's experience section" },
@@ -562,12 +609,13 @@ export async function readLinkedInProfile(
       return { profile, costUsd, cached: false };
     } catch (err) {
       const message = (err as Error).message ?? "";
+      const transient = isTransientToolError(err) || BUDGET_FAILURE_RX.test(message);
       logEvent(
         "linkedin_profile.read_failed",
-        { message_120: message.slice(0, 120), transient: isTransientToolError(err) },
+        { message_120: message.slice(0, 120), transient },
         "warn",
       );
-      if (!isTransientToolError(err)) {
+      if (!transient) {
         try {
           ledger.setCachedEnrichmentFailure(key, message || "linkedin read failed");
         } catch {

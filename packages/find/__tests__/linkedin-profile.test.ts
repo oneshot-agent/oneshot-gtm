@@ -123,6 +123,8 @@ const {
 } = await import("../src/_linkedin-profile.ts");
 
 const URL = "https://www.linkedin.com/in/julia-zabrodska-akinci-cv/";
+/** Cached profile rows only — the shared gate lease lives in the same map under another prefix. */
+const profileRows = () => [...cache.keys()].filter((k) => k.startsWith("linkedin-profile:")).length;
 const ctx = { playName: "luma-events" };
 const ok = () => ({
   loggedIn: true,
@@ -203,13 +205,28 @@ describe("ensureLinkedInProfile", () => {
     expect(saved.at(-1)?.["linkedinBrowserProfileId"]).toBe("prof_existing");
   });
 
-  it("fresh deletes every profile with our name and creates a new one", async () => {
-    platformProfiles.push({ id: "prof_dup", name: "oneshot-gtm linkedin" });
+  it("fresh creates the new profile first and deletes only the one this workspace pointed at", async () => {
+    platformProfiles.push({ id: "prof_other_ws", name: "oneshot-gtm linkedin" });
     const id = await ensureLinkedInProfile(ctx, { fresh: true });
     expect(id).toBe("prof_new_1");
-    expect(calls.delete).toBe(2);
-    expect(platformProfiles.map((p) => p.id)).toEqual(["prof_new_1"]);
+    expect(calls.delete).toBe(1);
+    expect(platformProfiles.map((p) => p.id)).toEqual(["prof_other_ws", "prof_new_1"]);
     expect(cfg["linkedinBrowserProfileId"]).toBe("prof_new_1");
+  });
+
+  it("a failed create leaves the working profile in place", async () => {
+    const core = await import("@oneshot-gtm/core");
+    const original = core.createBrowserProfile;
+    (core as unknown as { createBrowserProfile: unknown }).createBrowserProfile = async () => {
+      throw new Error("Failed to create browser profile");
+    };
+    try {
+      await expect(ensureLinkedInProfile(ctx, { fresh: true })).rejects.toThrow(/create/);
+      expect(calls.delete).toBe(0);
+      expect(cfg["linkedinBrowserProfileId"]).toBe("prof_existing");
+    } finally {
+      (core as unknown as { createBrowserProfile: unknown }).createBrowserProfile = original;
+    }
   });
 });
 
@@ -246,6 +263,15 @@ describe("connectLinkedInWithCookie", () => {
     const walled = await connectLinkedInWithCookie(ctx);
     expect(walled.loggedIn).toBe(false);
     expect(walled.reason).toMatch(/login page/);
+  });
+
+  it("a verify task the platform could not run throws and leaves the session untouched", async () => {
+    process.env["LINKEDIN_SESSION_COOKIE"] = "cookie-value";
+    browserSuccess = false;
+    browserOutput = "";
+    await expect(connectLinkedInWithCookie(ctx)).rejects.toThrow(/did not complete/);
+    expect(cfg["linkedinSessionInvalidAt"]).toBeNull();
+    expect(cfg["linkedinSessionCheckedAt"]).toBe("2026-09-11T20:00:00.000Z");
   });
 
   it("refuses without a cookie", async () => {
@@ -349,7 +375,7 @@ describe("readLinkedInProfile", () => {
     const read = await readLinkedInProfile(URL, ctx, { remainingUsd: 1 });
     expect(read.skipped).toBe("session-invalid");
     expect(typeof cfg["linkedinSessionInvalidAt"]).toBe("string");
-    expect(cache.size).toBe(0);
+    expect(profileRows()).toBe(0);
     expect((await readLinkedInProfile(URL, ctx, { remainingUsd: 1 })).skipped).toBe(
       "session-invalid",
     );
@@ -361,8 +387,38 @@ describe("readLinkedInProfile", () => {
     browserOutput = "";
     const read = await readLinkedInProfile(URL, ctx, { remainingUsd: 1 });
     expect(read.skipped).toBe("failed");
-    expect(cache.size).toBe(0);
+    expect(profileRows()).toBe(0);
     expect(cfg["linkedinSessionInvalidAt"]).toBeNull();
+  });
+
+  it("fails closed on the daily cap when the shared cache cannot count", async () => {
+    const core = await import("@oneshot-gtm/core");
+    const original = core.getLedger;
+    (core as unknown as { getLedger: unknown }).getLedger = () => ({
+      getCachedEnrichment: () => null,
+      countCachedEnrichmentSince: () => {
+        throw new Error("database is locked");
+      },
+    });
+    try {
+      expect((await readLinkedInProfile(URL, ctx, { remainingUsd: 1 })).skipped).toBe(
+        "daily-limit",
+      );
+      expect(calls.browser).toBe(0);
+    } finally {
+      (core as unknown as { getLedger: unknown }).getLedger = original;
+    }
+  });
+
+  it("the platform's own budget stop is not negative-cached", async () => {
+    browserError = new Error("Job failed: Browser task failed: cost_limit (ref: 3a960955)");
+    expect((await readLinkedInProfile(URL, ctx, { remainingUsd: 1 })).skipped).toBe("failed");
+    expect(profileRows()).toBe(0);
+  });
+
+  it("bounds the task's charge by the caller's remaining budget", async () => {
+    await readLinkedInProfile(URL, ctx, { remainingUsd: 0.05 });
+    expect(browserInputs[0]?.["maxCost"]).toBe(0.05);
   });
 
   it("negative-caches a hard failure but not a transient one", async () => {
@@ -373,7 +429,25 @@ describe("readLinkedInProfile", () => {
     _resetLinkedInReadGate();
     browserError = Object.assign(new Error("ETIMEDOUT"), { code: "ETIMEDOUT" });
     expect((await readLinkedInProfile(URL, ctx, { remainingUsd: 1 })).skipped).toBe("failed");
-    expect(cache.size).toBe(0);
+    expect(profileRows()).toBe(0);
+  });
+
+  it("honours another process's lease from the shared gate row", async () => {
+    cache.set("linkedin-gate:reads", {
+      result_json: JSON.stringify({ nextAllowedAt: Date.now() + 10_000 }),
+      fetched_at: new Date().toISOString(),
+      status: null,
+    });
+    const t0 = Date.now();
+    const read = readLinkedInProfile(URL, ctx, { remainingUsd: 1 });
+    await vi.advanceTimersByTimeAsync(11_000);
+    await read;
+    expect(calls.browser).toBe(1);
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(10_000);
+    const lease = JSON.parse(cache.get("linkedin-gate:reads")!.result_json) as {
+      nextAllowedAt: number;
+    };
+    expect(lease.nextAllowedAt).toBeGreaterThan(t0 + 10_000);
   });
 
   it("serializes reads and spaces them fifteen seconds apart", async () => {

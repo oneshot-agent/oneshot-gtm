@@ -180,6 +180,10 @@ export function CredentialsSection({
   });
   const cookieSet = Boolean(sources.LINKEDIN_SESSION_COOKIE);
   const sessionChecked = Boolean(cfg.linkedinSessionCheckedAt);
+  // A profile on record with no verified session is a hosted login that was
+  // started and never finished (a cookie import always verifies). The page
+  // may have been reloaded since, so Finish stays available for it.
+  const loginResumable = Boolean(cfg.linkedinBrowserProfileId) && !sessionChecked;
   const anyPending = connectLinkedIn.isPending || startLogin.isPending || finishLogin.isPending;
 
   const groups = useMemo<Group[]>(
@@ -254,33 +258,38 @@ export function CredentialsSection({
         inUse: () => true,
         optional: true,
         status: linkedinSessionStatus(cfg, cookieSet),
-        actions: login
-          ? [
-              {
-                label: "Finish login",
-                pendingLabel: "checking the session in the OneShot browser… ~1 min",
-                disabled: false,
-                pending: finishLogin.isPending,
-                onClick: () => finishLogin.mutate(),
-              },
-            ]
-          : [
-              {
-                label: sessionChecked ? "Log in again" : "Log in with LinkedIn",
-                pendingLabel: "opening a hosted browser on linkedin.com…",
-                disabled: anyPending,
-                pending: startLogin.isPending,
-                onClick: () => startLogin.mutate(),
-              },
-              {
-                label: "Use the cookie",
-                pendingLabel: "importing the cookie into a OneShot browser profile… ~1 min",
-                disabled: !cookieSet || anyPending,
-                disabledTitle: "Save the cookie first",
-                pending: connectLinkedIn.isPending,
-                onClick: () => connectLinkedIn.mutate(),
-              },
-            ],
+        actions: [
+          ...(login || loginResumable
+            ? [
+                {
+                  label: "Finish login",
+                  pendingLabel: "checking the session in the OneShot browser… ~1 min",
+                  disabled: anyPending,
+                  pending: finishLogin.isPending,
+                  onClick: () => finishLogin.mutate(),
+                },
+              ]
+            : []),
+          ...(login
+            ? []
+            : [
+                {
+                  label: sessionChecked || loginResumable ? "Log in again" : "Log in with LinkedIn",
+                  pendingLabel: "opening a hosted browser on linkedin.com…",
+                  disabled: anyPending,
+                  pending: startLogin.isPending,
+                  onClick: () => startLogin.mutate(),
+                },
+                {
+                  label: "Use the cookie",
+                  pendingLabel: "importing the cookie into a OneShot browser profile… ~1 min",
+                  disabled: !cookieSet || anyPending,
+                  disabledTitle: "Save the cookie first",
+                  pending: connectLinkedIn.isPending,
+                  onClick: () => connectLinkedIn.mutate(),
+                },
+              ]),
+        ],
         note: login ? (
           <>
             <a
@@ -295,6 +304,8 @@ export function CredentialsSection({
             {login.expiresAt ? ` before ${new Date(login.expiresAt).toLocaleTimeString()}` : ""}.
             The link is private to you; $0.30 per login.
           </>
+        ) : loginResumable ? (
+          "A login was started earlier. If its hosted browser is still open in another tab and you are signed in there, click Finish login; otherwise log in again."
         ) : null,
         error: connectError,
       },
@@ -307,6 +318,7 @@ export function CredentialsSection({
       xEngine,
       cookieSet,
       sessionChecked,
+      loginResumable,
       anyPending,
       connectError,
       login,

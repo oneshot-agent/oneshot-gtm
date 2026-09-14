@@ -399,6 +399,7 @@ export async function runXRepostersFinder(opts: XRepostersFinderOpts): Promise<F
           }
         : {
             name: c.user.name,
+            ...researched,
             ...base,
             ...(opts.launchDate ? { launchDate: opts.launchDate } : {}),
           };

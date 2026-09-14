@@ -325,25 +325,37 @@ export async function configLinkedInSession(opts: { login?: boolean } = {}): Pro
       `Log in to LinkedIn (2FA included) in this private browser:\n  ${c.cyan(started.liveUrl ?? "")}`,
     );
     if (started.expiresAt) note(c.dim(`the login browser closes at ${started.expiresAt}`));
-    const { done } = await prompts({
-      type: "confirm",
-      name: "done",
-      message: "Finished logging in?",
-      initial: true,
-    });
-    if (!done) {
-      note("left the login open — run this again and confirm once you are logged in");
-      return;
+    // The open login belongs to this profile; a rerun would start another
+    // billed one, so stay here until it is done or given up.
+    for (;;) {
+      const { next } = await prompts({
+        type: "select",
+        name: "next",
+        message: "Finished logging in?",
+        choices: [
+          { title: "Yes — save the session", value: "done" },
+          { title: "Not yet — ask me again", value: "wait" },
+          { title: "Give up this login", value: "abandon" },
+        ],
+        initial: 0,
+      });
+      if (next === "done") break;
+      if (next !== "wait") {
+        note(
+          "login abandoned — the hosted browser closes on its own; run this again to start a new one",
+        );
+        return;
+      }
     }
     note(c.dim("saving the session into the profile and checking the feed… about a minute"));
     report(await finishLinkedInLogin(ctx));
   } catch (err) {
-    note(`connect failed: ${(err as Error).message}`);
     note(
       c.dim(
         "run this again; to skip the browser login, paste your li_at with `oneshot-gtm config keys` first",
       ),
     );
+    throw new Error(`connect failed: ${(err as Error).message}`);
   }
 }
 

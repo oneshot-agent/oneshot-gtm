@@ -55,12 +55,27 @@ import type { FinderResult } from "./_types.ts";
 
 export const PERSON_RESEARCH_COST_ESTIMATE_USD = 0.05;
 export const COMPANY_RESEARCH_COST_ESTIMATE_USD = 0.005;
-/** Reserved per in-flight call against the trigger cap (research + company + live read); released on completion. */
-const RESERVE_USD =
-  PERSON_RESEARCH_COST_ESTIMATE_USD +
-  COMPANY_RESEARCH_COST_ESTIMATE_USD +
-  LINKEDIN_READ_COST_ESTIMATE_USD +
-  0.005;
+/** Reserved per in-flight call against the trigger cap (research + company); released on completion. */
+const RESERVE_USD = PERSON_RESEARCH_COST_ESTIMATE_USD + COMPANY_RESEARCH_COST_ESTIMATE_USD + 0.005;
+
+/** The live read is reserved only for a row that can take one: a LinkedIn seed with the tier on and a session connected. */
+function liveReadPossible(
+  seed: { url?: string | null } | null,
+  liveProfile: boolean | undefined,
+): boolean {
+  return (
+    liveProfile !== false &&
+    Boolean(seed?.url && isLinkedInProfileUrl(seed.url)) &&
+    linkedinSessionState() !== "unset"
+  );
+}
+
+function reserveFor(
+  seed: { url?: string | null } | null,
+  liveProfile: boolean | undefined,
+): number {
+  return RESERVE_USD + (liveReadPossible(seed, liveProfile) ? LINKEDIN_READ_COST_ESTIMATE_USD : 0);
+}
 /** Soft wall budget for one post-finder pass; leftover rows wait for the backfill or the next run. */
 const RUN_BUDGET_MS = 20 * 60 * 1000;
 const COMPANY_ENRICH_TIMEOUT_MS = 30_000;
@@ -413,7 +428,7 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
     live && !live.profile && live.skipped && live.skipped !== "not-linkedin"
       ? `live profile skipped: ${live.skipped}`
       : undefined;
-  if (providerFailed && liveOrgs.length === 0) {
+  if (providerFailed && liveOrgs.length === 0 && !bio) {
     return { dossier: unavailable(seed, "person research failed"), costUsd, cached: false };
   }
   if (!current && organizations.length === 0 && !bio) {
@@ -848,13 +863,20 @@ export async function researchNewQueueRowPeople(input: {
     } catch {
       return;
     }
-    if (personResearchOf(payload)) return;
-    if (row.prospect_id != null) {
-      const prospect = ledger.getProspectById(row.prospect_id);
-      if (prospect && hasDossierSignal(readPersonHalf(prospect.dossier_json))) return;
-    }
     const seed = personSeedFor(payload);
     if (!seed) return;
+    // A row that already carries research is done — unless it is provider
+    // history only (a finder paid for it before any live tier) and this row
+    // can take a live read now: then research re-runs, the provider call is
+    // a free cache hit, and the live Experience merges in on top.
+    const liveDue = liveReadPossible(seed, input.liveProfile);
+    const existing = personResearchOf(payload);
+    if (existing && (existing.liveProfile || !liveDue)) return;
+    if (row.prospect_id != null) {
+      const prospect = ledger.getProspectById(row.prospect_id);
+      const half = prospect ? readPersonHalf(prospect.dossier_json) : null;
+      if (half && hasDossierSignal(half) && (!liveDue || hasLiveProfile(half))) return;
+    }
     const spent =
       (input.priorSdkCostUsd ?? initialResultCostUsd) +
       (input.result.costUsd - initialResultCostUsd);
@@ -862,8 +884,9 @@ export async function researchNewQueueRowPeople(input: {
       0,
       (input.maxCostUsd ?? Number.POSITIVE_INFINITY) - spent - reserved,
     );
-    if (input.maxCostUsd !== undefined && remainingUsd < RESERVE_USD) return;
-    reserved += RESERVE_USD;
+    const reserve = reserveFor(seed, input.liveProfile);
+    if (input.maxCostUsd !== undefined && remainingUsd < reserve) return;
+    reserved += reserve;
     try {
       const researched = await researchPerson({
         seed,
@@ -890,9 +913,13 @@ export async function researchNewQueueRowPeople(input: {
         verdict: applied.verdict,
       });
     } finally {
-      reserved -= RESERVE_USD;
+      reserved -= reserve;
     }
   });
+}
+
+function hasLiveProfile(half: unknown): boolean {
+  return isRecord(half) && isRecord(half["liveProfile"]);
 }
 
 // ---------------------------------------------------------------------------
