@@ -10,7 +10,7 @@ Public — issues mirror the items below, PRs welcome. Items carry an effort tag
 ## In flight
 
 - **refactor(core): extract inbox and conversation persistence from Ledger** — PR #635, issue #634.
-- **refactor(core): extract queue persistence from Ledger** — PR #636, issue #631.
+- **refactor(core): extract queue persistence from Ledger** — issue #641 (re-filed from #631).
 - **refactor(core): extract cadence persistence from Ledger** — PR #637, issue #633.
 - **refactor(core): extract prospect and research persistence from Ledger** — PR #638, issue #632.
 
@@ -59,6 +59,8 @@ The ICP filter currently judges each candidate cold — `icpFilter` in `packages
       **Progress (#617):** bounce, suppression, and canary persistence extracted to `packages/core/src/delivery-health.ts` (pure functions of a raw `Database` handle, mirroring the `ledger-schema.ts` pattern); `Ledger`'s recordBounce/suppressionFor/contactSuppressionFor/bounceStatsByIdentity/listRecentBounces/countBounces/countAutoPermanentBounces/recordCanaryResult/latestCanaryResult/latestSentEmailCopy now delegate to it, same signatures and SQL, every call site unchanged. Prospects, queue, cadence, and inbox domain methods remain in `ledger.ts` for further slices.
 
       **Progress (#634):** inbound-message recording, conversation/thread reads, reply classification state, archive/reopen operations, and inbox-specific transactions extracted to `packages/core/src/ledger-inbox.ts` as an `InboxStore` constructed from the migrated `Database` handle (same pattern as `ReceiptStore`/`LedgerCache`); `Ledger` delegates every inbox method to it with signatures, dedup behavior, ordering and transaction boundaries unchanged. No inbox-only SQL remains inline in `ledger.ts`. Prospects, queue and cadence domain methods remain in `ledger.ts`, tracked as issues #631–#633.
+
+      **Progress (#641):** queue (`target_queue`) reads, writes, state transitions, selection/drain operations and queue-only transactions extracted to `packages/core/src/ledger-queue.ts` as a `QueueStore` constructed from the migrated `Database` handle; `Ledger` delegates every existing queue method to it with unchanged public signatures, return values, errors, and transaction boundaries — including the sent-row re-approval guard (`throwIfSentRowGuardBlocked`) and the `send_started_at`/`sent_at` invariants. No queue-only SQL remains inline in `ledger.ts`. Prospects and cadence domain methods remain in `ledger.ts`, tracked as issue #632–#633.
 
 ## Launch assets
 
