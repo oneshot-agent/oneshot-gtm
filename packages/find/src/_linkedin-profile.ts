@@ -126,6 +126,7 @@ export type LiveProfileSkip =
   | "session-invalid"
   | "daily-limit"
   | "cost-cap"
+  | "different-person"
   | "failed";
 
 export interface LiveProfileRead {
