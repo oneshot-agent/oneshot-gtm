@@ -19,6 +19,10 @@ let liveRows = new Set<number>([1, 2]);
 let icp: string | null = "founders who own their own customer acquisition";
 let verdict = '{"verdict":"pass","reason":"Founder of a consumer app, owns acquisition."}';
 let researchStatus = "completed";
+/** What the provider names the person for a URL seed / an email seed (null = no name field). */
+let providerNameByUrl: string | null = null;
+let providerNameByEmail: string | null = null;
+let liveName = "Julia Zabrodska-Akinci";
 let pendingRows: unknown[] = [];
 
 const juliaResearch = {
@@ -93,9 +97,17 @@ vi.mock("@oneshot-gtm/core", async () => {
       setProspectIcpVerdict: (id: number, v: string, reason: string | null) =>
         prospectWrites.push({ kind: "verdict", id, verdict: v, reason }),
     }),
-    deepResearchPerson: async () => {
+    deepResearchPerson: async (input: { socialMediaUrl?: string; email?: string }) => {
       calls.research++;
-      return { result: { ...juliaResearch, status: researchStatus }, receiptId: 7 };
+      const name = input.socialMediaUrl ? providerNameByUrl : providerNameByEmail;
+      return {
+        result: {
+          ...juliaResearch,
+          status: researchStatus,
+          result: { ...juliaResearch.result, ...(name ? { full_name: name } : {}) },
+        },
+        receiptId: 7,
+      };
     },
     enrichCompany: async () => {
       calls.company++;
@@ -121,7 +133,7 @@ vi.mock("@oneshot-gtm/core", async () => {
         result: {
           output: {
             loggedIn: true,
-            name: "Julia Zabrodska-Akinci",
+            name: liveName,
             headline: "Founder & Product Owner at WildMuse.App",
             experience: [
               {
@@ -218,6 +230,9 @@ beforeEach(() => {
   icp = "founders who own their own customer acquisition";
   verdict = '{"verdict":"pass","reason":"Founder of a consumer app, owns acquisition."}';
   researchStatus = "completed";
+  providerNameByUrl = null;
+  providerNameByEmail = null;
+  liveName = "Julia Zabrodska-Akinci";
   pendingRows = [];
 });
 
@@ -346,6 +361,102 @@ describe("normalizeCompany / personSeedFor", () => {
       personSeedFor({ name: "Nick", twitterUrl: "not a url", githubUrl: "https://github.com/nick" })
         ?.url,
     ).toBe("https://github.com/nick");
+  });
+});
+
+describe("namesAgree", () => {
+  it("folds accents, accepts shared tokens and 4-letter prefixes, and never judges a company-named row", async () => {
+    const { namesAgree } = await import("../src/_person-research.ts");
+    expect(namesAgree("Matúš Pavliščák", "Matus Pavliscak")).toBe(true);
+    expect(namesAgree("Mo Nasir", "Mohammed Nasir")).toBe(true);
+    expect(namesAgree("Alex Meza", "Alexander Meza")).toBe(true);
+    expect(namesAgree("Filip Kozera", "Rafael Lopez")).toBe(false);
+    expect(namesAgree("Edvard Bakken", "Miriam Cameron")).toBe(false);
+    expect(namesAgree("ability.ai", "Eugene Vyborov")).toBe(true);
+    expect(namesAgree("Julia", "Rafael Lopez")).toBe(true);
+    expect(namesAgree("Filip Kozera", null)).toBe(true);
+  });
+});
+
+describe("researchPerson: the record must be about the person on the row", () => {
+  it("retries by email when the profile URL's record names someone else, and uses that result", async () => {
+    providerNameByUrl = "Rafael Lopez";
+    providerNameByEmail = "Julia Zabrodska-Akinci";
+    const { dossier, costUsd } = await researchPerson({
+      seed: personSeedFor(juliaPayload),
+      playName: "luma-events",
+      subject: { queueId: 1 },
+      remainingUsd: Number.POSITIVE_INFINITY,
+      liveProfile: false,
+    });
+    expect(calls.research).toBe(2);
+    expect(dossier.status).toBe("complete");
+    expect(dossier.currentRole?.company).toBe("WildMuse.App");
+    expect(costUsd).toBeGreaterThan(0.05);
+  });
+
+  it("stops without a patch when the URL names someone else and there is no email to fall back on", async () => {
+    providerNameByUrl = "Rafael Lopez";
+    const { dossier } = await researchPerson({
+      seed: personSeedFor({ ...juliaPayload, email: undefined }),
+      playName: "luma-events",
+      subject: { queueId: 1 },
+      remainingUsd: Number.POSITIVE_INFINITY,
+    });
+    expect(calls.research).toBe(1);
+    expect(calls.browser).toBe(0);
+    expect(dossier.status).toBe("unavailable");
+    expect(dossier.warning).toMatch(/different person \(Rafael Lopez\)/);
+  });
+
+  it("does not judge a business-named seed, and does not retry past the budget", async () => {
+    const { seedNamesABusiness } = await import("../src/_person-research.ts");
+    expect(
+      seedNamesABusiness({ name: "Ridgeway Plumbing Ltd", company: "Ridgeway Plumbing, Ltd." }),
+    ).toBe(true);
+    expect(seedNamesABusiness({ name: "Julia Zabrodska", company: "L'eto Group" })).toBe(false);
+    providerNameByUrl = "Rafael Lopez";
+    const business = await researchPerson({
+      seed: personSeedFor({
+        name: "Ridgeway Plumbing Ltd",
+        company: "Ridgeway Plumbing Ltd",
+        linkedinUrl: "https://www.linkedin.com/in/rafaell0pez/",
+      }),
+      playName: "local-business",
+      subject: { queueId: 1 },
+      remainingUsd: Number.POSITIVE_INFINITY,
+      liveProfile: false,
+    });
+    expect(calls.research).toBe(1);
+    expect(business.dossier.status).toBe("complete");
+
+    calls.research = 0;
+    const capped = await researchPerson({
+      seed: personSeedFor(juliaPayload),
+      playName: "luma-events",
+      subject: { queueId: 1 },
+      remainingUsd: 0.06,
+      liveProfile: false,
+    });
+    expect(calls.research).toBe(1);
+    expect(capped.dossier.status).toBe("unavailable");
+    expect(capped.dossier.warning).toMatch(/different person/);
+  });
+
+  it("discards a live page that names someone else and keeps the provider's record", async () => {
+    liveSession = true;
+    liveName = "Rafael Lopez";
+    const { dossier, liveSkipped } = await researchPerson({
+      seed: personSeedFor(juliaPayload),
+      playName: "luma-events",
+      subject: { queueId: 1 },
+      remainingUsd: Number.POSITIVE_INFINITY,
+    });
+    expect(calls.browser).toBe(1);
+    expect(liveSkipped).toBe("different-person");
+    expect(dossier.liveProfile).toBeUndefined();
+    expect(dossier.status).toBe("complete");
+    expect(dossier.warning).toMatch(/different-person/);
   });
 });
 

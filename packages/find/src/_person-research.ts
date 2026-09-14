@@ -163,6 +163,76 @@ export function personSeedFor(payload: JsonRecord): PersonSeed | null {
 }
 
 // ---------------------------------------------------------------------------
+// Is the record about the person on the row?
+// ---------------------------------------------------------------------------
+
+function nameTokens(value: string): string[] {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .split(/[^a-z]+/)
+    .filter((t) => t.length >= 3);
+}
+
+/**
+ * Whether a researched record can be about the person the row names. A
+ * profile URL is the finder's guess, and a wrong guess hands research a
+ * stranger: the row then gets the stranger's title, and the gate judges the
+ * stranger (prospect #704: Filip Kozera's row carried Wordware's chief of
+ * staff's URL and came back "Chief of Staff"). Conservative on purpose: it
+ * only says no when the row names a person (two or more name tokens) and the
+ * record's name shares no token with it, after folding accents, so "Matúš
+ * Pavliščák" and "Matus Pavliscak" agree and a company-named row is never
+ * compared (tokens under three letters, "ai" or "Bo", do not count, so a
+ * one-token row like "Bo Nam" is not judged either). Transliterations and
+ * short forms pass on a shared 4-letter prefix ("Mohammed" / "Mohammad",
+ * "Alex" / "Alexander").
+ */
+export function namesAgree(
+  rowName: string | null | undefined,
+  recordName: string | null | undefined,
+): boolean {
+  if (!rowName || !recordName) return true;
+  const a = nameTokens(rowName);
+  const b = nameTokens(recordName);
+  if (a.length < 2 || b.length === 0) return true;
+  return a.some((x) =>
+    b.some(
+      (y) =>
+        x === y ||
+        (x.length >= 4 &&
+          y.length >= 4 &&
+          (x.startsWith(y.slice(0, 4)) || y.startsWith(x.slice(0, 4)))),
+    ),
+  );
+}
+
+/**
+ * A seed whose "name" is the business, not a person (local-business rows put
+ * the company in both fields): the provider's person name has nothing to
+ * agree with, so the guard stays out of the way.
+ */
+export function seedNamesABusiness(seed: Pick<PersonSeed, "name" | "company">): boolean {
+  if (!seed.name || !seed.company) return false;
+  const a = nameTokens(seed.name);
+  const b = nameTokens(seed.company);
+  return a.length > 0 && a.length === b.length && a.every((t, i) => t === b[i]);
+}
+
+/** The person's name as the provider reports it, when it does. */
+function providerPersonName(result: unknown): string | null {
+  if (!isRecord(result)) return null;
+  const inner = isRecord(result["result"]) ? (result["result"] as JsonRecord) : {};
+  const enrichment = isRecord(inner["enrichment"]) ? (inner["enrichment"] as JsonRecord) : {};
+  const full = str(inner, "full_name") ?? str(enrichment, "full_name");
+  if (full) return full;
+  const first = str(inner, "first_name") ?? str(enrichment, "first_name");
+  const last = str(inner, "last_name") ?? str(enrichment, "last_name");
+  return [first, last].filter(Boolean).join(" ") || null;
+}
+
+// ---------------------------------------------------------------------------
 // Organisations → current role
 // ---------------------------------------------------------------------------
 
@@ -389,21 +459,73 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
     };
   }
   const ledger = getLedger();
-  const res = await safeDeepResearchPerson(
+  const ctx = {
+    playName: input.playName,
+    memo: "person research: current role and company before review",
+    decisionContext: { source: "person-research", ...input.subject },
+  };
+  let res = await safeDeepResearchPerson(
     {
       ...(seed.url ? { socialMediaUrl: seed.url } : {}),
       ...(seed.email ? { email: seed.email } : {}),
       ...(seed.name ? { name: seed.name } : {}),
       ...(seed.company && seed.company !== "(unknown)" ? { company: seed.company } : {}),
     },
-    {
-      playName: input.playName,
-      memo: "person research: current role and company before review",
-      decisionContext: { source: "person-research", ...input.subject },
-    },
+    ctx,
   );
-  const billed = res.receiptId !== 0;
+  let billed = res.receiptId !== 0;
   let costUsd = billed ? (res.result?.cost ?? 0) : 0;
+  // The URL was the finder's guess. When the provider's record names someone
+  // else, the guess was wrong: research the address instead when there is
+  // one (the identifier the row actually owns), otherwise stop here rather
+  // than patch a stranger's title onto the row and judge the stranger.
+  let wrongPerson: string | null = null;
+  const urlName = seed.url && !seedNamesABusiness(seed) ? providerPersonName(res.result) : null;
+  if (seed.url && urlName && !namesAgree(seed.name, urlName)) {
+    logEvent(
+      "person_research.wrong_person",
+      {
+        ...input.subject,
+        url_80: seed.url.slice(0, 80),
+        record_name_60: urlName.slice(0, 60),
+        retry_by_email: Boolean(seed.email),
+      },
+      "warn",
+    );
+    // The retry is a second paid call; it needs the same headroom the first one had.
+    const canRetry =
+      Boolean(seed.email) && input.remainingUsd - costUsd >= PERSON_RESEARCH_COST_ESTIMATE_USD;
+    if (canRetry) {
+      const retry = await safeDeepResearchPerson(
+        {
+          ...(seed.email ? { email: seed.email } : {}),
+          ...(seed.name ? { name: seed.name } : {}),
+          ...(seed.company && seed.company !== "(unknown)" ? { company: seed.company } : {}),
+        },
+        { ...ctx, memo: "person research: by email after the profile URL named someone else" },
+      );
+      if (retry.receiptId !== 0) costUsd += retry.result?.cost ?? 0;
+      const retryName = providerPersonName(retry.result);
+      if (retry.result && retry.result.status !== "failed" && namesAgree(seed.name, retryName)) {
+        res = retry;
+        billed = billed || retry.receiptId !== 0;
+      } else {
+        wrongPerson = urlName;
+      }
+    } else {
+      wrongPerson = urlName;
+    }
+  }
+  if (wrongPerson) {
+    return {
+      dossier: unavailable(
+        seed,
+        `profile URL belongs to a different person (${wrongPerson}); title and verdict left as they were`,
+      ),
+      costUsd,
+      cached: false,
+    };
+  }
   const providerFailed = !res.result || res.result.status === "failed";
   const providerOrgs = providerFailed ? [] : organizationsFromResearch(res.result);
   const inner =
@@ -426,6 +548,28 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
         { remainingUsd: Math.max(0, input.remainingUsd - costUsd) },
       );
       costUsd += live.costUsd;
+      if (
+        live.profile?.name &&
+        !seedNamesABusiness(seed) &&
+        !namesAgree(seed.name, live.profile.name)
+      ) {
+        logEvent(
+          "person_research.wrong_person",
+          {
+            ...input.subject,
+            url_80: seed.url.slice(0, 80),
+            record_name_60: live.profile.name.slice(0, 60),
+            tier: "live",
+          },
+          "warn",
+        );
+        live = {
+          profile: null,
+          skipped: "different-person",
+          costUsd: live.costUsd,
+          cached: live.cached,
+        };
+      }
     }
   }
   const liveOrgs = live?.profile
