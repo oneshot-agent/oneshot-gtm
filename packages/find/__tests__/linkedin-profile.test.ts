@@ -302,9 +302,13 @@ describe("startLinkedInLogin / finishLinkedInLogin", () => {
     expect(calls.setupStatus).toBe(2);
 
     setupStatuses = ["created", "failed"];
-    const failed = startLinkedInLogin(ctx);
+    // The expectation is attached before the timers run so the rejection is
+    // never unhandled (vitest fails the run on one, even when it is expected).
+    const failed = expect(startLinkedInLogin(ctx)).rejects.toThrow(
+      /could not open the login browser/,
+    );
     await vi.advanceTimersByTimeAsync(3_000);
-    await expect(failed).rejects.toThrow(/could not open the login browser/);
+    await failed;
   });
 
   it("finish saves the session and verifies it when li_at was stored", async () => {
