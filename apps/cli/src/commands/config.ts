@@ -355,7 +355,7 @@ export async function configLinkedInSession(opts: { login?: boolean } = {}): Pro
         "run this again; to skip the browser login, paste your li_at with `oneshot-gtm config keys` first",
       ),
     );
-    throw new Error(`connect failed: ${(err as Error).message}`);
+    throw new Error(`connect failed: ${(err as Error).message}`, { cause: err });
   }
 }
 
