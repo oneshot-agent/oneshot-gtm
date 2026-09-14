@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { QueueStore } from "./ledger-queue.ts";
 import type { CadencePlanStep, ChannelEventRecord, SequenceEventRecord } from "./types.ts";
 
 /**
@@ -263,23 +264,6 @@ export function setCadenceStatus(
   );
 }
 
-/**
- * Expire any queued/approved `breakup-revive` row for this prospect — a stop
- * or a reply means the deliberate re-engagement play should no longer fire.
- * Shared by `stopCadence`, `recordLinkedInReply` and `recordProspectReply`.
- */
-function expireBreakupReviveQueue(db: Database, prospectId: number, reason: string): void {
-  db.prepare(
-    `UPDATE target_queue
-     SET status = 'expired',
-         notes = CASE WHEN notes IS NULL OR notes = '' THEN ?
-                      ELSE notes || ' · ' || ? END
-     WHERE (prospect_id = ? OR dedupe_key = ?)
-       AND play_name = 'breakup-revive'
-       AND status IN ('pending', 'approved')`,
-  ).run(`expired: ${reason}`, `expired: ${reason}`, prospectId, `prospect:${prospectId}`);
-}
-
 export function stopCadence(
   db: Database,
   input: {
@@ -304,7 +288,7 @@ export function stopCadence(
       .run(input.reason, input.note?.trim() || null, input.prospectId, input.playName);
     changed = result.changes > 0;
     if (changed) {
-      expireBreakupReviveQueue(db, input.prospectId, "cadence stopped");
+      new QueueStore(db).expireBreakupReviveQueue(input.prospectId, "cadence stopped");
     }
   })();
   return changed;
@@ -504,7 +488,7 @@ export function recordLinkedInReply(
            last_send_error = NULL, last_send_error_at = NULL
        WHERE prospect_id = ? AND status IN ('active','paused')`,
     ).run(input.prospectId);
-    expireBreakupReviveQueue(db, input.prospectId, "prospect replied");
+    new QueueStore(db).expireBreakupReviveQueue(input.prospectId, "prospect replied");
     return {
       duplicate: false,
       prospectId: input.prospectId,
@@ -685,7 +669,7 @@ export function recordProspectReply(
         eventRecorded,
       });
     }
-    expireBreakupReviveQueue(db, prospectId, "prospect replied");
+    new QueueStore(db).expireBreakupReviveQueue(prospectId, "prospect replied");
     return [...out].map(([playName, r]) => ({
       playName,
       newlyReplied: r.newlyReplied,
