@@ -356,6 +356,7 @@ describe("isTransientToolError", () => {
   it("flags platform/transport failures as transient (must not become a durable verdict)", () => {
     for (const m of [
       "Job failed: Tool execution failed. (ref: 35a99138)",
+      "Tool request failed", // the SDK's generic wrapper when the tool's HTTP request fails
       "The operation timed out.",
       "enrichProfile deadline exceeded (120s)",
       "fetch failed",

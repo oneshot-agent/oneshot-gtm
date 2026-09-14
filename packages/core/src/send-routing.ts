@@ -68,6 +68,7 @@ export function isTransientToolError(err: unknown): boolean {
   if (!msg) return false;
   return (
     msg.includes("tool execution failed") || // OneShot worker crash (generic)
+    msg.includes("tool request failed") || // SDK: the tool's HTTP request itself failed (generic, not a verdict)
     msg.includes("timed out") || // job/operation timeout
     msg.includes("timeout") ||
     msg.includes("deadline exceeded") || // withDeadline rejection
