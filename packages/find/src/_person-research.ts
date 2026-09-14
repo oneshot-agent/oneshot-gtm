@@ -138,11 +138,16 @@ export function personSeedFor(payload: JsonRecord): PersonSeed | null {
   // LinkedIn first (the live tier reads it), then whatever profile the finder
   // surfaced: an X handle from x-reposters / x-amplify-dm, a GitHub or
   // author page. The provider builds a dossier from any of them.
+  // One candidate per field: each is normalised and validated on its own, so
+  // a malformed value in one never hides a valid URL in the next.
   const candidates = [
     str(payload, "linkedinUrl"),
     str(payload, "sourceProfileUrl"),
-    str(payload, "profileUrl", "authorUrl"),
-    str(payload, "twitterUrl", "xUrl", "githubUrl"),
+    str(payload, "profileUrl"),
+    str(payload, "authorUrl"),
+    str(payload, "twitterUrl"),
+    str(payload, "xUrl"),
+    str(payload, "githubUrl"),
   ];
   const url =
     candidates

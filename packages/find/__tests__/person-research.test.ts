@@ -341,6 +341,11 @@ describe("normalizeCompany / personSeedFor", () => {
         linkedinUrl: "https://www.linkedin.com/in/nick",
       })?.url,
     ).toBe("https://linkedin.com/in/nick");
+    // a malformed value in one field does not hide the next
+    expect(
+      personSeedFor({ name: "Nick", twitterUrl: "not a url", githubUrl: "https://github.com/nick" })
+        ?.url,
+    ).toBe("https://github.com/nick");
   });
 });
 
