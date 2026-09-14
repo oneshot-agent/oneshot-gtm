@@ -728,6 +728,24 @@ export interface ApplyPersonResearchOpts {
 }
 
 /**
+ * The dossier as a merge patch for a live row. `patchLiveQueuePayload` is a
+ * JSON merge patch (nested objects merge, keys absent from the patch stay),
+ * so the optional keys a refresh may have dropped are written as null,
+ * which the merge removes: a stale `warning` from a failed live read, or a
+ * `liveProfile` marker from before a session expired, must not outlive the
+ * research that produced it.
+ */
+export function researchMergePatch(dossier: PersonResearchDossier): JsonRecord {
+  return {
+    ...dossier,
+    warning: dossier.warning ?? null,
+    liveProfile: dossier.liveProfile ?? null,
+    currentRole: dossier.currentRole ?? null,
+    company: dossier.company ?? null,
+  };
+}
+
+/**
  * Write research onto a live queue row. Guarded: `patchLiveQueuePayload`
  * refuses sent and mid-send rows. A pending row the re-judge rejects is
  * rejected as the finder would have (`auto: role — …`, machine); an approved
@@ -749,7 +767,10 @@ export async function applyPersonResearch(
     return { outcome: "skipped", verdict: null, patch: {} };
   }
   if (dossier.status === "unavailable") {
-    const ok = ledger.patchLiveQueuePayload({ id: row.id, patch: { personResearch: dossier } });
+    const ok = ledger.patchLiveQueuePayload({
+      id: row.id,
+      patch: { personResearch: researchMergePatch(dossier) },
+    });
     if (ok) {
       ledger.setQueueNotes({
         id: row.id,
@@ -775,7 +796,10 @@ export async function applyPersonResearch(
     reason = judged.reason;
     Object.assign(patch, judged.patch);
   }
-  const ok = ledger.patchLiveQueuePayload({ id: row.id, patch });
+  const ok = ledger.patchLiveQueuePayload({
+    id: row.id,
+    patch: { ...patch, personResearch: researchMergePatch(dossier) },
+  });
   if (!ok) {
     logEvent("person_research.row_not_live", { queue_id: row.id, play: row.play_name });
     return { outcome: "skipped", verdict, patch };

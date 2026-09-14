@@ -685,7 +685,15 @@ describe("applyPersonResearch (queue rows)", () => {
       remainingUsd: 1,
     });
     expect(out.outcome).toBe("unavailable");
-    expect(patches[0]?.patch).toEqual({ personResearch: dossier });
+    expect(patches[0]?.patch).toEqual({
+      personResearch: {
+        ...dossier,
+        warning: dossier.warning,
+        liveProfile: null,
+        currentRole: null,
+        company: null,
+      },
+    });
     expect(notes[0]?.notes).toContain("person research unavailable");
     expect(calls.classify).toBe(0);
   });
@@ -782,5 +790,33 @@ describe("applyPersonResearchToProspect", () => {
       patch: { title: "Founder & Product Owner", company: "WildMuse.App" },
     });
     expect(prospectWrites.find((w) => w["kind"] === "verdict")).toMatchObject({ verdict: "pass" });
+  });
+});
+
+describe("researchMergePatch", () => {
+  it("writes dropped optional keys as null so a merge patch removes them", async () => {
+    const { researchMergePatch } = await import("../src/_person-research.ts");
+    const patch = researchMergePatch({
+      status: "complete",
+      source: "deepResearchPerson",
+      researchedAt: "2026-09-14T10:55:56.464Z",
+      seed: { kind: "profile", url: "https://www.linkedin.com/in/x" },
+      organizations: [],
+      formerRoles: [],
+      costUsd: 0,
+    } as never);
+    expect(patch).toMatchObject({
+      warning: null,
+      liveProfile: null,
+      currentRole: null,
+      company: null,
+    });
+    const live = researchMergePatch({
+      status: "complete",
+      liveProfile: { url: "https://www.linkedin.com/in/x", readAt: "2026-09-14T10:55:56.464Z" },
+      warning: "x",
+    } as never);
+    expect(live["warning"]).toBe("x");
+    expect(live["liveProfile"]).toMatchObject({ url: "https://www.linkedin.com/in/x" });
   });
 });
