@@ -228,9 +228,11 @@ export function startScheduler(): SchedulerHandle {
       if (Date.now() - lastLiveProfileSweepAt >= LIVE_PROFILE_SWEEP_INTERVAL_MS) {
         lastLiveProfileSweepAt = Date.now();
         try {
+          // The sweep stops itself at the deadline (no new row, no write);
+          // withDeadline is the backstop for a row already in flight.
           const sweep = await withDeadline(
-            sweepLiveProfiles(),
-            LIVE_PROFILE_SWEEP_DEADLINE_MS,
+            sweepLiveProfiles({ deadlineAt: Date.now() + LIVE_PROFILE_SWEEP_DEADLINE_MS }),
+            LIVE_PROFILE_SWEEP_DEADLINE_MS + 5 * 60_000,
             "live profile sweep",
           );
           liveProfilesRead = sweep.read;

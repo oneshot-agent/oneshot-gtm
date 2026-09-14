@@ -89,19 +89,22 @@ describe("selectLiveSweepCandidates", () => {
 describe("sweepLiveProfiles", () => {
   const researched: number[] = [];
   const applied: number[] = [];
-  let warnings: Record<number, string> = {};
+  let skips: Record<number, string> = {};
   const deps = {
     researchPerson: async (input: { subject: { queueId?: number }; remainingUsd: number }) => {
       const id = input.subject.queueId!;
       researched.push(id);
-      const warning = warnings[id];
+      const skipped = skips[id];
       return {
         dossier: {
-          status: "complete",
-          ...(warning ? { warning } : { liveProfile: { url: "u", readAt: "t" } }),
+          status: skipped ? "unavailable" : "complete",
+          ...(skipped
+            ? { warning: "person research failed" }
+            : { liveProfile: { url: "u", readAt: "t" } }),
         },
         costUsd: 0.012,
         cached: false,
+        ...(skipped ? { liveSkipped: skipped } : {}),
       };
     },
     applyPersonResearch: async (_l: unknown, r: { id: number }) => {
@@ -113,7 +116,7 @@ describe("sweepLiveProfiles", () => {
   beforeEach(() => {
     researched.length = 0;
     applied.length = 0;
-    warnings = {};
+    skips = {};
   });
 
   it("does nothing without a verified session or in demo mode", async () => {
@@ -138,13 +141,13 @@ describe("sweepLiveProfiles", () => {
   });
 
   it("stops at the daily cap and on a login wall, after applying that row's provider result", async () => {
-    warnings = { 2: "live profile skipped: daily-limit" };
+    skips = { 2: "daily-limit" };
     const capped = await sweepLiveProfiles({}, deps);
     expect(capped).toMatchObject({ researched: 2, read: 1, stoppedBy: "daily-limit" });
     expect(applied).toEqual([7, 2]);
 
     researched.length = applied.length = 0;
-    warnings = { 7: "live profile skipped: session-invalid" };
+    skips = { 7: "session-invalid" };
     const walled = await sweepLiveProfiles({}, deps);
     expect(walled).toMatchObject({ researched: 1, read: 0, stoppedBy: "session-invalid" });
   });
@@ -155,9 +158,36 @@ describe("sweepLiveProfiles", () => {
       stoppedBy: "max-rows",
     });
     researched.length = 0;
-    expect(await sweepLiveProfiles({ maxCostUsd: 0.02 }, deps)).toMatchObject({
-      researched: 2,
-      stoppedBy: "budget",
+    const capped = await sweepLiveProfiles({ maxCostUsd: 0.02 }, deps);
+    expect(capped).toMatchObject({ researched: 1, stoppedBy: "budget" });
+    expect(capped.costUsd).toBeLessThanOrEqual(0.02);
+  });
+
+  it("starts no row and writes nothing after the scheduler's deadline", async () => {
+    expect(await sweepLiveProfiles({ deadlineAt: Date.now() - 1 }, deps)).toMatchObject({
+      researched: 0,
+      stoppedBy: "deadline",
     });
+    expect(applied).toEqual([]);
+    const late = {
+      ...(deps as object),
+      researchPerson: async (input: { subject: { queueId?: number } }) => {
+        researched.push(input.subject.queueId!);
+        vi.setSystemTime(Date.now() + 61 * 60_000);
+        return {
+          dossier: { status: "complete", liveProfile: { url: "u", readAt: "t" } },
+          costUsd: 0.012,
+          cached: false,
+        };
+      },
+    } as never;
+    vi.useFakeTimers();
+    try {
+      const r = await sweepLiveProfiles({ deadlineAt: Date.now() + 60 * 60_000 }, late);
+      expect(r).toMatchObject({ researched: 1, stoppedBy: "deadline" });
+      expect(applied).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

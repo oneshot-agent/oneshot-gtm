@@ -14,7 +14,7 @@
  */
 import { demoMode, getLedger, logEvent, type QueueRow } from "@oneshot-gtm/core";
 import { isLinkedInProfileUrl } from "./_linkedin.ts";
-import { linkedinSessionState } from "./_linkedin-profile.ts";
+import { LINKEDIN_READ_COST_ESTIMATE_USD, linkedinSessionState } from "./_linkedin-profile.ts";
 import {
   applyPersonResearch,
   personSeedFor,
@@ -55,7 +55,7 @@ export interface LiveProfileSweepResult {
   read: number;
   costUsd: number;
   /** Why the sweep ended before its candidates ran out. */
-  stoppedBy?: "daily-limit" | "session-invalid" | "budget" | "max-rows";
+  stoppedBy?: "daily-limit" | "session-invalid" | "budget" | "max-rows" | "deadline";
 }
 
 /**
@@ -121,7 +121,7 @@ export interface LiveProfileSweepDeps {
 }
 
 export async function sweepLiveProfiles(
-  opts: { maxRows?: number; maxCostUsd?: number } = {},
+  opts: { maxRows?: number; maxCostUsd?: number; deadlineAt?: number } = {},
   deps: LiveProfileSweepDeps = { researchPerson, applyPersonResearch },
 ): Promise<LiveProfileSweepResult> {
   const base = { candidates: 0, researched: 0, read: 0, costUsd: 0 };
@@ -137,13 +137,23 @@ export async function sweepLiveProfiles(
   const maxCostUsd = opts.maxCostUsd ?? DEFAULT_MAX_COST_USD;
   const result: LiveProfileSweepResult = { ran: true, ...base, candidates: candidates.length };
   const spend = { costUsd: 0 };
+  const deadlineAt = opts.deadlineAt ?? Number.POSITIVE_INFINITY;
   for (const [index, { row, seed }] of candidates.entries()) {
     if (index >= maxRows) {
       result.stoppedBy = "max-rows";
       break;
     }
+    // The scheduler's deadline is checked here and again before the write:
+    // a read that finishes late is not lost (its result is cached) and the
+    // next sweep applies it for free, but nothing starts or persists after
+    // the deadline. A running browser task cannot be cancelled.
+    if (Date.now() >= deadlineAt) {
+      result.stoppedBy = "deadline";
+      break;
+    }
     const remainingUsd = Math.max(0, maxCostUsd - spend.costUsd);
-    if (remainingUsd <= 0) {
+    // The live read is the spend; a row may not start unless its estimate fits.
+    if (remainingUsd < LINKEDIN_READ_COST_ESTIMATE_USD) {
       result.stoppedBy = "budget";
       break;
     }
@@ -156,8 +166,11 @@ export async function sweepLiveProfiles(
     });
     spend.costUsd += researched.costUsd;
     result.researched++;
-    const warning = researched.dossier.warning ?? "";
     if (researched.dossier.liveProfile) result.read++;
+    if (Date.now() >= deadlineAt) {
+      result.stoppedBy = "deadline";
+      break;
+    }
     await deps.applyPersonResearch(ledger, row, researched.dossier, {
       rejudge: true,
       remainingUsd: Math.max(0, remainingUsd - researched.costUsd),
@@ -165,12 +178,8 @@ export async function sweepLiveProfiles(
     });
     // The read path's own stops end the sweep: another row would only skip
     // for the same reason.
-    if (warning.includes("daily-limit")) {
-      result.stoppedBy = "daily-limit";
-      break;
-    }
-    if (warning.includes("session-invalid")) {
-      result.stoppedBy = "session-invalid";
+    if (researched.liveSkipped === "daily-limit" || researched.liveSkipped === "session-invalid") {
+      result.stoppedBy = researched.liveSkipped;
       break;
     }
   }

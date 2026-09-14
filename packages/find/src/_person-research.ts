@@ -47,6 +47,7 @@ import {
   linkedinSessionState,
   readLinkedInProfile,
   type LiveProfileRead,
+  type LiveProfileSkip,
 } from "./_linkedin-profile.ts";
 import { isResearchableUrl } from "./_profile-url.ts";
 import { safeScorePriority } from "./_priority-adapters.ts";
@@ -360,6 +361,8 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
   dossier: PersonResearchDossier;
   costUsd: number;
   cached: boolean;
+  /** Why the live LinkedIn tier did not produce a profile, when it ran and did not. Structured, for callers that stop on it. */
+  liveSkipped?: LiveProfileSkip;
 }> {
   const { seed } = input;
   if (!seed) {
@@ -429,13 +432,19 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
       ? `live profile skipped: ${live.skipped}`
       : undefined;
   if (providerFailed && liveOrgs.length === 0 && !bio) {
-    return { dossier: unavailable(seed, "person research failed"), costUsd, cached: false };
+    return {
+      dossier: unavailable(seed, "person research failed"),
+      costUsd,
+      cached: false,
+      ...(live?.skipped ? { liveSkipped: live.skipped } : {}),
+    };
   }
   if (!current && organizations.length === 0 && !bio) {
     return {
       dossier: unavailable(seed, "person research returned no organisation history"),
       costUsd,
       cached: !billed,
+      ...(live?.skipped ? { liveSkipped: live.skipped } : {}),
     };
   }
 
@@ -506,7 +515,12 @@ export async function researchPerson(input: ResearchPersonInput): Promise<{
     costUsd,
     cached: !billed && !(live?.profile && !live.cached),
   });
-  return { dossier, costUsd, cached: !billed && !(live?.profile && !live.cached) };
+  return {
+    dossier,
+    costUsd,
+    cached: !billed && !(live?.profile && !live.cached),
+    ...(live?.skipped ? { liveSkipped: live.skipped } : {}),
+  };
 }
 
 /**
