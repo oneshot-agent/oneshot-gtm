@@ -687,7 +687,7 @@ function ReplyComposer({
         toast.success(`draft ready · researched sender ($${res.costUsd.toFixed(2)})`);
       }
       if (res.needsDecision) {
-        toast.warning("this draft commits to something unauthorised — edit it or steer a redraft");
+        toast.warning("this draft commits terms · read it again, then send as-is if it holds up");
       }
     },
     onError: (err) => toast.error(`couldn't draft · ${err.message}`),
