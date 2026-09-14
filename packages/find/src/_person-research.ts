@@ -135,10 +135,14 @@ export interface PersonSeed {
  * deterministically (see research-prospects: 281 of 281 twice).
  */
 export function personSeedFor(payload: JsonRecord): PersonSeed | null {
+  // LinkedIn first (the live tier reads it), then whatever profile the finder
+  // surfaced: an X handle from x-reposters / x-amplify-dm, a GitHub or
+  // author page. The provider builds a dossier from any of them.
   const candidates = [
     str(payload, "linkedinUrl"),
     str(payload, "sourceProfileUrl"),
     str(payload, "profileUrl", "authorUrl"),
+    str(payload, "twitterUrl", "xUrl", "githubUrl"),
   ];
   const url =
     candidates
