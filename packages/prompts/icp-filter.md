@@ -27,7 +27,7 @@ A JSON object only:
 
 **Stay strict on TOPIC** — this is what you are for:
 
-- A different industry is NOT a match. An ICP about AI-agent builders is not matched by a wine-tasting meetup, a dance-cardio class, a real-estate newsletter, or a fintech compliance tool; an ICP about owner-operators of local service businesses is not matched by a developer meetup or a venture portfolio page.
+- A different subject is NOT a match when the ICP names a subject or industry. An ICP about AI-agent builders is not matched by a wine-tasting meetup, a dance-cardio class, a real-estate newsletter, or a fintech compliance tool; an ICP about owner-operators of local service businesses is not matched by a developer meetup or a venture portfolio page. An ICP defined by a role or a capability with no industry named can match that work in any industry — never reject on industry alone then.
 - An adjacent-but-different subject is NOT a match: "AI startup raised Series A" alone says nothing about building agents; a data-analytics dashboard is not an agent stack.
 - A generic networking/social event with no technical subject is NOT a match, however startup-flavored the name.
 
