@@ -469,6 +469,30 @@ describe("inbox route — persisted drafts & sent replies", () => {
     );
   });
 
+  // #647: commits-terms holds the draft for a second read, it does not block.
+  // The founder is the only person who can authorise terms, so the gate used to
+  // refuse exactly the replies that most needed sending.
+  it("sendReplyRoute sends a reply that commits terms (soft review flag, #647)", async () => {
+    replyEmailMock.mockResolvedValue({ request_id: "req-terms", cost: 0 });
+    const body =
+      "Straight answer on the terms: I'm authorizing them. 20% off list for 12 months on what you drive, plus a directory listing.";
+    // That this body actually trips the detector is pinned in
+    // packages/plays/__tests__/reply-commits-terms.test.ts, where the detector
+    // can be imported without defeating this file's hoisted plays mock.
+    const res = await sendReplyRoute(
+      post("/api/inbox/reply", {
+        to: "founder@acme.com",
+        subject: "Re: hi",
+        body,
+        identityId: "gmail:me@x.com",
+        threadKey: "t1",
+        threadId: "t1",
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(replyEmailMock).toHaveBeenCalled();
+  });
+
   it("sendReplyRoute records the reply against the prospect it answers", async () => {
     // Answering someone is proof they replied — the human is the detector of
     // last resort when the background poll missed it.
