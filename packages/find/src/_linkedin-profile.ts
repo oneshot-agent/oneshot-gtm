@@ -534,10 +534,17 @@ export async function readLinkedInProfile(
       const res = await withDeadline(
         browserTask(
           {
+            // The details page lists the whole history; the profile page
+            // shows the latest few behind "Show all N experiences". "Never
+            // fail" matters: the agent otherwise ends a long page with
+            // task_unsuccessful instead of a partial list (2026-09-14).
             task: [
-              `Open ${url}. If the page asks you to sign in or join, set loggedIn=false and return an empty experience list; do not attempt to log in.`,
-              "Otherwise read the Experience section (click 'Show all experiences' if present) and return every position as {company, title, period, location}, with period exactly as shown (e.g. 'Mar 2026 - Present').",
-              "Also return name, headline and location from the top of the profile. Return JSON matching the schema.",
+              `Open ${url} (it may redirect to the canonical profile URL; that is fine). Do not log in.`,
+              "If a login, sign-in or join page is shown instead of the profile, return loggedIn=false with an empty experience list.",
+              "Otherwise set loggedIn=true and read name, headline and location from the top of the profile.",
+              "Then read the Experience section. If it shows a 'Show all N experiences' link, open the profile's '/details/experience/' page instead of scrolling; otherwise read the positions on the profile page.",
+              "Return every position as {company, title, period, location}. Copy period exactly as displayed (e.g. 'Mar 2026 - Present'); use null for anything not shown.",
+              "Never fail the task: return whatever you could read, even a partial list. Return JSON matching the schema.",
             ].join(" "),
             startUrl: url,
             allowedDomains: LINKEDIN_DOMAINS,
@@ -584,7 +591,8 @@ export async function readLinkedInProfile(
         .map((e) => {
           const item: LiveExperience = { company: str(e, "company") ?? "" };
           const title = str(e, "title");
-          const period = str(e, "period");
+          // "Mar 2026 - Present · 7 mos": the duration after the dot is derived, not a date.
+          const period = str(e, "period")?.replace(/\s*·.*$/u, "");
           const location = str(e, "location");
           if (title) item.title = title;
           if (period) item.period = period;

@@ -333,6 +333,17 @@ describe("startLinkedInLogin / finishLinkedInLogin", () => {
 });
 
 describe("readLinkedInProfile", () => {
+  it("drops the derived duration after a period's dot", async () => {
+    browserOutput = {
+      ...ok(),
+      experience: [
+        { company: "WildMuse.App", title: "Founder", period: "Mar 2026 - Present · 7 mos" },
+      ],
+    };
+    const read = await readLinkedInProfile(URL, ctx, { remainingUsd: 1 });
+    expect(read.profile?.experience[0]?.period).toBe("Mar 2026 - Present");
+  });
+
   it("reads the Experience section, caches it, and a second read is free", async () => {
     const first = await readLinkedInProfile(URL, ctx, { remainingUsd: 1 });
     expect(first.profile?.experience).toEqual(ok().experience);
