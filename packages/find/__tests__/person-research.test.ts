@@ -328,6 +328,25 @@ describe("normalizeCompany / personSeedFor", () => {
       personSeedFor({ name: "Ann", sourceProfileUrl: "https://luma.com/user/ann" }),
     ).toBeNull();
   });
+
+  it("seeds an X-sourced row from its twitterUrl (x-reposters, x-amplify-dm)", () => {
+    expect(
+      personSeedFor({ name: "Nick", handle: "Dayhaysoos", twitterUrl: "https://x.com/Dayhaysoos" })
+        ?.url,
+    ).toBe("https://x.com/Dayhaysoos");
+    expect(
+      personSeedFor({
+        name: "Nick",
+        twitterUrl: "https://x.com/Dayhaysoos",
+        linkedinUrl: "https://www.linkedin.com/in/nick",
+      })?.url,
+    ).toBe("https://linkedin.com/in/nick");
+    // a malformed value in one field does not hide the next
+    expect(
+      personSeedFor({ name: "Nick", twitterUrl: "not a url", githubUrl: "https://github.com/nick" })
+        ?.url,
+    ).toBe("https://github.com/nick");
+  });
 });
 
 describe("researchPerson + personPayloadPatch", () => {
