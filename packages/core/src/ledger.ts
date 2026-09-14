@@ -25,6 +25,7 @@ import {
 } from "./delivery-health.ts";
 import { humanDecisionWhereSql } from "./labels.ts";
 import { LedgerCache } from "./ledger-cache.ts";
+import { InboxStore } from "./ledger-inbox.ts";
 import { migrateLedgerSchema } from "./ledger-schema.ts";
 import { MailboxStore } from "./mailbox-store.ts";
 import { ReceiptStore } from "./ledger-receipts.ts";
@@ -256,34 +257,13 @@ function normalizeSubject(subject: string | null | undefined): string | null {
   return s.length > 0 ? s : null;
 }
 
-/**
- * Sentinel written into `inbox_replies.intent` by `claimInboxReplyForTriage`
- * to atomically mark "a caller is triaging this row right now" without
- * committing to a real category yet. Never a valid `TriageCategory` /
- * `ReplyIntent` value, and never read back as a classification: every reader
- * of `intent` (`listInboxReplyIntents`, the /inbox route, `POSITIVE_REPLY_INTENTS`
- * checks) only sees it during the brief window between the claim and the
- * winner's `setInboxReplyIntent` call overwriting it with the real result (or
- * NULL on failure) — same transaction-scoped visibility any other in-flight
- * write has.
- */
-const INBOX_REPLY_TRIAGE_PENDING = "__triage_pending__";
-
-/**
- * The claim sentinel is bookkeeping, not a classification: every reader of
- * `intent` gets NULL back for it (#559), so the column's `ReplyIntent | null`
- * contract holds even during the window a triage call is in flight.
- */
-function publicIntent(intent: string | null): string | null {
-  return intent === INBOX_REPLY_TRIAGE_PENDING ? null : intent;
-}
-
 export class Ledger {
   readonly mailboxes: MailboxStore;
   private db: Database;
   private path: string;
   private receipts: ReceiptStore;
   private cache: LedgerCache;
+  private inbox: InboxStore;
 
   constructor(path: string = DEFAULT_DB_PATH) {
     this.path = path;
@@ -304,6 +284,12 @@ export class Ledger {
     this.receipts = new ReceiptStore(this.db);
     // Same slice, same reason: the cache tables exist only after migrate().
     this.cache = new LedgerCache(this.db, this.path);
+    // Inbound-message recording, conversation/thread reads, reply
+    // classification state, and archive/reopen operations live in
+    // ledger-inbox.ts (#634) — same pattern, same reason: constructed after
+    // migrate() so inbox_drafts/inbox_sent/inbox_archives/inbox_replies
+    // already exist.
+    this.inbox = new InboxStore(this.db);
     this.mailboxes = new MailboxStore(this.db);
   }
 
@@ -840,29 +826,7 @@ export class Ledger {
     body: string;
     status?: "needs_decision" | null;
   }): void {
-    this.db
-      .prepare(
-        `INSERT INTO inbox_drafts(thread_key, inbound_email_id, to_email, subject, identity_id, body, status, updated_at)
-         VALUES(?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT(thread_key) DO UPDATE SET
-           inbound_email_id = excluded.inbound_email_id,
-           to_email = excluded.to_email,
-           subject = excluded.subject,
-           identity_id = excluded.identity_id,
-           body = excluded.body,
-           status = excluded.status,
-           updated_at = excluded.updated_at`,
-      )
-      .run(
-        input.threadKey,
-        input.inboundEmailId,
-        input.toEmail,
-        input.subject,
-        input.identityId,
-        input.body,
-        input.status ?? null,
-        new Date().toISOString(),
-      );
+    this.inbox.upsertInboxDraft(input);
   }
 
   /**
@@ -872,7 +836,7 @@ export class Ledger {
    * after that succeeds).
    */
   setInboxDraftSteer(threadKey: string, steer: string | null): void {
-    this.db.prepare(`UPDATE inbox_drafts SET steer = ? WHERE thread_key = ?`).run(steer, threadKey);
+    this.inbox.setInboxDraftSteer(threadKey, steer);
   }
 
   /**
@@ -886,13 +850,11 @@ export class Ledger {
    * survive this call.
    */
   setInboxDraftBody(threadKey: string, body: string, status: "needs_decision" | null): void {
-    this.db
-      .prepare(`UPDATE inbox_drafts SET body = ?, status = ?, updated_at = ? WHERE thread_key = ?`)
-      .run(body, status, new Date().toISOString(), threadKey);
+    this.inbox.setInboxDraftBody(threadKey, body, status);
   }
 
   clearInboxDraft(threadKey: string): void {
-    this.db.prepare(`DELETE FROM inbox_drafts WHERE thread_key = ?`).run(threadKey);
+    this.inbox.clearInboxDraft(threadKey);
   }
 
   /**
@@ -908,30 +870,7 @@ export class Ledger {
     identityId: string | null;
     requestId: string | null;
   }): void {
-    this.db.transaction(() => {
-      if (
-        input.requestId &&
-        this.db
-          .query("SELECT 1 FROM inbox_sent WHERE request_id=? AND identity_id IS ? LIMIT 1")
-          .get(input.requestId, input.identityId)
-      )
-        return;
-      this.db
-        .prepare(
-          `INSERT INTO inbox_sent(thread_key, to_email, subject, body, identity_id, request_id, sent_at)
-           VALUES(?, ?, ?, ?, ?, ?, ?)`,
-        )
-        .run(
-          input.threadKey,
-          input.toEmail,
-          input.subject,
-          input.body,
-          input.identityId,
-          input.requestId,
-          new Date().toISOString(),
-        );
-      this.db.prepare(`DELETE FROM inbox_drafts WHERE thread_key = ?`).run(input.threadKey);
-    })();
+    this.inbox.recordInboxSent(input);
   }
 
   /**
@@ -948,37 +887,7 @@ export class Ledger {
       status: "needs_decision" | null;
     }
   > {
-    const map = new Map<
-      string,
-      {
-        draftBody: string | null;
-        sent: { body: string; sentAt: string }[];
-        steer: string | null;
-        status: "needs_decision" | null;
-      }
-    >();
-    const ensure = (key: string) => {
-      let entry = map.get(key);
-      if (!entry) {
-        entry = { draftBody: null, sent: [], steer: null, status: null };
-        map.set(key, entry);
-      }
-      return entry;
-    };
-    const drafts = this.db
-      .query(`SELECT thread_key AS k, body AS b, steer AS s, status AS st FROM inbox_drafts`)
-      .all() as Array<{ k: string; b: string; s: string | null; st: string | null }>;
-    for (const d of drafts) {
-      const entry = ensure(d.k);
-      entry.draftBody = d.b;
-      entry.steer = d.s;
-      entry.status = d.st === "needs_decision" ? "needs_decision" : null;
-    }
-    const sent = this.db
-      .query(`SELECT thread_key AS k, body AS b, sent_at AS t FROM inbox_sent ORDER BY sent_at ASC`)
-      .all() as Array<{ k: string; b: string; t: string }>;
-    for (const s of sent) ensure(s.k).sent.push({ body: s.b, sentAt: s.t });
-    return map;
+    return this.inbox.getInboxThreads();
   }
 
   /**
@@ -1225,21 +1134,11 @@ export class Ledger {
    * inbox's known-replier fetch, so a reply is never lost to the live window.
    */
   listRepliedProspectEmails(): string[] {
-    const rows = this.db
-      .query(
-        `SELECT DISTINCT p.email FROM sequence_events se
-         JOIN prospects p ON p.id = se.prospect_id
-         WHERE se.status = 'replied' AND p.email IS NOT NULL AND p.email != ''`,
-      )
-      .all() as Array<{ email: string }>;
-    return rows.map((r) => r.email);
+    return this.inbox.listRepliedProspectEmails();
   }
 
   listInboxArchives(): Map<number, string> {
-    const rows = this.db
-      .query("SELECT prospect_id, archived_at FROM inbox_archives")
-      .all() as Array<{ prospect_id: number; archived_at: string }>;
-    return new Map(rows.map((r) => [r.prospect_id, r.archived_at]));
+    return this.inbox.listInboxArchives();
   }
 
   /** Compare the caller's visible replies under the same write lock as archiving. */
@@ -1247,25 +1146,11 @@ export class Ledger {
     prospectId: number,
     observedReplyIds: string[],
   ): "archived" | "stale" | "missing" {
-    return this.db
-      .transaction(() => {
-        const current = this.listInboxRepliesForProspect(prospectId).map((r) => r.id);
-        if (!current.length) return "missing" as const;
-        const observed = new Set(observedReplyIds);
-        if (observed.size !== current.length || current.some((id) => !observed.has(id)))
-          return "stale" as const;
-        this.db
-          .query(
-            "INSERT INTO inbox_archives(prospect_id, archived_at) VALUES (?, ?) ON CONFLICT(prospect_id) DO UPDATE SET archived_at=excluded.archived_at",
-          )
-          .run(prospectId, new Date().toISOString());
-        return "archived" as const;
-      })
-      .immediate();
+    return this.inbox.archiveInboxConversation(prospectId, observedReplyIds);
   }
 
   restoreInboxConversation(prospectId: number): void {
-    this.db.query("DELETE FROM inbox_archives WHERE prospect_id=?").run(prospectId);
+    this.inbox.restoreInboxConversation(prospectId);
   }
 
   /**
@@ -1287,33 +1172,7 @@ export class Ledger {
     messageId?: string | null;
     kind?: ReplyKind | null;
   }): boolean {
-    return this.db
-      .transaction(() => {
-        const res = this.db
-          .query(
-            `INSERT OR IGNORE INTO inbox_replies
-           (id, thread_key, prospect_id, play_name, from_email, subject, body,
-            received_at, source_identity_id, thread_id, message_id, kind)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          )
-          .run(
-            row.id,
-            row.threadKey,
-            row.prospectId,
-            row.playName ?? null,
-            canonEmail(row.fromEmail),
-            row.subject ?? null,
-            row.body,
-            row.receivedAt,
-            row.sourceIdentityId ?? null,
-            row.threadId ?? null,
-            row.messageId ?? null,
-            row.kind ?? null,
-          );
-        if (res.changes > 0) this.restoreInboxConversation(row.prospectId);
-        return res.changes > 0;
-      })
-      .immediate();
+    return this.inbox.recordInboxReply(row);
   }
 
   /**
@@ -1324,9 +1183,7 @@ export class Ledger {
    * throw out of a best-effort classification path.
    */
   setInboxReplyIntent(id: string, intent: string | null, intentReason: string | null): void {
-    this.db
-      .prepare(`UPDATE inbox_replies SET intent = ?, intent_reason = ? WHERE id = ?`)
-      .run(intent, intentReason, id);
+    this.inbox.setInboxReplyIntent(id, intent, intentReason);
   }
 
   /**
@@ -1347,10 +1204,7 @@ export class Ledger {
    * entirely for this row this poll.
    */
   claimInboxReplyForTriage(id: string): boolean {
-    const res = this.db
-      .prepare(`UPDATE inbox_replies SET intent = ? WHERE id = ? AND intent IS NULL`)
-      .run(INBOX_REPLY_TRIAGE_PENDING, id);
-    return res.changes > 0;
+    return this.inbox.claimInboxReplyForTriage(id);
   }
 
   /**
@@ -1381,10 +1235,7 @@ export class Ledger {
    * an age-gated sweep; not worth a schema change for that window.
    */
   sweepStaleInboxReplyTriage(): number {
-    const res = this.db
-      .prepare(`UPDATE inbox_replies SET intent = NULL WHERE intent = ?`)
-      .run(INBOX_REPLY_TRIAGE_PENDING);
-    return res.changes;
+    return this.inbox.sweepStaleInboxReplyTriage();
   }
 
   /**
@@ -1396,32 +1247,17 @@ export class Ledger {
   listInboxReplyIntents(
     ids: string[],
   ): Map<string, { intent: string | null; intentReason: string | null }> {
-    if (ids.length === 0) return new Map();
-    const placeholders = ids.map(() => "?").join(",");
-    const rows = this.db
-      .query(
-        `SELECT id, intent, intent_reason AS intentReason FROM inbox_replies
-         WHERE id IN (${placeholders})`,
-      )
-      .all(...ids) as Array<{ id: string; intent: string | null; intentReason: string | null }>;
-    return new Map(
-      rows.map((r) => [r.id, { intent: publicIntent(r.intent), intentReason: r.intentReason }]),
-    );
+    return this.inbox.listInboxReplyIntents(ids);
   }
 
   /** All persisted inbound replies for one prospect, oldest first. */
   listInboxRepliesForProspect(prospectId: number): InboxReplyRecord[] {
-    const rows = this.db
-      .query(`SELECT * FROM inbox_replies WHERE prospect_id = ? ORDER BY received_at ASC, id ASC`)
-      .all(prospectId) as InboxReplyRecord[];
-    for (const r of rows) if (r.intent === INBOX_REPLY_TRIAGE_PENDING) r.intent = null;
-    return rows;
+    return this.inbox.listInboxRepliesForProspect(prospectId);
   }
 
   /** Provider ids of every persisted reply — dedupe set for capture passes. */
   listInboxReplyIds(): Set<string> {
-    const rows = this.db.query(`SELECT id FROM inbox_replies`).all() as Array<{ id: string }>;
-    return new Set(rows.map((r) => r.id));
+    return this.inbox.listInboxReplyIds();
   }
 
   /**
@@ -1432,25 +1268,12 @@ export class Ledger {
    * a NULL kind read as human everywhere.
    */
   listUntriagedHumanReplies(limit = 200): InboxReplyRecord[] {
-    return this.db
-      .query(
-        `SELECT * FROM inbox_replies
-         WHERE COALESCE(kind, 'human') = 'human' AND intent IS NULL
-         ORDER BY received_at ASC
-         LIMIT ?`,
-      )
-      .all(limit) as InboxReplyRecord[];
+    return this.inbox.listUntriagedHumanReplies(limit);
   }
 
   /** Prospects that have at least one persisted reply, most recent activity first. */
   listProspectIdsWithReplies(): number[] {
-    const rows = this.db
-      .query(
-        `SELECT prospect_id, MAX(received_at) AS last FROM inbox_replies
-         GROUP BY prospect_id ORDER BY last DESC`,
-      )
-      .all() as Array<{ prospect_id: number }>;
-    return rows.map((r) => r.prospect_id);
+    return this.inbox.listProspectIdsWithReplies();
   }
 
   /** Full prospect record by id (PK seek). Avoids loading every prospect to find one. */
