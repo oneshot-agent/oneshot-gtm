@@ -114,4 +114,16 @@ describe("shared person identity with workspace memberships", () => {
       shared.close();
     }
   });
+  it("keeps each workspace's original finder profile provenance", () => {
+    const a = sdk.upsertProspect({
+      email: "same@example.test",
+      source_profile_url: "https://linkedin.com/in/same-person",
+    });
+    const b = gtm.upsertProspect({
+      email: "same@example.test",
+      source_profile_url: "https://github.com/same-person",
+    });
+    expect(sdk.getProspectById(a)?.shared_person_id).toBe(gtm.getProspectById(b)?.shared_person_id);
+    expect(gtm.getProspectById(b)?.source_profile_url).toBe("https://github.com/same-person");
+  });
 });

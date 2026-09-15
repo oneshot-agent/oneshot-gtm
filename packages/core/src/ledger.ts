@@ -1604,7 +1604,15 @@ export class Ledger {
     const person = row.shared_person_id
       ? this.people.get(row.shared_person_id)
       : this.bindSharedPerson(row);
-    return person ? { ...row, ...person, id: row.id, shared_person_id: person.id } : row;
+    return person
+      ? {
+          ...row,
+          ...person,
+          id: row.id,
+          shared_person_id: person.id,
+          source_profile_url: row.source_profile_url,
+        }
+      : row;
   }
 
   upsertProspect(input: Partial<ProspectRecord> & { email?: string | null }): number {
@@ -1631,7 +1639,12 @@ export class Ledger {
         return membership.id;
       }
       const { id, ...identity } = person;
-      input = { ...input, ...identity, shared_person_id: id };
+      input = {
+        ...input,
+        ...identity,
+        shared_person_id: id,
+        source_profile_url: input.source_profile_url ?? identity.source_profile_url,
+      };
     }
     const email = input.email ? canonEmail(input.email) : null;
     if (email) {
