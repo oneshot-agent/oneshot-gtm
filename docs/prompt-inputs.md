@@ -117,6 +117,33 @@ and saving a trigger config runs `lintEdge` (`packages/plays/src/_edge-lint.ts`)
 over the edge — warnings only, never a refusal — so a new install gets the
 shape without the founder having to know the convention.
 
+### What the review loop records
+
+Every draft put in front of the founder is kept as a row in `draft_versions`
+(`packages/core/src/ledger-drafts.ts`), intro and follow-up alike, with the
+angle it was built on keyed by normalized text — never by index, which goes
+stale the moment the edge is edited. The row's current draft is the `open`
+version. **Regenerate** closes it as discarded with reason `regenerate` (the
+text was rejected, the angle kept); **Rotate angle** closes it with reason
+`rotate` (the angle was rejected); a reviewed send closes it as `sent`; a
+drain send of an approved row the founder never read is `auto_sent`; a
+cadence that stops, replies or bounces with a preview open leaves it
+`abandoned`. Nothing here is a prompt instruction — the counts are shown, not
+fed back to the model.
+
+The trigger config editor on /queue shows, under `yourEdge`, one line per
+configured angle — offered, rotated away, redrafted, sent, auto-sent, counted
+in distinct prospects — plus a bucket for generated alternatives and the
+play's draft totals (intro and follow-up apart). An angle with no reviewed
+send after two rotations or three offers is marked "never sent", and the
+collapsed trigger row says how many such angles the edge holds. **Retire**
+removes an angle from the edge text in the editor; the editor's own save is
+the only write, and it runs `lintEdge` as usual. Retired angles keep their
+history in the ledger but leave the view. Each queue row and cadence step
+also lists its earlier drafts (`GET /api/queue/:id/drafts`,
+`GET /api/cadences/:id/drafts?play=`), newest first, with what became of
+each.
+
 ## Keeping this page true
 
 Re-derive rather than trusting it:
@@ -149,7 +176,12 @@ configured angle. It cycles in order and wraps after the last. When there are
 fewer than twelve available angles, the first rotation fills the pool to twelve with
 alternatives grounded in current product positioning and prospect context. Later
 clicks cycle through the saved pool without generating more alternatives. Generated alternatives belong to that prospect's draft; they do not
-edit trigger configuration.
+edit trigger configuration. (Retiring an angle from the trigger editor is the
+one control that does — see "What the review loop records" above.) A rotate
+records the angle it left as rotated away from; a plain Regenerate records
+the draft it replaced as regenerated. Follow-up previews on /cadences record
+the same way, and a follow-up's draft now carries the angle the selector chose
+for it.
 
 The selected angle is shown below the draft and saved with it. **Regenerate**
 keeps that selection until product positioning or configured edges change.

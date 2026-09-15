@@ -24,6 +24,7 @@ import type {
   InboxSendReplyResult,
   InboxSteerRequest,
   InboxSteerResult,
+  DraftVersionView,
   LastDraft,
   LogMeetingOutcomeRequest,
   MeetingsResult,
@@ -398,6 +399,13 @@ export const api = {
   // so drafts + lint flags are visible per row. Kept for the CLI's HTTP path
   // (`oneshot-gtm find drain`) and any external scripted callers.
   drainQueue: (req: DrainRequest) => postJson<DrainResult>("/queue/drain", req),
+  // Every draft a queue row went through (regenerated, rotated, sent), newest first.
+  queueDrafts: (id: number) => getJson<{ versions: DraftVersionView[] }>(`/queue/${id}/drafts`),
+  // Same for a cadence's next step.
+  cadenceDrafts: (id: number, playName: string) =>
+    getJson<{ versions: DraftVersionView[] }>(
+      `/cadences/${id}/drafts?play=${encodeURIComponent(playName)}`,
+    ),
   triggers: () => getJson<{ triggers: TriggerView[] }>("/triggers"),
   setTriggerEnabled: (name: string, enabled: boolean) =>
     postJson<{ ok: boolean }>(`/triggers/${encodeURIComponent(name)}/enabled`, { enabled }),

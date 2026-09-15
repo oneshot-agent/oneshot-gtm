@@ -1,4 +1,5 @@
 import { draftAngleFor, parseDraftAngle } from "./_draft-angle.ts";
+import { toDraftVersionView } from "./_draft-versions.ts";
 import {
   companyRecordFromResearch,
   extractBusinessAddress,
@@ -742,6 +743,9 @@ async function regenerateDraftInner(
     previousDraft: row.last_draft_json ?? null,
     previousPayload: row.payload_json,
     draft: out,
+    // What the founder said about the draft this replaces: rotate = the
+    // angle was wrong, plain regenerate = the text was (angle kept).
+    discardReason: rotate ? "rotate" : "regenerate",
   });
   if (!saved)
     return jsonResponse(
@@ -831,7 +835,27 @@ export async function markSentRoute(
   }
   // A per-row human action (manually sent via another channel).
   ledger.setQueueStatus({ id: row.id, status: "sent", decidedBy: "human" });
+  // No draft write on this path — close the reviewed draft's version by hand.
+  try {
+    ledger.closeQueueDraftVersion(row.id, "sent");
+  } catch {
+    // older ledgers / test doubles without draft versions — the send is recorded regardless
+  }
   return jsonResponse({ ok: true, prospectId }, 200, req);
+}
+
+/**
+ * Every draft this row went through, newest first — what the founder
+ * regenerated or rotated away from, and what was finally sent.
+ */
+export function queueDraftVersionsRoute(req: Request, params: Record<string, string>): Response {
+  const id = Number.parseInt(params["id"] ?? "", 10);
+  if (!Number.isFinite(id)) return jsonResponse({ error: "bad id" }, 400, req);
+  const ledger = getLedger();
+  const row = ledger.getQueueRow(id);
+  if (!row) return jsonResponse({ error: `row #${id} not found` }, 404, req);
+  const versions = ledger.draftVersionsFor({ queueId: id }).map(toDraftVersionView);
+  return jsonResponse({ versions }, 200, req);
 }
 
 /**
@@ -1037,6 +1061,7 @@ export async function sendDraftRoute(
       dryRun: false,
       ...(parseDraftAngle(parsed.angle) ? { angle: parseDraftAngle(parsed.angle)! } : {}),
     },
+    sentBy: "human",
   });
 
   return done("ok", jsonResponse({ sent: true, receiptIds: result.receiptIds }, 200, req));

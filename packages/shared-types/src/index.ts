@@ -23,6 +23,8 @@ export interface CadenceNextStepDraft {
   body: string;
   flags: string[];
   draftedAt: string;
+  /** Which edge angle the follow-up was built on, when the play's edge has several. */
+  angle?: DraftAngleChoice;
 }
 
 export interface CadenceSentStep {
@@ -732,6 +734,51 @@ export interface AddProspectResult {
  * true only when the SDK actually emitted the email (false for dryRun
  * and for lint-blocked drafts).
  */
+/**
+ * Which angle a draft was built on — the part of `DraftAngle` every draft
+ * path (drain, /api/run, regenerate, cadence preview) can supply. The
+ * draft-version record keys on `text`.
+ */
+export interface DraftAngleChoice {
+  text: string;
+  origin: "configured" | "generated";
+  index: number;
+  count: number;
+}
+
+/** One entry in a row's draft history (`GET /api/queue/:id/drafts`, `GET /api/cadences/:id/drafts`). */
+export interface DraftVersionView {
+  id: number;
+  stepIndex: number;
+  subject: string;
+  body: string;
+  flags: string[];
+  angle: { text: string; origin: "configured" | "generated" } | null;
+  outcome: "open" | "discarded" | "sent" | "auto_sent";
+  discardReason: "regenerate" | "rotate" | "redraft" | "abandoned" | null;
+  createdAt: string;
+  closedAt: string | null;
+}
+
+/** Per-angle review outcomes, counted in distinct prospects (see ledger-drafts.ts). */
+export interface AngleUsageView {
+  text: string;
+  offered: number;
+  rotatedAway: number;
+  redrafted: number;
+  sent: number;
+  autoSent: number;
+}
+
+/** Draft-version counts by outcome for one play and one scope (intro or follow-up). */
+export interface DraftUsageView {
+  open: number;
+  regenerated: number;
+  rotated: number;
+  sent: number;
+  autoSent: number;
+}
+
 export interface DraftAngle {
   pool?: Array<{ text: string; origin: "configured" | "generated" }>;
   text: string;
@@ -1250,6 +1297,14 @@ export interface TriggerView {
   approvalRateWindowDays: number;
   deprioritized: boolean;
   deprioritizedReason: string | null;
+  /**
+   * What the founder did with each configured angle of this trigger's edge,
+   * in config order, plus one bucket for generated alternatives. Null when
+   * the trigger has no `yourEdge`/`yourClaim`.
+   */
+  angleUsage: { angles: AngleUsageView[]; generated: AngleUsageView } | null;
+  /** Draft outcomes for this play, intro and follow-up apart. Null when nothing was ever drafted. */
+  draftUsage: { intro: DraftUsageView; followUp: DraftUsageView } | null;
 }
 
 export interface PackView {

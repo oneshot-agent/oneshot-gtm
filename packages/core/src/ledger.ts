@@ -26,6 +26,15 @@ import {
   suppressionFor as delivSuppressionFor,
 } from "./delivery-health.ts";
 import { LedgerCache } from "./ledger-cache.ts";
+import {
+  DraftVersionStore,
+  draftVersionAngle,
+  type AngleUsageRow,
+  type DraftDiscardReason,
+  type DraftSlot,
+  type DraftUsageByStep,
+  type DraftVersionRow,
+} from "./ledger-drafts.ts";
 import { InboxStore } from "./ledger-inbox.ts";
 import { QueueStore } from "./ledger-queue.ts";
 import { migrateLedgerSchema } from "./ledger-schema.ts";
@@ -173,6 +182,12 @@ export class Ledger {
   private cache: LedgerCache;
   private inbox: InboxStore;
   private queue: QueueStore;
+  /**
+   * Draft versions for cadence follow-ups (ledger-drafts.ts). Intro drafts
+   * are versioned by `QueueStore` through its own instance — the table is the
+   * same, the handle is the same, and neither store keeps state.
+   */
+  private drafts: DraftVersionStore;
   private people: SharedPeople | null = null;
   private peopleVersion = "";
 
@@ -226,6 +241,7 @@ export class Ledger {
     // the split, following the inbox extraction in #634. Constructed AFTER
     // migrate() so target_queue already exists.
     this.queue = new QueueStore(this.db);
+    this.drafts = new DraftVersionStore(this.db);
   }
 
   getDirectMail(id: string): DirectMailDraft | null {
@@ -593,16 +609,24 @@ export class Ledger {
     // surface a fresh "no preview yet" state.
     // A successful advance also clears any prior send-failure marker (the send
     // that just advanced us obviously succeeded).
-    this.db
-      .prepare(
-        `UPDATE cadence_state
-         SET current_step = ?, next_due_at = ?, last_polled_at = datetime('now'),
-             next_step_draft_json = NULL, next_step_drafted_at = NULL,
-             sending_started_at = NULL,
-             last_send_error = NULL, last_send_error_at = NULL
-         WHERE prospect_id = ? AND play_name = ?`,
-      )
-      .run(input.newStep, input.nextDueAt, input.prospectId, input.playName);
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          `UPDATE cadence_state
+           SET current_step = ?, next_due_at = ?, last_polled_at = datetime('now'),
+               next_step_draft_json = NULL, next_step_drafted_at = NULL,
+               sending_started_at = NULL,
+               last_send_error = NULL, last_send_error_at = NULL
+           WHERE prospect_id = ? AND play_name = ?`,
+        )
+        .run(input.newStep, input.nextDueAt, input.prospectId, input.playName);
+      // The step just advanced past is the one the open draft was for, and
+      // every cadence send is founder-reviewed — it was sent.
+      this.drafts.close(
+        { prospectId: input.prospectId, playName: input.playName, stepIndex: input.newStep },
+        "sent",
+      );
+    })();
   }
 
   /**
@@ -652,6 +676,14 @@ export class Ledger {
         input.prospectId,
         input.playName,
       );
+    // `breakup` is stamped only after the breakup step was sent (reviewed,
+    // like every cadence send); every other terminal state abandons whatever
+    // preview was open — no judgment on the draft was made.
+    if (input.status === "breakup") {
+      this.drafts.closeAllForCadence(input.prospectId, input.playName, "sent");
+    } else if (input.status !== "active") {
+      this.drafts.closeAllForCadence(input.prospectId, input.playName, "discarded", "abandoned");
+    }
   }
 
   stopCadence(input: {
@@ -676,6 +708,7 @@ export class Ledger {
       changed = result.changes > 0;
       if (changed) {
         this.expireBreakupReviveQueue(input.prospectId, "cadence stopped");
+        this.drafts.closeAllForCadence(input.prospectId, input.playName, "discarded", "abandoned");
       }
     })();
     return changed;
@@ -690,16 +723,44 @@ export class Ledger {
       flags: string[];
       payload: unknown;
     };
+    /** Why the preview being replaced was discarded (ledger-drafts.ts); default `redraft`. */
+    discardReason?: DraftDiscardReason;
   }): void {
     const draftedAtIso = new Date().toISOString();
     const json = JSON.stringify({ ...input.draft, draftedAt: draftedAtIso });
-    this.db
-      .prepare(
-        `UPDATE cadence_state
-         SET next_step_draft_json = ?, next_step_drafted_at = ?
-         WHERE prospect_id = ? AND play_name = ?`,
-      )
-      .run(json, draftedAtIso, input.prospectId, input.playName);
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          `UPDATE cadence_state
+           SET next_step_draft_json = ?, next_step_drafted_at = ?
+           WHERE prospect_id = ? AND play_name = ?`,
+        )
+        .run(json, draftedAtIso, input.prospectId, input.playName);
+      const row = this.db
+        .query(
+          `SELECT c.current_step AS current_step, p.email AS email
+             FROM cadence_state c JOIN prospects p ON p.id = c.prospect_id
+            WHERE c.prospect_id = ? AND c.play_name = ?`,
+        )
+        .get(input.prospectId, input.playName) as {
+        current_step: number;
+        email: string | null;
+      } | null;
+      if (!row) return;
+      const stepIndex = row.current_step + 1;
+      const payload = input.draft.payload as { angle?: unknown } | null;
+      this.drafts.open({
+        slot: { prospectId: input.prospectId, playName: input.playName, stepIndex },
+        playName: input.playName,
+        prospectKey: row.email?.trim().toLowerCase() || `prospect:${input.prospectId}`,
+        stepIndex,
+        subject: input.draft.subject,
+        body: input.draft.body,
+        flags: input.draft.flags,
+        angle: draftVersionAngle(payload && typeof payload === "object" ? payload.angle : null),
+        ...(input.discardReason ? { discardReason: input.discardReason } : {}),
+      });
+    })();
   }
 
   getCadenceDraft(input: { prospectId: number; playName: string }): {
@@ -737,6 +798,22 @@ export class Ledger {
          WHERE prospect_id = ? AND play_name = ?`,
       )
       .run(input.prospectId, input.playName);
+    this.drafts.closeAllForCadence(input.prospectId, input.playName, "discarded", "abandoned");
+  }
+
+  /** Every draft version a queue row or cadence step went through, newest first (ledger-drafts.ts). */
+  draftVersionsFor(slot: DraftSlot): DraftVersionRow[] {
+    return this.drafts.versionsFor(slot);
+  }
+
+  /** Per play, per angle: offered / rotated away / redrafted / sent / auto-sent, counting distinct prospects. */
+  angleUsageByPlay(): Record<string, AngleUsageRow[]> {
+    return this.drafts.angleUsageByPlay();
+  }
+
+  /** Per play: draft-version counts by outcome, intro and follow-up apart. */
+  draftUsageByPlay(): Record<string, DraftUsageByStep> {
+    return this.drafts.draftUsageByPlay();
   }
 
   /**
@@ -1042,6 +1119,7 @@ export class Ledger {
            WHERE prospect_id = ? AND status IN ('active','paused')`,
         )
         .run(input.prospectId);
+      this.drafts.closeAllForProspect(input.prospectId, "discarded", "abandoned");
       this.expireBreakupReviveQueue(input.prospectId, "prospect replied");
       return {
         duplicate: false,
@@ -2439,6 +2517,7 @@ export class Ledger {
          WHERE prospect_id = ? AND play_name = ? AND status IN ('active','paused')`,
       )
       .run(prospectId, playName);
+    this.drafts.closeAllForCadence(prospectId, playName, "discarded", "abandoned");
   }
 
   /**
@@ -3636,8 +3715,14 @@ export class Ledger {
     previousDraft: string | null;
     previousPayload: string;
     draft: Parameters<Ledger["setQueueDraft"]>[0]["draft"];
+    discardReason?: DraftDiscardReason;
   }): boolean {
     return this.queue.setQueueDraftIfCurrent(input);
+  }
+
+  /** Close a queue row's open draft version without a draft write (the mark-sent path). */
+  closeQueueDraftVersion(id: number, outcome: "sent" | "auto_sent"): boolean {
+    return this.queue.closeQueueDraftVersion(id, outcome);
   }
 
   /**
@@ -3657,6 +3742,8 @@ export class Ledger {
       enrichmentFailed?: boolean;
       angle?: unknown;
     };
+    discardReason?: DraftDiscardReason;
+    sentBy?: "human" | "machine";
   }): void {
     this.queue.setQueueDraft(input);
   }

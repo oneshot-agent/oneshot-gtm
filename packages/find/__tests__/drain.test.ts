@@ -162,6 +162,7 @@ describe("drainQueue per-target dispatch + persistence", () => {
         receiptIds: [101],
         dryRun: false,
       },
+      sentBy: "machine",
     });
     expect(ledgerStub.setQueueDraft).toHaveBeenNthCalledWith(2, {
       id: 20,
@@ -173,6 +174,7 @@ describe("drainQueue per-target dispatch + persistence", () => {
         receiptIds: [],
         dryRun: false,
       },
+      sentBy: "machine",
     });
     expect(ledgerStub.setQueueStatus).toHaveBeenCalledTimes(1);
     expect(ledgerStub.setQueueStatus).toHaveBeenCalledWith({ id: 10, status: "sent" });
@@ -229,6 +231,7 @@ describe("drainQueue per-target dispatch + persistence", () => {
         receiptIds: [],
         dryRun: false,
       },
+      sentBy: "machine",
     });
     expect(ledgerStub.setQueueStatus).toHaveBeenCalledTimes(2);
     expect(ledgerStub.setQueueStatus).toHaveBeenCalledWith({ id: 10, status: "sent" });

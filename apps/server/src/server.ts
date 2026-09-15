@@ -22,6 +22,7 @@ import {
   sendCadenceStepRoute,
   previewCadenceBatchRoute,
   sendCadenceBatchRoute,
+  cadenceDraftVersionsRoute,
 } from "./api/cadences.ts";
 import { listReceipts, getReceipt } from "./api/receipts.ts";
 import {
@@ -71,6 +72,7 @@ import {
   drainQueueRoute,
   listQueueRoute,
   markSentRoute,
+  queueDraftVersionsRoute,
   queueRowDetailRoute,
   regenerateDraftRoute,
   rejectQueueRoute,
@@ -124,6 +126,7 @@ const routes: RouteEntry[] = [
   route("POST", "/api/cadences/:id/skip-mail", skipCadenceMailRoute),
   route("POST", "/api/cadences/skip-mail-batch", skipCadenceMailBatchRoute),
   route("POST", "/api/prospects/:id/linkedin-reply", markLinkedInReplyRoute),
+  route("GET", "/api/cadences/:id/drafts", cadenceDraftVersionsRoute),
   route("POST", "/api/cadences/:id/preview-next", previewCadenceStepRoute),
   route("POST", "/api/cadences/:id/send-next", sendCadenceStepRoute),
   route("POST", "/api/cadences/preview-batch", previewCadenceBatchRoute),
@@ -180,6 +183,7 @@ const routes: RouteEntry[] = [
   // Literal before param: `:id` matches [^/]+ and would otherwise swallow "search".
   route("GET", "/api/queue/search", searchQueueRoute),
   route("GET", "/api/queue/:id", queueRowDetailRoute),
+  route("GET", "/api/queue/:id/drafts", queueDraftVersionsRoute),
   route("POST", "/api/queue/approve-all", approveAllRoute),
   route("POST", "/api/queue/drain", drainQueueRoute),
   route("POST", "/api/queue/:id/approve", approveQueueRoute),

@@ -40,6 +40,10 @@ vi.mock("@oneshot-gtm/core", async () => {
       recentSentEmailBodies: () => [],
       getCadence: () => ({ current_step: 0, status: "active" }),
       listSequenceEventsForProspectPlay: (_pid: number, _play: string) => storedRows,
+      // The intro's sent queue row, which the follow-up edge angle is chosen from.
+      latestSentQueuePayload: () => sentPayload,
+      getProductResearchCache: () => null,
+      setProductResearchCache: () => {},
     }),
     receiptUrlForId: (id: number) => `local://receipt/${id}`,
   };
@@ -55,6 +59,11 @@ vi.mock("@oneshot-gtm/intel", async () => {
         system: input.messages.find((m) => m.role === "system")?.content ?? "",
         user: input.messages.find((m) => m.role === "user")?.content ?? "",
       });
+      const user = input.messages.find((m) => m.role === "user")?.content ?? "";
+      // The angle classifier (packages/plays/src/_angles.ts): pick the second angle.
+      if (user.startsWith("ANGLES:")) {
+        return { content: JSON.stringify({ index: 2 }), provider: "test", model: "test" };
+      }
       return {
         content: nextLlmContent ?? JSON.stringify({ subject: "ok", body: "ok body" }),
         provider: "test",
@@ -66,6 +75,8 @@ vi.mock("@oneshot-gtm/intel", async () => {
 
 /** Per-test override of the LLM response. null = default clean JSON. */
 let nextLlmContent: string | null = null;
+/** The intro's sent queue payload (issue #584); null = no multi-angle edge to draw on. */
+let sentPayload: Record<string, unknown> | null = null;
 
 let storedRows: Array<{
   step_index: number;
@@ -125,6 +136,7 @@ beforeEach(() => {
   llmCalls.length = 0;
   nextLlmContent = null;
   storedRows = [];
+  sentPayload = null;
 });
 
 afterEach(() => {
@@ -281,6 +293,44 @@ describe("buildFollowUpEmail — ANGLE injection (issue #356)", () => {
     expect(userMsg).toContain("Hook: Shipped the v2 migration last week.");
     expect(userMsg).toContain("Do NOT say");
     expect(userMsg).toContain("not evaluating vendors right now");
+  });
+});
+
+describe("buildFollowUpEmail — follow-up edge angle (issue #584)", () => {
+  const A1 = "For a founder selling to clinics — the stack breaks";
+  const A2 = "For a CTO shipping agents — egress is the hole";
+
+  it("carries the selected angle on the payload and in the YOUR EDGE block", async () => {
+    sentPayload = { email: "p42@example.com", yourEdge: `${A1} // ${A2}` };
+    const builder = buildFollowUpEmail({
+      playName: "stack-consolidation",
+      promptName: "stack-consolidation-followup",
+      contextLines: [],
+    });
+    const out = await builder(ctx(42, null));
+    expect(out).toMatchObject({
+      kind: "email",
+      angle: { text: A2, origin: "configured", index: 1, count: 2 },
+    });
+    // The writer call is the last one; the classifier call came first.
+    const writer = llmCalls.find((c) => !c.user.startsWith("ANGLES:"))!;
+    expect(writer.user).toContain("YOUR EDGE (a different angle from the first email");
+    expect(writer.user).toContain(A2);
+    expect(writer.user).not.toContain(A1);
+  });
+
+  it("has no angle when the intro's row carries a one-angle edge or none", async () => {
+    sentPayload = { email: "p42@example.com", yourEdge: A1 };
+    const builder = buildFollowUpEmail({
+      playName: "stack-consolidation",
+      promptName: "stack-consolidation-followup",
+      contextLines: [],
+    });
+    const one = await builder(ctx(42, null));
+    expect(one).not.toHaveProperty("angle");
+    sentPayload = null;
+    const none = await builder(ctx(42, null));
+    expect(none).not.toHaveProperty("angle");
   });
 });
 

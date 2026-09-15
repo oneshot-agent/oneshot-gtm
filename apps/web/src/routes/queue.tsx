@@ -33,6 +33,9 @@ import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
 import { Field, Input, Textarea } from "../components/primitives/Field.tsx";
 import { Modal } from "../components/primitives/Modal.tsx";
 import { AddProspectForm } from "../components/queue/AddProspectForm.tsx";
+import { AngleUsagePanel } from "../components/queue/AngleUsagePanel.tsx";
+import { DraftHistory } from "../components/ledger/DraftHistory.tsx";
+import { neverSentAngles, removeAngleFromConfigText } from "../lib/angleRetire.ts";
 import { useMask, usePrivacy } from "../lib/privacy.tsx";
 import { SkeletonRow } from "../components/primitives/Skeleton.tsx";
 import { Toggle } from "../components/primitives/Toggle.tsx";
@@ -1507,6 +1510,7 @@ function DraftSection({
               <p className="mt-2">{draft.angle.text}</p>
             </details>
           )}
+          <DraftHistory queryKey={["queue-drafts", id]} load={() => api.queueDrafts(id)} />
           {linkedinReplyEditor}
         </>
       }
@@ -2121,6 +2125,9 @@ function TriggerRowFragment(props: TriggerRowProps) {
   const notReady = t.ready === false;
   const notReadyReason = t.notReadyReason ?? "missing required config";
   const approvalBlocked = t.deprioritized === true;
+  // Configured angles the founder has had chances to send and never did —
+  // the nudge to open the editor, where the per-angle tally lives.
+  const neverSent = neverSentAngles(t.angleUsage);
   // Block enabling an unready trigger but still allow disabling.
   // Both fold in READ_ONLY rather than taking `readOnly` as props: these two
   // controls compute their own disabled state, and `run now` gates clicks
@@ -2234,7 +2241,9 @@ function TriggerRowFragment(props: TriggerRowProps) {
             ? `not ready · ${notReadyReason}`
             : approvalBlocked
               ? `deprioritized · ${t.deprioritizedReason ?? "low-approval-rate"} · ${((t.approvalRate ?? 0) * 100).toFixed(0)}% (${t.approvalReviewed}/${t.approvalMinSamples} min)`
-              : props.summary}
+              : neverSent.length > 0
+                ? `${props.summary ? `${props.summary} · ` : ""}${neverSent.length} angle${neverSent.length === 1 ? "" : "s"} never sent`
+                : props.summary}
         </td>
         <td className="px-6 py-2 text-right">
           <div className="flex items-center justify-end gap-1">
@@ -2313,6 +2322,22 @@ function TriggerRowFragment(props: TriggerRowProps) {
                   (&quot;For a founder selling to clinics —&quot;), then a named failure and what
                   you found. The tool picks one per prospect.
                 </div>
+              )}
+              {/yourEdge|yourClaim/.test(props.editing.text) && (
+                <AngleUsagePanel
+                  angleUsage={t.angleUsage ?? null}
+                  draftUsage={t.draftUsage ?? null}
+                  disabled={props.setConfigPending || READ_ONLY}
+                  onRetire={(angleText) => {
+                    const next = removeAngleFromConfigText(props.editing?.text ?? "", angleText);
+                    if (next == null) {
+                      toast.error("couldn't find that angle in the edge text — edit it by hand");
+                      return;
+                    }
+                    props.onChangeEditText(next);
+                    toast.message("angle removed from the editor · save to apply");
+                  }}
+                />
               )}
               <div className="flex items-center justify-between gap-2">
                 <div className="font-mono text-[11.5px] text-[color:var(--ink-blocked-2)]">
