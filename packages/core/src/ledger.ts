@@ -1706,7 +1706,9 @@ export class Ledger {
     },
   ): boolean {
     if (this.people) {
-      const row = this.getProspectById(id);
+      const row = this.db
+        .query("SELECT * FROM prospects WHERE id=?")
+        .get(id) as ProspectRecord | null;
       if (row) {
         const effective = { ...row };
         for (const key of [
@@ -1717,7 +1719,10 @@ export class Ledger {
           "title",
         ] as const)
           if (!effective[key] && patch[key]?.trim()) effective[key] = patch[key]!.trim();
-        this.people.resolve(effective, row.shared_person_id ?? undefined);
+        const canonical = this.people.resolve(effective, row.shared_person_id ?? undefined);
+        patch = { ...patch };
+        for (const key of ["linkedin_url", "phone", "company", "title"] as const)
+          if (patch[key]?.trim()) patch[key] = canonical[key];
       }
     }
     const cols = ["linkedin_url", "phone", "company", "source_profile_url", "title"] as const;

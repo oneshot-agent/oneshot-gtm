@@ -14,7 +14,7 @@ bun run cli -- workspace list                 # every workspace, the current and
 
 ## What stays shared
 
-`~/.oneshot-gtm-shared/shared.sqlite` (relocate with `ONESHOT_GTM_SHARED`) holds shared person identities and workspace membership links, alongside the paid lookup caches (enrichment, LinkedIn — the same person is never bought twice) and contact touches. A workspace never first-touches someone another workspace emailed in the last 7 days: the draft holds with a `contacted-elsewhere` flag you can override on a manual send, while drain and cadence steps wait the window out.
+`~/.oneshot-gtm-shared/shared.sqlite` (relocate with `ONESHOT_GTM_SHARED`) holds shared person identities and workspace membership links, alongside the paid lookup caches (enrichment and LinkedIn, reused when lookup identifiers match; unlinked aliases can still cause duplicate lookups) and contact touches. A workspace never first-touches someone another workspace emailed in the last 7 days: the draft holds with a `contacted-elsewhere` flag you can override on a manual send, while drain and cadence steps wait the window out.
 
 Each ledger's own cache tables are imported into the shared DB once on first use and then left unwritten, so rolling back is a code revert, not a data migration.
 

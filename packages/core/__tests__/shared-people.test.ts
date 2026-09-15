@@ -126,4 +126,36 @@ describe("shared person identity with workspace memberships", () => {
     expect(sdk.getProspectById(a)?.shared_person_id).toBe(gtm.getProspectById(b)?.shared_person_id);
     expect(gtm.getProspectById(b)?.source_profile_url).toBe("https://github.com/same-person");
   });
+  it("validates a patch against stale local fields before applying canonical values", () => {
+    const a = sdk.upsertProspect({ email: "person@example.test" });
+    const b = gtm.linkSharedProspect(sdk.getProspectById(a)!.shared_person_id!);
+    sdk.updateProspectIdentity(a, { linkedin_url: "https://linkedin.com/in/correct-person" });
+    sdk.upsertProspect({
+      email: "other@example.test",
+      linkedin_url: "https://linkedin.com/in/other-person",
+    });
+    const raw = new Database(join(root, "gtm.sqlite"));
+    try {
+      expect(
+        (
+          raw.query("SELECT linkedin_url FROM prospects WHERE id=?").get(b) as {
+            linkedin_url: string | null;
+          }
+        ).linkedin_url,
+      ).toBeNull();
+      expect(() =>
+        gtm.updateProspectIdentity(b, { linkedin_url: "https://linkedin.com/in/other-person" }),
+      ).toThrow("Conflicting person");
+      gtm.updateProspectIdentity(b, { linkedin_url: "https://linkedin.com/in/new-handle" });
+      expect(
+        (
+          raw.query("SELECT linkedin_url FROM prospects WHERE id=?").get(b) as {
+            linkedin_url: string;
+          }
+        ).linkedin_url,
+      ).toBe("https://linkedin.com/in/correct-person");
+    } finally {
+      raw.close();
+    }
+  });
 });
