@@ -858,30 +858,34 @@ export class QueueStore {
     discardReason?: DraftDiscardReason;
   }): boolean {
     const at = new Date().toISOString();
-    return this.db.transaction((): boolean => {
-      const saved =
-        this.db
-          .prepare(`UPDATE target_queue SET last_draft_json = ?, last_drafted_at = ?
+    return this.db
+      .transaction((): boolean => {
+        const saved =
+          this.db
+            .prepare(`UPDATE target_queue SET last_draft_json = ?, last_drafted_at = ?
       WHERE id = ? AND last_draft_json IS ? AND payload_json = ?
       AND status != 'sent' AND sent_at IS NULL AND send_started_at IS NULL`)
-          .run(
-            JSON.stringify({ ...input.draft, draftedAt: at }),
-            at,
+            .run(
+              JSON.stringify({ ...input.draft, draftedAt: at }),
+              at,
+              input.id,
+              input.previousDraft,
+              input.previousPayload,
+            ).changes === 1;
+        if (saved) {
+          this.versionQueueDraft(
             input.id,
+            input.draft,
+            input.discardReason,
+            "machine",
             input.previousDraft,
-            input.previousPayload,
-          ).changes === 1;
-      if (saved) {
-        this.versionQueueDraft(
-          input.id,
-          input.draft,
-          input.discardReason,
-          "machine",
-          input.previousDraft,
-        );
-      }
-      return saved;
-    })();
+          );
+        }
+        return saved;
+        // IMMEDIATE: the version write reads `draft_versions` before writing it;
+        // a deferred transaction would let a concurrent send slip in between.
+      })
+      .immediate();
   }
 
   /**
@@ -908,23 +912,27 @@ export class QueueStore {
   }): void {
     const draftedAtIso = new Date().toISOString();
     const json = JSON.stringify({ ...input.draft, draftedAt: draftedAtIso });
-    this.db.transaction(() => {
-      // The envelope this write replaces — read before the UPDATE so a draft
-      // that predates versioning can still be recorded as what was replaced.
-      const before = this.db
-        .query(`SELECT last_draft_json AS j FROM target_queue WHERE id = ?`)
-        .get(input.id) as { j: string | null } | null;
-      this.db
-        .prepare(`UPDATE target_queue SET last_draft_json = ?, last_drafted_at = ? WHERE id = ?`)
-        .run(json, draftedAtIso, input.id);
-      this.versionQueueDraft(
-        input.id,
-        input.draft,
-        input.discardReason,
-        input.sentBy ?? "machine",
-        before?.j ?? null,
-      );
-    })();
+    this.db
+      .transaction(() => {
+        // The envelope this write replaces — read before the UPDATE so a draft
+        // that predates versioning can still be recorded as what was replaced.
+        const before = this.db
+          .query(`SELECT last_draft_json AS j FROM target_queue WHERE id = ?`)
+          .get(input.id) as { j: string | null } | null;
+        this.db
+          .prepare(`UPDATE target_queue SET last_draft_json = ?, last_drafted_at = ? WHERE id = ?`)
+          .run(json, draftedAtIso, input.id);
+        this.versionQueueDraft(
+          input.id,
+          input.draft,
+          input.discardReason,
+          input.sentBy ?? "machine",
+          before?.j ?? null,
+        );
+        // IMMEDIATE: the envelope is read before the UPDATE and the version
+        // table before its own writes — take the write lock up front.
+      })
+      .immediate();
   }
 
   /**
@@ -990,13 +998,17 @@ export class QueueStore {
    * versioning.
    */
   closeQueueDraftVersion(id: number, outcome: "sent" | "auto_sent"): boolean {
-    const key = this.queueVersionKey(id);
-    if (!key) return false;
-    const stored = this.db
-      .query(`SELECT last_draft_json AS j FROM target_queue WHERE id = ?`)
-      .get(id) as { j: string | null } | null;
-    this.drafts.seedFromStored({ ...key, stored: stored?.j ?? null });
-    return this.drafts.close({ queueId: id }, outcome);
+    return this.db
+      .transaction((): boolean => {
+        const key = this.queueVersionKey(id);
+        if (!key) return false;
+        const stored = this.db
+          .query(`SELECT last_draft_json AS j FROM target_queue WHERE id = ?`)
+          .get(id) as { j: string | null } | null;
+        this.drafts.seedFromStored({ ...key, stored: stored?.j ?? null });
+        return this.drafts.close({ queueId: id }, outcome);
+      })
+      .immediate();
   }
 
   /**

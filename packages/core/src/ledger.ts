@@ -609,27 +609,30 @@ export class Ledger {
     // surface a fresh "no preview yet" state.
     // A successful advance also clears any prior send-failure marker (the send
     // that just advanced us obviously succeeded).
-    this.db.transaction(() => {
-      // A preview that predates versioning is still the draft being sent —
-      // seed it before the clear below erases the envelope.
-      this.seedCadenceDraftVersion(input.prospectId, input.playName);
-      this.db
-        .prepare(
-          `UPDATE cadence_state
+    this.db
+      .transaction(() => {
+        // A preview that predates versioning is still the draft being sent —
+        // seed it before the clear below erases the envelope.
+        this.seedCadenceDraftVersion(input.prospectId, input.playName);
+        this.db
+          .prepare(
+            `UPDATE cadence_state
            SET current_step = ?, next_due_at = ?, last_polled_at = datetime('now'),
                next_step_draft_json = NULL, next_step_drafted_at = NULL,
                sending_started_at = NULL,
                last_send_error = NULL, last_send_error_at = NULL
            WHERE prospect_id = ? AND play_name = ?`,
-        )
-        .run(input.newStep, input.nextDueAt, input.prospectId, input.playName);
-      // The step just advanced past is the one the open draft was for, and
-      // every cadence send is founder-reviewed — it was sent.
-      this.drafts.close(
-        { prospectId: input.prospectId, playName: input.playName, stepIndex: input.newStep },
-        "sent",
-      );
-    })();
+          )
+          .run(input.newStep, input.nextDueAt, input.prospectId, input.playName);
+        // The step just advanced past is the one the open draft was for, and
+        // every cadence send is founder-reviewed — it was sent.
+        this.drafts.close(
+          { prospectId: input.prospectId, playName: input.playName, stepIndex: input.newStep },
+          "sent",
+        );
+        // IMMEDIATE: the seed reads the stored preview before the clear.
+      })
+      .immediate();
   }
 
   /**
@@ -731,28 +734,31 @@ export class Ledger {
   }): void {
     const draftedAtIso = new Date().toISOString();
     const json = JSON.stringify({ ...input.draft, draftedAt: draftedAtIso });
-    this.db.transaction(() => {
-      // Seed from the preview this write replaces (a draft that predates
-      // versioning) before the UPDATE erases it.
-      const key = this.seedCadenceDraftVersion(input.prospectId, input.playName);
-      this.db
-        .prepare(
-          `UPDATE cadence_state
+    this.db
+      .transaction(() => {
+        // Seed from the preview this write replaces (a draft that predates
+        // versioning) before the UPDATE erases it.
+        const key = this.seedCadenceDraftVersion(input.prospectId, input.playName);
+        this.db
+          .prepare(
+            `UPDATE cadence_state
            SET next_step_draft_json = ?, next_step_drafted_at = ?
            WHERE prospect_id = ? AND play_name = ?`,
-        )
-        .run(json, draftedAtIso, input.prospectId, input.playName);
-      if (!key) return;
-      const payload = input.draft.payload as { angle?: unknown } | null;
-      this.drafts.open({
-        ...key,
-        subject: input.draft.subject,
-        body: input.draft.body,
-        flags: input.draft.flags,
-        angle: draftVersionAngle(payload && typeof payload === "object" ? payload.angle : null),
-        ...(input.discardReason ? { discardReason: input.discardReason } : {}),
-      });
-    })();
+          )
+          .run(json, draftedAtIso, input.prospectId, input.playName);
+        if (!key) return;
+        const payload = input.draft.payload as { angle?: unknown } | null;
+        this.drafts.open({
+          ...key,
+          subject: input.draft.subject,
+          body: input.draft.body,
+          flags: input.draft.flags,
+          angle: draftVersionAngle(payload && typeof payload === "object" ? payload.angle : null),
+          ...(input.discardReason ? { discardReason: input.discardReason } : {}),
+        });
+        // IMMEDIATE: the seed reads the stored preview before the UPDATE.
+      })
+      .immediate();
   }
 
   /**
