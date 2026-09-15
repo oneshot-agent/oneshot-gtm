@@ -1,3 +1,4 @@
+import type { DraftAngle } from "@oneshot-gtm/shared-types";
 import { loadConfig } from "@oneshot-gtm/core";
 import { type EmailPlayDef, runEmailPlay, standardEnrich } from "./_run-play.ts";
 import { acceleratorBatchMetadata } from "./_metadata.ts";
@@ -53,6 +54,8 @@ interface AcceleratorBatchDraft {
   receiptIds: number[];
   sent: boolean;
   flags: string[];
+  /** Which edge angle the runner built the draft on (see `PlayDraft.angle`). */
+  angle?: DraftAngle;
 }
 
 const PLAY_NAME = "accelerator-batch";
