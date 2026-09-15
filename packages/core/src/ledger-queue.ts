@@ -972,6 +972,22 @@ export class QueueStore {
     this.drafts.insertClosed({ ...base, outcome });
   }
 
+  /**
+   * Drop a row's stored draft so nothing can send it verbatim — a moved-in
+   * row's old draft was written against another workspace's edge. The open
+   * draft version closes as a machine redraft: no founder judgment was made.
+   */
+  clearQueueDraft(id: number): void {
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          `UPDATE target_queue SET last_draft_json = NULL, last_drafted_at = NULL WHERE id = ?`,
+        )
+        .run(id);
+      this.drafts.close({ queueId: id }, "discarded", "redraft");
+    })();
+  }
+
   /** Slot + identity for a queue row's draft versions; null when the row is gone. */
   private queueVersionKey(
     id: number,

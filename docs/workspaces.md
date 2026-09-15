@@ -16,6 +16,8 @@ bun run cli -- workspace list                 # every workspace, the current and
 
 `~/.oneshot-gtm-shared/shared.sqlite` (relocate with `ONESHOT_GTM_SHARED`) holds shared person identities and workspace membership links, alongside the paid lookup caches (enrichment and LinkedIn, reused when lookup identifiers match; unlinked aliases can still cause duplicate lookups) and contact touches. A workspace never first-touches someone another workspace emailed in the last 7 days: the draft holds with a `contacted-elsewhere` flag you can override on a manual send, while drain and cadence steps wait the window out.
 
+Rejects are per workspace and permanent within it: the queue's unique key on play + dedupe key ignores status, so a finder can never re-enqueue someone you rejected there (only "Approve anyway" on /prospects reopens the row). Nothing carries a reject across workspaces. To hand a prospect to the other product, use **move →** on the /queue row (pending, approved or rejected). The destination is started if it is not running, the row lands in its queue as pending under the same play with the person's research intact and the sender's edge and verdicts stripped (the destination's own `yourEdge` applies at draft time), and the row here is rejected with a `moved to <workspace>` note. A rejected or expired row the destination already holds for that person is re-opened instead of refused — that is also how a prospect comes back.
+
 Each ledger's own cache tables are imported into the shared DB once on first use and then left unwritten, so rolling back is a code revert, not a data migration.
 
 ## What `doctor` warns about

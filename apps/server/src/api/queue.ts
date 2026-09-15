@@ -7,6 +7,7 @@ import {
   personRecordFromResearch,
 } from "@oneshot-gtm/core";
 import {
+  currentWorkspaceName,
   getLedger,
   isDraining,
   loadConfig,
@@ -22,12 +23,16 @@ import {
 import {
   drainQueue,
   isDudDomain,
+  portableQueuePayload,
   rankPendingRows,
   resolveQueueTarget,
   safeEnrichCompany,
+  type MovedFrom,
 } from "@oneshot-gtm/find";
+import { ensureWorkspaceRunning } from "./workspace.ts";
 import {
   MANUAL_PLAYS,
+  PLAYS,
   enrollInCadence,
   generateRejectReason,
   logTargetError,
@@ -37,6 +42,9 @@ import {
 import { reportServerExecution } from "../telemetry.ts";
 import {
   blockingFlags,
+  type ImportQueueRowRequest,
+  type ImportQueueRowResult,
+  type MoveQueueRowResult,
   type DrainRequest,
   type DrainResult,
   type LastDraft,
@@ -403,6 +411,200 @@ export async function approveQueueRoute(
   }
   ledger.setQueueStatus({ id, status: "approved", decidedBy: "human" });
   return jsonResponse({ ok: true }, 200, req);
+}
+
+/* ── Moving a row to another workspace ─────────────────────────────── */
+
+/**
+ * The source row's note once it has been handed over: a human reason is
+ * kept and the destination appended; otherwise the destination alone. Never
+ * `auto:` — the founder clicked.
+ */
+export function moveNote(existing: string | null | undefined, workspace: string): string {
+  const moved = `moved to ${workspace}`;
+  const prior = existing?.trim() ?? "";
+  if (!prior || MACHINE_PREFIX.test(prior)) return moved;
+  if (prior.includes(moved)) return prior;
+  return `${prior} · ${moved}`.slice(0, REJECT_REASON_MAX_CHARS);
+}
+
+function isImportRequest(body: unknown): body is ImportQueueRowRequest {
+  if (!body || typeof body !== "object" || Array.isArray(body)) return false;
+  const b = body as Record<string, unknown>;
+  const from = b["movedFrom"];
+  return (
+    typeof b["playName"] === "string" &&
+    b["playName"].trim() !== "" &&
+    typeof b["dedupeKey"] === "string" &&
+    b["dedupeKey"].trim() !== "" &&
+    typeof b["source"] === "string" &&
+    !!b["payload"] &&
+    typeof b["payload"] === "object" &&
+    !Array.isArray(b["payload"]) &&
+    !!from &&
+    typeof from === "object" &&
+    typeof (from as { workspace?: unknown }).workspace === "string" &&
+    typeof (from as { queueId?: unknown }).queueId === "number"
+  );
+}
+
+/**
+ * POST /api/queue/import — the destination side of a move. Another workspace's
+ * server on this machine hands over a row; only loopback callers get here
+ * (the Host and Origin gates in server.ts). The row lands `pending` for
+ * review, with the person's research intact and the sender's positioning
+ * and verdicts stripped (queue-portable.ts). A rejected/expired row this
+ * workspace already holds for the same play + dedupe key is re-opened rather
+ * than refused — that is how a prospect comes back after a move away.
+ */
+export async function importQueueRowRoute(req: Request): Promise<Response> {
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return jsonResponse({ error: "JSON body required" }, 400, req);
+  }
+  if (!isImportRequest(body)) {
+    return jsonResponse(
+      {
+        error:
+          "body must be {playName, dedupeKey, source, payload, movedFrom:{workspace, queueId}}",
+      },
+      400,
+      req,
+    );
+  }
+  const playName = body.playName.trim();
+  if (!(playName in PLAYS) && !(playName in MANUAL_PLAYS)) {
+    return jsonResponse({ error: `unknown play '${playName}'` }, 400, req);
+  }
+  const portable = portableQueuePayload(body.payload);
+  if (!portable) return jsonResponse({ error: "payload must be an object" }, 400, req);
+  const movedFrom: MovedFrom = {
+    workspace: body.movedFrom.workspace,
+    queueId: body.movedFrom.queueId,
+    at: new Date().toISOString(),
+  };
+  const payload = { ...portable, movedFrom };
+  const notes = `moved from ${movedFrom.workspace}`;
+  const ledger = getLedger();
+  const dedupeKey = body.dedupeKey.trim();
+  const inserted = ledger.enqueueTarget({
+    playName,
+    payload,
+    dedupeKey,
+    source: body.source,
+    notes,
+  });
+  if (inserted != null) {
+    const out: ImportQueueRowResult = { queueId: inserted, reused: false };
+    return jsonResponse(out, 201, req);
+  }
+  // Unique (play_name, dedupe_key): this workspace already has the person on
+  // this play. Re-open it unless it actually went out from here.
+  const existing = ledger.getQueueRowByDedupe(playName, dedupeKey);
+  if (!existing) return jsonResponse({ error: "could not enqueue the row" }, 500, req);
+  if (existing.status === "sent" || existing.sent_at != null || existing.send_started_at != null) {
+    return jsonResponse(
+      { error: `already sent to this person from this workspace (row #${existing.id})` },
+      409,
+      req,
+    );
+  }
+  ledger.setQueueStatus({ id: existing.id, status: "pending", notes });
+  ledger.updateQueuePayload({ id: existing.id, payload });
+  // A draft written here against an older payload/edge must not be sendable
+  // verbatim; the next review re-drafts from the moved-in facts.
+  ledger.clearQueueDraft(existing.id);
+  const out: ImportQueueRowResult = { queueId: existing.id, reused: true };
+  return jsonResponse(out, 200, req);
+}
+
+/**
+ * POST /api/queue/:id/move {workspace} — hand this row to another workspace.
+ * The destination is started if it is not running, the row is imported
+ * through its own API, and only then is the row here rejected with a
+ * `moved to <workspace>` note so it never drafts from this workspace again.
+ * A sent or in-flight row cannot move (it is already a conversation here).
+ */
+export async function moveQueueRowRoute(
+  req: Request,
+  params: Record<string, string>,
+): Promise<Response> {
+  const id = Number.parseInt(params["id"] ?? "", 10);
+  if (!Number.isFinite(id)) return jsonResponse({ error: "bad id" }, 400, req);
+  let workspace = "";
+  try {
+    const body = (await req.json()) as { workspace?: unknown };
+    if (typeof body.workspace === "string") workspace = body.workspace.trim();
+  } catch {
+    // fall through to the empty guard
+  }
+  if (!workspace) return jsonResponse({ error: "body must be {workspace: string}" }, 400, req);
+  const ledger = getLedger();
+  const row = ledger.getQueueRow(id);
+  if (!row) return jsonResponse({ error: `row #${id} not found` }, 404, req);
+  if (row.status === "sent" || row.sent_at != null || row.send_started_at != null) {
+    return jsonResponse({ error: "row already sent from here; it cannot move" }, 409, req);
+  }
+  let payload: unknown;
+  try {
+    payload = JSON.parse(row.payload_json);
+  } catch {
+    return jsonResponse({ error: "row payload is not valid JSON" }, 400, req);
+  }
+  const portable = portableQueuePayload(payload);
+  if (!portable) return jsonResponse({ error: "row payload is not an object" }, 400, req);
+
+  const dest = await ensureWorkspaceRunning(workspace);
+  if (!dest.ok) return jsonResponse({ error: dest.error }, dest.status, req);
+
+  const request: ImportQueueRowRequest = {
+    playName: row.play_name,
+    dedupeKey: row.dedupe_key,
+    source: row.source ?? "manual",
+    payload: portable,
+    movedFrom: { workspace: currentWorkspaceName(), queueId: row.id },
+  };
+  let imported: ImportQueueRowResult;
+  try {
+    const res = await fetch(`http://127.0.0.1:${dest.port}/api/queue/import`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(request),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const out = (await res.json().catch(() => ({}))) as Partial<ImportQueueRowResult> & {
+      error?: string;
+    };
+    if (!res.ok || typeof out.queueId !== "number") {
+      return jsonResponse(
+        { error: `${workspace}: ${out.error ?? `import failed (${res.status})`}` },
+        res.status >= 400 && res.status < 600 ? res.status : 502,
+        req,
+      );
+    }
+    imported = { queueId: out.queueId, reused: out.reused === true };
+  } catch (err) {
+    return jsonResponse(
+      { error: `${workspace}: could not reach its server — ${(err as Error).message}` },
+      502,
+      req,
+    );
+  }
+
+  // Only now, with the destination holding the row: close it here.
+  ledger.setQueueStatus({
+    id,
+    status: "rejected",
+    decidedBy: "human",
+    notes: moveNote(row.notes, workspace),
+  });
+  const result: MoveQueueRowResult = {
+    ok: true,
+    destination: { name: workspace, port: dest.port, ...imported },
+  };
+  return jsonResponse(result, 200, req);
 }
 
 /**

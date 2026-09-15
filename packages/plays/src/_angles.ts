@@ -224,6 +224,8 @@ const NOT_EVIDENCE = new Set<string>([
   // Our own summaries of the row — never evidence for a classifier (#592).
   "fitReason",
   "fitReasonSource",
+  // Provenance of a row moved in from another workspace (queue-portable.ts).
+  "movedFrom",
   // Postal data: identifying, never a fit signal.
   "address",
   "postalCode",

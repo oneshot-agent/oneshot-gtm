@@ -71,7 +71,9 @@ import {
   approveQueueRoute,
   drainQueueRoute,
   listQueueRoute,
+  importQueueRowRoute,
   markSentRoute,
+  moveQueueRowRoute,
   queueDraftVersionsRoute,
   queueRowDetailRoute,
   regenerateDraftRoute,
@@ -182,6 +184,8 @@ const routes: RouteEntry[] = [
   route("GET", "/api/queue", listQueueRoute),
   // Literal before param: `:id` matches [^/]+ and would otherwise swallow "search".
   route("GET", "/api/queue/search", searchQueueRoute),
+  // Literal before param for the same reason; the destination side of a move.
+  route("POST", "/api/queue/import", importQueueRowRoute),
   route("GET", "/api/queue/:id", queueRowDetailRoute),
   route("GET", "/api/queue/:id/drafts", queueDraftVersionsRoute),
   route("POST", "/api/queue/approve-all", approveAllRoute),
@@ -192,6 +196,7 @@ const routes: RouteEntry[] = [
   route("POST", "/api/queue/:id/regenerate", regenerateDraftRoute),
   route("POST", "/api/queue/:id/send-draft", sendDraftRoute),
   route("POST", "/api/queue/:id/mark-sent", markSentRoute),
+  route("POST", "/api/queue/:id/move", moveQueueRowRoute),
   route("GET", "/api/triggers", listTriggersRoute),
   route("POST", "/api/triggers/cal-no-show", calNoShowWebhookRoute),
   route("POST", "/api/triggers/signup", signupWebhookRoute),

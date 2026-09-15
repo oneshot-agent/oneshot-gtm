@@ -1490,6 +1490,28 @@ export interface CancelRunResponse {
   reason: string | null;
 }
 
+/** POST /api/queue/import — a row handed over by another workspace on this machine. */
+export interface ImportQueueRowRequest {
+  playName: string;
+  dedupeKey: string;
+  source: string;
+  /** Already stripped of workspace-specific keys by the sender; stripped again on receipt. */
+  payload: Record<string, unknown>;
+  movedFrom: { workspace: string; queueId: number };
+}
+
+export interface ImportQueueRowResult {
+  queueId: number;
+  /** True when the destination re-opened a row it already held (rejected/expired) instead of inserting. */
+  reused: boolean;
+}
+
+/** POST /api/queue/:id/move {workspace} — the source side of a hand-over. */
+export interface MoveQueueRowResult {
+  ok: true;
+  destination: { name: string; port: number; queueId: number; reused: boolean };
+}
+
 /** Workspace identity + roster served by GET /api/workspace. */
 export interface WorkspaceInfo {
   current: { name: string; home: string; port: number };
