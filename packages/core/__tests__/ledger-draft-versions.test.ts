@@ -549,3 +549,51 @@ describe("aggregates", () => {
     expect(ledger.draftUsageByPlay()["other-play"]).toBeUndefined();
   });
 });
+
+describe("draft version writer reservations", () => {
+  for (const operation of ["queue replace", "queue close", "cadence replace", "cadence advance"]) {
+    it(`${operation} reserves the writer before reading the draft it will change`, () => {
+      const id = enqueue("locking@x.dev");
+      const prospectId = ledger.upsertProspect({
+        name: "P",
+        email: "locking@x.dev",
+        company: null,
+        source: "test",
+      });
+      const playName = "stack-consolidation";
+      ledger.enrollCadence({ prospectId, playName, nextDueAt: new Date().toISOString() });
+      const db = (ledger as unknown as { db: Database }).db;
+      const other = rawDb();
+      other.exec("PRAGMA busy_timeout=0");
+      const original = db.query;
+      let attempted = false;
+      db.query = ((...args: Parameters<Database["query"]>) => {
+        if (!attempted) {
+          attempted = true;
+          // A real second connection tries to replace the source envelope at
+          // the first read. It must be excluded until this operation commits.
+          expect(() =>
+            other.prepare("UPDATE target_queue SET last_draft_json = NULL WHERE id = ?").run(id),
+          ).toThrow(/locked|busy/i);
+        }
+        return original.apply(db, args);
+      }) as Database["query"];
+      try {
+        if (operation === "queue replace") ledger.setQueueDraft({ id, draft: draft() });
+        if (operation === "queue close") ledger.closeQueueDraftVersion(id, "sent");
+        if (operation === "cadence replace")
+          ledger.setCadenceDraft({
+            prospectId,
+            playName,
+            draft: { subject: "s", body: "b", flags: [], payload: payload() },
+          });
+        if (operation === "cadence advance")
+          ledger.advanceCadence({ prospectId, playName, newStep: 1, nextDueAt: null });
+        expect(attempted).toBe(true);
+      } finally {
+        db.query = original;
+        other.close();
+      }
+    });
+  }
+});
