@@ -6,7 +6,8 @@ import { demoMode } from "./demo.ts";
 import { logEvent } from "./events.ts";
 
 /**
- * The one SQLite file shared ACROSS workspaces: paid lookup caches (never
+ * The one SQLite file shared ACROSS workspaces: person identity (shared-people.ts),
+ * paid lookup caches (never
  * re-buy a person researched for another product) and contact touches (two
  * motions must not pile into one founder's inbox the same week). Everything
  * else stays per-workspace. Lives at `$ONESHOT_GTM_SHARED/shared.sqlite`
@@ -227,6 +228,22 @@ export class SharedDb {
       );
   }
 
+  /** Include every verified email alias of the shared person in contact protection. */
+  private contactEmails(email: string): string[] {
+    const normalized = email.trim().toLowerCase();
+    if (
+      !this.db
+        .query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='person_aliases'")
+        .get()
+    )
+      return [normalized];
+    const aliases = this.db
+      .query(`SELECT substr(alias,7) email FROM person_aliases
+      WHERE alias LIKE 'email:%' AND person_id=(SELECT person_id FROM person_aliases WHERE alias=?)`)
+      .all(`email:${normalized}`) as { email: string }[];
+    return [...new Set([normalized, ...aliases.map((row) => row.email)])];
+  }
+
   /** Most recent live touch of `email` by a workspace OTHER than `workspace` within the window, or null. */
   recentTouchElsewhere(
     email: string,
@@ -234,19 +251,15 @@ export class SharedDb {
     windowMs: number = CONTACT_TOUCH_WINDOW_MS,
   ): ContactTouch | null {
     const since = new Date(Date.now() - windowMs).toISOString();
+    const emails = this.contactEmails(email);
     return (
       (this.db
         .query(
           `SELECT workspace, play_name, sent_at, status FROM contact_touches
-           WHERE email = ? AND workspace != ? AND sent_at >= ? AND ${SharedDb.LIVE_TOUCH_SQL}
+           WHERE email IN (${emails.map(() => "?").join(",")}) AND workspace != ? AND sent_at >= ? AND ${SharedDb.LIVE_TOUCH_SQL}
            ORDER BY sent_at DESC LIMIT 1`,
         )
-        .get(
-          email.trim().toLowerCase(),
-          workspace,
-          since,
-          ...this.liveTouchArgs(),
-        ) as ContactTouch) ?? null
+        .get(...emails, workspace, since, ...this.liveTouchArgs()) as ContactTouch) ?? null
     );
   }
 
@@ -315,12 +328,13 @@ export class SharedDb {
 
   /** All live touches of an email across workspaces, newest first (doctor / UI detail). */
   touchesFor(email: string, limit = 20): ContactTouch[] {
+    const emails = this.contactEmails(email);
     return this.db
       .query(
         `SELECT workspace, play_name, sent_at, status FROM contact_touches
-         WHERE email = ? AND ${SharedDb.LIVE_TOUCH_SQL} ORDER BY sent_at DESC LIMIT ?`,
+         WHERE email IN (${emails.map(() => "?").join(",")}) AND ${SharedDb.LIVE_TOUCH_SQL} ORDER BY sent_at DESC LIMIT ?`,
       )
-      .all(email.trim().toLowerCase(), ...this.liveTouchArgs(), limit) as ContactTouch[];
+      .all(...emails, ...this.liveTouchArgs(), limit) as ContactTouch[];
   }
 
   // ── legacy import ──────────────────────────────────────────────────────────

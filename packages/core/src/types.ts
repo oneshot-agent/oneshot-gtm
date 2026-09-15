@@ -107,6 +107,8 @@ export interface CadencePlanStep {
 }
 
 export interface ProspectRecord {
+  /** Shared person identity; id remains the workspace membership/history key. */
+  shared_person_id?: string | null;
   businessAddressSource?: string;
   businessAddress?: import("./direct-mail.ts").PostalAddress | null;
   id: number;
