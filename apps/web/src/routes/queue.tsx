@@ -264,7 +264,14 @@ function QueuePage() {
   const move = useMutation({
     mutationFn: (vars: { id: number; workspace: string }) =>
       api.moveQueueRow(vars.id, vars.workspace),
-    onSuccess: (res) => {
+    onSuccess: (res, vars) => {
+      // The row is rejected here now; leaving it selected would let a bulk
+      // approve re-open it while the destination holds the live copy.
+      setSelected((prev) => {
+        const next = new Set(prev);
+        next.delete(vars.id);
+        return next;
+      });
       const { name, port, reused } = res.destination;
       toast.success(reused ? `re-opened their existing row in ${name}` : `moved to ${name}`, {
         description: "This row is now rejected here.",

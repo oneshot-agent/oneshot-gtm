@@ -29,7 +29,7 @@ import {
   safeEnrichCompany,
   type MovedFrom,
 } from "@oneshot-gtm/find";
-import { ensureWorkspaceRunning } from "./workspace.ts";
+import { ensureWorkspaceRunning, resolveOtherWorkspace } from "./workspace.ts";
 import {
   MANUAL_PLAYS,
   PLAYS,
@@ -415,6 +415,9 @@ export async function approveQueueRoute(
 
 /* ── Moving a row to another workspace ─────────────────────────────── */
 
+/** `dequeueApproved`'s default lease: a row claimed more recently than this is mid-drain. */
+const DRAIN_LEASE_MS = 15 * 60 * 1000;
+
 /**
  * The source row's note once it has been handed over: a human reason is
  * kept and the destination appended; otherwise the destination alone. Never
@@ -511,11 +514,13 @@ export async function importQueueRowRoute(req: Request): Promise<Response> {
       req,
     );
   }
-  ledger.setQueueStatus({ id: existing.id, status: "pending", notes });
-  ledger.updateQueuePayload({ id: existing.id, payload });
-  // A draft written here against an older payload/edge must not be sendable
-  // verbatim; the next review re-drafts from the moved-in facts.
+  // Draft first, status last: a draft written here against an older
+  // payload/edge must not be sendable verbatim, and if the process dies
+  // between these writes the row is left rejected with no draft (harmless)
+  // rather than pending with a stale one that a later approval could send.
   ledger.clearQueueDraft(existing.id);
+  ledger.updateQueuePayload({ id: existing.id, payload });
+  ledger.setQueueStatus({ id: existing.id, status: "pending", notes });
   const out: ImportQueueRowResult = { queueId: existing.id, reused: true };
   return jsonResponse(out, 200, req);
 }
@@ -555,9 +560,42 @@ export async function moveQueueRowRoute(
   }
   const portable = portableQueuePayload(payload);
   if (!portable) return jsonResponse({ error: "row payload is not an object" }, 400, req);
+  // A drain that has leased this row is mid-send: its play.run is awaiting
+  // and will stamp `sent` when it lands. Moving underneath it would hand the
+  // destination a person this workspace is emailing right now.
+  if (row.drain_claimed_at && Date.now() - Date.parse(row.drain_claimed_at) < DRAIN_LEASE_MS) {
+    return jsonResponse(
+      { error: "row is being drained right now; try again in a few minutes" },
+      409,
+      req,
+    );
+  }
+
+  // The destination must exist and not be us before anything is written.
+  const target = resolveOtherWorkspace(workspace);
+  if (!target.ok) return jsonResponse({ error: target.error }, target.status, req);
+
+  // Reserve the row before anything is awaited: `rejected` is the one status
+  // neither the drain (`dequeueApproved` takes `approved` only) nor send-draft
+  // will touch, so nothing can send it while the destination starts up and
+  // imports. Restored verbatim if the hand-over fails.
+  const previous = { status: row.status, notes: row.notes };
+  const note = moveNote(row.notes, workspace);
+  ledger.setQueueStatus({ id, status: "rejected", decidedBy: "human", notes: note });
+  const restore = (): void => {
+    ledger.setQueueStatus({
+      id,
+      status: previous.status,
+      ...(previous.status === "rejected" ? { decidedBy: "human" as const } : {}),
+    });
+    ledger.setQueueNotes({ id, notes: previous.notes ?? "" });
+  };
 
   const dest = await ensureWorkspaceRunning(workspace);
-  if (!dest.ok) return jsonResponse({ error: dest.error }, dest.status, req);
+  if (!dest.ok) {
+    restore();
+    return jsonResponse({ error: dest.error }, dest.status, req);
+  }
 
   const request: ImportQueueRowRequest = {
     playName: row.play_name,
@@ -578,6 +616,7 @@ export async function moveQueueRowRoute(
       error?: string;
     };
     if (!res.ok || typeof out.queueId !== "number") {
+      restore();
       return jsonResponse(
         { error: `${workspace}: ${out.error ?? `import failed (${res.status})`}` },
         res.status >= 400 && res.status < 600 ? res.status : 502,
@@ -586,6 +625,7 @@ export async function moveQueueRowRoute(
     }
     imported = { queueId: out.queueId, reused: out.reused === true };
   } catch (err) {
+    restore();
     return jsonResponse(
       { error: `${workspace}: could not reach its server — ${(err as Error).message}` },
       502,
@@ -593,13 +633,19 @@ export async function moveQueueRowRoute(
     );
   }
 
-  // Only now, with the destination holding the row: close it here.
-  ledger.setQueueStatus({
-    id,
-    status: "rejected",
-    decidedBy: "human",
-    notes: moveNote(row.notes, workspace),
-  });
+  // The destination holds the row. If a send that was already in flight
+  // landed meanwhile (the `sent` write ignores status), say so rather than
+  // pretend: the person was emailed from here AND is now queued there.
+  const after = ledger.getQueueRow(id);
+  if (after && (after.status === "sent" || after.sent_at != null)) {
+    return jsonResponse(
+      {
+        error: `sent from here while moving; ${workspace} now holds them as pending (row #${imported.queueId}) — reject it there`,
+      },
+      409,
+      req,
+    );
+  }
   const result: MoveQueueRowResult = {
     ok: true,
     destination: { name: workspace, port: dest.port, ...imported },

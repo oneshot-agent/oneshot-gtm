@@ -28,6 +28,8 @@ let importReply: { status: number; body: unknown } = {
   body: { queueId: 77, reused: false },
 };
 const importBodies: unknown[] = [];
+/** When set, the stubbed import also stamps the source row `sent`, as a concurrent drain would. */
+let sentDuringImport = false;
 const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
   const url = String(input instanceof Request ? input.url : input);
   if (url.endsWith("/api/health")) {
@@ -36,6 +38,10 @@ const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit
   }
   if (url.endsWith("/api/queue/import")) {
     importBodies.push(JSON.parse(String(init?.body)));
+    if (sentDuringImport && row) {
+      row.status = "sent";
+      row.sent_at = new Date().toISOString();
+    }
     return new Response(JSON.stringify(importReply.body), { status: importReply.status });
   }
   throw new Error(`unexpected fetch ${url}`);
@@ -52,9 +58,12 @@ type Row = {
   notes: string | null;
   sent_at: string | null;
   send_started_at: string | null;
+  drain_claimed_at: string | null;
 };
 let row: Row | null = null;
+/** Every status/notes write, in order — the reserve/restore dance is the point. */
 const statusCalls: Array<Record<string, unknown>> = [];
+const noteCalls: Array<Record<string, unknown>> = [];
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -64,6 +73,11 @@ vi.mock("@oneshot-gtm/core", async () => {
       getQueueRow: () => row,
       setQueueStatus: (input: Record<string, unknown>) => {
         statusCalls.push(input);
+        // Mirror the write so the post-import re-read sees it.
+        if (row && typeof input["status"] === "string") row.status = input["status"];
+      },
+      setQueueNotes: (input: Record<string, unknown>) => {
+        noteCalls.push(input);
       },
     }),
   };
@@ -88,6 +102,8 @@ beforeEach(() => {
   importReply = { status: 201, body: { queueId: 77, reused: false } };
   importBodies.length = 0;
   statusCalls.length = 0;
+  noteCalls.length = 0;
+  sentDuringImport = false;
   fetchMock.mockClear();
   _setLaunchSpawn();
   row = {
@@ -106,6 +122,7 @@ beforeEach(() => {
     notes: null,
     sent_at: null,
     send_started_at: null,
+    drain_claimed_at: null,
   };
 });
 
@@ -160,7 +177,9 @@ describe("POST /api/queue/:id/move", () => {
     expect(importBodies).toHaveLength(1);
   });
 
-  it("passes the destination's refusal through and leaves the row here untouched", async () => {
+  it("reserves the row as rejected before the awaits and restores it when the destination refuses", async () => {
+    row!.status = "approved";
+    row!.notes = "looks good";
     importReply = {
       status: 409,
       body: { error: "already sent to this person from this workspace (row #9)" },
@@ -168,7 +187,40 @@ describe("POST /api/queue/:id/move", () => {
     const res = await moveQueueRowRoute(req({ workspace: "gtm" }), { id: "746" });
     expect(res.status).toBe(409);
     expect(((await res.json()) as { error: string }).error).toContain("gtm: already sent");
+    // Reserved first (nothing can drain it during the awaits), then put back.
+    expect(statusCalls.map((c) => c["status"])).toEqual(["rejected", "approved"]);
+    expect(noteCalls).toEqual([{ id: 746, notes: "looks good" }]);
+    expect(row!.status).toBe("approved");
+  });
+
+  it("restores the row when the destination cannot be started", async () => {
+    up = false;
+    _setLaunchSpawn(() => {
+      /* never comes up */
+    });
+    const res = await moveQueueRowRoute(req({ workspace: "gtm" }), { id: "746" });
+    expect(res.status).toBe(503);
+    expect(statusCalls.map((c) => c["status"])).toEqual(["rejected", "pending"]);
+    expect(noteCalls).toEqual([{ id: 746, notes: "" }]);
+  }, 20_000);
+
+  it("refuses a row the drain has leased in the last 15 minutes", async () => {
+    row!.status = "approved";
+    row!.drain_claimed_at = new Date(Date.now() - 60_000).toISOString();
+    const res = await moveQueueRowRoute(req({ workspace: "gtm" }), { id: "746" });
+    expect(res.status).toBe(409);
     expect(statusCalls).toHaveLength(0);
+    expect(importBodies).toHaveLength(0);
+  });
+
+  it("reports a send that landed mid-move instead of pretending the row left", async () => {
+    // The destination import "takes long enough" for a drain send to stamp `sent`.
+    sentDuringImport = true;
+    const res = await moveQueueRowRoute(req({ workspace: "gtm" }), { id: "746" });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toContain(
+      "sent from here while moving",
+    );
   });
 
   it("refuses a sent or in-flight row, the current workspace, an unknown one, and a bad body", async () => {

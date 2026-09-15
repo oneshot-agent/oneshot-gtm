@@ -161,6 +161,32 @@ function spawnWorkspace(name: string, entry: { home: string; port: number }): vo
   spawnFn({ binPath, env });
 }
 
+/**
+ * Another workspace by name — never this one, never an unregistered one.
+ * Synchronous, so a caller can validate a destination before it commits to
+ * anything (a move reserves its row only after this passes).
+ */
+export function resolveOtherWorkspace(
+  name: string,
+):
+  | { ok: true; entry: { home: string; port: number } }
+  | { ok: false; status: number; error: string } {
+  if (!name) return { ok: false, status: 400, error: "workspace name required" };
+  if (name === currentWorkspaceName()) {
+    return { ok: false, status: 400, error: "that is this workspace" };
+  }
+  let entry: { home: string; port: number } | undefined;
+  try {
+    const found = listWorkspaces(loadRegistry()).find(([wsName]) => wsName === name);
+    entry = found?.[1];
+  } catch (err) {
+    if (!(err instanceof WorkspaceError)) throw err;
+    return { ok: false, status: 500, error: `workspace registry unreadable: ${err.message}` };
+  }
+  if (!entry) return { ok: false, status: 404, error: `unknown workspace "${name}"` };
+  return { ok: true, entry };
+}
+
 /** How long a just-spawned workspace gets to answer /api/health before a move gives up. */
 const LAUNCH_WAIT_MS = 15_000;
 const LAUNCH_POLL_MS = 500;
@@ -178,19 +204,9 @@ export async function ensureWorkspaceRunning(
 ): Promise<
   { ok: true; port: number; started: boolean } | { ok: false; status: number; error: string }
 > {
-  if (!name) return { ok: false, status: 400, error: "workspace name required" };
-  if (name === currentWorkspaceName()) {
-    return { ok: false, status: 400, error: "that is this workspace" };
-  }
-  let entry: { home: string; port: number } | undefined;
-  try {
-    const found = listWorkspaces(loadRegistry()).find(([wsName]) => wsName === name);
-    entry = found?.[1];
-  } catch (err) {
-    if (!(err instanceof WorkspaceError)) throw err;
-    return { ok: false, status: 500, error: `workspace registry unreadable: ${err.message}` };
-  }
-  if (!entry) return { ok: false, status: 404, error: `unknown workspace "${name}"` };
+  const resolved = resolveOtherWorkspace(name);
+  if (!resolved.ok) return resolved;
+  const { entry } = resolved;
   if (await probe(entry.port)) return { ok: true, port: entry.port, started: false };
 
   spawnWorkspace(name, entry);
