@@ -242,6 +242,9 @@ export const api = {
     ),
   recordOutcome: (req: OutcomeRequest) => postJson<{ id: number }>("/measure/outcome", req),
   doctor: () => getJson<{ checks: DoctorCheck[] }>("/doctor"),
+  // Same checks, but the wallet balance is re-read instead of served from
+  // the day-old cache — the masthead pill's refresh control after a top-up.
+  doctorRefreshBalance: () => getJson<{ checks: DoctorCheck[] }>("/doctor?refresh=1"),
   workspace: () => getJson<WorkspaceInfo>("/workspace"),
   workspaceLaunch: (name: string) =>
     postJson<{ status: "starting" | "already-running"; port: number }>("/workspace/launch", {

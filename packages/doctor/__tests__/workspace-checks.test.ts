@@ -756,21 +756,42 @@ describe("github token check", () => {
 });
 
 describe("wallet balance check", () => {
-  it.each(["0 USDC", "unavailable"])("warns when the balance is %s", async (balance) => {
+  it("fails at zero — every paid call is refused, the founder needs the red pill", async () => {
     walletReady = true;
-    balanceValue = balance;
+    balanceValue = "0 USDC";
 
     const hit = (await runDoctor()).find((c) => c.name === "wallet balance");
-    expect(hit?.severity).toBe("warn");
-    expect(hit?.hint).toContain("USDC on Base");
+    expect(hit?.severity).toBe("fail");
+    expect(hit?.balanceUsd).toBe(0);
+    expect(hit?.message).toMatch(/^\$0\.00 USDC · checked /);
+    expect(typeof hit?.balanceCheckedAt).toBe("string");
+    expect(hit?.hint).toContain("top up USDC on Base");
   });
 
-  it("passes for a positive parsed balance", async () => {
+  it("warns when the balance is low or cannot be parsed", async () => {
     walletReady = true;
     balanceValue = "2.50 USDC";
+    let hit = (await runDoctor()).find((c) => c.name === "wallet balance");
+    expect(hit?.severity).toBe("warn");
+    expect(hit?.balanceUsd).toBe(2.5);
+    expect(hit?.hint).toContain("USDC on Base");
+
+    balanceValue = "unavailable";
+    hit = (await runDoctor()).find((c) => c.name === "wallet balance");
+    expect(hit?.severity).toBe("warn");
+    expect(hit?.balanceUsd).toBeUndefined();
+    expect(hit?.message).toMatch(/^unavailable · checked /);
+  });
+
+  it("passes for a healthy balance and carries the amount for the masthead pill", async () => {
+    walletReady = true;
+    balanceValue = "26.890849";
 
     const hit = (await runDoctor()).find((c) => c.name === "wallet balance");
     expect(hit?.severity).toBe("ok");
+    expect(hit?.balanceUsd).toBeCloseTo(26.89, 2);
+    expect(hit?.message).toMatch(/^\$26\.89 USDC · checked just now$/);
+    expect(hit?.hint).toBeUndefined();
   });
 });
 

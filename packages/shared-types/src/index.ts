@@ -318,6 +318,9 @@ export interface DoctorCheck {
   severity: "ok" | "warn" | "fail";
   message: string;
   hint?: string;
+  /** `wallet balance` only: USDC amount and when it was last read (cached a day; `?refresh=1` re-reads). */
+  balanceUsd?: number;
+  balanceCheckedAt?: string;
   approvalRate?: number | null;
   approved?: number;
   reviewed?: number;
