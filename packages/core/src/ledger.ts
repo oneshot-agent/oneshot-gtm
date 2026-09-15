@@ -610,6 +610,9 @@ export class Ledger {
     // A successful advance also clears any prior send-failure marker (the send
     // that just advanced us obviously succeeded).
     this.db.transaction(() => {
+      // A preview that predates versioning is still the draft being sent —
+      // seed it before the clear below erases the envelope.
+      this.seedCadenceDraftVersion(input.prospectId, input.playName);
       this.db
         .prepare(
           `UPDATE cadence_state
@@ -729,6 +732,9 @@ export class Ledger {
     const draftedAtIso = new Date().toISOString();
     const json = JSON.stringify({ ...input.draft, draftedAt: draftedAtIso });
     this.db.transaction(() => {
+      // Seed from the preview this write replaces (a draft that predates
+      // versioning) before the UPDATE erases it.
+      const key = this.seedCadenceDraftVersion(input.prospectId, input.playName);
       this.db
         .prepare(
           `UPDATE cadence_state
@@ -736,24 +742,10 @@ export class Ledger {
            WHERE prospect_id = ? AND play_name = ?`,
         )
         .run(json, draftedAtIso, input.prospectId, input.playName);
-      const row = this.db
-        .query(
-          `SELECT c.current_step AS current_step, p.email AS email
-             FROM cadence_state c JOIN prospects p ON p.id = c.prospect_id
-            WHERE c.prospect_id = ? AND c.play_name = ?`,
-        )
-        .get(input.prospectId, input.playName) as {
-        current_step: number;
-        email: string | null;
-      } | null;
-      if (!row) return;
-      const stepIndex = row.current_step + 1;
+      if (!key) return;
       const payload = input.draft.payload as { angle?: unknown } | null;
       this.drafts.open({
-        slot: { prospectId: input.prospectId, playName: input.playName, stepIndex },
-        playName: input.playName,
-        prospectKey: row.email?.trim().toLowerCase() || `prospect:${input.prospectId}`,
-        stepIndex,
+        ...key,
         subject: input.draft.subject,
         body: input.draft.body,
         flags: input.draft.flags,
@@ -761,6 +753,43 @@ export class Ledger {
         ...(input.discardReason ? { discardReason: input.discardReason } : {}),
       });
     })();
+  }
+
+  /**
+   * Slot + identity for a cadence's next-step draft versions, seeding a
+   * version from the stored preview when the slot has none (ledger-drafts.ts
+   * `seedFromStored`). Null when the cadence is gone.
+   */
+  private seedCadenceDraftVersion(
+    prospectId: number,
+    playName: string,
+  ): {
+    slot: { prospectId: number; playName: string; stepIndex: number };
+    playName: string;
+    prospectKey: string;
+    stepIndex: number;
+  } | null {
+    const row = this.db
+      .query(
+        `SELECT c.current_step AS current_step, c.next_step_draft_json AS stored, p.email AS email
+           FROM cadence_state c JOIN prospects p ON p.id = c.prospect_id
+          WHERE c.prospect_id = ? AND c.play_name = ?`,
+      )
+      .get(prospectId, playName) as {
+      current_step: number;
+      stored: string | null;
+      email: string | null;
+    } | null;
+    if (!row) return null;
+    const stepIndex = row.current_step + 1;
+    const key = {
+      slot: { prospectId, playName, stepIndex },
+      playName,
+      prospectKey: row.email?.trim().toLowerCase() || `prospect:${prospectId}`,
+      stepIndex,
+    };
+    this.drafts.seedFromStored({ ...key, stored: row.stored });
+    return key;
   }
 
   getCadenceDraft(input: { prospectId: number; playName: string }): {

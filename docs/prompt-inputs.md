@@ -128,8 +128,11 @@ text was rejected, the angle kept); **Rotate angle** closes it with reason
 `rotate` (the angle was rejected); a reviewed send closes it as `sent`; a
 drain send of an approved row the founder never read is `auto_sent`; a
 cadence that stops, replies or bounces with a preview open leaves it
-`abandoned`. Nothing here is a prompt instruction — the counts are shown, not
-fed back to the model.
+`abandoned`. A draft that was already on a row before versioning existed is
+recorded the first time it is regenerated, rotated away from or sent, dated
+to when it was drafted, so the first regenerate after an upgrade still shows
+what it replaced. Nothing here is a prompt instruction — the counts are
+shown, not fed back to the model.
 
 The trigger config editor on /queue shows, under `yourEdge`, one line per
 configured angle — offered, rotated away, redrafted, sent, auto-sent, counted

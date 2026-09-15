@@ -871,7 +871,15 @@ export class QueueStore {
             input.previousDraft,
             input.previousPayload,
           ).changes === 1;
-      if (saved) this.versionQueueDraft(input.id, input.draft, input.discardReason, "machine");
+      if (saved) {
+        this.versionQueueDraft(
+          input.id,
+          input.draft,
+          input.discardReason,
+          "machine",
+          input.previousDraft,
+        );
+      }
       return saved;
     })();
   }
@@ -901,10 +909,21 @@ export class QueueStore {
     const draftedAtIso = new Date().toISOString();
     const json = JSON.stringify({ ...input.draft, draftedAt: draftedAtIso });
     this.db.transaction(() => {
+      // The envelope this write replaces — read before the UPDATE so a draft
+      // that predates versioning can still be recorded as what was replaced.
+      const before = this.db
+        .query(`SELECT last_draft_json AS j FROM target_queue WHERE id = ?`)
+        .get(input.id) as { j: string | null } | null;
       this.db
         .prepare(`UPDATE target_queue SET last_draft_json = ?, last_drafted_at = ? WHERE id = ?`)
         .run(json, draftedAtIso, input.id);
-      this.versionQueueDraft(input.id, input.draft, input.discardReason, input.sentBy ?? "machine");
+      this.versionQueueDraft(
+        input.id,
+        input.draft,
+        input.discardReason,
+        input.sentBy ?? "machine",
+        before?.j ?? null,
+      );
     })();
   }
 
@@ -919,20 +938,14 @@ export class QueueStore {
     draft: { subject: string; body: string; flags: string[]; sent: boolean; angle?: unknown },
     discardReason: DraftDiscardReason | undefined,
     sentBy: "human" | "machine",
+    /** The `last_draft_json` this write replaced — seeds a version when the row had none. */
+    previousStored: string | null,
   ): void {
-    const row = this.db
-      .query(
-        `SELECT play_name, dedupe_key, json_extract(payload_json, '$.email') AS email
-           FROM target_queue WHERE id = ?`,
-      )
-      .get(id) as { play_name: string; dedupe_key: string; email: string | null } | null;
-    if (!row) return;
-    const email = typeof row.email === "string" ? row.email.trim().toLowerCase() : "";
+    const key = this.queueVersionKey(id);
+    if (!key) return;
+    this.drafts.seedFromStored({ ...key, stored: previousStored });
     const base = {
-      slot: { queueId: id },
-      playName: row.play_name,
-      prospectKey: email || row.dedupe_key,
-      stepIndex: 0,
+      ...key,
       subject: draft.subject,
       body: draft.body,
       flags: draft.flags,
@@ -951,8 +964,38 @@ export class QueueStore {
     this.drafts.insertClosed({ ...base, outcome });
   }
 
-  /** The `mark-sent` path records no draft write of its own — close what the founder marked. */
+  /** Slot + identity for a queue row's draft versions; null when the row is gone. */
+  private queueVersionKey(
+    id: number,
+  ): { slot: { queueId: number }; playName: string; prospectKey: string; stepIndex: 0 } | null {
+    const row = this.db
+      .query(
+        `SELECT play_name, dedupe_key, json_extract(payload_json, '$.email') AS email
+           FROM target_queue WHERE id = ?`,
+      )
+      .get(id) as { play_name: string; dedupe_key: string; email: string | null } | null;
+    if (!row) return null;
+    const email = typeof row.email === "string" ? row.email.trim().toLowerCase() : "";
+    return {
+      slot: { queueId: id },
+      playName: row.play_name,
+      prospectKey: email || row.dedupe_key,
+      stepIndex: 0,
+    };
+  }
+
+  /**
+   * The `mark-sent` path records no draft write of its own — close what the
+   * founder marked, seeding it from the stored draft when the row predates
+   * versioning.
+   */
   closeQueueDraftVersion(id: number, outcome: "sent" | "auto_sent"): boolean {
+    const key = this.queueVersionKey(id);
+    if (!key) return false;
+    const stored = this.db
+      .query(`SELECT last_draft_json AS j FROM target_queue WHERE id = ?`)
+      .get(id) as { j: string | null } | null;
+    this.drafts.seedFromStored({ ...key, stored: stored?.j ?? null });
     return this.drafts.close({ queueId: id }, outcome);
   }
 

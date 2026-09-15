@@ -101,6 +101,49 @@ export function draftVersionAngle(value: unknown): DraftVersionAngle | null {
   return { text: a.text.trim(), origin };
 }
 
+/**
+ * The draft envelope a row stores (`target_queue.last_draft_json`, or a
+ * cadence's `next_step_draft_json` whose `payload.angle` carries the angle),
+ * shape-checked. Null when it is not a usable unsent draft: a sent envelope
+ * has nothing left to discard, and an error stub was never a draft.
+ */
+export function storedDraftEnvelope(raw: unknown): {
+  subject: string;
+  body: string;
+  flags: string[];
+  angle: DraftVersionAngle | null;
+  draftedAt: string | null;
+} | null {
+  let value: unknown = raw;
+  if (typeof raw === "string") {
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  if (!value || typeof value !== "object") return null;
+  const v = value as Record<string, unknown>;
+  if (typeof v["body"] !== "string" || !v["body"].trim()) return null;
+  if (v["sent"] === true) return null;
+  const subject = typeof v["subject"] === "string" ? v["subject"] : "";
+  if (subject === "(error)") return null;
+  const flags = Array.isArray(v["flags"])
+    ? v["flags"].filter((f): f is string => typeof f === "string")
+    : [];
+  if (flags.some((f) => f.startsWith("error:"))) return null;
+  const payload = v["payload"];
+  const payloadAngle =
+    payload && typeof payload === "object" ? (payload as { angle?: unknown }).angle : undefined;
+  return {
+    subject,
+    body: v["body"],
+    flags,
+    angle: draftVersionAngle(v["angle"] ?? payloadAngle),
+    draftedAt: typeof v["draftedAt"] === "string" ? v["draftedAt"] : null,
+  };
+}
+
 const EMPTY_USAGE = (): DraftUsage => ({
   open: 0,
   regenerated: 0,
@@ -135,11 +178,51 @@ export class DraftVersionStore {
     flags: string[];
     angle?: DraftVersionAngle | null;
     discardReason?: DraftDiscardReason;
+    /** When the draft was really written — a seeded pre-existing draft keeps its own time. */
+    createdAt?: string;
   }): void {
     if (!input.body.trim() || input.subject === "(error)") return;
     if (input.flags.some((f) => f.startsWith("error:"))) return;
     this.close(input.slot, "discarded", input.discardReason ?? "redraft");
     this.insert({ ...input, outcome: "open" });
+  }
+
+  /**
+   * A draft that was on the row BEFORE versioning existed (or that reached
+   * the row through a path this store never saw) is still the draft the
+   * founder is about to regenerate, rotate away from, or send. When the slot
+   * has no open version, open one from the stored envelope first, so the
+   * write that follows records it as discarded/sent instead of losing it.
+   * Dated to the envelope's own `draftedAt` when it carries one.
+   */
+  seedFromStored(input: {
+    slot: DraftSlot;
+    playName: string;
+    prospectKey: string;
+    stepIndex: number;
+    stored: unknown;
+  }): void {
+    // Only a slot this store has never seen: once any version exists, the
+    // stored envelope IS a version (or was closed as one) — seeding again
+    // would double-count a send.
+    const where = slotWhere(input.slot);
+    const seen = this.db
+      .query(`SELECT 1 FROM draft_versions WHERE ${where.sql} LIMIT 1`)
+      .get(...where.args);
+    if (seen) return;
+    const env = storedDraftEnvelope(input.stored);
+    if (!env) return;
+    this.open({
+      slot: input.slot,
+      playName: input.playName,
+      prospectKey: input.prospectKey,
+      stepIndex: input.stepIndex,
+      subject: env.subject,
+      body: env.body,
+      flags: env.flags,
+      angle: env.angle,
+      ...(env.draftedAt ? { createdAt: env.draftedAt } : {}),
+    });
   }
 
   /**
@@ -246,6 +329,7 @@ export class DraftVersionStore {
     flags: string[];
     angle?: DraftVersionAngle | null;
     outcome: DraftVersionOutcome;
+    createdAt?: string;
   }): void {
     const now = new Date().toISOString();
     const angle = input.angle ?? null;
@@ -270,7 +354,7 @@ export class DraftVersionStore {
         angle ? angle.text : null,
         angle ? angle.origin : null,
         input.outcome,
-        now,
+        input.createdAt ?? now,
         input.outcome === "open" ? null : now,
       );
   }

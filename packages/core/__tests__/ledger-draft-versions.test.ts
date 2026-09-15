@@ -1,3 +1,4 @@
+import { Database } from "bun:sqlite";
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +14,11 @@ import { angleTextKey, draftVersionAngle } from "../src/ledger-drafts.ts";
 
 let dbPath: string;
 let ledger: Ledger;
+
+/** A second connection for writing the pre-versioning envelopes the tests plant. */
+function rawDb(): Database {
+  return new Database(dbPath);
+}
 
 beforeEach(() => {
   dbPath = join(
@@ -212,6 +218,71 @@ describe("intro drafts (target_queue)", () => {
     expect(ledger.draftVersionsFor({ queueId: id })).toHaveLength(0);
   });
 
+  it("a draft stored before versioning existed is seeded as what the first regenerate replaced", () => {
+    const id = enqueue("pre@x.dev");
+    // Write the envelope directly, the way every row looked before draft_versions.
+    rawDb()
+      .prepare(`UPDATE target_queue SET last_draft_json = ?, last_drafted_at = ? WHERE id = ?`)
+      .run(
+        JSON.stringify({
+          subject: "old subject",
+          body: "old body",
+          flags: [],
+          sent: false,
+          receiptIds: [],
+          dryRun: true,
+          draftedAt: "2026-09-10T10:00:00.000Z",
+          angle: ANGLE_A,
+        }),
+        "2026-09-10T10:00:00.000Z",
+        id,
+      );
+    expect(ledger.draftVersionsFor({ queueId: id })).toHaveLength(0);
+    ledger.setQueueDraft({
+      id,
+      draft: draft({ body: "new body", angle: ANGLE_B }),
+      discardReason: "rotate",
+    });
+    const versions = ledger.draftVersionsFor({ queueId: id });
+    expect(versions.map((v) => [v.body, v.outcome, v.discard_reason, v.angle_text])).toEqual([
+      ["new body", "open", null, ANGLE_B.text],
+      ["old body", "discarded", "rotate", ANGLE_A.text],
+    ]);
+    // The seeded version keeps the time it was really drafted.
+    expect(versions[1]!.created_at).toBe("2026-09-10T10:00:00.000Z");
+  });
+
+  it("a pre-versioning draft sent verbatim (send-draft or mark-sent) is recorded as sent, once", () => {
+    const sendDraft = enqueue("pre2@x.dev");
+    const stored = JSON.stringify({ subject: "s", body: "reviewed body", flags: [], sent: false });
+    rawDb()
+      .prepare(`UPDATE target_queue SET last_draft_json = ? WHERE id = ?`)
+      .run(stored, sendDraft);
+    ledger.setQueueDraft({
+      id: sendDraft,
+      draft: draft({ body: "reviewed body", sent: true, dryRun: false, receiptIds: [9] }),
+      sentBy: "human",
+    });
+    expect(ledger.draftVersionsFor({ queueId: sendDraft }).map((v) => [v.body, v.outcome])).toEqual(
+      [["reviewed body", "sent"]],
+    );
+
+    const markSent = enqueue("pre3@x.dev");
+    rawDb()
+      .prepare(`UPDATE target_queue SET last_draft_json = ? WHERE id = ?`)
+      .run(stored, markSent);
+    expect(ledger.closeQueueDraftVersion(markSent, "sent")).toBe(true);
+    expect(ledger.draftVersionsFor({ queueId: markSent }).map((v) => [v.body, v.outcome])).toEqual([
+      ["reviewed body", "sent"],
+    ]);
+    // An already-sent or error envelope seeds nothing.
+    const sentEnv = enqueue("pre4@x.dev");
+    rawDb()
+      .prepare(`UPDATE target_queue SET last_draft_json = ? WHERE id = ?`)
+      .run(JSON.stringify({ subject: "s", body: "gone out", flags: [], sent: true }), sentEnv);
+    expect(ledger.closeQueueDraftVersion(sentEnv, "sent")).toBe(false);
+  });
+
   it("closeQueueDraftVersion closes the open version (mark-sent path) and reports when nothing is open", () => {
     const id = enqueue("i@x.dev");
     expect(ledger.closeQueueDraftVersion(id, "sent")).toBe(false);
@@ -293,6 +364,49 @@ describe("follow-up drafts (cadence_state)", () => {
     });
     expect(ledger.draftVersionsFor({ ...input, stepIndex: 2 })).toHaveLength(1);
     expect(ledger.draftVersionsFor({ ...input, stepIndex: 1 })).toHaveLength(2);
+  });
+
+  it("a cadence preview stored before versioning is seeded on the next preview and on send", () => {
+    const play = "stack-consolidation";
+    const stored = JSON.stringify({
+      subject: "old follow",
+      body: "old follow body",
+      flags: [],
+      payload: { kind: "email", subject: "old follow", body: "old follow body", angle: ANGLE_B },
+      draftedAt: "2026-09-11T09:00:00.000Z",
+    });
+    const write = (pid: number) =>
+      rawDb()
+        .prepare(
+          `UPDATE cadence_state SET next_step_draft_json = ? WHERE prospect_id = ? AND play_name = ?`,
+        )
+        .run(stored, pid, play);
+
+    const regenerated = cadence("q@x.dev");
+    write(regenerated);
+    ledger.setCadenceDraft({
+      prospectId: regenerated,
+      playName: play,
+      draft: { subject: "new", body: "new follow body", flags: [], payload: payload(ANGLE_A) },
+      discardReason: "regenerate",
+    });
+    expect(
+      ledger
+        .draftVersionsFor({ prospectId: regenerated, playName: play, stepIndex: 1 })
+        .map((v) => [v.body, v.outcome, v.discard_reason, v.angle_text, v.created_at]),
+    ).toEqual([
+      ["new follow body", "open", null, ANGLE_A.text, expect.any(String)],
+      ["old follow body", "discarded", "regenerate", ANGLE_B.text, "2026-09-11T09:00:00.000Z"],
+    ]);
+
+    const sent = cadence("r@x.dev");
+    write(sent);
+    ledger.advanceCadence({ prospectId: sent, playName: play, newStep: 1, nextDueAt: null });
+    expect(
+      ledger
+        .draftVersionsFor({ prospectId: sent, playName: play, stepIndex: 1 })
+        .map((v) => [v.body, v.outcome]),
+    ).toEqual([["old follow body", "sent"]]);
   });
 
   it("breakup closes as sent; other terminal statuses, stop, clear and reply abandon the open draft", () => {
