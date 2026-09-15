@@ -777,7 +777,9 @@ describe("wallet balance check", () => {
     expect(hit?.hint).toContain("USDC on Base");
 
     balanceValue = "unavailable";
-    hit = (await runDoctor()).find((c) => c.name === "wallet balance");
+    // Force a live read: on a ledger with the cache, the "2.50" read above
+    // would otherwise be served for the rest of the day.
+    hit = (await runDoctor({ refreshBalance: true })).find((c) => c.name === "wallet balance");
     expect(hit?.severity).toBe("warn");
     expect(hit?.balanceUsd).toBeUndefined();
     expect(hit?.message).toMatch(/^unavailable · checked /);
