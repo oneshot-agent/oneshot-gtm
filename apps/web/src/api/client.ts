@@ -26,6 +26,7 @@ import type {
   InboxSteerResult,
   DraftVersionView,
   LastDraft,
+  MoveQueueRowResult,
   LogMeetingOutcomeRequest,
   MeetingsResult,
   OutcomeByPlay,
@@ -395,6 +396,10 @@ export const api = {
   // sequence event + prospect and flips the row to sent. No transport.
   markSent: (id: number) =>
     postJson<{ ok: boolean; prospectId: number }>(`/queue/${id}/mark-sent`, {}),
+  // Hand the row to another workspace's queue (started if needed); the row
+  // here is rejected with a "moved to" note once the destination holds it.
+  moveQueueRow: (id: number, workspace: string) =>
+    postJson<MoveQueueRowResult>(`/queue/${id}/move`, { workspace }),
   // Web UI no longer calls this — the drain modal navigates to /run/$playName
   // so drafts + lint flags are visible per row. Kept for the CLI's HTTP path
   // (`oneshot-gtm find drain`) and any external scripted callers.

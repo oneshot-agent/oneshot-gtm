@@ -3755,6 +3755,11 @@ export class Ledger {
     return this.queue.setQueueDraftIfCurrent(input);
   }
 
+  /** Drop a row's stored draft (and close its open version as a redraft) — see QueueStore.clearQueueDraft. */
+  clearQueueDraft(id: number): void {
+    this.queue.clearQueueDraft(id);
+  }
+
   /** Close a queue row's open draft version without a draft write (the mark-sent path). */
   closeQueueDraftVersion(id: number, outcome: "sent" | "auto_sent"): boolean {
     return this.queue.closeQueueDraftVersion(id, outcome);

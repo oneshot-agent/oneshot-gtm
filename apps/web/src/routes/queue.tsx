@@ -34,6 +34,8 @@ import { Field, Input, Textarea } from "../components/primitives/Field.tsx";
 import { Modal } from "../components/primitives/Modal.tsx";
 import { AddProspectForm } from "../components/queue/AddProspectForm.tsx";
 import { AngleUsagePanel } from "../components/queue/AngleUsagePanel.tsx";
+import { MoveToWorkspace } from "../components/queue/MoveToWorkspace.tsx";
+import { moveTargets, movedRowUrl, type MoveTarget } from "../lib/moveTargets.ts";
 import { DraftHistory } from "../components/ledger/DraftHistory.tsx";
 import { neverSentAngles, removeAngleFromConfigText } from "../lib/angleRetire.ts";
 import { useMask, usePrivacy } from "../lib/privacy.tsx";
@@ -248,6 +250,39 @@ function QueuePage() {
     mutationFn: (id: number) => api.approveQueue(id),
     onSuccess: invalidate,
     onError: (err) => toast.error(`couldn't approve · ${err.message}`),
+  });
+
+  // The other workspaces on this machine, for "move →" on each row. Same
+  // roster the masthead switcher polls, so the cache is shared.
+  const workspaceRoster = useQuery({
+    queryKey: ["workspace"],
+    queryFn: api.workspace,
+    staleTime: 60_000,
+  });
+  const targets = moveTargets(workspaceRoster.data);
+
+  const move = useMutation({
+    mutationFn: (vars: { id: number; workspace: string }) =>
+      api.moveQueueRow(vars.id, vars.workspace),
+    onSuccess: (res, vars) => {
+      // The row is rejected here now; leaving it selected would let a bulk
+      // approve re-open it while the destination holds the live copy.
+      setSelected((prev) => {
+        const next = new Set(prev);
+        next.delete(vars.id);
+        return next;
+      });
+      const { name, port, reused } = res.destination;
+      toast.success(reused ? `re-opened their existing row in ${name}` : `moved to ${name}`, {
+        description: "This row is now rejected here.",
+        action: {
+          label: "open",
+          onClick: () => window.open(movedRowUrl(port), "_blank", "noopener"),
+        },
+      });
+      void qc.invalidateQueries({ queryKey: ["queue"] });
+    },
+    onError: (err) => toast.error(`couldn't move · ${err.message}`),
   });
   const reject = useMutation({
     mutationFn: (vars: { id: number; reason: string }) => api.rejectQueue(vars.id, vars.reason),
@@ -605,6 +640,8 @@ function QueuePage() {
                   onToggle={() => setExpanded(expanded === row.id ? null : row.id)}
                   generating={generating.has(row.id)}
                   onApprove={() => approve.mutate(row.id)}
+                  onMove={(workspace) => move.mutate({ id: row.id, workspace })}
+                  moveTargets={targets}
                   onReject={() => {
                     const s = masked
                       ? { text: "", source: null }
@@ -617,7 +654,7 @@ function QueuePage() {
                       privacy: masked,
                     });
                   }}
-                  busy={approve.isPending || reject.isPending}
+                  busy={approve.isPending || reject.isPending || move.isPending}
                 />
               ))}
               {/* The fetch returns up to 200 rows (queue-helpers.ts `limit`)
@@ -868,6 +905,8 @@ export function QueueRow({
   generating,
   onApprove,
   onReject,
+  onMove,
+  moveTargets: targets,
   busy,
 }: {
   row: QueueRowView;
@@ -881,6 +920,10 @@ export function QueueRow({
   generating: boolean;
   onApprove: () => void;
   onReject: () => void;
+  /** Hand the row to another workspace (components/queue/MoveToWorkspace.tsx). */
+  onMove: (workspace: string) => void;
+  /** The other workspaces on this machine; empty hides the move button. */
+  moveTargets: MoveTarget[];
   busy: boolean;
 }) {
   const email = emailFor(row.payload);
@@ -1035,6 +1078,11 @@ export function QueueRow({
                 <X size={12} />
                 reject
               </Button>
+            )}
+            {(row.status === "pending" ||
+              row.status === "approved" ||
+              row.status === "rejected") && (
+              <MoveToWorkspace targets={targets} disabled={busy} onMove={onMove} />
             )}
           </div>
         </td>

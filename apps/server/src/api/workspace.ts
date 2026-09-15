@@ -23,7 +23,7 @@ function boundPort(): number {
 }
 
 /** ~300ms liveness probe against another workspace's /api/health. */
-async function probe(port: number): Promise<boolean> {
+export async function probe(port: number): Promise<boolean> {
   try {
     const res = await fetch(`http://127.0.0.1:${port}/api/health`, {
       signal: AbortSignal.timeout(300),
@@ -130,6 +130,13 @@ export async function workspaceLaunch(req: Request): Promise<Response> {
     return jsonResponse({ status: "already-running", port: entry.port }, 200, req);
   }
 
+  spawnWorkspace(name, entry);
+
+  return jsonResponse({ status: "starting", port: entry.port }, 200, req);
+}
+
+/** Detach a child server for `name` on its registered port. Unsupervised by design. */
+function spawnWorkspace(name: string, entry: { home: string; port: number }): void {
   const env: Record<string, string | undefined> = {
     ...process.env,
     ONESHOT_GTM_HOME: entry.home,
@@ -152,6 +159,68 @@ export async function workspaceLaunch(req: Request): Promise<Response> {
   // would arrive percent-encoded and the child would die on a missing file.
   const binPath = fileURLToPath(new URL("../bin.ts", import.meta.url));
   spawnFn({ binPath, env });
+}
 
-  return jsonResponse({ status: "starting", port: entry.port }, 200, req);
+/**
+ * Another workspace by name — never this one, never an unregistered one.
+ * Synchronous, so a caller can validate a destination before it commits to
+ * anything (a move reserves its row only after this passes).
+ */
+export function resolveOtherWorkspace(
+  name: string,
+):
+  | { ok: true; entry: { home: string; port: number } }
+  | { ok: false; status: number; error: string } {
+  if (!name) return { ok: false, status: 400, error: "workspace name required" };
+  if (name === currentWorkspaceName()) {
+    return { ok: false, status: 400, error: "that is this workspace" };
+  }
+  let entry: { home: string; port: number } | undefined;
+  try {
+    const found = listWorkspaces(loadRegistry()).find(([wsName]) => wsName === name);
+    entry = found?.[1];
+  } catch (err) {
+    if (!(err instanceof WorkspaceError)) throw err;
+    return { ok: false, status: 500, error: `workspace registry unreadable: ${err.message}` };
+  }
+  if (!entry) return { ok: false, status: 404, error: `unknown workspace "${name}"` };
+  return { ok: true, entry };
+}
+
+/** How long a just-spawned workspace gets to answer /api/health before a move gives up. */
+const LAUNCH_WAIT_MS = 15_000;
+const LAUNCH_POLL_MS = 500;
+
+/**
+ * Resolve another workspace by name and make sure its server answers: probe,
+ * spawn if needed, poll until healthy. The building block of a queue move —
+ * the move route talks to the destination over its own HTTP API, so the
+ * destination must be up. Never throws on a registry problem; every failure
+ * is a message the route can return verbatim.
+ */
+export async function ensureWorkspaceRunning(
+  name: string,
+  opts: { waitMs?: number; pollMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+): Promise<
+  { ok: true; port: number; started: boolean } | { ok: false; status: number; error: string }
+> {
+  const resolved = resolveOtherWorkspace(name);
+  if (!resolved.ok) return resolved;
+  const { entry } = resolved;
+  if (await probe(entry.port)) return { ok: true, port: entry.port, started: false };
+
+  spawnWorkspace(name, entry);
+  const sleep = opts.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+  const waitMs = opts.waitMs ?? LAUNCH_WAIT_MS;
+  const pollMs = opts.pollMs ?? LAUNCH_POLL_MS;
+  const deadline = Date.now() + waitMs;
+  while (Date.now() < deadline) {
+    await sleep(pollMs);
+    if (await probe(entry.port)) return { ok: true, port: entry.port, started: true };
+  }
+  return {
+    ok: false,
+    status: 503,
+    error: `workspace "${name}" did not come up on :${entry.port} within ${Math.round(waitMs / 1000)}s — start it with: bun run cli -- --workspace ${name} ui`,
+  };
 }
