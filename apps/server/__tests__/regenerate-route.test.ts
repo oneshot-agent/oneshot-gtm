@@ -34,7 +34,7 @@ const getTrigger = vi.fn();
 const dispatchCalls: unknown[] = [];
 const dispatchAngles: Array<string | undefined> = [];
 
-const setQueueDraftCalls: Array<{ id: number; sent: boolean }> = [];
+const setQueueDraftCalls: Array<{ id: number; sent: boolean; discardReason?: string }> = [];
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -44,8 +44,16 @@ vi.mock("@oneshot-gtm/core", async () => {
     getLedger: () => ({
       getQueueRow: () => ({ ...row }),
       getTrigger,
-      setQueueDraftIfCurrent: (input: { id: number; draft: { sent: boolean } }) => {
-        setQueueDraftCalls.push({ id: input.id, sent: input.draft.sent });
+      setQueueDraftIfCurrent: (input: {
+        id: number;
+        draft: { sent: boolean };
+        discardReason?: string;
+      }) => {
+        setQueueDraftCalls.push({
+          id: input.id,
+          sent: input.draft.sent,
+          ...(input.discardReason ? { discardReason: input.discardReason } : {}),
+        });
         return true;
       },
     }),
@@ -140,6 +148,8 @@ describe("regenerateDraftRoute — TOCTOU guards", () => {
     expect(res.status).toBe(200);
     expect(setQueueDraftCalls).toHaveLength(1);
     expect(setQueueDraftCalls[0]?.sent).toBe(false);
+    // A plain regenerate is the founder rejecting the text, angle kept.
+    expect(setQueueDraftCalls[0]?.discardReason).toBe("regenerate");
   });
 });
 
@@ -232,4 +242,6 @@ it("rotation passes the next angle explicitly to the writer", async () => {
   expect(body.angle.index).toBe(1);
   expect(dispatchAngles).toEqual(["second"]);
   expect(row.last_draft_json).toContain("old draft");
+  // The replaced draft is recorded as rotated away from, not merely redrafted.
+  expect(setQueueDraftCalls.at(-1)?.discardReason).toBe("rotate");
 });

@@ -236,14 +236,30 @@ describe("a play's input block (accelerator-batch through runEmailPlay)", () => 
   });
 
   it("a one-angle edge reaches the prompt whole, with no classifier call", async () => {
-    await runAcceleratorBatch({ dryRun: true, targets: [{ ...base, yourEdge: A1 }] });
+    const { drafted } = await runAcceleratorBatch({
+      dryRun: true,
+      targets: [{ ...base, yourEdge: A1 }],
+    });
     expect(calls.classifier).toHaveLength(0);
     expect(calls.writer[0]).toContain(`YOUR EDGE: ${A1}`);
+    // The draft still records which angle it carries: the founder's verdict
+    // on a lone angle is a verdict (draft versions key on it).
+    expect(drafted[0]?.angle).toMatchObject({
+      text: A1,
+      origin: "configured",
+      index: 0,
+      count: 1,
+      history: [],
+    });
+    expect(typeof drafted[0]?.angle?.fingerprint).toBe("string");
   });
 
   it("a multi-angle edge reaches the prompt as exactly the chosen angle", async () => {
     classifierAnswer = { index: 2 };
-    await runAcceleratorBatch({ dryRun: true, targets: [{ ...base, yourEdge: EDGE }] });
+    const { drafted } = await runAcceleratorBatch({
+      dryRun: true,
+      targets: [{ ...base, yourEdge: EDGE }],
+    });
     expect(calls.classifier).toHaveLength(1);
     expect(calls.classifier[0]).toContain("productOneLiner: scheduling for dental clinics");
     const block = calls.writer[0] ?? "";
@@ -251,6 +267,23 @@ describe("a play's input block (accelerator-batch through runEmailPlay)", () => 
     expect(block).not.toContain(A1);
     expect(block).not.toContain(A3);
     expect(block).not.toContain("//");
+    expect(drafted[0]?.angle).toMatchObject({ text: A2, origin: "configured", index: 1, count: 3 });
+  });
+
+  it("an explicit rotation leaves the angle to the caller (regenerate holds the full DraftAngle)", async () => {
+    const { drafted } = await runAcceleratorBatch({
+      dryRun: true,
+      targets: [{ ...base, yourEdge: EDGE }],
+      draftAngle: "the product is the playbook",
+    });
+    expect(drafted[0]?.angle).toBeUndefined();
+  });
+
+  it("the same positioning gives the same fingerprint; a different edge a different one", async () => {
+    const { positioningFingerprint } = await import("../src/_angles.ts");
+    expect(positioningFingerprint(EDGE)).toBe(positioningFingerprint(EDGE));
+    expect(positioningFingerprint(EDGE)).not.toBe(positioningFingerprint(A1));
+    expect(positioningFingerprint(EDGE)).toMatch(/^[0-9a-f]{64}$/);
   });
 });
 

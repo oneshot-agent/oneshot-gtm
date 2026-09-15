@@ -541,7 +541,11 @@ function persistDraftsToQueue(input: {
           receiptIds: draft.receiptIds,
           dryRun: input.dryRun,
           ...(draft.enrichmentFailed ? { enrichmentFailed: true } : {}),
+          ...(draft.angle ? { angle: draft.angle } : {}),
         },
+        // A run's send is not a per-row review: the founder approved the
+        // person; the draft went out unseen.
+        sentBy: "machine",
       });
       // A real send must leave the approved pool or every drain re-loads the
       // same row forever. Held drafts and dry-runs intentionally stay approved.

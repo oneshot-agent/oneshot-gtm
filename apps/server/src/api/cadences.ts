@@ -18,8 +18,10 @@ import type {
   CadenceStopReason,
   CadenceView,
   CadencesResult,
+  DraftAngleChoice,
 } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
+import { toDraftVersionView } from "./_draft-versions.ts";
 import { sendsToday } from "./_capacity.ts";
 import { reportServerExecution } from "../telemetry.ts";
 
@@ -44,11 +46,14 @@ function toView(
         payload?: unknown;
       };
       // Strip `payload` from the wire view — only the send route reads it.
+      // The angle it carries is the one field the founder reviews by.
+      const angle = draftAngleChoiceOf(parsed.payload);
       nextStepDraft = {
         subject: parsed.subject,
         body: parsed.body,
         flags: parsed.flags ?? [],
         draftedAt: parsed.draftedAt,
+        ...(angle ? { angle } : {}),
       };
     } catch {
       nextStepDraft = null;
@@ -276,6 +281,41 @@ function parseProspectAndPlay(
   const playName = url.searchParams.get("play") ?? "";
   if (!playName) return jsonResponse({ error: "play query param required" }, 400, req);
   return { prospectId, playName };
+}
+
+/** The angle a persisted cadence payload carries, shape-checked. */
+function draftAngleChoiceOf(payload: unknown): DraftAngleChoice | null {
+  if (!payload || typeof payload !== "object") return null;
+  const a = (payload as { angle?: unknown }).angle;
+  if (!a || typeof a !== "object") return null;
+  const c = a as Partial<DraftAngleChoice>;
+  if (typeof c.text !== "string" || !c.text.trim()) return null;
+  return {
+    text: c.text,
+    origin: c.origin === "generated" ? "generated" : "configured",
+    index: Number.isInteger(c.index) ? (c.index as number) : 0,
+    count: Number.isInteger(c.count) && (c.count as number) > 0 ? (c.count as number) : 1,
+  };
+}
+
+/**
+ * Every draft the cadence's NEXT step went through, newest first. The step is
+ * `current_step + 1` — the one a preview/regenerate/send acts on.
+ */
+export function cadenceDraftVersionsRoute(req: Request, params: Record<string, string>): Response {
+  const parsed = parseProspectAndPlay(req, params);
+  if (parsed instanceof Response) return parsed;
+  const ledger = getLedger();
+  const cadence = ledger.getCadence(parsed.prospectId, parsed.playName);
+  if (!cadence) return jsonResponse({ error: "no cadence for that prospect+play" }, 404, req);
+  const versions = ledger
+    .draftVersionsFor({
+      prospectId: parsed.prospectId,
+      playName: parsed.playName,
+      stepIndex: cadence.current_step + 1,
+    })
+    .map(toDraftVersionView);
+  return jsonResponse({ versions }, 200, req);
 }
 
 export async function previewCadenceStepRoute(

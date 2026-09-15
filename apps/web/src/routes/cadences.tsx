@@ -39,6 +39,7 @@ import { IdentityCell, SignalLabel } from "../components/ledger/IdentityCell.tsx
 import { CaseSection, Rule, Sheet } from "../components/ledger/Sheet.tsx";
 import { CaseList, Disclosure, type CaseListRow } from "../components/ledger/CaseList.tsx";
 import { DraftStateLine, LetterCard, LetterEmpty } from "../components/ledger/LetterCard.tsx";
+import { DraftHistory } from "../components/ledger/DraftHistory.tsx";
 
 /** Tailwind can't build class names dynamically — enumerate the tile-count variants. */
 const TILE_GRID_COLS: Record<number, string> = {
@@ -873,6 +874,22 @@ function CadencesPage() {
                           ) : undefined
                         }
                         body={draft.body}
+                        afterBody={
+                          <>
+                            {draft.angle && (
+                              <details className="mt-3 text-xs text-ink-muted">
+                                <summary className="cursor-pointer">
+                                  {`Angle ${draft.angle.index + 1} of ${draft.angle.count} · a different one from the intro's`}
+                                </summary>
+                                <p className="mt-2">{draft.angle.text}</p>
+                              </details>
+                            )}
+                            <DraftHistory
+                              queryKey={["cadence-drafts", c.prospectId, c.playName, c.currentStep]}
+                              load={() => api.cadenceDrafts(c.prospectId, c.playName)}
+                            />
+                          </>
+                        }
                         foot={{
                           left: regenerateButton,
                           right: (

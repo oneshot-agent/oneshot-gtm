@@ -16,12 +16,19 @@ import {
 import { describeEdgeWarning, lintEdge } from "@oneshot-gtm/plays";
 import type { RunTriggerResult, TriggerView } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
+import {
+  angleUsageForEdge,
+  draftUsageView,
+  playUsageLoader,
+  type PlayUsage,
+} from "./_draft-versions.ts";
 
 export function toView(
   name: string,
   defaultIntervalMs: number,
   row: TriggerRow | null,
   spec: TriggerSpec | null,
+  usage?: PlayUsage,
 ): TriggerView {
   let lastSummary: unknown = null;
   if (row?.last_run_summary) {
@@ -79,6 +86,8 @@ export function toView(
     approvalRateWindowDays: approval.windowDays,
     deprioritized: approval.deprioritized,
     deprioritizedReason: approval.reason,
+    angleUsage: angleUsageForEdge(config ?? spec?.defaultConfig ?? null, usage?.angles ?? []),
+    draftUsage: draftUsageView(usage?.drafts),
   };
 }
 
@@ -88,15 +97,26 @@ export function listTriggersRoute(req: Request): Response {
   const byName = new Map(rows.map((r) => [r.name, r]));
   const seen = new Set<string>();
   const views: TriggerView[] = [];
+  // One pair of aggregate reads for the whole list; a trigger's name is its
+  // play name, which is what draft versions are keyed by.
+  const usage = playUsageLoader(ledger);
   for (const spec of TRIGGERS) {
     seen.add(spec.name);
-    views.push(toView(spec.name, spec.defaultIntervalMs, byName.get(spec.name) ?? null, spec));
+    views.push(
+      toView(
+        spec.name,
+        spec.defaultIntervalMs,
+        byName.get(spec.name) ?? null,
+        spec,
+        usage(spec.name),
+      ),
+    );
   }
   // Surface any historical triggers stored in the ledger that no longer exist
   // in the registry (e.g. a deprecated cohort) so the founder can disable them.
   for (const row of rows) {
     if (seen.has(row.name)) continue;
-    views.push(toView(row.name, 24 * 3600 * 1000, row, null));
+    views.push(toView(row.name, 24 * 3600 * 1000, row, null, usage(row.name)));
   }
   return jsonResponse({ triggers: views }, 200, req);
 }

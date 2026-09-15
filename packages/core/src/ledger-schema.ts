@@ -632,6 +632,42 @@ export function migrateLedgerSchema(db: Database): void {
       CREATE INDEX IF NOT EXISTS idx_meetings_ical_uid
         ON meetings(ical_uid) WHERE ical_uid IS NOT NULL;
     `);
+
+  // v33: draft versions — every draft put in front of the founder, intro or
+  // follow-up, with what became of it (see ledger-drafts.ts). Before this,
+  // `target_queue.last_draft_json` and `cadence_state.next_step_draft_json`
+  // were overwritten in place, so a regenerate erased the draft it replaced
+  // and no row said which angle a send was built on once the edge changed.
+  db.exec(`
+      CREATE TABLE IF NOT EXISTS draft_versions (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        play_name      TEXT NOT NULL,
+        -- lower-cased trimmed email, else the queue row's dedupe_key /
+        -- 'prospect:<id>' — one value per person so DISTINCT counts people.
+        prospect_key   TEXT NOT NULL,
+        -- 0 = intro, n = follow-up step n (cadence current_step + 1).
+        step_index     INTEGER NOT NULL,
+        queue_id       INTEGER,
+        prospect_id    INTEGER,
+        subject        TEXT NOT NULL,
+        body           TEXT NOT NULL,
+        flags_json     TEXT,
+        -- angleTextKey(angle_text); NULL when the draft carried no angle.
+        angle_key      TEXT,
+        angle_text     TEXT,
+        angle_origin   TEXT,           -- 'configured' | 'generated'
+        outcome        TEXT NOT NULL,  -- 'open' | 'discarded' | 'sent' | 'auto_sent'
+        discard_reason TEXT,           -- 'regenerate' | 'rotate' | 'redraft' | 'abandoned'
+        created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+        closed_at      TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_draft_versions_queue
+        ON draft_versions(queue_id, outcome);
+      CREATE INDEX IF NOT EXISTS idx_draft_versions_cadence
+        ON draft_versions(prospect_id, play_name, step_index, outcome);
+      CREATE INDEX IF NOT EXISTS idx_draft_versions_play
+        ON draft_versions(play_name, angle_key);
+    `);
 }
 
 /**

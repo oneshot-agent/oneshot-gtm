@@ -25,6 +25,7 @@ let cadenceRows: Array<{
   prospect_name: string | null;
   prospect_company: string | null;
 }> = [];
+let lastDraftDiscardReason: string | null = null;
 let persistedDraft: {
   subject: string;
   body: string;
@@ -184,7 +185,9 @@ vi.mock("@oneshot-gtm/core", async () => {
         prospectId: number;
         playName: string;
         draft: { subject: string; body: string; flags: string[]; payload: unknown };
+        discardReason?: string;
       }) => {
+        lastDraftDiscardReason = input.discardReason ?? null;
         persistedDraft = { ...input.draft, draftedAt: new Date().toISOString() };
         const row = cadenceRows.find(
           (c) => c.prospect_id === input.prospectId && c.play_name === input.playName,
@@ -302,6 +305,9 @@ describe("previewCadenceStep", () => {
     expect(out.body).toBe("fresh body");
     expect(out.flags).toEqual([]); // clean draft
     expect(persistedDraft).toMatchObject({ subject: "fresh subject", body: "fresh body" });
+    // A preview is the founder asking for a draft: the one it replaces was
+    // rejected on its text (the follow-up keeps the classifier's angle).
+    expect(lastDraftDiscardReason).toBe("regenerate");
   });
 
   it("refuses on a non-active cadence", async () => {
