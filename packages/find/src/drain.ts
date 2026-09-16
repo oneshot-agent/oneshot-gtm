@@ -151,6 +151,7 @@ export async function drainQueue(opts: DrainOpts): Promise<DrainOutcome> {
             dryRun: opts.dryRun,
             ...(draft.enrichmentFailed ? { enrichmentFailed: true } : {}),
             ...(draft.angle ? { angle: draft.angle } : {}),
+            ...(draft.voiceKey ? { voiceKey: draft.voiceKey } : {}),
           },
           // Drain sends are unattended: the founder approved the row, never
           // this draft — recorded as `auto_sent`, apart from reviewed sends.

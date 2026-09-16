@@ -36,6 +36,8 @@ export interface DraftedRow {
   enrichmentFailed?: boolean;
   /** Which edge angle the draft was built on, when the runner chose it (see `PlayDraft.angle`). */
   angle?: DraftAngle;
+  /** Hash of the founder's voice card the draft was written with (see `PlayDraft.voiceKey`). */
+  voiceKey?: string | null;
 }
 
 /** Run-level options a play may consume. `targets` is play-specific JSON. */

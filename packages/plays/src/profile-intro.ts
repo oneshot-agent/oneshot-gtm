@@ -37,6 +37,8 @@ export interface ProfileIntroRunOptions {
 }
 
 interface ProfileIntroDraft {
+  /** Hash of the founder's voice card the draft was written with (see `PlayDraft.voiceKey`). */
+  voiceKey?: string | null;
   target: ProfileIntroTarget;
   subject: string;
   body: string;

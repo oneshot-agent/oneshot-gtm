@@ -279,6 +279,7 @@ export async function runProspectResearch(queueId: number): Promise<void> {
         sent: false,
         receiptIds: [],
         dryRun: true,
+        ...(draft.voiceKey ? { voiceKey: draft.voiceKey } : {}),
       },
     });
     ledger.setQueueNotes({
