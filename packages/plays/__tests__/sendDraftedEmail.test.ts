@@ -238,9 +238,10 @@ describe("sendDraftedEmail person-level ICP gate", () => {
   });
 
   it("FAILS OPEN on unclear and on null — the documented contract", async () => {
-    // ledger.ts:1470 is explicit that the cadence gate tests === "reject", so
-    // `unclear` fails open exactly as NULL does. This gate must not quietly
-    // narrow the funnel on an undecided classifier.
+    // ledger-prospects.ts's setProspectIcpVerdict doc is explicit that the
+    // cadence gate tests === "reject", so `unclear` fails open exactly as
+    // NULL does. This gate must not quietly narrow the funnel on an
+    // undecided classifier.
     for (const verdict of ["unclear", "pass"] as const) {
       sendEmailMock.mockClear();
       const out = await sendDraftedEmail(baseOpts({ icp: { verdict, reason: "n/a" } }));

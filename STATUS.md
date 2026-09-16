@@ -42,7 +42,7 @@ Person-level ICP verdicts are now written by the send path, not only by `ops/aud
 `ok/reject/platform-error` and discarded), nine finders stamp it via `icpFields`, and
 `sendDraftedEmail` both persists it and **gates step 0 on it** — that check existed only for
 follow-ups, so 65 `reject`-verdict prospects had been emailed while just 3 cadences ever went
-`off-icp`. `null` and `unclear` still fail open, per the contract at `ledger.ts:1470`.
+`off-icp`. `null` and `unclear` still fail open, per the contract at `ledger-prospects.ts`'s `setProspectIcpVerdict`.
 
 luma-events: the event relevance gate ran on the event NAME before any fetch, to avoid paying to
 read city-page noise — but `fetchEventDetails` is free and returns the description, so the gate was
