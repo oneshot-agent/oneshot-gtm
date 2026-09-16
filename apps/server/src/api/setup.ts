@@ -31,6 +31,8 @@ import {
   finishLinkedInLogin,
   startLinkedInLogin,
   type LinkedInSessionResult,
+  cancelLinkedInLogin,
+  linkedinLoginState,
 } from "@oneshot-gtm/find";
 import { jsonResponse } from "../server.ts";
 
@@ -293,6 +295,24 @@ export async function linkedinLoginStartRoute(req: Request): Promise<Response> {
       200,
       req,
     );
+  } catch (err) {
+    return platformFailure(err, req);
+  }
+}
+
+export async function linkedinLoginCancelRoute(req: Request): Promise<Response> {
+  try {
+    const out = await cancelLinkedInLogin({ playName: "setup", memo: "cancel linkedin login" });
+    return jsonResponse({ ok: true, ...out }, 200, req);
+  } catch (err) {
+    return platformFailure(err, req);
+  }
+}
+
+export async function linkedinLoginStateRoute(req: Request): Promise<Response> {
+  try {
+    const out = await linkedinLoginState({ playName: "setup", memo: "linkedin login state" });
+    return jsonResponse({ ok: true, ...out }, 200, req);
   } catch (err) {
     return platformFailure(err, req);
   }

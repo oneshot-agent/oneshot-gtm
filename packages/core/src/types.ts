@@ -468,6 +468,13 @@ export interface OneShotConfig {
    * /setup buttons fill these in.
    */
   linkedinBrowserProfileId?: string | null;
+  /**
+   * A hosted login in progress: the fresh profile the founder is signing in
+   * to. Kept apart from `linkedinBrowserProfileId` so a login that is never
+   * finished — or finished before the sign-in completed — cannot replace a
+   * working session; it is promoted only once its feed verifies.
+   */
+  linkedinPendingProfileId?: string | null;
   /** When the session was last confirmed logged in, and as whom. */
   linkedinSessionCheckedAt?: string | null;
   linkedinSessionName?: string | null;

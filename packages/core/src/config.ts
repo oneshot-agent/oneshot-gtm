@@ -59,6 +59,7 @@ const DEFAULTS: OneShotConfig = {
   calendarIdentityId: null,
   calendarId: "primary",
   linkedinBrowserProfileId: null,
+  linkedinPendingProfileId: null,
   linkedinSessionCheckedAt: null,
   linkedinSessionName: null,
   linkedinSessionInvalidAt: null,

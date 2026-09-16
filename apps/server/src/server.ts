@@ -48,6 +48,8 @@ import {
   linkedinSessionRoute,
   linkedinLoginStartRoute,
   linkedinLoginFinishRoute,
+  linkedinLoginCancelRoute,
+  linkedinLoginStateRoute,
 } from "./api/setup.ts";
 import { gmailAuthCallbackRoute, startGmailAuthRoute } from "./api/gmail-auth.ts";
 import {
@@ -171,6 +173,8 @@ const routes: RouteEntry[] = [
   route("POST", "/api/setup/linkedin-session", linkedinSessionRoute),
   route("POST", "/api/setup/linkedin-login/start", linkedinLoginStartRoute),
   route("POST", "/api/setup/linkedin-login/finish", linkedinLoginFinishRoute),
+  route("POST", "/api/setup/linkedin-login/cancel", linkedinLoginCancelRoute),
+  route("GET", "/api/setup/linkedin-login/state", linkedinLoginStateRoute),
   route("POST", "/api/strategist/stream", strategistRoute),
   route("GET", "/api/doctor", doctor),
   route("GET", "/api/workspace", workspaceInfo),
