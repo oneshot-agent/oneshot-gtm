@@ -10,7 +10,7 @@ Four headings, a few lines each, at most 1500 characters:
 
 - **MOVES** — three to five rhetorical moves you actually make, described mechanically ("a concrete fact, then the mechanism under it, then one flat line that closes it"). Not topics; topics are not voice.
 - **SENTENCES** — length pattern, punctuation habits, case, how you cut paragraphs.
-- **NEVER** — what you visibly avoid: hedges, hype, exclamation marks, corporate uplift, padded lists.
+- **NEVER** — what you avoid that the drafts do not already forbid: pleasantries, flattery, moralising, faking certainty, listicle hooks, urgency. Em dashes, three-item lists, "X isn't A, it's B", exclamation marks, emoji, hedging and hype vocabulary are already stripped from every draft, so they do not belong here; if your samples lean on one of them, the derivation says so once in its notes instead.
 - **EXEMPLARS** — three to six short lines copied verbatim from your own writing, chosen for cadence, not content. A number belongs there only if it was in the original.
 
 ## What the block enforces around it
@@ -53,14 +53,14 @@ MOVES
 SENTENCES
 - short declaratives, average eight words; a long one only to set up a short one
 - lowercase body; a single word in caps for emphasis, rarely
-- commas and periods; semicolons in the essayistic line; em dashes almost never
+- commas and periods; semicolons in the essayistic line
 - paragraphs of one to three sentences
 
 NEVER
-- hedges to be safe; hype; exclamation marks; emoji
-- corporate uplift ("exciting times", "game-changer")
-- three-item lists; forced parallel triplets
 - a moral about whether something is good or bad; observe the mechanism instead
+- pleasantries, sign-offs, flattery about the reader's company
+- faking certainty; when unsure, say so and stop
+- a promise of a doc, a deck, a call; the email is the whole offer
 
 EXEMPLARS
 - cost is not friction. cost is information.
