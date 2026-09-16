@@ -94,8 +94,8 @@ export function cadenceStateLabel(c: CadenceView, now: Date): CadenceState {
 
 /**
  * The cadences waiting on a letter (issue #611): active, next step goes by
- * post, nothing in flight. These rows are unselectable for email batches, so
- * the bulk skip takes this set directly rather than the checkboxes.
+ * post, nothing in flight. The bulk skip takes all waiting letters directly;
+ * email batches exclude these rows even when selected for batch stopping.
  */
 export function mailWaitingRows(list: ReadonlyArray<CadenceView>): CadenceView[] {
   return list.filter(
