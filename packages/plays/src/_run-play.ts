@@ -84,6 +84,8 @@ export type PlayDraft<T, X = Record<string, never>> = {
    * full `DraftAngle` themselves) or the target has no edge field.
    */
   angle?: DraftAngle;
+  /** Hash of the founder's voice card the draft was written with; absent when none was set. */
+  voiceKey?: string | null;
 } & X;
 
 /**

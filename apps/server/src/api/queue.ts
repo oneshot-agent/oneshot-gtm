@@ -99,6 +99,9 @@ export function toView(row: QueueRow): QueueRowView {
           dryRun: parsed.dryRun === true,
           draftedAt: typeof parsed.draftedAt === "string" ? parsed.draftedAt : "",
           ...(parseDraftAngle(parsed.angle) ? { angle: parseDraftAngle(parsed.angle)! } : {}),
+          ...(typeof parsed.voiceKey === "string" && parsed.voiceKey
+            ? { voiceKey: parsed.voiceKey }
+            : {}),
           ...(parsed.enrichmentFailed === true ? { enrichmentFailed: true } : {}),
         };
       }
@@ -985,6 +988,8 @@ async function regenerateDraftInner(
     draftedAt: new Date().toISOString(),
     ...(angle ? { angle } : {}),
     ...(draft.enrichmentFailed ? { enrichmentFailed: true } : {}),
+    // The voice card the draft was written with, so its version splits by voice.
+    ...(draft.voiceKey ? { voiceKey: draft.voiceKey } : {}),
   };
   const saved = ledger.setQueueDraftIfCurrent({
     id,

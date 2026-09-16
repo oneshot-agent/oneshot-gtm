@@ -11,6 +11,8 @@ export interface DraftedView {
   originalTargetIndex?: number;
   /** Which edge angle the play built the draft on (see `PlayDraft.angle`). */
   angle?: DraftAngle;
+  /** Hash of the founder's voice card in the prompt (see `PlayDraft.voiceKey`). */
+  voiceKey?: string | null;
 }
 
 export function toDraftedView(d: {
@@ -22,6 +24,7 @@ export function toDraftedView(d: {
   enrichmentFailed?: boolean;
   originalTargetIndex?: number;
   angle?: DraftAngle;
+  voiceKey?: string | null;
 }): DraftedView {
   return {
     subject: d.subject,
@@ -32,6 +35,7 @@ export function toDraftedView(d: {
     ...(d.enrichmentFailed ? { enrichmentFailed: true } : {}),
     ...(d.originalTargetIndex !== undefined ? { originalTargetIndex: d.originalTargetIndex } : {}),
     ...(d.angle ? { angle: d.angle } : {}),
+    ...(d.voiceKey ? { voiceKey: d.voiceKey } : {}),
   };
 }
 
