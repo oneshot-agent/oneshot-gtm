@@ -734,6 +734,11 @@ async function walkInboxWindow(
           });
           out.cadencesStopped++;
         }
+        // A pending or approved breakup-revive row would still go out to a
+        // prospect who just asked to be removed: setCadenceStatus touches
+        // cadence_state only, so expire the queue rows here, as stopCadence
+        // and the reply paths do.
+        ledger.expireBreakupReviveQueue(prospect.id, "prospect unsubscribed");
         // Round-1 correction (#663): an unsubscribe-labeled reply must not
         // ALSO fall through to recordProspectReply/tagOutcomeValue below —
         // that path counts the message as engagement (repliesDetected,

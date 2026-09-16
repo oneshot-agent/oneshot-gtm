@@ -1168,11 +1168,11 @@ export class Ledger {
   /**
    * Expire live `breakup-revive` queue rows for a prospect who just replied —
    * only ever touches `target_queue`, so the write itself lives in
-   * `QueueStore.expireBreakupReviveQueue`; this private delegate keeps every
+   * `QueueStore.expireBreakupReviveQueue`; this delegate keeps every
    * reply-handling call site above (`stopCadence`, `recordLinkedInReply`,
    * `recordProspectReply`) unchanged.
    */
-  private expireBreakupReviveQueue(prospectId: number, reason: string): void {
+  expireBreakupReviveQueue(prospectId: number, reason: string): void {
     this.queue.expireBreakupReviveQueue(prospectId, reason);
   }
 

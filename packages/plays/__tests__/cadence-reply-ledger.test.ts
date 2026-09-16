@@ -90,6 +90,15 @@ describe("pollInboxReplies — intent=unsubscribe triage against the real Ledger
       metadata: { subject: "your agent stack" },
     });
     expect(ledger.getCadence(prospectId, "stack-consolidation")?.status).toBe("active");
+    // A breakup-revive row already queued for this prospect must not go out
+    // after they asked to be removed: setCadenceStatus touches cadence_state
+    // only, so the unsubscribe branch expires the row itself.
+    const reviveRowId = ledger.enqueueTarget({
+      playName: "breakup-revive",
+      payload: { email: STORED_EMAIL, name: "Sophia" },
+      dedupeKey: `prospect:${prospectId}`,
+      source: "breakup-revive",
+    });
 
     // classifyReply's own phrase-based UNSUBSCRIBE_RE does NOT match this
     // body (no "remove me" / "unsubscribe" / etc.) — it lands as kind=human,
@@ -128,6 +137,12 @@ describe("pollInboxReplies — intent=unsubscribe triage against the real Ledger
     // ordinary-reply counting path (recordProspectReply) must not have run
     // at all for this triaged-unsubscribe email.
     expect(result.repliesDetected).toBe(0);
+
+    // The queued breakup-revive row is expired, with the reason on its notes.
+    expect(reviveRowId).not.toBeNull();
+    const revive = ledger.listQueue({ ids: [reviveRowId as number], limit: 1 })[0];
+    expect(revive?.status).toBe("expired");
+    expect(revive?.notes).toMatch(/prospect unsubscribed/);
   });
 
   it("does not resurrect a terminal (breakup) cadence, and still skips the ordinary-reply path", async () => {
