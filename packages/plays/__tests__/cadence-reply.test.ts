@@ -216,6 +216,17 @@ vi.mock("@oneshot-gtm/core", async () => {
         intents.set(id, { intent: "__triage_pending__", intentReason: cur?.intentReason ?? null });
         return true;
       },
+      // Round-2 correction (#663, F-1): mirrors the real ledger's
+      // `peekInboxReplyIntent` — what a claim LOSER reads back to tell
+      // "another caller's triage is still in flight" (pending: true) from
+      // "a prior poll already wrote back a real result" (pending: false,
+      // the real category, possibly still null on a prior failed triage).
+      peekInboxReplyIntent: (id: string) => {
+        const cur = intents.get(id);
+        if (!cur) return { pending: false, intent: null };
+        if (cur.intent === "__triage_pending__") return { pending: true, intent: null };
+        return { pending: false, intent: cur.intent };
+      },
     }),
   };
 });

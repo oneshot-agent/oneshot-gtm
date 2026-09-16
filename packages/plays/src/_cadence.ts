@@ -659,7 +659,24 @@ async function walkInboxWindow(
       // the loser skips triage entirely this poll. The winner releases the
       // claim (resets intent back to NULL) on any failure so a later poll
       // can retry — the pending marker itself is never a real category.
+      //
+      // Round-2 correction (#663, F-1): losing the claim used to leave
+      // `triagedIntent` null unconditionally, and the caller fell straight
+      // through into the ordinary reply bookkeeping below (recordProspectReply
+      // / tagOutcomeValue) even when this row's persisted `intent` was
+      // already 'unsubscribe' — every repeated or concurrent pass over an
+      // already-triaged unsubscribe reply then got counted and billed as
+      // engagement (the same outcome the branch below exists to prevent for
+      // the winning pass). `peekInboxReplyIntent` tells a claim loser which
+      // of two different situations it's in: another caller's triage is
+      // still in flight (`pending: true` — the real category isn't known
+      // yet, so this pass must not guess and must skip reply bookkeeping
+      // entirely, exactly like a loser always did) vs. a prior poll already
+      // wrote back a real result (`pending: false` — read it and treat it
+      // exactly like a winning triage's own result, so an unsubscribe stays
+      // vetoed on every later pass, not just the one that discovered it).
       let triagedIntent: string | null = null;
+      let claimPending = false;
       if (ledger.claimInboxReplyForTriage(e.id)) {
         try {
           const [triaged] = await triageEmails([e]);
@@ -677,6 +694,10 @@ async function walkInboxWindow(
             "warn",
           );
         }
+      } else {
+        const peeked = ledger.peekInboxReplyIntent(e.id);
+        claimPending = peeked.pending;
+        triagedIntent = peeked.intent;
       }
       // Issue #663: the deliverability classifier above (`kind`) is
       // phrase-based (reply-classify.ts's UNSUBSCRIBE_RE) and can miss a
@@ -689,9 +710,12 @@ async function walkInboxWindow(
       // cadences to 'replied'. `contactAllowedClause` (contact-optout.ts)
       // now also vetoes re-enrollment directly on this `intent` column;
       // this keeps `cadence_state` (and the Slack/notes path) telling the
-      // same truth. Only fires when THIS poll ran the triage (a row
-      // triaged by an earlier poll before this fix shipped isn't backfilled
-      // here — that's a one-off ops audit, not this code path).
+      // same truth. Fires on THIS poll's own triage result, and (round-2
+      // correction, #663) also on any earlier poll's persisted result read
+      // back via `peekInboxReplyIntent` above — the cadence-stopping loop
+      // below is itself idempotent (it only touches still-active/paused
+      // cadences), so re-running it against an already-unsubscribed
+      // cadence on a later pass is always a safe no-op, not a double-count.
       if (triagedIntent === "unsubscribe") {
         for (const cad of ledger.listCadencesForProspect(prospect.id)) {
           if (cad.status !== "active" && cad.status !== "paused") continue;
@@ -719,7 +743,7 @@ async function walkInboxWindow(
         // `continue`) already exists to prevent. The cadences are already
         // stopped as 'unsubscribed' by the loop just above, so there is
         // nothing left for the ordinary reply bookkeeping to do here.
-      } else {
+      } else if (!claimPending) {
         for (const r of ledger.recordProspectReply(prospect.id, {
           subject: e.subject,
           // The inbound email's own timestamp, not "now" — this poll can walk a
@@ -742,6 +766,12 @@ async function walkInboxWindow(
           });
         }
       }
+      // Round-2 correction (#663, F-1): `claimPending` (a concurrent
+      // triage is still in flight for this exact row) falls through both
+      // branches above deliberately — the real category isn't known yet,
+      // so neither the unsubscribe veto nor the ordinary reply bookkeeping
+      // may run this pass. The next poll's claim attempt (or a peek once
+      // the winner has written back) resolves it correctly.
       if (e.id.startsWith("mailbox:")) ledger.mailboxes.acknowledge(e.id, prospect.id);
     }
     if (pageOldest && (res.oldest == null || pageOldest < res.oldest)) res.oldest = pageOldest;

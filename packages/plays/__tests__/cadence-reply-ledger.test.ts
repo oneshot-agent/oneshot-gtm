@@ -163,4 +163,145 @@ describe("pollInboxReplies — intent=unsubscribe triage against the real Ledger
     expect(result.repliesDetected).toBe(0);
     expect(ledger.getCadence(prospectId, "stack-consolidation")?.status).toBe("breakup");
   });
+
+  // Round-2 correction (#663, F-2): a REPEATED pass — the watermark-overlap
+  // window re-examines a reply a prior poll already fully triaged as
+  // 'unsubscribe'. This poll's `claimInboxReplyForTriage` loses (intent is
+  // already non-NULL), so it must read the persisted result back via
+  // `peekInboxReplyIntent` and still take the unsubscribe veto, not fall
+  // through to `recordProspectReply`/`tagOutcomeValue` for a second time.
+  it("vetoes recordProspectReply on a repeated pass over an already-triaged unsubscribe reply", async () => {
+    const prospectId = ledger.upsertProspect({
+      name: "Sophia",
+      email: STORED_EMAIL,
+      source: "stack-consolidation",
+    });
+    ledger.enrollCadence({
+      prospectId,
+      playName: "stack-consolidation",
+      nextDueAt: "2026-01-01T00:00:00Z",
+    });
+    ledger.recordSequenceEvent({
+      prospectId,
+      playName: "stack-consolidation",
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+      metadata: { subject: "your agent stack" },
+    });
+
+    inboxEmails = [
+      {
+        id: "m1",
+        from: `Sophia <${STORED_EMAIL}>`,
+        subject: "Re: your agent stack",
+        body: "This isn't relevant to our team, please don't send any more of these.",
+        received_at: "2026-08-20T09:00:00.000Z",
+      },
+    ];
+
+    // First poll: wins the claim, triages as unsubscribe, stops the cadence.
+    const first = await pollInboxReplies();
+    expect(first.repliesDetected).toBe(0);
+    expect(ledger.getCadence(prospectId, "stack-consolidation")?.status).toBe("unsubscribed");
+    expect(triageEmailsMock).toHaveBeenCalledTimes(1);
+
+    // Second poll: the same email id is re-examined (overlap window /
+    // backlog re-walk). recordInboxReply's INSERT OR IGNORE makes this a
+    // no-op insert, and claimInboxReplyForTriage now loses (intent is
+    // already 'unsubscribe', not NULL) — before the round-2 fix this fell
+    // straight through to recordProspectReply/tagOutcomeValue.
+    const second = await pollInboxReplies();
+
+    // No second (paid) triage call — the claim loss is expected.
+    expect(triageEmailsMock).toHaveBeenCalledTimes(1);
+    // The billing-relevant assertion: still zero replies detected/counted,
+    // and no 'replied' sequence_events row was ever written for this
+    // (prospect, play) across either pass.
+    expect(second.repliesDetected).toBe(0);
+    expect(second.cadencesStopped).toBe(0); // already unsubscribed — no live cadence left to stop
+    const allEvents = ledger.listAllSequenceEventsForProspect(prospectId);
+    expect(allEvents.map((e) => e.status)).toEqual(["sent", "unsubscribed"]);
+    expect(allEvents.some((e) => e.status === "replied")).toBe(false);
+  });
+
+  // Round-2 correction (#663, F-2): a CONCURRENT claim loss — a second,
+  // overlapping pollInboxReplies() call observes the same row while the
+  // first call's triageEmails() await is still in flight (intent is the
+  // '__triage_pending__' sentinel, not yet a real category). The loser must
+  // not guess and must skip BOTH the unsubscribe veto and the ordinary
+  // reply bookkeeping for this pass — `peekInboxReplyIntent` reports
+  // `pending: true` for exactly this window.
+  it("skips reply bookkeeping entirely for a concurrent claim-loss while triage is still in flight", async () => {
+    const prospectId = ledger.upsertProspect({
+      name: "Sophia",
+      email: STORED_EMAIL,
+      source: "stack-consolidation",
+    });
+    ledger.enrollCadence({
+      prospectId,
+      playName: "stack-consolidation",
+      nextDueAt: "2026-01-01T00:00:00Z",
+    });
+    ledger.recordSequenceEvent({
+      prospectId,
+      playName: "stack-consolidation",
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+      metadata: { subject: "your agent stack" },
+    });
+
+    inboxEmails = [
+      {
+        id: "m1",
+        from: `Sophia <${STORED_EMAIL}>`,
+        subject: "Re: your agent stack",
+        body: "This isn't relevant to our team, please don't send any more of these.",
+        received_at: "2026-08-20T09:00:00.000Z",
+      },
+    ];
+
+    // Hold the first poll's triage call open until the second, overlapping
+    // poll has had a chance to run its own claim attempt against it.
+    let resolveFirst: (() => void) | null = null;
+    triageEmailsMock.mockImplementationOnce(
+      (emails: Array<{ id: string }>) =>
+        new Promise((resolve) => {
+          resolveFirst = (): void =>
+            resolve(
+              emails.map((e) => ({
+                id: e.id,
+                from: "x",
+                subject: "x",
+                category: "unsubscribe" as const,
+                reasoning: "asked to be removed",
+              })),
+            );
+        }),
+    );
+
+    const firstPoll = pollInboxReplies();
+    // Let the first poll's synchronous prelude (recordInboxReply, the
+    // winning claim) run before starting the overlapping second poll.
+    await Promise.resolve();
+    await Promise.resolve();
+    const secondPoll = pollInboxReplies();
+
+    (resolveFirst as (() => void) | null)?.();
+    const [, secondResult] = await Promise.all([firstPoll, secondPoll]);
+
+    // Only one paid triage call — the second poll lost the claim.
+    expect(triageEmailsMock).toHaveBeenCalledTimes(1);
+    // The loser's own poll result must not have counted this row as an
+    // ordinary reply while the real category was still unresolved.
+    expect(secondResult.repliesDetected).toBe(0);
+
+    // Once the winner's triage resolves, the row lands as unsubscribed and
+    // no 'replied' row is ever written by either pass.
+    expect(ledger.getCadence(prospectId, "stack-consolidation")?.status).toBe("unsubscribed");
+    const allEvents = ledger.listAllSequenceEventsForProspect(prospectId);
+    expect(allEvents.map((e) => e.status)).toEqual(["sent", "unsubscribed"]);
+    expect(allEvents.some((e) => e.status === "replied")).toBe(false);
+  });
 });
