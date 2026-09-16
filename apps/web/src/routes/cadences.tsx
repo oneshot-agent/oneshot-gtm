@@ -14,12 +14,7 @@ import {
 } from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
 import { toast } from "sonner";
-import type {
-  CadenceCounts,
-  CadenceStopReason,
-  CadenceView,
-  OutcomeRequest,
-} from "@oneshot-gtm/shared-types";
+import type { CadenceCounts, CadenceStopReason, OutcomeRequest } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
@@ -33,6 +28,15 @@ import { StepProgress } from "../components/primitives/StepProgress.tsx";
 import { cn, formatSendsToday, timeAgo } from "../lib/cn.ts";
 import { readOnly } from "../lib/readOnly.ts";
 import { STOP_REASON_LABELS, mailWaitingRows } from "../lib/cadenceState.ts";
+import { appendReason, REJECT_REASON_CHIPS } from "../lib/rejectReason.ts";
+import {
+  cadenceKey as rowKey,
+  cadenceSelection,
+  stopCadences,
+  type CadenceStopTarget,
+  type CadenceStopInput,
+  type CadenceStopFailure,
+} from "../lib/cadenceStop.ts";
 import { fitReasonFor } from "../lib/queueRationale.ts";
 import { queueEvidence } from "../lib/queueEvidence.ts";
 import { IdentityCell, SignalLabel } from "../components/ledger/IdentityCell.tsx";
@@ -106,17 +110,13 @@ interface OutcomeModalState {
 }
 
 interface StopModalState {
-  prospectId: number;
-  prospectName: string | null;
-  playName: string;
+  items: CadenceStopTarget[];
 }
 
 interface LinkedInReplyModalState {
   prospectId: number;
   prospectName: string | null;
 }
-
-const rowKey = (c: CadenceView): string => `${c.prospectId}|${c.playName}`;
 
 function CadencesPage() {
   const [mailKey, setMailKey] = useState<string | null>(null);
@@ -141,6 +141,20 @@ function CadencesPage() {
   };
   const [stopReason, setStopReason] = useState<CadenceStopReason>("bad_timing");
   const [stopNote, setStopNote] = useState("");
+  const [stopFailures, setStopFailures] = useState<CadenceStopFailure[]>([]);
+  const openStopModal = (items: CadenceStopTarget[]): void => {
+    setStopModal({ items });
+    setStopReason("bad_timing");
+    setStopNote("");
+    setStopFailures([]);
+  };
+  const closeStopModal = (): void => {
+    if (stop.isPending) return;
+    setStopModal(null);
+    setStopReason("bad_timing");
+    setStopNote("");
+    setStopFailures([]);
+  };
 
   const { sinceRun } = Route.useSearch();
   const cadences = useQuery({
@@ -156,20 +170,33 @@ function CadencesPage() {
   };
 
   const stop = useMutation({
-    mutationFn: (vars: {
-      prospectId: number;
-      playName: string;
-      reason: CadenceStopReason;
-      note?: string;
-    }) => api.stopCadence(vars.prospectId, vars.playName, { reason: vars.reason, note: vars.note }),
-    onSuccess: (data, vars) => {
-      void qc.invalidateQueries({ queryKey: ["cadences"] });
-      setStopModal(null);
-      setStopReason("bad_timing");
-      setStopNote("");
-      toast.success(`stopped cadence · ${vars.playName}`);
+    mutationFn: (vars: { items: CadenceStopTarget[]; input: CadenceStopInput }) =>
+      stopCadences(vars.items, vars.input, api.stopCadence),
+    onSuccess: ({ stopped, failed }) => {
+      for (const queryKey of ["cadences", "prospects", "queue"]) {
+        void qc.invalidateQueries({ queryKey: [queryKey] });
+      }
+      setSelected((previous) => {
+        const next = new Set(previous);
+        for (const item of stopped) next.delete(rowKey(item));
+        return next;
+      });
+      if (stopped.length > 0)
+        toast.success(`Stopped ${stopped.length} cadence${stopped.length === 1 ? "" : "s"}`);
+      if (failed.length > 0) {
+        setStopModal({ items: failed.map((failure) => failure.target) });
+        setStopFailures(failed);
+        toast.error(
+          `${failed.length} cadence${failed.length === 1 ? "" : "s"} could not be stopped`,
+        );
+      } else {
+        setStopModal(null);
+        setStopReason("bad_timing");
+        setStopNote("");
+        setStopFailures([]);
+      }
     },
-    onError: (err) => toast.error(`couldn't stop cadence: ${err.message}`),
+    onError: (err) => toast.error(`couldn't stop cadences: ${err.message}`),
   });
 
   // Skip a pending letter and move on to the next email (#611). No reason
@@ -341,36 +368,19 @@ function CadencesPage() {
   const now = new Date();
   const nowIso = now.toISOString();
 
-  // Bulk-action derived state.
-  const selectableActive = useMemo(
-    () => list.filter((c) => c.status === "active" && c.nextStepChannel !== "direct_mail"),
-    [list],
-  );
+  // Selection includes mail cadences for stopping; email actions use their own subset.
+  const {
+    selectable: selectableActive,
+    chosen: selectedRows,
+    stoppable: stoppableRows,
+    previewable: previewableRows,
+    sendable: sendableRows,
+  } = useMemo(() => cadenceSelection(list, selected), [list, selected]);
   const mailWaiting = useMemo(() => mailWaitingRows(list), [list]);
   const allActiveSelected =
     selectableActive.length > 0 && selectableActive.every((c) => selected.has(rowKey(c)));
   const someActiveSelected =
     selectableActive.some((c) => selected.has(rowKey(c))) && !allActiveSelected;
-  const selectedRows = useMemo(
-    () =>
-      list.filter(
-        (c) =>
-          selected.has(rowKey(c)) && c.status === "active" && c.nextStepChannel !== "direct_mail",
-      ),
-    [list, selected],
-  );
-  // Sendable = selected + has clean persisted draft + not already in flight.
-  // Pending-batch state gates the BUTTON's disabled prop, not the filter —
-  // otherwise the "Send M of N" label would flicker to "Send 0 of N" while a
-  // send is in flight. The `!c.isSending` filter prevents re-firing a row
-  // whose background send is still running (server marks it in-flight).
-  const sendableRows = useMemo(
-    () =>
-      selectedRows.filter(
-        (c) => c.nextStepDraft != null && c.nextStepDraft.flags.length === 0 && !c.isSending,
-      ),
-    [selectedRows],
-  );
   const earlySendableCount = sendableRows.filter(
     (c) => c.nextDueAt != null && c.nextDueAt > nowIso,
   ).length;
@@ -556,12 +566,12 @@ function CadencesPage() {
       </section>
 
       {selectedRows.length > 0 && (
-        <section className="flex items-center justify-between gap-3 border-b border-ink-rule bg-ink-surface/40 px-6 py-2.5">
+        <section className="flex flex-wrap items-center justify-between gap-3 border-b border-ink-rule bg-ink-surface/40 px-6 py-2.5">
           <div className="font-mono text-[12px] text-ink-cream-2">
             <span className="text-ink-cream">{selectedRows.length}</span> selected
             {sendableRows.length !== selectedRows.length && (
               <span className="ml-2 text-[color:var(--ink-spend-2)]">
-                · {sendableRows.length} sendable (others need preview / have flags)
+                · {sendableRows.length} ready to send by email
               </span>
             )}
           </div>
@@ -569,10 +579,15 @@ function CadencesPage() {
             <Button
               variant="secondary"
               size="sm"
-              disabled={previewBatch.isPending || sendBatch.isPending}
+              disabled={
+                previewableRows.length === 0 ||
+                previewBatch.isPending ||
+                sendBatch.isPending ||
+                stop.isPending
+              }
               onClick={() =>
                 previewBatch.mutate(
-                  selectedRows.map((c) => ({
+                  previewableRows.map((c) => ({
                     prospectId: c.prospectId,
                     playName: c.playName,
                   })),
@@ -581,20 +596,34 @@ function CadencesPage() {
               {...readOnly}
             >
               {previewBatch.isPending
-                ? `Previewing ${selectedRows.length}…`
-                : `Preview ${selectedRows.length}`}
+                ? `Previewing ${previewableRows.length}…`
+                : `Preview ${previewableRows.length}`}
             </Button>
             <Button
               variant="primary"
               size="sm"
-              disabled={sendableRows.length === 0 || sendBatch.isPending}
+              disabled={sendableRows.length === 0 || sendBatch.isPending || stop.isPending}
               onClick={() => setBulkSendConfirmOpen(true)}
             >
               {sendBatch.isPending
                 ? "Sending…"
                 : `Send ${sendableRows.length}${sendableRows.length !== selectedRows.length ? ` of ${selectedRows.length}` : ""}`}
             </Button>
-            <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
+            <Button
+              variant="danger"
+              size="sm"
+              disabled={stoppableRows.length === 0 || stop.isPending || sendBatch.isPending}
+              onClick={() => openStopModal(stoppableRows)}
+              {...readOnly}
+            >
+              <CircleStop size={12} /> Stop {stoppableRows.length}
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={stop.isPending}
+              onClick={() => setSelected(new Set())}
+            >
               Clear
             </Button>
           </div>
@@ -637,7 +666,7 @@ function CadencesPage() {
                           ? "deselect all active"
                           : "select all active"
                     }
-                    disabled={selectableActive.length === 0}
+                    disabled={selectableActive.length === 0 || stop.isPending}
                     checked={allActiveSelected}
                     ref={(el) => {
                       if (el) el.indeterminate = someActiveSelected;
@@ -783,13 +812,7 @@ function CadencesPage() {
                           : "stop cadence"
                       }
                       disabled={stop.isPending || c.isSending}
-                      onClick={() =>
-                        setStopModal({
-                          prospectId: c.prospectId,
-                          prospectName: c.prospectName,
-                          playName: c.playName,
-                        })
-                      }
+                      onClick={() => openStopModal([c])}
                     >
                       <CircleStop size={11} /> Stop
                     </Button>
@@ -949,10 +972,12 @@ function CadencesPage() {
                           aria-label={`select ${c.prospectName ?? c.prospectEmail ?? "row"}`}
                           title={
                             c.status === "active"
-                              ? `select for batch preview / send`
+                              ? c.isSending
+                                ? "wait for the in-flight send to finish"
+                                : "select for batch actions"
                               : `only active cadences can be selected (status: ${c.status})`
                           }
-                          disabled={c.status !== "active" || c.nextStepChannel === "direct_mail"}
+                          disabled={c.status !== "active" || c.isSending || stop.isPending}
                           checked={selected.has(rowKey(c))}
                           onChange={() => toggleSelected(rowKey(c))}
                           className="cursor-pointer disabled:cursor-not-allowed disabled:opacity-30"
@@ -1048,13 +1073,7 @@ function CadencesPage() {
                                       variant="ghost"
                                       title="Stop cadence"
                                       disabled={stop.isPending || c.isSending}
-                                      onClick={() =>
-                                        setStopModal({
-                                          prospectId: c.prospectId,
-                                          prospectName: c.prospectName,
-                                          playName: c.playName,
-                                        })
-                                      }
+                                      onClick={() => openStopModal([c])}
                                     >
                                       <CircleStop size={12} />
                                     </Button>
@@ -1143,13 +1162,7 @@ function CadencesPage() {
                                           : "stop cadence"
                                       }
                                       disabled={stop.isPending || c.isSending}
-                                      onClick={() =>
-                                        setStopModal({
-                                          prospectId: c.prospectId,
-                                          prospectName: c.prospectName,
-                                          playName: c.playName,
-                                        })
-                                      }
+                                      onClick={() => openStopModal([c])}
                                     >
                                       <CircleStop size={12} />
                                     </Button>
@@ -1436,73 +1449,139 @@ function CadencesPage() {
 
       <Modal
         open={stopModal != null}
-        onClose={() => {
-          setStopModal(null);
-          setStopReason("bad_timing");
-          setStopNote("");
-        }}
-        title={`Stop cadence${stopModal?.prospectName ? ` — ${mask("name", stopModal.prospectName)}` : ""}`}
+        onClose={closeStopModal}
+        title={
+          stopModal && stopModal.items.length > 1
+            ? `Stop ${stopModal.items.length} cadences`
+            : `Stop cadence${stopModal?.items[0]?.prospectName ? ` — ${mask("name", stopModal.items[0].prospectName)}` : ""}`
+        }
         footer={
           <>
-            <Button
-              variant="ghost"
-              onClick={() => {
-                setStopModal(null);
-                setStopReason("bad_timing");
-                setStopNote("");
-              }}
-            >
+            <Button variant="ghost" disabled={stop.isPending} onClick={closeStopModal}>
               Cancel
             </Button>
             <Button
+              variant="danger"
               onClick={() => {
                 if (!stopModal) return;
                 stop.mutate({
-                  prospectId: stopModal.prospectId,
-                  playName: stopModal.playName,
-                  reason: stopReason,
-                  ...(stopNote.trim() ? { note: stopNote.trim() } : {}),
+                  items: stopModal.items,
+                  input: {
+                    reason: stopReason,
+                    ...(stopNote.trim() ? { note: stopNote.trim() } : {}),
+                  },
                 });
               }}
-              disabled={stop.isPending || (stopReason === "other" && !stopNote.trim())}
+              disabled={
+                stop.isPending ||
+                !stopModal?.items.length ||
+                stopNote.trim().length > 500 ||
+                (stopReason === "other" && !stopNote.trim())
+              }
               {...readOnly}
             >
-              {stop.isPending ? "Stopping…" : "Stop cadence"}
+              {stop.isPending
+                ? "Stopping…"
+                : stopModal && stopModal.items.length > 1
+                  ? `Stop ${stopModal.items.length} cadences`
+                  : "Stop cadence"}
             </Button>
           </>
         }
       >
         <div className="flex flex-col gap-4">
-          <div className="text-[12px] text-ink-muted">
-            This stops only <code>{stopModal?.playName}</code>. The prospect will be excluded from
-            Expandi. Bad timing and Other may return through breakup-revive after 60–90 days;
-            permanent reasons will not.
-          </div>
-          <Field label="Reason">
-            <Select
-              value={stopReason}
-              onChange={(e) => setStopReason(e.target.value as CadenceStopReason)}
-            >
+          <p className="m-0 text-[12px] text-ink-muted">
+            {stopModal && stopModal.items.length > 1 ? (
+              "Apply the same reason and note to these cadences."
+            ) : (
+              <>
+                This stops only <code>{stopModal?.items[0]?.playName}</code>.
+              </>
+            )}{" "}
+            Stopped prospects are excluded from Expandi. Bad timing and Other may return through
+            breakup-revive after 60–90 days; permanent reasons will not.
+          </p>
+          {stopModal && stopModal.items.length > 1 && (
+            <ul className="max-h-32 overflow-y-auto space-y-1 text-[12px] text-ink-cream-2">
+              {stopModal.items.map((item) => (
+                <li key={rowKey(item)} className="flex justify-between gap-3">
+                  <span>
+                    {item.prospectName
+                      ? mask("name", item.prospectName)
+                      : `Prospect #${item.prospectId}`}
+                  </span>
+                  <span className="text-ink-muted">{item.playName}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {stopFailures.length > 0 && (
+            <div role="alert" className="text-[12px] text-ink-blocked-2">
+              <p className="mb-2">Only these unsuccessful stops remain. Retry them or close.</p>
+              <ul className="space-y-1">
+                {stopFailures.map(({ target, message }) => (
+                  <li key={rowKey(target)}>
+                    {target.prospectName
+                      ? mask("name", target.prospectName)
+                      : `Prospect #${target.prospectId}`}{" "}
+                    · {target.playName}: {masked ? "Could not stop this cadence." : message}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <fieldset className="flex flex-col gap-2">
+            <legend className="ln-eyebrow mb-2">Reason</legend>
+            <div className="flex flex-wrap gap-2" role="group" aria-label="Stop reason">
               {(Object.entries(STOP_REASON_LABELS) as Array<[CadenceStopReason, string]>).map(
                 ([value, label]) => (
-                  <option key={value} value={value}>
+                  <Button
+                    key={value}
+                    variant={stopReason === value ? "secondary" : "ghost"}
+                    size="sm"
+                    aria-pressed={stopReason === value}
+                    disabled={stop.isPending}
+                    onClick={() => setStopReason(value)}
+                  >
                     {label}
-                  </option>
+                  </Button>
                 ),
               )}
-            </Select>
-          </Field>
+            </div>
+          </fieldset>
           <Field
             label={stopReason === "other" ? "Notes (required)" : "Notes (optional)"}
-            hint="Stored with the cadence for future context."
+            hint="Stored with each cadence for future context."
           >
             <Textarea
               value={stopNote}
               maxLength={500}
+              disabled={stop.isPending}
               onChange={(e) => setStopNote(e.target.value)}
-              placeholder="Why are you stopping this cadence?"
+              placeholder="Why are you stopping?"
             />
           </Field>
+          <div>
+            <p className="mb-2 text-[12px] text-ink-muted">
+              Quick rejection reasons — selects “not a fit”
+            </p>
+            <div className="flex flex-wrap gap-1">
+              {REJECT_REASON_CHIPS.map((chip) => (
+                <Button
+                  key={chip}
+                  variant="ghost"
+                  size="sm"
+                  disabled={stop.isPending || appendReason(stopNote, chip).length > 500}
+                  onClick={() => {
+                    setStopReason("not_a_fit");
+                    setStopNote((current) => appendReason(current, chip));
+                  }}
+                >
+                  {chip}
+                </Button>
+              ))}
+            </div>
+          </div>
         </div>
       </Modal>
 
