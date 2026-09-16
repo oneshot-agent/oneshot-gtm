@@ -34,10 +34,11 @@ import type {
  * prospect and payload, which reaches into the prospect/mail-address domains
  * that stay on `Ledger` — so only the row's own `prospect_id` UPDATE lives
  * here, and `Ledger.setQueueProspectId` keeps the cross-domain orchestration.
- * Likewise `expireBreakupReviveQueue` is called by `Ledger`'s reply-handling
- * methods (channel_events/cadence_state), but only ever touches
- * `target_queue`, so its implementation lives here with `Ledger` keeping a
- * private one-line delegate at its original call sites.
+ * Likewise `expireBreakupReviveQueue` is called directly by
+ * `ledger-cadence.ts`'s reply-handling functions (`stopCadence`,
+ * `recordLinkedInReply`, `recordProspectReply`), but only ever touches
+ * `target_queue`, so its implementation lives here and callers construct
+ * their own `QueueStore(db)` instance rather than going through `Ledger`.
  */
 
 const QUEUE_STATUSES: readonly QueueStatus[] = [
@@ -1249,14 +1250,13 @@ export class QueueStore {
   }
 
   /**
-   * Expire live `breakup-revive` queue rows for a prospect who just replied
-   * (via any channel) — a reply means the revive attempt worked or the
-   * relationship moved on either way, so the queued follow-up would be
-   * stale. Matches by prospect id (linked rows) OR the play's own
-   * `prospect:<id>` dedupe key (rows enqueued before linking). Called from
-   * `Ledger`'s reply-handling methods (`recordLinkedInReply`,
-   * `recordProspectReply`), which live outside this store's domain — but the
-   * write itself only ever touches `target_queue`, so it lives here.
+   * Expire live `breakup-revive` queue rows for a prospect — a stop or a
+   * reply (via any channel) means the deliberate re-engagement play should
+   * no longer fire. Matches by prospect id (linked rows) OR the play's own
+   * `prospect:<id>` dedupe key (rows enqueued before linking). Called
+   * directly from `ledger-cadence.ts`'s `stopCadence`, `recordLinkedInReply`
+   * and `recordProspectReply`, which live outside this store's domain — but
+   * the write itself only ever touches `target_queue`, so it lives here.
    */
   expireBreakupReviveQueue(prospectId: number, reason: string): void {
     this.db
