@@ -785,6 +785,17 @@ export class Ledger {
   }
 
   /**
+   * Expire live `breakup-revive` queue rows for a prospect who just replied —
+   * only ever touches `target_queue`, so the write itself lives in
+   * `QueueStore.expireBreakupReviveQueue`; this delegate keeps every
+   * reply-handling call site above (`stopCadence`, `recordLinkedInReply`,
+   * `recordProspectReply`) unchanged.
+   */
+  expireBreakupReviveQueue(prospectId: number, reason: string): void {
+    this.queue.expireBreakupReviveQueue(prospectId, reason);
+  }
+
+  /**
    * Emails of every prospect with a recorded reply — the target list for the
    * inbox's known-replier fetch, so a reply is never lost to the live window.
    */
@@ -860,6 +871,16 @@ export class Ledger {
    */
   claimInboxReplyForTriage(id: string): boolean {
     return this.inbox.claimInboxReplyForTriage(id);
+  }
+
+  /**
+   * Round-2 correction (#663, F-1): thin delegate to
+   * `InboxStore.peekInboxReplyIntent` — see that method's doc for why a
+   * caller that lost `claimInboxReplyForTriage` cannot treat "not the
+   * winner" as "not unsubscribe" and must read this back instead.
+   */
+  peekInboxReplyIntent(id: string): { pending: boolean; intent: string | null } {
+    return this.inbox.peekInboxReplyIntent(id);
   }
 
   /**

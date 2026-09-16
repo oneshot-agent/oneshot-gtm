@@ -11,15 +11,28 @@ export function contactAllowedClause(db: Database): string {
   if (hasTable(db, "cadence_state"))
     clauses.push(`NOT EXISTS (
     SELECT 1 FROM cadence_state c WHERE c.prospect_id = p.id AND c.status = 'unsubscribed')`);
-  if (
-    hasTable(db, "inbox_replies") &&
-    (db.query("PRAGMA table_info(inbox_replies)").all() as Array<{ name: string }>).some(
-      (c) => c.name === "kind",
-    )
-  )
-    clauses.push(`NOT EXISTS (
+  if (hasTable(db, "inbox_replies")) {
+    const inboxReplyColumns = new Set(
+      (db.query("PRAGMA table_info(inbox_replies)").all() as Array<{ name: string }>).map(
+        (c) => c.name,
+      ),
+    );
+    if (inboxReplyColumns.has("kind"))
+      clauses.push(`NOT EXISTS (
     SELECT 1 FROM inbox_replies ir WHERE ir.kind = 'unsubscribe'
       AND (ir.prospect_id = p.id OR lower(ir.from_email) = lower(p.email)))`);
+    // Issue #663: the deliverability `kind` above is phrase-based
+    // (reply-classify.ts's UNSUBSCRIBE_RE) and can miss a real "remove me"
+    // request, landing it as `kind = 'human'`. The sentiment triage (issue
+    // #480) reads the same reply's `intent` column correctly as
+    // 'unsubscribe' in that case. Either signal is a do-not-contact — veto
+    // on both, guarded separately since `intent` postdates `kind` and an
+    // older ledger may have the table without the column.
+    if (inboxReplyColumns.has("intent"))
+      clauses.push(`NOT EXISTS (
+    SELECT 1 FROM inbox_replies ir WHERE ir.intent = 'unsubscribe'
+      AND (ir.prospect_id = p.id OR lower(ir.from_email) = lower(p.email)))`);
+  }
   // Sync may have persisted a verdict before the cadence poll consumes it.
   if (
     db.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='mailbox_messages'").get()

@@ -61,6 +61,15 @@ const STORED_EMAIL = "sophia@agenticarchitect.ai";
 
 const notifySlackReplyReceivedMock = vi.fn(async () => {});
 const notifySlackBounceRecordedMock = vi.fn(async () => {});
+// Round-1 correction (#663): tagOutcomeValue is the engagement-billing side
+// effect an unsubscribe-labeled reply must never trigger (it tags the play's
+// send receipts with `{type: "engagement"}`, which is what feeds RoCS/spend
+// accounting). _cadence.ts imports it from "@oneshot-gtm/core", so mocking it
+// here — rather than relying on the real oneshot.ts implementation, which
+// resolves its own internal getLedger() independent of this file's ledger
+// stub — lets the tests below assert it fires exactly when a reply is real
+// engagement, and never for a triaged or phrase-matched opt-out.
+const tagOutcomeValueMock = vi.fn(async () => ({ tagged: true }));
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -69,6 +78,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     loadConfig: () => ({ founderName: "J", productOneLiner: "thing" }),
     notifySlackReplyReceived: notifySlackReplyReceivedMock,
     notifySlackBounceRecorded: notifySlackBounceRecordedMock,
+    tagOutcomeValue: tagOutcomeValueMock,
     sendEmail: async () => {
       calls.sendEmail++;
       return { receiptId: 1 };
@@ -146,6 +156,10 @@ vi.mock("@oneshot-gtm/core", async () => {
         const r = rows.find((x) => x.prospect_id === prospectId && x.play_name === playName);
         if (r) r.status = status;
       },
+      // The intent-unsubscribe branch expires queued breakup-revive rows; this
+      // mock has no queue, so the call is a no-op here (the real-Ledger test
+      // in cadence-reply-ledger.test.ts covers the row).
+      expireBreakupReviveQueue: () => {},
       // Mirrors the real ledger.recordProspectReply: every live cadence for the
       // prospect stops (control plane); the analytics event is credited to ONE
       // play — `latestSentPlay` stands in for the subject/latest resolution —
@@ -206,6 +220,17 @@ vi.mock("@oneshot-gtm/core", async () => {
         intents.set(id, { intent: "__triage_pending__", intentReason: cur?.intentReason ?? null });
         return true;
       },
+      // Round-2 correction (#663, F-1): mirrors the real ledger's
+      // `peekInboxReplyIntent` — what a claim LOSER reads back to tell
+      // "another caller's triage is still in flight" (pending: true) from
+      // "a prior poll already wrote back a real result" (pending: false,
+      // the real category, possibly still null on a prior failed triage).
+      peekInboxReplyIntent: (id: string) => {
+        const cur = intents.get(id);
+        if (!cur) return { pending: false, intent: null };
+        if (cur.intent === "__triage_pending__") return { pending: true, intent: null };
+        return { pending: false, intent: cur.intent };
+      },
     }),
   };
 });
@@ -214,12 +239,25 @@ vi.mock("@oneshot-gtm/core", async () => {
 // check-and-mark on `intent` gates the paid triageEmails call — mocked here
 // so the dedupe test below can assert call counts/args without hitting a
 // real LLM.
+// Local mirror of intel/triage.ts's TriageCategory — used only to let the
+// mock's return type vary the category across tests (see
+// mockImplementationOnce below for the intent=unsubscribe case, issue #663).
+type TriageCategoryStub =
+  | "interested"
+  | "not_now"
+  | "wrong_person"
+  | "objection"
+  | "question"
+  | "unsubscribe"
+  | "auto_reply"
+  | "other";
+
 const triageEmailsMock = vi.fn(async (emails: Array<{ id: string }>) =>
   emails.map((e) => ({
     id: e.id,
     from: "x",
     subject: "x",
-    category: "interested" as const,
+    category: "interested" as TriageCategoryStub,
     reasoning: "r",
   })),
 );
@@ -242,6 +280,7 @@ beforeEach(() => {
   recordProspectReplyRepliedAts = [];
   notifySlackReplyReceivedMock.mockClear();
   notifySlackBounceRecordedMock.mockClear();
+  tagOutcomeValueMock.mockClear();
   intents = new Map();
   triageEmailsMock.mockClear();
   angleRefreshCalls = [];
@@ -767,6 +806,72 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
     // "Bounce recorded" alert (only auto_permanent is a bounce by this
     // codebase's own status mapping above).
     expect(notifySlackBounceRecordedMock).not.toHaveBeenCalled();
+    // Round-1 correction (#663): must not be billed/counted as engagement either.
+    expect(tagOutcomeValueMock).not.toHaveBeenCalled();
+  });
+
+  // Issue #663: reply-classify.ts's phrase-based UNSUBSCRIBE_RE is what
+  // decides `kind` above — it can miss a real "remove me" request and land
+  // it as `kind = 'human'` (a normal reply). The sentiment triage (issue
+  // #480, mocked via triageEmailsMock) is the independent classifier that
+  // gets it right. When triage labels a HUMAN reply intent=unsubscribe, the
+  // cadence must flip to 'unsubscribed' the same way the kind='unsubscribe'
+  // branch above does, not be left in 'replied' — 'replied' is what
+  // breakup-revive's re-enrollment reads as "still eligible for another play".
+  it("a human reply triaged intent=unsubscribe stops the cadence as unsubscribed, not replied", async () => {
+    inboxEmails = [
+      {
+        id: "m1",
+        from: "sophia@agenticarchitect.ai",
+        subject: "Re: your agent stack",
+        body: "This isn't relevant to our team, please don't send any more of these.",
+      },
+    ];
+    triageEmailsMock.mockImplementationOnce(async (emails: Array<{ id: string }>) =>
+      emails.map((e) => ({
+        id: e.id,
+        from: "x",
+        subject: "x",
+        category: "unsubscribe" as TriageCategoryStub,
+        reasoning: "asked to be removed",
+      })),
+    );
+
+    const result = await pollInboxReplies();
+
+    expect(rows[0]?.status).toBe("unsubscribed");
+    expect(result.cadencesStopped).toBe(1);
+    expect(seqEvents).toEqual([
+      { prospectId: 1, playName: "stack-consolidation", status: "unsubscribed" },
+    ]);
+    // classifyReply's own kind was 'human' (no phrase match) — persisted kind
+    // proves this test exercises the label/kind disagreement, not the
+    // existing kind==='unsubscribe' branch.
+    expect(persistedReplies[0]?.kind).toBe("human");
+    // F-1 (round-1 correction, #663): the reply must not ALSO fall through to
+    // recordProspectReply/tagOutcomeValue — an unsubscribe-labeled reply is a
+    // do-not-contact, not engagement, and must not be counted or billed as
+    // one. Before this fix, `intent === "unsubscribe"` fell through
+    // unconditionally into the ordinary reply-bookkeeping block below it.
+    expect(result.repliesDetected).toBe(0);
+    expect(repliedSteps).toEqual([]);
+    expect(tagOutcomeValueMock).not.toHaveBeenCalled();
+  });
+
+  // A human reply triaged with any other intent (e.g. genuine interest) must
+  // not be treated as an opt-out — only intent='unsubscribe' does.
+  it("a human reply triaged intent=interested stops the cadence as replied, not unsubscribed", async () => {
+    inboxEmails = [{ id: "m1", from: "sophia@agenticarchitect.ai", subject: "re: stack" }];
+    // Default triageEmailsMock already returns category 'interested'.
+
+    const result = await pollInboxReplies();
+
+    expect(rows[0]?.status).toBe("replied");
+    expect(result.repliesDetected).toBe(1);
+    expect(seqEvents).toEqual([]);
+    // Ordinary engagement is still tagged — only the unsubscribe branch above
+    // must suppress this.
+    expect(tagOutcomeValueMock).toHaveBeenCalledTimes(1);
   });
 
   it("a terminal cadence is not resurrected or re-stopped by a dead-mailbox notice", async () => {

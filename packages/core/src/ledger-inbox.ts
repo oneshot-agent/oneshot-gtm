@@ -368,6 +368,33 @@ export class InboxStore {
   }
 
   /**
+   * Round-2 correction (#663, F-1): what a caller that just LOST
+   * `claimInboxReplyForTriage` must read back before deciding whether it's
+   * safe to run ordinary-reply bookkeeping for this row. Losing the claim
+   * means one of two very different things — (a) an earlier poll already
+   * fully triaged this row, and its real classification (including
+   * `unsubscribe`) is sitting in the column right now, or (b) a
+   * concurrently-running caller's `triageEmails()` await is still in
+   * flight and hasn't written the real result back yet. Unlike
+   * `listInboxReplyIntents` (which folds the pending sentinel into `null`
+   * for UI/API readers — #559, an intentional simplification for display),
+   * this distinguishes the two: `pending: true` tells the caller a result
+   * is still unresolved so it must not guess "not unsubscribe" and fall
+   * through to billing-relevant bookkeeping, while `pending: false` hands
+   * back the real (possibly still-null, e.g. a previously *failed* triage)
+   * classification to use exactly like a winning triage's own result.
+   */
+  peekInboxReplyIntent(id: string): { pending: boolean; intent: string | null } {
+    const row = this.db.query(`SELECT intent FROM inbox_replies WHERE id = ?`).get(id) as
+      | { intent: string | null }
+      | undefined;
+    const raw = row?.intent ?? null;
+    return raw === INBOX_REPLY_TRIAGE_PENDING
+      ? { pending: true, intent: null }
+      : { pending: false, intent: raw };
+  }
+
+  /**
    * Cold-boot recovery for `claimInboxReplyForTriage` (round-2 correction,
    * #558): every other claim-marker in this ledger split (claimCadenceSendingMarker/
    * sweepStaleCadenceSends, claimQueueSendingMarker/sweepStaleQueueSends,
