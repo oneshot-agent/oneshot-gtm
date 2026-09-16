@@ -18,6 +18,8 @@ import {
 } from "@oneshot-gtm/find";
 import { withXEngine, type XEngine } from "@oneshot-gtm/shared-types";
 import prompts from "prompts";
+import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
+import { loadVoiceCorpus, voiceCorpusPrompt } from "./_voice-corpus.ts";
 import { c, header, note, ok } from "../output.ts";
 
 export async function configLlm(): Promise<void> {
@@ -357,6 +359,111 @@ export async function configLinkedInSession(opts: { login?: boolean } = {}): Pro
     );
     throw new Error(`connect failed: ${(err as Error).message}`, { cause: err });
   }
+}
+
+const VOICE_CARD_MAX_CHARS = 1500;
+
+/**
+ * `config voice`: show, set, clear, or draft the founder's voice card. With
+ * `--from`, the founder's own writing (local files) goes through the
+ * `voice-derive` prompt on the configured LLM and the proposed card is
+ * shown before it is saved; the /setup Voice card is where it is edited
+ * afterwards. Nothing is saved without a yes.
+ */
+export async function configVoice(opts: {
+  from?: string[];
+  messages?: string[];
+  guide?: string;
+  show?: boolean;
+  clear?: boolean;
+  yes?: boolean;
+}): Promise<void> {
+  header("Founder voice");
+  const cfg = loadConfig();
+  if (opts.clear) {
+    saveConfig({ ...cfg, founderVoice: null });
+    ok("voice card cleared — drafts use the plain register");
+    return;
+  }
+  const hasSources = (opts.from?.length ?? 0) + (opts.messages?.length ?? 0) > 0;
+  if (!hasSources) {
+    if (cfg.founderVoice?.trim()) {
+      note(`card (${cfg.founderVoice.length} chars):\n${c.dim(cfg.founderVoice)}`);
+    } else {
+      note(c.dim("no voice card — drafts use the plain register"));
+    }
+    note(
+      c.dim(
+        "draft one from your writing: oneshot-gtm config voice --from <posts>... [--messages <sent messages>...] [--guide <file>]",
+      ),
+    );
+    note(c.dim("edit it on /setup (Voice); clear with --clear"));
+    return;
+  }
+  const corpus = loadVoiceCorpus(opts.from ?? [], {
+    ...(opts.messages ? { messages: opts.messages } : {}),
+    ...(opts.guide ? { guide: opts.guide } : {}),
+  });
+  const posts = corpus.items.filter((i) => i.kind === "post").length;
+  const dms = corpus.items.filter((i) => i.kind === "dm").length;
+  note(
+    `read ${corpus.files} file${corpus.files === 1 ? "" : "s"} → ${posts} post${posts === 1 ? "" : "s"}, ${dms} approved message${dms === 1 ? "" : "s"}${corpus.guide ? ", plus your guide" : ""}`,
+  );
+  if (corpus.items.length === 0) {
+    throw new Error(
+      "nothing readable under those paths — point --from / --messages at .md or .txt files of your own writing",
+    );
+  }
+  note(c.dim(`asking ${cfg.llmProvider}/${cfg.llmModel} for the card…`));
+  const res = await complete({
+    messages: [
+      { role: "system", content: loadPrompt("voice-derive") },
+      { role: "user", content: voiceCorpusPrompt(corpus) },
+    ],
+    temperature: 0.3,
+    maxTokens: 1200,
+  });
+  const parsed = tryParseJsonObject<{ card?: unknown; thin?: unknown; notes?: unknown }>(
+    res.content,
+    {},
+  );
+  const card = typeof parsed.card === "string" ? parsed.card.trim() : "";
+  if (!card) throw new Error("the model returned no card — try again, or write one on /setup");
+  const thin = parsed.thin === true;
+  const notes = Array.isArray(parsed.notes)
+    ? parsed.notes.filter((n): n is string => typeof n === "string")
+    : [];
+  process.stdout.write(`\n${card}\n\n`);
+  for (const n of notes) note(`note: ${n}`);
+  if (card.length > VOICE_CARD_MAX_CHARS) {
+    note(
+      c.yellow(
+        `card is ${card.length} chars; the drafts read the first ${VOICE_CARD_MAX_CHARS} — trim it on /setup`,
+      ),
+    );
+  }
+  if (thin && !opts.yes) {
+    note(
+      c.yellow(
+        "the samples were thin; this card is a sketch. Pass --yes to save it anyway, or add more of your writing to --from.",
+      ),
+    );
+    return;
+  }
+  const { save } = opts.yes
+    ? { save: true }
+    : await prompts({
+        type: "confirm",
+        name: "save",
+        message: "Save this card? (edit it later on /setup)",
+        initial: true,
+      });
+  if (!save) {
+    note("not saved");
+    return;
+  }
+  saveConfig({ ...loadConfig(), founderVoice: card });
+  ok(`voice card saved (${card.length} chars) — every email draft now carries it`);
 }
 
 export async function configKeys(): Promise<void> {

@@ -7,7 +7,12 @@ import {
   type DraftVersionRow,
 } from "@oneshot-gtm/core";
 import { edgeFieldOf, splitEdgeAngles } from "@oneshot-gtm/plays";
-import type { AngleUsageView, DraftUsageView, DraftVersionView } from "@oneshot-gtm/shared-types";
+import type {
+  AngleUsageView,
+  DraftUsageView,
+  DraftVersionView,
+  VoiceUsageView,
+} from "@oneshot-gtm/shared-types";
 
 /**
  * Wire projections of the draft-version record (packages/core/src/ledger-drafts.ts):
@@ -45,19 +50,22 @@ export function toDraftVersionView(row: DraftVersionRow): DraftVersionView {
 export interface PlayUsage {
   angles: AngleUsageRow[];
   drafts: DraftUsageByStep | undefined;
+  voice: { voiced: DraftUsage; plain: DraftUsage } | undefined;
 }
 
 /** Read both aggregates once; hand out per-play slices. */
 export function playUsageLoader(ledger: ReturnType<typeof getLedger>): (play: string) => PlayUsage {
   let angles: Record<string, AngleUsageRow[]> = {};
   let drafts: Record<string, DraftUsageByStep> = {};
+  let voice: Record<string, { voiced: DraftUsage; plain: DraftUsage }> = {};
   try {
     angles = ledger.angleUsageByPlay();
     drafts = ledger.draftUsageByPlay();
+    voice = ledger.draftUsageByVoice();
   } catch {
     // Test doubles and pre-v33 ledgers: the editor simply shows no tally.
   }
-  return (play) => ({ angles: angles[play] ?? [], drafts: drafts[play] });
+  return (play) => ({ angles: angles[play] ?? [], drafts: drafts[play], voice: voice[play] });
 }
 
 const ZERO: Omit<AngleUsageView, "text"> = {
@@ -135,4 +143,11 @@ export function draftUsageView(
 ): { intro: DraftUsageView; followUp: DraftUsageView } | null {
   if (!drafts) return null;
   return { intro: usageView(drafts.intro), followUp: usageView(drafts.followUp) };
+}
+
+export function voiceUsageView(
+  voice: { voiced: DraftUsage; plain: DraftUsage } | undefined,
+): VoiceUsageView | null {
+  if (!voice) return null;
+  return { voiced: usageView(voice.voiced), plain: usageView(voice.plain) };
 }

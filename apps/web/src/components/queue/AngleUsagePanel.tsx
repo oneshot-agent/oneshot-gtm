@@ -30,11 +30,14 @@ function angleCounts(a: AngleUsageView): string {
 export function AngleUsagePanel({
   angleUsage,
   draftUsage,
+  voiceUsage,
   onRetire,
   disabled,
 }: {
   angleUsage: TriggerView["angleUsage"];
   draftUsage: TriggerView["draftUsage"];
+  /** The same outcomes split by the founder's voice card; absent on older callers. */
+  voiceUsage?: TriggerView["voiceUsage"];
   /** Remove an angle from the editor text. Absent = read-only. */
   onRetire?: (angleText: string) => void;
   disabled?: boolean;
@@ -50,6 +53,11 @@ export function AngleUsagePanel({
           ? `drafts · ${usageLine("intro", draftUsage.intro)} · ${usageLine("follow-up", draftUsage.followUp)}`
           : "drafts · nothing drafted on this play yet"}
       </div>
+      {voiceUsage && voiceUsage.voiced.sent + voiceUsage.voiced.regenerated > 0 && (
+        <div className="font-mono text-[11px] text-ink-faint">
+          {`voice · ${usageLine("on", voiceUsage.voiced)} · ${usageLine("off", voiceUsage.plain)}`}
+        </div>
+      )}
       {!hasAny && (
         <div className="text-ink-faint">
           No angle has been put in front of you yet — counts appear once drafts are reviewed.

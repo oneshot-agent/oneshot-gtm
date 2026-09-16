@@ -2284,6 +2284,7 @@ function TriggerRowFragment(props: TriggerRowProps) {
                 <AngleUsagePanel
                   angleUsage={t.angleUsage ?? null}
                   draftUsage={t.draftUsage ?? null}
+                  voiceUsage={t.voiceUsage ?? null}
                   disabled={props.setConfigPending || READ_ONLY}
                   onRetire={(angleText) => {
                     const next = removeAngleFromConfigText(props.editing?.text ?? "", angleText);

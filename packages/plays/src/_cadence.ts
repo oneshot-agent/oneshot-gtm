@@ -39,6 +39,7 @@ import {
   lintOpenerFrequency,
   overusedOpeners,
   signatureDirective,
+  voiceBlock,
 } from "./_lib.ts";
 
 export interface CadenceContext {
@@ -55,6 +56,8 @@ export type StepPayload =
       body: string;
       /** Which edge angle the follow-up drew on (issue #584); absent when the play's edge has one or none. */
       angle?: DraftAngleChoice;
+      /** Hash of the founder's voice card in the prompt; absent when none was set. */
+      voiceKey?: string | null;
     }
   | { kind: "sms"; message: string; toPhone?: string }
   | {
@@ -2032,6 +2035,9 @@ export function buildFollowUpEmail(opts: {
     // intro's. No multi-angle edge on the sent row → null → no block.
     const edgeSelection = await followUpEdgeSelection(ctx.prospect, opts.playName);
     const edgeBlock = followUpEdgeBlock(edgeSelection?.angle ?? null);
+    // VOICE: the founder's register, when a card is set. The breakup step
+    // gets the no-aphorism budget; every other follow-up the default one.
+    const voice = voiceBlock(opts.promptName === "breakup-email" ? "breakup" : "followup");
     const user = [
       `FOUNDER: ${ctx.cfg.founderName}`,
       `PRODUCT: ${ctx.cfg.productOneLiner}`,
@@ -2042,6 +2048,7 @@ export function buildFollowUpEmail(opts: {
       ...(priorBlock ? ["", priorBlock] : []),
       ...(angleBlock ? ["", angleBlock] : []),
       ...(edgeBlock ? ["", edgeBlock] : []),
+      ...(voice ? ["", voice.text] : []),
       ...(firstName ? ["", `PROSPECT_FIRST_NAME: ${firstName}`] : []),
       ...(avoidBlock ? ["", avoidBlock] : []),
     ].join("\n");
@@ -2065,6 +2072,9 @@ export function buildFollowUpEmail(opts: {
       kind: "email",
       subject: cleaned.subject,
       body: cleaned.body,
+      // The voice card in the prompt, so the persisted preview's draft
+      // version can be split voice on/off like an intro draft's.
+      ...(voice ? { voiceKey: voice.key } : {}),
       // Carried on the payload so the persisted preview — and its draft
       // version — records the angle the way an intro draft does.
       ...(edgeSelection

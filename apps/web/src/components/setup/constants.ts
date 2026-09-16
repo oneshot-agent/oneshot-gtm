@@ -79,6 +79,7 @@ export const SECTIONS = [
   { id: "icp", eyebrow: "02 · Ideal customer profile", label: "ICP" },
   { id: "proof", eyebrow: "03 · Social proof", label: "Social proof" },
   { id: "brief", eyebrow: "04 · Product brief", label: "Product brief" },
+  { id: "voice", eyebrow: "04.5 · Voice", label: "Voice" },
   { id: "llm", eyebrow: "05 · LLM provider", label: "LLM provider" },
   { id: "wallet", eyebrow: "06 · Wallet & spend", label: "Wallet & spend" },
   { id: "notifications", eyebrow: "06.5 · Notifications", label: "Notifications" },

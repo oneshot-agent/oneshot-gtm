@@ -121,6 +121,7 @@ describe("toDraftVersionView", () => {
     angle_origin: "configured",
     outcome: "discarded",
     discard_reason: "rotate",
+    voice_key: null,
     created_at: "2026-09-15T00:00:00.000Z",
     closed_at: "2026-09-15T00:01:00.000Z",
   };

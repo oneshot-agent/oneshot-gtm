@@ -28,6 +28,7 @@ import {
   admissionBlock,
   socialProofBlock,
   type SendDraftedOpts,
+  voiceBlock,
 } from "./_lib.ts";
 import { enrollInCadence, getSequence } from "./_cadence.ts";
 import {
@@ -313,6 +314,10 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         // keep, which it can't).
         const admission = admissionBlock(def.toEmail(target));
         if (admission) inputBlock = `${inputBlock}\n\n${admission}`;
+        // VOICE: the founder's register card, when set. Same conditional
+        // shape; the block's own budget line keeps it under the humanizer.
+        const voice = voiceBlock("intro");
+        if (voice) inputBlock = `${inputBlock}\n\n${voice.text}`;
         // ANGLE (issue #356, lowest priority of the three draft paths — most
         // outbound is first-touch, so a stored angle_json is the exception,
         // not the rule): only present when a prior finder/synthesis run
@@ -439,6 +444,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           sent: send.sent,
           flags,
           ...(prep.enrichmentFailed ? { enrichmentFailed: true } : {}),
+          ...(voice ? { voiceKey: voice.key } : {}),
           ...(angleSelection && edgeField
             ? {
                 angle: {

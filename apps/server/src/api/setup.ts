@@ -499,6 +499,11 @@ export function mergeSetupConfig(
     founderCohort: mergeString(body.founderCohort, current.founderCohort ?? null),
     founderAdmission: mergeString(body.founderAdmission, current.founderAdmission),
     productBrief: mergeString(body.productBrief, current.productBrief),
+    // Optional field: absent on both sides stays absent, so a body that does
+    // not touch it re-saves the config byte-identical.
+    ...(body.founderVoice !== undefined || current.founderVoice !== undefined
+      ? { founderVoice: mergeString(body.founderVoice, current.founderVoice ?? null) }
+      : {}),
     mobileSignature: body.mobileSignature ?? current.mobileSignature,
     slackWebhookUrl: mergeSlackWebhookUrl(body.slackWebhookUrl, current.slackWebhookUrl),
     queueReviewOrder:

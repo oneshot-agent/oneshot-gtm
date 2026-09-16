@@ -60,6 +60,7 @@ import {
   type AngleUsageRow,
   type DraftDiscardReason,
   type DraftSlot,
+  type DraftUsage,
   type DraftUsageByStep,
   type DraftVersionRow,
 } from "./ledger-drafts.ts";
@@ -575,6 +576,11 @@ export class Ledger {
   /** Per play: draft-version counts by outcome, intro and follow-up apart. */
   draftUsageByPlay(): Record<string, DraftUsageByStep> {
     return this.drafts.draftUsageByPlay();
+  }
+
+  /** Per play: draft-version counts by outcome, voice card on versus off. */
+  draftUsageByVoice(): Record<string, { voiced: DraftUsage; plain: DraftUsage }> {
+    return this.drafts.draftUsageByVoice();
   }
 
   /**

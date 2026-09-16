@@ -10,6 +10,7 @@ import {
   lintEmail,
   meetingBlock,
   signatureDirective,
+  voiceBlock,
 } from "./_lib.ts";
 
 // stripQuotedChain moved to core (reply-classify.ts) — the classifier needs it
@@ -473,6 +474,10 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<Draf
   // prompt's "do not re-introduce yourself or the product" — the credentials
   // and portfolio lines only render as a self-introduction, which the prospect
   // already read in the intro email. Social proof belongs in outbound drafts.
+  // VOICE is the one founder-specific block that does belong here: it is
+  // register, not credentials, and its reply budget drops the aphorism in
+  // logistics mode.
+  const voice = voiceBlock("reply");
   const firstName = firstNameFrom(input.matched?.name ?? null);
   const angleBlock = angleBlockFromJson(input.angleJson);
   // ICP GATE — a free ledger fact, rendered with its caveat inline so the
@@ -503,6 +508,7 @@ export async function draftInboxReply(input: DraftInboxReplyInput): Promise<Draf
     ...(asksBlock ? ["", asksBlock] : []),
     ...(intentBlock ? ["", intentBlock] : []),
     ...(steerBlock ? ["", steerBlock] : []),
+    ...(voice ? ["", voice.text] : []),
     "",
     "INBOUND EMAIL (the message you are answering):",
     `Subject: ${input.subject}`,

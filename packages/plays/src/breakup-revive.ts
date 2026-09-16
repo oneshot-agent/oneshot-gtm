@@ -11,6 +11,7 @@ import {
   lintEmail,
   logTargetError,
   sendDraftedEmail,
+  voiceBlock,
 } from "./_lib.ts";
 
 const PLAY_NAME = "breakup-revive";
@@ -71,6 +72,8 @@ export async function runBreakupRevive(
 
   const targets = opts.targets ?? ledgerScanTargets(opts);
   const drafted: BreakupReviveDraft[] = [];
+  // A revive is a breakup-class touch: the voice card's no-aphorism budget.
+  const voice = voiceBlock("breakup");
 
   for (const [index, t] of targets.entries()) {
     if (!t.email) continue;
@@ -92,6 +95,7 @@ export async function runBreakupRevive(
           `PROSPECT: ${t.name ?? "(unknown)"} at ${t.company ?? "(unknown)"}`,
           `DAYS SINCE LAST ACTIVITY: ${t.daysCold}`,
           `OPTIONAL VALUE DROP: ${opts.valueDrop ?? "(none — go with a probe question instead)"}`,
+          ...(voice ? ["", voice.text] : []),
         ].join("\n"),
       });
 
