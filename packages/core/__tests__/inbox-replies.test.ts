@@ -172,9 +172,12 @@ describe("contactSuppressionFor", () => {
   // correctly labels intent = 'unsubscribe' must still veto here — every
   // send path funnels through dispatchEmail's contactSuppressionFor call.
   it("suppresses on an intent-only unsubscribe even when kind stayed 'human'", () => {
-    record({ kind: "human" });
+    record({ kind: "human", receivedAt: "2026-08-27T09:00:00.000Z" });
     ledger.setInboxReplyIntent("msg-1", "unsubscribe", "asked to be removed");
-    expect(ledger.contactSuppressionFor("jane@prospect.example")).not.toBeNull();
+    expect(ledger.contactSuppressionFor("jane@prospect.example")).toMatchObject({
+      kind: "unsubscribe",
+      received_at: "2026-08-27T09:00:00.000Z",
+    });
   });
 
   it("ordinary human replies with a non-unsubscribe intent still do not suppress", () => {

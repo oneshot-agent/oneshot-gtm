@@ -1127,6 +1127,12 @@ export class Ledger {
    * mailbox is dead) captured from this address. Durable on purpose — it
    * outlives any one cadence, so a later play can never re-enroll and email
    * an unsubscribed or gone prospect. Sibling of suppressionFor (bounces).
+   *
+   * `kind` is the declared reason, not necessarily the row's raw `kind`
+   * column: a reply whose phrase-classified `kind` stayed 'human' but whose
+   * sentiment-triaged `intent` (issue #480) reads 'unsubscribe' is reported
+   * here as 'unsubscribe' too (issue #666), since callers use this value to
+   * choose between an "unsubscribed" and a "bounced" outcome.
    */
   contactSuppressionFor(email: string): { kind: string; received_at: string } | null {
     return delivContactSuppressionFor(this.db, email);

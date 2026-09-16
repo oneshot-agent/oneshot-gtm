@@ -125,6 +125,14 @@ function hasIntentColumn(db: Database): boolean {
  * contactAllowedClause (contact-optout.ts) already closed for re-enrollment
  * eligibility. Guarded on the column existing: an older ledger without the
  * issue #480 migration must keep working on `kind` alone rather than error.
+ *
+ * The returned `kind` is the declared REASON, not a copy of the raw column:
+ * an intent-only match (row `kind` still 'human', `intent` = 'unsubscribe')
+ * reports 'unsubscribe' here too, because every caller — cadence status
+ * ('unsubscribed' vs 'bounced'), the send-refusal message, and the dashboard
+ * badge — branches on this value to say "they asked to stop" rather than
+ * "their mailbox is dead". Reporting the raw 'human' kind would mislabel an
+ * opt-out as a bounce everywhere downstream.
  */
 export function contactSuppressionFor(
   db: Database,
@@ -134,7 +142,10 @@ export function contactSuppressionFor(
   return (
     (db
       .query(
-        `SELECT kind, received_at FROM inbox_replies
+        `SELECT
+           CASE WHEN kind IN ('unsubscribe', 'auto_permanent') THEN kind ELSE 'unsubscribe' END AS kind,
+           received_at
+         FROM inbox_replies
          WHERE (from_email = ? OR prospect_id IN (SELECT id FROM prospects WHERE email = ?))
            AND (kind IN ('unsubscribe', 'auto_permanent')${intentClause})
          ORDER BY received_at DESC LIMIT 1`,
