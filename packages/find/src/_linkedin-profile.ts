@@ -440,6 +440,17 @@ export async function finishLinkedInLogin(ctx: CallContext): Promise<LinkedInSes
   }
   const verified = await verifyLinkedInSession(profileId, ctx, { record: false });
   if (!verified.loggedIn) return verified;
+  // Two awaits passed since the pending id was read; a cancel or a fresh
+  // start meanwhile makes this profile stale — it must not become the
+  // session, nor clear whatever login is now pending.
+  if (loadConfig().linkedinPendingProfileId !== profileId) {
+    logEvent("linkedin_profile.login_superseded", { profile_id: profileId }, "warn");
+    return {
+      ...verified,
+      loggedIn: false,
+      reason: "this sign-in was cancelled or replaced while it was being checked — start again",
+    };
+  }
   promotePendingProfile(profileId, verified.name);
   return verified;
 }
@@ -469,9 +480,7 @@ export async function cancelLinkedInLogin(ctx: CallContext): Promise<{ cancelled
  * The hosted login's current state, for a page that reloaded mid-login: the
  * live URL to send the founder back to, or nothing when no login is pending.
  */
-export async function linkedinLoginState(
-  ctx: CallContext,
-): Promise<
+export async function linkedinLoginState(ctx: CallContext): Promise<
   | { pending: false }
   | {
       pending: true;

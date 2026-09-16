@@ -30,6 +30,25 @@ let platformProfiles: Array<{ id: string; name: string }> = [];
 let storedCookies: Array<{ name: string; domain: string; path: string }> = [];
 const saved: Array<Record<string, unknown>> = [];
 
+/** The mocked browser task; a test can swap it to interleave state changes mid-call. */
+let browserTaskImpl = async (input: Record<string, unknown>) => {
+  calls.browser++;
+  browserInputs.push(input);
+  if (browserError) throw browserError;
+  return {
+    result: {
+      output: browserOutput,
+      steps: browserSteps,
+      cost: 0.012,
+      ...(browserFinalUrl ? { final_url: browserFinalUrl } : {}),
+      ...(browserSuccess === undefined
+        ? {}
+        : { success: browserSuccess, error_reason: "internal_error" }),
+    },
+    receiptId: 5,
+  };
+};
+
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
   return {
@@ -91,23 +110,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       calls.setupFinish++;
       return { profileId, status: "finished", liveUrl: null, expiresAt: null, storedCookies };
     },
-    browserTask: async (input: Record<string, unknown>) => {
-      calls.browser++;
-      browserInputs.push(input);
-      if (browserError) throw browserError;
-      return {
-        result: {
-          output: browserOutput,
-          steps: browserSteps,
-          cost: 0.012,
-          ...(browserFinalUrl ? { final_url: browserFinalUrl } : {}),
-          ...(browserSuccess === undefined
-            ? {}
-            : { success: browserSuccess, error_reason: "internal_error" }),
-        },
-        receiptId: 5,
-      };
-    },
+    browserTask: (input: Record<string, unknown>) => browserTaskImpl(input),
   };
 });
 
@@ -368,6 +371,23 @@ describe("startLinkedInLogin / finishLinkedInLogin", () => {
     expect(r.loggedIn).toBe(false);
     expect(linkedinSessionState()).toBe("ok");
     expect(cfg["linkedinBrowserProfileId"]).toBe("prof_existing");
+  });
+
+  it("a sign-in cancelled or replaced while being checked is never promoted", async () => {
+    await startLinkedInLogin(ctx);
+    browserOutput = { loggedIn: true, name: "Founder Name" };
+    // The verify task "takes long enough" for a fresh start to replace the pending login.
+    const original = browserTaskImpl;
+    browserTaskImpl = async (input) => {
+      cfg = { ...cfg, linkedinPendingProfileId: "prof_other" };
+      return original(input);
+    };
+    const r = await finishLinkedInLogin(ctx);
+    browserTaskImpl = original;
+    expect(r.loggedIn).toBe(false);
+    expect(r.reason).toMatch(/cancelled or replaced/);
+    expect(cfg["linkedinBrowserProfileId"]).toBe("prof_existing");
+    expect(cfg["linkedinPendingProfileId"]).toBe("prof_other");
   });
 
   it("finish without a login in progress refuses; cancel drops the pending profile only", async () => {
