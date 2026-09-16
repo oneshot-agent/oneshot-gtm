@@ -214,12 +214,25 @@ vi.mock("@oneshot-gtm/core", async () => {
 // check-and-mark on `intent` gates the paid triageEmails call — mocked here
 // so the dedupe test below can assert call counts/args without hitting a
 // real LLM.
+// Local mirror of intel/triage.ts's TriageCategory — used only to let the
+// mock's return type vary the category across tests (see
+// mockImplementationOnce below for the intent=unsubscribe case, issue #663).
+type TriageCategoryStub =
+  | "interested"
+  | "not_now"
+  | "wrong_person"
+  | "objection"
+  | "question"
+  | "unsubscribe"
+  | "auto_reply"
+  | "other";
+
 const triageEmailsMock = vi.fn(async (emails: Array<{ id: string }>) =>
   emails.map((e) => ({
     id: e.id,
     from: "x",
     subject: "x",
-    category: "interested" as const,
+    category: "interested" as TriageCategoryStub,
     reasoning: "r",
   })),
 );
@@ -767,6 +780,59 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
     // "Bounce recorded" alert (only auto_permanent is a bounce by this
     // codebase's own status mapping above).
     expect(notifySlackBounceRecordedMock).not.toHaveBeenCalled();
+  });
+
+  // Issue #663: reply-classify.ts's phrase-based UNSUBSCRIBE_RE is what
+  // decides `kind` above — it can miss a real "remove me" request and land
+  // it as `kind = 'human'` (a normal reply). The sentiment triage (issue
+  // #480, mocked via triageEmailsMock) is the independent classifier that
+  // gets it right. When triage labels a HUMAN reply intent=unsubscribe, the
+  // cadence must flip to 'unsubscribed' the same way the kind='unsubscribe'
+  // branch above does, not be left in 'replied' — 'replied' is what
+  // breakup-revive's re-enrollment reads as "still eligible for another play".
+  it("a human reply triaged intent=unsubscribe stops the cadence as unsubscribed, not replied", async () => {
+    inboxEmails = [
+      {
+        id: "m1",
+        from: "sophia@agenticarchitect.ai",
+        subject: "Re: your agent stack",
+        body: "This isn't relevant to our team, please don't send any more of these.",
+      },
+    ];
+    triageEmailsMock.mockImplementationOnce(async (emails: Array<{ id: string }>) =>
+      emails.map((e) => ({
+        id: e.id,
+        from: "x",
+        subject: "x",
+        category: "unsubscribe" as TriageCategoryStub,
+        reasoning: "asked to be removed",
+      })),
+    );
+
+    const result = await pollInboxReplies();
+
+    expect(rows[0]?.status).toBe("unsubscribed");
+    expect(result.cadencesStopped).toBe(1);
+    expect(seqEvents).toEqual([
+      { prospectId: 1, playName: "stack-consolidation", status: "unsubscribed" },
+    ]);
+    // classifyReply's own kind was 'human' (no phrase match) — persisted kind
+    // proves this test exercises the label/kind disagreement, not the
+    // existing kind==='unsubscribe' branch.
+    expect(persistedReplies[0]?.kind).toBe("human");
+  });
+
+  // A human reply triaged with any other intent (e.g. genuine interest) must
+  // not be treated as an opt-out — only intent='unsubscribe' does.
+  it("a human reply triaged intent=interested stops the cadence as replied, not unsubscribed", async () => {
+    inboxEmails = [{ id: "m1", from: "sophia@agenticarchitect.ai", subject: "re: stack" }];
+    // Default triageEmailsMock already returns category 'interested'.
+
+    const result = await pollInboxReplies();
+
+    expect(rows[0]?.status).toBe("replied");
+    expect(result.repliesDetected).toBe(1);
+    expect(seqEvents).toEqual([]);
   });
 
   it("a terminal cadence is not resurrected or re-stopped by a dead-mailbox notice", async () => {

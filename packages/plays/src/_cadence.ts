@@ -659,10 +659,12 @@ async function walkInboxWindow(
       // the loser skips triage entirely this poll. The winner releases the
       // claim (resets intent back to NULL) on any failure so a later poll
       // can retry — the pending marker itself is never a real category.
+      let triagedIntent: string | null = null;
       if (ledger.claimInboxReplyForTriage(e.id)) {
         try {
           const [triaged] = await triageEmails([e]);
           if (triaged) {
+            triagedIntent = triaged.category;
             ledger.setInboxReplyIntent(e.id, triaged.category, triaged.reasoning || null);
           } else {
             ledger.setInboxReplyIntent(e.id, null, null);
@@ -674,6 +676,39 @@ async function walkInboxWindow(
             { message_120: ((err as Error)?.message ?? "").slice(0, 120) },
             "warn",
           );
+        }
+      }
+      // Issue #663: the deliverability classifier above (`kind`) is
+      // phrase-based (reply-classify.ts's UNSUBSCRIBE_RE) and can miss a
+      // real "remove me" request, landing it as `kind = 'human'`. The
+      // sentiment triage just above (issue #480) reads the same reply
+      // correctly as `intent = 'unsubscribe'` in that case. Mirror the
+      // `kind === 'unsubscribe'` branch above — mark every live cadence
+      // unsubscribed with an honest sequence-events row — before the
+      // ordinary reply bookkeeping below would otherwise flip the same
+      // cadences to 'replied'. `contactAllowedClause` (contact-optout.ts)
+      // now also vetoes re-enrollment directly on this `intent` column;
+      // this keeps `cadence_state` (and the Slack/notes path) telling the
+      // same truth. Only fires when THIS poll ran the triage (a row
+      // triaged by an earlier poll before this fix shipped isn't backfilled
+      // here — that's a one-off ops audit, not this code path).
+      if (triagedIntent === "unsubscribe") {
+        for (const cad of ledger.listCadencesForProspect(prospect.id)) {
+          if (cad.status !== "active" && cad.status !== "paused") continue;
+          ledger.recordSequenceEvent({
+            prospectId: prospect.id,
+            playName: cad.play_name,
+            stepIndex: cad.current_step,
+            channel: "email",
+            status: "unsubscribed",
+            metadata: { reason: "unsubscribe" },
+          });
+          ledger.setCadenceStatus({
+            prospectId: prospect.id,
+            playName: cad.play_name,
+            status: "unsubscribed",
+          });
+          out.cadencesStopped++;
         }
       }
       for (const r of ledger.recordProspectReply(prospect.id, {
