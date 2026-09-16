@@ -364,7 +364,12 @@ describe("isTransientToolError", () => {
       "read ECONNRESET",
       "request failed with status 503",
       "429 Too Many Requests",
+      "request failed with status 520", // an edge/CDN 5xx outside 500-509
       "network error: connection lost",
+      // The wallet, not the person: a top-up fixes these, a negative cache would not.
+      "payment rejected: invalid_payload — expected $0.05, signed $0.05 (contract call failed: unable to call contract: execution reverted)",
+      "Credit balance does not cover this call",
+      "payment rejected: insufficient_funds",
     ]) {
       expect(isTransientToolError(new Error(m))).toBe(true);
     }
