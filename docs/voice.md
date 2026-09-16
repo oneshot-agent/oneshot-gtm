@@ -10,7 +10,7 @@ Four headings, a few lines each, at most 1500 characters:
 
 - **MOVES** — three to five rhetorical moves you actually make, described mechanically ("a concrete fact, then the mechanism under it, then one flat line that closes it"). Not topics; topics are not voice.
 - **SENTENCES** — length pattern, punctuation habits, case, how you cut paragraphs.
-- **NEVER** — what you avoid that the drafts do not already forbid: pleasantries, flattery, moralising, faking certainty, listicle hooks, urgency. Em dashes, three-item lists, "X isn't A, it's B", exclamation marks, emoji, hedging and hype vocabulary are already stripped from every draft, so they do not belong here; if your samples lean on one of them, the derivation says so once in its notes instead.
+- **NEVER** — what you avoid that the drafts do not already forbid: pleasantries, flattery, moralising, faking certainty, listicle hooks, urgency. Em dashes, three-item lists, "X isn't A, it's B", exclamation marks, emoji, hedging and hype vocabulary are already stripped from every draft, so they do not belong here, and neither do greetings, sign-offs or signatures, which the draft rules set on their own; if your samples lean on one of them, the derivation says so once in its notes instead.
 - **EXEMPLARS** — three to six short lines copied verbatim from your own writing, chosen for cadence, not content. A number belongs there only if it was in the original.
 
 ## What the block enforces around it
