@@ -115,6 +115,7 @@ const {
   _resetLinkedInReadGate,
   connectLinkedInWithCookie,
   ensureLinkedInProfile,
+  cancelLinkedInLogin,
   finishLinkedInLogin,
   linkedinProfileCacheKey,
   linkedinSessionState,
@@ -281,7 +282,7 @@ describe("connectLinkedInWithCookie", () => {
 });
 
 describe("startLinkedInLogin / finishLinkedInLogin", () => {
-  it("opens the hosted login in a fresh profile and returns its live URL", async () => {
+  it("opens the hosted login in a fresh PENDING profile; the working session is untouched", async () => {
     const started = await startLinkedInLogin(ctx);
     expect(started).toEqual({
       profileId: "prof_new_1",
@@ -289,9 +290,20 @@ describe("startLinkedInLogin / finishLinkedInLogin", () => {
       status: "idle",
       expiresAt: "2026-09-14T10:15:00.000Z",
     });
-    expect(calls.delete).toBe(1);
+    // Nothing deleted: the profile reads run in stays until the new one verifies.
+    expect(calls.delete).toBe(0);
     expect(calls.setupStart).toBe(1);
-    expect(cfg["linkedinBrowserProfileId"]).toBe("prof_new_1");
+    expect(cfg["linkedinPendingProfileId"]).toBe("prof_new_1");
+    expect(cfg["linkedinBrowserProfileId"]).toBe("prof_existing");
+  });
+
+  it("a second start replaces only the stale pending profile", async () => {
+    await startLinkedInLogin(ctx);
+    await startLinkedInLogin(ctx);
+    expect(cfg["linkedinPendingProfileId"]).toBe("prof_new_2");
+    expect(calls.delete).toBe(1);
+    expect(platformProfiles.map((p) => p.id)).toEqual(["prof_existing", "prof_new_2"]);
+    expect(cfg["linkedinBrowserProfileId"]).toBe("prof_existing");
   });
 
   it("waits for the hosted browser to be idle before handing out the URL, and fails fast on a failed boot", async () => {
@@ -311,28 +323,62 @@ describe("startLinkedInLogin / finishLinkedInLogin", () => {
     await failed;
   });
 
-  it("finish saves the session and verifies it when li_at was stored", async () => {
+  it("finish verifies the pending profile and promotes it, dropping the replaced one", async () => {
     await startLinkedInLogin(ctx);
     browserOutput = { loggedIn: true, name: "Founder Name" };
     const r = await finishLinkedInLogin(ctx);
+    await vi.advanceTimersByTimeAsync(0);
     expect(calls.setupFinish).toBe(1);
     expect(r).toMatchObject({ loggedIn: true, name: "Founder Name", profileId: "prof_new_1" });
+    expect(cfg["linkedinBrowserProfileId"]).toBe("prof_new_1");
+    expect(cfg["linkedinPendingProfileId"]).toBeNull();
+    expect(cfg["linkedinSessionName"]).toBe("Founder Name");
     expect(linkedinSessionState()).toBe("ok");
+    expect(platformProfiles.map((p) => p.id)).toEqual(["prof_new_1"]);
   });
 
-  it("finish without a stored li_at spends nothing and marks the session invalid", async () => {
+  it("finish before the sign-in completed spends nothing and leaves the working session as it was", async () => {
+    cfg = {
+      ...cfg,
+      linkedinSessionCheckedAt: "2026-09-14T10:00:00.000Z",
+      linkedinSessionName: "Kept",
+    };
     await startLinkedInLogin(ctx);
     storedCookies = [{ name: "bcookie", domain: ".linkedin.com", path: "/" }];
     const r = await finishLinkedInLogin(ctx);
     expect(r.loggedIn).toBe(false);
-    expect(r.reason).toMatch(/did not complete/);
+    expect(r.reason).toMatch(/not signed in yet/);
     expect(calls.browser).toBe(0);
-    expect(linkedinSessionState()).toBe("invalid");
+    // The verified session and the pending login both survive for a retry.
+    expect(linkedinSessionState()).toBe("ok");
+    expect(cfg["linkedinSessionName"]).toBe("Kept");
+    expect(cfg["linkedinPendingProfileId"]).toBe("prof_new_1");
+    expect(calls.delete).toBe(0);
   });
 
-  it("finish without a login in progress refuses", async () => {
-    cfg = { ...cfg, linkedinBrowserProfileId: null };
+  it("a pending profile whose feed shows no member is reported, not recorded", async () => {
+    cfg = {
+      ...cfg,
+      linkedinSessionCheckedAt: "2026-09-14T10:00:00.000Z",
+      linkedinSessionName: "Kept",
+    };
+    await startLinkedInLogin(ctx);
+    browserOutput = { loggedIn: false };
+    const r = await finishLinkedInLogin(ctx);
+    expect(r.loggedIn).toBe(false);
+    expect(linkedinSessionState()).toBe("ok");
+    expect(cfg["linkedinBrowserProfileId"]).toBe("prof_existing");
+  });
+
+  it("finish without a login in progress refuses; cancel drops the pending profile only", async () => {
+    cfg = { ...cfg, linkedinPendingProfileId: null };
     await expect(finishLinkedInLogin(ctx)).rejects.toThrow(/start one first/);
+    expect(await cancelLinkedInLogin(ctx)).toEqual({ cancelled: false });
+    await startLinkedInLogin(ctx);
+    expect(await cancelLinkedInLogin(ctx)).toEqual({ cancelled: true });
+    expect(cfg["linkedinPendingProfileId"]).toBeNull();
+    expect(cfg["linkedinBrowserProfileId"]).toBe("prof_existing");
+    expect(platformProfiles.map((p) => p.id)).toEqual(["prof_existing"]);
   });
 });
 

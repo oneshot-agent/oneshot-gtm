@@ -293,6 +293,7 @@ function recordSession(profileId: string, loggedIn: boolean, name: string | null
 export async function verifyLinkedInSession(
   profileId: string,
   ctx: CallContext,
+  opts: { record?: boolean } = {},
 ): Promise<LinkedInSessionResult> {
   const res = await browserTask(
     {
@@ -323,7 +324,7 @@ export async function verifyLinkedInSession(
   const wall = LOGIN_WALL_RX.test(res.result.final_url ?? "");
   const loggedIn = out["loggedIn"] === true && !wall;
   const name = str(out, "name") ?? null;
-  recordSession(profileId, loggedIn, name);
+  if (opts.record !== false) recordSession(profileId, loggedIn, name);
   return {
     loggedIn,
     name,
@@ -381,7 +382,7 @@ export async function startLinkedInLogin(
   ctx: CallContext,
   opts: { readyTimeoutMs?: number } = {},
 ): Promise<LinkedInLoginStart> {
-  const profileId = await ensureLinkedInProfile(ctx, { fresh: true });
+  const profileId = await createPendingLoginProfile(ctx);
   let state = await startBrowserProfileSetup(profileId, LINKEDIN_LOGIN_URL, ctx);
   // The hosted browser reports `created` / `running` while it boots and
   // `idle` once the login page is up; hand the founder a URL that is ready.
@@ -408,27 +409,135 @@ export async function startLinkedInLogin(
  */
 export async function finishLinkedInLogin(ctx: CallContext): Promise<LinkedInSessionResult> {
   const cfg = loadConfig();
-  const profileId = cfg.linkedinBrowserProfileId;
+  const profileId = cfg.linkedinPendingProfileId;
   if (!profileId) throw new Error("no LinkedIn login in progress — start one first");
+  // The platform, not this process, decides what happened in the hosted
+  // browser. Nothing below touches the working session until the pending
+  // profile's own feed shows a signed-in member: a Done click before the
+  // sign-in finished, a closed tab, or a platform hiccup leaves the founder
+  // exactly where they were, with the pending login still there to retry.
   let state: BrowserProfileSetupState;
   try {
     state = await finishBrowserProfileSetup(profileId, ctx);
   } catch (err) {
-    markLinkedInSessionInvalid(`finish failed: ${(err as Error).message ?? ""}`);
+    logEvent(
+      "linkedin_profile.login_finish_failed",
+      { message_120: ((err as Error).message ?? "").slice(0, 120) },
+      "warn",
+    );
     throw err;
   }
   const hasSession = state.storedCookies.some((c) => c.name === "li_at");
   if (!hasSession) {
-    recordSession(profileId, false, null);
+    logEvent("linkedin_profile.login_not_signed_in", {}, "warn");
     return {
       loggedIn: false,
       name: null,
       profileId,
       costUsd: 0,
-      reason: "the login did not complete — LinkedIn stored no session cookie",
+      reason: "not signed in yet — finish signing in in the LinkedIn tab, then click Done",
     };
   }
-  return verifyLinkedInSession(profileId, ctx);
+  const verified = await verifyLinkedInSession(profileId, ctx, { record: false });
+  if (!verified.loggedIn) return verified;
+  promotePendingProfile(profileId, verified.name);
+  return verified;
+}
+
+/**
+ * Drop the login in progress: its profile is deleted (best-effort) and the
+ * pending id cleared. The working session, if any, is untouched.
+ */
+export async function cancelLinkedInLogin(ctx: CallContext): Promise<{ cancelled: boolean }> {
+  const cfg = loadConfig();
+  const pending = cfg.linkedinPendingProfileId;
+  if (!pending) return { cancelled: false };
+  saveConfig({ ...cfg, linkedinPendingProfileId: null });
+  try {
+    await deleteBrowserProfile(pending, ctx);
+  } catch (err) {
+    logEvent(
+      "linkedin_profile.delete_failed",
+      { profile_id: pending, message_120: ((err as Error).message ?? "").slice(0, 120) },
+      "warn",
+    );
+  }
+  return { cancelled: true };
+}
+
+/**
+ * The hosted login's current state, for a page that reloaded mid-login: the
+ * live URL to send the founder back to, or nothing when no login is pending.
+ */
+export async function linkedinLoginState(
+  ctx: CallContext,
+): Promise<
+  | { pending: false }
+  | {
+      pending: true;
+      profileId: string;
+      liveUrl: string | null;
+      status: string;
+      expiresAt: string | null;
+    }
+> {
+  const pending = loadConfig().linkedinPendingProfileId;
+  if (!pending) return { pending: false };
+  const state = await getBrowserProfileSetup(pending, ctx);
+  return {
+    pending: true,
+    profileId: pending,
+    liveUrl: state.liveUrl,
+    status: state.status,
+    expiresAt: state.expiresAt,
+  };
+}
+
+/**
+ * A fresh profile for a hosted login. A stale pending login (started, never
+ * finished) is replaced; the verified profile — the one reads run in — is
+ * never touched here. Persists the pending id only.
+ */
+async function createPendingLoginProfile(ctx: CallContext): Promise<string> {
+  const cfg = loadConfig();
+  const stale = cfg.linkedinPendingProfileId;
+  const created = await createBrowserProfile(LINKEDIN_PROFILE_NAME, ctx, {});
+  saveConfig({ ...loadConfig(), linkedinPendingProfileId: created.id });
+  if (stale && stale !== created.id && stale !== cfg.linkedinBrowserProfileId) {
+    try {
+      await deleteBrowserProfile(stale, ctx);
+    } catch (err) {
+      logEvent(
+        "linkedin_profile.delete_failed",
+        { profile_id: stale, message_120: ((err as Error).message ?? "").slice(0, 120) },
+        "warn",
+      );
+    }
+  }
+  return created.id;
+}
+
+/**
+ * The pending profile just verified as signed in: it becomes the session
+ * reads run in, the previous profile is deleted (best-effort, and only when
+ * it is a different one), and the pending id is cleared.
+ */
+function promotePendingProfile(profileId: string, name: string | null): void {
+  const previous = loadConfig().linkedinBrowserProfileId;
+  recordSession(profileId, true, name);
+  saveConfig({ ...loadConfig(), linkedinPendingProfileId: null });
+  if (previous && previous !== profileId) {
+    void deleteBrowserProfile(previous, {
+      playName: "setup",
+      memo: "linkedin: drop the replaced profile",
+    }).catch((err: unknown) => {
+      logEvent(
+        "linkedin_profile.delete_failed",
+        { profile_id: previous, message_120: ((err as Error).message ?? "").slice(0, 120) },
+        "warn",
+      );
+    });
+  }
 }
 
 // One read at a time from the founder's account, with a gap between reads.

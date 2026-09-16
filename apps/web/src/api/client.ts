@@ -293,6 +293,7 @@ export const api = {
         calendarIdentityId?: string | null;
         calendarId?: string;
         linkedinBrowserProfileId?: string | null;
+        linkedinPendingProfileId?: string | null;
         linkedinSessionCheckedAt?: string | null;
         linkedinSessionName?: string | null;
         linkedinSessionInvalidAt?: string | null;
@@ -331,6 +332,20 @@ export const api = {
       expiresAt: string | null;
     }>("/setup/linkedin-login/start", {}),
   finishLinkedInLogin: () => postJson<LinkedInSessionOutcome>("/setup/linkedin-login/finish", {}),
+  cancelLinkedInLogin: () =>
+    postJson<{ ok: boolean; cancelled: boolean }>("/setup/linkedin-login/cancel", {}),
+  linkedinLoginState: () =>
+    getJson<
+      | { ok: boolean; pending: false }
+      | {
+          ok: boolean;
+          pending: true;
+          profileId: string;
+          liveUrl: string | null;
+          status: string;
+          expiresAt: string | null;
+        }
+    >("/setup/linkedin-login/state"),
   meetings: () => getJson<MeetingsResult>("/meetings"),
   logMeetingOutcome: (req: LogMeetingOutcomeRequest) =>
     postJson<{ ok: boolean }>("/meetings/outcome", req),
