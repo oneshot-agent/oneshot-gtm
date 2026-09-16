@@ -84,7 +84,7 @@ export function isTransientToolError(err: unknown): boolean {
     // network faults; match only explicit network errors.
     /network (error|unreachable|timeout)/.test(msg) ||
     msg.includes("rate limit") || // rate-limited → back off + retry, not a verdict
-    /\b(50[0-9]|429)\b/.test(msg) || // 5xx / rate-limit HTTP statuses
+    /\b(5[0-9]{2}|429)\b/.test(msg) || // any 5xx / rate-limit HTTP statuses (520 from an edge, too)
     // The wallet, not the person: an empty or unfunded wallet refuses every
     // paid call at the payment rail. A top-up fixes it; a 3-day negative
     // cache on the person would not (2026-09-15: 46 rows stuck that way).
