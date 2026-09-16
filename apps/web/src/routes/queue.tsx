@@ -30,7 +30,7 @@ import { api } from "../api/client.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
 import { EmptyNote } from "../components/primitives/EmptyNote.tsx";
-import { Field, Input, Textarea } from "../components/primitives/Field.tsx";
+import { Field, Input, Select, Textarea } from "../components/primitives/Field.tsx";
 import { Modal } from "../components/primitives/Modal.tsx";
 import { AddProspectForm } from "../components/queue/AddProspectForm.tsx";
 import { AngleUsagePanel } from "../components/queue/AngleUsagePanel.tsx";
@@ -100,7 +100,6 @@ import {
   markDraftGenerating,
   useGeneratingDrafts,
 } from "../lib/draftRunState.ts";
-import { buildSignalDays } from "../lib/signalDays.ts";
 import { summarizeRun } from "../lib/summarizeRun.ts";
 import { READ_ONLY, readOnly } from "../lib/readOnly.ts";
 import {
@@ -240,7 +239,7 @@ function QueuePage() {
     queryFn: () => api.queue(queueRequest({ statusFilter, playFilter, orderOverride })),
     refetchInterval: 20_000,
   });
-  const effectiveOrder = queueQuery.data?.order ?? "newest";
+  const effectiveOrder = queueQuery.data?.order ?? orderOverride ?? "newest";
 
   const invalidate = (): void => {
     void qc.invalidateQueries({ queryKey: ["queue"] });
@@ -409,6 +408,8 @@ function QueuePage() {
   // the chip both filters the table and scopes the drain button, so a play with
   // drainable rows must stay selectable even when the page shows none of them.
   const playList = queuePlayList(rows, approvedByPlay);
+  // Keep the selected option visible while a new filter request is loading.
+  if (playFilter !== "all" && !playList.includes(playFilter)) playList.push(playFilter);
   const drain = drainButtonState({ playFilter, approvedByPlay, isRunnable: isRunnablePlay });
   // Selection outlives the filters, so read each selected row from the session
   // map rather than the visible page — otherwise filtering to one play makes a
@@ -434,162 +435,118 @@ function QueuePage() {
 
   return (
     <div className="-mx-6 -my-6 flex flex-col">
-      <section className="flex items-end justify-between gap-4 border-b border-ink-rule px-6 pb-5 pt-6">
-        <div>
-          <div className="ln-eyebrow">The Ledger · Queue</div>
-          <h1
-            className="mt-1 text-ink-cream"
-            style={{
-              fontFamily: "var(--font-display)",
-              fontSize: 44,
-              fontWeight: 600,
-              letterSpacing: "-0.025em",
-              lineHeight: 0.98,
-            }}
-          >
-            Candidates, for review.
-          </h1>
-        </div>
-        <div className="font-mono text-[11px] text-ink-faint">
-          {Object.entries(counts)
-            .map(([k, v]) => `${k} ${v}`)
-            .join(" · ")}
+      <section className="flex flex-wrap items-center justify-between gap-4 border-b border-ink-rule px-6 py-5">
+        <h1
+          className="m-0 text-[32px] font-semibold leading-none tracking-[-0.025em] text-ink-cream"
+          style={{ fontFamily: "var(--font-display)" }}
+        >
+          Queue
+        </h1>
+        <div className="flex items-center gap-4">
           {queueQuery.data?.sendsToday && (
-            <span className="ml-2 border-l border-ink-rule pl-2 text-ink-cream-2">
-              sends today {formatSendsToday(queueQuery.data.sendsToday)}
+            <span className="font-mono text-[11px] text-ink-muted">
+              Sent today {formatSendsToday(queueQuery.data.sendsToday)}
             </span>
           )}
+          <Button variant="secondary" size="sm" onClick={() => setAddOpen(true)} {...readOnly}>
+            <UserPlus size={13} /> Add prospect
+          </Button>
         </div>
       </section>
 
       <IcpBanner />
-
       <TriggersCard queueEmpty={queueQuery.isLoading ? null : rows.length === 0} />
 
-      {/* Target Queue. The play filter is inline because it narrows this table only. */}
-      <section className="border-t-2 border-ink-rule">
-        {/* The 7-day histogram rides the caption rather than holding a band of
-            its own. It is one line of context about the rows below, and a full
-            width strip for it was 42px of the first screen. */}
-        <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2 px-6 pb-3 pt-5">
-          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-            <div className="ln-eyebrow">
-              Target Queue{" "}
-              <span className="text-ink-faint">
-                · {queueQuery.data ? rows.length : "…"} row{rows.length === 1 ? "" : "s"}
-              </span>
-            </div>
-            {rows.length > 0 && <SignalStrip rows={rows} ranked={effectiveOrder === "ranked"} />}
-          </div>
-          <div className="flex items-center gap-3">
-            {/* The one manual way a row gets here, next to the rows it makes.
-                It used to be the second item in the sidebar, which gave an
-                occasional act more prominence than the daily review. */}
-            <Button variant="ghost" size="sm" onClick={() => setAddOpen(true)} {...readOnly}>
-              <UserPlus size={13} /> Add prospect
-            </Button>
-            <div className="font-mono text-[11px] text-ink-faint">refresh · 20s</div>
-          </div>
-        </div>
-
-        {/*
-          Status, order and play are one filter block, so one rule closes it.
-          A rule between these two rows made them read as separate bands, which
-          on top of the caption's rule and the table head put four hairlines in
-          200px of page.
-        */}
-        <div className="flex flex-wrap items-center gap-2 px-6 pb-3">
-          <span className="ln-eyebrow">status</span>
-          {STATUSES.map((s) => (
+      <section>
+        <div
+          className="flex flex-wrap items-center gap-1 px-6 pt-3"
+          role="group"
+          aria-label="Queue status"
+        >
+          {STATUSES.map((status) => (
             <Button
-              key={s}
-              variant={statusFilter === s ? "secondary" : "ghost"}
+              key={status}
+              variant={statusFilter === status ? "secondary" : "ghost"}
               size="sm"
+              aria-pressed={statusFilter === status}
               onClick={() => {
-                setStatusFilter(s);
+                setStatusFilter(status);
                 setShowAllRows(false);
                 setExpanded(null);
               }}
             >
-              {s}
+              <span className="capitalize">{status}</span>
+              {status !== "all" && (
+                <span className="ml-1 font-mono text-[10px] text-ink-muted">
+                  {formatCount(counts[status])}
+                </span>
+              )}
             </Button>
           ))}
+        </div>
+        <div className="flex flex-wrap items-center gap-3 border-b border-ink-rule/60 px-6 py-3">
+          <Select
+            aria-label="Filter by play"
+            className="w-auto max-w-[240px] [&>select]:h-8 [&>select]:text-[12px]"
+            value={playFilter}
+            onChange={(e) => {
+              setPlayFilter(e.target.value);
+              setShowAllRows(false);
+              setExpanded(null);
+            }}
+          >
+            <option value="all">All plays</option>
+            {playList.map((play) => (
+              <option key={play} value={play}>
+                {play}
+              </option>
+            ))}
+          </Select>
           {statusFilter === "pending" && (
-            <>
-              <span className="mx-2 h-4 w-px bg-ink-rule" />
-              <span className="ln-eyebrow">order</span>
-              {(["newest", "ranked"] as const).map((o) => (
-                <Button
-                  key={o}
-                  variant={effectiveOrder === o ? "secondary" : "ghost"}
-                  size="sm"
-                  onClick={() => setOrderOverride(o)}
-                >
-                  {o}
-                </Button>
-              ))}
-            </>
+            <Select
+              aria-label="Queue order"
+              className="w-auto [&>select]:h-8 [&>select]:text-[12px]"
+              value={effectiveOrder}
+              onChange={(e) => setOrderOverride(e.target.value as "newest" | "ranked")}
+            >
+              <option value="newest">Newest first</option>
+              <option value="ranked">Highest score first</option>
+            </Select>
           )}
-          {/* Approve-all and drain scope to the play filter below, and sit up
-              here because status and order are a fixed, short set: this row's
-              width does not change with the install, so the buttons stay put. */}
-          <div className="ml-auto flex items-center gap-2">
+          <span className="font-mono text-[11px] text-ink-faint">
+            {queueQuery.data
+              ? `${visibleRows.length}${visibleRows.length < rows.length ? ` of ${rows.length}` : ""} shown`
+              : "Loading…"}
+          </span>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
             <Button
               variant="secondary"
               size="sm"
               disabled={approveAll.isPending || counts.pending === 0}
+              title={
+                playFilter === "all"
+                  ? "Approve all pending prospects"
+                  : `Approve pending prospects in ${playFilter}`
+              }
               onClick={() => approveAll.mutate(playFilter === "all" ? undefined : playFilter)}
               {...readOnly}
             >
-              <Check size={12} /> approve all pending
-              {playFilter !== "all" ? ` (${playFilter})` : ""}
+              <Check size={12} /> Approve pending
             </Button>
             <Button
               variant="ghost"
               size="sm"
               disabled={!drain.enabled}
+              title={drain.label}
               onClick={() => {
-                if (!drain.playName) return;
-                setDrainModal({ playName: drain.playName, approvedCount: drain.approvedCount });
+                if (drain.playName)
+                  setDrainModal({ playName: drain.playName, approvedCount: drain.approvedCount });
               }}
               {...readOnly}
             >
-              <Send size={12} /> {drain.label}
+              <Send size={12} /> Send approved{drain.enabled ? ` (${drain.approvedCount})` : ""}
             </Button>
           </div>
-        </div>
-
-        {/* The play filter earns its own line: it is the only group here whose
-            length grows with the install — seven chips against this seeded
-            ledger, eleven on a working one — and on one row it shunted the
-            actions around every time the status tab changed. */}
-        <div className="flex flex-wrap items-center gap-2 border-b border-ink-rule/60 px-6 py-2.5">
-          <span className="ln-eyebrow">play</span>
-          <Button
-            variant={playFilter === "all" ? "secondary" : "ghost"}
-            size="sm"
-            onClick={() => {
-              setPlayFilter("all");
-              setShowAllRows(false);
-              setExpanded(null);
-            }}
-          >
-            all
-          </Button>
-          {playList.map((p) => (
-            <Button
-              key={p}
-              variant={playFilter === p ? "secondary" : "ghost"}
-              size="sm"
-              onClick={() => {
-                setPlayFilter(p);
-                setShowAllRows(false);
-                setExpanded(null);
-              }}
-            >
-              {p}
-            </Button>
-          ))}
         </div>
 
         {queueQuery.isLoading ? (
@@ -1577,50 +1534,6 @@ function DraftSection({
   );
 }
 
-/**
- * 7-day signal strip — renders a tight row of daily-enqueue bars computed
- * client-side from `rows`. It's an approximate readout (limited to the
- * rows currently in memory) but gives a quick visual pulse without any
- * new API.
- */
-function SignalStrip({ rows, ranked = false }: { rows: QueueRowView[]; ranked?: boolean }) {
-  const days = buildSignalDays(rows);
-  const max = Math.max(1, ...days.map((d) => d.count));
-  const total = days.reduce((a, d) => a + d.count, 0);
-
-  return (
-    <div className="flex items-center gap-3">
-      <div className="ln-eyebrow" style={{ fontSize: 10 }}>
-        {/* A ranked page is no longer "the newest N", so the histogram only
-            describes the rows shown — make the existing approximation visible. */}
-        {ranked ? "last 7d · shown rows" : "last 7d"}
-      </div>
-      <div className="flex items-end gap-1" aria-hidden="true">
-        {days.map((d) => {
-          const h = Math.round((d.count / max) * 20);
-          return (
-            <span
-              key={d.label}
-              title={`${d.label} · ${d.count} enqueued`}
-              className={cn(
-                "w-[10px] rounded-[1px]",
-                d.count === 0 ? "bg-ink-rule" : "bg-[color:var(--ink-signal)]/70",
-              )}
-              style={{ height: Math.max(2, h) }}
-            />
-          );
-        })}
-      </div>
-      <div className="font-mono text-[11px] text-ink-muted">
-        {formatCount(total)} enqueued
-        <span className="ml-2 text-ink-faint">
-          · <span className="text-ink-cream-2">{days[days.length - 1]?.count ?? 0}</span> today
-        </span>
-      </div>
-    </div>
-  );
-}
-
 /** Per-browser memory of whether the panel is open. */
 const TRIGGERS_OPEN_KEY = "oneshot-gtm:queue-triggers-open";
 
@@ -2043,7 +1956,7 @@ function TriggersCard({ queueEmpty }: { queueEmpty: boolean | null }) {
 
   return (
     <section className="border-b border-ink-rule">
-      <div className="flex items-baseline justify-between pr-6">
+      <div className="flex items-center justify-between">
         <button
           type="button"
           onClick={toggle}
@@ -2055,14 +1968,12 @@ function TriggersCard({ queueEmpty }: { queueEmpty: boolean | null }) {
            * table" where a sighted reader gets "5 on, next in 4h".
            * `aria-expanded` already carries the open/shut part.
            */
-          className="flex flex-1 items-baseline gap-3 px-6 pb-2 pt-5 text-left transition-colors duration-[var(--dur-stamp)] hover:bg-ink-surface/40"
+          className="flex min-w-0 flex-1 flex-wrap items-center gap-3 px-6 py-2.5 text-left transition-colors duration-[var(--dur-stamp)] hover:bg-ink-surface/40"
         >
           <span className="text-ink-faint">
             {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
           </span>
-          <div className="ln-eyebrow">
-            Triggers <span className="text-ink-faint">· {triggers.length}</span>
-          </div>
+          <div className="ln-eyebrow">Triggers</div>
           {/* The facts you would open the panel to check, so that most of the
               time you do not have to. Only while shut: expanded, the table
               below says all of this in more detail. */}
@@ -2083,10 +1994,8 @@ function TriggersCard({ queueEmpty }: { queueEmpty: boolean | null }) {
             {!expanded && summary.nextDueMs != null && (
               <span className="ml-2">· next in {humanInterval(summary.nextDueMs)}</span>
             )}
-            {!expanded && <span className="ml-2 text-ink-faint">· see more</span>}
           </div>
         </button>
-        <div className="font-mono text-[11px] text-ink-faint">refresh · 30s</div>
       </div>
       {/* Packs configure the triggers below, so the picker rides inside this
           panel and inherits its collapse — including the autoOpen rule, which
@@ -2455,16 +2364,23 @@ function IcpBanner() {
   }
 
   return (
-    <section className="flex items-start gap-3 border-b border-ink-rule px-6 py-3">
-      <Target size={14} className="mt-[3px] shrink-0 text-[color:var(--ink-receipt-2)]" />
-      <div className="flex-1 min-w-0">
-        <div className="ln-eyebrow">ICP</div>
-        <div className="mt-0.5 truncate text-[13px] text-ink-cream-2">{icp}</div>
-      </div>
-      <Link to="/setup">
-        <Button variant="ghost" size="sm">
-          edit
-        </Button>
+    <section className="flex items-start gap-3 border-b border-ink-rule px-6 py-2">
+      <details className="group min-w-0 flex-1">
+        <summary className="flex cursor-pointer list-none items-center gap-3 py-1 text-[12px] [&::-webkit-details-marker]:hidden">
+          <ChevronRight
+            size={12}
+            className="shrink-0 text-ink-faint transition-transform group-open:rotate-90"
+          />
+          <span className="shrink-0 text-ink-muted">ICP</span>
+          <span className="truncate text-ink-cream-2 group-open:hidden">{icp}</span>
+        </summary>
+        <p className="mb-2 mt-2 max-w-[90ch] pl-6 text-[13px] leading-5 text-ink-cream-2">{icp}</p>
+      </details>
+      <Link
+        to="/setup"
+        className="rounded px-2 py-1 text-[12px] text-ink-muted hover:text-ink-cream"
+      >
+        Edit ICP
       </Link>
     </section>
   );
