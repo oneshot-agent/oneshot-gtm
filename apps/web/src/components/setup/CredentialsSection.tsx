@@ -1,4 +1,3 @@
-import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState, type ReactNode } from "react";
 import type { XEngine } from "@oneshot-gtm/shared-types";
 import { api } from "../../api/client.ts";
@@ -15,6 +14,7 @@ import {
   X_OAUTH_KEYS,
   type SecretKey,
 } from "./constants.ts";
+import { LinkedInConnect } from "./LinkedInConnect.tsx";
 import { SectionShell } from "./SectionShell.tsx";
 import { useSectionDraft } from "./useSectionDraft.ts";
 import { useSectionSave } from "./useSectionSave.ts";
@@ -74,6 +74,8 @@ interface Group {
   note?: ReactNode;
   /** An error from the last action, shown next to the buttons. */
   error?: string | null;
+  /** A custom body in place of status/actions/note/error (the LinkedIn card). */
+  body?: ReactNode;
 }
 
 /**
@@ -137,54 +139,10 @@ export function CredentialsSection({
   });
   useReportDirty("credentials", draft.dirty, onDirtyChange);
 
-  // Connect LinkedIn, two ways. "Log in with LinkedIn" opens a hosted browser
-  // (the live URL is a credential: rendered as a link, never logged) and
-  // "Finish login" saves the state into the profile and verifies it. "Use the
-  // cookie" imports the stored li_at into a fresh profile instead. The
-  // status line re-renders from the refetched cfg.
-  const qc = useQueryClient();
-  const [connectError, setConnectError] = useState<string | null>(null);
-  const [login, setLogin] = useState<{ liveUrl: string; expiresAt: string | null } | null>(null);
-  const settle = (r: { loggedIn: boolean; reason: string | null }) => {
-    setLogin(null);
-    if (!r.loggedIn)
-      setConnectError(
-        `${r.reason ?? "LinkedIn showed no signed-in member"} — try again, or paste a fresh li_at.`,
-      );
-    void qc.invalidateQueries({ queryKey: ["setup"] });
-    void qc.invalidateQueries({ queryKey: ["doctor"] });
-  };
-  const connectLinkedIn = useMutation({
-    mutationFn: () => api.connectLinkedInSession(),
-    onMutate: () => setConnectError(null),
-    onSuccess: settle,
-    onError: (err: Error) => setConnectError(err.message),
-  });
-  const startLogin = useMutation({
-    mutationFn: () => api.startLinkedInLogin(),
-    onMutate: () => setConnectError(null),
-    onSuccess: (r) => {
-      if (!r.liveUrl) {
-        setConnectError(`the platform opened no login browser (status ${r.status})`);
-        return;
-      }
-      setLogin({ liveUrl: r.liveUrl, expiresAt: r.expiresAt });
-    },
-    onError: (err: Error) => setConnectError(err.message),
-  });
-  const finishLogin = useMutation({
-    mutationFn: () => api.finishLinkedInLogin(),
-    onMutate: () => setConnectError(null),
-    onSuccess: settle,
-    onError: (err: Error) => setConnectError(err.message),
-  });
+  // Connect LinkedIn: one card, one action at a time (LinkedInConnect.tsx).
+  // The cookie field stays a secret input on this form, behind "advanced".
   const cookieSet = Boolean(sources.LINKEDIN_SESSION_COOKIE);
-  const sessionChecked = Boolean(cfg.linkedinSessionCheckedAt);
-  // A profile on record with no verified session is a hosted login that was
-  // started and never finished (a cookie import always verifies). The page
-  // may have been reloaded since, so Finish stays available for it.
-  const loginResumable = Boolean(cfg.linkedinBrowserProfileId) && !sessionChecked;
-  const anyPending = connectLinkedIn.isPending || startLogin.isPending || finishLogin.isPending;
+  const [linkedinAdvanced, setLinkedinAdvanced] = useState(cookieSet);
 
   const groups = useMemo<Group[]>(
     () => [
@@ -251,81 +209,23 @@ export function CredentialsSection({
         optional: true,
       },
       {
-        title: "LinkedIn profile reads",
+        title: "LinkedIn",
         caption:
-          "Person research reads prospects' profiles live in a OneShot browser profile logged in as you, so a role change the data provider has not seen yet still lands in the dossier. Log in once through a hosted browser (2FA works), or paste your li_at cookie (browser dev tools → Application → Cookies → linkedin.com). Reads show up to prospects as profile views from your account. Optional: without it, research uses the provider's history.",
-        keys: ["LINKEDIN_SESSION_COOKIE"],
+          "Lets research read prospects' profiles live, as you. Optional; $0.30 per sign-in.",
+        keys: linkedinAdvanced ? ["LINKEDIN_SESSION_COOKIE"] : [],
         inUse: () => true,
         optional: true,
-        status: linkedinSessionStatus(cfg, cookieSet),
-        actions: [
-          ...(login || loginResumable
-            ? [
-                {
-                  label: "Finish login",
-                  pendingLabel: "checking the session in the OneShot browser… ~1 min",
-                  disabled: anyPending,
-                  pending: finishLogin.isPending,
-                  onClick: () => finishLogin.mutate(),
-                },
-              ]
-            : []),
-          ...(login
-            ? []
-            : [
-                {
-                  label: sessionChecked || loginResumable ? "Log in again" : "Log in with LinkedIn",
-                  pendingLabel: "opening a hosted browser on linkedin.com…",
-                  disabled: anyPending,
-                  pending: startLogin.isPending,
-                  onClick: () => startLogin.mutate(),
-                },
-                {
-                  label: "Use the cookie",
-                  pendingLabel: "importing the cookie into a OneShot browser profile… ~1 min",
-                  disabled: !cookieSet || anyPending,
-                  disabledTitle: "Save the cookie first",
-                  pending: connectLinkedIn.isPending,
-                  onClick: () => connectLinkedIn.mutate(),
-                },
-              ]),
-        ],
-        note: login ? (
-          <>
-            <a
-              href={login.liveUrl}
-              target="_blank"
-              rel="noreferrer"
-              className="underline underline-offset-2"
-            >
-              Open the login browser
-            </a>{" "}
-            in a new tab, sign in to LinkedIn there (2FA included), then click Finish login
-            {login.expiresAt ? ` before ${new Date(login.expiresAt).toLocaleTimeString()}` : ""}.
-            The link is private to you; $0.30 per login.
-          </>
-        ) : loginResumable ? (
-          "A login was started earlier. If its hosted browser is still open in another tab and you are signed in there, click Finish login; otherwise log in again."
-        ) : null,
-        error: connectError,
+        body: (
+          <LinkedInConnect
+            cfg={cfg}
+            cookieSet={cookieSet}
+            advancedOpen={linkedinAdvanced}
+            onToggleAdvanced={() => setLinkedinAdvanced((v) => !v)}
+          />
+        ),
       },
     ],
-    [
-      cfg,
-      sources,
-      homeDir,
-      isLegacyPool,
-      xEngine,
-      cookieSet,
-      sessionChecked,
-      loginResumable,
-      anyPending,
-      connectError,
-      login,
-      connectLinkedIn,
-      startLogin,
-      finishLogin,
-    ],
+    [cfg, sources, homeDir, isLegacyPool, xEngine, cookieSet, linkedinAdvanced],
   );
 
   return (
@@ -343,6 +243,7 @@ export function CredentialsSection({
           <fieldset key={g.title} className="flex flex-col gap-3 border-t border-ink-rule/60 pt-4">
             <legend className="ln-eyebrow float-left pr-2">{g.title}</legend>
             {g.caption && <p className="clear-both text-[12px] text-ink-faint">{g.caption}</p>}
+            {g.body}
             {g.status && (
               <p className="clear-both font-mono text-[11px] text-ink-muted">{g.status}</p>
             )}

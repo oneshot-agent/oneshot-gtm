@@ -24,7 +24,9 @@ import type {
   InboxSendReplyResult,
   InboxSteerRequest,
   InboxSteerResult,
+  DraftVersionView,
   LastDraft,
+  MoveQueueRowResult,
   LogMeetingOutcomeRequest,
   MeetingsResult,
   OutcomeByPlay,
@@ -240,6 +242,12 @@ export const api = {
     ),
   recordOutcome: (req: OutcomeRequest) => postJson<{ id: number }>("/measure/outcome", req),
   doctor: () => getJson<{ checks: DoctorCheck[] }>("/doctor"),
+  // Same checks, but the wallet balance is re-read instead of served from
+  // the day-old cache — the masthead pill's refresh control after a top-up.
+  // The vendored demo has a fixture for /doctor only; there a "refresh" is
+  // just the same read again, never a 404 on an uncaptured query variant.
+  doctorRefreshBalance: () =>
+    getJson<{ checks: DoctorCheck[] }>(IS_DEMO ? "/doctor" : "/doctor?refresh=1"),
   workspace: () => getJson<WorkspaceInfo>("/workspace"),
   workspaceLaunch: (name: string) =>
     postJson<{ status: "starting" | "already-running"; port: number }>("/workspace/launch", {
@@ -285,6 +293,7 @@ export const api = {
         calendarIdentityId?: string | null;
         calendarId?: string;
         linkedinBrowserProfileId?: string | null;
+        linkedinPendingProfileId?: string | null;
         linkedinSessionCheckedAt?: string | null;
         linkedinSessionName?: string | null;
         linkedinSessionInvalidAt?: string | null;
@@ -323,6 +332,20 @@ export const api = {
       expiresAt: string | null;
     }>("/setup/linkedin-login/start", {}),
   finishLinkedInLogin: () => postJson<LinkedInSessionOutcome>("/setup/linkedin-login/finish", {}),
+  cancelLinkedInLogin: () =>
+    postJson<{ ok: boolean; cancelled: boolean }>("/setup/linkedin-login/cancel", {}),
+  linkedinLoginState: () =>
+    getJson<
+      | { ok: boolean; pending: false }
+      | {
+          ok: boolean;
+          pending: true;
+          profileId: string;
+          liveUrl: string | null;
+          status: string;
+          expiresAt: string | null;
+        }
+    >("/setup/linkedin-login/state"),
   meetings: () => getJson<MeetingsResult>("/meetings"),
   logMeetingOutcome: (req: LogMeetingOutcomeRequest) =>
     postJson<{ ok: boolean }>("/meetings/outcome", req),
@@ -394,10 +417,21 @@ export const api = {
   // sequence event + prospect and flips the row to sent. No transport.
   markSent: (id: number) =>
     postJson<{ ok: boolean; prospectId: number }>(`/queue/${id}/mark-sent`, {}),
+  // Hand the row to another workspace's queue (started if needed); the row
+  // here is rejected with a "moved to" note once the destination holds it.
+  moveQueueRow: (id: number, workspace: string) =>
+    postJson<MoveQueueRowResult>(`/queue/${id}/move`, { workspace }),
   // Web UI no longer calls this — the drain modal navigates to /run/$playName
   // so drafts + lint flags are visible per row. Kept for the CLI's HTTP path
   // (`oneshot-gtm find drain`) and any external scripted callers.
   drainQueue: (req: DrainRequest) => postJson<DrainResult>("/queue/drain", req),
+  // Every draft a queue row went through (regenerated, rotated, sent), newest first.
+  queueDrafts: (id: number) => getJson<{ versions: DraftVersionView[] }>(`/queue/${id}/drafts`),
+  // Same for a cadence's next step.
+  cadenceDrafts: (id: number, playName: string) =>
+    getJson<{ versions: DraftVersionView[] }>(
+      `/cadences/${id}/drafts?play=${encodeURIComponent(playName)}`,
+    ),
   triggers: () => getJson<{ triggers: TriggerView[] }>("/triggers"),
   setTriggerEnabled: (name: string, enabled: boolean) =>
     postJson<{ ok: boolean }>(`/triggers/${encodeURIComponent(name)}/enabled`, { enabled }),

@@ -23,6 +23,15 @@ vi.mock("@oneshot-gtm/intel", () => ({
 }));
 vi.mock("@oneshot-gtm/plays", () => ({
   selectAngle,
+  // The ledger's angle key and the positioning fingerprint, mirrored so the
+  // module under test sees the same identities production does.
+  angleTextKey: (v: string) =>
+    v
+      .toLowerCase()
+      .replace(/[^\p{L}\p{N}]+/gu, " ")
+      .trim(),
+  positioningFingerprint: (edge: string) =>
+    JSON.stringify([cfg.productOneLiner, cfg.productBrief, cfg.icpOneLiner, edge]),
   edgeFieldOf: (t: Record<string, unknown>) =>
     typeof t.yourEdge === "string" && t.yourEdge.trim()
       ? "yourEdge"

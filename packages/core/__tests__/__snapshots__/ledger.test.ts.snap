@@ -41,6 +41,27 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
       "type": "index",
     },
     {
+      "name": "idx_draft_versions_cadence",
+      "sql": "CREATE INDEX idx_draft_versions_cadence
+        ON draft_versions(prospect_id, play_name, step_index, outcome)",
+      "tbl_name": "draft_versions",
+      "type": "index",
+    },
+    {
+      "name": "idx_draft_versions_play",
+      "sql": "CREATE INDEX idx_draft_versions_play
+        ON draft_versions(play_name, angle_key)",
+      "tbl_name": "draft_versions",
+      "type": "index",
+    },
+    {
+      "name": "idx_draft_versions_queue",
+      "sql": "CREATE INDEX idx_draft_versions_queue
+        ON draft_versions(queue_id, outcome)",
+      "tbl_name": "draft_versions",
+      "type": "index",
+    },
+    {
       "name": "idx_inbox_replies_from_kind",
       "sql": "CREATE INDEX idx_inbox_replies_from_kind ON inbox_replies(from_email, kind)",
       "tbl_name": "inbox_replies",
@@ -366,6 +387,33 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
       "name": "direct_mail_receipts",
       "sql": "CREATE TABLE direct_mail_receipts (receipt_id TEXT PRIMARY KEY, local_id INTEGER NOT NULL)",
       "tbl_name": "direct_mail_receipts",
+      "type": "table",
+    },
+    {
+      "name": "draft_versions",
+      "sql": "CREATE TABLE draft_versions (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        play_name      TEXT NOT NULL,
+        -- lower-cased trimmed email, else the queue row's dedupe_key /
+        -- 'prospect:<id>' — one value per person so DISTINCT counts people.
+        prospect_key   TEXT NOT NULL,
+        -- 0 = intro, n = follow-up step n (cadence current_step + 1).
+        step_index     INTEGER NOT NULL,
+        queue_id       INTEGER,
+        prospect_id    INTEGER,
+        subject        TEXT NOT NULL,
+        body           TEXT NOT NULL,
+        flags_json     TEXT,
+        -- angleTextKey(angle_text); NULL when the draft carried no angle.
+        angle_key      TEXT,
+        angle_text     TEXT,
+        angle_origin   TEXT,           -- 'configured' | 'generated'
+        outcome        TEXT NOT NULL,  -- 'open' | 'discarded' | 'sent' | 'auto_sent'
+        discard_reason TEXT,           -- 'regenerate' | 'rotate' | 'redraft' | 'abandoned'
+        created_at     TEXT NOT NULL DEFAULT (datetime('now')),
+        closed_at      TEXT
+      )",
+      "tbl_name": "draft_versions",
       "type": "table",
     },
     {

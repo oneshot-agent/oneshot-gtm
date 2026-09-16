@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { DraftVersionStore, draftVersionAngle, type DraftDiscardReason } from "./ledger-drafts.ts";
 import { extractBusinessAddress } from "./mail-address.ts";
 import { humanDecisionWhereSql } from "./labels.ts";
 import type {
@@ -148,7 +149,11 @@ function likePatternsFor(term: string): string[] {
 const QUEUE_SEARCH_NAME_EXPR = `COALESCE(NULLIF(p.name, ''), NULLIF(json_extract(b.payload_json, '$.name'), ''), NULLIF(json_extract(b.payload_json, '$.founderName'), ''))`;
 
 export class QueueStore {
-  constructor(private readonly db: Database) {}
+  /** Draft-version mirror for intro drafts (ledger-drafts.ts); stateless, shares the handle. */
+  private readonly drafts: DraftVersionStore;
+  constructor(private readonly db: Database) {
+    this.drafts = new DraftVersionStore(db);
+  }
 
   /** Recent reviewed rows for few-shot ICP classification. */
   recentIcpDecisions(limit = 20): IcpDecisionExample[] {
@@ -850,27 +855,44 @@ export class QueueStore {
     previousDraft: string | null;
     previousPayload: string;
     draft: Parameters<QueueStore["setQueueDraft"]>[0]["draft"];
+    /** Why the draft being replaced was discarded (see ledger-drafts.ts). */
+    discardReason?: DraftDiscardReason;
   }): boolean {
     const at = new Date().toISOString();
-    return (
-      this.db
-        .prepare(`UPDATE target_queue SET last_draft_json = ?, last_drafted_at = ?
+    return this.db
+      .transaction((): boolean => {
+        const saved =
+          this.db
+            .prepare(`UPDATE target_queue SET last_draft_json = ?, last_drafted_at = ?
       WHERE id = ? AND last_draft_json IS ? AND payload_json = ?
       AND status != 'sent' AND sent_at IS NULL AND send_started_at IS NULL`)
-        .run(
-          JSON.stringify({ ...input.draft, draftedAt: at }),
-          at,
-          input.id,
-          input.previousDraft,
-          input.previousPayload,
-        ).changes === 1
-    );
+            .run(
+              JSON.stringify({ ...input.draft, draftedAt: at }),
+              at,
+              input.id,
+              input.previousDraft,
+              input.previousPayload,
+            ).changes === 1;
+        if (saved) {
+          this.versionQueueDraft(
+            input.id,
+            input.draft,
+            input.discardReason,
+            "machine",
+            input.previousDraft,
+          );
+        }
+        return saved;
+        // IMMEDIATE: the version write reads `draft_versions` before writing it;
+        // a deferred transaction would let a concurrent send slip in between.
+      })
+      .immediate();
   }
 
   /**
    * Persist the most-recent draft for this queue row (the /run page is
-   * ephemeral; /queue reviews from here). Most-recent-wins — re-runs
-   * overwrite without history.
+   * ephemeral; /queue reviews from here). Most-recent-wins on the row; the
+   * replaced draft survives as a `draft_versions` row (ledger-drafts.ts).
    */
   setQueueDraft(input: {
     id: number;
@@ -884,12 +906,126 @@ export class QueueStore {
       enrichmentFailed?: boolean;
       angle?: unknown;
     };
+    /** Why the draft being replaced was discarded; default `redraft` (a machine re-draft, no judgment). */
+    discardReason?: DraftDiscardReason;
+    /** For a sent draft: whether a human reviewed it (`sent`) or the drain shipped it unseen (`auto_sent`). */
+    sentBy?: "human" | "machine";
   }): void {
     const draftedAtIso = new Date().toISOString();
     const json = JSON.stringify({ ...input.draft, draftedAt: draftedAtIso });
     this.db
-      .prepare(`UPDATE target_queue SET last_draft_json = ?, last_drafted_at = ? WHERE id = ?`)
-      .run(json, draftedAtIso, input.id);
+      .transaction(() => {
+        // The envelope this write replaces — read before the UPDATE so a draft
+        // that predates versioning can still be recorded as what was replaced.
+        const before = this.db
+          .query(`SELECT last_draft_json AS j FROM target_queue WHERE id = ?`)
+          .get(input.id) as { j: string | null } | null;
+        this.db
+          .prepare(`UPDATE target_queue SET last_draft_json = ?, last_drafted_at = ? WHERE id = ?`)
+          .run(json, draftedAtIso, input.id);
+        this.versionQueueDraft(
+          input.id,
+          input.draft,
+          input.discardReason,
+          input.sentBy ?? "machine",
+          before?.j ?? null,
+        );
+        // IMMEDIATE: the envelope is read before the UPDATE and the version
+        // table before its own writes — take the write lock up front.
+      })
+      .immediate();
+  }
+
+  /**
+   * Mirror a queue-row draft write into `draft_versions`. An unsent draft
+   * opens a version (closing the previous one as discarded); a sent draft
+   * closes the open version when it is the one that shipped, else records
+   * the shipped text directly (drain drafts and sends in one pass).
+   */
+  private versionQueueDraft(
+    id: number,
+    draft: { subject: string; body: string; flags: string[]; sent: boolean; angle?: unknown },
+    discardReason: DraftDiscardReason | undefined,
+    sentBy: "human" | "machine",
+    /** The `last_draft_json` this write replaced — seeds a version when the row had none. */
+    previousStored: string | null,
+  ): void {
+    const key = this.queueVersionKey(id);
+    if (!key) return;
+    this.drafts.seedFromStored({ ...key, stored: previousStored });
+    const base = {
+      ...key,
+      subject: draft.subject,
+      body: draft.body,
+      flags: draft.flags,
+      angle: draftVersionAngle(draft.angle),
+    };
+    if (!draft.sent) {
+      this.drafts.open({ ...base, ...(discardReason ? { discardReason } : {}) });
+      return;
+    }
+    const outcome = sentBy === "human" ? "sent" : "auto_sent";
+    if (this.drafts.openBody({ queueId: id }) === draft.body) {
+      this.drafts.close({ queueId: id }, outcome);
+      return;
+    }
+    this.drafts.close({ queueId: id }, "discarded", "redraft");
+    this.drafts.insertClosed({ ...base, outcome });
+  }
+
+  /**
+   * Drop a row's stored draft so nothing can send it verbatim — a moved-in
+   * row's old draft was written against another workspace's edge. The open
+   * draft version closes as a machine redraft: no founder judgment was made.
+   */
+  clearQueueDraft(id: number): void {
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          `UPDATE target_queue SET last_draft_json = NULL, last_drafted_at = NULL WHERE id = ?`,
+        )
+        .run(id);
+      this.drafts.close({ queueId: id }, "discarded", "redraft");
+    })();
+  }
+
+  /** Slot + identity for a queue row's draft versions; null when the row is gone. */
+  private queueVersionKey(
+    id: number,
+  ): { slot: { queueId: number }; playName: string; prospectKey: string; stepIndex: 0 } | null {
+    const row = this.db
+      .query(
+        `SELECT play_name, dedupe_key, json_extract(payload_json, '$.email') AS email
+           FROM target_queue WHERE id = ?`,
+      )
+      .get(id) as { play_name: string; dedupe_key: string; email: string | null } | null;
+    if (!row) return null;
+    const email = typeof row.email === "string" ? row.email.trim().toLowerCase() : "";
+    return {
+      slot: { queueId: id },
+      playName: row.play_name,
+      prospectKey: email || row.dedupe_key,
+      stepIndex: 0,
+    };
+  }
+
+  /**
+   * The `mark-sent` path records no draft write of its own — close what the
+   * founder marked, seeding it from the stored draft when the row predates
+   * versioning.
+   */
+  closeQueueDraftVersion(id: number, outcome: "sent" | "auto_sent"): boolean {
+    return this.db
+      .transaction((): boolean => {
+        const key = this.queueVersionKey(id);
+        if (!key) return false;
+        const stored = this.db
+          .query(`SELECT last_draft_json AS j FROM target_queue WHERE id = ?`)
+          .get(id) as { j: string | null } | null;
+        this.drafts.seedFromStored({ ...key, stored: stored?.j ?? null });
+        return this.drafts.close({ queueId: id }, outcome);
+      })
+      .immediate();
   }
 
   /**

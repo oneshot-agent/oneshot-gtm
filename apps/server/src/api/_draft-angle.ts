@@ -1,9 +1,10 @@
-import { createHash } from "node:crypto";
 import { isPersonResearchDossier, loadConfig, personRecordFromResearch } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import {
+  angleTextKey,
   describeTargetForAngle,
   edgeFieldOf,
+  positioningFingerprint,
   selectAngle,
   splitEdgeAngles,
   slopFlags,
@@ -45,11 +46,8 @@ export function parseDraftAngle(value: unknown): DraftAngle | undefined {
  */
 export const ANGLE_POOL_SIZE = 12;
 
-const normalize = (v: string): string =>
-  v
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}]+/gu, " ")
-    .trim();
+// The ledger's angle key (ledger-drafts.ts) — one identity for an angle's text everywhere.
+const normalize = angleTextKey;
 
 /** Chooses a preview argument; never changes trigger config or sends a message. */
 export async function draftAngleFor(input: {
@@ -75,7 +73,7 @@ export async function draftAngleFor(input: {
     icp: cfg.icpOneLiner,
     edge,
   };
-  const fingerprint = createHash("sha256").update(JSON.stringify(positioning)).digest("hex");
+  const fingerprint = positioningFingerprint(edge);
   const previous = input.previous;
   const current = previous?.fingerprint === fingerprint ? previous : undefined;
   if (!input.rotate && current) return current;

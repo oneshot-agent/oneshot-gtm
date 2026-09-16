@@ -1,3 +1,4 @@
+import type { DraftAngle } from "@oneshot-gtm/shared-types";
 import { type AcceleratorBatchTarget, runAcceleratorBatch } from "./accelerator-batch.ts";
 import { type BreakupReviveTarget, runBreakupRevive } from "./breakup-revive.ts";
 import { type CompetitorSwitchTarget, runCompetitorSwitch } from "./competitor-switch.ts";
@@ -33,6 +34,8 @@ export interface DraftedRow {
   receiptIds: number[];
   /** Enrichment SDK failed — draft built from payload only (non-blocking; surfaced on /queue). */
   enrichmentFailed?: boolean;
+  /** Which edge angle the draft was built on, when the runner chose it (see `PlayDraft.angle`). */
+  angle?: DraftAngle;
 }
 
 /** Run-level options a play may consume. `targets` is play-specific JSON. */

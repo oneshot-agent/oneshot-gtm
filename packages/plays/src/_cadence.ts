@@ -1,3 +1,4 @@
+import type { DraftAngleChoice } from "@oneshot-gtm/shared-types";
 import {
   classifyReply,
   motionMailPolicy,
@@ -30,7 +31,7 @@ import {
   notifySlackReplyReceived,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject, triageEmails } from "@oneshot-gtm/intel";
-import { followUpEdgeAngle, followUpEdgeBlock } from "./_angles.ts";
+import { followUpEdgeBlock, followUpEdgeSelection } from "./_angles.ts";
 import {
   firstNameFrom,
   humanizeDraft,
@@ -48,7 +49,13 @@ export interface CadenceContext {
 
 export type StepPayload =
   | { kind: "direct_mail"; draftId: string }
-  | { kind: "email"; subject: string; body: string }
+  | {
+      kind: "email";
+      subject: string;
+      body: string;
+      /** Which edge angle the follow-up drew on (issue #584); absent when the play's edge has one or none. */
+      angle?: DraftAngleChoice;
+    }
   | { kind: "sms"; message: string; toPhone?: string }
   | {
       kind: "voice";
@@ -1537,6 +1544,10 @@ export async function previewCadenceStep(input: {
     prospectId: input.prospectId,
     playName: input.playName,
     draft: { subject, body, flags, payload: built },
+    // Both callers (preview-next, preview-batch) are the founder asking for
+    // a new draft; a preview it replaces was rejected on its text, not its
+    // angle — follow-ups keep the classifier's pick.
+    discardReason: "regenerate",
   });
   const draft = ledger.getCadenceDraft({
     prospectId: input.prospectId,
@@ -1783,6 +1794,7 @@ async function dispatchStepImpl(input: {
         subject: input.payload.subject,
         body: input.payload.body,
         label: input.label,
+        ...(input.payload.angle ? { angleText: input.payload.angle.text } : {}),
       },
     });
     return { receiptIds };
@@ -1938,7 +1950,8 @@ export function buildFollowUpEmail(opts: {
     // saw the edge at all — only the prior body under "do not repeat" — so it
     // could not say anything new. It now gets a DIFFERENT angle from the
     // intro's. No multi-angle edge on the sent row → null → no block.
-    const edgeBlock = followUpEdgeBlock(await followUpEdgeAngle(ctx.prospect, opts.playName));
+    const edgeSelection = await followUpEdgeSelection(ctx.prospect, opts.playName);
+    const edgeBlock = followUpEdgeBlock(edgeSelection?.angle ?? null);
     const user = [
       `FOUNDER: ${ctx.cfg.founderName}`,
       `PRODUCT: ${ctx.cfg.productOneLiner}`,
@@ -1968,7 +1981,23 @@ export function buildFollowUpEmail(opts: {
       subject: parsed.subject.trim(),
       body: parsed.body.trim(),
     });
-    return { kind: "email", subject: cleaned.subject, body: cleaned.body };
+    return {
+      kind: "email",
+      subject: cleaned.subject,
+      body: cleaned.body,
+      // Carried on the payload so the persisted preview — and its draft
+      // version — records the angle the way an intro draft does.
+      ...(edgeSelection
+        ? {
+            angle: {
+              text: edgeSelection.angle,
+              origin: "configured" as const,
+              index: edgeSelection.index,
+              count: edgeSelection.count,
+            },
+          }
+        : {}),
+    };
   };
 }
 

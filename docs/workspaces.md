@@ -14,7 +14,9 @@ bun run cli -- workspace list                 # every workspace, the current and
 
 ## What stays shared
 
-`~/.oneshot-gtm-shared/shared.sqlite` (relocate with `ONESHOT_GTM_SHARED`) holds the paid lookup caches (enrichment, LinkedIn — the same person is never bought twice) and contact touches. A workspace never first-touches someone another workspace emailed in the last 7 days: the draft holds with a `contacted-elsewhere` flag you can override on a manual send, while drain and cadence steps wait the window out.
+`~/.oneshot-gtm-shared/shared.sqlite` (relocate with `ONESHOT_GTM_SHARED`) holds shared person identities and workspace membership links, alongside the paid lookup caches (enrichment and LinkedIn, reused when lookup identifiers match; unlinked aliases can still cause duplicate lookups) and contact touches. A workspace never first-touches someone another workspace emailed in the last 7 days: the draft holds with a `contacted-elsewhere` flag you can override on a manual send, while drain and cadence steps wait the window out.
+
+Rejects are per workspace and permanent within it: the queue's unique key on play + dedupe key ignores status, so a finder can never re-enqueue someone you rejected there (only "Approve anyway" on /prospects reopens the row). Nothing carries a reject across workspaces. To hand a prospect to the other product, use **move →** on the /queue row (pending, approved or rejected). The destination is started if it is not running, the row lands in its queue as pending under the same play with the person's research intact and the sender's edge and verdicts stripped (the destination's own `yourEdge` applies at draft time), and the row here is rejected with a `moved to <workspace>` note. A rejected or expired row the destination already holds for that person is re-opened instead of refused — that is also how a prospect comes back.
 
 Each ledger's own cache tables are imported into the shared DB once on first use and then left unwritten, so rolling back is a code revert, not a data migration.
 
@@ -61,3 +63,13 @@ Connecting one mailbox in two workspaces gives both access to that mailbox; thei
 prospect matches, read states, drafts, and archives remain independent.
 
 `find watch --install-service` embeds the active home, so `--workspace acme find watch --install-service` pins the generated service to that workspace. See [background monitoring](./background-monitoring.md).
+
+### Shared people and workspace memberships
+
+A person has one shared identity and can belong to several workspaces. Normalized email and LinkedIn profile identifiers resolve to that identity. Matching names alone never merges people; contradictory identifiers require review. Adding the same person in another workspace links a membership rather than creating a second shared person.
+
+Existing numeric prospect IDs remain workspace-local history keys. On startup, each workspace links those records to `shared_person_id` without renumbering or deleting sends, replies, queues or cadences. Legacy IDs that resolve to the same person remain valid. The workspace identity columns are compatibility projections; the shared person is authoritative. Dossiers, product-specific angles, qualification and outreach history stay with the workspace.
+
+The shared contact check follows known email aliases of a person, so changing email addresses does not bypass another workspace's recent-contact hold. Unknown aliases still need an email or LinkedIn identity link before they can be recognised.
+
+Code opening a custom ledger path outside the configured workspace home can opt into the same store with `new Ledger(path, { sharedPeoplePath })`; isolated fixture ledgers keep their previous local-only behavior.

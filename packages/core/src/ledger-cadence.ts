@@ -1,4 +1,9 @@
 import type { Database } from "bun:sqlite";
+import {
+  draftVersionAngle,
+  type DraftDiscardReason,
+  type DraftVersionStore,
+} from "./ledger-drafts.ts";
 import { QueueStore } from "./ledger-queue.ts";
 import type { CadencePlanStep, ChannelEventRecord, SequenceEventRecord } from "./types.ts";
 
@@ -190,6 +195,7 @@ export function listCadencesForProspect(db: Database, prospectId: number): Caden
 
 export function advanceCadence(
   db: Database,
+  drafts: DraftVersionStore,
   input: {
     prospectId: number;
     playName: string;
@@ -203,14 +209,65 @@ export function advanceCadence(
   // surface a fresh "no preview yet" state.
   // A successful advance also clears any prior send-failure marker (the send
   // that just advanced us obviously succeeded).
-  db.prepare(
-    `UPDATE cadence_state
-     SET current_step = ?, next_due_at = ?, last_polled_at = datetime('now'),
-         next_step_draft_json = NULL, next_step_drafted_at = NULL,
-         sending_started_at = NULL,
-         last_send_error = NULL, last_send_error_at = NULL
-     WHERE prospect_id = ? AND play_name = ?`,
-  ).run(input.newStep, input.nextDueAt, input.prospectId, input.playName);
+  db.transaction(() => {
+    // A preview that predates versioning is still the draft being sent —
+    // seed it before the clear below erases the envelope.
+    seedCadenceDraftVersion(db, drafts, input.prospectId, input.playName);
+    db.prepare(
+      `UPDATE cadence_state
+       SET current_step = ?, next_due_at = ?, last_polled_at = datetime('now'),
+           next_step_draft_json = NULL, next_step_drafted_at = NULL,
+           sending_started_at = NULL,
+           last_send_error = NULL, last_send_error_at = NULL
+       WHERE prospect_id = ? AND play_name = ?`,
+    ).run(input.newStep, input.nextDueAt, input.prospectId, input.playName);
+    // The step just advanced past is the one the open draft was for, and
+    // every cadence send is founder-reviewed — it was sent.
+    drafts.close(
+      { prospectId: input.prospectId, playName: input.playName, stepIndex: input.newStep },
+      "sent",
+    );
+    // IMMEDIATE: the seed reads the stored preview before the clear.
+  }).immediate();
+}
+
+/**
+ * Slot + identity for a cadence's next-step draft versions, seeding a
+ * version from the stored preview when the slot has none (ledger-drafts.ts
+ * `seedFromStored`). Null when the cadence is gone.
+ */
+function seedCadenceDraftVersion(
+  db: Database,
+  drafts: DraftVersionStore,
+  prospectId: number,
+  playName: string,
+): {
+  slot: { prospectId: number; playName: string; stepIndex: number };
+  playName: string;
+  prospectKey: string;
+  stepIndex: number;
+} | null {
+  const row = db
+    .query(
+      `SELECT c.current_step AS current_step, c.next_step_draft_json AS stored, p.email AS email
+         FROM cadence_state c JOIN prospects p ON p.id = c.prospect_id
+        WHERE c.prospect_id = ? AND c.play_name = ?`,
+    )
+    .get(prospectId, playName) as {
+    current_step: number;
+    stored: string | null;
+    email: string | null;
+  } | null;
+  if (!row) return null;
+  const stepIndex = row.current_step + 1;
+  const key = {
+    slot: { prospectId, playName, stepIndex },
+    playName,
+    prospectKey: row.email?.trim().toLowerCase() || `prospect:${prospectId}`,
+    stepIndex,
+  };
+  drafts.seedFromStored({ ...key, stored: row.stored });
+  return key;
 }
 
 /**
@@ -231,6 +288,7 @@ export function recordCadenceSendError(
 
 export function setCadenceStatus(
   db: Database,
+  drafts: DraftVersionStore,
   input: {
     prospectId: number;
     playName: string;
@@ -262,10 +320,19 @@ export function setCadenceStatus(
     input.prospectId,
     input.playName,
   );
+  // `breakup` is stamped only after the breakup step was sent (reviewed,
+  // like every cadence send); every other terminal state abandons whatever
+  // preview was open — no judgment on the draft was made.
+  if (input.status === "breakup") {
+    drafts.closeAllForCadence(input.prospectId, input.playName, "sent");
+  } else if (input.status !== "active") {
+    drafts.closeAllForCadence(input.prospectId, input.playName, "discarded", "abandoned");
+  }
 }
 
 export function stopCadence(
   db: Database,
+  drafts: DraftVersionStore,
   input: {
     prospectId: number;
     playName: string;
@@ -289,6 +356,7 @@ export function stopCadence(
     changed = result.changes > 0;
     if (changed) {
       new QueueStore(db).expireBreakupReviveQueue(input.prospectId, "cadence stopped");
+      drafts.closeAllForCadence(input.prospectId, input.playName, "discarded", "abandoned");
     }
   })();
   return changed;
@@ -296,6 +364,7 @@ export function stopCadence(
 
 export function setCadenceDraft(
   db: Database,
+  drafts: DraftVersionStore,
   input: {
     prospectId: number;
     playName: string;
@@ -305,15 +374,33 @@ export function setCadenceDraft(
       flags: string[];
       payload: unknown;
     };
+    /** Why the preview being replaced was discarded (ledger-drafts.ts); default `redraft`. */
+    discardReason?: DraftDiscardReason;
   },
 ): void {
   const draftedAtIso = new Date().toISOString();
   const json = JSON.stringify({ ...input.draft, draftedAt: draftedAtIso });
-  db.prepare(
-    `UPDATE cadence_state
-     SET next_step_draft_json = ?, next_step_drafted_at = ?
-     WHERE prospect_id = ? AND play_name = ?`,
-  ).run(json, draftedAtIso, input.prospectId, input.playName);
+  db.transaction(() => {
+    // Seed from the preview this write replaces (a draft that predates
+    // versioning) before the UPDATE erases it.
+    const key = seedCadenceDraftVersion(db, drafts, input.prospectId, input.playName);
+    db.prepare(
+      `UPDATE cadence_state
+       SET next_step_draft_json = ?, next_step_drafted_at = ?
+       WHERE prospect_id = ? AND play_name = ?`,
+    ).run(json, draftedAtIso, input.prospectId, input.playName);
+    if (!key) return;
+    const payload = input.draft.payload as { angle?: unknown } | null;
+    drafts.open({
+      ...key,
+      subject: input.draft.subject,
+      body: input.draft.body,
+      flags: input.draft.flags,
+      angle: draftVersionAngle(payload && typeof payload === "object" ? payload.angle : null),
+      ...(input.discardReason ? { discardReason: input.discardReason } : {}),
+    });
+    // IMMEDIATE: the seed reads the stored preview before the UPDATE.
+  }).immediate();
 }
 
 export function getCadenceDraft(
@@ -348,6 +435,7 @@ export function getCadenceDraft(
 
 export function clearCadenceDraft(
   db: Database,
+  drafts: DraftVersionStore,
   input: { prospectId: number; playName: string },
 ): void {
   db.prepare(
@@ -355,6 +443,7 @@ export function clearCadenceDraft(
      SET next_step_draft_json = NULL, next_step_drafted_at = NULL
      WHERE prospect_id = ? AND play_name = ?`,
   ).run(input.prospectId, input.playName);
+  drafts.closeAllForCadence(input.prospectId, input.playName, "discarded", "abandoned");
 }
 
 /**
@@ -432,6 +521,7 @@ export function sweepStaleCadenceSends(
 
 export function recordLinkedInReply(
   db: Database,
+  drafts: DraftVersionStore,
   input: {
     prospectId: number;
     source: string;
@@ -488,6 +578,7 @@ export function recordLinkedInReply(
            last_send_error = NULL, last_send_error_at = NULL
        WHERE prospect_id = ? AND status IN ('active','paused')`,
     ).run(input.prospectId);
+    drafts.closeAllForProspect(input.prospectId, "discarded", "abandoned");
     new QueueStore(db).expireBreakupReviveQueue(input.prospectId, "prospect replied");
     return {
       duplicate: false,
@@ -499,7 +590,12 @@ export function recordLinkedInReply(
 }
 
 /** Stop future work on one live cadence without hiding a send already handed to a provider. */
-function markCadenceReplied(db: Database, prospectId: number, playName: string): void {
+function markCadenceReplied(
+  db: Database,
+  drafts: DraftVersionStore,
+  prospectId: number,
+  playName: string,
+): void {
   db.prepare(
     `UPDATE cadence_state
      SET status = 'replied', next_due_at = NULL,
@@ -507,6 +603,7 @@ function markCadenceReplied(db: Database, prospectId: number, playName: string):
          last_send_error = NULL, last_send_error_at = NULL
      WHERE prospect_id = ? AND play_name = ? AND status IN ('active','paused')`,
   ).run(prospectId, playName);
+  drafts.closeAllForCadence(prospectId, playName, "discarded", "abandoned");
 }
 
 /**
@@ -575,6 +672,7 @@ export function markLatestStepReplied(
  */
 export function recordCadenceReply(
   db: Database,
+  drafts: DraftVersionStore,
   input: { prospectId: number; playName: string; repliedAt?: string | null },
 ): {
   newlyReplied: boolean;
@@ -584,7 +682,7 @@ export function recordCadenceReply(
     const cad = getCadence(db, input.prospectId, input.playName);
     const newlyReplied = cad?.status === "active" || cad?.status === "paused";
     if (newlyReplied) {
-      markCadenceReplied(db, input.prospectId, input.playName);
+      markCadenceReplied(db, drafts, input.prospectId, input.playName);
     }
     const eventRecorded = markLatestStepReplied(db, {
       prospectId: input.prospectId,
@@ -645,6 +743,7 @@ export function latestSentPlayForProspect(
  */
 export function recordProspectReply(
   db: Database,
+  drafts: DraftVersionStore,
   prospectId: number,
   opts?: { subject?: string | null; repliedAt?: string | null },
 ): Array<{ playName: string; newlyReplied: boolean; eventRecorded: boolean }> {
@@ -654,7 +753,7 @@ export function recordProspectReply(
     for (const cad of listCadencesForProspect(db, prospectId)) {
       const live = cad.status === "active" || cad.status === "paused";
       if (live) {
-        markCadenceReplied(db, prospectId, cad.play_name);
+        markCadenceReplied(db, drafts, prospectId, cad.play_name);
       }
       out.set(cad.play_name, { newlyReplied: live, eventRecorded: false });
     }

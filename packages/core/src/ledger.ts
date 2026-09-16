@@ -3,7 +3,9 @@ import { extractBusinessAddress } from "./mail-address.ts";
 import type { DirectMailDraft, PostalAddress } from "./direct-mail.ts";
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import { demoMode } from "./demo.ts";
+import { workspacesDir } from "./workspaces.ts";
 import { configDir } from "./config.ts";
 import {
   hasPersonSignal,
@@ -53,12 +55,21 @@ import {
   sweepStaleCadenceSends as cadSweepStaleCadenceSends,
 } from "./ledger-cadence.ts";
 import { LedgerCache } from "./ledger-cache.ts";
+import {
+  DraftVersionStore,
+  type AngleUsageRow,
+  type DraftDiscardReason,
+  type DraftSlot,
+  type DraftUsageByStep,
+  type DraftVersionRow,
+} from "./ledger-drafts.ts";
 import { InboxStore } from "./ledger-inbox.ts";
 import { QueueStore } from "./ledger-queue.ts";
 import { migrateLedgerSchema } from "./ledger-schema.ts";
 import { MailboxStore } from "./mailbox-store.ts";
 import { ReceiptStore } from "./ledger-receipts.ts";
-import { getSharedDb } from "./shared-db.ts";
+import { sharedDbPath } from "./shared-db.ts";
+import { SharedPeople, type SharedPerson } from "./shared-people.ts";
 import type { ReplyKind } from "./reply-classify.ts";
 import type {
   AuthVerdict,
@@ -157,8 +168,16 @@ export class Ledger {
   private cache: LedgerCache;
   private inbox: InboxStore;
   private queue: QueueStore;
+  /**
+   * Draft versions for cadence follow-ups (ledger-drafts.ts). Intro drafts
+   * are versioned by `QueueStore` through its own instance — the table is the
+   * same, the handle is the same, and neither store keeps state.
+   */
+  private drafts: DraftVersionStore;
+  private people: SharedPeople | null = null;
+  private peopleVersion = "";
 
-  constructor(path: string = DEFAULT_DB_PATH) {
+  constructor(path: string = DEFAULT_DB_PATH, options: { sharedPeoplePath?: string } = {}) {
     this.path = path;
     if (!existsSync(dirname(path))) mkdirSync(dirname(path), { recursive: true });
     this.db = new Database(path);
@@ -170,6 +189,25 @@ export class Ledger {
     // / "no such table" mid-migration.
     this.db.exec("PRAGMA busy_timeout = 5000");
     this.migrate();
+    // Recognise both the active home and named workspaces opened by maintenance tools.
+    // Arbitrary fixture databases and demo homes must not enter the live person registry.
+    const namedWorkspace =
+      basename(path) === "ledger.sqlite" && dirname(dirname(resolve(path))) === workspacesDir();
+    if (options.sharedPeoplePath || (!demoMode() && (path === DEFAULT_DB_PATH || namedWorkspace))) {
+      this.people = new SharedPeople(options.sharedPeoplePath ?? sharedDbPath());
+      const columns = this.db.query("PRAGMA table_info(prospects)").all() as { name: string }[];
+      if (!columns.some((c) => c.name === "shared_person_id")) {
+        try {
+          this.db.exec("ALTER TABLE prospects ADD COLUMN shared_person_id TEXT");
+        } catch (error) {
+          if (!/duplicate column/i.test(String(error))) throw error;
+        }
+      }
+      this.db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_prospects_person ON prospects(shared_person_id)",
+      );
+      this.refreshSharedPeople();
+    }
     // Receipt reads/writes/attribution/aggregation live in ledger-receipts.ts
     // (see its doc comment) — extracted as the next slice of the ledger split
     // tracked in ROADMAP.md, following the schema extraction in #452.
@@ -189,6 +227,7 @@ export class Ledger {
     // the split, following the inbox extraction in #634. Constructed AFTER
     // migrate() so target_queue already exists.
     this.queue = new QueueStore(this.db);
+    this.drafts = new DraftVersionStore(this.db);
   }
 
   getDirectMail(id: string): DirectMailDraft | null {
@@ -465,7 +504,7 @@ export class Ledger {
     newStep: number;
     nextDueAt: string | null;
   }): void {
-    cadAdvanceCadence(this.db, input);
+    cadAdvanceCadence(this.db, this.drafts, input);
   }
 
   /**
@@ -482,7 +521,7 @@ export class Ledger {
     playName: string;
     status: "active" | "replied" | "breakup" | "completed" | "bounced" | "off-icp" | "unsubscribed";
   }): void {
-    cadSetCadenceStatus(this.db, input);
+    cadSetCadenceStatus(this.db, this.drafts, input);
   }
 
   stopCadence(input: {
@@ -491,7 +530,7 @@ export class Ledger {
     reason: "bad_timing" | "other" | "not_a_fit" | "do_not_contact";
     note?: string;
   }): boolean {
-    return cadStopCadence(this.db, input);
+    return cadStopCadence(this.db, this.drafts, input);
   }
 
   setCadenceDraft(input: {
@@ -503,8 +542,10 @@ export class Ledger {
       flags: string[];
       payload: unknown;
     };
+    /** Why the preview being replaced was discarded (ledger-drafts.ts); default `redraft`. */
+    discardReason?: DraftDiscardReason;
   }): void {
-    cadSetCadenceDraft(this.db, input);
+    cadSetCadenceDraft(this.db, this.drafts, input);
   }
 
   getCadenceDraft(input: { prospectId: number; playName: string }): {
@@ -518,7 +559,22 @@ export class Ledger {
   }
 
   clearCadenceDraft(input: { prospectId: number; playName: string }): void {
-    cadClearCadenceDraft(this.db, input);
+    cadClearCadenceDraft(this.db, this.drafts, input);
+  }
+
+  /** Every draft version a queue row or cadence step went through, newest first (ledger-drafts.ts). */
+  draftVersionsFor(slot: DraftSlot): DraftVersionRow[] {
+    return this.drafts.versionsFor(slot);
+  }
+
+  /** Per play, per angle: offered / rotated away / redrafted / sent / auto-sent, counting distinct prospects. */
+  angleUsageByPlay(): Record<string, AngleUsageRow[]> {
+    return this.drafts.angleUsageByPlay();
+  }
+
+  /** Per play: draft-version counts by outcome, intro and follow-up apart. */
+  draftUsageByPlay(): Record<string, DraftUsageByStep> {
+    return this.drafts.draftUsageByPlay();
   }
 
   /**
@@ -656,20 +712,22 @@ export class Ledger {
   }
 
   findProspectByEmail(email: string): { id: number } | null {
-    return (
-      (this.db.query("SELECT id FROM prospects WHERE email = ?").get(canonEmail(email)) as {
-        id: number;
-      }) ?? null
-    );
+    const local = this.db
+      .query("SELECT id FROM prospects WHERE email = ?")
+      .get(canonEmail(email)) as { id: number } | null;
+    if (local) return local;
+    const person = this.people?.find({ email });
+    return person
+      ? (this.db
+          .query("SELECT id FROM prospects WHERE shared_person_id=? ORDER BY id LIMIT 1")
+          .get(person.id) as { id: number } | null)
+      : null;
   }
 
-  /** Full prospect record by email — used to attach name/company to inbox replies. */
+  /** Full prospect record by any verified email alias of the shared person. */
   getProspectByEmail(email: string): ProspectRecord | null {
-    return (
-      (this.db
-        .query("SELECT * FROM prospects WHERE email = ?")
-        .get(canonEmail(email)) as ProspectRecord) ?? null
-    );
+    const found = this.findProspectByEmail(email);
+    return found ? this.getProspectById(found.id) : null;
   }
 
   resolveProspectForLinkedInReply(input: {
@@ -723,7 +781,7 @@ export class Ledger {
     cadencesStopped: number;
     inFlightSends: number;
   } {
-    return cadRecordLinkedInReply(this.db, input);
+    return cadRecordLinkedInReply(this.db, this.drafts, input);
   }
 
   /**
@@ -875,9 +933,9 @@ export class Ledger {
 
   /** Full prospect record by id (PK seek). Avoids loading every prospect to find one. */
   getProspectById(id: number): ProspectRecord | null {
-    const prospect = this.db
-      .query("SELECT * FROM prospects WHERE id = ?")
-      .get(id) as ProspectRecord | null;
+    const prospect = this.withSharedIdentity(
+      this.db.query("SELECT * FROM prospects WHERE id = ?").get(id) as ProspectRecord | null,
+    );
     const address = prospect && this.getMailAddress(`prospect:${id}`);
     return prospect
       ? {
@@ -1171,15 +1229,118 @@ export class Ledger {
     return this.receipts.listReceipts(opts);
   }
 
+  /** Link legacy workspace IDs without renumbering any queue, cadence or reply history. */
+  refreshSharedPeople(): void {
+    if (!this.people) return;
+    if (this.peopleVersion === this.people.version()) return;
+    const rows = this.db.query("SELECT * FROM prospects").all() as ProspectRecord[];
+    this.db
+      .transaction(() => {
+        for (const row of rows) {
+          const person = row.shared_person_id
+            ? this.people!.get(row.shared_person_id)
+            : this.bindSharedPerson(row);
+          if (!person) throw Error(`Missing shared person for prospect ${row.id}`);
+          for (const field of [
+            "name",
+            "email",
+            "phone",
+            "company",
+            "linkedin_url",
+            "title",
+          ] as const) {
+            if (row[field] === person[field]) continue;
+            // Legacy aliases can have separate historical IDs in one workspace.
+            // Keep their unique email keys; both still resolve to the same shared identity.
+            if (
+              field === "email" &&
+              person.email &&
+              this.db
+                .query("SELECT id FROM prospects WHERE email=? AND id<>?")
+                .get(person.email, row.id)
+            )
+              continue;
+            this.db.query(`UPDATE prospects SET ${field}=? WHERE id=?`).run(person[field], row.id);
+          }
+        }
+      })
+      .immediate();
+    this.peopleVersion = this.people.version();
+  }
+
+  private bindSharedPerson(row: ProspectRecord): SharedPerson | null {
+    if (!this.people) return null;
+    const known = row.shared_person_id ?? this.people.membership(this.path, row.id);
+    const person = this.people.resolve(row, known ?? undefined);
+    this.db
+      .query("UPDATE prospects SET shared_person_id=? WHERE id=? AND shared_person_id IS NOT ?")
+      .run(person.id, row.id, person.id);
+    this.people.link(this.path, row.id, person.id);
+    return person;
+  }
+
+  /** Add membership to the same person, preserving this workspace's independent history. */
+  linkSharedProspect(personId: string): number {
+    const person = this.people?.get(personId);
+    if (!person) throw Error("Shared person does not exist");
+    const { id, ...identity } = person;
+    return this.upsertProspect({ ...identity, shared_person_id: id, source: "workspace-link" });
+  }
+
+  private withSharedIdentity(row: ProspectRecord | null): ProspectRecord | null {
+    if (!row || !this.people) return row;
+    const person = row.shared_person_id
+      ? this.people.get(row.shared_person_id)
+      : this.bindSharedPerson(row);
+    return person
+      ? {
+          ...row,
+          ...person,
+          id: row.id,
+          shared_person_id: person.id,
+          source_profile_url: row.source_profile_url,
+        }
+      : row;
+  }
+
   upsertProspect(input: Partial<ProspectRecord> & { email?: string | null }): number {
+    return this.db.transaction(() => this.upsertProspectInTransaction(input)).immediate();
+  }
+
+  private upsertProspectInTransaction(
+    input: Partial<ProspectRecord> & { email?: string | null },
+  ): number {
     // Store the canonical (lowercased) email so reply matching — which
     // normalizes the inbound from-address the same way — always lands.
+    const person = this.people?.resolve(input, input.shared_person_id ?? undefined);
+    if (person) {
+      const membership = this.db
+        .query("SELECT id FROM prospects WHERE shared_person_id=? ORDER BY id LIMIT 1")
+        .get(person.id) as { id: number } | null;
+      if (membership) {
+        if (input.businessAddress && !this.getMailAddress(`prospect:${membership.id}`))
+          this.setMailAddress(
+            `prospect:${membership.id}`,
+            input.businessAddress,
+            input.businessAddressSource ?? "prospect input",
+          );
+        return membership.id;
+      }
+      const { id, ...identity } = person;
+      input = {
+        ...input,
+        ...identity,
+        shared_person_id: id,
+        source_profile_url: input.source_profile_url ?? identity.source_profile_url,
+      };
+    }
     const email = input.email ? canonEmail(input.email) : null;
     if (email) {
       const existing = this.db.query("SELECT id FROM prospects WHERE email = ?").get(email) as
         | { id: number }
         | undefined;
       if (existing) {
+        if (person) this.bindSharedPerson({ ...input, id: existing.id } as ProspectRecord);
         if (input.businessAddress && !this.getMailAddress(`prospect:${existing.id}`))
           this.setMailAddress(
             `prospect:${existing.id}`,
@@ -1206,6 +1367,7 @@ export class Ledger {
       input.title ?? null,
     );
     const id = Number(result.lastInsertRowid);
+    if (person) this.bindSharedPerson({ ...input, id } as ProspectRecord);
     if (input.businessAddress)
       this.setMailAddress(
         `prospect:${id}`,
@@ -1231,6 +1393,26 @@ export class Ledger {
       title?: string | null;
     },
   ): boolean {
+    if (this.people) {
+      const row = this.db
+        .query("SELECT * FROM prospects WHERE id=?")
+        .get(id) as ProspectRecord | null;
+      if (row) {
+        const effective = { ...row };
+        for (const key of [
+          "linkedin_url",
+          "phone",
+          "company",
+          "source_profile_url",
+          "title",
+        ] as const)
+          if (!effective[key] && patch[key]?.trim()) effective[key] = patch[key]!.trim();
+        const canonical = this.people.resolve(effective, row.shared_person_id ?? undefined);
+        patch = { ...patch };
+        for (const key of ["linkedin_url", "phone", "company", "title"] as const)
+          if (patch[key]?.trim()) patch[key] = canonical[key];
+      }
+    }
     const cols = ["linkedin_url", "phone", "company", "source_profile_url", "title"] as const;
     const set: string[] = [];
     const blank: string[] = [];
@@ -1265,6 +1447,8 @@ export class Ledger {
    * originals live inside the dossier person record, not in new columns.
    */
   setProspectCurrentRole(id: number, patch: { title?: string; company?: string }): boolean {
+    const sharedId = this.people && this.getProspectById(id)?.shared_person_id;
+    if (sharedId) this.people!.setRole(sharedId, patch);
     const set: string[] = [];
     const args: Array<string | number> = [];
     for (const col of ["title", "company"] as const) {
@@ -1823,7 +2007,7 @@ export class Ledger {
     newlyReplied: boolean;
     eventRecorded: boolean;
   } {
-    return cadRecordCadenceReply(this.db, input);
+    return cadRecordCadenceReply(this.db, this.drafts, input);
   }
 
   /**
@@ -1840,7 +2024,7 @@ export class Ledger {
     prospectId: number,
     opts?: { subject?: string | null; repliedAt?: string | null },
   ): Array<{ playName: string; newlyReplied: boolean; eventRecorded: boolean }> {
-    return cadRecordProspectReply(this.db, prospectId, opts);
+    return cadRecordProspectReply(this.db, this.drafts, prospectId, opts);
   }
 
   /**
@@ -2984,8 +3168,19 @@ export class Ledger {
     previousDraft: string | null;
     previousPayload: string;
     draft: Parameters<Ledger["setQueueDraft"]>[0]["draft"];
+    discardReason?: DraftDiscardReason;
   }): boolean {
     return this.queue.setQueueDraftIfCurrent(input);
+  }
+
+  /** Drop a row's stored draft (and close its open version as a redraft) — see QueueStore.clearQueueDraft. */
+  clearQueueDraft(id: number): void {
+    this.queue.clearQueueDraft(id);
+  }
+
+  /** Close a queue row's open draft version without a draft write (the mark-sent path). */
+  closeQueueDraftVersion(id: number, outcome: "sent" | "auto_sent"): boolean {
+    return this.queue.closeQueueDraftVersion(id, outcome);
   }
 
   /**
@@ -3005,6 +3200,8 @@ export class Ledger {
       enrichmentFailed?: boolean;
       angle?: unknown;
     };
+    discardReason?: DraftDiscardReason;
+    sentBy?: "human" | "machine";
   }): void {
     this.queue.setQueueDraft(input);
   }
@@ -3136,6 +3333,7 @@ export class Ledger {
   }
 
   close(): void {
+    this.people?.close();
     this.db.close();
   }
 
@@ -3506,5 +3704,6 @@ let singleton: Ledger | null = null;
 
 export function getLedger(): Ledger {
   if (!singleton) singleton = new Ledger();
+  singleton.refreshSharedPeople();
   return singleton;
 }

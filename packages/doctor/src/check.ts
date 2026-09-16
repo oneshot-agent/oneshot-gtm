@@ -50,6 +50,64 @@ interface CheckResult {
   windowDays?: number;
   minSamples?: number;
   deprioritized?: boolean;
+  /** `wallet balance` only: the USDC amount and when it was read (see `cachedBalance`). */
+  balanceUsd?: number;
+  balanceCheckedAt?: string;
+}
+
+/** How long a wallet balance read is reused before the doctor asks the chain again. */
+export const BALANCE_CACHE_MS = 24 * 60 * 60_000;
+/** Below this the wallet pill warns: a day of finders at ~$2-3 would drain it. */
+export const LOW_BALANCE_USD = 5;
+const BALANCE_CACHE_KEY = "wallet-balance";
+
+/**
+ * The wallet balance, read at most once a day. The masthead polls the doctor
+ * every minute, and a balance is an RPC round-trip that does not change
+ * minute to minute — so the read is kept in the ledger's keyed cache with the
+ * time it was taken, and served from there until it is a day old or the
+ * founder asks for a fresh one (`refresh`, the pill's refresh button). Cache
+ * reads and writes fail open to a live read: an older ledger or a test double
+ * without the cache methods still gets a balance.
+ */
+export async function cachedBalance(
+  refresh = false,
+): Promise<{ balance: string; checkedAt: string; cached: boolean }> {
+  if (!refresh) {
+    try {
+      const raw = getLedger().getProductResearchCache(BALANCE_CACHE_KEY, BALANCE_CACHE_MS);
+      if (raw) {
+        const parsed = JSON.parse(raw) as { balance?: unknown; checkedAt?: unknown };
+        if (typeof parsed.balance === "string" && typeof parsed.checkedAt === "string") {
+          return { balance: parsed.balance, checkedAt: parsed.checkedAt, cached: true };
+        }
+      }
+    } catch {
+      // no cache on this ledger — read live
+    }
+  }
+  const bal = await getBalance();
+  const checkedAt = new Date().toISOString();
+  try {
+    getLedger().setProductResearchCache(
+      BALANCE_CACHE_KEY,
+      JSON.stringify({ balance: bal.balance, checkedAt }),
+    );
+  } catch {
+    // best-effort
+  }
+  return { balance: bal.balance, checkedAt, cached: false };
+}
+
+/** "3h ago" / "2d ago" for the balance line; "just now" under a minute. */
+function ageLabel(iso: string): string {
+  const ms = Date.now() - Date.parse(iso);
+  if (!Number.isFinite(ms) || ms < 60_000) return "just now";
+  const m = Math.round(ms / 60_000);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 48) return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
 }
 
 function finderApprovalChecks(): CheckResult[] {
@@ -689,7 +747,7 @@ async function calendarIdentityCheck(
   }
 }
 
-export async function runDoctor(): Promise<CheckResult[]> {
+export async function runDoctor(opts: { refreshBalance?: boolean } = {}): Promise<CheckResult[]> {
   const cfg = loadConfig();
   const results: CheckResult[] = [];
 
@@ -986,15 +1044,35 @@ export async function runDoctor(): Promise<CheckResult[]> {
 
   if (oneshotEnvReady()) {
     try {
-      const bal = await getBalance();
+      const bal = await cachedBalance(opts.refreshBalance === true);
       const amount = Number.parseFloat(bal.balance.trim());
-      const usable = Number.isFinite(amount) && amount > 0;
+      // An empty wallet is a FAIL, not a warning: every paid call (research,
+      // enrichment, sends) is refused at the payment rail, and the finders
+      // quietly enqueue nothing researchable — the founder needs the red pill.
+      const severity: CheckSeverity = !Number.isFinite(amount)
+        ? "warn"
+        : amount <= 0
+          ? "fail"
+          : amount < LOW_BALANCE_USD
+            ? "warn"
+            : "ok";
       results.push({
         name: "wallet balance",
         group: "spend",
-        severity: usable ? "ok" : "warn",
-        message: `${bal.balance}`,
-        ...(usable ? {} : { hint: "paid calls require USDC on Base" }),
+        severity,
+        message: Number.isFinite(amount)
+          ? `$${amount.toFixed(2)} USDC · checked ${ageLabel(bal.checkedAt)}`
+          : `${bal.balance} · checked ${ageLabel(bal.checkedAt)}`,
+        ...(Number.isFinite(amount) ? { balanceUsd: amount } : {}),
+        balanceCheckedAt: bal.checkedAt,
+        ...(severity === "ok"
+          ? {}
+          : {
+              hint:
+                amount <= 0
+                  ? "paid calls are being refused — top up USDC on Base, then refresh the wallet pill"
+                  : "paid calls require USDC on Base; a day of finders spends $2-3",
+            }),
       });
     } catch (err) {
       results.push({

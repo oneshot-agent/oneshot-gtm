@@ -107,6 +107,8 @@ export interface CadencePlanStep {
 }
 
 export interface ProspectRecord {
+  /** Shared person identity; id remains the workspace membership/history key. */
+  shared_person_id?: string | null;
   businessAddressSource?: string;
   businessAddress?: import("./direct-mail.ts").PostalAddress | null;
   id: number;
@@ -466,6 +468,13 @@ export interface OneShotConfig {
    * /setup buttons fill these in.
    */
   linkedinBrowserProfileId?: string | null;
+  /**
+   * A hosted login in progress: the fresh profile the founder is signing in
+   * to. Kept apart from `linkedinBrowserProfileId` so a login that is never
+   * finished — or finished before the sign-in completed — cannot replace a
+   * working session; it is promoted only once its feed verifies.
+   */
+  linkedinPendingProfileId?: string | null;
   /** When the session was last confirmed logged in, and as whom. */
   linkedinSessionCheckedAt?: string | null;
   linkedinSessionName?: string | null;
@@ -549,6 +558,14 @@ export interface QueueRow {
    * on failure or stale by the cold-boot `sweepStaleQueueSends` sweep.
    */
   send_started_at: string | null;
+  /**
+   * ISO timestamp of the drain's lease on this row (`dequeueApproved`, 15 min
+   * by default): set when a drain batch claims it, so a second drain skips
+   * it and a move can tell the row is mid-send. Null when never drained or
+   * the lease is stale. Present on every row (`SELECT *`) since the drain
+   * lease was added; older test fakes may omit it.
+   */
+  drain_claimed_at?: string | null;
   /**
    * Serialized `ProspectPriority` (shadow-mode score, v25) or null on rows
    * from manual/legacy producers, auto-rejections, and pre-v25 rows.

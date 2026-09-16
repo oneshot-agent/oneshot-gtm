@@ -22,6 +22,7 @@ import {
   sendCadenceStepRoute,
   previewCadenceBatchRoute,
   sendCadenceBatchRoute,
+  cadenceDraftVersionsRoute,
 } from "./api/cadences.ts";
 import { listReceipts, getReceipt } from "./api/receipts.ts";
 import {
@@ -47,6 +48,8 @@ import {
   linkedinSessionRoute,
   linkedinLoginStartRoute,
   linkedinLoginFinishRoute,
+  linkedinLoginCancelRoute,
+  linkedinLoginStateRoute,
 } from "./api/setup.ts";
 import { gmailAuthCallbackRoute, startGmailAuthRoute } from "./api/gmail-auth.ts";
 import {
@@ -70,7 +73,10 @@ import {
   approveQueueRoute,
   drainQueueRoute,
   listQueueRoute,
+  importQueueRowRoute,
   markSentRoute,
+  moveQueueRowRoute,
+  queueDraftVersionsRoute,
   queueRowDetailRoute,
   regenerateDraftRoute,
   rejectQueueRoute,
@@ -124,6 +130,7 @@ const routes: RouteEntry[] = [
   route("POST", "/api/cadences/:id/skip-mail", skipCadenceMailRoute),
   route("POST", "/api/cadences/skip-mail-batch", skipCadenceMailBatchRoute),
   route("POST", "/api/prospects/:id/linkedin-reply", markLinkedInReplyRoute),
+  route("GET", "/api/cadences/:id/drafts", cadenceDraftVersionsRoute),
   route("POST", "/api/cadences/:id/preview-next", previewCadenceStepRoute),
   route("POST", "/api/cadences/:id/send-next", sendCadenceStepRoute),
   route("POST", "/api/cadences/preview-batch", previewCadenceBatchRoute),
@@ -166,6 +173,8 @@ const routes: RouteEntry[] = [
   route("POST", "/api/setup/linkedin-session", linkedinSessionRoute),
   route("POST", "/api/setup/linkedin-login/start", linkedinLoginStartRoute),
   route("POST", "/api/setup/linkedin-login/finish", linkedinLoginFinishRoute),
+  route("POST", "/api/setup/linkedin-login/cancel", linkedinLoginCancelRoute),
+  route("GET", "/api/setup/linkedin-login/state", linkedinLoginStateRoute),
   route("POST", "/api/strategist/stream", strategistRoute),
   route("GET", "/api/doctor", doctor),
   route("GET", "/api/workspace", workspaceInfo),
@@ -179,7 +188,10 @@ const routes: RouteEntry[] = [
   route("GET", "/api/queue", listQueueRoute),
   // Literal before param: `:id` matches [^/]+ and would otherwise swallow "search".
   route("GET", "/api/queue/search", searchQueueRoute),
+  // Literal before param for the same reason; the destination side of a move.
+  route("POST", "/api/queue/import", importQueueRowRoute),
   route("GET", "/api/queue/:id", queueRowDetailRoute),
+  route("GET", "/api/queue/:id/drafts", queueDraftVersionsRoute),
   route("POST", "/api/queue/approve-all", approveAllRoute),
   route("POST", "/api/queue/drain", drainQueueRoute),
   route("POST", "/api/queue/:id/approve", approveQueueRoute),
@@ -188,6 +200,7 @@ const routes: RouteEntry[] = [
   route("POST", "/api/queue/:id/regenerate", regenerateDraftRoute),
   route("POST", "/api/queue/:id/send-draft", sendDraftRoute),
   route("POST", "/api/queue/:id/mark-sent", markSentRoute),
+  route("POST", "/api/queue/:id/move", moveQueueRowRoute),
   route("GET", "/api/triggers", listTriggersRoute),
   route("POST", "/api/triggers/cal-no-show", calNoShowWebhookRoute),
   route("POST", "/api/triggers/signup", signupWebhookRoute),

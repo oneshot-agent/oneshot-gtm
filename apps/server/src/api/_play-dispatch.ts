@@ -1,5 +1,5 @@
 import { PLAYS } from "@oneshot-gtm/plays";
-import type { RunPlayRequest } from "@oneshot-gtm/shared-types";
+import type { DraftAngle, RunPlayRequest } from "@oneshot-gtm/shared-types";
 
 export interface DraftedView {
   subject: string;
@@ -9,6 +9,8 @@ export interface DraftedView {
   sent: boolean;
   enrichmentFailed?: boolean;
   originalTargetIndex?: number;
+  /** Which edge angle the play built the draft on (see `PlayDraft.angle`). */
+  angle?: DraftAngle;
 }
 
 export function toDraftedView(d: {
@@ -19,6 +21,7 @@ export function toDraftedView(d: {
   sent: boolean;
   enrichmentFailed?: boolean;
   originalTargetIndex?: number;
+  angle?: DraftAngle;
 }): DraftedView {
   return {
     subject: d.subject,
@@ -28,6 +31,7 @@ export function toDraftedView(d: {
     sent: d.sent,
     ...(d.enrichmentFailed ? { enrichmentFailed: true } : {}),
     ...(d.originalTargetIndex !== undefined ? { originalTargetIndex: d.originalTargetIndex } : {}),
+    ...(d.angle ? { angle: d.angle } : {}),
   };
 }
 

@@ -1,3 +1,4 @@
+import type { DraftAngle } from "@oneshot-gtm/shared-types";
 import { extractBusinessAddress } from "@oneshot-gtm/core";
 import {
   deepResearch,
@@ -36,6 +37,7 @@ import {
   selectAngle,
   splitEdgeAngles,
   withSelectedAngle,
+  positioningFingerprint,
 } from "./_angles.ts";
 
 type AppConfig = ReturnType<typeof loadConfig>;
@@ -74,6 +76,13 @@ export type PlayDraft<T, X = Record<string, never>> = {
   flags: string[];
   /** See Prepared.enrichmentFailed. */
   enrichmentFailed?: boolean;
+  /**
+   * Which edge angle the draft was built on, when the runner chose it (a
+   * one-angle edge counts — the founder's verdict on it is still a verdict).
+   * Absent when the caller supplied `draftAngle` (regenerate/rotate keep the
+   * full `DraftAngle` themselves) or the target has no edge field.
+   */
+  angle?: DraftAngle;
 } & X;
 
 /**
@@ -274,7 +283,8 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           if (edgeField) draftTarget = withSelectedAngle(target, edgeField, opts.draftAngle);
         } else if (edgeField) {
           const edge = rawTarget[edgeField] as string;
-          if (splitEdgeAngles(edge).length > 1) {
+          const angles = splitEdgeAngles(edge);
+          if (angles.length > 1) {
             angleSelection = await selectAngle({
               edge,
               prospectKey: def.toEmail(target),
@@ -282,6 +292,11 @@ export async function runEmailPlay<T, X = Record<string, never>>(
               playName: def.playName,
             });
             draftTarget = withSelectedAngle(target, edgeField, angleSelection.angle);
+          } else if (angles.length === 1) {
+            // No choice to make, but the draft still records which angle it
+            // carries — the founder's send/regenerate verdict counts against
+            // a lone angle exactly as it does against one of four.
+            angleSelection = { index: 0, angle: angles[0]!, count: 1, method: "single" };
           }
         }
 
@@ -392,6 +407,9 @@ export async function runEmailPlay<T, X = Record<string, never>>(
                     angleIndex: angleSelection.index,
                     angleCount: angleSelection.count,
                     angleMethod: angleSelection.method,
+                    // The text too: an index goes stale the moment the edge
+                    // is edited; the text is what the draft record keys on.
+                    angleText: angleSelection.angle,
                   }
                 : {}),
             };
@@ -421,6 +439,20 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           sent: send.sent,
           flags,
           ...(prep.enrichmentFailed ? { enrichmentFailed: true } : {}),
+          ...(angleSelection && edgeField
+            ? {
+                angle: {
+                  text: angleSelection.angle,
+                  origin: "configured" as const,
+                  index: angleSelection.index,
+                  count: angleSelection.count,
+                  // The same fingerprint the rotate module stamps, so a
+                  // later regenerate/rotate treats this as a current pick.
+                  fingerprint: positioningFingerprint(rawTarget[edgeField] as string),
+                  history: [],
+                } satisfies DraftAngle,
+              }
+            : {}),
           ...(prep.extra ?? ({} as X)),
         } as PlayDraft<T, X>;
       } catch (err) {

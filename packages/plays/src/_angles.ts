@@ -20,8 +20,12 @@
  * ledger double without the cache methods falls back to a stable per-prospect
  * hash (the `admissionSlot` shape). A draft is never blocked by selection.
  */
-import { getLedger, logEvent } from "@oneshot-gtm/core";
+import { createHash } from "node:crypto";
+import { angleTextKey, getLedger, loadConfig, logEvent } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
+
+/** Re-exported so play/server code keys angles the way the ledger does (ledger-drafts.ts). */
+export { angleTextKey };
 
 export const ANGLE_SEPARATOR = "//";
 /** Cache namespace inside `product_research_cache` — a keyed JSON cache with a TTL read, which is exactly what a verdict needs. */
@@ -62,6 +66,24 @@ function hash32(s: string): number {
 /** Short stable key for an edge's text, so a rewritten edge is a different cache entry. */
 export function edgeKey(edge: string): string {
   return hash32(edge.trim()).toString(36);
+}
+
+/**
+ * Fingerprint of the positioning a draft's angle was chosen under — product,
+ * brief, ICP and the edge text. A stored `DraftAngle` whose fingerprint no
+ * longer matches is stale: rotate re-seeds its pool and regenerate re-selects.
+ * Lives here (not in the server's rotate module) so the drain can stamp the
+ * same value on the drafts it persists.
+ */
+export function positioningFingerprint(edge: string): string {
+  const cfg = loadConfig();
+  const positioning = {
+    product: cfg.productOneLiner,
+    brief: cfg.productBrief,
+    icp: cfg.icpOneLiner,
+    edge,
+  };
+  return createHash("sha256").update(JSON.stringify(positioning)).digest("hex");
 }
 
 /** Deterministic fallback pick: the prospect's hash spread across the angles not excluded. */
@@ -202,6 +224,8 @@ const NOT_EVIDENCE = new Set<string>([
   // Our own summaries of the row — never evidence for a classifier (#592).
   "fitReason",
   "fitReasonSource",
+  // Provenance of a row moved in from another workspace (queue-portable.ts).
+  "movedFrom",
   // Postal data: identifying, never a fit signal.
   "address",
   "postalCode",
@@ -247,6 +271,19 @@ export async function followUpEdgeAngle(
   prospect: { email: string | null },
   playName: string,
 ): Promise<string | null> {
+  const sel = await followUpEdgeSelection(prospect, playName);
+  return sel?.angle ?? null;
+}
+
+/**
+ * `followUpEdgeAngle` with the whole selection (index and count), so the
+ * follow-up draft can carry which angle it was built on the way an intro
+ * draft does — the draft-version record keys on it.
+ */
+export async function followUpEdgeSelection(
+  prospect: { email: string | null },
+  playName: string,
+): Promise<AngleSelection | null> {
   const email = prospect.email?.trim();
   if (!email) return null;
   let payload: Record<string, unknown> | null = null;
@@ -261,14 +298,13 @@ export async function followUpEdgeAngle(
   const edge = payload[field] as string;
   if (splitEdgeAngles(edge).length < 2) return null;
   const intro = readCached(cacheKeyFor({ edge, prospectKey: email, description: "" }, null));
-  const sel = await selectAngle({
+  return selectAngle({
     edge,
     prospectKey: email,
     description: describeTargetForAngle(payload),
     excludeIndex: intro,
     playName,
   });
-  return sel.angle;
 }
 
 /**

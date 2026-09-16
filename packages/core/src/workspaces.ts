@@ -1,5 +1,6 @@
 /**
- * Named workspaces — fully isolated installs (one ONESHOT_GTM_HOME each).
+ * Named workspaces — separate operating histories (one ONESHOT_GTM_HOME each).
+ * Person identities, paid lookup caches and contact protection are shared.
  * Imports ONLY node builtins, on purpose: the CLI shim must resolve
  * `--workspace` to a home dir BEFORE core's config.ts is evaluated (it
  * captures ONESHOT_GTM_HOME at module load). Layout: ~/.oneshot-gtm =

@@ -189,7 +189,7 @@ bun run cli -- --workspace acme init          # profile, keys, identities
 bun run cli -- --workspace acme ui            # side by side with the default dashboard
 ```
 
-Workspaces share one thing: `~/.oneshot-gtm-shared/shared.sqlite`, holding the paid lookup caches and contact touches, so the same person is never bought twice and never first-touched by two workspaces within 7 days. [Workspaces](./docs/workspaces.md) covers resolution order, the shared DB, `doctor`'s cross-workspace checks and the dashboard switcher.
+Workspaces share one thing: `~/.oneshot-gtm-shared/shared.sqlite`, holding shared person identities, workspace memberships, paid lookup caches and contact touches, so resolved identities can reuse cached lookups and known email aliases share the 7-day cross-workspace first-touch hold. Unlinked aliases can still cause duplicate lookups. [Workspaces](./docs/workspaces.md) covers resolution order, the shared DB, `doctor`'s cross-workspace checks and the dashboard switcher.
 
 ---
 

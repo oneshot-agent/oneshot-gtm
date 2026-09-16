@@ -188,6 +188,8 @@ describe("queue.tsx fixed-props render fixture", () => {
         generating: false,
         onApprove: () => undefined,
         onReject: () => undefined,
+        onMove: () => undefined,
+        moveTargets: [],
         busy: false,
       }),
     );
