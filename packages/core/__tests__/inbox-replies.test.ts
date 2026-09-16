@@ -164,6 +164,52 @@ describe("contactSuppressionFor", () => {
     record({ id: "msg-2" }); // NULL kind (legacy) — also human
     expect(ledger.contactSuppressionFor("jane@prospect.example")).toBeNull();
   });
+
+  // Issue #666, follow-up to #663/#665: the queue-expiration fix closed the
+  // re-enrollment gap, but this final dispatch-time backstop still filtered
+  // only `kind`. A reply that reply-classify.ts's phrase-based UNSUBSCRIBE_RE
+  // missed (kind stays 'human') but the sentiment triage (issue #480)
+  // correctly labels intent = 'unsubscribe' must still veto here — every
+  // send path funnels through dispatchEmail's contactSuppressionFor call.
+  it("suppresses on an intent-only unsubscribe even when kind stayed 'human'", () => {
+    record({ kind: "human" });
+    ledger.setInboxReplyIntent("msg-1", "unsubscribe", "asked to be removed");
+    expect(ledger.contactSuppressionFor("jane@prospect.example")).not.toBeNull();
+  });
+
+  it("ordinary human replies with a non-unsubscribe intent still do not suppress", () => {
+    record({ kind: "human" });
+    ledger.setInboxReplyIntent("msg-1", "not_now", "declined, no removal request");
+    expect(ledger.contactSuppressionFor("jane@prospect.example")).toBeNull();
+  });
+
+  it("a pre-#480 ledger without the intent column still suppresses on kind alone", () => {
+    // Simulate a legacy install: drop the intent column entirely, leaving
+    // only kind — the dispatch-time check must not throw or silently bypass
+    // suppression when the optional column is missing.
+    const db = (ledger as unknown as { db: { exec(s: string): void } }).db;
+    db.exec("DROP TABLE inbox_replies");
+    db.exec(`
+      CREATE TABLE inbox_replies (
+        id                 TEXT PRIMARY KEY,
+        thread_key         TEXT NOT NULL,
+        prospect_id        INTEGER NOT NULL,
+        play_name          TEXT,
+        from_email         TEXT NOT NULL,
+        subject            TEXT,
+        body               TEXT NOT NULL,
+        received_at        TEXT NOT NULL,
+        source_identity_id TEXT,
+        thread_id          TEXT,
+        message_id         TEXT,
+        kind               TEXT,
+        created_at         TEXT NOT NULL DEFAULT (datetime('now'))
+      )`);
+    db.exec(`
+      INSERT INTO inbox_replies (id, thread_key, prospect_id, from_email, body, received_at, kind)
+      VALUES ('legacy-1', 't1', 9, 'legacy@prospect.example', 'remove me', '2026-06-01T00:00:00.000Z', 'unsubscribe')`);
+    expect(ledger.contactSuppressionFor("legacy@prospect.example")?.kind).toBe("unsubscribe");
+  });
 });
 
 describe("inbox_replies.intent (issue #480)", () => {
