@@ -72,6 +72,21 @@ export function canonicalLinkedInProfileKey(value: string): string | null {
   }
 }
 
+/**
+ * The identity columns `Ledger.refreshSharedPeople`/`bindSharedPerson`
+ * backfill from a resolved shared person. Kept as its own union (not
+ * imported from `shared-people.ts`) so this module's SQL surface stays
+ * self-contained; `Ledger` picks the fields off its own `SharedPerson`
+ * value, which is a structural superset.
+ */
+export type ProspectSharedIdentityField =
+  | "name"
+  | "email"
+  | "phone"
+  | "company"
+  | "linkedin_url"
+  | "title";
+
 export class ProspectStore {
   constructor(
     private readonly db: Database,
@@ -160,6 +175,58 @@ export class ProspectStore {
    */
   getProspectRow(id: number): ProspectRecord | null {
     return this.db.query("SELECT * FROM prospects WHERE id = ?").get(id) as ProspectRecord | null;
+  }
+
+  /**
+   * Every prospect row, unfiltered — `Ledger.refreshSharedPeople`'s backfill
+   * sweep needs to walk the whole table once per shared-people version bump.
+   * Read OUTSIDE any transaction, matching the original inline call: the
+   * sweep itself (each row's resolve + write) is what needs the write lock,
+   * not this initial snapshot.
+   */
+  listAllProspects(): ProspectRecord[] {
+    return this.db.query("SELECT * FROM prospects").all() as ProspectRecord[];
+  }
+
+  /**
+   * True when some OTHER prospect already holds `email` — the guard
+   * `Ledger.refreshSharedPeople` checks before backfilling a shared person's
+   * email onto a row, so two legacy aliases with distinct historical IDs
+   * that happen to resolve to the same shared person never collide on
+   * `prospects.email`'s implicit uniqueness.
+   */
+  hasOtherProspectWithEmail(email: string, excludingId: number): boolean {
+    return (
+      this.db.query("SELECT id FROM prospects WHERE email=? AND id<>?").get(email, excludingId) !=
+      null
+    );
+  }
+
+  /**
+   * Backfill one shared-identity column onto a prospect row.
+   * `Ledger.refreshSharedPeople` calls this per changed field, inside its own
+   * `db.transaction(...).immediate()` — this method issues a single bound
+   * UPDATE and does not open its own transaction, so the caller's lock
+   * boundary is unaffected.
+   */
+  setSharedIdentityField(
+    id: number,
+    field: ProspectSharedIdentityField,
+    value: string | null,
+  ): void {
+    this.db.query(`UPDATE prospects SET ${field}=? WHERE id=?`).run(value, id);
+  }
+
+  /**
+   * Link a prospect row to its resolved shared person. The `IS NOT ?` guard
+   * makes the write a no-op when the row already points at this person —
+   * `Ledger.bindSharedPerson` relies on that to avoid a WAL write (and a
+   * `peopleVersion` bump upstream) for rows that are already correct.
+   */
+  setProspectSharedPersonId(id: number, personId: string): void {
+    this.db
+      .query("UPDATE prospects SET shared_person_id=? WHERE id=? AND shared_person_id IS NOT ?")
+      .run(personId, id, personId);
   }
 
   /**
@@ -413,9 +480,20 @@ export class ProspectStore {
    * flight, and the curated person half vanished under an API one. The reads
    * were seconds apart.
    *
-   * BEGIN IMMEDIATE via `db.transaction` takes the write lock before the
-   * re-read, so the merge sees the current value and no one can interleave
-   * between the two statements.
+   * `.immediate()` takes the write lock (`BEGIN IMMEDIATE`, a RESERVED lock)
+   * BEFORE the re-read runs, not on the first write inside the transaction —
+   * the default `db.transaction(...)()` call opens a DEFERRED transaction,
+   * which only escalates to a write lock at the first write statement, so a
+   * second writer's SELECT can still land in the gap between this
+   * transaction's own SELECT and its UPDATE. `.immediate()` closes that gap:
+   * once this call's SELECT runs, it already holds the write lock, so no
+   * other connection's transaction can interleave a write until this one
+   * commits. Same pattern as `ledger-queue.ts`'s `dequeueApproved` and
+   * `ledger.ts`'s `reserveSpendIfUnderCeiling` (see `daily-spend.test.ts`'s
+   * "cross-connection atomicity" tests) — proven the same way in
+   * `ledger-prospects.test.ts`'s "two independent connections racing"
+   * cases below, which open a SECOND real connection to the same on-disk
+   * file rather than just calling the method twice on one connection.
    */
   mergeProspectDossierHalf(
     id: number,
@@ -423,18 +501,20 @@ export class ProspectStore {
     value: unknown,
     slice?: number,
   ): void {
-    this.db.transaction(() => {
-      const row = this.db.query("SELECT dossier_json FROM prospects WHERE id = ?").get(id) as
-        | { dossier_json: string | null }
-        | undefined;
-      if (!row) return;
-      const merged =
-        half === "person"
-          ? mergePersonDossier(row.dossier_json, value)
-          : mergeProductDossier(row.dossier_json, value as ProductResearchDossier);
-      const bounded = slice != null && merged.length > slice ? merged.slice(0, slice) : merged;
-      this.db.prepare("UPDATE prospects SET dossier_json = ? WHERE id = ?").run(bounded, id);
-    })();
+    this.db
+      .transaction(() => {
+        const row = this.db.query("SELECT dossier_json FROM prospects WHERE id = ?").get(id) as
+          | { dossier_json: string | null }
+          | undefined;
+        if (!row) return;
+        const merged =
+          half === "person"
+            ? mergePersonDossier(row.dossier_json, value)
+            : mergeProductDossier(row.dossier_json, value as ProductResearchDossier);
+        const bounded = slice != null && merged.length > slice ? merged.slice(0, slice) : merged;
+        this.db.prepare("UPDATE prospects SET dossier_json = ? WHERE id = ?").run(bounded, id);
+      })
+      .immediate();
   }
 
   /**

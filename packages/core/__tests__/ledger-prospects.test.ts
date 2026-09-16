@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Database } from "bun:sqlite";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { migrateLedgerSchema } from "../src/ledger-schema.ts";
 import { ProspectStore, type ProspectMailAddress } from "../src/ledger-prospects.ts";
 import type { PostalAddress } from "../src/direct-mail.ts";
@@ -248,5 +251,118 @@ describe("ProspectStore.mergeProspectDossierHalf (issue #643 parity)", () => {
     expect(db.query("SELECT COUNT(*) as n FROM prospects").get() as { n: number }).toEqual({
       n: 0,
     });
+  });
+});
+
+/**
+ * Round-1 review finding: the tests above only proved sequential behavior on
+ * ONE connection — a fresh read on each call, and both write orders
+ * preserving the other half. That leaves the actual concurrency claim
+ * ("BEGIN IMMEDIATE takes the write lock before the re-read, so no one can
+ * interleave") unproven, because a single connection can never race itself.
+ *
+ * These tests open a SECOND real `bun:sqlite` connection to the SAME
+ * on-disk file — not just a second call through the same `ProspectStore` —
+ * mirroring the precedent `daily-spend.test.ts`'s "cross-connection
+ * atomicity" describe block and `shared-people.test.ts` already set for
+ * proving SQLite-level (not just JS-level) serialization. A `:memory:`
+ * database is per-connection in `bun:sqlite`, so this needs a real file.
+ */
+describe("ProspectStore.mergeProspectDossierHalf — cross-connection concurrency (issue #643 round 1)", () => {
+  let dir: string;
+  let dbPath: string;
+  let dbA: Database;
+  let dbB: Database;
+  let storeA: ProspectStore;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "ledger-prospects-lock-"));
+    dbPath = join(dir, "ledger.sqlite");
+    dbA = new Database(dbPath);
+    dbA.exec("PRAGMA journal_mode = WAL");
+    // Short on purpose: the assertions below want a fast, deterministic
+    // SQLITE_BUSY rather than waiting out a production-sized timeout.
+    dbA.exec("PRAGMA busy_timeout = 200");
+    migrateLedgerSchema(dbA);
+    storeA = new ProspectStore(dbA, fakeMailAddress());
+
+    dbB = new Database(dbPath);
+    dbB.exec("PRAGMA journal_mode = WAL");
+    dbB.exec("PRAGMA busy_timeout = 200");
+  });
+
+  afterEach(() => {
+    dbA.close();
+    dbB.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("a concurrent writer holding the write lock blocks mergeProspectDossierHalf instead of letting it interleave", () => {
+    const id = storeA.upsertProspect({ name: "Lock Test", email: "lock-a@x.dev" });
+    storeA.mergeProspectDossierHalf(id, "product", {
+      version: 1,
+      status: "complete",
+      researchedAt: "2026-09-01T00:00:00.000Z",
+      subject: { company: "Acme" },
+      sources: [],
+    });
+
+    // Connection B simulates an independent writer mid-merge: it has taken
+    // the write lock (BEGIN IMMEDIATE) but not committed yet — exactly the
+    // "read-to-write promotion" window mergeProspectDossierHalf's own
+    // BEGIN IMMEDIATE exists to close.
+    dbB.exec("BEGIN IMMEDIATE");
+    dbB
+      .prepare("UPDATE prospects SET dossier_json = ? WHERE id = ?")
+      .run(JSON.stringify({ person: { title: "In Flight" }, product: null }), id);
+
+    // If mergeProspectDossierHalf's transaction were DEFERRED (the bug this
+    // finding flags), connection A's SELECT could still slip in here, read
+    // the pre-B value, and either silently interleave or fail AFTER already
+    // computing a merge from stale data. With `.immediate()`, A cannot even
+    // start its transaction while B holds the RESERVED lock — it fails fast,
+    // proving the two writers serialize rather than race.
+    expect(() => storeA.mergeProspectDossierHalf(id, "person", { title: "From A" })).toThrow(
+      /locked|busy/i,
+    );
+
+    dbB.exec("COMMIT");
+
+    // Once B releases the lock, A's merge proceeds, re-reads B's now-committed
+    // state, and preserves it rather than trusting the value read before B's
+    // write landed.
+    storeA.mergeProspectDossierHalf(id, "person", { title: "From A" });
+    const stored = JSON.parse(storeA.getProspectById(id)!.dossier_json!) as {
+      person: { title: string };
+      product: unknown;
+    };
+    expect(stored.person.title).toBe("From A");
+    expect(stored.product).toBeNull(); // B's in-flight write, now committed, is what A re-read and preserved
+  });
+
+  it("two independent connections' merges of different halves both land, whichever acquires the lock first", () => {
+    const id = storeA.upsertProspect({ name: "Lock Test 2", email: "lock-b@x.dev" });
+    const storeB = new ProspectStore(dbB, fakeMailAddress());
+
+    // Genuine cross-connection call, not two calls on one store: each of
+    // these opens its own BEGIN IMMEDIATE on a separate `bun:sqlite` handle
+    // to the same file. Run back-to-back rather than truly parallel (bun is
+    // single-threaded per connection), but the lock hand-off between them is
+    // enforced by SQLite itself, not by JS call ordering.
+    storeA.mergeProspectDossierHalf(id, "product", {
+      version: 1,
+      status: "complete",
+      researchedAt: "2026-09-01T00:00:00.000Z",
+      subject: { company: "Acme" },
+      sources: [],
+    });
+    storeB.mergeProspectDossierHalf(id, "person", { title: "Via B" });
+
+    const stored = JSON.parse(storeA.getProspectById(id)!.dossier_json!) as {
+      person: { title: string };
+      product: { subject: { company: string } };
+    };
+    expect(stored.person.title).toBe("Via B");
+    expect(stored.product.subject.company).toBe("Acme");
   });
 });

@@ -176,6 +176,21 @@ export class Ledger {
     // / "no such table" mid-migration.
     this.db.exec("PRAGMA busy_timeout = 5000");
     this.migrate();
+    // Prospect CRUD, research-backlog queries, dossier merge/update
+    // operations, person/company facts, and stored ICP-verdict persistence
+    // live in ledger-prospects.ts (#643, re-filed from #632) — same pattern,
+    // same reason as the stores built alongside it further down. Built here,
+    // ahead of the other post-migrate() stores, because the shared-identity
+    // backfill block immediately below (`refreshSharedPeople`) already
+    // delegates its prospect reads/writes to `this.prospects` and needs it
+    // constructed first; the mailAddress accessor closures capture `this` and
+    // resolve lazily, so this store doesn't itself depend on anything built
+    // later in the constructor.
+    this.prospects = new ProspectStore(this.db, {
+      get: (key) => this.getMailAddress(key),
+      set: (key, address, source) => this.setMailAddress(key, address, source),
+      getMetadata: (key) => this.getMailAddressMetadata(key),
+    });
     // Recognise both the active home and named workspaces opened by maintenance tools.
     // Arbitrary fixture databases and demo homes must not enter the live person registry.
     const namedWorkspace =
@@ -215,16 +230,6 @@ export class Ledger {
     // migrate() so target_queue already exists.
     this.queue = new QueueStore(this.db);
     this.drafts = new DraftVersionStore(this.db);
-    // Prospect CRUD, research-backlog queries, dossier merge/update
-    // operations, person/company facts, and stored ICP-verdict persistence
-    // live in ledger-prospects.ts (#643, re-filed from #632) — same pattern,
-    // same reason. The shared-identity resolution (SharedPeople) stays here
-    // since it needs this Ledger instance's own `path`/`people` fields.
-    this.prospects = new ProspectStore(this.db, {
-      get: (key) => this.getMailAddress(key),
-      set: (key, address, source) => this.setMailAddress(key, address, source),
-      getMetadata: (key) => this.getMailAddressMetadata(key),
-    });
   }
 
   getDirectMail(id: string): DirectMailDraft | null {
@@ -1200,7 +1205,7 @@ export class Ledger {
   refreshSharedPeople(): void {
     if (!this.people) return;
     if (this.peopleVersion === this.people.version()) return;
-    const rows = this.db.query("SELECT * FROM prospects").all() as ProspectRecord[];
+    const rows = this.prospects.listAllProspects();
     this.db
       .transaction(() => {
         for (const row of rows) {
@@ -1222,12 +1227,10 @@ export class Ledger {
             if (
               field === "email" &&
               person.email &&
-              this.db
-                .query("SELECT id FROM prospects WHERE email=? AND id<>?")
-                .get(person.email, row.id)
+              this.prospects.hasOtherProspectWithEmail(person.email, row.id)
             )
               continue;
-            this.db.query(`UPDATE prospects SET ${field}=? WHERE id=?`).run(person[field], row.id);
+            this.prospects.setSharedIdentityField(row.id, field, person[field]);
           }
         }
       })
@@ -1239,9 +1242,7 @@ export class Ledger {
     if (!this.people) return null;
     const known = row.shared_person_id ?? this.people.membership(this.path, row.id);
     const person = this.people.resolve(row, known ?? undefined);
-    this.db
-      .query("UPDATE prospects SET shared_person_id=? WHERE id=? AND shared_person_id IS NOT ?")
-      .run(person.id, row.id, person.id);
+    this.prospects.setProspectSharedPersonId(row.id, person.id);
     this.people.link(this.path, row.id, person.id);
     return person;
   }
