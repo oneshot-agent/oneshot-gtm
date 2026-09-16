@@ -156,6 +156,10 @@ vi.mock("@oneshot-gtm/core", async () => {
         const r = rows.find((x) => x.prospect_id === prospectId && x.play_name === playName);
         if (r) r.status = status;
       },
+      // The intent-unsubscribe branch expires queued breakup-revive rows; this
+      // mock has no queue, so the call is a no-op here (the real-Ledger test
+      // in cadence-reply-ledger.test.ts covers the row).
+      expireBreakupReviveQueue: () => {},
       // Mirrors the real ledger.recordProspectReply: every live cadence for the
       // prospect stops (control plane); the analytics event is credited to ONE
       // play — `latestSentPlay` stands in for the subject/latest resolution —
