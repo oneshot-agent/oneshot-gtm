@@ -84,7 +84,16 @@ export function isTransientToolError(err: unknown): boolean {
     // network faults; match only explicit network errors.
     /network (error|unreachable|timeout)/.test(msg) ||
     msg.includes("rate limit") || // rate-limited → back off + retry, not a verdict
-    /\b(50[0-9]|429)\b/.test(msg) // 5xx / rate-limit HTTP statuses
+    /\b(50[0-9]|429)\b/.test(msg) || // 5xx / rate-limit HTTP statuses
+    // The wallet, not the person: an empty or unfunded wallet refuses every
+    // paid call at the payment rail. A top-up fixes it; a 3-day negative
+    // cache on the person would not (2026-09-15: 46 rows stuck that way).
+    msg.includes("payment rejected") ||
+    msg.includes("insufficient credits") ||
+    msg.includes("insufficient funds") ||
+    msg.includes("insufficient_funds") ||
+    msg.includes("credit balance does not cover") ||
+    msg.includes("execution reverted")
   );
 }
 
