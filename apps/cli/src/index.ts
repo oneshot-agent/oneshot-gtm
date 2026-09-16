@@ -30,6 +30,7 @@ import {
   configTelemetry,
   configXEngine,
   configLinkedInSession,
+  configVoice,
 } from "./commands/config.ts";
 import { commandDoctor } from "./commands/doctor.ts";
 import {
@@ -268,6 +269,30 @@ config
     "Show, set, or clear the Slack incoming-webhook URL for reply/bounce/daily-summary notifications",
   )
   .action(runOrFail((url?: string) => configSlackWebhook(url)));
+config
+  .command("voice")
+  .description(
+    "Show, draft (from your own writing), or clear the founder voice card every email draft writes in",
+  )
+  .option("--from <paths...>", "files or folders of your own posts to draft the card from")
+  .option(
+    "--messages <paths...>",
+    "files or folders of messages you sent to people (fenced blocks or whole files); these outrank posts for register",
+  )
+  .option("--guide <file>", "a note you wrote about your own style, used as evidence")
+  .option("--clear", "remove the card; drafts return to the plain register")
+  .option("--yes", "save without confirming (and even when the samples were thin)")
+  .action(
+    runOrFail(
+      (opts: {
+        from?: string[];
+        messages?: string[];
+        guide?: string;
+        clear?: boolean;
+        yes?: boolean;
+      }) => configVoice(opts),
+    ),
+  );
 config
   .command("spend-ceiling [amount]")
   .description(

@@ -390,13 +390,18 @@ export function setCadenceDraft(
        WHERE prospect_id = ? AND play_name = ?`,
     ).run(json, draftedAtIso, input.prospectId, input.playName);
     if (!key) return;
-    const payload = input.draft.payload as { angle?: unknown } | null;
+    const payload = input.draft.payload as { angle?: unknown; voiceKey?: unknown } | null;
+    const voiceKey =
+      payload && typeof payload === "object" && typeof payload.voiceKey === "string"
+        ? payload.voiceKey
+        : null;
     drafts.open({
       ...key,
       subject: input.draft.subject,
       body: input.draft.body,
       flags: input.draft.flags,
       angle: draftVersionAngle(payload && typeof payload === "object" ? payload.angle : null),
+      voiceKey,
       ...(input.discardReason ? { discardReason: input.discardReason } : {}),
     });
     // IMMEDIATE: the seed reads the stored preview before the UPDATE.

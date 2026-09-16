@@ -62,6 +62,13 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
       "type": "index",
     },
     {
+      "name": "idx_draft_versions_voice",
+      "sql": "CREATE INDEX idx_draft_versions_voice
+        ON draft_versions(play_name, voice_key)",
+      "tbl_name": "draft_versions",
+      "type": "index",
+    },
+    {
       "name": "idx_inbox_replies_from_kind",
       "sql": "CREATE INDEX idx_inbox_replies_from_kind ON inbox_replies(from_email, kind)",
       "tbl_name": "inbox_replies",
@@ -412,7 +419,7 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
         discard_reason TEXT,           -- 'regenerate' | 'rotate' | 'redraft' | 'abandoned'
         created_at     TEXT NOT NULL DEFAULT (datetime('now')),
         closed_at      TEXT
-      )",
+      , voice_key TEXT)",
       "tbl_name": "draft_versions",
       "type": "table",
     },

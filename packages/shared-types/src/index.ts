@@ -379,6 +379,7 @@ export interface SetupRequest {
   founderAdmission?: string;
   /** Product facts + canonical links replies may cite. Links absent from this brief are never sent. */
   productBrief?: string;
+  founderVoice?: string;
   /** When true, signature appends a literal "Sent from my iPhone" line. */
   mobileSignature?: boolean;
   /** Slack incoming-webhook URL for reply/bounce/daily-summary notifications. Empty string clears it (feature off). */
@@ -782,6 +783,12 @@ export interface DraftUsageView {
   autoSent: number;
 }
 
+/** The same counts split by whether a founder voice card was in the prompt (ledger-drafts.ts `draftUsageByVoice`). */
+export interface VoiceUsageView {
+  voiced: DraftUsageView;
+  plain: DraftUsageView;
+}
+
 export interface DraftAngle {
   pool?: Array<{ text: string; origin: "configured" | "generated" }>;
   text: string;
@@ -803,6 +810,8 @@ export interface LastDraft {
   draftedAt: string;
   /** Enrichment SDK failed for this prospect — draft built from payload only. Non-blocking (send stays enabled). */
   enrichmentFailed?: boolean;
+  /** Hash of the founder's voice card the draft was written with; absent when none was set. */
+  voiceKey?: string | null;
 }
 
 /**
@@ -1308,6 +1317,8 @@ export interface TriggerView {
   angleUsage: { angles: AngleUsageView[]; generated: AngleUsageView } | null;
   /** Draft outcomes for this play, intro and follow-up apart. Null when nothing was ever drafted. */
   draftUsage: { intro: DraftUsageView; followUp: DraftUsageView } | null;
+  /** The same outcomes split by voice card on/off. Null when nothing was ever drafted. */
+  voiceUsage: VoiceUsageView | null;
 }
 
 export interface PackView {

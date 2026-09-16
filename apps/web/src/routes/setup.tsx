@@ -13,6 +13,7 @@ import { IcpSection } from "../components/setup/IcpSection.tsx";
 import { LlmSection } from "../components/setup/LlmSection.tsx";
 import { NotificationsSection } from "../components/setup/NotificationsSection.tsx";
 import { ProductBriefSection } from "../components/setup/ProductBriefSection.tsx";
+import { VoiceSection } from "../components/setup/VoiceSection.tsx";
 import { ReviewQueueSection } from "../components/setup/ReviewQueueSection.tsx";
 import { SectionNav, jumpToSection } from "../components/setup/SectionNav.tsx";
 import { SocialProofSection } from "../components/setup/SocialProofSection.tsx";
@@ -228,6 +229,7 @@ function Sections({
       <IcpSection {...common} proposedIcp={proposedIcp} packLabel={packLabel} />
       <SocialProofSection {...common} />
       <ProductBriefSection {...common} />
+      <VoiceSection {...common} />
       <LlmSection {...common} />
       <WalletSection {...common} homeDir={homeDir} />
       <NotificationsSection {...common} />

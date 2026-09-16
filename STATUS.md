@@ -2,7 +2,7 @@
 
 **Assume green.** The 67 CLI commands, 23 plays, 15 finders, ten dashboard pages plus the run form, and the server's REST + SSE routes are all covered by the test suite — and verified end to end against the live OneShot API: every paid call type has made the live round trip, including the voice and SMS legs (`motion concierge` / `motion demo-no-show`), the PMF survey pair, reply triage, bounce harvesting, and `gmail placement`.
 
-Last verified **2026-09-16** · Bun 1.3.13 · OneShot SDK 0.34.0 · **4170 tests / 322 files** · typecheck + oxlint + oxfmt pass (44 lint warnings, 0 errors).
+Last verified **2026-09-17** · Bun 1.3.13 · OneShot SDK 0.34.0 · **4188 tests / 325 files** · typecheck + oxlint + oxfmt pass (44 lint warnings, 0 errors).
 
 **What the gate covers.** `apps/web` is now inside `bun run typecheck` — the dashboard source is
 type-checked in CI, and a deliberate error under `apps/web/src` fails the root script. As of
@@ -42,7 +42,7 @@ Person-level ICP verdicts are now written by the send path, not only by `ops/aud
 `ok/reject/platform-error` and discarded), nine finders stamp it via `icpFields`, and
 `sendDraftedEmail` both persists it and **gates step 0 on it** — that check existed only for
 follow-ups, so 65 `reject`-verdict prospects had been emailed while just 3 cadences ever went
-`off-icp`. `null` and `unclear` still fail open, per the contract at `ledger-prospects.ts`'s `setProspectIcpVerdict`.
+`off-icp`. `null` and `unclear` still fail open, per the contract at `ledger.ts:1470`.
 
 luma-events: the event relevance gate ran on the event NAME before any fetch, to avoid paying to
 read city-page noise — but `fetchEventDetails` is free and returns the description, so the gate was

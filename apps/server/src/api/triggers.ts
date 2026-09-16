@@ -19,6 +19,7 @@ import { jsonResponse } from "../server.ts";
 import {
   angleUsageForEdge,
   draftUsageView,
+  voiceUsageView,
   playUsageLoader,
   type PlayUsage,
 } from "./_draft-versions.ts";
@@ -88,6 +89,7 @@ export function toView(
     deprioritizedReason: approval.reason,
     angleUsage: angleUsageForEdge(config ?? spec?.defaultConfig ?? null, usage?.angles ?? []),
     draftUsage: draftUsageView(usage?.drafts),
+    voiceUsage: voiceUsageView(usage?.voice),
   };
 }
 

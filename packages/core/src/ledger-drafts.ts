@@ -46,6 +46,8 @@ export interface DraftVersionRow {
   angle_origin: DraftAngleOrigin | null;
   outcome: DraftVersionOutcome;
   discard_reason: DraftDiscardReason | null;
+  /** Hash of the founder voice card in the prompt; NULL when none was set. */
+  voice_key: string | null;
   created_at: string;
   closed_at: string | null;
 }
@@ -113,6 +115,7 @@ export function storedDraftEnvelope(raw: unknown): {
   flags: string[];
   angle: DraftVersionAngle | null;
   draftedAt: string | null;
+  voiceKey: string | null;
 } | null {
   let value: unknown = raw;
   if (typeof raw === "string") {
@@ -135,12 +138,18 @@ export function storedDraftEnvelope(raw: unknown): {
   const payload = v["payload"];
   const payloadAngle =
     payload && typeof payload === "object" ? (payload as { angle?: unknown }).angle : undefined;
+  const payloadVoice =
+    payload && typeof payload === "object"
+      ? (payload as { voiceKey?: unknown }).voiceKey
+      : undefined;
+  const voice = v["voiceKey"] ?? payloadVoice;
   return {
     subject,
     body: v["body"],
     flags,
     angle: draftVersionAngle(v["angle"] ?? payloadAngle),
     draftedAt: typeof v["draftedAt"] === "string" ? v["draftedAt"] : null,
+    voiceKey: typeof voice === "string" && voice ? voice : null,
   };
 }
 
@@ -177,6 +186,7 @@ export class DraftVersionStore {
     body: string;
     flags: string[];
     angle?: DraftVersionAngle | null;
+    voiceKey?: string | null;
     discardReason?: DraftDiscardReason;
     /** When the draft was really written — a seeded pre-existing draft keeps its own time. */
     createdAt?: string;
@@ -221,6 +231,7 @@ export class DraftVersionStore {
       body: env.body,
       flags: env.flags,
       angle: env.angle,
+      voiceKey: env.voiceKey,
       ...(env.draftedAt ? { createdAt: env.draftedAt } : {}),
     });
   }
@@ -313,6 +324,7 @@ export class DraftVersionStore {
     body: string;
     flags: string[];
     angle?: DraftVersionAngle | null;
+    voiceKey?: string | null;
     outcome: "sent" | "auto_sent";
   }): void {
     if (!input.body.trim()) return;
@@ -328,6 +340,7 @@ export class DraftVersionStore {
     body: string;
     flags: string[];
     angle?: DraftVersionAngle | null;
+    voiceKey?: string | null;
     outcome: DraftVersionOutcome;
     createdAt?: string;
   }): void {
@@ -338,8 +351,8 @@ export class DraftVersionStore {
         `INSERT INTO draft_versions(
            play_name, prospect_key, step_index, queue_id, prospect_id,
            subject, body, flags_json, angle_key, angle_text, angle_origin,
-           outcome, discard_reason, created_at, closed_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?)`,
+           outcome, discard_reason, voice_key, created_at, closed_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?,?)`,
       )
       .run(
         input.playName,
@@ -354,6 +367,7 @@ export class DraftVersionStore {
         angle ? angle.text : null,
         angle ? angle.origin : null,
         input.outcome,
+        input.voiceKey ?? null,
         input.createdAt ?? now,
         input.outcome === "open" ? null : now,
       );
@@ -412,6 +426,46 @@ export class DraftVersionStore {
         sent: r.sent,
         autoSent: r.auto_sent,
       });
+    }
+    return out;
+  }
+
+  /**
+   * Per play: version counts by outcome, split by whether a founder voice
+   * card was in the prompt (`voice_key` set) — the on/off comparison the
+   * /setup voice card is judged by. Plays with no versions are absent.
+   */
+  draftUsageByVoice(): Record<string, { voiced: DraftUsage; plain: DraftUsage }> {
+    const rows = this.db
+      .query(
+        `SELECT play_name,
+                CASE WHEN voice_key IS NULL THEN 'plain' ELSE 'voiced' END AS scope,
+                SUM(outcome = 'open') AS open,
+                SUM(outcome = 'discarded' AND discard_reason = 'regenerate') AS regenerated,
+                SUM(outcome = 'discarded' AND discard_reason = 'rotate') AS rotated,
+                SUM(outcome = 'sent') AS sent,
+                SUM(outcome = 'auto_sent') AS auto_sent
+           FROM draft_versions
+          GROUP BY play_name, scope`,
+      )
+      .all() as Array<{
+      play_name: string;
+      scope: "voiced" | "plain";
+      open: number;
+      regenerated: number;
+      rotated: number;
+      sent: number;
+      auto_sent: number;
+    }>;
+    const out: Record<string, { voiced: DraftUsage; plain: DraftUsage }> = {};
+    for (const r of rows) {
+      const entry = (out[r.play_name] ??= { voiced: EMPTY_USAGE(), plain: EMPTY_USAGE() });
+      const target = r.scope === "voiced" ? entry.voiced : entry.plain;
+      target.open = r.open;
+      target.regenerated = r.regenerated;
+      target.rotated = r.rotated;
+      target.sent = r.sent;
+      target.autoSent = r.auto_sent;
     }
     return out;
   }

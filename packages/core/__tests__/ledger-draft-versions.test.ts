@@ -597,3 +597,34 @@ describe("draft version writer reservations", () => {
     });
   }
 });
+
+describe("voice_key on versions", () => {
+  it("carries the draft's voiceKey through the queue path and splits usage by voice on/off", () => {
+    const play = "luma-events";
+    const q1 = enqueue("v1@x.dev", play);
+    ledger.setQueueDraft({ id: q1, draft: draft({ voiceKey: "abcd1234" } as never) });
+    ledger.setQueueDraft({
+      id: q1,
+      draft: draft({ body: "b2", voiceKey: "abcd1234" } as never),
+      discardReason: "regenerate",
+    });
+    ledger.setQueueDraft({
+      id: q1,
+      draft: draft({ body: "b2", sent: true, dryRun: false, voiceKey: "abcd1234" } as never),
+      sentBy: "human",
+    });
+    const q2 = enqueue("v2@x.dev", play);
+    ledger.setQueueDraft({ id: q2, draft: draft({}) });
+    ledger.setQueueDraft({
+      id: q2,
+      draft: draft({ body: "b3", sent: true, dryRun: false }),
+      sentBy: "human",
+    });
+    const keys = ledger.draftVersionsFor({ queueId: q1 }).map((v) => v.voice_key);
+    expect(keys).toEqual(["abcd1234", "abcd1234"]);
+    expect(ledger.draftVersionsFor({ queueId: q2 }).map((v) => v.voice_key)).toEqual([null, null]);
+    const split = ledger.draftUsageByVoice()[play]!;
+    expect(split.voiced).toMatchObject({ sent: 1, regenerated: 1 });
+    expect(split.plain).toMatchObject({ sent: 1, regenerated: 0 });
+  });
+});

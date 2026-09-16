@@ -19,18 +19,19 @@ per-play — a play does not opt in, it opts _out_ by not mentioning them.
 
 On top of that:
 
-| Founder-authored input                                                | First touch              | Cadence follow-up | Reply                                        |
-| --------------------------------------------------------------------- | ------------------------ | ----------------- | -------------------------------------------- |
-| `founderName`, `productOneLiner`                                      | yes                      | yes               | yes                                          |
-| `yourEdge` / `yourClaim` (current trigger config for queued drafts)   | yes                      | no                | no                                           |
-| Social proof — `founderCredentials` / `productPortfolio` / `partners` | yes                      | yes               | no                                           |
-| `founderAdmission`                                                    | yes (~1 in 3)            | no                | no                                           |
-| `icpOneLiner`                                                         | no [^icp]                | no                | yes                                          |
-| `productBrief`                                                        | no                       | no                | yes — and the only permitted source of links |
-| Prior emails on the thread                                            | no                       | yes               | yes                                          |
-| Overused-openers avoid list                                           | no                       | yes               | no                                           |
-| `founderCohort`                                                       | `accelerator-batch` only | no                | no                                           |
-| Meeting outcome + founder's pasted notes (issue #578)                 | no                       | no                | yes                                          |
+| Founder-authored input                                                | First touch              | Cadence follow-up                         | Reply                                        |
+| --------------------------------------------------------------------- | ------------------------ | ----------------------------------------- | -------------------------------------------- |
+| `founderName`, `productOneLiner`                                      | yes                      | yes                                       | yes                                          |
+| `yourEdge` / `yourClaim` (current trigger config for queued drafts)   | yes                      | no                                        | no                                           |
+| Social proof — `founderCredentials` / `productPortfolio` / `partners` | yes                      | yes                                       | no                                           |
+| `founderAdmission`                                                    | yes (~1 in 3)            | no                                        | no                                           |
+| `icpOneLiner`                                                         | no [^icp]                | no                                        | yes                                          |
+| `productBrief`                                                        | no                       | no                                        | yes — and the only permitted source of links |
+| `founderVoice` — the [voice card](./voice.md)                         | yes                      | yes (breakup: one flat line, no aphorism) | yes (none in logistics mode)                 |
+| Prior emails on the thread                                            | no                       | yes                                       | yes                                          |
+| Overused-openers avoid list                                           | no                       | yes                                       | no                                           |
+| `founderCohort`                                                       | `accelerator-batch` only | no                                        | no                                           |
+| Meeting outcome + founder's pasted notes (issue #578)                 | no                       | no                                        | yes                                          |
 
 [^icp]:
     except `add-prospect`, `profile-intro` and `x-repost-intro`, which

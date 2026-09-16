@@ -51,6 +51,7 @@ const DEFAULTS: OneShotConfig = {
   founderCohort: null,
   founderAdmission: null,
   productBrief: null,
+  founderVoice: null,
   mobileSignature: false,
   slackWebhookUrl: null,
   timezone: null,

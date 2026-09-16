@@ -944,7 +944,14 @@ export class QueueStore {
    */
   private versionQueueDraft(
     id: number,
-    draft: { subject: string; body: string; flags: string[]; sent: boolean; angle?: unknown },
+    draft: {
+      subject: string;
+      body: string;
+      flags: string[];
+      sent: boolean;
+      angle?: unknown;
+      voiceKey?: string | null;
+    },
     discardReason: DraftDiscardReason | undefined,
     sentBy: "human" | "machine",
     /** The `last_draft_json` this write replaced — seeds a version when the row had none. */
@@ -959,6 +966,7 @@ export class QueueStore {
       body: draft.body,
       flags: draft.flags,
       angle: draftVersionAngle(draft.angle),
+      voiceKey: typeof draft.voiceKey === "string" && draft.voiceKey ? draft.voiceKey : null,
     };
     if (!draft.sent) {
       this.drafts.open({ ...base, ...(discardReason ? { discardReason } : {}) });

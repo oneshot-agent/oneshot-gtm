@@ -28,11 +28,13 @@ vi.mock("@oneshot-gtm/core", async () => {
       productPortfolio: "Previously shipped a Zoom competitor to 500k MAU.",
       partners: "Google Cloud, LangChain",
       productBrief: null,
+      founderVoice: voiceCard,
       mobileSignature: false,
       clientId: null,
     }),
   };
 });
+let voiceCard: string | null = null;
 
 const completeMock = vi.fn();
 vi.mock("@oneshot-gtm/intel", async () => {
@@ -202,5 +204,23 @@ describe("draftInboxReply gate", () => {
   it("still throws on an empty first draft", async () => {
     completeMock.mockResolvedValueOnce(draftReply("   "));
     await expect(draftInboxReply(BASE)).rejects.toThrow("empty reply draft");
+  });
+});
+
+describe("VOICE block in replies", () => {
+  it("sits after the founder steer and before the inbound email, with the reply budget; absent when blank", async () => {
+    voiceCard = "MOVES\n- say what it is not, and stop\nEXEMPLARS\n- cost is information.";
+    completeMock.mockResolvedValue(draftReply("short answer."));
+    await draftInboxReply({ ...BASE, steer: "keep it to one line" });
+    const block = userBlocks()[0]!;
+    const voiceAt = block.indexOf("VOICE (");
+    expect(voiceAt).toBeGreaterThan(block.indexOf("FOUNDER STEER"));
+    expect(voiceAt).toBeLessThan(block.indexOf("INBOUND EMAIL"));
+    expect(block).toContain("logistics mode");
+    expect(block).toContain("cost is information.");
+    expect(block).not.toContain("SOCIAL PROOF");
+    voiceCard = null;
+    await draftInboxReply(BASE);
+    expect(userBlocks()[0]!).not.toContain("VOICE (");
   });
 });

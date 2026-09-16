@@ -279,6 +279,7 @@ export const api = {
         founderCohort: string | null;
         founderAdmission: string | null;
         productBrief: string | null;
+        founderVoice?: string | null;
         mobileSignature: boolean;
         dailySpendCeilingUsd: number | null;
         llmProvider: "openrouter" | "openai" | "anthropic";

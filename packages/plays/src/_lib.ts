@@ -16,6 +16,7 @@ import {
   withDeadline,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
+import { createHash } from "node:crypto";
 
 /** The shape safeEnrich returns when enrichment failed (live or negative-cached). */
 const FAILED_ENRICH = { status: "failed", profile: null, cost: 0 };
@@ -578,6 +579,51 @@ export function signatureDirective(): string {
         ]
       : []),
   ].join("\n");
+}
+
+/** Where a VOICE block lands; each surface gets its own budget line. */
+export type VoiceSurface = "intro" | "followup" | "breakup" | "reply";
+
+/** The card is cut here before it reaches a prompt; the CLI warns past it. */
+export const VOICE_CARD_MAX_CHARS = 1500;
+
+/** Short stable fingerprint of a voice card, stamped on draft versions so outcomes split by card. */
+export function voiceKey(card: string): string {
+  return createHash("sha1").update(card.trim()).digest("hex").slice(0, 8);
+}
+
+const VOICE_BUDGET: Record<VoiceSurface, string> = {
+  intro:
+    'VOICE BUDGET: at most ONE aphoristic or deflating line in the whole email, never in the CTA. Numbers only from the inputs above; never invent one for effect. The register shapes body prose only: keep the greeting, proper nouns, the product name and the signature exactly as given. State an asymmetry as a plain declarative ("the hard part is X"), never as "X isn\'t A, it\'s B".',
+  followup:
+    'VOICE BUDGET: at most ONE aphoristic or deflating line in the whole email, never in the CTA. Numbers only from the inputs above; never invent one for effect. The register shapes body prose only: keep the greeting, proper nouns, the product name and the signature exactly as given. State an asymmetry as a plain declarative ("the hard part is X"), never as "X isn\'t A, it\'s B".',
+  breakup:
+    "VOICE BUDGET: no aphorism in a breakup. One flat, matter-of-fact closing line is allowed, nothing else. Numbers only from the inputs above. Keep the greeting, proper nouns, the product name and the signature exactly as given.",
+  reply:
+    "VOICE BUDGET: at most ONE aphoristic or deflating line, never in the ask, and none at all when an INTENT DIRECTIVE puts you in logistics mode (scheduling, unsubscribe, a plain yes). Numbers only from the inputs above; never invent one. The register shapes body prose only: keep the greeting, proper nouns, the product name and the signature exactly as given. State an asymmetry as a plain declarative, never as \"X isn't A, it's B\".",
+};
+
+/**
+ * VOICE input block from the founder's card (`founderVoice`). Null when the
+ * card is blank, so an unconfigured install drafts exactly as before. The
+ * directive keeps the card in its place: it shapes sentence texture, while
+ * the prompt's beat structure and the humanizer's bans (which the lint
+ * enforces regardless) still win. Platform-generic on purpose: no founder
+ * name, no product, no influence named.
+ */
+export function voiceBlock(surface: VoiceSurface): { text: string; key: string } | null {
+  const card = loadConfig().founderVoice?.trim();
+  if (!card) return null;
+  const cut =
+    card.length > VOICE_CARD_MAX_CHARS ? card.slice(0, VOICE_CARD_MAX_CHARS).trimEnd() : card;
+  return {
+    key: voiceKey(card),
+    text: [
+      "VOICE (the founder's own register — it shapes sentence texture only; the beat structure, banned vocabulary and banned constructions above still bind and win on conflict):",
+      cut,
+      VOICE_BUDGET[surface],
+    ].join("\n"),
+  };
 }
 
 /**

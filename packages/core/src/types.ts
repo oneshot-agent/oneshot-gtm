@@ -400,6 +400,14 @@ export interface OneShotConfig {
    */
   productBrief: string | null;
   /**
+   * The founder's own register, as a short card (MOVES / SENTENCES / NEVER /
+   * EXEMPLARS), written or pasted on /setup or drafted from their writing by
+   * `config voice`. Injected into every email draft as a VOICE block that
+   * shapes sentence texture; the humanizer's structure and bans still win.
+   * Null = no block, drafts unchanged. Capped at 1500 characters in use.
+   */
+  founderVoice?: string | null;
+  /**
    * When true, the signature directive appends a literal "Sent from my iPhone"
    * line below the domain. Proof-of-human artifact: reads as if the founder
    * forgot to disable the default. Default false.

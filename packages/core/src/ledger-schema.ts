@@ -668,6 +668,15 @@ export function migrateLedgerSchema(db: Database): void {
       CREATE INDEX IF NOT EXISTS idx_draft_versions_play
         ON draft_versions(play_name, angle_key);
     `);
+
+  // v34: which founder voice card (a short hash of it) a draft was written
+  // with, NULL when none was set — so approve/reject outcomes split by card
+  // even if the card changes mid-review.
+  addColumnIfMissing(db, "draft_versions", "voice_key", "TEXT");
+  db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_draft_versions_voice
+        ON draft_versions(play_name, voice_key);
+    `);
 }
 
 /**
