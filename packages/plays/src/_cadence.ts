@@ -710,27 +710,37 @@ async function walkInboxWindow(
           });
           out.cadencesStopped++;
         }
-      }
-      for (const r of ledger.recordProspectReply(prospect.id, {
-        subject: e.subject,
-        // The inbound email's own timestamp, not "now" — this poll can walk a
-        // backlog page well after the reply actually landed in the mailbox,
-        // and eventsByPlay's date-windowed rollups (the Slack daily summary)
-        // must credit the reply to the day it happened, not the day this
-        // process happened to notice it.
-        repliedAt: e.received_at,
-      })) {
-        if (r.newlyReplied) out.cadencesStopped++;
-        if (!r.eventRecorded) continue;
-        out.repliesDetected++;
-        out.details.push({ prospectEmail: from, playName: r.playName, subject: e.subject });
-        // A reply is the first value signal — tag the play's send receipts so
-        // RoCS reflects engagement. Best-effort (tagOutcomeValue swallows errors).
-        await tagOutcomeValue({
-          prospectId: prospect.id,
-          playName: r.playName,
-          valueTag: { type: "engagement", label: "reply" },
-        });
+        // Round-1 correction (#663): an unsubscribe-labeled reply must not
+        // ALSO fall through to recordProspectReply/tagOutcomeValue below —
+        // that path counts the message as engagement (repliesDetected,
+        // markLatestStepReplied's replied_at) and tags the play's receipts
+        // with an "engagement" value, exactly the opt-out-still-billed
+        // outcome the `kind === 'unsubscribe'` branch above (and its
+        // `continue`) already exists to prevent. The cadences are already
+        // stopped as 'unsubscribed' by the loop just above, so there is
+        // nothing left for the ordinary reply bookkeeping to do here.
+      } else {
+        for (const r of ledger.recordProspectReply(prospect.id, {
+          subject: e.subject,
+          // The inbound email's own timestamp, not "now" — this poll can walk a
+          // backlog page well after the reply actually landed in the mailbox,
+          // and eventsByPlay's date-windowed rollups (the Slack daily summary)
+          // must credit the reply to the day it happened, not the day this
+          // process happened to notice it.
+          repliedAt: e.received_at,
+        })) {
+          if (r.newlyReplied) out.cadencesStopped++;
+          if (!r.eventRecorded) continue;
+          out.repliesDetected++;
+          out.details.push({ prospectEmail: from, playName: r.playName, subject: e.subject });
+          // A reply is the first value signal — tag the play's send receipts so
+          // RoCS reflects engagement. Best-effort (tagOutcomeValue swallows errors).
+          await tagOutcomeValue({
+            prospectId: prospect.id,
+            playName: r.playName,
+            valueTag: { type: "engagement", label: "reply" },
+          });
+        }
       }
       if (e.id.startsWith("mailbox:")) ledger.mailboxes.acknowledge(e.id, prospect.id);
     }

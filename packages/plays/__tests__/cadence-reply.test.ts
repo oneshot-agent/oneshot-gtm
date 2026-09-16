@@ -61,6 +61,15 @@ const STORED_EMAIL = "sophia@agenticarchitect.ai";
 
 const notifySlackReplyReceivedMock = vi.fn(async () => {});
 const notifySlackBounceRecordedMock = vi.fn(async () => {});
+// Round-1 correction (#663): tagOutcomeValue is the engagement-billing side
+// effect an unsubscribe-labeled reply must never trigger (it tags the play's
+// send receipts with `{type: "engagement"}`, which is what feeds RoCS/spend
+// accounting). _cadence.ts imports it from "@oneshot-gtm/core", so mocking it
+// here — rather than relying on the real oneshot.ts implementation, which
+// resolves its own internal getLedger() independent of this file's ledger
+// stub — lets the tests below assert it fires exactly when a reply is real
+// engagement, and never for a triaged or phrase-matched opt-out.
+const tagOutcomeValueMock = vi.fn(async () => ({ tagged: true }));
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -69,6 +78,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     loadConfig: () => ({ founderName: "J", productOneLiner: "thing" }),
     notifySlackReplyReceived: notifySlackReplyReceivedMock,
     notifySlackBounceRecorded: notifySlackBounceRecordedMock,
+    tagOutcomeValue: tagOutcomeValueMock,
     sendEmail: async () => {
       calls.sendEmail++;
       return { receiptId: 1 };
@@ -255,6 +265,7 @@ beforeEach(() => {
   recordProspectReplyRepliedAts = [];
   notifySlackReplyReceivedMock.mockClear();
   notifySlackBounceRecordedMock.mockClear();
+  tagOutcomeValueMock.mockClear();
   intents = new Map();
   triageEmailsMock.mockClear();
   angleRefreshCalls = [];
@@ -780,6 +791,8 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
     // "Bounce recorded" alert (only auto_permanent is a bounce by this
     // codebase's own status mapping above).
     expect(notifySlackBounceRecordedMock).not.toHaveBeenCalled();
+    // Round-1 correction (#663): must not be billed/counted as engagement either.
+    expect(tagOutcomeValueMock).not.toHaveBeenCalled();
   });
 
   // Issue #663: reply-classify.ts's phrase-based UNSUBSCRIBE_RE is what
@@ -820,6 +833,14 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
     // proves this test exercises the label/kind disagreement, not the
     // existing kind==='unsubscribe' branch.
     expect(persistedReplies[0]?.kind).toBe("human");
+    // F-1 (round-1 correction, #663): the reply must not ALSO fall through to
+    // recordProspectReply/tagOutcomeValue — an unsubscribe-labeled reply is a
+    // do-not-contact, not engagement, and must not be counted or billed as
+    // one. Before this fix, `intent === "unsubscribe"` fell through
+    // unconditionally into the ordinary reply-bookkeeping block below it.
+    expect(result.repliesDetected).toBe(0);
+    expect(repliedSteps).toEqual([]);
+    expect(tagOutcomeValueMock).not.toHaveBeenCalled();
   });
 
   // A human reply triaged with any other intent (e.g. genuine interest) must
@@ -833,6 +854,9 @@ describe("pollInboxReplies — auto-reply classification (v23)", () => {
     expect(rows[0]?.status).toBe("replied");
     expect(result.repliesDetected).toBe(1);
     expect(seqEvents).toEqual([]);
+    // Ordinary engagement is still tagged — only the unsubscribe branch above
+    // must suppress this.
+    expect(tagOutcomeValueMock).toHaveBeenCalledTimes(1);
   });
 
   it("a terminal cadence is not resurrected or re-stopped by a dead-mailbox notice", async () => {
