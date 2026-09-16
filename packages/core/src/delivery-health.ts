@@ -90,22 +90,64 @@ export function suppressionFor(db: Database, email: string): BounceRecord | null
 }
 
 /**
+ * True once, per Database handle: whether inbox_replies has the `intent`
+ * column (issue #480 — postdates the table itself, so an older ledger may
+ * legitimately lack it). Cached because contactSuppressionFor is the
+ * dispatch-time backstop on every send path — checking every call would add
+ * a PRAGMA query to the hot path for no benefit, since a ledger's schema
+ * doesn't change mid-process.
+ */
+const intentColumnCache = new WeakMap<Database, boolean>();
+function hasIntentColumn(db: Database): boolean {
+  let cached = intentColumnCache.get(db);
+  if (cached === undefined) {
+    cached = (db.query("PRAGMA table_info(inbox_replies)").all() as Array<{ name: string }>).some(
+      (c) => c.name === "intent",
+    );
+    intentColumnCache.set(db, cached);
+  }
+  return cached;
+}
+
+/**
  * A do-not-send verdict from the reply stream: the newest 'unsubscribe'
  * (they asked to stop) or 'auto_permanent' (their responder says the
  * mailbox is dead) captured from this address. Durable on purpose — it
  * outlives any one cadence, so a later play can never re-enroll and email
  * an unsubscribed or gone prospect. Sibling of suppressionFor (bounces).
+ *
+ * Issue #666 (follow-up to #663/#665): the phrase-based `kind` classifier
+ * (reply-classify.ts's UNSUBSCRIBE_RE) can miss a real "remove me" request,
+ * leaving `kind = 'human'` while the sentiment `intent` column (issue #480)
+ * correctly reads 'unsubscribe'. This IS the final dispatch-time backstop —
+ * dispatchEmail (oneshot.ts) and every play/cadence/queue send path funnels
+ * through it — so it must veto on `intent` too, the same gap
+ * contactAllowedClause (contact-optout.ts) already closed for re-enrollment
+ * eligibility. Guarded on the column existing: an older ledger without the
+ * issue #480 migration must keep working on `kind` alone rather than error.
+ *
+ * The returned `kind` is the declared REASON, not a copy of the raw column:
+ * an intent-only match (row `kind` still 'human', `intent` = 'unsubscribe')
+ * reports 'unsubscribe' here too, because every caller — cadence status
+ * ('unsubscribed' vs 'bounced'), the send-refusal message, and the dashboard
+ * badge — branches on this value to say "they asked to stop" rather than
+ * "their mailbox is dead". Reporting the raw 'human' kind would mislabel an
+ * opt-out as a bounce everywhere downstream.
  */
 export function contactSuppressionFor(
   db: Database,
   email: string,
 ): { kind: string; received_at: string } | null {
+  const intentClause = hasIntentColumn(db) ? " OR intent = 'unsubscribe'" : "";
   return (
     (db
       .query(
-        `SELECT kind, received_at FROM inbox_replies
+        `SELECT
+           CASE WHEN kind IN ('unsubscribe', 'auto_permanent') THEN kind ELSE 'unsubscribe' END AS kind,
+           received_at
+         FROM inbox_replies
          WHERE (from_email = ? OR prospect_id IN (SELECT id FROM prospects WHERE email = ?))
-           AND kind IN ('unsubscribe', 'auto_permanent')
+           AND (kind IN ('unsubscribe', 'auto_permanent')${intentClause})
          ORDER BY received_at DESC LIMIT 1`,
       )
       .get(canonEmail(email), canonEmail(email)) as { kind: string; received_at: string }) ?? null
