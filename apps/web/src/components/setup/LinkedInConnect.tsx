@@ -7,6 +7,30 @@ import { readOnly } from "../../lib/readOnly.ts";
 import { Button } from "../primitives/Button.tsx";
 
 /**
+ * The tab that will hold the hosted sign-in, opened during the click and
+ * given a waiting page while the platform boots the browser. Same-origin
+ * `about:blank`, so writing into it is allowed; the later navigation to the
+ * live URL replaces it.
+ */
+function openWaitingTab(): Window | null {
+  try {
+    const w = window.open("", "_blank");
+    if (!w) return null;
+    w.document.write(
+      "<!doctype html><title>Opening LinkedIn sign-in…</title>" +
+        '<body style="font:15px/1.5 system-ui,sans-serif;color:#1c2128;background:#f5f6f3;margin:0;display:grid;place-items:center;height:100vh">' +
+        '<div style="max-width:32rem;padding:24px"><p><strong>Opening the LinkedIn sign-in…</strong></p>' +
+        "<p>The hosted browser takes up to a minute to start. Keep this tab open; it will show LinkedIn's login page when it is ready.</p>" +
+        "<p>If nothing appears after a minute, go back to the setup page and use <em>Open the sign-in tab</em>.</p></div></body>",
+    );
+    w.document.close();
+    return w;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Connect LinkedIn for live profile reads. One primary action at a time:
  *
  *   idle / expired   → [Connect LinkedIn]  opens the hosted sign-in tab
@@ -58,11 +82,11 @@ export function LinkedInConnect({
     mutationFn: api.startLinkedInLogin,
     onMutate: () => {
       setError(null);
-      try {
-        tab.current = window.open("", "_blank");
-      } catch {
-        tab.current = null;
-      }
+      // Opened inside the click so popup blockers allow it; the platform
+      // takes up to a minute to hand back the sign-in URL, so the tab says
+      // so instead of sitting blank (a blank tab reads as broken, and a
+      // Done click before the sign-in exists stops the hosted browser).
+      tab.current = openWaitingTab();
     },
     onSuccess: (r) => {
       if (!r.liveUrl) {
@@ -71,7 +95,14 @@ export function LinkedInConnect({
         return;
       }
       setLiveUrl(r.liveUrl);
-      if (tab.current) tab.current.location.href = r.liveUrl;
+      if (tab.current && !tab.current.closed) {
+        tab.current.location.href = r.liveUrl;
+        tab.current.focus();
+      } else {
+        // The waiting tab was closed (or never opened): try once more, and
+        // the "Open the sign-in tab" button below is the fallback.
+        tab.current = window.open(r.liveUrl, "_blank");
+      }
       refresh();
     },
     onError: (err: Error) => {
@@ -155,9 +186,9 @@ export function LinkedInConnect({
                 href={liveUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="inline-flex items-center gap-1 text-[12px] text-ink-muted underline underline-offset-2"
+                className="inline-flex items-center gap-1 rounded border border-ink-rule/60 px-2 py-1 text-[12px] text-ink-cream-2 underline-offset-2 hover:underline"
               >
-                open the sign-in tab <ExternalLink size={11} />
+                Open the sign-in tab <ExternalLink size={11} />
               </a>
             )}
             <button
