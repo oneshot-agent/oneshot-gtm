@@ -218,6 +218,27 @@ export class ProspectStore {
   }
 
   /**
+   * Idempotently backfill the `shared_person_id` column and its lookup index
+   * onto the `prospects` table. `Ledger`'s constructor calls this once, the
+   * first time it enables shared-people resolution for a database (a fresh
+   * `sharedPeoplePath` option, or the live home/named-workspace database),
+   * before its first `refreshSharedPeople()` sweep — mirroring the original
+   * inline `PRAGMA table_info`/`ALTER TABLE`/`CREATE INDEX` sequence exactly,
+   * just moved here since all three statements touch `prospects` alone.
+   */
+  ensureSharedPersonColumn(): void {
+    const columns = this.db.query("PRAGMA table_info(prospects)").all() as { name: string }[];
+    if (!columns.some((c) => c.name === "shared_person_id")) {
+      try {
+        this.db.exec("ALTER TABLE prospects ADD COLUMN shared_person_id TEXT");
+      } catch (error) {
+        if (!/duplicate column/i.test(String(error))) throw error;
+      }
+    }
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_prospects_person ON prospects(shared_person_id)");
+  }
+
+  /**
    * Link a prospect row to its resolved shared person. The `IS NOT ?` guard
    * makes the write a no-op when the row already points at this person —
    * `Ledger.bindSharedPerson` relies on that to avoid a WAL write (and a

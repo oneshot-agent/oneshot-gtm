@@ -197,17 +197,7 @@ export class Ledger {
       basename(path) === "ledger.sqlite" && dirname(dirname(resolve(path))) === workspacesDir();
     if (options.sharedPeoplePath || (!demoMode() && (path === DEFAULT_DB_PATH || namedWorkspace))) {
       this.people = new SharedPeople(options.sharedPeoplePath ?? sharedDbPath());
-      const columns = this.db.query("PRAGMA table_info(prospects)").all() as { name: string }[];
-      if (!columns.some((c) => c.name === "shared_person_id")) {
-        try {
-          this.db.exec("ALTER TABLE prospects ADD COLUMN shared_person_id TEXT");
-        } catch (error) {
-          if (!/duplicate column/i.test(String(error))) throw error;
-        }
-      }
-      this.db.exec(
-        "CREATE INDEX IF NOT EXISTS idx_prospects_person ON prospects(shared_person_id)",
-      );
+      this.prospects.ensureSharedPersonColumn();
       this.refreshSharedPeople();
     }
     // Receipt reads/writes/attribution/aggregation live in ledger-receipts.ts
