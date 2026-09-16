@@ -9,9 +9,7 @@ Public — issues mirror the items below, PRs welcome. Items carry an effort tag
 
 ## In flight
 
-- **refactor(core): extract inbox and conversation persistence from Ledger** — PR #635, issue #634.
-- **refactor(core): extract queue persistence from Ledger** — issue #641 (re-filed from #631).
-- **refactor(core): extract cadence persistence from Ledger** — issue #642 (re-filed from #633).
+_Nothing in flight._
 
 ---
 
@@ -47,11 +45,6 @@ The ICP filter currently judges each candidate cold — `icpFilter` in `packages
 - [ ] Linear notification webhook. Slack is in flight above.
 
 ## Tech debt
-
-- [x] **Split `packages/core/src/ledger.ts`** · L — 2967 lines covering receipts, prospects, queue, cadence, inbox, bounces, canaries and caches behind one class, with `migrate()` at 400 lines of inline DDL.
-      _Done when:_ the file is split by domain with the exported class surface and every call site unchanged, `migrate()` still produces a byte-identical schema for a fresh install, and `packages/core/__tests__/ledger.test.ts` passes untouched.
-      _Progress (#452):_ fresh-install schema construction + inline migrations extracted to `packages/core/src/ledger-schema.ts`; `Ledger.migrate()` now delegates to it. Byte-identical fresh-install schema verified (sqlite_master + schema_version snapshot in `ledger.test.ts`); domain methods (receipts, prospects, queue, cadence, inbox, bounces, canaries, caches) remain in `ledger.ts` for a follow-up slice.
-      **Progress (#616):** receipt reads, writes, attribution and aggregation extracted to `packages/core/src/ledger-receipts.ts` as a `ReceiptStore` constructed from the migrated `Database` handle; `Ledger` delegates every receipt method to it with signatures, return values and transaction boundaries unchanged. Prospects, queue, cadence, inbox, bounces, canaries and caches remain in `ledger.ts` for further slices (bounces/canaries tracked as issue #617).
 
       _Progress (#618):_ cache get/set/expiry/invalidation extracted to `packages/core/src/ledger-cache.ts`; `Ledger` delegates to a `LedgerCache` instance, keeping identical public method signatures and TTL constants. Receipts, prospects, queue, cadence, inbox, bounces and canaries remain in `ledger.ts` for further slices.
 
