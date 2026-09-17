@@ -136,20 +136,6 @@ export interface CadencesResult {
   sendsToday?: SendsToday;
 }
 
-export interface LinkedInReplyWebhookRequest {
-  source: string;
-  eventId: string;
-  occurredAt: string;
-  linkedinUrl?: string;
-  email?: string;
-  /**
-   * The message text, when the provider sends it. Optional — recording the
-   * reply (and stopping the cadence) never depends on it — but without a body
-   * the reply composer has nothing to draft against.
-   */
-  body?: string;
-}
-
 export interface LinkedInReplyResult {
   accepted: true;
   duplicate: boolean;
@@ -434,8 +420,7 @@ export interface SetupRequest {
       | "TWITTERAPI_IO_KEY"
       | "GITHUB_TOKEN"
       | "LUMA_SESSION_COOKIE"
-      | "LINKEDIN_SESSION_COOKIE"
-      | "LINKEDIN_REPLY_WEBHOOK_SECRET",
+      | "LINKEDIN_SESSION_COOKIE",
       string
     >
   >;

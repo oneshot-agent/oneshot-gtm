@@ -163,6 +163,8 @@ Six more drain from the queue without a Run form — `profile-intro` (what Add P
 
 Most carry a cadence — a value follow-up, then a breakup, over roughly three to nine days, editable per play from `/plays`. Any reply, email or LinkedIn, stops every live cadence for that prospect. You can also stop one deliberately from `/cadences` with a reason: bad-timing stops become breakup-revive candidates after the cold window, not-a-fit and do-not-contact stay excluded.
 
+**LinkedIn** — OneShot operates connected accounts, message sync, and authorized actions. GTM owns drafting and cadence decisions. Connect your account and manage messages from Replies. No GTM LinkedIn webhook setup is required for that integration. See [LinkedIn](./docs/linkedin.md).
+
 ### Direct mail
 
 An optional, individually approved physical-letter step. **Plays → Direct mail** picks eligible prospects per motion (a named person, a company, and a complete U.S. business address); **Cadences → Review mail** generates or uploads the letter, shows the print proof and price, and sends on approval. Bulk actions never send mailpieces. [Direct mail](./docs/direct-mail.md) has the selection rules and timing.
@@ -218,7 +220,7 @@ Workspaces share one thing: `~/.oneshot-gtm-shared/shared.sqlite`, holding share
 
 **Secrets** — `~/.oneshot-gtm/.env`, chmod 600, auto-loaded on first import.
 
-**Server** — single-user, local-first, binds `127.0.0.1` only. Dashboard routes rely on that local boundary. Two [webhook](./docs/webhooks.md) families accept outside input: signed trigger intake (signup, demo no-show) and a bearer-authenticated LinkedIn reply endpoint.
+**Server** — single-user, local-first, binds `127.0.0.1` only. Dashboard routes rely on that local boundary. [Trigger webhooks](./docs/webhooks.md) accept signup and demo no-show events. OneShot messaging does not require a public GTM callback.
 
 **Data underneath** — enrichment, verification and local lookups resolve through OneShot, which maintains a vendor landscape of 50 data sources across six categories (contact enrichment, company data, email verification, maps and places, browser automation, social). Which source answers a given lookup is chosen per call. [The full catalogue](https://docs.oneshotagent.com/vendors).
 
