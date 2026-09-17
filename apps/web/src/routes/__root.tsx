@@ -1,3 +1,4 @@
+import { replyNeedsAttention } from "../lib/replies.ts";
 import { useQuery } from "@tanstack/react-query";
 import { Outlet, createRootRouteWithContext, Link, useRouterState } from "@tanstack/react-router";
 import type { QueryClient } from "@tanstack/react-query";
@@ -70,6 +71,7 @@ const NAV: NavItem[] = [
 
 function RootLayout() {
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   useKeyboard({
     paletteOpen,
     openPalette: () => setPaletteOpen(true),
@@ -93,8 +95,8 @@ function RootLayout() {
   // thing that never announced itself (issue #480) — polled at the same
   // cadence /inbox itself uses, so the dot and the page never disagree.
   const inboxAlertQuery = useQuery({
-    queryKey: ["inbox"],
-    queryFn: () => api.inbox(),
+    queryKey: ["replies"],
+    queryFn: () => api.replies(),
     refetchInterval: 60_000,
   });
   // A past meeting with no outcome logged (issue #577) — same idea as the
@@ -140,19 +142,38 @@ function RootLayout() {
     // Round-2 correction (#480): `awaitingReply` (not a bare `intent` check)
     // — it clears once the founder replies to the thread or records a deal
     // outcome, so the dot doesn't stay lit forever after the first use.
-    "inbox-positive":
-      (inboxAlertQuery.data?.conversations ?? []).some((c) => !c.archivedAt && c.awaitingReply) ||
-      (inboxAlertQuery.data?.mailboxThreads ?? []).some(
-        (t) => !t.archivedAt && t.unread && t.reply.kind === "human" && t.prospectId != null,
-      ),
+    "inbox-positive": (inboxAlertQuery.data?.threads ?? []).some(replyNeedsAttention),
     "meetings-pending": (meetingsAlertQuery.data?.awaitingOutcome.length ?? 0) > 0,
   };
 
   return (
     <PrivacyProvider>
       <Frame>
-        <div className="grid h-full grid-cols-[224px_1fr] grid-rows-[auto_1fr_auto] bg-ink-bg text-ink-cream">
-          <aside className="row-span-3 flex flex-col border-r border-ink-rule bg-ink-bg/60 px-3 py-5 backdrop-blur-[2px]">
+        <div className="grid h-full min-w-0 grid-cols-[minmax(0,1fr)] md:grid-cols-[224px_minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)_auto] bg-ink-bg text-ink-cream">
+          {mobileNavOpen && (
+            <button
+              type="button"
+              aria-label="Close navigation"
+              className="fixed inset-0 z-40 bg-black/50 md:hidden"
+              onClick={() => setMobileNavOpen(false)}
+            />
+          )}
+          <aside
+            aria-label="Navigation"
+            className={cn(
+              "row-span-3 flex-col border-r border-ink-rule bg-ink-bg px-3 py-5 md:static md:flex md:w-auto md:bg-ink-bg/60",
+              mobileNavOpen ? "fixed inset-y-0 left-0 z-50 flex w-56" : "hidden",
+            )}
+          >
+            {mobileNavOpen && (
+              <button
+                type="button"
+                className="mb-3 self-end text-[12px] md:hidden"
+                onClick={() => setMobileNavOpen(false)}
+              >
+                Close
+              </button>
+            )}
             <div className="mb-7 px-2">
               <div
                 className="text-ink-cream"
@@ -181,6 +202,7 @@ function RootLayout() {
                   <Link
                     key={to}
                     to={to}
+                    onClick={() => setMobileNavOpen(false)}
                     activeOptions={{ exact: to === "/" }}
                     className={cn(
                       "group relative flex items-center gap-2.5 rounded-[var(--radius-sm)] px-2.5 py-1.5",
@@ -255,15 +277,26 @@ function RootLayout() {
             </div>
           </aside>
 
-          <header className="flex items-center justify-between border-b border-ink-rule bg-ink-bg/70 px-6 py-2.5 backdrop-blur-[2px]">
-            <div className="text-[11.5px] text-ink-faint ln-mono">
+          <header className="flex min-w-0 items-center justify-between border-b border-ink-rule bg-ink-bg/70 px-6 py-2.5 backdrop-blur-[2px]">
+            <button
+              type="button"
+              aria-label="Open navigation"
+              aria-expanded={mobileNavOpen}
+              onClick={() => setMobileNavOpen(true)}
+              className="text-[12px] text-ink-cream md:hidden"
+            >
+              Menu · {workspace?.name ?? "oneshot"}
+            </button>
+            <div className="hidden text-[11.5px] text-ink-faint ln-mono md:block">
               workspace <span className="text-ink-cream">{workspace?.name ?? "…"}</span>
               {workspace ? <span className="text-ink-muted"> :{workspace.port}</span> : null} ·
               local-first · bound to <span className="text-ink-muted">127.0.0.1</span>
             </div>
             <div className="flex items-center gap-3">
               <PrivacyToggle />
-              <StatusBar />
+              <div className="hidden sm:block">
+                <StatusBar />
+              </div>
             </div>
           </header>
 
@@ -275,7 +308,7 @@ function RootLayout() {
             a margin on the page's last in-flow block instead — see
             `--ledger-gutter` in styles.css.
           */}
-          <main ref={mainRef} className="overflow-y-auto px-6 py-6">
+          <main ref={mainRef} className="min-w-0 overflow-y-auto px-6 py-6">
             <Outlet />
           </main>
 

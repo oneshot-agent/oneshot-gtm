@@ -1,3 +1,14 @@
+import {
+  repliesRoute,
+  replyStateRoute,
+  replyDraftSaveRoute,
+  replyGenerateRoute,
+  replyImproveRoute,
+  replySendRoute,
+  repliesLinkedInRoute,
+  replyAssignRoute,
+  replyProspectsRoute,
+} from "./api/replies.ts";
 import { directMailRoute } from "./api/direct-mail.ts";
 import {
   mailboxStateRoute,
@@ -137,6 +148,15 @@ const routes: RouteEntry[] = [
   route("POST", "/api/cadences/send-batch", sendCadenceBatchRoute),
   route("GET", "/api/receipts", listReceipts),
   route("GET", "/api/receipts/:id", getReceipt),
+  route("GET", "/api/replies", repliesRoute),
+  route("GET", "/api/replies/prospects", replyProspectsRoute),
+  route("POST", "/api/replies/state", replyStateRoute),
+  route("POST", "/api/replies/drafts", replyDraftSaveRoute),
+  route("POST", "/api/replies/generate", replyGenerateRoute),
+  route("POST", "/api/replies/improve", replyImproveRoute),
+  route("POST", "/api/replies/send", replySendRoute),
+  route("POST", "/api/replies/linkedin", repliesLinkedInRoute),
+  route("POST", "/api/replies/assign", replyAssignRoute),
   route("GET", "/api/inbox", listInboxRoute),
   route("POST", "/api/inbox/thread-state", mailboxStateRoute),
   route("POST", "/api/inbox/thread-match", mailboxMatchRoute),
