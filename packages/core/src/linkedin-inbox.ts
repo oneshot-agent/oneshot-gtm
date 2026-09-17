@@ -89,6 +89,37 @@ export function conversationMatches(c: LinkedInConversation, matches: LinkedInMa
   return profile ? matches.filter((m) => m.profile === profile) : [];
 }
 
+/** Reuse workspace connections within one delivery batch, then release them together. */
+class LinkedInDeliveryHandles {
+  private ledgers = new Map<string, Ledger>();
+  private databases = new Map<string, Database>();
+  ledger(home: string): Ledger {
+    const key = resolve(home);
+    let ledger = this.ledgers.get(key);
+    if (!ledger) {
+      ledger = new Ledger(join(key, "ledger.sqlite"));
+      this.ledgers.set(key, ledger);
+    }
+    return ledger;
+  }
+  database(home: string): Database {
+    const key = resolve(home);
+    let db = this.databases.get(key);
+    if (!db) {
+      db = new Database(join(key, "ledger.sqlite"));
+      this.databases.set(key, db);
+    }
+    return db;
+  }
+  close() {
+    try {
+      for (const db of this.databases.values()) db.close();
+    } finally {
+      for (const ledger of this.ledgers.values()) ledger.close();
+    }
+  }
+}
+
 export class LinkedInInboxStore {
   readonly db: Database;
   constructor(path = join(sharedDir(), "linkedin-inbox.sqlite")) {
@@ -201,6 +232,22 @@ export class LinkedInInboxStore {
   }
   /** One attribution per message; sibling matches only stop outreach. Existing Expandi history remains intact. */
   deliver(t: LinkedInThreadRecord, matches: LinkedInMatch[]) {
+    this.deliverAll([t], matches);
+  }
+  /** Attribute a capture batch without repeating workspace initialization for every thread. */
+  deliverAll(threads: LinkedInThreadRecord[], matches: LinkedInMatch[]) {
+    const handles = new LinkedInDeliveryHandles();
+    try {
+      for (const t of threads) this.deliverWithHandles(t, matches, handles);
+    } finally {
+      handles.close();
+    }
+  }
+  private deliverWithHandles(
+    t: LinkedInThreadRecord,
+    matches: LinkedInMatch[],
+    handles: LinkedInDeliveryHandles,
+  ) {
     const inbound = this.messages(t.accountKey, t.conversation.id).filter(
       (m) =>
         m.direction === "inbound" &&
@@ -226,70 +273,61 @@ export class LinkedInInboxStore {
         Number(a.workspace === t.owner?.workspace && a.prospectId === t.owner?.prospectId),
     );
     for (const match of targets) {
-      const ledger = new Ledger(join(match.home, "ledger.sqlite"));
-      const db = new Database(join(match.home, "ledger.sqlite"));
-      try {
-        if (!ledger.getProspectById(match.prospectId)) continue;
-        if (match.workspace !== t.owner?.workspace || match.prospectId !== t.owner?.prospectId) {
-          db.query(
-            "UPDATE cadence_state SET status='stopped',stop_reason='other',stop_note='LinkedIn reply in another workspace',stopped_at=datetime('now'),next_due_at=NULL,next_step_draft_json=NULL,next_step_drafted_at=NULL WHERE prospect_id=? AND status IN ('active','paused')",
-          ).run(match.prospectId);
-          continue;
-        }
-        for (const m of inbound) {
-          const eventId = `${t.accountKey}:${m.id}`;
-          if (
-            this.db
-              .query(
-                "SELECT 1 FROM deliveries WHERE account_key=? AND message_id=? AND workspace=? AND prospect_id=?",
-              )
-              .get(t.accountKey, m.id, match.workspace, match.prospectId)
-          )
-            continue;
-          const legacy = ledger
-            .listChannelEventsForProspect(match.prospectId)
-            .some(
-              (e) =>
-                e.source === "expandi" &&
-                Date.parse(e.occurred_at) === Date.parse(m.sent_at) &&
-                (e.body ?? "").trim() === (m.text ?? "").trim(),
-            );
-          if (!legacy) {
-            db.query(
-              "DELETE FROM channel_events WHERE source='oneshot-linkedin' AND external_event_id=? AND prospect_id<>?",
-            ).run(eventId, match.prospectId);
-            ledger.recordLinkedInReply({
-              prospectId: match.prospectId,
-              source: "oneshot-linkedin",
-              externalEventId: eventId,
-              occurredAt: m.sent_at,
-              body: m.text,
-            });
-          }
-          this.db
-            .query("INSERT OR IGNORE INTO deliveries VALUES(?,?,?,?)")
-            .run(t.accountKey, m.id, match.workspace, match.prospectId);
+      const ledger = handles.ledger(match.home);
+      const db = handles.database(match.home);
+      if (!ledger.getProspectById(match.prospectId)) continue;
+      if (match.workspace !== t.owner?.workspace || match.prospectId !== t.owner?.prospectId) {
+        db.query(
+          "UPDATE cadence_state SET status='stopped',stop_reason='other',stop_note='LinkedIn reply in another workspace',stopped_at=datetime('now'),next_due_at=NULL,next_step_draft_json=NULL,next_step_drafted_at=NULL WHERE prospect_id=? AND status IN ('active','paused')",
+        ).run(match.prospectId);
+        continue;
+      }
+      for (const m of inbound) {
+        const eventId = `${t.accountKey}:${m.id}`;
+        if (
           this.db
             .query(
-              "DELETE FROM deliveries WHERE account_key=? AND message_id=? AND (workspace<>? OR prospect_id<>?)",
+              "SELECT 1 FROM deliveries WHERE account_key=? AND message_id=? AND workspace=? AND prospect_id=?",
             )
-            .run(t.accountKey, m.id, match.workspace, match.prospectId);
-          for (const w of replyWorkspaces().filter((w) => w.name !== match.workspace)) {
-            const other = new Database(join(w.home, "ledger.sqlite"));
-            try {
-              other
-                .query(
-                  "DELETE FROM channel_events WHERE source='oneshot-linkedin' AND external_event_id=?",
-                )
-                .run(eventId);
-            } finally {
-              other.close();
-            }
-          }
+            .get(t.accountKey, m.id, match.workspace, match.prospectId)
+        )
+          continue;
+        const legacy = ledger
+          .listChannelEventsForProspect(match.prospectId)
+          .some(
+            (e) =>
+              e.source === "expandi" &&
+              Date.parse(e.occurred_at) === Date.parse(m.sent_at) &&
+              (e.body ?? "").trim() === (m.text ?? "").trim(),
+          );
+        if (!legacy) {
+          db.query(
+            "DELETE FROM channel_events WHERE source='oneshot-linkedin' AND external_event_id=? AND prospect_id<>?",
+          ).run(eventId, match.prospectId);
+          ledger.recordLinkedInReply({
+            prospectId: match.prospectId,
+            source: "oneshot-linkedin",
+            externalEventId: eventId,
+            occurredAt: m.sent_at,
+            body: m.text,
+          });
         }
-      } finally {
-        db.close();
-        ledger.close();
+        this.db
+          .query("INSERT OR IGNORE INTO deliveries VALUES(?,?,?,?)")
+          .run(t.accountKey, m.id, match.workspace, match.prospectId);
+        this.db
+          .query(
+            "DELETE FROM deliveries WHERE account_key=? AND message_id=? AND (workspace<>? OR prospect_id<>?)",
+          )
+          .run(t.accountKey, m.id, match.workspace, match.prospectId);
+        for (const w of replyWorkspaces().filter((w) => w.name !== match.workspace)) {
+          const other = handles.database(w.home);
+          other
+            .query(
+              "DELETE FROM channel_events WHERE source='oneshot-linkedin' AND external_event_id=?",
+            )
+            .run(eventId);
+        }
       }
     }
   }

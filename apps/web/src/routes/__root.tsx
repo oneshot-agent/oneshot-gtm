@@ -14,7 +14,14 @@ import {
   Settings,
   Users,
 } from "lucide-react";
-import { useEffect, useRef, useState, type ComponentType, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentType,
+  type ReactNode,
+} from "react";
 import { Toaster } from "sonner";
 import { api } from "../api/client.ts";
 import { IS_DEMO } from "../api/demo.ts";
@@ -72,6 +79,24 @@ const NAV: NavItem[] = [
 function RootLayout() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const menuRef = useRef<HTMLButtonElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const closeMobileNav = useCallback(() => {
+    setMobileNavOpen(false);
+    menuRef.current?.focus();
+  }, []);
+  useEffect(() => {
+    if (!mobileNavOpen) return;
+    closeRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeMobileNav();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [mobileNavOpen, closeMobileNav]);
   useKeyboard({
     paletteOpen,
     openPalette: () => setPaletteOpen(true),
@@ -155,7 +180,7 @@ function RootLayout() {
               type="button"
               aria-label="Close navigation"
               className="fixed inset-0 z-40 bg-black/50 md:hidden"
-              onClick={() => setMobileNavOpen(false)}
+              onClick={closeMobileNav}
             />
           )}
           <aside
@@ -168,8 +193,9 @@ function RootLayout() {
             {mobileNavOpen && (
               <button
                 type="button"
+                ref={closeRef}
                 className="mb-3 self-end text-[12px] md:hidden"
-                onClick={() => setMobileNavOpen(false)}
+                onClick={closeMobileNav}
               >
                 Close
               </button>
@@ -202,7 +228,7 @@ function RootLayout() {
                   <Link
                     key={to}
                     to={to}
-                    onClick={() => setMobileNavOpen(false)}
+                    onClick={closeMobileNav}
                     activeOptions={{ exact: to === "/" }}
                     className={cn(
                       "group relative flex items-center gap-2.5 rounded-[var(--radius-sm)] px-2.5 py-1.5",
@@ -282,6 +308,7 @@ function RootLayout() {
               type="button"
               aria-label="Open navigation"
               aria-expanded={mobileNavOpen}
+              ref={menuRef}
               onClick={() => setMobileNavOpen(true)}
               className="text-[12px] text-ink-cream md:hidden"
             >

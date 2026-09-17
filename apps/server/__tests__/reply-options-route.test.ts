@@ -28,6 +28,7 @@ const {
   replyImproveRoute,
   replySendRoute,
   replyStateRoute,
+  replyProspectsRoute,
 } = await import("../src/api/replies.ts");
 const review = getReplyReviewStore();
 const linkedin = getLinkedInInboxStore();
@@ -137,6 +138,20 @@ beforeEach(() => {
     .mockResolvedValue(Response.json({ sent: true, id: "email-send", costUsd: 0 }));
 });
 describe("reply options API", () => {
+  it("does not disclose workspace prospects in demo mode", async () => {
+    const previous = process.env.ONESHOT_GTM_DEMO;
+    process.env.ONESHOT_GTM_DEMO = "1";
+    try {
+      const response = await replyProspectsRoute(
+        new Request("http://localhost:3030/api/replies/prospects"),
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ prospects: [] });
+    } finally {
+      if (previous === undefined) delete process.env.ONESHOT_GTM_DEMO;
+      else process.env.ONESHOT_GTM_DEMO = previous;
+    }
+  });
   it("returns three channel-aware options without replacing existing edits, then reuses accepted options", async () => {
     const t = seed();
     const saved = review.saveDrafts(t.key, drafts(), null);

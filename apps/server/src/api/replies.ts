@@ -524,6 +524,7 @@ export async function replyAssignRoute(req: Request) {
   }
 }
 export async function replyProspectsRoute(req: Request) {
+  if (demoMode()) return jsonResponse({ prospects: [] }, 200, req);
   const q = new URL(req.url).searchParams.get("q") ?? "";
   const prospects: Array<{ workspace: string; id: number; name: string; email: string | null }> =
     [];

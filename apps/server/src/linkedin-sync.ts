@@ -141,8 +141,8 @@ async function capture(force: boolean) {
         // A later page failure must not delay stop-on-reply for messages already captured.
         for (const t of store.threads(a.key)) {
           store.saveConversation(a.key, t.conversation, matches);
-          store.deliver(store.thread(t.key)!, matches);
         }
+        store.deliverAll(store.threads(a.key), matches);
       } catch (e) {
         a.error = a.error ?? (e as Error).message;
       }
