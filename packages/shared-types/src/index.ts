@@ -1,3 +1,4 @@
+export * from "./reply-email-view.ts";
 /**
  * Wire types shared between apps/cli, apps/server, and apps/web.
  * These are the API contracts for /api/* endpoints. Keep stable.
@@ -939,7 +940,7 @@ export function withXEngine(
   config: Record<string, unknown> | null | undefined,
   engine: XEngine,
 ): Record<string, unknown> {
-  const out = { ...(config ?? {}) };
+  const out = { ...config };
   if (out["engine"] !== engine) {
     delete out["maxSpendPerRun"];
     delete out["knobs"];
@@ -1600,3 +1601,4 @@ export interface CalendarPickerEntry {
   accessRole: string;
   recentEventCount: number;
 }
+export * from "./replies.ts";

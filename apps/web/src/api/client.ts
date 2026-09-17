@@ -1,3 +1,12 @@
+import { emailThreads } from "@oneshot-gtm/shared-types";
+import type {
+  RepliesResult,
+  ReplyDraftSet,
+  ReplyThread,
+  ReplyStateRequest,
+  ReplyVariant,
+  ReplySendState,
+} from "@oneshot-gtm/shared-types";
 import type { InboxArchiveRequest, InboxArchiveResult } from "@oneshot-gtm/shared-types";
 import type {
   AddProspectResult,
@@ -195,6 +204,38 @@ export const api = {
     const qs = q.toString();
     return getJson<{ receipts: ReceiptView[] }>(`/receipts${qs ? `?${qs}` : ""}`);
   },
+  replies: async (): Promise<RepliesResult> => {
+    if (!IS_DEMO) return getJson<RepliesResult>("/replies");
+    const inbox = await getJson<InboxResult>("/inbox");
+    return {
+      threads: emailThreads(inbox, "demo"),
+      accounts: [],
+      mailboxes: inbox.mailboxes ?? [],
+      workspace: "demo",
+      hasMore: inbox.hasMore,
+    };
+  },
+  replyState: (request: ReplyStateRequest) => postJson<ReplyThread>("/replies/state", request),
+  saveReplyOptions: (key: string, drafts: ReplyDraftSet, expectedRevision: number | null) =>
+    postJson<ReplyDraftSet>("/replies/drafts", { key, drafts, expectedRevision }),
+  generateReplyOptions: (key: string, force = false, steer = "") =>
+    postJson<ReplyDraftSet>("/replies/generate", { key, force, steer }),
+  improveReplyOption: (key: string, variant: ReplyVariant, text: string, feedback: string) =>
+    postJson<{ text: string }>("/replies/improve", { key, variant, text, feedback }),
+  sendReplyOption: (key: string, sendId: string, revision: number) =>
+    postJson<ReplySendState>("/replies/send", { key, sendId, revision }),
+  checkReplySend: (key: string) => postJson<ReplySendState>("/replies/send", { key, check: true }),
+  linkedinAction: (request: { action: string; accountKey?: string; intentId?: string }) =>
+    postJson<{ url?: string; intent_id?: string; status?: string; failure_reason?: string }>(
+      "/replies/linkedin",
+      request,
+    ),
+  replyProspects: (q: string) =>
+    getJson<{
+      prospects: Array<{ workspace: string; id: number; name: string; email: string | null }>;
+    }>(`/replies/prospects?q=${encodeURIComponent(q)}`),
+  assignReply: (key: string, workspace: string, prospectId: number) =>
+    postJson<{ ok: boolean }>("/replies/assign", { key, workspace, prospectId }),
   inbox: () => getJson<InboxResult>("/inbox"),
   mailboxState: (req: import("@oneshot-gtm/shared-types").MailboxStateRequest) =>
     postJson<{ ok: boolean }>("/inbox/thread-state", req),

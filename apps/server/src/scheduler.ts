@@ -1,3 +1,4 @@
+import { refreshLinkedInInbox } from "./linkedin-sync.ts";
 import {
   demoMode,
   loadConfig,
@@ -122,6 +123,9 @@ export function startScheduler(): SchedulerHandle {
 
   const tick = async (): Promise<void> => {
     if (cancelled) return;
+    void Promise.resolve()
+      .then(() => refreshLinkedInInbox())
+      .catch((e) => logEvent("scheduler.linkedin.failed", { message: String(e) }, "warn"));
     try {
       if (!mailBackfillRunning) {
         mailBackfillRunning = true;

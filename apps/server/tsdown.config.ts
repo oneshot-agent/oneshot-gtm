@@ -4,7 +4,7 @@ import { defineConfig } from "tsdown";
 // We target node22 syntax for compatibility but the runtime is Bun.
 // A runtime check in src/bin.ts fails loudly if invoked under plain node.
 export default defineConfig({
-  entry: ["src/bin.ts"],
+  entry: ["src/bin.ts", "src/linkedin-worker.ts"],
   outDir: "dist",
   format: ["esm"],
   platform: "node",

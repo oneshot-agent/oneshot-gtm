@@ -199,14 +199,14 @@ export function slopFlags(text: string): string[] {
 
 export function bodyWordsForLint(body: string, sigLines?: string[]): number {
   const lines = sigLines ?? configuredSigLines();
-  let trimmed = body.replace(/\s+$/, "");
+  let trimmed = body.trimEnd();
   // Peel each sig line off the tail only if it matches the current last line —
   // never chop content that merely contains the founder's name mid-paragraph.
   for (const line of lines) {
     const i = trimmed.lastIndexOf("\n");
     const last = (i < 0 ? trimmed : trimmed.slice(i + 1)).trim();
     if (last !== line) break;
-    trimmed = trimmed.slice(0, i < 0 ? 0 : i).replace(/\s+$/, "");
+    trimmed = trimmed.slice(0, i < 0 ? 0 : i).trimEnd();
   }
   return trimmed.split(/\s+/).filter(Boolean).length;
 }
