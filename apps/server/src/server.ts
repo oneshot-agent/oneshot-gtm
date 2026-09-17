@@ -104,7 +104,7 @@ import {
 import { applyPackRoute, listPacksRoute } from "./api/packs.ts";
 import { addProspectRoute } from "./api/prospects.ts";
 import { calNoShowWebhookRoute, signupWebhookRoute } from "./api/webhook-triggers.ts";
-import { linkedinReplyWebhookRoute, markLinkedInReplyRoute } from "./api/linkedin-replies.ts";
+import { markLinkedInReplyRoute } from "./api/linkedin-replies.ts";
 
 interface ServerOptions {
   port: number;
@@ -224,7 +224,6 @@ const routes: RouteEntry[] = [
   route("GET", "/api/triggers", listTriggersRoute),
   route("POST", "/api/triggers/cal-no-show", calNoShowWebhookRoute),
   route("POST", "/api/triggers/signup", signupWebhookRoute),
-  route("POST", "/api/triggers/linkedin-reply", linkedinReplyWebhookRoute),
   route("POST", "/api/triggers/:name/enabled", setTriggerEnabledRoute),
   route("POST", "/api/triggers/:name/config", setTriggerConfigRoute),
   route("POST", "/api/triggers/:name/run", runTriggerRoute),

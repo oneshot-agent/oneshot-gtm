@@ -193,15 +193,6 @@ export function CredentialsSection({
         optional: true,
       },
       {
-        title: "LinkedIn replies",
-        caption:
-          "Lets a LinkedIn tool report a real reply so email cadences stop. Connection acceptance alone does nothing.",
-        keys: ["LINKEDIN_REPLY_WEBHOOK_SECRET"],
-        inUse: () => true,
-        optional: true,
-        keyHint: { LINKEDIN_REPLY_WEBHOOK_SECRET: "Random, 32+ characters." },
-      },
-      {
         title: "Finder access",
         caption: "Richer GitHub and Luma discovery.",
         keys: ["GITHUB_TOKEN", "LUMA_SESSION_COOKIE"],

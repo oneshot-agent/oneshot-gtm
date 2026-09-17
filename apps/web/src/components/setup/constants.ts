@@ -35,7 +35,6 @@ export const SECRET_LABELS: Record<SecretKey, string> = {
   GITHUB_TOKEN: "GitHub token",
   LUMA_SESSION_COOKIE: "Luma session cookie",
   LINKEDIN_SESSION_COOKIE: "LinkedIn session cookie (li_at)",
-  LINKEDIN_REPLY_WEBHOOK_SECRET: "LinkedIn reply webhook secret",
 };
 
 export const X_OAUTH_KEYS = [
