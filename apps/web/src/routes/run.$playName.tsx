@@ -1,15 +1,11 @@
+import { validateRunSearch } from "../lib/runSearch.ts";
 import { Explain } from "../components/primitives/Explain.tsx";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, CheckCircle2, Loader2, Play, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import {
-  parseQueueIds,
-  type RunPlayEvent,
-  type RunPlayRequest,
-  type RunRecord,
-} from "@oneshot-gtm/shared-types";
+import { type RunPlayEvent, type RunPlayRequest, type RunRecord } from "@oneshot-gtm/shared-types";
 import { api } from "../api/client.ts";
 import { Badge } from "../components/primitives/Badge.tsx";
 import { Button } from "../components/primitives/Button.tsx";
@@ -26,45 +22,10 @@ import { readOnly } from "../lib/readOnly.ts";
  * fetches approved rows to hydrate the targets editor; the rest round-trip the
  * modal's fields so the founder can submit from /run as if never leaving /queue.
  */
-interface RunSearch {
-  fromQueue?: "1";
-  limit?: number;
-  dryRun?: "0" | "1";
-  /**
-   * Explicit queue-row ids ("drain selected"). When present, hydration loads
-   * exactly these rows instead of the play's newest `limit` approved ones.
-   */
-  ids?: number[];
-  /**
-   * In-progress / done / interrupted mode: fetch GET /api/runs/:runId and render
-   * server-side per-target state, polling every 2s while running. Survives
-   * navigate-away; a cold-boot sweep shows it as 'interrupted'.
-   */
-  runId?: number;
-}
-
 export const Route = createFileRoute("/run/$playName")({
   staticData: { title: (p: Record<string, string>) => `Run ${p["playName"] ?? ""}`.trim() },
   component: RunPage,
-  validateSearch: (search: Record<string, unknown>): RunSearch => {
-    const out: RunSearch = {};
-    if (search["fromQueue"] === "1") out.fromQueue = "1";
-    if (typeof search["limit"] === "number") out.limit = search["limit"];
-    else if (typeof search["limit"] === "string" && /^\d+$/.test(search["limit"])) {
-      out.limit = Number.parseInt(search["limit"], 10);
-    }
-    // Keep an explicit-but-empty pick (`?ids=`, `?ids=abc`) as `[]` rather than
-    // dropping the field — hydration must load nothing, not silently widen to
-    // the play's whole approved batch.
-    const ids = parseQueueIds(typeof search["ids"] === "string" ? search["ids"] : null);
-    if (ids) out.ids = ids;
-    if (search["dryRun"] === "0" || search["dryRun"] === "1") out.dryRun = search["dryRun"];
-    if (typeof search["runId"] === "number") out.runId = search["runId"];
-    else if (typeof search["runId"] === "string" && /^\d+$/.test(search["runId"])) {
-      out.runId = Number.parseInt(search["runId"], 10);
-    }
-    return out;
-  },
+  validateSearch: validateRunSearch,
 });
 
 function RunPage() {
