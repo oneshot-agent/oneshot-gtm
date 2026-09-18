@@ -403,3 +403,18 @@ describe("preference activation and refresh", () => {
     expect(store.learning.status("default").pending).toBe(true);
   });
 });
+
+it("renews only the current live lease and recovers after a heartbeat stops", () => {
+  sent(prepare("one"));
+  const job = store.learning.claim("default", now)!;
+  expect(store.learning.renew("other", job.token, now + 60_000)).toBe(false);
+  expect(store.learning.renew("default", "wrong-token", now + 60_000)).toBe(false);
+  expect(store.learning.renew("default", job.token, now + 180_000)).toBe(true);
+  expect(store.learning.claim("default", now + 300_000)).toBeNull();
+  expect(store.learning.renew("default", job.token, now + 420_000)).toBe(false);
+  const retry = store.learning.claim("default", now + 420_000)!;
+  expect(retry.token).not.toBe(job.token);
+  expect(store.learning.renew("default", job.token, now + 420_001)).toBe(false);
+  store.learning.setEnabled("default", false);
+  expect(store.learning.renew("default", retry.token, now + 420_002)).toBe(false);
+});

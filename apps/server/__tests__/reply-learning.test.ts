@@ -61,7 +61,10 @@ beforeEach(() => {
   release.mockReset();
   reserve.mockReset().mockReturnValue({ granted: true, release });
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
 it("synthesizes only the current workspace with disabled guidance and bounded evidence", async () => {
   seed();
   seed("other", "other");
@@ -119,4 +122,33 @@ it("does not consume evidence arriving during synthesis", async () => {
   });
   await refreshReplyLearning();
   expect(store.learning.status("default").pending).toBe(true);
+});
+
+it("renews the persisted lease through slow provider retries and prevents a second reservation", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  seed();
+  let resolve!: (value: { content: string }) => void;
+  complete.mockImplementation(
+    () =>
+      new Promise<{ content: string }>((r) => {
+        resolve = r;
+      }),
+  );
+  const running = refreshReplyLearning();
+  try {
+    for (let elapsed = 60_000; elapsed <= 360_000; elapsed += 60_000) {
+      vi.mocked(Date.now).mockReturnValue(now + elapsed);
+      await vi.advanceTimersByTimeAsync(60_000);
+    }
+    await refreshReplyLearning();
+    expect(reserve).toHaveBeenCalledTimes(1);
+    expect(complete).toHaveBeenCalledTimes(1);
+    resolve({ content: '{"preferences":[]}' });
+    await running;
+    expect(store.learning.status("default").pending).toBe(false);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    resolve({ content: '{"preferences":[]}' });
+    await running;
+  }
 });

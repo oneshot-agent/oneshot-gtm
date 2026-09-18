@@ -400,6 +400,16 @@ export class ReplyLearningStore {
       })
       .immediate();
   }
+  /** Keep a live provider retry sequence exclusive without reviving an expired/fenced lease. */
+  renew(workspace: string, token: string, now = Date.now()): boolean {
+    return (
+      this.db
+        .query(
+          "UPDATE reply_learning_state SET until_ms=? WHERE workspace=? AND token=? AND until_ms>?",
+        )
+        .run(now + 240_000, workspace, token, now).changes > 0
+    );
+  }
   finish(
     workspace: string,
     token: string,

@@ -3,7 +3,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { expect, it } from "vitest";
 import { ReplyPreferences } from "../src/components/ReplyPreferences.tsx";
-import { adoptReplyImprovement, replyLearningSummary } from "../src/lib/replyLearning.ts";
+import {
+  adoptReplyImprovement,
+  replyLearningSummary,
+  replyDraftFingerprint,
+} from "../src/lib/replyLearning.ts";
 import type { ReplyDraftSet, ReplyLearningStatus } from "@oneshot-gtm/shared-types";
 
 const status: ReplyLearningStatus = {
@@ -81,4 +85,33 @@ it("associates adopted improvements with the edited variant without changing ori
   expect(next.originals).toEqual(draft.originals);
   expect(draft.edits.technical).toBe("detail");
   expect(next.edits.direct).toBe("my edit");
+});
+
+it("treats reordered or omitted empty improvement IDs as the same saved draft", () => {
+  const d: ReplyDraftSet = {
+    id: "generation",
+    revision: 1,
+    contextVersion: "v",
+    read: "",
+    originals: { direct: "before", technical: "detail", warm: "hello" },
+    edits: { direct: "my edit", technical: "detail", warm: "hello" },
+    selected: "direct",
+    moves: {},
+    flags: { direct: [], technical: [], warm: [] },
+    setFlags: [],
+    steer: "",
+    generated: true,
+  };
+  expect(replyDraftFingerprint(d)).toBe(replyDraftFingerprint({ ...d, improvementIds: {} }));
+  expect(replyDraftFingerprint(d)).toBe(
+    replyDraftFingerprint({ ...d, improvementIds: { warm: [], direct: [], technical: [] } }),
+  );
+  const adopted = { ...d, improvementIds: { technical: ["a"], direct: ["b"] } };
+  expect(replyDraftFingerprint(adopted)).toBe(
+    replyDraftFingerprint({ ...d, improvementIds: { direct: ["b"], technical: ["a"] } }),
+  );
+  expect(replyDraftFingerprint(adopted)).not.toBe(replyDraftFingerprint(d));
+  expect(replyDraftFingerprint({ ...d, edits: { ...d.edits, direct: "new edit" } })).not.toBe(
+    replyDraftFingerprint(d),
+  );
 });

@@ -1,3 +1,4 @@
+import { REPLY_VARIANTS } from "@oneshot-gtm/shared-types";
 import type { ReplyDraftSet, ReplyVariant, ReplyLearningStatus } from "@oneshot-gtm/shared-types";
 
 export function adoptReplyImprovement(
@@ -27,3 +28,14 @@ export function replyLearningSummary(status: ReplyLearningStatus): string {
     return "No active preferences yet. Repeated edits and general feedback on sent replies help establish your style.";
   return "Applied to new LinkedIn suggestions in this workspace. Your current instructions always take priority.";
 }
+
+/** Server normalization must not turn an unchanged draft into another autosave. */
+export const replyDraftFingerprint = (d: ReplyDraftSet): string =>
+  JSON.stringify([
+    d.id,
+    d.edits,
+    d.selected,
+    d.steer,
+    d.contextVersion,
+    REPLY_VARIANTS.map((v) => d.improvementIds?.[v] ?? []),
+  ]);

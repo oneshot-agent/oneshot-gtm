@@ -12,7 +12,10 @@ import { api } from "../api/client.ts";
 import { IS_DEMO } from "../api/demo.ts";
 import { Button } from "./primitives/Button.tsx";
 import { Textarea } from "./primitives/Field.tsx";
-import { adoptReplyImprovement } from "../lib/replyLearning.ts";
+import {
+  adoptReplyImprovement,
+  replyDraftFingerprint as fingerprint,
+} from "../lib/replyLearning.ts";
 import { readOnly } from "../lib/readOnly.ts";
 
 function initialDraft(t: ReplyThread): ReplyDraftSet {
@@ -33,8 +36,6 @@ function initialDraft(t: ReplyThread): ReplyDraftSet {
     }
   );
 }
-const fingerprint = (d: ReplyDraftSet) =>
-  JSON.stringify([d.id, d.edits, d.selected, d.steer, d.contextVersion, d.improvementIds]);
 
 export function ReplyOptionsComposer({ thread: t }: { thread: ReplyThread }) {
   const queryClient = useQueryClient();

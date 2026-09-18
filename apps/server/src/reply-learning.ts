@@ -48,6 +48,15 @@ export async function refreshReplyLearning(): Promise<void> {
   const job = learning.claim(workspace);
   if (!job) return;
   let reservation: ReturnType<typeof tryReserveDailySpend> | undefined;
+  // complete() includes provider retries and Retry-After delays; renew for its full lifetime.
+  const heartbeat = setInterval(() => {
+    try {
+      if (!learning.renew(workspace, job.token)) clearInterval(heartbeat);
+    } catch {
+      logEvent("reply.learning.renew_failed", { workspace }, "warn");
+    }
+  }, 60_000);
+  heartbeat.unref();
   try {
     reservation = tryReserveDailySpend(2);
     if (!reservation.granted) {
@@ -102,6 +111,7 @@ export async function refreshReplyLearning(): Promise<void> {
     learning.fail(workspace, job.token, "Could not refresh reply preferences; will retry.");
     logEvent("reply.learning.failed", { workspace }, "warn");
   } finally {
+    clearInterval(heartbeat);
     if (reservation?.granted) reservation.release();
   }
 }
