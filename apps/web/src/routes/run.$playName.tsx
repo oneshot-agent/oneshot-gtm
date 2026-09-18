@@ -147,6 +147,8 @@ function RunPage() {
   // fetch returned zero. Surfaces a one-line empty-state hint so the
   // founder isn't confused by the schema's default empty row.
   const [hydrationEmpty, setHydrationEmpty] = useState(false);
+  const [missingContactIds, setMissingContactIds] = useState<number[]>([]);
+  const [resolvingContacts, setResolvingContacts] = useState(false);
 
   // Mount-only hydrate-from-queue. StrictMode double-invokes this effect: the
   // closure-scoped `cancelled` flag must stay (a useRef ran-once guard would
@@ -160,12 +162,24 @@ function RunPage() {
         // play's rows into this play's form, and a row that got sent between
         // the click and the load drops out instead of being re-sent.
         const res = await api.queue({
+          forRun: true,
           play: playName,
           status: "approved",
           ...(search.ids ? { ids: search.ids } : {}),
           limit: search.ids ? Math.max(1, search.ids.length) : (search.limit ?? 50),
         });
         if (cancelledRef?.cancelled) return;
+        setMissingContactIds(
+          res.rows
+            .filter((r) => {
+              const p = r.payload as Record<string, unknown> | null;
+              return (
+                r.source.startsWith("find:github-stars:") &&
+                !(typeof p?.email === "string" && p.email.trim())
+              );
+            })
+            .map((r) => r.id),
+        );
         const pairs = res.rows
           .map((r) => ({ payload: r.payload, dedupeKey: r.dedupeKey }))
           .filter((p): p is { payload: Record<string, unknown>; dedupeKey: string } => {
@@ -210,6 +224,28 @@ function RunPage() {
     // button invokes hydrateFromQueue directly on demand.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const recoverContacts = async (): Promise<void> => {
+    setResolvingContacts(true);
+    let resolved = 0;
+    let lastError = "";
+    try {
+      for (const id of missingContactIds) {
+        try {
+          await api.resolveQueueContact(id);
+          resolved++;
+        } catch (err) {
+          lastError = (err as Error).message;
+        }
+      }
+      await hydrateFromQueue();
+      if (resolved < missingContactIds.length)
+        fail(`Resolved ${resolved} of ${missingContactIds.length} missing emails. ${lastError}`);
+      else toast.success(`Resolved ${resolved} missing emails`);
+    } finally {
+      setResolvingContacts(false);
+    }
+  };
 
   const draftedByIndex = useMemo(() => {
     const m = new Map<
@@ -339,9 +375,11 @@ function RunPage() {
       .filter((r) => r.missing.length > 0);
     const missingExtras = missingRequiredExtras(schema, extras);
     if (rowIssues.length > 0 || missingExtras.length > 0) {
-      const rowDetail = rowIssues
-        .map((r) => `row ${r.idx + 1}: ${r.missing.join(", ")}`)
-        .join("; ");
+      const rowDetail =
+        rowIssues
+          .slice(0, 5)
+          .map((r) => `row ${r.idx + 1}: ${r.missing.join(", ")}`)
+          .join("; ") + (rowIssues.length > 5 ? `; and ${rowIssues.length - 5} more rows` : "");
       const extraDetail =
         missingExtras.length > 0 ? `run options: ${missingExtras.join(", ")}` : "";
       const detail = [rowDetail, extraDetail].filter(Boolean).join("; ");
@@ -454,7 +492,7 @@ function RunPage() {
             <button
               type="button"
               onClick={() => void hydrateFromQueue()}
-              disabled={running}
+              disabled={running || resolvingContacts}
               title="Re-load approved rows from the queue (drops your in-form edits)"
               className="ml-2 inline-flex items-center gap-1 font-mono text-[11px] text-ink-muted hover:text-ink-cream disabled:opacity-40"
             >
@@ -477,6 +515,23 @@ function RunPage() {
         <p className="ln-note mt-3 max-w-[72ch] text-[14px] text-ink-cream-2">
           {schema.description}
         </p>
+        {mode === "edit" && missingContactIds.length > 0 && (
+          <div className="mt-3 text-sm text-ink-muted">
+            <p>
+              {missingContactIds.length} approved GitHub prospects have no email because contact
+              lookup did not finish. Find verified emails before dispatching, or enter them below.
+              Lookup charges may apply. This reloads the form and replaces unsaved edits.
+            </p>
+            <Button
+              className="mt-2"
+              disabled={running || resolvingContacts}
+              onClick={() => void recoverContacts()}
+              {...readOnly}
+            >
+              {resolvingContacts ? "Finding emails…" : "Find missing emails"}
+            </Button>
+          </div>
+        )}
         {hydrationEmpty && (
           <p className="mt-3 font-mono text-[12px] text-ink-spend-2">
             no approved targets in <code>{playName}</code> queue right now — add rows below or
@@ -654,7 +709,7 @@ function RunPage() {
           )}
         </div>
         {mode === "edit" && (
-          <Button onClick={submit} disabled={running} {...readOnly}>
+          <Button onClick={submit} disabled={running || resolvingContacts} {...readOnly}>
             <Play size={14} />
             {running
               ? "Running…"
@@ -714,7 +769,7 @@ function RunPage() {
             )}
             <Button
               variant="ghost"
-              disabled={running}
+              disabled={running || resolvingContacts}
               onClick={() => {
                 setEvents([]);
                 setError(null);

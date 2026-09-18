@@ -53,3 +53,9 @@ All of these are env-only: `init` never asks, but `/setup` and `config keys` sto
 Expired is a queue status, not deletion. Queue and Prospects allow a human to approve an expired row again; approval makes it eligible for drafting and a later send. Review whether its original signal is still relevant. A prospect who has already replied cannot be re-approved for cold outreach, and sent rows cannot be approved again.
 
 Re-engagement (`breakup-revive`) rows expire when the prospect replies or their cadence is stopped. An age-based expiry helper exists, but no production scheduler currently invokes it, so there is no automatic “expires after N days” policy. CSV imports temporarily reserve rows as expired during ICP classification; those rows cannot be approved until classification finishes.
+
+## Incomplete targets after an override
+
+An early ICP rejection may be saved before contact lookup, so approving that row does not mean it already has an email. Run forms load the source trigger's current `yourEdge` / `yourClaim` without rewriting the historical queue payload.
+
+For approved GitHub Stars rows without an email, **Find missing emails** on the Run page resumes contact lookup using the original GitHub identity and verifies the result. It can incur lookup charges, reloads the form (replacing unsaved edits), and never sends. Failed lookups remain incomplete; enter a verified email manually or leave that row out. Simply listing or approving a row performs no paid contact lookup.

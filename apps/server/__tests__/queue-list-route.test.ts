@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 
 const listQueueCalls: Array<Record<string, unknown>> = [];
 let nextRows: unknown[] = [];
+let triggerConfig = JSON.stringify({ yourEdge: "current trigger edge" });
 let configOrder: "ranked" | "newest" = "newest";
 
 vi.mock("@oneshot-gtm/core", async () => {
@@ -15,6 +16,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     ...actual,
     loadConfig: () => ({ ...actual.loadConfig(), queueReviewOrder: configOrder }),
     getLedger: () => ({
+      getTrigger: () => ({ config_json: triggerConfig }),
       listQueue: (args: Record<string, unknown>) => {
         listQueueCalls.push(args);
         return nextRows;
@@ -245,6 +247,43 @@ describe("listQueueRoute — ranked review order", () => {
       expect(picked.ids).toEqual([1, 2]);
     } finally {
       nextRows = [];
+    }
+  });
+});
+
+describe("run-form queue hydration", () => {
+  it("uses current trigger edges only when requested and preserves queue history", async () => {
+    const row = queueRow(null);
+    row.source = "find:github-stars:org/repo";
+    row.payload_json = JSON.stringify({
+      name: "Ada",
+      email: "ada@example.com",
+      yourEdge: "old edge",
+    });
+    nextRows = [row];
+    try {
+      const plain = await body("http://x/api/queue");
+      const resolved = await body("http://x/api/queue?forRun=1");
+      expect((plain.rows as Array<{ payload: unknown }>)[0]?.payload).toMatchObject({
+        yourEdge: "old edge",
+      });
+      expect((resolved.rows as Array<{ payload: unknown }>)[0]?.payload).toMatchObject({
+        email: "ada@example.com",
+        yourEdge: "current trigger edge",
+      });
+      expect(JSON.parse(row.payload_json as string).yourEdge).toBe("old edge");
+    } finally {
+      nextRows = [];
+    }
+  });
+  it("reports invalid trigger configuration rather than returning stale run targets", async () => {
+    nextRows = [queueRow(null)];
+    triggerConfig = "{";
+    try {
+      expect(listQueueRoute(new Request("http://x/api/queue?forRun=1")).status).toBe(400);
+    } finally {
+      nextRows = [];
+      triggerConfig = JSON.stringify({ yourEdge: "current trigger edge" });
     }
   });
 });

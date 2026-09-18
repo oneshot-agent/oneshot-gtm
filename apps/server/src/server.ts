@@ -1,3 +1,4 @@
+import { resolveQueueContactRoute } from "./api/queue-contact.ts";
 import {
   repliesRoute,
   replyStateRoute,
@@ -218,6 +219,7 @@ const routes: RouteEntry[] = [
   route("POST", "/api/queue/approve-all", approveAllRoute),
   route("POST", "/api/queue/drain", drainQueueRoute),
   route("POST", "/api/queue/:id/approve", approveQueueRoute),
+  route("POST", "/api/queue/:id/resolve-contact", resolveQueueContactRoute),
   route("POST", "/api/queue/:id/reject", rejectQueueRoute),
   route("POST", "/api/queue/:id/reject-reason", suggestRejectReasonRoute),
   route("POST", "/api/queue/:id/regenerate", regenerateDraftRoute),
