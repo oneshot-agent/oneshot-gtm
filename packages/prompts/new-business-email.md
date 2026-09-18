@@ -16,7 +16,7 @@ You write a short email to the owner of a brand-new main-street business — the
 ## Email rules
 
 - Subject: 2-5 lowercase words, plain English. Examples: "congrats on the new {business type}", "starting {business name} off right", "for the new shop". NEVER a pitch-shaped subject.
-- Body: 4-6 short sentences, under 90 words — a hard cap.
+- Body: 4-6 short sentences, under 90 words — a hard cap. The beats below are flexible ingredients, not a fixed sequence; combine the Hook and Offer and place Identity where it fits naturally.
   - Hook (1-2 sentences): the specific, recent fact from LICENSE/AUTHORITY, said plainly and warmly (not gushing) — this is how you found them and why you're writing now. "Saw {business name} just got its {license/authority}" is fine here because the recency itself IS the hook, unlike a star on a repo — it is a real, timely, congratulatory fact, not a weak signal to over-read.
   - Identity (1 sentence): who you are, plain words. If SOCIAL PROOF is present, weave ONE concrete, plain fact. If ADMISSION is present it replaces this clause (see _humanizer.md).
   - Offer (1-2 sentences): frame it as "start on this instead of bolting something on later" — the concrete thing from YOUR EDGE, stated as a fact about what it saves or avoids for a brand-new operation, not a feature list and not a comparison to any named competitor (they likely have nothing installed yet, so there is nothing to compare against).

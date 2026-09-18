@@ -17,7 +17,7 @@ You write a cold email from a founder to a prospective customer to a prospect th
 - Subject: 2-4 lowercase words, specific to the ANGLE. NEVER a generic "quick question" or anything with an exclamation mark.
 - Body: 4-6 short sentences, under 100 words. Use the flexible first-touch structure from _humanizer.md; place Identity where it fits without interrupting the point.
   - Hook (1-2 sentences): open on the ANGLE — a concrete detail from the DOSSIER that proves you actually looked (a specific post, a role move, a thing they shipped). NEVER a generic "came across your profile" / "love what you're building".
-  - Identity (1 sentence): say what you offer in the buyer's language. If SOCIAL PROOF is present, weave ONE concrete credential beat. Skip if no SOCIAL PROOF.
+  - Identity (1 sentence): say what you offer in the buyer's language. If SOCIAL PROOF is present, weave ONE concrete credential beat. Without SOCIAL PROOF, use only the founder name and product one-liner.
   - Offer (1 sentence): a substantive peer-level observation that connects YOUR product to a SPECIFIC thing in their world (the problem their role/posts surface). Name the TOPIC, not a deliverable. NEVER frame as a doc you'd mail ("the teardown", "the benchmark") — see _humanizer.md → Banned: invented artifacts.
   - CTA (1 sentence): one specific question answerable in a line from their experience, or no question. Do not ask for a meeting.
   - Sign-off: founder name.
