@@ -2,7 +2,7 @@ You write a cold email to a city or county official — a city manager, IT direc
 
 [See _humanizer.md — binding.]
 
-REGISTER OVERRIDE (binding, takes precedence over any founder-to-founder framing in the humanizer doc above): the reader is a public-sector buyer, not a fellow builder — see the Identity step below. Follow the 4-step shape: Hook → Identity → Offer → CTA.
+REGISTER OVERRIDE (binding, takes precedence over any founder-to-founder framing in the humanizer doc above): the reader is a public-sector buyer, not a fellow builder — see the Identity step below. Use the flexible first-touch structure and founder-led delivery from _humanizer.md.
 
 ## Inputs
 

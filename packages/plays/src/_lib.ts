@@ -594,21 +594,20 @@ export function voiceKey(card: string): string {
 
 const VOICE_BUDGET: Record<VoiceSurface, string> = {
   intro:
-    'VOICE BUDGET: at most ONE aphoristic or deflating line in the whole email, never in the CTA. Numbers only from the inputs above; never invent one for effect. The register shapes body prose only: keep the greeting, proper nouns, the product name and the signature exactly as given. State an asymmetry as a plain declarative ("the hard part is X"), never as "X isn\'t A, it\'s B".',
+    'VOICE BUDGET: at most ONE aphoristic or deflating line in the whole email, never in the CTA. Numbers only from the inputs above; never invent one for effect. The card controls tone and rhythm in body prose: keep the greeting, proper nouns, the product name and the signature exactly as given. State an asymmetry as a plain declarative ("the hard part is X"), never as "X isn\'t A, it\'s B".',
   followup:
-    'VOICE BUDGET: at most ONE aphoristic or deflating line in the whole email, never in the CTA. Numbers only from the inputs above; never invent one for effect. The register shapes body prose only: keep the greeting, proper nouns, the product name and the signature exactly as given. State an asymmetry as a plain declarative ("the hard part is X"), never as "X isn\'t A, it\'s B".',
+    'VOICE BUDGET: at most ONE aphoristic or deflating line in the whole email, never in the CTA. Numbers only from the inputs above; never invent one for effect. The card controls tone and rhythm in body prose: keep the greeting, proper nouns, the product name and the signature exactly as given. State an asymmetry as a plain declarative ("the hard part is X"), never as "X isn\'t A, it\'s B".',
   breakup:
-    "VOICE BUDGET: no aphorism in a breakup. One flat, matter-of-fact closing line is allowed, nothing else. Numbers only from the inputs above. Keep the greeting, proper nouns, the product name and the signature exactly as given.",
+    "VOICE BUDGET: no aphorism in a breakup. Use one brief closing line in the founder's register. Numbers only from the inputs above. Keep the greeting, proper nouns, the product name and the signature exactly as given.",
   reply:
-    "VOICE BUDGET: at most ONE aphoristic or deflating line, never in the ask, and none at all when an INTENT DIRECTIVE puts you in logistics mode (scheduling, unsubscribe, a plain yes). Numbers only from the inputs above; never invent one. The register shapes body prose only: keep the greeting, proper nouns, the product name and the signature exactly as given. State an asymmetry as a plain declarative, never as \"X isn't A, it's B\".",
+    "VOICE BUDGET: at most ONE aphoristic or deflating line, never in the ask, and none at all when an INTENT DIRECTIVE puts you in logistics mode (scheduling, unsubscribe, a plain yes). Numbers only from the inputs above; never invent one. The card controls tone and rhythm in body prose: keep the greeting, proper nouns, the product name and the signature exactly as given. State an asymmetry as a plain declarative, never as \"X isn't A, it's B\".",
 };
 
 /**
  * VOICE input block from the founder's card (`founderVoice`). Null when the
  * card is blank, so an unconfigured install drafts exactly as before. The
- * directive keeps the card in its place: it shapes sentence texture, while
- * the prompt's beat structure and the humanizer's bans (which the lint
- * enforces regardless) still win. Platform-generic on purpose: no founder
+ * card controls tone and rhythm; factual, audience, channel and lint
+ * constraints still apply. The shared structure is flexible. Platform-generic on purpose: no founder
  * name, no product, no influence named.
  */
 export function voiceBlock(surface: VoiceSurface): { text: string; key: string } | null {
@@ -619,7 +618,7 @@ export function voiceBlock(surface: VoiceSurface): { text: string; key: string }
   return {
     key: voiceKey(card),
     text: [
-      "VOICE (the founder's own register — it shapes sentence texture only; the beat structure, banned vocabulary and banned constructions above still bind and win on conflict):",
+      "VOICE (the founder's own register — this card controls warmth, dryness, bluntness, playfulness, technical register and sentence rhythm over generic style defaults. The shared structure is flexible. Factual grounding, audience and channel constraints, required content, banned vocabulary and banned constructions still bind and win on conflict):",
       cut,
       VOICE_BUDGET[surface],
     ].join("\n"),

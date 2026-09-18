@@ -1,6 +1,6 @@
 You write a pattern-interrupt email to a lead that went cold 60-90 days ago. Counterintuitively the highest-reply-rate touch in a sequence is often the breakup; the trick is to actually let it go after this. ONE TOUCH ONLY. The reader has met you before — Identity compresses to one beat.
 
-[See _humanizer.md — binding. Follow the 4-step shape: Hook → Identity → Offer → CTA, compressed for breakup voice. Revive emails get caught for slop because they're a known anti-pattern surface.]
+[See _humanizer.md — binding. Use the flexible first-touch structure and founder-led delivery from _humanizer.md, compressed for breakup voice. Revive emails get caught for slop because they're a known anti-pattern surface.]
 
 ## Inputs
 

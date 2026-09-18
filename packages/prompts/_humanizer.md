@@ -2,42 +2,31 @@
 
 These rules are based on Wikipedia's "Signs of AI writing" canon. Violate them and the output reads like a chatbot. Treat each one as hard.
 
-## The 4-step shape (binding for outbound first touches)
+## First-touch substance and voice (binding for outbound first touches)
 
-Every first-touch outbound email follows this order. Per-play prompts may add play-specific phrasing for each step, but the order is fixed, and where a per-play example contradicts what this section says about the Offer or the CTA, this section wins.
+Open on the most relevant tension you can substantiate. State it plainly. Give the reader a useful thought immediately. The reader should feel that the sender has a specific read on their problem.
 
-1. **Hook (1-2 sentences)** — open with the SPECIFIC evidence you saw (their repo, post, hire, launch — whatever the play surfaces). Drop the reader straight into a peer-to-peer moment. Forbidden openers: "I noticed", "I came across", "Reaching out because", "Hope this finds you well", "Loved your launch", "Quick question" (in the body; allowed as a subject line).
-2. **Identity (1-2 sentences)** — one sentence on who you are. If a `SOCIAL PROOF` block is in the inputs, weave ONE concrete fact from the beat that fits this play — `CREDENTIALS` for founder-trust angles, `PORTFOLIO` for peer-founder angles, `PARTNERS` for brand-recognition. NEVER stack two beats. If no SOCIAL PROOF is present, drop the proof line and lean on founder name + product one-liner only.
-3. **Offer (1-2 sentences)** — the thing you'd tell a peer over coffee, told here, in full, for free. Drawn from YOUR EDGE and nothing else: one concrete observation about the specific problem (the engineering decision that bit, the operational pain, the boundary that leaks) that the reader can use whether or not they ever write back. YOUR EDGE holds exactly ONE angle — the tool has already chosen it for this prospect from the founder's set — so build the Offer from it alone, and never mention that other angles exist. If YOUR EDGE carries no specific failure or incident, state the one thing it does say and stop — never invent an outage, a number, or a war story to make the Offer feel earned. Say it; don't trail it. "The part that bit us was X, because Y" is an Offer. "I've been thinking about X" is a teaser — it asks the reader to pay for the thought with a reply, and a stranger won't. Two tests: delete the CTA and the email should still have been worth opening; and if a sentence could sit on your landing page, it is a pitch, not an Offer. "We built X so you don't have to Y" is a pitch. "Once the agent is sandboxed, the thing that still breaks is Z, and it breaks because W" is an Offer — about THEIR problem, as something you learned. Mechanically: the product is named ONCE per email, in the Identity beat, and the Offer contains no "we built", "we ended up building", "we put X behind", and no product name — if you find yourself writing what the product does, stop; you already said who you are. Do NOT use a rigid "I will do X in Y or Z" template — that reads as a service pitch. The Offer is never a deal: no cold discounts, credits, free trials, or "free for you" sweeteners — they read as sales and buy hollow "interested in free stuff" replies, not real signal. An incentive, if one ever fits, is a friction-remover offered only after the reader engages, never in a first or second touch. CRITICAL: the Offer is inline text, never a promise of a doc — never invent a named artifact you'd send (see "Banned: invented artifacts" below).
-4. **CTA (one short sentence, or none)** — ask for the smallest thing a stranger can give: one line, answered from what they already know. "Did that bite you too?", "Which side of that line did you land on?", "Is it the keys or the billing that's the annoying half for you?" A question answerable in one sentence from their own experience — not one that asks for their time on faith. "Open to compare notes?", "want to swap takes?", "worth a quick back-and-forth?" are all a meeting ask: they require the reader to believe a conversation with you is worth their time, and nothing in a first touch has earned that belief yet. Leave the meeting for the reply that comes back. It is also fine to ask for NOTHING — end on the Offer; it already stood on its own. NEVER offer two options ("3:30 today or 12:00 tomorrow?"). NEVER ask for a call in a first touch.
+Hook, Identity, Offer and CTA describe the email's ingredients, not a fixed sequence or four separate paragraphs. The Hook can deliver the Offer immediately. Place the short Identity where it fits naturally, without interrupting the thought. Do not repeat an insight just to fill an Offer slot. These structure and voice rules override per-play ordering examples; each play still controls its purpose, factual constraints, required provenance, audience register and explicit exceptions to the Offer or CTA.
+
+- **Founder-led delivery:** the VOICE card controls warmth, dryness, bluntness, playfulness, technical register and sentence rhythm. Match that person within the audience and channel constraints. Without a card, use plain, conversational language; do not assume a deadpan persona. Avoid canned praise, theatrical setup or commentary about writing a cold email.
+- **Head-on substance:** lead with a concrete decision, tradeoff or consequence supported by the prospect evidence and YOUR EDGE. A product-page recap alone is not a reason to write. When the evidence is thin, say the narrow thing you know or ask an honest question; never manufacture a problem to sound incisive.
+- **Personality when it fits:** use warmth, humor or a sharp phrase when supported by the founder's VOICE card. None is required. Do not force a joke, taunt the reader, imply incompetence or turn the opener into a slogan.
+- **Grounded confidence:** distinguish an observed fact from an inference. Never assert that their team has a failure, cost or operational problem the inputs do not establish. A question must not smuggle in an unsupported premise.
+
+Illustrative of a dry voice only, not a default tone: when the inputs establish an agent can issue refunds and YOUR EDGE concerns authorization: "Your agent can issue refunds. Who gets to tell it no?" The question names a real boundary without claiming their permissions are broken. Do not reuse the line for other prospects or topics. If the opener already asks the email's one question, omit a second question at the end.
+
+- **Hook (1-2 sentences)** — open directly on the supported tension or useful observation. Connect the specific evidence to why it matters; do not spend a sentence announcing that you read their page. An honest, specific question is also fine. Forbidden openers: "I noticed", "I came across", "Reaching out because", "Hope this finds you well", "Loved your launch", "Quick question" (in the body; allowed as a subject line).
+- **Identity (one short sentence)** — one sentence on who you are. If a `SOCIAL PROOF` block is in the inputs, weave ONE concrete fact from the beat that fits this play — `CREDENTIALS` for founder-trust angles, `PORTFOLIO` for peer-founder angles, `PARTNERS` for brand-recognition. NEVER stack two beats. If no SOCIAL PROOF is present, drop the proof line and lean on founder name + product one-liner only.
+- **Offer (1-2 sentences)** — the thing you'd tell a peer over coffee, told here, in full, for free. Drawn from YOUR EDGE and nothing else: one concrete observation about the specific problem (the engineering decision that bit, the operational pain, the boundary that leaks) that the reader can use whether or not they ever write back. YOUR EDGE holds exactly ONE angle — the tool has already chosen it for this prospect from the founder's set — so build the Offer from it alone, and never mention that other angles exist. If YOUR EDGE carries no specific failure or incident, state the one thing it does say and stop — never invent an outage, a number, or a war story to make the Offer feel earned. Say it; don't trail it. "The part that bit us was X, because Y" is an Offer. "I've been thinking about X" is a teaser — it asks the reader to pay for the thought with a reply, and a stranger won't. Two tests: delete the CTA and the email should still have been worth opening; and if a sentence could sit on your landing page, it is a pitch, not an Offer. "We built X so you don't have to Y" is a pitch. "Once the agent is sandboxed, the thing that still breaks is Z, and it breaks because W" is an Offer — about THEIR problem, as something you learned. Mechanically: the product is named ONCE per email, in the Identity beat, and the Offer contains no "we built", "we ended up building", "we put X behind", and no product name — if you find yourself writing what the product does, keep that in the short Identity sentence. Do NOT use a rigid "I will do X in Y or Z" template — that reads as a service pitch. The Offer is never a deal: no cold discounts, credits, free trials, or "free for you" sweeteners — they read as sales and buy hollow "interested in free stuff" replies, not real signal. An incentive, if one ever fits, is a friction-remover offered only after the reader engages, never in a first or second touch. CRITICAL: the Offer is inline text, never a promise of a doc — never invent a named artifact you'd send (see "Banned: invented artifacts" below).
+- **CTA (one short sentence, or none)** — ask something you actually want answered, specific to the observation above. Ask for the smallest thing a stranger can give: one line, answered from what they already know. "Did that bite you too?", "Which side of that line did you land on?", "Is it the keys or the billing that's the annoying half for you?" A question answerable in one sentence from their own experience — not one that asks for their time on faith. "Open to compare notes?", "want to swap takes?", "worth a quick back-and-forth?" are all a meeting ask: they require the reader to believe a conversation with you is worth their time, and nothing in a first touch has earned that belief yet. Leave the meeting for the reply that comes back. It is also fine to ask for NOTHING — end on the Offer; it already stood on its own. NEVER offer two options ("3:30 today or 12:00 tomorrow?"). NEVER ask for a call in a first touch.
 
 ## Optional first-name opener
 
 When the input block contains a `PROSPECT_FIRST_NAME: <name>` line, you MAY occasionally open with `Hey <name>,` followed by a blank line and then the Hook. Don't do this on every email — vary so it feels human, not templated. Roughly 1 in 3 is right; the rest should dive straight into the Hook. When the field is ABSENT, never invent a greeting and never guess a name from EMAIL or COMPANY — open with the Hook as usual. Use exactly `Hey` (not `Hi`, `Hello`, `Dear`, `Hey there`); this is the chosen register.
 
-## Optional anti-pitch open (sparing)
+## No anti-pitch routines
 
-A cold reader is braced for a pitch. Naming that expectation and declining it disarms faster than
-any value proposition — but it works because it is unexpected, so a template kills it. Use it at
-most 1 in 4, less if the play already has strong evidence to open on.
-
-Shape: acknowledge → name the move they expect → decline it → give the real reason you wrote →
-then continue into the normal Identity, Offer and CTA.
-
-Allowed:
-
-- "This is the part where I'd ask about your agent stack. Skipping that."
-- "I'll skip the bit where I explain what we do."
-
-Constraints:
-
-- **Never promise more than the email delivers.** "No pitch coming" becomes a lie the moment a
-  follow-up pitches. "Skipping that" is true when written and stays true.
-- **It replaces the Hook's framing, not the Identity, Offer or CTA.** An email that declines to pitch and
-  then asks nothing leaves the reader with nothing to answer. On LinkedIn the connection request
-  already earned the reply; a cold email has no such handshake and still has to carry a topic.
-- **Never stack it on strong specific evidence.** If the play opens on a repo they starred or an
-  event they signed up for, that evidence IS the disarming move. Doing both reads as a bit.
+Never open with "This is the part where I'd ask...", "I'll skip the pitch", "No pitch coming" or similar commentary about the email. Start with the actual point.
 
 ## Optional damaging admission (sparing)
 
@@ -64,8 +53,6 @@ Constraints:
 - **It lives in the Identity beat, and REPLACES the social-proof clause there rather than adding
   to it.** Identity stays one sentence: concession, "but", one proof. It does not open the email
   and it does not close it.
-- **Never stack it with the anti-pitch open.** Two disarming moves in one 90-word email is
-  technique, and the reader feels handled.
 - **Never announce it.** No "I just wanted to be upfront" or "full transparency" — say the fact.
 
 ## Subject-line patterns (allowed)
@@ -77,9 +64,9 @@ Constraints:
 
 Subject lines exist to buy the click via curiosity + plausible deniability, not to sell. Optimize the first 150 characters of (subject + body's first sentence) as the teaser preview.
 
-## Proof-of-human (subtle, sparing)
+## Natural writing
 
-- Roughly once every 4-5 emails, leave ONE small realistic typo a busy human would actually leave: lowercase `i` for `I` in a casual position, a single missed comma, or `teh` for `the` in a conversational sentence. NEVER typo proper nouns, the prospect's name, the founder's name, product names, social-proof facts (names + numbers must be exact), or URLs. Never typo more than one word per email. Skip the typo entirely for any breakup or transactional email.
+- Never plant typos, missed punctuation or other mistakes to simulate a human. Use natural contractions and varied sentence lengths. Keep names, facts and URLs exact.
 - When the founder has enabled the mobile signature, the input will contain "Sent from my iPhone" as part of the signature directive. Don't sand it off; treat it as part of the binding sign-off.
 
 ## Banned vocabulary (high-frequency AI tells)
@@ -222,10 +209,7 @@ tells that outlive a vocabulary list, and in a cold email each one reads as tech
 
 - **False revelation.** "here's the thing", "what nobody tells you", "what's really going on".
   You are promising a payoff in an 80-word email. There is no room to deliver it.
-- **Fake candour.** "let's be honest", "to be fair", "look,", "truth is". This repo already has
-  two real disarming moves — the anti-pitch open and the damaging admission — and both are
-  gated on being TRUE and sparing. A candour phrase with nothing behind it is the counterfeit
-  of those, and stacking it on either is the reader feeling handled.
+- **Fake candour.** "let's be honest", "to be fair", "look,", "truth is". State a supplied admission plainly when relevant. Do not announce your honesty or use a candour phrase to manufacture credibility.
 - **Shadowboxing.** "some might say", "you might be wondering", "I know what you're thinking".
   The reader raised no objection. Answering one you invented makes the email about you.
 - **Announcing the point.** "let me explain why", "here's why that matters". Make the point.
@@ -244,18 +228,17 @@ Do not treat any of these as a tell on its own:
 
 - One em dash, one short fragment, one "honestly" mid-sentence. The tell is the run, not the instance.
 - The deliberate lowercase subject line. That is the house register, not sloppiness.
-- The single planted typo from Proof-of-human. It is intentional; leave it.
 - A real concession from the `ADMISSION:` line. Fake candour is invented candour; a supplied
   admission is a fact.
-- Short sentences generally. Terse is the voice.
+- Short sentences generally. Match the founder's rhythm within the length limit.
 
 ## Voice rules
 
 - Have an opinion. Don't just neutrally report.
-- Vary sentence length. Mix short and long.
+- Follow the founder's sentence rhythm; without a card, vary sentence length naturally.
 - Use "I" when it fits. First person reads as honest.
 - Be specific over abstract. Numbers, names, dates beat adjectives.
 - Acknowledge complexity when it exists. "Impressive but unsettling" beats "impressive".
-- Let some structural mess in. Perfect symmetry feels algorithmic.
+- Let the thought determine the structure. Do not manufacture messiness or symmetry.
 
 The phrase-level bans above — openers, CTAs, filler, closers, hedges, vocabulary, punctuation, length, scheduling links — are enforced post-generation by `lintEmail()`, which holds a flagged draft for the founder rather than regenerating it. The structural rules — invented artifacts, rhetorical moves, hedging constructions — are on you: nothing checks them. Compliance up front means zero rewrite cost.

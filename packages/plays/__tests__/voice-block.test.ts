@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // The VOICE block: the founder's register card reaches the drafts as one
 // runtime input block, mirrors socialProofBlock's contract (null when blank),
-// carries a per-surface budget that keeps it under the humanizer, and stays
+// controls tone within factual/channel constraints and a per-surface budget, and stays
 // platform-generic — no founder, product or influence named in the directive.
 
 let cfgOverride: Record<string, unknown> = {};
@@ -44,6 +44,11 @@ describe("voiceBlock", () => {
     const out = voiceBlock("intro")!;
     expect(out.text.startsWith("VOICE (")).toBe(true);
     expect(out.text).toContain(CARD);
+    expect(out.text).toContain(
+      "this card controls warmth, dryness, bluntness, playfulness, technical register and sentence rhythm over generic style defaults",
+    );
+    expect(out.text).toContain("Factual grounding, audience and channel constraints");
+    expect(out.text).not.toContain("sentence texture only");
     expect(out.text).toContain("VOICE BUDGET: at most ONE aphoristic");
     expect(out.text).toContain("never in the CTA");
     expect(out.text).toContain("never as \"X isn't A, it's B\"");

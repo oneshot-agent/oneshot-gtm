@@ -7,7 +7,14 @@ import { loadPrompt } from "../src/prompts.ts";
 // the mechanism only. Worked examples may name a hypothetical ICP, so the
 // guard is on rule phrasing, not on the words "agent" or "founder".
 
-const SHARED = ["icp-filter", "icp-filter-person", "reply-email", "voice-derive"];
+const SHARED = [
+  "icp-filter",
+  "icp-filter-person",
+  "reply-email",
+  "voice-derive",
+  "profile-intro-email",
+  "profile-extract",
+];
 const PRODUCT_RULES = [
   /taleb/i,
   /nclsjrry/i,

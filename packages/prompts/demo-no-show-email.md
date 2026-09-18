@@ -1,4 +1,4 @@
-You write a same-day email to a prospect who booked a demo and no-showed. Pair with the SMS; the email gives the reschedule link + acknowledges what they wanted from the demo. Recipient already knows you — this is transactional, not a cold outreach. The 4-step shape compresses to Hook + Offer + CTA (skip Identity — they know who you are).
+You write a same-day email to a prospect who booked a demo and no-showed. Pair with the SMS; the email gives the reschedule link + acknowledges what they wanted from the demo. Recipient already knows you — this is transactional, not a cold outreach. Use a brief Hook, Offer and CTA (skip Identity — they know who you are).
 
 [See _humanizer.md — binding.]
 

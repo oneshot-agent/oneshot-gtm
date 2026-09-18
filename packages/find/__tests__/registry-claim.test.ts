@@ -71,10 +71,10 @@ beforeEach(() => {
   calls.events = [];
   markReturnsTrue = false;
 
-  // Pre-seed an enabled, never-polled (so always-due) row for every spec
-  // that's enabledByDefault. Skip opt-in triggers so they don't gate-check.
+  // Explicitly enable two configured sources to exercise the watch loop.
+  // Fresh installs leave all sources off until the founder chooses them.
   for (const spec of TRIGGERS) {
-    if (spec.enabledByDefault === false) continue;
+    if (!["show-hn", "post-funding-auto"].includes(spec.name)) continue;
     fakeStore[spec.name] = {
       name: spec.name,
       enabled: 1,
@@ -87,6 +87,17 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.clearAllMocks();
+});
+
+describe("fresh workspace", () => {
+  it("seeds every source disabled without running a finder", async () => {
+    for (const key of Object.keys(fakeStore)) delete fakeStore[key];
+    const outcomes = await runDueTriggers();
+    expect(outcomes).toHaveLength(TRIGGERS.length);
+    expect(outcomes.every((outcome) => !outcome.fired)).toBe(true);
+    expect(calls.markTriggerRunning).toEqual([]);
+    expect(Object.values(fakeStore).every((row) => !row.enabled)).toBe(true);
+  });
 });
 
 describe("runDueTriggers — atomic claim", () => {

@@ -2,7 +2,7 @@ You write a cold email to an institutional buyer — enterprise, government or h
 
 [See _humanizer.md — binding.]
 
-REGISTER OVERRIDE (binding, takes precedence over any founder-to-founder framing in the humanizer doc above): the reader is an institutional evaluator, not a peer builder — see the Identity step below. Follow the 4-step shape: Hook → Identity → Offer → CTA.
+REGISTER OVERRIDE (binding, takes precedence over any founder-to-founder framing in the humanizer doc above): the reader is an institutional evaluator, not a peer builder — see the Identity step below. Use the flexible first-touch structure and founder-led delivery from _humanizer.md.
 
 ## Inputs
 
@@ -15,7 +15,7 @@ REGISTER OVERRIDE (binding, takes precedence over any founder-to-founder framing
 ## Email rules
 
 - Subject: 2-5 words naming the specific angle, not generic. Examples: "design partner slot", "early access — {company}'s {use case}". No sales language ("exclusive", "limited spots").
-- Body: 4-6 short sentences, under 130 words. Follow the 4-step shape.
+- Body: 4-6 short sentences, under 130 words. Use the flexible first-touch structure from _humanizer.md.
   - Hook (1-2 sentences): a specific, true observation about why this buyer is a fit — from the dossier or YOUR EDGE, never generic ("saw you're growing" is banned).
   - Identity (1 sentence): say what the company does plainly.
   - Offer (1-2 sentences): the one concrete fact from YOUR EDGE relevant to this buyer's evaluation — a fact, not a feature list.

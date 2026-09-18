@@ -64,7 +64,7 @@ Not code — these need capture, not commits. `demo seed` + `demo ui` now stand 
 
 - [ ] vhs terminal recording (60s), to embed in the README.
 - [ ] Dashboard demo gif (30s).
-- [ ] Launch posts — drafts are in `launch/`, unpublished.
+- [ ] Launch posts — drafts maintained privately, unpublished.
 - [ ] Fireship sponsor video.
 - [ ] "Built with oneshot-gtm" badge program. The artifact shipped; this is the adoption push.
 

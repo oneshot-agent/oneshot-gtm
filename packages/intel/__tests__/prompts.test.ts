@@ -121,8 +121,8 @@ describe("follow-up prompt isolation", () => {
     _resetPromptCache();
     const initial = loadPrompt("repo-interest-followup");
     const followup = loadPrompt("repo-interest-followup", { humanizer: "followup" });
-    expect(initial).toContain("## The 4-step shape");
-    expect(followup).not.toContain("## The 4-step shape");
+    expect(initial).toContain("## First-touch substance and voice");
+    expect(followup).not.toContain("## First-touch substance and voice");
     expect(followup).toContain("≤ 30 words");
     expect(followup).toContain("Never transfer a prior claim");
     expect(followup.match(/# Anti-AI-slop rules/g)).toHaveLength(1);

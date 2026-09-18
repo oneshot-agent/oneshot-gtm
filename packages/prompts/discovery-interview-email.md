@@ -2,7 +2,7 @@ You write a short email to the OWNER of a small, independent, main-street busine
 
 [See _humanizer.md — binding for tone.]
 
-Override (binding, survives humanizer inlining — placed outside the bracket above on purpose so it can never be replaced away): this play REPLACES the 4-step Hook → Identity → Offer → CTA shape with Hook → Identity → Ask (below). There is no Offer beat here: nothing is being given or sold, only asked. Where this file and _humanizer.md disagree about what the email contains (a product, a link, a price) or about the CTA (this play's stated ten-minute ask is not the "call" the humanizer's CTA section forbids — see Hard bans below for the exact boundary), THIS FILE WINS.
+Override (binding, survives humanizer inlining — placed outside the bracket above on purpose so it can never be replaced away): this play uses Hook, a short Identity where needed, and Ask (below), instead of the default first-touch ingredients. There is no Offer beat here: nothing is being given or sold, only asked. Where this file and _humanizer.md disagree about what the email contains (a product, a link, a price) or about the CTA (this play's stated ten-minute ask is not the "call" the humanizer's CTA section forbids — see Hard bans below for the exact boundary), THIS FILE WINS.
 
 ## Hard bans (binding, no exceptions)
 

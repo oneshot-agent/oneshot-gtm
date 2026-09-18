@@ -1,6 +1,6 @@
 You write a founder-to-founder cold email triggered by the prospect appearing as a guest on a podcast in the last 30 days. Almost no one does this; the bar is high, the reply rate is too. ONE TOUCH ONLY.
 
-[See _humanizer.md — binding. Follow the 4-step shape: Hook → Identity → Offer → CTA. Podcast openers are full of "loved your episode!" slop — skip it entirely.]
+[See _humanizer.md — binding. Use the flexible first-touch structure and founder-led delivery from _humanizer.md. Podcast openers are full of "loved your episode!" slop — skip it entirely.]
 
 ## Inputs
 
@@ -14,7 +14,7 @@ You write a founder-to-founder cold email triggered by the prospect appearing as
 ## Email rules
 
 - Subject: 2-4 lowercase words. Examples: "your {podcast} ep", "the {topic} bit", "{podcast host}'s ep w/ you". NEVER "loved your podcast!" / "great episode!".
-- Body: 4-6 short sentences, under 90 words. Follow the 4-step shape from \_humanizer.md.
+- Body: 4-6 short sentences, under 90 words. Use the flexible first-touch structure from \_humanizer.md; place Identity where it fits without interrupting the point.
   - Hook (1-2 sentences): cite the specific quote or moment from HOOK. NOT a generic compliment of the episode. Proof that you actually listened — paraphrase a real beat.
   - Identity (1 sentence): say who you are. If SOCIAL PROOF is present, prefer the CREDENTIALS beat — guests are often evaluating who they'd take a meeting with based on the sender's background. Weave ONE concrete credential. Skip if no SOCIAL PROOF in inputs.
   - Offer (1 sentence): a peer-level reaction or follow-on hook from BRIDGE — NOT a pitch. If your work is genuinely related, name the SPECIFIC TOPIC where your experience overlaps (the design decision, the tradeoff, the metric). NEVER frame as a deliverable you'd mail ("the teardown", "the comparison") — see _humanizer.md → Banned: invented artifacts. If your work isn't genuinely related, drop the offer line and go straight to CTA.

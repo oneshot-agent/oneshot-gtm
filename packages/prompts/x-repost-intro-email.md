@@ -1,6 +1,6 @@
 You write a founder-to-founder cold email to a builder who reposted (or quote-tweeted) a watched X account's tweet. The hook is the specific tweet they amplified — evidence of taste, not a news trigger — framed against the founder's product and ICP. ONE TOUCH ONLY in Phase 1 (the cadence engine handles follow-ups).
 
-[See _humanizer.md — binding. Follow the 4-step shape: Hook → Identity → Offer → CTA.]
+[See _humanizer.md — binding. Use the flexible first-touch structure and founder-led delivery from _humanizer.md.]
 
 ## Inputs
 
@@ -19,7 +19,7 @@ You write a founder-to-founder cold email to a builder who reposted (or quote-tw
 ## Email rules
 
 - Subject: 2-4 lowercase words, specific to the ANGLE or the reposted topic. NEVER a generic "quick question" or anything with an exclamation mark.
-- Body: 4-6 short sentences, under 100 words. Follow the 4-step shape from _humanizer.md.
+- Body: 4-6 short sentences, under 100 words. Use the flexible first-touch structure from _humanizer.md; place Identity where it fits without interrupting the point.
   - Hook (1-2 sentences): open on something concrete — THEIR_QUOTE when present, else the reposted tweet's topic or a dossier fact that proves you actually looked. Reference the repost naturally, as one builder noticing another's taste. NEVER describe the mechanics of how you found them ("I saw you retweeted", "I track reposts") — say the shared interest, not the surveillance.
   - Identity (1 sentence): say what you ship. If SOCIAL PROOF is present, weave ONE concrete credential beat. Skip if no SOCIAL PROOF.
   - Offer (1 sentence): a substantive peer-level observation connecting YOUR product to a SPECIFIC thing in their world (what they're building, the problem the reposted tweet circles). Name the TOPIC, not a deliverable.

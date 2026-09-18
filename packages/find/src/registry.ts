@@ -177,10 +177,11 @@ const DEFAULT_COHORTS: CohortEntry[] = [
 export const TRIGGERS: TriggerSpec[] = [
   {
     name: "show-hn",
+    enabledByDefault: false,
     defaultIntervalMs: 6 * ONE_HOUR,
     defaultConfig: { ...RESEARCH_DEFAULT, sinceDays: 1, limit: 25, maxCostUsd: 5 },
     configBrief:
-      "Polls Hacker News Algolia for recent Show HN posts, ICP-filters them, enriches founder contact, and enqueues them for review. Config: `sinceDays` (lookback window, default 1), `limit` (max kept, default 25), `maxCostUsd` (per-run spend cap), `minPoints` (upvote floor, default 5 — posts below it drop as low-signal). Defaults work for most ICPs — bump sinceDays to 7+ if your ICP is niche enough that daily volume is thin. STRATEGIST NOTE: minPoints is a MOTION choice, not noise control — selling a paid product, keep ≥5 (traction = budget); driving adoption of a founder tool, drop to 1-2 (the quiet launch IS the pain signal).",
+      "Polls Hacker News Algolia for recent Show HN posts, ICP-filters them, enriches founder contact, and enqueues them for review. Config: `sinceDays` (lookback window, default 1), `limit` (max kept, default 25), `maxCostUsd` (per-run spend cap), `minPoints` (upvote floor, default 5 — posts below it drop as low-signal). Use this source only when your buyers launch on Hacker News; these defaults apply to that audience — bump sinceDays to 7+ if your ICP is niche enough that daily volume is thin. STRATEGIST NOTE: minPoints is a MOTION choice, not noise control — selling a paid product, keep ≥5 (traction = budget); driving adoption of a founder tool, drop to 1-2 (the quiet launch IS the pain signal).",
     run: (cfg) =>
       runShowHnFinder({
         dryRun: false,
@@ -268,6 +269,7 @@ export const TRIGGERS: TriggerSpec[] = [
   },
   {
     name: "post-funding-auto",
+    enabledByDefault: false,
     defaultIntervalMs: 12 * ONE_HOUR,
     defaultConfig: {
       ...RESEARCH_DEFAULT,

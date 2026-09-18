@@ -1,6 +1,6 @@
 # Voice
 
-The drafts follow a fixed structure (the humanizer's beats, the anti-slop rules, the lint) so they never read as a template or as a model. What they cannot know is how _you_ write. The voice card fills that gap: a short, plain-text description of your own register that every email draft reads at runtime.
+The drafts share standards for grounded claims, useful substance and concise asks, with flexible structure. What they cannot know is how _you_ write. The voice card fills that gap: a short, plain-text description of your own register that every email draft reads at runtime.
 
 It lives in config as `founderVoice`, edited on `/setup` (Voice) and injected as a `VOICE` block into first-touch emails (and their regenerate/rotate), cadence follow-ups and breakups, breakup-revive, and inbox replies. SMS, letters and X DMs do not carry it. Blank means no block: an install without a card drafts exactly as before.
 
@@ -15,9 +15,9 @@ Four headings, a few lines each, at most 1500 characters:
 
 ## What the block enforces around it
 
-The card shapes sentence texture; it does not get to override the prompt. The `VOICE` block carries a budget line the model has to obey, and the lint holds the draft regardless:
+The card controls warmth, dryness, bluntness, playfulness, technical register and rhythm over generic style defaults. Factual grounding, audience and channel constraints, required content and lint rules still apply. The `VOICE` block carries a budget line the model has to obey, and the lint holds the draft regardless:
 
-- at most **one** aphoristic or deflating line per email, never in the ask; a breakup gets none, only a flat closing line; a reply in logistics mode (scheduling, unsubscribe, a plain yes) gets none;
+- at most **one** aphoristic or deflating line per email, never in the ask; a breakup gets none, a brief closing line in your register; a reply in logistics mode (scheduling, unsubscribe, a plain yes) gets none;
 - numbers only from the inputs, never invented for effect;
 - the register applies to body prose only: the greeting, proper nouns, the product name and the signature stay as given;
 - an asymmetry is stated as a plain declarative ("the hard part is X"), never as "X isn't A, it's B" — that inversion is the banned "negative parallelism" shape the lint flags, however on-brand it feels. The same goes for three-item lists and em dashes.
