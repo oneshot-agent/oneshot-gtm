@@ -1587,3 +1587,16 @@ export interface CalendarPickerEntry {
   recentEventCount: number;
 }
 export * from "./replies.ts";
+
+/** CSV classification reserves a queue row before it is ready for review. */
+export function isQueueImportInProgress(row: {
+  status: string;
+  source: string;
+  notes: string | null;
+}): boolean {
+  return (
+    row.status === "expired" &&
+    row.source === "find:csv-import" &&
+    row.notes === "CSV import: ICP classification in progress"
+  );
+}

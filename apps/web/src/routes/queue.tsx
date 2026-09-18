@@ -20,6 +20,7 @@ import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   blockingFlags,
+  isQueueImportInProgress,
   isRunnablePlay,
   type PackApplyResult,
   type QueueRowView,
@@ -1017,7 +1018,9 @@ export function QueueRow({
         </td>
         <td className="px-6 py-[10px] text-right" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-end gap-1.5">
-            {row.status === "pending" && (
+            {(row.status === "pending" ||
+              row.status === "rejected" ||
+              (row.status === "expired" && !isQueueImportInProgress(row))) && (
               <Button variant="primary" size="sm" disabled={busy} onClick={onApprove} {...readOnly}>
                 <Check size={12} />
                 approve

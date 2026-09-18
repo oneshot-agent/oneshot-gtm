@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // GET /api/queue/:id feeds the /prospects drawer. The contracts: a row with no
 // prospect_id still finds its prospect by payload email, the response never
@@ -200,7 +200,10 @@ describe("queueRowDetailRoute", () => {
   });
 });
 
-describe("approveQueueRoute on a sent row", () => {
+describe("approveQueueRoute status transitions", () => {
+  beforeEach(() => {
+    statusCalls.length = 0;
+  });
   it("refuses with 409 so drain cannot re-send", async () => {
     queueRows.set(9, row({ status: "sent" }));
     const res = await approveQueueRoute(
@@ -222,6 +225,43 @@ describe("approveQueueRoute on a sent row", () => {
     );
     expect(res.status).toBe(409);
     expect(((await res.json()) as { error: string }).error).toMatch(/replied/);
+    expect(statusCalls).toEqual([]);
+  });
+
+  it("approves an expired row when the prospect has not replied", async () => {
+    queueRows.set(
+      11,
+      row({
+        id: 11,
+        status: "expired",
+        sent_at: null,
+        payload_json: JSON.stringify({ name: "New Prospect", email: "new@x.example" }),
+      }),
+    );
+    const res = await approveQueueRoute(
+      new Request("http://x/api/queue/11/approve", { method: "POST" }),
+      { id: "11" },
+    );
+    expect(res.status).toBe(200);
+    expect(statusCalls).toEqual([{ id: 11, status: "approved", decidedBy: "human" }]);
+  });
+
+  it("does not approve a CSV reservation while classification is in progress", async () => {
+    queueRows.set(
+      11,
+      row({
+        id: 11,
+        status: "expired",
+        source: "find:csv-import",
+        notes: "CSV import: ICP classification in progress",
+        sent_at: null,
+      }),
+    );
+    const res = await approveQueueRoute(
+      new Request("http://x/api/queue/11/approve", { method: "POST" }),
+      { id: "11" },
+    );
+    expect(res.status).toBe(409);
     expect(statusCalls).toEqual([]);
   });
 
