@@ -42,6 +42,7 @@ import {
 import { reportServerExecution } from "../telemetry.ts";
 import {
   blockingFlags,
+  isQueueImportInProgress,
   type ImportQueueRowRequest,
   type ImportQueueRowResult,
   type MoveQueueRowResult,
@@ -393,6 +394,13 @@ export async function approveQueueRoute(
   const ledger = getLedger();
   const row = ledger.getQueueRow(id);
   if (!row) return jsonResponse({ error: `row #${id} not found` }, 404, req);
+  if (isQueueImportInProgress(row)) {
+    return jsonResponse(
+      { error: "CSV import is still being classified; try again when it finishes" },
+      409,
+      req,
+    );
+  }
   // Drain picks up every `approved` row, so re-approving a sent one would
   // email the same person again. /prospects can reach sent rows; /queue
   // never offered the button on them.

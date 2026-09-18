@@ -47,3 +47,9 @@ Approved rows ship via the **Drain** button or `find drain <play>`. Both respect
 - `LUMA_SESSION_COOKIE` — optional; only buys authed Luma guest lists.
 
 All of these are env-only: `init` never asks, but `/setup` and `config keys` store them in the workspace's `.env`.
+
+## Expired queue rows
+
+Expired is a queue status, not deletion. Queue and Prospects allow a human to approve an expired row again; approval makes it eligible for drafting and a later send. Review whether its original signal is still relevant. A prospect who has already replied cannot be re-approved for cold outreach, and sent rows cannot be approved again.
+
+Re-engagement (`breakup-revive`) rows expire when the prospect replies or their cadence is stopped. An age-based expiry helper exists, but no production scheduler currently invokes it, so there is no automatic “expires after N days” policy. CSV imports temporarily reserve rows as expired during ICP classification; those rows cannot be approved until classification finishes.

@@ -195,5 +195,38 @@ describe("queue.tsx fixed-props render fixture", () => {
     );
 
     expect(html).toMatchSnapshot();
+
+    const renderStatus = (status: QueueRowView["status"], importing = false) =>
+      renderToStaticMarkup(
+        createElement(QueueRow, {
+          row: {
+            ...row,
+            status,
+            ...(importing
+              ? { source: "find:csv-import", notes: "CSV import: ICP classification in progress" }
+              : {}),
+          },
+          ranked: false,
+          zebra: false,
+          expanded: false,
+          selected: false,
+          anySelected: false,
+          onToggleSelect: () => undefined,
+          onToggle: () => undefined,
+          generating: false,
+          onApprove: () => undefined,
+          onReject: () => undefined,
+          onMove: () => undefined,
+          moveTargets: [],
+          busy: false,
+        }),
+      );
+    for (const status of ["pending", "rejected", "expired"] as const) {
+      expect(renderStatus(status)).toMatch(/<button[^>]*>[\s\S]*?approve<\/button>/);
+    }
+    for (const status of ["sent", "approved"] as const) {
+      expect(renderStatus(status)).not.toMatch(/approve<\/button>/);
+    }
+    expect(renderStatus("expired", true)).not.toMatch(/approve<\/button>/);
   });
 });
