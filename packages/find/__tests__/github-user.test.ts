@@ -110,6 +110,7 @@ describe("fetchGitHubUser", () => {
   it("parses email and blog when both present", async () => {
     mockFetchOnceJson(200, {
       login: "ada",
+      type: "User",
       name: "Ada Lovelace",
       email: "ada@acme.dev",
       blog: "https://www.acme.dev/about",
@@ -118,6 +119,7 @@ describe("fetchGitHubUser", () => {
     const out = await fetchGitHubUser("ada");
     expect(out).toEqual({
       login: "ada",
+      accountType: "User",
       name: "Ada Lovelace",
       email: "ada@acme.dev",
       blogDomain: "acme.dev",

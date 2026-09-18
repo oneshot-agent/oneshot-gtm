@@ -67,3 +67,17 @@ completed negative results are reused without additional lookup charges.
 Transport errors are not cached as negative results. A public GitHub profile
 email bypasses email discovery and goes straight to verification. GitHub role
 rejections retain an email already verified earlier in the same run.
+
+GitHub Stars and GitHub Topics use a personal-profile README as the final email
+fallback. Public profile email comes first, then existing contact lookup stages
+(including enabled topic enrichment/research), then the individual's public
+`username/username` README. An undeliverable address can fall through; duplicates,
+qualification rejections and temporary service errors do not trigger another search.
+
+README extraction accepts explicit personal contact text or contact-labelled email
+links, skips unrelated/example/team addresses, and leaves ambiguous results unresolved.
+Extracted addresses are verified using the same 14-day receipt history. The queue
+retains the README source URL and resolution timestamp. Completed README extraction
+results are cached in memory for 24 hours; temporary errors are not cached as misses.
+Requests are bounded to 10 seconds and 64 KiB. The existing approved-row recovery
+action gains this fallback; deployment does not retry historical rows or send messages.

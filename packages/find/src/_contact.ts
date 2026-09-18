@@ -1,3 +1,8 @@
+import {
+  fetchProfileReadmeEmail,
+  type GitHubIdentity,
+  type EmailSource,
+} from "./_github-readme.ts";
 import { logEvent, type PersonResult } from "@oneshot-gtm/core";
 import type { CallContext, FindEmailInput } from "@oneshot-gtm/core";
 import { isCircuitOpen, recordResolutionOutcome } from "./_breaker.ts";
@@ -17,6 +22,7 @@ export type ContactResolution =
   | {
       ok: true;
       email: string;
+      emailSource?: EmailSource;
       fullName: string | null;
       /** Job title the domain person-lookup surfaced, when that path ran. */
       title?: string | null;
@@ -33,6 +39,7 @@ export type ContactResolution =
         // The backend threw/timed out — NOT a verdict about the candidate.
         // Callers should defer/persist-for-retry rather than treat as bad.
         | "platform-error";
+      attemptedEmail?: string;
       costUsd: number;
     };
 
@@ -55,7 +62,7 @@ export type ContactResolution =
  *   stays caller-owned (each finder has its own `dedupeKey`).
  * - `decisionContext`: threaded to both findEmail and verify as audit metadata.
  */
-export async function resolveAndVerifyContact(args: {
+async function resolvePrimaryContact(args: {
   playName: string;
   fullName: string | null;
   knownEmail?: string | null;
@@ -78,6 +85,7 @@ export async function resolveAndVerifyContact(args: {
    * verifying unless it explicitly opts in.
    */
   skipVerify?: boolean;
+  unusableEmails?: Set<string>;
 }): Promise<ContactResolution> {
   const ctx: CallContext = { playName: args.playName };
   if (args.decisionContext) ctx.decisionContext = args.decisionContext;
@@ -165,6 +173,8 @@ export async function resolveAndVerifyContact(args: {
     }
   }
 
+  if (args.unusableEmails?.has(email.toLowerCase()))
+    return { ok: false, reason: "undeliverable", attemptedEmail: email, costUsd };
   if (args.isDuplicate?.(email)) return { ok: false, reason: "duplicate", costUsd };
 
   if (args.knownEmail && args.skipVerify) {
@@ -179,9 +189,65 @@ export async function resolveAndVerifyContact(args: {
     return { ok: false, reason: "platform-error", costUsd };
   }
   recordResolutionOutcome(false);
-  if (!verified.result.deliverable) return { ok: false, reason: "undeliverable", costUsd };
+  if (!verified.result.deliverable)
+    return { ok: false, reason: "undeliverable", attemptedEmail: email, costUsd };
 
   return { ok: true, email, fullName, ...(title ? { title } : {}), costUsd };
+}
+
+/** GitHub-only final fallback; other finders retain their existing resolution path. */
+export async function resolveAndVerifyContact(
+  args: Parameters<typeof resolvePrimaryContact>[0] & { githubIdentity?: GitHubIdentity },
+): Promise<ContactResolution> {
+  let result = await resolvePrimaryContact(args);
+  if (!args.githubIdentity) {
+    if (result.ok) return result;
+    const { attemptedEmail: _attemptedEmail, ...failure } = result;
+    return failure;
+  }
+  if (result.ok || result.reason === "duplicate" || result.reason === "platform-error")
+    return result;
+  const attempted = new Set<string>();
+  if (result.attemptedEmail) attempted.add(result.attemptedEmail.toLowerCase());
+  let costUsd = result.costUsd;
+  if (args.knownEmail && result.reason === "undeliverable") {
+    result = await resolvePrimaryContact({
+      ...args,
+      knownEmail: null,
+      unusableEmails: attempted,
+      isDuplicate: (email) => args.isDuplicate?.(email) ?? false,
+    });
+    costUsd += result.costUsd;
+    if (result.ok || result.reason === "duplicate" || result.reason === "platform-error")
+      return { ...result, costUsd };
+    if (result.attemptedEmail) attempted.add(result.attemptedEmail.toLowerCase());
+  }
+  const readme = await fetchProfileReadmeEmail(args.githubIdentity);
+  if (readme.status === "unavailable") return { ok: false, reason: "platform-error", costUsd };
+  if (readme.status !== "found" || attempted.has(readme.email.toLowerCase()))
+    return { ...result, costUsd };
+  const recovered = await resolvePrimaryContact({
+    ...args,
+    knownEmail: readme.email,
+    skipVerify: false,
+  });
+  costUsd += recovered.costUsd;
+  logEvent("github.readme.verification", {
+    login: args.githubIdentity.login,
+    ok: recovered.ok,
+    costUsd: recovered.costUsd,
+  });
+  return recovered.ok
+    ? {
+        ...recovered,
+        costUsd,
+        emailSource: {
+          kind: "github-profile-readme",
+          url: readme.url,
+          resolvedAt: new Date().toISOString(),
+        },
+      }
+    : { ...recovered, costUsd };
 }
 
 /**
@@ -229,6 +295,7 @@ export type QualifiedContact =
   | {
       ok: true;
       email: string;
+      emailSource?: EmailSource;
       /** Name as resolved by findEmail — some finders prefer it over their extract. */
       fullName: string | null;
       phone: string | null;
@@ -263,6 +330,7 @@ export type QualifiedContact =
       detail?: string;
       /** Verified contact retained when a later role gate rejects the candidate. */
       email?: string;
+      emailSource?: EmailSource;
       costUsd: number;
     };
 
@@ -295,6 +363,7 @@ export async function resolveVerifyEnrichQualify(args: {
   isDuplicate?: (email: string) => boolean;
   decisionContext?: CallContext["decisionContext"];
   errKindPrefix?: string;
+  githubIdentity?: GitHubIdentity;
   /** Person-level gate context. */
   icp: string | null;
   person: PersonCandidate;
@@ -329,6 +398,7 @@ export async function resolveVerifyEnrichQualify(args: {
     decisionContext: args.decisionContext,
     allowMissingFullName: args.allowMissingFullName,
     skipVerify: args.skipVerify,
+    githubIdentity: args.githubIdentity,
   });
   let costUsd = contact.costUsd;
   if (!contact.ok) return { ok: false, reason: contact.reason, costUsd };
@@ -352,7 +422,14 @@ export async function resolveVerifyEnrichQualify(args: {
   costUsd += gate.costUsd;
 
   if (gate.action === "reject") {
-    return { ok: false, reason: "role", detail: gate.reason, email: contact.email, costUsd };
+    return {
+      ok: false,
+      reason: "role",
+      detail: gate.reason,
+      email: contact.email,
+      emailSource: contact.emailSource,
+      costUsd,
+    };
   }
   // A classifier/platform outage is not a verdict — surface it as the same
   // platform-error the callers already know how to defer and retry.
@@ -363,6 +440,7 @@ export async function resolveVerifyEnrichQualify(args: {
   return {
     ok: true,
     email: contact.email,
+    emailSource: contact.emailSource,
     fullName: contact.fullName,
     phone: enr.phone,
     linkedinUrl: enr.linkedinUrl,

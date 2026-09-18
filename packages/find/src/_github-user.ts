@@ -3,6 +3,7 @@ import { githubHeaders } from "./_github-search.ts";
 
 export interface GitHubUserInfo {
   login: string;
+  accountType?: string | null;
   name: string | null;
   email: string | null;
   /** Bare hostname extracted from the user's blog URL. */
@@ -64,6 +65,7 @@ export async function fetchGitHubUser(login: string): Promise<GitHubUserInfo | n
     }
     const json = (await res.json()) as Record<string, unknown>;
     const info: GitHubUserInfo = {
+      accountType: typeof json["type"] === "string" ? json["type"] : null,
       login: typeof json["login"] === "string" ? (json["login"] as string) : login,
       name:
         typeof json["name"] === "string" && json["name"] !== "" ? (json["name"] as string) : null,

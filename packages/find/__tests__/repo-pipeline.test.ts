@@ -11,6 +11,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * those — focus stays on the per-candidate body.
  */
 
+const { readme } = vi.hoisted(() => ({ readme: vi.fn() }));
+vi.mock("../src/_github-readme.ts", () => ({ fetchProfileReadmeEmail: readme }));
+let verifyResults: Array<{ deliverable?: boolean; status?: string }> = [];
+let researchThrows = false;
+
 const calls = {
   topicSearch: 0,
   detectStack: 0,
@@ -121,7 +126,10 @@ vi.mock("@oneshot-gtm/core", async () => {
     },
     verifyEmail: async () => {
       calls.verifyEmail++;
-      return { result: { deliverable: true, cost: 0.01 }, receiptId: 0 };
+      return {
+        result: { ...(verifyResults.shift() ?? { deliverable: true }), cost: 0.01 },
+        receiptId: 0,
+      };
     },
     deepResearchPerson: async (input: {
       socialMediaUrl?: string;
@@ -129,6 +137,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       company?: string;
     }) => {
       calls.deepResearch++;
+      if (researchThrows) throw new Error("service unavailable");
       deepResearchInputs.push(input);
       return {
         result: {
@@ -159,6 +168,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       };
     },
     getLedger: () => ({
+      findContactReceipt: () => null,
       isQueueDuplicate: () => false,
       isEmailPendingInQueue: () => false,
       enqueueTarget: (row: Record<string, unknown>) => {
@@ -237,6 +247,10 @@ const { runGitHubTopicsFinder } = await import("../src/github-topics.ts");
 const { _resetLinkedInCache } = await import("../src/_linkedin.ts");
 
 beforeEach(() => {
+  verifyResults = [];
+  researchThrows = false;
+  readme.mockReset();
+  readme.mockResolvedValue({ status: "missing" });
   _resetLinkedInCache();
   calls.topicSearch = 0;
   calls.detectStack = 0;
@@ -358,7 +372,7 @@ describe("repo pipeline — GitHub user fallback in resolveContact", () => {
     expect(calls.enqueued[0]?.["payload"]).toMatchObject({ email: "ada@personal.dev" });
   });
 
-  it("when extract has a domain but findEmail fails, GitHub email rescues the candidate", async () => {
+  it("prefers public email even when a domain lookup is available", async () => {
     nextSearchHits = [makeRepo("https://github.com/ada/agent")];
     nextFindEmailQueue = [{ found: false }]; // first findEmail returns no result
     defaultGhUser = {
@@ -369,7 +383,7 @@ describe("repo pipeline — GitHub user fallback in resolveContact", () => {
       company: null,
     };
     const out = await runGitHubTopicsFinder(baseOpts);
-    expect(calls.findEmail).toBe(1);
+    expect(calls.findEmail).toBe(0);
     expect(out.enqueued).toBe(1);
     expect(calls.enqueued[0]?.["payload"]).toMatchObject({ email: "ada@personal.dev" });
   });
@@ -696,5 +710,67 @@ describe("repo pipeline — concurrency", () => {
     detectStackDelayMs = 4;
     await runGitHubTopicsFinder({ ...baseOpts, concurrency: 1 });
     expect(inflight.peak).toBe(1);
+  });
+});
+
+describe("profile README final fallback", () => {
+  beforeEach(() => {
+    nextSearchHits = [makeRepo("https://github.com/ada/agent")];
+    nextFindEmailResult = { found: false };
+    readme.mockResolvedValue({
+      status: "found",
+      email: "ada@personal.dev",
+      url: "https://github.com/ada/ada#readme",
+    });
+  });
+  it("runs after enabled research and persists provenance", async () => {
+    readme.mockImplementation(async () => {
+      expect(calls.deepResearch).toBe(1);
+      return {
+        status: "found",
+        email: "ada@personal.dev",
+        url: "https://github.com/ada/ada#readme",
+      };
+    });
+    const out = await runGitHubTopicsFinder({ ...baseOpts, useDeepResearch: true });
+    expect(out.enqueued).toBe(1);
+    expect(calls.enqueued[0]?.payload).toMatchObject({
+      emailSource: { kind: "github-profile-readme" },
+    });
+    expect(calls.verifyEmail).toBe(1);
+  });
+  it("runs when optional research is disabled", async () => {
+    const out = await runGitHubTopicsFinder({ ...baseOpts, useDeepResearch: false });
+    expect(out.enqueued).toBe(1);
+    expect(calls.deepResearch).toBe(0);
+    expect(readme).toHaveBeenCalledTimes(1);
+  });
+  it("continues after an undeliverable discovered address", async () => {
+    nextFindEmailResult = { found: true, email: "ada@acme.dev" };
+    verifyResults = [{ deliverable: false }, { deliverable: true }];
+    expect((await runGitHubTopicsFinder({ ...baseOpts, useDeepResearch: false })).enqueued).toBe(1);
+    expect(calls.verifyEmail).toBe(2);
+  });
+  it("does not reverify a previously rejected address from README", async () => {
+    nextFindEmailResult = { found: true, email: "ada@personal.dev" };
+    verifyResults = [{ deliverable: false }];
+    expect((await runGitHubTopicsFinder({ ...baseOpts, useDeepResearch: false })).enqueued).toBe(0);
+    expect(calls.verifyEmail).toBe(1);
+  });
+  it("stops on temporary verification failure", async () => {
+    nextFindEmailResult = { found: true, email: "ada@acme.dev" };
+    verifyResults = [{ status: "error" }];
+    expect((await runGitHubTopicsFinder(baseOpts)).enqueued).toBe(0);
+    expect(readme).not.toHaveBeenCalled();
+  });
+  it("stops on temporary research failure", async () => {
+    researchThrows = true;
+    expect((await runGitHubTopicsFinder({ ...baseOpts, useDeepResearch: true })).enqueued).toBe(0);
+    expect(readme).not.toHaveBeenCalled();
+  });
+  it("does not run after snippet ICP rejection", async () => {
+    icpMatchResult = false;
+    await runGitHubTopicsFinder(baseOpts);
+    expect(readme).not.toHaveBeenCalled();
   });
 });

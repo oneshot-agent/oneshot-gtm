@@ -211,6 +211,7 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
       playName: PLAY_NAME,
       fullName,
       knownEmail: user.email,
+      githubIdentity: user,
       companyDomain: user.blogDomain,
       isDuplicate: (email) => isDuplicate({ playName, dedupeKey, prospectEmail: email }),
       icp,
@@ -236,6 +237,7 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
             company: user.company ?? "",
             repo: c.repo,
             ...(contact.email ? { email: contact.email } : {}),
+            ...(contact.emailSource ? { emailSource: contact.emailSource } : {}),
           },
           source: sourceFor(c.repo),
           reason: contact.detail ?? "off-ICP role",
@@ -275,6 +277,7 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
       ...(contact.title ? { title: contact.title } : {}),
       ...icpFields(contact),
       sourceProfileUrl: profileUrl,
+      ...(contact.emailSource ? { emailSource: contact.emailSource } : {}),
     };
 
     // repo-interest is a peer-builder pitch — what the candidate ships gives
