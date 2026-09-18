@@ -107,6 +107,32 @@ export class ReceiptStore {
     return this.db.query(sql).all(...(args as never[])) as ReceiptRecord[];
   }
 
+  /** Reuse only completed contact results with an exact identity, within 14 days. */
+  findContactReceipt(
+    input: { email: string } | { fullName: string; companyDomain: string },
+  ): ReceiptRecord | null {
+    const verify = "email" in input;
+    const fields = verify ? ["email"] : ["full_name", "company_domain"];
+    const values = verify ? [input.email] : [input.fullName, input.companyDomain];
+    if (values.some((value) => !value.trim())) return null;
+    const match = fields
+      .map((field) => `lower(trim(json_extract(signed_receipt, '$.${field}'))) = ?`)
+      .join(" AND ");
+    return this.db
+      .query(`
+      SELECT * FROM receipts
+      WHERE call_type = ? AND created_at >= datetime('now', '-14 days')
+        AND CASE WHEN json_valid(signed_receipt) THEN
+          json_extract(signed_receipt, '$.status') = 'completed' AND ${match}
+        ELSE 0 END
+      ORDER BY created_at DESC, id DESC LIMIT 1
+    `)
+      .get(
+        verify ? "email.verify" : "email.find",
+        ...values.map((value) => value.trim().toLowerCase()),
+      ) as ReceiptRecord | null;
+  }
+
   /** Persist the RoCS value tag (JSON `{type,amount?,label?}`) on a single receipt. */
   setReceiptValueTag(receiptId: number, valueTagJson: string): void {
     this.db

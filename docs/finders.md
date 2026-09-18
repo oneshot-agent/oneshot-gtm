@@ -59,3 +59,11 @@ Re-engagement (`breakup-revive`) rows expire when the prospect replies or their 
 An early ICP rejection may be saved before contact lookup, so approving that row does not mean it already has an email. Run forms load the source trigger's current `yourEdge` / `yourClaim` without rewriting the historical queue payload.
 
 For approved GitHub Stars rows without an email, **Find missing emails** on the Run page resumes contact lookup using the original GitHub identity and verifies the result. It can incur lookup charges, reloads the form (replacing unsaved edits), and never sends. Failed lookups remain incomplete; enter a verified email manually or leave that row out. Simply listing or approving a row performs no paid contact lookup.
+
+Contact lookup retries reuse completed receipts from the current workspace for
+14 days. Email discovery matches both the full name and domain; verification
+matches the exact email address (case-insensitive). Successful results and
+completed negative results are reused without additional lookup charges.
+Transport errors are not cached as negative results. A public GitHub profile
+email bypasses email discovery and goes straight to verification. GitHub role
+rejections retain an email already verified earlier in the same run.

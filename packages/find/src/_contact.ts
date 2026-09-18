@@ -261,6 +261,8 @@ export type QualifiedContact =
         | "role";
       /** Classifier's reason, present when `reason === "role"`. */
       detail?: string;
+      /** Verified contact retained when a later role gate rejects the candidate. */
+      email?: string;
       costUsd: number;
     };
 
@@ -350,7 +352,7 @@ export async function resolveVerifyEnrichQualify(args: {
   costUsd += gate.costUsd;
 
   if (gate.action === "reject") {
-    return { ok: false, reason: "role", detail: gate.reason, costUsd };
+    return { ok: false, reason: "role", detail: gate.reason, email: contact.email, costUsd };
   }
   // A classifier/platform outage is not a verdict — surface it as the same
   // platform-error the callers already know how to defer and retry.

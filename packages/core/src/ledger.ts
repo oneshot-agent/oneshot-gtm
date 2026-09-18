@@ -1197,6 +1197,12 @@ export class Ledger {
     return this.receipts.getReceipt(id);
   }
 
+  findContactReceipt(
+    input: { email: string } | { fullName: string; companyDomain: string },
+  ): ReceiptRecord | null {
+    return this.receipts.findContactReceipt(input);
+  }
+
   listReceipts(
     opts: { playName?: string; sinceIso?: string; limit?: number } = {},
   ): ReceiptRecord[] {

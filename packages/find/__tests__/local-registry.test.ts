@@ -354,6 +354,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       return { result: { deliverable: true, cost: 0.005 }, receiptId: 1 };
     },
     getLedger: () => ({
+      findContactReceipt: () => null,
       isQueueDuplicate: (_playName: string, dedupeKey: string) =>
         duplicateDedupeKeys.has(dedupeKey),
       enqueueTarget: (row: EnqueuedRow) => {
