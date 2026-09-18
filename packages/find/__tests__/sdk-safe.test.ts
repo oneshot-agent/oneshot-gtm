@@ -159,3 +159,44 @@ describe("safeEnrichCompany", () => {
     expect(out.receiptId).toBe(0);
   });
 });
+
+it("reuses saved misses and verification results without new spend", async () => {
+  const { getLedger } = await import("@oneshot-gtm/core");
+  const saved = vi.spyOn(getLedger(), "findContactReceipt");
+  findThrow = true;
+  verifyThrow = true;
+  try {
+    saved.mockReturnValue({
+      id: 91,
+      signed_receipt: JSON.stringify({
+        status: "completed",
+        found: false,
+        email: null,
+        cost: 0.005,
+      }),
+    } as ReturnType<ReturnType<typeof getLedger>["findContactReceipt"]>);
+    expect(
+      await safeFindEmail(
+        { fullName: "Pat Lee", companyDomain: "example.com" },
+        { playName: "test" },
+      ),
+    ).toMatchObject({ receiptId: 91, result: { found: false, status: "completed", cost: 0 } });
+    expect(saved).toHaveBeenCalledWith({ fullName: "Pat Lee", companyDomain: "example.com" });
+    saved.mockReturnValue({
+      id: 92,
+      signed_receipt: JSON.stringify({
+        status: "completed",
+        email: "pat@example.com",
+        deliverable: true,
+        cost: 0.005,
+      }),
+    } as ReturnType<ReturnType<typeof getLedger>["findContactReceipt"]>);
+    expect(await safeVerifyEmail({ email: "pat@example.com" }, { playName: "test" })).toMatchObject(
+      { receiptId: 92, result: { deliverable: true, cost: 0 } },
+    );
+  } finally {
+    saved.mockRestore();
+    findThrow = false;
+    verifyThrow = false;
+  }
+});

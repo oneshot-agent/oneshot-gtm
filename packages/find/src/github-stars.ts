@@ -231,7 +231,12 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
         persistRoleRejection({
           playName,
           dedupeKey,
-          payload: { name: fullName, company: user.company ?? "", repo: c.repo },
+          payload: {
+            name: fullName,
+            company: user.company ?? "",
+            repo: c.repo,
+            ...(contact.email ? { email: contact.email } : {}),
+          },
           source: sourceFor(c.repo),
           reason: contact.detail ?? "off-ICP role",
           dryRun: opts.dryRun,

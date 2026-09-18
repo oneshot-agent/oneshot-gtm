@@ -60,6 +60,24 @@ export async function safeFindEmail(
   ctx: CallContext,
 ): Promise<Awaited<ReturnType<typeof findEmail>>> {
   try {
+    const fullName = input.fullName ?? [input.firstName, input.lastName].filter(Boolean).join(" ");
+    const saved = getLedger().findContactReceipt({ fullName, companyDomain: input.companyDomain });
+    if (saved?.signed_receipt) {
+      const result = JSON.parse(saved.signed_receipt) as Awaited<
+        ReturnType<typeof findEmail>
+      >["result"];
+      if (
+        typeof result.found === "boolean" &&
+        (!result.found || typeof result.email === "string")
+      ) {
+        logEvent("contact.receipt_reused", {
+          call: "email.find",
+          receiptId: saved.id,
+          found: result.found,
+        });
+        return { result: { ...result, cost: 0 }, receiptId: saved.id };
+      }
+    }
     return await findEmail(input, ctx);
   } catch (err) {
     swallow(ctx, "find_email", err);
@@ -89,6 +107,20 @@ export async function safeVerifyEmail(
   ctx: CallContext,
 ): Promise<Awaited<ReturnType<typeof verifyEmail>>> {
   try {
+    const saved = getLedger().findContactReceipt(input);
+    if (saved?.signed_receipt) {
+      const result = JSON.parse(saved.signed_receipt) as Awaited<
+        ReturnType<typeof verifyEmail>
+      >["result"];
+      if (typeof result.deliverable === "boolean") {
+        logEvent("contact.receipt_reused", {
+          call: "email.verify",
+          receiptId: saved.id,
+          deliverable: result.deliverable,
+        });
+        return { result: { ...result, cost: 0 }, receiptId: saved.id };
+      }
+    }
     return await verifyEmail(input, ctx);
   } catch (err) {
     swallow(ctx, "verify_email", err);

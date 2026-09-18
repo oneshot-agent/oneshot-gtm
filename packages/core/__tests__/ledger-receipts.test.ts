@@ -194,3 +194,62 @@ describe("ReceiptStore is a pure function of a raw Database handle (issue #616)"
     expect(viaRaw.play_name).toBe("shared");
   });
 });
+
+describe("contact receipt reuse", () => {
+  it("matches name and domain together, reuses misses, and prefers the latest result", () => {
+    const record = (domain: string, found: boolean) =>
+      ledger.recordReceipt({
+        playName: "github-stars",
+        callType: "email.find",
+        signedReceipt: {
+          status: "completed",
+          full_name: "Pat Lee",
+          company_domain: domain,
+          found,
+          email: found ? "pat@example.com" : null,
+        },
+      });
+    record("elsewhere.example", true);
+    const miss = record("example.com", false);
+    expect(
+      ledger.findContactReceipt({ fullName: " pat lee ", companyDomain: "EXAMPLE.COM" })?.id,
+    ).toBe(miss);
+    expect(
+      ledger.findContactReceipt({ fullName: "Other Person", companyDomain: "example.com" }),
+    ).toBeNull();
+    expect(ledger.findContactReceipt({ fullName: "", companyDomain: "example.com" })).toBeNull();
+    const hit = record("example.com", true);
+    expect(
+      ledger.findContactReceipt({ fullName: "Pat Lee", companyDomain: "example.com" })?.id,
+    ).toBe(hit);
+  });
+
+  it("ignores expired, malformed and transient receipts", () => {
+    const db = new Database(dbPath);
+    for (const signed of [
+      "{broken",
+      JSON.stringify({ status: "error", email: "pat@example.com", deliverable: false }),
+    ]) {
+      ledger.recordReceipt({
+        playName: "github-stars",
+        callType: "email.verify",
+        signedReceipt: signed === "{broken" ? {} : JSON.parse(signed),
+      });
+    }
+    db.run("UPDATE receipts SET signed_receipt = '{broken' WHERE id = 1");
+    const old = ledger.recordReceipt({
+      playName: "github-stars",
+      callType: "email.verify",
+      signedReceipt: { status: "completed", email: "pat@example.com", deliverable: true },
+    });
+    db.run("UPDATE receipts SET created_at = datetime('now', '-15 days') WHERE id = ?", [old]);
+    expect(ledger.findContactReceipt({ email: "pat@example.com" })).toBeNull();
+    const fresh = ledger.recordReceipt({
+      playName: "repo-interest",
+      callType: "email.verify",
+      signedReceipt: { status: "completed", email: "pat@example.com", deliverable: false },
+    });
+    expect(ledger.findContactReceipt({ email: "PAT@example.com" })?.id).toBe(fresh);
+    db.close();
+  });
+});

@@ -128,6 +128,7 @@ vi.mock("@oneshot-gtm/core", async () => {
     },
     verifyEmail: async () => ({ result: { deliverable: true, cost: 0.005 }, receiptId: 1 }),
     getLedger: () => ({
+      findContactReceipt: () => null,
       isQueueDuplicate: () => false,
       enqueueTarget: (row: EnqueuedRow) => {
         enqueued.push(row);

@@ -94,6 +94,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       return { result: { results: nextWebSearchResults, cost: 0.01 }, receiptId: 0 };
     },
     getLedger: () => ({
+      findContactReceipt: () => null,
       isQueueDuplicate: () => false,
       getCachedLinkedIn: () => null,
       setCachedLinkedIn: () => {},
@@ -215,6 +216,18 @@ describe("runGitHubStarsFinder — per-repo rel routing", () => {
     expect(enqueued).toHaveLength(1);
     expect(enqueued[0]?.initialStatus).toBe("rejected");
     expect(enqueued[0]?.playName).toBe("competitor-switch");
+  });
+
+  it("retains the verified email when the later role gate rejects", async () => {
+    personVerdict = "reject";
+    await runGitHubStarsFinder({
+      dryRun: false,
+      yourEdge: "x",
+      repos: [{ repo: "apollographql/router", rel: "competitor", label: "Apollo" }],
+    });
+    expect(enqueued).toHaveLength(1);
+    expect(enqueued[0]?.initialStatus).toBe("rejected");
+    expect(enqueued[0]?.payload["email"]).toBeTruthy();
   });
 
   it("does NOT persist a rejected row when classifier is transiently unavailable (match=null)", async () => {

@@ -167,6 +167,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       return { result: { deliverable: verifyDeliverable, cost: 0.005 }, receiptId: 1 };
     },
     getLedger: () => ({
+      findContactReceipt: () => null,
       isQueueDuplicate: () => false,
       isPendingResolution: () => false,
       upsertPendingResolution: () => {},
