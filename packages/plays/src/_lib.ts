@@ -594,13 +594,13 @@ export function voiceKey(card: string): string {
 
 const VOICE_BUDGET: Record<VoiceSurface, string> = {
   intro:
-    'VOICE BUDGET: at most ONE aphoristic or deflating line in the whole email, never in the CTA. Numbers only from the inputs above; never invent one for effect. The card controls tone and rhythm in body prose: keep the greeting, proper nouns, the product name and the signature exactly as given. State an asymmetry as a plain declarative ("the hard part is X"), never as "X isn\'t A, it\'s B".',
+    "VOICE BUDGET: at most ONE aphoristic or deflating line in the whole email, never in the CTA. Numbers only from the inputs above; never invent one for effect. The card controls tone and rhythm in body prose: follow the card on whether to include a greeting; preserve proper nouns, the product name and the signature exactly as given. If a supported contrast is useful, state it plainly, never as \"X isn't A, it's B\".",
   followup:
-    'VOICE BUDGET: at most ONE aphoristic or deflating line in the whole email, never in the CTA. Numbers only from the inputs above; never invent one for effect. The card controls tone and rhythm in body prose: keep the greeting, proper nouns, the product name and the signature exactly as given. State an asymmetry as a plain declarative ("the hard part is X"), never as "X isn\'t A, it\'s B".',
+    "VOICE BUDGET: at most ONE aphoristic or deflating line in the whole email, never in the CTA. Numbers only from the inputs above; never invent one for effect. The card controls tone and rhythm in body prose: follow the card on whether to include a greeting; preserve proper nouns, the product name and the signature exactly as given. If a supported contrast is useful, state it plainly, never as \"X isn't A, it's B\".",
   breakup:
     "VOICE BUDGET: no aphorism in a breakup. Use one brief closing line in the founder's register. Numbers only from the inputs above. Keep the greeting, proper nouns, the product name and the signature exactly as given.",
   reply:
-    "VOICE BUDGET: at most ONE aphoristic or deflating line, never in the ask, and none at all when an INTENT DIRECTIVE puts you in logistics mode (scheduling, unsubscribe, a plain yes). Numbers only from the inputs above; never invent one. The card controls tone and rhythm in body prose: keep the greeting, proper nouns, the product name and the signature exactly as given. State an asymmetry as a plain declarative, never as \"X isn't A, it's B\".",
+    "VOICE BUDGET: at most ONE aphoristic or deflating line, never in the ask, and none at all when an INTENT DIRECTIVE puts you in logistics mode (scheduling, unsubscribe, a plain yes). Numbers only from the inputs above; never invent one. The card controls tone and rhythm in body prose: follow the card on whether to include a greeting; preserve proper nouns, the product name and the signature exactly as given. State an asymmetry as a plain declarative, never as \"X isn't A, it's B\".",
 };
 
 /**
