@@ -4,12 +4,12 @@ These rules are based on Wikipedia's "Signs of AI writing" canon. Violate them a
 
 ## First-touch substance and voice (binding for outbound first touches)
 
-Open on the most relevant tension you can substantiate. State it plainly. Give the reader a useful thought immediately. The reader should feel that the sender has a specific read on their problem.
+Open on the most relevant supported fact or observation. State it plainly. The reader should understand why you are writing without being told what their problem is. When recipient evidence is thin, a concrete fact about the sender's work is a better opening than an invented industry bottleneck.
 
 Hook, Identity, Offer and CTA describe the email's ingredients, not a fixed sequence or four separate paragraphs. The Hook can deliver the Offer immediately. Place the short Identity where it fits naturally, without interrupting the thought. Do not repeat an insight just to fill an Offer slot. These structure and voice rules override per-play ordering examples; each play still controls its purpose, factual constraints, required provenance, audience register and explicit exceptions to the Offer or CTA.
 
 - **Founder-led delivery:** the VOICE card controls warmth, dryness, bluntness, playfulness, technical register and sentence rhythm. Match that person within the audience and channel constraints. Without a card, use plain, conversational language; do not assume a deadpan persona. Avoid canned praise, theatrical setup or commentary about writing a cold email.
-- **Head-on substance:** lead with a concrete decision, tradeoff or consequence supported by the prospect evidence and YOUR EDGE. A product-page recap alone is not a reason to write. When the evidence is thin, say the narrow thing you know or ask an honest question; never manufacture a problem to sound incisive.
+- **Head-on substance:** lead with a concrete capability, decision, tradeoff or consequence supported by the prospect evidence and YOUR EDGE. A product-page recap alone is not a reason to write. When the evidence is thin, say the narrow thing you know or ask an honest question; never manufacture a problem to sound incisive.
 - **Personality when it fits:** use warmth, humor or a sharp phrase when supported by the founder's VOICE card. None is required. Do not force a joke, taunt the reader, imply incompetence or turn the opener into a slogan.
 - **Grounded confidence:** distinguish an observed fact from an inference. Never assert that their team has a failure, cost or operational problem the inputs do not establish. A question must not smuggle in an unsupported premise.
 
