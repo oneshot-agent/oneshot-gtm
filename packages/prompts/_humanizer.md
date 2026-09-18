@@ -18,7 +18,7 @@ Illustrative of a dry voice only, not a default tone: when the inputs establish 
 - **Hook (1-2 sentences)** — open directly on the supported tension or useful observation. Connect the specific evidence to why it matters; do not spend a sentence announcing that you read their page. An honest, specific question is also fine. Forbidden openers: "I noticed", "I came across", "Reaching out because", "Hope this finds you well", "Loved your launch", "Quick question" (in the body; allowed as a subject line).
 - **Identity (one short sentence)** — one sentence on who you are. If a `SOCIAL PROOF` block is in the inputs, weave ONE concrete fact from the beat that fits this play — `CREDENTIALS` for founder-trust angles, `PORTFOLIO` for peer-founder angles, `PARTNERS` for brand-recognition. NEVER stack two beats. If no SOCIAL PROOF is present, drop the proof line and lean on founder name + product one-liner only.
 - **Offer (the useful substance)** — say the one concrete thing YOUR EDGE establishes. It can share a sentence with Identity or the opener; do not repeat it to fill a separate slot. Name the product once. A supported capability or tradeoff is enough when no incident or lesson is supplied. Never invent an outage, a failure, a number or a personal war story. Do not force an operational-pain story onto a reader whose setup is unknown. No unrelated feature list, cold discounts, credits, free trials, or invented deliverable to send later.
-- **CTA (one short sentence, or none)** — stop when the thought is complete. Ask only a specific question that does not smuggle in an unsupported premise about the recipient's setup, usage or pain. Do not append a stock "did that bite you too?" or an either/or pain question. Leave calls and meeting requests for a reply; a first touch may ask for nothing.
+- **CTA (one short sentence, when useful)** — sometimes close with a natural, specific question that gives the reader an easy way to respond. Use it when their answer would help establish interest or relevance; omit it when it adds nothing. Neither always ask nor default to never asking, and do not follow a quota. Keep it answerable in one line without assuming the recipient's setup, usage or pain. Do not append a stock "did that bite you too?" or an either/or pain question. If the opener already asks the one question, do not add another. Leave calls and meeting requests for a reply.
 
 ## Optional first-name opener
 
@@ -142,7 +142,7 @@ NEVER use these calls-to-action:
 - "I'd love to chat / connect / jump on a call / hear..."
 - "Worth a 15-min..." / "Worth a 15 min..."
 - "Mind if I..."
-- Two specific time slots ("3:30 today or 12:00 tomorrow?") — single yes/no question only.
+- Two specific time slots ("3:30 today or 12:00 tomorrow?") — ask at most one short question, not for a scheduling decision.
 - "open to compare notes?" / "want to swap takes?" / "worth a quick back-and-forth?" — a meeting ask dressed as a small one. In a first touch it asks a stranger for their time before anything has been given.
 
 The CTA asks for one line, answered from the reader's own experience, or asks for nothing. One sentence, one question at most — a reader who can answer in a sentence will; one who has to decide whether you're worth a meeting won't.
@@ -160,8 +160,8 @@ Forbidden CTA shapes:
 
 Replace with the useful thing said inline, and a CTA that asks for one line, not a doc and not a meeting:
 
-- "did {specific thing} bite you on {their project} too?"
-- "which side of {that line} did you land on?"
+- Ask about their interest in the topic or whether it is relevant to their work, without assuming usage.
+- Ask about an actual decision established by the evidence, without assuming a problem.
 - or no CTA at all — the Offer already said the useful thing.
 
 The Offer is the substance, in the email; the CTA, if any, asks for one sentence back. Inline text is real and the founder can always stand behind it. Named docs aren't real unless the founder confirms they exist — and the prompt has no way to verify that, so it must never assume.
