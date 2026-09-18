@@ -63,3 +63,19 @@ it("improves intentional edits without applying the humanizer or reverting to th
     editingFeedback: "Keep my emphasis",
   });
 });
+
+it("passes learned guidance to both reply prompts with explicit directions taking priority", async () => {
+  const context = { ...input, learnedPreferences: ["Use plain wording."] };
+  expect(buildDraftUserPrompt(context)).toContain("Use plain wording.");
+  expect(buildDraftUserPrompt({ ...context, channel: "email" })).not.toContain(
+    "Use plain wording.",
+  );
+  expect(buildDraftSystemPrompt("linkedin")).toContain("take priority over learned preferences");
+  complete.mockResolvedValue({ content: JSON.stringify({ text: "My revision" }) });
+  await improveReplyOption(context, "my edit", "original", "Keep the detail");
+  const call = complete.mock.calls[0]![0];
+  expect(JSON.parse(call.messages[1].content).conversationContext.learnedPreferences).toEqual([
+    "Use plain wording.",
+  ]);
+  expect(call.messages[0].content).toContain("override learned preferences");
+});

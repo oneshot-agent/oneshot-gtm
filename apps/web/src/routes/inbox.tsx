@@ -15,6 +15,7 @@ import { Badge } from "../components/primitives/Badge.tsx";
 import { Input } from "../components/primitives/Field.tsx";
 import { Pii } from "../components/primitives/Pii.tsx";
 import { MailboxConnections } from "../components/MailboxInbox.tsx";
+import { ReplyPreferences } from "../components/ReplyPreferences.tsx";
 import { ReplyOptionsComposer } from "../components/ReplyOptionsComposer.tsx";
 import { timeAgo } from "../lib/cn.ts";
 import { readOnly } from "../lib/readOnly.ts";
@@ -106,6 +107,9 @@ function InboxPage() {
       </section>
       <MailboxConnections mailboxes={inbox.data?.mailboxes ?? []} />
       <LinkedInConnections accounts={inbox.data?.accounts ?? []} />
+      {inbox.data && (
+        <ReplyPreferences key={inbox.data.workspace} workspace={inbox.data.workspace} />
+      )}
       <div className="flex flex-wrap items-center gap-2 border-b border-ink-rule/60 px-6 py-3">
         {(["all", "email", "linkedin"] as const).map((c) => (
           <Button

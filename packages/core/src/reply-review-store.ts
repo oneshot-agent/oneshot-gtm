@@ -8,6 +8,7 @@ import type {
   ReplyStateRequest,
   ReplyThread,
 } from "@oneshot-gtm/shared-types";
+import { ReplyLearningStore } from "./reply-learning-store.ts";
 import { sharedDir } from "./shared-db.ts";
 
 type Row = {
@@ -27,6 +28,7 @@ export const humanReplyIds = (t: ReplyThread): string[] =>
 /** Durable review state shared by channels. Email keys include the workspace; LinkedIn keys include the wallet/account. */
 export class ReplyReviewStore {
   readonly db: Database;
+  readonly learning: ReplyLearningStore;
   constructor(path = join(sharedDir(), "reply-review.sqlite")) {
     mkdirSync(dirname(path), { recursive: true });
     this.db = new Database(path);
@@ -37,6 +39,7 @@ export class ReplyReviewStore {
       CREATE TABLE IF NOT EXISTS review_leases(key TEXT PRIMARY KEY, token TEXT NOT NULL, until_ms INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS review_sends(id TEXT PRIMARY KEY, thread_key TEXT NOT NULL, data TEXT NOT NULL);
     `);
+    this.learning = new ReplyLearningStore(this.db);
   }
   close() {
     this.db.close();
@@ -166,7 +169,10 @@ export class ReplyReviewStore {
           throw new Error("A reply is still being sent");
         if ((t.drafts?.revision ?? null) !== expectedRevision)
           throw new Error("Draft changed in another window. Reload before saving.");
-        const saved = { ...next, revision: (expectedRevision ?? 0) + 1 };
+        const saved = {
+          ...this.learning.validateDraft(t, next),
+          revision: (expectedRevision ?? 0) + 1,
+        };
         this.db
           .query("UPDATE review_threads SET drafts=? WHERE key=?")
           .run(JSON.stringify(saved), key);
@@ -202,6 +208,7 @@ export class ReplyReviewStore {
         this.db
           .query("INSERT INTO review_sends VALUES(?,?,?)")
           .run(send.id, key, JSON.stringify(send));
+        this.learning.snapshot(t, send);
         return send;
       })
       .immediate();
@@ -217,6 +224,7 @@ export class ReplyReviewStore {
         this.db
           .query("UPDATE review_sends SET data=? WHERE id=?")
           .run(JSON.stringify(send), send.id);
+        this.learning.confirm(key, send);
         if (send.status === "sent" && t.drafts?.id === send.generationId) {
           const empty = {
             ...t.drafts,

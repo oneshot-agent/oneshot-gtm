@@ -13,6 +13,9 @@ export interface ReplyMessage {
   deleted?: boolean;
 }
 export interface ReplyDraftSet {
+  learningVersion?: number;
+  /** Server-issued improvement IDs explicitly adopted by the reviewer. */
+  improvementIds?: Partial<Record<ReplyVariant, string[]>>;
   id: string;
   revision: number;
   contextVersion: string;
@@ -88,3 +91,31 @@ export interface ReplyStateRequest {
   action: "archive" | "restore" | "snooze" | "unsnooze";
   observedReplyIds: string[];
 }
+
+export interface ReplyLearningEvidence {
+  id: string;
+  threadKey: string;
+  name: string;
+  body: string;
+  original: string | null;
+  feedback: string[];
+  historical: boolean;
+  at: string;
+}
+export interface ReplyPreference {
+  id: string;
+  instruction: string;
+  source: "explicit" | "edits" | "style";
+  enabled: boolean;
+  evidence: ReplyLearningEvidence[];
+}
+export interface ReplyLearningStatus {
+  enabled: boolean;
+  version: number;
+  pending: boolean;
+  imported: boolean;
+  lastRefreshedAt: string | null;
+  error: string | null;
+  preferences: ReplyPreference[];
+}
+export type ReplyLearningUpdate = { enabled: boolean } | { preferenceId: string; enabled: boolean };

@@ -29,6 +29,8 @@ const {
   replySendRoute,
   replyStateRoute,
   replyProspectsRoute,
+  replyLearningRoute,
+  replyOptionsContext,
 } = await import("../src/api/replies.ts");
 const review = getReplyReviewStore();
 const linkedin = getLinkedInInboxStore();
@@ -106,6 +108,13 @@ function seed(channel: "email" | "linkedin" = "email") {
   return t;
 }
 beforeEach(() => {
+  for (const table of [
+    "reply_learning_state",
+    "reply_learning_preferences",
+    "reply_learning_observations",
+    "reply_learning_artifacts",
+  ])
+    review.db.exec(`DELETE FROM ${table}`);
   review.db.exec("DELETE FROM review_threads; DELETE FROM review_sends; DELETE FROM review_leases");
   linkedin.db.exec("DELETE FROM accounts; DELETE FROM conversations");
   linkedin.db.query("INSERT INTO accounts VALUES(?,?)").run(
@@ -307,4 +316,50 @@ describe("reply options API", () => {
     expect(sdk.mock.calls[0]![1]).toMatchObject({ idempotencyKey: "1234567890123456" });
     expect(sdk.mock.calls[1]![1]).toMatchObject({ idempotencyKey: "1234567890123456" });
   });
+});
+
+it("applies workspace learning to generation and improvement without changing stored drafts", async () => {
+  const t = seed("linkedin");
+  review.learning.status("default");
+  review.db
+    .query("INSERT INTO reply_learning_preferences VALUES(?,?,?,?,?,?)")
+    .run("default", "plain", "Keep language plain.", "explicit", 1, "[]");
+  review.db
+    .query("INSERT INTO reply_learning_preferences VALUES(?,?,?,?,?,?)")
+    .run("other", "secret", "Other product preference", "explicit", 1, "[]");
+  const result = (await (await replyGenerateRoute(req({ key: t.key }))).json()) as ReplyDraftSet;
+  expect(result.learningVersion).toBe(0);
+  expect(generate.mock.calls[0]![0].learnedPreferences).toEqual(["Keep language plain."]);
+  expect(review.get(t.key)!.drafts).toBeNull();
+  const saved = (await (
+    await replyDraftSaveRoute(req({ key: t.key, drafts: result, expectedRevision: null }))
+  ).json()) as ReplyDraftSet;
+  const improved = (await (
+    await replyImproveRoute(
+      req({
+        key: t.key,
+        variant: "direct",
+        text: saved.edits.direct,
+        feedback: "Always keep language plain",
+      }),
+    )
+  ).json()) as { text: string; improvementId: string };
+  expect(improved.improvementId).toBeTruthy();
+  expect(improve.mock.calls[0]![0].learnedPreferences).toEqual(["Keep language plain."]);
+  expect(replyOptionsContext({ ...t, channel: "email" }).learnedPreferences).toEqual([]);
+  await replyLearningRoute(req({ enabled: false }));
+  expect(replyOptionsContext(t).learnedPreferences).toEqual([]);
+  expect(review.get(t.key)!.drafts).toEqual(saved);
+});
+it("keeps preference controls workspace scoped and blocks foreign-origin mutations", async () => {
+  review.db
+    .query("INSERT INTO reply_learning_preferences VALUES(?,?,?,?,?,?)")
+    .run("other", "private", "Private guidance", "explicit", 1, "[]");
+  const read = await replyLearningRoute(new Request("http://localhost:3030/api/replies/learning"));
+  expect(await read.json()).toMatchObject({ preferences: [] });
+  const foreign = await replyLearningRoute(req({ enabled: false }, "https://evil.example"));
+  expect(foreign.status).toBe(403);
+  const other = await replyLearningRoute(req({ enabled: false, preferenceId: "private" }));
+  expect(other.status).toBe(400);
+  expect(review.learning.guidance("other").instructions).toEqual(["Private guidance"]);
 });

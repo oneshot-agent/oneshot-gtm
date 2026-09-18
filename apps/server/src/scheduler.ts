@@ -1,3 +1,4 @@
+import { refreshReplyLearning } from "./reply-learning.ts";
 import { refreshLinkedInInbox } from "./linkedin-sync.ts";
 import {
   demoMode,
@@ -123,6 +124,9 @@ export function startScheduler(): SchedulerHandle {
 
   const tick = async (): Promise<void> => {
     if (cancelled) return;
+    void refreshReplyLearning().catch(() =>
+      logEvent("scheduler.reply_learning.failed", {}, "warn"),
+    );
     void Promise.resolve()
       .then(() => refreshLinkedInInbox())
       .catch((e) => logEvent("scheduler.linkedin.failed", { message: String(e) }, "warn"));

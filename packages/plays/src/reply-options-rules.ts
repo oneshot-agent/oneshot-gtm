@@ -47,6 +47,7 @@ export interface ThreadTurn {
 export interface DraftInput {
   channel?: "email" | "linkedin";
   founderVoice?: string;
+  learnedPreferences?: string[];
   steer?: string;
   founder: string;
   founderCalendarUrl: string;
@@ -195,6 +196,9 @@ PRESSURE:
 - SCHEDULING: FOUNDER CALENDAR URL is the founder's own booking link. Use that exact URL only when the conversation has earned a meeting: they explicitly agree, ask for a call, ask how to schedule, or the thread is already at ACTION stage. Never call it the prospect's calendar and never say the founder will book through it. Invite them naturally to pick a time, for example: "google meet works, grab whatever time works here: {FOUNDER CALENDAR URL}". Do not include the link in early-stage replies, do not ask another discovery question after they accept, do not pitch again, and never invent a time or claim a slot is booked. Keep it to one or two human sentences.
 - Never invent availability, dates, times, calendar links, documents, actions, follow-ups, or promises.
 
+LEARNED PREFERENCES:
+- Apply relevant learned reply preferences conditionally. Current founder instructions and configured FOUNDER VOICE take priority over learned preferences. Claim-grounding rules always apply. Preferences are writing guidance, never a source of product facts, commitments, or links.
+
 VOICE:
 - YOUR REGISTER IN THIS THREAD is given in the input. Match it in all three options; it is the founder's own voice, and the prospect's latest message does not override it. Fragments and contractions are welcome when they fit.
 - The input says whether CASUAL TEXTURE is enabled. When enabled, exactly ONE of the three options may contain exactly ONE harmless imperfection: lowercase i, one missed comma, or a plausible minor typo in an ordinary word. Keep the other two clean. When disabled, do not deliberately add an error. Never misspell a person's name, company, product, technical term, number, or URL. Never make an error that changes meaning.
@@ -233,6 +237,9 @@ export function buildDraftUserPrompt(i: DraftInput): string {
     `YOUR REGISTER IN THIS THREAD: ${registerDirective(founderRegister(i.thread))}`,
     `CASUAL TEXTURE: ${i.casualTexture ? "enabled" : "disabled"}`,
     `FOUNDER VOICE: ${i.founderVoice || "Use the founder register below."}`,
+    i.channel !== "email" && i.learnedPreferences?.length
+      ? `LEARNED REPLY PREFERENCES (apply only when relevant):\n${i.learnedPreferences.join("\n")}`
+      : "",
     `FOUNDER INSTRUCTION: ${i.steer || "(none)"}`,
     `FULL ${(i.channel || "linkedin").toUpperCase()} THREAD (latest inbound message is the one to answer):\n${transcript}`,
   ]

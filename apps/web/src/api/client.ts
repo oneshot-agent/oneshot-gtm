@@ -1,6 +1,8 @@
 import { emailThreads } from "@oneshot-gtm/shared-types";
 import type {
   RepliesResult,
+  ReplyLearningStatus,
+  ReplyLearningUpdate,
   ReplyDraftSet,
   ReplyThread,
   ReplyStateRequest,
@@ -215,13 +217,21 @@ export const api = {
       hasMore: inbox.hasMore,
     };
   },
+  replyLearning: () => getJson<ReplyLearningStatus>("/replies/learning"),
+  updateReplyLearning: (change: ReplyLearningUpdate) =>
+    postJson<ReplyLearningStatus>("/replies/learning", change),
   replyState: (request: ReplyStateRequest) => postJson<ReplyThread>("/replies/state", request),
   saveReplyOptions: (key: string, drafts: ReplyDraftSet, expectedRevision: number | null) =>
     postJson<ReplyDraftSet>("/replies/drafts", { key, drafts, expectedRevision }),
   generateReplyOptions: (key: string, force = false, steer = "") =>
     postJson<ReplyDraftSet>("/replies/generate", { key, force, steer }),
   improveReplyOption: (key: string, variant: ReplyVariant, text: string, feedback: string) =>
-    postJson<{ text: string }>("/replies/improve", { key, variant, text, feedback }),
+    postJson<{ text: string; improvementId?: string }>("/replies/improve", {
+      key,
+      variant,
+      text,
+      feedback,
+    }),
   sendReplyOption: (key: string, sendId: string, revision: number) =>
     postJson<ReplySendState>("/replies/send", { key, sendId, revision }),
   checkReplySend: (key: string) => postJson<ReplySendState>("/replies/send", { key, check: true }),
