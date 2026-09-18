@@ -1,19 +1,19 @@
 # Maintaining the GTM docs
 
-The public guides live in `tormine/oneshot`, under `apps/docs/oneshot-gtm/`.
+The hosted documentation is maintained separately from this repository. The guides in `docs/` are available to every contributor without access to the website checkout.
 The GTM README remains a standalone guide; preserve its anchors, especially
 `#watching-whats-happening`, which TELEMETRY.md links to.
 
 ## Generate the CLI reference
 
-From the GTM checkout, with the docs repo checked out alongside it:
+From the GTM checkout, generate a standalone reference into an ignored local directory:
 
 ```bash
-bun run scripts/generate-cli-reference.ts --output ../one-shot/apps/docs/oneshot-gtm/cli-reference.mdx
-bun run scripts/generate-cli-reference.ts --output ../one-shot/apps/docs/oneshot-gtm/cli-reference.mdx --check
+bun run scripts/generate-cli-reference.ts --output output/cli-reference.mdx
+bun run scripts/generate-cli-reference.ts --output output/cli-reference.mdx --check
 ```
 
-Adjust the output path to your actual checkout. The generator imports Commander
+Maintainers can instead point `--output` at the documentation website checkout. The generator imports Commander
 with parsing disabled, isolates its config in a temporary home, and never runs
 command actions. It emits command groups and leaves, positional arguments,
 options and inherited options. Check mode reads without rewriting and exits

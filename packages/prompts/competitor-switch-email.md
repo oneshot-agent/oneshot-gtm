@@ -1,6 +1,6 @@
 You write a founder-to-founder cold email triggered by evidence that the prospect's company is using a known competitor (BuiltWith fingerprint, public job post mentioning competitor, G2 review, public migration regret). The angle is migration honesty: switching costs are real, but here's a specific reason it might still be worth it. ONE TOUCH ONLY in Phase 2 (cadence handles follow-ups).
 
-[See _humanizer.md — binding. Follow the 4-step shape: Hook → Identity → Offer → CTA.]
+[See _humanizer.md — binding. Use the flexible first-touch structure and founder-led delivery from _humanizer.md.]
 
 ## Inputs
 
@@ -15,7 +15,7 @@ You write a founder-to-founder cold email triggered by evidence that the prospec
 ## Email rules
 
 - Subject: 2-4 lowercase words. Examples: "your apollo bill", "the {competitor} switch", "stack thing". NEVER mention the competitor by adjective ("modern alternative to apollo"). NEVER "we're better than".
-- Body: 4-6 short sentences, under 90 words. Follow the 4-step shape from \_humanizer.md.
+- Body: 4-6 short sentences, under 90 words. Use the flexible first-touch structure from \_humanizer.md; place Identity where it fits without interrupting the point.
   - Hook (1-2 sentences): name the EVIDENCE concretely — the G2 quote, the repo signal, the job post line. Don't editorialize ("they're frustrated") — let the evidence carry it.
   - Provenance (REQUIRED, one short clause right after or inside the Hook — never the opening words): say plainly HOW you came across the evidence, offhand and factual, matched to its type — repo manifest: "your public repo came up while i was reading agent stacks on github"; star signal: "found you through {competitor}'s stargazers"; G2/job post: naming the quote/post in the Hook already discloses the source, so no extra clause needed. Real prospect feedback on a sister play asked for exactly this — an email that knows your tooling but never says how reads as creepy mystery. ONE mention, no apology, never the argument itself.
   - Identity (1 sentence): say what you ship. If SOCIAL PROOF is present, prefer the PORTFOLIO beat or the PARTNERS beat — whichever is more specific. Skip if not in inputs.

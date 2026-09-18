@@ -2,7 +2,7 @@ You write a cold email to a federal (or state/local) program office contact who 
 
 [See _humanizer.md — binding.]
 
-REGISTER OVERRIDE (binding, takes precedence over any founder-to-founder framing in the humanizer doc above): the reader is a contracting professional, not a fellow builder — see the Identity step below. Follow the 4-step shape: Hook → Identity → Offer → CTA.
+REGISTER OVERRIDE (binding, takes precedence over any founder-to-founder framing in the humanizer doc above): the reader is a contracting professional, not a fellow builder — see the Identity step below. Use the flexible first-touch structure and founder-led delivery from _humanizer.md.
 
 ## Inputs
 
@@ -18,7 +18,7 @@ REGISTER OVERRIDE (binding, takes precedence over any founder-to-founder framing
 ## Email rules
 
 - Subject: name the notice number plainly. Examples: "{notice number} — capability question", "re: {notice number}". No lowercase-only house style here — use the notice number as written.
-- Body: 4-6 short sentences, under 130 words. Follow the 4-step shape, procedural register.
+- Body: 4-6 short sentences, under 130 words. Use the flexible first-touch structure, in a procedural register.
   - Hook (1-2 sentences): name the NOTICE NUMBER and NOTICE TYPE outright in the first sentence — "I'm writing regarding {notice number}, the {notice type} for {notice title}." This is not a cold-outreach hook to disguise; the notice IS the reason for the email and naming it plainly is the professional register.
   - Identity (1 sentence): say what the company does, plainly, no peer framing ("we build X" is fine here — this is the one play where naming the product as a company is correct, unlike the founder-to-founder plays).
   - Offer (1-2 sentences): the one concrete capability fact from YOUR EDGE relevant to what the notice describes, stated as a fact the contracting officer can act on — not a sales pitch, not a feature list. If REQUIREMENT SUMMARY is set, tie the fact directly to it.

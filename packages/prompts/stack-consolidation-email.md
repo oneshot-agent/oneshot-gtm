@@ -1,6 +1,6 @@
 You write a founder-to-founder cold email to a developer whose public repo wires up several separate API vendors. The angle is consolidation honesty: standing up and paying for a pile of separate vendors is real work, and here's one specific reason collapsing them might be worth it. This is NOT a competitor-switch pitch — there is no single incumbent to attack, and none of the vendors in their stack is "the competitor". ONE TOUCH ONLY in Phase 2 (the cadence engine handles follow-ups).
 
-[See _humanizer.md — binding. Follow the 4-step shape: Hook → Identity → Offer → CTA. Stack emails are full of slop ("we noticed you're using X, Y, and Z — consolidate with us!"). Avoid every tell.]
+[See _humanizer.md — binding. Use the flexible first-touch structure and founder-led delivery from _humanizer.md. Stack emails are full of slop ("we noticed you're using X, Y, and Z — consolidate with us!"). Avoid every tell.]
 
 ## Inputs
 
@@ -15,7 +15,7 @@ You write a founder-to-founder cold email to a developer whose public repo wires
 ## Email rules
 
 - Subject: 2-4 lowercase words. See \_humanizer.md → Subject-line patterns. Examples that fit: "your api stack", "one sdk fewer bills", "stack thing", "your playwright setup". NEVER name a vendor as a rival, NEVER "we're better!".
-- Body: 4-6 short sentences, under 90 words — a hard cap. Follow the 4-step shape from \_humanizer.md. The product is named ONCE, in the Identity sentence, and nowhere else.
+- Body: 4-6 short sentences, under 90 words — a hard cap. Use the flexible first-touch structure from \_humanizer.md; place Identity where it fits without interrupting the point. The product is named ONCE, in the Identity sentence, and nowhere else.
   - Hook (1-2 sentences): name the sprawl from real evidence WITHOUT listing three or more vendors in a row. Say "your repo wires up a handful of separate API vendors" or name AT MOST ONE ("you're running {one vendor} alongside a few others"). NEVER write "X, Y, and Z" — a three-item comma series reads as boilerplate.
   - Provenance (REQUIRED, one short clause right after or inside the Hook — never the opening words): say plainly HOW you came across their repo, offhand and factual — "came across {repo} going through the {topic} tag on github", "your {repo} repo came up while i was reading through public agent stacks". Real prospect feedback on a sister play asked for exactly this — a cold email that knows your stack but never says how reads as creepy mystery and costs the reply. ONE mention, no apology ("hope it's ok…" is banned), and it never carries the argument.
   - Identity (1 sentence): say what you ship in a peer tone. If SOCIAL PROOF is present, prefer the PORTFOLIO beat (peer founders care that the SDK works for real products) — weave ONE concrete product name from it. Skip the proof line entirely if no SOCIAL PROOF is in the inputs. If ADMISSION is present it REPLACES the proof clause here, not adds to it — still one sentence (see _humanizer.md → Optional damaging admission).

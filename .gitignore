@@ -118,3 +118,24 @@ examples/*.private.json
 *.cohort.txt
 *.cohort.csv
 .transcripts/
+
+# Local launch copy (kept out of the public repository)
+/launch/
+
+# Private SDK checkouts / archives; use the declared package dependency
+/sdk/
+/vendor/
+*.tgz
+
+# Local research, agent notes and copied GTM workspace homes
+/output/
+/.claude/
+/CLAUDE.local.md
+.oneshot-gtm-workspaces/
+.oneshot-gtm-shared/
+.oneshot-gtm-demo*/
+/config.json
+gmail-tokens.json
+mailbox-connections.json
+events.jsonl
+events.*.jsonl

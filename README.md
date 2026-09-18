@@ -2,7 +2,7 @@
 
 # oneshot-gtm
 
-> Open-source GTM agent for technical founders. Pay-per-result, signed receipts, founder-led discipline encoded. Terminal CLI + local web dashboard over one SQLite ledger.
+> Open-source GTM workspace for founders across industries. Pay-per-result, signed receipts, founder-led discipline encoded. Terminal CLI + local web dashboard over one SQLite ledger.
 
 **[oneshot-gtm.com](https://oneshot-gtm.com)** · [what a signed receipt is](https://oneshot-gtm.com/receipt) · [docs](https://docs.oneshotagent.com/oneshot-gtm/introduction)
 
@@ -37,13 +37,21 @@ MIT, so you can read every prompt, fork every play, and trust what's running.
 
 Most GTM tools assume you have product-market fit and optimize sends. Most pre-PMF founders don't, and end up scaling a broken motion because the tool said "send more" — the [Startup Genome Report](https://startupgenome.com)'s top documented cause of startup death. So the discipline is built in:
 
-- Plays default to founder-to-founder voice, low volume (≤50/day), one touch unless you invoke the cadence engine.
-- Every first touch is Hook → Identity → Offer → CTA. The Offer says the useful thing in the email, for free; the CTA asks for one line the reader can answer from their own experience, or asks for nothing. It never asks a stranger for a meeting. One true concession you write in config (`founderAdmission`) is worked into roughly a third of first touches; leave it blank and the beat is skipped, never invented.
+- Plays use your founder voice and the buyer's context, with low volume (≤50/day). Choose the motion and review its cadence before sending.
+- First touches lead with a supported observation; the short introduction fits around the thought rather than interrupting it. The Offer says the useful thing in the email, for free; the CTA asks for one line the reader can answer from their own experience, or asks for nothing. It never asks a stranger for a meeting. One true concession you write in config (`founderAdmission`) is worked into roughly a third of first touches; leave it blank and the beat is skipped, never invented.
 - Every draft passes a lint built on the Wikipedia "Signs of AI writing" canon — banned phrases, em dashes, AI vocabulary, three-item lists, sycophantic openers.
 - Scale-move commands (`handoff templatize`, `first-ae`, `readiness`) print soft-gate checklists and default to "not yet, fix this first" until the signals earn the move. `--force` overrides.
 - Every paid action emits a signed receipt carrying a **memo** (why the call happened), structured `decisionContext`, and a `goalId` grouping a cadence's spend. When a reply or deal outcome lands, that value is tagged back, so CAC and RoCS on the Measure page are attestable and outcome-attributed, not estimated.
 
 ---
+
+## Start with your business
+
+Use the dashboard without writing code. Describe what you sell (a product or service), who buys it, and one useful observation you can share. Choose sources and plays for those buyers. Industry packs cover restaurants, trades, healthcare practices, auto services, professional services, trucking, government and developer tools; they are editable starting points, not eligibility requirements.
+
+[Start your first workspace](./docs/getting-started.md) walks through setup, choosing a motion and reviewing the first draft. [Workspaces](./docs/workspaces.md) explains multiple businesses. [Repository boundaries](./docs/repository-boundaries.md) explains what stays private: SDK internals, credentials, prospect data and your operating workspace.
+
+The current motions focus on reaching identifiable business buyers and learning from customers. Consumer advertising, retail checkout and a ready-made finder for every industry or country are not included. You can bring your own prospects when the built-in sources do not cover your market.
 
 ## Setup
 
@@ -149,7 +157,7 @@ Fifteen **finders** discover prospects, ICP-filter them, and enqueue into `/queu
 | `local-business`    | main-street businesses via `peopleSearch`/`companySearch` (job title × industry × location × company size), or the SDK's `localSearch` places index with `engine: local` — routed to the `free-pilot` play                                         |
 | `local-registry`    | newly-licensed main-street businesses over free public registries (Socrata business licenses, NPPES NPI, FMCSA Company Census), resolved to a domain with the SDK's `localResolve` — recent matches route to `new-business`, older to `free-pilot` |
 
-Only `show-hn` and `post-funding-auto` are on by default. Two ICP gates run per candidate: a **topic gate** on the source, before any spend, and a **person gate** on the human's role, staged by cost and judging capability to build and self-adopt rather than seniority. Only a positive reject drops a candidate; rejections land in `/queue` as auditable rows you can override. [Finders](./docs/finders.md) covers the prescreen, the gates, product research and review ordering.
+All finders start disabled in a new workspace. Choose sources for your buyers or apply an industry pack; existing workspaces retain their saved settings. Two ICP gates run per candidate: a **topic gate** on the source, before any spend, and a **person gate** on the human's role, staged by cost and judging the role against your own ICP, without assuming technical skills or a founder title. Only a positive reject drops a candidate; rejections land in `/queue` as auditable rows you can override. [Finders](./docs/finders.md) covers the prescreen, the gates, product research and review ordering.
 
 ### The plays
 
@@ -239,7 +247,6 @@ packages/
   shared-types/  Wire types shared across CLI / server / web
 docs/         Guides: workspaces, finders, sending, direct mail, background monitoring, webhooks, demo mode, prompt inputs, voice
 examples/     Sample target files for nine plays
-vendor/       The pinned SDK archive core and server install from
 ```
 
 **Stack** — Bun 1.3+ · Turborepo with a Bun catalog · Vitest 4 · oxlint + oxfmt · TypeScript 6 (`verbatimModuleSyntax`, `noUncheckedIndexedAccess`, `noImplicitOverride`) · Vite 8 + React 19 + TanStack Router/Query + Base UI + Tailwind 4 · tsdown for the server bundle · `bun:sqlite` · BYO LLM via OpenRouter, OpenAI or Anthropic. Plain `async`/`await` throughout — no monadic abstractions to learn before reading the code.
@@ -253,7 +260,7 @@ bun install
 bun run typecheck                  # tsc --noEmit across cli + server + packages
 bun run lint                       # oxlint
 bun run fmt                        # oxfmt --write   (fmt:check in CI)
-bun run test                       # vitest — current totals in STATUS.md
+bun --bun run test                 # vitest under Bun — current totals in STATUS.md
 bun run cli -- doctor              # smoke check
 ```
 
@@ -265,7 +272,7 @@ bun run --cwd apps/web build       # → apps/web/dist/
 bun run --cwd apps/server build    # → apps/server/dist/bin.mjs + dist/web/
 ```
 
-The suite is 3503 cases across 261 files (STATUS.md carries the current totals). Tests set `ONESHOT_GTM_HOME` to a temp dir, so they never touch your real ledger. CI runs `bun --bun run test` — the flag matters, since `bun:sqlite` doesn't exist under Node. Core and server install the SDK from the archive in `vendor/`; its README has the coordinated release step. STATUS.md's "Last verified" line is generated on `main` — CI runs `bun run status:stamp` and commits the result on every push to `main`; never hand-edit that line in a branch, it will be overwritten on merge.
+The suite is 3503 cases across 261 files (STATUS.md carries the current totals). Tests set `ONESHOT_GTM_HOME` to a temp dir, so they never touch your real ledger. CI runs `bun --bun run test` — the flag matters, since `bun:sqlite` doesn't exist under Node. Core and server install the pinned `@oneshot-agent/sdk` dependency from the package registry. SDK source and private archives do not belong in this repository. STATUS.md's "Last verified" line is generated on `main` — CI runs `bun run status:stamp` and commits the result on every push to `main`; never hand-edit that line in a branch, it will be overwritten on merge.
 
 ### Watching what's happening
 

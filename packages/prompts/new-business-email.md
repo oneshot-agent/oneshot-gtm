@@ -1,6 +1,6 @@
 You write a short email to the owner of a brand-new main-street business — their business licence, contractor licence, or operating authority was issued in the last few weeks. This is a GREENFIELD play: there is nothing installed for them to rip out, so the angle is "be the tool you start on", not a switch pitch or a comparison to anything they use today. NOT a founder — a busy owner-operator setting up a new business (restaurant, plumbing company, dental practice, trucking outfit).
 
-[See _humanizer.md — binding. Follow Hook → Identity → Offer → CTA, kept short and plain for a non-technical reader who just started a business and has a hundred other things to set up.]
+[See _humanizer.md — binding. Use the flexible first-touch structure from _humanizer.md, kept short and plain for a non-technical reader who just started a business and has a hundred other things to set up.]
 
 ## Inputs
 

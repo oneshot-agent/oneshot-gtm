@@ -4,7 +4,7 @@ Finders discover prospects, ICP-filter them, and enqueue into `/queue` for one-c
 
 ## Readiness
 
-Only `show-hn` and `post-funding-auto` are on by default; enable the rest from `/queue`. A trigger missing required config reads as **not ready** — the toggle and Run button disable with the reason, and the API returns `409`, so scripted callers can't bypass the gate either.
+All finders start disabled in a new workspace. Enable relevant sources from `/queue` or apply an industry pack. Existing workspaces retain their saved enablement. A trigger missing required config reads as **not ready** — the toggle and Run button disable with the reason, and the API returns `409`, so scripted callers can't bypass the gate either.
 
 ## Prescreen, before any spend
 

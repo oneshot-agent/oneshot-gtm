@@ -113,24 +113,8 @@ describe("TRIGGERS registry", () => {
   });
 
   it("opt-in triggers are disabled by default", () => {
-    const optIn = [
-      "job-change",
-      "hiring-signal",
-      "podcast-guest",
-      "breakup-revive",
-      "github-topics",
-      "github-stars",
-      "accelerator-batch",
-      "luma-events",
-      "gov-solicitation",
-      "civic-agenda",
-      "local-registry",
-      "gov-solicitation",
-      "civic-agenda",
-    ];
-    for (const name of optIn) {
-      const spec = TRIGGERS.find((t) => t.name === name);
-      expect(spec?.enabledByDefault, `${name} should be opt-in`).toBe(false);
+    for (const spec of TRIGGERS) {
+      expect(spec.enabledByDefault, `${spec.name} should be opt-in`).toBe(false);
     }
   });
 });

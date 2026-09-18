@@ -403,7 +403,8 @@ export interface OneShotConfig {
    * The founder's own register, as a short card (MOVES / SENTENCES / NEVER /
    * EXEMPLARS), written or pasted on /setup or drafted from their writing by
    * `config voice`. Injected into every email draft as a VOICE block that
-   * shapes sentence texture; the humanizer's structure and bans still win.
+   * controls tone and rhythm over generic style defaults; factual, audience,
+   * channel and lint constraints still apply. Shared structure is flexible.
    * Null = no block, drafts unchanged. Capped at 1500 characters in use.
    */
   founderVoice?: string | null;

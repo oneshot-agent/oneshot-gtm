@@ -52,12 +52,12 @@ describe("setTriggerConfigRoute", () => {
     expect(upserts[0]!.enabled).toBe(false);
   });
 
-  it("seeding an on-by-default trigger keeps it enabled", async () => {
+  it("saving a startup source config does not enable it automatically", async () => {
     const res = await setTriggerConfigRoute(req({ config: { sinceDays: 2 } }), {
       name: "show-hn",
     });
     expect(res.status).toBe(200);
-    expect(upserts[0]!.enabled).toBe(true);
+    expect(upserts[0]!.enabled).toBe(false);
   });
 
   it("an existing row gets a config UPDATE that leaves enablement alone", async () => {
