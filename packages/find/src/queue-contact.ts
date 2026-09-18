@@ -28,6 +28,7 @@ export async function resolveQueueContact(
     playName: row.play_name,
     fullName: user.name ?? (typeof payload.name === "string" ? payload.name : null),
     knownEmail: user.email,
+    githubIdentity: user,
     companyDomain: user.blogDomain,
   });
   if (!contact.ok)
@@ -36,6 +37,7 @@ export async function resolveQueueContact(
     );
   return {
     email: contact.email,
+    ...(contact.emailSource ? { emailSource: contact.emailSource } : {}),
     sourceProfileUrl: `https://github.com/${login}`,
     candidateLogin: login,
   };

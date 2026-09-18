@@ -1,11 +1,6 @@
-import {
-  deepResearchPerson,
-  enrichProfile,
-  findEmail,
-  getLedger,
-  logEvent,
-  verifyEmail,
-} from "@oneshot-gtm/core";
+import { safeFindEmail, safeVerifyEmail } from "./_sdk-safe.ts";
+import { fetchProfileReadmeEmail, type EmailSource } from "./_github-readme.ts";
+import { deepResearchPerson, enrichProfile, getLedger, logEvent } from "@oneshot-gtm/core";
 import { dossierFromProviderResult, personPayloadPatch } from "./_person-research.ts";
 import type { CompetitorSwitchTarget, StackConsolidationTarget } from "@oneshot-gtm/plays";
 import { isDuplicate } from "./_dedupe.ts";
@@ -191,46 +186,46 @@ export async function processRepoCandidate(
   const matchedCompetitor = extract.stackDetected.find((v) => directSet.has(v.toLowerCase()));
   const playName = matchedCompetitor ? "competitor-switch" : "stack-consolidation";
 
-  // 3) Resolve a contact (3-tier: extract domain → GitHub user → deepResearch).
+  // 3) Resolve and verify sources in order, with profile README last.
   // Pass the already-fetched ghUserInfo so resolveContact doesn't re-fetch.
-  const contact = await resolveContact({
-    extract,
-    repoUrl: hit.url,
-    ghUser: ghUserInfo,
-    accumCost,
-    useDeepResearch: ctx.useDeepResearch,
-    errKindPrefix,
-    playName,
-  });
-  if (!contact) {
-    result.droppedEnrichment++;
-    return;
-  }
-
-  if (isDuplicate({ playName, dedupeKey: hit.url, prospectEmail: contact.email })) {
-    result.droppedDuplicate++;
-    return;
-  }
-
-  // verifyEmail can throw on transient errors — catch and drop the candidate
-  // rather than letting one bad call tear down the pool.
-  let verified: Awaited<ReturnType<typeof verifyEmail>>;
+  let contact: ResolvedContact | null;
+  const attempted = new Set<string>();
   try {
-    verified = await verifyEmail({ email: contact.email }, { playName });
-  } catch (err) {
-    logEvent(
-      "error.swallowed",
-      {
-        kind: `${errKindPrefix}.verify_email`,
-        message_120: ((err as Error).message ?? "").slice(0, 120),
+    contact = await resolveContact({
+      extract,
+      repoUrl: hit.url,
+      ghUser: ghUserInfo,
+      accumCost,
+      useDeepResearch: ctx.useDeepResearch,
+      errKindPrefix,
+      playName,
+      accept: async (candidate) => {
+        const email = candidate.email.toLowerCase();
+        if (attempted.has(email)) return false;
+        if (isDuplicate({ playName, dedupeKey: hit.url, prospectEmail: email }))
+          throw new ContactStopped("duplicate");
+        attempted.add(email);
+        const verified = await safeVerifyEmail({ email }, { playName });
+        accumCost(verified.result.cost ?? 0);
+        if (candidate.emailSource)
+          logEvent("github.readme.verification", {
+            login: ghUserInfo?.login,
+            ok: verified.result.deliverable === true,
+            costUsd: verified.result.cost ?? 0,
+          });
+        if (verified.result.status === "error") throw new ContactStopped("platform-error");
+        return verified.result.deliverable === true;
       },
-      "warn",
-    );
-    result.droppedEnrichment++;
+    });
+  } catch (error) {
+    if (error instanceof ContactStopped && error.reason === "duplicate") result.droppedDuplicate++;
+    else {
+      logEvent("github.contact.deferred", { reason: "platform-error", playName }, "warn");
+      result.droppedEnrichment++;
+    }
     return;
   }
-  accumCost(verified.result.cost ?? 0);
-  if (!verified.result.deliverable) {
+  if (!contact) {
     result.droppedEnrichment++;
     return;
   }
@@ -274,7 +269,12 @@ export async function processRepoCandidate(
       // must audit under competitor-switch, or the override row lies.
       playName,
       dedupeKey: hit.url,
-      payload: { repoUrl: hit.url, title: hit.title },
+      payload: {
+        repoUrl: hit.url,
+        title: hit.title,
+        email: contact.email,
+        ...(contact.emailSource ? { emailSource: contact.emailSource } : {}),
+      },
       source: ctx.sourceTag,
       reason: gate.reason,
       dryRun: ctx.dryRun,
@@ -361,7 +361,7 @@ export async function processRepoCandidate(
   );
   const id = enqueueScoredTarget(ledger, {
     playName,
-    payload: target,
+    payload: { ...target, ...(contact.emailSource ? { emailSource: contact.emailSource } : {}) },
     dedupeKey: hit.url,
     source: ctx.sourceTag,
     fitReason: snippetFilter.reason,
@@ -387,7 +387,15 @@ function profileTitle(profile: unknown): string | null {
   return null;
 }
 
+class ContactStopped extends Error {
+  constructor(readonly reason: "duplicate" | "platform-error") {
+    super(reason);
+    this.name = "ContactStopped";
+  }
+}
+
 interface ResolvedContact {
+  emailSource?: EmailSource;
   email: string;
   /** From findEmail; null when GitHub gave us the email directly. */
   fullName: string | null;
@@ -412,8 +420,7 @@ interface ResolvedContact {
 
 /**
  * Resolve a deliverable contact for a repo candidate, cheapest path first:
- * extract domain → findEmail; GitHub user email direct; then (opt-in)
- * deepResearchPerson. `ghUser` is passed pre-fetched to avoid a duplicate
+ * GitHub user email, domain lookup, optional enrichment/research, then profile README. `ghUser` is passed pre-fetched to avoid a duplicate
  * lookup; null if the candidate isn't a GitHub repo.
  */
 export async function resolveContact(args: {
@@ -427,8 +434,11 @@ export async function resolveContact(args: {
   errKindPrefix?: string;
   /** Resolved motion play, used to tag the receipts this resolution spends on. */
   playName?: string;
+  /** Called before accepting a source; false continues to the next source. */
+  accept?: (contact: ResolvedContact) => Promise<boolean>;
 }): Promise<ResolvedContact | null> {
   const { extract, repoUrl, ghUser, accumCost, useDeepResearch } = args;
+  const accept = args.accept ?? (async () => true);
   const errKindPrefix = args.errKindPrefix ?? "repo-pipeline";
   const playName = args.playName ?? PLAY_NAME;
   const extractDomain = extract.companyDomain ?? extract.personalDomain ?? null;
@@ -454,11 +464,24 @@ export async function resolveContact(args: {
     });
   }
 
-  // Path A: extract has a domain. Try findEmail with it.
+  // Public profile email precedes paid discovery.
+  if (ghUser?.email) {
+    const candidate: ResolvedContact = {
+      title: null,
+      summary: null,
+      enrichedByLinkedin: didEnrichByLinkedin,
+      email: ghUser.email,
+      fullName: ghUser.name,
+      domain: ghUser.blogDomain ?? extractDomain,
+      linkedinUrl: discoveredLinkedinUrl,
+      phone: null,
+    };
+    if (await accept(candidate)) return candidate;
+  }
   if (extractDomain) {
     const direct = await tryFindEmail(extractDomain, extract, accumCost, errKindPrefix, playName);
-    if (direct)
-      return {
+    if (direct) {
+      const candidate: ResolvedContact = {
         title: null,
         summary: null,
         enrichedByLinkedin: didEnrichByLinkedin,
@@ -467,21 +490,8 @@ export async function resolveContact(args: {
         linkedinUrl: discoveredLinkedinUrl,
         phone: null,
       };
-    // Fall through.
-  }
-
-  // Path B: GitHub user provides an email directly.
-  if (ghUser?.email) {
-    return {
-      title: null,
-      summary: null,
-      enrichedByLinkedin: didEnrichByLinkedin,
-      email: ghUser.email,
-      fullName: null,
-      domain: ghUser.blogDomain ?? extractDomain,
-      linkedinUrl: discoveredLinkedinUrl,
-      phone: null,
-    };
+      if (await accept(candidate)) return candidate;
+    }
   }
 
   // Path B': enrichProfile off the LinkedIn URL, to recover company /
@@ -496,6 +506,7 @@ export async function resolveContact(args: {
       const enriched = await enrichProfile({ linkedinUrl }, { playName });
       didEnrichByLinkedin = true;
       accumCost(enriched.result.cost ?? 0);
+      if (enriched.result.status === "error") throw new ContactStopped("platform-error");
       const profile = enriched.result.profile;
       // Captured once and reused on every return path.
       const enrichedPhone = extractFirstPhone(profile);
@@ -515,7 +526,7 @@ export async function resolveContact(args: {
       }
       // 1) enrichProfile gave us a direct email — use it.
       if (profile?.email) {
-        return {
+        const candidate: ResolvedContact = {
           title: profileTitle(profile),
           summary: null,
           enrichedByLinkedin: didEnrichByLinkedin,
@@ -525,6 +536,7 @@ export async function resolveContact(args: {
           linkedinUrl: discoveredLinkedinUrl,
           phone: enrichedPhone,
         };
+        if (await accept(candidate)) return candidate;
       }
       // 2) Got a company_domain — try findEmail with it.
       if (profile?.company_domain) {
@@ -535,8 +547,8 @@ export async function resolveContact(args: {
           errKindPrefix,
           playName,
         );
-        if (viaEnriched)
-          return {
+        if (viaEnriched) {
+          const candidate: ResolvedContact = {
             title: profileTitle(profile),
             summary: null,
             enrichedByLinkedin: didEnrichByLinkedin,
@@ -545,11 +557,14 @@ export async function resolveContact(args: {
             linkedinUrl: discoveredLinkedinUrl,
             phone: enrichedPhone,
           };
+          if (await accept(candidate)) return candidate;
+        }
         domainForGate = profile.company_domain;
       }
       // 3) At minimum we may have learned a company name — feeds Path C's gate.
       if (profile?.company) companyForGate = profile.company;
     } catch (err) {
+      if (err instanceof ContactStopped) throw err;
       logEvent(
         "error.swallowed",
         {
@@ -558,65 +573,96 @@ export async function resolveContact(args: {
         },
         "warn",
       );
+      throw new ContactStopped("platform-error");
     }
   }
 
-  // Path C: deep research as the last resort. The API needs strong
-  // identifiers — a repo URL alone is empirically not enough, so require a
-  // known email OR full name AND company; the repoUrl still rides along as
-  // `socialMediaUrl` for bonus signal.
-  if (!useDeepResearch) return null;
-  const hasName = Boolean(extract.authorFullName && extract.authorFullName.length > 0);
-  const hasCompany = Boolean(companyForGate && companyForGate.length > 0);
-  // Never true here by definition (earlier paths short-circuit on a found
-  // contact); kept as a placeholder for a future tentative-email source.
-  const hasEmail = false;
-  if (!hasEmail && !(hasName && hasCompany)) return null;
-  try {
-    const dr = await deepResearchPerson(
-      {
-        // The owner's profile, not the repo: that is the URL the person-research
-        // cache is keyed on, so a later backfill is a hit instead of a re-buy.
-        socialMediaUrl: ghUser ? `https://github.com/${ghUser.login}` : repoUrl,
-        ...(hasName ? { name: extract.authorFullName as string } : {}),
-        ...(hasCompany ? { company: companyForGate as string } : {}),
-      },
-      { playName },
-    );
-    accumCost(dr.result.cost ?? 0);
-    const enr = dr.result.result?.enrichment;
-    const drEmail = enr?.best_work_email ?? enr?.best_personal_email ?? enr?.altemails?.[0] ?? null;
-    if (!drEmail) return null;
-    const drFullName =
-      [enr?.firstname, enr?.lastname]
-        .filter((p): p is string => Boolean(p))
-        .join(" ")
-        .trim() ||
-      enr?.displayname ||
-      null;
-    const drPhone = extractFirstPhone(enr);
-    return {
-      title: null,
-      summary: null,
-      enrichedByLinkedin: didEnrichByLinkedin,
-      research: dr.result,
-      email: drEmail,
-      fullName: drFullName,
-      domain: domainForGate ?? ghUser?.blogDomain ?? drEmail.split("@")[1] ?? null,
-      linkedinUrl: discoveredLinkedinUrl,
-      phone: drPhone,
-    };
-  } catch (err) {
-    logEvent(
-      "error.swallowed",
-      {
-        kind: `${errKindPrefix}.deep_research`,
-        message_120: ((err as Error).message ?? "").slice(0, 120),
-      },
-      "warn",
-    );
-    return null;
+  async function researchContact(): Promise<ResolvedContact | null> {
+    // Last existing paid stage, ahead of the README. The API needs strong
+    // identifiers — a repo URL alone is empirically not enough, so require a
+    // known email OR full name AND company; the repoUrl still rides along as
+    // `socialMediaUrl` for bonus signal.
+    if (!useDeepResearch) return null;
+    const hasName = Boolean(extract.authorFullName && extract.authorFullName.length > 0);
+    const hasCompany = Boolean(companyForGate && companyForGate.length > 0);
+    // Never true here by definition (earlier paths short-circuit on a found
+    // contact); kept as a placeholder for a future tentative-email source.
+    const hasEmail = false;
+    if (!hasEmail && !(hasName && hasCompany)) return null;
+    try {
+      const dr = await deepResearchPerson(
+        {
+          // The owner's profile, not the repo: that is the URL the person-research
+          // cache is keyed on, so a later backfill is a hit instead of a re-buy.
+          socialMediaUrl: ghUser ? `https://github.com/${ghUser.login}` : repoUrl,
+          ...(hasName ? { name: extract.authorFullName as string } : {}),
+          ...(hasCompany ? { company: companyForGate as string } : {}),
+        },
+        { playName },
+      );
+      accumCost(dr.result.cost ?? 0);
+      if (dr.result.status === "error") throw new ContactStopped("platform-error");
+      const enr = dr.result.result?.enrichment;
+      const drEmail =
+        enr?.best_work_email ?? enr?.best_personal_email ?? enr?.altemails?.[0] ?? null;
+      if (!drEmail) return null;
+      const drFullName =
+        [enr?.firstname, enr?.lastname]
+          .filter((p): p is string => Boolean(p))
+          .join(" ")
+          .trim() ||
+        enr?.displayname ||
+        null;
+      const drPhone = extractFirstPhone(enr);
+      return {
+        title: null,
+        summary: null,
+        enrichedByLinkedin: didEnrichByLinkedin,
+        research: dr.result,
+        email: drEmail,
+        fullName: drFullName,
+        domain: domainForGate ?? ghUser?.blogDomain ?? drEmail.split("@")[1] ?? null,
+        linkedinUrl: discoveredLinkedinUrl,
+        phone: drPhone,
+      };
+    } catch (err) {
+      if (err instanceof ContactStopped) throw err;
+      logEvent(
+        "error.swallowed",
+        {
+          kind: `${errKindPrefix}.deep_research`,
+          message_120: ((err as Error).message ?? "").slice(0, 120),
+        },
+        "warn",
+      );
+      throw new ContactStopped("platform-error");
+    }
   }
+  const researched = await researchContact();
+  if (researched && (await accept(researched))) return researched;
+
+  // README is last, including when optional research is disabled or ineligible.
+  if (!ghUser) return null;
+  const readme = await fetchProfileReadmeEmail(ghUser);
+  if (readme.status === "unavailable") throw new ContactStopped("platform-error");
+  if (readme.status !== "found") return null;
+  const candidate: ResolvedContact = {
+    email: readme.email,
+    fullName: ghUser.name,
+    domain: ghUser.blogDomain,
+    linkedinUrl: discoveredLinkedinUrl,
+    phone: null,
+    title: null,
+    summary: null,
+    enrichedByLinkedin: didEnrichByLinkedin,
+    emailSource: {
+      kind: "github-profile-readme",
+      url: readme.url,
+      resolvedAt: new Date().toISOString(),
+    },
+  };
+  const accepted = await accept(candidate);
+  return accepted ? candidate : null;
 }
 
 /**
@@ -647,25 +693,12 @@ async function tryFindEmail(
     );
     return null;
   }
-  let found: Awaited<ReturnType<typeof findEmail>>;
-  try {
-    found = await findEmail(
-      { fullName: extract.authorFullName, companyDomain: domain },
-      { playName },
-    );
-  } catch (err) {
-    logEvent(
-      "error.swallowed",
-      {
-        kind: `${errKindPrefix}.find_email`,
-        domain,
-        message_120: ((err as Error).message ?? "").slice(0, 120),
-      },
-      "warn",
-    );
-    return null;
-  }
+  const found = await safeFindEmail(
+    { fullName: extract.authorFullName, companyDomain: domain },
+    { playName },
+  );
   accumCost(found.result.cost ?? 0);
+  if (found.result.status === "error") throw new ContactStopped("platform-error");
   if (found.result.found && found.result.email) {
     return { email: found.result.email, fullName: found.result.full_name ?? null };
   }

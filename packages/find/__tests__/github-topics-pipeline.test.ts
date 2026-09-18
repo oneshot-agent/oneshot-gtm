@@ -102,6 +102,7 @@ vi.mock("@oneshot-gtm/core", async () => {
       receiptId: 0,
     }),
     getLedger: () => ({
+      findContactReceipt: () => null,
       isQueueDuplicate: () => false,
       isEmailPendingInQueue: () => false,
       enqueueTarget: (row: Record<string, unknown>) => {

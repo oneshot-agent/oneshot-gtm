@@ -25,6 +25,7 @@ it("recovers a historical rejection from its exact GitHub dedupe identity", asyn
     playName: "repo-interest",
     fullName: "A Founder",
     knownEmail: null,
+    githubIdentity: { name: "A Founder", email: null, blogDomain: "business.example" },
     companyDomain: "business.example",
   });
   expect(JSON.parse(row.payload_json)).not.toHaveProperty("email");
