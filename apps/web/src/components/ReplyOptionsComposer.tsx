@@ -12,6 +12,7 @@ import { api } from "../api/client.ts";
 import { IS_DEMO } from "../api/demo.ts";
 import { Button } from "./primitives/Button.tsx";
 import { Textarea } from "./primitives/Field.tsx";
+import { adoptReplyImprovement } from "../lib/replyLearning.ts";
 import { readOnly } from "../lib/readOnly.ts";
 
 function initialDraft(t: ReplyThread): ReplyDraftSet {
@@ -33,7 +34,7 @@ function initialDraft(t: ReplyThread): ReplyDraftSet {
   );
 }
 const fingerprint = (d: ReplyDraftSet) =>
-  JSON.stringify([d.id, d.edits, d.selected, d.steer, d.contextVersion]);
+  JSON.stringify([d.id, d.edits, d.selected, d.steer, d.contextVersion, d.improvementIds]);
 
 export function ReplyOptionsComposer({ thread: t }: { thread: ReplyThread }) {
   const queryClient = useQueryClient();
@@ -53,7 +54,11 @@ export function ReplyOptionsComposer({ thread: t }: { thread: ReplyThread }) {
     warm: "",
   });
   const [improving, setImproving] = useState<ReplyVariant | null>(null);
-  const [improved, setImproved] = useState<{ variant: ReplyVariant; text: string } | null>(null);
+  const [improved, setImproved] = useState<{
+    variant: ReplyVariant;
+    text: string;
+    improvementId?: string;
+  } | null>(null);
   const [outcome, setOutcome] = useState(false);
   const sendId = useRef<string | null>(null);
   useEffect(() => {
@@ -213,13 +218,11 @@ export function ReplyOptionsComposer({ thread: t }: { thread: ReplyThread }) {
       const result = await api.improveReplyOption(t.key, variant, text, feedback[variant]);
       if (!mounted.current) return;
       if (version !== editVersion.current || latest.current.edits[variant] !== text)
-        setImproved({ variant, text: result.text });
-      else
-        update({
-          ...latest.current,
-          selected: variant,
-          edits: { ...latest.current.edits, [variant]: result.text },
-        });
+        setImproved({ variant, text: result.text, improvementId: result.improvementId });
+      else {
+        update(adoptReplyImprovement(latest.current, variant, result.text, result.improvementId));
+        await flush();
+      }
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -331,6 +334,7 @@ export function ReplyOptionsComposer({ thread: t }: { thread: ReplyThread }) {
                     ...latest.current,
                     selected: v,
                     edits: { ...latest.current.edits, [v]: latest.current.originals[v] },
+                    improvementIds: { ...latest.current.improvementIds, [v]: [] },
                   })
                 }
                 {...readOnly}
@@ -383,11 +387,15 @@ export function ReplyOptionsComposer({ thread: t }: { thread: ReplyThread }) {
             size="sm"
             disabled={busy}
             onClick={() => {
-              update({
-                ...latest.current,
-                selected: improved.variant,
-                edits: { ...latest.current.edits, [improved.variant]: improved.text },
-              });
+              update(
+                adoptReplyImprovement(
+                  latest.current,
+                  improved.variant,
+                  improved.text,
+                  improved.improvementId,
+                ),
+              );
+              void flush().catch(() => {});
               setImproved(null);
             }}
           >

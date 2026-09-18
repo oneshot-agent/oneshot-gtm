@@ -6,6 +6,7 @@ export interface ImproveInput {
 }
 export const IMPROVE_INSTRUCTIONS = `Edit the user's current reply for the supplied channel, treating their changes as intentional.
 Follow the user's editingFeedback to steer this revision. Their explicit directions about tone, length, emphasis, structure, or questions take priority over the default editing style below. If feedback is empty, use the defaults.
+Apply relevant conversationContext.learnedPreferences as writing guidance only. Explicit editingFeedback, conversationContext.steer, and configured founderVoice override learned preferences. Product-grounding constraints always apply.
 Improve clarity, sentence structure, flow, spelling, grammar, and punctuation. Tighten repetition and filler.
 Expand an incomplete thought only enough to make its existing meaning clear; do not pad the message.
 Preserve the user's meaning unless their feedback requests a change in emphasis or intent. Preserve factual claims, technical specifics, names, numbers, links, questions, commitments, and intended next step.

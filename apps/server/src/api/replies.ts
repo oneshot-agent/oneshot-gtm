@@ -176,6 +176,10 @@ export function replyOptionsContext(t: ReplyThread, steer = ""): ReplyOptionsCon
     primaryBrief: cfg.productBrief ?? "",
     secondaryProducts: [],
     founderVoice: cfg.founderVoice ?? "",
+    learnedPreferences:
+      t.channel === "linkedin" && t.workspace
+        ? getReplyReviewStore().learning.guidance(t.workspace).instructions
+        : [],
     steer,
     prospect: {
       name: p?.name ?? t.name,
@@ -272,7 +276,12 @@ export async function replyGenerateRoute(req: Request) {
     lease = getReplyReviewStore().claim(key);
     if (!lease) throw new Error("Reply generation is already pending");
     const steer = typeof b.steer === "string" ? b.steer.slice(0, 4000) : (t.drafts?.steer ?? "");
-    const generated = await generateReplyOptions(replyOptionsContext(t, steer));
+    const context = replyOptionsContext(t, steer);
+    const learningVersion =
+      t.channel === "linkedin" && t.workspace
+        ? getReplyReviewStore().learning.guidance(t.workspace).version
+        : undefined;
+    const generated = await generateReplyOptions(context);
     const next: ReplyDraftSet = {
       ...emptyReplyDraft(t),
       id: randomUUID(),
@@ -285,7 +294,9 @@ export async function replyGenerateRoute(req: Request) {
       setFlags: generated.flags.set,
       steer,
       generated: true,
+      learningVersion,
     };
+    getReplyReviewStore().learning.recordGeneration(t, next, context);
     // The browser explicitly accepts a replacement; a generation never mutates existing edits.
     return jsonResponse(next, 200, req);
   } catch (e) {
@@ -309,13 +320,21 @@ export async function replyImproveRoute(req: Request) {
     )
       throw new Error("A reply and valid option are required");
     const variant = b.variant as (typeof REPLY_VARIANTS)[number];
+    const feedback = String(b.feedback ?? "").slice(0, 4000);
     const text = await improveReplyOption(
       replyOptionsContext(t, t.drafts?.steer),
       b.text,
       t.drafts?.originals[variant] ?? "",
-      String(b.feedback ?? "").slice(0, 4000),
+      feedback,
     );
-    return jsonResponse({ text }, 200, req);
+    const improvementId = getReplyReviewStore().learning.recordImprovement(
+      t,
+      variant,
+      b.text,
+      text,
+      feedback,
+    );
+    return jsonResponse({ text, improvementId }, 200, req);
   } catch (e) {
     return failure(req, e);
   }
@@ -544,4 +563,37 @@ export async function replyProspectsRoute(req: Request) {
     }
   }
   return jsonResponse({ prospects }, 200, req);
+}
+
+export async function replyLearningRoute(req: Request) {
+  try {
+    if (demoMode())
+      return jsonResponse(
+        {
+          enabled: false,
+          version: 0,
+          pending: false,
+          imported: false,
+          lastRefreshedAt: null,
+          error: null,
+          preferences: [],
+        },
+        200,
+        req,
+      );
+    const learning = getReplyReviewStore().learning;
+    const workspace = currentWorkspaceName();
+    if (req.method === "POST") {
+      const b = await payload(req);
+      if (
+        typeof b.enabled !== "boolean" ||
+        (b.preferenceId !== undefined && (typeof b.preferenceId !== "string" || !b.preferenceId))
+      )
+        throw new Error("A learning setting is required");
+      learning.setEnabled(workspace, b.enabled, b.preferenceId as string | undefined);
+    }
+    return jsonResponse(learning.status(workspace), 200, req);
+  } catch (e) {
+    return failure(req, e);
+  }
 }
