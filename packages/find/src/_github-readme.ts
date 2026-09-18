@@ -24,14 +24,14 @@ export function _resetReadmeCache(): void {
 /** Deliberately conservative: explicit self-contact only, never inferred addresses. */
 export function extractReadmeEmail(markdown: string): ReadmeResult {
   const clean = markdown
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/<(pre|code)\b[^>]*>[\s\S]*?<\/\1>/gi, "")
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, "")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<(pre|code)\b[^>]*>[\s\S]*?<\/\1>/gi, " ")
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, " ")
     .replace(/\[([^\]]*)\]\((?!mailto:)[^)]*\)/gi, "$1")
     .replace(/<a\b([^>]*)>[\s\S]*?<\/a>/gi, (link, attrs: string) =>
-      /href\s*=\s*["']mailto:/i.test(attrs) ? link : "",
+      /href\s*=\s*["']mailto:/i.test(attrs) ? link : " ",
     )
-    .replace(/https?:\/\/[^\s<>")]+/gi, "");
+    .replace(/https?:\/\/[^\s<>")]+/gi, " ");
   const emails = new Set<string>();
   let excludedDepth: number | null = null;
   let fence: string | null = null;
