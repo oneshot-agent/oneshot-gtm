@@ -414,6 +414,7 @@ export const api = {
       ...(businessAddress ? { businessAddress } : {}),
     }),
   queue: (opts?: {
+    forRun?: boolean;
     play?: string;
     status?: QueueStatusView;
     limit?: number;
@@ -423,6 +424,7 @@ export const api = {
     ids?: number[];
   }) => {
     const q = new URLSearchParams();
+    if (opts?.forRun) q.set("forRun", "1");
     if (opts?.play) q.set("play", opts.play);
     if (opts?.status) q.set("status", opts.status);
     if (opts?.limit != null) q.set("limit", String(opts.limit));
@@ -447,6 +449,8 @@ export const api = {
         )
       : getJson<ProspectSearchResponse>(`/queue/search?${toApiQuery(search)}`),
   queueRowDetail: (id: number) => getJson<QueueRowDetail>(`/queue/${id}`),
+  resolveQueueContact: (id: number) =>
+    postJson<{ ok: boolean; payload: Record<string, unknown> }>(`/queue/${id}/resolve-contact`, {}),
   approveQueue: (id: number) => postJson<{ ok: boolean }>(`/queue/${id}/approve`, {}),
   // `reason` undefined → the row's note is left alone; a string — including
   // "" — is written, so a founder can clear a prefilled reason.

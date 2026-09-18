@@ -374,8 +374,18 @@ export function listQueueRoute(req: Request): Response {
   const counts: QueueCounts = ledger.queueCounts();
   // Unfiltered on purpose — the drain button needs per-play approved counts
   // regardless of the page's current filter.
+  let views: QueueRowView[];
+  try {
+    views = ordered.map((row) =>
+      url.searchParams.get("forRun") === "1"
+        ? { ...toView(row), payload: resolveQueueTarget(row) }
+        : toView(row),
+    );
+  } catch (error) {
+    return jsonResponse({ error: (error as Error).message }, 400, req);
+  }
   const body: QueueListResponse = {
-    rows: ordered.map(toView),
+    rows: views,
     counts,
     approvedByPlay: ledger.approvedCountsByPlay(),
     order: ranked ? "ranked" : "newest",
