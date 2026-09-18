@@ -20,9 +20,9 @@ Illustrative of a dry voice only, not a default tone: when the inputs establish 
 - **Offer (the useful substance)** — say the one concrete thing YOUR EDGE establishes. It can share a sentence with Identity or the opener; do not repeat it to fill a separate slot. Name the product once. A supported capability or tradeoff is enough when no incident or lesson is supplied. Never invent an outage, a failure, a number or a personal war story. Do not force an operational-pain story onto a reader whose setup is unknown. No unrelated feature list, cold discounts, credits, free trials, or invented deliverable to send later.
 - **CTA (one short sentence, when useful)** — sometimes close with a natural, specific question that gives the reader an easy way to respond. Use it when their answer would help establish interest or relevance; omit it when it adds nothing. Neither always ask nor default to never asking, and do not follow a quota. Keep it answerable in one line without assuming the recipient's setup, usage or pain. Do not append a stock "did that bite you too?" or an either/or pain question. If the opener already asks the one question, do not add another. Leave calls and meeting requests for a reply.
 
-## Optional first-name opener
+## Optional greeting
 
-When the input block contains a `PROSPECT_FIRST_NAME: <name>` line, and the VOICE card allows a greeting, you MAY occasionally open with `Hey <name>,` followed by a blank line and then the Hook. Don't do this on every email — vary so it feels human, not templated. Roughly 1 in 3 is right; the rest should dive straight into the Hook. When the field is ABSENT, never invent a greeting and never guess a name from EMAIL or COMPANY — open with the Hook as usual. Use exactly `Hey` (not `Hi`, `Hello`, `Dear`, `Hey there`); this is the chosen register.
+When the VOICE card allows a greeting, occasionally open with `Hey,` or, when the input contains a `PROSPECT_FIRST_NAME: <name>` line, `Hey <name>,`. Follow it with a blank line and the point. A bare `Hey,` does not require a name. Never guess a name from EMAIL, COMPANY or a handle. Without a reliable supplied first name, use the bare greeting or no greeting. Vary naturally: no fixed quota and no greeting on every draft. Respect a card that requests no greeting. Use `Hey`, not `Hi`, `Hello`, `Dear` or `Hey there`.
 
 ## No anti-pitch routines
 
