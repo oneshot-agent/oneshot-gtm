@@ -47,7 +47,7 @@ Most GTM tools assume you have product-market fit and optimize sends. Most pre-P
 
 ## Start with your business
 
-Use the dashboard without writing code. Describe what you sell (a product or service), who buys it, and one useful observation you can share. Choose sources and plays for those buyers. Industry packs cover restaurants, trades, healthcare practices, auto services, professional services, trucking, government and developer tools; they are editable starting points, not eligibility requirements.
+Use the dashboard without writing code. Describe what you sell (a product or service), who buys it, and one useful observation you can share. Choose sources and plays for those buyers. Industry packs cover restaurants, trades, healthcare practices, auto services, professional services, trucking, government, developer tools and vertical AI startups; they are editable starting points, not eligibility requirements.
 
 [Start your first workspace](./docs/getting-started.md) walks through setup, choosing a motion and reviewing the first draft. [Workspaces](./docs/workspaces.md) explains multiple businesses. [Repository boundaries](./docs/repository-boundaries.md) explains what stays private: SDK internals, credentials, prospect data and your operating workspace.
 

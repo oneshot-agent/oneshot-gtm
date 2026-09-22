@@ -25,6 +25,13 @@
  * `trucking-freight` and `civic-gov` were not part of the spike — those
  * follow the card's original reasoning unchanged.
  *
+ * `vertical-ai-startups` is the exception to that shape: its buyers are
+ * software companies, so none of the local/registry channels reach them and
+ * it wires the company-level sources instead (`accelerator-batch`,
+ * `post-funding-auto`, `hiring-signal`, `github-topics`). It is also the only
+ * pack whose triggers gate on two founder-voice keys, `yourEdge` AND
+ * `yourClaim`.
+ *
  * Every pack's `requires` lists only founder-voice keys (`yourEdge`) and
  * deliberately omits them from every trigger patch — those words describe
  * the founder's OWN product, and a pack that guessed at them would produce
@@ -33,6 +40,8 @@
  * the founder fills `yourEdge` in (via the strategist's `apply-config` or
  * `/queue`'s trigger card) — the intended end state, not a bug.
  */
+
+import { DEFAULT_COHORTS } from "./registry.ts";
 
 export interface IndustryPack {
   /** Stable slug, e.g. "restaurants-food-service". Used in the API path and the ACTION marker. */
@@ -90,7 +99,7 @@ export const PACKS: IndustryPack[] = [
     label: "Restaurants & Food Service",
     summary: "Owners and GMs at independent restaurants, franchisees, and ghost kitchens.",
     buyerBrief:
-      "Owner / GM / franchisee at independent restaurants, multi-unit franchisees, and ghost kitchens. The coverage spike (#456) measured `peopleSearch` at 80% best_work_email hit rate for independent restaurants in Austin, TX — the BEST of the three verticals tested, the opposite of the working hypothesis that single-location restaurants would be the weakest B2B-database population. `local-business` is the only channel here. The `local-registry` block that used to sit beside it pointed at NYC's DCWP licence dataset (w7w3-xahh), which carries no restaurant category at all — measured 2026-09-07 with a Socrata group-by, the only food-adjacent value is 'Third Party Food Delivery Service' — so it could never enqueue anything; restaurant permits are a health-department dataset, not a consumer-affairs licence, and no open feed of them with a contactable business record is wired yet.",
+      "Owner / GM / franchisee at independent restaurants, multi-unit franchisees, and ghost kitchens. The coverage spike (#456) measured `peopleSearch` at 80% best_work_email hit rate for independent restaurants in Austin, TX — the BEST of the three verticals tested, the opposite of the working hypothesis that single-location restaurants would be the weakest B2B-database population. `local-business` is the only channel here. The `local-registry` block that used to sit beside it pointed at NYC's DCWP licence dataset (w7w3-xahh), which carries no restaurant category at all — measured 2026-09-07 with a Socrata group-by, the only food-adjacent value is 'Third Party Food Delivery Service' — so it could never enqueue anything; restaurant permits are a health-department dataset, not a consumer-affairs licence, and no open feed of them with a contactable business record is wired yet. `local-business` runs on the SDK's places index (`engine: local`) like every other main-street pack: the 2026-09-07 measurement that moved the others found the B2B people database returning zero matches for main-street titles × industries, superseding the spike's 80%; this pack was missed in that pass (#685).",
     icpOneLiner: "Owners and GMs of independent restaurants, franchisees, and ghost kitchens",
     triggers: {
       "local-business": {
@@ -102,6 +111,7 @@ export const PACKS: IndustryPack[] = [
           "Quick Service Restaurants",
           "Catering",
         ],
+        engine: "local",
       },
     },
     requires: ["yourEdge"],
@@ -235,6 +245,65 @@ export const PACKS: IndustryPack[] = [
       },
     },
     requires: ["yourEdge"],
+  },
+  {
+    id: "vertical-ai-startups",
+    label: "Vertical AI Startups",
+    summary:
+      "Founders and engineers at AI startups building agents for one industry — clinics, logistics, trades, finance.",
+    buyerBrief:
+      "Founder / founding engineer / head of AI at a startup building agents for a single industry. The only pack whose buyers are themselves software companies, so none of the local-business or public-registry channels apply; every source here is a company-level signal instead. `accelerator-batch` and `post-funding-auto` are TIMING signals — fresh money, a demo-day clock, and a budget that exists for the first time. `hiring-signal` catches a build-vs-buy decision in flight: a company posting a founding or applied AI engineer role is about to build whatever it has not bought. `github-topics` catches the same decision already half-made — a repo whose manifests import several vendor SDKs is carrying the integration tax the consolidation pitch names. Cohorts are narrowed to the `yc-*` and `ai-grant-*` entries of the registry's default list because those two populations skew AI-native; the generalist incubators in that list dilute the run without raising the hit rate. `vendors` below is a starting vocabulary of the action APIs this population tends to wire up, not a claim about any founder's competitors — edit it to the landscape you actually sell against.",
+    icpOneLiner: "Founders and engineers at AI startups building agents for a single industry",
+    triggers: {
+      // Derived, not pinned: batch names rotate every few months and the
+      // registry's DEFAULT_COHORTS is the one place that tracks them.
+      "accelerator-batch": {
+        cohorts: DEFAULT_COHORTS.filter(
+          (c) => c.cohort.startsWith("yc-") || c.cohort.startsWith("ai-grant-"),
+        ),
+        limit: 40,
+      },
+      "post-funding-auto": {
+        autoRounds: ["Seed", "Series A"],
+        autoIndustry: "vertical AI / AI agents",
+        autoSinceDays: 14,
+      },
+      "hiring-signal": {
+        roles: [
+          "Founding AI Engineer",
+          "Applied AI Engineer",
+          "AI Platform Engineer",
+          "Forward Deployed Engineer",
+          "Head of AI",
+        ],
+      },
+      // Slugs verified against the GitHub search API (topic:<slug> returns
+      // thousands of repos each); `rag` and other retrieval-only topics are
+      // deliberately absent — this pack wants agents that act.
+      "github-topics": {
+        topics: ["ai-agents", "agentic-ai", "ai-automation", "voice-ai", "conversational-ai"],
+        vendors: [
+          "twilio",
+          "sendgrid",
+          "resend",
+          "postmark",
+          "elevenlabs",
+          "deepgram",
+          "browserbase",
+          "apollo",
+          "clearbit",
+          "hunter",
+          "tavily",
+          "exa",
+        ],
+        directCompetitors: [],
+        minStars: 10,
+        minVendors: 2,
+      },
+    },
+    // accelerator-batch and github-topics gate on `yourEdge`; hiring-signal
+    // gates on `yourClaim`. Both stay the founder's own words.
+    requires: ["yourEdge", "yourClaim"],
   },
 ];
 

@@ -18,6 +18,7 @@ const REAL_PACK_IDS = [
   "professional-services-smb",
   "trucking-freight",
   "civic-gov",
+  "vertical-ai-startups",
 ] as const;
 
 describe("PACKS — trigger names stay in sync with the registry", () => {
@@ -33,7 +34,7 @@ describe("PACKS — trigger names stay in sync with the registry", () => {
     }
   });
 
-  it("ships exactly the seven real-vertical packs plus the #458 placeholder", () => {
+  it("ships exactly the eight real-vertical packs plus the #458 placeholder", () => {
     const ids = PACKS.map((p) => p.id).toSorted();
     expect(ids).toEqual([...REAL_PACK_IDS, "devtools-early-adopters"].toSorted());
   });
