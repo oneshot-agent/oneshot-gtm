@@ -71,7 +71,10 @@ describe("sites: which boards a trigger searches", () => {
     expect(hiringManagerFullName("Sacha Greif")).toBe("Sacha Greif");
     expect(hiringManagerFullName("  Ada   Lovelace ")).toBe("Ada Lovelace");
     expect(hiringManagerFullName("Sacha")).toBeNull();
+    expect(hiringManagerFullName("Jean-Luc O'Neil")).toBe("Jean-Luc O'Neil");
     expect(hiringManagerFullName("@sacha")).toBeNull();
+    expect(hiringManagerFullName("Ada @sacha")).toBeNull();
+    expect(hiringManagerFullName("Ada sacha_dev")).toBeNull();
     expect(hiringManagerFullName("")).toBeNull();
     expect(hiringManagerFullName(null)).toBeNull();
   });

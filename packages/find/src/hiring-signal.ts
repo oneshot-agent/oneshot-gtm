@@ -389,11 +389,15 @@ export function isJobBoardUrl(url: string, sites: readonly string[]): boolean {
  * cannot search on; returning null there lets the contact spine look the
  * person up by company domain instead of skipping the row.
  */
+const NAME_TOKEN = /^\p{L}[\p{L}'’.-]*$/u;
 export function hiringManagerFullName(name: string | null | undefined): string | null {
   const trimmed = (name ?? "").replace(/\s+/g, " ").trim();
   if (!trimmed) return null;
-  const parts = trimmed.split(" ").filter((p) => /\p{L}/u.test(p));
-  return parts.length >= 2 ? trimmed : null;
+  // Every token must read as a name: letters (with the usual hyphen,
+  // apostrophe, period) and nothing else — "@sacha" or "sacha_dev" is a
+  // handle, and a handle next to a first name is still not a full name.
+  const parts = trimmed.split(" ");
+  return parts.length >= 2 && parts.every((p) => NAME_TOKEN.test(p)) ? trimmed : null;
 }
 
 const SOCIAL_OR_ATS_HOSTS = new Set([
