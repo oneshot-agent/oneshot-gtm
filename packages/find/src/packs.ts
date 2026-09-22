@@ -99,7 +99,7 @@ export const PACKS: IndustryPack[] = [
     label: "Restaurants & Food Service",
     summary: "Owners and GMs at independent restaurants, franchisees, and ghost kitchens.",
     buyerBrief:
-      "Owner / GM / franchisee at independent restaurants, multi-unit franchisees, and ghost kitchens. The coverage spike (#456) measured `peopleSearch` at 80% best_work_email hit rate for independent restaurants in Austin, TX — the BEST of the three verticals tested, the opposite of the working hypothesis that single-location restaurants would be the weakest B2B-database population. `local-business` is the only channel here. The `local-registry` block that used to sit beside it pointed at NYC's DCWP licence dataset (w7w3-xahh), which carries no restaurant category at all — measured 2026-09-07 with a Socrata group-by, the only food-adjacent value is 'Third Party Food Delivery Service' — so it could never enqueue anything; restaurant permits are a health-department dataset, not a consumer-affairs licence, and no open feed of them with a contactable business record is wired yet.",
+      "Owner / GM / franchisee at independent restaurants, multi-unit franchisees, and ghost kitchens. The coverage spike (#456) measured `peopleSearch` at 80% best_work_email hit rate for independent restaurants in Austin, TX — the BEST of the three verticals tested, the opposite of the working hypothesis that single-location restaurants would be the weakest B2B-database population. `local-business` is the only channel here. The `local-registry` block that used to sit beside it pointed at NYC's DCWP licence dataset (w7w3-xahh), which carries no restaurant category at all — measured 2026-09-07 with a Socrata group-by, the only food-adjacent value is 'Third Party Food Delivery Service' — so it could never enqueue anything; restaurant permits are a health-department dataset, not a consumer-affairs licence, and no open feed of them with a contactable business record is wired yet. `local-business` runs on the SDK's places index (`engine: local`) like every other main-street pack: the 2026-09-07 measurement that moved the others found the B2B people database returning zero matches for main-street titles × industries, superseding the spike's 80%; this pack was missed in that pass (#685).",
     icpOneLiner: "Owners and GMs of independent restaurants, franchisees, and ghost kitchens",
     triggers: {
       "local-business": {
@@ -111,6 +111,7 @@ export const PACKS: IndustryPack[] = [
           "Quick Service Restaurants",
           "Catering",
         ],
+        engine: "local",
       },
     },
     requires: ["yourEdge"],
