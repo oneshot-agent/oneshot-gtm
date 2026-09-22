@@ -12,13 +12,27 @@ import type { FinderResult, HiringSignalExtract, RunOpts } from "./_types.ts";
 const PLAY_NAME = "hiring-signal";
 const SOURCE = "find:hiring-signal";
 
-const ATS_DOMAIN_HINTS = [
-  "boards.greenhouse.io",
-  "jobs.lever.co",
-  "apply.workable.com",
-  "jobs.ashbyhq.com",
-  "ashbyhq.com",
+/**
+ * Job boards the finder searches (`site:` clauses) and accepts hits from.
+ * The four ATS hosts are where funded companies post; Work at a Startup is
+ * YC's own board, where a company that has no GTM yet posts its first
+ * intern or generalist — the stage a pre-PMF tool is for. A trigger's
+ * `sites` picks from these (or adds its own host); default: the four ATS.
+ */
+export const JOB_BOARD_HOSTS = {
+  greenhouse: "boards.greenhouse.io",
+  lever: "jobs.lever.co",
+  workable: "apply.workable.com",
+  ashby: "jobs.ashbyhq.com",
+  workatastartup: "workatastartup.com",
+} as const;
+export const DEFAULT_JOB_SITES: readonly string[] = [
+  JOB_BOARD_HOSTS.greenhouse,
+  JOB_BOARD_HOSTS.lever,
+  JOB_BOARD_HOSTS.workable,
+  JOB_BOARD_HOSTS.ashby,
 ];
+const ATS_DOMAIN_HINTS = [...DEFAULT_JOB_SITES, "ashbyhq.com", JOB_BOARD_HOSTS.workatastartup];
 
 export interface HiringSignalFinderOpts extends RunOpts {
   /** Roles to scan for. Default: ["Staff Engineer","ML Engineer","Solutions Engineer"]. */
@@ -32,6 +46,11 @@ export interface HiringSignalFinderOpts extends RunOpts {
   yourClaim?: string;
   /** Days back to bias the search query. Default 14. */
   sinceDays?: number;
+  /**
+   * Job-board hosts to search and accept, e.g. `["workatastartup.com"]` for
+   * YC's board only. Default: the four ATS hosts (`DEFAULT_JOB_SITES`).
+   */
+  sites?: string[];
 }
 
 const DEFAULT_ROLES = ["Staff Engineer", "ML Engineer", "Solutions Engineer"];
@@ -49,6 +68,7 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
   const ledger = getLedger();
   const system = loadPrompt("hiring-signal-extract");
   const roles = opts.roles && opts.roles.length > 0 ? opts.roles : DEFAULT_ROLES;
+  const sites = normalizeSites(opts.sites);
   // No hardcoded fallback claim — a generic one would assert a product capability
   // the founder may not have. The trigger's readiness gate blocks the scheduled
   // path; this guards the CLI/direct path so an empty claim never ships.
@@ -80,7 +100,7 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
       opts.companies && opts.companies.length > 0
         ? ` (${opts.companies.map((c) => `"${c}"`).join(" OR ")})`
         : "";
-    const query = `"${role}"${companyClause} ${sincePhrase} (site:boards.greenhouse.io OR site:jobs.lever.co OR site:apply.workable.com OR site:jobs.ashbyhq.com)`;
+    const query = `"${role}"${companyClause} ${sincePhrase} (${sites.map((s) => `site:${s}`).join(" OR ")})`;
     try {
       const search = await webSearch(
         { query, maxResults: Math.min(15, limit) },
@@ -88,7 +108,7 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
       );
       result.costUsd += search.result.cost ?? 0;
       for (const hit of search.result.results ?? []) {
-        if (!hit.url || seen.has(hit.url) || !isAtsUrl(hit.url)) continue;
+        if (!hit.url || seen.has(hit.url) || !isJobBoardUrl(hit.url, sites)) continue;
         seen.add(hit.url);
         hits.push({ url: hit.url, title: hit.title, description: hit.description });
       }
@@ -318,6 +338,37 @@ export function isAtsUrl(url: string): boolean {
   }
 }
 
+/**
+ * Lower-cased, de-duplicated hosts with scheme, `www.` and any path stripped;
+ * non-strings dropped (the config route stores whatever JSON it is given);
+ * empty or absent → the default ATS set. Plain string ops, no regex: the
+ * input is founder-typed config, and CodeQL flags a `/\/.*$/` on it.
+ */
+export function normalizeSites(sites: readonly unknown[] | undefined): string[] {
+  const out = new Set<string>();
+  for (const raw of sites ?? []) {
+    if (typeof raw !== "string") continue;
+    let host = raw.trim().toLowerCase();
+    const scheme = host.indexOf("://");
+    if (scheme !== -1) host = host.slice(scheme + 3);
+    if (host.startsWith("www.")) host = host.slice(4);
+    const slash = host.indexOf("/");
+    if (slash !== -1) host = host.slice(0, slash);
+    if (host) out.add(host);
+  }
+  return out.size > 0 ? [...out] : [...DEFAULT_JOB_SITES];
+}
+
+/** A hit counts only when it is on one of the searched boards (or a subdomain of one). */
+export function isJobBoardUrl(url: string, sites: readonly string[]): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase().replace(/^www\./, "");
+    return sites.some((h) => host === h || host.endsWith(`.${h}`));
+  } catch {
+    return false;
+  }
+}
+
 const SOCIAL_OR_ATS_HOSTS = new Set([
   "linkedin.com",
   "twitter.com",
@@ -334,6 +385,7 @@ const SOCIAL_OR_ATS_HOSTS = new Set([
   "medium.com",
   "substack.com",
   ...ATS_DOMAIN_HINTS,
+  "workatastartup.com",
 ]);
 
 /**
