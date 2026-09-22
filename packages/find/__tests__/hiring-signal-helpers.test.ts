@@ -36,10 +36,11 @@ describe("isAtsUrl", () => {
 describe("sites: which boards a trigger searches", () => {
   it("defaults to the four ATS hosts and normalizes what a founder types", () => {
     expect(normalizeSites(undefined)).toEqual([...DEFAULT_JOB_SITES]);
-    expect(normalizeSites([])).toEqual([...DEFAULT_JOB_SITES]);
     expect(
-      normalizeSites([" https://www.WorkAtAStartup.com/jobs ", "workatastartup.com", ""]),
+      normalizeSites([" https://www.WorkAtAStartup.com/jobs ", "workatastartup.com", "", 42, null]),
     ).toEqual(["workatastartup.com"]);
+    // An all-invalid list falls back rather than aborting the run.
+    expect(normalizeSites([7, {}])).toEqual([...DEFAULT_JOB_SITES]);
   });
 
   it("accepts hits only from the searched boards", () => {

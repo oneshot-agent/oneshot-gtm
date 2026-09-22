@@ -338,23 +338,25 @@ export function isAtsUrl(url: string): boolean {
   }
 }
 
-/** Lower-cased, de-duplicated, `www.`-stripped hosts; empty or absent → the default ATS set. */
-export function normalizeSites(sites: readonly string[] | undefined): string[] {
-  const out = [
-    ...new Set(
-      (sites ?? [])
-        .map((s) =>
-          s
-            .trim()
-            .toLowerCase()
-            .replace(/^https?:\/\//, "")
-            .replace(/^www\./, "")
-            .replace(/\/.*$/, ""),
-        )
-        .filter((s) => s.length > 0),
-    ),
-  ];
-  return out.length > 0 ? out : [...DEFAULT_JOB_SITES];
+/**
+ * Lower-cased, de-duplicated hosts with scheme, `www.` and any path stripped;
+ * non-strings dropped (the config route stores whatever JSON it is given);
+ * empty or absent → the default ATS set. Plain string ops, no regex: the
+ * input is founder-typed config, and CodeQL flags a `/\/.*$/` on it.
+ */
+export function normalizeSites(sites: readonly unknown[] | undefined): string[] {
+  const out = new Set<string>();
+  for (const raw of sites ?? []) {
+    if (typeof raw !== "string") continue;
+    let host = raw.trim().toLowerCase();
+    const scheme = host.indexOf("://");
+    if (scheme !== -1) host = host.slice(scheme + 3);
+    if (host.startsWith("www.")) host = host.slice(4);
+    const slash = host.indexOf("/");
+    if (slash !== -1) host = host.slice(0, slash);
+    if (host) out.add(host);
+  }
+  return out.size > 0 ? [...out] : [...DEFAULT_JOB_SITES];
 }
 
 /** A hit counts only when it is on one of the searched boards (or a subdomain of one). */
