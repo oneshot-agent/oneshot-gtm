@@ -578,6 +578,16 @@ describe("pollInboxReplies — standalone background detection (no sends)", () =
 });
 
 describe("pollInboxReplies — watermark", () => {
+  beforeEach(() => {
+    // Keep the dated fixtures inside the initial poll's rolling 30-day window.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-20T17:00:00.000Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("polls from the persisted watermark (with overlap) and advances it on a clean poll", async () => {
     pollState["inbox_replies"] = "2026-08-20T12:00:00.000Z";
     inboxEmails = [
@@ -669,9 +679,12 @@ describe("pollInboxReplies — watermark", () => {
     const first = await pollInboxReplies({ pageSize: 2, maxPages: 1 });
     expect(first.repliesDetected).toBe(0);
     expect(watermarkOf()).toBe(at(16)); // the live window is done; it advances
-    expect(JSON.parse(pollState["inbox_replies_backlog"]!)).toMatchObject({ until: at(15) });
+    expect(JSON.parse(pollState["inbox_replies_backlog"]!)).toEqual({
+      since: "2026-07-21T17:00:00.000Z",
+      until: at(15),
+    });
 
-    // Next poll: the live window is empty past the watermark; the spare page
+    // Next poll rechecks the live overlap (15:00 and 16:00); the spare page
     // budget drains the backlog and finds the reply.
     const second = await pollInboxReplies({ pageSize: 2, maxPages: 2 });
     expect(second.repliesDetected).toBe(1);
