@@ -214,12 +214,10 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
       continue;
     }
 
-    // Email target = the hiring manager when extracted, else fall back to a
-    // best-effort search on the company domain (no name).
-    const managerName =
-      extract.hiringManagerName && extract.hiringManagerName.length > 0
-        ? extract.hiringManagerName
-        : null;
+    // Email target = the hiring manager when the page names one in full,
+    // else whoever the B2B database has at the company domain (a founder,
+    // on a seed-stage board) — the spine's own domain-scoped lookup.
+    const managerName = hiringManagerFullName(extract.hiringManagerName);
     // Stage A: judge the extracted role BEFORE paying for findEmail +
     // verify + enrich — a clearly off-ICP hiringManagerRole must not consume
     // the run's cost budget and crowd out valid candidates behind it.
@@ -248,6 +246,9 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
     const contact = await resolveVerifyEnrichQualify({
       playName: PLAY_NAME,
       fullName: managerName,
+      // No full name on the posting is the norm on a founder-run board, not
+      // a reason to skip: let the spine find a named person at the domain.
+      allowMissingFullName: managerName === null,
       companyDomain: domain,
       isDuplicate: (email) =>
         isDuplicate({ playName: PLAY_NAME, dedupeKey: hit.url, prospectEmail: email }),
@@ -359,14 +360,40 @@ export function normalizeSites(sites: readonly unknown[] | undefined): string[] 
   return out.size > 0 ? [...out] : [...DEFAULT_JOB_SITES];
 }
 
-/** A hit counts only when it is on one of the searched boards (or a subdomain of one). */
+/**
+ * On boards whose search results mix listing, filter and company pages in
+ * with the postings, only a posting counts: the first YC-board run spent a
+ * dozen ICP calls (and their dedupe keys) on `/internships`, `/jobs?role=`
+ * and `/companies/<x>/website`. Hosts not listed here accept any path.
+ */
+const JOB_PATH_RULES: ReadonlyArray<{ host: string; posting: (path: string) => boolean }> = [
+  { host: JOB_BOARD_HOSTS.workatastartup, posting: (p) => /^\/jobs\/\d+\/?$/.test(p) },
+];
+
+/** A hit counts only when it is on one of the searched boards (or a subdomain of one) and is a posting. */
 export function isJobBoardUrl(url: string, sites: readonly string[]): boolean {
   try {
-    const host = new URL(url).hostname.toLowerCase().replace(/^www\./, "");
-    return sites.some((h) => host === h || host.endsWith(`.${h}`));
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase().replace(/^www\./, "");
+    if (!sites.some((h) => host === h || host.endsWith(`.${h}`))) return false;
+    const rule = JOB_PATH_RULES.find((r) => host === r.host || host.endsWith(`.${r.host}`));
+    return rule ? rule.posting(u.pathname) : true;
   } catch {
     return false;
   }
+}
+
+/**
+ * The hiring manager's name only when it is a full one. A board like Work at
+ * a Startup names founders by first name ("Sacha"), which the email step
+ * cannot search on; returning null there lets the contact spine look the
+ * person up by company domain instead of skipping the row.
+ */
+export function hiringManagerFullName(name: string | null | undefined): string | null {
+  const trimmed = (name ?? "").replace(/\s+/g, " ").trim();
+  if (!trimmed) return null;
+  const parts = trimmed.split(" ").filter((p) => /\p{L}/u.test(p));
+  return parts.length >= 2 ? trimmed : null;
 }
 
 const SOCIAL_OR_ATS_HOSTS = new Set([

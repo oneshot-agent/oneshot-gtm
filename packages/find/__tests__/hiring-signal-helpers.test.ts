@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_JOB_SITES,
+  hiringManagerFullName,
   isAtsUrl,
   isJobBoardUrl,
   normalizeSites,
@@ -43,6 +44,20 @@ describe("sites: which boards a trigger searches", () => {
     expect(normalizeSites([7, {}])).toEqual([...DEFAULT_JOB_SITES]);
   });
 
+  it("on the YC board only a posting counts, never a listing, filter or company page", () => {
+    const yc = ["workatastartup.com"];
+    for (const listing of [
+      "https://www.workatastartup.com/internships",
+      "https://www.workatastartup.com/jobs?role=",
+      "https://www.workatastartup.com/jobs/l/",
+      "https://www.workatastartup.com/jobs/dover",
+      "https://www.workatastartup.com/companies/faire/website",
+    ]) {
+      expect(isJobBoardUrl(listing, yc)).toBe(false);
+    }
+    expect(isJobBoardUrl("https://www.workatastartup.com/jobs/77251", yc)).toBe(true);
+  });
+
   it("accepts hits only from the searched boards", () => {
     const yc = ["workatastartup.com"];
     expect(isJobBoardUrl("https://www.workatastartup.com/jobs/106818", yc)).toBe(true);
@@ -50,6 +65,15 @@ describe("sites: which boards a trigger searches", () => {
     expect(isJobBoardUrl("https://boards.greenhouse.io/acme/jobs/1", DEFAULT_JOB_SITES)).toBe(true);
     expect(isJobBoardUrl("https://foo.ashbyhq.com/x", ["ashbyhq.com"])).toBe(true);
     expect(isJobBoardUrl("::::", yc)).toBe(false);
+  });
+
+  it("passes a full hiring-manager name through and drops a first name or handle", () => {
+    expect(hiringManagerFullName("Sacha Greif")).toBe("Sacha Greif");
+    expect(hiringManagerFullName("  Ada   Lovelace ")).toBe("Ada Lovelace");
+    expect(hiringManagerFullName("Sacha")).toBeNull();
+    expect(hiringManagerFullName("@sacha")).toBeNull();
+    expect(hiringManagerFullName("")).toBeNull();
+    expect(hiringManagerFullName(null)).toBeNull();
   });
 
   it("never mistakes the YC board for the company's own domain", () => {
