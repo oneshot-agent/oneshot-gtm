@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  DEFAULT_JOB_SITES,
   isAtsUrl,
+  isJobBoardUrl,
+  normalizeSites,
   parseHiringSignalExtract,
   pickCorporateHost,
   slugFallback,
@@ -23,6 +26,35 @@ describe("isAtsUrl", () => {
   it("rejects non-ATS hosts and garbage", () => {
     expect(isAtsUrl("https://acme.com/careers")).toBe(false);
     expect(isAtsUrl("::::not-a-url::::")).toBe(false);
+  });
+
+  it("knows YC's Work at a Startup board", () => {
+    expect(isAtsUrl("https://www.workatastartup.com/jobs/106818")).toBe(true);
+  });
+});
+
+describe("sites: which boards a trigger searches", () => {
+  it("defaults to the four ATS hosts and normalizes what a founder types", () => {
+    expect(normalizeSites(undefined)).toEqual([...DEFAULT_JOB_SITES]);
+    expect(normalizeSites([])).toEqual([...DEFAULT_JOB_SITES]);
+    expect(
+      normalizeSites([" https://www.WorkAtAStartup.com/jobs ", "workatastartup.com", ""]),
+    ).toEqual(["workatastartup.com"]);
+  });
+
+  it("accepts hits only from the searched boards", () => {
+    const yc = ["workatastartup.com"];
+    expect(isJobBoardUrl("https://www.workatastartup.com/jobs/106818", yc)).toBe(true);
+    expect(isJobBoardUrl("https://boards.greenhouse.io/acme/jobs/1", yc)).toBe(false);
+    expect(isJobBoardUrl("https://boards.greenhouse.io/acme/jobs/1", DEFAULT_JOB_SITES)).toBe(true);
+    expect(isJobBoardUrl("https://foo.ashbyhq.com/x", ["ashbyhq.com"])).toBe(true);
+    expect(isJobBoardUrl("::::", yc)).toBe(false);
+  });
+
+  it("never mistakes the YC board for the company's own domain", () => {
+    expect(
+      pickCorporateHost("https://www.workatastartup.com/companies/intelligence-factory"),
+    ).toBeNull();
   });
 });
 

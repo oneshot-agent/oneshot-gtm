@@ -338,7 +338,7 @@ export const TRIGGERS: TriggerSpec[] = [
       maxCostUsd: 5,
     },
     configBrief:
-      "Scans Greenhouse / Lever / Workable / Ashby ATS pages for open roles that signal the company would buy THIS product. Config: `roles` (job titles whose existence implies a need for the product — e.g. 'Founding ML Engineer' for AI-infra products, 'Head of Compliance' for compliance products), `companies` (optional whitelist), `yourClaim` (REQUIRED. Observations the founder actually made, never a pitch: several `//`-separated angles, each opening with who it fits (e.g. *For a founder selling to clinics —*), then a named failure and what was learned. The tool picks ONE per prospect in code; the email never sees the others; here each angle is the specific piece of the first 90 days in that role it collapses), `sinceDays`, `limit`, `maxCostUsd`. The roles + yourClaim angles need to be tightly coupled to the product.",
+      "Scans job boards for open roles that signal the company would buy THIS product. Config: `sites` (job-board hosts to search; default Greenhouse / Lever / Workable / Ashby — the boards funded companies post on; add `workatastartup.com`, YC's own board, for companies with no GTM yet, i.e. the ones posting a first intern or generalist), `roles` (job titles whose existence implies a need for the product — pick the stage as much as the function: 'GTM Intern' or 'Founder's Associate' says no sales team exists yet, 'Head of Sales' says it already does), `companies` (optional whitelist), `yourClaim` (REQUIRED. Observations the founder actually made, never a pitch: several `//`-separated angles, each opening with who it fits (e.g. *For a founder selling to clinics —*), then a named failure and what was learned. The tool picks ONE per prospect in code; the email never sees the others; here each angle is the specific piece of the first 90 days in that role it collapses), `sinceDays`, `limit`, `maxCostUsd`. The roles + yourClaim angles need to be tightly coupled to the product.",
     readiness: (cfg) => {
       const claim = typeof cfg["yourClaim"] === "string" ? (cfg["yourClaim"] as string).trim() : "";
       return claim.length > 0
@@ -350,6 +350,7 @@ export const TRIGGERS: TriggerSpec[] = [
         dryRun: false,
         ...(Array.isArray(cfg["roles"]) ? { roles: cfg["roles"] as string[] } : {}),
         ...(Array.isArray(cfg["companies"]) ? { companies: cfg["companies"] as string[] } : {}),
+        ...(Array.isArray(cfg["sites"]) ? { sites: cfg["sites"] as string[] } : {}),
         ...(typeof cfg["yourClaim"] === "string" ? { yourClaim: cfg["yourClaim"] as string } : {}),
         sinceDays: (cfg["sinceDays"] as number) ?? 14,
         limit: (cfg["limit"] as number) ?? 25,
