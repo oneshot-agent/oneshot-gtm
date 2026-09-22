@@ -105,7 +105,7 @@ describe("resolveAndVerifyContact — no person on the record (SDK 0.32 needs on
     nextPeople = [{ full_name: "Dana Rivera", title: "Owner" }];
     const res = await resolveAndVerifyContact(domainOnly);
     expect(peopleCalls).toHaveLength(1);
-    expect(peopleCalls[0]).toMatchObject({ companyDomains: ["riverafamilydental.com"], limit: 5 });
+    expect(peopleCalls[0]).toMatchObject({ companyDomains: ["riverafamilydental.com"], limit: 10 });
     expect(findInputs[0]).toMatchObject({
       companyDomain: "riverafamilydental.com",
       fullName: "Dana Rivera",
@@ -180,17 +180,45 @@ describe("pickNamedPerson", () => {
     expect(
       pickNamedPerson([
         { full_name: "No Title" },
-        { full_name: "Has Title", title: "Owner" },
+        { full_name: "Has Title", title: "Engineer" },
         { first_name: "Has", last_name: "Email", best_work_email: "x@y.z" },
       ] as never),
     ).toEqual({ fullName: "Has Email", title: null, bestWorkEmail: "x@y.z" });
     expect(
       pickNamedPerson([
         { full_name: "No Title" },
-        { full_name: "Has Title", title: "Owner" },
+        { full_name: "Has Title", title: "Engineer" },
       ] as never)?.fullName,
     ).toBe("Has Title");
     expect(pickNamedPerson([{ title: "Nameless" }, null] as never)).toBeNull();
+  });
+
+  it("puts a decision owner ahead of an employee who happens to have a work email", async () => {
+    const { pickNamedPerson } = await import("../src/_contact.ts");
+    const results = [
+      { full_name: "Ops Person", title: "Logistics", best_work_email: "ops@y.z" },
+      {
+        full_name: "Talent Person",
+        title: "Senior Talent Acquisition Partner",
+        best_work_email: "t@y.z",
+      },
+      { full_name: "The Founder", title: "Co-founder & CEO" },
+    ] as never;
+    expect(pickNamedPerson(results)?.fullName).toBe("The Founder");
+    // Among decision owners, the one with an email on file still wins.
+    expect(
+      pickNamedPerson([
+        { full_name: "Head Of", title: "Head of Growth" },
+        { full_name: "Chief", title: "CTO", best_work_email: "c@y.z" },
+      ] as never)?.fullName,
+    ).toBe("Chief");
+    // No decision owner named: the old order holds.
+    expect(
+      pickNamedPerson([
+        { full_name: "Has Title", title: "Engineer" },
+        { full_name: "Has Email", title: "Support", best_work_email: "s@y.z" },
+      ] as never)?.fullName,
+    ).toBe("Has Email");
   });
 });
 
