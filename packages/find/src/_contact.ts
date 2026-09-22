@@ -126,7 +126,7 @@ async function resolvePrimaryContact(args: {
     let lookedUpEmail: string | null = null;
     if (!fullName?.trim()) {
       const people = await safePeopleSearch(
-        { companyDomains: [args.companyDomain], limit: 5 },
+        { companyDomains: [args.companyDomain], limit: 10 },
         ctx,
       );
       costUsd += people.result.cost ?? 0;
@@ -251,10 +251,21 @@ export async function resolveAndVerifyContact(
 }
 
 /**
+ * Titles that own the buying decision at a small company. Checked first
+ * when picking from a domain-scoped search: the person ICP gate rejects a
+ * logistics hire or a recruiter and burns the candidate's dedupe key, so a
+ * founder further down the list must win over a titled employee with a
+ * work email on file.
+ */
+const DECISION_OWNER_TITLE =
+  /\b(founder|co-?founder|ceo|cto|coo|cfo|cro|cmo|chief|president|owner|managing (director|partner)|general manager|head of|vp|vice president|director)\b/i;
+
+/**
  * The person to write to out of a domain-scoped peopleSearch: needs a usable
- * name; prefers someone the database already has a work email for (skips a
- * paid findEmail), then someone with a title (feeds the role gate). Exported
- * for the unit test.
+ * name; prefers a decision owner (founder, chief, head, VP — see
+ * `DECISION_OWNER_TITLE`), among those one with a work email on file (skips
+ * a paid findEmail); then anyone with a work email, then anyone with a title
+ * (feeds the role gate). Exported for the unit test.
  */
 export function pickNamedPerson(
   results: PersonResult[] | null | undefined,
@@ -280,7 +291,15 @@ export function pickNamedPerson(
       },
     ];
   });
-  return named.find((p) => p.bestWorkEmail) ?? named.find((p) => p.title) ?? named[0] ?? null;
+  const owners = named.filter((p) => p.title && DECISION_OWNER_TITLE.test(p.title));
+  return (
+    owners.find((p) => p.bestWorkEmail) ??
+    owners[0] ??
+    named.find((p) => p.bestWorkEmail) ??
+    named.find((p) => p.title) ??
+    named[0] ??
+    null
+  );
 }
 
 /**
