@@ -24,7 +24,7 @@ Every inbound is classified: out-of-office autoresponders, dead-mailbox notices 
 
 Answering from `/inbox` records the reply, sends from the receiving identity, and threads on both transports — Gmail via `In-Reply-To`/`References`, OneShot via `reply_to_email_id`. Drafting is research-grounded: known prospects reuse their stored dossier, unknown senders get enriched and their site read (~$0.06, cached 30 days, receipted under `inbox-reply`), and replies may cite links from your product brief — never invented ones.
 
-LinkedIn replies stop email too once recorded in GTM. Connect LinkedIn from Replies; GTM reads messages and sends reviewed replies through OneShot. No LinkedIn webhook setup is needed. You can also record a reply manually from the queue or cadences view. See [LinkedIn](./linkedin.md).
+LinkedIn replies stop email too once recorded in GTM. Connect LinkedIn on Setup; GTM reads messages and sends reviewed replies through OneShot. No LinkedIn webhook setup is needed. You can also record a reply manually from the queue or cadences view. See [LinkedIn](./linkedin.md).
 
 ## Deliverability
 

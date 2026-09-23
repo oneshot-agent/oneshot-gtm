@@ -546,7 +546,7 @@ function linkedinSessionCheck(cfg: OneShotConfig): CheckResult {
       group: "install",
       severity: "warn",
       message: `LinkedIn session (${via}) expired ${cfg.linkedinSessionInvalidAt} — live profile reads are paused`,
-      hint: "reconnect on /setup (Log in with LinkedIn, or paste a fresh li_at) or run `oneshot-gtm config linkedin-session`",
+      hint: "reconnect on /setup (Connect LinkedIn, or paste a fresh li_at) or run `oneshot-gtm config linkedin-session`",
     };
   }
   if (!cfg.linkedinSessionCheckedAt || !cfg.linkedinBrowserProfileId) {

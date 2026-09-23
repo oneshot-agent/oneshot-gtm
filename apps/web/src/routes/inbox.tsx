@@ -2,7 +2,7 @@ import { linkedInConnectionView } from "../lib/linkedinConnection.ts";
 import { useEffect, useState } from "react";
 import "../design/replies.css";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   ArrowLeft,
   Archive,
@@ -656,19 +656,30 @@ function LinkedInConnections({ accounts }: { accounts: LinkedInAccountView[] }) 
           );
         })}
         <div className="replies-connection-footer">
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={connect.isPending || accountAction.isPending || !!intent}
-            onClick={() => connect.mutate(undefined)}
-            {...readOnly}
-          >
-            {connect.isPending && !connect.variables
-              ? "Opening connection…"
-              : accounts.length
-                ? "Add another account"
-                : "Connect LinkedIn"}
-          </Button>
+          {accounts.length ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={connect.isPending || accountAction.isPending || !!intent}
+              onClick={() => connect.mutate(undefined)}
+              {...readOnly}
+            >
+              {connect.isPending && !connect.variables
+                ? "Opening connection…"
+                : "Add another account"}
+            </Button>
+          ) : (
+            // The first connection is made on Setup, where one button also
+            // opens the profile-research session; this panel manages the
+            // account afterwards.
+            <Link
+              to="/setup"
+              hash="credentials"
+              className="text-[12px] text-ink-cream-2 underline underline-offset-2"
+            >
+              Connect LinkedIn on Setup →
+            </Link>
+          )}
           {connectUrl && (
             <p className="text-[12px] text-ink-muted">
               <a className="underline" href={connectUrl} target="_blank" rel="noreferrer">
