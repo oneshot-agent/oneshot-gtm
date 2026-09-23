@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID, scryptSync } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { configDir, demoMode, llmApiKey, loadConfig } from "@oneshot-gtm/core";
@@ -7,6 +7,7 @@ import { normalizeWebsite, type OnboardingStatus } from "@oneshot-gtm/shared-typ
 import { jsonResponse } from "../server.ts";
 
 interface State {
+  fingerprintSalt?: string;
   deferred?: boolean;
   revision?: string;
   verification?: { fingerprint: string; at: string };
@@ -29,11 +30,19 @@ function writeState(state: State): void {
   chmodSync(tmp, 0o600);
   renameSync(tmp, path);
 }
+// Cache only the current server-side derivation so status polling stays inexpensive.
+let fingerprintCache: { input: string; salt: string; fingerprint: string } | undefined;
 export function aiFingerprint(): string {
   const cfg = loadConfig();
-  return createHash("sha256")
-    .update(JSON.stringify([cfg.llmProvider, cfg.llmModel, llmApiKey(cfg.llmProvider)]))
-    .digest("hex");
+  const state = readState();
+  const salt = state.fingerprintSalt ?? randomBytes(16).toString("hex");
+  if (!state.fingerprintSalt) writeState({ ...state, fingerprintSalt: salt });
+  const input = JSON.stringify([cfg.llmProvider, cfg.llmModel, llmApiKey(cfg.llmProvider)]);
+  if (fingerprintCache?.input === input && fingerprintCache.salt === salt)
+    return fingerprintCache.fingerprint;
+  const fingerprint = scryptSync(input, salt, 32).toString("hex");
+  fingerprintCache = { input, salt, fingerprint };
+  return fingerprint;
 }
 export function invalidateOnboardingAI(): void {
   writeState({ ...readState(), revision: randomUUID(), verification: undefined });
