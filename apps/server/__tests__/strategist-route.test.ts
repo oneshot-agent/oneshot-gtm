@@ -112,6 +112,7 @@ let mockCfg: {
   llmModel: string;
   telemetryEnabled: boolean;
   founderName: string | null;
+  productDomain?: string;
   founderEmail: string | null;
   clientId: string | null;
 } = {
@@ -190,27 +191,40 @@ async function readSseFrames(
   return frames;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   // Restore baseline before each case.
   mockCfg = {
     walletMode: "cdp",
     llmProvider: "openrouter",
     llmModel: "test",
     telemetryEnabled: true,
-    founderName: null,
+    founderName: "Founder",
+    productDomain: "example.com",
     founderEmail: null,
     productOneLiner: "TestProduct — unified action API",
     icpOneLiner: "Engineers shipping autonomous AI agents",
     clientId: "test-client-id",
   };
   mockLlmContent = "ok";
+  vi.stubEnv("OPENROUTER_API_KEY", "test-key");
+  const { verifyOnboardingAI } = await import("../src/api/onboarding.ts");
+  await verifyOnboardingAI(makeRequest({}));
 });
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 describe("strategistRoute — validation paths return JSON 400", () => {
+  it("requires founder onboarding before planning", async () => {
+    mockCfg.founderName = null;
+    const res = await strategistRoute(
+      makeRequest({ messages: [{ role: "user", content: "Plan my first motion" }] }),
+    );
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ missing: ["Founder name"] });
+  });
   it("returns 400 on malformed JSON body", async () => {
     const res = await strategistRoute(makeRequest("{not valid json"));
     expect(res.status).toBe(400);

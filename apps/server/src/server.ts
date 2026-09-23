@@ -1,3 +1,4 @@
+import { getOnboarding, deferOnboarding, verifyOnboardingAI } from "./api/onboarding.ts";
 import { resolveQueueContactRoute } from "./api/queue-contact.ts";
 import {
   repliesRoute,
@@ -179,6 +180,9 @@ const routes: RouteEntry[] = [
   route("GET", "/api/measure/rocs-by-goal", measureRocsByGoal),
   route("GET", "/api/measure/spend-series", measureSpendSeries),
   route("POST", "/api/measure/outcome", recordOutcome),
+  route("GET", "/api/onboarding", getOnboarding),
+  route("POST", "/api/onboarding/defer", deferOnboarding),
+  route("POST", "/api/onboarding/verify-ai", verifyOnboardingAI),
   route("GET", "/api/setup", getSetupStatus),
   route("GET", "/api/setup/domains", getSetupDomains),
   route("GET", "/api/setup/calendars", listCalendarsRoute),

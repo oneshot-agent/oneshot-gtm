@@ -3,6 +3,7 @@ import { join } from "node:path";
 import {
   currentWorkspaceName,
   linkedInSdk,
+  linkedInError,
   resolveWorkspaceHome,
   SECRET_KEYS,
   ENV_ONLY_SECRET_KEYS,
@@ -10,7 +11,14 @@ import {
 } from "@oneshot-gtm/core";
 
 export async function callLinkedIn<T>(workspace: string, operation: LinkedInOperation): Promise<T> {
-  if (workspace === currentWorkspaceName()) return (await linkedInSdk(operation)) as T;
+  if (workspace === currentWorkspaceName()) {
+    try {
+      return (await linkedInSdk(operation)) as T;
+    } catch (e) {
+      const error = linkedInError(e);
+      throw Object.assign(new Error(error.message), error);
+    }
+  }
   const home = resolveWorkspaceHome(workspace);
   const source = join(import.meta.dir, "linkedin-worker.ts");
   const worker = existsSync(source) ? source : join(import.meta.dir, "linkedin-worker.mjs");

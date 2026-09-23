@@ -40,6 +40,7 @@ import {
   recordCadenceReply as cadRecordCadenceReply,
   recordCadenceSendError as cadRecordCadenceSendError,
   recordLinkedInReply as cadRecordLinkedInReply,
+  suppressCadencesForReply,
   recordProspectReply as cadRecordProspectReply,
   recordSequenceEvent as cadRecordSequenceEvent,
   saveCadencePlan as cadSaveCadencePlan,
@@ -730,8 +731,13 @@ export class Ledger {
     return this.prospects.resolveProspectForLinkedInReply(input, emailId);
   }
 
+  suppressCadencesForReply(prospectId: number, accountKey?: string) {
+    return suppressCadencesForReply(this.db, this.drafts, prospectId, accountKey);
+  }
+
   recordLinkedInReply(input: {
     prospectId: number;
+    accountKey?: string;
     source: string;
     externalEventId: string;
     occurredAt: string;

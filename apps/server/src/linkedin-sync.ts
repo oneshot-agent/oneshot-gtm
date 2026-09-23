@@ -12,6 +12,7 @@ import type {
   LinkedInMessagesPage,
   LinkedInSyncStatus,
 } from "@oneshot-agent/sdk";
+import { adoptPendingLinkedInReplacements } from "./linkedin-replacement.ts";
 import { callLinkedIn } from "./linkedin-client.ts";
 
 interface Progress {
@@ -35,6 +36,7 @@ export function refreshLinkedInInbox(force = false): Promise<void> {
 }
 
 async function capture(force: boolean) {
+  await adoptPendingLinkedInReplacements();
   const store = getLinkedInInboxStore();
   const review = getReplyReviewStore();
   const workspace = currentWorkspaceName();
@@ -47,9 +49,21 @@ async function capture(force: boolean) {
         { kind: "accounts" },
       );
       for (const account of discovered.accounts) {
-        const key = `${discovered.wallet}:${account.id}`;
-        const old = store.account(key);
+        if (
+          store
+            .accounts()
+            .some(
+              (a) => a.wallet === discovered.wallet && a.previousAccountIds?.includes(account.id),
+            )
+        )
+          continue;
+        const old = store
+          .accounts()
+          .find((a) => a.wallet === discovered.wallet && a.account.id === account.id);
+        if (old?.removedAt) continue;
+        const key = old?.key ?? `${discovered.wallet}:${account.id}`;
         store.saveAccount({
+          ...old,
           key,
           wallet: discovered.wallet,
           workspace: old?.workspace ?? owner,
@@ -57,6 +71,9 @@ async function capture(force: boolean) {
           sync: old?.sync ?? null,
           checkedAt: old?.checkedAt ?? null,
           error: null,
+          permissionUpgradeError: account.allowed_actions.includes("view_profile")
+            ? undefined
+            : old?.permissionUpgradeError,
         });
       }
     } catch (e) {
@@ -69,12 +86,18 @@ async function capture(force: boolean) {
   // Every account is captured once, using the workspace that connected it.
   for (const a of store.accounts()) {
     if (
+      a.removedAt ||
       a.account.status !== "connected" ||
       (!force && a.checkedAt && Date.now() - Date.parse(a.checkedAt) < 60_000)
     )
       continue;
     const token = review.claim(`capture:${a.key}`, 15 * 60_000);
     if (!token) continue;
+    const heartbeat = setInterval(() => {
+      review.db
+        .query("UPDATE review_leases SET until_ms=? WHERE key=? AND token=?")
+        .run(Date.now() + 15 * 60_000, `capture:${a.key}`, token);
+    }, 30_000);
     try {
       a.sync = await callLinkedIn<LinkedInSyncStatus>(a.workspace, {
         kind: "status",
@@ -101,7 +124,7 @@ async function capture(force: boolean) {
                 includeDeleted: true,
               },
             });
-            store.saveMessages(a.key, page.messages);
+            store.saveMessages(a.key, page.messages, a.account.id);
             if (page.has_more && (!page.next_cursor || page.next_cursor === p.cursor))
               throw new Error("LinkedIn returned an invalid message cursor");
             p.cursor = page.next_cursor ?? undefined;
@@ -117,7 +140,8 @@ async function capture(force: boolean) {
                 archived: resource === "archived",
               },
             });
-            for (const c of page.conversations) store.saveConversation(a.key, c, matches);
+            for (const c of page.conversations)
+              store.saveConversation(a.key, c, matches, a.account.id);
             if (page.has_more && (!page.next_cursor || page.next_cursor === p.cursor))
               throw new Error("LinkedIn returned an invalid conversation cursor");
             p.cursor = page.next_cursor ?? undefined;
@@ -138,6 +162,7 @@ async function capture(force: boolean) {
       a.error = (e as Error).message;
     } finally {
       try {
+        store.reconcileReplacementHistory(a.key);
         // A later page failure must not delay stop-on-reply for messages already captured.
         for (const t of store.threads(a.key)) {
           store.saveConversation(a.key, t.conversation, matches);
@@ -147,6 +172,7 @@ async function capture(force: boolean) {
         a.error = a.error ?? (e as Error).message;
       }
       store.saveAccount(a);
+      clearInterval(heartbeat);
       review.release(`capture:${a.key}`, token);
     }
   }
