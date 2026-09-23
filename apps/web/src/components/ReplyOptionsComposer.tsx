@@ -1,3 +1,4 @@
+import { replySendFailure } from "../lib/replySendFailure.ts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Send, Sparkles } from "lucide-react";
@@ -231,11 +232,15 @@ export function ReplyOptionsComposer({ thread: t }: { thread: ReplyThread }) {
     }
   }
   const selectedBody = draft.edits[draft.selected];
+  const sendFailure = replySendFailure(t);
   return (
-    <div className="space-y-3 border-t border-ink-rule/60 pt-4">
+    <div className="reply-composer space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-[13px] text-ink-cream">
-          Reply on {t.channel === "linkedin" ? "LinkedIn" : "email"}
+          Your reply{" "}
+          <span className="ml-2 text-[11px] text-ink-muted">
+            via {t.channel === "linkedin" ? "LinkedIn" : "email"}
+          </span>
         </div>
         <span className="text-[11px] text-ink-muted">
           {saving ? "Saving…" : saveError ? "Changes not saved" : "Edits save automatically"}
@@ -249,103 +254,111 @@ export function ReplyOptionsComposer({ thread: t }: { thread: ReplyThread }) {
         </p>
       )}
       {draft.read && (
-        <p className="max-w-[80ch] text-[13px] leading-relaxed text-ink-muted">{draft.read}</p>
+        <details className="reply-context">
+          <summary>Conversation insight</summary>
+          <p>{draft.read}</p>
+        </details>
       )}
-      <div className="grid gap-3 xl:grid-cols-3">
+      <div className="reply-directions" role="group" aria-label="Reply approach">
         {REPLY_VARIANTS.map((v) => (
-          <section
+          <button
             key={v}
-            className={`min-w-0 rounded-sm border p-3 ${draft.selected === v ? "border-ink-cream/60 bg-ink-surface" : "border-ink-rule/60"}`}
+            type="button"
+            className="reply-direction"
+            aria-pressed={draft.selected === v}
+            disabled={busy}
+            onClick={() => update({ ...latest.current, selected: v })}
           >
-            <label className="mb-2 flex cursor-pointer items-center gap-2 text-[13px] text-ink-cream">
-              <input
-                type="radio"
-                name={`reply-${t.key}`}
-                checked={draft.selected === v}
-                disabled={busy}
-                onChange={() => update({ ...latest.current, selected: v })}
-              />
+            <span className="reply-direction-title">
               <span className="capitalize">{v}</span>
-              {draft.moves[v] && (
-                <span className="text-[11px] text-ink-muted">{draft.moves[v]}</span>
-              )}
-            </label>
+              {draft.selected === v && <span className="reply-selected-dot" />}
+            </span>
+            <span className="reply-direction-description">
+              {draft.moves[v] ||
+                {
+                  direct: "Get to the point",
+                  technical: "Go into the details",
+                  warm: "Keep it personal",
+                }[v]}
+            </span>
+            {draft.edits[v] && <span className="reply-direction-preview">{draft.edits[v]}</span>}
+          </button>
+        ))}
+      </div>
+      {REPLY_VARIANTS.filter((v) => v === draft.selected).map((v) => (
+        <section key={v} className="reply-editor">
+          <Textarea
+            aria-label={`${v} reply`}
+            className="reply-textarea"
+            rows={6}
+            value={draft.edits[v]}
+            disabled={busy}
+            onFocus={() => {
+              if (draft.selected !== v && !busy) update({ ...latest.current, selected: v });
+            }}
+            onChange={(e) =>
+              update({
+                ...latest.current,
+                selected: v,
+                edits: { ...latest.current.edits, [v]: e.target.value },
+              })
+            }
+            placeholder={
+              generate.isPending ? "Drafting suggestions… You can write here." : "Write your reply…"
+            }
+          />
+          {!!draft.flags[v]?.length && (
+            <p className="mt-2 text-[11px] text-ink-spend-2">Review: {draft.flags[v].join(", ")}</p>
+          )}
+          <details className="mt-2 text-[11px] text-ink-muted">
+            <summary className="cursor-pointer">Improvement instructions</summary>
             <Textarea
-              aria-label={`${v} reply`}
-              rows={8}
-              value={draft.edits[v]}
-              disabled={busy}
-              onFocus={() => {
-                if (draft.selected !== v && !busy) update({ ...latest.current, selected: v });
-              }}
-              onChange={(e) =>
+              aria-label={`Instructions for ${v}`}
+              rows={2}
+              value={feedback[v]}
+              onChange={(e) => setFeedback({ ...feedback, [v]: e.target.value })}
+              placeholder="Shorter, keep my question…"
+            />
+          </details>
+          <div className="mt-2 flex gap-2">
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={
+                !draft.edits[v].trim() ||
+                busy ||
+                !!improving ||
+                (t.channel === "linkedin" && !t.workspace)
+              }
+              onClick={() => void improve(v)}
+              {...readOnly}
+            >
+              {improving === v ? (
+                <Loader2 size={12} className="animate-spin" />
+              ) : (
+                <Sparkles size={12} />
+              )}{" "}
+              Improve
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy || !draft.originals[v]}
+              onClick={() =>
                 update({
                   ...latest.current,
                   selected: v,
-                  edits: { ...latest.current.edits, [v]: e.target.value },
+                  edits: { ...latest.current.edits, [v]: latest.current.originals[v] },
+                  improvementIds: { ...latest.current.improvementIds, [v]: [] },
                 })
               }
-              placeholder={
-                generate.isPending
-                  ? "Drafting suggestions… You can write here."
-                  : "Write your reply…"
-              }
-            />
-            {!!draft.flags[v]?.length && (
-              <p className="mt-2 text-[11px] text-ink-spend-2">
-                Review: {draft.flags[v].join(", ")}
-              </p>
-            )}
-            <details className="mt-2 text-[11px] text-ink-muted">
-              <summary className="cursor-pointer">Improvement instructions</summary>
-              <Textarea
-                aria-label={`Instructions for ${v}`}
-                rows={2}
-                value={feedback[v]}
-                onChange={(e) => setFeedback({ ...feedback, [v]: e.target.value })}
-                placeholder="Shorter, keep my question…"
-              />
-            </details>
-            <div className="mt-2 flex gap-2">
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={
-                  !draft.edits[v].trim() ||
-                  busy ||
-                  !!improving ||
-                  (t.channel === "linkedin" && !t.workspace)
-                }
-                onClick={() => void improve(v)}
-                {...readOnly}
-              >
-                {improving === v ? (
-                  <Loader2 size={12} className="animate-spin" />
-                ) : (
-                  <Sparkles size={12} />
-                )}{" "}
-                Improve
-              </Button>
-              <Button
-                size="sm"
-                variant="ghost"
-                disabled={busy || !draft.originals[v]}
-                onClick={() =>
-                  update({
-                    ...latest.current,
-                    selected: v,
-                    edits: { ...latest.current.edits, [v]: latest.current.originals[v] },
-                    improvementIds: { ...latest.current.improvementIds, [v]: [] },
-                  })
-                }
-                {...readOnly}
-              >
-                Reset
-              </Button>
-            </div>
-          </section>
-        ))}
-      </div>
+              {...readOnly}
+            >
+              Reset
+            </Button>
+          </div>
+        </section>
+      ))}
       {!!draft.setFlags.length && (
         <p className="text-[11px] text-ink-spend-2">Review options: {draft.setFlags.join(", ")}</p>
       )}
@@ -432,12 +445,17 @@ export function ReplyOptionsComposer({ thread: t }: { thread: ReplyThread }) {
             : "Sending… Waiting for delivery confirmation."}
         </p>
       )}
-      {t.send?.status === "failed" && (
-        <p role="alert" className="text-[12px] text-ink-blocked-2">
-          {t.send.error}
+      {sendFailure && (
+        <p
+          role={sendFailure.recovered ? "status" : "alert"}
+          className={
+            sendFailure.recovered ? "text-[12px] text-ink-muted" : "text-[12px] text-ink-blocked-2"
+          }
+        >
+          {sendFailure.message}
         </p>
       )}
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="reply-sendbar flex flex-wrap items-center gap-3">
         <Button
           size="sm"
           variant="ghost"
@@ -466,7 +484,7 @@ export function ReplyOptionsComposer({ thread: t }: { thread: ReplyThread }) {
           {...readOnly}
         >
           <Send size={12} />
-          {busy ? "Sending…" : `Send ${draft.selected} reply`}
+          {busy ? "Sending…" : "Send reply"}
         </Button>
         {t.channel === "linkedin" && (
           <span className="text-[11px] text-ink-muted">{selectedBody.length}/4000</span>

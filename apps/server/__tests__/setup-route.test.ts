@@ -295,3 +295,47 @@ describe("POST /api/setup — rejected bodies answer 400 and write nothing", () 
     await expect(setup(req({ founderName: "Janet" }))).rejects.toThrow("disk full");
   });
 });
+
+describe("minimum onboarding step saves", () => {
+  it("rejects untouched and whitespace business fields without writing", async () => {
+    expect((await post({ onboardingStep: 1 })).status).toBe(400);
+    expect(
+      (
+        await post({
+          onboardingStep: 1,
+          founderName: " ",
+          productOneLiner: " ",
+          productDomain: "example.com",
+        })
+      ).status,
+    ).toBe(400);
+    expect(saveConfigMock).not.toHaveBeenCalled();
+    expect(saveSecretsMock).not.toHaveBeenCalled();
+  });
+  it("normalizes the website and saves only the requested business fields", async () => {
+    expect(
+      (
+        await post({
+          onboardingStep: 1,
+          founderName: " Founder ",
+          productOneLiner: " Bookkeeping ",
+          productDomain: "https://EXAMPLE.com/about",
+        })
+      ).status,
+    ).toBe(200);
+    expect(savedCfg()).toMatchObject({
+      founderName: "Founder",
+      productOneLiner: "Bookkeeping",
+      productDomain: "example.com",
+      icpOneLiner: BASE.icpOneLiner,
+    });
+  });
+  it("rejects an empty customer step and invalid AI settings", async () => {
+    expect((await post({ onboardingStep: 2, icpOneLiner: " " })).status).toBe(400);
+    expect(
+      (await post({ onboardingStep: 3, llmProvider: "invalid", llmModel: "model" })).status,
+    ).toBe(400);
+    expect(saveConfigMock).not.toHaveBeenCalled();
+    expect(saveSecretsMock).not.toHaveBeenCalled();
+  });
+});

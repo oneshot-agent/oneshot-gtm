@@ -81,7 +81,7 @@ function HomePage() {
         </div>
       </section>
 
-      {/* Onboarding nudge — disappears when ICP set + finder run + drain done. */}
+      {/* Workspace readiness and a resumable path to the first plan. */}
       <NextStep />
 
       <section

@@ -1,3 +1,4 @@
+import { removeLinkedInAccount, forceReconnectLinkedInAccount } from "../linkedin-remove.ts";
 import { randomUUID } from "node:crypto";
 import { Database } from "bun:sqlite";
 import { join } from "node:path";
@@ -31,6 +32,11 @@ import {
 } from "@oneshot-gtm/shared-types";
 import { isLoopbackOrigin, jsonResponse } from "../server.ts";
 import { callLinkedIn } from "../linkedin-client.ts";
+import {
+  startLinkedInBackfill,
+  backfillStatus,
+  resumeLinkedInBackfills,
+} from "../linkedin-backfill.ts";
 import { refreshLinkedInInbox } from "../linkedin-sync.ts";
 import { collectReplies } from "./replies-view.ts";
 import { sendReplyRoute, archiveInboxConversationRoute } from "./inbox.ts";
@@ -64,7 +70,12 @@ async function payload(req: Request): Promise<Record<string, unknown>> {
 }
 function failure(req: Request, e: unknown) {
   return jsonResponse(
-    { error: (e as Error).message },
+    {
+      error: (e as Error).message,
+      requestId: (e as { requestId?: string }).requestId,
+      code: (e as { code?: string }).code,
+      statusCode: (e as { statusCode?: number }).statusCode,
+    },
     (e as Error).message === "Forbidden origin"
       ? 403
       : /changed|new reply|pending|being sent/.test((e as Error).message)
@@ -425,6 +436,19 @@ export async function replySendRoute(req: Request) {
       return jsonResponse(t.send, 200, req);
     }
     if (!t.canSend || !t.drafts) throw new Error("This conversation is not ready to send");
+    if (t.channel === "linkedin") {
+      const store = getLinkedInInboxStore();
+      const account = store.account(t.accountKey!);
+      const current = store.thread(t.key);
+      if (
+        account?.previousAccountIds?.length &&
+        (current?.sourceAccountId !== account.account.id ||
+          current?.conversation.id !== t.conversationId)
+      )
+        throw new Error(
+          "LinkedIn connection changed. Refresh and review the conversation before sending.",
+        );
+    }
     if (typeof b.sendId !== "string" || !/^[a-zA-Z0-9-]{16,100}$/.test(b.sendId))
       throw new Error("A send ID is required");
     if (t.send?.id === b.sendId) return jsonResponse(t.send, 200, req);
@@ -483,32 +507,69 @@ export async function repliesLinkedInRoute(req: Request) {
     const workspace = currentWorkspaceName();
     const a =
       typeof b.accountKey === "string" ? getLinkedInInboxStore().account(b.accountKey) : null;
+    if (
+      [
+        "remove",
+        "force-reconnect",
+        "reconnect",
+        "upgrade",
+        "sync",
+        "backfill",
+        "backfill-status",
+      ].includes(String(b.action)) &&
+      !a
+    ) {
+      throw new Error("LinkedIn account not found. Refresh Replies and try again.");
+    }
+    if (b.action === "force-reconnect" && a)
+      return jsonResponse(await forceReconnectLinkedInAccount(a.key), 200, req);
+    if (b.action === "remove" && a)
+      return jsonResponse(await removeLinkedInAccount(a.key), 200, req);
+    if (a?.removedAt)
+      throw new Error("This LinkedIn account has been removed. Connect an account to continue.");
     if (b.action === "refresh") {
       await refreshLinkedInInbox(true);
       return jsonResponse({ ok: true }, 200, req);
     }
     if (b.action === "connect")
       return jsonResponse(await callLinkedIn(workspace, { kind: "connect" }), 200, req);
-    if (b.action === "reconnect" && a)
+    if (b.action === "upgrade" && a?.permissionUpgradeError)
+      throw new Error(a.permissionUpgradeError);
+    if ((b.action === "reconnect" || b.action === "upgrade") && a)
       return jsonResponse(
-        await callLinkedIn(a.workspace, { kind: "connect", accountId: a.account.id }),
+        await callLinkedIn(a.workspace, {
+          kind: "connect",
+          accountId: a.account.id,
+          upgrade: b.action === "upgrade",
+        }),
         200,
         req,
       );
     if (b.action === "connection" && typeof b.intentId === "string") {
-      const result = await callLinkedIn<{ status: string }>(a?.workspace ?? workspace, {
-        kind: "connection",
-        intentId: b.intentId,
-      });
+      const result = await callLinkedIn<{ status: string; failure_reason?: string }>(
+        a?.workspace ?? workspace,
+        {
+          kind: "connection",
+          intentId: b.intentId,
+        },
+      );
+      if (result.status === "failed" && result.failure_reason === "duplicate_member" && a) {
+        getLinkedInInboxStore().saveAccount({
+          ...a,
+          permissionUpgradeError:
+            "OneShot rejected the permission upgrade because this member is already connected. Adding permissions requires replacing the upstream connection or a OneShot grant-upgrade API change. Local history and assignments are preserved.",
+        });
+      }
       if (result.status === "completed") await refreshLinkedInInbox(true);
       return jsonResponse(result, 200, req);
     }
-    if (b.action === "sync" && a) {
-      const result = await callLinkedIn(a.workspace, { kind: "sync", accountId: a.account.id });
-      void refreshLinkedInInbox(true).catch(() => {});
-      return jsonResponse(result, 200, req);
+    if (b.action === "backfill-status" && a) return jsonResponse(backfillStatus(a.key), 200, req);
+    if ((b.action === "sync" || b.action === "backfill") && a) {
+      const job = startLinkedInBackfill(a.key);
+      void resumeLinkedInBackfills().catch(() => {});
+      return jsonResponse(job, 202, req);
     }
-    throw new Error("Unknown LinkedIn action or account");
+    throw new Error("Unknown LinkedIn action. Reload the dashboard and try again.");
   } catch (e) {
     return failure(req, e);
   }

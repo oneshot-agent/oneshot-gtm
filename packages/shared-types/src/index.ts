@@ -318,6 +318,8 @@ export interface DoctorCheck {
 }
 
 export interface SetupRequest {
+  /** Validate a complete minimum-onboarding step without changing CLI settings semantics. */
+  onboardingStep?: 1 | 2 | 3;
   founderName?: string;
   founderEmail?: string;
   productOneLiner?: string;
@@ -1600,3 +1602,5 @@ export function isQueueImportInProgress(row: {
     row.notes === "CSV import: ICP classification in progress"
   );
 }
+
+export * from "./onboarding.ts";

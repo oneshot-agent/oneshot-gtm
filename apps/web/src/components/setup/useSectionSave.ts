@@ -33,6 +33,7 @@ export function useSectionSave<S>(opts: {
     },
     onSuccess: ({ sent, refreshed }) => {
       setSavedAt(Date.now());
+      void qc.invalidateQueries({ queryKey: ["onboarding"] });
       for (const key of opts.alsoInvalidate ?? []) void qc.invalidateQueries({ queryKey: key });
       if (refreshed) {
         opts.onCommitted(sent);

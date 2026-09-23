@@ -1,4 +1,5 @@
 import { refreshReplyLearning } from "./reply-learning.ts";
+import { resumeLinkedInBackfills } from "./linkedin-backfill.ts";
 import { refreshLinkedInInbox } from "./linkedin-sync.ts";
 import {
   demoMode,
@@ -80,6 +81,9 @@ export function startScheduler(): SchedulerHandle {
     return { stop: () => {} };
   }
 
+  const backfillTimer = setInterval(() => {
+    void resumeLinkedInBackfills().catch(() => {});
+  }, 15_000);
   let cancelled = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
   // 0 = never polled, so the first tick always sweeps.
@@ -331,6 +335,7 @@ export function startScheduler(): SchedulerHandle {
 
   return {
     stop(): void {
+      clearInterval(backfillTimer);
       cancelled = true;
       if (timer) {
         clearTimeout(timer);

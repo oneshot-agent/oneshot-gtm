@@ -529,6 +529,7 @@ export function recordLinkedInReply(
   drafts: DraftVersionStore,
   input: {
     prospectId: number;
+    accountKey?: string;
     source: string;
     externalEventId: string;
     occurredAt: string;
@@ -545,53 +546,70 @@ export function recordLinkedInReply(
     const existing = db
       .query(`SELECT * FROM channel_events WHERE source = ? AND external_event_id = ?`)
       .get(input.source, input.externalEventId) as ChannelEventRecord | null;
-    if (existing) {
-      const inFlight = db
-        .query(
-          `SELECT COUNT(*) AS n FROM cadence_state
-           WHERE prospect_id = ? AND sending_started_at IS NOT NULL`,
-        )
-        .get(existing.prospect_id) as { n: number };
-      return {
-        duplicate: true,
-        prospectId: existing.prospect_id,
-        cadencesStopped: 0,
-        inFlightSends: inFlight.n,
-      };
+    // Replay must suppress newly enrolled cadences even when the event already exists.
+    const prospectId = existing?.prospect_id ?? input.prospectId;
+    if (!existing) {
+      db.prepare(`INSERT INTO channel_events
+        (source, external_event_id, prospect_id, channel, event_type, occurred_at, body)
+        VALUES (?, ?, ?, 'linkedin', 'reply', ?, ?)`).run(
+        input.source,
+        input.externalEventId,
+        prospectId,
+        input.occurredAt,
+        input.body?.trim() || null,
+      );
     }
-    const live = db
-      .query(
-        `SELECT sending_started_at FROM cadence_state
+    return {
+      duplicate: !!existing,
+      prospectId,
+      ...suppressCadencesForReply(db, drafts, prospectId, input.accountKey),
+    };
+  })();
+}
+
+/** Suppression is independent of inbox ownership and never creates or removes reply history. */
+export function suppressCadencesForReply(
+  db: Database,
+  drafts: DraftVersionStore,
+  prospectId: number,
+  accountKey?: string,
+): {
+  cadencesStopped: number;
+  inFlightSends: number;
+} {
+  return db
+    .transaction(() => {
+      if (accountKey) {
+        db.exec(`CREATE TABLE IF NOT EXISTS linkedin_cadence_stops(
+        id INTEGER PRIMARY KEY, account_key TEXT NOT NULL, prospect_id INTEGER NOT NULL,
+        play_name TEXT NOT NULL, stopped_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`);
+        db.query(`INSERT INTO linkedin_cadence_stops(account_key,prospect_id,play_name)
+        SELECT ?,prospect_id,play_name FROM cadence_state WHERE prospect_id=? AND status IN ('active','paused')`).run(
+          accountKey,
+          prospectId,
+        );
+      }
+      const live = db
+        .query(
+          `SELECT sending_started_at FROM cadence_state
          WHERE prospect_id = ? AND status IN ('active','paused')`,
-      )
-      .all(input.prospectId) as Array<{ sending_started_at: string | null }>;
-    db.prepare(
-      `INSERT INTO channel_events
-         (source, external_event_id, prospect_id, channel, event_type, occurred_at, body)
-       VALUES (?, ?, ?, 'linkedin', 'reply', ?, ?)`,
-    ).run(
-      input.source,
-      input.externalEventId,
-      input.prospectId,
-      input.occurredAt,
-      input.body?.trim() || null,
-    );
-    db.prepare(
-      `UPDATE cadence_state
+        )
+        .all(prospectId) as Array<{ sending_started_at: string | null }>;
+      db.prepare(
+        `UPDATE cadence_state
        SET status = 'replied', next_due_at = NULL,
            next_step_draft_json = NULL, next_step_drafted_at = NULL,
            last_send_error = NULL, last_send_error_at = NULL
        WHERE prospect_id = ? AND status IN ('active','paused')`,
-    ).run(input.prospectId);
-    drafts.closeAllForProspect(input.prospectId, "discarded", "abandoned");
-    new QueueStore(db).expireBreakupReviveQueue(input.prospectId, "prospect replied");
-    return {
-      duplicate: false,
-      prospectId: input.prospectId,
-      cadencesStopped: live.length,
-      inFlightSends: live.filter((row) => row.sending_started_at != null).length,
-    };
-  })();
+      ).run(prospectId);
+      drafts.closeAllForProspect(prospectId, "discarded", "abandoned");
+      new QueueStore(db).expireBreakupReviveQueue(prospectId, "prospect replied");
+      return {
+        cadencesStopped: live.length,
+        inFlightSends: live.filter((row) => row.sending_started_at != null).length,
+      };
+    })
+    .immediate();
 }
 
 /** Stop future work on one live cadence without hiding a send already handed to a provider. */

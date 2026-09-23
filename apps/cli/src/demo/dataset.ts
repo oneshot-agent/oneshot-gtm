@@ -1,3 +1,4 @@
+import { buildLinkedInDemo } from "./linkedin.ts";
 import { cadenceGoalId, type PersonResearchDossier } from "@oneshot-gtm/core";
 import { lintEmail } from "@oneshot-gtm/plays";
 
@@ -1312,6 +1313,7 @@ export interface DemoDataset {
   }>;
   fixtures: {
     "inbox.json": unknown;
+    "linkedin-replies.json": ReturnType<typeof buildLinkedInDemo>;
     "rocs-by-goal.json": unknown;
     "domains.json": unknown;
     "balance.json": unknown;
@@ -1564,6 +1566,7 @@ export function buildDemoDataset(anchor: Date): DemoDataset {
     interviews: buildInterviews(anchor),
     fixtures: {
       "inbox.json": buildInboxFixture(anchor),
+      "linkedin-replies.json": buildLinkedInDemo(anchor, prospects),
       "rocs-by-goal.json": buildRocsFixture(receipts, anchor),
       "domains.json": buildDomainsFixture(anchor),
       // What is left of a $3,000 top-up after this ledger's spend. A wallet

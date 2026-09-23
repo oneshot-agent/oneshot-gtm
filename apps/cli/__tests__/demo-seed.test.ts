@@ -79,9 +79,39 @@ describe("seedDemoHome", { timeout: SEED_TIMEOUT_MS }, () => {
     // report itself as such.
     expect(cfg["telemetryEnabled"]).toBe(false);
 
-    for (const f of ["inbox.json", "rocs-by-goal.json", "domains.json", "balance.json"]) {
+    for (const f of [
+      "inbox.json",
+      "linkedin-replies.json",
+      "rocs-by-goal.json",
+      "domains.json",
+      "balance.json",
+    ]) {
       expect(existsSync(join(home, "demo", f))).toBe(true);
     }
+  });
+
+  it("seeds LinkedIn conversations with matched, unmatched and paused states", () => {
+    seedDemoHome({ home, anchor: ANCHOR });
+    const data = JSON.parse(
+      readFileSync(join(home, "demo", "linkedin-replies.json"), "utf8"),
+    ) as import("@oneshot-gtm/shared-types").RepliesResult;
+    expect(data.accounts).toHaveLength(2);
+    expect(data.threads).toHaveLength(6);
+    expect(data.threads.some((t) => t.archivedAt)).toBe(true);
+    expect(data.threads.some((t) => t.snoozedUntil)).toBe(true);
+    expect(data.threads.some((t) => t.matchStatus === "missing_identity")).toBe(true);
+    expect(data.threads.some((t) => t.matchStatus === "no_prospect")).toBe(true);
+    expect(data.threads.some((t) => !t.canSend)).toBe(true);
+    expect(data.threads[0]?.drafts?.edits.technical).toContain("parent span");
+    const db = open(home);
+    for (const t of data.threads) {
+      if (t.prospectId != null)
+        expect(db.query("SELECT name FROM prospects WHERE id = ?").get(t.prospectId)).toEqual({
+          name: t.name,
+        });
+      expect(t.messages.at(-1)?.direction).toBe("inbound");
+    }
+    db.close();
   });
 
   it("chmods the secrets file to 600 and keeps the keys non-functional", () => {

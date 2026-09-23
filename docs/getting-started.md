@@ -4,11 +4,17 @@ You can use the dashboard without writing code. Install [Bun](https://bun.sh), t
 
 ## Describe your business
 
-Open **Setup** and fill in your name, what you sell, and your ideal customer profile (ICP). A product can be a service, a physical product or software. Describe the buyer's role, business type, location and relevant problem. Avoid “everyone” as an ICP; start with one group you can learn from.
+A new workspace opens **Onboarding** from Today. Complete three short steps:
 
-For example, a bookkeeping firm might target owners of independent restaurants in its city. An equipment supplier might target operations managers at regional manufacturers. Neither needs to call its buyers technical founders.
+1. **Your business:** founder name, website, and one sentence describing what you sell and its benefit. Enter a bare domain or HTTP(S) URL; only the hostname is saved. Onboarding does not scrape the site.
+2. **Your customer:** buyer role, business type, and problem, plus geography when relevant. This saves your ideal customer profile (ICP). For example, a bookkeeping firm might target owners of independent restaurants in its city.
+3. **Connect AI:** choose a provider and add its API key. Existing credentials, including environment keys, are recognized. Keep the default model or enter a custom model under Advanced. **Save and test connection** makes one small provider request, which may incur a charge.
 
-Add your product brief and optional voice card. Your card controls how you sound; claims still need evidence. Credentials, partners and admissions are optional. Leave missing facts blank. Add the LLM credentials and sending identity needed for the actions you choose; Setup and `doctor` show what is missing. Research and delivery through OneShot require its configured wallet and may incur charges.
+Each completed step is saved. **Finish later** returns to Today and stops automatic reopening; the reminder and **Setup** page let you resume at the first incomplete step. Unsaved edits prompt before leaving. Existing configured workspaces receive a reminder instead of a redirect; the read-only demo stays browsable.
+
+When you see **Ready to plan**, choose **Plan my first motion** to open the strategist. No wallet or sending account is required to plan. Changing the provider, model, or effective key requires a new connection test. Readiness is based on your current saved business context and verified connection.
+
+Personal email, product brief, voice, social proof, calendar, and other integrations remain optional in **Setup**. Research, some drafting paths, and sending need additional setup; OneShot research and delivery may require a wallet and incur charges. Completing onboarding does not enable finders, run research, or send messages. The CLI setup flow is unchanged.
 
 ## Choose a source and a motion
 

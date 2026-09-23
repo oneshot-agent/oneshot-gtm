@@ -24,9 +24,11 @@ export function MailboxConnections({ mailboxes }: { mailboxes: MailboxHealthView
       className="border-b border-ink-rule/60 px-6 py-3"
       open={mailboxes.some((m) => m.status === "error")}
     >
-      <summary className="cursor-pointer font-mono text-[12px] text-ink-muted">
-        {mailboxes.filter((m) => m.status === "connected").length} of {mailboxes.length} receiving
-        mailboxes connected
+      <summary className="cursor-pointer text-[12px] text-ink-muted">
+        Email{" "}
+        <span className="ml-2">
+          {mailboxes.filter((m) => m.status === "connected").length} of {mailboxes.length} connected
+        </span>
         {mailboxes.some((m) => m.backfillRemaining) ? " · importing history" : ""}
       </summary>
       <div className="mt-3 space-y-3">

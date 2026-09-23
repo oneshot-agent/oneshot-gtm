@@ -62,9 +62,12 @@ export interface ReplyThread {
   email?: InboxReplyView;
   mailboxThreadKey?: string;
   historyComplete?: boolean;
+  /** Current account health, separate from historical send failures. */
+  linkedinConnectionState?: "connected" | "restoring" | "unavailable";
   accountKey?: string;
   conversationId?: string;
   profileUrl?: string | null;
+  matchStatus?: "matched" | "ambiguous" | "missing_identity" | "no_prospect";
 }
 export interface LinkedInAccountView {
   key: string;
@@ -77,6 +80,26 @@ export interface LinkedInAccountView {
   lastCheckedAt: string | null;
   error: string | null;
   canReply: boolean;
+  canResolve?: boolean;
+  permissionUpgradeError?: string;
+  backfill?: {
+    stage: string;
+    error?: string;
+    pending?: { requestId?: string };
+    nextAttemptAt?: string;
+    providerLimit?: { limit: number; used: number; pending: number; resetsAt: string };
+    senders?: { total: number; resolved: number; failed?: number };
+    counts: Record<
+      string,
+      {
+        imported: number;
+        matched: number;
+        unresolved: number;
+        noProspect: number;
+        stoppedCadences: number;
+      }
+    >;
+  } | null;
 }
 export interface RepliesResult {
   threads: ReplyThread[];

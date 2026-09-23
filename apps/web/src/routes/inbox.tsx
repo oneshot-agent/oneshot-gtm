@@ -1,7 +1,19 @@
+import { linkedInConnectionView } from "../lib/linkedinConnection.ts";
 import { useEffect, useState } from "react";
+import "../design/replies.css";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute } from "@tanstack/react-router";
-import { ChevronDown, ChevronRight, Loader2, RefreshCw } from "lucide-react";
+import {
+  ArrowLeft,
+  Archive,
+  Clock3,
+  Inbox,
+  MessageSquare,
+  Mail,
+  Loader2,
+  RefreshCw,
+  Settings2,
+} from "lucide-react";
 import { toast } from "sonner";
 import type {
   ReplyThread,
@@ -11,12 +23,12 @@ import type {
 import { api } from "../api/client.ts";
 import { IS_DEMO } from "../api/demo.ts";
 import { Button } from "../components/primitives/Button.tsx";
-import { Badge } from "../components/primitives/Badge.tsx";
 import { Input } from "../components/primitives/Field.tsx";
 import { Pii } from "../components/primitives/Pii.tsx";
 import { MailboxConnections } from "../components/MailboxInbox.tsx";
 import { ReplyPreferences } from "../components/ReplyPreferences.tsx";
 import { ReplyOptionsComposer } from "../components/ReplyOptionsComposer.tsx";
+import { replyCompany, replyPreview } from "../lib/replyPreview.ts";
 import { timeAgo } from "../lib/cn.ts";
 import { readOnly } from "../lib/readOnly.ts";
 import { replyInView, replyNeedsAttention, type ReplyView } from "../lib/replies.ts";
@@ -39,6 +51,9 @@ function InboxPage() {
     (t) =>
       (channel === "all" || t.channel === channel) &&
       (match === "all" ||
+        (match === "missing-identity" && t.matchStatus === "missing_identity") ||
+        (match === "no-prospect" && t.matchStatus === "no_prospect") ||
+        (match === "ambiguous" && t.matchStatus === "ambiguous") ||
         (match === "matched" && t.prospectId != null) ||
         (match === "no-match" && t.prospectId == null) ||
         (match === "unassigned" && t.channel === "linkedin" && !t.workspace)) &&
@@ -65,52 +80,53 @@ function InboxPage() {
     setPage(1);
   }, [view, channel, match, search]);
   const attention = threads.filter(replyNeedsAttention).length;
+  const selected = visible.find((t) => t.key === expanded);
+  const pageCount = Math.max(1, Math.ceil(visible.length / 30));
+  const currentPage = Math.min(page, pageCount);
   return (
-    <div className="-mx-6 -my-6 flex flex-col">
-      <section className="flex flex-wrap items-end justify-between gap-4 border-b border-ink-rule px-6 pb-5 pt-6">
+    <div className={`replies-page -mx-6 -my-6 flex flex-col ${selected ? "has-selection" : ""}`}>
+      <header className="replies-heading">
         <div>
-          <div className="ln-eyebrow">The Ledger · Replies</div>
-          <h1
-            className="mt-1 text-ink-cream"
-            style={{
-              fontFamily: "var(--font-display)",
-              fontSize: 44,
-              fontWeight: 600,
-              letterSpacing: "-0.025em",
-              lineHeight: 0.98,
-            }}
-          >
-            Who wrote back.
-          </h1>
-          <p className="mt-3 max-w-[65ch] text-[13px] text-ink-muted">
-            Email and LinkedIn conversations. Compare three replies, make one yours, and send it
-            here.
+          <h1>Replies</h1>
+          <p>
+            {attention
+              ? `${attention} conversations waiting for you`
+              : "Your conversations, all in one place"}
           </p>
         </div>
-        <div className="flex items-center gap-3">
-          {attention > 0 && <Badge tone="spend">{attention} need a reply</Badge>}
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={inbox.isFetching || refresh.isPending}
-            onClick={() => refresh.mutate()}
-            {...readOnly}
-          >
-            {inbox.isFetching || refresh.isPending ? (
-              <Loader2 size={12} className="animate-spin" />
-            ) : (
-              <RefreshCw size={12} />
-            )}{" "}
-            Refresh
-          </Button>
-        </div>
-      </section>
-      <MailboxConnections mailboxes={inbox.data?.mailboxes ?? []} />
-      <LinkedInConnections accounts={inbox.data?.accounts ?? []} />
-      {inbox.data && (
-        <ReplyPreferences key={inbox.data.workspace} workspace={inbox.data.workspace} />
-      )}
-      <div className="flex flex-wrap items-center gap-2 border-b border-ink-rule/60 px-6 py-3">
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={inbox.isFetching || refresh.isPending}
+          onClick={() => refresh.mutate()}
+          {...readOnly}
+        >
+          {inbox.isFetching || refresh.isPending ? (
+            <Loader2 size={14} className="animate-spin" />
+          ) : (
+            <RefreshCw size={14} />
+          )}
+          Refresh
+        </Button>
+      </header>
+      <details className="replies-settings">
+        <summary>
+          <Settings2 size={14} /> Connections & reply preferences
+          <span className="replies-settings-count">
+            {inbox.data?.mailboxes.filter((m) => m.status === "connected").length ?? 0} email ·{" "}
+            {inbox.data?.accounts.length ?? 0} LinkedIn
+            {inbox.data?.accounts.some((a) => linkedInConnectionView(a).attention)
+              ? " · needs attention"
+              : ""}
+          </span>
+        </summary>
+        <MailboxConnections mailboxes={inbox.data?.mailboxes ?? []} />
+        <LinkedInConnections accounts={inbox.data?.accounts ?? []} />
+        {inbox.data && (
+          <ReplyPreferences key={inbox.data.workspace} workspace={inbox.data.workspace} />
+        )}
+      </details>
+      <div className="replies-filters flex flex-wrap items-center gap-2 border-b border-ink-rule/60 px-6 py-3">
         {(["all", "email", "linkedin"] as const).map((c) => (
           <Button
             key={c}
@@ -121,15 +137,42 @@ function InboxPage() {
             {c === "all" ? "All channels" : c === "email" ? "Email" : "LinkedIn"}
           </Button>
         ))}
+        <div className="replies-match-switch" role="group" aria-label="Conversation matching">
+          {(
+            [
+              ["matched", "Matched"],
+              ["no-match", "Unmatched"],
+              ["all", "All"],
+            ] as const
+          ).map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              aria-pressed={match === value}
+              onClick={() => {
+                setMatch(value);
+                setExpanded(null);
+              }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <select
-          aria-label="Prospect match filter"
-          className="rounded-sm border border-ink-rule bg-ink-bg px-2 py-1 text-[12px] text-ink-cream"
-          value={match}
-          onChange={(e) => setMatch(e.target.value)}
+          aria-label="Detailed matching filters"
+          className="max-w-full rounded-sm border border-ink-rule bg-ink-bg px-2 py-1 text-[12px] text-ink-muted"
+          value={["matched", "no-match", "all"].includes(match) ? "" : match}
+          onChange={(e) => {
+            setMatch(e.target.value);
+            setExpanded(null);
+          }}
         >
-          <option value="matched">Matched prospects</option>
-          <option value="all">All conversations</option>
-          <option value="no-match">No prospect match</option>
+          <option value="" disabled>
+            More filters
+          </option>
+          <option value="missing-identity">Identity not resolved</option>
+          <option value="no-prospect">Resolved · no prospect</option>
+          <option value="ambiguous">Multiple matches · review assignment</option>
           <option value="unassigned">Unassigned LinkedIn</option>
         </select>
         <Input
@@ -140,7 +183,7 @@ function InboxPage() {
           className="ml-auto max-w-xs"
         />
       </div>
-      <div className="flex gap-2 border-b border-ink-rule/60 px-6 py-3">
+      <div className="replies-views flex gap-2 border-b border-ink-rule/60 px-6 py-3">
         {(["inbox", "snoozed", "archived"] as const).map((v) => (
           <Button
             key={v}
@@ -163,46 +206,130 @@ function InboxPage() {
           {inbox.error?.message ?? inbox.data?.error}. Saved conversations remain available.
         </p>
       )}
-      {inbox.isLoading ? (
-        <p className="px-6 py-6 text-ink-muted">Loading conversations…</p>
-      ) : visible.length === 0 ? (
-        <p className="px-6 py-8 text-[13px] text-ink-muted">
-          {view === "snoozed"
-            ? "No snoozed conversations. Snooze a thread to return to it in five days."
-            : view === "archived"
-              ? "No archived conversations in this view."
-              : "No conversations in this view. Try All conversations or refresh your connections."}
-        </p>
-      ) : (
-        visible
-          .slice((page - 1) * 30, page * 30)
-          .map((t) => (
+      <div className={`replies-workspace ${selected ? "has-selection" : ""}`}>
+        <aside className="replies-queue" aria-label="Conversations">
+          <div className="replies-queue-heading">
+            <span>
+              {view === "inbox" ? "Conversations" : view === "snoozed" ? "Snoozed" : "Archived"}
+            </span>
+            <span>{visible.length}</span>
+          </div>
+          {inbox.isLoading ? (
+            <p className="replies-empty">Loading conversations…</p>
+          ) : visible.length === 0 ? (
+            <p className="replies-empty">
+              {view === "snoozed"
+                ? "No snoozed conversations."
+                : view === "archived"
+                  ? "No archived conversations."
+                  : "No conversations found. Try another filter or refresh your connections."}
+            </p>
+          ) : (
+            visible.slice((currentPage - 1) * 30, currentPage * 30).map((t) => {
+              const lastMessage = t.messages.filter((m) => !m.deleted).at(-1);
+              const company = replyCompany(t.company);
+              const preview = lastMessage ? replyPreview(lastMessage.body, t.channel) : "";
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  className="replies-conversation"
+                  aria-current={selected?.key === t.key ? "true" : undefined}
+                  onClick={() => setExpanded(t.key)}
+                >
+                  <span className="replies-avatar" aria-hidden="true">
+                    {t.channel === "linkedin" ? <MessageSquare size={17} /> : <Mail size={17} />}
+                  </span>
+                  <span className="replies-preview">
+                    <span className="replies-preview-top">
+                      <strong>
+                        <Pii kind="name">{t.name}</Pii>
+                      </strong>
+                      <time>{timeAgo(t.lastActivityAt)}</time>
+                    </span>
+                    <span className="replies-company">
+                      {company ? (
+                        <Pii kind="company">{company}</Pii>
+                      ) : t.channel === "email" && t.address ? (
+                        <Pii kind="email">{t.address}</Pii>
+                      ) : t.channel === "linkedin" ? (
+                        "LinkedIn"
+                      ) : (
+                        "Email"
+                      )}
+                    </span>
+                    <span className="replies-snippet">
+                      {lastMessage?.direction === "outbound" ? "You: " : ""}
+                      {preview ||
+                        (lastMessage?.attachment ? "Attachment" : t.subject) ||
+                        "Open conversation"}
+                    </span>
+                    <span className="replies-preview-status">
+                      {replyNeedsAttention(t) ? (
+                        <span className="replies-needs-reply">Needs reply</span>
+                      ) : (
+                        <span>
+                          {t.archivedAt
+                            ? "Archived"
+                            : t.snoozedUntil
+                              ? "Snoozed"
+                              : "No reply needed"}
+                        </span>
+                      )}
+                      {t.drafts && Object.values(t.drafts.edits).some((text) => text.trim()) && (
+                        <span>Draft saved</span>
+                      )}
+                    </span>
+                  </span>
+                </button>
+              );
+            })
+          )}
+          {pageCount > 1 && (
+            <div className="replies-pagination">
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={currentPage <= 1}
+                onClick={() => setPage(currentPage - 1)}
+              >
+                Previous
+              </Button>
+              <span>
+                {currentPage} / {pageCount}
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                disabled={currentPage >= pageCount}
+                onClick={() => setPage(currentPage + 1)}
+              >
+                Next
+              </Button>
+            </div>
+          )}
+        </aside>
+        <section className="replies-detail" aria-label="Selected conversation">
+          {selected ? (
             <ThreadRow
-              key={t.key}
-              thread={t}
-              expanded={expanded === t.key}
-              onToggle={() => setExpanded(expanded === t.key ? null : t.key)}
+              key={selected.key}
+              thread={selected}
+              expanded
+              onToggle={() => setExpanded(null)}
             />
-          ))
-      )}
-      {visible.length > 30 && (
-        <div className="flex items-center justify-end gap-3 px-6 py-4 text-[12px] text-ink-muted">
-          <Button size="sm" variant="ghost" disabled={page <= 1} onClick={() => setPage(page - 1)}>
-            Previous
-          </Button>
-          <span>
-            Page {page} of {Math.ceil(visible.length / 30)}
-          </span>
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={page * 30 >= visible.length}
-            onClick={() => setPage(page + 1)}
-          >
-            Next
-          </Button>
-        </div>
-      )}
+          ) : (
+            <div className="replies-placeholder">
+              <Inbox size={32} strokeWidth={1.3} />
+              <h2>A little room to reply.</h2>
+              <p>
+                Select a conversation to read the thread
+                <br />
+                and make your next reply yours.
+              </p>
+            </div>
+          )}
+        </section>
+      </div>
       {inbox.data?.hasMore && (
         <p className="px-6 py-3 text-[11px] text-ink-muted">
           The live email window contains more messages. Saved conversations remain available here.
@@ -218,7 +345,15 @@ function LinkedInConnections({ accounts }: { accounts: LinkedInAccountView[] }) 
   const [connectUrl, setConnectUrl] = useState<string | null>(null);
   const connect = useMutation({
     mutationFn: (accountKey?: string) =>
-      api.linkedinAction({ action: accountKey ? "reconnect" : "connect", accountKey }),
+      api.linkedinAction({
+        action: accountKey
+          ? accounts.find((a) => a.key === accountKey)?.canResolve ||
+            accounts.some((a) => a.key === accountKey && linkedInConnectionView(a).reconnect)
+            ? "reconnect"
+            : "upgrade"
+          : "connect",
+        accountKey,
+      }),
     onSuccess: (r, accountKey) => {
       if (r.url && r.intent_id) {
         setConnectUrl(r.url);
@@ -244,92 +379,309 @@ function LinkedInConnections({ accounts }: { accounts: LinkedInAccountView[] }) 
     if (status.data.status === "completed") {
       toast.success("LinkedIn connected");
       void queryClient.invalidateQueries({ queryKey: ["replies"] });
-    } else toast.error(status.data.failure_reason ?? `Connection ${status.data.status}`);
+    } else {
+      toast.error(
+        status.data.failure_reason === "duplicate_member"
+          ? "OneShot rejected the permission upgrade for an existing connection. See connection details."
+          : (status.data.failure_reason ?? `Connection ${status.data.status}`),
+      );
+      void queryClient.invalidateQueries({ queryKey: ["replies"] });
+    }
     setIntent(null);
     setConnectUrl(null);
   }, [status.data, queryClient]);
   const sync = useMutation({
-    mutationFn: (accountKey: string) => api.linkedinAction({ action: "sync", accountKey }),
+    mutationFn: (accountKey: string) => api.linkedinAction({ action: "backfill", accountKey }),
     onSuccess: () => {
-      toast.message("History import started. New messages will appear as they arrive.");
+      toast.message("Backfill started. Progress is saved and shared across workspaces.");
       void queryClient.invalidateQueries({ queryKey: ["replies"] });
     },
     onError: (e: Error) => toast.error(e.message),
   });
+  const [confirmAction, setConfirmAction] = useState<{
+    key: string;
+    action: "remove" | "force-reconnect";
+  } | null>(null);
+  const accountAction = useMutation({
+    mutationFn: (request: { accountKey: string; action: "remove" | "force-reconnect" }) =>
+      api.linkedinAction(request),
+    onSuccess: (result, request) => {
+      setConfirmAction(null);
+      if (request.action === "remove") {
+        toast.success("Connection removed. Imported messages are kept.");
+        if (result.upstreamDeleted === false)
+          toast.warning("Access revoked; provider disconnection is still pending.");
+      } else if (result.url && result.intent_id) {
+        setConnectUrl(result.url);
+        setIntent({ id: result.intent_id, accountKey: request.accountKey });
+        window.open(result.url, "_blank", "noopener,noreferrer");
+      }
+      void queryClient.invalidateQueries({ queryKey: ["replies"] });
+    },
+    onError: () => {
+      void queryClient.invalidateQueries({ queryKey: ["replies"] });
+    },
+  });
+  const attentionCount = accounts.filter((a) => linkedInConnectionView(a).attention).length;
   return (
     <details
-      className="border-b border-ink-rule/60 px-6 py-3"
-      open={accounts.some((a) => a.error || a.status !== "connected") || !!intent}
+      className="replies-linkedin border-b border-ink-rule/60 px-6 py-3"
+      open={attentionCount > 0 || !!intent}
     >
-      <summary className="cursor-pointer text-[12px] text-ink-muted">
-        LinkedIn connections ({accounts.filter((a) => a.status === "connected").length})
+      <summary className="replies-connection-summary">
+        LinkedIn
+        <span>
+          {accounts.length === 0
+            ? "Not connected"
+            : attentionCount
+              ? `${attentionCount} ${attentionCount === 1 ? "account needs" : "accounts need"} attention`
+              : `${accounts.length} connected`}
+        </span>
       </summary>
-      <div className="mt-3 space-y-3">
-        {accounts.map((a) => (
-          <div key={a.key} className="text-[12px] text-ink-muted">
-            <div className="flex flex-wrap items-center gap-2">
-              <Pii kind="name">{a.name}</Pii>
-              <Badge tone={a.status === "connected" ? "neutral" : "blocked"}>
-                {a.status.replaceAll("_", " ")}
-              </Badge>
-              <span>
-                {a.syncState.replaceAll("_", " ")}
-                {a.lastCheckedAt ? ` · checked ${timeAgo(a.lastCheckedAt)}` : ""}
-              </span>
-              {a.status === "reconnect_required" && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={connect.isPending}
-                  onClick={() => connect.mutate(a.key)}
-                  {...readOnly}
-                >
-                  Reconnect
-                </Button>
+      <div className="replies-connection-list">
+        {accounts.map((a) => {
+          const view = linkedInConnectionView(a);
+          const diagnostics = [
+            ...new Set([a.permissionUpgradeError, a.backfill?.error, a.error].filter(Boolean)),
+          ];
+          return (
+            <div key={a.key} className="replies-connection text-[12px] text-ink-muted">
+              <div className="replies-connection-header">
+                <div>
+                  <strong className="replies-connection-name">
+                    <Pii kind="name">{a.name}</Pii>
+                  </strong>
+                  <p className={view.attention ? "text-ink-blocked-2" : "text-ink-muted"}>
+                    {view.title}
+                  </p>
+                </div>
+                <div className="replies-connection-actions">
+                  {(view.reconnect || view.needsPermissions) && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={
+                        connect.isPending ||
+                        accountAction.isPending ||
+                        !!intent ||
+                        (!!a.permissionUpgradeError && !view.reconnect)
+                      }
+                      onClick={() => connect.mutate(a.key)}
+                      {...readOnly}
+                    >
+                      {connect.isPending && connect.variables === a.key
+                        ? "Opening…"
+                        : view.reconnect
+                          ? "Reconnect"
+                          : "Allow profile access"}
+                    </Button>
+                  )}
+                  {view.connected && !view.needsPermissions && !view.running && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={sync.isPending || accountAction.isPending}
+                      onClick={() => sync.mutate(a.key)}
+                      {...readOnly}
+                    >
+                      {sync.isPending && sync.variables === a.key
+                        ? "Starting…"
+                        : view.paused
+                          ? "Resume import"
+                          : "Import history"}
+                    </Button>
+                  )}
+                </div>
+              </div>
+              {view.description && (
+                <p className="replies-connection-description">{view.description}</p>
               )}
-              {a.status === "connected" && !a.complete && (
+              {a.backfill && !view.reconnect && !view.paused && (
+                <div className="replies-sync">
+                  <p>
+                    {a.backfill.stage === "complete"
+                      ? "History import complete"
+                      : a.backfill.nextAttemptAt
+                        ? `Daily limit reached. Resumes ${new Date(a.backfill.nextAttemptAt).toLocaleString()}.`
+                        : "Importing conversation history…"}
+                  </p>
+                  {view.showProgress && a.backfill.senders && (
+                    <>
+                      <progress
+                        aria-label={`Profiles checked for ${a.name}`}
+                        value={a.backfill.senders.resolved}
+                        max={a.backfill.senders.total}
+                      />
+                      <p className="mt-2">
+                        {a.backfill.senders.resolved} of {a.backfill.senders.total} profiles checked
+                      </p>
+                    </>
+                  )}
+                </div>
+              )}
+              <div className="mt-3 flex flex-wrap gap-2">
                 <Button
                   size="sm"
                   variant="ghost"
-                  disabled={sync.isPending || a.syncState === "syncing"}
-                  onClick={() => sync.mutate(a.key)}
+                  disabled={accountAction.isPending || connect.isPending || !!intent}
+                  onClick={() => {
+                    accountAction.reset();
+                    setConfirmAction({ key: a.key, action: "force-reconnect" });
+                  }}
                   {...readOnly}
                 >
-                  {a.syncState === "never_synced" ? "Import history" : "Continue import"} · paid
+                  Force reconnect
                 </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  disabled={accountAction.isPending || connect.isPending || !!intent}
+                  onClick={() => {
+                    accountAction.reset();
+                    setConfirmAction({ key: a.key, action: "remove" });
+                  }}
+                  {...readOnly}
+                >
+                  Remove connection
+                </Button>
+              </div>
+              {confirmAction?.key === a.key && (
+                <div
+                  className="my-3 space-y-3 rounded border border-ink-rule p-3"
+                  role="group"
+                  aria-label="Confirm connection change"
+                >
+                  <p className="text-ink-cream-2">
+                    {confirmAction.action === "remove"
+                      ? "Remove this LinkedIn connection from all workspaces? OneShot access will be revoked and pending sends cancelled. All imported messages and assignments stay saved."
+                      : "Disconnect this account and open a fresh LinkedIn login? This affects all workspaces and cancels pending sends. All imported messages and assignments stay saved. Sign in to the same LinkedIn account. If the connection service is unavailable, the new login may still fail."}
+                  </p>
+                  {accountAction.error && (
+                    <p role="alert" className="text-ink-blocked-2">
+                      {accountAction.error.message}
+                    </p>
+                  )}
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      disabled={accountAction.isPending}
+                      onClick={() =>
+                        accountAction.mutate({ accountKey: a.key, action: confirmAction.action })
+                      }
+                      {...readOnly}
+                    >
+                      {accountAction.isPending
+                        ? "Working…"
+                        : confirmAction.action === "remove"
+                          ? "Remove connection, keep messages"
+                          : "Disconnect and reconnect"}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      disabled={accountAction.isPending}
+                      onClick={() => setConfirmAction(null)}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              )}
+              {(a.backfill || diagnostics.length > 0 || a.lastCheckedAt) && (
+                <details className="replies-sync-details">
+                  <summary>Connection & import details</summary>
+                  {a.lastCheckedAt && <p>Last history check {timeAgo(a.lastCheckedAt)}.</p>}
+                  {diagnostics.map((message) => (
+                    <p key={message} className="break-words">
+                      {message}
+                    </p>
+                  ))}
+                  {a.backfill && (
+                    <>
+                      {a.backfill.senders && (
+                        <p>
+                          {a.backfill.senders.resolved} of {a.backfill.senders.total} profiles
+                          checked. Profile checks are one part of the history import.
+                        </p>
+                      )}
+                      <div className="replies-import-table">
+                        <table>
+                          <caption className="sr-only">History import results by workspace</caption>
+                          <thead>
+                            <tr>
+                              <th>Workspace</th>
+                              <th>Messages</th>
+                              <th>Matched replies</th>
+                              <th>Unresolved</th>
+                              <th>No prospect</th>
+                              <th>Cadences stopped</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {Object.entries(a.backfill.counts).map(([workspace, c]) => (
+                              <tr key={workspace}>
+                                <th scope="row">{workspace}</th>
+                                <td>{c.imported}</td>
+                                <td>{c.matched}</td>
+                                <td>{c.unresolved}</td>
+                                <td>{c.noProspect}</td>
+                                <td>{c.stoppedCadences}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      {!!a.backfill.senders?.failed && (
+                        <p>
+                          {a.backfill.senders.failed} profiles were unavailable. Their messages
+                          remain unresolved; these lookups will not be retried.
+                        </p>
+                      )}
+                      {a.backfill.providerLimit && (
+                        <p>
+                          Daily allowance: {a.backfill.providerLimit.limit} profile lookups.
+                          Requests are paced by the provider.
+                        </p>
+                      )}
+                      <p>Import stage: {a.backfill.stage}</p>
+                      {a.backfill.pending?.requestId && (
+                        <p className="break-all">Request: {a.backfill.pending.requestId}</p>
+                      )}
+                    </>
+                  )}
+                </details>
               )}
             </div>
-            {!a.complete && (
-              <p className="mt-1">History is incomplete. This is not the full inbox yet.</p>
-            )}
-            {a.error && (
-              <p role="alert" className="mt-1 text-ink-blocked-2">
-                {a.error}
-              </p>
-            )}
-          </div>
-        ))}
-        <Button
-          size="sm"
-          variant="ghost"
-          disabled={connect.isPending || !!intent}
-          onClick={() => connect.mutate(undefined)}
-          {...readOnly}
-        >
-          {connect.isPending ? "Opening connection…" : "Connect LinkedIn"}
-        </Button>
-        {connectUrl && (
-          <p className="text-[12px] text-ink-muted">
-            <a className="underline" href={connectUrl} target="_blank" rel="noreferrer">
-              Open LinkedIn login
-            </a>{" "}
-            · waiting for connection{status.error ? ` · ${status.error.message}` : ""}
+          );
+        })}
+        <div className="replies-connection-footer">
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={connect.isPending || accountAction.isPending || !!intent}
+            onClick={() => connect.mutate(undefined)}
+            {...readOnly}
+          >
+            {connect.isPending && !connect.variables
+              ? "Opening connection…"
+              : accounts.length
+                ? "Add another account"
+                : "Connect LinkedIn"}
+          </Button>
+          {connectUrl && (
+            <p className="text-[12px] text-ink-muted">
+              <a className="underline" href={connectUrl} target="_blank" rel="noreferrer">
+                Open LinkedIn login
+              </a>{" "}
+              · waiting for connection{status.error ? ` · ${status.error.message}` : ""}
+            </p>
+          )}
+          <p className="max-w-[80ch] text-[11px] text-ink-muted">
+            Imports may incur charges within your wallet limits. Matched replies stop cadences
+            across workspaces.
           </p>
-        )}
-        <p className="text-[11px] text-ink-muted">
-          Messaging uses its own connection. Refresh reads saved history; Import history starts a
-          paid sync.
-        </p>
+        </div>
       </div>
     </details>
   );
@@ -382,39 +734,30 @@ function ThreadRow({
     }
   }, [expanded, t.key, t.mailboxThreadKey, t.messages]);
   return (
-    <article className="border-b border-ink-rule/60">
-      <div className="flex flex-wrap items-center gap-2 pr-6">
+    <article className="replies-thread">
+      <div className="replies-thread-header">
         <button
           type="button"
-          aria-expanded={expanded}
+          className="replies-back"
           onClick={onToggle}
-          className="flex min-w-0 flex-1 basis-full items-center gap-3 px-6 py-4 sm:basis-0 text-left hover:bg-ink-surface/60"
+          aria-label="Back to conversations"
         >
-          {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-[14px] text-ink-cream">
-              <Pii kind="name">{t.name}</Pii>
-              {t.company && (
-                <span className="text-ink-muted">
-                  {" "}
-                  · <Pii kind="company">{t.company}</Pii>
-                </span>
-              )}
-            </div>
-            <div className="truncate text-[12px] text-ink-muted">{t.subject || "(No subject)"}</div>
-            <div className="mt-1 text-[11px] text-ink-faint">
-              {timeAgo(t.lastActivityAt)}
-              {t.snoozedUntil && ` · returns ${new Date(t.snoozedUntil).toLocaleString()}`}
-            </div>
-          </div>
-          <Badge tone="neutral">{t.channel === "linkedin" ? "LinkedIn" : "Email"}</Badge>
-          {!t.prospectId && (
-            <Badge tone="neutral">{t.channel === "linkedin" ? "Unassigned" : "No match"}</Badge>
-          )}
-          {t.needsReply && !t.archivedAt && !t.snoozedUntil && (
-            <Badge tone="signal">Needs reply</Badge>
-          )}
+          <ArrowLeft size={18} />
         </button>
+        <div className="replies-recipient">
+          <h2>
+            <Pii kind="name">{t.name}</Pii>
+          </h2>
+          <p>
+            {t.channel === "linkedin" ? "LinkedIn" : "Email"}
+            {replyCompany(t.company) && (
+              <>
+                {" "}
+                · <Pii kind="company">{replyCompany(t.company)!}</Pii>
+              </>
+            )}
+          </p>
+        </div>
         {!t.archivedAt && (
           <Button
             size="sm"
@@ -423,6 +766,7 @@ function ThreadRow({
             onClick={() => state.mutate(t.snoozedUntil ? "unsnooze" : "snooze")}
             {...readOnly}
           >
+            <Clock3 size={14} />
             {t.snoozedUntil ? "Unsnooze" : "Snooze 5 days"}
           </Button>
         )}
@@ -433,55 +777,67 @@ function ThreadRow({
           onClick={() => state.mutate(t.archivedAt ? "restore" : "archive")}
           {...readOnly}
         >
+          <Archive size={14} />
           {t.archivedAt ? "Restore" : "Archive"}
         </Button>
       </div>
       {expanded && (
-        <div className="space-y-4 bg-ink-bg-deep/40 px-6 py-4">
-          <div className="flex flex-wrap gap-2">
-            {t.channel === "linkedin" && (
-              <>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setAssignOpen(!assignOpen)}
-                  {...readOnly}
-                >
-                  {t.workspace ? "Change assignment" : "Assign workspace and prospect"}
-                </Button>
-                {t.profileUrl && (
-                  <a
-                    href={t.profileUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="self-center text-[12px] text-ink-muted underline"
+        <div className="replies-thread-body">
+          {t.channel === "email" && (
+            <h3 className="pt-4 text-[14px] font-medium">{t.subject || "(No subject)"}</h3>
+          )}
+          {t.snoozedUntil && (
+            <p className="pt-3 text-[12px] text-ink-muted">
+              Returns {new Date(t.snoozedUntil).toLocaleString()}
+            </p>
+          )}
+          <details className="replies-contact-details">
+            <summary>Contact details & assignment</summary>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {t.channel === "linkedin" && (
+                <>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setAssignOpen(!assignOpen)}
+                    {...readOnly}
                   >
-                    LinkedIn profile
-                  </a>
-                )}
-              </>
-            )}
-            {t.mailboxThreadKey && (
-              <>
-                <Input
-                  aria-label="Prospect email for matching"
-                  className="max-w-xs"
-                  value={matchEmail}
-                  onChange={(e) => setMatchEmail(e.target.value)}
-                  placeholder="Existing prospect’s email"
-                />
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  disabled={!matchEmail.trim() || match.isPending}
-                  onClick={() => match.mutate()}
-                  {...readOnly}
-                >
-                  Match prospect
-                </Button>
-              </>
-            )}
-          </div>
+                    {t.workspace ? "Change assignment" : "Assign workspace and prospect"}
+                  </Button>
+                  {t.profileUrl && (
+                    <a
+                      href={t.profileUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="self-center text-[12px] text-ink-muted underline"
+                    >
+                      LinkedIn profile
+                    </a>
+                  )}
+                </>
+              )}
+              {t.mailboxThreadKey && (
+                <>
+                  <Input
+                    aria-label="Prospect email for matching"
+                    className="max-w-xs"
+                    value={matchEmail}
+                    onChange={(e) => setMatchEmail(e.target.value)}
+                    placeholder="Existing prospect’s email"
+                  />
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    disabled={!matchEmail.trim() || match.isPending}
+                    onClick={() => match.mutate()}
+                    {...readOnly}
+                  >
+                    Match prospect
+                  </Button>
+                </>
+              )}
+            </div>
+          </details>
           {assignOpen && (
             <Assignment
               thread={t}
@@ -491,13 +847,13 @@ function ThreadRow({
               }}
             />
           )}
-          <div className="max-h-[480px] space-y-3 overflow-auto">
+          <div className="replies-messages">
             {t.messages.map((m) => (
               <div
                 key={m.id}
-                className={`max-w-[85%] rounded-sm border border-ink-rule/60 px-3 py-2 ${m.direction === "outbound" ? "ml-auto bg-ink-surface" : "bg-ink-surface/30"}`}
+                className={`replies-message ${m.direction === "outbound" ? "is-outbound" : "is-inbound"}`}
               >
-                <div className="mb-1 text-[11px] text-ink-faint">
+                <div className="mb-1 text-[11px] text-ink-muted">
                   {m.direction === "outbound" ? "You" : <Pii kind="name">{t.name}</Pii>} ·{" "}
                   {timeAgo(m.at)}
                   {!m.human && " · automatic message"}

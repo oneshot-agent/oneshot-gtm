@@ -5,12 +5,14 @@ import type { LinkedInConversationsOptions, LinkedInMessagesOptions } from "@one
 
 export type LinkedInOperation =
   | { kind: "accounts" }
-  | { kind: "connect"; accountId?: string }
+  | { kind: "revoke"; accountId: string }
+  | { kind: "connect"; accountId?: string; upgrade?: boolean }
+  | { kind: "profile"; accountId: string; identifier: string; idempotencyKey: string }
   | { kind: "connection"; intentId: string }
   | { kind: "status"; accountId: string }
   | { kind: "conversations"; options: LinkedInConversationsOptions }
   | { kind: "messages"; options: LinkedInMessagesOptions }
-  | { kind: "sync"; accountId: string }
+  | { kind: "sync"; accountId: string; idempotencyKey?: string }
   | {
       kind: "reply";
       accountId: string;
@@ -35,9 +37,11 @@ export async function linkedInSdk(operation: LinkedInOperation): Promise<unknown
         ...(await agent.listLinkedInAccounts({ includeRevoked: true })),
       };
     case "connect":
-      return operation.accountId
+      return operation.accountId && !operation.upgrade
         ? agent.reconnectLinkedInAccount(operation.accountId)
-        : agent.linkedinConnect({ requestedActions: ["read", "reply"] });
+        : agent.linkedinConnect({ requestedActions: ["read", "reply", "view_profile"] });
+    case "revoke":
+      return agent.revokeLinkedInAccount(operation.accountId);
     case "connection":
       return agent.getLinkedInConnection(operation.intentId);
     case "status":
@@ -46,11 +50,27 @@ export async function linkedInSdk(operation: LinkedInOperation): Promise<unknown
       return agent.linkedinConversations(operation.options);
     case "messages":
       return agent.linkedinMessages(operation.options);
+    case "profile": {
+      const result = await agent.tool("linkedin/profile-view", {
+        account_id: operation.accountId,
+        identifier: operation.identifier,
+        notify: false,
+        wait: false,
+        idempotencyKey: operation.idempotencyKey,
+        ...audit,
+      });
+      record(result, "linkedin.profile");
+      return result;
+    }
     case "sync": {
-      const result = await agent.linkedinSync({
-        accountId: operation.accountId,
+      // SDK 0.35.0's linkedinSync injects timeout into the request body,
+      // which this endpoint rejects. Use the SDK transport without that field;
+      // wait:false returns the job immediately, so no polling timeout is needed.
+      const result = await agent.tool("linkedin/sync", {
+        account_id: operation.accountId,
         mode: "continue",
-        maxPages: 10,
+        ...(operation.idempotencyKey ? { idempotencyKey: operation.idempotencyKey } : {}),
+        max_pages: 10,
         wait: false,
         ...audit,
       });
@@ -63,9 +83,10 @@ export async function linkedInSdk(operation: LinkedInOperation): Promise<unknown
         throw new Error("Reconnect this LinkedIn account with permission to reply");
       if (!operation.text.trim() || operation.text.length > 4000)
         throw new Error("LinkedIn replies must contain 1–4000 characters");
-      const result = await agent.linkedinReply({
-        accountId: operation.accountId,
-        conversationId: operation.conversationId,
+      // The SDK convenience method adds a timeout field rejected by the API.
+      const result = await agent.tool("linkedin/reply", {
+        account_id: operation.accountId,
+        conversation_id: operation.conversationId,
         text: operation.text,
         idempotencyKey: operation.idempotencyKey,
         wait: false,

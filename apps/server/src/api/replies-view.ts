@@ -1,11 +1,13 @@
 import {
   classifyReply,
   demoMode,
+  demoFixture,
   currentWorkspaceName,
   getLedger,
   getLinkedInInboxStore,
   getReplyReviewStore,
   loadConfig,
+  linkedInMatches,
   replyContextVersion,
 } from "@oneshot-gtm/core";
 import type {
@@ -14,6 +16,7 @@ import type {
   RepliesResult,
   ReplyThread,
 } from "@oneshot-gtm/shared-types";
+import { backfillStatus } from "../linkedin-backfill.ts";
 import { listInboxRoute } from "./inbox.ts";
 
 import { emailThreads } from "@oneshot-gtm/shared-types";
@@ -21,6 +24,7 @@ import { emailThreads } from "@oneshot-gtm/shared-types";
 export function linkedInThreads(): ReplyThread[] {
   const store = getLinkedInInboxStore();
   const workspace = currentWorkspaceName();
+  const matches = linkedInMatches();
   return store
     .threads()
     .filter((t) => !t.owner || t.owner.workspace === workspace)
@@ -28,6 +32,17 @@ export function linkedInThreads(): ReplyThread[] {
       const a = store.account(t.accountKey);
       if (!a) return [];
       const c = t.conversation;
+      const rawMessages = store.messages(a.key, c.id);
+      const sender = rawMessages.findLast((m) => m.direction === "inbound" && !m.deleted);
+      const profile = sender ? store.senderProfile(a.key, c, sender) : null;
+      const found = profile ? matches.filter((m) => m.profile === profile) : [];
+      const matchStatus = t.owner
+        ? ("matched" as const)
+        : !profile
+          ? ("missing_identity" as const)
+          : found.length
+            ? ("ambiguous" as const)
+            : ("no_prospect" as const);
       const history: ReplyMessage[] = store.messages(a.key, c.id).map((m) => ({
         id: m.id,
         direction: m.direction,
@@ -43,26 +58,41 @@ export function linkedInThreads(): ReplyThread[] {
       if (!latest) return [];
       const peers = c.attendees.filter((p) => !p.is_self);
       const peer = peers[0];
-      const canSend =
+      const currentConnection = !a.previousAccountIds?.length || t.sourceAccountId === a.account.id;
+      const connectionAvailable =
+        !a.removedAt &&
         a.account.status === "connected" &&
         a.sync?.sync_state !== "reconnect_required" &&
-        a.account.allowed_actions.includes("reply") &&
-        !c.read_only;
-      const oneToOne = c.attendees_synced && peers.length === 1;
-      const reason = !canSend
-        ? "Connect an account with reply permission and a writable conversation."
-        : !t.owner
-          ? "Assign a workspace and prospect to generate replies."
-          : !oneToOne
-            ? "Review this group conversation and write a reply manually."
-            : !latest.body.trim()
-              ? "This message has no text. Review it on LinkedIn before replying."
-              : undefined;
+        a.account.allowed_actions.includes("reply");
+      const canSend = connectionAvailable && currentConnection && !c.read_only;
+      const linkedinConnectionState = !connectionAvailable
+        ? ("unavailable" as const)
+        : !currentConnection
+          ? ("restoring" as const)
+          : ("connected" as const);
+      const oneToOne = c.attendees_synced && c.type === 0 && peers.length === 1;
+      const reason = !connectionAvailable
+        ? a.removedAt
+          ? "This connection was removed. Imported messages remain saved."
+          : "Connect an account with reply permission to send."
+        : !currentConnection
+          ? "LinkedIn is connected. This saved conversation is waiting to be restored through the new connection before you can send. Check the history import under Connections."
+          : c.read_only
+            ? "This conversation is read-only on LinkedIn."
+            : !t.owner
+              ? "Assign a workspace and prospect to generate replies."
+              : !oneToOne
+                ? c.attendees_synced
+                  ? "Review this group conversation and write a reply manually."
+                  : "Participant details are incomplete. Review the conversation and write a reply manually."
+                : !latest.body.trim()
+                  ? "This message has no text. Review it on LinkedIn before replying."
+                  : undefined;
       return [
         {
           key: t.key,
           channel: "linkedin" as const,
-          name: peer?.name ?? c.name ?? "LinkedIn conversation",
+          name: peer?.name ?? sender?.sender_name ?? c.name ?? "LinkedIn conversation",
           company: peer?.occupation ?? null,
           subject: c.subject ?? "LinkedIn conversation",
           address: peer?.profile_url ?? "",
@@ -74,14 +104,22 @@ export function linkedInThreads(): ReplyThread[] {
           snoozedUntil: null,
           needsReply: history.findLast((m) => m.human && !m.deleted)?.direction === "inbound",
           canSend,
-          canGenerate: !!t.owner && oneToOne && !!latest.body.trim() && latest.human,
+          linkedinConnectionState,
+          canGenerate:
+            !a.removedAt &&
+            currentConnection &&
+            !!t.owner &&
+            oneToOne &&
+            !!latest.body.trim() &&
+            latest.human,
           unavailableReason: reason,
           contextVersion: "",
           drafts: null,
           send: null,
           accountKey: a.key,
           conversationId: c.id,
-          profileUrl: peer?.profile_url,
+          profileUrl: profile ? `https://${profile}` : peer?.profile_url,
+          matchStatus,
         },
       ];
     });
@@ -90,15 +128,20 @@ export function linkedInThreads(): ReplyThread[] {
 export async function collectReplies(req: Request): Promise<RepliesResult> {
   const inbox = (await (await listInboxRoute(req)).json()) as InboxResult;
   const workspace = currentWorkspaceName();
-  if (demoMode())
+  if (demoMode()) {
+    const linkedin =
+      demoFixture<Pick<RepliesResult, "threads" | "accounts">>("linkedin-replies.json");
     return {
-      threads: emailThreads(inbox, workspace),
-      accounts: [],
+      threads: [...emailThreads(inbox, workspace), ...(linkedin?.threads ?? [])].toSorted((a, b) =>
+        b.lastActivityAt.localeCompare(a.lastActivityAt),
+      ),
+      accounts: linkedin?.accounts ?? [],
       mailboxes: inbox.mailboxes ?? [],
       workspace,
       hasMore: inbox.hasMore,
       error: inbox.error,
     };
+  }
   const review = getReplyReviewStore();
   const cfg = loadConfig();
   const incoming = [
@@ -138,6 +181,7 @@ export async function collectReplies(req: Request): Promise<RepliesResult> {
   ];
   const accounts = getLinkedInInboxStore()
     .accounts()
+    .filter((a) => !a.removedAt)
     .map((a) => ({
       key: a.key,
       id: a.account.id,
@@ -154,6 +198,9 @@ export async function collectReplies(req: Request): Promise<RepliesResult> {
       lastCheckedAt: a.checkedAt,
       error: a.error,
       canReply: a.account.allowed_actions.includes("reply"),
+      canResolve: a.account.allowed_actions.includes("view_profile"),
+      permissionUpgradeError: a.permissionUpgradeError,
+      backfill: backfillStatus(a.key),
     }));
   return {
     threads: threads.toSorted((a, b) => b.lastActivityAt.localeCompare(a.lastActivityAt)),

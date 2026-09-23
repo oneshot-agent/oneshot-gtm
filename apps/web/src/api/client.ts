@@ -1,4 +1,4 @@
-import { emailThreads } from "@oneshot-gtm/shared-types";
+import type { OnboardingStatus } from "@oneshot-gtm/shared-types";
 import type {
   RepliesResult,
   ReplyLearningStatus,
@@ -93,9 +93,11 @@ async function errorMessage(res: Response, fallback: string): Promise<string> {
   try {
     const text = await res.text();
     if (text) {
-      const body = JSON.parse(text) as { error?: unknown };
+      const body = JSON.parse(text) as { error?: unknown; requestId?: unknown; code?: unknown };
       if (typeof body.error === "string" && body.error) message = body.error;
       else message = `${res.status} ${res.statusText}: ${text.slice(0, 200)}`;
+      if (typeof body.code === "string") message += ` (${body.code})`;
+      if (typeof body.requestId === "string") message += ` · request ${body.requestId}`;
     }
   } catch {
     // body absent, empty, or not JSON — keep the fallback message
@@ -133,6 +135,9 @@ export interface LinkedInSessionOutcome {
 }
 
 export const api = {
+  onboarding: () => getJson<OnboardingStatus>("/onboarding"),
+  deferOnboarding: () => postJson<OnboardingStatus>("/onboarding/defer", {}),
+  verifyOnboardingAI: () => postJson<OnboardingStatus>("/onboarding/verify-ai", {}),
   home: () => getJson<HomeMetrics>("/home"),
   cadences: (opts: { all?: boolean; sinceRun?: number } = {}) => {
     const qs: string[] = [];
@@ -206,17 +211,7 @@ export const api = {
     const qs = q.toString();
     return getJson<{ receipts: ReceiptView[] }>(`/receipts${qs ? `?${qs}` : ""}`);
   },
-  replies: async (): Promise<RepliesResult> => {
-    if (!IS_DEMO) return getJson<RepliesResult>("/replies");
-    const inbox = await getJson<InboxResult>("/inbox");
-    return {
-      threads: emailThreads(inbox, "demo"),
-      accounts: [],
-      mailboxes: inbox.mailboxes ?? [],
-      workspace: "demo",
-      hasMore: inbox.hasMore,
-    };
-  },
+  replies: () => getJson<RepliesResult>("/replies"),
   replyLearning: () => getJson<ReplyLearningStatus>("/replies/learning"),
   updateReplyLearning: (change: ReplyLearningUpdate) =>
     postJson<ReplyLearningStatus>("/replies/learning", change),
@@ -236,10 +231,13 @@ export const api = {
     postJson<ReplySendState>("/replies/send", { key, sendId, revision }),
   checkReplySend: (key: string) => postJson<ReplySendState>("/replies/send", { key, check: true }),
   linkedinAction: (request: { action: string; accountKey?: string; intentId?: string }) =>
-    postJson<{ url?: string; intent_id?: string; status?: string; failure_reason?: string }>(
-      "/replies/linkedin",
-      request,
-    ),
+    postJson<{
+      url?: string;
+      intent_id?: string;
+      status?: string;
+      failure_reason?: string;
+      upstreamDeleted?: boolean;
+    }>("/replies/linkedin", request),
   replyProspects: (q: string) =>
     getJson<{
       prospects: Array<{ workspace: string; id: number; name: string; email: string | null }>;

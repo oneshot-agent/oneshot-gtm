@@ -1,3 +1,4 @@
+import { onboardingStatus } from "./onboarding.ts";
 import { loadConfig, logEvent, startRun, webSearch } from "@oneshot-gtm/core";
 import { complete, loadPrompt } from "@oneshot-gtm/intel";
 import { effectiveIntervalMs, PACKS, TRIGGERS } from "@oneshot-gtm/find";
@@ -95,6 +96,17 @@ export async function strategistRoute(req: Request): Promise<Response> {
   if (cfgCheck.kind === "error") {
     return jsonResponse({ error: cfgCheck.error }, cfgCheck.status, req);
   }
+
+  const readiness = onboardingStatus();
+  if (!readiness.ready)
+    return jsonResponse(
+      {
+        error: `Complete onboarding before planning: ${readiness.missing.join(", ")}. Open /onboarding.`,
+        missing: readiness.missing,
+      },
+      400,
+      req,
+    );
 
   // Pre-search the web for accelerator data when the founder's latest message
   // is about cohort selection. Strategist's training-data knowledge of which

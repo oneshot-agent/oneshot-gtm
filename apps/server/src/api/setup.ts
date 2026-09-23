@@ -1,3 +1,5 @@
+import { normalizeWebsite } from "@oneshot-gtm/shared-types";
+import { aiFingerprint, invalidateOnboardingAI } from "./onboarding.ts";
 import {
   deleteGmailToken,
   hasCalendarScope,
@@ -372,6 +374,21 @@ export async function setup(req: Request): Promise<Response> {
  * they were — a partial write behind a 400 would make the 400 a lie.
  */
 function applySetup(body: SetupRequest): void {
+  if (body.onboardingStep === 1) {
+    if (!body.founderName?.trim() || !body.productOneLiner?.trim())
+      throw new SetupValidationError("Enter your name and product description.");
+    const domain = normalizeWebsite(body.productDomain ?? "");
+    if (!domain) throw new SetupValidationError("Enter a website domain or HTTP(S) URL.");
+    body.productDomain = domain;
+  }
+  if (body.onboardingStep === 2 && !body.icpOneLiner?.trim())
+    throw new SetupValidationError("Describe your target customer.");
+  if (
+    body.onboardingStep === 3 &&
+    (!["openrouter", "openai", "anthropic"].includes(body.llmProvider ?? "") ||
+      !body.llmModel?.trim())
+  )
+    throw new SetupValidationError("Select a provider and model.");
   const current = loadConfig();
   const llmProvider: LlmProvider = body.llmProvider ?? current.llmProvider;
   const walletMode: WalletMode = body.walletMode ?? current.walletMode;
@@ -430,6 +447,7 @@ function applySetup(body: SetupRequest): void {
     }
   }
 
+  const previousAI = aiFingerprint();
   saveConfig(merged);
 
   for (const id of remove) {
@@ -466,6 +484,7 @@ function applySetup(body: SetupRequest): void {
   if (body.secrets && Object.keys(body.secrets).length > 0) {
     saveSecrets(body.secrets);
   }
+  if (previousAI !== aiFingerprint()) invalidateOnboardingAI();
 }
 
 export function mergeSetupConfig(

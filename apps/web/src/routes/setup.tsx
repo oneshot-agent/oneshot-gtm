@@ -1,3 +1,4 @@
+import { NextStep } from "../components/home/NextStep.tsx";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, useBlocker } from "@tanstack/react-router";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
@@ -168,6 +169,7 @@ function SetupPage() {
         </span>
       </section>
 
+      <NextStep autoOpen={false} />
       <div className="grid grid-cols-1 lg:grid-cols-[200px_1fr]">
         <div className="lg:sticky lg:top-0 lg:self-start">
           <SectionNav dirty={dirty} active={active} />

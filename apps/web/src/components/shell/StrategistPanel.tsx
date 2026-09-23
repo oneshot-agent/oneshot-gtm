@@ -1,3 +1,5 @@
+import { Link } from "@tanstack/react-router";
+import { IS_DEMO } from "../../api/demo.ts";
 import {
   AssistantRuntimeProvider,
   ComposerPrimitive,
@@ -5,7 +7,7 @@ import {
   ThreadPrimitive,
   useLocalRuntime,
 } from "@assistant-ui/react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Sparkles, X } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -36,6 +38,11 @@ const SUGGESTIONS = [
  * close/reopen + page navigation. Default export for `React.lazy`.
  */
 export default function StrategistPanel({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const readiness = useQuery({
+    queryKey: ["onboarding"],
+    queryFn: api.onboarding,
+    enabled: open && !IS_DEMO,
+  });
   const adapter = useMemo(() => createStrategistAdapter(), []);
   const runtime = useLocalRuntime(adapter);
 
@@ -58,7 +65,27 @@ export default function StrategistPanel({ open, onClose }: { open: boolean; onCl
         aria-hidden={!open}
       >
         <DrawerHeader onClose={onClose} />
-        <ChatBody />
+        {IS_DEMO || readiness.data?.ready ? (
+          <ChatBody />
+        ) : (
+          <div className="space-y-4 p-5">
+            <p>
+              {readiness.error
+                ? "Could not check your setup. Try reopening the strategist."
+                : readiness.data
+                  ? `Before planning, complete: ${readiness.data.missing.join(", ")}.`
+                  : "Checking your setup…"}
+            </p>
+            <Link to="/onboarding" onClick={onClose} className="underline">
+              Complete onboarding
+            </Link>
+            <p>
+              <Link to="/setup" onClick={onClose} className="underline">
+                Open full setup
+              </Link>
+            </p>
+          </div>
+        )}
       </aside>
     </AssistantRuntimeProvider>
   );
