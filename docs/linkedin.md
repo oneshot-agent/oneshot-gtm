@@ -14,13 +14,13 @@ See the [OneShot LinkedIn API documentation](https://docs.oneshotagent.com/api-r
 
 ## Using LinkedIn in GTM
 
-Connect the messaging account from Replies. GTM reads conversations and messages through OneShot, supports reconnect and history sync, and sends reviewed replies through the connected account. The server refreshes messages in the background and when the Replies view loads.
+Connect the messaging account from Setup: the one **Connect LinkedIn** button there runs the messaging sign-in and the [profile-research](./finders.md) sign-in back to back. Replies manages the account afterwards (reconnect, permissions, history import, remove). GTM reads conversations and messages through OneShot, supports reconnect and history sync, and sends reviewed replies through the connected account. The server refreshes messages in the background and when the Replies view loads.
 
 Conversations are matched to prospects and assigned to a workspace. Human replies are recorded through GTM's reply handling and stop active or paused cadences for the prospect. Automatic responses remain separate from human replies.
 
 **No LinkedIn webhook setup is required in GTM.** The local app reads from OneShot without exposing a public callback.
 
-The LinkedIn browser connection on `/setup` is for [live profile research](./finders.md), separate from the messaging account. You can also record a reply manually from the queue or cadences view, optionally including its text.
+The LinkedIn browser connection on `/setup` is for [live profile research](./finders.md), separate from the messaging account, though both start from the same **Connect LinkedIn** button there. You can also record a reply manually from the queue or cadences view, optionally including its text.
 
 ## Reply preferences
 

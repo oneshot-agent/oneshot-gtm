@@ -1,7 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import type { XEngine } from "@oneshot-gtm/shared-types";
 import { api } from "../../api/client.ts";
-import { timeAgo } from "../../lib/cn.ts";
 import { Badge } from "../primitives/Badge.tsx";
 import { Button } from "../primitives/Button.tsx";
 import { Field, Input } from "../primitives/Field.tsx";
@@ -76,28 +75,6 @@ interface Group {
   error?: string | null;
   /** A custom body in place of status/actions/note/error (the LinkedIn card). */
   body?: ReactNode;
-}
-
-/**
- * What the LinkedIn card says about the session. The cookie itself is never
- * echoed; the states come from the setup status the server sends.
- */
-export function linkedinSessionStatus(
-  cfg: Pick<
-    SectionProps["cfg"],
-    | "linkedinBrowserProfileId"
-    | "linkedinSessionCheckedAt"
-    | "linkedinSessionName"
-    | "linkedinSessionInvalidAt"
-  >,
-  cookieSet: boolean,
-): string {
-  if (!cfg.linkedinBrowserProfileId && !cookieSet) return "not connected";
-  if (cfg.linkedinSessionInvalidAt) return "session expired — log in again or paste a fresh cookie";
-  if (!cfg.linkedinSessionCheckedAt || !cfg.linkedinBrowserProfileId)
-    return cookieSet ? "cookie stored, not connected yet" : "login started, not finished yet";
-  const who = cfg.linkedinSessionName ? `logged in as ${cfg.linkedinSessionName}` : "logged in";
-  return `${who} · checked ${timeAgo(cfg.linkedinSessionCheckedAt)}`;
 }
 
 /**
@@ -202,7 +179,7 @@ export function CredentialsSection({
       {
         title: "LinkedIn",
         caption:
-          "Lets research read prospects' profiles live, as you. Optional; $0.30 per sign-in.",
+          "Replies and live profile reads, as you. Two LinkedIn sign-ins behind one button; the profile session costs $0.30 per sign-in. Optional.",
         keys: linkedinAdvanced ? ["LINKEDIN_SESSION_COOKIE"] : [],
         inUse: () => true,
         optional: true,

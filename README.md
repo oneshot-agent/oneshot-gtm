@@ -171,7 +171,7 @@ Six more drain from the queue without a Run form — `profile-intro` (what Add P
 
 Most carry a cadence — a value follow-up, then a breakup, over roughly three to nine days, editable per play from `/plays`. Any reply, email or LinkedIn, stops every live cadence for that prospect. You can also stop one deliberately from `/cadences` with a reason: bad-timing stops become breakup-revive candidates after the cold window, not-a-fit and do-not-contact stay excluded.
 
-**LinkedIn** — OneShot operates connected accounts, message sync, and authorized actions. GTM owns drafting and cadence decisions. Connect your account and manage messages from Replies. No GTM LinkedIn webhook setup is required for that integration. See [LinkedIn](./docs/linkedin.md).
+**LinkedIn** — OneShot operates connected accounts, message sync, and authorized actions. GTM owns drafting and cadence decisions. Connect your account on Setup and manage messages from Replies. No GTM LinkedIn webhook setup is required for that integration. See [LinkedIn](./docs/linkedin.md).
 
 ### Direct mail
 
