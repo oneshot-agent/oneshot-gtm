@@ -16,7 +16,8 @@ import { linkedInConnectionView } from "./linkedinConnection.ts";
  * Kept pure so the copy is testable; the component only wires the calls.
  */
 
-export type MessagingState = "none" | "connected" | "attention";
+/** `unknown`: the account list has not loaded (or failed), so nothing is assumed. */
+export type MessagingState = "none" | "connected" | "attention" | "unknown";
 /** What the Connect chain is doing right now, on this page. */
 export type CardStep = null | "messaging" | "research";
 export type ConnectRun = "messaging" | "research";
@@ -39,11 +40,14 @@ export interface LinkedInCardView {
  * without asking for anything. Accounts that exist but need a reconnect, a
  * permission, or a resumed import are managed on Replies, not here: a fresh
  * connect from this card would add a second account, not fix the first.
+ * `null` (list not loaded) is unknown, never "no accounts": a Connect that
+ * assumed none would add a second account behind a loading spinner.
  */
-export function messagingState(accounts: readonly LinkedInAccountView[]): {
+export function messagingState(accounts: readonly LinkedInAccountView[] | null): {
   state: MessagingState;
   name: string | null;
 } {
+  if (accounts === null) return { state: "unknown", name: null };
   const live = accounts.find((a) => {
     const v = linkedInConnectionView(a);
     return v.connected && !v.attention;
@@ -58,7 +62,10 @@ const MESSAGING_WAITING =
 export function linkedinCardView(args: {
   cfg: LinkedInCfg;
   cookieSet: boolean;
-  accounts: readonly LinkedInAccountView[];
+  /** `null` while the account list is loading or when it failed to load. */
+  accounts: readonly LinkedInAccountView[] | null;
+  /** Why the list failed to load, when it did. */
+  accountsError?: string | null;
   step: CardStep;
   liveUrl: string | null;
 }): LinkedInCardView {
@@ -79,7 +86,11 @@ export function linkedinCardView(args: {
           : "Connected"
         : m.state === "attention"
           ? "Needs attention"
-          : "Not connected",
+          : m.state === "unknown"
+            ? args.accountsError
+              ? `Couldn't check — ${args.accountsError}`
+              : "Checking…"
+            : "Not connected",
   };
   const research = {
     phase: r.phase,

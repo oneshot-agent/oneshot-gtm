@@ -242,7 +242,10 @@ export function LinkedInConnect({
   const view = linkedinCardView({
     cfg,
     cookieSet,
-    accounts: accounts.data ?? [],
+    // Demo has no accounts by construction; otherwise an unloaded list is
+    // unknown, so Connect never adds a second account behind a spinner.
+    accounts: IS_DEMO ? [] : accounts.isSuccess ? accounts.data : null,
+    accountsError: accounts.error?.message ?? null,
     step,
     liveUrl,
   });

@@ -45,7 +45,8 @@ const researchOff = {
 };
 
 describe("messagingState", () => {
-  it("is none without accounts, connected with a working one, attention otherwise", () => {
+  it("is unknown until the list has loaded, none without accounts, connected with a working one, attention otherwise", () => {
+    expect(messagingState(null)).toEqual({ state: "unknown", name: null });
     expect(messagingState([])).toEqual({ state: "none", name: null });
     expect(messagingState([account()])).toEqual({ state: "connected", name: "J. Nicolas" });
     expect(messagingState([account({ status: "reconnect_required" })]).state).toBe("attention");
@@ -145,6 +146,29 @@ describe("linkedinCardView", () => {
     });
     expect(resumed.primary).toBe("done");
     expect(resumed.connectRuns).toEqual([]);
+  });
+
+  it("an unloaded account list never lets Connect add a messaging account", () => {
+    const loading = linkedinCardView({
+      cfg: researchOff,
+      cookieSet: false,
+      accounts: null,
+      step: null,
+      liveUrl: null,
+    });
+    expect(loading.messaging).toEqual({ state: "unknown", ok: false, text: "Checking…" });
+    expect(loading.connectRuns).toEqual(["research"]);
+    const failed = linkedinCardView({
+      cfg: researchOn,
+      cookieSet: false,
+      accounts: null,
+      accountsError: "replies unavailable",
+      step: null,
+      liveUrl: null,
+    });
+    expect(failed.messaging.text).toBe("Couldn't check — replies unavailable");
+    expect(failed.connectRuns).toEqual([]);
+    expect(failed.primary).toBeNull();
   });
 
   it("an account that needs attention is pointed at Replies, not reconnected from here", () => {
