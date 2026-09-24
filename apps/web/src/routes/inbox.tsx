@@ -240,12 +240,12 @@ function InboxPage() {
             </Button>
           ))}
         </div>
-        {(inbox.error || inbox.data?.error) && (
-          <p role="alert" className="px-6 py-3 text-[12px] text-ink-blocked-2">
-            {inbox.error?.message ?? inbox.data?.error}. Saved conversations remain available.
-          </p>
-        )}
       </div>
+      {(inbox.error || inbox.data?.error) && (
+        <p role="alert" className="px-6 py-3 text-[12px] text-ink-blocked-2">
+          {inbox.error?.message ?? inbox.data?.error}. Saved conversations remain available.
+        </p>
+      )}
       <div className={`replies-workspace ${selected ? "has-selection" : ""}`}>
         <aside className="replies-queue" aria-label="Conversations">
           <div className="replies-queue-heading">
