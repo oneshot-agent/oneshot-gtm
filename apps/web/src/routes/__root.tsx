@@ -141,6 +141,9 @@ function RootLayout() {
   // at the top, the way a full page load does.
   const mainRef = useRef<HTMLElement | null>(null);
   const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const isRepliesPage = useRouterState({
+    select: (s) => s.matches.some((match) => match.routeId === "/inbox"),
+  });
   useEffect(() => {
     mainRef.current?.scrollTo({ top: 0 });
   }, [pathname]);
@@ -335,7 +338,13 @@ function RootLayout() {
             a margin on the page's last in-flow block instead — see
             `--ledger-gutter` in styles.css.
           */}
-          <main ref={mainRef} className="min-w-0 overflow-y-auto px-6 py-6">
+          <main
+            ref={mainRef}
+            className={cn(
+              "min-h-0 min-w-0",
+              isRepliesPage ? "replies-main overflow-hidden" : "overflow-y-auto px-6 py-6",
+            )}
+          >
             <Outlet />
           </main>
 

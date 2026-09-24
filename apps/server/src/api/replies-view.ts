@@ -179,6 +179,16 @@ export async function collectReplies(req: Request): Promise<RepliesResult> {
     ...retainedEmail,
     ...incoming.filter((t) => t.channel === "linkedin").map((t) => review.get(t.key)!),
   ];
+  for (const t of threads) {
+    // Resolve this at read time so saved email conversations also pick up a
+    // profile added to their prospect after the last provider sync.
+    t.profileUrl =
+      t.profileUrl ||
+      (t.prospectId != null && t.workspace === workspace
+        ? getLedger().getProspectById(t.prospectId)?.linkedin_url
+        : null) ||
+      null;
+  }
   const accounts = getLinkedInInboxStore()
     .accounts()
     .filter((a) => !a.removedAt)

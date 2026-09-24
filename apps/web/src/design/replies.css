@@ -2,33 +2,66 @@
    Host Grotesk headings / Plex Sans correspondence; left-aligned throughout.
    Palette: canvas #15120f, surface #211c18, rule #3a332d,
    text #eee8de, secondary #b0a79b, selection #8cb9ed. */
+.replies-main {
+  container-type: inline-size;
+  --ledger-gutter: 0px;
+}
+.replies-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.replies-page > :not(.replies-workspace) {
+  flex-shrink: 0;
+}
+.replies-page .replies-filters,
+.replies-page .replies-views {
+  padding: 8px 16px;
+}
+.replies-page .replies-filters input {
+  flex: 1 1 160px;
+  width: auto;
+  min-width: 100px;
+}
+.replies-page .replies-filters select {
+  width: 150px;
+}
+.replies-page > [role="alert"] {
+  max-height: 15%;
+  overflow: auto;
+}
 .replies-heading {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 24px;
-  gap: 16px;
+  padding: 12px 16px;
+  gap: 12px;
 }
 .replies-heading h1 {
   font-family: var(--font-display);
-  font-size: 32px;
+  font-size: 26px;
   font-weight: 600;
   letter-spacing: -0.035em;
   line-height: 1.1;
 }
 .replies-heading p {
-  margin-top: 7px;
+  margin-top: 4px;
   font-size: 13px;
   color: var(--ink-muted);
 }
 .replies-settings {
+  max-height: 35%;
+  overflow: auto;
+  overscroll-behavior: contain;
   border-block: 1px solid var(--ink-rule);
 }
 .replies-settings > summary {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 10px 24px;
+  padding: 8px 16px;
   cursor: pointer;
   font-size: 12px;
   color: var(--ink-muted);
@@ -38,20 +71,38 @@
 }
 .replies-workspace {
   display: grid;
-  grid-template-columns: minmax(270px, 330px) minmax(0, 1fr);
-  min-height: 640px;
-  align-items: start;
+  grid-template-columns: 280px minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 .replies-queue {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   min-width: 0;
   align-self: stretch;
   border-right: 1px solid var(--ink-rule);
   background: var(--ink-bg);
 }
+.replies-queue-list,
+.replies-thread-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.replies-queue-list:focus-visible,
+.replies-thread-body:focus-visible {
+  outline: 2px solid var(--ink-signal-2);
+  outline-offset: -2px;
+}
 .replies-queue-heading {
   display: flex;
   justify-content: space-between;
-  padding: 16px 20px;
+  padding: 10px 16px;
+  flex-shrink: 0;
   font-size: 12px;
   color: var(--ink-muted);
 }
@@ -59,7 +110,7 @@
   display: flex;
   width: 100%;
   gap: 12px;
-  padding: 18px;
+  padding: 12px;
   text-align: left;
   border-block-end: 1px solid var(--ink-rule);
   border-inline-start: 3px solid transparent;
@@ -154,16 +205,28 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 16px 10px;
+  padding: 8px 10px;
+  flex-shrink: 0;
+  border-top: 1px solid var(--ink-rule);
   font-size: 12px;
   color: var(--ink-muted);
 }
 .replies-detail {
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
   background: var(--ink-bg-deep);
 }
+.replies-thread {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
 .replies-placeholder {
-  min-height: 640px;
+  height: 100%;
+  min-height: 0;
+  padding: 16px;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -192,19 +255,40 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 10px;
-  padding: 20px 24px;
+  padding: 12px 16px;
+  flex-shrink: 0;
   border-bottom: 1px solid var(--ink-rule);
   background: var(--ink-bg);
 }
 .replies-recipient {
   flex: 1;
   min-width: 140px;
+  overflow-wrap: anywhere;
 }
 .replies-recipient h2 {
   font-family: var(--font-display);
   font-size: 21px;
   font-weight: 500;
   letter-spacing: -0.02em;
+}
+.replies-profile-link {
+  text-decoration: underline;
+  text-decoration-color: var(--ink-rule-2);
+  text-underline-offset: 4px;
+}
+.replies-profile-link svg {
+  display: inline;
+  margin-left: 6px;
+  color: var(--ink-muted);
+}
+.replies-profile-link:hover {
+  color: var(--ink-signal-2);
+  text-decoration-color: currentColor;
+}
+.replies-profile-link:focus-visible {
+  outline: 2px solid var(--ink-signal-2);
+  outline-offset: 4px;
+  border-radius: 2px;
 }
 .replies-recipient p {
   font-size: 12px;
@@ -220,7 +304,8 @@
   cursor: pointer;
 }
 .replies-thread-body {
-  padding: 0 24px 24px;
+  padding: 0 16px 16px;
+  overflow-wrap: anywhere;
 }
 .replies-contact-details {
   padding: 12px 0;
@@ -235,12 +320,12 @@
   flex-direction: column;
   gap: 20px;
   padding: 20px 0 28px;
-  max-height: 460px;
-  overflow: auto;
 }
 .replies-message {
   width: fit-content;
-  max-width: min(85%, 70ch);
+  max-width: min(90%, 70ch);
+  flex-shrink: 0;
+  overflow-wrap: anywhere;
   padding: 14px 18px;
   border-radius: 12px;
 }
@@ -344,32 +429,9 @@
   height: 36px;
   padding-inline: 18px;
 }
-@media (min-width: 1100px) {
-  .replies-queue {
-    position: sticky;
-    top: 0;
-    max-height: calc(100dvh - 100px);
-    overflow: auto;
-  }
-}
-@media (max-width: 900px) {
+@container (max-width: 759px) {
   .replies-workspace {
-    grid-template-columns: 260px minmax(0, 1fr);
-  }
-  .replies-thread-body {
-    padding-inline: 16px;
-  }
-  .replies-thread-header {
-    padding: 16px;
-  }
-  .reply-direction-preview {
-    display: none;
-  }
-}
-@media (max-width: 700px) {
-  .replies-workspace {
-    display: block;
-    min-height: 400px;
+    grid-template-columns: minmax(0, 1fr);
   }
   .replies-detail {
     display: none;
@@ -390,7 +452,7 @@
     flex-basis: calc(100% - 60px);
   }
   .replies-message {
-    max-width: 92%;
+    max-width: 95%;
   }
   .reply-composer {
     padding: 12px;
@@ -401,9 +463,9 @@
   .reply-direction-description {
     font-size: 10px;
   }
-}
-
-@media (max-width: 700px) {
+  .reply-direction-preview {
+    display: none;
+  }
   .replies-page.has-selection > .replies-heading,
   .replies-page.has-selection > .replies-settings,
   .replies-page.has-selection > .replies-filters,
@@ -421,7 +483,7 @@
   background: var(--ink-bg-deep);
 }
 .replies-match-switch button {
-  padding: 5px 12px;
+  padding: 5px 8px;
   border-radius: 4px;
   font-size: 12px;
   color: var(--ink-muted);
@@ -517,7 +579,7 @@
   color: var(--ink-cream-2);
   font-variant-numeric: tabular-nums;
 }
-@media (max-width: 700px) {
+@container (max-width: 759px) {
   .replies-settings-count {
     display: none;
   }
@@ -577,7 +639,7 @@
   outline: 2px solid var(--ink-signal);
   outline-offset: 3px;
 }
-@media (max-width: 480px) {
+@container (max-width: 480px) {
   .replies-connection-header {
     flex-wrap: wrap;
     gap: 10px;
