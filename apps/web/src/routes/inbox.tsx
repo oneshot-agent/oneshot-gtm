@@ -118,127 +118,134 @@ function InboxPage() {
   }, [selectedKey]);
   return (
     <div className={`replies-page ${selected ? "has-selection" : ""}`}>
-      <header className="replies-heading">
-        <div>
-          <h1>Replies</h1>
-          <p>
-            {attention
-              ? `${attention} conversations waiting for you`
-              : "Your conversations, all in one place"}
-          </p>
-        </div>
-        <Button
-          size="sm"
-          variant="ghost"
-          disabled={inbox.isFetching || refresh.isPending}
-          onClick={() => refresh.mutate()}
-          {...readOnly}
-        >
-          {inbox.isFetching || refresh.isPending ? (
-            <Loader2 size={14} className="animate-spin" />
-          ) : (
-            <RefreshCw size={14} />
-          )}
-          Refresh
-        </Button>
-      </header>
-      <details className="replies-settings">
-        <summary>
-          <Settings2 size={14} /> Connections & reply preferences
-          <span className="replies-settings-count">
-            {inbox.data?.mailboxes.filter((m) => m.status === "connected").length ?? 0} email ·{" "}
-            {inbox.data?.accounts.length ?? 0} LinkedIn
-            {inbox.data?.accounts.some((a) => linkedInConnectionView(a).attention)
-              ? " · needs attention"
-              : ""}
-          </span>
-        </summary>
-        <MailboxConnections mailboxes={inbox.data?.mailboxes ?? []} />
-        <LinkedInConnections accounts={inbox.data?.accounts ?? []} />
-        {inbox.data && (
-          <ReplyPreferences key={inbox.data.workspace} workspace={inbox.data.workspace} />
-        )}
-      </details>
-      <div className="replies-filters flex flex-wrap items-center gap-2 border-b border-ink-rule/60 px-6 py-3">
-        {(["all", "email", "linkedin"] as const).map((c) => (
+      <div
+        className="replies-controls"
+        role="region"
+        aria-label="Reply filters and settings"
+        tabIndex={0}
+      >
+        <header className="replies-heading">
+          <div>
+            <h1>Replies</h1>
+            <p>
+              {attention
+                ? `${attention} conversations waiting for you`
+                : "Your conversations, all in one place"}
+            </p>
+          </div>
           <Button
-            key={c}
             size="sm"
-            variant={channel === c ? "secondary" : "ghost"}
-            onClick={() => setChannel(c)}
+            variant="ghost"
+            disabled={inbox.isFetching || refresh.isPending}
+            onClick={() => refresh.mutate()}
+            {...readOnly}
           >
-            {c === "all" ? "All channels" : c === "email" ? "Email" : "LinkedIn"}
+            {inbox.isFetching || refresh.isPending ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <RefreshCw size={14} />
+            )}
+            Refresh
           </Button>
-        ))}
-        <div className="replies-match-switch" role="group" aria-label="Conversation matching">
-          {(
-            [
-              ["matched", "Matched"],
-              ["no-match", "Unmatched"],
-              ["all", "All"],
-            ] as const
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={match === value}
-              onClick={() => {
-                setMatch(value);
-                setExpanded(null);
-              }}
+        </header>
+        <details className="replies-settings">
+          <summary>
+            <Settings2 size={14} /> Connections & reply preferences
+            <span className="replies-settings-count">
+              {inbox.data?.mailboxes.filter((m) => m.status === "connected").length ?? 0} email ·{" "}
+              {inbox.data?.accounts.length ?? 0} LinkedIn
+              {inbox.data?.accounts.some((a) => linkedInConnectionView(a).attention)
+                ? " · needs attention"
+                : ""}
+            </span>
+          </summary>
+          <MailboxConnections mailboxes={inbox.data?.mailboxes ?? []} />
+          <LinkedInConnections accounts={inbox.data?.accounts ?? []} />
+          {inbox.data && (
+            <ReplyPreferences key={inbox.data.workspace} workspace={inbox.data.workspace} />
+          )}
+        </details>
+        <div className="replies-filters flex flex-wrap items-center gap-2 border-b border-ink-rule/60 px-6 py-3">
+          {(["all", "email", "linkedin"] as const).map((c) => (
+            <Button
+              key={c}
+              size="sm"
+              variant={channel === c ? "secondary" : "ghost"}
+              onClick={() => setChannel(c)}
             >
-              {label}
-            </button>
+              {c === "all" ? "All channels" : c === "email" ? "Email" : "LinkedIn"}
+            </Button>
           ))}
-        </div>
-        <select
-          aria-label="Detailed matching filters"
-          className="max-w-full rounded-sm border border-ink-rule bg-ink-bg px-2 py-1 text-[12px] text-ink-muted"
-          value={["matched", "no-match", "all"].includes(match) ? "" : match}
-          onChange={(e) => {
-            setMatch(e.target.value);
-            setExpanded(null);
-          }}
-        >
-          <option value="" disabled>
-            More filters
-          </option>
-          <option value="missing-identity">Identity not resolved</option>
-          <option value="no-prospect">Resolved · no prospect</option>
-          <option value="ambiguous">Multiple matches · review assignment</option>
-          <option value="unassigned">Unassigned LinkedIn</option>
-        </select>
-        <Input
-          aria-label="Search conversations"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search conversations"
-          className="ml-auto max-w-xs"
-        />
-      </div>
-      <div className="replies-views flex gap-2 border-b border-ink-rule/60 px-6 py-3">
-        {(["inbox", "snoozed", "archived"] as const).map((v) => (
-          <Button
-            key={v}
-            size="sm"
-            variant={view === v ? "secondary" : "ghost"}
-            onClick={() => {
-              setView(v);
+          <div className="replies-match-switch" role="group" aria-label="Conversation matching">
+            {(
+              [
+                ["matched", "Matched"],
+                ["no-match", "Unmatched"],
+                ["all", "All"],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={match === value}
+                onClick={() => {
+                  setMatch(value);
+                  setExpanded(null);
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <select
+            aria-label="Detailed matching filters"
+            className="max-w-full rounded-sm border border-ink-rule bg-ink-bg px-2 py-1 text-[12px] text-ink-muted"
+            value={["matched", "no-match", "all"].includes(match) ? "" : match}
+            onChange={(e) => {
+              setMatch(e.target.value);
               setExpanded(null);
             }}
           >
-            <span className="capitalize">{v}</span>
-            <span className="ml-1 opacity-60">
-              {filtered.filter((t) => replyInView(t, v)).length}
-            </span>
-          </Button>
-        ))}
+            <option value="" disabled>
+              More filters
+            </option>
+            <option value="missing-identity">Identity not resolved</option>
+            <option value="no-prospect">Resolved · no prospect</option>
+            <option value="ambiguous">Multiple matches · review assignment</option>
+            <option value="unassigned">Unassigned LinkedIn</option>
+          </select>
+          <Input
+            aria-label="Search conversations"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search conversations"
+            className="ml-auto max-w-xs"
+          />
+        </div>
+        <div className="replies-views flex gap-2 border-b border-ink-rule/60 px-6 py-3">
+          {(["inbox", "snoozed", "archived"] as const).map((v) => (
+            <Button
+              key={v}
+              size="sm"
+              variant={view === v ? "secondary" : "ghost"}
+              onClick={() => {
+                setView(v);
+                setExpanded(null);
+              }}
+            >
+              <span className="capitalize">{v}</span>
+              <span className="ml-1 opacity-60">
+                {filtered.filter((t) => replyInView(t, v)).length}
+              </span>
+            </Button>
+          ))}
+        </div>
+        {(inbox.error || inbox.data?.error) && (
+          <p role="alert" className="px-6 py-3 text-[12px] text-ink-blocked-2">
+            {inbox.error?.message ?? inbox.data?.error}. Saved conversations remain available.
+          </p>
+        )}
       </div>
-      {(inbox.error || inbox.data?.error) && (
-        <p role="alert" className="px-6 py-3 text-[12px] text-ink-blocked-2">
-          {inbox.error?.message ?? inbox.data?.error}. Saved conversations remain available.
-        </p>
-      )}
       <div className={`replies-workspace ${selected ? "has-selection" : ""}`}>
         <aside className="replies-queue" aria-label="Conversations">
           <div className="replies-queue-heading">
@@ -357,7 +364,18 @@ function InboxPage() {
             </div>
           )}
         </aside>
-        <section ref={detailRef} className="replies-detail" aria-label="Selected conversation">
+        <section
+          ref={detailRef}
+          className="replies-detail"
+          aria-label="Selected conversation"
+          onFocusCapture={() => {
+            restoreQueueFocus.current = true;
+          }}
+          onBlurCapture={(event) => {
+            if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget))
+              restoreQueueFocus.current = false;
+          }}
+        >
           {selected ? (
             <ThreadRow
               key={selected.key}

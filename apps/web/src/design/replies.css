@@ -13,8 +13,16 @@
   min-height: 0;
   overflow: hidden;
 }
-.replies-page > :not(.replies-workspace) {
+.replies-controls {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.replies-page > p {
   flex-shrink: 0;
+  max-height: 15%;
+  overflow: auto;
 }
 .replies-page .replies-filters,
 .replies-page .replies-views {
@@ -27,10 +35,6 @@
 }
 .replies-page .replies-filters select {
   width: 150px;
-}
-.replies-page > [role="alert"] {
-  max-height: 15%;
-  overflow: auto;
 }
 .replies-heading {
   display: flex;
@@ -52,9 +56,6 @@
   color: var(--ink-muted);
 }
 .replies-settings {
-  max-height: 35%;
-  overflow: auto;
-  overscroll-behavior: contain;
   border-block: 1px solid var(--ink-rule);
 }
 .replies-settings > summary {
@@ -73,7 +74,7 @@
   display: grid;
   grid-template-columns: 280px minmax(0, 1fr);
   flex: 1;
-  min-height: 0;
+  min-height: min(240px, 60%);
   overflow: hidden;
 }
 .replies-queue {
@@ -93,6 +94,7 @@
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
+.replies-controls:focus-visible,
 .replies-queue-list:focus-visible,
 .replies-thread-body:focus-visible {
   outline: 2px solid var(--ink-signal-2);
@@ -466,10 +468,7 @@
   .reply-direction-preview {
     display: none;
   }
-  .replies-page.has-selection > .replies-heading,
-  .replies-page.has-selection > .replies-settings,
-  .replies-page.has-selection > .replies-filters,
-  .replies-page.has-selection > .replies-views {
+  .replies-page.has-selection > .replies-controls {
     display: none;
   }
 }
