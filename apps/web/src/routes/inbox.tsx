@@ -1,5 +1,5 @@
 import { linkedInConnectionView } from "../lib/linkedinConnection.ts";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import "../design/replies.css";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   Archive,
   Clock3,
+  ExternalLink,
   Inbox,
   MessageSquare,
   Mail,
@@ -32,6 +33,8 @@ import { replyCompany, replyPreview } from "../lib/replyPreview.ts";
 import { timeAgo } from "../lib/cn.ts";
 import { readOnly } from "../lib/readOnly.ts";
 import { replyInView, replyNeedsAttention, type ReplyView } from "../lib/replies.ts";
+import { useReplyScroll } from "../lib/useReplyScroll.ts";
+import { linkedinUrlFor } from "../lib/payloadIdentity.ts";
 
 export const Route = createFileRoute("/inbox")({
   staticData: { title: "Replies" },
@@ -81,125 +84,162 @@ function InboxPage() {
   }, [view, channel, match, search]);
   const attention = threads.filter(replyNeedsAttention).length;
   const selected = visible.find((t) => t.key === expanded);
+  const selectedKey = selected?.key;
   const pageCount = Math.max(1, Math.ceil(visible.length / 30));
   const currentPage = Math.min(page, pageCount);
+  const queueRef = useRef<HTMLDivElement>(null);
+  const detailRef = useRef<HTMLElement>(null);
+  const queueScrollTop = useRef(0);
+  const selectedButtonRef = useRef<HTMLButtonElement | null>(null);
+  const restoreQueueFocus = useRef(false);
+  useLayoutEffect(() => {
+    queueScrollTop.current = 0;
+    queueRef.current?.scrollTo({ top: 0 });
+  }, [currentPage, view, channel, match, search]);
+  useEffect(() => {
+    const queue = queueRef.current;
+    if (!queue) return;
+    const observer = new ResizeObserver(() => {
+      if (queue.clientHeight) queue.scrollTop = queueScrollTop.current;
+    });
+    observer.observe(queue);
+    return () => observer.disconnect();
+  }, []);
+  useLayoutEffect(() => {
+    if (selectedKey && queueRef.current?.clientHeight === 0) {
+      detailRef.current
+        ?.querySelector<HTMLElement>(".replies-thread-body")
+        ?.focus({ preventScroll: true });
+    } else if (!selectedKey && restoreQueueFocus.current) {
+      const button = selectedButtonRef.current;
+      (button?.isConnected ? button : queueRef.current)?.focus({ preventScroll: true });
+      restoreQueueFocus.current = false;
+    }
+  }, [selectedKey]);
   return (
-    <div className={`replies-page -mx-6 -my-6 flex flex-col ${selected ? "has-selection" : ""}`}>
-      <header className="replies-heading">
-        <div>
-          <h1>Replies</h1>
-          <p>
-            {attention
-              ? `${attention} conversations waiting for you`
-              : "Your conversations, all in one place"}
-          </p>
-        </div>
-        <Button
-          size="sm"
-          variant="ghost"
-          disabled={inbox.isFetching || refresh.isPending}
-          onClick={() => refresh.mutate()}
-          {...readOnly}
-        >
-          {inbox.isFetching || refresh.isPending ? (
-            <Loader2 size={14} className="animate-spin" />
-          ) : (
-            <RefreshCw size={14} />
-          )}
-          Refresh
-        </Button>
-      </header>
-      <details className="replies-settings">
-        <summary>
-          <Settings2 size={14} /> Connections & reply preferences
-          <span className="replies-settings-count">
-            {inbox.data?.mailboxes.filter((m) => m.status === "connected").length ?? 0} email ·{" "}
-            {inbox.data?.accounts.length ?? 0} LinkedIn
-            {inbox.data?.accounts.some((a) => linkedInConnectionView(a).attention)
-              ? " · needs attention"
-              : ""}
-          </span>
-        </summary>
-        <MailboxConnections mailboxes={inbox.data?.mailboxes ?? []} />
-        <LinkedInConnections accounts={inbox.data?.accounts ?? []} />
-        {inbox.data && (
-          <ReplyPreferences key={inbox.data.workspace} workspace={inbox.data.workspace} />
-        )}
-      </details>
-      <div className="replies-filters flex flex-wrap items-center gap-2 border-b border-ink-rule/60 px-6 py-3">
-        {(["all", "email", "linkedin"] as const).map((c) => (
+    <div className={`replies-page ${selected ? "has-selection" : ""}`}>
+      <div
+        className="replies-controls"
+        role="region"
+        aria-label="Reply filters and settings"
+        tabIndex={0}
+      >
+        <header className="replies-heading">
+          <div>
+            <h1>Replies</h1>
+            <p>
+              {attention
+                ? `${attention} conversations waiting for you`
+                : "Your conversations, all in one place"}
+            </p>
+          </div>
           <Button
-            key={c}
             size="sm"
-            variant={channel === c ? "secondary" : "ghost"}
-            onClick={() => setChannel(c)}
+            variant="ghost"
+            disabled={inbox.isFetching || refresh.isPending}
+            onClick={() => refresh.mutate()}
+            {...readOnly}
           >
-            {c === "all" ? "All channels" : c === "email" ? "Email" : "LinkedIn"}
+            {inbox.isFetching || refresh.isPending ? (
+              <Loader2 size={14} className="animate-spin" />
+            ) : (
+              <RefreshCw size={14} />
+            )}
+            Refresh
           </Button>
-        ))}
-        <div className="replies-match-switch" role="group" aria-label="Conversation matching">
-          {(
-            [
-              ["matched", "Matched"],
-              ["no-match", "Unmatched"],
-              ["all", "All"],
-            ] as const
-          ).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              aria-pressed={match === value}
-              onClick={() => {
-                setMatch(value);
-                setExpanded(null);
-              }}
+        </header>
+        <details className="replies-settings">
+          <summary>
+            <Settings2 size={14} /> Connections & reply preferences
+            <span className="replies-settings-count">
+              {inbox.data?.mailboxes.filter((m) => m.status === "connected").length ?? 0} email ·{" "}
+              {inbox.data?.accounts.length ?? 0} LinkedIn
+              {inbox.data?.accounts.some((a) => linkedInConnectionView(a).attention)
+                ? " · needs attention"
+                : ""}
+            </span>
+          </summary>
+          <MailboxConnections mailboxes={inbox.data?.mailboxes ?? []} />
+          <LinkedInConnections accounts={inbox.data?.accounts ?? []} />
+          {inbox.data && (
+            <ReplyPreferences key={inbox.data.workspace} workspace={inbox.data.workspace} />
+          )}
+        </details>
+        <div className="replies-filters flex flex-wrap items-center gap-2 border-b border-ink-rule/60 px-6 py-3">
+          {(["all", "email", "linkedin"] as const).map((c) => (
+            <Button
+              key={c}
+              size="sm"
+              variant={channel === c ? "secondary" : "ghost"}
+              onClick={() => setChannel(c)}
             >
-              {label}
-            </button>
+              {c === "all" ? "All channels" : c === "email" ? "Email" : "LinkedIn"}
+            </Button>
           ))}
-        </div>
-        <select
-          aria-label="Detailed matching filters"
-          className="max-w-full rounded-sm border border-ink-rule bg-ink-bg px-2 py-1 text-[12px] text-ink-muted"
-          value={["matched", "no-match", "all"].includes(match) ? "" : match}
-          onChange={(e) => {
-            setMatch(e.target.value);
-            setExpanded(null);
-          }}
-        >
-          <option value="" disabled>
-            More filters
-          </option>
-          <option value="missing-identity">Identity not resolved</option>
-          <option value="no-prospect">Resolved · no prospect</option>
-          <option value="ambiguous">Multiple matches · review assignment</option>
-          <option value="unassigned">Unassigned LinkedIn</option>
-        </select>
-        <Input
-          aria-label="Search conversations"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search conversations"
-          className="ml-auto max-w-xs"
-        />
-      </div>
-      <div className="replies-views flex gap-2 border-b border-ink-rule/60 px-6 py-3">
-        {(["inbox", "snoozed", "archived"] as const).map((v) => (
-          <Button
-            key={v}
-            size="sm"
-            variant={view === v ? "secondary" : "ghost"}
-            onClick={() => {
-              setView(v);
+          <div className="replies-match-switch" role="group" aria-label="Conversation matching">
+            {(
+              [
+                ["matched", "Matched"],
+                ["no-match", "Unmatched"],
+                ["all", "All"],
+              ] as const
+            ).map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                aria-pressed={match === value}
+                onClick={() => {
+                  setMatch(value);
+                  setExpanded(null);
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <select
+            aria-label="Detailed matching filters"
+            className="max-w-full rounded-sm border border-ink-rule bg-ink-bg px-2 py-1 text-[12px] text-ink-muted"
+            value={["matched", "no-match", "all"].includes(match) ? "" : match}
+            onChange={(e) => {
+              setMatch(e.target.value);
               setExpanded(null);
             }}
           >
-            <span className="capitalize">{v}</span>
-            <span className="ml-1 opacity-60">
-              {filtered.filter((t) => replyInView(t, v)).length}
-            </span>
-          </Button>
-        ))}
+            <option value="" disabled>
+              More filters
+            </option>
+            <option value="missing-identity">Identity not resolved</option>
+            <option value="no-prospect">Resolved · no prospect</option>
+            <option value="ambiguous">Multiple matches · review assignment</option>
+            <option value="unassigned">Unassigned LinkedIn</option>
+          </select>
+          <Input
+            aria-label="Search conversations"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search conversations"
+            className="ml-auto max-w-xs"
+          />
+        </div>
+        <div className="replies-views flex gap-2 border-b border-ink-rule/60 px-6 py-3">
+          {(["inbox", "snoozed", "archived"] as const).map((v) => (
+            <Button
+              key={v}
+              size="sm"
+              variant={view === v ? "secondary" : "ghost"}
+              onClick={() => {
+                setView(v);
+                setExpanded(null);
+              }}
+            >
+              <span className="capitalize">{v}</span>
+              <span className="ml-1 opacity-60">
+                {filtered.filter((t) => replyInView(t, v)).length}
+              </span>
+            </Button>
+          ))}
+        </div>
       </div>
       {(inbox.error || inbox.data?.error) && (
         <p role="alert" className="px-6 py-3 text-[12px] text-ink-blocked-2">
@@ -214,77 +254,92 @@ function InboxPage() {
             </span>
             <span>{visible.length}</span>
           </div>
-          {inbox.isLoading ? (
-            <p className="replies-empty">Loading conversations…</p>
-          ) : visible.length === 0 ? (
-            <p className="replies-empty">
-              {view === "snoozed"
-                ? "No snoozed conversations."
-                : view === "archived"
-                  ? "No archived conversations."
-                  : "No conversations found. Try another filter or refresh your connections."}
-            </p>
-          ) : (
-            visible.slice((currentPage - 1) * 30, currentPage * 30).map((t) => {
-              const lastMessage = t.messages.filter((m) => !m.deleted).at(-1);
-              const company = replyCompany(t.company);
-              const preview = lastMessage ? replyPreview(lastMessage.body, t.channel) : "";
-              return (
-                <button
-                  key={t.key}
-                  type="button"
-                  className="replies-conversation"
-                  aria-current={selected?.key === t.key ? "true" : undefined}
-                  onClick={() => setExpanded(t.key)}
-                >
-                  <span className="replies-avatar" aria-hidden="true">
-                    {t.channel === "linkedin" ? <MessageSquare size={17} /> : <Mail size={17} />}
-                  </span>
-                  <span className="replies-preview">
-                    <span className="replies-preview-top">
-                      <strong>
-                        <Pii kind="name">{t.name}</Pii>
-                      </strong>
-                      <time>{timeAgo(t.lastActivityAt)}</time>
+          <div
+            ref={queueRef}
+            className="replies-queue-list"
+            role="region"
+            tabIndex={0}
+            aria-label="Conversation list"
+            onScroll={(event) => {
+              if (event.currentTarget.clientHeight)
+                queueScrollTop.current = event.currentTarget.scrollTop;
+            }}
+          >
+            {inbox.isLoading ? (
+              <p className="replies-empty">Loading conversations…</p>
+            ) : visible.length === 0 ? (
+              <p className="replies-empty">
+                {view === "snoozed"
+                  ? "No snoozed conversations."
+                  : view === "archived"
+                    ? "No archived conversations."
+                    : "No conversations found. Try another filter or refresh your connections."}
+              </p>
+            ) : (
+              visible.slice((currentPage - 1) * 30, currentPage * 30).map((t) => {
+                const lastMessage = t.messages.findLast((m) => !m.deleted);
+                const company = replyCompany(t.company);
+                const preview = lastMessage ? replyPreview(lastMessage.body, t.channel) : "";
+                return (
+                  <button
+                    key={t.key}
+                    type="button"
+                    className="replies-conversation"
+                    aria-current={selected?.key === t.key ? "true" : undefined}
+                    onClick={(event) => {
+                      selectedButtonRef.current = event.currentTarget;
+                      setExpanded(t.key);
+                    }}
+                  >
+                    <span className="replies-avatar" aria-hidden="true">
+                      {t.channel === "linkedin" ? <MessageSquare size={17} /> : <Mail size={17} />}
                     </span>
-                    <span className="replies-company">
-                      {company ? (
-                        <Pii kind="company">{company}</Pii>
-                      ) : t.channel === "email" && t.address ? (
-                        <Pii kind="email">{t.address}</Pii>
-                      ) : t.channel === "linkedin" ? (
-                        "LinkedIn"
-                      ) : (
-                        "Email"
-                      )}
+                    <span className="replies-preview">
+                      <span className="replies-preview-top">
+                        <strong>
+                          <Pii kind="name">{t.name}</Pii>
+                        </strong>
+                        <time>{timeAgo(t.lastActivityAt)}</time>
+                      </span>
+                      <span className="replies-company">
+                        {company ? (
+                          <Pii kind="company">{company}</Pii>
+                        ) : t.channel === "email" && t.address ? (
+                          <Pii kind="email">{t.address}</Pii>
+                        ) : t.channel === "linkedin" ? (
+                          "LinkedIn"
+                        ) : (
+                          "Email"
+                        )}
+                      </span>
+                      <span className="replies-snippet">
+                        {lastMessage?.direction === "outbound" ? "You: " : ""}
+                        {preview ||
+                          (lastMessage?.attachment ? "Attachment" : t.subject) ||
+                          "Open conversation"}
+                      </span>
+                      <span className="replies-preview-status">
+                        {replyNeedsAttention(t) ? (
+                          <span className="replies-needs-reply">Needs reply</span>
+                        ) : (
+                          <span>
+                            {t.archivedAt
+                              ? "Archived"
+                              : t.snoozedUntil
+                                ? "Snoozed"
+                                : "No reply needed"}
+                          </span>
+                        )}
+                        {t.drafts && Object.values(t.drafts.edits).some((text) => text.trim()) && (
+                          <span>Draft saved</span>
+                        )}
+                      </span>
                     </span>
-                    <span className="replies-snippet">
-                      {lastMessage?.direction === "outbound" ? "You: " : ""}
-                      {preview ||
-                        (lastMessage?.attachment ? "Attachment" : t.subject) ||
-                        "Open conversation"}
-                    </span>
-                    <span className="replies-preview-status">
-                      {replyNeedsAttention(t) ? (
-                        <span className="replies-needs-reply">Needs reply</span>
-                      ) : (
-                        <span>
-                          {t.archivedAt
-                            ? "Archived"
-                            : t.snoozedUntil
-                              ? "Snoozed"
-                              : "No reply needed"}
-                        </span>
-                      )}
-                      {t.drafts && Object.values(t.drafts.edits).some((text) => text.trim()) && (
-                        <span>Draft saved</span>
-                      )}
-                    </span>
-                  </span>
-                </button>
-              );
-            })
-          )}
+                  </button>
+                );
+              })
+            )}
+          </div>
           {pageCount > 1 && (
             <div className="replies-pagination">
               <Button
@@ -309,13 +364,27 @@ function InboxPage() {
             </div>
           )}
         </aside>
-        <section className="replies-detail" aria-label="Selected conversation">
+        <section
+          ref={detailRef}
+          className="replies-detail"
+          aria-label="Selected conversation"
+          onFocusCapture={() => {
+            restoreQueueFocus.current = true;
+          }}
+          onBlurCapture={(event) => {
+            if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget))
+              restoreQueueFocus.current = false;
+          }}
+        >
           {selected ? (
             <ThreadRow
               key={selected.key}
               thread={selected}
               expanded
-              onToggle={() => setExpanded(null)}
+              onToggle={() => {
+                restoreQueueFocus.current = true;
+                setExpanded(null);
+              }}
             />
           ) : (
             <div className="replies-placeholder">
@@ -710,6 +779,10 @@ function ThreadRow({
   const queryClient = useQueryClient();
   const [assignOpen, setAssignOpen] = useState(false);
   const [matchEmail, setMatchEmail] = useState("");
+  const { bodyRef, latestRef, onScroll, scrollToLatest, newMessage } = useReplyScroll(t.messages);
+  const composerRef = useRef<HTMLDivElement>(null);
+  const latestMessageId = t.messages.findLast((message) => !message.deleted)?.id;
+  const profileUrl = linkedinUrlFor({ linkedinUrl: t.profileUrl });
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["replies"] });
   const state = useMutation({
     mutationFn: (action: ReplyStateRequest["action"]) =>
@@ -757,7 +830,21 @@ function ThreadRow({
         </button>
         <div className="replies-recipient">
           <h2>
-            <Pii kind="name">{t.name}</Pii>
+            {profileUrl ? (
+              <a
+                className="replies-profile-link"
+                href={profileUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open LinkedIn profile in a new tab"
+              >
+                <Pii kind="name">{t.name}</Pii>
+                <ExternalLink size={14} aria-hidden="true" />
+                <span className="sr-only"> — LinkedIn profile (opens in a new tab)</span>
+              </a>
+            ) : (
+              <Pii kind="name">{t.name}</Pii>
+            )}
           </h2>
           <p>
             {t.channel === "linkedin" ? "LinkedIn" : "Email"}
@@ -791,9 +878,41 @@ function ThreadRow({
           <Archive size={14} />
           {t.archivedAt ? "Restore" : "Archive"}
         </Button>
+        {newMessage && (
+          <Button size="sm" variant="secondary" onClick={scrollToLatest}>
+            New message
+          </Button>
+        )}
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => {
+            const body = bodyRef.current;
+            const composer = composerRef.current;
+            if (!body || !composer) return;
+            const editor = composer.querySelector<HTMLTextAreaElement>(".reply-textarea");
+            const composerTop = composer.getBoundingClientRect().top;
+            const editorRect = editor?.getBoundingClientRect();
+            const targetTop =
+              editorRect && editorRect.bottom - composerTop > body.clientHeight - 16
+                ? editorRect.top - 16
+                : composerTop;
+            body.scrollTop += targetTop - body.getBoundingClientRect().top;
+            (editor && !editor.disabled ? editor : body).focus({ preventScroll: true });
+          }}
+        >
+          Reply
+        </Button>
       </div>
       {expanded && (
-        <div className="replies-thread-body">
+        <div
+          ref={bodyRef}
+          className="replies-thread-body"
+          role="region"
+          onScroll={onScroll}
+          tabIndex={0}
+          aria-label="Conversation and reply"
+        >
           {t.channel === "email" && (
             <h3 className="pt-4 text-[14px] font-medium">{t.subject || "(No subject)"}</h3>
           )}
@@ -815,11 +934,11 @@ function ThreadRow({
                   >
                     {t.workspace ? "Change assignment" : "Assign workspace and prospect"}
                   </Button>
-                  {t.profileUrl && (
+                  {profileUrl && (
                     <a
-                      href={t.profileUrl}
+                      href={profileUrl}
                       target="_blank"
-                      rel="noreferrer"
+                      rel="noopener noreferrer"
                       className="self-center text-[12px] text-ink-muted underline"
                     >
                       LinkedIn profile
@@ -858,10 +977,22 @@ function ThreadRow({
               }}
             />
           )}
+          {t.mailboxThreadKey && !t.historyComplete && (
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={history.isPending}
+              onClick={() => history.mutate()}
+            >
+              {history.isPending ? "Loading history…" : "Load more history"}
+            </Button>
+          )}
           <div className="replies-messages">
             {t.messages.map((m) => (
               <div
                 key={m.id}
+                data-message-id={m.id}
+                ref={m.id === latestMessageId ? latestRef : undefined}
                 className={`replies-message ${m.direction === "outbound" ? "is-outbound" : "is-inbound"}`}
               >
                 <div className="mb-1 text-[11px] text-ink-muted">
@@ -878,17 +1009,9 @@ function ThreadRow({
               </div>
             ))}
           </div>
-          {t.mailboxThreadKey && !t.historyComplete && (
-            <Button
-              size="sm"
-              variant="ghost"
-              disabled={history.isPending}
-              onClick={() => history.mutate()}
-            >
-              {history.isPending ? "Loading history…" : "Load more history"}
-            </Button>
-          )}
-          <ReplyOptionsComposer key={t.key} thread={t} />
+          <div ref={composerRef} data-reply-composer>
+            <ReplyOptionsComposer key={t.key} thread={t} />
+          </div>
         </div>
       )}
     </article>
