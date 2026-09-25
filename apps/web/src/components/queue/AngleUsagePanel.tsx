@@ -3,6 +3,7 @@ import { isNeverSent } from "../../lib/angleRetire.ts";
 import { cn } from "../../lib/cn.ts";
 import { replyLabel } from "../../lib/replyRate.ts";
 import { Button } from "../primitives/Button.tsx";
+import { Explain } from "../primitives/Explain.tsx";
 
 /**
  * What the founder did with each configured angle, shown inside the trigger
@@ -62,6 +63,7 @@ export function AngleUsagePanel({
         {draftUsage
           ? `drafts · ${usageLine("intro", draftUsage.intro)} · ${usageLine("follow-up", draftUsage.followUp)}`
           : "drafts · nothing drafted on this play yet"}
+        <Explain concept="angleUsage" />
       </div>
       {voiceUsage && voiceUsage.voiced.sent + voiceUsage.voiced.regenerated > 0 && (
         <div className="font-mono text-[11px] text-ink-faint">
@@ -73,6 +75,7 @@ export function AngleUsagePanel({
           {`first-touch format · ${Object.entries(formatUsage)
             .map(([arm, u]) => usageLine(arm, u))
             .join(" · ")}`}
+          <Explain concept="firstTouchFormat" />
         </div>
       )}
       {!hasAny && (

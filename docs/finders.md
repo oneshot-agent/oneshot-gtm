@@ -32,7 +32,7 @@ The person gate is re-judged on the researched role when its verdict was missing
 
 Backfill, in this order per workspace: `find research-queue --status live` (pending and approved rows), `find research-prospects --scope all --refresh` (every prospect with a profile URL: sent, in cadence, completed, replied), then `find synthesize-angles --refresh --scope active` so follow-ups and reply drafts pick up the new dossier. None of the three has a cost cap by default (`--max-cost-usd` bounds a rehearsal); each run considers up to 100,000 rows per status and researched rows are skipped, so re-running continues where the last run stopped. `--dry-run` shows counts and an estimate; `--no-rejudge` and `--no-company` narrow what is bought.
 
-**GitHub-only people.** A stargazer whose whole public footprint is GitHub usually comes back `unavailable` from person research. The github-stars gate therefore judges on what GitHub itself publishes: the bio, company, site and location, account age with repo and follower counts, the person's own most recently pushed repos (language, stars, last push), and on an otherwise bare profile an excerpt of their profile README. That costs one extra API call per candidate, or up to three on bare profiles. The block is stored on the row as `githubEvidence`, rejected rows included, so a review shows what the gate saw. `find rejudge-github` re-runs that decision on live github-stars rows with no paid research: one classifier call per row, plus the person gate on the bio when the row has an email. A reject moves a pending row to rejected; an approved row is annotated and moves only with `--reject-approved`. A GitHub or classifier failure skips the row rather than rejecting it. `--dry-run` prints every verdict and writes nothing. Re-judged rows are skipped on the next run until `--refresh`.
+**GitHub-only people.** For someone whose whole public footprint is GitHub, the github-stars gate judges on what GitHub publishes, since person research usually comes back `unavailable`: bio, company, site, location, account age, their own recent repos, and a profile-README excerpt on a bare profile (one extra API call per candidate, up to three on bare profiles). The block is stored on the row as `githubEvidence`. `find rejudge-github` re-runs that decision on live github-stars rows with no paid research: pending rejects move to rejected, approved rows only with `--reject-approved`, and a GitHub or classifier failure skips a row rather than rejecting it. `--dry-run` writes nothing.
 
 ## Review order
 
@@ -49,6 +49,10 @@ Approved rows ship via the **Drain** button or `find drain <play>`. Both respect
 - `LUMA_SESSION_COOKIE` — optional; only buys authed Luma guest lists.
 
 All of these are env-only: `init` never asks, but `/setup` and `config keys` store them in the workspace's `.env`.
+
+## Institutional buyers
+
+Set `play: "design-partner-loi"` and `buyerType` (`enterprise`, `government` or `hardware`) on a finder's trigger to send its rows to the design-partner play instead of the finder's own founder-to-founder play. That play writes for an institutional evaluator and steps the ask from a scoped conversation to a pilot to a non-binding LOI. It works on hiring-signal, job-change, post-funding, podcast-guest and local-business. The trigger is ready only with an edge and a valid buyer type, and dedupe covers both plays, so switching the setting never lets the same person through twice.
 
 ## Expired queue rows
 
