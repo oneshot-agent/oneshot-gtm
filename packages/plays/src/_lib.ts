@@ -459,18 +459,30 @@ function splitBodySentences(text: string): string[] {
  * with terminal punctuation (it is always a statement or a question); a
  * short, unterminated final chunk is a name, not a fourth sentence.
  *
- * Deliberately narrow: only a bare name (optionally hyphen-prefixed, e.g.
- * "- Sam") qualifies. Round-1 review (finding PRRT_kwDOSKzrBs6mF-g2) caught
- * that the previous "<=4 words, unterminated" heuristic also matched a real
- * final sentence that merely lacks trailing punctuation (e.g. "Worth a short
- * call"), silently dropping it and letting an over-length draft skip
- * `enterprise-too-many-sentences`.
+ * Verified against the CONFIGURED founder name, not just shape (finding
+ * PRRT_kwDOSKzrBs6mGdey / F-t_1d98fbc8-1): a prior narrowing (round-1 review
+ * finding PRRT_kwDOSKzrBs6mF-g2) restricted this to a single unpunctuated
+ * word, but any such word — "Interested", "Thanks", any real one-word
+ * closing line — still matched, so it was silently dropped from both the
+ * word and sentence counts along with a genuine bare-name sign-off. Only a
+ * final line that actually equals the founder's configured name (full name
+ * or just its first token, case-insensitive, optionally hyphen-prefixed) is
+ * a verified sign-off; every other unterminated final line is real body
+ * content and must stay in both counts. With no founder name configured
+ * there is nothing to verify against, so nothing is stripped — the safe
+ * direction, matching the invariant that only an ACTUAL trailing signature
+ * is excluded. `founderName` is exposed for tests; production reads config.
  */
-function trimTrailingSignOff(sentences: string[]): string[] {
+function trimTrailingSignOff(sentences: string[], founderName?: string): string[] {
   const last = sentences[sentences.length - 1];
   if (!last) return sentences;
-  const isBareNameSignOff = !/[.!?]$/.test(last) && /^-?\s*[A-Za-z]+(?:[-'][A-Za-z]+)?$/.test(last);
-  return isBareNameSignOff ? sentences.slice(0, -1) : sentences;
+  const name = (founderName ?? loadConfig().founderName ?? "").trim();
+  if (!name) return sentences;
+  const firstName = name.split(/\s+/)[0] ?? name;
+  const bare = last.replace(/^-\s*/, "").trim().toLowerCase();
+  const isVerifiedNameSignOff =
+    !/[.!?]$/.test(last) && (bare === name.toLowerCase() || bare === firstName.toLowerCase());
+  return isVerifiedNameSignOff ? sentences.slice(0, -1) : sentences;
 }
 
 /** design-partner-loi's enterprise first-touch body cap (issue #707): at most 3 sentences. */
@@ -534,8 +546,13 @@ function stripGreetingLine(text: string): string {
  * model wrote it. Called only for `buyerType: "enterprise"` — see
  * `design-partner-loi.ts`'s `draftFlags`; government and hardware are
  * unaffected and keep the play's general rules.
+ *
+ * `founderName` (test-only override, mirrors `stripSignatureLines`'s
+ * `sigLines?` param in this same file) decides which trailing line
+ * `trimTrailingSignOff` may treat as a verified sign-off; production always
+ * omits it and reads the real configured founder name.
  */
-export function enterpriseFirstTouchFlags(body: string): string[] {
+export function enterpriseFirstTouchFlags(body: string, founderName?: string): string[] {
   const flags: string[] = [];
   const stripped = stripGreetingLine(stripSignatureLines(body));
   // Both counts must read the same body content (round-2 review finding
@@ -545,7 +562,7 @@ export function enterpriseFirstTouchFlags(body: string): string[] {
   // sign-off-trimmed sentences the sentence count uses, not from `stripped`
   // directly — otherwise a compliant 69-word draft could trip
   // enterprise-body-too-long on the sign-off's word alone.
-  const sentences = trimTrailingSignOff(splitBodySentences(stripped));
+  const sentences = trimTrailingSignOff(splitBodySentences(stripped), founderName);
   const words = sentences.join(" ").split(/\s+/).filter(Boolean);
   if (words.length >= ENTERPRISE_MAX_BODY_WORDS) flags.push("enterprise-body-too-long");
   if (sentences.length > ENTERPRISE_MAX_BODY_SENTENCES) {

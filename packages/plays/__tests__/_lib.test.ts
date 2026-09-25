@@ -493,7 +493,7 @@ describe("enterpriseFirstTouchFlags — issue #707", () => {
       "",
       "Sam",
     ].join("\n");
-    expect(enterpriseFirstTouchFlags(body)).toEqual([]);
+    expect(enterpriseFirstTouchFlags(body, "Sam")).toEqual([]);
   });
 
   it("flags a draft with 4+ body sentences", () => {
@@ -505,7 +505,7 @@ describe("enterpriseFirstTouchFlags — issue #707", () => {
       "",
       "Sam",
     ].join("\n");
-    expect(enterpriseFirstTouchFlags(body)).toContain("enterprise-too-many-sentences");
+    expect(enterpriseFirstTouchFlags(body, "Sam")).toContain("enterprise-too-many-sentences");
   });
 
   it("flags a draft over the 70-word body cap even at 3 sentences", () => {
@@ -513,7 +513,7 @@ describe("enterpriseFirstTouchFlags — issue #707", () => {
     const body = [`${filler}.`, "A short call would help.", "Open to a chat?", "", "Sam"].join(
       "\n",
     );
-    expect(enterpriseFirstTouchFlags(body)).toContain("enterprise-body-too-long");
+    expect(enterpriseFirstTouchFlags(body, "Sam")).toContain("enterprise-body-too-long");
   });
 
   it("flags a personalised dossier-observation opener", () => {
@@ -530,7 +530,7 @@ describe("enterpriseFirstTouchFlags — issue #707", () => {
         "",
         "Sam",
       ].join("\n");
-      expect(enterpriseFirstTouchFlags(body)).toContain("enterprise-dossier-opener");
+      expect(enterpriseFirstTouchFlags(body, "Sam")).toContain("enterprise-dossier-opener");
     }
   });
 
@@ -542,14 +542,15 @@ describe("enterpriseFirstTouchFlags — issue #707", () => {
       "",
       "Sam",
     ].join("\n");
-    expect(enterpriseFirstTouchFlags(body)).toEqual([]);
+    expect(enterpriseFirstTouchFlags(body, "Sam")).toEqual([]);
   });
 
   it("ignores the trailing signature lines when counting words and sentences", () => {
-    // Without config, stripSignatureLines has no configured sig lines to peel
-    // (founderName/productDomain aren't set in this test's isolated config),
-    // so this only pins that a two-line sign-off never inflates the count on
-    // its own when the body is otherwise compliant.
+    // Without a matching founder name, trimTrailingSignOff can't verify the
+    // final line as a sign-off, so this pins the matching-name case: a
+    // two-line sign-off never inflates the count on its own when the body is
+    // otherwise compliant and the trailing name matches the configured
+    // founder.
     const body = [
       "Teams shipping agent tooling into regulated ops skip the manual evidence trail entirely.",
       "A short call would show how it maps to your control set.",
@@ -557,7 +558,7 @@ describe("enterpriseFirstTouchFlags — issue #707", () => {
       "",
       "Sam",
     ].join("\n");
-    expect(enterpriseFirstTouchFlags(body)).toEqual([]);
+    expect(enterpriseFirstTouchFlags(body, "Sam")).toEqual([]);
   });
 
   // Regression for the round-1 review finding: `_humanizer.md`'s "Optional
@@ -577,7 +578,7 @@ describe("enterpriseFirstTouchFlags — issue #707", () => {
       "",
       "Sam",
     ].join("\n");
-    expect(enterpriseFirstTouchFlags(body)).toEqual([]);
+    expect(enterpriseFirstTouchFlags(body, "Sam")).toEqual([]);
   });
 
   it("still flags a dossier-observation opener that follows a greeting", () => {
@@ -590,7 +591,7 @@ describe("enterpriseFirstTouchFlags — issue #707", () => {
       "",
       "Sam",
     ].join("\n");
-    expect(enterpriseFirstTouchFlags(body)).toContain("enterprise-dossier-opener");
+    expect(enterpriseFirstTouchFlags(body, "Sam")).toContain("enterprise-dossier-opener");
   });
 
   // Regression for the round-1 external review finding PRRT_kwDOSKzrBs6mF-g2:
@@ -608,7 +609,7 @@ describe("enterpriseFirstTouchFlags — issue #707", () => {
       "",
       "Sam",
     ].join("\n");
-    expect(enterpriseFirstTouchFlags(body)).toContain("enterprise-too-many-sentences");
+    expect(enterpriseFirstTouchFlags(body, "Sam")).toContain("enterprise-too-many-sentences");
   });
 
   // Regression for the round-1 external review finding PRRT_kwDOSKzrBs6mF-hB:
@@ -620,7 +621,7 @@ describe("enterpriseFirstTouchFlags — issue #707", () => {
     // 70 words of actual body content — "Sam" is a bare-name sign-off, not
     // part of the count (see the next test).
     expect(`${filler} Open to a chat?`.split(/\s+/).filter(Boolean).length).toBe(70);
-    expect(enterpriseFirstTouchFlags(body)).toContain("enterprise-body-too-long");
+    expect(enterpriseFirstTouchFlags(body, "Sam")).toContain("enterprise-body-too-long");
   });
 
   // Regression for the round-2 external review finding PRRT_kwDOSKzrBs6mGdey:
@@ -634,6 +635,33 @@ describe("enterpriseFirstTouchFlags — issue #707", () => {
     // 69 words of actual body content, plus a bare "Sam" sign-off that must
     // not push the count to the 70-word cap.
     expect(`${filler} Open to a chat?`.split(/\s+/).filter(Boolean).length).toBe(69);
-    expect(enterpriseFirstTouchFlags(body)).not.toContain("enterprise-body-too-long");
+    expect(enterpriseFirstTouchFlags(body, "Sam")).not.toContain("enterprise-body-too-long");
+  });
+
+  // Regression for round-3 external review finding F-t_1d98fbc8-1
+  // (PRRT_kwDOSKzrBs6mGdey follow-up): trimTrailingSignOff used to drop ANY
+  // unpunctuated single-word final line, not only the CONFIGURED founder's
+  // name — so a legitimate one-word closing sentence ("Interested") that
+  // merely happens not to be the founder's name was wrongly excluded from
+  // both the word and sentence counts, letting a 4-sentence draft skip
+  // enterprise-too-many-sentences.
+  it("still flags a 4th sentence that is a single word but not the founder's name", () => {
+    const body = [
+      "Regulated ops teams that pass audit on the first pass skip the manual trail.",
+      "That's a real edge over category peers still doing it by hand.",
+      "A short call would show how it maps to your control set.",
+      "Interested",
+    ].join("\n");
+    expect(enterpriseFirstTouchFlags(body, "Sam")).toContain("enterprise-too-many-sentences");
+  });
+
+  it("does not strip a one-word final line when no founder name is configured", () => {
+    const body = [
+      "Regulated ops teams that pass audit on the first pass skip the manual trail.",
+      "That's a real edge over category peers still doing it by hand.",
+      "A short call would show how it maps to your control set.",
+      "Interested",
+    ].join("\n");
+    expect(enterpriseFirstTouchFlags(body)).toContain("enterprise-too-many-sentences");
   });
 });
