@@ -397,11 +397,12 @@ export function closingEitherOrQuestion(body: string, sigLines?: string[]): bool
   if (!text.endsWith("?")) return false;
   const sentences = text.split(/(?<=[.!?])\s+/);
   const last = sentences[sentences.length - 1] ?? "";
-  const cleaned = last.replace(
-    /\b(?:one|a minute|a day|a week|two|three) or (?:two|three|so|more|later)\b/gi,
-    "",
-  );
-  return /\bor\b/i.test(cleaned);
+  // Count, don't strip: an "or" that is not part of an idiom is an option.
+  const ors = last.match(/\bor\b/gi)?.length ?? 0;
+  const idioms =
+    last.match(/\b(?:one|a minute|a day|a week|two|three) or (?:two|three|so|more|later)\b/gi)
+      ?.length ?? 0;
+  return ors > idioms;
 }
 
 export function lintEmail(
