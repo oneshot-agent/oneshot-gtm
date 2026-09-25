@@ -136,6 +136,34 @@ it("keeps one idempotency key across payment failures with unknown acceptance", 
     pending.idempotencyKey,
   ]);
 });
+it("replaces a key the provider consumed without a request id, once", async () => {
+  sender();
+  startLinkedInBackfill("account");
+  const burned = () =>
+    sdk.mockRejectedValueOnce(
+      new Error("Tool request failed: This Idempotency-Key was already used for a LinkedIn action"),
+    );
+  burned();
+  await runLinkedInBackfill("account");
+  const first = backfillStatus("account")!;
+  // Not blocked: the next tick retries under a fresh key.
+  expect(first.stage).toBe("resolve");
+  expect(first.pending?.rekeyed).toBe(true);
+  await runLinkedInBackfill("account");
+  const keys = sdk.mock.calls
+    .filter(([, op]) => op.kind === "profile")
+    .map(([, op]) => op.idempotencyKey);
+  expect(keys).toHaveLength(2);
+  expect(keys[0]).not.toBe(keys[1]);
+  expect(backfillStatus("account")?.senders?.resolved).toBe(1);
+  // A second refusal on the fresh key is a real fault and blocks as before.
+  sender();
+  burned();
+  await runLinkedInBackfill("account");
+  burned();
+  await runLinkedInBackfill("account");
+  expect(backfillStatus("account")?.stage).toBe("blocked");
+});
 it("a shared lease prevents another server from submitting the same work", async () => {
   sender();
   startLinkedInBackfill("account");
