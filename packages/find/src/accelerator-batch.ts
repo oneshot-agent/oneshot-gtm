@@ -12,7 +12,13 @@ import { isDuplicate, urlDomain } from "./_dedupe.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
 import { parallelMap } from "./_parallel.ts";
-import { deriveCohortLabel, fetchYcOssBatch } from "./_yc-oss-adapter.ts";
+import { deriveCohortLabel, fetchYcOssBatch, ycBatchExists } from "./_yc-oss-adapter.ts";
+import {
+  getAccelerator,
+  resolveAcceleratorCohorts,
+  type AcceleratorSelection,
+  type ResolvedCohort,
+} from "./_accelerators.ts";
 import type { CompanyRecord, FinderResult, RunOpts } from "./_types.ts";
 
 /**
@@ -60,6 +66,14 @@ export interface AcceleratorBatchFinderOpts extends RunOpts {
   cohort?: string;
   /** Legacy human label. Ignored when `cohorts` is set. */
   cohortLabel?: string;
+  /**
+   * Accelerators to search at their most recent cohort(s), resolved from the
+   * date at run time (see `_accelerators.ts`). Combined with `cohorts` when
+   * both are set; a cohort named by both is searched once.
+   */
+  accelerators?: AcceleratorSelection[];
+  /** Clock for resolving `accelerators` (tests). Default: now. */
+  now?: Date;
   /** Force a specific adapter for ALL entries. Default: yc-* → yc-oss, else → websearch. */
   adapter?: "yc-oss" | "websearch";
   /** Concurrency for the per-company pipeline (over the unified pool). Default 3. */
@@ -178,7 +192,19 @@ export async function runAcceleratorBatchFinder(
   const concurrency = opts.concurrency ?? 3;
   const icp = resolveIcp(opts.icpOverride);
   const ledger = getLedger();
-  const cohorts = normalizeCohorts(opts);
+  const selected =
+    opts.accelerators && opts.accelerators.length > 0
+      ? await resolveAcceleratorCohorts(opts.accelerators, opts.now ?? new Date(), ycBatchExists)
+      : { cohorts: [] as ResolvedCohort[], unknown: [] as string[] };
+  const hasExplicit =
+    (opts.cohorts?.length ?? 0) > 0 ||
+    (typeof opts.cohort === "string" && opts.cohort.trim() !== "");
+  const explicit: Array<CohortEntry & Partial<ResolvedCohort>> =
+    hasExplicit || selected.cohorts.length === 0 ? normalizeCohorts(opts) : [];
+  const cohorts: Array<CohortEntry & Partial<ResolvedCohort>> = [];
+  for (const c of [...selected.cohorts, ...explicit]) {
+    if (!cohorts.some((x) => x.cohort === c.cohort)) cohorts.push(c);
+  }
   // Source string reflects whether this is a sweep or a single-cohort run.
   // Keeps the per-target `source` column on the queue readable.
   const source =
@@ -210,7 +236,7 @@ export async function runAcceleratorBatchFinder(
     records: TaggedCompanyRecord[];
     summary: { cohort: string; records: number; error?: string };
   };
-  const cohortResults = await parallelMap<CohortEntry, CohortOutcome>(
+  const cohortResults = await parallelMap<CohortEntry & Partial<ResolvedCohort>, CohortOutcome>(
     cohorts,
     concurrency,
     async (entry) => {
@@ -223,12 +249,28 @@ export async function runAcceleratorBatchFinder(
         };
       }
       const adapterName = pickAdapter(entry.cohort, opts.adapter);
+      const acc = entry.accelerator ? getAccelerator(entry.accelerator) : null;
+      const search = (e: CohortEntry & { year?: number }) =>
+        fetchAcceleratorSearch(e.cohort, e.cohortLabel, limit, {
+          ...(acc ? { acceleratorName: acc.name, listingUrls: acc.listingUrls } : {}),
+          ...(e.year !== undefined ? { year: e.year } : {}),
+        });
       try {
-        const fetched =
+        let fetched =
           adapterName === "yc-oss"
             ? await fetchYcOssBatch(entry.cohort, YC_OSS_READ_CAP)
-            : await fetchAcceleratorSearch(entry.cohort, entry.cohortLabel, limit);
+            : await search(entry);
         result.costUsd += fetched.costUsd;
+        // A yearly cohort that has not published yet (early in the year):
+        // fall back to the previous year's, tagged as that cohort.
+        if (fetched.records.length === 0 && entry.fallback && adapterName !== "yc-oss") {
+          const prior = await search(entry.fallback);
+          result.costUsd += prior.costUsd;
+          if (prior.records.length > 0) {
+            fetched = prior;
+            entry = { ...entry, ...entry.fallback };
+          }
+        }
         if (fetched.records.length === 0) {
           return {
             records: [],
@@ -273,6 +315,9 @@ export async function runAcceleratorBatchFinder(
   for (const r of cohortResults) {
     allRecords.push(...r.records);
     perCohortOutcomes.push(r.summary);
+  }
+  for (const id of selected.unknown) {
+    perCohortOutcomes.push({ cohort: id, records: 0, error: "unknown accelerator id" });
   }
   result.perCohort = perCohortOutcomes;
 

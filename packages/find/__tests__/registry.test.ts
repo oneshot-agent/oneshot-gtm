@@ -391,26 +391,20 @@ describe("checkReadiness", () => {
     ).toEqual({ ready: true });
   });
 
-  it("accelerator-batch ships with a multi-incubator default sweep", () => {
+  it("accelerator-batch ships with a multi-incubator default sweep", async () => {
     const spec = TRIGGERS.find((t) => t.name === "accelerator-batch")!;
-    const cohorts = spec.defaultConfig["cohorts"] as Array<{
-      cohort: string;
-      cohortLabel: string;
+    const { getAccelerator } = await import("../src/_accelerators.ts");
+    const accelerators = spec.defaultConfig["accelerators"] as Array<{
+      id: string;
+      recent?: number;
     }>;
-    expect(Array.isArray(cohorts)).toBe(true);
-    expect(cohorts.length).toBeGreaterThan(1);
-    expect(cohorts.length).toBeLessThanOrEqual(30); // sanity ceiling
-    // Each entry has both a tag + a label, both non-empty.
-    for (const c of cohorts) {
-      expect(typeof c.cohort).toBe("string");
-      expect(c.cohort.length).toBeGreaterThan(0);
-      expect(typeof c.cohortLabel).toBe("string");
-      expect(c.cohortLabel.length).toBeGreaterThan(0);
-    }
+    expect(Array.isArray(accelerators)).toBe(true);
+    // Every default is a known accelerator, resolved to its latest cohort at run time.
+    for (const a of accelerators) expect(getAccelerator(a.id)).not.toBeNull();
     // Sweep must cover more than just YC — the whole point is multi-incubator.
-    const ycCount = cohorts.filter((c) => /^yc-/i.test(c.cohort)).length;
-    expect(ycCount).toBeGreaterThan(0);
-    expect(cohorts.length - ycCount).toBeGreaterThan(0);
+    expect(accelerators.some((a) => a.id === "yc")).toBe(true);
+    expect(accelerators.filter((a) => a.id !== "yc").length).toBeGreaterThan(0);
+    expect(spec.readiness?.({ ...spec.defaultConfig, yourEdge: "e" })).toEqual({ ready: true });
   });
 
   it("local-registry is not ready with its empty default config (no sources)", () => {

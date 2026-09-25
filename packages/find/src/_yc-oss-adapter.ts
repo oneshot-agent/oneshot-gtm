@@ -220,3 +220,31 @@ export function mapYcOssCompany(c: YcOssCompany): CompanyRecord | null {
     source: "yc-oss",
   };
 }
+
+const batchExistsCache = new Map<string, boolean>();
+
+/** Test-only: forget cached batch-existence probes. */
+export function _resetYcBatchExistsCache(): void {
+  batchExistsCache.clear();
+}
+
+/**
+ * Whether yc-oss has published a batch file (`winter-2026` form). A HEAD
+ * request against GitHub Pages: free, no auth. A network error counts as
+ * "not published" for this run and is not cached, so the next run retries.
+ */
+export async function ycBatchExists(slug: string): Promise<boolean> {
+  const cached = batchExistsCache.get(slug);
+  if (cached !== undefined) return cached;
+  try {
+    const res = await fetch(`${YC_OSS_BASE}/${slug}.json`, {
+      method: "HEAD",
+      signal: AbortSignal.timeout(10_000),
+    });
+    const exists = res.ok;
+    batchExistsCache.set(slug, exists);
+    return exists;
+  } catch {
+    return false;
+  }
+}

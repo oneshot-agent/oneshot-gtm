@@ -177,8 +177,8 @@ const PERSON_RESEARCH_BRIEF =
  * structured yc-oss/api directory; the rest use the websearch + LLM-extract
  * adapter with spotty recall. Per-cohort failures are isolated — the run only
  * halts when EVERY cohort comes back empty.
- * ROTATION: goes stale within ~3 months; founders edit `cohorts[]` in the
- * /queue trigger config as new batches announce.
+ * Kept for configs that pin cohorts explicitly. New installs default to
+ * `DEFAULT_ACCELERATORS`, which resolves the latest cohorts from the date.
  */
 export const DEFAULT_COHORTS: CohortEntry[] = [
   { cohort: "yc-w26", cohortLabel: "YC W26" },
@@ -195,6 +195,23 @@ export const DEFAULT_COHORTS: CohortEntry[] = [
   { cohort: "spc-2025-2", cohortLabel: "South Park Commons F1 2025-2" },
   { cohort: "neo-class-2026", cohortLabel: "Neo Class 2026" },
   { cohort: "neo-class-2025", cohortLabel: "Neo Class 2025" },
+];
+
+/**
+ * Default for new installs: every known accelerator at its most recent
+ * cohort, resolved from the date at run time, so it never goes stale. YC runs
+ * four batches a year, so its two most recent are searched.
+ */
+export const DEFAULT_ACCELERATORS: Array<{ id: string; recent?: number }> = [
+  { id: "yc", recent: 2 },
+  { id: "spc" },
+  { id: "neo" },
+  { id: "antler" },
+  { id: "techstars" },
+  { id: "500-global" },
+  { id: "ai-grant" },
+  { id: "hf0" },
+  { id: "a16z-speedrun" },
 ];
 
 export const TRIGGERS: TriggerSpec[] = [
@@ -221,21 +238,26 @@ export const TRIGGERS: TriggerSpec[] = [
     // Every known incubator × {latest, previous-latest}; editable in /queue.
     defaultConfig: {
       ...RESEARCH_DEFAULT,
-      cohorts: DEFAULT_COHORTS,
+      accelerators: DEFAULT_ACCELERATORS,
       yourEdge: "",
       limit: 25,
       maxCostUsd: 15,
     },
     configBrief:
-      'Sweeps every known incubator (YC, Techstars, Antler, 500 Global, AI Grant, SPC, Neo) at its latest + previous-latest cohorts in one run. Config: `cohorts` (array of `{cohort, cohortLabel}` — defaults to the 14-entry curated list; edit to add/remove batches as new cohorts announce), optional `cohort` + `cohortLabel` (legacy single-cohort shape; still accepted), optional `adapter` (`yc-oss` | `websearch`; auto-picked per cohort — yc-* tags use the free yc-oss/api directory, everything else falls back to web search), `yourEdge` (REQUIRED. Observations the founder actually made, never a pitch: several `//`-separated angles, each opening with who it fits (e.g. *For a founder selling to clinics —*), then either a lesson (a named failure and what was learned) or an opportunity (what this reader could do that their peers cannot yet, resting on one concrete capability or number, never an unbacked outcome). Optional `firstTouchFormat` (`standard` default, `brief`, or `split` with `firstTouchSplit` 0 to 1) tests a 3-sentence first email against the standard one; results show per arm in the trigger editor. The tool picks ONE per prospect in code; the email never sees the others; stamped onto every enqueued row so rows draft inline), `limit` (global enqueue cap across all cohorts), `maxCostUsd`. Per-cohort failures (spotty incubator, network blip) log and continue; the run only halts when EVERY cohort returns 0 candidates. ROTATION: the default list goes stale within ~3 months — edit when YC announces W27, Techstars rolls Fall 2026, etc. AFFILIATION: the batch is a TIMING signal about the prospect (fresh money, demo-day clock, no distribution) and the honest answer to "how did you find me" — it is NOT a relationship the sender has. There is no sender-cohort setting here on purpose; if the founder genuinely did an accelerator, `founderCohort` in config (Setup → social proof) turns on the peer angle, and blank — the default — writes as the outsider the sender is. STRATEGIST DUTY: when the founder\'s ICP overlaps strongly with one incubator population, narrow the cohorts list rather than sweeping all seven — e.g. AI/infra startups → keep yc-* + ai-grant-*, drop the rest.',
+      'Sweeps accelerators at their most recent cohort in one run. Config: `accelerators` (array of `{id, recent?}` — ids yc, spc, neo, antler, techstars, 500-global, ai-grant, hf0, a16z-speedrun; `recent` = how many of its latest cohorts, default 1; the cohort is resolved from the date at run time, so the list never goes stale; defaults to all of them, YC at 2), optional `cohorts` (array of `{cohort, cohortLabel}` to pin specific cohorts; combined with `accelerators`), optional `cohort` + `cohortLabel` (legacy single-cohort shape; still accepted), optional `adapter` (`yc-oss` | `websearch`; auto-picked per cohort — yc-* tags use the free yc-oss/api directory, everything else falls back to web search), `yourEdge` (REQUIRED. Observations the founder actually made, never a pitch: several `//`-separated angles, each opening with who it fits (e.g. *For a founder selling to clinics —*), then either a lesson (a named failure and what was learned) or an opportunity (what this reader could do that their peers cannot yet, resting on one concrete capability or number, never an unbacked outcome). Optional `firstTouchFormat` (`standard` default, `brief`, or `split` with `firstTouchSplit` 0 to 1) tests a 3-sentence first email against the standard one; results show per arm in the trigger editor. The tool picks ONE per prospect in code; the email never sees the others; stamped onto every enqueued row so rows draft inline), `limit` (global enqueue cap across all cohorts), `maxCostUsd`. Per-cohort failures (spotty incubator, network blip) log and continue; the run only halts when EVERY cohort returns 0 candidates. ROTATION: the default list goes stale within ~3 months — edit when YC announces W27, Techstars rolls Fall 2026, etc. AFFILIATION: the batch is a TIMING signal about the prospect (fresh money, demo-day clock, no distribution) and the honest answer to "how did you find me" — it is NOT a relationship the sender has. There is no sender-cohort setting here on purpose; if the founder genuinely did an accelerator, `founderCohort` in config (Setup → social proof) turns on the peer angle, and blank — the default — writes as the outsider the sender is. STRATEGIST DUTY: when the founder\'s ICP overlaps strongly with one incubator population, narrow the cohorts list rather than sweeping all seven — e.g. AI/infra startups → keep yc-* + ai-grant-*, drop the rest.',
     readiness: (cfg) => {
       const cohorts = Array.isArray(cfg["cohorts"]) ? cfg["cohorts"] : null;
+      const accelerators = Array.isArray(cfg["accelerators"]) ? cfg["accelerators"] : null;
       const legacyCohort =
         typeof cfg["cohort"] === "string" ? (cfg["cohort"] as string).trim() : "";
-      if ((!cohorts || cohorts.length === 0) && legacyCohort.length === 0) {
+      if (
+        (!cohorts || cohorts.length === 0) &&
+        (!accelerators || accelerators.length === 0) &&
+        legacyCohort.length === 0
+      ) {
         return {
           ready: false,
-          reason: "set `cohorts[]` (or legacy `cohort`)",
+          reason: "set `accelerators[]` (or `cohorts[]`)",
         };
       }
       // Deliberately NOT gated on a sender cohort. That gate is what made
@@ -273,10 +295,26 @@ export const TRIGGERS: TriggerSpec[] = [
       const legacyLabel =
         typeof cfg["cohortLabel"] === "string" ? (cfg["cohortLabel"] as string) : "";
 
+      const acceleratorsRaw = Array.isArray(cfg["accelerators"])
+        ? (cfg["accelerators"] as unknown[])
+        : [];
+      const accelerators = acceleratorsRaw
+        .map((e) => {
+          if (typeof e === "string") return { id: e };
+          if (!e || typeof e !== "object") return null;
+          const o = e as Record<string, unknown>;
+          if (typeof o["id"] !== "string" || !o["id"].trim()) return null;
+          const sel: { id: string; recent?: number } = { id: o["id"].trim() };
+          if (typeof o["recent"] === "number" && o["recent"] > 0) sel.recent = o["recent"];
+          return sel;
+        })
+        .filter((e): e is { id: string; recent?: number } => e !== null);
+
       return runAcceleratorBatchFinder({
         dryRun: false,
+        ...(accelerators.length > 0 ? { accelerators } : {}),
         ...(cohorts.length > 0 ? { cohorts } : {}),
-        ...(cohorts.length === 0 && legacyCohort.trim().length > 0
+        ...(cohorts.length === 0 && accelerators.length === 0 && legacyCohort.trim().length > 0
           ? { cohort: legacyCohort, cohortLabel: legacyLabel }
           : {}),
         ...(cfg["adapter"] === "yc-oss" || cfg["adapter"] === "websearch"
