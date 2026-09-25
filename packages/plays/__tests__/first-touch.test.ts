@@ -95,6 +95,11 @@ describe("bodySentencesForLint", () => {
     ).toBe(3);
   });
 
+  it("still ends a sentence at an abbreviation followed by a capitalised word", () => {
+    expect(bodySentencesForLint("We cover Chicago, Denver etc. Want the list?", [])).toBe(2);
+    expect(bodySentencesForLint("Tools, e.g. schedulers, break first. Worth a look?", [])).toBe(2);
+  });
+
   it("excludes a standalone greeting from the word budget only when asked", () => {
     const body = "Hey Sam,\none two three";
     expect(bodyWordsForLint(body, [])).toBe(5);

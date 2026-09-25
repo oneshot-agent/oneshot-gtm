@@ -216,8 +216,13 @@ export function bodyWordsForLint(
   return counted.split(/\s+/).filter(Boolean).length;
 }
 
-/** Abbreviations whose period never ends a sentence. */
-const ABBREVIATIONS = /\b(?:Dr|Mr|Mrs|Ms|Mx|Prof|Sr|Jr|St|vs|etc|e\.g|i\.e|approx|Inc|Ltd|Co)\./gi;
+/** Titles: a name always follows, so their period never ends a sentence. */
+const TITLE_ABBREVIATIONS = /\b(?:Dr|Mr|Mrs|Ms|Mx|Prof|Sr|Jr|St)\./g;
+/**
+ * Other abbreviations: mid-sentence unless a capitalised word follows, in
+ * which case the period is also the sentence's end ("…St. Louis etc. Want a call?").
+ */
+const OTHER_ABBREVIATIONS = /\b(?:vs|etc|e\.g|i\.e|approx|Inc|Ltd|Co)\.(?!\s+\p{Lu})/giu;
 
 function bodyWithoutSignature(body: string, sigLines?: string[]): string {
   const lines = sigLines ?? configuredSigLines();
@@ -251,7 +256,8 @@ export function bodySentencesForLint(body: string, sigLines?: string[]): number 
     const text = line
       .replace(/https?:\/\/\S+/g, "URL")
       .replace(/(\d)\.(\d)/g, "$1$2")
-      .replace(ABBREVIATIONS, (m) => m.replace(/\./g, ""));
+      .replace(TITLE_ABBREVIATIONS, (m) => m.replace(/\./g, ""))
+      .replace(OTHER_ABBREVIATIONS, (m) => m.replace(/\./g, ""));
     const parts = text.split(/[.!?]+(?=\s|$)/).filter((p) => /\p{L}/u.test(p));
     count += Math.max(parts.length, 1);
   }
