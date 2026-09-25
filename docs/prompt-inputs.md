@@ -108,9 +108,15 @@ founder selling to clinics and contractors —", "For someone in a marketing
 role —" — and that condition is something visible in the payload. An angle
 routed on the prospect's internal stage or tooling ("still testing the pitch",
 "already has the stack wired") cannot be matched from a product one-liner and
-fires by accident or never. Then a named failure, a mechanism, and what was
-learned. If something must appear in every email, an angle is the wrong home
-for it.
+fires by accident or never. Then one of two shapes: a lesson (a named failure,
+a mechanism, and what was learned) or an opportunity (what this reader could do
+that their peers can't yet, resting on one concrete capability or number). The
+trigger editor shows each angle's sends and replies, with a rate once an angle
+has 30 sends, so a founder can compare the two shapes on their own buyers
+rather than take either on faith. `lintEdge` flags an angle that promises an
+outcome ("the edge is…", "ahead of their peers") with no number and no term
+from the product one-liner or brief behind it. If something must appear in
+every email, an angle is the wrong home for it.
 
 The same definition lives in `packages/prompts/strategist-trigger.md` (the
 strategist writes most edges) and in every edge-taking trigger's `configBrief`,

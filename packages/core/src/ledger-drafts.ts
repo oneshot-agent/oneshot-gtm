@@ -71,6 +71,8 @@ export interface AngleUsageRow {
   sent: number;
   /** Distinct prospects it went to unattended (drain on an approved row). */
   autoSent: number;
+  /** Distinct prospects who replied to the send built on it (reviewed or unattended). */
+  replied: number;
 }
 
 export interface DraftUsage {
@@ -79,6 +81,8 @@ export interface DraftUsage {
   rotated: number;
   sent: number;
   autoSent: number;
+  /** Sent or auto-sent versions whose send got a reply. */
+  replied: number;
 }
 
 export interface DraftUsageByStep {
@@ -159,7 +163,25 @@ const EMPTY_USAGE = (): DraftUsage => ({
   rotated: 0,
   sent: 0,
   autoSent: 0,
+  replied: 0,
 });
+
+/**
+ * SQL predicate, for a `draft_versions dv` row: the send this version became
+ * (sent or auto_sent) was replied to. A reply flips the matching sent
+ * `sequence_events` row to `replied` (`markLatestStepReplied`), keyed by
+ * prospect, play and step. Intro versions may predate their prospect row, so
+ * the prospect is found by `prospect_id` or, failing that, the prospect key
+ * (the lower-cased email every version is keyed by).
+ */
+const DV_REPLIED = `dv.outcome IN ('sent', 'auto_sent') AND EXISTS (
+    SELECT 1 FROM sequence_events se
+     WHERE se.status = 'replied'
+       AND se.play_name = dv.play_name
+       AND se.step_index = dv.step_index
+       AND se.prospect_id = COALESCE(
+             dv.prospect_id,
+             (SELECT p.id FROM prospects p WHERE lower(p.email) = dv.prospect_key LIMIT 1)))`;
 
 function slotWhere(slot: DraftSlot): { sql: string; args: Array<number | string> } {
   if ("queueId" in slot) return { sql: "queue_id = ?", args: [slot.queueId] };
@@ -397,8 +419,9 @@ export class DraftVersionStore {
                 COUNT(DISTINCT CASE WHEN outcome = 'discarded' AND discard_reason = 'rotate' THEN prospect_key END) AS rotated_away,
                 COUNT(DISTINCT CASE WHEN outcome = 'discarded' AND discard_reason = 'regenerate' THEN prospect_key END) AS redrafted,
                 COUNT(DISTINCT CASE WHEN outcome = 'sent' THEN prospect_key END) AS sent,
-                COUNT(DISTINCT CASE WHEN outcome = 'auto_sent' THEN prospect_key END) AS auto_sent
-           FROM draft_versions
+                COUNT(DISTINCT CASE WHEN outcome = 'auto_sent' THEN prospect_key END) AS auto_sent,
+                COUNT(DISTINCT CASE WHEN ${DV_REPLIED} THEN prospect_key END) AS replied
+           FROM draft_versions dv
           WHERE angle_key IS NOT NULL
           GROUP BY play_name, angle_key
           ORDER BY play_name, sent DESC, offered DESC`,
@@ -413,6 +436,7 @@ export class DraftVersionStore {
       redrafted: number;
       sent: number;
       auto_sent: number;
+      replied: number;
     }>;
     const out: Record<string, AngleUsageRow[]> = {};
     for (const r of rows) {
@@ -425,6 +449,7 @@ export class DraftVersionStore {
         redrafted: r.redrafted,
         sent: r.sent,
         autoSent: r.auto_sent,
+        replied: r.replied,
       });
     }
     return out;
@@ -444,8 +469,9 @@ export class DraftVersionStore {
                 SUM(outcome = 'discarded' AND discard_reason = 'regenerate') AS regenerated,
                 SUM(outcome = 'discarded' AND discard_reason = 'rotate') AS rotated,
                 SUM(outcome = 'sent') AS sent,
-                SUM(outcome = 'auto_sent') AS auto_sent
-           FROM draft_versions
+                SUM(outcome = 'auto_sent') AS auto_sent,
+                SUM(${DV_REPLIED}) AS replied
+           FROM draft_versions dv
           GROUP BY play_name, scope`,
       )
       .all() as Array<{
@@ -456,6 +482,7 @@ export class DraftVersionStore {
       rotated: number;
       sent: number;
       auto_sent: number;
+      replied: number;
     }>;
     const out: Record<string, { voiced: DraftUsage; plain: DraftUsage }> = {};
     for (const r of rows) {
@@ -466,6 +493,7 @@ export class DraftVersionStore {
       target.rotated = r.rotated;
       target.sent = r.sent;
       target.autoSent = r.auto_sent;
+      target.replied = r.replied ?? 0;
     }
     return out;
   }
@@ -480,8 +508,9 @@ export class DraftVersionStore {
                 SUM(outcome = 'discarded' AND discard_reason = 'regenerate') AS regenerated,
                 SUM(outcome = 'discarded' AND discard_reason = 'rotate') AS rotated,
                 SUM(outcome = 'sent') AS sent,
-                SUM(outcome = 'auto_sent') AS auto_sent
-           FROM draft_versions
+                SUM(outcome = 'auto_sent') AS auto_sent,
+                SUM(${DV_REPLIED}) AS replied
+           FROM draft_versions dv
           GROUP BY play_name, scope`,
       )
       .all() as Array<{
@@ -492,6 +521,7 @@ export class DraftVersionStore {
       rotated: number;
       sent: number;
       auto_sent: number;
+      replied: number;
     }>;
     const out: Record<string, DraftUsageByStep> = {};
     for (const r of rows) {
@@ -502,6 +532,7 @@ export class DraftVersionStore {
       target.rotated = r.rotated;
       target.sent = r.sent;
       target.autoSent = r.auto_sent;
+      target.replied = r.replied ?? 0;
     }
     return out;
   }

@@ -74,6 +74,7 @@ const ZERO: Omit<AngleUsageView, "text"> = {
   redrafted: 0,
   sent: 0,
   autoSent: 0,
+  replied: 0,
 };
 
 function counts(r: AngleUsageRow): Omit<AngleUsageView, "text"> {
@@ -83,6 +84,7 @@ function counts(r: AngleUsageRow): Omit<AngleUsageView, "text"> {
     redrafted: r.redrafted,
     sent: r.sent,
     autoSent: r.autoSent,
+    replied: r.replied,
   };
 }
 
@@ -114,6 +116,7 @@ export function angleUsageForEdge(
       redrafted: c.redrafted,
       sent: c.sent,
       autoSent: c.autoSent,
+      replied: c.replied,
     });
   }
   const generated: AngleUsageView = { text: "generated", ...ZERO };
@@ -124,6 +127,7 @@ export function angleUsageForEdge(
     generated.redrafted += r.redrafted;
     generated.sent += r.sent;
     generated.autoSent += r.autoSent;
+    generated.replied += r.replied;
   }
   return { angles, generated };
 }
@@ -135,6 +139,7 @@ function usageView(u: DraftUsage): DraftUsageView {
     rotated: u.rotated,
     sent: u.sent,
     autoSent: u.autoSent,
+    replied: u.replied,
   };
 }
 

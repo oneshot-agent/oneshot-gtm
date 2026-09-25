@@ -2277,10 +2277,11 @@ function TriggerRowFragment(props: TriggerRowProps) {
                   <code className="ln-mono text-[11.5px] text-[color:var(--ink-signal-2)]">
                     yourEdge
                   </code>{" "}
-                  is what you learned, not a pitch: 3–4 angles separated by{" "}
+                  is not a pitch: 3–4 angles separated by{" "}
                   <code className="ln-mono text-[11.5px]">//</code>, each opening with who it fits
-                  (&quot;For a founder selling to clinics —&quot;), then a named failure and what
-                  you found. The tool picks one per prospect.
+                  (&quot;For a founder selling to clinics —&quot;), then either a lesson (a named
+                  failure and what you found) or an opportunity resting on one concrete fact. The
+                  tool picks one per prospect; the counts below show which angles get replies.
                 </div>
               )}
               {/yourEdge|yourClaim/.test(props.editing.text) && (

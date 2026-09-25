@@ -760,6 +760,8 @@ export interface AngleUsageView {
   redrafted: number;
   sent: number;
   autoSent: number;
+  /** Distinct prospects who replied to a send built on this angle. */
+  replied: number;
 }
 
 /** Draft-version counts by outcome for one play and one scope (intro or follow-up). */
@@ -769,6 +771,8 @@ export interface DraftUsageView {
   rotated: number;
   sent: number;
   autoSent: number;
+  /** Sent or auto-sent versions whose send got a reply. */
+  replied: number;
 }
 
 /** The same counts split by whether a founder voice card was in the prompt (ledger-drafts.ts `draftUsageByVoice`). */

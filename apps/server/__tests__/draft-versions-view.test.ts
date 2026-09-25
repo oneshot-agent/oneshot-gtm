@@ -25,6 +25,7 @@ function row(over: Partial<AngleUsageRow>): AngleUsageRow {
     redrafted: 0,
     sent: 0,
     autoSent: 0,
+    replied: 0,
     ...over,
   };
 }
@@ -41,8 +42,8 @@ describe("angleUsageForEdge", () => {
     ]);
     expect(usage).toEqual({
       angles: [
-        { text: A, offered: 0, rotatedAway: 0, redrafted: 0, sent: 0, autoSent: 0 },
-        { text: B, offered: 4, rotatedAway: 0, redrafted: 0, sent: 2, autoSent: 0 },
+        { text: A, offered: 0, rotatedAway: 0, redrafted: 0, sent: 0, autoSent: 0, replied: 0 },
+        { text: B, offered: 4, rotatedAway: 0, redrafted: 0, sent: 2, autoSent: 0, replied: 0 },
       ],
       generated: {
         text: "generated",
@@ -51,6 +52,7 @@ describe("angleUsageForEdge", () => {
         redrafted: 0,
         sent: 0,
         autoSent: 0,
+        replied: 0,
       },
     });
   });
@@ -80,6 +82,7 @@ describe("angleUsageForEdge", () => {
       redrafted: 0,
       sent: 1,
       autoSent: 0,
+      replied: 0,
     });
   });
 
@@ -95,12 +98,12 @@ describe("draftUsageView", () => {
     expect(draftUsageView(undefined)).toBeNull();
     expect(
       draftUsageView({
-        intro: { open: 1, regenerated: 2, rotated: 3, sent: 4, autoSent: 5 },
-        followUp: { open: 0, regenerated: 0, rotated: 0, sent: 1, autoSent: 0 },
+        intro: { open: 1, regenerated: 2, rotated: 3, sent: 4, autoSent: 5, replied: 1 },
+        followUp: { open: 0, regenerated: 0, rotated: 0, sent: 1, autoSent: 0, replied: 0 },
       }),
     ).toEqual({
-      intro: { open: 1, regenerated: 2, rotated: 3, sent: 4, autoSent: 5 },
-      followUp: { open: 0, regenerated: 0, rotated: 0, sent: 1, autoSent: 0 },
+      intro: { open: 1, regenerated: 2, rotated: 3, sent: 4, autoSent: 5, replied: 1 },
+      followUp: { open: 0, regenerated: 0, rotated: 0, sent: 1, autoSent: 0, replied: 0 },
     });
   });
 });

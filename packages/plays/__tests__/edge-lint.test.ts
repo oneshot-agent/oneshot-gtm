@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeEdgeWarning, lintEdge } from "../src/_edge-lint.ts";
+import { describeEdgeWarning, factTermsFrom, lintEdge } from "../src/_edge-lint.ts";
 
 // Issue #585: a warn-tier read of the edge. Never a refusal — "x" must lint
 // to warnings, not throw, because it is a fixture across the suite.
@@ -48,12 +48,55 @@ describe("lintEdge", () => {
   });
 });
 
+describe("opportunity angles", () => {
+  const terms = factTermsFrom(
+    "Appointment reminders by text for clinics",
+    "Sends booking confirmations and reminders by SMS from the clinic's own number.",
+  );
+  const LESSON_ONLY = GOOD;
+
+  it("leaves lesson angles alone", () => {
+    expect(lintEdge(LESSON_ONLY, { factTerms: terms })).toEqual([]);
+  });
+
+  it("accepts an opportunity resting on something the product description names", () => {
+    const w = lintEdge(
+      `${GOOD} // For a clinic group adding online booking — the edge is confirming every appointment by text the same hour it is booked, which the front desk never has time for.`,
+      { factTerms: terms },
+    );
+    expect(w).toEqual([]);
+  });
+
+  it("accepts an opportunity backed by a number", () => {
+    const w = lintEdge(
+      `${GOOD} // For a practice with a long waitlist — the opportunity is refilling a cancelled slot within 20 minutes instead of losing the hour.`,
+    );
+    expect(w).toEqual([]);
+  });
+
+  it("flags an opportunity that promises an outcome with nothing behind it", () => {
+    const w = lintEdge(
+      `${GOOD} // For a fast-moving team in a crowded category — the edge is getting ahead of their peers and setting the bar everyone else follows.`,
+      { factTerms: terms },
+    );
+    expect(w).toContain("unbacked-claim:4");
+  });
+
+  it("extracts content words and drops stopwords and short words", () => {
+    const t = factTermsFrom("Sends reminders from their own number", null);
+    expect(t.has("reminders")).toBe(true);
+    expect(t.has("their")).toBe(false);
+    expect(t.has("own")).toBe(false);
+  });
+});
+
 describe("describeEdgeWarning", () => {
   it("renders each kind as a founder-facing sentence with the angle number", () => {
     expect(describeEdgeWarning("single-angle")).toContain("one angle only");
     expect(describeEdgeWarning("angle-too-short:2")).toContain("angle 2");
     expect(describeEdgeWarning("no-routing-clause:3")).toContain("angle 3");
     expect(describeEdgeWarning("reads-as-pitch:1")).toContain("landing page");
+    expect(describeEdgeWarning("unbacked-claim:2")).toContain("angle 2 promises an outcome");
     expect(describeEdgeWarning("slop:banned-cta:worth-n-min:4")).toBe(
       "angle 4 uses banned copy (banned-cta:worth-n-min)",
     );

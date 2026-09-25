@@ -543,10 +543,63 @@ describe("aggregates", () => {
     expect(ledger.angleUsageByPlay()["other-play"]).toBeUndefined();
 
     expect(ledger.draftUsageByPlay()[play]).toEqual({
-      intro: { open: 1, regenerated: 1, rotated: 1, sent: 2, autoSent: 1 },
-      followUp: { open: 0, regenerated: 1, rotated: 0, sent: 1, autoSent: 0 },
+      intro: { open: 1, regenerated: 1, rotated: 1, sent: 2, autoSent: 1, replied: 0 },
+      followUp: { open: 0, regenerated: 1, rotated: 0, sent: 1, autoSent: 0, replied: 0 },
     });
     expect(ledger.draftUsageByPlay()["other-play"]).toBeUndefined();
+  });
+
+  it("credits a reply to the angle and step of the send that got it", () => {
+    const play = "reply-attribution";
+    // u10 gets an intro on A and replies to it; u11 gets an intro on B and never replies.
+    const q10 = enqueue("u10@x.dev", play);
+    ledger.setQueueDraft({
+      id: q10,
+      draft: draft({ sent: true, dryRun: false, angle: ANGLE_A }),
+      sentBy: "human",
+    });
+    const q11 = enqueue("u11@x.dev", play);
+    ledger.setQueueDraft({
+      id: q11,
+      draft: draft({ sent: true, dryRun: false, angle: ANGLE_B }),
+      sentBy: "machine",
+    });
+    // The intro draft predates the prospect row: attribution goes through the email.
+    const p10 = ledger.upsertProspect({
+      name: "U10",
+      email: "u10@x.dev",
+      company: null,
+      source: "t",
+    });
+    const p11 = ledger.upsertProspect({
+      name: "U11",
+      email: "u11@x.dev",
+      company: null,
+      source: "t",
+    });
+    for (const prospectId of [p10, p11]) {
+      ledger.recordSequenceEvent({
+        prospectId,
+        playName: play,
+        stepIndex: 0,
+        channel: "email",
+        status: "sent",
+      });
+    }
+    ledger.markLatestStepReplied({ prospectId: p10, playName: play });
+
+    const byText = Object.fromEntries(
+      ledger.angleUsageByPlay()[play]!.map((r) => [r.angleText, r]),
+    );
+    expect(byText[ANGLE_A.text]).toMatchObject({ sent: 1, replied: 1 });
+    expect(byText[ANGLE_B.text]).toMatchObject({ autoSent: 1, replied: 0 });
+    expect(ledger.draftUsageByPlay()[play]?.intro).toMatchObject({
+      sent: 1,
+      autoSent: 1,
+      replied: 1,
+    });
+    expect(ledger.draftUsageByPlay()[play]?.followUp.replied).toBe(0);
+    expect(ledger.draftUsageByVoice()[play]?.plain.replied).toBe(1);
   });
 });
 
