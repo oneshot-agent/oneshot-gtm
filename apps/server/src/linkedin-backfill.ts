@@ -21,6 +21,8 @@ export interface LinkedInBackfill {
   resumeStage?: LinkedInBackfill["stage"];
   pending?: {
     kind: "profile" | "sync";
+    /** The key was replaced once after the provider refused it without a request id. */
+    rekeyed?: boolean;
     identifier?: string;
     idempotencyKey: string;
     requestId?: string;
@@ -327,6 +329,24 @@ export async function runLinkedInBackfill(accountKey: string) {
       const requestId = error.requestId ?? error.jobId;
       if (job.pending && requestId) job.pending.requestId = requestId;
       if (/timeout/i.test(error.name) && job.pending?.requestId) {
+        save(job);
+        return;
+      }
+      // The key is kept across a failure so an accepted lookup is never bought
+      // twice — but the provider can consume a key without ever handing back
+      // a request id (a dispatch failure that was recorded upstream). Then the
+      // same key is refused on every retry and there is nothing to wait on:
+      // resubmitting under a fresh key is the only way forward. Once, and
+      // logged, so a lookup that keeps failing still ends in "blocked".
+      if (
+        job.pending &&
+        !job.pending.requestId &&
+        !job.pending.rekeyed &&
+        /idempotency-key was already used/i.test(error.message)
+      ) {
+        job.failures.push({ at: new Date().toISOString(), message: error.message });
+        job.pending = { ...job.pending, idempotencyKey: randomUUID(), rekeyed: true };
+        delete job.error;
         save(job);
         return;
       }
