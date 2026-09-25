@@ -1,7 +1,6 @@
 import { Database } from "bun:sqlite";
+import { openStateDatabase } from "./sqlite-open.ts";
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
 
 /** Canonical person identity. Workspace prospect IDs remain stable history/membership keys. */
 export interface SharedPerson {
@@ -43,9 +42,8 @@ export function personAliases(input: Partial<Omit<SharedPerson, "id">>): string[
 export class SharedPeople {
   private db: Database;
   constructor(path: string) {
-    mkdirSync(dirname(path), { recursive: true });
-    this.db = new Database(path);
-    this.db.exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=10000;");
+    // person_aliases.person_id references shared_people(id).
+    this.db = openStateDatabase(path, { busyTimeoutMs: 10000, foreignKeys: true });
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS shared_people (
         id TEXT PRIMARY KEY, name TEXT, email TEXT, phone TEXT, company TEXT,

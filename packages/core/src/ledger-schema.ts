@@ -20,6 +20,13 @@ import type { Database } from "bun:sqlite";
  * query methods convert their cutoffs to the column's form (`toSqliteUtc` in
  * time.ts) and compare across formats with `julianday()`. Callers never need
  * to know which form a column uses.
+ *
+ * Money: the existing USD columns (receipts.cost_usd, deal_outcomes.amount_usd,
+ * spend_reservations.amount_usd) are REAL; totals and caps compare in integer
+ * cents (`cents()` in ledger.ts). New money columns are INTEGER micro-dollars.
+ *
+ * Foreign keys are enforced on Ledger connections (sqlite-open.ts): a row that
+ * references prospects(id) must point at an existing prospect.
  */
 export interface LedgerMigration {
   version: number;

@@ -1,7 +1,8 @@
 import { Database } from "bun:sqlite";
+import { openStateDatabase } from "./sqlite-open.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { chmodSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+
+import { join } from "node:path";
 import type {
   ReplyDraftSet,
   ReplySendState,
@@ -30,10 +31,8 @@ export class ReplyReviewStore {
   readonly db: Database;
   readonly learning: ReplyLearningStore;
   constructor(path = join(sharedDir(), "reply-review.sqlite")) {
-    mkdirSync(dirname(path), { recursive: true });
-    this.db = new Database(path);
-    chmodSync(path, 0o600);
-    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=10000;
+    this.db = openStateDatabase(path, { busyTimeoutMs: 10000 });
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS review_threads(key TEXT PRIMARY KEY, scope TEXT NOT NULL, data TEXT NOT NULL,
         archived_at TEXT, snoozed_until TEXT, observed TEXT NOT NULL DEFAULT '[]', through_at TEXT, drafts TEXT, send TEXT);
       CREATE TABLE IF NOT EXISTS review_leases(key TEXT PRIMARY KEY, token TEXT NOT NULL, until_ms INTEGER NOT NULL);
