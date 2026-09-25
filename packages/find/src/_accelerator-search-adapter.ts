@@ -1,17 +1,33 @@
 import { logEvent, webRead, webSearch } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
-import { isLinkedInProfileUrl } from "./_linkedin.ts";
 import type { AcceleratorLaunchExtract, CompanyRecord } from "./_types.ts";
 
 /**
- * Fallback adapter for accelerators that DON'T publish a structured directory
- * (Techstars, Antler, 500 Global, AI Grant, SPC, Neo, …). Combo-search shape:
- * webSearch with cohort-derived queries, aggregate hits, dedupe, then per-hit
- * webRead + LLM extract.
- *
- * Less reliable than the yc-oss adapter (search recall depends on the
- * accelerator's web presence) but works without per-accelerator scrapers.
+ * Adapter for accelerators without a structured directory (everyone but YC).
+ * Reads the accelerator's own listing pages first, then search hits for the
+ * cohort, and extracts EVERY company a page names (a demo-day recap or a class
+ * list names dozens). Only companies the page ties to the target cohort's
+ * year or label are kept, so an all-years portfolio index cannot flood the
+ * queue. A company without a stated domain gets one from a name-only
+ * companySearch in the pipeline, after the ICP gate.
  */
+
+/** Pages read per cohort. Each read is slow (~75 s) and paid. */
+export const MAX_PAGES_PER_COHORT = 5;
+/** A long listing page is extracted in chunks of this size, up to `MAX_CHUNKS_PER_PAGE`. */
+const CHUNK_CHARS = 24000;
+const MAX_CHUNKS_PER_PAGE = 4;
+/** Companies kept per cohort, after filtering. */
+const MAX_COMPANIES_PER_COHORT = 300;
+
+/** What the resolver knows about the cohort being searched (all optional for legacy cohorts). */
+export interface CohortTarget {
+  acceleratorName?: string;
+  /** The name cohorts are announced under, when it differs ("Neo Accelerator"). */
+  programName?: string;
+  year?: number;
+  listingUrls?: string[];
+}
 
 const PLAY_NAME = "accelerator-batch";
 
@@ -32,6 +48,59 @@ export function buildCohortQueries(cohortLabel: string): string[] {
   const label = cohortLabel.trim();
   if (label.length === 0) return [];
   return [`"${label}" launch announcement`, `"${label}" portfolio company`, `"${label}" demo day`];
+}
+
+interface CohortCompany {
+  name: string;
+  domain: string | null;
+  oneLiner: string | null;
+  cohort: string | null;
+}
+
+function str(v: unknown): string | null {
+  return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+
+export function parseCohortExtract(raw: string): {
+  aboutTargetCohort: boolean;
+  companies: CohortCompany[];
+} {
+  const parsed = tryParseJsonObject<{ aboutTargetCohort?: unknown; companies?: unknown }>(raw, {});
+  const list = Array.isArray(parsed.companies) ? parsed.companies : [];
+  return {
+    aboutTargetCohort: parsed.aboutTargetCohort === true,
+    companies: list
+      .map((c): CohortCompany | null => {
+        if (!c || typeof c !== "object") return null;
+        const o = c as Record<string, unknown>;
+        const name = str(o["name"]);
+        return name
+          ? {
+              name,
+              domain: str(o["domain"]),
+              oneLiner: str(o["oneLiner"]),
+              cohort: str(o["cohort"]),
+            }
+          : null;
+      })
+      .filter((c): c is CohortCompany => c !== null),
+  };
+}
+
+/**
+ * Whether a company the page lists belongs to the target cohort: its stated
+ * cohort names the target year or label; with no stated cohort, only when the
+ * page as a whole is about the target cohort.
+ */
+export function inTargetCohort(
+  company: { cohort: string | null },
+  aboutTargetCohort: boolean,
+  target: { year?: number; label: string },
+): boolean {
+  if (!company.cohort) return aboutTargetCohort;
+  const c = company.cohort.toLowerCase();
+  if (target.year !== undefined) return c.includes(String(target.year));
+  return c.includes(target.label.toLowerCase());
 }
 
 /**
@@ -70,18 +139,19 @@ export function looksLikeAcceleratorNoise(url: string): boolean {
 }
 
 /**
- * Fetch search hits for a non-YC accelerator cohort, then extract a
- * `CompanyRecord` per hit via LLM. Honors `limit` at the hit-count level so a
- * sparse search doesn't blow the per-record budget on noise.
- *
- * Cost is non-zero (webSearch + webRead + LLM extract per hit).
+ * Companies of one non-YC cohort: listing pages and search hits, read up to
+ * `MAX_PAGES_PER_COHORT`, every company on each page extracted and filtered
+ * to the target cohort. `limit` bounds search results, not companies — the
+ * run's enqueue limit applies downstream.
  */
 export async function fetchAcceleratorSearch(
   _cohort: string,
   cohortLabel: string,
   limit: number,
+  target: CohortTarget = {},
 ): Promise<{ records: CompanyRecord[]; costUsd: number; diagnostic: string | null }> {
-  const queries = buildCohortQueries(cohortLabel);
+  const label = cohortLabel.trim();
+  const queries = buildCohortQueries(label);
   if (queries.length === 0) {
     return {
       records: [],
@@ -89,15 +159,32 @@ export async function fetchAcceleratorSearch(
       diagnostic: "set `cohortLabel` to the human-readable program name",
     };
   }
+  const year =
+    target.year ??
+    (/\b(20\d{2})\b/.exec(label) ? Number(/\b(20\d{2})\b/.exec(label)![1]) : undefined);
+  if (target.acceleratorName && year !== undefined) {
+    queries.unshift(`"${target.acceleratorName}" ${year} batch companies`);
+  }
+  if (target.programName && year !== undefined) {
+    queries.unshift(
+      `"${target.programName}" ${year} companies`,
+      `"${target.programName}" ${year} cohort`,
+    );
+  }
 
   let costUsd = 0;
   const seen = new Set<string>();
-  const hits: SearchHit[] = [];
+  const pages: SearchHit[] = [];
+  for (const url of target.listingUrls ?? []) {
+    if (seen.has(url)) continue;
+    seen.add(url);
+    pages.push({ url, title: target.acceleratorName ?? "", description: "" });
+  }
   for (const query of queries) {
-    if (hits.length >= limit * 2) break;
+    if (pages.length >= MAX_PAGES_PER_COHORT * 2) break;
     try {
       const search = await webSearch(
-        { query, maxResults: Math.min(15, limit) },
+        { query, maxResults: Math.min(15, Math.max(5, limit)) },
         { playName: PLAY_NAME },
       );
       costUsd += search.result.cost ?? 0;
@@ -105,7 +192,7 @@ export async function fetchAcceleratorSearch(
         if (!raw.url || seen.has(raw.url)) continue;
         if (looksLikeAcceleratorNoise(raw.url)) continue;
         seen.add(raw.url);
-        hits.push({ url: raw.url, title: raw.title, description: raw.description });
+        pages.push({ url: raw.url, title: raw.title, description: raw.description });
       }
     } catch (err) {
       logEvent(
@@ -119,39 +206,73 @@ export async function fetchAcceleratorSearch(
     }
   }
 
-  if (hits.length === 0) {
+  if (pages.length === 0) {
     return {
       records: [],
       costUsd,
-      diagnostic: `no usable hits for '${cohortLabel}' — try a more specific cohortLabel (e.g. include the city/year)`,
+      diagnostic: `no usable hits for '${label}' — try a more specific cohortLabel (e.g. include the city/year)`,
     };
   }
 
-  const system = loadPrompt("accelerator-launch-extract");
-  const records: CompanyRecord[] = [];
-  for (const hit of hits.slice(0, limit)) {
-    let extract: AcceleratorLaunchExtract | null = null;
+  const system = loadPrompt("accelerator-cohort-extract");
+  const byName = new Map<string, CohortCompany>();
+  let pagesRead = 0;
+  let readFailed = 0;
+  for (const page of pages.slice(0, MAX_PAGES_PER_COHORT)) {
     try {
-      const read = await webRead({ url: hit.url }, { playName: PLAY_NAME });
+      const read = await webRead({ url: page.url }, { playName: PLAY_NAME });
       costUsd += read.result.cost ?? 0;
-      const llm = await complete({
-        messages: [
-          { role: "system", content: system },
-          {
-            role: "user",
-            content: JSON.stringify({
-              url: hit.url,
-              title: hit.title,
-              description: hit.description,
-              markdown: (read.result.markdown ?? "").slice(0, 12000),
-            }),
-          },
-        ],
-        temperature: 0.1,
-        maxTokens: 500,
-      });
-      extract = parseAcceleratorLaunchExtract(llm.content);
+      pagesRead++;
+      // A long listing page (an alphabetical portfolio) is read in chunks, so
+      // the target cohort's companies past the first screenful are not lost.
+      const markdown = read.result.markdown ?? "";
+      const chunks = Math.min(
+        MAX_CHUNKS_PER_PAGE,
+        Math.max(1, Math.ceil(markdown.length / CHUNK_CHARS)),
+      );
+      let aboutTarget = false;
+      const needle = year !== undefined ? String(year) : label.toLowerCase();
+      const pageNamesTarget = `${page.title} ${page.url} ${markdown.slice(0, 3000)}`
+        .toLowerCase()
+        .includes(needle);
+      const t = { ...(year !== undefined ? { year } : {}), label };
+      for (let k = 0; k < chunks; k++) {
+        const llm = await complete({
+          messages: [
+            { role: "system", content: system },
+            {
+              role: "user",
+              content: JSON.stringify({
+                accelerator: target.programName ?? target.acceleratorName ?? label,
+                targetCohort: label,
+                targetYear: year ?? null,
+                url: page.url,
+                title: page.title,
+                ...(chunks > 1 ? { part: `${k + 1} of ${chunks}` } : {}),
+                markdown: markdown.slice(k * CHUNK_CHARS, (k + 1) * CHUNK_CHARS),
+              }),
+            },
+          ],
+          temperature: 0.1,
+          maxTokens: 4000,
+        });
+        const extract = parseCohortExtract(llm.content);
+        // The page's heading is usually in the first part: once any part says
+        // the page is about the target cohort, the rest inherits it.
+        // The model's say-so is not enough: a page counts as about the target
+        // cohort only if it names the target year (or label) in its title,
+        // URL or opening text. Otherwise an all-years alumni page would pass
+        // its most famous companies off as this year's cohort.
+        aboutTarget = aboutTarget || (extract.aboutTargetCohort && pageNamesTarget);
+        for (const c of extract.companies) {
+          if (!inTargetCohort(c, aboutTarget, t)) continue;
+          const key = c.name.toLowerCase();
+          const prior = byName.get(key);
+          if (!prior || (!prior.domain && c.domain)) byName.set(key, c);
+        }
+      }
     } catch (err) {
+      readFailed++;
       logEvent(
         "error.swallowed",
         {
@@ -160,30 +281,26 @@ export async function fetchAcceleratorSearch(
         },
         "warn",
       );
-      continue;
     }
-    if (!extract || !extract.company) continue;
-    // The prompt instructs the LLM to return a bare hostname, but LLMs drift —
-    // sanitize so an off-spec response can't break URL construction or pass
-    // through paths/protocols into findEmail.
-    const cleanDomain = sanitizeCompanyDomain(extract.companyDomain);
-    const website = cleanDomain ? `https://${cleanDomain}` : null;
+    if (byName.size >= MAX_COMPANIES_PER_COHORT) break;
+  }
+
+  const records: CompanyRecord[] = [];
+  for (const c of [...byName.values()].slice(0, MAX_COMPANIES_PER_COHORT)) {
+    // A missing domain is looked up later, only for companies that pass the
+    // ICP gate (accelerator-batch.ts), not for every name a page lists.
+    const domain = sanitizeCompanyDomain(c.domain);
     records.push({
-      name: extract.company,
-      website,
-      oneLiner: extract.oneLiner,
+      name: c.name,
+      website: domain ? `https://${domain}` : null,
+      oneLiner: c.oneLiner,
       longDescription: null,
       industry: null,
       tags: [],
       ycUrl: null,
-      // The websearch extract returns founderName when the page named one
-      // explicitly. Keep null here when it didn't — the pipeline still has
-      // a chance to resolve via per-page extract on a different URL.
-      founderName: extract.founderName?.trim() || null,
-      founderLinkedinUrl: isLinkedInProfileUrl(extract.linkedinUrl)
-        ? (extract.linkedinUrl as string).trim()
-        : null,
-      founderPhone: extract.phone?.trim() || null,
+      founderName: null,
+      founderLinkedinUrl: null,
+      founderPhone: null,
       source: "websearch",
     });
   }
@@ -192,10 +309,9 @@ export async function fetchAcceleratorSearch(
     return {
       records: [],
       costUsd,
-      diagnostic: `${hits.length} hits found but none extracted to a usable company record`,
+      diagnostic: `${pagesRead} page${pagesRead === 1 ? "" : "s"} read${readFailed > 0 ? ` (${readFailed} failed)` : ""}, no ${label} companies found`,
     };
   }
-
   return { records, costUsd, diagnostic: null };
 }
 

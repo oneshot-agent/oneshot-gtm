@@ -134,3 +134,13 @@ describe("getPack", () => {
     expect(getPack("healthcare-practices")?.label).toBe("Healthcare Practices");
   });
 });
+
+it("vertical-ai-startups narrows accelerator-batch through accelerators, not cohorts", () => {
+  const pack = PACKS.find((p) => p.id === "vertical-ai-startups")!;
+  const patch = pack.triggers["accelerator-batch"] as Record<string, unknown>;
+  // `cohorts` is combined with the default `accelerators`, so pinning cohorts alone
+  // would still sweep every accelerator.
+  expect(patch["accelerators"]).toEqual([{ id: "yc", recent: 2 }, { id: "ai-grant" }]);
+  // An explicit empty list, so applying the pack clears cohorts pinned earlier.
+  expect(patch["cohorts"]).toEqual([]);
+});
