@@ -1,5 +1,6 @@
 import { getLedger, logEvent, webRead } from "@oneshot-gtm/core";
 import { resolveVerifyEnrichQualify, icpFields } from "./_contact.ts";
+import { safeCompanySearch } from "./_sdk-safe.ts";
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { persistRoleRejection } from "./_qualify.ts";
 import { complete, loadPrompt } from "@oneshot-gtm/intel";
@@ -7,12 +8,19 @@ import type { AcceleratorBatchTarget } from "@oneshot-gtm/plays";
 import {
   fetchAcceleratorSearch,
   parseAcceleratorLaunchExtract,
+  sanitizeCompanyDomain,
 } from "./_accelerator-search-adapter.ts";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
 import { parallelMap } from "./_parallel.ts";
-import { deriveCohortLabel, fetchYcOssBatch } from "./_yc-oss-adapter.ts";
+import { deriveCohortLabel, fetchYcOssBatch, ycBatchExists } from "./_yc-oss-adapter.ts";
+import {
+  getAccelerator,
+  resolveAcceleratorCohorts,
+  type AcceleratorSelection,
+  type ResolvedCohort,
+} from "./_accelerators.ts";
 import type { CompanyRecord, FinderResult, RunOpts } from "./_types.ts";
 
 /**
@@ -60,6 +68,14 @@ export interface AcceleratorBatchFinderOpts extends RunOpts {
   cohort?: string;
   /** Legacy human label. Ignored when `cohorts` is set. */
   cohortLabel?: string;
+  /**
+   * Accelerators to search at their most recent cohort(s), resolved from the
+   * date at run time (see `_accelerators.ts`). Combined with `cohorts` when
+   * both are set; a cohort named by both is searched once.
+   */
+  accelerators?: AcceleratorSelection[];
+  /** Clock for resolving `accelerators` (tests). Default: now. */
+  now?: Date;
   /** Force a specific adapter for ALL entries. Default: yc-* → yc-oss, else → websearch. */
   adapter?: "yc-oss" | "websearch";
   /** Concurrency for the per-company pipeline (over the unified pool). Default 3. */
@@ -178,7 +194,41 @@ export async function runAcceleratorBatchFinder(
   const concurrency = opts.concurrency ?? 3;
   const icp = resolveIcp(opts.icpOverride);
   const ledger = getLedger();
-  const cohorts = normalizeCohorts(opts);
+  const selected =
+    opts.accelerators && opts.accelerators.length > 0
+      ? await resolveAcceleratorCohorts(opts.accelerators, opts.now ?? new Date(), ycBatchExists)
+      : { cohorts: [] as ResolvedCohort[], unknown: [] as string[] };
+  const hasExplicit =
+    (opts.cohorts?.length ?? 0) > 0 ||
+    (typeof opts.cohort === "string" && opts.cohort.trim() !== "");
+  if (!hasExplicit && selected.cohorts.length === 0 && (opts.accelerators?.length ?? 0) > 0) {
+    // Every selection was unknown (or YC had nothing published): a halted run
+    // with the reason, not an exception out of the scheduler.
+    return {
+      source: "find:accelerator-batch:sweep",
+      candidates: 0,
+      droppedIcp: 0,
+      droppedDuplicate: 0,
+      droppedEnrichment: 0,
+      enqueued: 0,
+      costUsd: 0,
+      halted:
+        selected.unknown.length > 0
+          ? `no cohorts resolved (unknown accelerator ids: ${selected.unknown.join(", ")})`
+          : "no cohorts resolved from `accelerators`",
+      perCohort: selected.unknown.map((id) => ({
+        cohort: id,
+        records: 0,
+        error: "unknown accelerator id",
+      })),
+    };
+  }
+  const explicit: Array<CohortEntry & Partial<ResolvedCohort>> =
+    hasExplicit || selected.cohorts.length === 0 ? normalizeCohorts(opts) : [];
+  const cohorts: Array<CohortEntry & Partial<ResolvedCohort>> = [];
+  for (const c of [...selected.cohorts, ...explicit]) {
+    if (!cohorts.some((x) => x.cohort === c.cohort)) cohorts.push(c);
+  }
   // Source string reflects whether this is a sweep or a single-cohort run.
   // Keeps the per-target `source` column on the queue readable.
   const source =
@@ -210,7 +260,7 @@ export async function runAcceleratorBatchFinder(
     records: TaggedCompanyRecord[];
     summary: { cohort: string; records: number; error?: string };
   };
-  const cohortResults = await parallelMap<CohortEntry, CohortOutcome>(
+  const cohortResults = await parallelMap<CohortEntry & Partial<ResolvedCohort>, CohortOutcome>(
     cohorts,
     concurrency,
     async (entry) => {
@@ -223,12 +273,42 @@ export async function runAcceleratorBatchFinder(
         };
       }
       const adapterName = pickAdapter(entry.cohort, opts.adapter);
+      const acc = entry.accelerator ? getAccelerator(entry.accelerator) : null;
+      const search = (e: CohortEntry & { year?: number }) =>
+        fetchAcceleratorSearch(e.cohort, e.cohortLabel, limit, {
+          ...(acc
+            ? {
+                acceleratorName: acc.name,
+                listingUrls: acc.listingUrls,
+                ...(acc.programName ? { programName: acc.programName } : {}),
+              }
+            : {}),
+          ...(e.year !== undefined ? { year: e.year } : {}),
+        });
       try {
-        const fetched =
+        let fetched =
           adapterName === "yc-oss"
             ? await fetchYcOssBatch(entry.cohort, YC_OSS_READ_CAP)
-            : await fetchAcceleratorSearch(entry.cohort, entry.cohortLabel, limit);
+            : await search(entry);
         result.costUsd += fetched.costUsd;
+        // A yearly cohort that has not published yet (early in the year):
+        // fall back to the previous year's, tagged as that cohort.
+        // Skip it when the fallback cohort is also its own entry (recent: 2).
+        const fallbackIsEntry =
+          entry.fallback !== undefined && cohorts.some((c) => c.cohort === entry.fallback!.cohort);
+        if (
+          fetched.records.length === 0 &&
+          entry.fallback &&
+          !fallbackIsEntry &&
+          adapterName !== "yc-oss"
+        ) {
+          const prior = await search(entry.fallback);
+          result.costUsd += prior.costUsd;
+          if (prior.records.length > 0) {
+            fetched = prior;
+            entry = { ...entry, ...entry.fallback };
+          }
+        }
         if (fetched.records.length === 0) {
           return {
             records: [],
@@ -273,6 +353,9 @@ export async function runAcceleratorBatchFinder(
   for (const r of cohortResults) {
     allRecords.push(...r.records);
     perCohortOutcomes.push(r.summary);
+  }
+  for (const id of selected.unknown) {
+    perCohortOutcomes.push({ cohort: id, records: 0, error: "unknown accelerator id" });
   }
   result.perCohort = perCohortOutcomes;
 
@@ -367,6 +450,18 @@ export async function runAcceleratorBatchFinder(
     // website) and run the same `accelerator-launch-extract` prompt the
     // websearch adapter uses. ~$0.02 per ICP-pass — only paid for candidates
     // that survived the cheaper ICP gate.
+    // Listing pages rarely link every company's site. Look the domain up by
+    // name only for a company that passed the ICP gate (and so will actually
+    // be worked), not for every name a page lists. $0.01, never throws.
+    if (!record.website && record.source === "websearch") {
+      const found = await safeCompanySearch(
+        { name: record.name, limit: 1 },
+        { playName: PLAY_NAME },
+      );
+      result.costUsd += found.result.cost ?? 0;
+      const domain = sanitizeCompanyDomain(found.result.results?.[0]?.domain ?? null);
+      if (domain) record = { ...record, website: `https://${domain}` };
+    }
     let founderName = record.founderName?.trim() || null;
     let resolvedLinkedin: string | null = isLinkedInProfileUrl(record.founderLinkedinUrl)
       ? record.founderLinkedinUrl
