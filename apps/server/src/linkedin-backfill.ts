@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
-import { Database } from "bun:sqlite";
 import { join } from "node:path";
 import {
   verifiedLinkedInProfileKey,
   getLinkedInInboxStore,
   getReplyReviewStore,
   linkedInMatches,
+  openLedgerDatabase,
   type LinkedInWorkspaceCounts,
   type LinkedInOperation,
 } from "@oneshot-gtm/core";
@@ -144,7 +144,7 @@ export async function runLinkedInBackfill(accountKey: string) {
       };
       const activeNames = new Set<string>();
       for (const home of new Set(matches.map((m) => m.home))) {
-        const db = new Database(join(home, "ledger.sqlite"), { readonly: true });
+        const db = openLedgerDatabase(join(home, "ledger.sqlite"), { readonly: true });
         try {
           const ids = new Set(
             (

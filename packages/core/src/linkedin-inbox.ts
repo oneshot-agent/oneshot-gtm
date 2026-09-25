@@ -11,7 +11,7 @@ import { sharedDir, currentWorkspaceName } from "./shared-db.ts";
 import { listWorkspaces } from "./workspaces.ts";
 import { configDir } from "./config.ts";
 import { canonicalLinkedInProfileKey } from "./ledger-prospects.ts";
-import { Ledger } from "./ledger.ts";
+import { Ledger, openLedgerDatabase } from "./ledger.ts";
 import { classifyReply } from "./reply-classify.ts";
 
 export function isHumanLinkedInReply(m: LinkedInMessage): boolean {
@@ -74,7 +74,7 @@ export function replyWorkspaces() {
 export function linkedInMatches(): LinkedInMatch[] {
   const matches: LinkedInMatch[] = [];
   for (const w of replyWorkspaces()) {
-    const db = new Database(join(w.home, "ledger.sqlite"), { readonly: true });
+    const db = openLedgerDatabase(join(w.home, "ledger.sqlite"), { readonly: true });
     try {
       const rows = db
         .query<
@@ -146,7 +146,7 @@ class LinkedInDeliveryHandles {
     const key = resolve(home);
     let db = this.databases.get(key);
     if (!db) {
-      db = new Database(join(key, "ledger.sqlite"));
+      db = openLedgerDatabase(join(key, "ledger.sqlite"));
       this.databases.set(key, db);
     }
     return db;
@@ -436,7 +436,7 @@ export class LinkedInInboxStore {
         noProspect: 0,
         stoppedCadences: 0,
       });
-      const ledgerDb = new Database(join(w.home, "ledger.sqlite"), { readonly: true });
+      const ledgerDb = openLedgerDatabase(join(w.home, "ledger.sqlite"), { readonly: true });
       try {
         if (ledgerDb.query("SELECT 1 FROM sqlite_master WHERE name='linkedin_cadence_stops'").get())
           c.stoppedCadences = (

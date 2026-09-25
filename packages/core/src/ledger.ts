@@ -149,6 +149,22 @@ function safeParseJsonArray(raw: string): unknown[] {
 // `export * from "./ledger.ts"` barrel) keeps resolving unchanged.
 export type { CadenceWithProspect } from "./ledger-cadence.ts";
 
+/** How long a ledger connection waits on another process's write lock before SQLITE_BUSY. */
+export const LEDGER_BUSY_TIMEOUT_MS = 5000;
+
+/**
+ * A plain connection to a ledger file, for code that reads (or, like LinkedIn
+ * delivery, rewrites) another workspace's ledger without building a `Ledger`.
+ * A bare `new Database()` has no busy timeout, so it fails with "database is
+ * locked" the instant that workspace's server is writing; this one waits like
+ * `Ledger` does. It runs no migrations.
+ */
+export function openLedgerDatabase(path: string, opts: { readonly?: boolean } = {}): Database {
+  const db = new Database(path, opts.readonly ? { readonly: true } : undefined);
+  db.exec(`PRAGMA busy_timeout = ${LEDGER_BUSY_TIMEOUT_MS}`);
+  return db;
+}
+
 export class Ledger {
   readonly mailboxes: MailboxStore;
   private db: Database;
@@ -177,7 +193,7 @@ export class Ledger {
     // parallel test workers running first-run migrations against a shared file.
     // Without this, concurrent DDL surfaces as a spurious "database is locked"
     // / "no such table" mid-migration.
-    this.db.exec("PRAGMA busy_timeout = 5000");
+    this.db.exec(`PRAGMA busy_timeout = ${LEDGER_BUSY_TIMEOUT_MS}`);
     this.migrate();
     // Prospect CRUD, research-backlog queries, dossier merge/update
     // operations, person/company facts, and stored ICP-verdict persistence
