@@ -65,6 +65,19 @@ describe("runLedgerMigrations", () => {
     expect(withRaw((db) => columns(db, "prospects"))).not.toContain("angle_json");
   });
 
+  it("adds columns introduced after v2 to a ledger already at v2", () => {
+    // A shipped step never re-runs: a column added by editing the baseline
+    // would never reach an install already past it.
+    new Ledger(dbPath).close();
+    withRaw((db) => {
+      db.exec("ALTER TABLE triggers DROP COLUMN company_batch_seq");
+      db.exec("PRAGMA user_version = 2");
+    });
+    new Ledger(dbPath).close();
+    expect(withRaw((db) => columns(db, "triggers"))).toContain("company_batch_seq");
+    expect(withRaw(userVersion)).toBe(LEDGER_SCHEMA_VERSION);
+  });
+
   it("migrates a pre-versioning ledger (user_version 0)", () => {
     new Ledger(dbPath).close();
     withRaw((db) => {

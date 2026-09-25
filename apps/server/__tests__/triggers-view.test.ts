@@ -32,6 +32,7 @@ function row(overrides: Partial<TriggerRow> = {}): TriggerRow {
     enabled: 1,
     config_json: JSON.stringify({ sinceDays: 1, limit: 25 }),
     running_started_at: null,
+    company_batch_seq: 0,
     ...overrides,
   };
 }

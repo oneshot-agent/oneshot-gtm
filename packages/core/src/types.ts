@@ -678,4 +678,16 @@ export interface TriggerRow {
    * boot-time `sweepStaleRunningTriggers` call.
    */
   running_started_at: string | null;
+  /**
+   * Monotonic counter, incremented by exactly 1 every time
+   * `updateTriggerLastPoll` records a completed run (issue #708 correction).
+   * `hiring-signal`/`job-change`'s company-batch rotation cursor reads this
+   * PRE-run value rather than `last_polled_at`: a wall-clock timestamp's
+   * value modulo the batch count can repeat across successive runs (e.g.
+   * whenever the batch count divides the elapsed milliseconds, or trivially
+   * whenever the batch count is 1), so it does not guarantee the starting
+   * batch advances. A counter that steps by 1 each run visits every batch
+   * index in turn before repeating, regardless of run timing.
+   */
+  company_batch_seq: number;
 }

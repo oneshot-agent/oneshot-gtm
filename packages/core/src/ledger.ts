@@ -2837,13 +2837,18 @@ export class Ledger {
    * Records the result of a finished run AND clears `running_started_at` in
    * the same statement. This is the only "completed" path — both success and
    * caught-finder-throw funnel through here, so clearing the in-flight flag
-   * here is the right semantic.
+   * here is the right semantic. Also steps `company_batch_seq` by 1 (issue
+   * #708 correction) — the rotation cursor `companyBatchCursorFor` reads,
+   * so the starting company batch advances by exactly one index every
+   * completed run, unlike `last_polled_at`'s wall-clock value whose modulo
+   * can repeat.
    */
   updateTriggerLastPoll(input: { name: string; summary: unknown }): void {
     this.db
       .prepare(
         `UPDATE triggers
-         SET last_polled_at = ?, last_run_summary = ?, running_started_at = NULL
+         SET last_polled_at = ?, last_run_summary = ?, running_started_at = NULL,
+             company_batch_seq = company_batch_seq + 1
          WHERE name = ?`,
       )
       .run(new Date().toISOString(), JSON.stringify(input.summary), input.name);

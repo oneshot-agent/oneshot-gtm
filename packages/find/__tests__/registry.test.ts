@@ -576,6 +576,7 @@ const cfgTestRow = (config_json: string | null): TriggerRow => ({
   enabled: 1,
   config_json,
   running_started_at: null,
+  company_batch_seq: 0,
 });
 
 describe("storedTriggerConfig — corruption fallback", () => {

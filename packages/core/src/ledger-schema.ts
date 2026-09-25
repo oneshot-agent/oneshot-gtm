@@ -60,6 +60,17 @@ export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
       );
     },
   },
+  {
+    // Monotonic per-trigger rotation counter for hiring-signal/job-change's
+    // company batches: unlike last_polled_at (a wall-clock value whose modulo
+    // can repeat across runs), it steps by exactly 1 per completed run, so
+    // the starting batch visits every index before repeating.
+    version: 3,
+    name: "triggers-company-batch-seq",
+    up: (db) => {
+      addColumnIfMissing(db, "triggers", "company_batch_seq", "INTEGER NOT NULL DEFAULT 0");
+    },
+  },
 ];
 
 export const LEDGER_SCHEMA_VERSION = LEDGER_MIGRATIONS[LEDGER_MIGRATIONS.length - 1]!.version;

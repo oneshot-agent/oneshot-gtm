@@ -7,6 +7,7 @@ import type { JobChangeTarget } from "@oneshot-gtm/plays";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
+import { batchCompaniesByQueryLength, rotateBatches } from "./_query-batch.ts";
 import { buildDesignPartnerLoiPayload, dedupePlayNames, resolvePlayRoute } from "./_play-route.ts";
 import type { FinderResult, JobChangeExtract, RunOpts } from "./_types.ts";
 
@@ -26,6 +27,16 @@ export interface JobChangeFinderOpts extends RunOpts {
    * If empty, casts a wider net per persona.
    */
   companies?: string[];
+  /**
+   * Rotation cursor for batching a long `companies` list across queries
+   * (issue #708): when the list needs more than one batch to stay under the
+   * query length bound, batches start at `cursor mod batchCount` instead of
+   * always batch 0, so a list spanning several batches isn't scanned from
+   * the top on every run. The registry passes the trigger's
+   * `company_batch_seq` (one step per completed run); direct/CLI callers may
+   * omit it (defaults to 0 — first batch always starts the run).
+   */
+  companyBatchCursor?: number;
   /** Days back to bias the search query. Default 14. */
   sinceDays?: number;
   /**
@@ -78,32 +89,57 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
 
   for (const persona of personas) {
     if (hits.length >= limit * 2) break;
-    const companyClause =
-      opts.companies && opts.companies.length > 0
-        ? ` (${opts.companies.map((c) => `"${c}"`).join(" OR ")})`
-        : "";
-    const query = `"joined as ${persona}"${companyClause} ${sincePhrase}`;
-    try {
-      const search = await webSearch(
-        { query, maxResults: Math.min(15, limit) },
-        { playName: PLAY_NAME },
-      );
-      result.costUsd += search.result.cost ?? 0;
-      for (const hit of search.result.results ?? []) {
-        if (!hit.url || seenUrls.has(hit.url)) continue;
-        seenUrls.add(hit.url);
-        hits.push({ url: hit.url, title: hit.title, description: hit.description });
+    if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
+      result.halted = `max-cost cap (${opts.maxCostUsd})`;
+      break;
+    }
+    const companies = opts.companies ?? [];
+    const buildQuery = (batch: readonly string[]): string => {
+      const companyClause = batch.length > 0 ? ` (${batch.map((c) => `"${c}"`).join(" OR ")})` : "";
+      return `"joined as ${persona}"${companyClause} ${sincePhrase}`;
+    };
+    const batches = rotateBatches(
+      batchCompaniesByQueryLength(companies, buildQuery),
+      opts.companyBatchCursor ?? 0,
+    );
+    for (const batch of batches) {
+      if (hits.length >= limit * 2) break;
+      // Hard cap, checked BEFORE each paid batch search (issue #708
+      // correction): checking only after the search-gathering loop finished
+      // let a long `companies` list run every remaining batch search once
+      // the cap was already reached, and a run that ended with zero hits
+      // never reached the per-hit check below at all, so the cap never
+      // fired. Checking here, ahead of every webSearch call, stops
+      // additional spend the moment the accumulated cost reaches the cap —
+      // including on the very next batch/persona, and even when no hit is
+      // ever produced.
+      if (opts.maxCostUsd != null && result.costUsd >= opts.maxCostUsd) {
+        result.halted = `max-cost cap (${opts.maxCostUsd})`;
+        break;
       }
-    } catch (err) {
-      logEvent(
-        "error.swallowed",
-        {
-          kind: "job-change.webSearch",
-          persona,
-          message_120: ((err as Error).message ?? "").slice(0, 120),
-        },
-        "warn",
-      );
+      const query = buildQuery(batch);
+      try {
+        const search = await webSearch(
+          { query, maxResults: Math.min(15, limit) },
+          { playName: PLAY_NAME },
+        );
+        result.costUsd += search.result.cost ?? 0;
+        for (const hit of search.result.results ?? []) {
+          if (!hit.url || seenUrls.has(hit.url)) continue;
+          seenUrls.add(hit.url);
+          hits.push({ url: hit.url, title: hit.title, description: hit.description });
+        }
+      } catch (err) {
+        logEvent(
+          "error.swallowed",
+          {
+            kind: "job-change.webSearch",
+            persona,
+            message_120: ((err as Error).message ?? "").slice(0, 120),
+          },
+          "warn",
+        );
+      }
     }
   }
   result.candidates = hits.length;

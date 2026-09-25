@@ -794,7 +794,7 @@ exports[`Ledger schema migration > fresh-install schema (tables, columns, indexe
         enabled INTEGER NOT NULL DEFAULT 1,
         config_json TEXT,
         running_started_at TEXT
-      )",
+      , company_batch_seq INTEGER NOT NULL DEFAULT 0)",
       "tbl_name": "triggers",
       "type": "table",
     },
