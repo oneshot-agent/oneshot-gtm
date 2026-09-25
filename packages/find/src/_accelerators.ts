@@ -20,6 +20,8 @@ export interface Accelerator {
   cadence: "seasonal" | "yearly";
   /** The accelerator's own company listing pages, read before any search hit. */
   listingUrls: string[];
+  /** The name its cohorts are announced under, when it differs from `name` ("Neo Accelerator"). */
+  programName?: string;
 }
 
 export const ACCELERATORS: readonly Accelerator[] = [
@@ -27,10 +29,17 @@ export const ACCELERATORS: readonly Accelerator[] = [
   {
     id: "spc",
     name: "South Park Commons",
+    programName: "South Park Commons Founder Fellowship",
     cadence: "yearly",
     listingUrls: ["https://www.southparkcommons.com/companies"],
   },
-  { id: "neo", name: "Neo", cadence: "yearly", listingUrls: ["https://neo.com/companies"] },
+  {
+    id: "neo",
+    name: "Neo",
+    programName: "Neo Accelerator",
+    cadence: "yearly",
+    listingUrls: ["https://neo.com/companies"],
+  },
   {
     id: "antler",
     name: "Antler",

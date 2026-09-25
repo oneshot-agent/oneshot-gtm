@@ -1,5 +1,6 @@
 import { getLedger, logEvent, webRead } from "@oneshot-gtm/core";
 import { resolveVerifyEnrichQualify, icpFields } from "./_contact.ts";
+import { safeCompanySearch } from "./_sdk-safe.ts";
 import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { persistRoleRejection } from "./_qualify.ts";
 import { complete, loadPrompt } from "@oneshot-gtm/intel";
@@ -7,6 +8,7 @@ import type { AcceleratorBatchTarget } from "@oneshot-gtm/plays";
 import {
   fetchAcceleratorSearch,
   parseAcceleratorLaunchExtract,
+  sanitizeCompanyDomain,
 } from "./_accelerator-search-adapter.ts";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
@@ -252,7 +254,13 @@ export async function runAcceleratorBatchFinder(
       const acc = entry.accelerator ? getAccelerator(entry.accelerator) : null;
       const search = (e: CohortEntry & { year?: number }) =>
         fetchAcceleratorSearch(e.cohort, e.cohortLabel, limit, {
-          ...(acc ? { acceleratorName: acc.name, listingUrls: acc.listingUrls } : {}),
+          ...(acc
+            ? {
+                acceleratorName: acc.name,
+                listingUrls: acc.listingUrls,
+                ...(acc.programName ? { programName: acc.programName } : {}),
+              }
+            : {}),
           ...(e.year !== undefined ? { year: e.year } : {}),
         });
       try {
@@ -412,6 +420,18 @@ export async function runAcceleratorBatchFinder(
     // website) and run the same `accelerator-launch-extract` prompt the
     // websearch adapter uses. ~$0.02 per ICP-pass — only paid for candidates
     // that survived the cheaper ICP gate.
+    // Listing pages rarely link every company's site. Look the domain up by
+    // name only for a company that passed the ICP gate (and so will actually
+    // be worked), not for every name a page lists. $0.01, never throws.
+    if (!record.website && record.source === "websearch") {
+      const found = await safeCompanySearch(
+        { name: record.name, limit: 1 },
+        { playName: PLAY_NAME },
+      );
+      result.costUsd += found.result.cost ?? 0;
+      const domain = sanitizeCompanyDomain(found.result.results?.[0]?.domain ?? null);
+      if (domain) record = { ...record, website: `https://${domain}` };
+    }
     let founderName = record.founderName?.trim() || null;
     let resolvedLinkedin: string | null = isLinkedInProfileUrl(record.founderLinkedinUrl)
       ? record.founderLinkedinUrl

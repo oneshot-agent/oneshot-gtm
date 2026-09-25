@@ -21,7 +21,12 @@ vi.mock("@oneshot-gtm/core", async () => {
     }),
     webRead: async ({ url }: { url: string }) => {
       reads.push(url);
-      return { result: { markdown: `page ${url}`, cost: 0.02 } };
+      const markdown = url.includes("long")
+        ? `Class of 2026\n${"x".repeat(60_000)}`
+        : url.includes("news") || url.includes("class")
+          ? `Demo day 2026 at ${url}`
+          : `page ${url}`;
+      return { result: { markdown, cost: 0.02 } };
     },
   };
 });
@@ -31,8 +36,9 @@ vi.mock("@oneshot-gtm/intel", async () => {
     ...actual,
     loadPrompt: () => "system",
     complete: async (input: { messages: Array<{ role: string; content: string }> }) => {
-      const url = JSON.parse(input.messages[1]!.content).url as string;
-      return { content: JSON.stringify(pageExtracts[url] ?? { companies: [] }) };
+      const body = JSON.parse(input.messages[1]!.content) as { url: string; part?: string };
+      const key = body.part ? `${body.url}#${body.part}` : body.url;
+      return { content: JSON.stringify(pageExtracts[key] ?? { companies: [] }) };
     },
   };
 });
@@ -92,10 +98,41 @@ describe("fetchAcceleratorSearch (multi-company)", () => {
     // Off-year and unlabelled rows on an all-years index are dropped.
     expect(Object.keys(byName).toSorted()).toEqual(["Alpha", "Beta", "Findable", "Nowhere"]);
     expect(byName["Beta"]).toBe("https://beta.ai");
-    // A missing domain is looked up by name; a miss stays null (the pipeline drops it).
-    expect(byName["Findable"]).toBe("https://findable.io");
-    expect(byName["Nowhere"]).toBeNull();
-    expect(lookups.toSorted()).toEqual(["Findable", "Nowhere"]);
+    // Domain-less rows stay null here; the pipeline looks them up only after the ICP gate.
+    expect(byName["Findable"]).toBeNull();
+    expect(lookups).toEqual([]);
+  });
+
+  it("extracts a long page in parts, carrying the cohort heading from part 1", async () => {
+    pageExtracts = {
+      "https://long.example/class#1 of 3": {
+        aboutTargetCohort: true,
+        companies: [{ name: "First", domain: "first.dev", cohort: null }],
+      },
+      "https://long.example/class#3 of 3": {
+        aboutTargetCohort: false,
+        companies: [{ name: "Last", domain: "last.dev", cohort: null }],
+      },
+    };
+    const out = await fetchAcceleratorSearch("acc-2026", "Acc 2026", 25, {
+      year: 2026,
+      listingUrls: ["https://long.example/class"],
+    });
+    expect(out.records.map((r) => r.name)).toEqual(["First", "Last"]);
+  });
+
+  it("ignores a page the model calls on-cohort when the page never names the year", async () => {
+    pageExtracts = {
+      "https://acc.example/alumni": {
+        aboutTargetCohort: true,
+        companies: [{ name: "Famous Alum", domain: "famous.co", cohort: null }],
+      },
+    };
+    const out = await fetchAcceleratorSearch("acc-2026", "Acc 2026", 25, {
+      year: 2026,
+      listingUrls: ["https://acc.example/alumni"],
+    });
+    expect(out.records).toEqual([]);
   });
 
   it("reports pages read when nothing matches", async () => {

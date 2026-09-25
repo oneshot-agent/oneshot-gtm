@@ -1,5 +1,4 @@
 import { logEvent, webRead, webSearch } from "@oneshot-gtm/core";
-import { safeCompanySearch } from "./_sdk-safe.ts";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 import type { AcceleratorLaunchExtract, CompanyRecord } from "./_types.ts";
 
@@ -10,17 +9,22 @@ import type { AcceleratorLaunchExtract, CompanyRecord } from "./_types.ts";
  * list names dozens). Only companies the page ties to the target cohort's
  * year or label are kept, so an all-years portfolio index cannot flood the
  * queue. A company without a stated domain gets one from a name-only
- * companySearch before the pipeline's no-domain drop.
+ * companySearch in the pipeline, after the ICP gate.
  */
 
 /** Pages read per cohort. Each read is slow (~75 s) and paid. */
 export const MAX_PAGES_PER_COHORT = 5;
+/** A long listing page is extracted in chunks of this size, up to `MAX_CHUNKS_PER_PAGE`. */
+const CHUNK_CHARS = 24000;
+const MAX_CHUNKS_PER_PAGE = 4;
 /** Companies kept per cohort, after filtering. */
 const MAX_COMPANIES_PER_COHORT = 300;
 
 /** What the resolver knows about the cohort being searched (all optional for legacy cohorts). */
 export interface CohortTarget {
   acceleratorName?: string;
+  /** The name cohorts are announced under, when it differs ("Neo Accelerator"). */
+  programName?: string;
   year?: number;
   listingUrls?: string[];
 }
@@ -161,6 +165,12 @@ export async function fetchAcceleratorSearch(
   if (target.acceleratorName && year !== undefined) {
     queries.unshift(`"${target.acceleratorName}" ${year} batch companies`);
   }
+  if (target.programName && year !== undefined) {
+    queries.unshift(
+      `"${target.programName}" ${year} companies`,
+      `"${target.programName}" ${year} cohort`,
+    );
+  }
 
   let costUsd = 0;
   const seen = new Set<string>();
@@ -168,7 +178,7 @@ export async function fetchAcceleratorSearch(
   for (const url of target.listingUrls ?? []) {
     if (seen.has(url)) continue;
     seen.add(url);
-    pages.push({ url, title: target.acceleratorName ?? label, description: "" });
+    pages.push({ url, title: target.acceleratorName ?? "", description: "" });
   }
   for (const query of queries) {
     if (pages.length >= MAX_PAGES_PER_COHORT * 2) break;
@@ -213,36 +223,53 @@ export async function fetchAcceleratorSearch(
       const read = await webRead({ url: page.url }, { playName: PLAY_NAME });
       costUsd += read.result.cost ?? 0;
       pagesRead++;
-      const llm = await complete({
-        messages: [
-          { role: "system", content: system },
-          {
-            role: "user",
-            content: JSON.stringify({
-              accelerator: target.acceleratorName ?? label,
-              targetCohort: label,
-              targetYear: year ?? null,
-              url: page.url,
-              title: page.title,
-              markdown: (read.result.markdown ?? "").slice(0, 24000),
-            }),
-          },
-        ],
-        temperature: 0.1,
-        maxTokens: 4000,
-      });
-      const extract = parseCohortExtract(llm.content);
-      for (const c of extract.companies) {
-        if (
-          !inTargetCohort(c, extract.aboutTargetCohort, {
-            ...(year !== undefined ? { year } : {}),
-            label,
-          })
-        )
-          continue;
-        const key = c.name.toLowerCase();
-        const prior = byName.get(key);
-        if (!prior || (!prior.domain && c.domain)) byName.set(key, c);
+      // A long listing page (an alphabetical portfolio) is read in chunks, so
+      // the target cohort's companies past the first screenful are not lost.
+      const markdown = read.result.markdown ?? "";
+      const chunks = Math.min(
+        MAX_CHUNKS_PER_PAGE,
+        Math.max(1, Math.ceil(markdown.length / CHUNK_CHARS)),
+      );
+      let aboutTarget = false;
+      const needle = year !== undefined ? String(year) : label.toLowerCase();
+      const pageNamesTarget = `${page.title} ${page.url} ${markdown.slice(0, 3000)}`
+        .toLowerCase()
+        .includes(needle);
+      const t = { ...(year !== undefined ? { year } : {}), label };
+      for (let k = 0; k < chunks; k++) {
+        const llm = await complete({
+          messages: [
+            { role: "system", content: system },
+            {
+              role: "user",
+              content: JSON.stringify({
+                accelerator: target.programName ?? target.acceleratorName ?? label,
+                targetCohort: label,
+                targetYear: year ?? null,
+                url: page.url,
+                title: page.title,
+                ...(chunks > 1 ? { part: `${k + 1} of ${chunks}` } : {}),
+                markdown: markdown.slice(k * CHUNK_CHARS, (k + 1) * CHUNK_CHARS),
+              }),
+            },
+          ],
+          temperature: 0.1,
+          maxTokens: 4000,
+        });
+        const extract = parseCohortExtract(llm.content);
+        // The page's heading is usually in the first part: once any part says
+        // the page is about the target cohort, the rest inherits it.
+        // The model's say-so is not enough: a page counts as about the target
+        // cohort only if it names the target year (or label) in its title,
+        // URL or opening text. Otherwise an all-years alumni page would pass
+        // its most famous companies off as this year's cohort.
+        aboutTarget = aboutTarget || (extract.aboutTargetCohort && pageNamesTarget);
+        for (const c of extract.companies) {
+          if (!inTargetCohort(c, aboutTarget, t)) continue;
+          const key = c.name.toLowerCase();
+          const prior = byName.get(key);
+          if (!prior || (!prior.domain && c.domain)) byName.set(key, c);
+        }
       }
     } catch (err) {
       readFailed++;
@@ -260,14 +287,9 @@ export async function fetchAcceleratorSearch(
 
   const records: CompanyRecord[] = [];
   for (const c of [...byName.values()].slice(0, MAX_COMPANIES_PER_COHORT)) {
-    let domain = sanitizeCompanyDomain(c.domain);
-    if (!domain) {
-      // Name-only company lookup ($0.01) before the pipeline drops a
-      // domain-less record: listing pages rarely link every company's site.
-      const found = await safeCompanySearch({ name: c.name, limit: 1 }, { playName: PLAY_NAME });
-      costUsd += found.result.cost ?? 0;
-      domain = sanitizeCompanyDomain(found.result.results?.[0]?.domain ?? null);
-    }
+    // A missing domain is looked up later, only for companies that pass the
+    // ICP gate (accelerator-batch.ts), not for every name a page lists.
+    const domain = sanitizeCompanyDomain(c.domain);
     records.push({
       name: c.name,
       website: domain ? `https://${domain}` : null,

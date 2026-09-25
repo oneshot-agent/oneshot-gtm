@@ -4,7 +4,7 @@ Input is a JSON object:
 - `accelerator`: the program's name (e.g. an accelerator or fellowship).
 - `targetCohort`: the cohort wanted, e.g. "<Program> 2026".
 - `targetYear`: the cohort's year, as a number.
-- `url`, `title`, `markdown`: the page.
+- `url`, `title`, `markdown`: the page. A long page arrives in parts (`part`: "2 of 4"); list the companies in this part only.
 
 Return ONLY a JSON object:
 
