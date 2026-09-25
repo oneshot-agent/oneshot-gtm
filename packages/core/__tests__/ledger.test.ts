@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Database } from "bun:sqlite";
 import { Ledger } from "../src/ledger.ts";
+import { LEDGER_SCHEMA_VERSION } from "../src/ledger-schema.ts";
 
 let dbPath: string;
 let ledger: Ledger;
@@ -101,6 +102,8 @@ describe("Ledger schema migration", () => {
       version: number;
     }>;
     expect({ objects, version }).toMatchSnapshot();
+    // The real schema version; sqlite_master doesn't record it.
+    expect(db.query("PRAGMA user_version").get()).toEqual({ user_version: LEDGER_SCHEMA_VERSION });
   });
 });
 

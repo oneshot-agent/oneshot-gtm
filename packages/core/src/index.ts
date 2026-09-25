@@ -4,6 +4,7 @@ export * from "./ledger.ts";
 export * from "./ledger-cache.ts";
 export * from "./ledger-drafts.ts";
 export * from "./ledger-prospects.ts";
+export { backfillDecisionProvenance, LEDGER_SCHEMA_VERSION } from "./ledger-schema.ts";
 export * from "./config.ts";
 export * from "./demo.ts";
 export * from "./shared-db.ts";

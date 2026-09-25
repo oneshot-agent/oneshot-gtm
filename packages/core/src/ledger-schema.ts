@@ -21,6 +21,79 @@ import type { Database } from "bun:sqlite";
  * time.ts) and compare across formats with `julianday()`. Callers never need
  * to know which form a column uses.
  */
+export interface LedgerMigration {
+  version: number;
+  name: string;
+  up(db: Database): void;
+}
+
+/**
+ * The ledger's schema history, oldest first; `PRAGMA user_version` records the
+ * last one applied. To change the schema, append `{ version: N + 1, ... }` and
+ * never edit a shipped step: an install on version N runs only what comes
+ * after it, all in one transaction. A step may be non-idempotent (a table
+ * rebuild, a data move) since it runs once per file.
+ *
+ * Version 1 is everything before versioning existed: `migrateLedgerSchema`,
+ * which is idempotent, so it brings any older ledger (user_version 0) to the
+ * same shape a fresh install gets.
+ */
+export const LEDGER_MIGRATIONS: ReadonlyArray<LedgerMigration> = [
+  { version: 1, name: "baseline", up: (db) => migrateLedgerSchema(db) },
+];
+
+export const LEDGER_SCHEMA_VERSION = LEDGER_MIGRATIONS[LEDGER_MIGRATIONS.length - 1]!.version;
+
+function userVersion(db: Database): number {
+  return (db.query("PRAGMA user_version").get() as { user_version: number }).user_version;
+}
+
+/**
+ * Bring a ledger to the latest schema. Up to date (the normal case): one
+ * pragma read. Behind: every missing step, then the new user_version, in one
+ * BEGIN IMMEDIATE, so a crash leaves the file on its old version rather than
+ * half-migrated, and a second process waiting on the lock sees the new
+ * version and does nothing. A file from a newer build is left alone.
+ * `migrations` is for tests.
+ */
+export function runLedgerMigrations(
+  db: Database,
+  migrations: ReadonlyArray<LedgerMigration> = LEDGER_MIGRATIONS,
+): void {
+  const latest = migrations[migrations.length - 1]!.version;
+  if (userVersion(db) >= latest) return;
+  db.exec("BEGIN IMMEDIATE");
+  try {
+    const current = userVersion(db);
+    if (current < latest) {
+      for (const step of migrations) {
+        if (step.version > current) step.up(db);
+      }
+      // PRAGMA values can't be bound; `latest` is a number from our own list.
+      db.exec(`PRAGMA user_version = ${Math.trunc(latest)}`);
+    }
+    db.exec("COMMIT");
+  } catch (err) {
+    rollbackQuietly(db);
+    throw err;
+  }
+}
+
+/**
+ * Roll back if a transaction is still open, never masking the error that got
+ * us here: SQLite ends the transaction itself on some failures (SQLITE_FULL,
+ * SQLITE_IOERR, SQLITE_NOMEM), and a bare ROLLBACK would then throw "no
+ * transaction is active" in place of the real cause.
+ */
+function rollbackQuietly(db: Database): void {
+  if (!db.inTransaction) return;
+  try {
+    db.exec("ROLLBACK");
+  } catch {
+    // The original error is the one worth reporting.
+  }
+}
+
 export function migrateLedgerSchema(db: Database): void {
   db.exec(`CREATE TABLE IF NOT EXISTS cadence_plans (
     prospect_id INTEGER NOT NULL, play_name TEXT NOT NULL, enrollment TEXT NOT NULL, steps TEXT NOT NULL,
@@ -205,6 +278,8 @@ export function migrateLedgerSchema(db: Database): void {
       CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(started_at DESC);
       CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
 
+      -- Legacy: never advanced past 6. PRAGMA user_version is the schema
+      -- version (see LEDGER_MIGRATIONS); this table stays for old readers.
       CREATE TABLE IF NOT EXISTS schema_version (
         version INTEGER PRIMARY KEY
       );
@@ -696,7 +771,7 @@ export function migrateLedgerSchema(db: Database): void {
  * not fabricated. Safe under concurrent boots: the `decision IS NULL`
  * guard makes the loser's UPDATE a no-op.
  */
-function backfillDecisionProvenance(db: Database): void {
+export function backfillDecisionProvenance(db: Database): void {
   // Approvals. A human cannot hand-approve 20 rows in one millisecond, so
   // >=20 rows sharing (play_name, reviewed_at) is an approveAllPending
   // batch (the gauge measured a single 108-row millisecond) → human_bulk.
@@ -754,16 +829,18 @@ function backfillDecisionProvenance(db: Database): void {
  * DROP TABLE takes the indexes with it, hence the recreate.
  */
 function widenRunsStatusCheck(db: Database): void {
-  // Use explicit BEGIN IMMEDIATE so the schema probe happens while holding
-  // the write lock — concurrent processes that see the old schema won't both
-  // migrate it and destroy each other's cancel_reason data.
-  db.exec("BEGIN IMMEDIATE");
+  // The schema probe must happen while holding the write lock, so concurrent
+  // processes that see the old schema won't both migrate it and destroy each
+  // other's cancel_reason data. Under runLedgerMigrations the caller already
+  // holds it; a direct migrateLedgerSchema call takes it here.
+  const own = !db.inTransaction;
+  if (own) db.exec("BEGIN IMMEDIATE");
   try {
     const row = db
       .query(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'runs'`)
       .get() as { sql: string | null } | null;
     if (!row?.sql || row.sql.includes("'cancelled'")) {
-      db.exec("ROLLBACK");
+      if (own) db.exec("ROLLBACK");
       return;
     }
     db.exec(`
@@ -795,9 +872,9 @@ function widenRunsStatusCheck(db: Database): void {
         CREATE INDEX IF NOT EXISTS idx_runs_started ON runs(started_at DESC);
         CREATE INDEX IF NOT EXISTS idx_runs_status ON runs(status);
       `);
-    db.exec("COMMIT");
+    if (own) db.exec("COMMIT");
   } catch (err) {
-    db.exec("ROLLBACK");
+    if (own) rollbackQuietly(db);
     throw err;
   }
 }
