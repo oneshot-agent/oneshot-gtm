@@ -1,7 +1,10 @@
 import { beforeEach, expect, it, vi } from "vitest";
 
 const getTrigger = vi.fn();
-vi.mock("@oneshot-gtm/core", () => ({ getLedger: () => ({ getTrigger }) }));
+vi.mock("@oneshot-gtm/core", async () => {
+  const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
+  return { ...actual, getLedger: () => ({ getTrigger }) };
+});
 const { resolveQueueTarget } = await import("../src/queue-target.ts");
 const payload_json = JSON.stringify({
   email: "a@example.com",

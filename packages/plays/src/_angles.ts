@@ -21,7 +21,13 @@
  * hash (the `admissionSlot` shape). A draft is never blocked by selection.
  */
 import { createHash } from "node:crypto";
-import { angleTextKey, getLedger, loadConfig, logEvent } from "@oneshot-gtm/core";
+import {
+  angleTextKey,
+  getLedger,
+  loadConfig,
+  logEvent,
+  resolveTriggerOverlay,
+} from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject } from "@oneshot-gtm/intel";
 
 /** Re-exported so play/server code keys angles the way the ledger does (ledger-drafts.ts). */
@@ -264,50 +270,118 @@ export function withSelectedAngle<T>(target: T, field: EdgeField, angle: string)
 }
 
 /**
- * The angle a follow-up should be built on: a different one from the intro's.
- * Recovers the edge from the intro's sent queue row (whichever path sent it),
- * reads the intro's cached pick for that (prospect, edge), and selects among
- * the rest. Null — and therefore no block — when the intro carried no
- * multi-angle edge, or the ledger can't answer (test doubles, older rows).
+ * The angle a follow-up should be built on: a different one from the intro's,
+ * chosen from the trigger's CURRENT edge. Null — and therefore no block — when
+ * the play's sent row carries no multi-angle edge, or the ledger can't answer
+ * (test doubles, older rows).
  */
 export async function followUpEdgeAngle(
-  prospect: { email: string | null },
+  prospect: { email: string | null; id?: number | null },
   playName: string,
 ): Promise<string | null> {
   const sel = await followUpEdgeSelection(prospect, playName);
   return sel?.angle ?? null;
 }
 
-/**
- * `followUpEdgeAngle` with the whole selection (index and count), so the
- * follow-up draft can carry which angle it was built on the way an intro
- * draft does — the draft-version record keys on it.
- */
-export async function followUpEdgeSelection(
-  prospect: { email: string | null },
-  playName: string,
-): Promise<AngleSelection | null> {
-  const email = prospect.email?.trim();
-  if (!email) return null;
-  let payload: Record<string, unknown> | null = null;
+/** The intro's angle text as recorded on its sent step (issue #584 metadata). */
+function introAngleText(prospectId: number | null | undefined, playName: string): string | null {
+  if (!prospectId) return null;
   try {
-    payload = getLedger().latestSentQueuePayload(playName, email);
+    const rows = getLedger().listSequenceEventsForProspectPlay(prospectId, playName) as Array<{
+      step_index: number;
+      metadata_json: string | null;
+    }>;
+    const step0 = rows.find((r) => r.step_index === 0);
+    if (!step0?.metadata_json) return null;
+    const meta = JSON.parse(step0.metadata_json) as { angleText?: unknown };
+    return typeof meta.angleText === "string" && meta.angleText.trim() ? meta.angleText : null;
   } catch {
     return null;
   }
-  if (!payload) return null;
-  const field = edgeFieldOf(payload);
+}
+
+/**
+ * `followUpEdgeAngle` with the whole selection (index and count, into the
+ * current edge), so the follow-up draft can carry which angle it was built on
+ * the way an intro draft does — the draft-version record keys on it.
+ *
+ * The edge is the trigger's current one (`resolveTriggerOverlay` over the
+ * intro's sent row), so an edit reaches prospects already in cadence; the
+ * frozen payload edge is only a fallback when the trigger is gone or its
+ * config is invalid. The intro's angle is excluded by its recorded TEXT, so a
+ * reordered edge still excludes it and a rewritten one excludes nothing.
+ * `rotateFrom` also excludes the angle a "Rotate angle" is moving away from.
+ */
+export async function followUpEdgeSelection(
+  prospect: { email: string | null; id?: number | null },
+  playName: string,
+  opts: { rotateFrom?: string | null } = {},
+): Promise<AngleSelection | null> {
+  const email = prospect.email?.trim();
+  if (!email) return null;
+  let row: { payload: Record<string, unknown>; source: string } | null = null;
+  try {
+    const ledger = getLedger() as ReturnType<typeof getLedger> & {
+      latestSentQueueRow?: (p: string, e: string) => typeof row;
+    };
+    row =
+      typeof ledger.latestSentQueueRow === "function"
+        ? ledger.latestSentQueueRow(playName, email)
+        : (() => {
+            const payload = ledger.latestSentQueuePayload(playName, email);
+            return payload ? { payload, source: "" } : null;
+          })();
+  } catch {
+    return null;
+  }
+  if (!row) return null;
+  const frozenField = edgeFieldOf(row.payload);
+  const frozenEdge = frozenField ? (row.payload[frozenField] as string) : "";
+  let target = row.payload;
+  try {
+    target = resolveTriggerOverlay(row.payload, row.source, (name) => getLedger().getTrigger(name));
+  } catch (err) {
+    logEvent(
+      "angle.followup_frozen_edge",
+      { play: playName, message_120: ((err as Error).message ?? "").slice(0, 120) },
+      "warn",
+    );
+  }
+  const field = edgeFieldOf(target);
   if (!field) return null;
-  const edge = payload[field] as string;
-  if (splitEdgeAngles(edge).length < 2) return null;
-  const intro = readCached(cacheKeyFor({ edge, prospectKey: email, description: "" }, null));
-  return selectAngle({
-    edge,
+  const edge = target[field] as string;
+  const angles = splitEdgeAngles(edge);
+  if (angles.length < 2) return null;
+
+  // What to exclude, by text. With no recorded intro text (rows from before
+  // the angle was stamped on the send), fall back to the intro's cached pick
+  // on the edge it was chosen from.
+  let introText = introAngleText(prospect.id, playName);
+  if (!introText && frozenEdge) {
+    const idx = readCached(
+      cacheKeyFor({ edge: frozenEdge, prospectKey: email, description: "" }, null),
+    );
+    const frozen = splitEdgeAngles(frozenEdge);
+    if (idx != null && idx >= 0 && idx < frozen.length) introText = frozen[idx]!;
+  }
+  const excluded = new Set(
+    [introText, opts.rotateFrom].filter((t): t is string => !!t?.trim()).map(angleTextKey),
+  );
+  let candidates = angles.filter((a) => !excluded.has(angleTextKey(a)));
+  // Rotating away with nothing else left: the intro's angle is fair game again.
+  if (candidates.length === 0 && opts.rotateFrom) {
+    candidates = angles.filter((a) => angleTextKey(a) !== angleTextKey(opts.rotateFrom!));
+  }
+  if (candidates.length === 0) return null;
+
+  const pick = await selectAngle({
+    edge: candidates.join(" // "),
     prospectKey: email,
-    description: describeTargetForAngle(payload),
-    excludeIndex: intro,
+    description: describeTargetForAngle(target),
     playName,
   });
+  const index = angles.findIndex((a) => angleTextKey(a) === angleTextKey(pick.angle));
+  return { ...pick, index: index < 0 ? 0 : index, count: angles.length };
 }
 
 /**

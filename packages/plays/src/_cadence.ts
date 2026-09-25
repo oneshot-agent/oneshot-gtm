@@ -34,6 +34,7 @@ import {
 import { complete, loadPrompt, tryParseJsonObject, triageEmails } from "@oneshot-gtm/intel";
 import { followUpEdgeBlock, followUpEdgeSelection } from "./_angles.ts";
 import {
+  closingEitherOrQuestion,
   firstNameFrom,
   humanizeDraft,
   lintEmail,
@@ -1564,6 +1565,17 @@ export interface CadenceStepPreview {
  * sends. Mirrors the /queue regenerate route — the founder reviews on
  * /cadences, then clicks Send next which calls sendCadenceStep.
  */
+/** The edge angle the current persisted preview was built on, if any. */
+function currentPreviewAngle(input: { prospectId: number; playName: string }): string | null {
+  try {
+    const draft = getLedger().getCadenceDraft(input) as { payload?: unknown } | null;
+    const angle = (draft?.payload as { angle?: { text?: unknown } } | undefined)?.angle;
+    return typeof angle?.text === "string" && angle.text.trim() ? angle.text : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function previewCadenceStep(input: {
   prospectId: number;
   playName: string;
@@ -1571,6 +1583,12 @@ export async function previewCadenceStep(input: {
    *  yet, and without them a batch can agree on one brand-new opener and every
    *  row passes the cap individually. */
   extraRecentBodies?: readonly string[];
+  /**
+   * "Rotate angle": draft on a different edge angle from the current
+   * preview's (and the intro's). The replaced preview is recorded as a
+   * rejected angle (`rotate`), not a rejected text.
+   */
+  rotateAngle?: boolean;
 }): Promise<CadenceStepPreview> {
   const ledger = getLedger();
   const cfg = loadConfig();
@@ -1598,7 +1616,11 @@ export async function previewCadenceStep(input: {
   );
   const built: StepPayload | null = mailDraft
     ? { kind: "direct_mail", draftId: mailDraft.id }
-    : await step.builder({ prospect, cfg, metadata: {} });
+    : await step.builder({
+        prospect,
+        cfg,
+        metadata: input.rotateAngle ? { rotateFrom: currentPreviewAngle(input) } : {},
+      });
   if (!built) throw new Error("builder returned null — nothing to preview");
 
   const subject = built.kind === "email" ? built.subject : "(non-email step)";
@@ -1617,7 +1639,7 @@ export async function previewCadenceStep(input: {
   const flags =
     built.kind === "email"
       ? [
-          ...lintEmail(subject, body, step.maxBodyWords ?? 100),
+          ...lintEmail(subject, body, step.maxBodyWords ?? 100, undefined, { followUp: true }),
           ...lintOpenerFrequency(body, [
             ...(input.extraRecentBodies ?? []),
             ...ledger.recentSentEmailBodies({ playName: input.playName, stepIndex: nextIndex }),
@@ -1628,10 +1650,10 @@ export async function previewCadenceStep(input: {
     prospectId: input.prospectId,
     playName: input.playName,
     draft: { subject, body, flags, payload: built },
-    // Both callers (preview-next, preview-batch) are the founder asking for
-    // a new draft; a preview it replaces was rejected on its text, not its
-    // angle — follow-ups keep the classifier's pick.
-    discardReason: "regenerate",
+    // The founder asking for a new draft: on the same angle the replaced
+    // preview was rejected on its text (`regenerate`); with Rotate angle, on
+    // its angle (`rotate`).
+    discardReason: input.rotateAngle ? "rotate" : "regenerate",
   });
   const draft = ledger.getCadenceDraft({
     prospectId: input.prospectId,
@@ -2034,7 +2056,13 @@ export function buildFollowUpEmail(opts: {
     // saw the edge at all — only the prior body under "do not repeat" — so it
     // could not say anything new. It now gets a DIFFERENT angle from the
     // intro's. No multi-angle edge on the sent row → null → no block.
-    const edgeSelection = await followUpEdgeSelection(ctx.prospect, opts.playName);
+    const rotateFrom =
+      typeof (ctx.metadata as { rotateFrom?: unknown } | undefined)?.rotateFrom === "string"
+        ? ((ctx.metadata as { rotateFrom: string }).rotateFrom as string)
+        : null;
+    const edgeSelection = await followUpEdgeSelection(ctx.prospect, opts.playName, {
+      rotateFrom,
+    });
     const edgeBlock = followUpEdgeBlock(edgeSelection?.angle ?? null);
     // VOICE: the founder's register, when a card is set. The breakup step
     // gets the no-aphorism budget; every other follow-up the default one.
@@ -2053,22 +2081,43 @@ export function buildFollowUpEmail(opts: {
       ...(firstName ? ["", `PROSPECT_FIRST_NAME: ${firstName}`] : []),
       ...(avoidBlock ? ["", avoidBlock] : []),
     ].join("\n");
-    const res = await complete({
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-      temperature: 0.6,
-      maxTokens: 500,
-    });
+    const messages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ];
+    const res = await complete({ messages, temperature: 0.6, maxTokens: 500 });
     const parsed = tryParseJsonObject<{ subject?: string; body?: string }>(res.content, {});
     if (!parsed.subject || !parsed.body) return null;
     // Same deterministic humanization the initial-send plays get via
     // draftEmailFromPrompt — without it, follow-ups ship em-dashes raw.
-    const cleaned = humanizeDraft({
+    let cleaned = humanizeDraft({
       subject: parsed.subject.trim(),
       body: parsed.body.trim(),
     });
+    // An either/or closing question gets one redraft in the same
+    // conversation; kept only if it fixes the ending. Otherwise the original
+    // stays and lint holds it (`either-or-question`) for review.
+    if (closingEitherOrQuestion(cleaned.body)) {
+      try {
+        messages.push(
+          { role: "assistant", content: JSON.stringify(cleaned) },
+          {
+            role: "user",
+            content:
+              "That ends by offering the reader two options. Rewrite the last sentence: end with one specific question they can answer yes or no, or with no question at all. Never offer two options. Keep everything else. " +
+              'Return only the JSON object with "subject" and "body".',
+          },
+        );
+        const retry = await complete({ messages, temperature: 0.4, maxTokens: 500 });
+        const again = tryParseJsonObject<{ subject?: string; body?: string }>(retry.content, {});
+        if (again.subject && again.body) {
+          const fixed = humanizeDraft({ subject: again.subject.trim(), body: again.body.trim() });
+          if (!closingEitherOrQuestion(fixed.body)) cleaned = fixed;
+        }
+      } catch {
+        // Keep the original; lint holds it.
+      }
+    }
     return {
       kind: "email",
       subject: cleaned.subject,

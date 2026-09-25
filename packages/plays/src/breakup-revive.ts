@@ -99,7 +99,7 @@ export async function runBreakupRevive(
         ].join("\n"),
       });
 
-      const flags = lintEmail(draft.subject, draft.body, 80);
+      const flags = lintEmail(draft.subject, draft.body, 80, undefined, { followUp: true });
 
       throwIfCancelled(opts.signal, `${PLAY_NAME} send`);
       const send = await sendDraftedEmail({

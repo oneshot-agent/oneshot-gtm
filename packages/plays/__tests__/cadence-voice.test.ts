@@ -70,7 +70,8 @@ vi.mock("@oneshot-gtm/intel", async () => {
         return { content: JSON.stringify({ index: 2 }), provider: "test", model: "test" };
       }
       return {
-        content: nextLlmContent ?? JSON.stringify({ subject: "ok", body: "ok body" }),
+        content:
+          llmQueue.shift() ?? nextLlmContent ?? JSON.stringify({ subject: "ok", body: "ok body" }),
         provider: "test",
         model: "test",
       };
@@ -80,6 +81,8 @@ vi.mock("@oneshot-gtm/intel", async () => {
 
 /** Per-test override of the LLM response. null = default clean JSON. */
 let nextLlmContent: string | null = null;
+/** Responses served in order before falling back to `nextLlmContent`. */
+const llmQueue: string[] = [];
 /** The intro's sent queue payload (issue #584); null = no multi-angle edge to draw on. */
 let sentPayload: Record<string, unknown> | null = null;
 
@@ -141,6 +144,7 @@ beforeEach(() => {
   voiceCard = null;
   llmCalls.length = 0;
   nextLlmContent = null;
+  llmQueue.length = 0;
   storedRows = [];
   sentPayload = null;
 });
@@ -192,5 +196,40 @@ describe("buildFollowUpEmail — VOICE block", () => {
     const out = await builder(ctx());
     expect(llmCalls[0]!.user).not.toContain("VOICE");
     expect(out).toEqual({ kind: "email", subject: "ok", body: "ok body" });
+  });
+});
+
+describe("buildFollowUpEmail — either/or closing question", () => {
+  const builder = () =>
+    buildFollowUpEmail({
+      playName: "stack-consolidation",
+      promptName: "breakup-email",
+      contextLines: ["PLAY: stack-consolidation. Breakup."],
+    });
+  const eitherOr = JSON.stringify({
+    subject: "s",
+    body: "Is it sorted already, or still on the back burner?",
+  });
+
+  it("redrafts once and keeps a redraft that fixes the ending", async () => {
+    llmQueue.push(
+      eitherOr,
+      JSON.stringify({ subject: "s", body: "Is it still on the list this quarter?" }),
+    );
+    const out = await builder()(ctx());
+    expect(llmCalls).toHaveLength(2);
+    expect(out).toMatchObject({ body: "Is it still on the list this quarter?" });
+  });
+
+  it("keeps the original when the redraft still offers two options", async () => {
+    llmQueue.push(eitherOr, eitherOr);
+    const out = await builder()(ctx());
+    expect(llmCalls).toHaveLength(2);
+    expect(out).toMatchObject({ body: "Is it sorted already, or still on the back burner?" });
+  });
+
+  it("makes no second call for a clean ending", async () => {
+    await builder()(ctx());
+    expect(llmCalls).toHaveLength(1);
   });
 });

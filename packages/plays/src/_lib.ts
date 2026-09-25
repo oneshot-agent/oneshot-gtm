@@ -385,12 +385,53 @@ function subjectShouty(subject: string): boolean {
   });
 }
 
+/**
+ * True when the email ends on an either/or question ("…dialed in already, or
+ * on the back burner?"): two canned options for the reader to pick from,
+ * which reads as a survey and adds nothing new. Checks the output text only
+ * (model-agnostic): the last sentence of the body, signature peeled, is a
+ * question that offers an "or". Idioms like "a minute or two" don't count.
+ */
+export function closingEitherOrQuestion(body: string, sigLines?: string[]): boolean {
+  // Peel the ending: configured signature lines in any order, plus short
+  // sign-off lines (a bare name, "Thanks,") — a draft that drops part of the
+  // signature must not hide the question above it.
+  const sig = new Set((sigLines ?? configuredSigLines()).map((l) => l.trim().toLowerCase()));
+  const lines = body
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  while (lines.length > 0) {
+    const tail = lines[lines.length - 1]!;
+    if (sig.has(tail.toLowerCase()) || (!tail.includes("?") && tail.split(/\s+/).length <= 4)) {
+      lines.pop();
+    } else break;
+  }
+  const text = lines.join("\n");
+  if (!text.endsWith("?")) return false;
+  // Keep abbreviations inside their sentence ("Acme Inc. this quarter?"),
+  // with the same rules the sentence counter uses.
+  const joined = text
+    .replace(TITLE_ABBREVIATIONS, (m) => m.replace(/\./g, ""))
+    .replace(OTHER_ABBREVIATIONS, (m) => m.replace(/\./g, ""));
+  const sentences = joined.split(/(?<=[.!?])\s+/);
+  const last = sentences[sentences.length - 1] ?? "";
+  // Count, don't strip: an "or" that is not part of an idiom is an option.
+  const ors = last.match(/\bor\b/gi)?.length ?? 0;
+  const idioms =
+    last.match(/\b(?:one|a minute|a day|a week|two|three) or (?:two|three|so|more|later)\b/gi)
+      ?.length ?? 0;
+  return ors > idioms;
+}
+
 export function lintEmail(
   subject: string,
   body: string,
   maxBodyWords = 110,
   /** Set by formats with a sentence budget (the brief first touch); absent = no sentence check. */
   maxBodySentences?: number,
+  /** Follow-ups and breakups: flag an either/or closing question. */
+  opts: { followUp?: boolean } = {},
 ): string[] {
   const flags: string[] = [];
   if (subject.length === 0) flags.push("empty-subject");
@@ -406,6 +447,7 @@ export function lintEmail(
   if (maxBodySentences !== undefined && bodySentencesForLint(body) > maxBodySentences) {
     flags.push("too-many-sentences");
   }
+  if (opts.followUp && closingEitherOrQuestion(body)) flags.push("either-or-question");
   if (body.includes("—")) flags.push("em-dash");
   if (/[“”‘’]/.test(body)) flags.push("curly-quotes");
   if (/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(body)) flags.push("emoji");
