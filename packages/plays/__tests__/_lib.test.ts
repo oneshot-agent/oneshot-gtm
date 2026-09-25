@@ -615,9 +615,25 @@ describe("enterpriseFirstTouchFlags — issue #707", () => {
   // the word-count gate used `>`, so an exactly-70-word body (the prompt's
   // own stated ceiling, "under 70 words") passed with no length flag.
   it("flags a body at exactly the 70-word cap", () => {
+    const filler = Array.from({ length: 66 }, (_, i) => `word${i}`).join(" ");
+    const body = [`${filler}.`, "Open to a chat?", "", "Sam"].join("\n");
+    // 70 words of actual body content — "Sam" is a bare-name sign-off, not
+    // part of the count (see the next test).
+    expect(`${filler} Open to a chat?`.split(/\s+/).filter(Boolean).length).toBe(70);
+    expect(enterpriseFirstTouchFlags(body)).toContain("enterprise-body-too-long");
+  });
+
+  // Regression for the round-2 external review finding PRRT_kwDOSKzrBs6mGdey:
+  // the word-count gate counted the trailing bare-name sign-off ("Sam") even
+  // though the sentence-count gate excludes it via trimTrailingSignOff, so a
+  // 69-word body plus a one-word sign-off falsely tripped
+  // enterprise-body-too-long. Both gates must count the same body content.
+  it("does not count the trailing sign-off name toward the word cap", () => {
     const filler = Array.from({ length: 65 }, (_, i) => `word${i}`).join(" ");
     const body = [`${filler}.`, "Open to a chat?", "", "Sam"].join("\n");
-    expect(body.split(/\s+/).filter(Boolean).length).toBe(70);
-    expect(enterpriseFirstTouchFlags(body)).toContain("enterprise-body-too-long");
+    // 69 words of actual body content, plus a bare "Sam" sign-off that must
+    // not push the count to the 70-word cap.
+    expect(`${filler} Open to a chat?`.split(/\s+/).filter(Boolean).length).toBe(69);
+    expect(enterpriseFirstTouchFlags(body)).not.toContain("enterprise-body-too-long");
   });
 });

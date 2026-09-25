@@ -538,9 +538,16 @@ function stripGreetingLine(text: string): string {
 export function enterpriseFirstTouchFlags(body: string): string[] {
   const flags: string[] = [];
   const stripped = stripGreetingLine(stripSignatureLines(body));
-  const words = stripped.split(/\s+/).filter(Boolean);
-  if (words.length >= ENTERPRISE_MAX_BODY_WORDS) flags.push("enterprise-body-too-long");
+  // Both counts must read the same body content (round-2 review finding
+  // PRRT_kwDOSKzrBs6mGdey): trimTrailingSignOff already drops a bare-name
+  // sign-off ("Sam") that stripSignatureLines can't catch when no
+  // productDomain is configured, so the word count is taken from the same
+  // sign-off-trimmed sentences the sentence count uses, not from `stripped`
+  // directly — otherwise a compliant 69-word draft could trip
+  // enterprise-body-too-long on the sign-off's word alone.
   const sentences = trimTrailingSignOff(splitBodySentences(stripped));
+  const words = sentences.join(" ").split(/\s+/).filter(Boolean);
+  if (words.length >= ENTERPRISE_MAX_BODY_WORDS) flags.push("enterprise-body-too-long");
   if (sentences.length > ENTERPRISE_MAX_BODY_SENTENCES) {
     flags.push("enterprise-too-many-sentences");
   }
