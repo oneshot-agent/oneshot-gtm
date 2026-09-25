@@ -163,6 +163,11 @@ export async function rejudgeGitHubStarsRows(
       }
     }
 
+    // A failed repo fetch leaves the evidence incomplete; never reject on it.
+    if (verdict === "reject" && evidence.repos === null) {
+      return skip("GitHub repos unavailable; evidence incomplete");
+    }
+
     if (opts.dryRun) {
       return report({ id: row.id, login, verdict, reason, statusChanged: false });
     }
@@ -179,8 +184,15 @@ export async function rejudgeGitHubStarsRows(
 
     let statusChanged = false;
     if (verdict === "reject") {
+      // Judging takes seconds per row; decide on the row as it is now, not the
+      // snapshot selected at the start (it may have been approved, sent or
+      // re-noted meanwhile).
+      const current = ledger.getQueueRow(row.id);
+      if (!current || current.sent_at || current.send_started_at) {
+        return skip("row changed during re-judge");
+      }
       const note = `auto: ICP — re-judged from GitHub: ${reason}`.slice(0, 320);
-      if (row.status === "pending" || (row.status === "approved" && opts.rejectApproved)) {
+      if (current.status === "pending" || (current.status === "approved" && opts.rejectApproved)) {
         ledger.setQueueStatus({
           id: row.id,
           status: "rejected",
@@ -191,7 +203,7 @@ export async function rejudgeGitHubStarsRows(
       } else {
         ledger.setQueueNotes({
           id: row.id,
-          notes: [row.notes, `re-judged from GitHub: ${reason}`].filter(Boolean).join(" — "),
+          notes: [current.notes, `re-judged from GitHub: ${reason}`].filter(Boolean).join(" — "),
         });
       }
     }

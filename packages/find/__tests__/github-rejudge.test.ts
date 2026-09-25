@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 let icpMatch: boolean | null = true;
 let personVerdict: "pass" | "reject" | "unclear" | "transient" = "pass";
 let userAvailable = true;
+let reposAvailable = true;
+let duringJudge: (() => void) | null = null;
 const icpSummaries: string[] = [];
 
 vi.mock("../src/_github-user.ts", () => ({
@@ -23,13 +25,15 @@ vi.mock("../src/_github-user.ts", () => ({
           followers: 9,
         }
       : null,
-  fetchTopRepos: async () => [{ name: "kit", description: "agent kit", language: "Go" }],
+  fetchTopRepos: async () =>
+    reposAvailable ? [{ name: "kit", description: "agent kit", language: "Go" }] : null,
 }));
 vi.mock("../src/_github-readme.ts", () => ({ fetchProfileReadmeText: async () => null }));
 vi.mock("../src/_filter.ts", () => ({
   resolveIcp: () => "icp",
   icpFilter: async (args: { candidate: { summary?: string } }) => {
     icpSummaries.push(args.candidate.summary ?? "");
+    duringJudge?.();
     return { match: icpMatch, reason: icpMatch ? "builds agents" : "not a builder" };
   },
   qualifyPerson: async () => ({ verdict: personVerdict, reason: "role stub" }),
@@ -60,6 +64,8 @@ beforeEach(() => {
   icpMatch = true;
   personVerdict = "pass";
   userAvailable = true;
+  reposAvailable = true;
+  duringJudge = null;
   icpSummaries.length = 0;
 });
 
@@ -133,6 +139,26 @@ describe("rejudgeGitHubStarsRows", () => {
     expect(res2.skipped).toBe(1);
     expect(row(a).status).toBe("pending");
     expect(payload(a)["icpVerdict"]).toBeUndefined();
+  });
+
+  it("skips a reject judged on incomplete evidence (repo fetch failed)", async () => {
+    icpMatch = false;
+    reposAvailable = false;
+    const id = seed("pending");
+    const res = await rejudgeGitHubStarsRows({ id });
+    expect(res.skipped).toBe(1);
+    expect(row(id).status).toBe("pending");
+  });
+
+  it("decides on the row as it is now, not the selected snapshot", async () => {
+    icpMatch = false;
+    const id = seed("pending");
+    // A human approves the row while it is being judged.
+    duringJudge = () => getLedger().setQueueStatus({ id, status: "approved", decidedBy: "human" });
+    const res = await rejudgeGitHubStarsRows({ id });
+    expect(res.statusChanged).toBe(0);
+    expect(row(id).status).toBe("approved");
+    expect(row(id).notes).toContain("re-judged from GitHub: not a builder");
   });
 
   it("writes nothing on a dry run", async () => {

@@ -259,6 +259,17 @@ describe("runGitHubStarsFinder — per-repo rel routing", () => {
     expect(String(row.payload["githubEvidence"])).toContain("Bio: bob builds agent tooling");
   });
 
+  it("drops, never persists, an ICP reject judged without the repo list (fetch failed)", async () => {
+    icpMatch = false;
+    nextFetchTopReposResult = null;
+    await runGitHubStarsFinder({
+      dryRun: false,
+      yourEdge: "x",
+      repos: [{ repo: "modelcontextprotocol/servers", rel: "adjacent", label: "MCP" }],
+    });
+    expect(enqueued).toHaveLength(0);
+  });
+
   it("retains the verified email when the later role gate rejects", async () => {
     personVerdict = "reject";
     await runGitHubStarsFinder({

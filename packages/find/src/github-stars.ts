@@ -188,6 +188,13 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
       result.droppedEnrichment++;
       return;
     }
+    if (!filter.match && evidence.repos === null) {
+      // The repo fetch failed (rate limit / network), so the gate judged on
+      // incomplete evidence. Same rule as a transient classifier failure: drop
+      // without persisting, so the candidate is judged properly on a later tick.
+      result.droppedEnrichment++;
+      return;
+    }
     if (!filter.match) {
       result.droppedIcp++;
       // Persist the auto-rejection for review (skipped on dry-run previews).

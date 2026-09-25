@@ -65,7 +65,11 @@ function isThin(user: GitHubUserInfo, repos: TopRepo[] | null): boolean {
 export interface GitHubEvidence {
   /** Plain-text block, ≤ GITHUB_EVIDENCE_MAX_CHARS, for a classifier prompt. */
   text: string;
-  /** The candidate's own repos as fetched (null on a failed fetch). */
+  /**
+   * The candidate's own repos as fetched. `null` = the fetch failed (rate
+   * limit, network): the evidence is incomplete, so a reject built on it must
+   * be treated as transient by the caller, never persisted.
+   */
   repos: TopRepo[] | null;
   /** Whether the profile README was consulted (it costs up to two API calls). */
   readReadme: boolean;
@@ -91,7 +95,15 @@ export async function buildGitHubEvidence(
     lines.push("Own repos (most recently pushed):");
     for (const r of repos.slice(0, MAX_REPOS)) lines.push(repoLine(r));
   } else if (repos) {
-    lines.push("Own repos: none public");
+    // `repos` is a sample (10 most recently pushed, forks/archived removed),
+    // so an empty sample is only "none" when GitHub counts zero public repos.
+    lines.push(
+      user.publicRepos === 0
+        ? "Own repos: none public"
+        : "Own repos: none in the 10 most recently pushed (forks and archived excluded)",
+    );
+  } else {
+    lines.push("Own repos: could not be fetched");
   }
   let readReadme = false;
   if (isThin(user, repos)) {

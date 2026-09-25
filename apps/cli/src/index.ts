@@ -655,9 +655,11 @@ find
 find
   .command("rejudge-github")
   .option("--status <s>", "pending, approved, or live = both (default live)")
-  .option("--id <n>", "re-judge one github-stars queue row by id", (v) => Number.parseInt(v, 10))
-  .option("--limit <n>", "max rows to judge, oldest first (default: no limit)", (v) =>
-    Number.parseInt(v, 10),
+  .option("--id <n>", "re-judge one github-stars queue row by id", positiveInt("--id"))
+  .option(
+    "--limit <n>",
+    "max rows to judge, oldest first (default: no limit)",
+    positiveInt("--limit"),
   )
   .option("--concurrency <n>", "parallel rows (default 3)", positiveInt("--concurrency"))
   .option(

@@ -90,10 +90,15 @@ describe("buildGitHubEvidence", () => {
     expect(out.text).not.toContain("shields.io");
   });
 
-  it("uses pre-fetched repos without refetching and says so when there are none", async () => {
-    const out = await buildGitHubEvidence(user({ bio: "x" }), { repos: [] });
-    expect(out.text).toContain("Own repos: none public");
-    expect(out.repos).toEqual([]);
+  it("uses pre-fetched repos and only calls an empty sample 'none' when GitHub counts zero", async () => {
+    const none = await buildGitHubEvidence(user({ bio: "x", publicRepos: 0 }), { repos: [] });
+    expect(none.text).toContain("Own repos: none public");
+    expect(none.repos).toEqual([]);
+    const sampled = await buildGitHubEvidence(user({ bio: "x", publicRepos: 30 }), { repos: [] });
+    expect(sampled.text).toContain("none in the 10 most recently pushed");
+    const failed = await buildGitHubEvidence(user({ bio: "x" }), { repos: null });
+    expect(failed.text).toContain("Own repos: could not be fetched");
+    expect(failed.repos).toBeNull();
   });
 
   it("caps the block", async () => {
