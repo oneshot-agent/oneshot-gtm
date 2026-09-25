@@ -144,6 +144,33 @@ describe("queueEvidence", () => {
     ).toBe("Records digitization support — DEPARTMENT OF VETERANS AFFAIRS");
   });
 
+  // Correction round 1, F-t_1ec69ea6-4: a routed finder's design-partner-loi
+  // row carries the PROSPECT's job title (e.g. "Head of AI Platform"), never
+  // a notice — rendering it as `title — agency` displayed a person's job
+  // title as if it were a solicitation. `buyerType` discriminates the shape.
+  it("renders a routed design-partner-loi row (buyerType present) as a buyer-type line, never the prospect's job title as a notice", () => {
+    expect(
+      queueEvidence("design-partner-loi", {
+        name: "Jamie Buyer",
+        company: "Enterprise Corp",
+        buyerType: "enterprise",
+        yourEdge: "our harness matches their checklist",
+        title: "Head of AI Platform",
+      }),
+    ).toBe("enterprise buyer at Enterprise Corp");
+    // The prospect's job title must never appear in the evidence line.
+    expect(
+      queueEvidence("design-partner-loi", {
+        company: "Enterprise Corp",
+        buyerType: "enterprise",
+        title: "Head of AI Platform",
+      }),
+    ).not.toContain("Head of AI Platform");
+    expect(queueEvidence("design-partner-loi", { buyerType: "government" })).toBe(
+      "government buyer",
+    );
+  });
+
   it("names the agenda item title (plus city) for civic-pilot", () => {
     expect(
       queueEvidence("civic-pilot", {

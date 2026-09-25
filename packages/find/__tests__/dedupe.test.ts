@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const ledgerStub = {
-  isQueueDuplicate: vi.fn(() => false),
+  isQueueDuplicate: vi.fn((_playName: string, _dedupeKey: string) => false),
   findProspectByEmail: vi.fn(() => null as { id: number } | null),
   isEmailPendingInQueue: vi.fn(() => false),
 };
@@ -30,6 +30,29 @@ describe("isDuplicate (cross-play)", () => {
     ledgerStub.isEmailPendingInQueue.mockReturnValue(true); // would match if consulted
     expect(isDuplicate({ playName: "breakup-revive", dedupeKey: "k" })).toBe(false);
     expect(ledgerStub.isEmailPendingInQueue).not.toHaveBeenCalled();
+  });
+
+  // F-t_1ec69ea6-2: a routed finder passes `playName` as the array from
+  // `dedupePlayNames` (its own play + design-partner-loi) so dedupe survives
+  // a `play` toggle. Pin the actual multi-play branch, not just the single
+  // string path every other case here exercises.
+  it("checks isQueueDuplicate under EVERY play in the array, true if any matches", () => {
+    ledgerStub.isQueueDuplicate.mockImplementation(
+      (playName: string, dedupeKey: string) =>
+        playName === "design-partner-loi" && dedupeKey === "k",
+    );
+    expect(isDuplicate({ playName: ["job-change", "design-partner-loi"], dedupeKey: "k" })).toBe(
+      true,
+    );
+    expect(ledgerStub.isQueueDuplicate).toHaveBeenCalledWith("job-change", "k");
+    expect(ledgerStub.isQueueDuplicate).toHaveBeenCalledWith("design-partner-loi", "k");
+  });
+
+  it("false for a multi-play array when neither play has the dedupeKey queued", () => {
+    ledgerStub.isQueueDuplicate.mockReturnValue(false);
+    expect(isDuplicate({ playName: ["job-change", "design-partner-loi"], dedupeKey: "k" })).toBe(
+      false,
+    );
   });
 });
 

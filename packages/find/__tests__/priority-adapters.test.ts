@@ -468,3 +468,41 @@ describe("new-business — sourceLabel is registry metadata, not evidence text",
     expect(p.components.signalConfidence).toBe(50);
   });
 });
+
+describe("design-partner-loi — two payload shapes, discriminated by buyerType (correction round 1, F-t_1ec69ea6-3)", () => {
+  // gov-solicitation's own routing (no buyerType): the existing FIXTURES
+  // entry for this play IS that shape and is already covered by the shared
+  // per-play loop above. This block covers the OTHER shape: the five
+  // finders `_play-route.ts` lets route here instead of their own play.
+  const routedPayload = {
+    name: "Jamie Buyer",
+    email: "jamie@enterprise-corp.example",
+    company: "Enterprise Corp",
+    buyerType: "enterprise",
+    yourEdge: "our harness matches their checklist",
+    title: "Head of AI Platform",
+  };
+
+  it("scores a routed payload without fabricating agency/solicitation evidence it doesn't carry", () => {
+    const p = safeScorePriority("design-partner-loi", routedPayload, NOW)!;
+    expect(p).not.toBeNull();
+    // Must never assert notice/agency/solicitation evidence a routed row has
+    // no fields for — the bug the review caught: a fixed "<agency> notice"
+    // / "<noticeType>: <title>" reason on a prospect with no notice at all.
+    const allReasons = p.reasons.join(" ");
+    expect(allReasons).not.toMatch(/notice/i);
+    expect(allReasons).not.toMatch(/solicitation/i);
+    expect(allReasons).not.toContain("an agency");
+  });
+
+  it("reads accountFit off `company`, not `agency` (absent on a routed payload)", () => {
+    const p = safeScorePriority("design-partner-loi", routedPayload, NOW)!;
+    expect(p!.components.accountFit).toBe(60); // buyer-type signal, not the gov agency reason
+    expect(p!.reasons.join(" ")).toContain("enterprise buyer");
+  });
+
+  it("gov-solicitation's own shape (no buyerType) still scores the notice reasons — unaffected by the routed branch", () => {
+    const p = safeScorePriority("design-partner-loi", FIXTURES["design-partner-loi"], NOW)!;
+    expect(p.reasons.join(" ")).toMatch(/notice|solicitation/i);
+  });
+});

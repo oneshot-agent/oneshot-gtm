@@ -376,26 +376,54 @@ export const PRIORITY_ADAPTERS: Record<string, (p: Record<string, unknown>) => P
     ...contact(p),
   }),
 
-  // gov-solicitation routes here for every other ptype (the requirement is
-  // already fixed — a weaker window than sources-sought, never stronger).
-  "design-partner-loi": (p) => ({
-    title: str(p["role"]),
-    companyKnown: str(p["agency"]) !== null,
-    accountSignals: [
-      { kind: "agency", strength: 60, reason: `${str(p["agency"]) ?? "an agency"} notice` },
-    ],
-    intentSignals: [
-      {
-        kind: "solicitation",
-        strength: 65,
-        reason: `${str(p["noticeType"]) ?? "solicitation"}: ${str(p["title"]) ?? "?"}`,
-      },
-    ],
-    eventAt: str(p["responseDeadline"]) ?? str(p["postedDate"]),
-    evidenceUrlCount: urlCount(p["noticeUrl"]),
-    hasEvidenceText: str(p["descriptionSnippet"]) !== null,
-    ...contact(p),
-  }),
+  // design-partner-loi is fed by two payload shapes: gov-solicitation's own
+  // routing (GovSolicitationTarget — agency/noticeNumber/noticeType/role/
+  // naicsCode, no buyerType) for every non-presolicitation notice, and the
+  // five finders `_play-route.ts` lets route here instead of their own play
+  // (DesignPartnerLoiTarget — name/email/company/buyerType/yourEdge/title,
+  // issue #705). `buyerType` is present on exactly the routed shape
+  // (gov-solicitation never sets it), so it is the discriminator: scoring a
+  // routed row with the gov-solicitation reasons below persisted a
+  // fabricated "<agency> notice" / "<noticeType>: <title>" — a routed row
+  // carries no agency/noticeType, and its own `title` is the prospect's job
+  // title, not a solicitation title (finding F-t_1ec69ea6-3).
+  "design-partner-loi": (p) => {
+    const buyerType = str(p["buyerType"]);
+    if (buyerType !== null) {
+      return {
+        title: str(p["title"]),
+        companyKnown: str(p["company"]) !== null,
+        accountSignals: [{ kind: "buyer-type", strength: 60, reason: `${buyerType} buyer` }],
+        intentSignals: [
+          {
+            kind: "routed-edge",
+            strength: 55,
+            reason: str(p["yourEdge"]) ?? "routed to design-partner-loi",
+          },
+        ],
+        hasEvidenceText: str(p["yourEdge"]) !== null,
+        ...contact(p),
+      };
+    }
+    return {
+      title: str(p["role"]),
+      companyKnown: str(p["agency"]) !== null,
+      accountSignals: [
+        { kind: "agency", strength: 60, reason: `${str(p["agency"]) ?? "an agency"} notice` },
+      ],
+      intentSignals: [
+        {
+          kind: "solicitation",
+          strength: 65,
+          reason: `${str(p["noticeType"]) ?? "solicitation"}: ${str(p["title"]) ?? "?"}`,
+        },
+      ],
+      eventAt: str(p["responseDeadline"]) ?? str(p["postedDate"]),
+      evidenceUrlCount: urlCount(p["noticeUrl"]),
+      hasEvidenceText: str(p["descriptionSnippet"]) !== null,
+      ...contact(p),
+    };
+  },
 
   "civic-pilot": (p) => ({
     title: str(p["role"]),
