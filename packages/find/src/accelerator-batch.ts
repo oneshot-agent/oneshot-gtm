@@ -30,6 +30,16 @@ import type { CompanyRecord, FinderResult, RunOpts } from "./_types.ts";
  * github-topics).
  */
 
+/**
+ * How many companies of one yc-oss batch a run reads. The batch is one free
+ * static JSON file and duplicates are dropped before any paid step, so the
+ * run reads the whole batch; the per-run `limit` still caps what is queued.
+ * Slicing the read to `limit` instead meant a batch larger than `limit` (a
+ * YC batch of 230) re-read the same first companies every run and never
+ * reached the rest.
+ */
+const YC_OSS_READ_CAP = 2000;
+
 const PLAY_NAME = "accelerator-batch";
 
 export interface CohortEntry {
@@ -216,7 +226,7 @@ export async function runAcceleratorBatchFinder(
       try {
         const fetched =
           adapterName === "yc-oss"
-            ? await fetchYcOssBatch(entry.cohort, limit)
+            ? await fetchYcOssBatch(entry.cohort, YC_OSS_READ_CAP)
             : await fetchAcceleratorSearch(entry.cohort, entry.cohortLabel, limit);
         result.costUsd += fetched.costUsd;
         if (fetched.records.length === 0) {
