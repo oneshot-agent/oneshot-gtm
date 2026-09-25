@@ -52,9 +52,15 @@ describe.runIf(posix)("openStateDatabase permissions", () => {
     chmodSync(path, 0o644);
     chmodSync(`${path}-shm`, 0o644);
 
-    openStateDatabase(path, { busyTimeoutMs: 1000 }).close();
-    expect(mode(path)).toBe(0o600);
-    expect(mode(`${path}-shm`)).toBe(0o600);
+    // Checked while open: on Linux SQLite deletes the -shm when the last
+    // connection closes.
+    const db = openStateDatabase(path, { busyTimeoutMs: 1000 });
+    try {
+      expect(mode(path)).toBe(0o600);
+      expect(mode(`${path}-shm`)).toBe(0o600);
+    } finally {
+      db.close();
+    }
   });
 
   it("leaves an existing directory's mode alone", () => {
