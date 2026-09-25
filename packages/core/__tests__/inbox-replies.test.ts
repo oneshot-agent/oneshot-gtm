@@ -106,7 +106,8 @@ describe("inbox_replies.kind (v23)", () => {
 
   it("migrates the column onto a pre-v23 ledger without losing rows", () => {
     // Simulate a pre-v23 install: rebuild inbox_replies without `kind`, insert
-    // a legacy row, then re-run migrations by reopening the ledger.
+    // a legacy row, mark the file as pre-versioning (user_version 0), then
+    // reopen so migrations run.
     const db = (ledger as unknown as { db: { exec(s: string): void } }).db;
     db.exec("DROP TABLE inbox_replies");
     db.exec(`
@@ -127,6 +128,7 @@ describe("inbox_replies.kind (v23)", () => {
     db.exec(`
       INSERT INTO inbox_replies (id, thread_key, prospect_id, from_email, body, received_at)
       VALUES ('legacy-1', 't1', 7, 'old@prospect.example', 'hi', '2026-06-01T00:00:00.000Z')`);
+    db.exec("PRAGMA user_version = 0");
     ledger.close();
 
     ledger = new Ledger(dbPath); // migrate() adds the column

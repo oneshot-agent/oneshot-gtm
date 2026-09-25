@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { Ledger, workspaceNameForHome } from "@oneshot-gtm/core";
+import { backfillDecisionProvenance, Ledger, workspaceNameForHome } from "@oneshot-gtm/core";
 import { buildDemoDataset, type DemoDataset } from "./dataset.ts";
 
 /** Written into every demo home. `demo reset` refuses to delete a dir without it. */
@@ -405,6 +405,11 @@ function writeLedger(dbPath: string, data: DemoDataset): Record<string, number> 
       insertInterview.run(iv.person, iv.transcriptPath, iv.jtbd, iv.painQuotesJson, iv.createdAt);
     }
     counts["interviews"] = data.interviews.length;
+
+    // The dataset's decided queue rows carry status + reviewed_at but not the
+    // decision columns; derive them the way the ledger does for legacy rows.
+    // (Migrations run once per file, so a later open no longer fills them.)
+    backfillDecisionProvenance(db);
 
     db.exec("COMMIT");
   } catch (err) {

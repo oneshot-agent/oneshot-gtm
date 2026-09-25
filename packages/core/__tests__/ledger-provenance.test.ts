@@ -193,9 +193,11 @@ describe("backfillDecisionProvenance", () => {
     return Number(result.lastInsertRowid);
   }
 
+  /** Reopen as a pre-versioning install (user_version 0), so the backfill runs. */
   function reopen(): void {
+    (ledger as unknown as { db: { exec(s: string): void } }).db.exec("PRAGMA user_version = 0");
     ledger.close();
-    ledger = new Ledger(dbPath); // backfill runs on boot
+    ledger = new Ledger(dbPath);
   }
 
   it("classifies legacy rows: single approvals, bulk clusters, human and auto rejections", () => {

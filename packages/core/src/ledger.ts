@@ -63,7 +63,7 @@ import {
 import { InboxStore } from "./ledger-inbox.ts";
 import { canonicalLinkedInProfileKey, ProspectStore } from "./ledger-prospects.ts";
 import { QueueStore } from "./ledger-queue.ts";
-import { migrateLedgerSchema } from "./ledger-schema.ts";
+import { runLedgerMigrations } from "./ledger-schema.ts";
 import { MailboxStore } from "./mailbox-store.ts";
 import { type ReceiptCompaction, ReceiptStore } from "./ledger-receipts.ts";
 import { sharedDbPath } from "./shared-db.ts";
@@ -429,11 +429,9 @@ export class Ledger {
   }
 
   private migrate(): void {
-    // Fresh-install schema construction + inline column/table migrations
-    // live in ledger-schema.ts (see its doc comment) — extracted so the
-    // highest-risk inline DDL in this file can be tested and read in
-    // isolation from the domain methods below.
-    migrateLedgerSchema(this.db);
+    // Schema construction and migrations live in ledger-schema.ts. They run
+    // only when this file's user_version is behind (see LEDGER_MIGRATIONS).
+    runLedgerMigrations(this.db);
   }
 
   /**

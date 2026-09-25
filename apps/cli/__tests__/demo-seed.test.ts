@@ -160,6 +160,17 @@ describe("seedDemoHome", { timeout: SEED_TIMEOUT_MS }, () => {
     expect(new Set(statuses)).toEqual(new Set(["pending", "approved", "rejected", "sent"]));
   });
 
+  it("stamps decision provenance on decided queue rows", () => {
+    seedDemoHome({ home, anchor: ANCHOR });
+    const db = open(home);
+    const undecided = rows(
+      db,
+      "SELECT id FROM target_queue WHERE status IN ('approved', 'rejected', 'sent') AND reviewed_at IS NOT NULL AND decision IS NULL",
+    );
+    db.close();
+    expect(undecided).toEqual([]);
+  });
+
   it("populates the case and unsent letter for every reviewable queue row", () => {
     seedDemoHome({ home, anchor: ANCHOR });
     const db = open(home);
