@@ -176,6 +176,26 @@ describe("compactReceiptPayloads", () => {
     expect(ledger.compactReceiptPayloads({ apply: true })).toMatchObject({ rows: 0, skipped: 0 });
   });
 
+  it("selects and measures by bytes, not characters", () => {
+    // 1,500 three-byte characters: under 4,096 characters, over 4,096 bytes.
+    const cjk = "字".repeat(1500);
+    const id = insertRaw("web.read", JSON.stringify({ url: "u", markdown: cjk }));
+    const res = ledger.compactReceiptPayloads({ apply: true });
+    expect(res.rows).toBe(1);
+    expect(res.bytesBefore).toBeGreaterThan(4500);
+    expect(JSON.parse(storedJson(id))["markdown"]).toBe("[omitted: 1500 chars]");
+  });
+
+  it("pages through more rows than one batch", () => {
+    const ids = Array.from({ length: 1100 }, (_, i) =>
+      insertRaw("web.read", JSON.stringify({ url: `u${i}`, markdown: "m".repeat(4200) })),
+    );
+    expect(ledger.compactReceiptPayloads({ apply: false }).rows).toBe(1100);
+    expect(ledger.compactReceiptPayloads({ apply: true }).rows).toBe(1100);
+    expect(JSON.parse(storedJson(ids.at(-1)!))["markdown"]).toBe("[omitted: 4200 chars]");
+    expect(ledger.compactReceiptPayloads({ apply: false }).rows).toBe(0);
+  });
+
   it("skips rows whose JSON doesn't parse", () => {
     const bad = insertRaw("web.read", `{not json ${PAGE}`);
     const res = ledger.compactReceiptPayloads({ apply: true });

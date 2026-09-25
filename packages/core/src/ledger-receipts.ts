@@ -48,7 +48,7 @@ export function slimReceiptPayload(callType: string, payload: unknown): unknown 
   return VERBATIM_RECEIPT_CALL_TYPES.has(callType) ? payload : slimValue(payload);
 }
 
-/** Rows smaller than this are left alone by `compactPayloads`. */
+/** Rows smaller than this (in bytes) are left alone by `compactPayloads`. */
 const COMPACT_MIN_BYTES = 4096;
 const COMPACT_BATCH = 500;
 
@@ -154,43 +154,47 @@ export class ReceiptStore {
    */
   compactPayloads(opts: { apply: boolean }): ReceiptCompaction {
     const verbatim = [...VERBATIM_RECEIPT_CALL_TYPES];
-    const rows = this.db
-      .query(
-        `SELECT id, call_type, signed_receipt FROM receipts
-         WHERE length(signed_receipt) > ?
-           AND call_type NOT IN (${verbatim.map(() => "?").join(",")})
-         ORDER BY id`,
-      )
-      .all(COMPACT_MIN_BYTES, ...verbatim) as Array<{
-      id: number;
-      call_type: string;
-      signed_receipt: string;
-    }>;
+    // Paged by id so memory stays one page, whatever the ledger's size; this
+    // also runs inside doctor on the dashboard server. CAST AS BLOB makes
+    // length() count bytes, not characters.
+    const page = this.db.query(
+      `SELECT id, call_type, signed_receipt FROM receipts
+       WHERE id > ? AND length(CAST(signed_receipt AS BLOB)) > ?
+         AND call_type NOT IN (${verbatim.map(() => "?").join(",")})
+       ORDER BY id LIMIT ?`,
+    );
+    const update = this.db.prepare("UPDATE receipts SET signed_receipt = ? WHERE id = ?");
     const out: ReceiptCompaction = { rows: 0, bytesBefore: 0, bytesAfter: 0, skipped: 0 };
-    const updates: Array<[string, number]> = [];
-    for (const row of rows) {
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(row.signed_receipt);
-      } catch {
-        out.skipped++;
-        continue;
+    let afterId = 0;
+    for (;;) {
+      const rows = page.all(afterId, COMPACT_MIN_BYTES, ...verbatim, COMPACT_BATCH) as Array<{
+        id: number;
+        call_type: string;
+        signed_receipt: string;
+      }>;
+      if (rows.length === 0) break;
+      afterId = rows[rows.length - 1]!.id;
+      const updates: Array<[string, number]> = [];
+      for (const row of rows) {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(row.signed_receipt);
+        } catch {
+          out.skipped++;
+          continue;
+        }
+        const slim = JSON.stringify(slimReceiptPayload(row.call_type, parsed));
+        // Already within the caps (e.g. many short fields): nothing to trim.
+        if (slim === JSON.stringify(parsed)) continue;
+        out.rows++;
+        out.bytesBefore += Buffer.byteLength(row.signed_receipt);
+        out.bytesAfter += Buffer.byteLength(slim);
+        updates.push([slim, row.id]);
       }
-      const slim = JSON.stringify(slimReceiptPayload(row.call_type, parsed));
-      // Already within the caps (e.g. many short fields): nothing to trim.
-      if (slim === JSON.stringify(parsed)) continue;
-      out.rows++;
-      out.bytesBefore += row.signed_receipt.length;
-      out.bytesAfter += slim.length;
-      updates.push([slim, row.id]);
-    }
-    if (opts.apply) {
-      const update = this.db.prepare("UPDATE receipts SET signed_receipt = ? WHERE id = ?");
-      for (let i = 0; i < updates.length; i += COMPACT_BATCH) {
-        const batch = updates.slice(i, i + COMPACT_BATCH);
+      if (opts.apply && updates.length > 0) {
         this.db
           .transaction(() => {
-            for (const [json, id] of batch) update.run(json, id);
+            for (const [json, id] of updates) update.run(json, id);
           })
           .immediate();
       }

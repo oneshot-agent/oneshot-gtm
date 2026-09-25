@@ -3155,6 +3155,12 @@ export class Ledger {
     this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
   }
 
+  /** Pages VACUUM would reclaim. */
+  freePages(): number {
+    return (this.db.query("PRAGMA freelist_count").get() as { freelist_count: number })
+      .freelist_count;
+  }
+
   /** Path of the SQLite file this ledger opened. */
   get filePath(): string {
     return this.path;

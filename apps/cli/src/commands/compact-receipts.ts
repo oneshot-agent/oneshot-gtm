@@ -55,17 +55,20 @@ export function commandCompactReceipts(opts: CompactReceiptsOpts): CompactReceip
   if (result.skipped > 0) warn(`${result.skipped} receipt(s) with unparseable JSON left as-is`);
   if (result.rows === 0) {
     ok("no oversized receipt payloads; nothing to trim");
-    return summary;
+  } else {
+    const verb = opts.apply ? "trimmed" : "would trim";
+    ok(
+      `${verb} ${result.rows} receipt(s): ${mb(result.bytesBefore)} → ${mb(result.bytesAfter)}` +
+        " (email.find/verify and direct mail kept whole)",
+    );
   }
-  const verb = opts.apply ? "trimmed" : "would trim";
-  ok(
-    `${verb} ${result.rows} receipt(s): ${mb(result.bytesBefore)} → ${mb(result.bytesAfter)}` +
-      " (email.find/verify and direct mail kept whole)",
-  );
   if (!opts.apply) {
-    note("run again with --apply to write, then VACUUM to reclaim the space");
+    if (result.rows > 0) note("run again with --apply to write, then VACUUM to reclaim the space");
     return summary;
   }
+  // An earlier `--no-vacuum` run, or a VACUUM that hit a lock, leaves free
+  // pages behind with nothing left to trim; still vacuum those.
+  if (result.rows === 0 && ledger.freePages() === 0) return summary;
   if (!opts.vacuum) {
     note("skipped VACUUM (--no-vacuum); the file keeps its size until one runs");
     return summary;
