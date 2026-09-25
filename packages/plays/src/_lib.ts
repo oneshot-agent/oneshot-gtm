@@ -496,6 +496,26 @@ const ENTERPRISE_DOSSIER_OPENER_PATTERNS: RegExp[] = [
 ];
 
 /**
+ * Strips a leading greeting line ("Hey," / "Hey Sam,") so it is never
+ * counted as a sentence or inspected as the opener — the same shape
+ * `openerStem` (above) already excludes from its stem, and `_humanizer.md`'s
+ * "Optional greeting" section permits, followed by a blank line, before
+ * the actual first-touch content. Without this, a greeting-prefixed
+ * enterprise draft can be falsely held on sentence count (the greeting
+ * eats one of the 3 allowed slots) while its real dossier-observation
+ * opener lands as sentences[1] and skips `ENTERPRISE_DOSSIER_OPENER_PATTERNS`
+ * entirely, since only sentences[0] is checked.
+ */
+function stripGreetingLine(text: string): string {
+  const lines = text.split("\n");
+  const first = (lines[0] ?? "").trim();
+  const isGreeting = /^(?:hey|hi|hello|good (?:morning|afternoon))\b[^,]{0,40}[,\-–—]?$/i.test(
+    first,
+  );
+  return lines.length > 1 && isGreeting ? lines.slice(1).join("\n").trimStart() : text;
+}
+
+/**
  * Post-generation flags for design-partner-loi's enterprise buyer-type
  * first touch (issue #707): the general play prose (4-6 sentences, a
  * dossier hook opener) reads as automated to a senior enterprise
@@ -510,7 +530,7 @@ const ENTERPRISE_DOSSIER_OPENER_PATTERNS: RegExp[] = [
  */
 export function enterpriseFirstTouchFlags(body: string): string[] {
   const flags: string[] = [];
-  const stripped = stripSignatureLines(body);
+  const stripped = stripGreetingLine(stripSignatureLines(body));
   const words = stripped.split(/\s+/).filter(Boolean);
   if (words.length > ENTERPRISE_MAX_BODY_WORDS) flags.push("enterprise-body-too-long");
   const sentences = trimTrailingSignOff(splitBodySentences(stripped));

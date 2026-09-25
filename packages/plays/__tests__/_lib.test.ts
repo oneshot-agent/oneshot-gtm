@@ -559,4 +559,37 @@ describe("enterpriseFirstTouchFlags — issue #707", () => {
     ].join("\n");
     expect(enterpriseFirstTouchFlags(body)).toEqual([]);
   });
+
+  // Regression for the round-1 review finding: `_humanizer.md`'s "Optional
+  // greeting" section permits a leading `Hey <name>,` line (followed by a
+  // blank line) on any draft, including enterprise first touches. Before the
+  // fix, `splitBodySentences` turned that greeting into sentences[0] — so it
+  // both ate one of the 3 allowed sentence slots (falsely holding an
+  // otherwise-compliant draft) and shifted the real opener to sentences[1],
+  // where `ENTERPRISE_DOSSIER_OPENER_PATTERNS` never inspects it.
+  it("does not count a leading greeting line as a sentence", () => {
+    const body = [
+      "Hey Sam,",
+      "",
+      "Regulated ops teams that pass audit on the first pass now skip the manual evidence trail entirely.",
+      "A short call would show exactly how the trail maps to your own control set.",
+      "Open to a scoped design-partner conversation for Acme?",
+      "",
+      "Sam",
+    ].join("\n");
+    expect(enterpriseFirstTouchFlags(body)).toEqual([]);
+  });
+
+  it("still flags a dossier-observation opener that follows a greeting", () => {
+    const body = [
+      "Hey Sam,",
+      "",
+      "I noticed your team just shipped a major platform migration.",
+      "A short call would show the specific fit.",
+      "Open to a scoped design-partner conversation?",
+      "",
+      "Sam",
+    ].join("\n");
+    expect(enterpriseFirstTouchFlags(body)).toContain("enterprise-dossier-opener");
+  });
 });
