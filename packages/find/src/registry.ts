@@ -103,6 +103,22 @@ export async function runFinderWithProductResearch(
 export type Readiness = { ready: true } | { ready: false; reason: string };
 
 /**
+ * Rotation cursor for `hiring-signal` / `job-change`'s company-batch split
+ * (issue #708): `runFinderWithProductResearch`'s two callers stamp
+ * `_triggerLastPolledAtMs` onto the resolved config with the trigger's
+ * PRE-run `last_polled_at` (epoch ms, 0 for a trigger's first-ever run)
+ * before invoking `spec.run` — so a config that spans several company
+ * batches starts at a different batch each run without any new persisted
+ * cursor state. Never itself persisted: `storedTriggerConfig`/`defaultConfig`
+ * never carry this key, and nothing serializes the mutated config back to
+ * `config_json`.
+ */
+export function companyBatchCursorFor(config: Record<string, unknown>): number {
+  const cursor = config["_triggerLastPolledAtMs"];
+  return typeof cursor === "number" && Number.isFinite(cursor) ? cursor : 0;
+}
+
+/**
  * Worst-case spend estimate for reserving against the daily ceiling before a
  * trigger fires. Reads `maxCostUsd` (every finder's SDK/LLM cap) plus, for
  * x-reposters, `maxSpendPerRun` (its separate X-read meter) — the two are
@@ -308,7 +324,7 @@ export const TRIGGERS: TriggerSpec[] = [
       maxCostUsd: 5,
     },
     configBrief:
-      "Searches for 'joined X as Y' job-change announcements, ICP-filters, enriches the new email. Config: `personas` (the roles whose JOB CHANGE represents a buying moment for THIS product — not generic 'VP Eng' unless that's actually who buys; e.g. 'Head of AI', 'Founding Engineer' for AI-tooling ICPs), `companies` (optional whitelist of companies to bias toward), `yourEdge` (REQUIRED. Observations the founder actually made, never a pitch: several `//`-separated angles, each opening with who it fits (e.g. *For a founder selling to clinics —*), then a named failure and what was learned. The tool picks ONE per prospect in code; the email never sees the others; here each angle is what a specific move makes newly relevant), `sinceDays` (lookback, default 14), `limit`, `maxCostUsd`. Strong personas matter more than long lists.",
+      "Searches for 'joined X as Y' job-change announcements, ICP-filters, enriches the new email. Config: `personas` (the roles whose JOB CHANGE represents a buying moment for THIS product — not generic 'VP Eng' unless that's actually who buys; e.g. 'Head of AI', 'Founding Engineer' for AI-tooling ICPs), `companies` (optional whitelist of companies to bias toward — a long list is automatically split into several queries that stay under the search engine's length limit, with the starting batch rotating run to run so it isn't always scanned from the top), `yourEdge` (REQUIRED. Observations the founder actually made, never a pitch: several `//`-separated angles, each opening with who it fits (e.g. *For a founder selling to clinics —*), then a named failure and what was learned. The tool picks ONE per prospect in code; the email never sees the others; here each angle is what a specific move makes newly relevant), `sinceDays` (lookback, default 14), `limit`, `maxCostUsd`. Strong personas matter more than long lists.",
     readiness: (cfg) => {
       const edge = cfg["yourEdge"];
       return typeof edge === "string" && edge.trim().length > 0
@@ -324,6 +340,7 @@ export const TRIGGERS: TriggerSpec[] = [
         sinceDays: (cfg["sinceDays"] as number) ?? 14,
         limit: (cfg["limit"] as number) ?? 25,
         maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
+        companyBatchCursor: companyBatchCursorFor(cfg),
       }),
   },
   {
@@ -338,7 +355,7 @@ export const TRIGGERS: TriggerSpec[] = [
       maxCostUsd: 5,
     },
     configBrief:
-      "Scans job boards for open roles that signal the company would buy THIS product. Config: `sites` (job-board hosts to search; default Greenhouse / Lever / Workable / Ashby — the boards funded companies post on; add `workatastartup.com`, YC's own board, for companies with no GTM yet, i.e. the ones posting a first intern or generalist), `roles` (job titles whose existence implies a need for the product — pick the stage as much as the function: 'GTM Intern' or 'Founder's Associate' says no sales team exists yet, 'Head of Sales' says it already does), `companies` (optional whitelist), `yourClaim` (REQUIRED. Observations the founder actually made, never a pitch: several `//`-separated angles, each opening with who it fits (e.g. *For a founder selling to clinics —*), then a named failure and what was learned. The tool picks ONE per prospect in code; the email never sees the others; here each angle is the specific piece of the first 90 days in that role it collapses), `sinceDays`, `limit`, `maxCostUsd`. The roles + yourClaim angles need to be tightly coupled to the product.",
+      "Scans job boards for open roles that signal the company would buy THIS product. Config: `sites` (job-board hosts to search; default Greenhouse / Lever / Workable / Ashby — the boards funded companies post on; add `workatastartup.com`, YC's own board, for companies with no GTM yet, i.e. the ones posting a first intern or generalist), `roles` (job titles whose existence implies a need for the product — pick the stage as much as the function: 'GTM Intern' or 'Founder's Associate' says no sales team exists yet, 'Head of Sales' says it already does), `companies` (optional whitelist — a long list is automatically split into several queries that stay under the search engine's length limit, with the starting batch rotating run to run so it isn't always scanned from the top), `yourClaim` (REQUIRED. Observations the founder actually made, never a pitch: several `//`-separated angles, each opening with who it fits (e.g. *For a founder selling to clinics —*), then a named failure and what was learned. The tool picks ONE per prospect in code; the email never sees the others; here each angle is the specific piece of the first 90 days in that role it collapses), `sinceDays`, `limit`, `maxCostUsd`. The roles + yourClaim angles need to be tightly coupled to the product.",
     readiness: (cfg) => {
       const claim = typeof cfg["yourClaim"] === "string" ? (cfg["yourClaim"] as string).trim() : "";
       return claim.length > 0
@@ -355,6 +372,7 @@ export const TRIGGERS: TriggerSpec[] = [
         sinceDays: (cfg["sinceDays"] as number) ?? 14,
         limit: (cfg["limit"] as number) ?? 25,
         maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
+        companyBatchCursor: companyBatchCursorFor(cfg),
       }),
   },
   {
@@ -1251,6 +1269,18 @@ export async function runTriggerNow(
     logEvent("trigger.run.skipped", { name, source: "ad_hoc", reason: readiness.reason });
     return { name, fired: false, error: message, nextDueInMs: intervalMs };
   }
+  // Company-batch rotation cursor (issue #708) — the PRE-run last_polled_at,
+  // read before this run touches it. `stored` is the row fetched above,
+  // before any upsert/claim; null (first-ever run) reads as cursor 0, same
+  // as `companyBatchCursorFor`'s own fallback. `storedTriggerConfig` may
+  // return `spec.defaultConfig` itself (same object reference) when there is
+  // no stored row yet, so a plain-property assignment would leak this key
+  // into the shared module-level default for every future call — spread
+  // into a fresh object instead.
+  const runConfig: Record<string, unknown> = {
+    ...config,
+    _triggerLastPolledAtMs: stored?.last_polled_at ? new Date(stored.last_polled_at).getTime() : 0,
+  };
   // fireTriggerNow claims before detaching its promise. Direct callers must
   // claim here so this exported boundary cannot overlap same-trigger runs.
   if (!options.claimHeld) {
@@ -1284,7 +1314,7 @@ export async function runTriggerNow(
   const startedAt = Date.now();
   logEvent("trigger.run.start", { name, source: "ad_hoc" });
   try {
-    const result = await runFinderWithProductResearch(spec, config);
+    const result = await runFinderWithProductResearch(spec, runConfig);
     ledger.updateTriggerLastPoll({ name, summary: result });
     logEvent("trigger.run.done", {
       name,
@@ -1352,6 +1382,21 @@ export async function runDueTriggers(
       outcomes.push({ name: spec.name, fired: false, nextDueInMs: intervalMs });
       continue;
     }
+
+    // Company-batch rotation cursor (issue #708) — the PRE-run last_polled_at,
+    // read before this run touches it. Same fallback as runTriggerNow: a
+    // never-polled trigger (`stored` null, or its `last_polled_at` unset)
+    // reads as cursor 0. `storedTriggerConfig` may return `spec.defaultConfig`
+    // itself (same object reference) when there is no stored row yet, so a
+    // plain-property assignment would leak this key into the shared
+    // module-level default for every future call — spread into a fresh
+    // object instead.
+    const runConfig: Record<string, unknown> = {
+      ...config,
+      _triggerLastPolledAtMs: stored?.last_polled_at
+        ? new Date(stored.last_polled_at).getTime()
+        : 0,
+    };
 
     // Readiness gate: skip without touching last_polled_at so a config fix is
     // picked up on the next tick, not the next interval boundary.
@@ -1444,7 +1489,7 @@ export async function runDueTriggers(
     const startedAt = Date.now();
     logEvent("trigger.run.start", { name: spec.name, source: "watch" });
     try {
-      const result = await runFinderWithProductResearch(spec, config);
+      const result = await runFinderWithProductResearch(spec, runConfig);
       const durationMs = Date.now() - startedAt;
       ledger.updateTriggerLastPoll({ name: spec.name, summary: result });
       logEvent("trigger.run.done", {

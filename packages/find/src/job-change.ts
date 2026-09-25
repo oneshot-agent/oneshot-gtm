@@ -7,6 +7,7 @@ import type { JobChangeTarget } from "@oneshot-gtm/plays";
 import { isDuplicate, urlDomain } from "./_dedupe.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
+import { batchCompaniesByQueryLength, rotateBatches } from "./_query-batch.ts";
 import type { FinderResult, JobChangeExtract, RunOpts } from "./_types.ts";
 
 const PLAY_NAME = "job-change";
@@ -25,6 +26,16 @@ export interface JobChangeFinderOpts extends RunOpts {
    * If empty, casts a wider net per persona.
    */
   companies?: string[];
+  /**
+   * Rotation cursor for batching a long `companies` list across queries
+   * (issue #708): when the list needs more than one batch to stay under the
+   * query length bound, batches start at `cursor mod batchCount` instead of
+   * always batch 0, so a list spanning several batches isn't scanned from
+   * the top on every run. The registry derives this from the trigger's
+   * `last_polled_at` epoch ms; direct/CLI callers may omit it (defaults to
+   * 0 — first batch always starts the run).
+   */
+  companyBatchCursor?: number;
   /** Days back to bias the search query. Default 14. */
   sinceDays?: number;
 }
@@ -66,32 +77,40 @@ export async function runJobChangeFinder(opts: JobChangeFinderOpts): Promise<Fin
 
   for (const persona of personas) {
     if (hits.length >= limit * 2) break;
-    const companyClause =
-      opts.companies && opts.companies.length > 0
-        ? ` (${opts.companies.map((c) => `"${c}"`).join(" OR ")})`
-        : "";
-    const query = `"joined as ${persona}"${companyClause} ${sincePhrase}`;
-    try {
-      const search = await webSearch(
-        { query, maxResults: Math.min(15, limit) },
-        { playName: PLAY_NAME },
-      );
-      result.costUsd += search.result.cost ?? 0;
-      for (const hit of search.result.results ?? []) {
-        if (!hit.url || seenUrls.has(hit.url)) continue;
-        seenUrls.add(hit.url);
-        hits.push({ url: hit.url, title: hit.title, description: hit.description });
+    const companies = opts.companies ?? [];
+    const buildQuery = (batch: readonly string[]): string => {
+      const companyClause = batch.length > 0 ? ` (${batch.map((c) => `"${c}"`).join(" OR ")})` : "";
+      return `"joined as ${persona}"${companyClause} ${sincePhrase}`;
+    };
+    const batches = rotateBatches(
+      batchCompaniesByQueryLength(companies, buildQuery),
+      opts.companyBatchCursor ?? 0,
+    );
+    for (const batch of batches) {
+      if (hits.length >= limit * 2) break;
+      const query = buildQuery(batch);
+      try {
+        const search = await webSearch(
+          { query, maxResults: Math.min(15, limit) },
+          { playName: PLAY_NAME },
+        );
+        result.costUsd += search.result.cost ?? 0;
+        for (const hit of search.result.results ?? []) {
+          if (!hit.url || seenUrls.has(hit.url)) continue;
+          seenUrls.add(hit.url);
+          hits.push({ url: hit.url, title: hit.title, description: hit.description });
+        }
+      } catch (err) {
+        logEvent(
+          "error.swallowed",
+          {
+            kind: "job-change.webSearch",
+            persona,
+            message_120: ((err as Error).message ?? "").slice(0, 120),
+          },
+          "warn",
+        );
       }
-    } catch (err) {
-      logEvent(
-        "error.swallowed",
-        {
-          kind: "job-change.webSearch",
-          persona,
-          message_120: ((err as Error).message ?? "").slice(0, 120),
-        },
-        "warn",
-      );
     }
   }
   result.candidates = hits.length;

@@ -2,7 +2,7 @@
 
 **Assume green.** The 67 CLI commands, 23 plays, 15 finders, ten dashboard pages plus the run form, and the server's REST + SSE routes are all covered by the test suite — and verified end to end against the live OneShot API: every paid call type has made the live round trip, including the voice and SMS legs (`motion concierge` / `motion demo-no-show`), the PMF survey pair, reply triage, bounce harvesting, and `gmail placement`.
 
-Last verified **2026-09-25** · Bun 1.3.13 · OneShot SDK 0.35.0 · **4518 tests / 361 files** · typecheck + oxlint + oxfmt pass (44 lint warnings, 0 errors).
+Last verified **2026-09-25** · Bun 1.3.13 · OneShot SDK 0.35.0 · **4546 tests / 365 files** · typecheck + oxlint + oxfmt pass (44 lint warnings, 0 errors).
 
 **What the gate covers.** `apps/web` is now inside `bun run typecheck` — the dashboard source is
 type-checked in CI, and a deliberate error under `apps/web/src` fails the root script. As of
@@ -96,6 +96,22 @@ on `angle_synthesized_at`'s own freshness (6h) rather than extra state, so a rep
 reply-then-outcome pair only pays for one re-synthesis; auto-replies and unsubscribes never trigger
 it at all. Best-effort throughout: demo mode, an open circuit breaker, a missing prospect, or an
 empty LLM result all degrade to a silent no-op, never a thrown error on the hot path.
+
+Company-list batching for `hiring-signal` / `job-change` (#708): both finders used to OR the
+entire `companies` list into one webSearch query per role/persona — search engines cap query
+length at roughly 32 words, and the hiring-signal query also carries the `site:` clauses, so a
+named-account list past a handful was silently truncated or matched nothing. A new
+`_query-batch.ts` (`batchCompaniesByQueryLength` + `rotateBatches`) greedily splits `companies`
+into batches sized off the RENDERED query's actual word count — not a fixed company count, so a
+wordier site clause or longer names shrink the batch that still fits — and issues one search per
+(role/persona × batch), deduping hits across batches exactly as before (`seen`/`seenUrls`) and
+still respecting the existing `hits.length >= limit * 2` guard and `maxCostUsd` (every batch's
+search cost is summed into `result.costUsd`). The starting batch rotates run to run via a new
+`companyBatchCursor` finder option, which `registry.ts` derives from the trigger's PRE-run
+`last_polled_at` (epoch ms; 0 for a never-polled trigger) rather than persisting new cursor
+state — stamped onto a config copy (`runConfig`) so the mutation never leaks onto the shared
+`spec.defaultConfig` object. An empty/absent `companies` list still issues exactly one query per
+role/persona with no company clause, byte-for-byte unchanged from before.
 
 Updated by hand after each dogfood run.
 

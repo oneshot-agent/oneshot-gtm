@@ -7,6 +7,7 @@ import type { HiringSignalTarget } from "@oneshot-gtm/plays";
 import { isDuplicate } from "./_dedupe.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
+import { batchCompaniesByQueryLength, rotateBatches } from "./_query-batch.ts";
 import type { FinderResult, HiringSignalExtract, RunOpts } from "./_types.ts";
 
 const PLAY_NAME = "hiring-signal";
@@ -39,6 +40,16 @@ export interface HiringSignalFinderOpts extends RunOpts {
   roles?: string[];
   /** Optional company-name filter to bias results. */
   companies?: string[];
+  /**
+   * Rotation cursor for batching a long `companies` list across queries
+   * (issue #708): when the list needs more than one batch to stay under the
+   * query length bound, batches start at `cursor mod batchCount` instead of
+   * always batch 0, so a list spanning several batches isn't scanned from
+   * the top on every run. The registry derives this from the trigger's
+   * `last_polled_at` epoch ms; direct/CLI callers may omit it (defaults to
+   * 0 — first batch always starts the run).
+   */
+  companyBatchCursor?: number;
   /**
    * The "your one-line claim" that goes onto every queued target — required for the
    * downstream hiring-signal play. If unset, we fall back to a generic placeholder.
@@ -96,32 +107,40 @@ export async function runHiringSignalFinder(opts: HiringSignalFinderOpts): Promi
 
   for (const role of roles) {
     if (hits.length >= limit * 2) break;
-    const companyClause =
-      opts.companies && opts.companies.length > 0
-        ? ` (${opts.companies.map((c) => `"${c}"`).join(" OR ")})`
-        : "";
-    const query = `"${role}"${companyClause} ${sincePhrase} (${sites.map((s) => `site:${s}`).join(" OR ")})`;
-    try {
-      const search = await webSearch(
-        { query, maxResults: Math.min(15, limit) },
-        { playName: PLAY_NAME },
-      );
-      result.costUsd += search.result.cost ?? 0;
-      for (const hit of search.result.results ?? []) {
-        if (!hit.url || seen.has(hit.url) || !isJobBoardUrl(hit.url, sites)) continue;
-        seen.add(hit.url);
-        hits.push({ url: hit.url, title: hit.title, description: hit.description });
+    const companies = opts.companies ?? [];
+    const buildQuery = (batch: readonly string[]): string => {
+      const companyClause = batch.length > 0 ? ` (${batch.map((c) => `"${c}"`).join(" OR ")})` : "";
+      return `"${role}"${companyClause} ${sincePhrase} (${sites.map((s) => `site:${s}`).join(" OR ")})`;
+    };
+    const batches = rotateBatches(
+      batchCompaniesByQueryLength(companies, buildQuery),
+      opts.companyBatchCursor ?? 0,
+    );
+    for (const batch of batches) {
+      if (hits.length >= limit * 2) break;
+      const query = buildQuery(batch);
+      try {
+        const search = await webSearch(
+          { query, maxResults: Math.min(15, limit) },
+          { playName: PLAY_NAME },
+        );
+        result.costUsd += search.result.cost ?? 0;
+        for (const hit of search.result.results ?? []) {
+          if (!hit.url || seen.has(hit.url) || !isJobBoardUrl(hit.url, sites)) continue;
+          seen.add(hit.url);
+          hits.push({ url: hit.url, title: hit.title, description: hit.description });
+        }
+      } catch (err) {
+        logEvent(
+          "error.swallowed",
+          {
+            kind: "hiring-signal.webSearch",
+            role,
+            message_120: ((err as Error).message ?? "").slice(0, 120),
+          },
+          "warn",
+        );
       }
-    } catch (err) {
-      logEvent(
-        "error.swallowed",
-        {
-          kind: "hiring-signal.webSearch",
-          role,
-          message_120: ((err as Error).message ?? "").slice(0, 120),
-        },
-        "warn",
-      );
     }
   }
   result.candidates = hits.length;
