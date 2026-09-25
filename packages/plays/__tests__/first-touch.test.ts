@@ -142,6 +142,15 @@ describe("closingEitherOrQuestion", () => {
     ).toBe(false);
   });
 
+  it("sees through a partial signature and an abbreviation", async () => {
+    const { closingEitherOrQuestion } = await import("../src/_lib.ts");
+    expect(closingEitherOrQuestion("Keys or billing?\nJ", ["oneshot.example", "J"])).toBe(true);
+    expect(closingEitherOrQuestion("Keys or billing?\n\nThanks,\nJ", [])).toBe(true);
+    expect(
+      closingEitherOrQuestion("Would keys or billing matter to Acme Inc. this quarter?", []),
+    ).toBe(true);
+  });
+
   it("is a lint flag only for follow-ups", async () => {
     const { lintEmail } = await import("../src/_lib.ts");
     const body = "Is it sorted, or still open?";

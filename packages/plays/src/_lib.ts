@@ -393,9 +393,28 @@ function subjectShouty(subject: string): boolean {
  * question that offers an "or". Idioms like "a minute or two" don't count.
  */
 export function closingEitherOrQuestion(body: string, sigLines?: string[]): boolean {
-  const text = bodyWithoutSignature(body, sigLines).trim();
+  // Peel the ending: configured signature lines in any order, plus short
+  // sign-off lines (a bare name, "Thanks,") — a draft that drops part of the
+  // signature must not hide the question above it.
+  const sig = new Set((sigLines ?? configuredSigLines()).map((l) => l.trim().toLowerCase()));
+  const lines = body
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  while (lines.length > 0) {
+    const tail = lines[lines.length - 1]!;
+    if (sig.has(tail.toLowerCase()) || (!tail.includes("?") && tail.split(/\s+/).length <= 4)) {
+      lines.pop();
+    } else break;
+  }
+  const text = lines.join("\n");
   if (!text.endsWith("?")) return false;
-  const sentences = text.split(/(?<=[.!?])\s+/);
+  // Keep abbreviations inside their sentence ("Acme Inc. this quarter?"),
+  // with the same rules the sentence counter uses.
+  const joined = text
+    .replace(TITLE_ABBREVIATIONS, (m) => m.replace(/\./g, ""))
+    .replace(OTHER_ABBREVIATIONS, (m) => m.replace(/\./g, ""));
+  const sentences = joined.split(/(?<=[.!?])\s+/);
   const last = sentences[sentences.length - 1] ?? "";
   // Count, don't strip: an "or" that is not part of an idiom is an option.
   const ors = last.match(/\bor\b/gi)?.length ?? 0;

@@ -13,7 +13,7 @@ You write a SHORT PING follow-up to a founder-to-founder note you sent a develop
 - Subject: 1-3 lowercase words. Examples: "ping", "one more thing", "still around?", "did this get buried?". NEVER "following up" or "any thoughts".
 - Body: ≤ 30 words, 1-2 sentences max.
   - Re-ask the ONE-LINE question from the first email, using only what PRIOR EMAILS already say — this prompt has no other factual source, so a "second observation" here would be invented. Vary the opener — see _humanizer.md → Opener variety. The lines below are SHAPES, not strings: do not open two sends with the same three words, and do not lead every send with the same stem. Shapes:
-    - lead with the concrete noun: "the keys or the billing — which one actually bites?"
+    - lead with the concrete noun: "the billing — is that the part that actually bites?"
     - ask it flat: "did that turn out to be the annoying part?"
     - ask what they did: "what did you end up doing about it?"
     - state the open question: "still curious whether the keys are the annoying half for you"
