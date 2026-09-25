@@ -82,6 +82,7 @@ import { commandEnrichLinkedIn } from "./commands/enrich-linkedin.ts";
 import { commandResearchProspects } from "./commands/research-prospects.ts";
 import { commandResearchProducts } from "./commands/research-products.ts";
 import { commandResearchQueue } from "./commands/research-queue.ts";
+import { commandRejudgeGitHub } from "./commands/rejudge-github.ts";
 import { commandSynthesizeAngles } from "./commands/synthesize-angles.ts";
 import { commandScoreProspects } from "./commands/score-prospects.ts";
 import { commandBackfillFitReason } from "./commands/backfill-fit-reason.ts";
@@ -646,6 +647,53 @@ find
           ...(Number.isFinite(opts.limit) ? { limit: opts.limit as number } : {}),
           ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
           ...(Number.isFinite(opts.maxCostUsd) ? { maxCostUsd: opts.maxCostUsd as number } : {}),
+        });
+      },
+    ),
+  );
+
+find
+  .command("rejudge-github")
+  .option("--status <s>", "pending, approved, or live = both (default live)")
+  .option("--id <n>", "re-judge one github-stars queue row by id", positiveInt("--id"))
+  .option(
+    "--limit <n>",
+    "max rows to judge, oldest first (default: no limit)",
+    positiveInt("--limit"),
+  )
+  .option("--concurrency <n>", "parallel rows (default 3)", positiveInt("--concurrency"))
+  .option(
+    "--reject-approved",
+    "move approved rows that fail to rejected (default: annotate only)",
+    false,
+  )
+  .option("--refresh", "re-judge rows that already carry a GitHub re-judge", false)
+  .option("--verbose", "print every row's verdict", false)
+  .option("--dry-run", "judge and print; write nothing", false)
+  .description(
+    "Re-judge live github-stars queue rows on their public GitHub evidence (bio, site, own repos, profile README); no paid research",
+  )
+  .action(
+    runOrFail(
+      async (opts: {
+        status?: string;
+        id?: number;
+        limit?: number;
+        concurrency?: number;
+        rejectApproved: boolean;
+        refresh: boolean;
+        verbose: boolean;
+        dryRun: boolean;
+      }) => {
+        await commandRejudgeGitHub({
+          dryRun: opts.dryRun,
+          rejectApproved: opts.rejectApproved,
+          refresh: opts.refresh,
+          verbose: opts.verbose,
+          ...(opts.status ? { status: opts.status } : {}),
+          ...(Number.isFinite(opts.id) ? { id: opts.id as number } : {}),
+          ...(Number.isFinite(opts.limit) ? { limit: opts.limit as number } : {}),
+          ...(opts.concurrency !== undefined ? { concurrency: opts.concurrency } : {}),
         });
       },
     ),
