@@ -458,12 +458,19 @@ function splitBodySentences(text: string): string[] {
  * on its own line). A real sentence in a design-partner-loi first touch ends
  * with terminal punctuation (it is always a statement or a question); a
  * short, unterminated final chunk is a name, not a fourth sentence.
+ *
+ * Deliberately narrow: only a bare name (optionally hyphen-prefixed, e.g.
+ * "- Sam") qualifies. Round-1 review (finding PRRT_kwDOSKzrBs6mF-g2) caught
+ * that the previous "<=4 words, unterminated" heuristic also matched a real
+ * final sentence that merely lacks trailing punctuation (e.g. "Worth a short
+ * call"), silently dropping it and letting an over-length draft skip
+ * `enterprise-too-many-sentences`.
  */
 function trimTrailingSignOff(sentences: string[]): string[] {
   const last = sentences[sentences.length - 1];
   if (!last) return sentences;
-  const isShortUnterminated = !/[.!?]$/.test(last) && last.split(/\s+/).filter(Boolean).length <= 4;
-  return isShortUnterminated ? sentences.slice(0, -1) : sentences;
+  const isBareNameSignOff = !/[.!?]$/.test(last) && /^-?\s*[A-Za-z]+(?:[-'][A-Za-z]+)?$/.test(last);
+  return isBareNameSignOff ? sentences.slice(0, -1) : sentences;
 }
 
 /** design-partner-loi's enterprise first-touch body cap (issue #707): at most 3 sentences. */
@@ -532,7 +539,7 @@ export function enterpriseFirstTouchFlags(body: string): string[] {
   const flags: string[] = [];
   const stripped = stripGreetingLine(stripSignatureLines(body));
   const words = stripped.split(/\s+/).filter(Boolean);
-  if (words.length > ENTERPRISE_MAX_BODY_WORDS) flags.push("enterprise-body-too-long");
+  if (words.length >= ENTERPRISE_MAX_BODY_WORDS) flags.push("enterprise-body-too-long");
   const sentences = trimTrailingSignOff(splitBodySentences(stripped));
   if (sentences.length > ENTERPRISE_MAX_BODY_SENTENCES) {
     flags.push("enterprise-too-many-sentences");

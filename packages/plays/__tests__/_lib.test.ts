@@ -592,4 +592,32 @@ describe("enterpriseFirstTouchFlags — issue #707", () => {
     ].join("\n");
     expect(enterpriseFirstTouchFlags(body)).toContain("enterprise-dossier-opener");
   });
+
+  // Regression for the round-1 external review finding PRRT_kwDOSKzrBs6mF-g2:
+  // `trimTrailingSignOff` used to drop ANY short (<=4 word), unterminated
+  // final chunk, not only a bare-name sign-off. A real 4th sentence that
+  // simply lacks trailing punctuation ("Worth a short call") was silently
+  // swallowed, letting an over-length draft skip
+  // `enterprise-too-many-sentences`.
+  it("still flags 4 sentences when the last one lacks terminal punctuation", () => {
+    const body = [
+      "Regulated ops teams that pass audit on the first pass skip the manual trail.",
+      "That's a real edge over category peers still doing it by hand.",
+      "A short call would show how it maps to your control set.",
+      "Worth a short call",
+      "",
+      "Sam",
+    ].join("\n");
+    expect(enterpriseFirstTouchFlags(body)).toContain("enterprise-too-many-sentences");
+  });
+
+  // Regression for the round-1 external review finding PRRT_kwDOSKzrBs6mF-hB:
+  // the word-count gate used `>`, so an exactly-70-word body (the prompt's
+  // own stated ceiling, "under 70 words") passed with no length flag.
+  it("flags a body at exactly the 70-word cap", () => {
+    const filler = Array.from({ length: 65 }, (_, i) => `word${i}`).join(" ");
+    const body = [`${filler}.`, "Open to a chat?", "", "Sam"].join("\n");
+    expect(body.split(/\s+/).filter(Boolean).length).toBe(70);
+    expect(enterpriseFirstTouchFlags(body)).toContain("enterprise-body-too-long");
+  });
 });
