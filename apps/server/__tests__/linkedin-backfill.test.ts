@@ -156,13 +156,25 @@ it("replaces a key the provider consumed without a request id, once", async () =
   expect(keys).toHaveLength(2);
   expect(keys[0]).not.toBe(keys[1]);
   expect(backfillStatus("account")?.senders?.resolved).toBe(1);
-  // A second refusal on the fresh key is a real fault and blocks as before.
+});
+it("a refusal of the replacement key is a real fault and blocks", async () => {
   sender();
+  startLinkedInBackfill("account");
+  const burned = () =>
+    sdk.mockRejectedValueOnce(
+      new Error("Tool request failed: This Idempotency-Key was already used for a LinkedIn action"),
+    );
   burned();
   await runLinkedInBackfill("account");
   burned();
   await runLinkedInBackfill("account");
-  expect(backfillStatus("account")?.stage).toBe("blocked");
+  const submissions = sdk.mock.calls.filter(([, op]) => op.kind === "profile");
+  expect(submissions).toHaveLength(2);
+  expect(submissions[0]![1].idempotencyKey).not.toBe(submissions[1]![1].idempotencyKey);
+  const job = backfillStatus("account")!;
+  expect(job.stage).toBe("blocked");
+  expect(job.pending?.rekeyed).toBe(true);
+  expect(job.pending?.idempotencyKey).toBe(submissions[1]![1].idempotencyKey);
 });
 it("a shared lease prevents another server from submitting the same work", async () => {
   sender();
