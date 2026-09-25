@@ -230,8 +230,8 @@ export function _resetYcBatchExistsCache(): void {
 
 /**
  * Whether yc-oss has published a batch file (`winter-2026` form). A HEAD
- * request against GitHub Pages: free, no auth. A network error counts as
- * "not published" for this run and is not cached, so the next run retries.
+ * request against GitHub Pages: free, no auth. Only a published batch is
+ * cached; a miss or network error is re-checked on the next run.
  */
 export async function ycBatchExists(slug: string): Promise<boolean> {
   const cached = batchExistsCache.get(slug);
@@ -241,9 +241,10 @@ export async function ycBatchExists(slug: string): Promise<boolean> {
       method: "HEAD",
       signal: AbortSignal.timeout(10_000),
     });
-    const exists = res.ok;
-    batchExistsCache.set(slug, exists);
-    return exists;
+    // Cache only a hit: a long-running server must notice a batch the day
+    // yc-oss publishes it, without a restart.
+    if (res.ok) batchExistsCache.set(slug, true);
+    return res.ok;
   } catch {
     return false;
   }

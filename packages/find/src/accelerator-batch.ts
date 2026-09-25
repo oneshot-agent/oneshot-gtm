@@ -201,6 +201,28 @@ export async function runAcceleratorBatchFinder(
   const hasExplicit =
     (opts.cohorts?.length ?? 0) > 0 ||
     (typeof opts.cohort === "string" && opts.cohort.trim() !== "");
+  if (!hasExplicit && selected.cohorts.length === 0 && (opts.accelerators?.length ?? 0) > 0) {
+    // Every selection was unknown (or YC had nothing published): a halted run
+    // with the reason, not an exception out of the scheduler.
+    return {
+      source: "find:accelerator-batch:sweep",
+      candidates: 0,
+      droppedIcp: 0,
+      droppedDuplicate: 0,
+      droppedEnrichment: 0,
+      enqueued: 0,
+      costUsd: 0,
+      halted:
+        selected.unknown.length > 0
+          ? `no cohorts resolved (unknown accelerator ids: ${selected.unknown.join(", ")})`
+          : "no cohorts resolved from `accelerators`",
+      perCohort: selected.unknown.map((id) => ({
+        cohort: id,
+        records: 0,
+        error: "unknown accelerator id",
+      })),
+    };
+  }
   const explicit: Array<CohortEntry & Partial<ResolvedCohort>> =
     hasExplicit || selected.cohorts.length === 0 ? normalizeCohorts(opts) : [];
   const cohorts: Array<CohortEntry & Partial<ResolvedCohort>> = [];
@@ -271,7 +293,15 @@ export async function runAcceleratorBatchFinder(
         result.costUsd += fetched.costUsd;
         // A yearly cohort that has not published yet (early in the year):
         // fall back to the previous year's, tagged as that cohort.
-        if (fetched.records.length === 0 && entry.fallback && adapterName !== "yc-oss") {
+        // Skip it when the fallback cohort is also its own entry (recent: 2).
+        const fallbackIsEntry =
+          entry.fallback !== undefined && cohorts.some((c) => c.cohort === entry.fallback!.cohort);
+        if (
+          fetched.records.length === 0 &&
+          entry.fallback &&
+          !fallbackIsEntry &&
+          adapterName !== "yc-oss"
+        ) {
           const prior = await search(entry.fallback);
           result.costUsd += prior.costUsd;
           if (prior.records.length > 0) {

@@ -64,3 +64,26 @@ describe("resolveAcceleratorCohorts", () => {
     expect(out.unknown).toEqual(["nope"]);
   });
 });
+
+describe("ycBatchExists", () => {
+  it("caches a published batch but re-checks a miss", async () => {
+    const { ycBatchExists, _resetYcBatchExistsCache } = await import("../src/_yc-oss-adapter.ts");
+    _resetYcBatchExistsCache();
+    let calls = 0;
+    let published = false;
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      calls++;
+      return new Response(null, { status: published ? 200 : 404 });
+    }) as unknown as typeof fetch;
+    try {
+      expect(await ycBatchExists("fall-2026")).toBe(false);
+      published = true;
+      expect(await ycBatchExists("fall-2026")).toBe(true);
+      expect(await ycBatchExists("fall-2026")).toBe(true);
+      expect(calls).toBe(2);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+});

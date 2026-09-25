@@ -63,3 +63,25 @@ it("resolves accelerators to their latest cohorts and falls back a year when nee
     { cohort: "not-real", records: 0, error: "unknown accelerator id" },
   ]);
 });
+
+it("returns a halted result, not an exception, when nothing resolves", async () => {
+  const out = await runAcceleratorBatchFinder({
+    dryRun: true,
+    accelerators: [{ id: "not-real" }],
+    now: new Date("2026-09-25T00:00:00Z"),
+  } as Parameters<typeof runAcceleratorBatchFinder>[0]);
+  expect(out.halted).toContain("unknown accelerator ids: not-real");
+  expect(out.enqueued).toBe(0);
+});
+
+it("does not search a fallback year that is already its own entry", async () => {
+  searched.length = 0;
+  await runAcceleratorBatchFinder({
+    dryRun: true,
+    accelerators: [{ id: "antler", recent: 2 }],
+    now: new Date("2026-09-25T00:00:00Z"),
+    concurrency: 1,
+  } as Parameters<typeof runAcceleratorBatchFinder>[0]);
+  // antler-2026 (empty) must not fall back to antler-2025, which is searched as its own entry.
+  expect(searched.filter((c) => c === "antler-2025")).toHaveLength(1);
+});

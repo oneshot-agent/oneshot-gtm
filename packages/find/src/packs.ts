@@ -41,8 +41,6 @@
  * `/queue`'s trigger card) — the intended end state, not a bug.
  */
 
-import { DEFAULT_COHORTS } from "./registry.ts";
-
 export interface IndustryPack {
   /** Stable slug, e.g. "restaurants-food-service". Used in the API path and the ACTION marker. */
   id: string;
@@ -252,15 +250,13 @@ export const PACKS: IndustryPack[] = [
     summary:
       "Founders and engineers at AI startups building agents for one industry — clinics, logistics, trades, finance.",
     buyerBrief:
-      "Founder / founding engineer / head of AI at a startup building agents for a single industry. The only pack whose buyers are themselves software companies, so none of the local-business or public-registry channels apply; every source here is a company-level signal instead. `accelerator-batch` and `post-funding-auto` are TIMING signals — fresh money, a demo-day clock, and a budget that exists for the first time. `hiring-signal` catches a build-vs-buy decision in flight: a company posting a founding or applied AI engineer role is about to build whatever it has not bought. `github-topics` catches the same decision already half-made — a repo whose manifests import several vendor SDKs is carrying the integration tax the consolidation pitch names. Cohorts are narrowed to the `yc-*` and `ai-grant-*` entries of the registry's default list because those two populations skew AI-native; the generalist incubators in that list dilute the run without raising the hit rate. `vendors` below is a starting vocabulary of the action APIs this population tends to wire up, not a claim about any founder's competitors — edit it to the landscape you actually sell against.",
+      "Founder / founding engineer / head of AI at a startup building agents for a single industry. The only pack whose buyers are themselves software companies, so none of the local-business or public-registry channels apply; every source here is a company-level signal instead. `accelerator-batch` and `post-funding-auto` are TIMING signals — fresh money, a demo-day clock, and a budget that exists for the first time. `hiring-signal` catches a build-vs-buy decision in flight: a company posting a founding or applied AI engineer role is about to build whatever it has not bought. `github-topics` catches the same decision already half-made — a repo whose manifests import several vendor SDKs is carrying the integration tax the consolidation pitch names. Accelerators are narrowed to YC and AI Grant (each at its latest cohort, resolved from the date) because those two populations skew AI-native; the generalist incubators dilute the run without raising the hit rate. `vendors` below is a starting vocabulary of the action APIs this population tends to wire up, not a claim about any founder's competitors — edit it to the landscape you actually sell against.",
     icpOneLiner: "Founders and engineers at AI startups building agents for a single industry",
     triggers: {
-      // Derived, not pinned: batch names rotate every few months and the
-      // registry's DEFAULT_COHORTS is the one place that tracks them.
+      // Accelerators, not cohorts: each resolves to its latest cohort from the
+      // date at run time, so the pack never goes stale.
       "accelerator-batch": {
-        cohorts: DEFAULT_COHORTS.filter(
-          (c) => c.cohort.startsWith("yc-") || c.cohort.startsWith("ai-grant-"),
-        ),
+        accelerators: [{ id: "yc", recent: 2 }, { id: "ai-grant" }],
         limit: 40,
       },
       "post-funding-auto": {
