@@ -34,7 +34,7 @@ const PITCH_SHAPE =
  * uses it is checked for a backing fact; a lesson angle rarely does.
  */
 const OUTCOME_CLAIM =
-  /\b(?:edge|advantage|ahead of|set(?:s|ting)? the bar|opportunity|outpace|leapfrog|(?:grow|move|ship|win)s? faster|faster than|before (?:their|your) (?:peers|competitors|rivals))\b/i;
+  /\b(?:an edge over|(?:competitive|unfair) (?:edge|advantage)|advantage over|ahead of (?:their|your|the) (?:peers|competitors|rivals|category|market)|set(?:s|ting)? the bar|outpace|leapfrog|(?:grow|move|ship|win)s? faster|faster than (?:their|your) (?:peers|competitors|rivals)|before (?:their|your) (?:peers|competitors|rivals))\b/i;
 const STOPWORDS = new Set(
   "about after again against their there these those which while would could should other every where being having into from with your that this what when than then them they have will more most some such only also just over under very make made".split(
     " ",
@@ -69,11 +69,23 @@ export function factTermsFrom(...texts: Array<string | null | undefined>): Set<s
   return out;
 }
 
+/**
+ * The claim part of an angle: everything after its routing clause ("For a
+ * clinic group —", "When the buyers are engineers,"). Who the angle fits is
+ * not evidence for what it promises, so the fact must be in the claim.
+ */
+function claimOf(angle: string): string {
+  if (!ROUTING_OPENER.test(angle)) return angle;
+  const cut = angle.search(/\s[—–-]\s|[—–:,]/);
+  return cut < 0 ? angle : angle.slice(cut + 1);
+}
+
 function isUnbacked(angle: string, ctx: EdgeLintContext): boolean {
-  if (!OUTCOME_CLAIM.test(angle)) return false;
-  if (/\d/.test(angle)) return false;
-  const words = angle.toLowerCase().match(/\p{L}[\p{L}\p{N}-]{4,}/gu) ?? [];
-  return !words.some((w) => ctx.factTerms?.has(w) && !OUTCOME_CLAIM.test(w));
+  const claim = claimOf(angle);
+  if (!OUTCOME_CLAIM.test(claim)) return false;
+  if (/\d/.test(claim)) return false;
+  const words = claim.toLowerCase().match(/\p{L}[\p{L}\p{N}-]{4,}/gu) ?? [];
+  return !words.some((w) => ctx.factTerms?.has(w));
 }
 
 /** Warnings about an edge. Empty means nothing to say, not that it is good. */

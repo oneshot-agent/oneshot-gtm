@@ -11,6 +11,11 @@ describe("replyLabel", () => {
     expect(replyLabel(3, 73)).toBe("3 replied (4.1%)");
     expect(replyLabel(12, 60)).toBe("12 replied (20%)");
   });
+  it("names the unit being counted", () => {
+    expect(replyLabel(0, 5, "people")).toBe(
+      `0 replied · rate after ${MIN_SENDS_FOR_RATE} people (5 so far)`,
+    );
+  });
   it("handles no sends", () => {
     expect(replyLabel(0, 0)).toBe("0 replied");
   });

@@ -172,9 +172,18 @@ const EMPTY_USAGE = (): DraftUsage => ({
  * `sequence_events` row to `replied` (`markLatestStepReplied`), keyed by
  * prospect, play and step. Intro versions may predate their prospect row, so
  * the prospect is found by `prospect_id` or, failing that, the prospect key
- * (the lower-cased email every version is keyed by).
+ * (the lower-cased email every version is keyed by). Should a slot ever
+ * hold two sent versions, only the latest is credited, so one reply is never
+ * counted twice.
  */
-const DV_REPLIED = `dv.outcome IN ('sent', 'auto_sent') AND EXISTS (
+const DV_REPLIED = `dv.outcome IN ('sent', 'auto_sent')
+  AND dv.id = (
+    SELECT MAX(d2.id) FROM draft_versions d2
+     WHERE d2.play_name = dv.play_name
+       AND d2.prospect_key = dv.prospect_key
+       AND d2.step_index = dv.step_index
+       AND d2.outcome IN ('sent', 'auto_sent'))
+  AND EXISTS (
     SELECT 1 FROM sequence_events se
      WHERE se.status = 'replied'
        AND se.play_name = dv.play_name

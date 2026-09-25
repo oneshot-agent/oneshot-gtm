@@ -28,7 +28,9 @@ function angleCounts(a: AngleUsageView): string {
     `redrafted ${a.redrafted}`,
     `sent ${a.sent}`,
     ...(a.autoSent > 0 ? [`auto ${a.autoSent}`] : []),
-    ...(a.sent + a.autoSent > 0 ? [replyLabel(a.replied, a.sent + a.autoSent)] : []),
+    // Angle counts are distinct people (reviewed + unattended sends), so the
+    // rate is per person reached, and the sample threshold says so.
+    ...(a.sent + a.autoSent > 0 ? [replyLabel(a.replied, a.sent + a.autoSent, "people")] : []),
   ].join(" · ");
 }
 

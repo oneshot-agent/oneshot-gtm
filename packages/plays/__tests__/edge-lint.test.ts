@@ -82,6 +82,27 @@ describe("opportunity angles", () => {
     expect(w).toContain("unbacked-claim:4");
   });
 
+  it("does not read the word 'edge' in a lesson as an outcome claim", () => {
+    const w = lintEdge(
+      `${GOOD} // For engineers calling public APIs — the edge case is that retries replay requests after transient failures; what we found: send an idempotency key.`,
+      { factTerms: terms },
+    );
+    expect(w).not.toContain("unbacked-claim:4");
+  });
+
+  it("does not let the routing clause back the claim", () => {
+    const fromClause = lintEdge(
+      `${GOOD} // For clinics choosing a vendor — the win is getting ahead of their peers and setting the bar everyone else follows.`,
+      { factTerms: terms },
+    );
+    expect(fromClause).toContain("unbacked-claim:4");
+    const digitInClause = lintEdge(
+      `${GOOD} // For teams of 5 to 50 people — the win is getting ahead of their competitors and setting the bar everyone else follows.`,
+      { factTerms: terms },
+    );
+    expect(digitInClause).toContain("unbacked-claim:4");
+  });
+
   it("extracts content words and drops stopwords and short words", () => {
     const t = factTermsFrom("Sends reminders from their own number", null);
     expect(t.has("reminders")).toBe(true);

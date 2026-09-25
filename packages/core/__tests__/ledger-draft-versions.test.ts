@@ -549,6 +549,44 @@ describe("aggregates", () => {
     expect(ledger.draftUsageByPlay()["other-play"]).toBeUndefined();
   });
 
+  it("credits one reply once, to the latest send in the slot", () => {
+    const play = "double-send";
+    const q1 = enqueue("dd@x.dev", play);
+    ledger.setQueueDraft({
+      id: q1,
+      draft: draft({ sent: true, dryRun: false, angle: ANGLE_A }),
+      sentBy: "human",
+    });
+    // The same person reached again through a second row: a second sent
+    // version in the same prospect/play/step slot, on another angle.
+    const q2 = ledger.enqueueTarget({
+      playName: play,
+      payload: { email: "dd@x.dev", name: "P", yourEdge: `${ANGLE_A.text} // ${ANGLE_B.text}` },
+      dedupeKey: "k2:dd@x.dev",
+      source: "test",
+    })!;
+    ledger.setQueueDraft({
+      id: q2,
+      draft: draft({ sent: true, dryRun: false, angle: ANGLE_B }),
+      sentBy: "human",
+    });
+    const p = ledger.upsertProspect({ name: "DD", email: "dd@x.dev", company: null, source: "t" });
+    ledger.recordSequenceEvent({
+      prospectId: p,
+      playName: play,
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+    });
+    ledger.markLatestStepReplied({ prospectId: p, playName: play });
+    const byText = Object.fromEntries(
+      ledger.angleUsageByPlay()[play]!.map((r) => [r.angleText, r]),
+    );
+    expect(byText[ANGLE_A.text]?.replied).toBe(0);
+    expect(byText[ANGLE_B.text]?.replied).toBe(1);
+    expect(ledger.draftUsageByPlay()[play]?.intro.replied).toBe(1);
+  });
+
   it("credits a reply to the angle and step of the send that got it", () => {
     const play = "reply-attribution";
     // u10 gets an intro on A and replies to it; u11 gets an intro on B and never replies.
