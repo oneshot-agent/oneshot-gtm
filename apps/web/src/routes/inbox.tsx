@@ -627,10 +627,12 @@ function LinkedInConnections({ accounts }: { accounts: LinkedInAccountView[] }) 
                   </p>
                   {confirmAction.action === "force-reconnect" && (
                     <p className="text-ink-blocked-2">
-                      You will not be able to reply in any imported conversation until the new
-                      connection has downloaded the history again and restored it. That download
-                      runs on OneShot's side and has taken up to a day. Prefer Reconnect when
-                      LinkedIn only asks you to sign in again.
+                      If the new connection gets new conversation ids, you will not be able to reply
+                      in any imported conversation until the history has been downloaded again and
+                      restored. The import stays paused after the new login: click Resume import
+                      under this connection to start it. The download itself runs on OneShot's side
+                      and has taken up to a day. Prefer Reconnect when LinkedIn only asks you to
+                      sign in again.
                     </p>
                   )}
                   {accountAction.error && (
