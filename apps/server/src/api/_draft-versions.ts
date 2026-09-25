@@ -75,6 +75,7 @@ const ZERO: Omit<AngleUsageView, "text"> = {
   sent: 0,
   autoSent: 0,
   replied: 0,
+  reached: 0,
 };
 
 function counts(r: AngleUsageRow): Omit<AngleUsageView, "text"> {
@@ -85,6 +86,7 @@ function counts(r: AngleUsageRow): Omit<AngleUsageView, "text"> {
     sent: r.sent,
     autoSent: r.autoSent,
     replied: r.replied,
+    reached: r.reached,
   };
 }
 
@@ -117,6 +119,7 @@ export function angleUsageForEdge(
       sent: c.sent,
       autoSent: c.autoSent,
       replied: c.replied,
+      reached: c.reached,
     });
   }
   const generated: AngleUsageView = { text: "generated", ...ZERO };
@@ -128,6 +131,7 @@ export function angleUsageForEdge(
     generated.sent += r.sent;
     generated.autoSent += r.autoSent;
     generated.replied += r.replied;
+    generated.reached += r.reached;
   }
   return { angles, generated };
 }

@@ -587,6 +587,29 @@ describe("aggregates", () => {
     expect(ledger.draftUsageByPlay()[play]?.intro.replied).toBe(1);
   });
 
+  it("counts a person reached by both a reviewed and an unattended send once", () => {
+    const play = "reached-union";
+    const q1 = enqueue("ru@x.dev", play);
+    ledger.setQueueDraft({
+      id: q1,
+      draft: draft({ sent: true, dryRun: false, angle: ANGLE_A }),
+      sentBy: "human",
+    });
+    const q2 = ledger.enqueueTarget({
+      playName: play,
+      payload: { email: "ru@x.dev", name: "P", yourEdge: ANGLE_A.text },
+      dedupeKey: "k2:ru@x.dev",
+      source: "test",
+    })!;
+    ledger.setQueueDraft({
+      id: q2,
+      draft: draft({ sent: true, dryRun: false, angle: ANGLE_A }),
+      sentBy: "machine",
+    });
+    const row = ledger.angleUsageByPlay()[play]!.find((r) => r.angleText === ANGLE_A.text)!;
+    expect(row).toMatchObject({ sent: 1, autoSent: 1, reached: 1 });
+  });
+
   it("credits a reply to the angle and step of the send that got it", () => {
     const play = "reply-attribution";
     // u10 gets an intro on A and replies to it; u11 gets an intro on B and never replies.

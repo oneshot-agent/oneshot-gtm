@@ -26,6 +26,7 @@ function row(over: Partial<AngleUsageRow>): AngleUsageRow {
     sent: 0,
     autoSent: 0,
     replied: 0,
+    reached: 0,
     ...over,
   };
 }
@@ -42,8 +43,26 @@ describe("angleUsageForEdge", () => {
     ]);
     expect(usage).toEqual({
       angles: [
-        { text: A, offered: 0, rotatedAway: 0, redrafted: 0, sent: 0, autoSent: 0, replied: 0 },
-        { text: B, offered: 4, rotatedAway: 0, redrafted: 0, sent: 2, autoSent: 0, replied: 0 },
+        {
+          text: A,
+          offered: 0,
+          rotatedAway: 0,
+          redrafted: 0,
+          sent: 0,
+          autoSent: 0,
+          replied: 0,
+          reached: 0,
+        },
+        {
+          text: B,
+          offered: 4,
+          rotatedAway: 0,
+          redrafted: 0,
+          sent: 2,
+          autoSent: 0,
+          replied: 0,
+          reached: 0,
+        },
       ],
       generated: {
         text: "generated",
@@ -53,6 +72,7 @@ describe("angleUsageForEdge", () => {
         sent: 0,
         autoSent: 0,
         replied: 0,
+        reached: 0,
       },
     });
   });
@@ -83,6 +103,7 @@ describe("angleUsageForEdge", () => {
       sent: 1,
       autoSent: 0,
       replied: 0,
+      reached: 0,
     });
   });
 

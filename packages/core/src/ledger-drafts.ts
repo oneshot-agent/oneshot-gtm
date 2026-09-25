@@ -73,6 +73,8 @@ export interface AngleUsageRow {
   autoSent: number;
   /** Distinct prospects who replied to the send built on it (reviewed or unattended). */
   replied: number;
+  /** Distinct prospects it was sent to at all, reviewed or unattended — the reply-rate denominator. */
+  reached: number;
 }
 
 export interface DraftUsage {
@@ -429,7 +431,8 @@ export class DraftVersionStore {
                 COUNT(DISTINCT CASE WHEN outcome = 'discarded' AND discard_reason = 'regenerate' THEN prospect_key END) AS redrafted,
                 COUNT(DISTINCT CASE WHEN outcome = 'sent' THEN prospect_key END) AS sent,
                 COUNT(DISTINCT CASE WHEN outcome = 'auto_sent' THEN prospect_key END) AS auto_sent,
-                COUNT(DISTINCT CASE WHEN ${DV_REPLIED} THEN prospect_key END) AS replied
+                COUNT(DISTINCT CASE WHEN ${DV_REPLIED} THEN prospect_key END) AS replied,
+                COUNT(DISTINCT CASE WHEN outcome IN ('sent', 'auto_sent') THEN prospect_key END) AS reached
            FROM draft_versions dv
           WHERE angle_key IS NOT NULL
           GROUP BY play_name, angle_key
@@ -446,6 +449,7 @@ export class DraftVersionStore {
       sent: number;
       auto_sent: number;
       replied: number;
+      reached: number;
     }>;
     const out: Record<string, AngleUsageRow[]> = {};
     for (const r of rows) {
@@ -459,6 +463,7 @@ export class DraftVersionStore {
         sent: r.sent,
         autoSent: r.auto_sent,
         replied: r.replied,
+        reached: r.reached,
       });
     }
     return out;

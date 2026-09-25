@@ -44,6 +44,7 @@ const row = (over: Partial<Parameters<typeof isNeverSent>[0]>) => ({
   sent: 0,
   autoSent: 0,
   replied: 0,
+  reached: 0,
   ...over,
 });
 

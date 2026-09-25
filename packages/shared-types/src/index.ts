@@ -762,6 +762,8 @@ export interface AngleUsageView {
   autoSent: number;
   /** Distinct prospects who replied to a send built on this angle. */
   replied: number;
+  /** Distinct prospects this angle was sent to (reviewed or unattended) — the rate's denominator. */
+  reached: number;
 }
 
 /** Draft-version counts by outcome for one play and one scope (intro or follow-up). */
