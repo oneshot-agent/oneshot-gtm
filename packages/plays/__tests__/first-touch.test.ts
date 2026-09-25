@@ -9,6 +9,7 @@ const { firstTouchArm, readerSeniority, briefFormatBlock } = await import("../sr
 const { admissionSlot, bodySentencesForLint, bodyWordsForLint, lintEmail } =
   await import("../src/_lib.ts");
 
+const words = (n: number) => Array.from({ length: n }, (_, i) => `w${i}`).join(" ");
 const emails = Array.from({ length: 2000 }, (_, i) => `person${i}@company${i % 37}.example`);
 
 describe("firstTouchArm", () => {
@@ -98,7 +99,6 @@ describe("bodySentencesForLint", () => {
     const body = "Hey Sam,\none two three";
     expect(bodyWordsForLint(body, [])).toBe(5);
     expect(bodyWordsForLint(body, [], { excludeGreeting: true })).toBe(3);
-    const words = (n: number) => Array.from({ length: n }, (_, i) => `w${i}`).join(" ");
     // 70 words plus a greeting: within the brief budget, over it for a standard 70-word cap.
     expect(lintEmail("s", `Hey Sam,\n${words(70)}.`, 70, 3)).not.toContain("body-too-long");
     expect(lintEmail("s", `Hey Sam,\n${words(70)}.`, 70)).toContain("body-too-long");
