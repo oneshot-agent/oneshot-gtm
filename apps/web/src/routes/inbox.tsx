@@ -625,6 +625,14 @@ function LinkedInConnections({ accounts }: { accounts: LinkedInAccountView[] }) 
                       ? "Remove this LinkedIn connection from all workspaces? OneShot access will be revoked and pending sends cancelled. All imported messages and assignments stay saved."
                       : "Disconnect this account and open a fresh LinkedIn login? This affects all workspaces and cancels pending sends. All imported messages and assignments stay saved. Sign in to the same LinkedIn account. If the connection service is unavailable, the new login may still fail."}
                   </p>
+                  {confirmAction.action === "force-reconnect" && (
+                    <p className="text-ink-blocked-2">
+                      You will not be able to reply in any imported conversation until the new
+                      connection has downloaded the history again and restored it. That download
+                      runs on OneShot's side and has taken up to a day. Prefer Reconnect when
+                      LinkedIn only asks you to sign in again.
+                    </p>
+                  )}
                   {accountAction.error && (
                     <p role="alert" className="text-ink-blocked-2">
                       {accountAction.error.message}
