@@ -13,12 +13,15 @@
  * suite, and a founder mid-edit should not be refused. Selection (#584)
  * happens in code, so the checks are about what a selectable, non-pitch angle
  * looks like: several of them, each opening with who it fits, long enough to
- * carry a named failure, and free of the vocabulary `_humanizer.md` bans.
+ * carry a lesson (a named failure and what was learned) or an opportunity
+ * resting on one concrete fact, and free of the vocabulary `_humanizer.md`
+ * bans. An opportunity that promises an outcome with nothing behind it — no
+ * number, nothing the product description names — is flagged as unbacked.
  */
 import { SLOP_PHRASES } from "./_lib.ts";
 import { splitEdgeAngles } from "./_angles.ts";
 
-/** Fewer words than this cannot hold a condition, a failure and a mechanism. */
+/** Fewer words than this cannot hold a condition plus a lesson or a concrete fact. */
 const MIN_ANGLE_WORDS = 12;
 /** A routing clause: the condition the angle fits, which selection matches on. */
 const ROUTING_OPENER = /^(?:for|when|if)\b/i;
@@ -26,15 +29,70 @@ const ROUTING_OPENER = /^(?:for|when|if)\b/i;
 const PITCH_SHAPE =
   /\b(?:connects|provides|enables|empowers|streamlines|helps (?:you|founders|teams|companies)|lets you|is an? (?:open[- ]source|all-in-one|unified|complete))\b/i;
 
+/**
+ * Outcome language — what an opportunity angle promises. Only an angle that
+ * uses it is checked for a backing fact; a lesson angle rarely does.
+ */
+const OUTCOME_CLAIM =
+  /\b(?:an edge over|(?:competitive|unfair) (?:edge|advantage)|advantage over|ahead of (?:their|your|the) (?:peers|competitors|rivals|category|market)|set(?:s|ting)? the bar|outpace|leapfrog|(?:grow|move|ship|win)s? faster|faster than (?:their|your) (?:peers|competitors|rivals)|before (?:their|your) (?:peers|competitors|rivals))\b/i;
+const STOPWORDS = new Set(
+  "about after again against their there these those which while would could should other every where being having into from with your that this what when than then them they have will more most some such only also just over under very make made".split(
+    " ",
+  ),
+);
+
 export type EdgeWarning =
   | "single-angle"
   | `angle-too-short:${number}`
   | `no-routing-clause:${number}`
   | `reads-as-pitch:${number}`
+  | `unbacked-claim:${number}`
   | `slop:${string}`;
 
+export interface EdgeLintContext {
+  /**
+   * Words that count as a concrete fact when an angle promises an outcome:
+   * the product's own description (see `factTermsFrom`). Absent = the
+   * unbacked-claim check only accepts a number.
+   */
+  factTerms?: ReadonlySet<string>;
+}
+
+/** Content words (≥5 letters, not stopwords) from the product's own description. */
+export function factTermsFrom(...texts: Array<string | null | undefined>): Set<string> {
+  const out = new Set<string>();
+  for (const t of texts) {
+    for (const w of (t ?? "").toLowerCase().match(/\p{L}[\p{L}\p{N}-]{4,}/gu) ?? []) {
+      if (!STOPWORDS.has(w)) out.add(w);
+    }
+  }
+  return out;
+}
+
+/**
+ * The claim part of an angle: everything after its routing clause ("For a
+ * clinic group —", "When the buyers are engineers,"). Who the angle fits is
+ * not evidence for what it promises, so the fact must be in the claim.
+ */
+function claimOf(angle: string): string {
+  if (!ROUTING_OPENER.test(angle)) return angle;
+  const cut = angle.search(/\s[—–-]\s|[—–:,]/);
+  return cut < 0 ? angle : angle.slice(cut + 1);
+}
+
+function isUnbacked(angle: string, ctx: EdgeLintContext): boolean {
+  const claim = claimOf(angle);
+  if (!OUTCOME_CLAIM.test(claim)) return false;
+  if (/\d/.test(claim)) return false;
+  const words = claim.toLowerCase().match(/\p{L}[\p{L}\p{N}-]{4,}/gu) ?? [];
+  return !words.some((w) => ctx.factTerms?.has(w));
+}
+
 /** Warnings about an edge. Empty means nothing to say, not that it is good. */
-export function lintEdge(edge: string | null | undefined): EdgeWarning[] {
+export function lintEdge(
+  edge: string | null | undefined,
+  ctx: EdgeLintContext = {},
+): EdgeWarning[] {
   const angles = splitEdgeAngles(edge);
   if (angles.length === 0) return [];
   const out: EdgeWarning[] = [];
@@ -44,6 +102,7 @@ export function lintEdge(edge: string | null | undefined): EdgeWarning[] {
     if (angle.split(/\s+/).length < MIN_ANGLE_WORDS) out.push(`angle-too-short:${n}`);
     if (!ROUTING_OPENER.test(angle)) out.push(`no-routing-clause:${n}`);
     if (PITCH_SHAPE.test(angle)) out.push(`reads-as-pitch:${n}`);
+    if (isUnbacked(angle, ctx)) out.push(`unbacked-claim:${n}`);
     for (const [re, label] of SLOP_PHRASES) {
       if (re.test(angle)) out.push(`slop:${label}:${n}`);
     }
@@ -60,11 +119,13 @@ export function describeEdgeWarning(w: EdgeWarning): string {
   const n = rest.at(-1);
   switch (kind) {
     case "angle-too-short":
-      return `angle ${n} is too short to carry a failure and a mechanism`;
+      return `angle ${n} is too short to carry a lesson or one concrete fact`;
     case "no-routing-clause":
       return `angle ${n} doesn't open with who it fits ("For a founder selling to clinics —")`;
     case "reads-as-pitch":
-      return `angle ${n} reads like a landing page, not something you learned`;
+      return `angle ${n} reads like a landing page — name what you learned, or the concrete fact behind the opportunity`;
+    case "unbacked-claim":
+      return `angle ${n} promises an outcome without a fact behind it — add the number or the capability that makes it true`;
     case "slop":
       return `angle ${n} uses banned copy (${rest.slice(0, -1).join(":")})`;
     default:

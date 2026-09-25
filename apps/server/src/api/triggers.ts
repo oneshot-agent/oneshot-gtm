@@ -1,4 +1,4 @@
-import { getLedger, type TriggerRow } from "@oneshot-gtm/core";
+import { getLedger, loadConfig, type TriggerRow } from "@oneshot-gtm/core";
 import {
   checkReadiness,
   DEFAULT_APPROVAL_RATE_MIN_SAMPLES,
@@ -15,8 +15,10 @@ import {
 } from "@oneshot-gtm/find";
 import {
   describeEdgeWarning,
+  factTermsFrom,
   isAllowedDesignPartnerLoiBuyerType,
   lintEdge,
+  type EdgeLintContext,
 } from "@oneshot-gtm/plays";
 import type { RunTriggerResult, TriggerView } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
@@ -218,7 +220,7 @@ export async function setTriggerConfigRoute(
       : typeof cfg["yourClaim"] === "string"
         ? cfg["yourClaim"]
         : null;
-  const warnings = edge ? lintEdge(edge).map(describeEdgeWarning) : [];
+  const warnings = edge ? lintEdge(edge, edgeLintContext()).map(describeEdgeWarning) : [];
   // Warn-tier `play`/`buyerType` validation (issue #705): never a refusal —
   // the save above already happened — but a founder routing rows to
   // design-partner-loi with a missing/invalid buyerType should learn that
@@ -246,6 +248,20 @@ export async function setTriggerConfigRoute(
     }
   }
   return jsonResponse({ ok: true, name, warnings }, 200, req);
+}
+
+/**
+ * What an opportunity angle may lean on as its fact: the product's own
+ * description. A config read failure only weakens the check (numbers still
+ * count) — the lint is guidance and must never fail a save.
+ */
+function edgeLintContext(): EdgeLintContext {
+  try {
+    const cfg = loadConfig();
+    return { factTerms: factTermsFrom(cfg.productOneLiner, cfg.productBrief) };
+  } catch {
+    return {};
+  }
 }
 
 /** Fire-and-forget: 202 on kick-off, 409 if already running. UI polls `GET /api/triggers`. */
