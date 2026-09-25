@@ -85,8 +85,9 @@ concession, `yourEdge` for the argument, `productBrief` for facts and links,
 
 ## Multiple angles
 
-An edge is 3–4 angles separated by `//`; the tool gives each prospect the one
-that fits them, and the trigger editor shows how each one did.
+An edge is usually 3–4 angles separated by `//`; the tool gives each prospect
+the one that fits them, and the trigger editor shows how each one did. A
+one-angle edge still works (every prospect gets it) but draws a lint warning.
 
 **Choosing.** A small isolated classifier call (`packages/plays/src/_angles.ts`)
 picks the angle whose opening condition is true of the prospect, judged from
