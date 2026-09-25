@@ -2,7 +2,7 @@ import { loadConfig } from "./config.ts";
 import { logEvent } from "./events.ts";
 import { LEGACY_GMAIL_ID, LEGACY_ONESHOT_ID, resolveIdentities } from "./identities.ts";
 import { getLedger } from "./ledger.ts";
-import { sqliteToIso } from "./time.ts";
+import { sqliteToIso, toSqliteUtc } from "./time.ts";
 import type { EmailIdentity } from "./types.ts";
 
 /**
@@ -95,11 +95,6 @@ export function isTransientToolError(err: unknown): boolean {
     msg.includes("credit balance does not cover") ||
     msg.includes("execution reverted")
   );
-}
-
-/** "YYYY-MM-DD HH:MM:SS" UTC — the format SQLite's datetime('now') writes into receipts.created_at. */
-function toSqliteUtc(d: Date): string {
-  return d.toISOString().slice(0, 19).replace("T", " ");
 }
 
 /**

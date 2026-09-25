@@ -29,6 +29,7 @@ import {
   recentTouchElsewhere,
   notifySlackBounceRecorded,
   notifySlackReplyReceived,
+  sqliteToIso,
 } from "@oneshot-gtm/core";
 import { complete, loadPrompt, tryParseJsonObject, triageEmails } from "@oneshot-gtm/intel";
 import { followUpEdgeBlock, followUpEdgeSelection } from "./_angles.ts";
@@ -2098,7 +2099,7 @@ export interface PriorStepRow {
   subject: string;
   /** Null for legacy pre-v8 rows whose metadata_json didn't include the body. */
   body: string | null;
-  /** sequence_events.created_at (UTC ISO) — for a skipped letter, when it was skipped. */
+  /** sequence_events.created_at as ISO (the column is SQLite-form) — for a skipped letter, when it was skipped. */
   sentAt: string;
   status: "sent" | "delivered" | "replied" | "skipped";
 }
@@ -2146,7 +2147,7 @@ function rowToPriorStep(r: {
       label: "letter skipped",
       subject: "",
       body: null,
-      sentAt: r.created_at,
+      sentAt: sqliteToIso(r.created_at),
       status: "skipped",
     };
   }
@@ -2155,7 +2156,7 @@ function rowToPriorStep(r: {
     label: meta.label ?? (r.step_index === 0 ? "initial send" : "follow-up"),
     subject: meta.subject ?? "(no subject)",
     body: meta.body ?? null,
-    sentAt: r.created_at,
+    sentAt: sqliteToIso(r.created_at),
     status: (r.status as PriorStepRow["status"]) ?? "sent",
   };
 }
