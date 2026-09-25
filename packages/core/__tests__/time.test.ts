@@ -32,6 +32,11 @@ describe("toSqliteUtc", () => {
     expect(toSqliteUtc(new Date("2026-09-08T10:00:00Z"))).toBe("2026-09-08 10:00:00");
   });
 
+  it("reads a zone-less ISO date-time as UTC, not local time", () => {
+    expect(toSqliteUtc("2026-09-08T10:00:00")).toBe("2026-09-08 10:00:00");
+    expect(toIsoUtc("2026-09-08T10:00:00.5")).toBe("2026-09-08T10:00:00.500Z");
+  });
+
   it("returns unparseable input as-is instead of throwing", () => {
     expect(toSqliteUtc("not a date")).toBe("not a date");
   });

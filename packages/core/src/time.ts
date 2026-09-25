@@ -18,8 +18,14 @@ export function sqliteToIso(ts: string): string {
   return SQLITE_DATETIME.test(ts) ? `${ts.replace(" ", "T")}Z` : ts;
 }
 
+/** ISO date-time with no `Z` or offset, which `new Date()` would read as local time. */
+const ZONELESS_ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/;
+
 function toDate(ts: string | Date): Date | null {
-  const d = ts instanceof Date ? ts : new Date(sqliteToIso(ts));
+  if (ts instanceof Date) return Number.isNaN(ts.getTime()) ? null : ts;
+  // A zone-less time is UTC, as SQLite reads it, never the process's local zone.
+  const iso = sqliteToIso(ts);
+  const d = new Date(ZONELESS_ISO.test(iso) ? `${iso}Z` : iso);
   return Number.isNaN(d.getTime()) ? null : d;
 }
 
