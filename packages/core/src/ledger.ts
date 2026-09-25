@@ -609,6 +609,11 @@ export class Ledger {
     return this.drafts.draftUsageByVoice();
   }
 
+  /** Intro draft outcomes by first-touch format arm (see ledger-drafts.ts). */
+  draftUsageByFormat(): Record<string, Record<string, DraftUsage>> {
+    return this.drafts.draftUsageByFormat();
+  }
+
   /**
    * Save (or overwrite) the single in-progress draft for an inbox thread.
    * Backs the /inbox composer's debounced auto-save so a refresh or navigation
@@ -3025,6 +3030,9 @@ export class Ledger {
       dryRun: boolean;
       enrichmentFailed?: boolean;
       angle?: unknown;
+      /** Voice card hash and first-touch format arm the draft was written with, when set. */
+      voiceKey?: string | null;
+      formatKey?: string | null;
     };
     discardReason?: DraftDiscardReason;
     sentBy?: "human" | "machine";
