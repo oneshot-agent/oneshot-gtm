@@ -34,6 +34,9 @@ import { finderApprovalHealth, storedTriggerConfig, TRIGGERS } from "@oneshot-gt
 
 type CheckSeverity = "ok" | "warn" | "fail";
 
+/** Trimmable receipt payload size above which doctor suggests compact-receipts. */
+const RECEIPT_PAYLOAD_WARN_BYTES = 20 * 1048576;
+
 /** Section a check renders under in the dashboard's grouped Doctor panel. */
 type CheckGroup = "install" | "senders" | "deliverability" | "finders" | "spend";
 
@@ -817,6 +820,19 @@ export async function runDoctor(opts: { refreshBalance?: boolean } = {}): Promis
       severity: "ok",
       message: `ok, ${sample.length === 0 ? "empty" : "has receipts"} (${join(configDir(), "ledger.sqlite")})`,
     });
+    // Receipts written before payloads were slimmed at write time can hold
+    // whole scraped pages. Only worth a line once it's real disk.
+    const trim = ledger.compactReceiptPayloads({ apply: false });
+    const reclaimable = trim.bytesBefore - trim.bytesAfter;
+    if (reclaimable > RECEIPT_PAYLOAD_WARN_BYTES) {
+      results.push({
+        name: "receipt payloads",
+        group: "install",
+        severity: "warn",
+        message: `${(reclaimable / 1048576).toFixed(0)} MB of old receipt payloads can be trimmed`,
+        hint: "oneshot-gtm compact-receipts",
+      });
+    }
   } catch (err) {
     results.push({
       name: "ledger",

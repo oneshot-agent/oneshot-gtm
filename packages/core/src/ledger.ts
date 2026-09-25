@@ -65,7 +65,7 @@ import { canonicalLinkedInProfileKey, ProspectStore } from "./ledger-prospects.t
 import { QueueStore } from "./ledger-queue.ts";
 import { migrateLedgerSchema } from "./ledger-schema.ts";
 import { MailboxStore } from "./mailbox-store.ts";
-import { ReceiptStore } from "./ledger-receipts.ts";
+import { type ReceiptCompaction, ReceiptStore } from "./ledger-receipts.ts";
 import { sharedDbPath } from "./shared-db.ts";
 import { SharedPeople, type SharedPerson } from "./shared-people.ts";
 import type { ReplyKind } from "./reply-classify.ts";
@@ -1218,6 +1218,11 @@ export class Ledger {
 
   getReceipt(id: number): ReceiptRecord | null {
     return this.receipts.getReceipt(id);
+  }
+
+  /** Trim pre-slimming receipt payloads (see `slimReceiptPayload`). Dry run unless `apply`. */
+  compactReceiptPayloads(opts: { apply: boolean }): ReceiptCompaction {
+    return this.receipts.compactPayloads(opts);
   }
 
   findContactReceipt(
@@ -3135,6 +3140,24 @@ export class Ledger {
    */
   listValueTaggedReceipts(): Array<{ goal_id: string; value_tag: string }> {
     return this.receipts.listValueTaggedReceipts();
+  }
+
+  /**
+   * Reclaim free pages after a large delete/trim. VACUUM needs the database
+   * to itself, so a running dashboard or CLI on this ledger makes it fail
+   * with "database is locked" once busy_timeout runs out. In WAL mode the
+   * rebuilt database lands in the WAL, so the checkpoint after it is what
+   * actually shrinks the file.
+   */
+  vacuum(): void {
+    this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    this.db.exec("VACUUM");
+    this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  }
+
+  /** Path of the SQLite file this ledger opened. */
+  get filePath(): string {
+    return this.path;
   }
 
   close(): void {
