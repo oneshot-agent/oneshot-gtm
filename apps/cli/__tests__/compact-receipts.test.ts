@@ -53,6 +53,8 @@ describe("commandCompactReceipts", () => {
   it("dry run writes nothing and never vacuums", () => {
     const out = commandCompactReceipts({ apply: false, vacuum: true });
     expect(out).toMatchObject({ rows: 40, vacuumed: false, fileBytesAfter: null });
+    // The seeded pages may still sit in the WAL; the footprint counts them.
+    expect(out.fileBytesBefore).toBeGreaterThan(40 * 51_200);
     expect(ledger.compactReceiptPayloads({ apply: false }).rows).toBe(40);
   });
 

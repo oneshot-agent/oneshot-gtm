@@ -38,11 +38,16 @@ function fileSize(path: string): number {
   }
 }
 
+/** The ledger's footprint: recent writes can still sit in the WAL file. */
+function databaseSize(path: string): number {
+  return fileSize(path) + fileSize(`${path}-wal`);
+}
+
 export function commandCompactReceipts(opts: CompactReceiptsOpts): CompactReceiptsSummary {
   header(`compact-receipts ${opts.apply ? "" : c.dim("(dry run)")}`);
   const ledger = getLedger();
   const path = ledger.filePath;
-  const fileBytesBefore = fileSize(path);
+  const fileBytesBefore = databaseSize(path);
   const result = ledger.compactReceiptPayloads({ apply: opts.apply });
   const summary: CompactReceiptsSummary = {
     ...result,
@@ -83,7 +88,7 @@ export function commandCompactReceipts(opts: CompactReceiptsOpts): CompactReceip
     return summary;
   }
   summary.vacuumed = true;
-  summary.fileBytesAfter = fileSize(path);
+  summary.fileBytesAfter = databaseSize(path);
   ok(`vacuumed: ${mb(fileBytesBefore)} → ${mb(summary.fileBytesAfter)}`);
   return summary;
 }

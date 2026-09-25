@@ -56,6 +56,14 @@ describe("slimReceiptPayload", () => {
     });
   });
 
+  it("is idempotent on an already-capped array", () => {
+    const results = Array.from({ length: RECEIPT_ARRAY_CAP + 40 }, (_, i) => i);
+    const once = slimReceiptPayload("web.search", { results });
+    const twice = slimReceiptPayload("web.search", once);
+    expect(twice).toEqual(once);
+    expect((twice as { results: unknown[] }).results.at(-1)).toBe("[omitted: 40 more items]");
+  });
+
   it("returns a small payload unchanged", () => {
     const payload = { provider: "gmail", message_id: "m1", thread_id: "t1", to: "a@x.com" };
     expect(slimReceiptPayload("email.send", payload)).toEqual(payload);

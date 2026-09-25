@@ -19,11 +19,23 @@ export const RECEIPT_STRING_CAP = 1000;
 /** Arrays keep this many items, then a count of the rest. */
 export const RECEIPT_ARRAY_CAP = 100;
 
+const OMITTED_ITEMS = /^\[omitted: \d+ more items\]$/;
+
 function slimValue(value: unknown): unknown {
   if (typeof value === "string") {
     return value.length > RECEIPT_STRING_CAP ? `[omitted: ${value.length} chars]` : value;
   }
   if (Array.isArray(value)) {
+    // Already capped by an earlier pass: keep its marker (and the original
+    // count in it) instead of treating the marker as the 101st item.
+    const last = value.at(-1);
+    if (
+      value.length === RECEIPT_ARRAY_CAP + 1 &&
+      typeof last === "string" &&
+      OMITTED_ITEMS.test(last)
+    ) {
+      return [...value.slice(0, RECEIPT_ARRAY_CAP).map(slimValue), last];
+    }
     const kept = value.slice(0, RECEIPT_ARRAY_CAP).map(slimValue);
     if (value.length > RECEIPT_ARRAY_CAP) {
       kept.push(`[omitted: ${value.length - RECEIPT_ARRAY_CAP} more items]`);
