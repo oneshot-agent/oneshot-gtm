@@ -177,7 +177,7 @@ export const api = {
       `/prospects/${id}/linkedin-reply`,
       body?.trim() ? { body: body.trim() } : {},
     ),
-  previewCadenceNext: (id: number, playName: string) =>
+  previewCadenceNext: (id: number, playName: string, rotateAngle = false) =>
     postJson<{
       subject: string;
       body: string;
@@ -185,7 +185,10 @@ export const api = {
       draftedAt: string;
       stepLabel: string | null;
       isBreakup: boolean;
-    }>(`/cadences/${id}/preview-next?play=${encodeURIComponent(playName)}`, {}),
+    }>(
+      `/cadences/${id}/preview-next?play=${encodeURIComponent(playName)}`,
+      rotateAngle ? { rotateAngle: true } : {},
+    ),
   sendCadenceNext: (id: number, playName: string) =>
     postJson<{ accepted: true }>(
       `/cadences/${id}/send-next?play=${encodeURIComponent(playName)}`,

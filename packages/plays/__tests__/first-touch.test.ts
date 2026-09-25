@@ -115,3 +115,39 @@ describe("bodySentencesForLint", () => {
     expect(lintEmail("s", body, 70)).not.toContain("too-many-sentences");
   });
 });
+
+describe("closingEitherOrQuestion", () => {
+  it("flags an ending that offers two options", async () => {
+    const { closingEitherOrQuestion } = await import("../src/_lib.ts");
+    expect(
+      closingEitherOrQuestion(
+        "Hey Sid, moving on from this thread. Is founder-led outreach already dialed in for the batch, or just on the back burner for now?",
+        [],
+      ),
+    ).toBe(true);
+    expect(closingEitherOrQuestion("Still curious whether it's the keys or the billing?", [])).toBe(
+      true,
+    );
+  });
+
+  it("leaves a yes/no question, an idiom and a non-question alone", async () => {
+    const { closingEitherOrQuestion } = await import("../src/_lib.ts");
+    expect(closingEitherOrQuestion("Did the keys turn out to be the annoying part?", [])).toBe(
+      false,
+    );
+    expect(closingEitherOrQuestion("Worth a minute or two this week?", [])).toBe(false);
+    expect(closingEitherOrQuestion("Keys or billing, either way it bites.", [])).toBe(false);
+    expect(
+      closingEitherOrQuestion("Keys or billing? I think it's keys. Does that match?", []),
+    ).toBe(false);
+  });
+
+  it("is a lint flag only for follow-ups", async () => {
+    const { lintEmail } = await import("../src/_lib.ts");
+    const body = "Is it sorted, or still open?";
+    expect(lintEmail("s", body, 100, undefined, { followUp: true })).toContain(
+      "either-or-question",
+    );
+    expect(lintEmail("s", body, 100)).not.toContain("either-or-question");
+  });
+});

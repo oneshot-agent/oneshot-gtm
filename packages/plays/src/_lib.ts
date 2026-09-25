@@ -385,12 +385,33 @@ function subjectShouty(subject: string): boolean {
   });
 }
 
+/**
+ * True when the email ends on an either/or question ("…dialed in already, or
+ * on the back burner?"): two canned options for the reader to pick from,
+ * which reads as a survey and adds nothing new. Checks the output text only
+ * (model-agnostic): the last sentence of the body, signature peeled, is a
+ * question that offers an "or". Idioms like "a minute or two" don't count.
+ */
+export function closingEitherOrQuestion(body: string, sigLines?: string[]): boolean {
+  const text = bodyWithoutSignature(body, sigLines).trim();
+  if (!text.endsWith("?")) return false;
+  const sentences = text.split(/(?<=[.!?])\s+/);
+  const last = sentences[sentences.length - 1] ?? "";
+  const cleaned = last.replace(
+    /\b(?:one|a minute|a day|a week|two|three) or (?:two|three|so|more|later)\b/gi,
+    "",
+  );
+  return /\bor\b/i.test(cleaned);
+}
+
 export function lintEmail(
   subject: string,
   body: string,
   maxBodyWords = 110,
   /** Set by formats with a sentence budget (the brief first touch); absent = no sentence check. */
   maxBodySentences?: number,
+  /** Follow-ups and breakups: flag an either/or closing question. */
+  opts: { followUp?: boolean } = {},
 ): string[] {
   const flags: string[] = [];
   if (subject.length === 0) flags.push("empty-subject");
@@ -406,6 +427,7 @@ export function lintEmail(
   if (maxBodySentences !== undefined && bodySentencesForLint(body) > maxBodySentences) {
     flags.push("too-many-sentences");
   }
+  if (opts.followUp && closingEitherOrQuestion(body)) flags.push("either-or-question");
   if (body.includes("—")) flags.push("em-dash");
   if (/[“”‘’]/.test(body)) flags.push("curly-quotes");
   if (/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(body)) flags.push("emoji");

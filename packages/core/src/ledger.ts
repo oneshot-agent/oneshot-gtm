@@ -3064,6 +3064,14 @@ export class Ledger {
     return this.queue.latestSentQueuePayload(playName, email);
   }
 
+  /** `latestSentQueuePayload` plus the row's `source`. */
+  latestSentQueueRow(
+    playName: string,
+    email: string,
+  ): { payload: Record<string, unknown>; source: string } | null {
+    return this.queue.latestSentQueueRow(playName, email);
+  }
+
   /**
    * `latestSentQueuePayload` for a whole page of cadences at once (issue
    * #599): one query over the sent rows of the plays involved, newest first,

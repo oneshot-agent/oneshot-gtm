@@ -324,8 +324,25 @@ export async function previewCadenceStepRoute(
 ): Promise<Response> {
   const parsed = parseProspectAndPlay(req, params);
   if (parsed instanceof Response) return parsed;
+  // Optional body: { rotateAngle?: boolean } — same contract as the queue's
+  // regenerate route. An empty body is a plain regenerate.
+  let rotateAngle = false;
+  const text = await req.text();
+  if (text.trim()) {
+    let body: unknown;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      return jsonResponse({ error: "body must be JSON" }, 400, req);
+    }
+    const value = (body as { rotateAngle?: unknown } | null)?.rotateAngle;
+    if (value !== undefined && typeof value !== "boolean") {
+      return jsonResponse({ error: "rotateAngle must be a boolean" }, 400, req);
+    }
+    rotateAngle = value === true;
+  }
   try {
-    const preview = await previewCadenceStep(parsed);
+    const preview = await previewCadenceStep({ ...parsed, rotateAngle });
     return jsonResponse(
       {
         subject: preview.subject,

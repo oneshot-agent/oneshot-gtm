@@ -241,8 +241,8 @@ function CadencesPage() {
   });
 
   const previewNext = useMutation({
-    mutationFn: (vars: { prospectId: number; playName: string }) =>
-      api.previewCadenceNext(vars.prospectId, vars.playName),
+    mutationFn: (vars: { prospectId: number; playName: string; rotateAngle?: boolean }) =>
+      api.previewCadenceNext(vars.prospectId, vars.playName, vars.rotateAngle === true),
     onSuccess: (data, vars) => {
       void qc.invalidateQueries({ queryKey: ["cadences"] });
       setExpandedKeys((prev) => new Set([...prev, `${vars.prospectId}|${vars.playName}`]));
@@ -914,7 +914,29 @@ function CadencesPage() {
                           </>
                         }
                         foot={{
-                          left: regenerateButton,
+                          left: (
+                            <>
+                              {regenerateButton}
+                              {regenerateButton && draft.angle && draft.angle.count > 1 && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled={pendingPreviewKey != null}
+                                  title="Try another angle from the current edge and generate a new preview"
+                                  onClick={() =>
+                                    previewNext.mutate({
+                                      prospectId: c.prospectId,
+                                      playName: c.playName,
+                                      rotateAngle: true,
+                                    })
+                                  }
+                                  {...readOnly}
+                                >
+                                  <RotateCw size={11} /> Rotate angle
+                                </Button>
+                              )}
+                            </>
+                          ),
                           right: (
                             <>
                               {sendButton}

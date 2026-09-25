@@ -1060,6 +1060,30 @@ export class QueueStore {
    * #584), whichever path sent it (drain, /queue send-draft, mark-sent). Null
    * when nothing was sent to them on this play, or the payload won't parse.
    */
+  /** `latestSentQueuePayload` plus the row's `source`, so a caller can resolve its trigger. */
+  latestSentQueueRow(
+    playName: string,
+    email: string,
+  ): { payload: Record<string, unknown>; source: string } | null {
+    const row = this.db
+      .query(
+        `SELECT payload_json, source FROM target_queue
+          WHERE play_name = ? AND status = 'sent'
+            AND lower(trim(json_extract(payload_json, '$.email'))) = lower(trim(?))
+          ORDER BY sent_at DESC, id DESC LIMIT 1`,
+      )
+      .get(playName, email) as { payload_json: string; source: string } | null;
+    if (!row) return null;
+    try {
+      const parsed: unknown = JSON.parse(row.payload_json);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? { payload: parsed as Record<string, unknown>, source: row.source }
+        : null;
+    } catch {
+      return null;
+    }
+  }
+
   latestSentQueuePayload(playName: string, email: string): Record<string, unknown> | null {
     const row = this.db
       .query(
