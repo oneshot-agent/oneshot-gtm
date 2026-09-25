@@ -5,6 +5,7 @@ import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { demoMode } from "./demo.ts";
+import { toSqliteUtc } from "./time.ts";
 import { workspacesDir } from "./workspaces.ts";
 import { configDir } from "./config.ts";
 import {
@@ -1585,7 +1586,7 @@ export class Ledger {
     const args: unknown[] = [];
     if (opts.sinceIso) {
       where.push("recorded_at >= ?");
-      args.push(opts.sinceIso);
+      args.push(toSqliteUtc(opts.sinceIso));
     }
     if (opts.playName) {
       where.push("play_name = ?");
@@ -1612,7 +1613,7 @@ export class Ledger {
     const args: unknown[] = [];
     if (opts.sinceIso) {
       where.push("recorded_at >= ?");
-      args.push(opts.sinceIso);
+      args.push(toSqliteUtc(opts.sinceIso));
     }
     const sql = `
       SELECT
@@ -1649,19 +1650,25 @@ export class Ledger {
     last_event_at: string | null;
   }> {
     const sql = `
+      SELECT cold.*, strftime('%Y-%m-%dT%H:%M:%fZ', cold.last_event_jd) AS last_event_at
+      FROM (
       SELECT p.id, p.name, p.email, p.company, p.linkedin_url, p.phone,
              MAX(s.created_at) AS last_sequence_at,
              MAX(CASE WHEN c.status = 'stopped' AND c.stop_reason IN ('bad_timing', 'other')
                       THEN c.stopped_at END) AS last_revivable_stop_at,
-             MAX(
-               COALESCE(MAX(s.created_at), ''),
+             -- The four sources mix SQLite-form (created_at, stopped_at) and
+             -- ISO (received_at, occurred_at) timestamps, so compare them as
+             -- julianday numbers, not strings. 0 stands in for "none" because
+             -- multi-argument MAX() returns NULL if any argument is NULL.
+             NULLIF(MAX(
+               COALESCE(MAX(julianday(s.created_at)), 0),
                COALESCE(MAX(CASE WHEN c.status = 'stopped' AND c.stop_reason IN ('bad_timing', 'other')
-                                 THEN c.stopped_at END), ''),
-               COALESCE((SELECT MAX(ir.received_at) FROM inbox_replies ir
-                         WHERE ir.prospect_id = p.id AND coalesce(ir.kind,'human') = 'human'), ''),
-               COALESCE((SELECT MAX(ce.occurred_at) FROM channel_events ce
-                         WHERE ce.prospect_id = p.id AND ce.event_type = 'reply'), '')
-             ) AS last_event_at
+                                 THEN julianday(c.stopped_at) END), 0),
+               COALESCE((SELECT MAX(julianday(ir.received_at)) FROM inbox_replies ir
+                         WHERE ir.prospect_id = p.id AND coalesce(ir.kind,'human') = 'human'), 0),
+               COALESCE((SELECT MAX(julianday(ce.occurred_at)) FROM channel_events ce
+                         WHERE ce.prospect_id = p.id AND ce.event_type = 'reply'), 0)
+             ), 0) AS last_event_jd
       FROM prospects p
       LEFT JOIN sequence_events s ON s.prospect_id = p.id
       LEFT JOIN cadence_state c ON c.prospect_id = p.id
@@ -1671,9 +1678,10 @@ export class Ledger {
           AND blocked.stop_reason IN ('not_a_fit', 'do_not_contact')
       )
       GROUP BY p.id
-      HAVING last_event_at != ''
-        AND julianday('now') - julianday(last_event_at) BETWEEN ? AND ?
-      ORDER BY last_event_at ASC
+      HAVING last_event_jd IS NOT NULL
+        AND julianday('now') - last_event_jd BETWEEN ? AND ?
+      ) cold
+      ORDER BY cold.last_event_jd ASC
       LIMIT ?
     `;
     return this.db
@@ -1929,23 +1937,29 @@ export class Ledger {
     const repliedClause: string[] = [];
     const bouncedClause: string[] = [];
     const repliedCol = opts.occurrenceWindow ? "COALESCE(replied_at, created_at)" : "created_at";
-    const bouncedCol = opts.occurrenceWindow ? "COALESCE(bounced_at, created_at)" : "created_at";
+    // created_at and replied_at are SQLite-form (replied_at is normalized on
+    // write), so they compare as strings against SQLite-form bounds. bounced_at
+    // is the provider's ISO timestamp: compare it by julianday, which reads both.
+    const bouncedCol = opts.occurrenceWindow
+      ? "COALESCE(julianday(bounced_at), julianday(created_at))"
+      : "created_at";
+    const bound = (name: string) => (opts.occurrenceWindow ? `julianday(${name})` : name);
     if (opts.sinceIso) {
       createdClause.push("created_at >= $sinceIso");
       repliedClause.push(`${repliedCol} >= $sinceIso`);
-      bouncedClause.push(`${bouncedCol} >= $sinceIso`);
+      bouncedClause.push(`${bouncedCol} >= ${bound("$sinceIso")}`);
     }
     if (opts.untilIso) {
       createdClause.push("created_at < $untilIso");
       repliedClause.push(`${repliedCol} < $untilIso`);
-      bouncedClause.push(`${bouncedCol} < $untilIso`);
+      bouncedClause.push(`${bouncedCol} < ${bound("$untilIso")}`);
     }
     const createdWindow = createdClause.length ? `(${createdClause.join(" AND ")})` : "1";
     const repliedWindow = repliedClause.length ? `(${repliedClause.join(" AND ")})` : "1";
     const bouncedWindow = bouncedClause.length ? `(${bouncedClause.join(" AND ")})` : "1";
     const params: Record<string, string> = {};
-    if (opts.sinceIso) params["$sinceIso"] = opts.sinceIso;
-    if (opts.untilIso) params["$untilIso"] = opts.untilIso;
+    if (opts.sinceIso) params["$sinceIso"] = toSqliteUtc(opts.sinceIso);
+    if (opts.untilIso) params["$untilIso"] = toSqliteUtc(opts.untilIso);
     const sql = `
       SELECT
         play_name,
@@ -2197,7 +2211,9 @@ export class Ledger {
    * re-discovery and the table doesn't silt. Returns the number removed.
    */
   sweepStalePendingResolution(maxAgeMs: number): number {
-    const cutoff = new Date(Date.now() - maxAgeMs).toISOString();
+    // first_seen_at is SQLite-form (column DEFAULT); an ISO cutoff would
+    // purge every row from the cutoff's own day.
+    const cutoff = toSqliteUtc(new Date(Date.now() - maxAgeMs));
     const res = this.db
       .prepare("DELETE FROM pending_resolution WHERE first_seen_at < ?")
       .run(cutoff);
@@ -3332,8 +3348,12 @@ export class Ledger {
          WHERE outcome IS NULL AND status = 'confirmed' AND all_day = 0
            AND prospect_id IS NOT NULL
            AND COALESCE(self_response, 'accepted') <> 'declined'
-           AND ends_at < datetime('now', '-30 minutes')
-         ORDER BY ends_at DESC`,
+           -- ends_at is Google's RFC 3339 with the event's own offset
+           -- (or ISO Z for all-day events); julianday reads both as UTC. A
+           -- string compare against datetime('now') held back every meeting
+           -- ending on today's UTC date.
+           AND julianday(ends_at) < julianday('now', '-30 minutes')
+         ORDER BY julianday(ends_at) DESC`,
       )
       .all() as MeetingRecord[];
   }
@@ -3344,7 +3364,7 @@ export class Ledger {
       .query(
         `SELECT * FROM meetings
          WHERE match_status IN ('suggested', 'ambiguous')
-         ORDER BY starts_at DESC`,
+         ORDER BY julianday(starts_at) DESC`,
       )
       .all() as MeetingRecord[];
   }
@@ -3384,7 +3404,7 @@ export class Ledger {
           `SELECT outcome, outcome_note AS note, summary
            FROM meetings
            WHERE prospect_id = ? AND outcome IS NOT NULL
-           ORDER BY outcome_recorded_at DESC, starts_at DESC
+           ORDER BY outcome_recorded_at DESC, julianday(starts_at) DESC
            LIMIT 1`,
         )
         .get(prospectId) as

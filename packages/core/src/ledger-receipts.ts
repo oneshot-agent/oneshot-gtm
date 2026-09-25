@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import type { ReceiptRecord } from "./types.ts";
+import { toSqliteUtc } from "./time.ts";
 
 /**
  * Receipt persistence for the ledger's `receipts` table: writes
@@ -100,7 +101,7 @@ export class ReceiptStore {
     }
     if (opts.sinceIso) {
       where.push("created_at >= ?");
-      args.push(opts.sinceIso);
+      args.push(toSqliteUtc(opts.sinceIso));
     }
     const sql = `SELECT * FROM receipts ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY created_at DESC LIMIT ?`;
     args.push(opts.limit ?? 200);
@@ -207,7 +208,7 @@ export class ReceiptStore {
     const args: unknown[] = [];
     if (opts.sinceIso) {
       where.push("created_at >= ?");
-      args.push(opts.sinceIso);
+      args.push(toSqliteUtc(opts.sinceIso));
     }
     const sql = `
       SELECT play_name, COUNT(*) AS calls, COALESCE(SUM(cost_usd), 0) AS total_usd
@@ -240,7 +241,7 @@ export class ReceiptStore {
     }
     if (opts.sinceIso) {
       where.push("created_at >= ?");
-      args.push(opts.sinceIso);
+      args.push(toSqliteUtc(opts.sinceIso));
     }
     const sql = `SELECT COUNT(*) AS n FROM receipts${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`;
     return (this.db.query(sql).get(...(args as never[])) as { n: number } | null)?.n ?? 0;
@@ -280,7 +281,7 @@ export class ReceiptStore {
     }
     if (opts.sinceIso) {
       where.push("created_at >= ?");
-      args.push(opts.sinceIso);
+      args.push(toSqliteUtc(opts.sinceIso));
     }
     const sql = `SELECT COALESCE(SUM(cost_usd), 0) AS total FROM receipts WHERE ${where.join(" AND ")}`;
     return (this.db.query(sql).get(...(args as never[])) as { total: number } | null)?.total ?? 0;

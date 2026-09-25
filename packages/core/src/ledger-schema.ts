@@ -11,6 +11,15 @@ import type { Database } from "bun:sqlite";
  * the rest of the ledger's surface. `Ledger.migrate()` is the sole caller —
  * it runs this once per connection, immediately after opening the database
  * and setting its PRAGMAs.
+ *
+ * Timestamp formats: columns stamped by SQL (`DEFAULT (datetime('now'))`,
+ * `datetime(...)` in an UPDATE) hold SQLite form `YYYY-MM-DD HH:MM:SS`; columns
+ * written from JS hold `toISOString()` form; provider timestamps (reply
+ * received_at, calendar starts_at/ends_at) arrive as the provider sent them.
+ * Since `' ' < 'T'`, a string comparison is only valid within one format:
+ * query methods convert their cutoffs to the column's form (`toSqliteUtc` in
+ * time.ts) and compare across formats with `julianday()`. Callers never need
+ * to know which form a column uses.
  */
 export function migrateLedgerSchema(db: Database): void {
   db.exec(`CREATE TABLE IF NOT EXISTS cadence_plans (
@@ -719,11 +728,20 @@ function backfillDecisionProvenance(db: Database): void {
   db.exec(`
       UPDATE target_queue SET
         decision = 'auto_reject',
-        decided_at = COALESCE(reviewed_at, found_at),
+        -- decided_at is ISO (JS-written); found_at is SQLite-form.
+        decided_at = COALESCE(reviewed_at, strftime('%Y-%m-%dT%H:%M:%fZ', found_at)),
         decided_by = 'machine'
       WHERE decision IS NULL
         AND status = 'rejected'
         AND COALESCE(notes, '') LIKE 'auto:%'
+    `);
+  // Earlier versions of the backfill above copied found_at verbatim, leaving
+  // SQLite-form values in an otherwise-ISO column. Once converted, no row
+  // matches, so re-running this on every boot is a no-op.
+  db.exec(`
+      UPDATE target_queue
+      SET decided_at = strftime('%Y-%m-%dT%H:%M:%fZ', decided_at)
+      WHERE decided_at GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9] [0-9][0-9]:[0-9][0-9]:[0-9][0-9]'
     `);
 }
 

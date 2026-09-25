@@ -17,3 +17,27 @@ const SQLITE_DATETIME = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
 export function sqliteToIso(ts: string): string {
   return SQLITE_DATETIME.test(ts) ? `${ts.replace(" ", "T")}Z` : ts;
 }
+
+function toDate(ts: string | Date): Date | null {
+  const d = ts instanceof Date ? ts : new Date(sqliteToIso(ts));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * Any timestamp (SQLite form, ISO `Z`, RFC 3339 with an offset, or a `Date`)
+ * as SQLite's `datetime('now')` form. The cutoff for a string comparison
+ * against an S column must be in this form: `' ' < 'T'`, so an ISO bound
+ * mis-sorts every row from its own calendar day. Unparseable input is
+ * returned as-is so a bad bound can't throw inside a query.
+ */
+export function toSqliteUtc(ts: string | Date): string {
+  if (typeof ts === "string" && SQLITE_DATETIME.test(ts)) return ts;
+  const d = toDate(ts);
+  return d ? d.toISOString().slice(0, 19).replace("T", " ") : String(ts);
+}
+
+/** Any timestamp as `YYYY-MM-DDTHH:MM:SS.sssZ`; the web client's one format. */
+export function toIsoUtc(ts: string | Date): string {
+  const d = toDate(ts);
+  return d ? d.toISOString() : String(ts);
+}

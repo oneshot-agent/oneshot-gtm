@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import { DraftVersionStore, draftVersionAngle, type DraftDiscardReason } from "./ledger-drafts.ts";
 import { extractBusinessAddress } from "./mail-address.ts";
 import { humanDecisionWhereSql } from "./labels.ts";
+import { toSqliteUtc } from "./time.ts";
 import type {
   IcpDecisionExample,
   ProspectPriority,
@@ -769,12 +770,13 @@ export class QueueStore {
   }
 
   expirePendingOlderThan(days: number): number {
-    const sinceIso = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
+    // found_at is SQLite-form (column DEFAULT), so the cutoff must be too.
+    const cutoff = toSqliteUtc(new Date(Date.now() - days * 24 * 3600 * 1000));
     const result = this.db
       .prepare(
         `UPDATE target_queue SET status = 'expired' WHERE status = 'pending' AND found_at < ?`,
       )
-      .run(sinceIso);
+      .run(cutoff);
     return Number(result.changes);
   }
 

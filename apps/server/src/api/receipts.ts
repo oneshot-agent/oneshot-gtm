@@ -1,4 +1,4 @@
-import { getLedger } from "@oneshot-gtm/core";
+import { getLedger, sqliteToIso } from "@oneshot-gtm/core";
 import type { ReceiptRecord } from "@oneshot-gtm/core";
 import type { ReceiptDetail, ReceiptValueTag, ReceiptView } from "@oneshot-gtm/shared-types";
 import { jsonResponse } from "../server.ts";
@@ -21,7 +21,7 @@ function toView(row: ReceiptRecord): ReceiptView {
     callType: row.call_type,
     costUsd: row.cost_usd,
     oneshotRequestId: row.oneshot_request_id,
-    createdAt: row.created_at,
+    createdAt: sqliteToIso(row.created_at),
     memo: row.memo,
     valueTag: parseValueTag(row.value_tag),
   };

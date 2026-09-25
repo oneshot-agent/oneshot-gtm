@@ -287,3 +287,17 @@ describe("run-form queue hydration", () => {
     }
   });
 });
+
+describe("listQueueRoute — timestamps", () => {
+  it("sends found_at as ISO so the browser doesn't parse it as local time", async () => {
+    nextRows = [queueRow(null)];
+    try {
+      const out = await body("http://x/api/queue");
+      expect((out["rows"] as Array<Record<string, unknown>>)[0]!["foundAt"]).toBe(
+        "2026-09-01T10:00:00Z",
+      );
+    } finally {
+      nextRows = [];
+    }
+  });
+});
