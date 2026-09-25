@@ -29,6 +29,7 @@ import { runXRepostersFinder } from "./x-reposters.ts";
 import type { XSeed } from "./_x-types.ts";
 import type { HarvestKnobs } from "./_x-engine.ts";
 import type { FinderResult } from "./_types.ts";
+import { checkPlayRouteReadiness } from "./_play-route.ts";
 import { collectQueueBusinessAddress } from "@oneshot-gtm/plays";
 import { researchNewQueueRows } from "./_product-research.ts";
 import { researchNewQueueRowPeople } from "./_person-research.ts";
@@ -275,11 +276,13 @@ export const TRIGGERS: TriggerSpec[] = [
       ...RESEARCH_DEFAULT,
       autoRounds: ["Seed", "Series A"],
       autoSinceDays: 7,
+      yourEdge: "",
       limit: 25,
       maxCostUsd: 5,
     },
     configBrief:
-      "Auto-discovers funding announcements via webSearch, extracts company + founder, ICP-filters. Config: `autoRounds` (e.g. ['Seed','Series A','Series B'] — match what your ICP actually buys at), `autoIndustry` (optional industry hint to bias the search query — derive from the ICP), `autoSinceDays` (lookback, default 7), `limit`, `maxCostUsd`. Tune autoRounds to skip stages that won't buy yet.",
+      "Auto-discovers funding announcements via webSearch, extracts company + founder, ICP-filters. Config: `autoRounds` (e.g. ['Seed','Series A','Series B'] — match what your ICP actually buys at), `autoIndustry` (optional industry hint to bias the search query — derive from the ICP), `autoSinceDays` (lookback, default 7), `limit`, `maxCostUsd`. Tune autoRounds to skip stages that won't buy yet. `play` (optional: set to `design-partner-loi` to route rows to that play's institutional register instead of post-funding's founder-to-founder one — for a founder/exec at a company that has actually become a large organization, e.g. a Head of AI Platform at a 2,000-person company) + `buyerType` (REQUIRED when `play` is set: `enterprise` | `government` | `hardware`) + `yourEdge` (also required when `play` is set — post-funding otherwise drafts from the round details alone).",
+    readiness: (cfg) => checkPlayRouteReadiness(cfg, "yourEdge") ?? { ready: true },
     run: (cfg) =>
       runPostFundingFinder({
         dryRun: false,
@@ -291,6 +294,9 @@ export const TRIGGERS: TriggerSpec[] = [
         autoSinceDays: (cfg["autoSinceDays"] as number) ?? 7,
         limit: (cfg["limit"] as number) ?? 25,
         maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
+        ...(typeof cfg["yourEdge"] === "string" ? { yourEdge: cfg["yourEdge"] as string } : {}),
+        ...(typeof cfg["play"] === "string" ? { play: cfg["play"] as string } : {}),
+        ...(typeof cfg["buyerType"] === "string" ? { buyerType: cfg["buyerType"] as string } : {}),
       }),
   },
   // Opt-in: these finders need founder-supplied personas/roles/podcasts to be
@@ -308,12 +314,13 @@ export const TRIGGERS: TriggerSpec[] = [
       maxCostUsd: 5,
     },
     configBrief:
-      "Searches for 'joined X as Y' job-change announcements, ICP-filters, enriches the new email. Config: `personas` (the roles whose JOB CHANGE represents a buying moment for THIS product — not generic 'VP Eng' unless that's actually who buys; e.g. 'Head of AI', 'Founding Engineer' for AI-tooling ICPs), `companies` (optional whitelist of companies to bias toward), `yourEdge` (REQUIRED. Observations the founder actually made, never a pitch: several `//`-separated angles, each opening with who it fits (e.g. *For a founder selling to clinics —*), then a named failure and what was learned. The tool picks ONE per prospect in code; the email never sees the others; here each angle is what a specific move makes newly relevant), `sinceDays` (lookback, default 14), `limit`, `maxCostUsd`. Strong personas matter more than long lists.",
+      "Searches for 'joined X as Y' job-change announcements, ICP-filters, enriches the new email. Config: `personas` (the roles whose JOB CHANGE represents a buying moment for THIS product — not generic 'VP Eng' unless that's actually who buys; e.g. 'Head of AI', 'Founding Engineer' for AI-tooling ICPs), `companies` (optional whitelist of companies to bias toward), `yourEdge` (REQUIRED. Observations the founder actually made, never a pitch: several `//`-separated angles, each opening with who it fits (e.g. *For a founder selling to clinics —*), then a named failure and what was learned. The tool picks ONE per prospect in code; the email never sees the others; here each angle is what a specific move makes newly relevant), `sinceDays` (lookback, default 14), `limit`, `maxCostUsd`. Strong personas matter more than long lists. `play` (optional: set to `design-partner-loi` to route rows to that play's institutional register instead of job-change's founder-to-founder one — for a move into a large organization, e.g. a Head of AI Platform at a 2,000-person company) + `buyerType` (REQUIRED when `play` is set: `enterprise` | `government` | `hardware`).",
     readiness: (cfg) => {
       const edge = cfg["yourEdge"];
-      return typeof edge === "string" && edge.trim().length > 0
-        ? { ready: true }
-        : { ready: false, reason: "set `yourEdge` — what the move makes newly relevant" };
+      if (!(typeof edge === "string" && edge.trim().length > 0)) {
+        return { ready: false, reason: "set `yourEdge` — what the move makes newly relevant" };
+      }
+      return checkPlayRouteReadiness(cfg, "yourEdge") ?? { ready: true };
     },
     run: (cfg) =>
       runJobChangeFinder({
@@ -324,6 +331,8 @@ export const TRIGGERS: TriggerSpec[] = [
         sinceDays: (cfg["sinceDays"] as number) ?? 14,
         limit: (cfg["limit"] as number) ?? 25,
         maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
+        ...(typeof cfg["play"] === "string" ? { play: cfg["play"] as string } : {}),
+        ...(typeof cfg["buyerType"] === "string" ? { buyerType: cfg["buyerType"] as string } : {}),
       }),
   },
   {
@@ -338,12 +347,13 @@ export const TRIGGERS: TriggerSpec[] = [
       maxCostUsd: 5,
     },
     configBrief:
-      "Scans job boards for open roles that signal the company would buy THIS product. Config: `sites` (job-board hosts to search; default Greenhouse / Lever / Workable / Ashby — the boards funded companies post on; add `workatastartup.com`, YC's own board, for companies with no GTM yet, i.e. the ones posting a first intern or generalist), `roles` (job titles whose existence implies a need for the product — pick the stage as much as the function: 'GTM Intern' or 'Founder's Associate' says no sales team exists yet, 'Head of Sales' says it already does), `companies` (optional whitelist), `yourClaim` (REQUIRED. Observations the founder actually made, never a pitch: several `//`-separated angles, each opening with who it fits (e.g. *For a founder selling to clinics —*), then a named failure and what was learned. The tool picks ONE per prospect in code; the email never sees the others; here each angle is the specific piece of the first 90 days in that role it collapses), `sinceDays`, `limit`, `maxCostUsd`. The roles + yourClaim angles need to be tightly coupled to the product.",
+      "Scans job boards for open roles that signal the company would buy THIS product. Config: `sites` (job-board hosts to search; default Greenhouse / Lever / Workable / Ashby — the boards funded companies post on; add `workatastartup.com`, YC's own board, for companies with no GTM yet, i.e. the ones posting a first intern or generalist), `roles` (job titles whose existence implies a need for the product — pick the stage as much as the function: 'GTM Intern' or 'Founder's Associate' says no sales team exists yet, 'Head of Sales' says it already does), `companies` (optional whitelist), `yourClaim` (REQUIRED. Observations the founder actually made, never a pitch: several `//`-separated angles, each opening with who it fits (e.g. *For a founder selling to clinics —*), then a named failure and what was learned. The tool picks ONE per prospect in code; the email never sees the others; here each angle is the specific piece of the first 90 days in that role it collapses), `sinceDays`, `limit`, `maxCostUsd`. The roles + yourClaim angles need to be tightly coupled to the product. `play` (optional: set to `design-partner-loi` to route rows to that play's institutional register instead of hiring-signal's founder-to-founder one — for a hire at a large organization, e.g. a Head of AI Platform at a 2,000-person company) + `buyerType` (REQUIRED when `play` is set: `enterprise` | `government` | `hardware`).",
     readiness: (cfg) => {
       const claim = typeof cfg["yourClaim"] === "string" ? (cfg["yourClaim"] as string).trim() : "";
-      return claim.length > 0
-        ? { ready: true }
-        : { ready: false, reason: "set `yourClaim` (your one-line pitch)" };
+      if (claim.length === 0) {
+        return { ready: false, reason: "set `yourClaim` (your one-line pitch)" };
+      }
+      return checkPlayRouteReadiness(cfg, "yourClaim") ?? { ready: true };
     },
     run: (cfg) =>
       runHiringSignalFinder({
@@ -355,6 +365,8 @@ export const TRIGGERS: TriggerSpec[] = [
         sinceDays: (cfg["sinceDays"] as number) ?? 14,
         limit: (cfg["limit"] as number) ?? 25,
         maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
+        ...(typeof cfg["play"] === "string" ? { play: cfg["play"] as string } : {}),
+        ...(typeof cfg["buyerType"] === "string" ? { buyerType: cfg["buyerType"] as string } : {}),
       }),
   },
   {
@@ -366,11 +378,13 @@ export const TRIGGERS: TriggerSpec[] = [
       podcasts: ["Latent Space", "Lenny's Podcast", "20VC", "Acquired", "Invest Like the Best"],
       sinceDays: 21,
       skipRead: false,
+      yourEdge: "",
       limit: 25,
       maxCostUsd: 5,
     },
     configBrief:
-      "Discovers recent podcast guests, ICP-filters, enriches their email. Config: `podcasts` (shows whose guest demographic overlaps with the ICP — replace defaults with shows the founder's actual buyer listens to), `sinceDays` (default 21), `skipRead` (skip per-episode webRead for cheaper but less accurate runs), `limit`, `maxCostUsd`. Podcast list is the leverage — narrow + on-target beats broad.",
+      "Discovers recent podcast guests, ICP-filters, enriches their email. Config: `podcasts` (shows whose guest demographic overlaps with the ICP — replace defaults with shows the founder's actual buyer listens to), `sinceDays` (default 21), `skipRead` (skip per-episode webRead for cheaper but less accurate runs), `limit`, `maxCostUsd`. Podcast list is the leverage — narrow + on-target beats broad. `play` (optional: set to `design-partner-loi` to route rows to that play's institutional register instead of podcast-guest's founder-to-founder one — for a guest who leads at a large organization, e.g. a Head of AI Platform at a 2,000-person company) + `buyerType` (REQUIRED when `play` is set: `enterprise` | `government` | `hardware`) + `yourEdge` (also required when `play` is set — podcast-guest otherwise drafts from the hook quote alone).",
+    readiness: (cfg) => checkPlayRouteReadiness(cfg, "yourEdge") ?? { ready: true },
     run: (cfg) =>
       runPodcastGuestFinder({
         dryRun: false,
@@ -379,6 +393,9 @@ export const TRIGGERS: TriggerSpec[] = [
         skipRead: cfg["skipRead"] === true,
         limit: (cfg["limit"] as number) ?? 25,
         maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
+        ...(typeof cfg["yourEdge"] === "string" ? { yourEdge: cfg["yourEdge"] as string } : {}),
+        ...(typeof cfg["play"] === "string" ? { play: cfg["play"] as string } : {}),
+        ...(typeof cfg["buyerType"] === "string" ? { buyerType: cfg["buyerType"] as string } : {}),
       }),
   },
   {
@@ -733,7 +750,7 @@ export const TRIGGERS: TriggerSpec[] = [
       maxCostUsd: 5,
     },
     configBrief:
-      "Reaches businesses with no GitHub repo, no Show HN post, no funding round and no accelerator batch — the local-business/main-street population the other ten finders can't touch. One `peopleSearch` call ($0.01 flat) returns up to 500 people matching `jobTitles` × `industries` × `locations` × `employeeRange`, many already carrying a `best_work_email` — those skip findEmail/verifyEmail entirely and go straight to the person-level ICP gate, so a run where every result has an email costs about one search call, not one per candidate. Config: `jobTitles` (roles that make the buying decision — e.g. 'Owner', 'Office Manager', 'Practice Manager'), `industries` (e.g. 'Dental Practices', 'HVAC Contractors', 'Independent Restaurants'), `locations` (metro/city/state filters), `employeeRange` (company-size band, e.g. '1-10', '11-50'), `keywords` (free-text refinement), `yourEdge` (REQUIRED. Observations the founder actually made, never a pitch: several `//`-separated angles, each opening with who it fits (e.g. *For a founder selling to clinics —*), then a named failure and what was learned. The tool picks ONE per prospect in code; the email never sees the others; for a free pilot: what you set up for them and what it saves, stated as something learned, fed to the `free-pilot` play), `limit`, `maxCostUsd`. When `industries` is set and `jobTitles` is empty, the search is business-shaped: a `companySearch` pass resolves matching company domains first, then `peopleSearch` is scoped to those domains instead of searching on industry directly. `engine` (`b2b`, the default, or `local`): `local` swaps the B2B people database for the SDK's `localSearch` — the places index, `industries` as the category × `locations` as the city — and walks each business through the domain-only contact spine. Pick `local` for main-street verticals the B2B database indexes poorly (independent restaurants, single-location practices, one-truck trades); it is one flat-priced search per run plus the normal per-candidate contact spend. STRATEGIST DUTY: propose `jobTitles` AND `industries` proactively from the founder's ICP — a pre-PMF founder selling to dental practices or HVAC companies shouldn't have to enumerate either by hand.",
+      "Reaches businesses with no GitHub repo, no Show HN post, no funding round and no accelerator batch — the local-business/main-street population the other ten finders can't touch. One `peopleSearch` call ($0.01 flat) returns up to 500 people matching `jobTitles` × `industries` × `locations` × `employeeRange`, many already carrying a `best_work_email` — those skip findEmail/verifyEmail entirely and go straight to the person-level ICP gate, so a run where every result has an email costs about one search call, not one per candidate. Config: `jobTitles` (roles that make the buying decision — e.g. 'Owner', 'Office Manager', 'Practice Manager'), `industries` (e.g. 'Dental Practices', 'HVAC Contractors', 'Independent Restaurants'), `locations` (metro/city/state filters), `employeeRange` (company-size band, e.g. '1-10', '11-50'), `keywords` (free-text refinement), `yourEdge` (REQUIRED. Observations the founder actually made, never a pitch: several `//`-separated angles, each opening with who it fits (e.g. *For a founder selling to clinics —*), then a named failure and what was learned. The tool picks ONE per prospect in code; the email never sees the others; for a free pilot: what you set up for them and what it saves, stated as something learned, fed to the `free-pilot` play), `limit`, `maxCostUsd`. When `industries` is set and `jobTitles` is empty, the search is business-shaped: a `companySearch` pass resolves matching company domains first, then `peopleSearch` is scoped to those domains instead of searching on industry directly. `engine` (`b2b`, the default, or `local`): `local` swaps the B2B people database for the SDK's `localSearch` — the places index, `industries` as the category × `locations` as the city — and walks each business through the domain-only contact spine. Pick `local` for main-street verticals the B2B database indexes poorly (independent restaurants, single-location practices, one-truck trades); it is one flat-priced search per run plus the normal per-candidate contact spend. STRATEGIST DUTY: propose `jobTitles` AND `industries` proactively from the founder's ICP — a pre-PMF founder selling to dental practices or HVAC companies shouldn't have to enumerate either by hand. `play` (optional: set to `design-partner-loi` to route rows to that play's institutional register instead of `free-pilot` — for a person at a genuinely larger organization this finder's `peopleSearch`/`companySearch` surfaced, e.g. a Head of AI Platform at a 2,000-person company; leave unset for the owner-operator/main-street population this finder normally targets) + `buyerType` (REQUIRED when `play` is set: `enterprise` | `government` | `hardware` — NEVER for a true owner-operator target, which the play's own runtime guard refuses anyway).",
     readiness: (cfg) => {
       const jobTitles = Array.isArray(cfg["jobTitles"])
         ? (cfg["jobTitles"] as unknown[]).filter((t) => typeof t === "string" && t.trim())
@@ -748,7 +765,7 @@ export const TRIGGERS: TriggerSpec[] = [
       if (typeof edge !== "string" || edge.trim().length === 0) {
         return { ready: false, reason: "set `yourEdge` — your one-line free-pilot pitch" };
       }
-      return { ready: true };
+      return checkPlayRouteReadiness(cfg, "yourEdge") ?? { ready: true };
     },
     run: (cfg) => {
       const strArray = (key: string): string[] =>
@@ -768,6 +785,8 @@ export const TRIGGERS: TriggerSpec[] = [
         ...(cfg["engine"] === "local" ? { engine: "local" as const } : {}),
         limit: (cfg["limit"] as number) ?? 25,
         maxCostUsd: (cfg["maxCostUsd"] as number) ?? 5,
+        ...(typeof cfg["play"] === "string" ? { play: cfg["play"] as string } : {}),
+        ...(typeof cfg["buyerType"] === "string" ? { buyerType: cfg["buyerType"] as string } : {}),
       });
     },
   },

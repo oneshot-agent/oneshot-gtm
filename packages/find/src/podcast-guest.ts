@@ -7,6 +7,7 @@ import type { PodcastGuestTarget } from "@oneshot-gtm/plays";
 import { isDuplicate } from "./_dedupe.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
+import { buildDesignPartnerLoiPayload, dedupePlayNames, resolvePlayRoute } from "./_play-route.ts";
 import type { FinderResult, PodcastGuestExtract, RunOpts } from "./_types.ts";
 
 const PLAY_NAME = "podcast-guest";
@@ -19,6 +20,21 @@ export interface PodcastGuestFinderOpts extends RunOpts {
   sinceDays?: number;
   /** Skip the deeper webRead step (cheaper but less accurate). */
   skipRead?: boolean;
+  /**
+   * Founder's one-line angle. podcast-guest has no such field for its own
+   * play (the hook quote/bridge IS the angle), but `design-partner-loi`
+   * requires one — only read/required when `play` routes there. See #705.
+   */
+  yourEdge?: string;
+  /**
+   * Route this finder's rows to `design-partner-loi` (the enterprise
+   * register) instead of `podcast-guest`'s own founder-to-founder play.
+   * `"design-partner-loi"` opts in; absent = today's behaviour, unchanged.
+   * Requires `buyerType`. See issue #705.
+   */
+  play?: string;
+  /** Required when `play` is `"design-partner-loi"`. See `DesignPartnerLoiTarget.buyerType`. */
+  buyerType?: string;
 }
 
 const DEFAULT_PODCASTS = [
@@ -42,6 +58,8 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
   const ledger = getLedger();
   const system = loadPrompt("podcast-guest-extract");
   const podcasts = opts.podcasts && opts.podcasts.length > 0 ? opts.podcasts : DEFAULT_PODCASTS;
+  const route = resolvePlayRoute(opts);
+  const dedupeScope = dedupePlayNames(PLAY_NAME);
 
   const result: FinderResult = {
     source: SOURCE,
@@ -91,7 +109,7 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
       result.halted = `max-cost cap (${opts.maxCostUsd})`;
       break;
     }
-    if (ledger.isQueueDuplicate(PLAY_NAME, hit.url)) {
+    if (dedupeScope.some((p) => ledger.isQueueDuplicate(p, hit.url))) {
       result.droppedDuplicate++;
       continue;
     }
@@ -193,7 +211,7 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
       fullName: extract.guestName,
       companyDomain: extract.guestCompanyDomain,
       isDuplicate: (email) =>
-        isDuplicate({ playName: PLAY_NAME, dedupeKey: hit.url, prospectEmail: email }),
+        isDuplicate({ playName: dedupeScope, dedupeKey: hit.url, prospectEmail: email }),
       icp,
       person: {
         name: extract.guestName,
@@ -257,8 +275,19 @@ export async function runPodcastGuestFinder(opts: PodcastGuestFinderOpts): Promi
       ...icpFields(contact),
     };
     const id = enqueueScoredTarget(ledger, {
-      playName: PLAY_NAME,
-      payload: target,
+      playName: route ? route.playName : PLAY_NAME,
+      payload: route
+        ? buildDesignPartnerLoiPayload({
+            name: target.name,
+            email: target.email,
+            company: target.company,
+            buyerType: route.buyerType,
+            yourEdge: (opts.yourEdge ?? "").trim(),
+            title: contact.title,
+            linkedinUrl,
+            phone,
+          })
+        : target,
       dedupeKey: hit.url,
       source: SOURCE,
       fitReason: filter.reason,

@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import { icpFilter, resolveIcp } from "./_filter.ts";
 import { isDuplicate } from "./_dedupe.ts";
 import { findLinkedInUrl, isLinkedInProfileUrl } from "./_linkedin.ts";
+import { buildDesignPartnerLoiPayload, dedupePlayNames, resolvePlayRoute } from "./_play-route.ts";
 import type { FinderResult, PostFundingExtract, RunOpts } from "./_types.ts";
 
 const PLAY_NAME = "post-funding";
@@ -39,6 +40,21 @@ export interface PostFundingFinderOpts extends RunOpts {
   autoIndustry?: string;
   /** Look back this many days in auto mode (used in the search query). Default 7. */
   autoSinceDays?: number;
+  /**
+   * Founder's one-line angle. post-funding has no such field for its own
+   * play (the round itself is the angle), but `design-partner-loi` requires
+   * one — only read/required when `play` routes there. See issue #705.
+   */
+  yourEdge?: string;
+  /**
+   * Route this finder's rows to `design-partner-loi` (the enterprise
+   * register) instead of `post-funding`'s own founder-to-founder play.
+   * `"design-partner-loi"` opts in; absent = today's behaviour, unchanged.
+   * Requires `buyerType`. See issue #705.
+   */
+  play?: string;
+  /** Required when `play` is `"design-partner-loi"`. See `DesignPartnerLoiTarget.buyerType`. */
+  buyerType?: string;
 }
 
 export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise<FinderResult> {
@@ -46,6 +62,8 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
   const icp = resolveIcp(opts.icpOverride);
   const ledger = getLedger();
   const system = loadPrompt("post-funding-extract");
+  const route = resolvePlayRoute(opts);
+  const dedupeScope = dedupePlayNames(PLAY_NAME);
 
   // Auto mode: harvest URLs via webSearch instead of reading a file.
   let urls = collectUrls(opts);
@@ -77,7 +95,7 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
       break;
     }
     // Dedupe by URL before spending anything (cheap).
-    if (ledger.isQueueDuplicate(PLAY_NAME, url)) {
+    if (dedupeScope.some((p) => ledger.isQueueDuplicate(p, url))) {
       result.droppedDuplicate++;
       continue;
     }
@@ -184,7 +202,7 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
       fullName: extract.founderName,
       companyDomain: extract.companyDomain,
       isDuplicate: (email) =>
-        isDuplicate({ playName: PLAY_NAME, dedupeKey: url, prospectEmail: email }),
+        isDuplicate({ playName: dedupeScope, dedupeKey: url, prospectEmail: email }),
       icp,
       person: {
         name: extract.founderName,
@@ -249,8 +267,19 @@ export async function runPostFundingFinder(opts: PostFundingFinderOpts): Promise
       ...icpFields(contact),
     };
     const id = enqueueScoredTarget(ledger, {
-      playName: PLAY_NAME,
-      payload: target,
+      playName: route ? route.playName : PLAY_NAME,
+      payload: route
+        ? buildDesignPartnerLoiPayload({
+            name: target.name,
+            email: target.email,
+            company: target.company,
+            buyerType: route.buyerType,
+            yourEdge: (opts.yourEdge ?? "").trim(),
+            title: contact.title,
+            linkedinUrl,
+            phone,
+          })
+        : target,
       dedupeKey: url,
       source: SOURCE,
       fitReason: filter.reason,
