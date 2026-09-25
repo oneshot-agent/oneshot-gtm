@@ -1,4 +1,4 @@
-import { emailDomain } from "./_lib.ts";
+import { emailDomain, enterpriseFirstTouchFlags } from "./_lib.ts";
 import { type EmailPlayDef, runEmailPlay, standardEnrich } from "./_run-play.ts";
 import { designPartnerLoiMetadata } from "./_metadata.ts";
 import { buildFollowUpEmail, registerSequence } from "./_cadence.ts";
@@ -123,9 +123,18 @@ const designPartnerLoiDef: EmailPlayDef<DesignPartnerLoiTarget> = {
       `PRODUCT: ${cfg.productOneLiner}`,
       `PROSPECT: ${t.name} at ${t.company}`,
       `BUYER TYPE: ${t.buyerType}`,
+      `TITLE: ${t.title ?? "(unknown)"}`,
       `YOUR EDGE: ${t.yourEdge}`,
       `DOSSIER:\n${prep.dossier || "(dry-run)"}`,
     ].join("\n"),
+  // Enterprise buyer type only (issue #707): the general play rules (4-6
+  // sentences, a dossier-observation hook) read as automated to a senior
+  // executive, so a stricter, code-enforced rule set applies — see
+  // `enterpriseFirstTouchFlags`. Government and hardware keep today's
+  // rules; a non-empty flags array holds the draft for founder review
+  // rather than auto-sending (see `_lib.ts`'s `sendDraftedEmail`).
+  bodyFlags: (t, body) =>
+    t.buyerType.trim().toLowerCase() === "enterprise" ? enterpriseFirstTouchFlags(body) : [],
   prospectMeta: (t) => ({
     name: t.name,
     email: t.email,

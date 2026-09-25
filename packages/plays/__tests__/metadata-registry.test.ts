@@ -139,6 +139,7 @@ describe("shared fns are what the play defs reference", () => {
     expect(designPartnerLoiMetadata({ buyerType: "enterprise", company: "Acme Corp" })).toEqual({
       buyerType: "enterprise",
       company: "Acme Corp",
+      promptVersion: 2,
     });
   });
 });

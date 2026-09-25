@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  enterpriseFirstTouchFlags,
   hardBanFlags,
   lintEmail,
   lintOpenerFrequency,
@@ -475,5 +476,87 @@ describe("lintEmail — what the prompts say it catches (issue #593)", () => {
     expect(
       lintEmail("x", "we found the valuable part was the join, not the sending. Sam"),
     ).toContain("ai-vocab");
+  });
+});
+
+// design-partner-loi's enterprise buyer-type first touch (issue #707): a
+// stricter, code-enforced rule set — 3-sentence / 70-word cap, no
+// dossier-observation opener — layered on top of `lintEmail`'s general
+// checks, applied only when `buyerType` is "enterprise" (see
+// design-partner-loi.ts's `bodyFlags`).
+describe("enterpriseFirstTouchFlags — issue #707", () => {
+  it("passes a compliant 3-sentence, opportunity-led draft", () => {
+    const body = [
+      "Regulated ops teams that pass audit on the first pass now skip the manual evidence trail entirely.",
+      "A short call would show exactly how the trail maps to your own control set.",
+      "Open to a scoped design-partner conversation for Acme?",
+      "",
+      "Sam",
+    ].join("\n");
+    expect(enterpriseFirstTouchFlags(body)).toEqual([]);
+  });
+
+  it("flags a draft with 4+ body sentences", () => {
+    const body = [
+      "Regulated ops teams that pass audit on the first pass skip the manual trail.",
+      "That's a real edge over category peers still doing it by hand.",
+      "A short call would show how it maps to your control set.",
+      "Open to a scoped design-partner conversation for Acme?",
+      "",
+      "Sam",
+    ].join("\n");
+    expect(enterpriseFirstTouchFlags(body)).toContain("enterprise-too-many-sentences");
+  });
+
+  it("flags a draft over the 70-word body cap even at 3 sentences", () => {
+    const filler = Array.from({ length: 65 }, (_, i) => `word${i}`).join(" ");
+    const body = [`${filler}.`, "A short call would help.", "Open to a chat?", "", "Sam"].join(
+      "\n",
+    );
+    expect(enterpriseFirstTouchFlags(body)).toContain("enterprise-body-too-long");
+  });
+
+  it("flags a personalised dossier-observation opener", () => {
+    for (const opener of [
+      "I noticed your team just shipped a major platform migration.",
+      "Saw that Acme recently closed a new funding round.",
+      "Your recent expansion into APAC caught my eye.",
+      "Congrats on the launch last week.",
+    ]) {
+      const body = [
+        opener,
+        "A short call would show the specific fit.",
+        "Open to a scoped design-partner conversation?",
+        "",
+        "Sam",
+      ].join("\n");
+      expect(enterpriseFirstTouchFlags(body)).toContain("enterprise-dossier-opener");
+    }
+  });
+
+  it("does not flag a fact-led opener that is not about the reader", () => {
+    const body = [
+      "Teams shipping agent tooling into regulated ops usually lose two weeks to manual evidence trails.",
+      "A short call would show how that maps to your own control set.",
+      "Open to a scoped design-partner conversation for Acme?",
+      "",
+      "Sam",
+    ].join("\n");
+    expect(enterpriseFirstTouchFlags(body)).toEqual([]);
+  });
+
+  it("ignores the trailing signature lines when counting words and sentences", () => {
+    // Without config, stripSignatureLines has no configured sig lines to peel
+    // (founderName/productDomain aren't set in this test's isolated config),
+    // so this only pins that a two-line sign-off never inflates the count on
+    // its own when the body is otherwise compliant.
+    const body = [
+      "Teams shipping agent tooling into regulated ops skip the manual evidence trail entirely.",
+      "A short call would show how it maps to your control set.",
+      "Open to a scoped design-partner conversation for Acme?",
+      "",
+      "Sam",
+    ].join("\n");
+    expect(enterpriseFirstTouchFlags(body)).toEqual([]);
   });
 });

@@ -109,9 +109,22 @@ export const civicPilotMetadata = (t: object): Record<string, unknown> => ({
   meetingDate: str(t, "meetingDate"),
 });
 
+/**
+ * Bumped whenever `design-partner-loi-email.md`'s RULES change in a way that
+ * would make an older draft's outcome data misleading if grouped with a
+ * newer one (issue #707: the enterprise buyer-type first touch went from
+ * the play's general institutional rules to a stricter, code-enforced
+ * length/opener/register rule set). Stamped onto every step-0 draft's
+ * metadata below so outcome tracking (reply rate, send rate) can split
+ * cleanly on it instead of conflating two different rule sets under one
+ * `buyerType: "enterprise"` bucket.
+ */
+export const DESIGN_PARTNER_LOI_PROMPT_VERSION = 2;
+
 export const designPartnerLoiMetadata = (t: object): Record<string, unknown> => ({
   buyerType: str(t, "buyerType"),
   company: str(t, "company"),
+  promptVersion: DESIGN_PARTNER_LOI_PROMPT_VERSION,
 });
 
 export const newBusinessMetadata = (t: object): Record<string, unknown> => ({

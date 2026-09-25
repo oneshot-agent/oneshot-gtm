@@ -7,6 +7,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // finders routing correctly by convention.
 
 const calls = { llmInputBlocks: [] as string[], enrolled: 0 };
+// Overridable per test — draft-length-retry.test.ts uses the same shape.
+// Defaults to the harmless {subject:"s", body:"b"} every existing test relies on.
+let nextDraft = { subject: "s", body: "b" };
 
 vi.mock("@oneshot-gtm/core", async () => {
   const actual = await vi.importActual<typeof import("@oneshot-gtm/core")>("@oneshot-gtm/core");
@@ -53,7 +56,7 @@ vi.mock("@oneshot-gtm/intel", async () => {
     loadPrompt: () => "system",
     complete: async (input: { messages: Array<{ role: string; content: string }> }) => {
       calls.llmInputBlocks.push(input.messages.find((m) => m.role === "user")?.content ?? "");
-      return { content: JSON.stringify({ subject: "s", body: "b" }), provider: "t", model: "t" };
+      return { content: JSON.stringify(nextDraft), provider: "t", model: "t" };
     },
   };
 });
@@ -72,6 +75,7 @@ const base = {
 beforeEach(() => {
   calls.llmInputBlocks = [];
   calls.enrolled = 0;
+  nextDraft = { subject: "s", body: "b" };
 });
 afterEach(() => vi.clearAllMocks());
 
@@ -158,5 +162,117 @@ describe("runDesignPartnerLoi", () => {
     });
     expect(out.drafted[0]?.sent).toBe(false);
     expect(out.drafted[0]?.flags.some((f) => f.startsWith("error:"))).toBe(true);
+  });
+});
+
+// Issue #707: an `enterprise` buyerType draft is held for a shape the general
+// institutional rules allow — 4+ body sentences, or a personalised
+// dossier-observation opener — while the identical draft under `government`
+// sails through untouched. The stricter rule set is scoped to `enterprise`
+// only, keyed on the target's own `buyerType` string.
+describe("runDesignPartnerLoi — enterprise first-touch flags (issue #707)", () => {
+  it("flags an enterprise draft with 4+ body sentences", async () => {
+    nextDraft = {
+      subject: "design partner slot",
+      body: [
+        "Regulated ops teams that pass audit on the first pass skip the manual trail.",
+        "That's a real edge over category peers still doing it by hand.",
+        "A short call would show how it maps to your control set.",
+        "Open to a scoped design-partner conversation for Acme?",
+      ].join(" "),
+    };
+    const out = await runDesignPartnerLoi({
+      dryRun: true,
+      targets: [{ ...base, buyerType: "enterprise" }],
+    });
+    expect(out.drafted[0]?.flags).toContain("enterprise-too-many-sentences");
+  });
+
+  it("flags an enterprise draft whose first sentence is a personalised dossier observation", async () => {
+    nextDraft = {
+      subject: "design partner slot",
+      body: [
+        "I noticed your team just shipped a major platform migration.",
+        "A short call would show the specific fit.",
+        "Open to a scoped design-partner conversation?",
+      ].join(" "),
+    };
+    const out = await runDesignPartnerLoi({
+      dryRun: true,
+      targets: [{ ...base, buyerType: "enterprise" }],
+    });
+    expect(out.drafted[0]?.flags).toContain("enterprise-dossier-opener");
+  });
+
+  it("does not flag the identical draft under buyerType government", async () => {
+    nextDraft = {
+      subject: "design partner slot",
+      body: [
+        "I noticed your team just shipped a major platform migration.",
+        "That's a real edge over category peers still doing it by hand.",
+        "A short call would show how it maps to your control set.",
+        "Open to a scoped design-partner conversation for Acme?",
+      ].join(" "),
+    };
+    const out = await runDesignPartnerLoi({
+      dryRun: true,
+      targets: [{ ...base, buyerType: "government" }],
+    });
+    expect(out.drafted[0]?.flags).not.toContain("enterprise-too-many-sentences");
+    expect(out.drafted[0]?.flags).not.toContain("enterprise-dossier-opener");
+    expect(out.drafted[0]?.flags).not.toContain("enterprise-body-too-long");
+  });
+
+  it("does not flag a compliant enterprise draft", async () => {
+    nextDraft = {
+      subject: "design partner slot",
+      body: [
+        "Regulated ops teams that pass audit on the first pass now skip the manual evidence trail entirely.",
+        "A short call would show exactly how the trail maps to your own control set.",
+        "Open to a scoped design-partner conversation for Acme?",
+      ].join(" "),
+    };
+    const out = await runDesignPartnerLoi({
+      dryRun: true,
+      targets: [{ ...base, buyerType: "enterprise" }],
+    });
+    expect(out.drafted[0]?.flags).toEqual([]);
+  });
+
+  // Acceptance criterion (issue #707): a dry-run draft for an enterprise
+  // VP-level target and a staff-engineer target both reach the prompt with
+  // their own TITLE, and a compliant draft in EITHER register (a tighter
+  // formal note for the VP, a shorter casual one for the staff engineer)
+  // passes the same 3-sentence code-enforced cap — the register is a prompt
+  // concern (title-keyed wording), the length cap is a code concern
+  // (buyerType-keyed, title-independent). Run in this suite's isolated
+  // ONESHOT_GTM_HOME (vitest.setup.ts redirects it to a fresh temp dir per
+  // test file — never the developer's real ~/.oneshot-gtm).
+  it("carries TITLE for both a VP-level and a staff-engineer enterprise target, and accepts a compliant 3-sentence draft in either register", async () => {
+    const vpTarget = { ...base, buyerType: "enterprise", title: "VP of Engineering" };
+    nextDraft = {
+      subject: "design partner slot for acme",
+      body: [
+        "Regulated ops teams that pass audit on the first pass skip the manual evidence trail entirely.",
+        "A short conversation would show exactly how that maps to your own control set.",
+        "Open to a scoped design-partner conversation for Acme?",
+      ].join(" "),
+    };
+    const vpOut = await runDesignPartnerLoi({ dryRun: true, targets: [vpTarget] });
+    expect(calls.llmInputBlocks.at(-1)).toContain("TITLE: VP of Engineering");
+    expect(vpOut.drafted[0]?.flags).toEqual([]);
+
+    const icTarget = { ...base, buyerType: "enterprise", title: "Staff Engineer" };
+    nextDraft = {
+      subject: "quick question",
+      body: [
+        "Teams shipping agent tooling into regulated ops skip the manual evidence trail entirely.",
+        "A short call would show how it maps to your stack.",
+        "Open to a scoped design-partner chat?",
+      ].join(" "),
+    };
+    const icOut = await runDesignPartnerLoi({ dryRun: true, targets: [icTarget] });
+    expect(calls.llmInputBlocks.at(-1)).toContain("TITLE: Staff Engineer");
+    expect(icOut.drafted[0]?.flags).toEqual([]);
   });
 });

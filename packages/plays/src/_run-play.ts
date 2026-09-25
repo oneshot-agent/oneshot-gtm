@@ -122,6 +122,16 @@ export interface EmailPlayDef<T, X = Record<string, never>> {
    */
   extraFlags?: (t: T) => string[];
   /**
+   * Play-specific flags computed from the DRAFTED BODY, merged with the lint
+   * flags exactly like `extraFlags` (a non-empty result holds the draft for
+   * review). Distinct from `extraFlags`: that hook only ever sees the
+   * target, so a rule that has to read what the model actually wrote (a
+   * sentence count, a word count, an opener shape) has nowhere to plug in.
+   * Opt-in per play — e.g. design-partner-loi's `enterpriseFirstTouchFlags`,
+   * applied only when the target's buyerType is "enterprise" (issue #707).
+   */
+  bodyFlags?: (t: T, body: string) => string[];
+  /**
    * When true, run `hardBanFlags()` (link / price / discount patterns)
    * against the drafted body and merge any hits into the lint flags before
    * sending. `lintEmail()` alone only checks for the literal string
@@ -364,6 +374,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           ...lintEmail(draft.subject, draft.body, def.maxBodyWords),
           ...(def.hardBans ? hardBanFlags(draft.body) : []),
           ...(def.extraFlags?.(target) ?? []),
+          ...(def.bodyFlags?.(target, draft.body) ?? []),
           ...lintGrounding(target, prep),
           ...lintStaleEmail(target),
         ];

@@ -186,18 +186,21 @@ function configuredSigLines(): string[] {
   return out;
 }
 
-/**
- * Word count for body-too-long lint, minus the trailing signature lines the
- * signatureDirective forces — so those deterministic words don't eat the
- * prompt's word budget. `sigLines` (last-line-first) is exposed for tests;
- * production passes nothing and reads config.
- */
 /** The SLOP_PHRASES labels a piece of text trips — the phrase-level half of lintEmail, for text that is not an email (a generated angle). */
 export function slopFlags(text: string): string[] {
   return SLOP_PHRASES.filter(([re]) => re.test(text)).map(([, label]) => label);
 }
 
-export function bodyWordsForLint(body: string, sigLines?: string[]): number {
+/**
+ * Body with the trailing founder-signature lines (name, domain, "Sent from my
+ * iPhone") peeled off, so anything counting body content — words, sentences —
+ * measures only what the model actually composed, not the deterministic
+ * sign-off `signatureDirective` forces it to append. `sigLines`
+ * (last-line-first) is exposed for tests; production passes nothing and reads
+ * config. Shared by `bodyWordsForLint` and `enterpriseFirstTouchFlags` (issue
+ * #707) so the two counts can never disagree about what counts as body text.
+ */
+export function stripSignatureLines(body: string, sigLines?: string[]): string {
   const lines = sigLines ?? configuredSigLines();
   let trimmed = body.trimEnd();
   // Peel each sig line off the tail only if it matches the current last line —
@@ -208,7 +211,17 @@ export function bodyWordsForLint(body: string, sigLines?: string[]): number {
     if (last !== line) break;
     trimmed = trimmed.slice(0, i < 0 ? 0 : i).trimEnd();
   }
-  return trimmed.split(/\s+/).filter(Boolean).length;
+  return trimmed;
+}
+
+/**
+ * Word count for body-too-long lint, minus the trailing signature lines the
+ * signatureDirective forces — so those deterministic words don't eat the
+ * prompt's word budget. `sigLines` (last-line-first) is exposed for tests;
+ * production passes nothing and reads config.
+ */
+export function bodyWordsForLint(body: string, sigLines?: string[]): number {
+  return stripSignatureLines(body, sigLines).split(/\s+/).filter(Boolean).length;
 }
 
 /**
@@ -421,6 +434,92 @@ export function hardBanFlags(body: string): string[] {
   if (/\$\s?\d|\b\d+(?:\.\d+)?\s?(?:usd|dollars?)\b/i.test(body)) flags.push("hard-ban:price");
   if (/\bfree trial\b|\bfree for you\b|\bdiscount\b/i.test(body)) {
     flags.push("hard-ban:discount-offer");
+  }
+  return flags;
+}
+
+/** Body split into sentence-ish chunks, on sentence-ending punctuation or a line break.
+ *  A separate, deliberately simple copy of reply.ts's private splitSentences: the two serve
+ *  different text shapes (a reply thread vs a short first-touch draft) and evolving one must
+ *  not risk the other's behaviour. */
+function splitBodySentences(text: string): string[] {
+  return text
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Drops a trailing sign-off fragment from a sentence split — a bare founder
+ * name ("Sam", "- Sam") that `stripSignatureLines` didn't catch because no
+ * `productDomain` is configured for this install (see `configuredSigLines`:
+ * with no domain, `signatureDirective` writes no forced sign-off block, but
+ * the play prompt's own "Sign-off: founder name" rule still puts a bare name
+ * on its own line). A real sentence in a design-partner-loi first touch ends
+ * with terminal punctuation (it is always a statement or a question); a
+ * short, unterminated final chunk is a name, not a fourth sentence.
+ */
+function trimTrailingSignOff(sentences: string[]): string[] {
+  const last = sentences[sentences.length - 1];
+  if (!last) return sentences;
+  const isShortUnterminated = !/[.!?]$/.test(last) && last.split(/\s+/).filter(Boolean).length <= 4;
+  return isShortUnterminated ? sentences.slice(0, -1) : sentences;
+}
+
+/** design-partner-loi's enterprise first-touch body cap (issue #707): at most 3 sentences. */
+export const ENTERPRISE_MAX_BODY_SENTENCES = 3;
+
+/** design-partner-loi's enterprise first-touch word cap (issue #707), looser than the sentence cap so a legitimate 3-sentence draft never trips it on word count alone. */
+export const ENTERPRISE_MAX_BODY_WORDS = 70;
+
+/**
+ * A first sentence shaped like the general first-touch "Hook" beat — a
+ * personalised, dossier-derived observation about the reader or their
+ * company ("I noticed your team just shipped...", "Your recent platform
+ * migration caught my eye.", "Congrats on the launch.") — the exact opener
+ * issue #707 bans for an enterprise buyer's first touch. Deliberately
+ * broader than `SLOP_PHRASES`'s banned-opener list: those catch specific
+ * AI-tell PHRASES anywhere in the body; this catches the STRUCTURAL SHAPE
+ * of a dossier-observation opener (an "about you" fact stated up front),
+ * and only when it leads the first sentence — the same shape is fine
+ * later in the body, where it is grounding rather than the opener.
+ */
+const ENTERPRISE_DOSSIER_OPENER_PATTERNS: RegExp[] = [
+  // "I noticed / saw / came across / read / found / caught / spotted ..."
+  /^i(?:'ve| have)?\s+(?:noticed|saw|seen|came across|read|found|caught|spotted)\b/i,
+  // Subjectless variants of the same tell: "Noticed your...", "Saw that...", "Congrats on...".
+  /^(?:noticed|saw|congrat(?:s|ulations)?)\b/i,
+  // Second-person / company-possessive opener paired with an observation or
+  // achievement predicate — "Your team just shipped...", "Acme's recent
+  // launch caught my eye.", "You've built an impressive platform."
+  /^(?:you(?:'ve|'re| are| have)?|your\s+[a-z-]+(?:'s)?|[a-z][\w&.'-]*'s\s+[a-z-]+)\b[^.?!]{0,80}\b(?:noticed|caught (?:my|our) (?:eye|attention)|stood out|impressive|impressed|recently|just\s+(?:shipped|launched|raised|announced|hired|closed|opened))\b/i,
+];
+
+/**
+ * Post-generation flags for design-partner-loi's enterprise buyer-type
+ * first touch (issue #707): the general play prose (4-6 sentences, a
+ * dossier hook opener) reads as automated to a senior enterprise
+ * executive, so this buyer type gets a stricter, code-enforced rule set
+ * — a hard limit the prompt text alone cannot guarantee, the same way
+ * `lintEmail`'s `body-too-long` enforces the general play's word cap.
+ * Model-agnostic: every check keys on the DRAFT's observable shape
+ * (sentence count, word count, first-sentence pattern), never on which
+ * model wrote it. Called only for `buyerType: "enterprise"` — see
+ * `design-partner-loi.ts`'s `draftFlags`; government and hardware are
+ * unaffected and keep the play's general rules.
+ */
+export function enterpriseFirstTouchFlags(body: string): string[] {
+  const flags: string[] = [];
+  const stripped = stripSignatureLines(body);
+  const words = stripped.split(/\s+/).filter(Boolean);
+  if (words.length > ENTERPRISE_MAX_BODY_WORDS) flags.push("enterprise-body-too-long");
+  const sentences = trimTrailingSignOff(splitBodySentences(stripped));
+  if (sentences.length > ENTERPRISE_MAX_BODY_SENTENCES) {
+    flags.push("enterprise-too-many-sentences");
+  }
+  const first = sentences[0] ?? "";
+  if (ENTERPRISE_DOSSIER_OPENER_PATTERNS.some((re) => re.test(first))) {
+    flags.push("enterprise-dossier-opener");
   }
   return flags;
 }
