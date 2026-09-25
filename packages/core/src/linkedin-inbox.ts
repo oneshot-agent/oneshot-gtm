@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync, chmodSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { openStateDatabase } from "./sqlite-open.ts";
+import { existsSync } from "node:fs";
+import { join, resolve } from "node:path";
 import type {
   LinkedInAccount,
   LinkedInConversation,
@@ -163,10 +164,8 @@ class LinkedInDeliveryHandles {
 export class LinkedInInboxStore {
   readonly db: Database;
   constructor(path = join(sharedDir(), "linkedin-inbox.sqlite")) {
-    mkdirSync(dirname(path), { recursive: true });
-    this.db = new Database(path);
-    chmodSync(path, 0o600);
-    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=10000;
+    this.db = openStateDatabase(path, { busyTimeoutMs: 10000 });
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS identities(account_key TEXT,provider_id TEXT,data TEXT NOT NULL,PRIMARY KEY(account_key,provider_id));
       CREATE TABLE IF NOT EXISTS accounts(key TEXT PRIMARY KEY,data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS conversations(key TEXT PRIMARY KEY,account_key TEXT NOT NULL,data TEXT NOT NULL);

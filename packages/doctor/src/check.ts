@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import {
   capGroupKey,
@@ -9,6 +9,8 @@ import {
   getGmailProfile,
   getLedger,
   GMAIL_AUTH_HINT,
+  isGroupOrWorldAccessible,
+  sharedDbPath,
   gmailAccountFor,
   hasCalendarScope,
   identityCapacities,
@@ -840,6 +842,29 @@ export async function runDoctor(opts: { refreshBalance?: boolean } = {}): Promis
       severity: "fail",
       message: `error opening ledger: ${(err as Error).message}`,
     });
+  }
+
+  // Opening a state DB chmods it to 0600 (sqlite-open.ts); a file that is
+  // still readable by others is one that heal couldn't change. Windows
+  // reports synthetic mode bits, so the check means nothing there.
+  const dbPaths =
+    process.platform === "win32" ? [] : [join(configDir(), "ledger.sqlite"), sharedDbPath()];
+  for (const path of dbPaths) {
+    let mode: number;
+    try {
+      mode = statSync(path).mode;
+    } catch {
+      continue;
+    }
+    if (isGroupOrWorldAccessible(mode)) {
+      results.push({
+        name: "database permissions",
+        group: "install",
+        severity: "warn",
+        message: `${path} is readable by other users (mode ${(mode & 0o777).toString(8)})`,
+        hint: `chmod 600 ${path}`,
+      });
+    }
   }
 
   // One line per sender identity in the rotation pool. Legacy installs

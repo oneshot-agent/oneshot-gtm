@@ -1,8 +1,9 @@
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync } from "node:fs";
+
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { demoMode } from "./demo.ts";
+import { openStateDatabase } from "./sqlite-open.ts";
 import { logEvent } from "./events.ts";
 
 /**
@@ -56,12 +57,9 @@ export class SharedDb {
   private importedFrom = new Set<string>();
 
   constructor(path: string = sharedDbPath()) {
-    if (!existsSync(dirname(path))) mkdirSync(dirname(path), { recursive: true });
-    this.db = new Database(path);
-    this.db.exec("PRAGMA journal_mode = WAL");
-    // Longer than the ledger's 5s: every workspace's server and every CLI run
-    // share this file, so write contention is the normal case, not the edge.
-    this.db.exec("PRAGMA busy_timeout = 10000");
+    // Longer busy timeout than the ledger's 5s: every workspace's server and
+    // every CLI run share this file, so write contention is the normal case.
+    this.db = openStateDatabase(path, { busyTimeoutMs: 10000 });
     this.migrate();
   }
 

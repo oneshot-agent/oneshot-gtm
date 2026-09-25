@@ -2,9 +2,10 @@ import { contactAllowedClause } from "./contact-optout.ts";
 import { extractBusinessAddress } from "./mail-address.ts";
 import type { DirectMailDraft, PostalAddress } from "./direct-mail.ts";
 import { Database } from "bun:sqlite";
-import { existsSync, mkdirSync } from "node:fs";
+
 import { basename, dirname, join, resolve } from "node:path";
 import { demoMode } from "./demo.ts";
+import { openStateDatabase } from "./sqlite-open.ts";
 import { toSqliteUtc } from "./time.ts";
 import { workspacesDir } from "./workspaces.ts";
 import { configDir } from "./config.ts";
@@ -162,6 +163,8 @@ export const LEDGER_BUSY_TIMEOUT_MS = 5000;
 export function openLedgerDatabase(path: string, opts: { readonly?: boolean } = {}): Database {
   const db = new Database(path, opts.readonly ? { readonly: true } : undefined);
   db.exec(`PRAGMA busy_timeout = ${LEDGER_BUSY_TIMEOUT_MS}`);
+  // Writes through a side handle are held to the same foreign keys as Ledger's.
+  if (!opts.readonly) db.exec("PRAGMA foreign_keys = ON");
   return db;
 }
 
@@ -197,15 +200,15 @@ export class Ledger {
 
   constructor(path: string = DEFAULT_DB_PATH, options: { sharedPeoplePath?: string } = {}) {
     this.path = path;
-    if (!existsSync(dirname(path))) mkdirSync(dirname(path), { recursive: true });
-    this.db = new Database(path);
-    this.db.exec("PRAGMA journal_mode = WAL");
-    // Wait (don't immediately throw) when another connection holds the write
-    // lock — e.g. a background send and a request both opening the ledger, or
-    // parallel test workers running first-run migrations against a shared file.
-    // Without this, concurrent DDL surfaces as a spurious "database is locked"
-    // / "no such table" mid-migration.
-    this.db.exec(`PRAGMA busy_timeout = ${LEDGER_BUSY_TIMEOUT_MS}`);
+    // Owner-only file, WAL, synchronous=NORMAL, enforced foreign keys, and a
+    // busy timeout so a concurrent writer (a background send and a request
+    // both opening the ledger, or parallel test workers migrating a shared
+    // file) is waited out instead of surfacing as "database is locked" /
+    // "no such table" mid-migration. See sqlite-open.ts.
+    this.db = openStateDatabase(path, {
+      busyTimeoutMs: LEDGER_BUSY_TIMEOUT_MS,
+      foreignKeys: true,
+    });
     this.migrate();
     // Prospect CRUD, research-backlog queries, dossier merge/update
     // operations, person/company facts, and stored ICP-verdict persistence
@@ -3178,6 +3181,12 @@ export class Ledger {
 
   close(): void {
     this.people?.close();
+    try {
+      // Refresh planner stats when SQLite thinks they're stale; cheap otherwise.
+      this.db.exec("PRAGMA optimize");
+    } catch {
+      // Never let housekeeping fail a close.
+    }
     this.db.close();
   }
 

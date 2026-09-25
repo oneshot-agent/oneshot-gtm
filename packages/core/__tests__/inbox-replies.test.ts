@@ -69,8 +69,10 @@ describe("inbox_replies (v21)", () => {
   });
 
   it("listSequenceEventsForProspect returns sent steps across plays, oldest first", () => {
+    // sequence_events.prospect_id is a foreign key: the prospect must exist.
+    const prospectId = ledger.upsertProspect({ name: "Pat", email: "pat@x.com", source: "t" });
     ledger.recordSequenceEvent({
-      prospectId: 1,
+      prospectId,
       playName: "stack-consolidation",
       stepIndex: 0,
       channel: "email",
@@ -78,14 +80,14 @@ describe("inbox_replies (v21)", () => {
       metadata: { subject: "stack thing", body: "hey" },
     });
     ledger.recordSequenceEvent({
-      prospectId: 1,
+      prospectId,
       playName: "luma-events",
       stepIndex: 0,
       channel: "email",
       status: "sent",
       metadata: { subject: "event", body: "yo" },
     });
-    const events = ledger.listSequenceEventsForProspect(1);
+    const events = ledger.listSequenceEventsForProspect(prospectId);
     expect(events).toHaveLength(2);
     expect(new Set(events.map((e) => e.play_name))).toEqual(
       new Set(["stack-consolidation", "luma-events"]),
