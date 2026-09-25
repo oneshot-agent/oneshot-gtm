@@ -112,6 +112,21 @@ export const CONCEPTS = {
     body: "current role and company facts from the person's public work history, researched after the finder ran; a draft made before it landed picks it up on Regenerate",
     href: docs + "finders",
   },
+  angleUsage: {
+    title: "Angle results",
+    body: "What happened to drafts built on each angle, and who replied. Rates appear after 30 sends (30 people for an angle); angles go to whoever they fit, so read differences as a hint.",
+    href: docs + "dashboard",
+  },
+  firstTouchFormat: {
+    title: "First-touch format",
+    body: "An opt-in test of the first email: standard against brief (at most 3 sentences, no opener about the reader). Each person stays in one arm; nothing switches automatically.",
+    href: docs + "plays",
+  },
+  edgeShape: {
+    title: "Writing an edge",
+    body: "3–4 angles, each opening with who it fits, then either a lesson (what failed and what you learned) or an opportunity backed by one concrete fact.",
+    href: docs + "dashboard",
+  },
 } satisfies Record<string, Concept>;
 
 export type ConceptId = keyof typeof CONCEPTS;

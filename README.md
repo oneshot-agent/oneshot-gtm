@@ -121,7 +121,7 @@ bun run cli -- ui [--dev] [--port 4000] [--no-browser]
 Ten pages plus a run form:
 
 - **Home** — spend, reply-rate trend, in-flight cadences, and a scheduler strip showing each trigger's state, last run and next due
-- **Queue** — triggers table (enable, edit config, fire) plus the target queue with bulk approve and per-play **Drain**
+- **Queue** — triggers table (enable, edit config, fire; the config editor shows each angle's and first-touch format's sends and replies) plus the target queue with bulk approve and per-play **Drain**
 - **Prospects** — search and browse every candidate a finder ever surfaced, any status, with who decided it and why, what happened after, and an override
 - **Add Prospect** — paste a LinkedIn / X / GitHub URL; deep research builds a dossier, the LLM picks an angle against your ICP and drafts an intro, and the row lands in the queue
 - **Replies** — every reply matched to its prospect, play and cadence status across all sender identities; answer in place, by hand or LLM-drafted and research-grounded
