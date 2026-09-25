@@ -124,6 +124,30 @@ describe("companyBatchCursor wiring (#708)", () => {
     }
   });
 
+  it("an unready ad-hoc run neither runs the finder nor advances company_batch_seq", async () => {
+    const spec = TRIGGERS.find((s) => s.name === "hiring-signal");
+    if (!spec) throw new Error("hiring-signal spec missing — registry shape changed");
+    // No yourClaim: hiring-signal's readiness gate refuses the run.
+    fakeStore["hiring-signal"] = {
+      name: "hiring-signal",
+      enabled: 1,
+      config_json: JSON.stringify({ roles: ["Head of AI"] }),
+      last_polled_at: null,
+      running_started_at: null,
+      company_batch_seq: 4,
+    };
+    const runSpy = vi.spyOn(spec, "run");
+    try {
+      const out = await runTriggerNow("hiring-signal");
+      expect(out.fired).toBe(false);
+      expect(runSpy).not.toHaveBeenCalled();
+      expect(fakeStore["hiring-signal"]!.company_batch_seq).toBe(4);
+      expect(fakeStore["hiring-signal"]!.last_polled_at).toBeNull();
+    } finally {
+      runSpy.mockRestore();
+    }
+  });
+
   it("runTriggerNow defaults the cursor to 0 for a never-run trigger", async () => {
     const spec = TRIGGERS.find((s) => s.name === "job-change");
     if (!spec) throw new Error("job-change spec missing — registry shape changed");

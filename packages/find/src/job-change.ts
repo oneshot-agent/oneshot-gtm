@@ -32,9 +32,9 @@ export interface JobChangeFinderOpts extends RunOpts {
    * (issue #708): when the list needs more than one batch to stay under the
    * query length bound, batches start at `cursor mod batchCount` instead of
    * always batch 0, so a list spanning several batches isn't scanned from
-   * the top on every run. The registry derives this from the trigger's
-   * `last_polled_at` epoch ms; direct/CLI callers may omit it (defaults to
-   * 0 — first batch always starts the run).
+   * the top on every run. The registry passes the trigger's
+   * `company_batch_seq` (one step per completed run); direct/CLI callers may
+   * omit it (defaults to 0 — first batch always starts the run).
    */
   companyBatchCursor?: number;
   /** Days back to bias the search query. Default 14. */

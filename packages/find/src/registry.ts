@@ -1287,7 +1287,10 @@ export async function runTriggerNow(
   const readiness = checkReadiness(spec, config);
   if (!readiness.ready) {
     const message = `not ready: ${readiness.reason}`;
-    ledger.updateTriggerLastPoll({
+    // The finder never ran: release the claim and record why, but neither
+    // stamp a poll nor step the company-batch cursor (company_batch_seq only
+    // advances on a completed run) — same as the scheduler's readiness skip.
+    ledger.clearTriggerClaim({
       name,
       summary: { error: message, at: new Date().toISOString() },
     });

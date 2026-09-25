@@ -59,10 +59,9 @@ export function batchCompaniesByQueryLength(
  * fairness knob issue #708 asks for: a `companies` list spanning several
  * batches shouldn't always have the same batch searched (and therefore
  * scored against `limit`/`maxCostUsd`) first on every run. `cursor` is
- * typically the trigger's last-poll epoch ms (see `registry.ts`), which
- * changes every run and so rotates the start deterministically with no new
- * persisted cursor state. A negative or fractional cursor is normalized the
- * same way.
+ * typically the trigger's `company_batch_seq` (see `registry.ts`), which
+ * steps by exactly 1 per completed run, so the start visits every batch in
+ * turn. A negative or fractional cursor is normalized the same way.
  */
 export function rotateBatches<T>(batches: readonly T[][], cursor: number): T[][] {
   if (batches.length <= 1) return [...batches];
