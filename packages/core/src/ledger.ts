@@ -165,6 +165,18 @@ export function openLedgerDatabase(path: string, opts: { readonly?: boolean } = 
   return db;
 }
 
+/**
+ * `PRAGMA wal_checkpoint(TRUNCATE)`, failing loudly. A reader still inside a
+ * transaction makes SQLite report `busy = 1` in the result row rather than
+ * throw, which would leave the WAL at full size behind a "success".
+ */
+export function truncateWal(db: Database): void {
+  const row = db.query("PRAGMA wal_checkpoint(TRUNCATE)").get() as { busy: number } | null;
+  if (row?.busy) {
+    throw new Error("database is locked: another connection kept the WAL from being checkpointed");
+  }
+}
+
 export class Ledger {
   readonly mailboxes: MailboxStore;
   private db: Database;
@@ -3150,9 +3162,9 @@ export class Ledger {
    * actually shrinks the file.
    */
   vacuum(): void {
-    this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    truncateWal(this.db);
     this.db.exec("VACUUM");
-    this.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    truncateWal(this.db);
   }
 
   /** Pages VACUUM would reclaim. */

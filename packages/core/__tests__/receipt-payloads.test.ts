@@ -3,7 +3,7 @@ import { rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { Database } from "bun:sqlite";
-import { Ledger } from "../src/ledger.ts";
+import { Ledger, truncateWal } from "../src/ledger.ts";
 import {
   RECEIPT_ARRAY_CAP,
   RECEIPT_STRING_CAP,
@@ -217,5 +217,24 @@ describe("compactReceiptPayloads", () => {
     const size = () => Bun.file(dbPath).size;
     ledger.vacuum();
     expect(size()).toBeLessThan(40 * PAGE.length);
+  });
+});
+
+describe("truncateWal", () => {
+  it("throws when a reader keeps the WAL from being checkpointed", () => {
+    const writer = new Database(dbPath);
+    const reader = new Database(dbPath);
+    try {
+      writer.exec("INSERT INTO receipts(play_name, call_type) VALUES ('p', 'web.read')");
+      reader.exec("BEGIN");
+      reader.query("SELECT COUNT(*) FROM receipts").get();
+      writer.exec("INSERT INTO receipts(play_name, call_type) VALUES ('p', 'web.read')");
+      expect(() => truncateWal(writer)).toThrow(/locked/);
+      reader.exec("COMMIT");
+      expect(() => truncateWal(writer)).not.toThrow();
+    } finally {
+      reader.close();
+      writer.close();
+    }
   });
 });
