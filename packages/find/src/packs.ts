@@ -255,8 +255,12 @@ export const PACKS: IndustryPack[] = [
     triggers: {
       // Accelerators, not cohorts: each resolves to its latest cohort from the
       // date at run time, so the pack never goes stale.
+      // `cohorts: []` clears any cohorts already pinned in the stored config:
+      // applying a pack merges over it, and pinned cohorts are combined with
+      // `accelerators`, so leaving them would widen the sweep again.
       "accelerator-batch": {
         accelerators: [{ id: "yc", recent: 2 }, { id: "ai-grant" }],
+        cohorts: [],
         limit: 40,
       },
       "post-funding-auto": {
