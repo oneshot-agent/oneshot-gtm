@@ -74,8 +74,23 @@ export function runLedgerMigrations(
     }
     db.exec("COMMIT");
   } catch (err) {
-    db.exec("ROLLBACK");
+    rollbackQuietly(db);
     throw err;
+  }
+}
+
+/**
+ * Roll back if a transaction is still open, never masking the error that got
+ * us here: SQLite ends the transaction itself on some failures (SQLITE_FULL,
+ * SQLITE_IOERR, SQLITE_NOMEM), and a bare ROLLBACK would then throw "no
+ * transaction is active" in place of the real cause.
+ */
+function rollbackQuietly(db: Database): void {
+  if (!db.inTransaction) return;
+  try {
+    db.exec("ROLLBACK");
+  } catch {
+    // The original error is the one worth reporting.
   }
 }
 
@@ -859,7 +874,7 @@ function widenRunsStatusCheck(db: Database): void {
       `);
     if (own) db.exec("COMMIT");
   } catch (err) {
-    if (own) db.exec("ROLLBACK");
+    if (own) rollbackQuietly(db);
     throw err;
   }
 }

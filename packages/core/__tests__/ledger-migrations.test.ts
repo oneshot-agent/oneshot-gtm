@@ -103,6 +103,24 @@ describe("runLedgerMigrations", () => {
     });
   });
 
+  it("reports the step's own error when the step already ended the transaction", () => {
+    const migrations: LedgerMigration[] = [
+      ...LEDGER_MIGRATIONS,
+      {
+        version: LEDGER_SCHEMA_VERSION + 1,
+        name: "ends the transaction, then fails",
+        up: (db) => {
+          db.exec("ROLLBACK");
+          throw new Error("the real cause");
+        },
+      },
+    ];
+    withRaw((db) => {
+      expect(() => runLedgerMigrations(db, migrations)).toThrow("the real cause");
+      expect(db.inTransaction).toBe(false);
+    });
+  });
+
   it("runs only the steps after the file's version", () => {
     new Ledger(dbPath).close();
     const ran: number[] = [];
