@@ -80,3 +80,25 @@ it.each(["csv:import", "manual", ""])(
     expect(getTrigger).not.toHaveBeenCalled();
   },
 );
+
+it("carries the trigger's first-touch format settings onto the target at generation time", () => {
+  getTrigger.mockReturnValue({
+    config_json: JSON.stringify({
+      yourEdge: "e",
+      firstTouchFormat: "split",
+      firstTouchSplit: 0.25,
+    }),
+  });
+  expect(resolveQueueTarget({ source: "find:luma-events", payload_json })).toMatchObject({
+    firstTouchFormat: "split",
+    firstTouchSplit: 0.25,
+  });
+  getTrigger.mockReturnValue({ config_json: JSON.stringify({ firstTouchFormat: "tiny" }) });
+  expect(resolveQueueTarget({ source: "find:luma-events", payload_json })).not.toHaveProperty(
+    "firstTouchFormat",
+  );
+  getTrigger.mockReturnValue({ config_json: JSON.stringify({ yourEdge: "e" }) });
+  expect(resolveQueueTarget({ source: "find:luma-events", payload_json })).not.toHaveProperty(
+    "firstTouchFormat",
+  );
+});

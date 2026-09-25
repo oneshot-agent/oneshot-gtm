@@ -36,6 +36,7 @@ export function AngleUsagePanel({
   angleUsage,
   draftUsage,
   voiceUsage,
+  formatUsage,
   onRetire,
   disabled,
 }: {
@@ -43,6 +44,8 @@ export function AngleUsagePanel({
   draftUsage: TriggerView["draftUsage"];
   /** The same outcomes split by the founder's voice card; absent on older callers. */
   voiceUsage?: TriggerView["voiceUsage"];
+  /** Intro outcomes by first-touch format arm; absent until a format setting drafted something. */
+  formatUsage?: TriggerView["formatUsage"];
   /** Remove an angle from the editor text. Absent = read-only. */
   onRetire?: (angleText: string) => void;
   disabled?: boolean;
@@ -61,6 +64,13 @@ export function AngleUsagePanel({
       {voiceUsage && voiceUsage.voiced.sent + voiceUsage.voiced.regenerated > 0 && (
         <div className="font-mono text-[11px] text-ink-faint">
           {`voice · ${usageLine("on", voiceUsage.voiced)} · ${usageLine("off", voiceUsage.plain)}`}
+        </div>
+      )}
+      {formatUsage && Object.keys(formatUsage).length > 0 && (
+        <div className="font-mono text-[11px] text-ink-faint">
+          {`first-touch format · ${Object.entries(formatUsage)
+            .map(([arm, u]) => usageLine(arm, u))
+            .join(" · ")}`}
         </div>
       )}
       {!hasAny && (

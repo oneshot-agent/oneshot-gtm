@@ -48,6 +48,8 @@ export interface DraftVersionRow {
   discard_reason: DraftDiscardReason | null;
   /** Hash of the founder voice card in the prompt; NULL when none was set. */
   voice_key: string | null;
+  /** First-touch format arm (`standard` / `brief`) when the trigger set one; NULL otherwise. */
+  format_key: string | null;
   created_at: string;
   closed_at: string | null;
 }
@@ -120,6 +122,7 @@ export function storedDraftEnvelope(raw: unknown): {
   angle: DraftVersionAngle | null;
   draftedAt: string | null;
   voiceKey: string | null;
+  formatKey: string | null;
 } | null {
   let value: unknown = raw;
   if (typeof raw === "string") {
@@ -154,6 +157,7 @@ export function storedDraftEnvelope(raw: unknown): {
     angle: draftVersionAngle(v["angle"] ?? payloadAngle),
     draftedAt: typeof v["draftedAt"] === "string" ? v["draftedAt"] : null,
     voiceKey: typeof voice === "string" && voice ? voice : null,
+    formatKey: typeof v["formatKey"] === "string" && v["formatKey"] ? v["formatKey"] : null,
   };
 }
 
@@ -209,6 +213,7 @@ export class DraftVersionStore {
     flags: string[];
     angle?: DraftVersionAngle | null;
     voiceKey?: string | null;
+    formatKey?: string | null;
     discardReason?: DraftDiscardReason;
     /** When the draft was really written — a seeded pre-existing draft keeps its own time. */
     createdAt?: string;
@@ -254,6 +259,7 @@ export class DraftVersionStore {
       flags: env.flags,
       angle: env.angle,
       voiceKey: env.voiceKey,
+      formatKey: env.formatKey,
       ...(env.draftedAt ? { createdAt: env.draftedAt } : {}),
     });
   }
@@ -347,6 +353,7 @@ export class DraftVersionStore {
     flags: string[];
     angle?: DraftVersionAngle | null;
     voiceKey?: string | null;
+    formatKey?: string | null;
     outcome: "sent" | "auto_sent";
   }): void {
     if (!input.body.trim()) return;
@@ -363,6 +370,7 @@ export class DraftVersionStore {
     flags: string[];
     angle?: DraftVersionAngle | null;
     voiceKey?: string | null;
+    formatKey?: string | null;
     outcome: DraftVersionOutcome;
     createdAt?: string;
   }): void {
@@ -373,8 +381,8 @@ export class DraftVersionStore {
         `INSERT INTO draft_versions(
            play_name, prospect_key, step_index, queue_id, prospect_id,
            subject, body, flags_json, angle_key, angle_text, angle_origin,
-           outcome, discard_reason, voice_key, created_at, closed_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?,?)`,
+           outcome, discard_reason, voice_key, format_key, created_at, closed_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,NULL,?,?,?,?)`,
       )
       .run(
         input.playName,
@@ -390,6 +398,7 @@ export class DraftVersionStore {
         angle ? angle.origin : null,
         input.outcome,
         input.voiceKey ?? null,
+        input.formatKey ?? null,
         input.createdAt ?? now,
         input.outcome === "open" ? null : now,
       );
@@ -494,6 +503,49 @@ export class DraftVersionStore {
       target.sent = r.sent;
       target.autoSent = r.auto_sent;
       target.replied = r.replied ?? 0;
+    }
+    return out;
+  }
+
+  /**
+   * Per play: intro version counts by first-touch format arm, replies
+   * included — the side-by-side a founder reads to judge the formats. Only
+   * versions whose trigger set a format count; plays with none are absent.
+   */
+  draftUsageByFormat(): Record<string, Record<string, DraftUsage>> {
+    const rows = this.db
+      .query(
+        `SELECT play_name, format_key,
+                SUM(outcome = 'open') AS open,
+                SUM(outcome = 'discarded' AND discard_reason = 'regenerate') AS regenerated,
+                SUM(outcome = 'discarded' AND discard_reason = 'rotate') AS rotated,
+                SUM(outcome = 'sent') AS sent,
+                SUM(outcome = 'auto_sent') AS auto_sent,
+                SUM(${DV_REPLIED}) AS replied
+           FROM draft_versions dv
+          WHERE format_key IS NOT NULL AND step_index = 0
+          GROUP BY play_name, format_key`,
+      )
+      .all() as Array<{
+      play_name: string;
+      format_key: string;
+      open: number;
+      regenerated: number;
+      rotated: number;
+      sent: number;
+      auto_sent: number;
+      replied: number;
+    }>;
+    const out: Record<string, Record<string, DraftUsage>> = {};
+    for (const r of rows) {
+      (out[r.play_name] ??= {})[r.format_key] = {
+        open: r.open,
+        regenerated: r.regenerated,
+        rotated: r.rotated,
+        sent: r.sent,
+        autoSent: r.auto_sent,
+        replied: r.replied ?? 0,
+      };
     }
     return out;
   }

@@ -26,6 +26,7 @@ import {
   angleUsageForEdge,
   draftUsageView,
   voiceUsageView,
+  formatUsageView,
   playUsageLoader,
   type PlayUsage,
 } from "./_draft-versions.ts";
@@ -96,6 +97,7 @@ export function toView(
     angleUsage: angleUsageForEdge(config ?? spec?.defaultConfig ?? null, usage?.angles ?? []),
     draftUsage: draftUsageView(usage?.drafts),
     voiceUsage: voiceUsageView(usage?.voice),
+    formatUsage: formatUsageView(usage?.format),
   };
 }
 

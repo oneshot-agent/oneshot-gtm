@@ -40,6 +40,13 @@ import {
   withSelectedAngle,
   positioningFingerprint,
 } from "./_angles.ts";
+import {
+  BRIEF_MAX_SENTENCES,
+  BRIEF_MAX_WORDS,
+  briefFormatBlock,
+  firstTouchArm,
+  type FirstTouchFormat,
+} from "./_first-touch.ts";
 
 type AppConfig = ReturnType<typeof loadConfig>;
 
@@ -86,6 +93,8 @@ export type PlayDraft<T, X = Record<string, never>> = {
   angle?: DraftAngle;
   /** Hash of the founder's voice card the draft was written with; absent when none was set. */
   voiceKey?: string | null;
+  /** The first-touch format arm the draft was written in; absent when the trigger never set one. */
+  formatKey?: FirstTouchFormat | null;
 } & X;
 
 /**
@@ -320,6 +329,18 @@ export async function runEmailPlay<T, X = Record<string, never>>(
         // shape; the block's own budget line keeps it under the humanizer.
         const voice = voiceBlock("intro");
         if (voice) inputBlock = `${inputBlock}\n\n${voice.text}`;
+        // FORMAT: only when the trigger opted into a first-touch format. The
+        // arm is a stable per-prospect hash (see _first-touch.ts), so an
+        // untouched trigger's prompt is byte-identical to before.
+        const formatKey = firstTouchArm(target, def.toEmail(target));
+        const brief = formatKey === "brief";
+        const titleForRegister =
+          typeof (target as { title?: unknown }).title === "string"
+            ? (target as { title: string }).title
+            : null;
+        if (brief) inputBlock = `${inputBlock}\n\n${briefFormatBlock(titleForRegister)}`;
+        const bodyWordCap = brief ? Math.min(def.maxBodyWords, BRIEF_MAX_WORDS) : def.maxBodyWords;
+        const bodySentenceCap = brief ? BRIEF_MAX_SENTENCES : undefined;
         // ANGLE (issue #356, lowest priority of the three draft paths — most
         // outbound is first-touch, so a stored angle_json is the exception,
         // not the rule): only present when a prior finder/synthesis run
@@ -357,11 +378,12 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           inputBlock,
           // The same cap lintEmail holds at, so an over-long first pass gets
           // one tighter redraft instead of becoming a lint-held send.
-          maxBodyWords: def.maxBodyWords,
+          maxBodyWords: bodyWordCap,
+          ...(bodySentenceCap !== undefined ? { maxBodySentences: bodySentenceCap } : {}),
         });
 
         const flags = [
-          ...lintEmail(draft.subject, draft.body, def.maxBodyWords),
+          ...lintEmail(draft.subject, draft.body, bodyWordCap, bodySentenceCap),
           ...(def.hardBans ? hardBanFlags(draft.body) : []),
           ...(def.extraFlags?.(target) ?? []),
           ...lintGrounding(target, prep),
@@ -419,6 +441,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
                     angleText: angleSelection.angle,
                   }
                 : {}),
+              ...(formatKey ? { firstTouchFormat: formatKey } : {}),
             };
             return Object.keys(metadata).length > 0 ? { metadata } : {};
           })(),
@@ -447,6 +470,7 @@ export async function runEmailPlay<T, X = Record<string, never>>(
           flags,
           ...(prep.enrichmentFailed ? { enrichmentFailed: true } : {}),
           ...(voice ? { voiceKey: voice.key } : {}),
+          ...(formatKey ? { formatKey } : {}),
           ...(angleSelection && edgeField
             ? {
                 angle: {

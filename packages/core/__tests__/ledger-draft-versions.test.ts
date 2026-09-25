@@ -603,6 +603,51 @@ describe("aggregates", () => {
   });
 });
 
+describe("first-touch format", () => {
+  it("records the arm on intro versions and counts outcomes and replies per arm", () => {
+    const play = "format-split";
+    const q1 = enqueue("f1@x.dev", play);
+    ledger.setQueueDraft({
+      id: q1,
+      draft: { ...draft({ sent: true, dryRun: false, angle: ANGLE_A }), formatKey: "brief" },
+      sentBy: "human",
+    });
+    const q2 = enqueue("f2@x.dev", play);
+    ledger.setQueueDraft({
+      id: q2,
+      draft: { ...draft({ angle: ANGLE_A }), formatKey: "standard" },
+    });
+    ledger.setQueueDraft({
+      id: q2,
+      draft: { ...draft({ body: "again", angle: ANGLE_A }), formatKey: "standard" },
+      discardReason: "regenerate",
+    });
+    // An untracked row (trigger never set a format) stays out of the split.
+    const q3 = enqueue("f3@x.dev", play);
+    ledger.setQueueDraft({
+      id: q3,
+      draft: draft({ sent: true, dryRun: false, angle: ANGLE_A }),
+      sentBy: "human",
+    });
+
+    const p1 = ledger.upsertProspect({ name: "F1", email: "f1@x.dev", company: null, source: "t" });
+    ledger.recordSequenceEvent({
+      prospectId: p1,
+      playName: play,
+      stepIndex: 0,
+      channel: "email",
+      status: "sent",
+    });
+    ledger.markLatestStepReplied({ prospectId: p1, playName: play });
+
+    const usage = ledger.draftUsageByFormat()[play]!;
+    expect(Object.keys(usage).toSorted()).toEqual(["brief", "standard"]);
+    expect(usage["brief"]).toMatchObject({ sent: 1, replied: 1 });
+    expect(usage["standard"]).toMatchObject({ open: 1, regenerated: 1, sent: 0, replied: 0 });
+    expect(ledger.draftUsageByFormat()["luma-events"]).toBeUndefined();
+  });
+});
+
 describe("draft version writer reservations", () => {
   for (const operation of ["queue replace", "queue close", "cadence replace", "cadence advance"]) {
     it(`${operation} reserves the writer before reading the draft it will change`, () => {

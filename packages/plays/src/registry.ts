@@ -38,6 +38,8 @@ export interface DraftedRow {
   angle?: DraftAngle;
   /** Hash of the founder's voice card the draft was written with (see `PlayDraft.voiceKey`). */
   voiceKey?: string | null;
+  /** First-touch format arm (see `PlayDraft.formatKey`). */
+  formatKey?: string | null;
 }
 
 /** Run-level options a play may consume. `targets` is play-specific JSON. */

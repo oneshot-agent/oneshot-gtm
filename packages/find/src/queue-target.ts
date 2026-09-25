@@ -27,5 +27,19 @@ export function resolveQueueTarget(row: Pick<QueueRow, "payload_json" | "source"
     }
     resolved[key] = value ?? "";
   }
+  // First-touch format experiment settings, read at generation time like the
+  // edge so turning a split on applies to rows already queued. Invalid values
+  // are ignored (the play then drafts in its standard format, untracked).
+  if (Object.hasOwn(config, "firstTouchFormat")) {
+    const format = config["firstTouchFormat"];
+    if (format === "standard" || format === "brief" || format === "split") {
+      resolved["firstTouchFormat"] = format;
+    } else {
+      delete resolved["firstTouchFormat"];
+    }
+  }
+  if (typeof config["firstTouchSplit"] === "number" && Number.isFinite(config["firstTouchSplit"])) {
+    resolved["firstTouchSplit"] = config["firstTouchSplit"];
+  }
   return resolved;
 }
