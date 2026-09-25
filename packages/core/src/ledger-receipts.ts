@@ -3,6 +3,76 @@ import type { ReceiptRecord } from "./types.ts";
 import { toSqliteUtc } from "./time.ts";
 
 /**
+ * Call types whose stored result is read back, so it is kept whole:
+ * email.find/verify results back the 14-day contact reuse
+ * (`findContactReceipt`, find's `_sdk-safe.ts`), and direct_mail.order holds
+ * the platform's own signed receipt.
+ */
+export const VERBATIM_RECEIPT_CALL_TYPES: ReadonlySet<string> = new Set([
+  "email.find",
+  "email.verify",
+  "direct_mail.order",
+]);
+
+/** Strings longer than this are replaced by a length marker. */
+export const RECEIPT_STRING_CAP = 1000;
+/** Arrays keep this many items, then a count of the rest. */
+export const RECEIPT_ARRAY_CAP = 100;
+
+const OMITTED_ITEMS = /^\[omitted: \d+ more items\]$/;
+
+function slimValue(value: unknown): unknown {
+  if (typeof value === "string") {
+    return value.length > RECEIPT_STRING_CAP ? `[omitted: ${value.length} chars]` : value;
+  }
+  if (Array.isArray(value)) {
+    // Already capped by an earlier pass: keep its marker (and the original
+    // count in it) instead of treating the marker as the 101st item.
+    const last = value.at(-1);
+    if (
+      value.length === RECEIPT_ARRAY_CAP + 1 &&
+      typeof last === "string" &&
+      OMITTED_ITEMS.test(last)
+    ) {
+      return [...value.slice(0, RECEIPT_ARRAY_CAP).map(slimValue), last];
+    }
+    const kept = value.slice(0, RECEIPT_ARRAY_CAP).map(slimValue);
+    if (value.length > RECEIPT_ARRAY_CAP) {
+      kept.push(`[omitted: ${value.length - RECEIPT_ARRAY_CAP} more items]`);
+    }
+    return kept;
+  }
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, slimValue(v)]));
+  }
+  return value;
+}
+
+/**
+ * What `signed_receipt` keeps for one call: the receipt envelope (receipt_id,
+ * request_id, cost, settlement_status) and the call's short identifiers
+ * (message_id, thread_id, url, subject, ...), not the tool's payload. A web.read
+ * result carried the whole page, which made receipts most of the ledger's size
+ * while nothing read it back. The column holds no signature: the signed
+ * receipt lives on the platform and signs metadata, not the payload.
+ */
+export function slimReceiptPayload(callType: string, payload: unknown): unknown {
+  return VERBATIM_RECEIPT_CALL_TYPES.has(callType) ? payload : slimValue(payload);
+}
+
+/** Rows smaller than this (in bytes) are left alone by `compactPayloads`. */
+const COMPACT_MIN_BYTES = 4096;
+const COMPACT_BATCH = 500;
+
+export interface ReceiptCompaction {
+  rows: number;
+  bytesBefore: number;
+  bytesAfter: number;
+  /** Rows whose JSON didn't parse; left untouched. */
+  skipped: number;
+}
+
+/**
  * Receipt persistence for the ledger's `receipts` table: writes
  * (`recordReceipt`), reads (`getReceipt`/`listReceipts`), attribution
  * (`setReceiptValueTag`/`setReceiptValueTagByGoal`/`currentGoalValueTag`/
@@ -76,7 +146,9 @@ export class ReceiptStore {
       input.playName,
       input.callType,
       costUsd,
-      input.signedReceipt ? JSON.stringify(input.signedReceipt) : null,
+      input.signedReceipt
+        ? JSON.stringify(slimReceiptPayload(input.callType, input.signedReceipt))
+        : null,
       input.oneshotRequestId ?? null,
       input.senderIdentity ?? null,
       memo,
@@ -84,6 +156,62 @@ export class ReceiptStore {
       goalId,
     );
     return Number(result.lastInsertRowid);
+  }
+
+  /**
+   * Trim receipts written before `slimReceiptPayload` existed. Dry run unless
+   * `apply`. Writes go in short IMMEDIATE batches so a running server keeps
+   * working between them. Idempotent: a row slimming wouldn't change is
+   * neither counted nor rewritten.
+   */
+  compactPayloads(opts: { apply: boolean }): ReceiptCompaction {
+    const verbatim = [...VERBATIM_RECEIPT_CALL_TYPES];
+    // Paged by id so memory stays one page, whatever the ledger's size; this
+    // also runs inside doctor on the dashboard server. CAST AS BLOB makes
+    // length() count bytes, not characters.
+    const page = this.db.query(
+      `SELECT id, call_type, signed_receipt FROM receipts
+       WHERE id > ? AND length(CAST(signed_receipt AS BLOB)) > ?
+         AND call_type NOT IN (${verbatim.map(() => "?").join(",")})
+       ORDER BY id LIMIT ?`,
+    );
+    const update = this.db.prepare("UPDATE receipts SET signed_receipt = ? WHERE id = ?");
+    const out: ReceiptCompaction = { rows: 0, bytesBefore: 0, bytesAfter: 0, skipped: 0 };
+    let afterId = 0;
+    for (;;) {
+      const rows = page.all(afterId, COMPACT_MIN_BYTES, ...verbatim, COMPACT_BATCH) as Array<{
+        id: number;
+        call_type: string;
+        signed_receipt: string;
+      }>;
+      if (rows.length === 0) break;
+      afterId = rows[rows.length - 1]!.id;
+      const updates: Array<[string, number]> = [];
+      for (const row of rows) {
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(row.signed_receipt);
+        } catch {
+          out.skipped++;
+          continue;
+        }
+        const slim = JSON.stringify(slimReceiptPayload(row.call_type, parsed));
+        // Already within the caps (e.g. many short fields): nothing to trim.
+        if (slim === JSON.stringify(parsed)) continue;
+        out.rows++;
+        out.bytesBefore += Buffer.byteLength(row.signed_receipt);
+        out.bytesAfter += Buffer.byteLength(slim);
+        updates.push([slim, row.id]);
+      }
+      if (opts.apply && updates.length > 0) {
+        this.db
+          .transaction(() => {
+            for (const [json, id] of updates) update.run(json, id);
+          })
+          .immediate();
+      }
+    }
+    return out;
   }
 
   getReceipt(id: number): ReceiptRecord | null {

@@ -85,6 +85,7 @@ import { commandResearchQueue } from "./commands/research-queue.ts";
 import { commandSynthesizeAngles } from "./commands/synthesize-angles.ts";
 import { commandScoreProspects } from "./commands/score-prospects.ts";
 import { commandBackfillFitReason } from "./commands/backfill-fit-reason.ts";
+import { commandCompactReceipts } from "./commands/compact-receipts.ts";
 import { commandCalibrate } from "./commands/calibrate.ts";
 import { commandFindDrain, commandFindImport, commandFindWatch } from "./commands/find.ts";
 import { commandInstallService } from "./commands/install-service.ts";
@@ -129,6 +130,16 @@ program
   .description("Check setup health")
   .option("--json", "output as JSON")
   .action(runOrFail((opts: { json?: boolean }) => commandDoctor(opts)));
+program
+  .command("compact-receipts")
+  .description("Trim old receipt payloads (scraped pages etc.) and VACUUM the ledger")
+  .option("--apply", "write the trim; without it the run is a dry run", false)
+  .option("--no-vacuum", "trim only; skip the VACUUM that shrinks the file")
+  .action(
+    runOrFail((opts: { apply: boolean; vacuum: boolean }) => {
+      commandCompactReceipts(opts);
+    }),
+  );
 program
   .command("ui")
   .option(

@@ -65,7 +65,7 @@ import { canonicalLinkedInProfileKey, ProspectStore } from "./ledger-prospects.t
 import { QueueStore } from "./ledger-queue.ts";
 import { migrateLedgerSchema } from "./ledger-schema.ts";
 import { MailboxStore } from "./mailbox-store.ts";
-import { ReceiptStore } from "./ledger-receipts.ts";
+import { type ReceiptCompaction, ReceiptStore } from "./ledger-receipts.ts";
 import { sharedDbPath } from "./shared-db.ts";
 import { SharedPeople, type SharedPerson } from "./shared-people.ts";
 import type { ReplyKind } from "./reply-classify.ts";
@@ -163,6 +163,18 @@ export function openLedgerDatabase(path: string, opts: { readonly?: boolean } = 
   const db = new Database(path, opts.readonly ? { readonly: true } : undefined);
   db.exec(`PRAGMA busy_timeout = ${LEDGER_BUSY_TIMEOUT_MS}`);
   return db;
+}
+
+/**
+ * `PRAGMA wal_checkpoint(TRUNCATE)`, failing loudly. A reader still inside a
+ * transaction makes SQLite report `busy = 1` in the result row rather than
+ * throw, which would leave the WAL at full size behind a "success".
+ */
+export function truncateWal(db: Database): void {
+  const row = db.query("PRAGMA wal_checkpoint(TRUNCATE)").get() as { busy: number } | null;
+  if (row?.busy) {
+    throw new Error("database is locked: another connection kept the WAL from being checkpointed");
+  }
 }
 
 export class Ledger {
@@ -1218,6 +1230,11 @@ export class Ledger {
 
   getReceipt(id: number): ReceiptRecord | null {
     return this.receipts.getReceipt(id);
+  }
+
+  /** Trim pre-slimming receipt payloads (see `slimReceiptPayload`). Dry run unless `apply`. */
+  compactReceiptPayloads(opts: { apply: boolean }): ReceiptCompaction {
+    return this.receipts.compactPayloads(opts);
   }
 
   findContactReceipt(
@@ -3135,6 +3152,30 @@ export class Ledger {
    */
   listValueTaggedReceipts(): Array<{ goal_id: string; value_tag: string }> {
     return this.receipts.listValueTaggedReceipts();
+  }
+
+  /**
+   * Reclaim free pages after a large delete/trim. VACUUM needs the database
+   * to itself, so a running dashboard or CLI on this ledger makes it fail
+   * with "database is locked" once busy_timeout runs out. In WAL mode the
+   * rebuilt database lands in the WAL, so the checkpoint after it is what
+   * actually shrinks the file.
+   */
+  vacuum(): void {
+    truncateWal(this.db);
+    this.db.exec("VACUUM");
+    truncateWal(this.db);
+  }
+
+  /** Pages VACUUM would reclaim. */
+  freePages(): number {
+    return (this.db.query("PRAGMA freelist_count").get() as { freelist_count: number })
+      .freelist_count;
+  }
+
+  /** Path of the SQLite file this ledger opened. */
+  get filePath(): string {
+    return this.path;
   }
 
   close(): void {

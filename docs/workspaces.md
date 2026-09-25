@@ -24,6 +24,7 @@ Each ledger's own cache tables are imported into the shared DB once on first use
 
 - Two workspaces sharing a **sending domain** — warm-up caps are per-workspace, so the domain's real budget silently doubles.
 - Two workspaces sharing a **Gmail account** — both inbox pollers would see both products' replies.
+- **Old receipt payloads** over 20 MB. Each receipt keeps the call's receipt envelope and identifiers, not the tool's output. Ledgers written before that change can hold every scraped page. `compact-receipts` shows what it would trim; `compact-receipts --apply` trims it and runs `VACUUM` to shrink the file. It acts on one workspace, so run it once per workspace. `VACUUM` needs the ledger to itself: stop that workspace's dashboard first, or re-run if it reports the database is locked. Contact-lookup results (`email.find` / `email.verify`) and direct-mail receipts are kept whole.
 
 ## In the dashboard
 

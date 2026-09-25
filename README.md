@@ -88,11 +88,12 @@ bun run cli -- find drain podcast-guest --dry-run  # preview approved /queue row
 bun run cli -- cadence advance                     # daily tick: poll inbox, fire follow-ups
 ```
 
-73 commands — `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
+74 commands — `bun run cli -- --help` (or `oneshot-gtm --help` once linked) is the reference:
 
 | Group                    | Commands                                                                                                                                                                                                                                                                                                                                                             |
 | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `init` · `doctor` · `ui` | setup wizard · health check · open the dashboard                                                                                                                                                                                                                                                                                                                     |
+| `compact-receipts`       | trim old receipt payloads and shrink the ledger (dry run unless `--apply`)                                                                                                                                                                                                                                                                                           |
 | `config`                 | `llm` · `founder` · `keys` · `voice [--from <path>...]` · `linkedin-session` · `telemetry on\|off` · `slack-webhook [url]` · `x-engine [engine]` · `spend-ceiling [amount\|off]`                                                                                                                                                                                     |
 | `identities`             | `list` · `add` · `remove <id>` — the sender pool                                                                                                                                                                                                                                                                                                                     |
 | `gmail`                  | `auth` (OAuth a sending account) · `placement` (inbox-placement canary)                                                                                                                                                                                                                                                                                              |
@@ -224,7 +225,7 @@ Workspaces share one thing: `~/.oneshot-gtm-shared/shared.sqlite`, holding share
    └──────────────────────────────────────────────┘
 ```
 
-**State** — one `~/.oneshot-gtm/ledger.sqlite` is the source of truth for all three surfaces: receipts, prospects, sequence events, cadence state, deal outcomes, interviews, target queue, triggers, bounces, and sender assignments. `ONESHOT_GTM_HOME` relocates the whole directory.
+**State** — one `~/.oneshot-gtm/ledger.sqlite` is the source of truth for all three surfaces: receipts, prospects, sequence events, cadence state, deal outcomes, interviews, target queue, triggers, bounces, and sender assignments. A receipt row keeps the call's receipt envelope and identifiers, not the tool's output; the signed receipt itself lives on the OneShot platform. `ONESHOT_GTM_HOME` relocates the whole directory.
 
 **Secrets** — `~/.oneshot-gtm/.env`, chmod 600, auto-loaded on first import.
 
@@ -234,7 +235,7 @@ Workspaces share one thing: `~/.oneshot-gtm-shared/shared.sqlite`, holding share
 
 ```
 apps/
-  cli/        the 73-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
+  cli/        the 74-command CLI (commander); src/demo/ seeds the demo install, src/main.ts picks the workspace
   server/     Bun.serve + SSE; tsdown bundle published as `oneshot-gtm-server`
   web/        Vite + React 19 + TanStack + Base UI — 9 pages, run form, strategist dock, privacy mode
 packages/
