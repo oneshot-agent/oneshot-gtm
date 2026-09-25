@@ -5,7 +5,8 @@ import { enqueueScoredTarget } from "./_priority-adapters.ts";
 import { persistRoleRejection } from "./_qualify.ts";
 import { isDuplicate } from "./_dedupe.ts";
 import { icpFilter, resolveIcp } from "./_filter.ts";
-import { fetchGitHubUser, fetchTopRepos } from "./_github-user.ts";
+import { buildGitHubEvidence } from "./_github-evidence.ts";
+import { fetchGitHubUser } from "./_github-user.ts";
 import { findLinkedInUrl } from "./_linkedin.ts";
 import { recentStargazers, type Stargazer } from "./_stargazers.ts";
 import type { FinderResult, RunOpts } from "./_types.ts";
@@ -166,14 +167,18 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
       return;
     }
     const fullName = user.name ?? c.login;
+    const profileUrl = `https://github.com/${c.login}`;
 
-    // ICP filter on the resolved profile + the repo they starred.
+    // ICP filter on what GitHub actually says about the person — bio, site,
+    // account maturity, their own repos (README only on a bare profile) — plus
+    // the repo they starred. A star alone is not evidence either way.
+    const evidence = await buildGitHubEvidence(user);
     const filter = await icpFilter({
       icp,
       candidate: {
         title: fullName,
         url: c.userUrl,
-        summary: [user.company, `starred ${c.repo}`].filter(Boolean).join(" · "),
+        summary: `${evidence.text}\nStarred: ${c.repo}`,
       },
     });
     if (filter.match === null) {
@@ -189,7 +194,14 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
       if (!opts.dryRun) {
         ledger.enqueueTarget({
           playName,
-          payload: { name: fullName, company: user.company ?? "", repo: c.repo },
+          payload: {
+            name: fullName,
+            company: user.company ?? "",
+            repo: c.repo,
+            candidateLogin: c.login,
+            sourceProfileUrl: profileUrl,
+            githubEvidence: evidence.text,
+          },
           dedupeKey,
           source: sourceFor(c.repo),
           initialStatus: "rejected",
@@ -216,11 +228,15 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
       isDuplicate: (email) => isDuplicate({ playName, dedupeKey, prospectEmail: email }),
       icp,
       // GitHub's user API carries no title, so stage A has nothing to judge —
-      // the gate decides on the enriched title (stage B), which is free.
+      // the gate decides on the enriched title (stage B), which is free. The
+      // bio rides as evidence, never as roleText: roleText becomes the
+      // prospect's persisted title.
       person: {
         name: fullName,
         company: user.company?.trim() ?? null,
-        evidence: `starred ${c.repo}`,
+        evidence: [user.bio ? `bio: ${user.bio}` : null, `starred ${c.repo}`]
+          .filter(Boolean)
+          .join(" · "),
       },
       fillGaps: opts.qualifyFillGaps ?? true,
     });
@@ -236,6 +252,9 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
             name: fullName,
             company: user.company ?? "",
             repo: c.repo,
+            candidateLogin: c.login,
+            sourceProfileUrl: profileUrl,
+            githubEvidence: evidence.text,
             ...(contact.email ? { email: contact.email } : {}),
             ...(contact.emailSource ? { emailSource: contact.emailSource } : {}),
           },
@@ -251,7 +270,6 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
 
     const company = user.company?.trim() || "(unknown)";
     const repoUrl = `https://github.com/${c.repo}`;
-    const profileUrl = `https://github.com/${c.login}`;
 
     // Tier 3 of the standard LinkedIn chain (see post-funding.ts for the
     // canonical shape). GitHub's user API carries no LinkedIn field, so without
@@ -277,15 +295,23 @@ export async function runGitHubStarsFinder(opts: GitHubStarsFinderOpts): Promise
       ...(contact.title ? { title: contact.title } : {}),
       ...icpFields(contact),
       sourceProfileUrl: profileUrl,
+      githubEvidence: evidence.text,
       ...(contact.emailSource ? { emailSource: contact.emailSource } : {}),
     };
 
     // repo-interest is a peer-builder pitch — what the candidate ships gives
     // the LLM concrete shared-taste evidence. competitor-switch is a head-on
     // pitch where the starred repo IS the signal; candidate's own repos add
-    // noise, so we only fetch for the repo-interest branch.
+    // noise, so we only pass them on the repo-interest branch. Already fetched
+    // for the evidence block; the draft only needs the three topical fields.
     const candidateRepos =
-      c.rel === "competitor" ? undefined : ((await fetchTopRepos(c.login)) ?? undefined);
+      c.rel === "competitor" || !evidence.repos
+        ? undefined
+        : evidence.repos.map(({ name, description, language }) => ({
+            name,
+            description,
+            language,
+          }));
 
     const target: CompetitorSwitchTarget | RepoInterestTarget =
       c.rel === "competitor"

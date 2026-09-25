@@ -9,6 +9,11 @@ export interface GitHubUserInfo {
   /** Bare hostname extracted from the user's blog URL. */
   blogDomain: string | null;
   company: string | null;
+  /** Free-text profile bio — the one self-description a GitHub-only person gives. */
+  bio?: string | null;
+  location?: string | null;
+  /** The raw blog/website field as the user typed it (see `blogDomain` for the host). */
+  blogUrl?: string | null;
   /**
    * Account-maturity signal (issue #355 refinement): a `created_at` within
    * the last few months plus a low `publicRepos`/`followers` count is what
@@ -20,6 +25,10 @@ export interface GitHubUserInfo {
   createdAt: string | null;
   publicRepos: number;
   followers: number;
+}
+
+function nonEmptyString(v: unknown): string | null {
+  return typeof v === "string" && v.trim() !== "" ? v.trim() : null;
 }
 
 /** Lowercase-keyed cache; `null` = "tried, got 404/429/network error". */
@@ -74,6 +83,9 @@ export async function fetchGitHubUser(login: string): Promise<GitHubUserInfo | n
           ? (json["email"] as string)
           : null,
       blogDomain: extractBlogDomain(json["blog"]),
+      bio: nonEmptyString(json["bio"]),
+      location: nonEmptyString(json["location"]),
+      blogUrl: nonEmptyString(json["blog"]),
       company:
         typeof json["company"] === "string" && json["company"] !== ""
           ? (json["company"] as string)
@@ -106,14 +118,17 @@ export async function fetchGitHubUser(login: string): Promise<GitHubUserInfo | n
 }
 
 /**
- * One of the candidate's own public repos. Star count + dates intentionally
- * dropped to keep token budget tight — the LLM picks ONE by topical fit, not
- * metrics.
+ * One of the candidate's own public repos. The draft prompt picks ONE by
+ * topical fit, not metrics; `stars`/`pushedAt` are for the ICP evidence
+ * block, where recency and traction separate a shipping builder from a
+ * dormant account.
  */
 export interface TopRepo {
   name: string;
   description: string | null;
   language: string | null;
+  stars?: number;
+  pushedAt?: string | null;
 }
 
 /** `null` = "we tried and got 404/429/network error, don't retry within the run." */
@@ -184,6 +199,8 @@ export async function fetchTopRepos(login: string): Promise<TopRepo[] | null> {
           name: r["name"] as string,
           description: rawDesc && rawDesc.length > 160 ? `${rawDesc.slice(0, 159)}…` : rawDesc,
           language: typeof r["language"] === "string" ? (r["language"] as string) : null,
+          stars: typeof r["stargazers_count"] === "number" ? (r["stargazers_count"] as number) : 0,
+          pushedAt: typeof r["pushed_at"] === "string" ? (r["pushed_at"] as string) : null,
         };
       });
     reposCache.set(key, repos);

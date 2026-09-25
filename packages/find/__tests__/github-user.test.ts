@@ -123,11 +123,28 @@ describe("fetchGitHubUser", () => {
       name: "Ada Lovelace",
       email: "ada@acme.dev",
       blogDomain: "acme.dev",
+      bio: null,
+      location: null,
+      blogUrl: "https://www.acme.dev/about",
       company: "@acme",
       createdAt: null,
       publicRepos: 0,
       followers: 0,
     });
+  });
+
+  it("keeps bio and location, trimmed, and nulls blank ones", async () => {
+    mockFetchOnceJson(200, {
+      login: "ada",
+      type: "User",
+      bio: "  Building agent infra at a payments startup  ",
+      location: "",
+      blog: "acme.dev",
+    });
+    const out = await fetchGitHubUser("ada");
+    expect(out?.bio).toBe("Building agent infra at a payments startup");
+    expect(out?.location).toBeNull();
+    expect(out?.blogUrl).toBe("acme.dev");
   });
 
   it("returns null name when GitHub user hasn't set a display name", async () => {
@@ -210,7 +227,7 @@ describe("fetchGitHubUser", () => {
 });
 
 describe("fetchTopRepos", () => {
-  it("returns a 3-field shape (name/description/language), dropping noise fields", async () => {
+  it("keeps name/description/language plus stars and push date, dropping noise fields", async () => {
     mockFetchOnceJson(200, [
       {
         name: "agent-loop",
@@ -228,8 +245,10 @@ describe("fetchTopRepos", () => {
         name: "agent-loop",
         description: "self-rewriting skill loop for autonomous agents",
         language: "Python",
+        stars: 42,
+        pushedAt: "2026-05-01T00:00:00Z",
       },
-      { name: "tiny-llm", description: null, language: "Rust" },
+      { name: "tiny-llm", description: null, language: "Rust", stars: 0, pushedAt: null },
     ]);
   });
 
@@ -263,8 +282,14 @@ describe("fetchTopRepos", () => {
     ]);
     const out = await fetchTopRepos("ada");
     expect(out).toEqual([
-      { name: "live-repo", description: "still maintained", language: "Go" },
-      { name: "another-live", description: null, language: null },
+      {
+        name: "live-repo",
+        description: "still maintained",
+        language: "Go",
+        stars: 0,
+        pushedAt: null,
+      },
+      { name: "another-live", description: null, language: null, stars: 0, pushedAt: null },
     ]);
     // Explicit: the fork must not be in the output (the test above already
     // covers this transitively, but being explicit makes the intent obvious

@@ -22,14 +22,15 @@ let stargazersByRepo: Record<
 let newestSeenByRepo: Record<string, string | null> = {};
 // Per-test override of what fetchTopRepos returns. `null` simulates an API
 // failure / rate-limit; `[]` simulates a user with no public repos. The call
-// tracker doubles as a regression guard: candidate-repo fetching is for the
-// repo-interest branch only, never for competitor-switch.
+// tracker doubles as a regression guard: repos are fetched exactly once per
+// candidate (for the ICP evidence block), and only repo-interest rows carry them.
 let nextFetchTopReposResult: Array<{
   name: string;
   description: string | null;
   language: string | null;
 }> | null = [{ name: "agent-loop", description: "self-rewriting skills", language: "Python" }];
 const fetchTopReposCalls: string[] = [];
+const icpCalls: Array<{ candidate: { title: string; url?: string; summary?: string } }> = [];
 
 vi.mock("../src/_stargazers.ts", () => ({
   recentStargazers: async (repo: string) => ({
@@ -44,6 +45,11 @@ vi.mock("../src/_github-user.ts", () => ({
     email: `${login}@acme.dev`,
     blogDomain: "acme.dev",
     company: "Acme",
+    bio: `${login} builds agent tooling`,
+    accountType: "User",
+    createdAt: "2019-03-01T00:00:00Z",
+    publicRepos: 12,
+    followers: 40,
   }),
   fetchTopRepos: async (login: string) => {
     fetchTopReposCalls.push(login);
@@ -52,10 +58,13 @@ vi.mock("../src/_github-user.ts", () => ({
 }));
 vi.mock("../src/_filter.ts", () => ({
   resolveIcp: () => "icp",
-  icpFilter: async () => ({
-    match: icpMatch,
-    reason: icpMatch === null ? "icp classifier unavailable" : icpMatch ? "fits" : "nope",
-  }),
+  icpFilter: async (args: { candidate: { title: string; url?: string; summary?: string } }) => {
+    icpCalls.push(args);
+    return {
+      match: icpMatch,
+      reason: icpMatch === null ? "icp classifier unavailable" : icpMatch ? "fits" : "nope",
+    };
+  },
   // Person-level gate. These tests cover stargazer routing and contact
   // resolution, not qualification, so everyone passes by default; the staging
   // itself is covered by qualify-staging.test.ts.
@@ -124,6 +133,7 @@ beforeEach(() => {
   _resetLinkedInCache();
   newestSeenByRepo = {};
   fetchTopReposCalls.length = 0;
+  icpCalls.length = 0;
   nextFetchTopReposResult = [
     { name: "agent-loop", description: "self-rewriting skills", language: "Python" },
   ];
@@ -175,9 +185,12 @@ describe("runGitHubStarsFinder — per-repo rel routing", () => {
     ]);
     expect(comp?.payload["candidateLogin"]).toBeUndefined();
     expect(comp?.payload["candidateRepos"]).toBeUndefined();
-    // Call-count guard: only the adjacent stargazer (bob) triggers fetchTopRepos.
-    // alice (competitor) must not — repo enrichment is repo-interest-only.
-    expect(fetchTopReposCalls).toEqual(["bob"]);
+    // Call-count guard: every candidate's repos are fetched exactly once (they
+    // feed the ICP evidence block), and only the repo-interest row carries them.
+    expect(fetchTopReposCalls.toSorted()).toEqual(["alice", "bob"]);
+    expect(
+      enqueued.find((r) => r.playName === "competitor-switch")?.payload["candidateRepos"],
+    ).toBeUndefined();
   });
 
   it("enqueues the repo-interest row without candidateRepos when fetchTopRepos returns null (rate-limited)", async () => {
@@ -216,6 +229,34 @@ describe("runGitHubStarsFinder — per-repo rel routing", () => {
     expect(enqueued).toHaveLength(1);
     expect(enqueued[0]?.initialStatus).toBe("rejected");
     expect(enqueued[0]?.playName).toBe("competitor-switch");
+  });
+
+  it("judges ICP on the GitHub profile evidence, not just the star", async () => {
+    await runGitHubStarsFinder({
+      dryRun: false,
+      yourEdge: "x",
+      repos: [{ repo: "modelcontextprotocol/servers", rel: "adjacent", label: "MCP" }],
+    });
+    const summary = icpCalls[0]?.candidate.summary ?? "";
+    expect(summary).toContain("Bio: bob builds agent tooling");
+    expect(summary).toContain("account created 2019-03-01T00:00:00Z");
+    expect(summary).toContain("- agent-loop (Python) — self-rewriting skills");
+    expect(summary).toContain("Starred: modelcontextprotocol/servers");
+    expect(enqueued[0]?.payload["githubEvidence"]).toContain("Bio: bob builds agent tooling");
+  });
+
+  it("persists the login, profile URL and evidence on an ICP rejection", async () => {
+    icpMatch = false;
+    await runGitHubStarsFinder({
+      dryRun: false,
+      yourEdge: "x",
+      repos: [{ repo: "modelcontextprotocol/servers", rel: "adjacent", label: "MCP" }],
+    });
+    const row = enqueued[0]!;
+    expect(row.initialStatus).toBe("rejected");
+    expect(row.payload["candidateLogin"]).toBe("bob");
+    expect(row.payload["sourceProfileUrl"]).toBe("https://github.com/bob");
+    expect(String(row.payload["githubEvidence"])).toContain("Bio: bob builds agent tooling");
   });
 
   it("retains the verified email when the later role gate rejects", async () => {
